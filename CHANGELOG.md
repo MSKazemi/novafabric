@@ -9,6 +9,23 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Added
+- **Repo discoverability / LLM-SEO pass.** Make the public repository crawlable,
+  understandable, and citable by search and AI answer engines:
+  - GitHub repository metadata: keyword-rich About description, `homepageUrl`
+    (`https://novafabric.dev`), and 20 topics.
+  - `CITATION.cff` (Citation File Format 1.2.0) and a BibTeX entry in the README.
+  - `SUPPORT.md`, `.github/FUNDING.yml`, and `.github/ISSUE_TEMPLATE/config.yml`
+    (routes support questions to docs / Discussions / security disclosure).
+  - README: new **FAQ**, **How NovaFabric compares**, and **When to use / when not
+    to use** sections; PyPI version badge.
+
+### Changed
+- README status corrected from `pre-alpha` to **beta (v0.58.0)** with an honest
+  stable-vs-experimental feature breakdown (was stale at "usable through v0.12").
+- `web/public/llms.txt` version corrected (`v0.7.0` → `v0.58.0`) and Python floor
+  (`3.11+` → `3.12+`) to match `pyproject.toml`.
+
 ## [0.58.0] — 2026-06-25
 
 ### Added

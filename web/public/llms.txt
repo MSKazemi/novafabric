@@ -1,7 +1,7 @@
 # NovaFabric
 
 > Open-source CLI toolkit that captures, replays, diffs, and audits AI system runs.
-> Local-first (data stays on your machine). No accounts, no telemetry. Python 3.11+.
+> Local-first (data stays on your machine). No accounts, no telemetry. Python 3.12+.
 
 NovaFabric is a time machine for AI systems. When an AI agent behaves differently
 than it did yesterday — different outputs, a regression, an unexpected tool call —
@@ -29,7 +29,7 @@ Install with: pip install novafabric
 
 ## Key facts
 
-- Current version: v0.7.0 (local-first, open source, CLI-first)
+- Current version: v0.58.0 (beta, local-first, open source, CLI-first)
 - Four replay modes: exact, mocked, semantic, forensic
 - Capsules stored in .novafabric/runs/ as schema-validated directories
 - Evidence bundles use in-toto DSSE Statement v1 + ed25519 signatures

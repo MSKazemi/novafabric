@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: "If you use NovaFabric in your research or tooling, please cite it as below."
+title: "NovaFabric: Replayable AI Infrastructure"
+abstract: >-
+  NovaFabric is a local-first, open-source CLI toolkit that captures, replays,
+  diffs, and audits AI agent and model runs as portable, redacted, signed
+  evidence capsules. It is built around five primitives — Asset Registry,
+  Run Capsule, Replay, Lineage, and Evidence Bundle — and supports four replay
+  modes (exact, mocked, semantic, forensic). No accounts and no telemetry; data
+  stays on the user's machine.
+type: software
+authors:
+  - family-names: "Seyedkazemi Ardebili"
+    given-names: "Mohsen"
+    alias: "MSKazemi"
+repository-code: "https://github.com/novafabric/novafabric"
+url: "https://novafabric.dev"
+license: Apache-2.0
+version: 0.58.0
+keywords:
+  - ai-agents
+  - llm
+  - observability
+  - reproducibility
+  - provenance
+  - lineage
+  - replay
+  - ai-governance
+  - evidence
+  - opentelemetry

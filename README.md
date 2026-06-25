@@ -1,8 +1,9 @@
 # NovaFabric
 
+[![PyPI](https://img.shields.io/pypi/v/novafabric.svg)](https://pypi.org/project/novafabric/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/)
-[![Status](https://img.shields.io/badge/status-pre--alpha-orange.svg)](#status)
+[![Status](https://img.shields.io/badge/status-beta-yellow.svg)](#status)
 
 **Created and maintained by [Mohsen Seyedkazemi Ardebili](https://github.com/MSKazemi)** — AI systems engineer, platform architect, HPC researcher. Part of the [NovaFabric](https://github.com/novafabric) open-source lab.
 
@@ -203,6 +204,63 @@ See [`docs/getting-started.md`](docs/getting-started.md) for the full registry w
 
 ---
 
+## When to use NovaFabric
+
+Use NovaFabric when you need to:
+
+- **Reproduce an AI run later** — replay a captured agent or model run for regression
+  debugging or incident forensics, instead of guessing what changed.
+- **Diff two runs** — see exactly which model calls, tool calls, or outputs changed
+  between yesterday and today, and gate CI on behavioral change.
+- **Produce portable, signed evidence** of what an agent or model actually did —
+  for governance, auditability, and compliance *support*.
+- **Capture without changing application code** — SDK hooks, wire-level hooks, and
+  transparent proxies capture runs of any command, fully **local and offline**.
+
+### When *not* to use NovaFabric
+
+Be honest about the trade-offs — NovaFabric is **not** the right tool when:
+
+- You want a fully managed, hosted observability dashboard with zero operations —
+  a SaaS LLM-observability platform will be less work.
+- You need large-scale, real-time, multi-user team analytics **today** — server mode
+  and the live dashboard are `experimental`.
+- You need a compliance *certification* — NovaFabric produces evidence that
+  *supports* compliance workflows; it does not certify or guarantee compliance.
+- You need frozen, long-term-stable on-disk formats right now — the Run Capsule and
+  Evidence Bundle formats are not frozen until the v1.0 schema freeze.
+
+---
+
+## How NovaFabric compares
+
+NovaFabric overlaps with LLM-observability platforms but is centered on a different
+unit of value: a **portable, signed, replayable evidence capsule** rather than a
+trace in a hosted database.
+
+| | **NovaFabric** | Self-hosted observability (Langfuse, Arize Phoenix) | Hosted SaaS (LangSmith, W&B, Helicone) |
+|---|---|---|---|
+| Deployment | Local-first CLI, **no account** | Self-hosted server + database | Managed cloud service |
+| Primary artifact | Portable evidence **capsule** (a folder) | Trace row in a database | Trace row in a vendor cloud |
+| Where data lives | **On your machine** | Your server | Vendor cloud |
+| Replay of a run | **✓ 4 modes** (exact / mocked / semantic / forensic) | ✗ | ✗ |
+| Run-to-run structural diff | **✓** | partial (eval) | partial (eval) |
+| Cryptographic signing / provenance | **✓** in-toto DSSE + Sigstore + RFC 3161 | ✗ | ✗ |
+| Capture without code changes | **✓** SDK + wire-level + proxy | SDK instrumentation | SDK / proxy |
+| Works fully offline | **✓** | self-host only | ✗ |
+
+**Where the alternatives are stronger:** hosted and self-hosted observability
+platforms offer richer turnkey dashboards, managed evaluation UIs, and team
+analytics out of the box. NovaFabric trades that for portability, offline
+operation, and signed, replayable artifacts you own. They are complementary —
+NovaFabric emits OpenTelemetry GenAI and OpenLineage, so you can feed an existing
+observability stack while keeping portable capsules for replay and audit.
+
+See [`docs/concepts.md`](docs/concepts.md) for the five primitives and four replay
+modes in depth.
+
+---
+
 ## Roadmap
 
 > All shipped items (`✓`) are `experimental` unless marked `prototype`. Interfaces and
@@ -251,6 +309,56 @@ v1.0     OAS v1.0 schema freeze + production-ready governance [planned]
 ```
 
 See [`CHANGELOG.md`](CHANGELOG.md) for release-by-release details.
+
+---
+
+## FAQ
+
+**What is NovaFabric?**
+An open-source, local-first CLI toolkit that captures, replays, diffs, and audits
+AI agent and model runs as portable, redacted evidence capsules. It is built around
+five primitives: Asset Registry, Run Capsule, Replay, Lineage, and Evidence Bundle.
+
+**Is it free and open source?**
+Yes — Apache-2.0 licensed. There is no paid tier or hosted service required.
+
+**Does NovaFabric send my data anywhere?**
+No. NovaFabric is local-first: captured data stays on your machine. There are no
+accounts and no telemetry, and core features (capture, validate, replay, diff,
+lineage) work fully offline.
+
+**Do I have to change my code to use it?**
+No. `nova capture <command>` captures any command with no application changes.
+Python SDKs (OpenAI, Anthropic, MCP, httpx, requests, aiohttp, urllib3, Bedrock)
+are auto-hooked; non-Python clients are captured via `nova api-proxy` and
+`nova mcp-proxy`.
+
+**What is an "evidence capsule"?**
+A portable `.novafabric/runs/<ulid>/` folder containing a schema-valid,
+secret-redacted record of a run: the manifest, traces, model/tool calls, the
+environment lock, a redaction proof, and a replay policy.
+
+**Can I replay a captured run?**
+Yes — four modes: `exact`, `mocked`, `semantic`, and `forensic` (read-only, no
+network, no subprocess).
+
+**How is this different from LangSmith / Langfuse / W&B?**
+Those are observability platforms centered on traces in a (hosted or self-hosted)
+database. NovaFabric is local-first and centered on portable, signed, *replayable*
+capsules you own, with run-to-run structural diff and cryptographic provenance.
+See [How NovaFabric compares](#how-novafabric-compares).
+
+**Is NovaFabric production-ready?**
+It is **beta** (v0.58.0). Local capture, replay, diff, lineage, the trust layer,
+policy gates, eval suites, and the asset registry are usable; server mode, the
+cluster-scale collector, and the dashboard are `experimental`. On-disk formats are
+not frozen until the v1.0 schema freeze.
+
+**What Python version is required?**
+Python 3.12 or newer.
+
+**How do I cite NovaFabric?**
+See [Citation](#citation) below, or the [`CITATION.cff`](CITATION.cff) file.
 
 ---
 
@@ -306,7 +414,15 @@ Requirements: [uv](https://docs.astral.sh/uv/).
 
 ## Status
 
-**Experimental / pre-release.** Local capture, replay, diff, lineage (SQLite), trust layer, server mode, policy gates, eval suites, and asset registry are usable through v0.12. The cluster-scale collector and Object Capsule Store are `prototype`–`experimental` (see [ROADMAP.md](ROADMAP.md) for per-feature labels). Run Capsule and Evidence Bundle formats are not frozen; expect schema changes until v1.0. NovaFabric produces evidence that *supports* compliance workflows; it does not guarantee compliance.
+**Beta — actively developed (v0.58.0).** Stable and usable today: local capture,
+replay, diff, lineage (SQLite), the trust layer (signing, secret scanning,
+redaction), the asset registry, policy/approval gates, and standard eval suites.
+`Experimental`: server mode, the cluster-scale collector, the Object Capsule Store,
+and the live dashboard (see [ROADMAP.md](ROADMAP.md) and [CHANGELOG.md](CHANGELOG.md)
+for per-feature maturity labels and the authoritative release history). Run Capsule
+and Evidence Bundle formats are **not frozen** — expect schema changes until the
+v1.0 freeze. NovaFabric produces evidence that *supports* compliance workflows; it
+does not certify or guarantee compliance.
 
 ---
 
@@ -314,6 +430,23 @@ Requirements: [uv](https://docs.astral.sh/uv/).
 
 OpenTelemetry GenAI semconv · Anthropic MCP · OpenLineage · in-toto · SLSA ·
 Sigstore · JSON Schema 2020-12 · OCI · OPA/Rego · NIST AI RMF
+
+---
+
+## Citation
+
+If you use NovaFabric in your research or tooling, please cite it. Citation
+metadata lives in [`CITATION.cff`](CITATION.cff); a BibTeX entry:
+
+```bibtex
+@software{novafabric,
+  author  = {Seyedkazemi Ardebili, Mohsen},
+  title   = {{NovaFabric}: Replayable AI Infrastructure},
+  url      = {https://github.com/novafabric/novafabric},
+  version = {0.58.0},
+  license = {Apache-2.0}
+}
+```
 
 ---
 
