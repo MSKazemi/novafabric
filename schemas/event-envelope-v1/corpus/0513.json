@@ -1,0 +1,28 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "5C8BW52GR0PAJ98D9FG5ASC0H3",
+  "global_run_id": "78c3c07d-a1e2-70c1-9bc7-dec0a34ceec7",
+  "run_id": "407T7JXSDJKQHQ0WQAHG4XKV0G",
+  "parent_run_id": "17C80BP1HGY53115WH5PV9MEYB",
+  "event_type": "model_call",
+  "trace_id": "e098dd2fb69b8d04de44bd24ebc8ecdc",
+  "span_id": "459681524a43e2c7",
+  "agent_id": "custom-agent-v1",
+  "cluster_id": "slurm-train-v100",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T18:33:00.201000+00:00",
+  "emitter_node_id": "gpu-node-04",
+  "payload": {
+    "model": "gpt-4o",
+    "system": "mistral",
+    "usage": {
+      "input_tokens": 1002,
+      "output_tokens": 574
+    },
+    "stop_reason": "max_tokens"
+  },
+  "payload_hash": "sha256:7731af1c153a2821e773b4870a270b5957f18a2f82d16f1327ecc27a2d45029e",
+  "nova.batch.signature": "ucMiFB3GeJxSr/Lw4FPAW6/61E9D/1OOLkaZpbl041ePThMcVNOwTwP/E/fqIy+uoVRL62m5y0mrty/XqZ5ihg==",
+  "nova.batch.signing_key_id": "9e70d783-9acd-4281-8801-daa0a037a440"
+}

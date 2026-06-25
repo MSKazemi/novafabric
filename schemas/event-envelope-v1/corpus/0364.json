@@ -1,0 +1,26 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "01TR6C3CCPNKR62ZTKMNG056MA",
+  "global_run_id": "23EF8CTFA3Z56PXVXSTXXHMJ4G",
+  "run_id": "0J4R6E8AP6ZD05914ERA4B3EN4",
+  "parent_run_id": "5AHFQ3W1YFDZPHEDWQZQ4TZXKW",
+  "event_type": "tool_call",
+  "trace_id": "276b5f0858e9dffcd603c78f94a8ecd6",
+  "span_id": "26c0a90a2f8920c7",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": "slurm-train-v100",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T16:04:00.198000+00:00",
+  "payload": {
+    "tool_name": "bash_executor",
+    "tool_call_id": "tc_8ee50f336e759958",
+    "arguments": {
+      "input": "example input for bash_executor"
+    },
+    "duration_ms": 833
+  },
+  "payload_hash": "sha256:b03d804c33eb3deb39067d243cb03b76bb590e0e3eefc1b2dd20fca73116cf0c",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

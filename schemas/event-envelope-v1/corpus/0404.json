@@ -1,0 +1,20 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "6EJEDBF2TP9HVDW2BTWT4NYZPK",
+  "global_run_id": "5861WGPVJY1E3ADQ7F06Q2DG50",
+  "run_id": "56QCW703YSJGE48XDYR7TFMC33",
+  "parent_run_id": "5KX4B23AFH4C4V30GDTWBDH15P",
+  "event_type": "run.end",
+  "trace_id": "3f839b0c896b20c1e1f0a368d4997374",
+  "span_id": "7247f95d4c642764",
+  "agent_id": "nova-otel-bridge",
+  "cluster_id": "azure-ml-cluster",
+  "tenant_id": "tenant-acme",
+  "started_at": "2026-05-12T16:44:00.941000+00:00",
+  "emitter_node_id": "node01.cluster.local",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

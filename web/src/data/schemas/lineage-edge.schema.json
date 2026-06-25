@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/lineage-edge.schema.json",
+  "$comment": "schema_version 0.1.0; validates records in lineage.jsonl.",
+  "title": "LineageEdge",
+  "description": "One directed edge in the NovaFabric lineage graph, stored as a JSONL record.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "edge_id",
+    "edge_type",
+    "source",
+    "target",
+    "direction",
+    "created_at",
+    "emitter"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+"
+    },
+    "edge_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "edge_type": {
+      "type": "string",
+      "enum": [
+        "consumed",
+        "produced_by",
+        "replayed_from",
+        "derived_from",
+        "evaluated_by",
+        "attested_by"
+      ]
+    },
+    "source": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["run", "asset", "artifact", "external", "attestation"]
+        },
+        "run_id": {"type": "string"},
+        "asset_ref": {"type": "string"},
+        "registry": {"type": "string"},
+        "artifact_ref": {"type": "object"}
+      }
+    },
+    "target": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["run", "asset", "artifact", "external", "attestation"]
+        },
+        "run_id": {"type": "string"},
+        "asset_ref": {"type": "string"},
+        "registry": {"type": "string"},
+        "artifact_ref": {"type": "object"}
+      }
+    },
+    "direction": {
+      "type": "string",
+      "enum": ["source_to_target", "target_to_source"]
+    },
+    "created_at": {"type": "string"},
+    "emitter": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"type": "string"},
+        "version": {"type": "string"}
+      }
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["observed", "inferred", "declared"]
+    },
+    "capsule_run_id": {"type": "string"},
+    "facets": {
+      "type": "object"
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "attributes": {
+      "type": "object"
+    }
+  }
+}

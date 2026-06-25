@@ -1,0 +1,26 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "56272J91KY1HG2CDS53JNV14N6",
+  "global_run_id": "2MS085PTWBT5FAJP9TK84X7490",
+  "run_id": "4W2Y3SQQ7SPF6KND5EH2F94R4R",
+  "parent_run_id": null,
+  "event_type": "tool_call",
+  "trace_id": "68d372cea7ffbb170abe118c45d1bc0e",
+  "span_id": "3f450748c5d75b5d",
+  "agent_id": "custom-agent-v1",
+  "cluster_id": null,
+  "tenant_id": "tenant-acme",
+  "started_at": "2026-05-12T13:10:00.470000+00:00",
+  "payload": {
+    "tool_name": "file_reader",
+    "tool_call_id": "tc_3dc36daf81adbc5e",
+    "arguments": {
+      "input": "example input for file_reader"
+    },
+    "duration_ms": 3605
+  },
+  "payload_hash": "sha256:22ff6d17461b8c432b8ea75330c285a3b0f16cdcf20ed33c76aaf5cc9052ea7e",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

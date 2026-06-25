@@ -1,0 +1,346 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "novafabric"
+version = "0.57.0"
+description = "Open-source AI Asset Registry and Agent Lifecycle Management"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.12"
+dependencies = [
+    "typer>=0.15",
+    "pydantic>=2.11",
+    "PyYAML>=6.0",
+    "rich>=13.9",
+    "opentelemetry-sdk>=1.29",
+    "opentelemetry-semantic-conventions>=0.50b0",
+    "httpx>=0.28",
+    "jinja2>=3.1",
+    "python-ulid>=2.7.0",
+    "jsonschema>=4.23.0",
+    "deepdiff>=8.0",
+    "cryptography>=44.0",
+    # jcs (MIT) — RFC 8785 JSON Canonicalization Scheme for proposal_digest computation.
+    # Tier A under ADR-0024.
+    "jcs>=0.2",
+    "duckdb>=1.5.2",
+    "pyarrow>=24.0.0",
+    "networkx>=3.6.1",
+    "python-louvain>=0.16",
+    "pyjwt>=2.12.1",
+    "python-multipart>=0.0.28",
+    "clickhouse-connect>=0.8.0",
+]
+
+[project.optional-dependencies]
+scale = [
+    # Evidence Fabric v1.0 infrastructure extras (ADR-0066, cap-001..009).
+    # All Tier A licenses under ADR-0024.
+    # nats-py (Apache-2.0) — NATS JetStream pull consumer for LineageConsumer (cap-006).
+    "nats-py>=2.9.0",
+    # clickhouse-connect (Apache-2.0) — ClickHouse sink for cost attribution (cap-002).
+    "clickhouse-connect>=0.8.0",
+    # fastavro (MIT) — Avro serialisation for capsule event schemas (cap-001).
+    "fastavro>=1.9.7",
+    # pyiceberg (Apache-2.0) — Iceberg table format for object capsule store (cap-009).
+    "pyiceberg>=0.7.0",
+    # blake3 (Apache-2.0/CC0-1.0) — BLAKE3 digest for dual-object store (cap-003).
+    "blake3>=0.4.1",
+    # boto3 (Apache-2.0) — S3-API abstraction for NovaObjectStore (cap-009).
+    "boto3>=1.35.0",
+]
+worm-s3 = [
+    # boto3 (Apache-2.0) — Tier A under ADR-0024.
+    "boto3>=1.38",
+]
+worm-azure = [
+    # azure-storage-blob (MIT) — Tier A under ADR-0024.
+    "azure-storage-blob>=12.25",
+]
+worm-gcs = [
+    # google-cloud-storage (Apache-2.0) — Tier A under ADR-0024.
+    "google-cloud-storage>=2.19",
+]
+seal-aws = [
+    # boto3 (Apache-2.0) — Tier A under ADR-0024.
+    # AWS KMS backend for NovaSeal Cloud KMS dual-mode signing (B-7).
+    "boto3>=1.38.0",
+]
+seal-azure = [
+    # azure-keyvault-keys (MIT) + azure-identity (MIT) — Tier A under ADR-0024.
+    # Azure Key Vault backend for NovaSeal Cloud KMS dual-mode signing (B-7).
+    "azure-keyvault-keys>=4.9.0",
+    "azure-identity>=1.20.0",
+]
+seal-gcp = [
+    # google-cloud-kms (Apache-2.0) — Tier A under ADR-0024.
+    # GCP Cloud KMS backend for NovaSeal Cloud KMS dual-mode signing (B-7).
+    "google-cloud-kms>=3.3.0",
+]
+sigstore = [
+    # sigstore (Apache-2.0) — Tier A under ADR-0024.
+    # Keyless signing backend for novafabric[sigstore] optional extra (ADR-0071).
+    "sigstore>=4.2.0",
+]
+seal-postgres = [
+    # psycopg3 (LGPL-3.0) — Tier B under ADR-0024.  Same justification as
+    # the [server] extra: the only actively maintained async/sync-capable
+    # Postgres driver; distributed as an optional extra per LGPL requirements.
+    # Enables PostgresMerkleLog for NovaSeal Merkle log at > 1M entries (Scale-S4).
+    "psycopg[binary]>=3.2",
+]
+serve = [
+    # Experimental local dashboard, gated behind `nova serve --experimental`.
+    # Per ADR-0027 — opt-in install: `pip install novafabric[serve]`.
+    # Both Tier A under ADR-0024 (FastAPI: MIT, uvicorn: BSD-3-Clause).
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+]
+federation = [
+    # Cross-site federation endpoints (Phase 6 Track C).
+    # fastapi (MIT) + httpx (BSD-3-Clause) — Tier A under ADR-0024.
+    "fastapi>=0.115",
+    "httpx>=0.28",
+]
+server = [
+    # Multi-user server mode (v0.7). Optional install: `pip install novafabric[server]`.
+    # FastAPI (MIT) + uvicorn (BSD-3-Clause) — Tier A under ADR-0024.
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    # python-multipart (Apache-2.0) — Tier A under ADR-0024.  Required by FastAPI
+    # for multipart/form-data upload endpoints (capsule upload).
+    "python-multipart>=0.0.20",
+    # psycopg3 (LGPL-3.0) — Tier B under ADR-0024.  Justification: the only
+    # actively maintained async-capable Postgres driver; LGPL requires
+    # distributing as a separate optional extra, not bundled in the default install.
+    # See ADR-0016 (storage) for the Postgres backend design decision.
+    "psycopg[binary]>=3.2",
+    # alembic (MIT) — Tier A under ADR-0024.  Schema migration for both SQLite
+    # and Postgres tracks.
+    "alembic>=1.14",
+    # PyJWT (MIT) — Tier A under ADR-0024.  JWT creation and validation for
+    # OIDC Bearer tokens and ed25519 offline tokens (ADR-0018).
+    # Cryptography extras are provided by the 'cryptography' core dependency.
+    "PyJWT>=2.9",
+    # sqlalchemy (MIT) — Tier A under ADR-0024.  ORM + Core used by the Phase 5
+    # MetadataStore (ADR-0040) for both SQLite local mode and Postgres server mode.
+    "sqlalchemy>=2.0",
+    # asyncpg (Apache-2.0) — Tier A under ADR-0024.  High-performance async Postgres
+    # driver; required by sqlalchemy[asyncio] for the MetadataStore async session pool.
+    "asyncpg>=0.30",
+]
+lineage-kuzu = [
+    # kuzu (MIT) — Tier A under ADR-0024.  Embedded openCypher graph DB for
+    # the KuzuDB v2 lineage tier (Phase 6 D-1, ADR-0053).
+    # Production-candidate pending depth-5 p99 < 500ms at 10M edges (cap-003).
+    "kuzu>=0.11.3",
+]
+janusgraph = [
+    # gremlinpython (Apache-2.0) — Tier A under ADR-0024.  Gremlin Python client
+    # for the JanusGraph v3 lineage tier (distributed graph DB, ADR-0053).
+    # Lazy import only — not required for local or KuzuDB tiers.
+    "gremlinpython>=3.7.0",
+]
+lineage-migration = [
+    # pyarrow (Apache-2.0) — Tier A under ADR-0024.  Parquet read/write for
+    # the lineage migration kit (Phase 6 E-1..E-3, ADR-0022 derived-index pattern).
+    "pyarrow>=24.0.0",
+]
+compliance = [
+    # presidio-analyzer (MIT) — Tier A under ADR-0024.  NLP-based PII detection
+    # for cap-001 (GDPR Art.17 erasure support).  Lazy import only — not required
+    # for RegexDetector default path.
+    "presidio-analyzer>=2.2",
+    # weasyprint (BSD-2-Clause) — Tier A under ADR-0024.  PDF rendering for
+    # cap-002 Annex IV technical documentation export.  Lazy import only —
+    # JSON-LD export works without it.
+    "weasyprint>=60.0",
+]
+scale-kg = [
+    # kuzu (MIT) — Tier A under ADR-0024.  Embedded openCypher graph DB for
+    # the Capsule Knowledge Graph secondary derived artifact (ADR-0067).
+    # SEPARATE KuzuDB instance from the lineage graph.
+    "kuzu>=0.11.3",
+    # cachetools (MIT) — Tier A under ADR-0024.  TTLCache for AliasTableResolver
+    # (Tier-2 entity resolution hot path, ADR-0067 v1.2).
+    "cachetools>=5.5",
+]
+ocs-compress = [
+    # zstandard (BSD-3-Clause) — Tier A under ADR-0024.  Zstd dictionary-based
+    # compression for the Object Capsule Store (cap-005).  Lazy import — not
+    # required for the default (uncompressed) path.
+    "zstandard>=0.23.0",
+]
+openai-agents = [
+    # openai-agents (MIT) — OpenAI Agents SDK tracing processor adapter (E-5).
+    # Tier A under ADR-0024.
+    "openai-agents>=0.17.3",
+]
+google-adk = [
+    # google-adk (Apache-2.0) — Google ADK BasePlugin adapter (E-6).
+    # Tier A under ADR-0024.
+    "google-adk>=1.34.0",
+]
+bedrock-agentcore = [
+    # boto3 (Apache-2.0) — AWS Bedrock AgentCore client wrapper (E-7).
+    # Tier A under ADR-0024.
+    "boto3>=1.43.10",
+]
+a2a = [
+    # a2a-sdk (Apache-2.0) — A2A ClientCallInterceptor adapter (E-8).
+    # Tier A under ADR-0024.
+    "a2a-sdk>=1.0.3",
+]
+watch = [
+    # watchdog (Apache-2.0) — Tier A under ADR-0024.
+    # Filesystem event notifications (inotify/FSEvents/kqueue) for CapsuleWatcher.
+    # Optional: polling backend is always available without this extra.
+    # Install: pip install 'novafabric[watch]'
+    "watchdog>=4.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    # pytest-benchmark (BSD-2-Clause) — Tier A under ADR-0024.  Latency
+    # benchmarking for the NovaSeal p99 CI gate (ADR-0041, tests/seal/test_benchmark.py).
+    "pytest-benchmark>=4.0",
+    "ruff>=0.9",
+    "mypy>=1.14",
+    "types-PyYAML>=6.0",
+    "novafabric",
+    "openapi-spec-validator>=0.8.5",
+    # Phase 6 Track C — federation endpoint tests need FastAPI + httpx TestClient.
+    # fastapi (MIT) + httpx (BSD-3-Clause) — Tier A under ADR-0024.
+    "fastapi>=0.115",
+    "httpx>=0.28",
+    # Phase 4 — Object Capsule Store testing
+    # boto3 (Apache-2.0) — S3/MinIO/Ceph WORM adapter + conformance suite.
+    "boto3>=1.38",
+    # hypothesis (MPL-2.0) — property-based tests for chain invariants (FR-03).
+    # MPL-2.0 is Tier A under ADR-0024 for dev dependencies.
+    "hypothesis>=6.115",
+    # prometheus-client (Apache-2.0) — optional metrics instrumentation.
+    "prometheus-client>=0.21",
+    # Phase 5 — MetadataStore (ADR-0040) dev tooling
+    # mutmut (BSD-2-Clause) — Tier A under ADR-0024.  Mutation testing for the
+    # MetadataStore RLS and query invariants.
+    "mutmut>=3.0",
+    # sqlfluff (MIT) — Tier A under ADR-0024.  SQL linter for migration scripts
+    # and raw DDL snippets in the MetadataStore.
+    "sqlfluff>=3.0",
+    # testcontainers (Apache-2.0) — Tier A under ADR-0024.  Spins up ephemeral
+    # Postgres containers for MetadataStore integration tests.
+    "testcontainers>=4.0",
+    # psycopg3 (LGPL-3.0) — Tier B under ADR-0024.  Needed in dev group so that
+    # MetadataStore integration tests can import PostgresMetadataStore without
+    # installing the full [server] extra.
+    "psycopg[binary]>=3.2",
+    "pyarrow>=24.0.0",
+    # openai (Apache-2.0) — Tier A under ADR-0024.  Used by the
+    # blackbox_demo example (examples/blackbox_demo/) and the OpenAI
+    # capture hook tests.
+    "openai>=2.37.0",
+    # watchdog (Apache-2.0) — Tier A under ADR-0024.  Enables WatchdogBackend
+    # tests (TestWatchdogBackend) to run in dev/CI rather than being skipped.
+    # Runtime optional; installed here for coverage completeness.
+    "watchdog>=4.0.0",
+]
+
+[project.entry-points."novafabric.eval_suites"]
+novafabric-smoke-v1 = "novafabric.evals.suites.smoke:SmokeAdapter"
+gaia-v1 = "novafabric.evals.suites.gaia:GaiaAdapter"
+mmlu-v1 = "novafabric.evals.suites.mmlu:MmluAdapter"
+truthful-qa-v1 = "novafabric.evals.suites.truthful_qa:TruthfulQaAdapter"
+swe-bench-verified-v1 = "novafabric.evals.suites.swe_bench:SweBenchAdapter"
+agentbench-v1 = "novafabric.evals.suites.agent_bench:AgentBenchAdapter"
+
+[project.scripts]
+novafabric = "novafabric.cli.main:app"
+nova = "novafabric.cli.main:app"
+novacap = "novafabric.daemon.client:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/novafabric"]
+include = [
+    "src/novafabric/schemas/*.json",
+    "src/novafabric/capture/hooks/*.yaml",
+    "src/novafabric/safetycase/templates/*.yaml",
+    "src/novafabric/serve/static/**/*",
+    "src/novafabric/policies/**/*.rego",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "packages/nova_worm_conformance/src", "tests"]
+
+[tool.coverage.run]
+omit = [
+    # Cloud-backend adapters require live infrastructure — excluded from coverage gate
+    "src/novafabric/object_capsule_store/worm/s3.py",
+    "src/novafabric/object_capsule_store/worm/minio.py",
+    "src/novafabric/object_capsule_store/worm/ceph.py",
+    "src/novafabric/object_capsule_store/worm/azure.py",
+    # Alembic migration env.py and version scripts only execute against a live database engine
+    "src/novafabric/metadata_store/migrations/*/env.py",
+    "src/novafabric/metadata_store/migrations/*/versions/*.py",
+]
+
+[tool.ruff]
+src = ["src"]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[[tool.mypy.overrides]]
+# Optional deps without type stubs — all Tier A per ADR-0024.
+module = [
+    "gremlin_python.*",
+    "cffi.*",
+    "zstandard.*",
+    "boto3.*",
+    "botocore.*",
+    "azure.*",
+    "google.cloud.*",
+    "google.adk.*",
+    "agents.*",
+    "a2a.*",
+    "watchdog",
+    "watchdog.*",
+    # sigstore (Apache-2.0, Tier A) — optional extra novafabric[sigstore] (ADR-0071).
+    # Not installed by default; lazily imported in sigstore_signer.py.
+    "sigstore.*",
+    # Installed-but-untyped optional extras (no py.typed): silence import-untyped
+    # so `mypy --all-extras` (CI typecheck job) and lean envs agree.
+    "clickhouse_connect.*",
+    "weasyprint.*",
+    "presidio_analyzer.*",
+    # pynvml (BSD-3, Tier A) — optional extra novafabric[energy-gpu] (ADR-0093).
+    # Lazily imported in energy/_readers.py for GPU energy; RAPL path needs no dep.
+    "pynvml",
+    "pynvml.*",
+]
+ignore_missing_imports = true
+
+[tool.mutmut]
+paths_to_mutate = "src/novafabric/metadata_store/postgres.py"
+runner = "uv run pytest tests/metadata_store/test_cross_tenant_isolation_pgbouncer.py tests/metadata_store/test_set_local_invariant.py -x --tb=short -q"
+tests_dir = "tests/metadata_store/"
+
+[tool.uv.sources]
+novafabric = { workspace = true }
+
+[tool.uv]
+# Dependabot #23: starlette Host-header validation (GHSA, fixed in 1.0.1);
+# transitive via fastapi — constraint forces the patched line.
+constraint-dependencies = ["starlette>=1.0.1"]

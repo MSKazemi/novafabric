@@ -1,0 +1,952 @@
+# Developer Guide
+
+## Local installation
+
+Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+
+```bash
+git clone git@github.com:novafabric/novafabric.git
+cd novafabric
+uv sync --dev
+```
+
+The `novafabric` CLI is then available as:
+
+```bash
+uv run novafabric --help
+# or with the venv activated:
+source .venv/bin/activate
+novafabric --help
+```
+
+### First-run setup (pip install path)
+
+After installing from source or PyPI, run `nova init` once to create the
+data directories and signing keypair:
+
+```bash
+nova init                  # creates ~/.novafabric/{capsules,keys,replays}
+                           # and ~/.novafabric/keys/signing_key.pem (mode 600)
+nova init --force          # regenerate keypair if needed
+nova init --home /data/nova  # custom NOVAFABRIC_HOME
+```
+
+This is not needed for docker-compose deployments — `make dev-up` handles
+all first-boot setup inside the container.
+
+## Running tests
+
+```bash
+uv run pytest --cov=novafabric --cov-report=term-missing
+```
+
+Coverage must stay ≥ 90%. Run specific tests with `-k`:
+
+```bash
+uv run pytest -k test_validate -v
+```
+
+## Running ruff
+
+```bash
+uv run ruff check src tests
+uv run ruff check --fix src tests   # auto-fix safe issues
+```
+
+## Running mypy
+
+```bash
+uv run mypy src
+```
+
+mypy is configured with `strict = true` in `pyproject.toml`. All type errors must
+be resolved before merging.
+
+## Adding a new asset type
+
+1. Add a new value to `AssetType` in `src/novafabric/spec/models.py`.
+2. Add `<Type>SpecFields` and `<Type>Spec` Pydantic models following the existing
+   pattern (see `ModelSpec`, `DatasetSpec`, etc.).
+3. Add the new spec class to the `AssetSpec` union discriminator in `models.py`.
+4. Add a test fixture in `tests/fixtures/<type>-basic.yaml`.
+5. Add a test in `tests/test_spec_validator.py` asserting the fixture validates.
+
+## Adding a new CLI command
+
+1. Create `src/novafabric/cli/<command>.py` with a `<command>_cmd` function.
+2. Register it in `src/novafabric/cli/main.py` with `app.command(...)`.
+3. Add at least two CLI tests in `tests/test_cli.py`: a success path and an error path.
+
+**Fixed-value options — use `str` Enum types.** When an option accepts a finite set
+of values, define a `class MyOption(str, Enum)` in the same module and use it as the
+type annotation. This gives shell tab-completion (via `nova --install-completion`) and
+exits 2 with a clear error on invalid input instead of a runtime failure. See
+`src/novafabric/cli/capture.py` (`RunnerName`) or `src/novafabric/cli/replay.py`
+(`ReplayMode`) for the canonical pattern.
+
+## Adding a new dashboard tab or input
+
+The dashboard is a static Astro/React app under `web/`. After editing source files,
+rebuild and copy the bundle:
+
+```bash
+cd web && npm run build
+cp -r dist/* ../src/novafabric/serve/static/
+```
+
+**Shared UI components** live in `web/src/components/ui/`:
+
+| Component | Purpose |
+|---|---|
+| `SuggestInput.tsx` | Text input with a live-filtered suggestion dropdown. Accepts `suggestions: string[]`; shows up to 8 on focus, filters as you type. Click-outside and Escape close the dropdown; Enter fires the optional `onEnter` callback and bubbles so parent `<form>` `onSubmit` still triggers. Use this instead of a bare `<input>` whenever the field accepts a database reference (run ID, asset `name@version`, registry name, etc.). |
+| `CopyButton.tsx` | Copy-to-clipboard button with a transient "copied" state. |
+
+**Adding a new text input that references database data:**
+
+1. Import `SuggestInput` from `../../ui/SuggestInput` (adjust path).
+2. Load the suggestion pool from the server (if not already in scope) — `api.listAssets()`, `api.listRuns()`, or `api.listHolds()`.
+3. Map to `string[]`: e.g. `assets.map(a => \`${a.name}@${a.version}\`)`.
+4. Replace the bare `<input type="text">` with `<SuggestInput value={...} onChange={...} suggestions={pool} className={...} />`.
+5. Rebuild and copy the bundle (see above).
+
+## Adding a new `nova serve` API endpoint
+
+All serve endpoints follow the same three-part pattern:
+
+1. **Resolve the capsule** using `_resolve_capsule(run_id, capsule_dir)` — raises HTTP 404 if the directory doesn't exist.
+2. **Require auth** with `dependencies=[Depends(verify_token)]` on the route decorator.
+3. **Mirror a CLI command** — every endpoint should have an obvious CLI equivalent noted in its docstring.
+
+```python
+@app.get("/api/example/{run_id}", dependencies=[Depends(verify_token)])
+async def example_endpoint(run_id: str) -> dict[str, Any]:
+    """Mirror of `nova example <run_id>`."""
+    cdir = _resolve_capsule(run_id, capsule_dir)
+    # ... do work using cdir ...
+    return {"run_id": run_id, "result": ...}
+```
+
+Add tests in `tests/test_serve_app.py` using the `client` fixture — three tests minimum: auth required (no token → 401), unknown run → 404, happy path → expected shape.
+
+The matching dashboard panel goes in `web/src/components/dashboard/tabs/<Tab>.tsx`. Add a `Dashboard equivalent:` note in `docs/cli-reference.md` under the corresponding CLI command.
+
+## Adding a new report format
+
+1. Add a new `elif format_ == "<name>":` branch in `src/novafabric/report/generator.py`.
+2. Return a `str` in the new format.
+3. Add a test in `tests/test_report.py` asserting the output is valid for the format.
+
+## Extending failure attribution (diagnose/, ADR-0084)
+
+`src/novafabric/diagnose/` is a pure, read-only analysis layer over the captured
+trace plus the lineage store. `attribute_failure(capsule_dir, lineage_store=None)`
+returns a `RunAttribution` (ranked `list[StepAttribution]`, chosen responsible step,
+and an `AgentErrorTaxonomy` label).
+
+To extend it:
+
+1. **Add a taxonomy cue.** Append keyword cues to the appropriate entry in
+   `_TAXONOMY_CUES` in `attribution.py`. Cues are matched case-insensitively against
+   the step's error text + name; the first matching category wins, so order matters
+   (SYSTEM is checked before ACTION to catch infrastructure faults).
+2. **Add a scoring signal.** In the coarse pass of `attribute_failure`, add a bounded,
+   additive term to `score`. Keep terms small and bounded (no unbounded weights) and
+   keep the function deterministic for a given capsule.
+3. **New taxonomy category.** Extend the `AgentErrorTaxonomy` enum — it is a public,
+   stable surface, so adding a member is additive but removing/renaming one is a
+   breaking change (update ADR-0084 and the CLI reference if you do).
+4. **Test first.** Add a fixture in `tests/test_attribution.py` (a multi-step failed
+   run where the responsible step is known) asserting the rank and label.
+
+Do **not** write attribution results back into the lineage store from this module —
+it is read-only by design (ADR-0084). Scores are relative ranking weights, never
+presented as calibrated probabilities.
+
+## Working with NovaSeal (trust/novaseal/)
+
+The NovaSeal signing subsystem lives entirely in `src/novafabric/trust/novaseal/`.
+Its tests are in `tests/seal/`. All tests in that directory run fast (no network
+calls — TSA requests are mocked).
+
+**Running NovaSeal tests only:**
+
+```bash
+uv run pytest tests/seal/ --benchmark-disable -v
+```
+
+**Running the p99 latency gate** (enforced in CI, ~1 s locally):
+
+```bash
+uv run pytest tests/seal/test_benchmark.py -v
+# or:
+make benchmark
+```
+
+The gate (`test_seal_p99_latency_gate`) runs 100 `pedantic` rounds of
+`NovaSeal.seal()` and asserts that nearest-rank p99 < 200 ms.  It skips
+automatically when `--benchmark-disable` is active so it does not slow down
+normal `make test` runs.  Results are written to
+`.benchmark-results/seal_latency.json` by `make benchmark` and saved as a
+90-day artifact in the `seal-latency-gate` CI job.
+
+**Adding a new signing profile** (e.g. Sigstore keyless — planned for v0.2):
+
+1. Add a new `profile:` value to `SigningProfile` in `config.py`.
+2. In `config.py._parse_profile`, add validation for the new profile's required fields.
+3. In `envelope.py.create_envelope`, dispatch on `profile` for the key-loading path.
+4. Add fixtures in `tests/seal/` for the new profile.
+5. Write an ADR if this changes the public wire format (DSSE envelope schema).
+
+**Using the Postgres Merkle log backend (Scale-S4, shipped v0.38.0):**
+
+Install the optional extra:
+
+```bash
+pip install novafabric[seal-postgres]
+```
+
+Point `NOVAFABRIC_SEAL_DB_PATH` at a Postgres DSN (or set `merkle_db` in `novaseal.yaml`):
+
+```bash
+export NOVAFABRIC_SEAL_DB_PATH=postgresql://user:pass@host:5432/nova
+nova seal log verify          # sampled check, p99 < 200 ms at 1M entries
+nova seal log verify --full   # full O(N) re-hash audit
+```
+
+`NovaSeal.__init__` calls `open_merkle_log(db_path)` which dispatches by URI prefix:
+- `Path` or non-DSN string → `MerkleLog` (SQLite, default)
+- `postgresql://` or `postgres://` prefix → `PostgresMerkleLog` (psycopg3)
+
+Tables are self-bootstrapped on first connection (`CREATE TABLE IF NOT EXISTS`).
+No Alembic migration is needed — the schema is stable by design (append-only Merkle log).
+Tests for the Postgres backend are in `tests/seal/test_postgres_merkle.py`, gated
+behind `NOVA_INTEGRATION=1` + `NOVA_TEST_POSTGRES_DSN`.
+
+**Seal bundle location convention:**
+
+All sealing code writes to `<capsule_dir>/.seal/`:
+- `manifest.dsse` — DSSE envelope bytes (UTF-8 JSON)
+- `manifest.dsse.tsr` — RFC 3161 TSR bytes (DER binary; empty if TSA skipped)
+- `log-entry.json` — Merkle log entry (JSON, human-readable)
+
+---
+
+## Working with the Promote package (promote/)
+
+The NovaSeal linked-envelope chain maker-checker lives in `src/novafabric/promote/`.
+Tests are in `tests/promote/`. Test key fixtures are at `tests/fixtures/promote/keys/`
+(ECDSA P-256, committed with `git add -f` despite the `*.pem` gitignore rule — test-only keys, not production credentials).
+
+**Running promote tests only:**
+
+```bash
+uv run pytest tests/promote/ -v --tb=short
+```
+
+**Module responsibilities:**
+
+| Module | Responsibility |
+|---|---|
+| `predicates.py` | DSSE sign/verify with promote payload types; predicate builders; JSON Schema validation via `jsonschema`; JCS-based `proposal_digest` |
+| `policy_store.py` | SQLite `promote_policy` table in the NovaSeal Merkle log DB; `get_by_version`, `get_active_at`, `get_latest`, `put` |
+| `bundle_store.py` | Filesystem proposal/approval DSSE bundle CRUD; paths `{data_dir}/promote/{capsule_id}/proposal/{uuid}.json` |
+| `verifier.py` | `verify_sod()` + `VerifyResult` dataclass; five checks with distinct exit codes 3–7 |
+| `exceptions.py` | `PredicateValidationError`, `PolicyNotFoundError`, `BundleNotFoundError`, `SoDError` |
+
+**DSSE payload types used:**
+
+```python
+PROPOSAL_PAYLOAD_TYPE = "application/vnd.novafabric.promote.proposal+json"
+APPROVAL_PAYLOAD_TYPE = "application/vnd.novafabric.promote.approval+json"
+POLICY_PAYLOAD_TYPE   = "application/vnd.novafabric.promote.policy+json"
+```
+
+These are distinct from the single-signer NovaSeal `PAYLOAD_TYPE` (`application/vnd.novafabric.capsule+json`). The `verify_promote_envelope()` function in `predicates.py` checks the payload type; do not use `verify_envelope()` from `trust/novaseal/envelope.py` for promote bundles.
+
+**Adding a new predicate type (e.g. `promote/bypass/v1`):**
+
+1. Add a JSON Schema to `src/novafabric/schemas/promote_bypass_v1.json` (already present — schema exists, CLI deferred to sprint 2).
+2. Add `BYPASS_PAYLOAD_TYPE` to `predicates.py`.
+3. Add `build_bypass_predicate()` to `predicates.py`.
+4. Add CLI command in `src/novafabric/cli/seal_propose.py` under `seal_app`.
+5. Add tests in `tests/promote/`.
+
+**Smoke test (local, no network):**
+
+```bash
+KEYS=tests/fixtures/promote/keys
+TMPDIR=$(mktemp -d)
+uv run nova policy sign --key $KEYS/admin.pem --cert $KEYS/admin_cert.pem \
+  --proposer-subjects "proposer" --approver-subjects "approver" --db "$TMPDIR/m.db"
+UUID=$(uv run nova seal propose test-capsule-001 \
+  --justification "Sprint 1 smoke test: model v1.0 validation complete." \
+  --key $KEYS/proposer.pem --cert $KEYS/proposer_cert.pem \
+  --db "$TMPDIR/m.db" --data-dir "$TMPDIR" | grep "Proposal created:" | awk '{print $3}')
+echo y | uv run nova seal approve "$UUID" --capsule-id test-capsule-001 \
+  --key $KEYS/approver.pem --cert $KEYS/approver_cert.pem \
+  --db "$TMPDIR/m.db" --data-dir "$TMPDIR"
+uv run nova seal verify test-capsule-001 --db "$TMPDIR/m.db" --data-dir "$TMPDIR"
+# Expected: SoD verification passed
+```
+
+Or use `make seal-smoke-test` for an automated version.
+
+---
+
+## Working with EventEnvelope (envelope/)
+
+The Event Envelope v1 wire format lives in `src/novafabric/envelope/`.
+Its tests are in `tests/test_event_envelope.py`.
+
+**Running Event Envelope tests only:**
+
+```bash
+uv run pytest tests/test_event_envelope.py -v
+```
+
+**Adding a new event_type:**
+
+1. Add the new string value to `EventType` in `envelope/models.py`.
+2. Add the same string to the `"enum"` array in `schemas/event-envelope-v1/envelope-v1.json`.
+3. Recompute `schemas/event-envelope-v1/envelope-v1.sha256`:
+   ```bash
+   python3 -c "
+   import hashlib, pathlib
+   c = pathlib.Path('schemas/event-envelope-v1/envelope-v1.json').read_bytes()
+   if c.endswith(b'\n'): c = c[:-1]
+   pathlib.Path('schemas/event-envelope-v1/envelope-v1.sha256').write_text(hashlib.sha256(c).hexdigest())
+   "
+   ```
+4. Update `envelope-v1.proto` with the same new string in a comment next to `event_type`.
+5. Add tests in `tests/test_event_envelope.py` for the new event_type.
+
+**Changing the envelope schema (adding an optional field):**
+
+Adding an optional field is backwards-compatible (additive). Steps:
+1. Add the field to `schemas/event-envelope-v1/envelope-v1.json` with `"oneOf": [{"type": ...}, {"type": "null"}]` (optional) or add it to `"required"` (new required field — only add new required fields before any consumers depend on the current schema).
+2. Add the field to `envelope-v1.proto` with the next available tag number (alphabetical order).
+3. Add a Pydantic field to `EventEnvelope` in `envelope/models.py` with a default of `None`.
+4. Recompute the sha256 pin (see above).
+5. Update this file and `design/architecture/overview.md`.
+
+**Breaking changes require `envelope_version: "2"`** — removing fields, changing types, or making optional fields required. These are forbidden in the v1.x line. Write an ADR before proceeding.
+
+**Schema hash pin enforcement:**
+
+Downstream consumers (parent-child-capsule, object-capsule-store, metadata-database, lineage-at-scale) embed the sha256 in their schema references. A mismatch between the expected and actual hash is a build-time error. Always recompute the pin after editing `envelope-v1.json`.
+
+**CloudEvents interop (gap-009, ADR-0081):**
+
+To route envelopes through a CloudEvents-aware broker (Kafka/NATS/HTTP) without
+adding NovaFabric-specific parsing, use the structured-mode mapping in
+`src/novafabric/envelope/cloudevents.py`:
+
+```python
+from novafabric.envelope import EventEnvelope, to_cloudevents, from_cloudevents
+
+ce = to_cloudevents(envelope)          # plain JSON-serializable dict (CloudEvents v1.0)
+envelope2 = from_cloudevents(ce)       # round-trips back to an equivalent EventEnvelope
+```
+
+`to_cloudevents()` always emits the four required CloudEvents context attributes
+(`id`, `source`, `type`, `specversion="1.0"`). The mapping is **additive** — the
+internal `EventEnvelope` model is untouched and the schema pin does not change.
+
+Key contract (mirrors `collector/pkg/envelope/cloudevents_mapping.go` so
+Python↔Go interop holds over the same topic):
+
+| EventEnvelope field | CloudEvents attribute |
+|---|---|
+| `event_id` | `id` |
+| `agent_id` | `source` (`nova://agent/{agent_id}`) |
+| `event_type` | `type` |
+| `started_at` | `time` |
+| `trace_id` + `span_id` | `traceparent` extension (`00-{trace}-{span}-01`) |
+| `global_run_id` / `run_id` | `novarunglobal` / `novarun` extensions |
+| `parent_run_id` / `cluster_id` / `tenant_id` / `emitter_node_id` / `payload_hash` | `novaparentrun` / `novacluster` / `novatenant` / `novaemitter` / `novapayloadhash` (omitted when null) |
+| `nova.batch.signature` / `nova.batch.signing_key_id` | `novabatchsig` / `novabatchkid` |
+| `payload` | `data` |
+
+Extension attribute names are lowercase `[a-z0-9]` per the CloudEvents naming
+rule (no hyphens or dots). Unknown broker-injected extension attributes are
+preserved across a `from_cloudevents()` → `to_cloudevents()` round-trip (stashed
+under the model's `cloudevents_extensions` extra block). Tests:
+`tests/test_envelope_cloudevents.py`.
+
+> **Out of scope (Wave 2):** SCITT COSE Receipts — the other half of gap-009 —
+> are not yet implemented.
+
+---
+
+## Building the collector tier (Go, Phase 2)
+
+The collector is a separate Go 1.22 module at `collector/`. Install Go:
+
+```bash
+# Download Go 1.22 to ~/go/ (no root required)
+curl -fsSL https://go.dev/dl/go1.22.12.linux-amd64.tar.gz | tar -xz -C ~
+export PATH=$HOME/go/bin:$PATH   # add to ~/.bashrc for persistence
+```
+
+Build and test:
+
+```bash
+cd collector
+
+# Download dependencies
+GOPATH=~/gopath go mod tidy
+
+# Run unit tests with race detector
+GOPATH=~/gopath go test -race ./...
+
+# Build all three binaries
+GOPATH=~/gopath go build -o bin/novafabric-collector ./cmd/novafabric-collector
+GOPATH=~/gopath go build -o bin/novafabric-verifier  ./cmd/novafabric-verifier
+GOPATH=~/gopath go build -o bin/novafabric-hpc-hub   ./cmd/novafabric-hpc-hub
+
+# Validate the 1000-event corpus
+make spec-test
+```
+
+**Key collector packages:**
+
+| Package | Description |
+|---|---|
+| `collector/pkg/canonical` | ADR-001 deterministic OTLP canonical encoding |
+| `collector/pkg/novaseal` | Ed25519 signer, KMS client, LocalWAL dev fallback |
+| `collector/pkg/envelope` | EventEnvelope Go types + OTLP / CloudEvents mappings |
+| `collector/pkg/metrics` | Prometheus metrics registry |
+| `collector/internal/spool` | Lustre-safe rename-commit JSONL spool (cap-001) |
+| `collector/internal/processor/novasealbatchsigner` | OTel custom processor (cap-002) |
+| `collector/internal/hpc` | NATS leaf lifecycle wrapper |
+| `collector/internal/verifier` | Offline Ed25519 batch-signature verifier |
+
+**Development mode (no KMS required):**
+
+```bash
+# Use a local dev key instead of the production NovaSeal KMS
+export NOVAFABRIC_KMS_LOCAL_WAL=1
+./bin/novafabric-collector --config testdata/collector.yaml
+```
+
+A WARN is emitted on every signing call when `NOVAFABRIC_KMS_LOCAL_WAL=1`. The local key is stored at `~/.novafabric/dev-keys/<uuid>.pem` (mode 0400). To prevent accidental use in production: the key is refused if `NOVAFABRIC_ENV=production`.
+
+**Adding a new Go package:**
+
+1. Create `collector/pkg/<name>/` or `collector/internal/<name>/`.
+2. Write tests in `_test.go` files in the same package.
+3. Run `GOPATH=~/gopath go test -race ./...` before committing.
+4. Ensure all dependencies are Apache-2.0, MIT, or BSD-3 (per ADR-0024).
+5. If the package introduces a new `nova_*` Prometheus metric, register it in `collector/pkg/metrics/metrics.go`.
+
+**HPC integration tests** (require Docker):
+
+```bash
+cd collector/tests/integration
+go test -tags=integration -v ./...
+```
+
+These tests require Docker + `docker compose` for the Slurm-in-Docker and 10-node NATS cluster harnesses. They are skipped in standard CI unless the `integration` build tag is set.
+
+---
+
+## Adding a framework adapter (v0.16.0)
+
+Framework adapters live in `src/novafabric/adapters/`. Each adapter is a single
+module that monkey-patches or wraps the framework's entry-point method to record
+`nova capture`-compatible events.
+
+Pattern (using `crewai.py` as the model):
+
+```python
+# src/novafabric/adapters/myframework.py
+from novafabric.capture.event_recorder import get_current_recorder
+
+def wrap_thing(thing):
+    original = thing.run
+
+    def _wrapped(*args, **kwargs):
+        recorder = get_current_recorder()
+        try:
+            result = original(*args, **kwargs)
+            if recorder:
+                recorder.record_event(...)
+            return result
+        except Exception:
+            if recorder:
+                recorder.record_event(...)
+            raise
+
+    thing.run = _wrapped
+    return thing
+```
+
+Rules:
+1. Fail-open: never raise inside the wrapper; log and swallow.
+2. Use `get_current_recorder()` — never instantiate a new recorder.
+3. Restore the original method on `unwrap()` if reversibility matters.
+4. Add an entry to `src/novafabric/adapters/__init__.py`.
+5. Register the adapter in `docs/cli-reference.md` and `design/architecture/capture-runtime.md`.
+
+### Typed `record_*` methods (extended event taxonomy, v0.53.0)
+
+Beyond the generic recorder, `EventRecorder` exposes typed convenience methods
+for the extended span taxonomy (ADR-0082). Each validates a Pydantic model,
+appends one line to a dedicated JSONL stream tagged with an `event_type`
+discriminator, and is **fail-open** — a bookkeeping failure never reaches the
+agent workflow:
+
+| Method | JSONL stream | Event type |
+|---|---|---|
+| `record_file_event` | `file_events.jsonl` | `FileEvent` |
+| `record_network_event` | `network_events.jsonl` | `NetworkEvent` |
+| `record_human_approval` | `human_approvals.jsonl` | `HumanApprovalEvent` |
+| `record_state_transition` | `state_transitions.jsonl` | `StateTransition` |
+| `record_memory_operation` | `memory_operations.jsonl` | `MemoryOperation` |
+| `record_guardrail` | `guardrail_events.jsonl` | `GuardrailEvaluated` |
+| `record_evaluator` | `evaluator_events.jsonl` | `EvaluatorScored` |
+| `record_reranker` | `reranker_events.jsonl` | `RerankerApplied` |
+| `record_vector_retrieval` | `vector_retrievals.jsonl` | `VectorRetrieval{Started,Completed,Failed}` (by `phase`) |
+
+```python
+recorder = get_current_recorder()
+if recorder:
+    recorder.record_guardrail("toxicity-filter", outcome="passed", score=0.02)
+    recorder.record_vector_retrieval("pgvector", phase="completed", top_k=5, returned_count=5)
+```
+
+---
+
+## Adding a compliance audit profile (v0.16.0)
+
+Compliance profiles live in `src/novafabric/compliance/audit/profiles/` as YAML files.
+Each file defines a list of evidence checkers:
+
+```yaml
+# src/novafabric/compliance/audit/profiles/my-standard.yaml
+profile_id: my-standard
+name: My Standard v1.0
+version: "1.0"
+checkers:
+  - id: MS-01
+    name: Capsule Schema Present
+    weight: 1.0
+    required_fields:
+      - capsule_id
+      - schema_version
+  - id: MS-02
+    name: Seal Present
+    weight: 2.0
+    required_fields:
+      - seal
+```
+
+Add the profile ID to the `--profile` option help text in `src/novafabric/cli/audit.py`.
+Run `nova audit map --profile my-standard` to confirm it loads.
+
+---
+
+## Compliance exporters — adding a new format (v0.37.0)
+
+Compliance exporters live in `src/novafabric/compliance/export/`. Each exporter
+follows a two-method pattern:
+
+```python
+class MyExporter:
+    def build_report(self, capsule_dir: Path) -> MyReport:
+        """Build the report model from capsule files."""
+        ...
+
+    def export_json(self, report: MyReport, output_path: Path) -> Path:
+        """Serialise to JSON and return the written path."""
+        ...
+```
+
+**Wiring up a new exporter:**
+
+1. Create `src/novafabric/compliance/export/my_format.py` with the two-method class.
+2. Add a CLI command in `src/novafabric/cli/export_evidence.py` (see `export_ropa_cmd` as a template).
+3. Register the CLI command in `src/novafabric/cli/main.py`.
+4. Add a `nova serve` endpoint in `src/novafabric/serve/app.py` following the `compliance_export_ropa_endpoint` pattern — import the exporter inside the function to avoid unconditional heavy imports.
+5. Add an `api.ts` method in `web/src/lib/api.ts` (see `exportRopa` as a template).
+6. Add a `<MyFormatExportPanel>` component in `web/src/components/dashboard/tabs/ComplianceTab.tsx` and render it in the `ComplianceTab` default export.
+7. Write integration tests in `tests/test_serve_compliance.py` — one happy-path test and one 422 on missing `run_id`.
+
+**Existing exporters for reference:**
+
+| Exporter | File | Cap | Dashboard panel |
+|---|---|---|---|
+| `GDPRRoPAExporter` | `compliance/export/gdpr_ropa.py` | cap-007 | `RoPAExportPanel` (v0.37.0) |
+| `AIBOMExporter` | `compliance/export/aibom.py` | cap-008 | `AIBOMExportPanel` (v0.37.0) — CycloneDX 1.7 (v0.39.0) |
+| `NISTAIRMFReporter` | `compliance/export/nist_rmf.py` | cap-009 | `NISTRMFExportPanel` (v0.37.0) |
+| `AnnexIVExporter` | `compliance/export/annex_iv.py` | cap-002 | `AnnexIVPanel` |
+| `NIS2Exporter` | `compliance/export/nis2.py` | cap-005 | `NIS2Panel` |
+| `ROCrateExporter` | `compliance/export/ro_crate.py` | — | `RoCrateExportPanel` |
+
+---
+
+## Live Topology Dashboard development (v0.16.1)
+
+The topology dashboard has two separate development loops.
+
+### Python server-side
+
+Topology modules live in `src/novafabric/serve/topology/`. Run tests with:
+
+```bash
+uv run pytest tests/test_topology_*.py -v
+```
+
+To start the server in topology mode:
+
+```bash
+make serve-topology   # build SPA + start nova serve --experimental --topology
+```
+
+### TypeScript SPA (`packages/nova-dashboard/`)
+
+```bash
+cd packages/nova-dashboard
+npm install
+npm run dev        # Vite dev server with HMR (proxies API to nova serve)
+npm test           # vitest unit tests
+npm run build      # production build → dist/
+```
+
+After a production build, copy artifacts to the Python static dir:
+
+```bash
+make topology-build   # rsync packages/nova-dashboard/dist/ → src/novafabric/serve/static/topology/
+```
+
+The SPA talks to the Python server at the same origin. In dev mode, configure
+`vite.config.ts` proxy to point at your running `nova serve` instance.
+
+## TV-5 3D Topology View development (v0.17.0)
+
+TV-5 adds a Three.js 3D topology view alongside the existing 2D Sigma.js view.
+
+### Python server-side (TV-5)
+
+TV-5 modules live in `src/novafabric/serve/topology/`. Run dedicated tests with:
+
+```bash
+uv run pytest tests/tv5/ -v
+```
+
+The three TV-5 modules are:
+
+- `snapshot_store_3d.py` — `SnapshotStore3D`: atomic fine/coarse snapshot tiers (msgpack or JSON)
+- `layout_pipeline_3d.py` — `LayoutPipeline3D`: `networkx.spring_layout` 3D layout in `ProcessPoolExecutor`
+- `router_tv5.py` — FastAPI router factory `make_tv5_router()`: `/api/tv5/` REST + WebSocket
+
+To start the server with TV-5 enabled:
+
+```bash
+nova serve --experimental --tv5
+# Or with the 2D topology dashboard too:
+nova serve --experimental --topology --tv5
+```
+
+Environment variables:
+
+- `TV5_SNAPSHOT_DIR` — storage path (default `.nova/tv5_snapshots`)
+- `TV5_MAX_FINE_SNAPSHOTS` — retention count for fine tier (default 288)
+- `TV5_MAX_COARSE_SNAPSHOTS` — retention count for coarse tier (default 168)
+
+The optional `msgpack` package enables binary snapshot transport. Without it, JSON is used automatically.
+
+### TypeScript SPA (TV-5)
+
+TV-5 adds one new component to the nova-dashboard SPA:
+
+- `src/components/topology/TV5Panel.tsx` — Three.js `InstancedMesh` per node type, `LineSegments` edges, `OrbitControls`, time-slider, WS live feed, p99 health color encoding
+
+The existing `src/App.tsx` has a tab switcher: **2D View** (Sigma.js, existing) / **3D View (TV-5)** (Three.js, new).
+
+```bash
+cd packages/nova-dashboard
+npm install    # also installs three, @react-three/fiber, @react-three/drei
+npm test       # includes TV5Panel.test.ts
+npm run build  # produces static bundle including TV5Panel
+```
+
+---
+
+## Extension points added in v0.24.0
+
+### BypassNotifier — bypass event dispatch
+
+Implement the `BypassNotifier` Protocol (`src/novafabric/promote/bypass_notify.py`) to
+route maker-checker bypass events to any destination:
+
+```python
+from novafabric.promote.bypass_notify import BypassEvent, BypassNotifier
+
+class SlackBypassNotifier:
+    def notify(self, event: BypassEvent) -> None:
+        # post to Slack; never raise
+        ...
+```
+
+Wire it via `PromoteBundleStore(notifier=SlackBypassNotifier())` or set
+`NOVA_BYPASS_NOTIFY_FILE` / `NOVA_BYPASS_NOTIFY_WEBHOOK` for the built-in backends.
+
+### SigningBackend — Cloud KMS signing
+
+Implement the `SigningBackend` Protocol (`src/novafabric/trust/novaseal/signing_backend.py`)
+to integrate any key management system:
+
+```python
+from novafabric.trust.novaseal.signing_backend import SigningBackend
+
+class VaultSigningBackend:
+    def sign(self, payload: bytes) -> bytes: ...
+    def public_key_pem(self) -> str: ...
+    @property
+    def algorithm(self) -> str: ...
+```
+
+Pass the backend to `create_envelope(capsule, backend=VaultSigningBackend())`.
+Built-in cloud backends: `AwsKmsSigningBackend`, `AzureKvSigningBackend`,
+`GcpKmsSigningBackend` — activated via `build_signing_backend(profile)`.
+
+Install the relevant optional extra:
+- `pip install novafabric[seal-aws]` — AWS KMS (boto3)
+- `pip install novafabric[seal-azure]` — Azure Key Vault
+- `pip install novafabric[seal-gcp]` — GCP Cloud KMS
+
+### ZstdDictRegistry — OCS compression dictionaries
+
+Use `ZstdDictRegistry` (`src/novafabric/object_capsule_store/zstd_dict.py`) to train
+and register named zstd dictionaries for capsule compression:
+
+```python
+from novafabric.object_capsule_store import ZstdDictRegistry
+
+reg = ZstdDictRegistry()
+reg.train(dict_id="model-weights-v1", samples=[sample1, sample2, ...])
+client = ObjectCapsuleStoreClient(..., zstd_registry=reg)
+await client.put_capsule(capsule, compression_dict_id="model-weights-v1")
+```
+
+Install with `pip install novafabric[ocs-compress]`.
+
+### JanusGraph lineage backend
+
+Use `JanusGraphLineageStore` for cluster-scale lineage storage:
+
+```python
+from novafabric.lineage.backends.janusgraph import JanusGraphLineageStore
+
+store = JanusGraphLineageStore(url="ws://janusgraph:8182/gremlin")
+store.insert(from_ref="run-a", to_ref="run-b", edge_type="depends_on", meta={})
+chain = store.provenance("run-b", depth=3)
+```
+
+LDBC SNB BI queries via `LineageSnbQueries`; deploy the included Helm chart at
+`deploy/helm/janusgraph/`. Install with `pip install novafabric[janusgraph]`.
+
+### NovaPySpool — Python cffi spool binding
+
+`NovaPySpool` (`src/novafabric/collector_cffi/spool.py`) provides a Python-native spool
+compatible with the Go collector's binary segment format. When `libnovaspool.so` is
+present it binds via cffi; otherwise it falls back to pure-Python atomic rename:
+
+```python
+from novafabric.collector_cffi.spool import NovaPySpool
+
+spool = NovaPySpool(spool_dir=Path("/var/nova/spool"), max_files=1000)
+spool.write(b'{"event":"capture","ts":1234567890}')
+segments = spool.drain()  # returns list[Path] of committed segment files
+```
+
+Install with `pip install novafabric[collector-cffi]`.
+
+---
+
+## Warm capture daemon development (daemon/, ADR-0092)
+
+The warm capture daemon (`src/novafabric/daemon/`) is a **prefork** `AF_UNIX`
+server: the parent imports `novafabric` once, then `os.fork()`s one worker per
+run. User-facing docs are in [`docs/warm-capture-daemon.md`](warm-capture-daemon.md);
+this section is for working on the daemon itself.
+
+Module layout:
+
+| File | Responsibility |
+|---|---|
+| `protocol.py` | length-prefixed JSON frames + SCM_RIGHTS fd passing (server/worker side) |
+| `client.py` | **stdlib-only** thin client (`novacap`); must not import the `novafabric` package |
+| `server.py` | forking server: peercred check, request dispatch, fork, SIGCHLD reaper |
+| `worker.py` | post-fork: dup2 stdio, `setpgrp`, run `CaptureOrchestrator`, cancel watcher |
+
+Hard rules when editing here:
+
+- **The prefork model depends on `import novafabric` starting no background
+  threads.** A fork after a thread is started corrupts the child. There is a gate
+  test for this — `tests/daemon/test_fork_safety_preflight.py`. If you add an
+  import-time thread anywhere in the import graph, that test fails and the daemon
+  is unsafe; make the thread lazy instead.
+- **`client.py` must stay stdlib-only.** Importing it must not pull in the
+  `novafabric` package, or the thin client re-acquires the cold-start the daemon
+  exists to remove. It carries its own small copies of the frame helpers. There is
+  no test that mechanically enforces this — keep its imports to the standard
+  library by hand.
+- **`run_worker` runs only in a forked child.** It rebinds stdio, calls
+  `setpgrp`, and may `killpg` its own process group — never call it in-process. It
+  is exercised for real (via an explicit `os.fork`) in
+  `tests/daemon/test_worker_integration.py` and end-to-end in
+  `tests/daemon/test_fidelity_e2e.py`; fork/loop-only branches are marked
+  `# pragma: no cover` with a pointer to those tests.
+- **Fidelity is the contract.** The worker must run the existing
+  `CaptureOrchestrator` unchanged so a daemon capsule stays structurally identical
+  to a direct one. `tests/daemon/test_fidelity_e2e.py` enforces this — keep it green.
+
+To extend the protocol (e.g. a new `op`), add it in `server._handle` (the parent
+reads the first frame and decides whether to fork) and mirror any client-side
+framing in `client.py`. Liveness probes are a bare connect that the parent reads as
+`None` and closes — they must never fork.
+
+---
+
+## Extending the Capsule Knowledge Graph
+
+The KG schema has 5 node tables and 4 relationship tables.  To add a new node type:
+
+1. Add `CREATE NODE TABLE IF NOT EXISTS <Type> (id STRING PRIMARY KEY, …)` to
+   `KGStore._ensure_schema()` in `kg/store.py`.
+2. Add a `merge_<type>()` method and the corresponding upsert logic.
+3. Register the type in `EntityNormaliser.normalise()` dispatch (`kg/entity_normaliser.py`).
+4. Add extraction logic in `KGIngestionPipeline._resolve_entities()` (`kg/pipeline.py`).
+5. Include the new type in `count_nodes()` / `get_topology_graph()` in `kg/store.py`.
+6. Add the type to `KGTopology` in `web/src/lib/api.ts` and update `TopologyLayerPanel`
+   in `web/src/components/dashboard/tabs/KGTab.tsx`.
+
+**MCP server auto-detection pattern** (added v0.29.0): tool names containing `:` are
+split on the first `:` in `_resolve_entities()`.  The left part becomes the `MCPServer`
+name; the right part is the `Tool` name.  A `SERVED_BY` (Tool → MCPServer) edge is added
+in addition to the standard `USES_TOOL` (Agent → Tool) edge.  Follow this pattern when
+adding other auto-detection heuristics.
+
+### `nova kg alias register --type mcp_server`
+
+The alias table accepts `mcp_server` as an entity type (alongside `model`, `agent`,
+`tool`, `endpoint`).  Register a display-name alias for a raw MCP server prefix:
+
+```bash
+nova kg alias register "filesystem" "nova-mcp-filesystem" --type mcp_server
+```
+
+### `nova kg query` MCP server output
+
+`nova kg query <agent-id>` now includes a `mcp_servers` key in the JSON result and
+prints a "MCP servers reachable" section in text mode.  The 2-hop path is
+`Agent → Tool → MCPServer` via `USES_TOOL` + `SERVED_BY`.
+
+### KG auto-ingest configuration
+
+The `nova serve` background loop polls for new capsules.  Two environment variables
+control its behaviour:
+
+| Variable | Default | Description |
+|---|---|---|
+| `NOVA_KG_INGEST_INTERVAL` | `60` | Poll interval in seconds |
+| `NOVA_KG_PATH` | `.nova/kg/nova_kg.kuzu` | KuzuDB file path |
+
+The set of already-ingested capsule directories is persisted in a SQLite sidecar
+(`ingest_tracker.db`) so restarts don't re-process the entire history.  The tracker
+is implemented in `src/novafabric/kg/ingest_tracker.py` (`IngestTracker` class).
+
+### Topology cache
+
+`GET /api/kg/topology` caches its response for 30 seconds.  The cache is
+process-local (not shared across workers) and is invalidated on process restart.
+Dashboard `TopologyLayerPanel` is lazy-loaded — it fetches only when the user clicks
+"Load topology", not on panel mount.
+
+## Extending CapsuleWatcher backends (v0.36.0)
+
+`CapsuleWatcher` (`src/novafabric/serve/capsule_watcher.py`) abstracts capsule
+directory scanning behind `_BackendProtocol` (a `typing.Protocol`):
+
+```python
+import sqlite3
+from pathlib import Path
+
+class MyCustomBackend:
+    """Example: watch an NFS mount or remote S3-prefix list."""
+
+    @property
+    def name(self) -> str:
+        return "my-custom"
+
+    def poll_once(self, capsule_dir: Path, conn: sqlite3.Connection) -> int:
+        """Scan for new capsules and upsert them into runs_cache. Return count ingested."""
+        ...
+
+    def close(self) -> None:
+        """Release resources (inotify watches, file handles, etc.)."""
+        ...
+```
+
+Instantiate `CapsuleWatcher(backend=MyCustomBackend())` and call
+`watcher.ingest_all()` / `watcher.poll_once()` / `watcher.start_background()`.
+
+Built-in backends:
+
+| Backend | Module | How selected |
+|---|---|---|
+| `PollingBackend` | `capsule_watcher.py` | default (`auto` when watchdog absent) |
+| `WatchdogBackend` | `capsule_watcher.py` | `NOVA_WATCHER_BACKEND=watchdog` or `--backend watchdog`; requires `pip install novafabric[watch]` |
+
+`nova serve` instantiates `CapsuleWatcher` with the backend resolved from
+`NOVA_WATCHER_BACKEND` (default: `auto`).  The poll interval is controlled by
+`NOVA_WATCHER_INTERVAL` (default: `2.0` s).
+
+## Registering a third-party eval suite adapter (v0.40.0)
+
+Eval suites are discovered at runtime via the `novafabric.eval_suites` entry-point group. To ship a custom suite in your own package, implement `EvalSuiteAdapter` and register it:
+
+```python
+# my_package/my_suite.py
+from pathlib import Path
+from novafabric.evals.adapter import EvalSuiteAdapter
+from novafabric.evals.result import EvalResult
+
+class MySuiteAdapter:
+    def suite_id(self) -> str:
+        return "my-suite-v1"
+
+    def version(self) -> str:
+        return "1.0.0"
+
+    def oci_digest(self) -> str:
+        return ""  # "" = host-env; "sha256:<hex>" = OCI-pinned
+
+    def run(self, capsule_path: Path, config: dict[str, str]) -> EvalResult:
+        ...
+```
+
+In `pyproject.toml`:
+
+```toml
+[project.entry-points."novafabric.eval_suites"]
+my-suite-v1 = "my_package.my_suite:MySuiteAdapter"
+```
+
+After `pip install -e .`, `nova eval list` will show the new suite. `nova eval run <capsule> --suite my-suite-v1` will invoke it.
+
+## Querying and extending PolicyStore (v0.40.0)
+
+`novafabric.promote.policy_store.PolicyStore` stores signed promotion policy bundles in a SQLite DB. Key methods:
+
+| Method | Description |
+|---|---|
+| `put(bundle_json, namespace)` | Insert a new policy bundle; returns version number |
+| `get_latest(namespace)` | Return `bundle_json` for the highest-version policy |
+| `get_by_version(version, namespace)` | Return `bundle_json` for a specific version |
+| `get_active_at(timestamp, namespace)` | Return the policy active at a given UTC timestamp |
+| `list_all(namespace=None)` | Return all rows as `list[dict]`; optional namespace filter |
+
+The default DB path searched by `nova policy list` is `NOVAFABRIC_HOME/promote/policy.db`, falling back to `~/.local/share/novafabric/merkle.db` for backwards compatibility with installations created before v0.40.0.

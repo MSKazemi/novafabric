@@ -1,0 +1,20 @@
+---
+import Layout from '../components/layout/Layout.astro';
+---
+
+<Layout title="Not found — NovaFabric">
+  <section class="container-content py-32 text-center">
+    <p class="font-mono text-xs text-[var(--color-text-faint)] uppercase tracking-wider">404</p>
+    <h1 class="mt-4 text-4xl font-medium tracking-tight">This page doesn't exist.</h1>
+    <p class="mt-4 text-[var(--color-text-muted)] max-w-md mx-auto">
+      Capsules don't fall through the floor. Pages do.
+    </p>
+    <div class="mt-8 flex items-center justify-center gap-4 text-sm">
+      <a href="/" class="text-[var(--color-text)] underline underline-offset-4 decoration-[var(--color-border-strong)] hover:decoration-[var(--color-text)]">Home</a>
+      <span class="text-[var(--color-text-faint)]">·</span>
+      <a href="/concepts" class="text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline underline-offset-4">Concepts</a>
+      <span class="text-[var(--color-text-faint)]">·</span>
+      <a href="/install" class="text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline underline-offset-4">Install</a>
+    </div>
+  </section>
+</Layout>

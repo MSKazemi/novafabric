@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "0V31CS8T0N7H93H4W2R5NG9CJQ",
+  "global_run_id": "57bedc33-68f7-710f-8867-fccd300165dd",
+  "run_id": "47YNM52VNTDP8VRFAR46Z6P4YX",
+  "parent_run_id": "403K84HNQ4TZM5QB15WZAB1CTM",
+  "event_type": "model_call",
+  "trace_id": "a65475412a11f41ca549a96f977c0cc0",
+  "span_id": "2fa1d72a2133be97",
+  "agent_id": "nova-otel-bridge",
+  "cluster_id": null,
+  "tenant_id": "tenant-ml-ops",
+  "started_at": "2026-05-12T11:57:00.580000+00:00",
+  "payload": {
+    "model": "mistralai/Mistral-7B-Instruct-v0.3",
+    "system": "mistral",
+    "usage": {
+      "input_tokens": 1712,
+      "output_tokens": 47
+    },
+    "stop_reason": "tool_use"
+  },
+  "payload_hash": "sha256:77c2e319e0e2275e30d51c06dc6f285216e7151e4100dcee7b018126550cd10b",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

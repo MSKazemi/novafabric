@@ -1,0 +1,28 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "6X9KVX0M4QH2J92CPJDMJ8HNFN",
+  "global_run_id": "3671e9e8-d052-70dc-9714-12876ec2e4b2",
+  "run_id": "4G93WBHMN1PZAYG04V7Z3EVE4G",
+  "parent_run_id": "44B8XM8816M89C1700DZMYYRD3",
+  "event_type": "model_call",
+  "trace_id": "9b9550dad0301a382cf8f8739997720b",
+  "span_id": "8d1dd701ecd837dc",
+  "agent_id": "anthropic-sdk",
+  "cluster_id": "azure-ml-cluster",
+  "tenant_id": "tenant-acme",
+  "started_at": "2026-05-12T18:57:00.357000+00:00",
+  "emitter_node_id": "node02.cluster.local",
+  "payload": {
+    "model": "claude-3-opus-20240229",
+    "system": "mistral",
+    "usage": {
+      "input_tokens": 339,
+      "output_tokens": 649
+    },
+    "stop_reason": "max_tokens"
+  },
+  "payload_hash": "sha256:9a2476d84ee72a5103452687fcfdba69850edcade4d7e390cac653dac0c0957e",
+  "nova.batch.signature": "razQXSgA0hqYDWX9o2q5wcFOZKGcxuS2cGjh/kKq8pMSp+Vh6sUCS7+8SAoUQYLJIZQmSkGtA4KGuDo6Abm6yQ==",
+  "nova.batch.signing_key_id": "cfcb74ce-57a8-463b-b296-a72e4d430742"
+}

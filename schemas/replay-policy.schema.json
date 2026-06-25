@@ -1,0 +1,288 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/replay-policy.schema.json",
+  "$comment": "schema_version 1.0.0; tracks design/spec/replay-policy-v1.md. Every field is optional; missing sections fall back to spec-documented defaults.",
+  "title": "ReplayPolicy",
+  "description": "Content of replay.yaml inside a NovaFabric Run Capsule. Governs what replay does with external resources and mutating tools.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^1\\.",
+      "description": "OAS v1.0 schema version. Must be 1.x.x (ADR-0034 §1)."
+    },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "external_resources": {
+          "$ref": "#/$defs/ExternalResourcePolicy",
+          "description": "Default policy for any external resource without an explicit override."
+        },
+        "mutating_tools": {
+          "$ref": "#/$defs/MutatingToolsDefaults",
+          "description": "Default policy for mutating tool re-execution."
+        }
+      },
+      "description": "Default policies applied when no per-resource or per-tool override matches."
+    },
+    "external_resources": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/ExternalResourceOverride"},
+      "description": "Per-resource policy overrides. First matching override wins."
+    },
+    "tool_overrides": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/ToolOverride"},
+      "description": "Per-tool overrides for mutating-tool handling."
+    },
+    "cost_caps": {
+      "$ref": "#/$defs/CostCaps",
+      "description": "Cost guardrails for replay. Enforced in semantic and exact modes."
+    },
+    "network": {
+      "$ref": "#/$defs/NetworkPolicy",
+      "description": "Outbound network access policy during replay."
+    },
+    "time": {
+      "$ref": "#/$defs/TimePolicy",
+      "description": "Clock and time injection for replay."
+    },
+    "mode_overrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "exact": {
+          "$ref": "#/$defs/ModeOverridePatch",
+          "description": "Policy overrides applied only when mode is 'exact'."
+        },
+        "mocked": {
+          "$ref": "#/$defs/ModeOverridePatch",
+          "description": "Policy overrides applied only when mode is 'mocked'."
+        },
+        "semantic": {
+          "$ref": "#/$defs/ModeOverridePatch",
+          "description": "Policy overrides applied only when mode is 'semantic'."
+        },
+        "forensic": {
+          "$ref": "#/$defs/ModeOverridePatch",
+          "description": "Policy overrides applied only when mode is 'forensic'."
+        }
+      },
+      "description": "Per-mode patches merged into the base policy at replay time."
+    }
+  },
+  "$defs": {
+    "ExternalResourceKind": {
+      "type": "string",
+      "enum": ["snapshot", "reference", "hash"],
+      "description": "How an external resource is stored and handled at replay. 'snapshot': full bytes in capsule. 'reference': refetch from URI and verify hash. 'hash': user supplies local copy; hash verified."
+    },
+    "OnHashMismatch": {
+      "type": "string",
+      "enum": ["refuse", "warn"],
+      "description": "'refuse' aborts replay; 'warn' records drift and continues."
+    },
+    "ExternalResourcePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ExternalResourceKind"
+        },
+        "snapshot_size_cap_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum bytes for snapshot capture. Default 104857600 (100 MiB).",
+          "default": 104857600
+        },
+        "freshness_window": {
+          "type": "string",
+          "description": "ISO 8601 duration. A reference resource is fresh if age <= window. Default P30D.",
+          "default": "P30D"
+        },
+        "on_hash_mismatch": {
+          "$ref": "#/$defs/OnHashMismatch"
+        },
+        "local_resolver": {
+          "type": "string",
+          "description": "Template for resolving local copies when kind is 'hash'. Substitution variables: {XDG_DATA_HOME}, {HOME}, {asset_ref}, {name}, {version}, {content_hash}, {capsule_dir}, {cwd}."
+        }
+      }
+    },
+    "MutatingToolsDefaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow": {
+          "type": "boolean",
+          "description": "Global toggle for re-executing mutating tools. Default false. CLI --allow-mutating-tools flips to true.",
+          "default": false
+        },
+        "require_per_tool_confirm": {
+          "type": "boolean",
+          "description": "If true, every mutating tool allowed via 'allow' still requires interactive confirmation.",
+          "default": true
+        },
+        "redact_argument_keys": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Argument keys whose values are masked in the policy log."
+        }
+      }
+    },
+    "ResourceMatcher": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["url", "host", "asset_ref", "asset_type", "dataset", "vector-index", "path", "mcp-server"],
+          "description": "How to match an external resource."
+        },
+        "pattern": {
+          "type": "string",
+          "description": "Regex pattern. Used by kinds: url, host, dataset (with pattern), vector-index, path."
+        },
+        "asset_ref": {
+          "type": "string",
+          "description": "Full asset_ref for exact matching. Used by kinds: asset_ref, dataset (with asset_ref)."
+        },
+        "asset_type": {
+          "type": "string",
+          "description": "Asset type enum for matching all assets of a type. Used by kind: asset_type."
+        },
+        "server_name": {
+          "type": "string",
+          "description": "MCP server name. Used by kind: mcp-server."
+        }
+      }
+    },
+    "ExternalResourceOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["matcher", "policy"],
+      "properties": {
+        "matcher": {"$ref": "#/$defs/ResourceMatcher"},
+        "policy": {"$ref": "#/$defs/ExternalResourcePolicy"}
+      }
+    },
+    "ToolOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool_name", "allow"],
+      "properties": {
+        "tool_name": {
+          "type": "string",
+          "description": "Exact match against tool-calls.jsonl tool_name."
+        },
+        "mutation_class": {
+          "type": "string",
+          "enum": [
+            "none",
+            "read-only",
+            "idempotent-write",
+            "non-idempotent-write",
+            "external-side-effect",
+            "unknown"
+          ],
+          "description": "Informational; not used for matching."
+        },
+        "allow": {
+          "type": "boolean",
+          "description": "Whether to re-execute this tool. Wins over the global default."
+        },
+        "confirm": {
+          "type": "boolean",
+          "description": "Override require_per_tool_confirm for this specific tool."
+        },
+        "rationale": {
+          "type": "string",
+          "description": "Required when allow is true and mutation_class is 'external-side-effect'. Recorded in replay_drift."
+        }
+      }
+    },
+    "CostCaps": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "total_max_usd": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Aggregate cost cap for the whole replay in USD."
+        },
+        "per_call_max_usd": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Per-call cost cap; abort if any single call estimate exceeds this."
+        },
+        "on_exceed": {
+          "$ref": "#/$defs/OnHashMismatch",
+          "description": "'refuse' aborts replay; 'warn' records and continues."
+        }
+      }
+    },
+    "NetworkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "egress": {
+          "type": "string",
+          "enum": ["allow", "deny", "policy"],
+          "description": "Outbound network access mode. 'policy' evaluates each call against external_resources.",
+          "default": "policy"
+        },
+        "allowed_hosts": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Hosts reachable when egress is 'policy'."
+        },
+        "denied_hosts": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Hosts blocked when egress is 'policy'."
+        },
+        "proxy": {
+          "oneOf": [
+            {"type": "string"},
+            {"type": "null"}
+          ],
+          "description": "Proxy URL applied to all replay HTTP."
+        }
+      }
+    },
+    "TimePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "freeze_clock": {
+          "type": "boolean",
+          "description": "If true, replay overrides time.time() and datetime.now() to return injected_now.",
+          "default": false
+        },
+        "injected_now": {
+          "oneOf": [
+            {"type": "string", "format": "date-time"},
+            {"type": "null"}
+          ],
+          "description": "Specific time to inject. If null and freeze_clock is true, captured wallclock_at_start is used."
+        }
+      }
+    },
+    "ModeOverridePatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cost_caps": {"$ref": "#/$defs/CostCaps"},
+        "network": {"$ref": "#/$defs/NetworkPolicy"},
+        "external_resources": {
+          "$ref": "#/$defs/ExternalResourcePolicy"
+        }
+      },
+      "description": "Subset of top-level fields that can be overridden per replay mode."
+    }
+  }
+}

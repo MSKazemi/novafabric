@@ -1,0 +1,75 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+@import '@fontsource/jetbrains-mono';
+@import './tokens.css';
+
+@layer base {
+  :root {
+    color-scheme: dark light;
+  }
+
+  html {
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv11', 'ss01', 'ss03';
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background: var(--color-bg);
+    color: var(--color-text);
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  ::selection {
+    background: var(--color-accent);
+    color: var(--color-accent-fg);
+  }
+
+  code, pre, kbd {
+    font-family: var(--font-mono);
+    font-feature-settings: 'liga' 0;
+  }
+
+  /* Remove the default focus ring on mouse, keep on keyboard. */
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+}
+
+@layer components {
+  /* Compact density: tighten sidebar nav rows */
+  [data-density="compact"] nav button {
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
+  }
+}
+
+@layer utilities {
+  .container-content {
+    max-width: var(--max-width-content);
+    margin-inline: auto;
+    padding-inline: var(--spacing-6);
+  }
+
+  .container-prose {
+    max-width: var(--max-width-prose);
+    margin-inline: auto;
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .grid-line {
+    border-color: var(--color-border);
+  }
+}

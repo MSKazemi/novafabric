@@ -1,0 +1,6 @@
+novafabric_spec_version: "1"
+name: test-model
+version: 1.0.0
+spec:
+  framework: pytorch
+  artifact_path: /tmp/model

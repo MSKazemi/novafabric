@@ -1,0 +1,28 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "4S8MG9WFMNW1FP705BQZ6J8TFA",
+  "global_run_id": "46b4cf9f-e687-7486-952c-458c8d8a48e1",
+  "run_id": "080KBGQVQ2XSSTKFA71ZG5P2BR",
+  "parent_run_id": "4MPP3D4HX8VQ845ESNBZ1NZJJT",
+  "event_type": "model_call",
+  "trace_id": "8561aa208deb963dcab45711debb37b4",
+  "span_id": "ba02cfd13f32f886",
+  "agent_id": "anthropic-sdk",
+  "cluster_id": "hpc-cluster-01",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T19:33:00.170000+00:00",
+  "emitter_node_id": "node01.cluster.local",
+  "payload": {
+    "model": "gpt-4-turbo",
+    "system": "openai",
+    "usage": {
+      "input_tokens": 3557,
+      "output_tokens": 61
+    },
+    "stop_reason": "tool_use"
+  },
+  "payload_hash": "sha256:681ccf74a5129e20b7f1eed6d292f452bce8ef768ebdd3e8ac5315c52d058b07",
+  "nova.batch.signature": "LI6GFm0L04tY90IpgpLGe5XLWebzLoJQs5rFfHYa/UDxbCFEr93HxTCSyLbIOINUyNQfoHVgVwRqcAIIac86qQ==",
+  "nova.batch.signing_key_id": "74b28eac-8edb-428b-9007-281cf48a7a83"
+}

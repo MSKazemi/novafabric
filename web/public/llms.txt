@@ -1,0 +1,43 @@
+# NovaFabric
+
+> Open-source CLI toolkit that captures, replays, diffs, and audits AI system runs.
+> Local-first (data stays on your machine). No accounts, no telemetry. Python 3.11+.
+
+NovaFabric is a time machine for AI systems. When an AI agent behaves differently
+than it did yesterday — different outputs, a regression, an unexpected tool call —
+NovaFabric lets you replay the original run, compare the two side by side, and trace
+exactly what changed. It is built around five primitives: Asset Registry, Run Capsule,
+Replay, Lineage, and Evidence Bundle.
+
+Install with: pip install novafabric
+
+## Core pages
+
+- [Home](https://novafabric.dev/): overview, 90-second story, five primitives
+- [Why now](https://novafabric.dev/why): motivation and non-goals
+- [Concepts](https://novafabric.dev/concepts): the five primitives and four replay modes in depth
+- [Install](https://novafabric.dev/install): three-command quickstart
+- [Spec](https://novafabric.dev/spec): JSON Schema 2020-12 definitions for every format
+
+## Interactive showcase
+
+- [Run capsule inspector](https://novafabric.dev/showcase/capsule): inspect a real captured run in the browser
+- [Lineage graph](https://novafabric.dev/showcase/lineage): interactive DAG — provenance, blast radius, replay chain
+- [Replay & diff](https://novafabric.dev/showcase/replay): four replay modes with explicit guarantees
+- [Asset registry](https://novafabric.dev/showcase/registry): eval-gated promotion for models, agents, prompts
+- [Evidence bundle](https://novafabric.dev/showcase/evidence): signed in-toto DSSE Statement v1, verified in-browser
+
+## Key facts
+
+- Current version: v0.7.0 (local-first, open source, CLI-first)
+- Four replay modes: exact, mocked, semantic, forensic
+- Capsules stored in .novafabric/runs/ as schema-validated directories
+- Evidence bundles use in-toto DSSE Statement v1 + ed25519 signatures
+- Code repository: https://github.com/novafabric/novafabric
+- Install: https://pypi.org/project/novafabric/
+
+## Note
+
+llms.txt is a community proposal (llmstxt.org). No major AI engine has confirmed
+consuming it as of 2026-06. This file serves as a human-readable index and a
+low-cost hedge should adoption increase.

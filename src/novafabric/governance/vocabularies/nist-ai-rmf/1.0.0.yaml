@@ -1,0 +1,42 @@
+version: "1.0.0"
+reference: "NIST AI 600-1 Artificial Intelligence Risk Management Framework"
+
+impact_levels:
+  critical:
+    domains:
+      - law_enforcement
+      - critical_infrastructure
+      - healthcare_diagnosis
+      - autonomous_weapons
+    affects_fundamental_rights: true
+    description: "Consequential decisions over life, liberty, or livelihood with no human review"
+  high:
+    domains:
+      - healthcare
+      - finance
+      - employment
+      - education
+      - border_control
+      - banking
+      - insurance
+      - recruitment
+      - hr
+      - policing
+      - security
+      - immigration
+    subject_count_threshold: 10000
+    description: "Significant impact on individual wellbeing, rights, or economic opportunity"
+  medium:
+    domains:
+      - general
+      - retail
+      - insurance
+      - hr_support
+    description: "Moderate impact on individuals with human oversight in decision loop"
+  low:
+    domains:
+      - entertainment
+      - productivity
+      - content_recommendation
+    is_general_purpose: true
+    description: "Limited or no direct impact on individual rights"

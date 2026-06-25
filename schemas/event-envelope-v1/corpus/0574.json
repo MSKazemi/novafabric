@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "6FKC49AM71NVPT9R75QHM7Q20K",
+  "global_run_id": "5FR5SBZ7YDRX0PWDVNR18DV22S",
+  "run_id": "3J8KRHXB6JSZSFY1XVJD28S0NJ",
+  "parent_run_id": "4897QF2R9JAR6TF7KY9F5D5S3R",
+  "event_type": "tool_call",
+  "trace_id": "dac99f2aa99aa89c0a932f11dbb7be70",
+  "span_id": "3aec81d5ed304555",
+  "agent_id": "custom-agent-v1",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T19:34:00.024000+00:00",
+  "emitter_node_id": "head-node",
+  "payload": {
+    "tool_name": "file_reader",
+    "tool_call_id": "tc_d364107a06ccd4d1",
+    "arguments": {
+      "input": "example input for file_reader"
+    },
+    "duration_ms": 3173
+  },
+  "payload_hash": "sha256:05afaac24ca3e02b93505b994ff0b4a2aa598b557f3e9eca06941f586761610b",
+  "nova.batch.signature": "2In1i5tx98Q7Eky6jpK+UOI3iSVqmDC/+TNHKVnYifo4xvs1JRMU57UnWzUeiXrfUPo85N9kg2859LxIcxBmvQ==",
+  "nova.batch.signing_key_id": "afb2c896-357c-4c63-86f2-e173e8df0ffb"
+}

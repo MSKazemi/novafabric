@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/promote_policy_v1.json",
+  "title": "PromotePolicy",
+  "description": "Signed promotion policy: who may propose and who may approve.",
+  "type": "object",
+  "required": [
+    "proposer_key_ids",
+    "approver_key_ids",
+    "self_approval",
+    "approval_threshold",
+    "bypass_valid_duration_hours"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "proposer_key_ids": {
+      "type": "array",
+      "items": {"type": "string"},
+      "minItems": 1
+    },
+    "approver_key_ids": {
+      "type": "array",
+      "items": {"type": "string"},
+      "minItems": 1
+    },
+    "self_approval": {
+      "type": "boolean",
+      "const": false
+    },
+    "approval_threshold": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "bypass_valid_duration_hours": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 168,
+      "default": 24
+    }
+  }
+}

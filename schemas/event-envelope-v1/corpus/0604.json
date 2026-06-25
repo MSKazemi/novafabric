@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "3JT5BKVQ13FM8C55XZ41Z9EXZR",
+  "global_run_id": "4NB0FBRWAJ1BJGMS0ZF179ANJ8",
+  "run_id": "43V9AHKK0HSMPVSHGSR6X5M7Y7",
+  "parent_run_id": "32DB2C0XCH7NDZJ19KMV983JTF",
+  "event_type": "tool_call",
+  "trace_id": "206e7c7f75caf58f363ee677a8238285",
+  "span_id": "2115690269ca919c",
+  "agent_id": "anthropic-sdk",
+  "cluster_id": "local-dev",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T20:04:00.750000+00:00",
+  "emitter_node_id": "node02.cluster.local",
+  "payload": {
+    "tool_name": "web_search",
+    "tool_call_id": "tc_f6471267a6745753",
+    "arguments": {
+      "input": "example input for web_search"
+    },
+    "duration_ms": 3367
+  },
+  "payload_hash": "sha256:21f288bb517de91f0f64f4199ea5495f26a8173d984dbbe8f4ca01afaac03d6b",
+  "nova.batch.signature": "TShzrkmHJ8I1xS5fytQsQnJYg7Xtz5hVXVgVxeJ+vP9kuJgRonHaqbesPAfJMCXdeZKJnTt9AFqTaOxF2TJfRw==",
+  "nova.batch.signing_key_id": "2c3bdb61-f059-4b74-bea7-de4446043a12"
+}

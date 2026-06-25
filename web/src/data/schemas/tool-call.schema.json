@@ -1,0 +1,334 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/tool-call.schema.json",
+  "$comment": "schema_version 0.1.0; tracks design/spec/tool-call-v0.md",
+  "title": "ToolCall",
+  "description": "One record in tool-calls.jsonl inside a NovaFabric Run Capsule. MCP-aligned; transport-agnostic.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "tool_call_id",
+    "parent_span_id",
+    "started_at",
+    "finished_at",
+    "duration_ms",
+    "tool_name",
+    "tool_version",
+    "tool_provider",
+    "transport",
+    "mutates",
+    "mutation_class",
+    "arguments",
+    "arguments_schema_ref",
+    "result",
+    "result_schema_ref",
+    "status",
+    "agent_call_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+",
+      "description": "Capsule schema version. v0.2 ships 0.1.0."
+    },
+    "tool_call_id": {
+      "$ref": "#/$defs/Ulid",
+      "description": "Unique within the capsule."
+    },
+    "parent_span_id": {
+      "$ref": "#/$defs/SpanId",
+      "description": "OTel span ID that initiated this tool call."
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC call start, microsecond precision (RFC 3339)."
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC call end, microsecond precision (RFC 3339)."
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Wall-clock duration in milliseconds."
+    },
+    "tool_name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Logical tool name, e.g. 'send_email' or 'web_search'."
+    },
+    "tool_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Semver if known; 'unknown' otherwise."
+    },
+    "tool_provider": {
+      "type": "string",
+      "minLength": 1,
+      "description": "URI or short id of the provider (e.g. 'mcp://localhost:8080', 'shell://')."
+    },
+    "transport": {
+      "type": "string",
+      "enum": ["mcp", "http", "grpc", "shell", "python", "filesystem", "non-mcp"],
+      "description": "Protocol used to invoke the tool."
+    },
+    "mutates": {
+      "type": "boolean",
+      "description": "True if the call modifies state outside the agent's local cache."
+    },
+    "mutation_class": {
+      "type": "string",
+      "enum": [
+        "none",
+        "read-only",
+        "idempotent-write",
+        "non-idempotent-write",
+        "external-side-effect",
+        "unknown"
+      ],
+      "description": "Classification used by replay safety to determine dry-run default."
+    },
+    "arguments": {
+      "type": "object",
+      "description": "Structured arguments passed to the tool. Validated against arguments_schema_ref if present."
+    },
+    "arguments_schema_ref": {
+      "oneOf": [
+        {"type": "string", "minLength": 1},
+        {"type": "null"}
+      ],
+      "description": "Path or URI to JSON Schema for arguments. Null if no schema declared."
+    },
+    "result": {
+      "oneOf": [
+        {"type": "object"},
+        {"type": "null"}
+      ],
+      "description": "Structured result. Null if tool returned no value or errored."
+    },
+    "result_schema_ref": {
+      "oneOf": [
+        {"type": "string", "minLength": 1},
+        {"type": "null"}
+      ],
+      "description": "Path or URI to JSON Schema for result. Null if no schema declared."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["success", "error", "timeout", "denied"],
+      "description": "Outcome of the tool invocation."
+    },
+    "agent_call_id": {
+      "oneOf": [
+        {"$ref": "#/$defs/Ulid"},
+        {"type": "null"}
+      ],
+      "description": "model_call_id in model-calls.jsonl that triggered this tool. Null if not model-driven."
+    },
+    "mcp": {
+      "$ref": "#/$defs/McpEnvelope",
+      "description": "MCP-specific fields. Required when transport is 'mcp'."
+    },
+    "pre_state": {
+      "$ref": "#/$defs/StateSnapshot",
+      "description": "Snapshot of relevant state before the call."
+    },
+    "post_state": {
+      "$ref": "#/$defs/StateSnapshot",
+      "description": "Snapshot of relevant state after the call."
+    },
+    "error": {
+      "$ref": "#/$defs/ErrorInfo",
+      "description": "Error detail when status is not 'success'."
+    },
+    "retries": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of retries the SDK performed before this record was finalized."
+    },
+    "cache_hit": {
+      "type": "boolean",
+      "description": "True if the SDK or proxy served the response from cache."
+    },
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["currency", "amount", "unit_count", "unit_kind"],
+      "properties": {
+        "currency": {"type": "string"},
+        "amount": {"type": "number"},
+        "unit_count": {"type": "number"},
+        "unit_kind": {"type": "string"}
+      },
+      "description": "Metered cost of this tool call, if applicable."
+    },
+    "latency_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Network or process latency excluding agent-side handling."
+    },
+    "bytes_in": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Approximate size of arguments in bytes."
+    },
+    "bytes_out": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Approximate size of result in bytes."
+    },
+    "endpoint": {
+      "type": "string",
+      "description": "Concrete URL or endpoint hit, sanitized of secrets per secret-policy-v0."
+    },
+    "replay_hint": {
+      "$ref": "#/$defs/ReplayHint",
+      "description": "Per-call replay guidance written by the framework adapter at capture time."
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Vendor extensions. Keys must be reverse-DNS-prefixed (e.g. 'io.langgraph.thread_id')."
+    }
+  },
+  "if": {
+    "properties": {
+      "transport": {"const": "mcp"}
+    },
+    "required": ["transport"]
+  },
+  "then": {
+    "required": ["mcp"]
+  },
+  "$defs": {
+    "Ulid": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "description": "26-character Crockford base32 ULID."
+    },
+    "SpanId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$",
+      "description": "16-character lowercase hex OTel span ID."
+    },
+    "McpEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "server_name",
+        "server_version",
+        "method",
+        "request_id",
+        "envelope",
+        "response_envelope"
+      ],
+      "properties": {
+        "server_name": {
+          "type": "string",
+          "description": "MCP server name per MCP spec Server Info."
+        },
+        "server_version": {
+          "type": "string",
+          "description": "MCP server version."
+        },
+        "method": {
+          "type": "string",
+          "description": "MCP method, e.g. 'tools/call', 'resources/read'."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "MCP request id."
+        },
+        "envelope": {
+          "type": "object",
+          "description": "Verbatim JSON-RPC request envelope."
+        },
+        "response_envelope": {
+          "oneOf": [
+            {"type": "object"},
+            {"type": "null"}
+          ],
+          "description": "Verbatim JSON-RPC response envelope."
+        }
+      }
+    },
+    "StateSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["argument-only", "result-cache", "state-fingerprint", "full-snapshot"],
+          "description": "What was captured in this snapshot."
+        },
+        "fingerprint": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "SHA-256 hash of the declared state surface. Present for state-fingerprint kind."
+        },
+        "declared_scope": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Paths or identifiers describing what state surface was captured."
+        },
+        "captured_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When this snapshot was taken (RFC 3339)."
+        }
+      }
+    },
+    "ErrorInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "message"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Exception class name or error kind."
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable error description, sanitized for secrets."
+        },
+        "traceback_ref": {
+          "oneOf": [
+            {"type": "string"},
+            {"type": "null"}
+          ],
+          "description": "Relative path under outputs/ where the traceback is stored."
+        }
+      }
+    },
+    "ReplayHint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "preferred_mode": {
+          "type": "string",
+          "enum": ["exact", "mocked", "semantic", "forensic"],
+          "description": "Suggested replay mode for this call."
+        },
+        "rationale": {
+          "type": "string",
+          "description": "Why this hint was set."
+        },
+        "allow_in_exact": {
+          "type": "boolean",
+          "description": "Whether this tool call may be re-executed in exact mode."
+        },
+        "allow_in_semantic": {
+          "type": "boolean",
+          "description": "Whether this tool call may be re-executed in semantic mode."
+        },
+        "max_age_for_reference": {
+          "type": "string",
+          "description": "ISO 8601 duration; maximum age of reference resources for replay."
+        }
+      }
+    }
+  }
+}

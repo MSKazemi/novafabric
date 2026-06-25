@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "3DHW6K6CP3BERC3MXECRMDFVCP",
+  "global_run_id": "00FNET34Q0H18XWCH22G1BAXMV",
+  "run_id": "3Z0SAWGDSYS2Y4HSS8EC0BJ7N2",
+  "parent_run_id": null,
+  "event_type": "tool_call",
+  "trace_id": "b79d58cb8b9f62ed3ba88dbfe815114e",
+  "span_id": "ace102e539fac8b3",
+  "agent_id": "langchain-agent",
+  "cluster_id": "azure-ml-cluster",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T17:10:00.137000+00:00",
+  "emitter_node_id": "head-node",
+  "payload": {
+    "tool_name": "code_interpreter",
+    "tool_call_id": "tc_db7fa87f0b76509d",
+    "arguments": {
+      "input": "example input for code_interpreter"
+    },
+    "duration_ms": 3866
+  },
+  "payload_hash": "sha256:02bb75480709cd37e085cf1ccafa32d2915895949ba0175536677a91fc72db72",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

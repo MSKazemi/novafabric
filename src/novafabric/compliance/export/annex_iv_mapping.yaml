@@ -1,0 +1,193 @@
+# EU AI Act Annex IV — capsule field path mapping
+# Regulation (EU) 2024/1689, Annex IV
+#
+# Each entry maps an Annex IV element (1-15) to the capsule fields that
+# contribute to populating it.  Fields are dot-notation paths within the
+# capsule manifest YAML or associated JSONL files.
+#
+# population_method:
+#   capsule_derived   — value is extracted from captured capsule data
+#   operator_declared — value must be supplied by the operator at export time
+#   not_applicable    — element is not applicable (with justification)
+#
+# required_field_paths: capsule paths that MUST be present for "complete" status
+# optional_field_paths: capsule paths that improve completeness if present
+
+elements:
+  - element_id: 1
+    element_title: "General description of the AI system"
+    population_method: capsule_derived
+    required_field_paths:
+      - "command"
+      - "novafabric_version"
+      - "schema_version"
+    optional_field_paths:
+      - "working_directory"
+      - "host.os"
+      - "host.arch"
+    description_template: >
+      AI system captured as run capsule {run_id} by NovaFabric {novafabric_version}.
+      Command: {command}. Platform: {host.os}/{host.arch}.
+
+  - element_id: 2
+    element_title: "Detailed description of the elements and the development process"
+    population_method: capsule_derived
+    required_field_paths:
+      - "model_calls_ref"
+      - "model_call_count"
+    optional_field_paths:
+      - "tool_calls_ref"
+      - "tool_call_count"
+      - "assets_ref"
+    description_template: >
+      {model_call_count} model calls and {tool_call_count} tool calls recorded.
+      Model call log: {model_calls_ref}. Tool call log: {tool_calls_ref}.
+
+  - element_id: 3
+    element_title: "Detailed information about the monitoring, functioning and control of the AI system"
+    population_method: capsule_derived
+    required_field_paths:
+      - "trace_ref"
+      - "trace_root_span_id"
+    optional_field_paths:
+      - "replay_policy_ref"
+      - "capture_mode"
+    description_template: >
+      Execution trace available at {trace_ref} (root span: {trace_root_span_id}).
+      Capture mode: {capture_mode}. Replay policy: {replay_policy_ref}.
+
+  - element_id: 4
+    element_title: "Description of the appropriateness of the performance metrics for the specific AI system"
+    population_method: capsule_derived
+    required_field_paths: []
+    optional_field_paths:
+      - "eval_results_ref"
+      - "regression_report_ref"
+    description_template: >
+      Eval results (if present) are attached at {eval_results_ref}.
+
+  - element_id: 5
+    element_title: "Detailed description of the risk management system"
+    population_method: operator_declared
+    required_field_paths: []
+    optional_field_paths:
+      - "policy_ref"
+      - "redaction_proof_ref"
+    description_template: >
+      Redaction proof: {redaction_proof_ref}. Operator must supply risk management
+      system description.
+
+  - element_id: 6
+    element_title: "Description of any change made through the lifetime of the system"
+    population_method: capsule_derived
+    required_field_paths:
+      - "created_at"
+      - "finished_at"
+      - "schema_version"
+    optional_field_paths:
+      - "novafabric_version"
+    description_template: >
+      Capsule created: {created_at}, finished: {finished_at}.
+      Schema version: {schema_version}. NovaFabric version: {novafabric_version}.
+
+  - element_id: 7
+    element_title: "List of the harmonised standards applied"
+    population_method: operator_declared
+    required_field_paths: []
+    optional_field_paths: []
+    description_template: >
+      Operator must declare applicable harmonised standards (e.g. ISO/IEC 42001,
+      CEN/CENELEC standards for AI).
+
+  - element_id: 8
+    element_title: "Copy of the EU declaration of conformity"
+    population_method: operator_declared
+    required_field_paths: []
+    optional_field_paths: []
+    description_template: >
+      Operator must supply the EU declaration of conformity document.
+
+  - element_id: 9
+    element_title: "Detailed description of the system to evaluate the AI system performance in the post-market phase"
+    population_method: capsule_derived
+    required_field_paths: []
+    optional_field_paths:
+      - "eval_results_ref"
+      - "model_call_count"
+    description_template: >
+      Post-market monitoring via NovaFabric run capsule replay and eval suite.
+      Eval results ref: {eval_results_ref}.
+
+  - element_id: 10
+    element_title: "Description of the intended purpose and reasonably foreseeable misuse"
+    population_method: operator_declared
+    required_field_paths: []
+    optional_field_paths:
+      - "command"
+      - "assets_ref"
+    description_template: >
+      Command: {command}. Operator must supply intended purpose and misuse analysis.
+
+  - element_id: 11
+    element_title: "Description of the human oversight measures"
+    population_method: capsule_derived
+    required_field_paths: []
+    optional_field_paths:
+      - "tool_permission_events_ref"
+      - "policy_ref"
+    description_template: >
+      Human oversight via policy gates and tool permission events.
+      Tool permission events: {tool_permission_events_ref}.
+
+  - element_id: 12
+    element_title: "Technical description of the measures implemented in the design and development phase"
+    population_method: capsule_derived
+    required_field_paths:
+      - "host"
+      - "environment_ref"
+    optional_field_paths:
+      - "novafabric_version"
+    description_template: >
+      Environment lock: {environment_ref}. Host: {host.os} {host.arch}
+      ({host.cpu_count} CPUs, {host.memory_bytes} bytes RAM).
+
+  - element_id: 13
+    element_title: "A description of what the AI system has done or is required to do"
+    population_method: capsule_derived
+    required_field_paths:
+      - "status"
+      - "exit_code"
+      - "duration_ms"
+    optional_field_paths:
+      - "command"
+      - "model_call_count"
+      - "tool_call_count"
+    description_template: >
+      Run status: {status} (exit code {exit_code}, {duration_ms}ms).
+      {model_call_count} model calls, {tool_call_count} tool calls.
+      Command: {command}.
+
+  - element_id: 14
+    element_title: "A description of the algorithms and computing infrastructure"
+    population_method: capsule_derived
+    required_field_paths:
+      - "host"
+      - "environment_ref"
+    optional_field_paths:
+      - "host.gpu"
+      - "novafabric_version"
+    description_template: >
+      Computing infrastructure: {host.os} {host.arch}, Python {host.python},
+      {host.cpu_count} CPUs. Environment lock: {environment_ref}.
+
+  - element_id: 15
+    element_title: "Copies of accuracy, robustness, and cybersecurity test reports"
+    population_method: capsule_derived
+    required_field_paths: []
+    optional_field_paths:
+      - "eval_results_ref"
+      - "redaction_proof_ref"
+      - "seal_ref"
+    description_template: >
+      Redaction proof: {redaction_proof_ref}. Seal: {seal_ref}.
+      Eval results: {eval_results_ref}.

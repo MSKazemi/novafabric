@@ -1,0 +1,28 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "6HQZZ8TNDJ8A59M0W89WF5FD78",
+  "global_run_id": "029b7a90-451f-7aee-b110-9d858da89abe",
+  "run_id": "27KEY5CXF7HZYQQYBCTHXHFRY8",
+  "parent_run_id": "3GEZ6PCX3M3DFM9NKGHEA2GHYV",
+  "event_type": "model_call",
+  "trace_id": "13cd178932981281e079c39389d99d37",
+  "span_id": "aec424f3ae54396b",
+  "agent_id": "custom-agent-v1",
+  "cluster_id": "local-dev",
+  "tenant_id": "tenant-ml-ops",
+  "started_at": "2026-05-13T01:21:00.118000+00:00",
+  "emitter_node_id": "head-node",
+  "payload": {
+    "model": "claude-3-5-sonnet-20241022",
+    "system": "anthropic",
+    "usage": {
+      "input_tokens": 478,
+      "output_tokens": 252
+    },
+    "stop_reason": "tool_use"
+  },
+  "payload_hash": "sha256:0b0b5d2a6317b37c2f38bd5f2d00c14235d53e63da17b2dc333a22e48a636a72",
+  "nova.batch.signature": "CoYW1oOede/638etP5RlZiJH0av8b91e8NBjEw0KVjdCXcVozuoABWFWRO5kyiE1W8NZYm/CBHpShHaFxgtMTA==",
+  "nova.batch.signing_key_id": "06bd4f8d-3e1d-4d5c-b02f-946288c5f68a"
+}

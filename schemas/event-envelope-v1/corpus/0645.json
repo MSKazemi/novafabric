@@ -1,0 +1,28 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "4SA9YZ6Z44BTWYX3B4WCT341A4",
+  "global_run_id": "7563a172-d19e-7e63-a7ab-60a033580384",
+  "run_id": "5XPZ5YX1B8NBS442B3MC3YVQZY",
+  "parent_run_id": null,
+  "event_type": "model_call",
+  "trace_id": "5aba7f2eda89e558f1319ad1e5e60573",
+  "span_id": "a6e8078eb66f2fd2",
+  "agent_id": "openai-agents-sdk",
+  "cluster_id": "slurm-train-v100",
+  "tenant_id": "tenant-acme",
+  "started_at": "2026-05-12T20:45:00.538000+00:00",
+  "emitter_node_id": "worker-0001",
+  "payload": {
+    "model": "gpt-4o",
+    "system": "mistral",
+    "usage": {
+      "input_tokens": 4061,
+      "output_tokens": 156
+    },
+    "stop_reason": "stop"
+  },
+  "payload_hash": "sha256:e02c61637ae764b27b0fb3ee413b8f603327c0fceb27d01fe5892afd977e6c66",
+  "nova.batch.signature": "SDpRkJaaFb90rHzYGoCqsNH4frlz54jCgYcgImNh42TfJDXsvrzuhkEi6HERANbTkBF9ptVpFvX9YEyd4c+/UQ==",
+  "nova.batch.signing_key_id": "bf38fee3-0313-4f92-8019-3cb95748a8ce"
+}

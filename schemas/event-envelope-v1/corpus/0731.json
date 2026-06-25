@@ -1,0 +1,20 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "078RPKZYJGQE349HW4XJ1GMCP8",
+  "global_run_id": "3PPEKWD8VA8GZPH126QTD5X84Y",
+  "run_id": "1JKHJQECXDB027V7A8DPXJZ051",
+  "parent_run_id": "38ZQXMJPPDKA1FQVS4D1FMBDJN",
+  "event_type": "span",
+  "trace_id": "2c81fc8765837e4fd356f76244e5f94b",
+  "span_id": "750661c4850d1e53",
+  "agent_id": "nova-otel-bridge",
+  "cluster_id": "hpc-cluster-01",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T22:11:00.044000+00:00",
+  "emitter_node_id": "node02.cluster.local",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": "SGp2NPczB70rBtsKaHI4qfGHVQw/DKSugoSD9zDpMYnhgU3KussaChktefZVsNKPKnfW8NEQWr+b3AiPLhA3XQ==",
+  "nova.batch.signing_key_id": "dc7aa2d6-3c62-4a67-ad3f-daef4077c7c1"
+}

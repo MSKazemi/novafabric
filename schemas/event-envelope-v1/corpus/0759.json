@@ -1,0 +1,28 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "3G63HK9MXAFJQ57Q9Z2S56GDT0",
+  "global_run_id": "108bb7df-3849-7e84-9240-d69a5f0ac0d5",
+  "run_id": "41YNHR4T7NB4SZ9K58HH4W5H5Y",
+  "parent_run_id": "4DA36ASVFE0MX6K2HNEDBM34PG",
+  "event_type": "model_call",
+  "trace_id": "627560bddc849b4464c29b5cd8721153",
+  "span_id": "40c4727d6be95585",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T22:39:00.440000+00:00",
+  "emitter_node_id": "head-node",
+  "payload": {
+    "model": "claude-3-5-sonnet-20241022",
+    "system": "openai",
+    "usage": {
+      "input_tokens": 293,
+      "output_tokens": 125
+    },
+    "stop_reason": "stop"
+  },
+  "payload_hash": "sha256:f02ffc572f8ab68b9db9d10ea5b318882577346a1c4d857c9cbab31d39837405",
+  "nova.batch.signature": "1aO383rxu3I9D+cyqSJctkkW4rM6BV73RdrKI1tPW3o3HONMBiAqZSC8ljNbFdSxbVWJxWeBRgCbQQOmguWgaw==",
+  "nova.batch.signing_key_id": "ac631d4c-51d7-4c2f-bec7-da1c1e5f1b37"
+}

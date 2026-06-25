@@ -1,0 +1,6 @@
+{
+  "alg": "ed25519",
+  "keyid": "demo-key-2026",
+  "pubPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAXs2s7xkx/5Gpv+2l5GpozUCXbUAQU3NeLH2OgAInmWQ=\n-----END PUBLIC KEY-----\n",
+  "note": "Demo key for the showcase site only. Real evidence bundles use a per-deployment ed25519 key (see ADR-0011)."
+}

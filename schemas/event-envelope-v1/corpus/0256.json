@@ -1,0 +1,26 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "0VSA0F0PVBYPH0WXH59BE3MXF1",
+  "global_run_id": "6FVWQ5R33HT31Y02FSAX15FHVA",
+  "run_id": "08Q29ZQKXRQFMG1B1A3EGDR5GW",
+  "parent_run_id": "3142QN34X0ZN2M1HW7BFN7QSCQ",
+  "event_type": "tool_call",
+  "trace_id": "621bc2c4d40ac12fb983f7fc0892c594",
+  "span_id": "47e6b8d02c56286b",
+  "agent_id": "langchain-agent",
+  "cluster_id": "hpc-cluster-01",
+  "tenant_id": "tenant-platform-eng",
+  "started_at": "2026-05-12T14:16:00.880000+00:00",
+  "payload": {
+    "tool_name": "database_query",
+    "tool_call_id": "tc_827acdd20ab73555",
+    "arguments": {
+      "input": "example input for database_query"
+    },
+    "duration_ms": 870
+  },
+  "payload_hash": "sha256:67d455750419881ca3f2c23c4f10b9fdbd36f0cb7a1bac1bac5f15eaae3e2ef9",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

@@ -1,0 +1,10 @@
+novafabric_spec_version: "1"
+asset_type: prompt
+name: fraud-detection-prompt
+version: 1.0.0
+status: development
+description: "System prompt for fraud detection"
+tags:
+  domain: fraud
+spec:
+  template: "Analyze the following transaction for fraud indicators."

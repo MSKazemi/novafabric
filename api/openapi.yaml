@@ -1,0 +1,1205 @@
+openapi: "3.1.0"
+
+info:
+  title: NovaFabric Multi-User REST API
+  version: "0.7.0"
+  description: |
+    Multi-user REST API for the NovaFabric AI Asset Registry.
+    URL prefix: /v0/
+    Authentication: Bearer token via Authorization header (OIDC) or open when OIDC disabled.
+    All list endpoints use cursor-based pagination (limit + next_cursor).
+    All error responses use the standard error envelope.
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: /v0
+    description: NovaFabric server (versioned)
+
+# --------------------------------------------------------------------------- #
+# Reusable components
+# --------------------------------------------------------------------------- #
+components:
+  schemas:
+    # -------- error envelope --------
+    ErrorDetail:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          example: not_found
+        message:
+          type: string
+          example: Asset 'my-agent@v1.0' not found.
+        details:
+          type: object
+          additionalProperties: true
+
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorDetail"
+
+    # -------- pagination --------
+    PaginationMeta:
+      type: object
+      required: [total]
+      properties:
+        next_cursor:
+          type: string
+          nullable: true
+          description: Opaque cursor for the next page; null when no more pages.
+        total:
+          type: integer
+          description: Total count of matching items (without pagination applied).
+
+    # -------- assets --------
+    AssetStatus:
+      type: string
+      enum: [development, staging, production, archived]
+
+    AssetType:
+      type: string
+      enum: [model, agent, prompt, tool, dataset, evaluation, deployment]
+
+    AssetSummary:
+      type: object
+      required: [id, name, version, asset_type, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        version:
+          type: string
+          description: SemVer string.
+        asset_type:
+          $ref: "#/components/schemas/AssetType"
+        status:
+          $ref: "#/components/schemas/AssetStatus"
+        created_at:
+          type: string
+          format: date-time
+        promoted_at:
+          type: string
+          format: date-time
+          nullable: true
+        git_commit_sha:
+          type: string
+          nullable: true
+
+    AssetDetail:
+      allOf:
+        - $ref: "#/components/schemas/AssetSummary"
+        - type: object
+          properties:
+            spec_json:
+              type: string
+              description: Raw JSON-serialized asset spec.
+            promoted_by:
+              type: string
+              nullable: true
+            forced_promotion:
+              type: boolean
+
+    AssetCreateRequest:
+      type: object
+      required: [spec_yaml]
+      properties:
+        spec_yaml:
+          type: string
+          description: Full YAML-formatted asset spec (novafabric_spec_version required).
+
+    PromoteRequest:
+      type: object
+      required: [to_status]
+      properties:
+        to_status:
+          $ref: "#/components/schemas/AssetStatus"
+        actor:
+          type: string
+          default: api
+        force:
+          type: boolean
+          default: false
+          description: Skip the evaluation gate for agents (recorded as forced_promotion).
+
+    AssetListResponse:
+      allOf:
+        - $ref: "#/components/schemas/PaginationMeta"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/AssetSummary"
+
+    # -------- capsules --------
+    CapsuleSummary:
+      type: object
+      required: [run_id, status, created_at]
+      properties:
+        run_id:
+          type: string
+        status:
+          type: string
+          enum: [success, failure, unknown]
+        created_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        duration_ms:
+          type: integer
+          nullable: true
+        command:
+          type: array
+          items:
+            type: string
+          nullable: true
+        exit_code:
+          type: integer
+          nullable: true
+
+    CapsuleDetail:
+      allOf:
+        - $ref: "#/components/schemas/CapsuleSummary"
+        - type: object
+          properties:
+            schema_version:
+              type: string
+            novafabric_version:
+              type: string
+            model_call_count:
+              type: integer
+            tool_call_count:
+              type: integer
+            mutating_tool_count:
+              type: integer
+            capture_mode:
+              type: string
+
+    CapsuleListResponse:
+      allOf:
+        - $ref: "#/components/schemas/PaginationMeta"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/CapsuleSummary"
+
+    # -------- lineage --------
+    LineageNode:
+      type: object
+      required: [node_id, kind, ref]
+      properties:
+        node_id:
+          type: string
+        kind:
+          type: string
+          enum: [run, asset, artifact, model, tool]
+        ref:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+
+    LineageNodeListResponse:
+      allOf:
+        - $ref: "#/components/schemas/PaginationMeta"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/LineageNode"
+
+    LineageQueryResponse:
+      type: object
+      required: [ref, depth, nodes]
+      properties:
+        ref:
+          type: string
+        kind:
+          type: string
+          nullable: true
+        depth:
+          type: integer
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/LineageNode"
+
+    ReplayChainResponse:
+      type: object
+      required: [run_id, chain]
+      properties:
+        run_id:
+          type: string
+        chain:
+          type: array
+          items:
+            $ref: "#/components/schemas/LineageNode"
+
+    # -------- replays --------
+    ReplayMode:
+      type: string
+      enum: [forensic, mocked, shadow, dry_run]
+
+    ReplayScheduleRequest:
+      type: object
+      required: [run_id, mode]
+      properties:
+        run_id:
+          type: string
+          description: The capsule run_id to replay.
+        mode:
+          $ref: "#/components/schemas/ReplayMode"
+
+    ReplayStatus:
+      type: string
+      enum: [pending, running, completed, failed, cancelled]
+
+    ReplaySummary:
+      type: object
+      required: [replay_id, run_id, mode, status, created_at]
+      properties:
+        replay_id:
+          type: string
+        run_id:
+          type: string
+        mode:
+          $ref: "#/components/schemas/ReplayMode"
+        status:
+          $ref: "#/components/schemas/ReplayStatus"
+        created_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        error:
+          type: string
+          nullable: true
+
+    # -------- evidence --------
+    EvidenceExportRequest:
+      type: object
+      required: [run_id]
+      properties:
+        run_id:
+          type: string
+          description: The capsule run_id to export as evidence.
+        output_path:
+          type: string
+          nullable: true
+          description: Optional override for the output ZIP path (server-side path).
+        allow_unsafe_skips:
+          type: boolean
+          default: false
+
+    BundleSummary:
+      type: object
+      required: [bundle_id, run_id, created_at, size_bytes]
+      properties:
+        bundle_id:
+          type: string
+        run_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        size_bytes:
+          type: integer
+        bundle_path:
+          type: string
+          nullable: true
+
+  parameters:
+    LimitParam:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        default: 50
+        minimum: 1
+        maximum: 500
+      description: Maximum number of items to return (default 50, max 500).
+
+    CursorParam:
+      name: cursor
+      in: query
+      schema:
+        type: string
+      required: false
+      description: Opaque pagination cursor returned from a previous list call.
+
+  responses:
+    BadRequest:
+      description: Invalid request parameters or body.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    NotFound:
+      description: The requested resource was not found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Conflict:
+      description: Resource conflict (e.g. duplicate asset or invalid lifecycle transition).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    UnprocessableEntity:
+      description: Spec validation error.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    PreconditionFailed:
+      description: Promotion gate blocked (agent missing passing eval).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    InternalError:
+      description: Unexpected server error.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+
+# --------------------------------------------------------------------------- #
+# Paths
+# --------------------------------------------------------------------------- #
+paths:
+
+  # ======================== ASSETS ========================
+
+  /assets:
+    get:
+      operationId: listAssets
+      summary: List registered assets
+      tags: [assets]
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/CursorParam"
+        - name: asset_type
+          in: query
+          schema:
+            $ref: "#/components/schemas/AssetType"
+          required: false
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/AssetStatus"
+          required: false
+      responses:
+        "200":
+          description: Paginated list of assets.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    post:
+      operationId: createAsset
+      summary: Register a new asset from a YAML spec
+      tags: [assets]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssetCreateRequest"
+      responses:
+        "201":
+          description: Asset registered successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /assets/{id}:
+    get:
+      operationId: getAsset
+      summary: Get a single asset by ID
+      tags: [assets]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Asset UUID (from registration).
+      responses:
+        "200":
+          description: Asset detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /assets/{id}/promote:
+    put:
+      operationId: promoteAsset
+      summary: Promote an asset to a new lifecycle status
+      tags: [assets]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PromoteRequest"
+      responses:
+        "200":
+          description: Asset promoted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ======================== CAPSULES ========================
+
+  /capsules:
+    get:
+      operationId: listCapsules
+      summary: List run capsules
+      tags: [capsules]
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/CursorParam"
+      responses:
+        "200":
+          description: Paginated list of capsule summaries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapsuleListResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    post:
+      operationId: uploadCapsule
+      summary: Upload a capsule (multipart/form-data ZIP)
+      tags: [capsules]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [capsule]
+              properties:
+                capsule:
+                  type: string
+                  format: binary
+                  description: The capsule ZIP archive.
+      responses:
+        "201":
+          description: Capsule uploaded and unpacked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapsuleSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /capsules/{run_id}:
+    get:
+      operationId: getCapsule
+      summary: Get capsule detail by run ID
+      tags: [capsules]
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Capsule detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapsuleDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ======================== LINEAGE ========================
+
+  /lineage/nodes:
+    get:
+      operationId: listLineageNodes
+      summary: List lineage nodes
+      tags: [lineage]
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/CursorParam"
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [run, asset, artifact, model, tool]
+      responses:
+        "200":
+          description: Paginated list of lineage nodes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LineageNodeListResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /lineage/blast-radius:
+    get:
+      operationId: lineageBlastRadius
+      summary: Compute blast radius (downstream dependents) from a node reference
+      tags: [lineage]
+      parameters:
+        - name: ref
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Node reference string (run_id, asset ref, artifact ref).
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Node kind filter (e.g. run, asset).
+        - name: depth
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 5
+            minimum: 1
+            maximum: 20
+      responses:
+        "200":
+          description: Blast-radius nodes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LineageQueryResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /lineage/provenance:
+    get:
+      operationId: lineageProvenance
+      summary: Compute provenance (upstream ancestors) from a node reference
+      tags: [lineage]
+      parameters:
+        - name: ref
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: depth
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 5
+            minimum: 1
+            maximum: 20
+      responses:
+        "200":
+          description: Provenance nodes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LineageQueryResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /lineage/replay-chain:
+    get:
+      operationId: lineageReplayChain
+      summary: Get the replay chain for a run
+      tags: [lineage]
+      parameters:
+        - name: run_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Replay chain nodes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReplayChainResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ======================== REPLAYS ========================
+
+  /replays:
+    post:
+      operationId: scheduleReplay
+      summary: Schedule a replay job
+      tags: [replays]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReplayScheduleRequest"
+      responses:
+        "202":
+          description: Replay job accepted; check status via GET /replays/{replay_id}.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReplaySummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /replays/{replay_id}:
+    get:
+      operationId: getReplay
+      summary: Get replay job status
+      tags: [replays]
+      parameters:
+        - name: replay_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Replay status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReplaySummary"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    delete:
+      operationId: cancelReplay
+      summary: Cancel a pending or running replay job
+      tags: [replays]
+      parameters:
+        - name: replay_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Replay cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReplaySummary"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Replay already completed or cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /replays/{replay_id}/events:
+    get:
+      operationId: replayEvents
+      summary: Stream replay progress as Server-Sent Events
+      tags: [replays]
+      parameters:
+        - name: replay_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: |
+            SSE stream. Each event is a JSON object:
+            `{"event": "progress|completed|error", "data": {...}}`.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ======================== EVIDENCE ========================
+
+  /evidence:
+    post:
+      operationId: exportEvidence
+      summary: Build an evidence bundle ZIP from a capsule
+      tags: [evidence]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvidenceExportRequest"
+      responses:
+        "202":
+          description: Evidence export accepted; poll GET /evidence/{bundle_id}.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BundleSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /evidence/{bundle_id}:
+    get:
+      operationId: getEvidenceBundle
+      summary: Get evidence bundle metadata
+      tags: [evidence]
+      parameters:
+        - name: bundle_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Bundle metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BundleSummary"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /evidence/{bundle_id}/download:
+    get:
+      operationId: downloadEvidenceBundle
+      summary: Download an evidence bundle ZIP
+      tags: [evidence]
+      parameters:
+        - name: bundle_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ZIP file binary download.
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # --------------------------------------------------------------------------- #
+  # Auth — Device Authorization Grant (RFC 8628)
+  # --------------------------------------------------------------------------- #
+
+  /auth/device/code:
+    post:
+      operationId: issueDeviceCode
+      summary: Issue a device code (Device Authorization Grant)
+      tags: [auth]
+      description: |
+        Initiates the Device Authorization Grant flow (RFC 8628).
+        Returns a device_code and user_code; the client polls /auth/token
+        until the user approves at the verification_uri.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                server_url:
+                  type: string
+                  example: "http://localhost:7433"
+      responses:
+        "200":
+          description: Device code issued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [device_code, user_code, verification_uri, expires_in, interval]
+                properties:
+                  device_code:
+                    type: string
+                  user_code:
+                    type: string
+                    example: "ABCD-1234"
+                  verification_uri:
+                    type: string
+                  expires_in:
+                    type: integer
+                    description: Seconds until the device code expires.
+                  interval:
+                    type: integer
+                    description: Minimum polling interval in seconds.
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /auth/token:
+    post:
+      operationId: pollDeviceToken
+      summary: Poll for a token after device code approval
+      tags: [auth]
+      description: |
+        Client polls this endpoint until the user approves the device code.
+        Returns the access token on approval, or a pending/expired error.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device_code]
+              properties:
+                device_code:
+                  type: string
+      responses:
+        "200":
+          description: Access token issued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [access_token, token_type]
+                properties:
+                  access_token:
+                    type: string
+                  token_type:
+                    type: string
+                    example: "bearer"
+        "400":
+          description: Pending approval or expired device code.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /auth/approve:
+    post:
+      operationId: approveDeviceCode
+      summary: Approve a pending device code (admin / testing)
+      tags: [auth]
+      description: |
+        Admin endpoint that approves a pending device code, associating a
+        subject and roles with it. Used for testing or headless admin flows.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_code, subject]
+              properties:
+                user_code:
+                  type: string
+                subject:
+                  type: string
+                  example: "user@example.com"
+                roles:
+                  type: array
+                  items:
+                    type: string
+                  example: ["reader"]
+      responses:
+        "200":
+          description: Device code approved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # --------------------------------------------------------------------------- #
+  # Admin
+  # --------------------------------------------------------------------------- #
+
+  /admin/flush-jwks:
+    post:
+      operationId: flushJwksCache
+      summary: Flush the in-memory JWKS cache
+      tags: [admin]
+      description: |
+        Invalidates the cached JWKS so the next request re-fetches from the
+        OIDC issuer. Requires admin role. Use after rotating signing keys at
+        the identity provider.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Cache flushed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # --------------------------------------------------------------------------- #
+  # Lineage (Phase 6)
+  # --------------------------------------------------------------------------- #
+
+  /lineage/shard-local-query:
+    post:
+      operationId: shardLocalQuery
+      summary: Execute a shard-local lineage query
+      description: >
+        Accepts an authenticated query from the federation coordinator.
+        Returns per-site result rows only — never raw edge tuples (FR-10 sovereignty).
+      tags: [lineage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query_type, root_run_id]
+              properties:
+                query_type:
+                  type: string
+                  enum: [provenance, blast_radius, replay_chain]
+                root_run_id:
+                  type: string
+                  description: ULID run identifier
+                max_depth:
+                  type: integer
+                  default: 5
+                site_id:
+                  type: string
+                  description: Requesting coordinator site_id (audit only)
+      responses:
+        "200":
+          description: Shard-local query result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [site_id, rows, partial]
+                properties:
+                  site_id:
+                    type: string
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      required: [node_id, kind, ref]
+                      properties:
+                        node_id: {type: string}
+                        kind: {type: string}
+                        ref: {type: string}
+                  partial:
+                    type: boolean
+        "401": {description: Unauthorized}
+        "422": {description: Validation error}
+
+  # --------------------------------------------------------------------------- #
+  # Federation (Phase 6 C-1..C-6)
+  # --------------------------------------------------------------------------- #
+
+  /federation/query:
+    post:
+      operationId: federationQuery
+      summary: Fan-out cross-site lineage query
+      description: >
+        Stateless federation coordinator: fans out to all participating sites,
+        deduplicates on node_id (ULID), returns merged result set.
+        Marks partial=true if any site is offline.
+      tags: [federation]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query_type, root_run_id, sites]
+              properties:
+                query_type:
+                  type: string
+                  enum: [provenance, blast_radius, replay_chain]
+                root_run_id:
+                  type: string
+                max_depth:
+                  type: integer
+                  default: 5
+                sites:
+                  type: array
+                  items:
+                    type: string
+                    format: uri
+                  description: Shard-local-query base URLs
+      responses:
+        "200":
+          description: Federated query result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rows, partial, site_count, dedup_count]
+                properties:
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      required: [node_id, kind, ref]
+                      properties:
+                        node_id: {type: string}
+                        kind: {type: string}
+                        ref: {type: string}
+                  partial:
+                    type: boolean
+                  site_count:
+                    type: integer
+                  dedup_count:
+                    type: integer
+        "401": {description: Unauthorized}
+
+  /federation/summary:
+    get:
+      operationId: getFederationSummary
+      summary: Cross-site reference summary
+      description: >
+        Returns rolled-up per-site cross-site reference counts by
+        (edge_type, target_site), tagged with source=summary and refresh timestamp.
+      tags: [federation]
+      responses:
+        "200":
+          description: Federation summary
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries, source, refreshed_at]
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      required: [source_site_id, target_site_id, edge_type, count]
+                      properties:
+                        source_site_id: {type: string}
+                        target_site_id: {type: string}
+                        edge_type: {type: string}
+                        count: {type: integer}
+                  source:
+                    type: string
+                    enum: [summary]
+                  refreshed_at:
+                    type: string
+                    format: date-time
+        "401": {description: Unauthorized}
+
+tags:
+  - name: federation
+    description: Cross-site lineage federation endpoints (Phase 6 C-1..C-6)

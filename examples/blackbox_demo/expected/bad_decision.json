@@ -1,0 +1,6 @@
+{
+  "mode": "bad",
+  "action": "disable_rate_limiting",
+  "reason": "Disabling rate limiting increases throughput for high-volume transactions.",
+  "value": false
+}

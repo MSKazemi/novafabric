@@ -1,0 +1,20 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "6HKPB6M13BVAC6BWCACJRYZJKF",
+  "global_run_id": "4VXD8VMF733WBWS7269NCVWASS",
+  "run_id": "1K9QKH20898S1GV678JKZ5BK9Y",
+  "parent_run_id": "5XR1NV3ECBG8XND4023M2994ND",
+  "event_type": "run.end",
+  "trace_id": "f336249aebbcab25febede721324d955",
+  "span_id": "84b09386f3569ba4",
+  "agent_id": "openai-agents-sdk",
+  "cluster_id": "hpc-cluster-01",
+  "tenant_id": "tenant-platform-eng",
+  "started_at": "2026-05-13T01:08:00.129000+00:00",
+  "emitter_node_id": "worker-0001",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": "TSGuOB+CXG6PBZxpSipJmMyyWlEoaFQFmDwwAjBa2cWioRgh95RGi+SjsQ18F3eN6A2QxoIvpt/PitUK3ai+kA==",
+  "nova.batch.signing_key_id": "20654066-df2c-4cab-8f09-7930ec7e5d5b"
+}

@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.dev/schemas/tool-permission-event.schema.json",
+  "title": "ToolPermissionEvent",
+  "description": "Compliance evidence record of a tool permission decision (cap-004). Included in DSSE signing scope.",
+  "type": "object",
+  "required": [
+    "entity_type",
+    "capsule_id",
+    "event_id",
+    "tool_name",
+    "tool_id",
+    "policy_id",
+    "permission_level",
+    "decision",
+    "authorising_identity",
+    "human_approval_required",
+    "decision_latency_ms",
+    "capsule_timestamp_utc"
+  ],
+  "properties": {
+    "entity_type": {
+      "type": "string",
+      "const": "tool_permission_event"
+    },
+    "capsule_id": {
+      "type": "string",
+      "description": "Run capsule ULID that owns this event"
+    },
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Stable UUID for this decision instance"
+    },
+    "tool_name": {
+      "type": "string",
+      "description": "Human-readable tool name"
+    },
+    "tool_id": {
+      "type": "string",
+      "description": "Stable tool identifier (URI or UUID)"
+    },
+    "policy_id": {
+      "type": "string",
+      "description": "Policy document that produced the decision"
+    },
+    "permission_level": {
+      "type": "string",
+      "enum": ["read", "write", "execute", "network", "filesystem", "escalated"],
+      "description": "Level of access requested"
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["allowed", "denied", "escalated_to_human"],
+      "description": "Outcome of the permission decision"
+    },
+    "authorising_identity": {
+      "type": "string",
+      "description": "Principal that the policy engine resolved as the authorising identity"
+    },
+    "human_approval_required": {
+      "type": "boolean",
+      "description": "True if the policy required a human-in-the-loop approval"
+    },
+    "human_approval_obtained": {
+      "type": ["boolean", "null"],
+      "description": "True if human approval was obtained; null if not required"
+    },
+    "approval_principal": {
+      "type": ["string", "null"],
+      "description": "Identity of the human approver; null if not required"
+    },
+    "decision_latency_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Wall-clock latency of the policy decision in milliseconds"
+    },
+    "capsule_timestamp_utc": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of the decision (UTC)"
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,34 @@
+assets_ref: assets.jsonl
+capture_mode: cli-wrapper
+command:
+- python
+- examples/minimal-agent-run/agent.py
+created_at: '2026-05-08T00:02:46.970466Z'
+duration_ms: 324
+environment_ref: env.lock
+exit_code: 0
+finished_at: '2026-05-08T00:02:47.295409Z'
+host:
+  arch: x86_64
+  cpu_count: 20
+  gpu: []
+  hostname_redacted: true
+  memory_bytes: 33281683456
+  os: linux
+  python: 3.12.3
+inputs: []
+model_call_count: 0
+model_calls_ref: model-calls.jsonl
+mutating_tool_count: 0
+novafabric_version: 0.2.0
+outputs: []
+redaction_proof_ref: redaction-proof.json
+replay_policy_ref: replay.yaml
+run_id: 01KR2E9P1TRANFT6EP0JAMTTQM
+schema_version: 0.1.0
+status: success
+tool_call_count: 0
+tool_calls_ref: tool-calls.jsonl
+trace_ref: trace.jsonl
+trace_root_span_id: 657bff2c61ddad1c
+working_directory: ~/projects/novafabric

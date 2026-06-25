@@ -1,0 +1,1 @@
+{"span_id":"657bff2c61ddad1c","parent_span_id":null,"name":"novafabric.capture","started_at":"2026-05-08T00:02:46.970466Z","finished_at":"2026-05-08T00:02:47.295409Z","duration_ms":324,"status":"ok","attributes":{"command":[".venv/bin/python","examples/minimal-agent-run/agent.py"],"exit_code":0}}

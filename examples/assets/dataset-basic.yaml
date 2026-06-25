@@ -1,0 +1,11 @@
+novafabric_spec_version: "1"
+asset_type: dataset
+name: transactions-cleaned
+version: 2.0.0
+status: production
+description: "Cleaned and deduplicated transactions dataset for fraud modeling"
+tags:
+  team: data-eng
+  sensitivity: pii-free
+spec:
+  path: s3://data-lake/transactions/cleaned/v2.0.0

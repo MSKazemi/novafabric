@@ -1,0 +1,28 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "0RVHFPRE9W5D05XMQ8NG2GMZ40",
+  "global_run_id": "5070eb05-b47d-7ae2-bb27-37d86263cda0",
+  "run_id": "292PSW3GFPGK3XA3M0H8YBHVQR",
+  "parent_run_id": "01NFSQM0WNRB0MPM8BFR424361",
+  "event_type": "model_call",
+  "trace_id": "2d872a02853c5525c483255c6e154730",
+  "span_id": "a448a7d183a54347",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": "slurm-train-v100",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T17:39:00.376000+00:00",
+  "emitter_node_id": "head-node",
+  "payload": {
+    "model": "meta-llama/Llama-3.1-70B-Instruct",
+    "system": "meta",
+    "usage": {
+      "input_tokens": 2248,
+      "output_tokens": 721
+    },
+    "stop_reason": "tool_use"
+  },
+  "payload_hash": "sha256:8a0270ccb827256b8221bc19c12a00c95458b4801d034552fa28f5daa7606173",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

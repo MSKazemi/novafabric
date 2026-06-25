@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/promote_approval_v1.json",
+  "title": "PromoteApproval",
+  "description": "Predicate for a capsule-level promotion approval (checker step).",
+  "type": "object",
+  "required": [
+    "role",
+    "proposal_digest",
+    "decision",
+    "approver_subject",
+    "timestamp"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "role": {
+      "type": "string",
+      "const": "approver"
+    },
+    "proposal_digest": {
+      "type": "object",
+      "required": ["sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "sha256": {
+          "type": "string"
+        }
+      }
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["approved", "rejected"]
+    },
+    "approver_subject": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "justification": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

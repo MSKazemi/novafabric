@@ -1,0 +1,88 @@
+id: gdpr-ai-v1
+name: GDPR — AI System Compliance
+framework: GDPR
+version: "2016/679"
+controls:
+  - id: GDPR-ART5-DATA-MIN
+    title: Data minimisation principle (Art. 5(1)(c))
+    description: >
+      Personal data shall be adequate, relevant and limited to what is
+      necessary in relation to the purposes for which they are processed
+      (data minimisation).
+    evidence_requirements:
+      - evidence_type: pii_scan
+        required: true
+        description: PII scan results demonstrating personal data detection and minimisation
+
+  - id: GDPR-ART5-ACCURACY
+    title: Accuracy of personal data (Art. 5(1)(d))
+    description: >
+      Personal data shall be accurate and, where necessary, kept up to date.
+      Every reasonable step must be taken to ensure that inaccurate personal
+      data are erased or rectified without delay.
+    evidence_requirements:
+      - evidence_type: pii_scan
+        required: true
+        description: PII scan audit trail documenting personal data locations and states
+
+  - id: GDPR-ART17-ERASURE
+    title: Right to erasure ("right to be forgotten") (Art. 17)
+    description: >
+      The data subject shall have the right to obtain from the controller the
+      erasure of personal data concerning him or her without undue delay.
+    evidence_requirements:
+      - evidence_type: pii_scan
+        required: true
+        description: PII erasure proof records (redaction-proof.json) per data subject
+
+  - id: GDPR-ART22-AUTOMATED-DECISIONS
+    title: Automated individual decision-making (Art. 22)
+    description: >
+      The data subject shall have the right not to be subject to a decision
+      based solely on automated processing, including profiling, which produces
+      legal or significant effects.
+    evidence_requirements:
+      - evidence_type: policy_events
+        required: true
+        description: Policy decision events showing human oversight of automated AI decisions
+      - evidence_type: tool_permissions
+        required: true
+        description: Tool permission events documenting human review of AI-driven actions
+
+  - id: GDPR-ART25-PRIVACY-BY-DESIGN
+    title: Data protection by design and by default (Art. 25)
+    description: >
+      Taking into account the state of the art, the cost of implementation and
+      the nature, scope, context and purposes of processing, the controller
+      shall implement appropriate technical and organisational measures.
+    evidence_requirements:
+      - evidence_type: pii_scan
+        required: true
+        description: Systematic PII detection embedded in AI system operation
+      - evidence_type: seal_signature
+        required: false
+        description: Cryptographic seals demonstrating integrity by design
+
+  - id: GDPR-ART32-SECURITY
+    title: Security of processing (Art. 32)
+    description: >
+      The controller and the processor shall implement appropriate technical
+      and organisational measures to ensure a level of security appropriate
+      to the risk.
+    evidence_requirements:
+      - evidence_type: seal_signature
+        required: true
+        description: Cryptographically sealed evidence bundles ensuring processing security
+
+  - id: GDPR-ART30-RECORDS
+    title: Records of processing activities (Art. 30)
+    description: >
+      Each controller and, where applicable, the controller's representative,
+      shall maintain a record of processing activities under its responsibility.
+    evidence_requirements:
+      - evidence_type: model_calls
+        required: true
+        description: Run capsules providing processing activity records
+      - evidence_type: lineage
+        required: false
+        description: Lineage records for data processing chain documentation

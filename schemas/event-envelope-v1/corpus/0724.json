@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "2G1BSQGMFBYZZRA53BM3NRQKMM",
+  "global_run_id": "3PSFRXJNB2GWH5B8YN79F037H5",
+  "run_id": "65HPGJFP14AEW3TSG3ST0Z013Z",
+  "parent_run_id": "41YSWX05P62MPQ1S5TE2NPBTA4",
+  "event_type": "tool_call",
+  "trace_id": "172afa9d7c008f6b0cc67bab3b70a405",
+  "span_id": "667aba4977bd4e44",
+  "agent_id": "langchain-agent",
+  "cluster_id": "slurm-train-v100",
+  "tenant_id": "tenant-ml-ops",
+  "started_at": "2026-05-12T22:04:00.619000+00:00",
+  "emitter_node_id": "node01.cluster.local",
+  "payload": {
+    "tool_name": "database_query",
+    "tool_call_id": "tc_d5172c801c42c91c",
+    "arguments": {
+      "input": "example input for database_query"
+    },
+    "duration_ms": 1584
+  },
+  "payload_hash": "sha256:c81475ce702e116c8fce934ab102daffe816a6d8990b32e96a0ab0c0886b8449",
+  "nova.batch.signature": "MX7VrBd5Z5Xafth22GvAwA+Hd3ybXLOtKCJ9uw+UXB7UKvIsWF4BGoL7CReaBBduata42bmYMsE+iYoB0S69vQ==",
+  "nova.batch.signing_key_id": "75817a51-813c-468d-ae25-a7dfac63d1e0"
+}

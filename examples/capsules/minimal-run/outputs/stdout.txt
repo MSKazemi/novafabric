@@ -1,0 +1,3 @@
+Running minimal agent…
+Agent returned: done
+Capsule written to: /home/mohsen/scratch/novafabric/.claude/worktrees/feat+v0.2-capture/examples/minimal-agent-run/capsule

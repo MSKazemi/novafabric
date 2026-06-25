@@ -1,0 +1,28 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "2E1JENT839A3TNNNABK7VBWPKE",
+  "global_run_id": "22d1e0fc-e4a8-7aa4-b35d-cd58415cdf43",
+  "run_id": "2HEMACRCST9TFJE6R2EBEW7YPT",
+  "parent_run_id": "1E1FXYWF32ZVXD4DJ4X5NXMWZ1",
+  "event_type": "model_call",
+  "trace_id": "d64d8d84437d21cf8dcbe8cff4f0bdfd",
+  "span_id": "da3cbab19478b38b",
+  "agent_id": "openai-agents-sdk",
+  "cluster_id": "slurm-train-v100",
+  "tenant_id": "tenant-acme",
+  "started_at": "2026-05-12T18:39:00.642000+00:00",
+  "emitter_node_id": "worker-0001",
+  "payload": {
+    "model": "claude-3-opus-20240229",
+    "system": "anthropic",
+    "usage": {
+      "input_tokens": 1600,
+      "output_tokens": 193
+    },
+    "stop_reason": "stop"
+  },
+  "payload_hash": "sha256:1179c70862dc0e85eec30356e17d45680a41b7f31e96052dcc0accdb65449bf4",
+  "nova.batch.signature": "XIgsti17kRUq7IzsNGjdhCdBpIk8rgk5zIr18mfzwqA05mq1R7lJ65bnBY/CqOcu6nPh6iK46OJbdgHIAilaCA==",
+  "nova.batch.signing_key_id": "9326d5b3-cd8e-4ee0-922a-446cc4bca6a4"
+}

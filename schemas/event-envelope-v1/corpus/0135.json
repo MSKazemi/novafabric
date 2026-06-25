@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "3ZVC6GY0J7582TNVN6V6D0XK92",
+  "global_run_id": "783cea1f-c344-799c-b6d7-264d5df531da",
+  "run_id": "0PK1RJ7RH55T2Y7VPD0GENA83N",
+  "parent_run_id": null,
+  "event_type": "model_call",
+  "trace_id": "62315e4e327e876e0d344904615587fd",
+  "span_id": "79342e434c1735cc",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": null,
+  "tenant_id": "tenant-ml-ops",
+  "started_at": "2026-05-12T12:15:00.513000+00:00",
+  "payload": {
+    "model": "claude-3-opus-20240229",
+    "system": "meta",
+    "usage": {
+      "input_tokens": 1887,
+      "output_tokens": 593
+    },
+    "stop_reason": "stop"
+  },
+  "payload_hash": "sha256:1d035634fec17a6c4170402292a175d9e7834851aeb560d1fb1f340e9a805d8b",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "335836SV5SSS82ZT6DJDYYZMQ3",
+  "global_run_id": "399CWX04ZK60YZJ0XFS2C8VVBP",
+  "run_id": "59PX0SJCQXPQ3F2M8QYVZ2TXYQ",
+  "parent_run_id": null,
+  "event_type": "tool_call",
+  "trace_id": "8f1dc6d8c28ed0cf9fcdd14236bb322e",
+  "span_id": "26c18981b023ff19",
+  "agent_id": "custom-agent-v1",
+  "cluster_id": "slurm-train-v100",
+  "tenant_id": "tenant-ml-ops",
+  "started_at": "2026-05-13T02:40:00.249000+00:00",
+  "emitter_node_id": "worker-0001",
+  "payload": {
+    "tool_name": "file_reader",
+    "tool_call_id": "tc_919ce91287a25fe0",
+    "arguments": {
+      "input": "example input for file_reader"
+    },
+    "duration_ms": 2066
+  },
+  "payload_hash": "sha256:0788312599bb6394e8327e3b5a048d9dd990d600f3adceb45e01574542e0268b",
+  "nova.batch.signature": "4OCV9kOsOHyLsCSDKCDPIBMsV6vfxwEYuBBnhQOdUeh5edzz9CG/Ip4BrfKw2gUENjBBQyfskocvD1NqJNUUGg==",
+  "nova.batch.signing_key_id": "68f2b66c-eacf-4c91-8c3b-9ad9c3d3639b"
+}

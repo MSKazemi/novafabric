@@ -1,0 +1,99 @@
+name: MetadataStore Security Gate
+
+on:
+  push:
+    paths:
+      - "src/novafabric/metadata_store/**"
+      - "tests/metadata_store/**"
+      - "tests/fixtures/broken_session_set.py"
+  pull_request:
+    paths:
+      - "src/novafabric/metadata_store/**"
+      - "tests/metadata_store/**"
+      - "tests/fixtures/broken_session_set.py"
+
+jobs:
+  security-gate:
+    name: MetadataStore Security Gate
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_USER: postgres
+          POSTGRES_DB: novafabric_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Ruff lint
+        run: uv run ruff check src/ tests/
+
+      - name: Mypy type check
+        run: uv run mypy src/novafabric/metadata_store/ --exclude migrations
+
+      - name: FR-07 grep — no session-scoped SET app. in metadata_store
+        run: |
+          violations=$(grep -rn "SET " src/novafabric/metadata_store/ | grep -v "SET LOCAL" | grep "app\." || true)
+          if [ -n "$violations" ]; then
+            echo "FAIL: Session-scoped SET app. found — use SET LOCAL"
+            echo "$violations"
+            exit 1
+          fi
+          echo "PASS: No session-scoped SET app. found"
+
+      - name: FR-13 grep — RLS primitives confined to metadata_store
+        run: |
+          violations=$(grep -rnE 'current_setting\(.*app\.|FORCE\s+ROW\s+LEVEL' \
+            --include='*.py' src/ tests/ \
+            | grep -v 'src/novafabric/metadata_store/' \
+            | grep -v 'tests/metadata_store/' \
+            | grep -v 'tests/fixtures/broken_session_set.py' || true)
+          if [ -n "$violations" ]; then
+            echo "FAIL: RLS primitives found outside allowed paths:"
+            echo "$violations"
+            exit 1
+          fi
+          echo "PASS: RLS primitives confined to allowed paths"
+
+      - name: Run MetadataStore tests with coverage
+        run: |
+          uv run pytest tests/metadata_store/ -v --tb=short \
+            --cov=src/novafabric/metadata_store \
+            --cov-report=term-missing \
+            --cov-fail-under=85
+        env:
+          NOVAFABRIC_METADATA_BACKEND: sqlite
+
+      - name: FR-08 mutmut — SET LOCAL invariant kill-rate gate
+        run: |
+          # Curated mutation target: postgres.py SET LOCAL line only.
+          # Runner uses testcontainers (Docker required on CI host).
+          uv run mutmut run \
+            --paths-to-mutate src/novafabric/metadata_store/postgres.py \
+            --runner "uv run pytest tests/metadata_store/test_cross_tenant_isolation_pgbouncer.py tests/metadata_store/test_set_local_invariant.py -x --tb=short -q"
+          survived=$(uv run mutmut results 2>/dev/null | grep -c "survived" || true)
+          if [ "${survived:-0}" -gt 0 ]; then
+            echo "FAIL: mutant(s) survived — FR-08 SET LOCAL kill rate < 100%"
+            uv run mutmut results
+            exit 1
+          fi
+          echo "PASS: All SET LOCAL mutants killed — GDPR Article 32 invariant confirmed"
+
+      - name: Benchmark smoke
+        run: bash bench/rls_partition_pruning/ci_smoke.sh

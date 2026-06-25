@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: novafabric-gateway-collector
+  namespace: novafabric
+  labels:
+    app.kubernetes.io/name: novafabric
+    app.kubernetes.io/component: gateway-collector
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: novafabric-gateway-collector
+  template:
+    metadata:
+      labels:
+        app: novafabric-gateway-collector
+        app.kubernetes.io/name: novafabric
+        app.kubernetes.io/component: gateway-collector
+    spec:
+      containers:
+        - name: collector
+          image: ghcr.io/novafabric/novafabric-collector:latest
+          ports:
+            - name: grpc
+              containerPort: 4317
+              protocol: TCP
+            - name: http
+              containerPort: 4318
+              protocol: TCP
+            - name: metrics
+              containerPort: 8888
+              protocol: TCP
+          env:
+            - name: NOVASEAL_KMS_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: novafabric-collector-secrets
+                  key: novaseal-kms-endpoint
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                secretKeyRef:
+                  name: novafabric-collector-secrets
+                  key: kafka-bootstrap-servers
+          volumeMounts:
+            - name: collector-config
+              mountPath: /etc/otelcol/collector.yaml
+              subPath: collector.yaml
+            - name: novaseal-mtls
+              mountPath: /etc/novaseal/tls
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: 8888
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: 8888
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+      volumes:
+        - name: collector-config
+          configMap:
+            name: novafabric-collector-config
+        - name: novaseal-mtls
+          secret:
+            secretName: novaseal-mtls-cert

@@ -1,0 +1,50 @@
+---
+import Layout from '../components/layout/Layout.astro';
+import ShowcaseBadge from '../components/layout/ShowcaseBadge.astro';
+import { SCHEMAS_BASE_URL } from '../lib/links';
+
+const schemas = [
+  { file: 'run-capsule.schema.json', desc: 'Capsule manifest — run_id, status, command, timing, artifact refs.' },
+  { file: 'model-call.schema.json', desc: 'LLM call record — provider, model, tokens, finish reason.' },
+  { file: 'tool-call.schema.json', desc: 'Tool invocation — transport (mcp / http_request), args, result, status.' },
+  { file: 'environment.schema.json', desc: 'env.lock — Python, packages, OS, CPU, memory, GPU, locale.' },
+  { file: 'lineage-edge.schema.json', desc: 'Causation edge — source/target nodes, edge_type, confidence.' },
+  { file: 'replay-policy.schema.json', desc: 'Replay constraints — mutation classification, resource handling.' },
+  { file: 'replay-result.schema.json', desc: 'Replay outcome — replay_id, mode, status, env_warnings.' },
+  { file: 'secret-redaction.schema.json', desc: 'redaction-proof — scan findings, strategy, chain hash.' },
+  { file: 'evidence-bundle.schema.json', desc: 'Bundle — in-toto predicates, vendored schemas, manifest hash.' },
+  { file: 'diff-report.schema.json', desc: 'Diff output — summary counts plus environment / model_calls / tool_calls / outputs sections.' },
+];
+---
+
+<Layout title="Spec — NovaFabric" description="JSON Schemas for every NovaFabric format.">
+  <article class="container-content py-16 md:py-24">
+    <header class="max-w-2xl">
+      <ShowcaseBadge variant="page" />
+      <h1 class="mt-4 text-4xl md:text-5xl font-medium tracking-tight text-balance">Spec</h1>
+      <p class="mt-4 text-lg text-[var(--color-text-muted)]">
+        Every NovaFabric format is a JSON Schema 2020-12 document. The
+        showcase site validates its fixture against the same schemas at build
+        time, so the demo can never silently drift from the real format.
+      </p>
+    </header>
+
+    <div class="mt-12 grid gap-3">
+      {schemas.map((s) => (
+        <a
+          href={`${SCHEMAS_BASE_URL}/${s.file}`}
+          rel="noopener"
+          class="flex items-start justify-between gap-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-5 hover:border-[var(--color-border-strong)] transition-colors"
+        >
+          <div>
+            <code class="font-mono text-sm text-[var(--color-text)]">{s.file}</code>
+            <p class="mt-1 text-sm text-[var(--color-text-muted)]">{s.desc}</p>
+          </div>
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true" class="text-[var(--color-text-faint)] shrink-0 mt-1">
+            <path d="M5 3H11V9M11 3L3 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+          </svg>
+        </a>
+      ))}
+    </div>
+  </article>
+</Layout>

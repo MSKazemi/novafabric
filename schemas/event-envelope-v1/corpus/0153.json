@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "1PC5ES7W2458Y7S7YBCXCFDGGJ",
+  "global_run_id": "027e62c2-1b58-761b-823a-6aa76da332a1",
+  "run_id": "2J24TG9GDX294900QEAXJHX47P",
+  "parent_run_id": "14DKMVC6ZRH8FHSFA2ZWX43RN0",
+  "event_type": "model_call",
+  "trace_id": "24c4514a5f9f66ed2adcceb2fbb993a4",
+  "span_id": "2216c5023e7fbdab",
+  "agent_id": "langchain-agent",
+  "cluster_id": null,
+  "tenant_id": "tenant-ml-ops",
+  "started_at": "2026-05-12T12:33:00.293000+00:00",
+  "payload": {
+    "model": "claude-3-5-sonnet-20241022",
+    "system": "mistral",
+    "usage": {
+      "input_tokens": 3011,
+      "output_tokens": 590
+    },
+    "stop_reason": "max_tokens"
+  },
+  "payload_hash": "sha256:a2877ea759dc6f63c866474949aa19fd20b80aa9e65589f31d009e40bb25a51b",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

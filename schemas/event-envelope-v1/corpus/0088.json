@@ -1,0 +1,26 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "02QPXEQ7Z19RV6D04VRXEGEPCX",
+  "global_run_id": "430XN57PA3QSHCNCJQPZ7M4PRP",
+  "run_id": "6ZSFXP9R96MY6096TN2E3YN0KA",
+  "parent_run_id": "26DJFK1F1A0PVCH3PKBZF01FWF",
+  "event_type": "tool_call",
+  "trace_id": "a09b7e424512d370ccec025ad37be12b",
+  "span_id": "f975b08ba1748614",
+  "agent_id": "anthropic-sdk",
+  "cluster_id": null,
+  "tenant_id": null,
+  "started_at": "2026-05-12T11:28:00.971000+00:00",
+  "payload": {
+    "tool_name": "http_client",
+    "tool_call_id": "tc_56eee129a7f541c2",
+    "arguments": {
+      "input": "example input for http_client"
+    },
+    "duration_ms": 3390
+  },
+  "payload_hash": "sha256:b257048a6bf1519c01c595a8fb27d2c415aaf008ddff3b2be7a76ff536f4a1a2",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

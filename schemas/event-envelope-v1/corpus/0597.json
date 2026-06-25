@@ -1,0 +1,28 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "5AC5HP3WTY5QEZCETKKBWN1Z6B",
+  "global_run_id": "c83a3963-0d46-75f6-bb27-23ed2c7187c6",
+  "run_id": "5VE00MTD1Y6V512YD1W5MSEP54",
+  "parent_run_id": "1VF8A54E7083Z34839CKQD2T0P",
+  "event_type": "model_call",
+  "trace_id": "07b4ac3f51b68e7f47d37546a945a61d",
+  "span_id": "5311551d4a5134cc",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": "local-dev",
+  "tenant_id": "tenant-ml-ops",
+  "started_at": "2026-05-12T19:57:00.810000+00:00",
+  "emitter_node_id": "gpu-node-04",
+  "payload": {
+    "model": "mistralai/Mistral-7B-Instruct-v0.3",
+    "system": "mistral",
+    "usage": {
+      "input_tokens": 1170,
+      "output_tokens": 177
+    },
+    "stop_reason": "tool_use"
+  },
+  "payload_hash": "sha256:d29692ead593ca81a3ad8e639ee78d7856eafd247771ae38bb8f4d0ae6dd24e4",
+  "nova.batch.signature": "VTzXqiLbC68C5oUtuQLsWnOtlVTip0d+CZNMEP4oBn4+ik4/EMSxcRB2J6aozxt6kJOz+hOgoHy0Jt3srwkYkg==",
+  "nova.batch.signing_key_id": "f561f683-43a4-42cf-9de0-000667a5a7a6"
+}

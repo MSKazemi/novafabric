@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "janusgraph.fullname" . }}-config
+  labels:
+    {{- include "janusgraph.labels" . | nindent 4 }}
+data:
+  janusgraph.properties: |
+    # Storage backend
+    storage.backend={{ .Values.config.storageBackend }}
+    storage.directory={{ .Values.config.storageDirectory }}
+    # Index backend
+    index.search.backend={{ .Values.config.indexSearchBackend }}
+    index.search.directory={{ .Values.config.indexSearchDirectory }}
+    # Gremlin server
+    host=0.0.0.0
+    port={{ .Values.gremlinPort }}
+    # Serialiser — GraphSON v3 for gremlin-python compatibility
+    serializer: { className: org.apache.tinkerpop.gremlin.driver.ser.GraphSONMessageSerializerV3, config: { ioRegistries: [org.janusgraph.graphdb.tinkerpop.JanusGraphIoRegistry] }}
+  gremlin-server.yaml: |
+    host: 0.0.0.0
+    port: {{ .Values.gremlinPort }}
+    scriptEvaluationTimeout: 30000
+    channelizer: org.apache.tinkerpop.gremlin.server.channel.WebSocketChannelizer
+    graphs: { graph: /etc/janusgraph/janusgraph.properties }
+    plugins:
+      - janusgraph.imports
+    scriptEngines:
+      gremlin-groovy:
+        plugins:
+          org.janusgraph.graphdb.tinkerpop.plugin.JanusGraphGremlinPlugin: {}
+          org.apache.tinkerpop.gremlin.server.jsr223.GremlinServerGremlinPlugin: {}
+          org.apache.tinkerpop.gremlin.tinkergraph.jsr223.TinkerGraphGremlinPlugin: {}
+          org.apache.tinkerpop.gremlin.jsr223.ImportGremlinPlugin:
+            classImports:
+              - java.lang.Math
+            methodImports:
+              - java.lang.Math#*
+    serializers:
+      - { className: org.apache.tinkerpop.gremlin.driver.ser.GraphSONMessageSerializerV3,
+          config: { ioRegistries: [org.janusgraph.graphdb.tinkerpop.JanusGraphIoRegistry] }}
+    threadPoolWorker: 1
+    gremlinPool: 8

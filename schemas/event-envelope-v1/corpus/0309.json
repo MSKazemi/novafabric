@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "4RCWEM0WTKS4VB1YH20J871E7R",
+  "global_run_id": "c276f4ba-2dcc-7464-aa3b-b21465df4e3f",
+  "run_id": "1Z6Z9YQ6CG54RKQDBFBKMNZZTK",
+  "parent_run_id": "037MM2KWNF0XW32QGMT6BK52BE",
+  "event_type": "model_call",
+  "trace_id": "a592aa8d863267bb14105d8ddf44f2b4",
+  "span_id": "906f461f83e8b64b",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": "local-dev",
+  "tenant_id": "tenant-platform-eng",
+  "started_at": "2026-05-12T15:09:00.707000+00:00",
+  "payload": {
+    "model": "meta-llama/Llama-3.1-70B-Instruct",
+    "system": "meta",
+    "usage": {
+      "input_tokens": 3770,
+      "output_tokens": 328
+    },
+    "stop_reason": "stop"
+  },
+  "payload_hash": "sha256:3014f0d4a711751adc1371a80ee94006605fc559a4938a35bf9dba8ae50d6a3a",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

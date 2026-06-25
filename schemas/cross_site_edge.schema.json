@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://novafabric.io/schemas/cross-site-edge.schema.json",
+  "title": "CrossSiteEdge",
+  "description": "A cross-site lineage edge connecting runs across independent NovaFabric deployments.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "edge_id",
+    "source_run_id",
+    "source_site_id",
+    "target_run_id",
+    "target_site_id",
+    "edge_type",
+    "signature_ref"
+  ],
+  "properties": {
+    "edge_id": {
+      "type": "string",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "description": "ULID identifier for this cross-site edge."
+    },
+    "source_run_id": {
+      "type": "string",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "description": "ULID of the source run."
+    },
+    "source_site_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Site identifier where the source run was recorded."
+    },
+    "target_run_id": {
+      "type": "string",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "description": "ULID of the target run."
+    },
+    "target_site_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Site identifier where the target run was recorded."
+    },
+    "edge_type": {
+      "type": "string",
+      "enum": ["contains", "spawned", "delegated_to", "replayed_from"],
+      "description": "Relationship type between source and target runs."
+    },
+    "signature_ref": {
+      "type": "string",
+      "description": "NovaSeal cross-site reference token; required when source_site_id != target_site_id."
+    }
+  }
+}

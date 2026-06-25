@@ -1,0 +1,44 @@
+---
+import Layout from '../../components/layout/Layout.astro';
+import ShowcaseBadge from '../../components/layout/ShowcaseBadge.astro';
+import RegistryBrowser from '../../components/registry/RegistryBrowser';
+import CodeBlock from '../../components/ui/CodeBlock.astro';
+---
+
+<Layout
+  title="Asset registry — NovaFabric Showcase"
+  description="Identity layer for every model, agent, prompt, tool, and dataset. Eval-gated promotion from development to production. Click a version to see why it's stuck."
+>
+  <article class="container-content py-12">
+    <header class="mb-8 max-w-3xl">
+      <ShowcaseBadge variant="page" />
+      <p class="mt-4 text-xs uppercase tracking-wider text-[var(--color-text-faint)]">Primitive 01 — interactive demo</p>
+      <h1 class="mt-1 text-4xl font-medium tracking-tight text-balance">Asset registry</h1>
+      <p class="mt-3 text-[var(--color-text-muted)] max-w-2xl">
+        Every model, agent, prompt, tool, dataset, and evaluation suite has a
+        <code class="text-[var(--color-text)] font-mono text-sm">name@version</code>
+        identity. Promotion from development to production is gated by eval suites.
+        Failed eval ⇒ promotion blocked.
+      </p>
+    </header>
+
+    <RegistryBrowser client:visible />
+
+    <aside class="mt-8 max-w-3xl rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-5 text-sm text-[var(--color-text-muted)] leading-relaxed">
+      <p class="text-[var(--color-text)] font-medium mb-2">The wow moment</p>
+      <p>
+        Click <code class="text-[var(--color-text)] font-mono text-xs bg-[var(--color-bg-sunken)] px-1.5 py-0.5 rounded">code-review-prompt@0.2.0</code>.
+        See the failed <strong>edge-case-coverage</strong> eval suite. That's why v0.1.0 is still
+        the production-promoted version. <em>Eval-gated promotion in five seconds.</em>
+      </p>
+    </aside>
+
+    <section class="mt-12 max-w-3xl">
+      <h2 class="text-xl font-medium text-[var(--color-text)] tracking-tight mb-4">On your machine</h2>
+      <CodeBlock code="nova register code-review-prompt-0.2.0.yaml
+nova eval code-review-prompt@0.2.0
+nova promote code-review-prompt@0.2.0
+nova list --type prompt" lang="bash" />
+    </section>
+  </article>
+</Layout>

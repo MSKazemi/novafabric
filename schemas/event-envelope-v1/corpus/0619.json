@@ -1,0 +1,20 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "12FF1DFS3FFZ4BX21JVYCEC8SR",
+  "global_run_id": "08KF617RGQDNPSP3C45CZ2YQ2Y",
+  "run_id": "4VWHGN7W30F7139C0E6NVAAWPG",
+  "parent_run_id": "13T494PE8S70YQZV8WBYDZFS79",
+  "event_type": "run.start",
+  "trace_id": "315576e20160f5f9dd12d8b46041d69b",
+  "span_id": "4c171e3f2f4e29b0",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": "hpc-cluster-01",
+  "tenant_id": "tenant-ml-ops",
+  "started_at": "2026-05-12T20:19:00.766000+00:00",
+  "emitter_node_id": "gpu-node-04",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": "jrRp2YesI0KkmmjKmICPPUSV5rR8EUYFRMibg+/GBCk0AJvYg/lHDFYF96SuM4Xpb1pdP8ukTR0ME4Qf6d3b+Q==",
+  "nova.batch.signing_key_id": "024cd586-402c-41bc-bc26-b525c26fbcf3"
+}

@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "2M7C1R6164Y60600RRH0191HKA",
+  "global_run_id": "372SJQB3E45HCYA23D2MP1CC68",
+  "run_id": "1207TGYK2JMTVBE0TCSQ0KZS2J",
+  "parent_run_id": "2CC1NT4GB6HT5G8PS836ZXYDAN",
+  "event_type": "tool_call",
+  "trace_id": "658e445f3959d8883b4b85d002e49f19",
+  "span_id": "0f41c4a07022729b",
+  "agent_id": "anthropic-sdk",
+  "cluster_id": "azure-ml-cluster",
+  "tenant_id": "tenant-platform-eng",
+  "started_at": "2026-05-12T19:52:00.245000+00:00",
+  "emitter_node_id": "node01.cluster.local",
+  "payload": {
+    "tool_name": "bash_executor",
+    "tool_call_id": "tc_c0d3b5c94e525262",
+    "arguments": {
+      "input": "example input for bash_executor"
+    },
+    "duration_ms": 3759
+  },
+  "payload_hash": "sha256:d34f0c85b56f89d1102a47307ca972351e21749692c9ef8fe514a54b6e3b284a",
+  "nova.batch.signature": "IV3tozx53LeSM9hqotP1v84msSgWBiISS0eD4XoM9o1t9OjEOhB7X4/0Ludwo82m1xFdSm2rOtD8GVO34ON1nA==",
+  "nova.batch.signing_key_id": "7e9c6b92-e713-4320-b6d1-47ee62de7d14"
+}

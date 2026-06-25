@@ -1,0 +1,26 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "3P75GVGWEHN3K6HB1111DM4GVM",
+  "global_run_id": "6E6PT24VV7XP3ZB7PBEXYS2QDN",
+  "run_id": "11XCMNK1PT68688TQJSJ85RX01",
+  "parent_run_id": null,
+  "event_type": "tool_call",
+  "trace_id": "7756812afa3463246afad8fc5bb5775f",
+  "span_id": "1f5cd796b9e6c0ca",
+  "agent_id": "openai-agents-sdk",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T13:40:00.787000+00:00",
+  "payload": {
+    "tool_name": "file_reader",
+    "tool_call_id": "tc_b752db8a192e5b57",
+    "arguments": {
+      "input": "example input for file_reader"
+    },
+    "duration_ms": 4820
+  },
+  "payload_hash": "sha256:c475cfbaaba584421017e807b2fad881054f04423fe8d27b8f5ab7c9f5aedfc0",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

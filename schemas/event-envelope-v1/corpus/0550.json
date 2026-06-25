@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "4TYT5YCYGQM7NV3R9ZK5KBE3NA",
+  "global_run_id": "6VRC59MW0M1QZNYGF9SNXQHC70",
+  "run_id": "420AYE6G2N7WNQEZPBQ2YS8BFK",
+  "parent_run_id": null,
+  "event_type": "tool_call",
+  "trace_id": "b7c851d229a356605df1ef0488867a68",
+  "span_id": "b78601ba97fa7f2f",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": "slurm-train-v100",
+  "tenant_id": "tenant-platform-eng",
+  "started_at": "2026-05-12T19:10:00.389000+00:00",
+  "emitter_node_id": "node02.cluster.local",
+  "payload": {
+    "tool_name": "file_reader",
+    "tool_call_id": "tc_7a23c105a05167ba",
+    "arguments": {
+      "input": "example input for file_reader"
+    },
+    "duration_ms": 3277
+  },
+  "payload_hash": "sha256:17939ff934c9248f059bb9a6b6dbce97f245f50ae1233bc1792f609e2c967ac7",
+  "nova.batch.signature": "Jw9B+OGue3DdLmYrFvZJfNPo1TlHBPu5+whjUTWKOSuXdfAaMPyRC33iXl9+jlguo5pvEQnpQkdr17PjNZHdrA==",
+  "nova.batch.signing_key_id": "64f2d412-bb04-48d1-97eb-c0321fcaf389"
+}

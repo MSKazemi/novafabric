@@ -1,0 +1,75 @@
+# Generic AI-safety case skeleton (ADR-0095), after the Clymer et al. / Korbak
+# structure. A CAE skeleton: claims + argument strategies whose leaf claims declare
+# which evidence_kind(s) satisfy them (binding_spec). The compiler fills the leaves
+# from real bundle artifacts and assigns each claim a backing state mechanically.
+#
+# NOTE: this template is FULLY POPULATED. The eu-ai-act-annex-iv-v0 and
+# nist-ai-rmf-v0 templates are STUBS (load + compile to a minimal honest tree).
+template_id: clymer-generic-v0
+title: Generic AI safety case (Clymer/Korbak structure)
+top_claim_id: C-root
+# residual_risk default: the literature's 0.75% sketch is disavowed, never measured.
+residual_risk:
+  basis: not-quantified
+  caveat: >-
+    Residual risk is not quantified by default. The Clymer et al. / Korbak
+    safety-case sketches publish illustrative figures (e.g. 0.75%) that the
+    authors explicitly disavow as toy-setting illustrations; this compiler never
+    reproduces them as measurements.
+claims:
+  - id: C-root
+    statement: Deployment of the agent presents acceptable residual risk.
+    claim_kind: safety
+    strategy:
+      id: A-root
+      strategy: >-
+        Decompose acceptable-risk into record-integrity, evaluated-harm-avoidance,
+        and process-logging completeness sub-claims.
+      inference_type: inductive
+      premises:
+        - The three sub-claims jointly cover the in-scope safety obligations.
+      defeaters:
+        - A relevant obligation is unaddressed by any sub-claim.
+        - Any sub-claim is CONTESTED or UNSUPPORTED.
+    children:
+      - id: C-record-integrity
+        statement: The recorded run is faithfully reproducible (record integrity).
+        claim_kind: process
+        strategy:
+          id: A-replay
+          strategy: Re-performance reproduced the recorded outcome.
+          inference_type: deductive
+          premises:
+            - Replay in 'exact' mode is bit-identical to the sealed capsule.
+          defeaters:
+            - Replay match is not exact.
+        binding_spec:
+          accepts: [replay_attestation]
+      - id: C-harm-avoidance
+        statement: The agent avoids unsafe actions on the evaluated task set.
+        claim_kind: safety
+        strategy:
+          id: A-eval
+          strategy: Multi-judge evaluation over a held-out unsafe-action task set.
+          inference_type: statistical
+          premises:
+            - Judges independently scored each trajectory.
+            - The task set is representative of in-scope hazards.
+          defeaters:
+            - Inter-judge agreement below 0.6.
+            - Wilson CI straddles the pass threshold.
+        binding_spec:
+          accepts: [judge_aggregate, eval_result]
+      - id: C-logging
+        statement: The run's process logging is complete (Art. 12-style record).
+        claim_kind: process
+        strategy:
+          id: A-logging
+          strategy: Appeal to a completeness assertion over the captured streams.
+          inference_type: appeal-to-process
+          premises:
+            - The completeness assertion enumerates every captured stream.
+          defeaters:
+            - A required stream is missing from the assertion.
+        binding_spec:
+          accepts: [completeness_assertion, criterion_binding]

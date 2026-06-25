@@ -1,0 +1,427 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/model-call.schema.json",
+  "$comment": "schema_version 1.0.0; tracks design/spec/model-call-v1.md. OTel GenAI semconv attribute names are preserved as dotted property keys.",
+  "title": "ModelCall",
+  "description": "One record in model-calls.jsonl inside a NovaFabric Run Capsule. OTel GenAI semconv aligned.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "semconv_version",
+    "model_call_id",
+    "parent_span_id",
+    "started_at",
+    "finished_at",
+    "duration_ms",
+    "gen_ai.system",
+    "gen_ai.request.model",
+    "gen_ai.response.model",
+    "gen_ai.operation.name",
+    "gen_ai.request.messages",
+    "gen_ai.response.choices",
+    "gen_ai.usage.input_tokens",
+    "gen_ai.usage.output_tokens",
+    "status"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^1\\.",
+      "description": "OAS v1.0 schema version. Must be 1.x.x (ADR-0034 §1)."
+    },
+    "semconv_version": {
+      "$comment": "Required for forward compatibility; tracks https://opentelemetry.io/docs/specs/semconv/gen-ai/",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+",
+      "description": "OTel GenAI semconv version this record was emitted against, e.g. '1.30.0'."
+    },
+    "model_call_id": {
+      "$ref": "#/$defs/Ulid",
+      "description": "Unique within the capsule. Join key to tool-calls.jsonl via agent_call_id."
+    },
+    "parent_span_id": {
+      "$ref": "#/$defs/SpanId",
+      "description": "OTel span ID that initiated this model call."
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC call start, microsecond precision (RFC 3339)."
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC call end, microsecond precision (RFC 3339)."
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Wall-clock duration in milliseconds."
+    },
+    "gen_ai.system": {
+      "type": "string",
+      "minLength": 1,
+      "description": "OTel gen_ai.system: provider id, e.g. 'openai', 'anthropic', 'ollama'."
+    },
+    "gen_ai.request.model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "OTel gen_ai.request.model: model id as the user requested it."
+    },
+    "gen_ai.response.model": {
+      "type": "string",
+      "description": "OTel gen_ai.response.model: model id as the provider reported it serving. May differ from request."
+    },
+    "gen_ai.operation.name": {
+      "type": "string",
+      "enum": [
+        "chat",
+        "text_completion",
+        "embeddings",
+        "image_generation",
+        "audio_transcription",
+        "tool_use"
+      ],
+      "description": "OTel gen_ai.operation.name: the operation kind."
+    },
+    "gen_ai.request.messages": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Message"},
+      "description": "OTel-aligned. Full message list sent to the model."
+    },
+    "gen_ai.response.choices": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Choice"},
+      "description": "OTel-aligned. The model's response choices."
+    },
+    "gen_ai.usage.input_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "OTel gen_ai.usage.input_tokens."
+    },
+    "gen_ai.usage.output_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "OTel gen_ai.usage.output_tokens."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["success", "error", "timeout", "denied", "partial"],
+      "description": "Outcome of the model invocation."
+    },
+    "gen_ai.request.temperature": {
+      "type": "number",
+      "description": "OTel gen_ai.request.temperature."
+    },
+    "gen_ai.request.top_p": {
+      "type": "number",
+      "description": "OTel gen_ai.request.top_p."
+    },
+    "gen_ai.request.top_k": {
+      "type": "integer",
+      "description": "OTel gen_ai.request.top_k."
+    },
+    "gen_ai.request.max_tokens": {
+      "type": "integer",
+      "description": "OTel gen_ai.request.max_tokens."
+    },
+    "gen_ai.request.stop_sequences": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "OTel gen_ai.request.stop_sequences."
+    },
+    "gen_ai.request.frequency_penalty": {
+      "type": "number",
+      "description": "OTel gen_ai.request.frequency_penalty."
+    },
+    "gen_ai.request.presence_penalty": {
+      "type": "number",
+      "description": "OTel gen_ai.request.presence_penalty."
+    },
+    "gen_ai.request.seed": {
+      "type": "integer",
+      "description": "OTel gen_ai.request.seed. Critical for exact replay."
+    },
+    "gen_ai.response.id": {
+      "type": "string",
+      "description": "Provider's response id for cross-referencing with provider logs."
+    },
+    "gen_ai.response.finish_reasons": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["stop", "length", "content_filter", "tool_calls", "error"]
+      },
+      "description": "One finish reason per choice."
+    },
+    "nova.cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["currency", "amount"],
+      "properties": {
+        "currency": {"type": "string", "description": "ISO 4217 currency code."},
+        "amount": {
+          "oneOf": [
+            {"type": "number", "minimum": 0},
+            {"type": "null"}
+          ],
+          "description": "Total cost. Null when the provider does not expose rates."
+        },
+        "breakdown": {
+          "type": "object",
+          "additionalProperties": {"type": "number"},
+          "description": "Itemized cost by component (input, output, cache, etc.)."
+        }
+      },
+      "description": "NovaFabric extension: monetary cost of this model call."
+    },
+    "nova.cache": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hit", "kind"],
+      "properties": {
+        "hit": {"type": "boolean"},
+        "kind": {
+          "type": "string",
+          "enum": ["prompt-cache", "kv-cache", "provider-cache", "none"]
+        },
+        "scope": {"type": "string"}
+      },
+      "description": "NovaFabric extension: provider-side or SDK-side cache status."
+    },
+    "nova.carbon": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["co2e_grams", "energy_kwh", "region"],
+      "properties": {
+        "co2e_grams": {"type": "number"},
+        "energy_kwh": {"type": "number"},
+        "region": {"type": "string"}
+      },
+      "description": "NovaFabric extension: carbon attribution if the runtime exposes it."
+    },
+    "nova.hardware": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "accelerator_kind": {"type": "string"},
+        "accelerator_count": {"type": "integer", "minimum": 0},
+        "gpu_model": {"type": "string"},
+        "batch_size": {"type": "integer", "minimum": 1},
+        "dtype": {"type": "string"}
+      },
+      "description": "NovaFabric extension: hardware context for local inference."
+    },
+    "nova.streaming": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["streamed"],
+      "properties": {
+        "streamed": {"type": "boolean"},
+        "chunk_count": {"type": "integer", "minimum": 0},
+        "first_token_ms": {
+          "oneOf": [
+            {"type": "integer", "minimum": 0},
+            {"type": "null"}
+          ]
+        }
+      },
+      "description": "NovaFabric extension: streaming metadata."
+    },
+    "nova.routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gateway_id": {"type": "string"},
+        "route_decision_reason": {"type": "string"},
+        "fallback_chain": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "description": "NovaFabric extension: gateway routing metadata."
+    },
+    "nova.judge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "target_call_id"],
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": ["judge", "reference"]
+        },
+        "target_call_id": {"$ref": "#/$defs/Ulid"},
+        "similarity": {
+          "oneOf": [
+            {"type": "number", "minimum": 0, "maximum": 1},
+            {"type": "null"}
+          ]
+        }
+      },
+      "description": "NovaFabric extension: present when this call is a semantic replay judge call."
+    },
+    "request_artifact_ref": {
+      "type": "string",
+      "description": "Path under inputs/ for the full request payload when it exceeds the inline cap."
+    },
+    "response_artifact_ref": {
+      "type": "string",
+      "description": "Path under outputs/ for the full response payload when it exceeds the inline cap."
+    },
+    "tool_choice_call_ids": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Ulid"},
+      "description": "tool_call_ids in tool-calls.jsonl triggered by this call's tool choices."
+    },
+    "error": {
+      "$ref": "#/$defs/ErrorInfo",
+      "description": "Error detail when status is not 'success'."
+    },
+    "endpoint": {
+      "type": "string",
+      "description": "Concrete URL or local socket hit, sanitized of secrets."
+    },
+    "provider_request_id": {
+      "type": "string",
+      "description": "Provider's request-side id, often x-request-id."
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Vendor extensions. Keys must be reverse-DNS-prefixed."
+    }
+  },
+  "$defs": {
+    "Ulid": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "description": "26-character Crockford base32 ULID."
+    },
+    "SpanId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$",
+      "description": "16-character lowercase hex OTel span ID."
+    },
+    "ContentPart": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["text", "image", "audio", "video", "document"]
+        },
+        "text": {"type": "string"},
+        "source": {
+          "type": "object",
+          "required": ["kind"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": ["inline", "url", "artifact_ref"]
+            },
+            "uri": {"type": "string"},
+            "data": {"type": "string"},
+            "media_type": {"type": "string"},
+            "duration_ms": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    },
+    "ToolCallRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "arguments"],
+      "properties": {
+        "id": {"type": "string"},
+        "name": {"type": "string"},
+        "arguments": {"type": "object"}
+      },
+      "description": "Tool choice produced by an assistant message."
+    },
+    "Message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "content"],
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": ["system", "user", "assistant", "tool", "developer"],
+          "description": "Message speaker role."
+        },
+        "content": {
+          "oneOf": [
+            {"type": "string"},
+            {
+              "type": "array",
+              "items": {"$ref": "#/$defs/ContentPart"}
+            },
+            {"type": "null"}
+          ],
+          "description": "Message content. String for plain text; array for multi-part; null for tool-call-only assistant turns."
+        },
+        "name": {
+          "oneOf": [
+            {"type": "string"},
+            {"type": "null"}
+          ],
+          "description": "Speaker name (supported by some providers)."
+        },
+        "tool_calls": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/ToolCallRef"},
+          "description": "Tool choices produced by an assistant turn."
+        },
+        "tool_call_id": {
+          "oneOf": [
+            {"type": "string"},
+            {"type": "null"}
+          ],
+          "description": "When role is 'tool': the id of the assistant tool call this message answers."
+        }
+      }
+    },
+    "Choice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "message", "finish_reason"],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "OTel gen_ai.response.choice.index."
+        },
+        "message": {
+          "$ref": "#/$defs/Message",
+          "description": "The assistant message for this choice."
+        },
+        "finish_reason": {
+          "type": "string",
+          "enum": ["stop", "length", "content_filter", "tool_calls", "error"],
+          "description": "Why the model stopped generating."
+        },
+        "logprobs": {
+          "oneOf": [
+            {"type": "object"},
+            {"type": "null"}
+          ],
+          "description": "Provider logprob output, if returned."
+        }
+      }
+    },
+    "ErrorInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "message"],
+      "properties": {
+        "type": {"type": "string"},
+        "message": {"type": "string"},
+        "traceback_ref": {
+          "oneOf": [
+            {"type": "string"},
+            {"type": "null"}
+          ]
+        }
+      }
+    }
+  }
+}

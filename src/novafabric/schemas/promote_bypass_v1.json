@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/promote_bypass_v1.json",
+  "title": "PromoteBypass",
+  "description": "Emergency bypass predicate for capsule promotion SoD.",
+  "type": "object",
+  "required": [
+    "bypass_reason",
+    "capsule_id",
+    "capsule_digest",
+    "target_environment",
+    "bypass_authorized_by",
+    "valid_until",
+    "notification_sent_to"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "bypass_reason": {
+      "type": "string",
+      "minLength": 50
+    },
+    "capsule_id": {
+      "type": "string"
+    },
+    "capsule_digest": {
+      "type": "object",
+      "required": ["sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "target_environment": {
+      "type": "string"
+    },
+    "bypass_authorized_by": {
+      "type": "string"
+    },
+    "valid_until": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "notification_sent_to": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "notification_status": {
+      "type": "string",
+      "enum": ["sent", "failed", "not_configured"]
+    }
+  }
+}

@@ -1,0 +1,47 @@
+# NovaFabric HPC Hub → Kafka Forwarder Configuration
+#
+# The forwarder consumes from the NATS cluster hub aggregate stream,
+# signs batches via NovaSeal, and publishes signed envelopes to Kafka.
+#
+# Environment variable substitution is supported for all ${...} values.
+
+cluster_id: "${NOVAFABRIC_CLUSTER_ID}"
+hub_address: "${NOVAFABRIC_HUB_ADDRESS}"
+
+kafka:
+  brokers:
+    - "${KAFKA_BOOTSTRAP_SERVERS}"
+  topic: "nova.${NOVAFABRIC_CLUSTER_ID}.evidence"
+  # acks: all — wait for all in-sync replicas to acknowledge
+  acks: all
+  # idempotent: true — enable exactly-once delivery (requires acks: all)
+  idempotent: true
+  # compression: lz4 — reduces network I/O; supported by Kafka 2.4+
+  compression: lz4
+
+novaseal:
+  keystore_endpoint: "${NOVASEAL_KMS_ENDPOINT}"
+  # fail_open: false — reject batch forwarding if NovaSeal is unreachable.
+  # Set to true only in dev/smoke environments where signing is not required.
+  fail_open: false
+  cache_ttl: 5m
+  key_rotation_interval: 1h
+
+# Batching parameters — tune based on event throughput and latency SLA
+batch:
+  max_size: 1000
+  max_bytes: 4MB
+  flush_interval: 5s
+
+# Retry and backpressure
+retry:
+  max_attempts: 5
+  initial_backoff: 100ms
+  max_backoff: 30s
+  backoff_multiplier: 2.0
+
+# Observability — Prometheus metrics endpoint
+metrics:
+  enabled: true
+  listen: "0.0.0.0:9090"
+  path: "/metrics"

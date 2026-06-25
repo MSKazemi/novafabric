@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/checkpoint_v1.schema.json",
+  "title": "CheckpointHeader",
+  "description": "Header record for a compacted checkpoint file (cap-001, FR-03). Stored as first line of <v>.checkpoint.ndjson.",
+  "type": "object",
+  "required": [
+    "type",
+    "checkpoint_version",
+    "tenant",
+    "run_id",
+    "created_at_ms",
+    "commit_count",
+    "first_version",
+    "last_version"
+  ],
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "checkpoint_header"
+    },
+    "checkpoint_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Version number of the last commit included in this checkpoint."
+    },
+    "tenant": {
+      "type": "string",
+      "minLength": 1
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Unix epoch milliseconds (UTC) when checkpoint was written."
+    },
+    "commit_count": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of ManifestCommit records in this checkpoint (excluding header)."
+    },
+    "first_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "last_version": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "additionalProperties": false
+}

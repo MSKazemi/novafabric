@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "2X8QPBFJ6B3PJGET64P9J9EMDG",
+  "global_run_id": "e2d2af49-0e37-7636-a907-7124d1493c57",
+  "run_id": "6CBW4ST3CF46JSBWCKAJ55NCWS",
+  "parent_run_id": "2K0XYXH05SAQZTS89NWC4HHJ9R",
+  "event_type": "model_call",
+  "trace_id": "08501b73495f46821c788196862cd68d",
+  "span_id": "2693eb54b360328d",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": null,
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T12:27:00.662000+00:00",
+  "payload": {
+    "model": "mistralai/Mistral-7B-Instruct-v0.3",
+    "system": "meta",
+    "usage": {
+      "input_tokens": 3777,
+      "output_tokens": 722
+    },
+    "stop_reason": "stop"
+  },
+  "payload_hash": "sha256:d2efe577e463eb5dbd6e140f08fd0290307cc0b90cfedd2960daa324f0a1bca5",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

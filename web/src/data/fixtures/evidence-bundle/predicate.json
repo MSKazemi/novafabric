@@ -1,0 +1,18 @@
+{
+  "predicateType": "https://novafabric.dev/schemas/run-capsule/v0.1.0",
+  "subject": [
+    {
+      "name": "run:01KR5SQZPDGTKE3MDP3ZRX8WP1",
+      "digest": {
+        "sha256": "1215e8dd557a386b96a6517f4599560ec3fc31679f7a808b3310f58ed94aa78b"
+      }
+    }
+  ],
+  "predicate": {
+    "schema_version": "0.1.0",
+    "run_id": "01KR5SQZPDGTKE3MDP3ZRX8WP1",
+    "manifest_hash": "8171166756424187f680c1ef0c788275bcaa7aac1053d9103c44b4fbfc6b105c",
+    "lineage_edge_count": 8,
+    "redaction_findings": 0
+  }
+}

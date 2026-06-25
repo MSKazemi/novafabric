@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "0C6K753BN1KZ3KJ5Q8XD620WX0",
+  "global_run_id": "5W224EANVX862MM32DGWRWM3B5",
+  "run_id": "1109YK5JDVKC3TR3B11TV5XS7H",
+  "parent_run_id": "5DANSWKZA518MHS2CFNVYXM7FS",
+  "event_type": "tool_call",
+  "trace_id": "7b092e45a375e6843bd81623da0d33ca",
+  "span_id": "d7c0118f0b7e8362",
+  "agent_id": "custom-agent-v1",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-platform-eng",
+  "started_at": "2026-05-12T16:52:00.065000+00:00",
+  "emitter_node_id": "head-node",
+  "payload": {
+    "tool_name": "web_search",
+    "tool_call_id": "tc_bb6edf7e1eefdf97",
+    "arguments": {
+      "input": "example input for web_search"
+    },
+    "duration_ms": 1501
+  },
+  "payload_hash": "sha256:5ea173ea962481db57cd9840663cbafc7cef3aa94a642505d4da28082beab815",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

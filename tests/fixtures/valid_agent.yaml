@@ -1,0 +1,22 @@
+novafabric_spec_version: "1"
+asset_type: agent
+name: kube-rca-agent
+version: v1.0.0
+status: development
+description: "Kubernetes root-cause analysis agent"
+tags:
+  team: platform
+spec:
+  model:
+    provider: anthropic
+    name: claude-sonnet-4-6
+    temperature: 0.2
+  tools:
+    - kubectl_describe
+    - kubectl_logs
+  prompts:
+    system: "You are a Kubernetes SRE assistant."
+  policies:
+    - rate_limit
+  evals:
+    - basic_rca_suite

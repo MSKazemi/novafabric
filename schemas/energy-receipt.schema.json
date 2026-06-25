@@ -1,0 +1,262 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/energy-receipt.schema.json",
+  "$comment": "schema_version 0.1.0; tracks design/spec/energy-receipt-v0.1.md and design/adr/0093-energy-anchored-action-receipts.md. One record per consequential agent action in energy-receipts.jsonl inside a Run Capsule. Core principle: measured-or-declared-unknown, NEVER fabricated.",
+  "title": "EnergyReceipt",
+  "description": "An Energy-Anchored Action Receipt: a signed record of MEASURED (or honestly-declared-unknown) energy in joules, carbon in gCO2e, and provenanced grid intensity for one consequential agent action. Additive in-capsule JSONL stream (ADR-0093); NOT a third top-level format (ADR-0034).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "receipt_id",
+    "action_ref",
+    "run_id",
+    "capsule_id",
+    "measured_joules",
+    "measurement_source",
+    "measurement_scope",
+    "confidence",
+    "attribution_method",
+    "carbon_g_co2e",
+    "grid_intensity_g_per_kwh",
+    "carbon_accounting_mode",
+    "hardware",
+    "payload_hash",
+    "generated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^0\\.1\\.",
+      "description": "Energy receipt schema version. Must be 0.1.x for this revision (ADR-0093 §A0)."
+    },
+    "receipt_id": {
+      "$ref": "#/$defs/Ulid",
+      "description": "Unique within the capsule. 26-char Crockford base32 ULID, time-sortable."
+    },
+    "action_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["model_call", "tool_call", "job_step", "run"],
+          "description": "What kind of action this receipt accounts for."
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The id of the accounted action: a model_call_id / tool_call_id ULID, a Slurm job-step id, or a run_id."
+        }
+      },
+      "description": "Join key. Binds this receipt to exactly one action elsewhere in the capsule."
+    },
+    "run_id": {
+      "$ref": "#/$defs/Ulid",
+      "description": "The run this action belongs to. Equals the capsule's run_id."
+    },
+    "capsule_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The capsule this receipt lives in (capsule Merkle root or capsule id)."
+    },
+    "measured_joules": {
+      "oneOf": [
+        {"type": "number", "minimum": 0},
+        {"type": "null"}
+      ],
+      "description": "MEASURED energy attributed to this action, in joules. MUST be null when no measurement is available or when energy is declared rather than measured. NEVER a fabricated estimate written as if measured (ADR-0093 forgery-guard)."
+    },
+    "measurement_source": {
+      "type": "string",
+      "enum": [
+        "nvml",
+        "rapl_pkg",
+        "rapl_dram",
+        "ipmi_bmc",
+        "sacct_energy",
+        "cgroup_v2",
+        "declared_model_table",
+        "declared_tdp",
+        "unavailable"
+      ],
+      "description": "The physical or declared source of the energy figure. 'declared_*' sources MUST set confidence='declared'; 'unavailable' MUST set confidence='unknown' and measured_joules=null."
+    },
+    "measurement_scope": {
+      "type": "string",
+      "enum": ["per_process", "per_cgroup", "per_job", "per_package", "per_node", "none"],
+      "description": "The hardware boundary the raw counter integrates over, before attribution down to this action."
+    },
+    "wall_clock_s": {
+      "oneOf": [
+        {"type": "number", "minimum": 0},
+        {"type": "null"}
+      ],
+      "description": "Wall-clock duration of the action in seconds; the integration window for power-to-energy."
+    },
+    "sampling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["interval_ms", "sample_count", "integrator"],
+      "properties": {
+        "interval_ms": {"type": "integer", "minimum": 0, "description": "Counter sampling interval in milliseconds."},
+        "sample_count": {"type": "integer", "minimum": 0, "description": "Number of counter samples integrated."},
+        "integrator": {
+          "type": "string",
+          "enum": ["counter_delta", "trapezoidal", "left_riemann", "none"],
+          "description": "How point samples were integrated to energy. 'counter_delta' for monotonic energy counters (RAPL, NVML total-energy, sacct)."
+        }
+      },
+      "description": "How the energy was integrated. Present for measured/apportioned receipts; omit for declared/unavailable."
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["measured", "apportioned", "declared", "unknown"],
+      "description": "Honesty grade. 'measured' = direct counter at action scope; 'apportioned' = a coarser measured total shared down to this action; 'declared' = a published-table figure, not measured here; 'unknown' = no figure (measured_joules=null)."
+    },
+    "error_model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["relative", "absolute", "interval", "none"],
+          "description": "How the uncertainty is expressed."
+        },
+        "value": {
+          "oneOf": [
+            {"type": "number", "minimum": 0},
+            {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+            {"type": "null"}
+          ],
+          "description": "The uncertainty magnitude: a fraction (relative), a joule magnitude (absolute), or a [low, high] joule interval."
+        },
+        "basis": {
+          "type": "string",
+          "description": "Plain-text justification of the error figure (e.g. 'RAPL package quantization', 'time-share apportionment of node total')."
+        }
+      },
+      "description": "Quantified uncertainty of measured_joules. Honest about the apportionment error this receipt carries."
+    },
+    "attribution_method": {
+      "type": "string",
+      "enum": ["direct_counter", "time_share", "energy_share", "token_share", "gpu_util_share", "none"],
+      "description": "How a coarser measured total was shared down to this action. 'direct_counter' = no apportionment needed; 'none' = nothing measured."
+    },
+    "attribution_basis": {
+      "type": "string",
+      "description": "Plain-text description of the apportionment fraction and how it was derived (e.g. 'this process used 0.42 of node CPU-seconds in the window')."
+    },
+    "idle_baseline_j": {
+      "oneOf": [
+        {"type": "number", "minimum": 0},
+        {"type": "null"}
+      ],
+      "description": "Idle/baseline energy over the same window, subtracted (or recorded) so dynamic energy is separable. Null when no baseline was measured."
+    },
+    "carbon_g_co2e": {
+      "oneOf": [
+        {"type": "number", "minimum": 0},
+        {"type": "null"}
+      ],
+      "description": "Operational carbon for this action in grams CO2-equivalent = measured_joules / 3.6e6 * grid_intensity_g_per_kwh. MUST be null when measured_joules is null or grid intensity is unavailable. NEVER fabricated."
+    },
+    "grid_intensity_g_per_kwh": {
+      "oneOf": [
+        {"type": "number", "minimum": 0},
+        {"type": "null"}
+      ],
+      "description": "Grid carbon intensity used, in grams CO2e per kWh. Null when no provenanced signal is available."
+    },
+    "grid_intensity_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "region", "method", "retrieved_at"],
+      "properties": {
+        "provider": {"type": "string", "description": "Carbon-signal provider id (e.g. 'electricitymaps', 'watttime', 'declared')."},
+        "region": {"type": "string", "description": "Grid region / balancing-authority code the intensity applies to."},
+        "method": {
+          "type": "string",
+          "enum": ["api_marginal", "api_average", "static_table", "declared"],
+          "description": "How the intensity figure was obtained. Marginal vs average is recorded because it materially changes the carbon claim (arXiv 2308.06680)."
+        },
+        "retrieved_at": {"type": "string", "format": "date-time", "description": "When the intensity signal was fetched (RFC 3339)."},
+        "signal_url": {"type": "string", "description": "Provenance URL of the signal, when applicable."},
+        "double_count_guard": {
+          "type": "string",
+          "enum": ["location_unique", "market_certificate_id", "none"],
+          "description": "Guard against the double-counting failure mode (up to 66% double-counting, arXiv 2308.06680). 'market_certificate_id' records the retired-certificate id for market-based claims."
+        }
+      },
+      "description": "Provenance of the grid-intensity figure. Present whenever grid_intensity_g_per_kwh is non-null."
+    },
+    "carbon_accounting_mode": {
+      "type": "string",
+      "enum": ["location_based", "market_based", "declared", "unknown"],
+      "description": "GHG Protocol accounting mode. 'unknown' when no carbon figure is produced (carbon_g_co2e=null)."
+    },
+    "hardware": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id", "counters_available"],
+      "properties": {
+        "node_id": {"type": "string", "description": "Hostname or node identifier the action ran on."},
+        "cpu_model": {"type": "string", "description": "CPU model string, when known."},
+        "accelerator_kind": {
+          "type": "string",
+          "enum": ["none", "nvidia_gpu", "amd_gpu", "intel_gpu", "tpu", "other"],
+          "description": "Accelerator class present on the node."
+        },
+        "gpu_uuid": {"type": "string", "description": "NVML/vendor GPU UUID when an accelerator was used."},
+        "tdp_watts": {
+          "oneOf": [
+            {"type": "number", "minimum": 0},
+            {"type": "null"}
+          ],
+          "description": "Thermal design power of the relevant device, for the declared_tdp degraded path only."
+        },
+        "counters_available": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["nvml", "rapl_pkg", "rapl_dram", "ipmi_bmc", "sacct_energy", "cgroup_v2"]
+          },
+          "uniqueItems": true,
+          "description": "The energy counters actually readable on this node at capture time. FORGERY-GUARD: a receipt with confidence='measured' MUST have a non-empty counters_available consistent with measurement_source (verified by `nova energy verify`)."
+        }
+      },
+      "description": "Hardware context. counters_available is the ground truth the forgery-guard checks against."
+    },
+    "payload_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "SHA-256 over the JCS-canonical bytes of this receipt MINUS the seal block. The agent hot path emits only this hash; the finalizer/collector signs it (ADR-0093 §A3, no heavy crypto in the hot path)."
+    },
+    "seal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["signed"],
+      "properties": {
+        "signed": {"type": "boolean", "description": "Whether this receipt has been bound into a DSSE envelope yet."},
+        "dsse_envelope_ref": {"type": "string", "description": "Path/ref to the DSSE envelope carrying the in-toto energy predicate over this receipt's payload_hash."},
+        "merkle_leaf_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "description": "This receipt's leaf in the capsule/collector Merkle log."},
+        "timestamp_ref": {"type": "string", "description": "Optional RFC 3161 timestamp token reference (ADR-0030)."}
+      },
+      "description": "Seal binding. Absent or signed=false until the finalizer/collector binds the receipt (ADR-0041 NovaSeal)."
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this receipt record was generated (RFC 3339, UTC)."
+    }
+  },
+  "$defs": {
+    "Ulid": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "description": "26-character Crockford base32 ULID."
+    }
+  }
+}

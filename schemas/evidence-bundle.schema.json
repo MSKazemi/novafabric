@@ -1,0 +1,399 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/evidence-bundle.schema.json",
+  "$comment": "schema_version 1.0.0; tracks design/spec/evidence-bundle-v1.md. Validates manifest.json inside an Evidence Bundle zip. The bundle layout itself is enforced by the spec, not by this schema.",
+  "title": "EvidenceBundle",
+  "description": "manifest.json at the root of a NovaFabric Evidence Bundle. The audit-ready, signed package produced by 'novafabric export-evidence'. Self-contained: all schemas are vendored; verification requires only stock cosign and in-toto tooling.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "bundle_id",
+    "created_at",
+    "created_by",
+    "subject",
+    "bundle_format",
+    "artifacts",
+    "attestations",
+    "signatures",
+    "schemas",
+    "verifier_instructions",
+    "manifest_hash"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^1\\.",
+      "description": "OAS v1.0 schema version. Must be 1.x.x (ADR-0034 §1)."
+    },
+    "bundle_id": {
+      "$ref": "#/$defs/Ulid",
+      "description": "Unique identifier for this bundle. Stable across re-exports of the same capsule."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the bundle was assembled (RFC 3339)."
+    },
+    "created_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Tool that produced the bundle, e.g. 'novafabric'."
+        },
+        "version": {
+          "type": "string",
+          "description": "Producer version."
+        }
+      }
+    },
+    "subject": {
+      "oneOf": [
+        {"$ref": "#/$defs/Subject"},
+        {
+          "type": "array",
+          "items": {"$ref": "#/$defs/Subject"},
+          "minItems": 2,
+          "description": "Multiple subjects when --include-runs was used."
+        }
+      ],
+      "description": "Primary subject(s) of the bundle. Usually a single Run Capsule."
+    },
+    "bundle_format": {
+      "type": "string",
+      "enum": ["zip", "tar.gz"],
+      "description": "Archive format of the bundle."
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/ArtifactEntry"},
+      "description": "Every file in the bundle (excluding manifest.json itself), with hash and attestation coverage."
+    },
+    "attestations": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/AttestationRef"},
+      "description": "in-toto envelopes included in the bundle."
+    },
+    "signatures": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/SignatureRef"},
+      "description": "Sigstore signatures for each in-toto envelope."
+    },
+    "schemas": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/SchemaRef"},
+      "description": "JSON schemas vendored into the bundle under schemas/."
+    },
+    "verifier_instructions": {
+      "type": "string",
+      "description": "Plain-text verification recipe; mirrored from README.md. Enables manifest-only verification."
+    },
+    "manifest_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "SHA-256 of the canonical manifest serialization, computed last. Verifiers check this first."
+    },
+    "manifest_dsse_tsr_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "SHA-256 of manifest.dsse.tsr — the DER-encoded RFC 3161 TimeStampResponse stored in the bundle alongside the primary DSSE envelope (ADR-0030). Present only when --timestamp was used."
+    },
+    "timestamp_status": {
+      "type": "string",
+      "enum": ["ok", "failed"],
+      "description": "Outcome of the RFC 3161 timestamp request. 'ok' means the TSR is present and valid. 'failed' means --timestamp-optional was set and the TSA was unreachable or rejected the request."
+    },
+    "timestamp_tsa_url": {
+      "type": "string",
+      "description": "URL of the Timestamp Authority that issued the TSR. Present when timestamp_status is 'ok'."
+    },
+    "timestamp_failure_reason": {
+      "type": "string",
+      "description": "Error detail when timestamp_status is 'failed' (--timestamp-optional mode)."
+    },
+    "chain_of_custody": {
+      "$ref": "#/$defs/ChainOfCustody",
+      "description": "Optional chain-of-custody block (ADR-0095; FRE 901(b)(9), SWGDE, Berkeley Protocol). Additive."
+    },
+    "self_authentication": {
+      "$ref": "#/$defs/SelfAuthentication",
+      "description": "Optional FRE-902(13)/(14) self-authentication block (ADR-0095). Additive."
+    },
+    "admissibility_status": {
+      "type": "string",
+      "enum": ["self-authenticating", "requires-foundation", "incomplete"],
+      "description": "Rollup of the five-point FRE-902(14) completeness gate (ADR-0095). Additive."
+    }
+  },
+  "$defs": {
+    "Ulid": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "description": "26-character Crockford base32 ULID."
+    },
+    "ChainOfCustody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["custodian", "acquisition", "custody_events", "integrity_continuous"],
+      "properties": {
+        "custodian": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["provenance"],
+          "properties": {
+            "identity": {"type": ["string", "null"]},
+            "role": {"type": ["string", "null"]},
+            "organization": {"type": ["string", "null"]},
+            "provenance": {"type": "string", "enum": ["novaseal-identity", "oidc", "operator_declared"]}
+          }
+        },
+        "acquisition": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "acquired_at", "hash_at_acquisition", "acquisition_tool", "provenance"],
+          "properties": {
+            "method": {"type": "string"},
+            "acquired_at": {"type": ["string", "null"]},
+            "hash_at_acquisition": {"type": "string"},
+            "acquisition_tool": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "version"],
+              "properties": {"name": {"type": "string"}, "version": {"type": "string"}}
+            },
+            "provenance": {"type": "string", "enum": ["witnessed", "operator_declared"]}
+          }
+        },
+        "custody_events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["event", "actor", "at", "audit_entry_id", "prev_hash", "entry_hash"],
+            "properties": {
+              "event": {"type": "string"},
+              "actor": {"type": "string"},
+              "at": {"type": "string"},
+              "audit_entry_id": {"type": "string"},
+              "prev_hash": {"type": ["string", "null"]},
+              "entry_hash": {"type": "string"}
+            }
+          }
+        },
+        "integrity_continuous": {"type": "boolean"}
+      }
+    },
+    "SelfAuthentication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule", "certification", "hash_verified_against_acquisition"],
+      "properties": {
+        "rule": {"type": "string", "enum": ["FRE-902(14)", "FRE-902(13)"]},
+        "certification": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["process_description", "qualified_person", "digital_signature_alg", "signature_verifies"],
+          "properties": {
+            "process_description": {"type": "string"},
+            "qualified_person": {"type": ["string", "null"]},
+            "digital_signature_alg": {"type": ["string", "null"]},
+            "signature_verifies": {"type": "boolean"}
+          }
+        },
+        "hash_verified_against_acquisition": {"type": "boolean"}
+      }
+    },
+    "ContentHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "SHA-256 content hash in sha256:<hex> form."
+    },
+    "Subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "run_id",
+        "capsule_hash",
+        "capsule_path_in_bundle"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "run-capsule",
+          "description": "The primary subject kind. v0.1 supports only run-capsule."
+        },
+        "run_id": {
+          "$ref": "#/$defs/Ulid",
+          "description": "The capsule's run_id. Stable across re-exports."
+        },
+        "alias": {
+          "oneOf": [
+            {"type": "string"},
+            {"type": "null"}
+          ],
+          "description": "Human-friendly name for the run, e.g. 'support-agent-prod-2026-05-07'."
+        },
+        "capsule_hash": {
+          "$ref": "#/$defs/ContentHash",
+          "description": "Merkle root over the capsule's required files (RFC 6962-style SHA-256 tree). This is what all attestation subjects point to."
+        },
+        "capsule_path_in_bundle": {
+          "type": "string",
+          "description": "Path to the capsule directory inside the bundle, e.g. 'run-capsule/'."
+        }
+      }
+    },
+    "ArtifactEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "size_bytes", "media_type", "sha256"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Relative path within the bundle."
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "media_type": {
+          "type": "string",
+          "description": "RFC 6838 media type, e.g. 'application/yaml', 'application/json'."
+        },
+        "sha256": {
+          "$ref": "#/$defs/ContentHash",
+          "description": "SHA-256 of this file's bytes."
+        },
+        "covered_by": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Paths to attestation envelopes whose subject Merkle root covers this file. Empty for unsigned derived files."
+        }
+      }
+    },
+    "AttestationRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "predicate_type",
+        "subject_count",
+        "subject_hashes",
+        "envelope_format",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path to the in-toto envelope within the bundle, e.g. 'attestations/run.intoto.jsonl'."
+        },
+        "predicate_type": {
+          "type": "string",
+          "description": "in-toto predicateType URI, e.g. 'https://novafabric.io/runcapsule/v0'."
+        },
+        "subject_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "subject_hashes": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/ContentHash"},
+          "minItems": 1,
+          "description": "SHA-256 digests of the subjects covered by this envelope."
+        },
+        "envelope_format": {
+          "type": "string",
+          "enum": ["DSSE"],
+          "description": "Envelope format. v0.1 requires DSSE (Dead Simple Signing Envelope)."
+        },
+        "sha256": {
+          "$ref": "#/$defs/ContentHash",
+          "description": "SHA-256 of the envelope file itself."
+        },
+        "signature_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Paths to the Sigstore signature files for this envelope."
+        }
+      }
+    },
+    "SignatureRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "envelope_path",
+        "signature_path",
+        "certificate_path",
+        "signer_identity",
+        "signed_at"
+      ],
+      "properties": {
+        "envelope_path": {
+          "type": "string",
+          "description": "Path to the signed in-toto envelope."
+        },
+        "signature_path": {
+          "type": "string",
+          "description": "Path to the detached Sigstore signature file (.sig)."
+        },
+        "certificate_path": {
+          "type": "string",
+          "description": "Path to the signing certificate (.cert)."
+        },
+        "bundle_path": {
+          "type": "string",
+          "description": "Path to the Sigstore bundle (.bundle). Inlines Rekor entry for offline verification."
+        },
+        "signer_identity": {
+          "type": "string",
+          "description": "OIDC identity of the signer, e.g. 'user@example.com'."
+        },
+        "issuer": {
+          "type": "string",
+          "description": "OIDC issuer URL, e.g. 'https://accounts.google.com'."
+        },
+        "signature_algorithm": {
+          "type": "string",
+          "description": "Algorithm used, e.g. 'ed25519'."
+        },
+        "rekor_log_index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Rekor transparency log entry index."
+        },
+        "rekor_log_id": {
+          "type": "string",
+          "description": "SHA-256 identifying the Rekor instance used."
+        },
+        "signed_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the envelope was signed (RFC 3339)."
+        }
+      }
+    },
+    "SchemaRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "sha256"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Schema file name, e.g. 'run-capsule.schema.json'."
+        },
+        "version": {
+          "type": "string",
+          "description": "Schema version, e.g. '0.1.0'."
+        },
+        "sha256": {
+          "$ref": "#/$defs/ContentHash",
+          "description": "SHA-256 of the vendored schema file. Enables schema integrity checks without network."
+        }
+      }
+    }
+  }
+}

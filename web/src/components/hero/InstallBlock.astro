@@ -1,0 +1,26 @@
+---
+import CopyButton from '../ui/CopyButton';
+
+interface Props {
+  command?: string;
+  variant?: 'hero' | 'inline';
+}
+
+const { command = 'pip install novafabric', variant = 'hero' } = Astro.props;
+---
+
+<div
+  class:list={[
+    'inline-flex items-center gap-3 rounded-lg border bg-[var(--color-bg-sunken)]',
+    variant === 'hero'
+      ? 'border-[var(--color-border-strong)] px-5 py-4'
+      : 'border-[var(--color-border)] px-3 py-2',
+  ]}
+>
+  <span aria-hidden="true" class="text-[var(--color-text-faint)] font-mono">$</span>
+  <code class:list={[
+    'font-mono text-[var(--color-text)] select-all',
+    variant === 'hero' ? 'text-base' : 'text-sm',
+  ]}>{command}</code>
+  <CopyButton client:load text={command} className="ml-2" />
+</div>

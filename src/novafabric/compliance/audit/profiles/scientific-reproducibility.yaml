@@ -1,0 +1,97 @@
+id: scientific-reproducibility-v1
+name: Scientific Reproducibility — AI Research Compliance
+framework: Scientific Reproducibility
+version: "1.0"
+controls:
+  - id: REPRO-ENV-1.1
+    title: Computational environment reproducibility
+    description: >
+      The computational environment (software versions, hardware configuration,
+      random seeds) is fully documented to enable independent reproduction
+      of AI experiments and their outputs.
+    evidence_requirements:
+      - evidence_type: model_calls
+        required: true
+        description: Run capsules capturing model version, parameters and environment details
+      - evidence_type: lineage
+        required: true
+        description: Lineage records establishing environment and dependency provenance
+
+  - id: REPRO-DATA-2.1
+    title: Data provenance and traceability
+    description: >
+      All data inputs to AI models and experiments are traceable to their
+      original sources, with transformations documented to enable
+      data set reconstruction.
+    evidence_requirements:
+      - evidence_type: lineage
+        required: true
+        description: Lineage records tracing data from source through transformations
+      - evidence_type: model_calls
+        required: true
+        description: Run capsules capturing the exact data references used per experiment
+
+  - id: REPRO-DATA-2.2
+    title: Data management plan compliance
+    description: >
+      The data management plan (NSF/NIH requirement) is implemented,
+      covering data sharing, preservation and curation commitments.
+    evidence_requirements:
+      - evidence_type: lineage
+        required: true
+        description: Lineage graph as evidence of data sharing and curation practice
+      - evidence_type: pii_scan
+        required: false
+        description: PII scan confirming privacy-compliant data handling
+
+  - id: REPRO-RESULT-3.1
+    title: Result integrity and tamper-evidence
+    description: >
+      Research results and experimental outputs are protected from
+      post-hoc tampering and are verifiable by third parties.
+    evidence_requirements:
+      - evidence_type: seal_signature
+        required: true
+        description: Cryptographic seals providing tamper-evident result provenance
+      - evidence_type: model_calls
+        required: true
+        description: Run capsules with immutable records of model outputs
+
+  - id: REPRO-RESULT-3.2
+    title: Experiment logging and audit trail
+    description: >
+      All experiment runs are logged with sufficient detail to reconstruct
+      the sequence of events, decisions and outputs.
+    evidence_requirements:
+      - evidence_type: model_calls
+        required: true
+        description: Complete model call logs in run capsules
+      - evidence_type: lineage
+        required: false
+        description: Lineage edges linking experiment runs in sequence
+
+  - id: REPRO-SHARING-4.1
+    title: Research artefact sharing readiness
+    description: >
+      AI models, code and data artefacts are documented and packaged
+      to support sharing with the research community (FAIR principles).
+    evidence_requirements:
+      - evidence_type: lineage
+        required: true
+        description: Lineage records enabling FAIR data/model discovery
+      - evidence_type: seal_signature
+        required: false
+        description: Sealed evidence bundles for verified artefact integrity
+
+  - id: REPRO-ACCESS-5.1
+    title: Controlled access and authorisation logging
+    description: >
+      Access to sensitive AI research artefacts (restricted datasets,
+      proprietary models) is controlled and all access events are logged.
+    evidence_requirements:
+      - evidence_type: tool_permissions
+        required: true
+        description: Tool permission events documenting authorised access to AI resources
+      - evidence_type: policy_events
+        required: false
+        description: Policy events recording access control decisions

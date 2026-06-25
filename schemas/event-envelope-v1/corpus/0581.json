@@ -1,0 +1,20 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "6X9Z20WT9VBX560NCXY09QPE4J",
+  "global_run_id": "06NQSXX8T8VY7KMJV0TM6P0YN2",
+  "run_id": "3RW6FFW29K4PGAABB9H1NFBSHE",
+  "parent_run_id": "0JTNYH4JH0KEGZM17H736F16N5",
+  "event_type": "span",
+  "trace_id": "71e27eca95a7dde650fb67eebc888dbe",
+  "span_id": "9728ff5181ab3289",
+  "agent_id": "custom-agent-v1",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-platform-eng",
+  "started_at": "2026-05-12T19:41:00.712000+00:00",
+  "emitter_node_id": "node02.cluster.local",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": "J/AkH+VjHKCuv5o3fSv7M4rZilUuYumaR4CzSUHhHPxwhGVzWvtPQkARfxrsw+VSp5CeNeFURR5svzaPtspAkA==",
+  "nova.batch.signing_key_id": "7570dc66-ba56-4e48-8721-44d646d80a04"
+}

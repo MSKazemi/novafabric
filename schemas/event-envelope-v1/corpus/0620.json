@@ -1,0 +1,20 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "6X2YDY41H22323X89V4GS3Y1V7",
+  "global_run_id": "28XTEY59XASMMDQ3S7KYCNGHQE",
+  "run_id": "0NTDBVDZGMJ64SSYBZ04M3CF7Y",
+  "parent_run_id": null,
+  "event_type": "run.end",
+  "trace_id": "399d02a7603e317c4b13d60f67b111e7",
+  "span_id": "3f563372b5e2a650",
+  "agent_id": "openai-agents-sdk",
+  "cluster_id": "slurm-train-v100",
+  "tenant_id": "tenant-ml-ops",
+  "started_at": "2026-05-12T20:20:00.900000+00:00",
+  "emitter_node_id": "gpu-node-04",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": "KqYoBXEQAfvT4k8YFQjtY0j/WHmKQAxpBa0pRJDsgixe96yHeMy/jVrPgKwAbe9/4tmy2gpcl/+HFDYLHI1cVQ==",
+  "nova.batch.signing_key_id": "018c6d43-f9de-459b-a2ad-1c437161bb3b"
+}

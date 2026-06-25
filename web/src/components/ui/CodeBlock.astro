@@ -1,0 +1,44 @@
+---
+import { highlight } from '../../lib/shiki';
+import type { BundledLanguage } from 'shiki';
+
+interface Props {
+  code: string;
+  lang?: BundledLanguage;
+  filename?: string;
+}
+
+const { code, lang = 'bash', filename } = Astro.props;
+const html = await highlight(code.trim(), lang);
+---
+
+<div class="rounded-lg border border-[var(--color-border)] overflow-hidden bg-[var(--color-bg-sunken)]">
+  {filename && (
+    <div class="flex items-center justify-between px-4 py-2 border-b border-[var(--color-border)] text-xs">
+      <span class="text-[var(--color-text-muted)] font-mono">{filename}</span>
+      <span class="text-[var(--color-text-faint)] uppercase tracking-wider">{lang}</span>
+    </div>
+  )}
+  <div class="overflow-x-auto text-sm" set:html={html} />
+</div>
+
+<style is:global>
+  .shiki {
+    padding: 1rem;
+    background: transparent !important;
+  }
+  .shiki code {
+    font-family: var(--font-mono);
+  }
+  /* Theme switching for Shiki dual-theme output */
+  @media (prefers-color-scheme: light) {
+    .shiki,
+    .shiki span {
+      color: var(--shiki-light) !important;
+      background-color: var(--shiki-light-bg) !important;
+      font-style: var(--shiki-light-font-style) !important;
+      font-weight: var(--shiki-light-font-weight) !important;
+      text-decoration: var(--shiki-light-text-decoration) !important;
+    }
+  }
+</style>

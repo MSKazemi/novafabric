@@ -1,0 +1,17 @@
+{
+  "schema_version": "0.1.0",
+  "suite_id": "gaia-level-1",
+  "suite_version": "2024-06",
+  "run_at": "2026-05-11T09:00:00.000Z",
+  "capsule_id": "01HWXYZ1234ABCDEFGHIJKLMNO",
+  "passed": false,
+  "metrics": [
+    {
+      "name": "accuracy",
+      "value": 0.50,
+      "unit": "percent",
+      "threshold": 0.70,
+      "passed": false
+    }
+  ]
+}

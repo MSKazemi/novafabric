@@ -1,0 +1,19 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "3DHG3H75DFR6KHMV484TSH3VNW",
+  "global_run_id": "19P3DC3HQ7K99K6C79FKY5V3NH",
+  "run_id": "4198SCEW7V5G4RTXCC883EV8XE",
+  "parent_run_id": "2PV4CKGARD5F23BNM98EPT00SE",
+  "event_type": "run.end",
+  "trace_id": "c47b56c1a91a4cd9aead8af548e0171e",
+  "span_id": "fbe685d9d1749f08",
+  "agent_id": "openai-agents-sdk",
+  "cluster_id": "slurm-train-v100",
+  "tenant_id": "tenant-acme",
+  "started_at": "2026-05-12T14:38:00.672000+00:00",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

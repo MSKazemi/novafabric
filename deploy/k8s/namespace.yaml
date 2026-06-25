@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: novafabric
+  labels:
+    app.kubernetes.io/name: novafabric
+    app.kubernetes.io/component: collector

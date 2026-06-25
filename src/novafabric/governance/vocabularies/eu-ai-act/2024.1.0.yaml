@@ -1,0 +1,131 @@
+version: "2024.1.0"
+regulation: "Regulation (EU) 2024/1689 of the European Parliament and of the Council"
+effective_date: "2024-08-01"
+
+prohibited:
+  - id: social_scoring
+    description: "AI systems by public authorities for social scoring of natural persons"
+    citation: "Regulation (EU) 2024/1689 Article 5(1)(c)"
+    triggers:
+      domains: ["government", "public_authority"]
+      keywords: ["social score", "citizen rating", "social credit"]
+  - id: real_time_biometric_surveillance
+    description: "Real-time remote biometric identification in publicly accessible spaces by law enforcement"
+    citation: "Regulation (EU) 2024/1689 Article 5(1)(h)"
+    triggers:
+      domains: ["law_enforcement", "security"]
+      uses_biometrics: true
+      keywords: ["real-time", "surveillance", "public space"]
+  - id: subliminal_manipulation
+    description: "AI systems that deploy subliminal techniques to manipulate persons against their will"
+    citation: "Regulation (EU) 2024/1689 Article 5(1)(a)"
+    triggers:
+      keywords: ["subliminal", "manipulate", "below threshold of consciousness"]
+  - id: vulnerability_exploitation
+    description: "AI systems exploiting vulnerabilities of specific groups (age, disability, social/economic situation)"
+    citation: "Regulation (EU) 2024/1689 Article 5(1)(b)"
+    triggers:
+      keywords: ["vulnerable", "exploit", "disability", "elderly", "children"]
+      affects_fundamental_rights: true
+
+high_risk_annex_iii:
+  category_1_biometrics:
+    - id: biometric_categorisation
+      description: "Biometric categorisation systems using sensitive or protected characteristics"
+      citation: "Regulation (EU) 2024/1689 Annex III item 1(a)"
+      triggers:
+        uses_biometrics: true
+        keywords: ["biometric", "face recognition", "fingerprint", "iris", "categorise", "classify persons"]
+    - id: emotion_recognition
+      description: "Emotion recognition systems in workplace or educational institutions"
+      citation: "Regulation (EU) 2024/1689 Annex III item 1(b)"
+      triggers:
+        uses_biometrics: true
+        keywords: ["emotion", "sentiment", "affect", "stress detection"]
+        domains: ["employment", "education"]
+
+  category_2_critical_infrastructure:
+    - id: critical_infrastructure_management
+      description: "AI systems for safety components of critical infrastructure"
+      citation: "Regulation (EU) 2024/1689 Annex III item 2"
+      triggers:
+        domains: ["critical_infrastructure", "energy", "transport", "water", "healthcare_infrastructure"]
+        keywords: ["safety component", "critical infrastructure", "utility", "grid"]
+
+  category_3_education:
+    - id: educational_assessment
+      description: "AI for access, admission, or assessment of students in education"
+      citation: "Regulation (EU) 2024/1689 Annex III item 3"
+      triggers:
+        domains: ["education"]
+        keywords: ["admission", "assessment", "grading", "student evaluation", "exam"]
+
+  category_4_employment:
+    - id: recruitment_screening
+      description: "AI for recruitment, screening, CV filtering, interview evaluation"
+      citation: "Regulation (EU) 2024/1689 Annex III item 4(a)"
+      triggers:
+        domains: ["employment", "hr", "recruitment"]
+        keywords: ["recruitment", "hiring", "cv screening", "resume", "job applicant"]
+    - id: work_allocation_monitoring
+      description: "AI for task allocation, performance monitoring, or termination in employment"
+      citation: "Regulation (EU) 2024/1689 Annex III item 4(b)"
+      triggers:
+        domains: ["employment"]
+        keywords: ["performance", "productivity", "task allocation", "termination", "promotion"]
+
+  category_5_essential_services:
+    - id: creditworthiness_assessment
+      description: "AI for creditworthiness or credit scoring assessment"
+      citation: "Regulation (EU) 2024/1689 Annex III item 5(a)"
+      triggers:
+        domains: ["finance", "banking", "insurance"]
+        keywords: ["credit", "loan", "creditworthiness", "credit score", "underwriting"]
+    - id: life_health_insurance_risk
+      description: "AI for risk assessment in life and health insurance"
+      citation: "Regulation (EU) 2024/1689 Annex III item 5(b)"
+      triggers:
+        domains: ["insurance", "healthcare"]
+        keywords: ["life insurance", "health insurance", "risk assessment", "actuarial"]
+
+  category_6_law_enforcement:
+    - id: individual_risk_assessment_law
+      description: "AI for assessing risk of natural persons for law enforcement"
+      citation: "Regulation (EU) 2024/1689 Annex III item 6(a)"
+      triggers:
+        domains: ["law_enforcement", "security", "policing"]
+        keywords: ["risk assessment", "recidivism", "criminal", "suspect", "threat assessment"]
+    - id: polygraph_detection
+      description: "AI as polygraph or similar tools for detecting deception"
+      citation: "Regulation (EU) 2024/1689 Annex III item 6(b)"
+      triggers:
+        keywords: ["polygraph", "lie detector", "deception detection", "truthfulness"]
+    - id: crime_prediction
+      description: "AI for predicting or profiling based on criminal offence risk"
+      citation: "Regulation (EU) 2024/1689 Annex III item 6(c)"
+      triggers:
+        domains: ["law_enforcement"]
+        keywords: ["crime prediction", "predictive policing", "criminal profiling"]
+
+  category_7_migration:
+    - id: migration_asylum_assessment
+      description: "AI for assessing irregular migration risk or asylum claims"
+      citation: "Regulation (EU) 2024/1689 Annex III item 7"
+      triggers:
+        domains: ["government", "border_control", "immigration"]
+        keywords: ["asylum", "migration", "refugee", "border", "visa"]
+
+  category_8_justice:
+    - id: court_legal_interpretation
+      description: "AI assisting judicial authorities in researching and interpreting facts and law"
+      citation: "Regulation (EU) 2024/1689 Annex III item 8"
+      triggers:
+        domains: ["justice", "legal", "court"]
+        keywords: ["judicial", "legal decision", "court", "tribunal", "sentencing"]
+
+limited_risk_indicators:
+  - keywords: ["chatbot", "customer service", "virtual assistant", "recommendation"]
+  - domains: ["general", "retail", "entertainment"]
+
+minimal_risk_indicators:
+  - keywords: ["spam filter", "content moderation", "search ranking"]

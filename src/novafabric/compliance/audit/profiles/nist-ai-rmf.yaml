@@ -1,0 +1,136 @@
+id: nist-ai-rmf-v1
+name: NIST AI Risk Management Framework
+framework: NIST AI RMF
+version: "1.0"
+controls:
+  - id: GOVERN-1.1
+    title: Organizational AI risk policies established
+    description: >
+      Policies, processes, procedures, and practices across the organization
+      related to the mapping, assessing, and managing of AI risks are
+      established and documented.
+    evidence_requirements:
+      - evidence_type: policy_events
+        required: true
+        description: Policy decision events captured in capsules
+
+  - id: GOVERN-1.2
+    title: Accountability for AI risk management assigned
+    description: >
+      Accountability and organizational roles for AI risk management are
+      documented and defined.
+    evidence_requirements:
+      - evidence_type: tool_permissions
+        required: true
+        description: Tool permission events showing access control assignments
+      - evidence_type: policy_events
+        required: false
+        description: Policy events attributing decisions to roles
+
+  - id: MAP-1.1
+    title: AI system context documented
+    description: >
+      Context in which the AI system is deployed, including the operating
+      environment, is established and understood.
+    evidence_requirements:
+      - evidence_type: model_calls
+        required: true
+        description: Model call records showing AI usage context
+
+  - id: MAP-2.1
+    title: AI capabilities and limitations identified
+    description: >
+      Scientific findings related to AI capabilities and limitations are
+      reviewed and documented.
+    evidence_requirements:
+      - evidence_type: model_calls
+        required: true
+        description: Model metadata captured showing model identity and parameters
+      - evidence_type: lineage
+        required: false
+        description: Asset lineage showing model provenance
+
+  - id: MAP-3.1
+    title: Benefits and costs of AI system assessed
+    description: >
+      Potential benefits and costs related to AI system deployment are
+      identified, estimated, and documented.
+    evidence_requirements:
+      - evidence_type: model_calls
+        required: true
+        description: Run capsules capturing actual AI usage and outcomes
+
+  - id: MEASURE-1.1
+    title: AI risk measurement approaches identified
+    description: >
+      Approaches and metrics for measurement of AI risks are identified
+      and documented.
+    evidence_requirements:
+      - evidence_type: model_calls
+        required: true
+        description: Evaluation runs captured
+
+  - id: MEASURE-2.1
+    title: AI systems tested for risks
+    description: >
+      AI systems are tested for bias, fairness, and other risks prior to
+      deployment and during operation.
+    evidence_requirements:
+      - evidence_type: model_calls
+        required: true
+        description: Test run capsules showing model evaluation
+      - evidence_type: seal_signature
+        required: false
+        description: Signed evidence of testing run integrity
+
+  - id: MEASURE-2.5
+    title: AI system performance monitored
+    description: >
+      AI system performance and effectiveness are monitored in operation
+      and against defined thresholds.
+    evidence_requirements:
+      - evidence_type: model_calls
+        required: true
+        description: Operational run capsules with performance data
+      - evidence_type: lineage
+        required: false
+        description: Lineage records showing model version provenance
+
+  - id: MANAGE-1.1
+    title: Identified risks prioritized
+    description: >
+      Responses to identified AI risks, including treatment of residual risks,
+      are selected and prioritized.
+    evidence_requirements:
+      - evidence_type: policy_events
+        required: true
+        description: Policy enforcement events showing risk decisions
+
+  - id: MANAGE-2.1
+    title: Risk treatments applied
+    description: >
+      Risk treatments, including risk avoidance, are applied with appropriate
+      monitoring and documentation.
+    evidence_requirements:
+      - evidence_type: tool_permissions
+        required: true
+        description: Tool permission events showing access control enforcement
+      - evidence_type: policy_events
+        required: true
+        description: Policy decisions showing active governance
+
+  - id: MANAGE-3.1
+    title: Risk responses documented and monitored
+    description: >
+      AI risk management responses are documented and monitored for
+      effectiveness and potential side effects.
+    evidence_requirements:
+      - evidence_type: model_calls
+        required: true
+        description: Run capsules providing operational audit trail
+      - evidence_type: seal_signature
+        required: false
+        description: Sealed evidence bundles confirming tamper-evident records
+      - evidence_type: lineage
+        required: false
+        description: Lineage graph showing causal chain of AI actions

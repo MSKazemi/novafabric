@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "66FH07GB2TDH9SH3KES1JZVMBS",
+  "global_run_id": "4CNJJMZCFZEGMT897RVS2H8AVD",
+  "run_id": "6SXZTRD22YR6K8CBNBYTYWFANW",
+  "parent_run_id": "4XG8F4C67T2QFV2M3397P3PQ19",
+  "event_type": "tool_call",
+  "trace_id": "04e0a9c278164d35019579319ecf9758",
+  "span_id": "00a1859bbe3cd303",
+  "agent_id": "anthropic-sdk",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-platform-eng",
+  "started_at": "2026-05-12T20:28:00.541000+00:00",
+  "emitter_node_id": "head-node",
+  "payload": {
+    "tool_name": "code_interpreter",
+    "tool_call_id": "tc_312117b488495087",
+    "arguments": {
+      "input": "example input for code_interpreter"
+    },
+    "duration_ms": 2807
+  },
+  "payload_hash": "sha256:4bb7d37d95ba071f8c8d9546bba12c256f3ad26ffc8ef5cd4c4bfc729bb9deb3",
+  "nova.batch.signature": "Vo0iBb8YgeKKljkD6a0FQwfRwhnnvkzh7MZFDR0QH33E2Rte8ofGjpQk/NlK7bvcMWyBhsB48dbCxm89KVk8gw==",
+  "nova.batch.signing_key_id": "caa75a4a-4f02-424a-bfdd-ca9b4686ecc1"
+}

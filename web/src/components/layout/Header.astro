@@ -1,0 +1,87 @@
+---
+import ThemeToggle from './ThemeToggle';
+import { GITHUB_REPO } from '../../lib/links';
+
+const nav = [
+  { href: '/dashboard', label: 'Dashboard', emphasis: true },
+  { href: '/concepts', label: 'Concepts' },
+  { href: '/showcase/capsule', label: 'Capsule' },
+  { href: '/showcase/replay', label: 'Replay' },
+  { href: '/showcase/lineage', label: 'Lineage' },
+  { href: '/showcase/registry', label: 'Registry' },
+  { href: '/showcase/evidence', label: 'Evidence' },
+  { href: '/install', label: 'Install' },
+];
+
+const path = Astro.url.pathname;
+---
+
+<header class="border-b border-[var(--color-border)] bg-[var(--color-bg)]/80 backdrop-blur sticky top-0 z-50">
+  <div class="container-content flex items-center gap-4 py-3">
+    <a href="/" class="flex items-center gap-2 font-semibold tracking-tight shrink-0">
+      <svg width="22" height="22" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <path
+          d="M8 24 L8 8 L16 16 L24 8 L24 24"
+          stroke="currentColor"
+          stroke-width="2.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          fill="none"
+          style="color: var(--color-accent)"
+        />
+      </svg>
+      <span>NovaFabric</span>
+    </a>
+
+    <nav class="hidden lg:flex items-center gap-1 text-sm" aria-label="Primary">
+      {nav.map((item) => {
+        const active = path === item.href || (item.href !== '/' && path.startsWith(item.href));
+        return (
+          <a
+            href={item.href}
+            class:list={[
+              'px-3 py-1.5 rounded-md transition-colors',
+              active
+                ? 'text-[var(--color-text)] bg-[var(--color-bg-raised)]'
+                : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-raised)]',
+              item.emphasis && !active && 'font-medium',
+            ]}
+          >
+            {item.label}
+          </a>
+        );
+      })}
+    </nav>
+
+    <div class="ml-auto flex items-center gap-3">
+      <ThemeToggle client:load />
+      <a
+        href={GITHUB_REPO}
+        rel="noopener"
+        class="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors hidden sm:inline"
+      >
+        GitHub
+      </a>
+    </div>
+  </div>
+
+  <!-- Mobile / narrow: secondary nav row -->
+  <nav class="lg:hidden border-t border-[var(--color-border)] container-content flex items-center gap-1 py-2 text-xs overflow-x-auto" aria-label="Primary mobile">
+    {nav.map((item) => {
+      const active = path === item.href || (item.href !== '/' && path.startsWith(item.href));
+      return (
+        <a
+          href={item.href}
+          class:list={[
+            'px-2.5 py-1 rounded transition-colors whitespace-nowrap',
+            active
+              ? 'text-[var(--color-text)] bg-[var(--color-bg-raised)]'
+              : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+          ]}
+        >
+          {item.label}
+        </a>
+      );
+    })}
+  </nav>
+</header>

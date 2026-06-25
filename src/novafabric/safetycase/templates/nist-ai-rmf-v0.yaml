@@ -1,0 +1,78 @@
+# NIST AI Risk Management Framework (AI RMF 1.0) CAE skeleton (ADR-0095).
+#
+# One top claim + one sub-claim per RMF core function: GOVERN, MAP, MEASURE, MANAGE
+# (NIST AI 100-1). Each leaf claim id encodes its function name so the
+# `nist-rmf` renderer can group claims by function. Each leaf declares a binding_spec
+# naming the evidence_kind(s) that satisfy it.
+#
+# GOVERN, MAP and MANAGE are largely operator/process-declared and bind to evidence
+# kinds the compiler cannot auto-resolve from a capsule (operator_document /
+# policy_decision) — those leaves compile to an honest UNSUPPORTED hole. MEASURE binds
+# to capsule-derived facts (criterion bindings, evaluation results), which the
+# compiler resolves and scores mechanically.
+template_id: nist-ai-rmf-v0
+title: NIST AI RMF — Govern / Map / Measure / Manage
+top_claim_id: C-root
+residual_risk:
+  basis: not-quantified
+  caveat: >-
+    Residual risk is not quantified by default. The GOVERN/MAP/MANAGE functions are
+    largely operator-declared and compile to UNSUPPORTED until the operator supplies
+    the declared documentation; this compiler never fabricates a measured number.
+claims:
+  - id: C-root
+    statement: >-
+      The AI system's risks are governed, mapped, measured, and managed per the NIST
+      AI Risk Management Framework.
+    claim_kind: compliance
+    strategy:
+      id: A-root
+      strategy: >-
+        Decompose into the four RMF core functions; each function is a sub-claim bound
+        to a capsule-derived fact or honestly flagged as operator-declared.
+      inference_type: inductive
+      premises:
+        - The four core functions jointly cover the RMF.
+      defeaters:
+        - A core function is unaddressed by any sub-claim.
+        - Any function sub-claim is CONTESTED or UNSUPPORTED.
+    children:
+      - id: C-GOVERN
+        statement: >-
+          GOVERN: a culture of risk management is cultivated and present
+          (policies, accountability, oversight).
+        claim_kind: compliance
+        binding_spec:
+          accepts: [policy_decision, operator_document, audit_entry]
+      - id: C-MAP
+        statement: >-
+          MAP: context is recognised and risks related to context are identified.
+        claim_kind: compliance
+        binding_spec:
+          accepts: [operator_document, completeness_assertion]
+      - id: C-MEASURE
+        statement: >-
+          MEASURE: identified risks are assessed, analysed, and tracked against the
+          run.
+        claim_kind: compliance
+        strategy:
+          id: A-MEASURE
+          strategy: >-
+            Criterion bindings and evaluation results measure controls against
+            captured facts.
+          inference_type: statistical
+          premises:
+            - Each control binds to a capsule fact by sha256.
+            - Judges independently scored each trajectory.
+          defeaters:
+            - A control has no covering fact.
+            - Inter-judge agreement below 0.6.
+            - Wilson CI straddles the pass threshold.
+        binding_spec:
+          accepts: [criterion_binding, eval_result, judge_aggregate]
+      - id: C-MANAGE
+        statement: >-
+          MANAGE: risks are prioritised and acted upon based on a projected impact.
+        claim_kind: compliance
+        binding_spec:
+          accepts: [policy_decision, operator_document, audit_entry]

@@ -1,0 +1,40 @@
+; pgBouncer userlist.txt — SCRAM-SHA-256 password hashes
+;
+; IMPORTANT: this file is a template.  Replace the placeholder values with
+; real SCRAM-SHA-256 hashes before deploying.  Never commit real passwords.
+;
+; Generating SCRAM-SHA-256 hashes
+; --------------------------------
+; 1. Connect to Postgres as a superuser and create the role:
+;
+;      CREATE ROLE novafabric_app WITH LOGIN PASSWORD 'your-strong-password';
+;      CREATE ROLE novafabric_migrator WITH LOGIN PASSWORD 'another-strong-password';
+;
+;    Postgres automatically stores these as SCRAM-SHA-256 hashes when
+;    password_encryption = scram-sha-256 (the default in Postgres 14+).
+;
+; 2. Retrieve the stored hash:
+;
+;      SELECT rolname, rolpassword FROM pg_authid
+;        WHERE rolname IN ('novafabric_app', 'novafabric_migrator');
+;
+;    The rolpassword column contains the full SCRAM-SHA-256 string of the form:
+;      SCRAM-SHA-256$<iterations>:<base64-salt>$<base64-stored-key>:<base64-server-key>
+;
+; 3. Place it in this file (including the double-quotes):
+;
+;      "novafabric_app" "SCRAM-SHA-256$4096:<salt>$<stored-key>:<server-key>"
+;
+; Security notes
+; --------------
+; - Mount this file read-only inside the pgBouncer container:
+;     volumes:
+;       - ./pgbouncer-userlist.txt:/etc/pgbouncer/userlist.txt:ro
+; - Rotate passwords by updating this file and reloading pgBouncer:
+;     docker compose exec pgbouncer pgbouncer -R /etc/pgbouncer/pgbouncer.ini
+; - Do NOT use md5 or plaintext passwords in production.
+
+"novafabric_app"      "SCRAM-SHA-256$<iterations>:<salt>$<stored-key>:<server-key>"
+"novafabric_migrator" "SCRAM-SHA-256$<iterations>:<salt>$<stored-key>:<server-key>"
+"pgbouncer_admin"     "SCRAM-SHA-256$<iterations>:<salt>$<stored-key>:<server-key>"
+"pgbouncer_stats"     "SCRAM-SHA-256$<iterations>:<salt>$<stored-key>:<server-key>"

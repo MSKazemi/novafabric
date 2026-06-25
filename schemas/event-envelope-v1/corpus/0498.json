@@ -1,0 +1,20 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "0VPT0HY3T54G182WKF1C225BTP",
+  "global_run_id": "de2917ac-362c-7286-829e-ad1aff7fd849",
+  "run_id": "162Z8H9GQ3406ZEZNZGS2ZFFGQ",
+  "parent_run_id": "6D93SX8KBWEB7TDNSNA0AJ56ZQ",
+  "event_type": "capsule.finalize",
+  "trace_id": "8617d08e83291ddce2a7845f23c9f859",
+  "span_id": "98bbe205c4fce031",
+  "agent_id": "anthropic-sdk",
+  "cluster_id": "slurm-train-v100",
+  "tenant_id": "tenant-acme",
+  "started_at": "2026-05-12T18:18:00.812000+00:00",
+  "emitter_node_id": "gpu-node-04",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

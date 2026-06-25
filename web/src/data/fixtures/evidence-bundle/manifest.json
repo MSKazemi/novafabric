@@ -1,0 +1,56 @@
+{
+  "schema_version": "0.1.0",
+  "files": [
+    {
+      "path": "capsule/capsule.yaml",
+      "sha256": "ba95ab536bdbc437c29002e0dade8d035fb1bf032286e57ddc4d9bf45c9dd0da",
+      "size": 1820
+    },
+    {
+      "path": "capsule/trace.jsonl",
+      "sha256": "a8894b7ca2f8b40672021f3b62952a55e24b033cfc34eb9d0dc292cd2e5d0aeb",
+      "size": 312
+    },
+    {
+      "path": "capsule/model-calls.jsonl",
+      "sha256": "4ea4bbb82a32b124306aaefaad014253dc304cc4162b0a88fd0de4a702dee884",
+      "size": 1240
+    },
+    {
+      "path": "capsule/tool-calls.jsonl",
+      "sha256": "679c2e2da9c5b5db5860651d809a47c4f02085dc864ae86b88047aa7713e0a4a",
+      "size": 880
+    },
+    {
+      "path": "capsule/env.lock",
+      "sha256": "9cd67aa93a948d4f0a2015ac9d8ad0b3abd9e77afd75a2d9985ef105950c147f",
+      "size": 4612
+    },
+    {
+      "path": "capsule/redaction-proof.json",
+      "sha256": "dd999ecfc8883f3b53d0c7646eafb92ed10ee7d6197176591efbb9a999e84bc6",
+      "size": 1816
+    },
+    {
+      "path": "lineage.jsonl",
+      "sha256": "9ea5107177d4bb42e650eeb3ab06518494c71d35c7853ff67f894ea41524d405",
+      "size": 2104
+    },
+    {
+      "path": "predicate.json",
+      "sha256": "9f477be98c54a899538977ba13f2af8289c73d489d76e233cdca4c38b6c767ab",
+      "size": 480
+    },
+    {
+      "path": "dsse-statement.json",
+      "sha256": "39a7d55cf5d59a03b14cd87016c45573b019f2cdfca59e6b7a7ee794378de4c1",
+      "size": 612
+    },
+    {
+      "path": "schemas/run-capsule.schema.json",
+      "sha256": "vendored",
+      "size": 8420
+    }
+  ],
+  "manifest_hash": "8171166756424187f680c1ef0c788275bcaa7aac1053d9103c44b4fbfc6b105c"
+}

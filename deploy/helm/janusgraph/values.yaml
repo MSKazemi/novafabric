@@ -1,0 +1,66 @@
+# Default values for janusgraph.
+# See templates/ for usage.
+
+replicaCount: 1
+
+image:
+  repository: janusgraph/janusgraph
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+
+# Gremlin WebSocket port (TinkerPop standard)
+gremlinPort: 8182
+
+service:
+  type: ClusterIP
+  port: 8182
+
+resources:
+  requests:
+    cpu: "500m"
+    memory: "1Gi"
+  limits:
+    cpu: "2"
+    memory: "4Gi"
+
+persistence:
+  enabled: true
+  storageClass: ""          # "" = cluster default StorageClass
+  accessMode: ReadWriteOnce
+  size: 10Gi
+
+# JanusGraph configuration overrides written into the ConfigMap.
+# Keys map to janusgraph.properties entries.
+config:
+  # Storage backend: berkeleyje (embedded, single-node) or cassandra/hbase for cluster.
+  storageBackend: berkeleyje
+  storageDirectory: /var/lib/janusgraph/data
+  # Index backend: lucene (embedded) or elasticsearch for cluster.
+  indexSearchBackend: lucene
+  indexSearchDirectory: /var/lib/janusgraph/index
+
+livenessProbe:
+  initialDelaySeconds: 30
+  periodSeconds: 30
+  failureThreshold: 5
+  tcpSocket:
+    port: 8182
+
+readinessProbe:
+  initialDelaySeconds: 15
+  periodSeconds: 10
+  failureThreshold: 3
+  tcpSocket:
+    port: 8182
+
+# Extra environment variables injected into the container.
+extraEnv: []
+
+# Pod-level node selector, tolerations, and affinity.
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Optional: name override.
+nameOverride: ""
+fullnameOverride: ""

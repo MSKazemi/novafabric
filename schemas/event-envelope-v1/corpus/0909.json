@@ -1,0 +1,28 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "2Z0RNEPVMR7V6GS654K400S7WD",
+  "global_run_id": "2d7ff436-0fd3-7b37-8e20-701b1572414c",
+  "run_id": "01VPT72P3QT3C2EYWHE634XXBP",
+  "parent_run_id": "4HBJEWDQA40XDGA97AXWB5TKD3",
+  "event_type": "model_call",
+  "trace_id": "1d1b405492a5ca853b00999044859bc7",
+  "span_id": "b5a288cf9603e6a1",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": "slurm-train-v100",
+  "tenant_id": "tenant-acme",
+  "started_at": "2026-05-13T01:09:00.730000+00:00",
+  "emitter_node_id": "worker-0001",
+  "payload": {
+    "model": "claude-3-5-sonnet-20241022",
+    "system": "anthropic",
+    "usage": {
+      "input_tokens": 2088,
+      "output_tokens": 298
+    },
+    "stop_reason": "stop"
+  },
+  "payload_hash": "sha256:4821d0d7b7d87d4353e2d34b7aadb5822925d477ba87647ab9cb4bbd99b74298",
+  "nova.batch.signature": "E1X8jdpG3rgIERbV6X7jv4NMKGtGZFgu/n1H5vO445MAsX1r2Ef31vSGj8ohvovbve6GkmHqoHCeAf5+Ji7MWg==",
+  "nova.batch.signing_key_id": "ac350590-6768-4868-b8d0-52cf6a835c39"
+}

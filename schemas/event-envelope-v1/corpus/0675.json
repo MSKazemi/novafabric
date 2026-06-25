@@ -1,0 +1,28 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "51KEC145YDV2TE02KE2BNPF6RR",
+  "global_run_id": "79cd6d93-d3b0-713e-9660-56182286f834",
+  "run_id": "4EPV69KTPKWQK1FWWXFS24RFYM",
+  "parent_run_id": null,
+  "event_type": "model_call",
+  "trace_id": "e77c413c8537d542b9e9998c9e902170",
+  "span_id": "51c2bf421f75735d",
+  "agent_id": "langchain-agent",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T21:15:00.713000+00:00",
+  "emitter_node_id": "gpu-node-04",
+  "payload": {
+    "model": "mistralai/Mistral-7B-Instruct-v0.3",
+    "system": "meta",
+    "usage": {
+      "input_tokens": 2164,
+      "output_tokens": 809
+    },
+    "stop_reason": "stop"
+  },
+  "payload_hash": "sha256:66f52d2642d38dc1b4e2bb8998191226ad8616ea022ebe5deb479b6ff038a3d8",
+  "nova.batch.signature": "8hxgnuWVLnuL7GCkGNk7cxr+n+5h5hRfkwK2f3c3t5LLr3HSlzJfYeDYZ7FBccOsrtixjV+c2UsS/nVB+6pNqw==",
+  "nova.batch.signing_key_id": "1e3c1635-c18f-46bd-85c5-369a87245fff"
+}

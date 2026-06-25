@@ -1,0 +1,20 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "6XX46HNYV412Q10YRAXFS79WCD",
+  "global_run_id": "ab92c3e8-6192-7035-a1fe-581a16e21113",
+  "run_id": "656PDHBNC439KTDAC1B1RTCF94",
+  "parent_run_id": "3A41GZ6Y8J879ETGV0T2YQW50Y",
+  "event_type": "capsule.finalize",
+  "trace_id": "8189b417a28fc390669f53cf7a535621",
+  "span_id": "bde776adefb3ecd8",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": "hpc-cluster-01",
+  "tenant_id": "tenant-platform-eng",
+  "started_at": "2026-05-12T20:06:00.496000+00:00",
+  "emitter_node_id": "head-node",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": "Qj0RqsljGUHKEjKws7gRLbmlbKBqOGKbwZ37wc98jD7iXjYlq+JcAgfe5lPKgD+FPeudbt9Z5ypNJHnyNJi/LQ==",
+  "nova.batch.signing_key_id": "d329546d-a1c1-4569-8081-1dffaeff61c9"
+}

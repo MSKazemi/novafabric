@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/promote_proposal_v1.json",
+  "title": "PromoteProposal",
+  "description": "Predicate for a capsule-level promotion proposal (maker step).",
+  "type": "object",
+  "required": [
+    "role",
+    "capsule_id",
+    "capsule_digest",
+    "target_environment",
+    "justification",
+    "proposer_subject",
+    "policy_version",
+    "timestamp"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "role": {
+      "type": "string",
+      "const": "proposer"
+    },
+    "capsule_id": {
+      "type": "string"
+    },
+    "capsule_digest": {
+      "type": "object",
+      "required": ["sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "target_environment": {
+      "type": "string"
+    },
+    "justification": {
+      "type": "string",
+      "minLength": 20
+    },
+    "proposer_subject": {
+      "type": "string"
+    },
+    "policy_version": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

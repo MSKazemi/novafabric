@@ -1,0 +1,20 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "5FTT71BYKSEC7AP0XXXEDNEN1T",
+  "global_run_id": "26A8373XJ5WE764WSB2Y87H971",
+  "run_id": "05K9BPFKEYBAMG8DJ349T43Y45",
+  "parent_run_id": null,
+  "event_type": "span",
+  "trace_id": "88cd51298b83b186345aac0e05432908",
+  "span_id": "5095a75c63a29ed2",
+  "agent_id": "anthropic-sdk",
+  "cluster_id": "slurm-train-v100",
+  "tenant_id": "tenant-acme",
+  "started_at": "2026-05-12T18:05:00.012000+00:00",
+  "emitter_node_id": "head-node",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

@@ -1,0 +1,26 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "0YTAV99PB929AAPGGNCCVWKW8Z",
+  "global_run_id": "5S277B3D552WVKXFDB952Y015G",
+  "run_id": "0T8ERC9MATCT4R7Q1V38XCXZWJ",
+  "parent_run_id": "0JT2T9YX88XJQEBE4W1FS943TD",
+  "event_type": "tool_call",
+  "trace_id": "78239369f58977fbfbf42425ccbda414",
+  "span_id": "23d727e95d0ad33e",
+  "agent_id": "anthropic-sdk",
+  "cluster_id": "azure-ml-cluster",
+  "tenant_id": "tenant-platform-eng",
+  "started_at": "2026-05-12T15:04:00.618000+00:00",
+  "payload": {
+    "tool_name": "database_query",
+    "tool_call_id": "tc_a877351058f75eec",
+    "arguments": {
+      "input": "example input for database_query"
+    },
+    "duration_ms": 3405
+  },
+  "payload_hash": "sha256:f1e452111e8e888195bf3571cc061e946ffeccd6294ac4d2b641f97e55aa452b",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

@@ -1,0 +1,246 @@
+# NovaFabric — experiment / production stack
+#
+# Profiles
+# ────────
+#   (no profile)  dev/laptop — postgres + nova-serve          (~512 MB RAM, fast startup)
+#   prod          full stack — + clickhouse + nats + kafka + pgbouncer + janusgraph
+#
+# All container names are prefixed novafabric- for easy identification in docker ps
+# alongside containers from other projects.
+#
+# Shared data directory (capsules + SQLite registry):
+#   Set NOVA_DATA_DIR in your shell or in a .env file next to this file.
+#   Default: ~/novafabric-data
+#   Both the host `nova capture` and the dashboard container read/write here.
+#
+#   mkdir -p "${NOVA_DATA_DIR:-$HOME/novafabric-data}/capsules"
+#   mkdir -p "${NOVA_DATA_DIR:-$HOME/novafabric-data}/nova"
+#
+# On the host, export these so nova CLI commands use the same paths:
+#   export NOVAFABRIC_HOME="${NOVA_DATA_DIR:-$HOME/novafabric-data}/nova"
+#   export NOVAFABRIC_CAPSULE_DIR="${NOVA_DATA_DIR:-$HOME/novafabric-data}/capsules"
+#
+# Quick start (dev — Postgres + dashboard only):
+#   make dev-up
+#   docker compose -f deploy/docker/docker-compose.yml up --build -d
+#
+# Full production stack:
+#   make prod-up
+#   docker compose -f deploy/docker/docker-compose.yml --profile prod up --build -d
+#
+# Run experiments on the host:
+#   export NOVAFABRIC_METADATA_BACKEND=postgres
+#   export NOVAFABRIC_METADATA_DSN=postgresql://nova:nova@localhost:5432/nova
+#   nova capture python my_scenario.py
+#
+# Access dashboard via SSH tunnel:
+#   ssh -L 4321:localhost:4321 <user>@<host>
+#   open: http://localhost:4321/dashboard?token=<printed in docker logs>
+#
+# Note for existing deployments
+# ──────────────────────────────
+# Container names changed from nova-* to novafabric-* in this version.
+# Named volumes (pg-data, ch-data, kuzu-data) are unchanged — existing data
+# is preserved. Run `docker compose down` then `make dev-up` or `make prod-up`.
+
+services:
+
+  # ── Postgres — MetadataStore + lineage edge tables (always active) ──────────
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: novafabric-postgres
+    environment:
+      POSTGRES_USER: nova
+      POSTGRES_PASSWORD: nova
+      POSTGRES_DB: nova
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nova"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  # ── Nova serve — dashboard + API (always active) ───────────────────────────
+  #
+  # In dev mode (no prod profile) ClickHouse and JanusGraph are not running.
+  # Nova detects unreachable backends and degrades gracefully:
+  #   - CostTab shows "backend: stub"
+  #   - Lineage-v2 falls back to the embedded KuzuDB graph
+
+  nova:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    container_name: novafabric-serve
+    ports:
+      - "4321:4321"
+    environment:
+      NOVAFABRIC_HOME: /data/nova
+      NOVAFABRIC_EVIDENCE_DIR: /data/capsules/evidence
+      # MetadataStore backend
+      NOVAFABRIC_METADATA_BACKEND: postgres
+      NOVAFABRIC_METADATA_DSN: postgresql://nova:nova@postgres:5432/nova
+      # Server-mode backend
+      NOVAFABRIC_SERVER_BACKEND: postgres
+      NOVAFABRIC_POSTGRES_DSN: postgresql://nova:nova@postgres:5432/nova
+      # ClickHouse cost attribution (cap-002 / ADR-0066)
+      # Absent in dev → CostTab degrades to stub; present in prod → live cost data
+      NOVA_CLICKHOUSE_URL: http://nova:novapass@clickhouse:8123/nova
+      # JanusGraph lineage-v2 (ADR-0053 / Phase 6)
+      # Absent in dev → lineage falls back to KuzuDB; present in prod → JanusGraph active
+      NOVA_JANUSGRAPH_URL: ws://janusgraph:8182/gremlin
+      # pg_isready target (used by entrypoint)
+      PGHOST: postgres
+      PGUSER: nova
+    volumes:
+      - ${NOVA_DATA_DIR:-${HOME}/novafabric-data}/capsules:/data/capsules
+      - ${NOVA_DATA_DIR:-${HOME}/novafabric-data}/nova:/data/nova
+      - kuzu-data:/data/kuzu
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── ClickHouse — cost attribution store (prod profile) ─────────────────────
+
+  clickhouse:
+    profiles: [prod]
+    image: clickhouse/clickhouse-server:24.12-alpine
+    container_name: novafabric-clickhouse
+    environment:
+      CLICKHOUSE_USER: nova
+      CLICKHOUSE_PASSWORD: novapass
+      CLICKHOUSE_DB: nova
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - ch-data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user nova --password novapass --query 'SELECT 1'"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+    restart: unless-stopped
+
+  # ── NATS JetStream — collector hub / evidence fabric transport (prod profile) ─
+
+  nats:
+    profiles: [prod]
+    image: nats:2.10-alpine
+    container_name: novafabric-nats
+    command:
+      - "--name"
+      - "novafabric-hub"
+      - "--js"
+      - "--store_dir"
+      - "/data/nats"
+      - "--port"
+      - "4222"
+      - "--http_port"
+      - "8222"
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats-data:/data/nats
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8222/healthz | grep -q ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  # ── Kafka KRaft — alternative collector transport (prod profile) ────────────
+
+  kafka:
+    profiles: [prod]
+    image: apache/kafka:3.9.0
+    container_name: novafabric-kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    ports:
+      - "9092:9092"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  # ── PgBouncer — Postgres connection pooling (prod profile) ─────────────────
+
+  pgbouncer:
+    profiles: [prod]
+    image: edoburu/pgbouncer:latest
+    container_name: novafabric-pgbouncer
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: nova
+      DB_USER: nova
+      DB_PASSWORD: nova
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: "200"
+      DEFAULT_POOL_SIZE: "20"
+      AUTH_TYPE: trust
+    ports:
+      - "6432:6432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 6432 -U nova"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ── JanusGraph — lineage-v2 graph store (prod profile) ─────────────────────
+  #
+  # Default backend: BerkeleyJE (embedded, single-node).
+  # For cluster deployments replace with Cassandra + Elasticsearch via env config.
+
+  janusgraph:
+    profiles: [prod]
+    image: janusgraph/janusgraph:1.1.0
+    container_name: novafabric-janusgraph
+    environment:
+      JAVA_OPTIONS: "-Xms512m -Xmx2g"
+    ports:
+      - "8182:8182"
+    volumes:
+      - janusgraph-data:/var/lib/janusgraph
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 8182 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  pg-data:
+  ch-data:
+  kuzu-data:
+  nats-data:
+  kafka-data:
+  janusgraph-data:
+
+networks:
+  default:
+    name: novafabric-net

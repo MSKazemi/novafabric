@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "06MSV8YEQF17A2XNRRKWQZ37SH",
+  "global_run_id": "4D2MDTW0P4AKDA377SE2ETMQTF",
+  "run_id": "00RVZ5HG2KT22FE3T2DRAWY3XF",
+  "parent_run_id": "5XS1SWZ8YH4PA1ZTPMJZ78QP2G",
+  "event_type": "tool_call",
+  "trace_id": "0869a21f5f5b4be9cec186552526add2",
+  "span_id": "830cb6e7ba417679",
+  "agent_id": "openai-agents-sdk",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-ml-ops",
+  "started_at": "2026-05-12T21:28:00.408000+00:00",
+  "emitter_node_id": "node02.cluster.local",
+  "payload": {
+    "tool_name": "web_search",
+    "tool_call_id": "tc_a78c3567d73b9497",
+    "arguments": {
+      "input": "example input for web_search"
+    },
+    "duration_ms": 949
+  },
+  "payload_hash": "sha256:73143f045622383dfd2f2115c67f046b0c6400e4d6be03c2de08f7c25c9cbccc",
+  "nova.batch.signature": "gcUkpI0eqpfeMStzUnntqYKXjxmi0aS4+75uWfpAo/y4804NjbhSSVLx7IjvooybUtXPjVGnRDuLt40ha4nFTA==",
+  "nova.batch.signing_key_id": "946067aa-7b68-45b6-b8cf-e97af7be3238"
+}

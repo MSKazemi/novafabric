@@ -1,0 +1,43 @@
+{
+  "name": "nova-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "NovaFabric live topology dashboard SPA — Sigma.js + Graphology + Arrow IPC",
+  "license": "Apache-2.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@dagrejs/dagre": "^3.0.0",
+    "@msgpack/msgpack": "^3.1.3",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.6.1",
+    "@types/three": ">=0.177.0",
+    "apache-arrow": ">=21.1.0",
+    "d3-hierarchy": "^3.1.2",
+    "graphology": ">=0.26.0",
+    "graphology-communities-louvain": ">=2.0.2",
+    "graphology-layout-forceatlas2": ">=0.10.1",
+    "graphology-types": ">=0.24.7",
+    "react": ">=19.2.6",
+    "react-dom": ">=19.2.6",
+    "sigma": ">=3.0.3",
+    "three": "^0.184.0",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/d3-hierarchy": "^3.1.7",
+    "@types/react": ">=19.2.14",
+    "@types/react-dom": ">=19.2.3",
+    "@vitejs/plugin-react": ">=6.0.2",
+    "typescript": ">=5.8.3",
+    "vite": ">=8.0.13",
+    "vitest": ">=4.1.6"
+  }
+}

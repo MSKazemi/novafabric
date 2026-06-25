@@ -1,0 +1,26 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "6C3BG0FQE4E025D63R5V5CBW23",
+  "global_run_id": "50X7AWE751JGP6472FM6Q69FED",
+  "run_id": "0VPDZB4WDBXMCYKZBMHFMMPRXZ",
+  "parent_run_id": "0XNNW9VYGPDE30AA2XBRB3F9KH",
+  "event_type": "tool_call",
+  "trace_id": "9f60452682f1d47902371fbc2f5d12cc",
+  "span_id": "349ca5bf3f12fba4",
+  "agent_id": "anthropic-sdk",
+  "cluster_id": "azure-ml-cluster",
+  "tenant_id": "tenant-ml-ops",
+  "started_at": "2026-05-12T15:52:00.404000+00:00",
+  "payload": {
+    "tool_name": "file_reader",
+    "tool_call_id": "tc_c11bcbda97f305e5",
+    "arguments": {
+      "input": "example input for file_reader"
+    },
+    "duration_ms": 1557
+  },
+  "payload_hash": "sha256:42bc2b05669b2636406308d6979bc17ba933040ee33c5cae8977e1114b25ffc8",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

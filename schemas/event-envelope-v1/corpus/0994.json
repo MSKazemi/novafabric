@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "5NFG1MV55RMFCNCMHWBS659DJW",
+  "global_run_id": "27QG3ERXQJ2XNWTDFB5T60CDTA",
+  "run_id": "61AWA2WYSECBJS34Z5BR59E0JV",
+  "parent_run_id": "6SCBMJ44BAGK7HM9MCQ63GZ9W8",
+  "event_type": "tool_call",
+  "trace_id": "4f73d00fc2c1672e90f04ff0696665dd",
+  "span_id": "5fe84aaf3b1bea6b",
+  "agent_id": "custom-agent-v1",
+  "cluster_id": "slurm-train-v100",
+  "tenant_id": "tenant-platform-eng",
+  "started_at": "2026-05-13T02:34:00.213000+00:00",
+  "emitter_node_id": "head-node",
+  "payload": {
+    "tool_name": "web_search",
+    "tool_call_id": "tc_e2f416acfbf90b23",
+    "arguments": {
+      "input": "example input for web_search"
+    },
+    "duration_ms": 1504
+  },
+  "payload_hash": "sha256:44949151f1069e7661816f5a578244e6cee4c1bc7e0aa2eb1fb3f48e4bc35138",
+  "nova.batch.signature": "3yksKhaKxibaZ3fPxq8rfq8kTzmSgxcKno9KN3FTAS2lHJoC3DF0CvNWwMxrA83VCrBWI3m2cDoB3FNTe7vfsA==",
+  "nova.batch.signing_key_id": "c53bffc1-d760-40e5-a625-d3b9038ccdb2"
+}

@@ -1,0 +1,20 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "54HM024Z4YYSGPD8GVAFP57VQW",
+  "global_run_id": "59P4JPZ2TP0AXDF9V46MRHD5WT",
+  "run_id": "3KFYM78P9TCSZR1ZDCN7DHKSF6",
+  "parent_run_id": "1RCY1AAKXAQVDBSZY4EX012TX4",
+  "event_type": "run.start",
+  "trace_id": "e47086cb27e514228aee771e0d776984",
+  "span_id": "8e25edf4495346da",
+  "agent_id": "nova-otel-bridge",
+  "cluster_id": "slurm-train-v100",
+  "tenant_id": "tenant-ml-ops",
+  "started_at": "2026-05-13T00:31:00.239000+00:00",
+  "emitter_node_id": "gpu-node-04",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": "U31zaWurhdt8JHueucRnj48eao3lUM8Q8EcCmcldWyr1cYnzKFj6JiaYuhUfrfJQ5xKDVIEOZ/P7uUyllmt2Vg==",
+  "nova.batch.signing_key_id": "547381d2-198e-4401-9d51-9d87be97fb6b"
+}

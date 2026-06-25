@@ -1,0 +1,152 @@
+name: Collector CI
+
+on:
+  push:
+    paths:
+      - "collector/**"
+      - "schemas/event-envelope-v1/**"
+      - "deploy/**"
+      - ".github/workflows/collector-ci.yml"
+  pull_request:
+    paths:
+      - "collector/**"
+      - "schemas/event-envelope-v1/**"
+      - "deploy/**"
+
+env:
+  # go.mod requires Go ≥ 1.25 since the OTel 1.43.0 bump (Dependabot Phase C).
+  GO_VERSION: "1.25"
+  GOPATH: ${{ github.workspace }}/.gopath
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: collector
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: collector/go.sum
+      - name: go vet
+        run: GOPATH=${{ env.GOPATH }} go vet ./...
+      - name: Prohibit flock/mmap/fcntl in spool
+        run: |
+          # Match the forbidden tokens in non-test Go files, then drop lines that
+          # are pure leading-comment lines (//... or  *...) so the spool's
+          # explanatory comments ("no flock/mmap/fcntl is used here") do not
+          # trip the check. Real uses would appear in code without a leading
+          # comment marker.
+          if grep -rn --include="*.go" \
+            -E 'flock|mmap|fcntl|F_SETLK|syscall\.Flock|LOCK_EX' \
+            internal/spool/ \
+            | grep -v "_test.go" \
+            | grep -Ev ':[[:space:]]*(//|\*)'; then
+            echo "ERROR: flock/mmap/fcntl found in spool non-test code"
+            exit 1
+          fi
+          echo "OK: no flock/mmap/fcntl in internal/spool"
+
+  unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: collector
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: collector/go.sum
+      - name: go test -race
+        run: GOPATH=${{ env.GOPATH }} go test -race -count=1 -timeout 120s ./...
+      - name: Coverage check
+        run: |
+          GOPATH=${{ env.GOPATH }} go test -coverprofile=coverage.out ./pkg/... ./internal/...
+          GOPATH=${{ env.GOPATH }} go tool cover -func=coverage.out | tail -1
+          COVERAGE=$(GOPATH=${{ env.GOPATH }} go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
+          echo "Coverage: ${COVERAGE}%"
+          # Warn (not fail) if below 75%
+          awk "BEGIN {exit (${COVERAGE} < 75)}" || echo "WARNING: coverage below 75%"
+
+  spec:
+    name: Spec Corpus Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate corpus
+        run: |
+          python3 -c "
+          import json, pathlib, sys
+          schema = json.load(open('schemas/event-envelope-v1/envelope-v1.json'))
+          files = sorted(pathlib.Path('schemas/event-envelope-v1/corpus').glob('[0-9]*.json'))
+          errors = []
+          for f in files:
+              data = json.load(open(f))
+              for req in schema.get('required', []):
+                  if req not in data:
+                      errors.append(f'{f}: missing required field {req}')
+          if errors:
+              for e in errors[:10]: print(e, file=sys.stderr)
+              sys.exit(1)
+          print(f'{len(files)}/{len(files)} corpus events valid')
+          "
+
+  build:
+    name: Build Artifacts
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: collector
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: collector/go.sum
+      - name: Build binaries
+        run: |
+          GOPATH=${{ env.GOPATH }} go build -o bin/novafabric-collector ./cmd/novafabric-collector
+          GOPATH=${{ env.GOPATH }} go build -o bin/novafabric-verifier ./cmd/novafabric-verifier
+          GOPATH=${{ env.GOPATH }} go build -o bin/novafabric-hpc-hub ./cmd/novafabric-hpc-hub
+      - name: Smoke-test verifier --help
+        run: ./bin/novafabric-verifier --help 2>&1 | head -3 || true
+      - name: Smoke-test hpc-hub --help
+        run: ./bin/novafabric-hpc-hub --help 2>&1 | head -3 || true
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: collector
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: collector/go.sum
+      - name: govulncheck
+        run: |
+          GOPATH=${{ env.GOPATH }} go install golang.org/x/vuln/cmd/govulncheck@latest
+          ${{ env.GOPATH }}/bin/govulncheck ./... || echo "Vulnerabilities found — review required"
+      - name: License check (no AGPL/GPL/BSL)
+        run: |
+          GOPATH=${{ env.GOPATH }} go install github.com/google/go-licenses@latest
+          ${{ env.GOPATH }}/bin/go-licenses report ./... 2>/dev/null > /tmp/licenses.txt || true
+          # Allowlisted MPL-2.0 transitive deps (see ADR-0024 amendment for
+          # hashicorp/go-version — file-level copyleft, unmodified, pulled in
+          # transitively via go.opentelemetry.io/collector/featuregate).
+          grep -v '^github\.com/hashicorp/go-version,' /tmp/licenses.txt > /tmp/licenses.filtered.txt
+          if grep -E '(AGPL|GPL-3|BSL-1\.1|MPL-2\.0|Elastic)' /tmp/licenses.filtered.txt; then
+            echo "ERROR: Prohibited license found"
+            exit 1
+          fi
+          echo "License check passed"

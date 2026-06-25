@@ -1,0 +1,26 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "5XVERBMY7W1MD3PA6FWZ6QEJT5",
+  "global_run_id": "0YFG8FFKSV7KGFAPMKKT6J3GB8",
+  "run_id": "6NJNZXEPJGC4K3SBAQAF9VHQF3",
+  "parent_run_id": "5A7Y2MJR2NMTAC2TQVCM4SSS5G",
+  "event_type": "tool_call",
+  "trace_id": "df4d6268951b5ac37d059b4a49cc99a5",
+  "span_id": "afca2434ffb27f15",
+  "agent_id": "anthropic-sdk",
+  "cluster_id": "slurm-train-v100",
+  "tenant_id": "tenant-platform-eng",
+  "started_at": "2026-05-12T14:22:00.874000+00:00",
+  "payload": {
+    "tool_name": "file_reader",
+    "tool_call_id": "tc_a65a0ae21ecf187f",
+    "arguments": {
+      "input": "example input for file_reader"
+    },
+    "duration_ms": 3911
+  },
+  "payload_hash": "sha256:e682c7c87118d35a708515f877767480128732d585d8de75d06fe608792bdfa8",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

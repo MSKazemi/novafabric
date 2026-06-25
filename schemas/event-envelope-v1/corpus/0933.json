@@ -1,0 +1,28 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "1CRQ8SKPAP7ZSKH0CDE8TKA2H5",
+  "global_run_id": "a93f4497-a369-72b9-b80b-076d04f397cb",
+  "run_id": "07Q5CQC8H3WCNYMK6GWTFRFD64",
+  "parent_run_id": "33MZ28SY666F02ZDHY8HQM5T7E",
+  "event_type": "model_call",
+  "trace_id": "5e85ac29375dcca9706b81adec2b8994",
+  "span_id": "ca85be9ed3e35428",
+  "agent_id": "anthropic-sdk",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-13T01:33:00.537000+00:00",
+  "emitter_node_id": "node02.cluster.local",
+  "payload": {
+    "model": "mistralai/Mistral-7B-Instruct-v0.3",
+    "system": "meta",
+    "usage": {
+      "input_tokens": 3412,
+      "output_tokens": 984
+    },
+    "stop_reason": "tool_use"
+  },
+  "payload_hash": "sha256:7a510b7ef11223a434c4d8ddd8dea2100ba6c0ee07447a71dd35eed285807fa3",
+  "nova.batch.signature": "jPr5P3relgemz9b5//TPQJOxEGMLs4mRtpFsgCpzJfuOOhnshWU9UTSrH9eBRQtige2BZLYWaWHTdwxLwlOHGw==",
+  "nova.batch.signing_key_id": "d1448e42-3dbc-4b26-8eee-a3b8d13202b0"
+}

@@ -1,0 +1,145 @@
+{
+  "schema_version": "0.1.0",
+  "assets": [
+    {
+      "name": "gpt-4o-mini",
+      "version": "2024-07-18",
+      "asset_type": "model",
+      "status": "promoted",
+      "description": "OpenAI's small frontier model. Used as the reasoning core of code-review-agent.",
+      "spec": {
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "context_window": 128000,
+        "max_output_tokens": 16384
+      }
+    },
+    {
+      "name": "code-review-prompt",
+      "version": "0.1.0",
+      "asset_type": "prompt",
+      "status": "promoted",
+      "description": "System prompt for the code-review-agent. Asks the model to identify bugs, style issues, and missing edge cases.",
+      "spec": {
+        "template": "You are a thorough code reviewer. For the diff below, identify: (1) bugs, (2) edge cases the author may have missed, (3) style inconsistencies. Be specific. Quote line numbers.\n\n{diff}",
+        "variables": [
+          "diff"
+        ]
+      }
+    },
+    {
+      "name": "code-review-prompt",
+      "version": "0.2.0",
+      "asset_type": "prompt",
+      "status": "development",
+      "description": "Shorter, faster v0.2.0 of the code-review prompt. Failed eval suite \u2014 misses edge cases.",
+      "spec": {
+        "template": "Review this code diff. Note bugs and style issues.\n\n{diff}",
+        "variables": [
+          "diff"
+        ]
+      }
+    },
+    {
+      "name": "python-test-corpus",
+      "version": "1.0.0",
+      "asset_type": "dataset",
+      "status": "promoted",
+      "description": "Curated set of 200 Python diffs with known bugs, used for evaluating code-review agents.",
+      "spec": {
+        "size": 200,
+        "format": "jsonl"
+      }
+    },
+    {
+      "name": "run-tests-tool",
+      "version": "0.3.0",
+      "asset_type": "tool",
+      "status": "promoted",
+      "description": "Runs the project's test suite in a sandboxed subprocess.",
+      "spec": {
+        "transport": "mcp",
+        "mutating": false
+      }
+    },
+    {
+      "name": "read-file-tool",
+      "version": "1.1.0",
+      "asset_type": "tool",
+      "status": "promoted",
+      "description": "Reads a file from the working tree. Read-only.",
+      "spec": {
+        "transport": "mcp",
+        "mutating": false
+      }
+    },
+    {
+      "name": "code-review-agent",
+      "version": "0.1.0",
+      "asset_type": "agent",
+      "status": "promoted",
+      "description": "Code-review agent. Composes gpt-4o-mini, code-review-prompt@0.1.0, run-tests-tool, read-file-tool.",
+      "spec": {
+        "depends_on": [
+          "gpt-4o-mini@2024-07-18",
+          "code-review-prompt@0.1.0",
+          "run-tests-tool@0.3.0",
+          "read-file-tool@1.1.0"
+        ]
+      }
+    },
+    {
+      "name": "code-review-agent",
+      "version": "0.2.0",
+      "asset_type": "agent",
+      "status": "development",
+      "description": "Code-review agent v0.2.0. Uses code-review-prompt@0.2.0. Eval-failed; held in development.",
+      "spec": {
+        "depends_on": [
+          "gpt-4o-mini@2024-07-18",
+          "code-review-prompt@0.2.0",
+          "run-tests-tool@0.3.0",
+          "read-file-tool@1.1.0"
+        ]
+      }
+    }
+  ],
+  "eval_results": [
+    {
+      "asset": "code-review-prompt@0.1.0",
+      "suite": "edge-case-coverage",
+      "passed": true,
+      "score": 0.91
+    },
+    {
+      "asset": "code-review-prompt@0.1.0",
+      "suite": "tone-and-clarity",
+      "passed": true,
+      "score": 0.88
+    },
+    {
+      "asset": "code-review-prompt@0.2.0",
+      "suite": "edge-case-coverage",
+      "passed": false,
+      "score": 0.62
+    },
+    {
+      "asset": "code-review-prompt@0.2.0",
+      "suite": "tone-and-clarity",
+      "passed": true,
+      "score": 0.84
+    },
+    {
+      "asset": "code-review-agent@0.1.0",
+      "suite": "regression-set",
+      "passed": true,
+      "score": 0.93
+    },
+    {
+      "asset": "code-review-agent@0.2.0",
+      "suite": "regression-set",
+      "passed": false,
+      "score": 0.71
+    }
+  ]
+}

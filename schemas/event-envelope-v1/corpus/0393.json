@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "0EWBZAC92XZXZAY4GQTC4RV83C",
+  "global_run_id": "f9e2a945-f1c3-7dce-ae9e-e282a587d2fe",
+  "run_id": "4TD7VKAM0YVZHNP2DHTGX0QATR",
+  "parent_run_id": "233VGQ95ZYDWBWB7MV0X9N6AV1",
+  "event_type": "model_call",
+  "trace_id": "cee5ace603656716d763e2eae346e855",
+  "span_id": "28f947473b6f1fff",
+  "agent_id": "langchain-agent",
+  "cluster_id": "slurm-train-v100",
+  "tenant_id": "tenant-ml-ops",
+  "started_at": "2026-05-12T16:33:00.489000+00:00",
+  "payload": {
+    "model": "claude-3-opus-20240229",
+    "system": "openai",
+    "usage": {
+      "input_tokens": 1556,
+      "output_tokens": 229
+    },
+    "stop_reason": "max_tokens"
+  },
+  "payload_hash": "sha256:c977c9161b82ceeb01db3a87cb945d07dc8214305dfdb94e045d52ad5c12b3f4",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

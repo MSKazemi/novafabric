@@ -1,0 +1,233 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/ledger-checkpoint-v1.schema.json",
+  "$comment": "schema_version 1.0.0; tracks design/spec/ledger-checkpoint-v1.md and ADR-0094 (A). In-capsule record at capsule_dir/.ledger/checkpoint.json. Additive/optional alongside the byte-identical jsonl evidence streams; the per-stream sidecar chains live in capsule_dir/.ledger/<stream>.chain.json. DSSE-signed by the ADR-0089 RatchetSigner, appended to the ADR-0041 MerkleLog, and externally anchored (ADR-0070 RFC3161 / ADR-0071 Sigstore).",
+  "title": "LedgerCheckpoint",
+  "description": "A multi-stream checkpoint of an Adversary-Anchored Accountability Ledger (ADR-0094). Aggregates the sealed head of every per-stream sidecar chain in a capsule plus the binding identity (node epoch + agent + principal), so a verifier can prove no stream was truncated, reordered, or rewritten below the signed head.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "checkpoint_id",
+    "capsule_id",
+    "created_at",
+    "kind",
+    "streams",
+    "identity"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^1\\.",
+      "description": "OAS v1.0 schema version. Must be 1.x.x (ADR-0034 §1)."
+    },
+    "checkpoint_id": {
+      "$ref": "#/$defs/Ulid",
+      "description": "Unique identifier for this checkpoint within the capsule."
+    },
+    "capsule_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "run_id of the capsule whose streams this checkpoint seals."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the checkpoint record was assembled (RFC 3339, UTC)."
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["finalize", "batch", "interim"],
+      "description": "Checkpoint cadence. 'finalize' = once at run end (local-mode default, one anchor call/run). 'batch' = amortized batch-root sealed at the hub (cluster mode, keeps crypto off the compute hot path). 'interim' = optional in-run checkpoint."
+    },
+    "prev_checkpoint_id": {
+      "oneOf": [
+        {"$ref": "#/$defs/Ulid"},
+        {"type": "null"}
+      ],
+      "description": "checkpoint_id of the previous checkpoint for this capsule, or null for the first. Lets verifiers chain multiple interim checkpoints."
+    },
+    "streams": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/StreamHead"},
+      "description": "One sealed head per evidence stream covered by this checkpoint. The set of streams is recorded so a verifier can detect a stream dropped entirely (omission) versus truncated (seq_high < observed)."
+    },
+    "identity": {
+      "$ref": "#/$defs/IdentityBinding",
+      "description": "The node/agent/principal binding sealed by this checkpoint — the principal -> agent -> action delegation chain (ADR-0094 §identity-to-action binding)."
+    },
+    "merkle": {
+      "$ref": "#/$defs/MerkleRef",
+      "description": "Reference to this checkpoint's entry in the NovaSeal MerkleLog (ADR-0041). Populated after the checkpoint is appended to the log."
+    },
+    "anchor": {
+      "$ref": "#/$defs/ExternalAnchor",
+      "description": "External anchor binding (RFC 3161 timestamp and/or Sigstore/Rekor transparency entry). Absent until the checkpoint is anchored."
+    },
+    "signature": {
+      "$ref": "#/$defs/Signature",
+      "description": "DSSE signature over the canonical checkpoint body produced by the ADR-0089 RatchetSigner. The body excludes the signature, merkle, and anchor blocks (all populated post-signing)."
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Vendor extensions. Keys must be reverse-DNS-prefixed."
+    }
+  },
+  "$defs": {
+    "Ulid": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "description": "26-character Crockford base32 ULID."
+    },
+    "Sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Lowercase hex SHA-256 digest, sha256:-prefixed."
+    },
+    "StreamHead": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stream", "seq_high", "head_link_hash", "record_count"],
+      "properties": {
+        "stream": {
+          "type": "string",
+          "description": "Logical stream name, matching the sidecar chain file capsule_dir/.ledger/<stream>.chain.json, e.g. 'model-calls', 'tool-calls', 'network_events', 'file_events', 'audit'."
+        },
+        "chain_file": {
+          "type": "string",
+          "description": "Relative path within the capsule to the sidecar chain file, e.g. '.ledger/model-calls.chain.json'."
+        },
+        "jsonl_file": {
+          "type": "string",
+          "description": "Relative path within the capsule to the byte-identical evidence stream the chain covers, e.g. 'model-calls.jsonl'. The chain is a sidecar; the jsonl is never modified."
+        },
+        "seq_high": {
+          "type": "integer",
+          "minimum": -1,
+          "description": "Highest sequence number sealed for this stream at checkpoint time (0-based; -1 means an empty stream). Truncation below this value after signing is detectable."
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of records sealed for this stream (seq_high + 1 for a gap-free chain). Recorded so a verifier can detect a seq gap independently of seq_high."
+        },
+        "head_link_hash": {
+          "$ref": "#/$defs/Sha256",
+          "description": "link_hash of the head (highest-seq) entry of the sidecar chain. A single value that the whole content chain cascades into; any content edit, reorder, or gap changes it."
+        }
+      },
+      "description": "Sealed head of one per-stream sidecar chain. Each chain entry is {seq, prev_hash, link_hash} where link_hash = sha256(seq || prev_hash || sha256(record_bytes))."
+    },
+    "IdentityBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id", "epoch", "epoch_pubkey"],
+      "properties": {
+        "node_id": {
+          "type": "string",
+          "description": "Node identity sealing the checkpoint (ADR-0089 ratchet node)."
+        },
+        "epoch": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Ratchet epoch of the signing key (ADR-0089). Monotonic per node; a checkpoint claiming an epoch below an already-observed epoch is an epoch rollback."
+        },
+        "epoch_pubkey": {
+          "type": "string",
+          "description": "Ed25519 public key of the epoch-i signing key. Verifiers resolve and trust the registry-published value, not this carried copy (ADR-0089 §3)."
+        },
+        "agent_id": {
+          "oneOf": [{"type": "string"}, {"type": "null"}],
+          "description": "Agent identity bound to the sealed actions (event-envelope agent_id). Binds the agent leg of principal -> agent -> action."
+        },
+        "principal": {
+          "oneOf": [{"type": "string"}, {"type": "null"}],
+          "description": "OIDC/RBAC subject the run executed under (the PolicySubject replay/_engine.py already uses). The root of the delegation chain."
+        }
+      },
+      "description": "Binds node (epoch key) + agent (record field) + actions (stream heads) under one ratchet signature."
+    },
+    "MerkleRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "leaf_hash"],
+      "properties": {
+        "root": {
+          "$ref": "#/$defs/Sha256",
+          "description": "Merkle root the checkpoint leaf was included under."
+        },
+        "leaf_hash": {
+          "$ref": "#/$defs/Sha256",
+          "description": "Leaf hash of this checkpoint in the MerkleLog."
+        },
+        "log_index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Position of the leaf in the append-only MerkleLog."
+        },
+        "inclusion_proof": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/Sha256"},
+          "description": "Audit path (sibling hashes) proving leaf_hash is included under root, RFC 6962-style."
+        }
+      },
+      "description": "Inclusion of this checkpoint in the NovaSeal MerkleLog (ADR-0041)."
+    },
+    "ExternalAnchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "anchored_value"],
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": ["rfc3161", "sigstore-rekor", "none"],
+          "description": "External anchor mechanism. 'rfc3161' = RFC 3161 timestamp token (ADR-0070). 'sigstore-rekor' = Sigstore transparency entry (ADR-0071). 'none' = not externally anchored (offline, anchor deferred)."
+        },
+        "anchored_value": {
+          "$ref": "#/$defs/Sha256",
+          "description": "The value anchored externally — the Merkle root (cluster batch) or the checkpoint signature digest (local finalize). The verifier recomputes it and compares against the external proof."
+        },
+        "rfc3161_token_ref": {
+          "oneOf": [{"type": "string"}, {"type": "null"}],
+          "description": "Relative path to the embedded RFC 3161 timestamp token (.tsr), when method is 'rfc3161'."
+        },
+        "rekor_log_index": {
+          "oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}],
+          "description": "Rekor log index, when method is 'sigstore-rekor'."
+        },
+        "rekor_log_id": {
+          "oneOf": [{"type": "string"}, {"type": "null"}],
+          "description": "Rekor instance log id, when method is 'sigstore-rekor'."
+        },
+        "anchored_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the external anchor was obtained (RFC 3339)."
+        }
+      },
+      "description": "External anchor that places the checkpoint beyond the reach of a host/key-compromised operator. A mismatch between anchored_value and the recomputed root/signature is anchor tampering."
+    },
+    "Signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "value"],
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "enum": ["ed25519"],
+          "description": "Signature algorithm of the ratchet epoch key (ADR-0089 Ed25519)."
+        },
+        "value": {
+          "type": "string",
+          "description": "Base64-encoded DSSE signature over the canonical checkpoint body."
+        },
+        "payload_type": {
+          "type": "string",
+          "description": "DSSE payloadType, e.g. 'application/vnd.novafabric.ledger-checkpoint+json'."
+        }
+      },
+      "description": "DSSE signature produced by the ADR-0089 RatchetSigner at the recorded epoch."
+    }
+  }
+}

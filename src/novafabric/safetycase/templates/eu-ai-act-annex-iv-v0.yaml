@@ -1,0 +1,148 @@
+# EU AI Act Art. 12 / Annex IV technical-documentation CAE skeleton (ADR-0095).
+#
+# One top claim + one sub-claim per Annex IV element. The 15 element ids and titles
+# mirror the canonical compliance mapping in
+# src/novafabric/compliance/export/annex_iv_mapping.yaml (Regulation (EU) 2024/1689,
+# Annex IV), so this safety-case template binds to the same 15 elements as
+# `nova export-annex-iv`.
+#
+# Each leaf declares a binding_spec naming the evidence_kind(s) that satisfy it. Many
+# Annex IV elements are operator-declared (description / declaration / standards
+# applied) and bind to evidence kinds the compiler cannot auto-resolve from a capsule
+# (operator_document / policy_decision) — those leaves compile to an honest
+# UNSUPPORTED hole rather than a falsely-supported claim. Elements that DO map onto
+# captured facts (logging completeness, control bindings, performance evals,
+# re-performance) bind to resolvable kinds.
+template_id: eu-ai-act-annex-iv-v0
+title: EU AI Act Art. 12 / Annex IV technical documentation
+top_claim_id: C-root
+residual_risk:
+  basis: not-quantified
+  caveat: >-
+    Residual risk is not quantified by default. Many Annex IV elements are
+    operator-declared and compile to UNSUPPORTED until the operator supplies the
+    declared documentation; this compiler never fabricates a measured residual risk.
+claims:
+  - id: C-root
+    statement: >-
+      The AI system's technical documentation satisfies EU AI Act Annex IV and the
+      Art. 12 automatic-logging obligation.
+    claim_kind: compliance
+    strategy:
+      id: A-root
+      strategy: >-
+        Decompose into the 15 Annex IV elements; each element is a sub-claim bound to
+        a capsule-derived fact or honestly flagged as operator-declared.
+      inference_type: inductive
+      premises:
+        - The 15 Annex IV elements jointly cover the technical-documentation duty.
+      defeaters:
+        - An Annex IV element is unaddressed by any sub-claim.
+        - Any element sub-claim is CONTESTED or UNSUPPORTED.
+    children:
+      - id: C-annex-iv-1
+        statement: "Annex IV(1): general description of the AI system."
+        claim_kind: compliance
+        binding_spec:
+          accepts: [operator_document, completeness_assertion]
+      - id: C-annex-iv-2
+        statement: >-
+          Annex IV(2): detailed description of the elements and the development
+          process.
+        claim_kind: compliance
+        binding_spec:
+          accepts: [operator_document, completeness_assertion]
+      - id: C-annex-iv-3
+        statement: >-
+          Annex IV(3): monitoring, functioning and control of the AI system.
+        claim_kind: compliance
+        binding_spec:
+          accepts: [completeness_assertion, criterion_binding]
+      - id: C-annex-iv-4
+        statement: >-
+          Annex IV(4): appropriateness of the performance metrics for the system.
+        claim_kind: compliance
+        binding_spec:
+          accepts: [eval_result, judge_aggregate]
+      - id: C-annex-iv-5
+        statement: "Annex IV(5): detailed description of the risk-management system."
+        claim_kind: compliance
+        binding_spec:
+          accepts: [criterion_binding, operator_document]
+      - id: C-annex-iv-6
+        statement: >-
+          Annex IV(6): description of any change made through the lifetime of the
+          system.
+        claim_kind: compliance
+        binding_spec:
+          accepts: [operator_document, audit_entry]
+      - id: C-annex-iv-7
+        statement: "Annex IV(7): list of the harmonised standards applied."
+        claim_kind: compliance
+        binding_spec:
+          accepts: [operator_document]
+      - id: C-annex-iv-8
+        statement: "Annex IV(8): copy of the EU declaration of conformity."
+        claim_kind: compliance
+        binding_spec:
+          accepts: [operator_document]
+      - id: C-annex-iv-9
+        statement: >-
+          Annex IV(9): system to evaluate AI-system performance in the post-market
+          phase.
+        claim_kind: compliance
+        binding_spec:
+          accepts: [operator_document, eval_result]
+      - id: C-annex-iv-10
+        statement: >-
+          Annex IV(10): intended purpose and reasonably foreseeable misuse.
+        claim_kind: compliance
+        binding_spec:
+          accepts: [operator_document]
+      - id: C-annex-iv-11
+        statement: "Annex IV(11): human-oversight measures."
+        claim_kind: compliance
+        binding_spec:
+          accepts: [operator_document, policy_decision]
+      - id: C-annex-iv-12
+        statement: >-
+          Annex IV(12): measures implemented in the design and development phase.
+        claim_kind: compliance
+        binding_spec:
+          accepts: [operator_document, criterion_binding]
+      - id: C-annex-iv-13
+        statement: >-
+          Annex IV(13): what the AI system has done or is required to do
+          (re-performance of the recorded run).
+        claim_kind: compliance
+        strategy:
+          id: A-annex-iv-13
+          strategy: Re-performance reproduced the recorded outcome.
+          inference_type: deductive
+          premises:
+            - Replay reproduced the sealed capsule outcome.
+          defeaters:
+            - Replay match is not exact or semantic.
+        binding_spec:
+          accepts: [replay_attestation]
+      - id: C-annex-iv-14
+        statement: >-
+          Annex IV(14): description of the algorithms and computing infrastructure.
+        claim_kind: compliance
+        binding_spec:
+          accepts: [operator_document, completeness_assertion]
+      - id: C-annex-iv-15
+        statement: >-
+          Annex IV(15): accuracy, robustness, and cybersecurity test reports.
+        claim_kind: compliance
+        strategy:
+          id: A-annex-iv-15
+          strategy: Multi-judge / metric evaluation over the test set.
+          inference_type: statistical
+          premises:
+            - Judges independently scored each trajectory.
+          defeaters:
+            - Inter-judge agreement below 0.6.
+            - Wilson CI straddles the pass threshold.
+        binding_spec:
+          accepts: [eval_result, judge_aggregate]

@@ -1,0 +1,28 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "3S59ZGQP01G0CGFCB14GKSFRM0",
+  "global_run_id": "fae0c22d-51a0-759b-bfdc-c07cc1a7b265",
+  "run_id": "3MM91BGQP5C5W7ASBAWBJSJNFT",
+  "parent_run_id": "1SC2NG6XTEPY0Z68MHQXSMRV1Q",
+  "event_type": "model_call",
+  "trace_id": "b968a7311f9e8fb1a3a91a8628ddaf43",
+  "span_id": "9fda5f02ed1fa2a9",
+  "agent_id": "anthropic-sdk",
+  "cluster_id": "azure-ml-cluster",
+  "tenant_id": "tenant-platform-eng",
+  "started_at": "2026-05-12T20:39:00.038000+00:00",
+  "emitter_node_id": "node02.cluster.local",
+  "payload": {
+    "model": "gpt-4-turbo",
+    "system": "mistral",
+    "usage": {
+      "input_tokens": 2582,
+      "output_tokens": 857
+    },
+    "stop_reason": "max_tokens"
+  },
+  "payload_hash": "sha256:d253172f7e30a1b4010ffadf316c3647a7f60084c595c898f84e95a988d87d43",
+  "nova.batch.signature": "ynLaz+xPZvWG6oxiR/FIy/8HOboBVQM7ZNOrl2G4Iq7RfRan4O0hbLoRqKdXB/YQZwoLso9sFnsaqUhgT8Rmtw==",
+  "nova.batch.signing_key_id": "6ddf361e-9ea4-48c8-8d4c-17ba5bbc37f7"
+}

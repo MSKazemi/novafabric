@@ -1,0 +1,198 @@
+---
+import Layout from '../components/layout/Layout.astro';
+import InstallBlock from '../components/hero/InstallBlock.astro';
+import TerminalReplay from '../components/hero/TerminalReplay';
+import PrimitiveStrip from '../components/primitives/PrimitiveStrip.astro';
+import CodeBlock from '../components/ui/CodeBlock.astro';
+import { GITHUB_REPO } from '../lib/links';
+
+// SoftwareApplication schema — only facts visible on this page are asserted.
+const softwareSchema = {
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareApplication',
+  name: 'NovaFabric',
+  description:
+    'CLI toolkit to capture, replay, diff, and audit any AI system run. Local-first, open source.',
+  url: 'https://novafabric.dev',
+  applicationCategory: 'DeveloperApplication',
+  operatingSystem: 'Linux, macOS, Windows',
+  softwareVersion: '0.7.0',
+  downloadUrl: 'https://pypi.org/project/novafabric/',
+  codeRepository: 'https://github.com/novafabric/novafabric',
+  author: {
+    '@type': 'Organization',
+    name: 'NovaFabric',
+    url: 'https://novafabric.dev',
+  },
+  offers: {
+    '@type': 'Offer',
+    price: '0',
+    priceCurrency: 'USD',
+  },
+};
+---
+
+<Layout
+  title="NovaFabric — The time machine for AI systems"
+  description="Capture, replay, and audit any AI run. Local-first. Open source. Not a web UI — this site is documentation; the CLI is the canonical interface."
+  softwareSchema={softwareSchema}
+>
+  <!-- Hero -->
+  <section class="container-content pt-20 md:pt-32 pb-20">
+    <div class="grid gap-12 lg:grid-cols-2 lg:gap-16 items-center">
+      <div>
+        <p class="inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] px-3 py-1 text-xs text-[var(--color-text-muted)] mb-6">
+          <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-accent)]" aria-hidden="true"></span>
+          v0.7.0 — local-first, open source
+        </p>
+        <h1 class="text-5xl md:text-6xl font-medium tracking-tighter text-balance leading-[1.05]">
+          The time machine for AI&nbsp;systems.
+        </h1>
+        <p class="mt-6 text-lg text-[var(--color-text-muted)] max-w-xl leading-relaxed">
+          Capture every AI run. Replay any of them. Diff what changed.
+          Trace what depended on what. Export signed evidence. Local-first.
+          Open source. CLI-first.
+        </p>
+        <div class="mt-8 flex flex-wrap items-center gap-4">
+          <InstallBlock command="pip install novafabric" variant="hero" />
+          <a
+            href="#story"
+            class="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline underline-offset-4 decoration-[var(--color-border-strong)] hover:decoration-[var(--color-text)]"
+          >
+            See an example run
+          </a>
+        </div>
+        <p class="mt-6 text-xs text-[var(--color-text-faint)]">
+          This site is documentation. The CLI is the canonical interface — a
+          read-only browser viewer is planned for v1.x.
+        </p>
+      </div>
+
+      <div class="lg:pl-6">
+        <TerminalReplay client:visible />
+      </div>
+    </div>
+  </section>
+
+  <!-- 90-second story -->
+  <section id="story" class="container-content py-16 md:py-24 border-t border-[var(--color-border)]">
+    <header class="mb-12 max-w-2xl">
+      <p class="text-xs uppercase tracking-wider text-[var(--color-text-faint)] mb-2">A 90-second story</p>
+      <h2 class="text-3xl md:text-4xl font-medium tracking-tight text-balance">
+        Yesterday it worked. Today it doesn't. <span class="text-[var(--color-text-muted)]">Now what?</span>
+      </h2>
+    </header>
+
+    <div class="grid gap-6 md:grid-cols-3">
+      <article class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-6">
+        <span class="font-mono text-xs text-[var(--color-text-faint)]">01 — yesterday</span>
+        <h3 class="mt-2 font-medium text-lg">It worked.</h3>
+        <p class="mt-2 text-sm text-[var(--color-text-muted)] leading-relaxed">
+          Your code-review agent shipped a thoughtful review on a 200-line PR.
+          Captured automatically — every model call, every tool, every env fact.
+        </p>
+        <div class="mt-4">
+          <CodeBlock code="nova capture python review.py" lang="bash" />
+        </div>
+      </article>
+
+      <article class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-6">
+        <span class="font-mono text-xs text-[var(--color-text-faint)]">02 — today</span>
+        <h3 class="mt-2 font-medium text-lg">It fails.</h3>
+        <p class="mt-2 text-sm text-[var(--color-text-muted)] leading-relaxed">
+          Same PR, different review — shallower, missing the bug yesterday's
+          run flagged. Something upstream changed. The prompt? The model? A tool version?
+        </p>
+        <div class="mt-4">
+          <CodeBlock code="nova diff RUN_A RUN_B" lang="bash" />
+        </div>
+      </article>
+
+      <article class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-6">
+        <span class="font-mono text-xs text-[var(--color-text-faint)]">03 — answer</span>
+        <h3 class="mt-2 font-medium text-lg">Replay yesterday's run.</h3>
+        <p class="mt-2 text-sm text-[var(--color-text-muted)] leading-relaxed">
+          Re-execute it under the new prompt. Lineage shows the prompt
+          changed from <code class="text-[var(--color-text)]">@0.1.0</code> to
+          <code class="text-[var(--color-text)]">@0.2.0</code>. Eval suite caught it.
+          Promotion blocked. Production stays on v0.1.0.
+        </p>
+        <div class="mt-4">
+          <CodeBlock code="nova replay RUN_A --mode mocked" lang="bash" />
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <!-- 5 primitives -->
+  <PrimitiveStrip />
+
+  <!-- Honest limitations -->
+  <section class="container-content py-16 md:py-24 border-t border-[var(--color-border)]">
+    <div class="grid gap-12 md:grid-cols-3">
+      <header class="md:col-span-1">
+        <p class="text-xs uppercase tracking-wider text-[var(--color-text-faint)] mb-2">Honest limitations</p>
+        <h2 class="text-2xl md:text-3xl font-medium tracking-tight text-balance">
+          What we don't promise.
+        </h2>
+      </header>
+      <div class="md:col-span-2 space-y-6 text-[var(--color-text-muted)] leading-relaxed">
+        <p>
+          <strong class="text-[var(--color-text)]">Not byte-exact replay of remote LLMs.</strong>
+          If you call OpenAI or Anthropic, NovaFabric replays your run from
+          captured records, not from re-issuing the API call. Four replay
+          modes (<code class="text-[var(--color-text)]">exact</code>,
+          <code class="text-[var(--color-text)]">mocked</code>,
+          <code class="text-[var(--color-text)]">semantic</code>,
+          <code class="text-[var(--color-text)]">forensic</code>) make the
+          guarantee explicit per run.
+        </p>
+        <p>
+          <strong class="text-[var(--color-text)]">Not a hosted SaaS.</strong>
+          v0.x runs entirely on your machine. SQLite for the registry and
+          lineage. Local files for capsules. v0.7 introduces an optional
+          server mode; v1.x adds a local read-only browser. Until then,
+          this site is the only browser experience.
+        </p>
+        <p>
+          <strong class="text-[var(--color-text)]">Not an evaluation harness.</strong>
+          NovaFabric records what happened so your evals can answer
+          "did the system regress?" Eval suites are a separate primitive
+          (<a href="/showcase/registry" class="underline underline-offset-2 decoration-[var(--color-border-strong)] hover:decoration-[var(--color-text)] hover:text-[var(--color-text)]">see the registry demo</a>);
+          we don't ship benchmarks.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Get started -->
+  <section class="container-content py-16 md:py-24 border-t border-[var(--color-border)]">
+    <div class="rounded-2xl border border-[var(--color-border-strong)] bg-[var(--color-bg-sunken)] p-10 md:p-16 text-center">
+      <h2 class="text-3xl md:text-4xl font-medium tracking-tight text-balance">
+        Try it on your own code.
+      </h2>
+      <p class="mt-4 text-[var(--color-text-muted)] max-w-xl mx-auto">
+        Three commands. No accounts. No telemetry. Capsules live in
+        <code class="text-[var(--color-text)]">.novafabric/runs/</code> on your machine.
+      </p>
+      <div class="mt-8 flex flex-col items-center gap-3">
+        <InstallBlock command="pip install novafabric" variant="hero" />
+        <InstallBlock command="nova capture python your_agent.py" variant="hero" />
+        <InstallBlock command="nova replay <run-id> --mode mocked" variant="hero" />
+      </div>
+      <div class="mt-8 flex flex-wrap items-center justify-center gap-4 text-sm">
+        <a href="/install" class="text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline underline-offset-4 decoration-[var(--color-border-strong)] hover:decoration-[var(--color-text)]">
+          Install instructions
+        </a>
+        <span class="text-[var(--color-text-faint)]">·</span>
+        <a href={GITHUB_REPO} rel="noopener" class="text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline underline-offset-4 decoration-[var(--color-border-strong)] hover:decoration-[var(--color-text)]">
+          GitHub
+        </a>
+        <span class="text-[var(--color-text-faint)]">·</span>
+        <a href="/concepts" class="text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline underline-offset-4 decoration-[var(--color-border-strong)] hover:decoration-[var(--color-text)]">
+          Concepts in depth
+        </a>
+      </div>
+    </div>
+  </section>
+</Layout>

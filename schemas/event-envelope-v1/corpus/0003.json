@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "2H6NCQ5JCT96SKAENGSYQN9NK2",
+  "global_run_id": "d9224ecd-e331-7ce6-9e32-c262ec6ab32b",
+  "run_id": "3VV7TE9S706AVY8MCZHY3Z5Y83",
+  "parent_run_id": "3BSDZ3W61DGSNYQ6DYXKN3WGNA",
+  "event_type": "model_call",
+  "trace_id": "f34c20f9c7e9b662bedec3cb78e12788",
+  "span_id": "5c7de6e72d7cd4c7",
+  "agent_id": "custom-agent-v1",
+  "cluster_id": null,
+  "tenant_id": null,
+  "started_at": "2026-05-12T10:03:00.244000+00:00",
+  "payload": {
+    "model": "claude-3-5-sonnet-20241022",
+    "system": "mistral",
+    "usage": {
+      "input_tokens": 367,
+      "output_tokens": 740
+    },
+    "stop_reason": "max_tokens"
+  },
+  "payload_hash": "sha256:441ca123729d3d08c15cd0eb82ad0a928b53f98166402eb5d5d15b36c9880da0",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

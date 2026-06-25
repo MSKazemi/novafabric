@@ -1,0 +1,20 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "3GEVBNVRPGNDYK2M5FVRBJY0PR",
+  "global_run_id": "2H7GC71W3WFM0K2RW5H79NHZXX",
+  "run_id": "6X80WHNKYGN0DK78FVPCAVK167",
+  "parent_run_id": "00MQ75EWPSMX9S7RRG29GXVA4V",
+  "event_type": "run.end",
+  "trace_id": "485cd6c137568695eb6b38eb5b176458",
+  "span_id": "01cdd0470e429ab6",
+  "agent_id": "langchain-agent",
+  "cluster_id": "slurm-train-v100",
+  "tenant_id": "tenant-acme",
+  "started_at": "2026-05-12T19:02:00.900000+00:00",
+  "emitter_node_id": "node01.cluster.local",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": "DLglI5vpTKKU4/fFPFXdrnIlkAEBEFx38dv0bd4OvCvjInfGkY2sW3zZg/m4KUCYziNUr7Gi1F9+InQ5iVm/xA==",
+  "nova.batch.signing_key_id": "05b3c398-4e80-46aa-a847-d9f0fb0d94b6"
+}

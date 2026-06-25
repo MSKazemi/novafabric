@@ -1,0 +1,19 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "6JNAB008YQ2G1WYKK8QBR6X21K",
+  "global_run_id": "2DYBAS576ZB2SRQ2MC066GPGA1",
+  "run_id": "28AWAM2JD780CDDSRFG3V89A8V",
+  "parent_run_id": null,
+  "event_type": "span",
+  "trace_id": "9d6fe4cf47091ca5e1639b23f65f285b",
+  "span_id": "1fd9bfb2ce3e6dc1",
+  "agent_id": "langchain-agent",
+  "cluster_id": "azure-ml-cluster",
+  "tenant_id": "tenant-ml-ops",
+  "started_at": "2026-05-12T15:35:00.216000+00:00",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

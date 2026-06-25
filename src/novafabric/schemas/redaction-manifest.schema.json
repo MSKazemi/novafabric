@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.dev/schemas/redaction-manifest.schema.json",
+  "title": "RedactionManifest",
+  "description": "PII redaction manifest for a single capsule (cap-001). OQ-01 (GDPR Art.17) UNRESOLVED — legal-hold draft mode only.",
+  "type": "object",
+  "required": ["capsule_id", "entries", "legal_hold_mode"],
+  "properties": {
+    "capsule_id": {
+      "type": "string",
+      "description": "ULID of the capsule this manifest covers"
+    },
+    "entries": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/RedactionManifestEntry" },
+      "description": "All redacted fields in this capsule"
+    },
+    "legal_hold_mode": {
+      "type": "boolean",
+      "description": "True while OQ-01 (GDPR Art.17) is unresolved"
+    }
+  },
+  "$defs": {
+    "RedactionManifestEntry": {
+      "type": "object",
+      "required": [
+        "field_path",
+        "detection_rule_id",
+        "legal_basis",
+        "subject_id_hmac",
+        "redacted_at_utc"
+      ],
+      "properties": {
+        "field_path": {
+          "type": "string",
+          "description": "Dot-notation path to the redacted field"
+        },
+        "detection_rule_id": {
+          "type": "string",
+          "description": "Rule identifier that triggered the redaction"
+        },
+        "legal_basis": {
+          "type": "string",
+          "description": "Legal basis for erasure / redaction"
+        },
+        "subject_id_hmac": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "HMAC-SHA256 of (subject_id + pepper) as 'sha256:<hex>'"
+        },
+        "redacted_at_utc": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 UTC timestamp when the redaction was applied"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

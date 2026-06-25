@@ -1,0 +1,55 @@
+name: Release
+
+# Triggered when a v* tag is pushed. Creates a GitHub Release with notes
+# extracted from docs/releases/<tag>.md (the source of truth for release
+# notes — also linked from CHANGELOG.md and discoverable in-repo).
+#
+# Does NOT publish to PyPI — that requires repository secrets and is a
+# user-driven decision per release.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  # Required to create the release. No write access to code.
+  contents: write
+
+jobs:
+  github-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Locate release notes
+        id: notes
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          notes_file="docs/releases/${tag}.md"
+          if [ ! -f "$notes_file" ]; then
+            echo "::error file=docs/releases::Missing release notes file: $notes_file"
+            echo "Tag $tag was pushed but $notes_file does not exist." >&2
+            exit 1
+          fi
+          # First H1 in the notes is the release title (drop the leading '# ').
+          title=$(head -1 "$notes_file" | sed 's/^# //')
+          if [ -z "$title" ]; then
+            echo "::error file=$notes_file::First line is not an H1; cannot derive title"
+            exit 1
+          fi
+          echo "notes_file=$notes_file" >> "$GITHUB_OUTPUT"
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${{ steps.notes.outputs.title }}" \
+            --notes-file "${{ steps.notes.outputs.notes_file }}" \
+            --latest=true

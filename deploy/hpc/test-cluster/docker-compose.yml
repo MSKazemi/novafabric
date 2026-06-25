@@ -1,0 +1,248 @@
+# NovaFabric HPC Collector — 10-leaf + 1-hub + 1-mock-KMS + 1-Kafka reference deployment
+#
+# Purpose: Integration testing for the collector tier.
+# NOT for production use.
+#
+# Topology:
+#   nats-hub         — cluster hub with JetStream (aggregate stream)
+#   nats-leaf-01..10 — per-node leaf nodes connected to hub
+#   mock-kms         — stub NovaSeal KMS endpoint (dev-only; see note below)
+#   kafka            — single-node Kafka/KRaft broker
+#
+# NOTE: The 10-minute hub-disconnect test window.
+# The test harness uses a 5-minute disconnect simulation window (see tests/integration/).
+# The hub JetStream stream is configured with --max-age 24h, so events written
+# during the 5-minute disconnect gap are replayed on reconnect. However, the
+# mock-kms stub does not persist key state across container restarts — if mock-kms
+# is restarted during the 10-minute window between disconnect and re-verification,
+# signature verification will fail. Always verify within the same mock-kms session.
+
+services:
+
+  nats-hub:
+    image: nats:2.10-alpine
+    container_name: novafabric-nats-hub
+    command:
+      - "--name"
+      - "nova-hub"
+      - "--js"
+      - "--store_dir"
+      - "/data/nats"
+      - "--port"
+      - "4222"
+      - "--leafnodes_listen"
+      - "0.0.0.0:7422"
+    ports:
+      - "4222:4222"
+      - "7422:7422"
+      - "8222:8222"
+    volumes:
+      - nats-hub-data:/data/nats
+    healthcheck:
+      test: ["CMD", "nats-server", "--healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  nats-leaf-01:
+    image: nats:2.10-alpine
+    container_name: novafabric-nats-leaf-01
+    command:
+      - "--name"
+      - "nova-leaf-test-node01-job001"
+      - "--js"
+      - "--store_dir"
+      - "/data/nats"
+      - "--leafnode_remotes"
+      - "nats://nats-hub:7422"
+    depends_on:
+      nats-hub:
+        condition: service_healthy
+
+  nats-leaf-02:
+    image: nats:2.10-alpine
+    container_name: novafabric-nats-leaf-02
+    command:
+      - "--name"
+      - "nova-leaf-test-node02-job001"
+      - "--js"
+      - "--store_dir"
+      - "/data/nats"
+      - "--leafnode_remotes"
+      - "nats://nats-hub:7422"
+    depends_on:
+      nats-hub:
+        condition: service_healthy
+
+  nats-leaf-03:
+    image: nats:2.10-alpine
+    container_name: novafabric-nats-leaf-03
+    command:
+      - "--name"
+      - "nova-leaf-test-node03-job001"
+      - "--js"
+      - "--store_dir"
+      - "/data/nats"
+      - "--leafnode_remotes"
+      - "nats://nats-hub:7422"
+    depends_on:
+      nats-hub:
+        condition: service_healthy
+
+  nats-leaf-04:
+    image: nats:2.10-alpine
+    container_name: novafabric-nats-leaf-04
+    command:
+      - "--name"
+      - "nova-leaf-test-node04-job001"
+      - "--js"
+      - "--store_dir"
+      - "/data/nats"
+      - "--leafnode_remotes"
+      - "nats://nats-hub:7422"
+    depends_on:
+      nats-hub:
+        condition: service_healthy
+
+  nats-leaf-05:
+    image: nats:2.10-alpine
+    container_name: novafabric-nats-leaf-05
+    command:
+      - "--name"
+      - "nova-leaf-test-node05-job001"
+      - "--js"
+      - "--store_dir"
+      - "/data/nats"
+      - "--leafnode_remotes"
+      - "nats://nats-hub:7422"
+    depends_on:
+      nats-hub:
+        condition: service_healthy
+
+  nats-leaf-06:
+    image: nats:2.10-alpine
+    container_name: novafabric-nats-leaf-06
+    command:
+      - "--name"
+      - "nova-leaf-test-node06-job001"
+      - "--js"
+      - "--store_dir"
+      - "/data/nats"
+      - "--leafnode_remotes"
+      - "nats://nats-hub:7422"
+    depends_on:
+      nats-hub:
+        condition: service_healthy
+
+  nats-leaf-07:
+    image: nats:2.10-alpine
+    container_name: novafabric-nats-leaf-07
+    command:
+      - "--name"
+      - "nova-leaf-test-node07-job001"
+      - "--js"
+      - "--store_dir"
+      - "/data/nats"
+      - "--leafnode_remotes"
+      - "nats://nats-hub:7422"
+    depends_on:
+      nats-hub:
+        condition: service_healthy
+
+  nats-leaf-08:
+    image: nats:2.10-alpine
+    container_name: novafabric-nats-leaf-08
+    command:
+      - "--name"
+      - "nova-leaf-test-node08-job001"
+      - "--js"
+      - "--store_dir"
+      - "/data/nats"
+      - "--leafnode_remotes"
+      - "nats://nats-hub:7422"
+    depends_on:
+      nats-hub:
+        condition: service_healthy
+
+  nats-leaf-09:
+    image: nats:2.10-alpine
+    container_name: novafabric-nats-leaf-09
+    command:
+      - "--name"
+      - "nova-leaf-test-node09-job001"
+      - "--js"
+      - "--store_dir"
+      - "/data/nats"
+      - "--leafnode_remotes"
+      - "nats://nats-hub:7422"
+    depends_on:
+      nats-hub:
+        condition: service_healthy
+
+  nats-leaf-10:
+    image: nats:2.10-alpine
+    container_name: novafabric-nats-leaf-10
+    command:
+      - "--name"
+      - "nova-leaf-test-node10-job001"
+      - "--js"
+      - "--store_dir"
+      - "/data/nats"
+      - "--leafnode_remotes"
+      - "nats://nats-hub:7422"
+    depends_on:
+      nats-hub:
+        condition: service_healthy
+
+  mock-kms:
+    # NOTE: This is a stub mock only — it returns a fixed JSON response.
+    # Replace with the real NovaSeal KMS (src/novafabric/trust/novaseal/) in production.
+    # This stub does NOT implement Ed25519 signing, key rotation, or audit logging.
+    image: alpine:3.19
+    container_name: novafabric-mock-kms
+    command:
+      - sh
+      - -c
+      - |
+        apk add --no-cache ncat > /dev/null 2>&1
+        while true; do
+          ncat -l -p 8443 -e sh -c \
+            'echo -e "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"key_id\":\"test-key-1\",\"public_key\":\"mock\",\"status\":\"ok\"}"'
+        done
+    ports:
+      - "8443:8443"
+
+  kafka:
+    # Single-node Kafka in KRaft mode (no ZooKeeper)
+    image: apache/kafka:3.7.0
+    container_name: novafabric-kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    ports:
+      - "9092:9092"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+volumes:
+  nats-hub-data:
+  kafka-data:
+
+networks:
+  default:
+    name: novafabric-hpc-test

@@ -1,0 +1,49 @@
+---
+import ShowcaseBadge from '../layout/ShowcaseBadge.astro';
+import Pill from './Pill.astro';
+
+interface Props {
+  primitive: string;
+  title: string;
+  description: string;
+  phase: string;
+  cliCommand?: string;
+}
+
+const { primitive, title, description, phase, cliCommand } = Astro.props;
+---
+
+<section class="container-content py-16 md:py-24">
+  <header class="max-w-2xl">
+    <ShowcaseBadge variant="page" />
+    <p class="mt-4 text-xs uppercase tracking-wider text-[var(--color-text-faint)]">{primitive}</p>
+    <h1 class="mt-1 text-4xl md:text-5xl font-medium tracking-tight text-balance">{title}</h1>
+    <p class="mt-4 text-lg text-[var(--color-text-muted)]">{description}</p>
+    <div class="mt-6 flex items-center gap-3">
+      <Pill variant="pending">In progress</Pill>
+      <span class="text-xs text-[var(--color-text-faint)]">Building this in {phase}</span>
+    </div>
+  </header>
+
+  {cliCommand && (
+    <div class="mt-12 max-w-2xl">
+      <p class="text-sm text-[var(--color-text-muted)] mb-3">
+        Available today on the CLI:
+      </p>
+      <div class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-5 py-4 font-mono text-sm">
+        <span class="text-[var(--color-text-faint)] mr-2">$</span>
+        <code class="text-[var(--color-text)]">{cliCommand}</code>
+      </div>
+    </div>
+  )}
+
+  <div class="mt-16 max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-6">
+    <h2 class="font-medium text-[var(--color-text)]">What's coming</h2>
+    <p class="mt-2 text-sm text-[var(--color-text-muted)] leading-relaxed">
+      An interactive demo running on baked-in fixture data. Click, hover,
+      validate, verify — all in your browser, no install. The site
+      consumes only the demo fixture; it does not read your local capsules
+      and does not phone home.
+    </p>
+  </div>
+</section>

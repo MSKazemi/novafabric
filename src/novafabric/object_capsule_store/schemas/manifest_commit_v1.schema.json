@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/manifest_commit_v1.schema.json",
+  "title": "ManifestCommit",
+  "description": "One immutable JSON commit in the per-run capsule manifest chain (cap-001, FR-01).",
+  "type": "object",
+  "required": [
+    "version",
+    "timestamp_ms",
+    "operation",
+    "capsule_uri",
+    "capsule_sha256",
+    "run_id",
+    "tenant"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonically increasing per (tenant, run_id) pair; starts at 1."
+    },
+    "timestamp_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Unix epoch milliseconds (UTC)."
+    },
+    "operation": {
+      "type": "string",
+      "enum": ["put", "tombstone"],
+      "description": "'put' for new capsule; 'tombstone' for logical deletion after retention expiry."
+    },
+    "capsule_uri": {
+      "type": "string",
+      "description": "Canonical CAS key: capsules/<tenant>/<sha[0:4]>/<sha256>/data.zst"
+    },
+    "capsule_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Hex-encoded SHA-256 of canonical capsule bytes."
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tenant": {
+      "type": "string",
+      "minLength": 1
+    },
+    "novaseal_leaf_hash": {
+      "oneOf": [
+        {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        {"type": "null"}
+      ],
+      "description": "SHA-256 hex of the NovaSeal Merkle-log leaf; null when status is PENDING_SIGNATURE."
+    },
+    "signed_at": {
+      "oneOf": [
+        {"type": "string"},
+        {"type": "null"}
+      ],
+      "description": "ISO-8601 UTC timestamp of NovaSeal signing; null when PENDING_SIGNATURE."
+    },
+    "stats": {
+      "type": "object",
+      "description": "Extension block for downstream consumers. Additions are non-breaking."
+    },
+    "compression_dict_id": {
+      "oneOf": [
+        {"type": "string"},
+        {"type": "null"}
+      ],
+      "description": "Zstd dictionary ID; null means no compression dictionary was used."
+    },
+    "prev_commit_hash": {
+      "oneOf": [
+        {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        {"type": "null"}
+      ],
+      "description": "SHA-256 hex of the previous commit's canonical JSON (model_dump_json()). Null for the genesis commit (version==1). Absent in commits written before OQ-027; present in all new commits. Used for hash-chain integrity verification on read."
+    }
+  },
+  "additionalProperties": false
+}

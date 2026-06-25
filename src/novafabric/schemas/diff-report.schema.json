@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/diff-report.schema.json",
+  "$comment": "schema_version 0.1.0; validates the JSON produced by nova diff --output-format json.",
+  "title": "DiffReport",
+  "description": "Structural diff report between two NovaFabric run capsules.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "run_a_id",
+    "run_b_id",
+    "summary",
+    "sections"
+  ],
+  "properties": {
+    "run_a_id": {
+      "type": "string",
+      "description": "run_id (or path) of the first capsule."
+    },
+    "run_b_id": {
+      "type": "string",
+      "description": "run_id (or path) of the second capsule."
+    },
+    "summary": {
+      "type": "object",
+      "required": ["changed", "added", "removed"],
+      "properties": {
+        "changed": {"type": "integer", "minimum": 0},
+        "added": {"type": "integer", "minimum": 0},
+        "removed": {"type": "integer", "minimum": 0}
+      },
+      "description": "Aggregate change counts across all sections."
+    },
+    "sections": {
+      "type": "object",
+      "required": ["environment", "model_calls", "tool_calls", "outputs"],
+      "properties": {
+        "environment": {
+          "type": "object",
+          "properties": {
+            "changes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "field": {"type": "string"},
+                  "before": {},
+                  "after": {},
+                  "severity": {"type": "string", "enum": ["minor", "major"]}
+                }
+              }
+            }
+          }
+        },
+        "model_calls": {
+          "type": "object",
+          "properties": {
+            "aligned": {"type": "integer", "minimum": 0},
+            "changed": {"type": "integer", "minimum": 0},
+            "added": {"type": "integer", "minimum": 0},
+            "removed": {"type": "integer", "minimum": 0},
+            "pairs": {"type": "array"}
+          }
+        },
+        "tool_calls": {
+          "type": "object",
+          "properties": {
+            "aligned": {"type": "integer", "minimum": 0},
+            "pairs": {"type": "array"}
+          }
+        },
+        "outputs": {
+          "type": "object",
+          "properties": {
+            "changes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {"type": "string"},
+                  "before_hash": {"type": ["string", "null"]},
+                  "after_hash": {"type": ["string", "null"]}
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

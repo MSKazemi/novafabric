@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/parent-child-capsule-v1.schema.json",
+  "$comment": "schema_version 0.2.0; parent/child capsule hierarchy — Phase 3 cap-001,002,003,004,006,007.",
+  "title": "ParentChildCapsule",
+  "description": "JSON Schema 2020-12 covering ParentCapsule, ChildCapsule, LineageEdgeV2, and OrphanPlaceholder for NovaFabric Phase 3.",
+  "type": "object",
+  "required": ["schema_version", "capsule_role", "global_run_id", "run_id", "status", "created_at"],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^0\\.2\\.",
+      "description": "Must be 0.2.x for Phase 3 capsules."
+    },
+    "capsule_role": {
+      "type": "string",
+      "enum": ["PARENT", "CHILD", "STANDALONE"],
+      "description": "Role in the distributed run hierarchy."
+    },
+    "global_run_id": {
+      "$ref": "#/$defs/UlidOrUuidV7",
+      "description": "Canonical run ID generated once at submission time."
+    },
+    "run_id": {
+      "$ref": "#/$defs/Ulid",
+      "description": "Per-capsule ULID — unique within the logical run."
+    },
+    "parent_run_id": {
+      "oneOf": [
+        {"$ref": "#/$defs/Ulid"},
+        {"type": "null"}
+      ],
+      "description": "Parent run_id for child capsules. null for top-level."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["RUNNING", "COMPLETE", "PARTIALLY_COMPLETE", "FAILED"],
+      "description": "cap-001: status enum including PARTIALLY_COMPLETE terminal state."
+    },
+    "fail_mode": {
+      "type": "string",
+      "enum": ["fail-open", "fail-closed"]
+    },
+    "children_expected": {
+      "oneOf": [
+        {"type": "integer", "minimum": 1},
+        {"type": "null"}
+      ]
+    },
+    "expected_children": {
+      "oneOf": [
+        {"type": "integer", "minimum": 1},
+        {"type": "null"}
+      ]
+    },
+    "children_arrived": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "world_size": {
+      "oneOf": [
+        {"type": "integer", "minimum": 1},
+        {"type": "null"}
+      ]
+    },
+    "rank": {
+      "oneOf": [
+        {"type": "integer", "minimum": 0},
+        {"type": "null"}
+      ]
+    },
+    "distribution_role": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": ["DRIVER", "WORKER"]
+        },
+        {"type": "null"}
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "description": "ISO 8601 / RFC 3339 timestamp."
+    },
+    "finished_at": {
+      "oneOf": [
+        {"type": "string"},
+        {"type": "null"}
+      ]
+    },
+    "pending_parent_timeout_s": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "trace_id": {
+      "oneOf": [
+        {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        {"type": "null"}
+      ]
+    },
+    "span_id": {
+      "oneOf": [
+        {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+        {"type": "null"}
+      ]
+    },
+    "is_synthetic": {
+      "type": "boolean",
+      "description": "True for ORPHAN_PARENT placeholder capsules."
+    },
+    "orphan_reason": {
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "Ulid": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "description": "26-character Crockford base32 ULID."
+    },
+    "UlidOrUuidV7": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+          "description": "26-character Crockford base32 ULID."
+        },
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+          "description": "RFC 9562 UUID v7, 36-char."
+        }
+      ]
+    },
+    "EdgeType": {
+      "type": "string",
+      "enum": ["contains", "spawned", "delegated_to", "replayed_from"],
+      "description": "cap-002 typed lineage edge vocabulary. Pre-0.2.0 schemaless rows are treated as 'contains'."
+    },
+    "LineageEdgeV2": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["schema_version", "edge_id", "edge_type", "source_run_id", "target_run_id", "created_at"],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "pattern": "^0\\.2\\."
+        },
+        "edge_id": {
+          "$ref": "#/$defs/Ulid"
+        },
+        "edge_type": {
+          "$ref": "#/$defs/EdgeType"
+        },
+        "source_run_id": {
+          "$ref": "#/$defs/UlidOrUuidV7"
+        },
+        "target_run_id": {
+          "$ref": "#/$defs/UlidOrUuidV7"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "attributes": {
+          "type": "object"
+        }
+      }
+    }
+  }
+}

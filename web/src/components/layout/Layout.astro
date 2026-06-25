@@ -1,0 +1,91 @@
+---
+import '../../styles/global.css';
+import Header from './Header.astro';
+import Footer from './Footer.astro';
+
+interface Props {
+  title?: string;
+  description?: string;
+  /**
+   * Pass a SoftwareApplication JSON-LD blob (as a plain JS object) to inject
+   * product-level structured data on pages that describe the tool directly
+   * (e.g. the homepage). Must only assert facts visible on the page.
+   */
+  softwareSchema?: Record<string, unknown>;
+}
+
+const {
+  title = 'NovaFabric — The time machine for AI systems',
+  description = 'Capture, replay, and audit any AI run. Local-first. Open source.',
+  softwareSchema,
+} = Astro.props;
+
+const canonical = new URL(Astro.url.pathname, Astro.site).toString();
+const ogImage = new URL('/og.png', Astro.site).toString();
+
+// Sitewide Organization schema — asserted on every page via the shared layout.
+// Only facts visible on the site are included. Update sameAs when social accounts exist.
+const organizationSchema = {
+  '@context': 'https://schema.org',
+  '@type': 'Organization',
+  name: 'NovaFabric',
+  url: 'https://novafabric.dev',
+  logo: 'https://novafabric.dev/favicon.svg',
+  description: 'Open-source CLI toolkit for capturing, replaying, and auditing AI system runs.',
+  sameAs: [
+    'https://github.com/novafabric/novafabric',
+  ],
+};
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="generator" content={Astro.generator} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+    <link rel="canonical" href={canonical} />
+
+    <title>{title}</title>
+    <meta name="description" content={description} />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="NovaFabric" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={ogImage} />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImage} />
+
+    <meta name="theme-color" content="#0a0a0c" />
+
+    <!-- JSON-LD: Organization (sitewide) -->
+    <script type="application/ld+json" set:html={JSON.stringify(organizationSchema)} />
+
+    <!-- JSON-LD: SoftwareApplication (per-page, homepage only) -->
+    {softwareSchema && (
+      <script type="application/ld+json" set:html={JSON.stringify(softwareSchema)} />
+    )}
+    <script is:inline>
+      (function () {
+        try {
+          var t = localStorage.getItem('novafabric.theme');
+          if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body class="min-h-screen flex flex-col">
+    <Header />
+    <main class="flex-1">
+      <slot />
+    </main>
+    <Footer />
+  </body>
+</html>

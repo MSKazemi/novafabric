@@ -1,0 +1,28 @@
+# Node-side sender: spool -> central hop over OTel-Arrow (experimental, ADR-0020).
+# Proven in SPK-COL-3 (n1, 2026-06-12): 31.5% egress reduction vs OTLP+zstd
+# at identical batch settings on the same corpus. Requires otelcol-contrib
+# (otelarrowexporter), v0.154.0+.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4317   # local emitters publish here
+processors:
+  batch:
+    send_batch_size: 8192          # columnar encoding needs real batches
+    timeout: 500ms
+exporters:
+  otelarrow:
+    endpoint: central-collector:4317   # set to your central collector
+    tls:
+      insecure: true               # use real TLS outside the lab
+    compression: zstd
+    arrow:
+      num_streams: 1
+      disable_downgrade: true      # fail loudly rather than silently fall back
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otelarrow]

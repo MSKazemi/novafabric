@@ -1,0 +1,51 @@
+---
+import Layout from '../components/layout/Layout.astro';
+import ShowcaseBadge from '../components/layout/ShowcaseBadge.astro';
+import { NON_GOALS_URL } from '../lib/links';
+---
+
+<Layout title="Why now — NovaFabric" description="Why a time machine for AI systems matters today.">
+  <article class="container-content py-16 md:py-24">
+    <header class="max-w-2xl">
+      <ShowcaseBadge variant="page" />
+      <h1 class="mt-4 text-4xl md:text-5xl font-medium tracking-tight text-balance">Why now</h1>
+      <p class="mt-4 text-lg text-[var(--color-text-muted)]">
+        AI systems behave like distributed systems with a non-determinism budget.
+        We don't have the time machine yet. NovaFabric is that time machine.
+      </p>
+    </header>
+
+    <div class="mt-12 container-prose space-y-8 text-[var(--color-text-muted)] leading-relaxed">
+      <section>
+        <h2 class="text-2xl font-medium text-[var(--color-text)] tracking-tight mb-3">Who this is for</h2>
+        <p>
+          Engineers shipping AI agents to production. Researchers running experiments that have to
+          reproduce. Auditors who need the trail. Platform teams whose oncall pager rings when a
+          model returns garbage at 2am.
+        </p>
+      </section>
+
+      <section>
+        <h2 class="text-2xl font-medium text-[var(--color-text)] tracking-tight mb-3">What's changed</h2>
+        <p>
+          Three years ago, debugging an LLM call meant reading a single prompt and a single response.
+          Today's systems chain six model calls, ten tool invocations, four MCP servers, two retrieval
+          backends, and three asynchronous workers — and any of them can drift between Tuesday and
+          Wednesday. The mental model that worked for one prompt no longer holds.
+        </p>
+      </section>
+
+      <section>
+        <h2 class="text-2xl font-medium text-[var(--color-text)] tracking-tight mb-3">What we won't do</h2>
+        <p>
+          We will not capture full prompts and responses by default — too noisy, too sensitive,
+          too expensive. We will not run a hosted service in v0.x. We will not invent a third
+          top-level format beyond Run Capsule and Evidence Bundle. We will not block the user
+          workload by default if a NovaFabric component fails. The
+          <a href={NON_GOALS_URL} rel="noopener" class="underline underline-offset-2 hover:text-[var(--color-text)]">non-goals doc</a>
+          is the load-bearing constraint.
+        </p>
+      </section>
+    </div>
+  </article>
+</Layout>

@@ -1,0 +1,28 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "5FA9SHME1464NHJG9MTRANVP6M",
+  "global_run_id": "4d64b79b-b40c-761f-83a1-2233d40e2a8e",
+  "run_id": "3FANG6ZM1NXKQ1YDVN7HA61V79",
+  "parent_run_id": "662XT57JTRZZ2JJP96RZKQ4D9B",
+  "event_type": "model_call",
+  "trace_id": "f0500eb1b04dfdd6cca63abc4ec646b2",
+  "span_id": "86740ab3a6ddf044",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": "local-dev",
+  "tenant_id": "tenant-acme",
+  "started_at": "2026-05-13T01:57:00.833000+00:00",
+  "emitter_node_id": "worker-0001",
+  "payload": {
+    "model": "gpt-4-turbo",
+    "system": "openai",
+    "usage": {
+      "input_tokens": 1862,
+      "output_tokens": 814
+    },
+    "stop_reason": "tool_use"
+  },
+  "payload_hash": "sha256:08cd228e39593bdee9b193cd2f591ce5826716a660ac032a401720bb55a48121",
+  "nova.batch.signature": "4iL6AvRRxBZV6wZVUsJqD59PYloqdlwSzpVhcGB1iSqPUfgmhYn01DfCBWMDwoDiZMEd0LHrPsmMrNZa/wC5uA==",
+  "nova.batch.signing_key_id": "de53ea16-6c31-4aca-8661-1a38d4b2b81a"
+}

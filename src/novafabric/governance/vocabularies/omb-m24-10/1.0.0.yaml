@@ -1,0 +1,43 @@
+version: "1.0.0"
+reference: "OMB M-24-10 Advancing Governance, Innovation, and Risk Management for Agency Use of AI"
+
+flags:
+  rights_impacting:
+    description: "AI that impacts rights, opportunities, or access to critical resources"
+    triggers:
+      affects_fundamental_rights: true
+      domains:
+        - law_enforcement
+        - employment
+        - education
+        - healthcare
+        - finance
+        - housing
+        - banking
+        - insurance
+        - immigration
+  safety_impacting:
+    description: "AI that impacts safety of persons or critical infrastructure"
+    triggers:
+      domains:
+        - critical_infrastructure
+        - autonomous_vehicles
+        - medical_devices
+        - healthcare_infrastructure
+        - energy
+        - transport
+        - water
+  high_impact_without_oversight:
+    description: "High-impact AI used without adequate human oversight"
+    triggers:
+      nist_rmf_impact:
+        - high
+        - critical
+  inventory_required:
+    description: "All non-exempt federal agency AI use cases requiring inventory entry"
+    triggers:
+      domains:
+        - government
+        - federal
+        - public_authority
+        - border_control

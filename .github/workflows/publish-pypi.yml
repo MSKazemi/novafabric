@@ -1,0 +1,77 @@
+name: Publish to PyPI
+
+# Builds the novafabric distribution and publishes it to PyPI using
+# Trusted Publishing (OIDC) — no API token or stored secret is required.
+# PyPI is configured to trust this exact tuple via a Trusted Publisher entry:
+#
+#   PyPI project   : novafabric
+#   Owner          : novafabric
+#   Repository     : novafabric
+#   Workflow name  : publish-pypi.yml   <-- the value to enter on pypi.org
+#   Environment    : pypi
+#
+# Fires when a v* tag is pushed (same trigger as release.yml, which creates
+# the GitHub Release). The two workflows run independently.
+on:
+  push:
+    tags:
+      - "v*"
+  # Allow a manual re-publish from the Actions tab if a tag run needs a retry.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Check distribution metadata
+        run: uvx twine check dist/*
+
+      - name: Upload distribution artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Must match the "Environment name" configured in the PyPI Trusted Publisher.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/novafabric
+    permissions:
+      # Required for Trusted Publishing: mints the OIDC token PyPI exchanges
+      # for a short-lived upload credential. No long-lived secret is stored.
+      id-token: write
+    steps:
+      - name: Download distribution artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

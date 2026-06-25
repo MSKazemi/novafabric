@@ -1,0 +1,42 @@
+{
+  "type": "record",
+  "name": "EvidenceEvent",
+  "namespace": "com.novafabric.evidence",
+  "doc": "Evidence Fabric v1.0 event envelope (cap-001/cap-002, ADR-0066).",
+  "fields": [
+    {
+      "name": "event_id",
+      "type": "string",
+      "doc": "Unique identifier for this event (UUID or ULID)."
+    },
+    {
+      "name": "event_type",
+      "type": {
+        "type": "enum",
+        "name": "EventType",
+        "symbols": ["lineage_edge", "model_call", "tool_call", "pii_detection"]
+      },
+      "doc": "Category of evidence event."
+    },
+    {
+      "name": "capsule_id",
+      "type": "string",
+      "doc": "Run capsule this event belongs to."
+    },
+    {
+      "name": "tenant_id",
+      "type": "string",
+      "doc": "Tenant that owns this event."
+    },
+    {
+      "name": "ts_ms",
+      "type": "long",
+      "doc": "Event timestamp in milliseconds since Unix epoch."
+    },
+    {
+      "name": "payload",
+      "type": "bytes",
+      "doc": "msgpack-encoded dict containing event-type-specific fields."
+    }
+  ]
+}

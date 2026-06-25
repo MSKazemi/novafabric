@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "26B84E0R4GA2ZCN1TZH0Q8CD6A",
+  "global_run_id": "0ENKKTTNNK26F528C4MJDRV0KG",
+  "run_id": "4VBHKPNPZD65R0NZSBG8EAMXJS",
+  "parent_run_id": "6264M51VDKZQMV009D731NB97V",
+  "event_type": "tool_call",
+  "trace_id": "6f737b2b31643a9aa1119b8b850a987f",
+  "span_id": "a5042964c0cd3f59",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-ml-ops",
+  "started_at": "2026-05-13T02:04:00.593000+00:00",
+  "emitter_node_id": "gpu-node-04",
+  "payload": {
+    "tool_name": "file_reader",
+    "tool_call_id": "tc_d098668262365599",
+    "arguments": {
+      "input": "example input for file_reader"
+    },
+    "duration_ms": 1129
+  },
+  "payload_hash": "sha256:2a0be679feb645875eebd9599bddd3a108dd8595c18eda54f82620d4821e0286",
+  "nova.batch.signature": "MsxAGfub/AUwrjCqNbCL1gFnYPEnoq9+/NQqaQIZ9Bxqr2XTMrrRj+5qdA5ySJbQAJmSXFhQAy+5Fxeo7gEV8g==",
+  "nova.batch.signing_key_id": "e3ab4dcc-9890-4638-8994-5f9256d5296b"
+}

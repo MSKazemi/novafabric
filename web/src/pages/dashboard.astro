@@ -1,0 +1,11 @@
+---
+import DashboardLayout from '../components/layout/DashboardLayout.astro';
+import DashboardApp from '../components/dashboard/DashboardApp';
+---
+
+<DashboardLayout
+  title="Dashboard — NovaFabric (experimental)"
+  description="Live local dashboard for nova serve --experimental. Browse capsules, registry, lineage, and run mutations."
+>
+  <DashboardApp client:only="react" />
+</DashboardLayout>

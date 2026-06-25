@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "6TTQ2CD0Z06FHAX2CB4SVHVT34",
+  "global_run_id": "2YRSWZCQ9JAQCTYNJ32H68F15C",
+  "run_id": "27SDH3MW6X4TB4V8JAWQJBJ7Y2",
+  "parent_run_id": "5G77XT0MSMJX0JZZM2NSR28R2N",
+  "event_type": "tool_call",
+  "trace_id": "4688e00220087bea126ca7634854f0ce",
+  "span_id": "7cebc486ed93f411",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": "hpc-cluster-01",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T22:22:00.928000+00:00",
+  "emitter_node_id": "node01.cluster.local",
+  "payload": {
+    "tool_name": "http_client",
+    "tool_call_id": "tc_465e3bfade8f66bb",
+    "arguments": {
+      "input": "example input for http_client"
+    },
+    "duration_ms": 3246
+  },
+  "payload_hash": "sha256:86758133bd26ecb88e4649089245033fdae1dbf2f2652614dc364f68b0f24053",
+  "nova.batch.signature": "WlXZ3qi89rTw60jiIwFJF5YRsOEeak6/ilWyGidkBIwYCeDqzWXAsuZ9P8xzxXQhsCKKDrG7gljxoGR09EwFDw==",
+  "nova.batch.signing_key_id": "5e6f9cbd-8025-4d3f-a87d-a0cdb294f32f"
+}

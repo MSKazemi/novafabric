@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "1JTYYE8MHPJVHNZN9FPRPSBQAM",
+  "global_run_id": "33fecc53-e3b9-77ed-89f2-2b9e88c57a8c",
+  "run_id": "6F6VD1XEJTQVVDJNZGAA0W1M8B",
+  "parent_run_id": "0E4CYWQZQN0E75YC4GBC0KNQD3",
+  "event_type": "model_call",
+  "trace_id": "28df07b0130971216370e7fe39dc1fb2",
+  "span_id": "1770eb9d8808a8f6",
+  "agent_id": "langchain-agent",
+  "cluster_id": "local-dev",
+  "tenant_id": "tenant-ml-ops",
+  "started_at": "2026-05-12T14:03:00.955000+00:00",
+  "payload": {
+    "model": "meta-llama/Llama-3.1-70B-Instruct",
+    "system": "openai",
+    "usage": {
+      "input_tokens": 1784,
+      "output_tokens": 463
+    },
+    "stop_reason": "stop"
+  },
+  "payload_hash": "sha256:97c3565b39ca5fa69f9c17dd95c4d01589ac621a17b5ee0c3e257ce0ee014a07",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

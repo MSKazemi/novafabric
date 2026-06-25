@@ -1,0 +1,95 @@
+id: soc2-type2-v1
+name: SOC 2 Type 2 — AI System Controls
+framework: SOC 2 Type 2
+version: "2017"
+controls:
+  - id: CC6.1-LOGICAL-ACCESS
+    title: Logical access security (CC6.1)
+    description: >
+      The entity implements logical access security measures to protect
+      against threats from sources outside its system boundaries.
+      Access to information assets is restricted to authorised users,
+      internal processes, and authorised external parties.
+    evidence_requirements:
+      - evidence_type: tool_permissions
+        required: true
+        description: Tool permission events showing logical access control enforcement
+      - evidence_type: policy_events
+        required: true
+        description: Policy decision events documenting access control decisions
+
+  - id: CC6.6-THREAT-MITIGATION
+    title: Vulnerability and threat mitigation (CC6.6)
+    description: >
+      The entity implements controls to prevent or detect and act upon the
+      introduction of unauthorised or malicious software.
+    evidence_requirements:
+      - evidence_type: policy_events
+        required: true
+        description: Policy enforcement events documenting threat detection and mitigation
+
+  - id: CC6.7-DATA-TRANSMISSION
+    title: Transmission of confidential information (CC6.7)
+    description: >
+      The entity restricts the transmission of confidential information to
+      authorised internal and external users and protects it during
+      transmission.
+    evidence_requirements:
+      - evidence_type: pii_scan
+        required: true
+        description: PII scan evidence showing personal data protection in AI outputs
+      - evidence_type: seal_signature
+        required: false
+        description: Cryptographic seals verifying integrity of transmitted data
+
+  - id: CC7.1-MONITORING
+    title: Detection and monitoring procedures (CC7.1)
+    description: >
+      To meet its objectives, the entity uses detection and monitoring
+      procedures to identify changes to configurations or the environment
+      or system components.
+    evidence_requirements:
+      - evidence_type: model_calls
+        required: true
+        description: Run capsules providing continuous monitoring trail of AI system operation
+      - evidence_type: lineage
+        required: false
+        description: Lineage graph for change tracking and impact assessment
+
+  - id: CC7.2-ANOMALY-MONITORING
+    title: Monitoring for anomalies (CC7.2)
+    description: >
+      The entity monitors system components and the operation of those
+      components for anomalies that are indicative of malicious acts,
+      natural disasters, and errors affecting the entity's ability to
+      meet its objectives.
+    evidence_requirements:
+      - evidence_type: model_calls
+        required: true
+        description: Run capsules enabling anomaly detection in AI system behaviour
+      - evidence_type: policy_events
+        required: false
+        description: Policy events capturing anomaly responses
+
+  - id: CC9.1-RISK-ASSESSMENT
+    title: Risk assessment (CC9.1)
+    description: >
+      The entity identifies, selects, and develops risk mitigation activities
+      for risks arising from potential business disruptions.
+    evidence_requirements:
+      - evidence_type: policy_events
+        required: true
+        description: Policy decision events documenting risk assessment outcomes
+
+  - id: CC9.2-VENDOR-RISK
+    title: Vendor and business partner risk management (CC9.2)
+    description: >
+      The entity assesses and manages risks associated with vendors and
+      business partners.
+    evidence_requirements:
+      - evidence_type: model_calls
+        required: true
+        description: Run capsules capturing third-party AI model usage for vendor risk evidence
+      - evidence_type: lineage
+        required: false
+        description: Lineage records showing third-party model and data provenance

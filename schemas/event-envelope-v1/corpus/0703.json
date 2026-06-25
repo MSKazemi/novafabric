@@ -1,0 +1,20 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "670Z5BSQWFQ9WZ9W66669A5T8K",
+  "global_run_id": "30SMDG33P7A06MM6P0ADXBJPJA",
+  "run_id": "4KZR6ER3C6EZ7EYZR3K7MNV8SW",
+  "parent_run_id": "2P0P08KYX8Z4B9SQQSZG9YC1HW",
+  "event_type": "run.start",
+  "trace_id": "6a8ab86ba7f5a9f426941e21a3ae978e",
+  "span_id": "07f01b329fde2105",
+  "agent_id": "custom-agent-v1",
+  "cluster_id": "local-dev",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T21:43:00.423000+00:00",
+  "emitter_node_id": "node02.cluster.local",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": "ftfTeAIF71nvdJRPKDwuUgRM+TOpG+aXakI1ZAQN5l3kQoPoZaZSfTbc4Nw0V9Yp587TYX3uqVohRYhlR4E/eQ==",
+  "nova.batch.signing_key_id": "bece498e-ad28-4af5-a707-3926981a6daa"
+}

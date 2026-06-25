@@ -1,0 +1,26 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "67JNPZHDGX2JM1T3G764HPN0TG",
+  "global_run_id": "4EH1RWP4Y0ADX26HWQEJXH7E78",
+  "run_id": "0KCA615A41VMTCCKM87R78CAZ5",
+  "parent_run_id": "0NCTG2G1A9KC09S6CEEQJNWD53",
+  "event_type": "tool_call",
+  "trace_id": "50d25d381e02457f150ba149936c5e59",
+  "span_id": "ab9d9816a1004f93",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": null,
+  "tenant_id": "tenant-platform-eng",
+  "started_at": "2026-05-12T13:16:00.166000+00:00",
+  "payload": {
+    "tool_name": "database_query",
+    "tool_call_id": "tc_efdf0eb91f3d1392",
+    "arguments": {
+      "input": "example input for database_query"
+    },
+    "duration_ms": 1109
+  },
+  "payload_hash": "sha256:a24a236e82e4c9ae1853b81e76b36349982ca3c7e8fcb764ceabb6057b524dd6",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

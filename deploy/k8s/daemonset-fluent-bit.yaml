@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: novafabric-fluent-bit
+  namespace: novafabric
+  labels:
+    app.kubernetes.io/name: novafabric
+    app.kubernetes.io/component: log-collector
+spec:
+  selector:
+    matchLabels:
+      app: novafabric-fluent-bit
+  template:
+    metadata:
+      labels:
+        app: novafabric-fluent-bit
+        app.kubernetes.io/name: novafabric
+        app.kubernetes.io/component: log-collector
+    spec:
+      tolerations:
+        # Run on all nodes including control-plane
+        - operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: fluent-bit
+          image: fluent/fluent-bit:3.0
+          env:
+            - name: NOVAFABRIC_CLUSTER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['novafabric.io/cluster-id']
+            - name: NOVAFABRIC_NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://novafabric-gateway-collector:4318"
+          volumeMounts:
+            - name: varlog
+              mountPath: /var/log
+              readOnly: true
+            - name: nova-spool
+              mountPath: /var/lib/novafabric/spool
+              readOnly: true
+            - name: fluent-bit-config
+              mountPath: /fluent-bit/etc/
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+      volumes:
+        - name: varlog
+          hostPath:
+            path: /var/log
+        - name: nova-spool
+          hostPath:
+            path: /var/lib/novafabric/spool
+        - name: fluent-bit-config
+          configMap:
+            name: novafabric-fluent-bit-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: novafabric-fluent-bit-config
+  namespace: novafabric
+  labels:
+    app.kubernetes.io/name: novafabric
+    app.kubernetes.io/component: log-collector
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         5
+        Daemon        Off
+        Log_Level     info
+        Parsers_File  parsers.conf
+
+    [INPUT]
+        Name              tail
+        Path              /var/lib/novafabric/spool/**/*.jsonl
+        Parser            nova_envelope
+        Tag               nova.spool
+        Refresh_Interval  5
+        Rotate_Wait       30
+        Mem_Buf_Limit     32MB
+        Skip_Long_Lines   Off
+
+    [OUTPUT]
+        Name                 opentelemetry
+        Match                nova.*
+        Host                 ${OTEL_EXPORTER_OTLP_ENDPOINT}
+        Port                 4318
+        Logs_uri             /v1/logs
+        Log_response_payload True
+        Tls                  Off
+        compress             gzip
+
+  parsers.conf: |
+    [PARSER]
+        Name         nova_envelope
+        Format       json
+        Time_Key     started_at
+        Time_Format  %Y-%m-%dT%H:%M:%S.%L%z
+        Time_Keep    On

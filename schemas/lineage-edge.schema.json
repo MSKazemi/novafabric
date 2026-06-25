@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/lineage-edge.schema.json",
+  "$comment": "schema_version 1.0.0; validates records in lineage.jsonl.",
+  "title": "LineageEdge",
+  "description": "One directed edge in the NovaFabric lineage graph, stored as a JSONL record.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "edge_id",
+    "edge_type",
+    "source",
+    "target",
+    "direction",
+    "created_at",
+    "emitter"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^1\\.",
+      "description": "OAS v1.0 schema version. Must be 1.x.x (ADR-0034 §1)."
+    },
+    "edge_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "edge_type": {
+      "type": "string",
+      "enum": [
+        "contains",
+        "spawned",
+        "delegated_to",
+        "replayed_from"
+      ],
+      "description": "Phase 3 four-type edge vocabulary (ADR-0044). Legacy strings (consumed, produced_by, derived_from, evaluated_by, attested_by, depends_on) are coerced by coerce_legacy_edge_type() and must not appear in new records.",
+      "x-deprecated-values": [
+        "consumed",
+        "produced_by",
+        "derived_from",
+        "evaluated_by",
+        "attested_by",
+        "depends_on"
+      ]
+    },
+    "source": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["run", "asset", "artifact", "external", "attestation"]
+        },
+        "run_id": {"type": "string"},
+        "asset_ref": {"type": "string"},
+        "registry": {"type": "string"},
+        "artifact_ref": {"type": "object"}
+      }
+    },
+    "target": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["run", "asset", "artifact", "external", "attestation"]
+        },
+        "run_id": {"type": "string"},
+        "asset_ref": {"type": "string"},
+        "registry": {"type": "string"},
+        "artifact_ref": {"type": "object"}
+      }
+    },
+    "direction": {
+      "type": "string",
+      "enum": ["source_to_target", "target_to_source"]
+    },
+    "created_at": {"type": "string"},
+    "emitter": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"type": "string"},
+        "version": {"type": "string"}
+      }
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["observed", "inferred", "declared"]
+    },
+    "capsule_run_id": {"type": "string"},
+    "facets": {
+      "type": "object"
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "attributes": {
+      "type": "object"
+    }
+  }
+}

@@ -1,0 +1,366 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/safety-case.schema.json",
+  "$comment": "schema_version 0.1.0; tracks design/spec/safety-case-v0.1.md and design/adr/0095-evidence-grounded-safety-case-and-admissible-evidence.md. A Claims-Arguments-Evidence (CAE) tree auto-assembled from existing NovaFabric artifacts. Carried INSIDE an Evidence Bundle as safety-case.json + attestations/safety-case.intoto.json; NOT a third top-level format (ADR-0034). Core invariant I1: eval evidence MUST carry process evidence; a bare pass/fail is a schema violation.",
+  "title": "SafetyCase",
+  "description": "An Evidence-Grounded Safety Case: a CAE tree (Claim -> ArgumentStrategy -> Claim*|Evidence*) whose leaves bind to real NovaFabric artifacts. Backing states are assigned mechanically from evidence statistics so honesty is structural, not editorial.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "case_id",
+    "created_at",
+    "created_by",
+    "template_id",
+    "subject",
+    "top_claim_id",
+    "nodes",
+    "case_hash"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^0\\.1\\.",
+      "description": "Safety-case schema version. Must be 0.1.x for this revision (ADR-0095)."
+    },
+    "case_id": {
+      "$ref": "#/$defs/Ulid",
+      "description": "Unique 26-char Crockford base32 ULID, time-sortable."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the case was compiled (RFC 3339)."
+    },
+    "created_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"type": "string", "description": "Producing tool, e.g. 'novafabric'."},
+        "version": {"type": "string", "description": "Producer version."}
+      }
+    },
+    "template_id": {
+      "type": "string",
+      "enum": ["clymer-generic-v0", "eu-ai-act-annex-iv-v0", "nist-ai-rmf-v0"],
+      "description": "The CAE skeleton the case was compiled from."
+    },
+    "subject": {
+      "$ref": "#/$defs/Subject",
+      "description": "What the case is about: a single run or a run-capsule set."
+    },
+    "top_claim_id": {
+      "type": "string",
+      "description": "id of the root Claim node in nodes[]."
+    },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          {"$ref": "#/$defs/Claim"},
+          {"$ref": "#/$defs/ArgumentStrategy"},
+          {"$ref": "#/$defs/Evidence"}
+        ]
+      },
+      "description": "Flat node list. The tree is reconstructed via Claim.children and Claim.evidence_ids. Discriminated on node_type."
+    },
+    "residual_risk": {
+      "oneOf": [
+        {"$ref": "#/$defs/ResidualRisk"},
+        {"type": "null"}
+      ],
+      "description": "Defaults to not-quantified/null. NEVER reproduces disavowed literature sketch numbers as measurements."
+    },
+    "case_hash": {
+      "$ref": "#/$defs/ContentHash",
+      "description": "SHA-256 of the canonical (JCS) case serialization; the in-toto subject digest."
+    }
+  },
+  "$defs": {
+    "Ulid": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "description": "26-character Crockford base32 ULID."
+    },
+    "ContentHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "SHA-256 content hash in sha256:<hex> form."
+    },
+    "Subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "run_ids", "capsule_hash"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["run-capsule", "run-capsule-set"],
+          "description": "Single run or a set of runs."
+        },
+        "run_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/Ulid"},
+          "description": "One or more run_ids covered by the case."
+        },
+        "capsule_hash": {
+          "$ref": "#/$defs/ContentHash",
+          "description": "Capsule Merkle root (single run) or set digest (run set)."
+        }
+      }
+    },
+    "Claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "node_type",
+        "id",
+        "statement",
+        "claim_kind",
+        "backing_state",
+        "children",
+        "evidence_ids",
+        "confidence",
+        "contest_reason"
+      ],
+      "properties": {
+        "node_type": {"const": "claim"},
+        "id": {"type": "string", "description": "Node id, unique within the case."},
+        "statement": {"type": "string", "description": "The proposition being argued."},
+        "claim_kind": {
+          "type": "string",
+          "enum": ["safety", "security", "capability", "compliance", "process"]
+        },
+        "backing_state": {
+          "type": "string",
+          "enum": ["SUPPORTED", "UNSUPPORTED", "CONTESTED", "UNKNOWN"],
+          "description": "Assigned mechanically from evidence statistics (ADR-0095 backing-state rules)."
+        },
+        "children": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Child ArgumentStrategy/Claim node ids. May be empty for a leaf claim."
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Directly-supporting Evidence node ids. May be empty."
+        },
+        "confidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["interval", "method", "sprt_verdict"],
+          "properties": {
+            "interval": {
+              "oneOf": [
+                {
+                  "type": "array",
+                  "items": {"type": "number"},
+                  "minItems": 2,
+                  "maxItems": 2
+                },
+                {"type": "null"}
+              ],
+              "description": "[lo, hi] confidence interval, or null."
+            },
+            "method": {
+              "type": "string",
+              "enum": ["wilson", "sprt", "none"]
+            },
+            "sprt_verdict": {
+              "oneOf": [{"type": "string"}, {"type": "null"}],
+              "description": "SPRT verdict (e.g. 'accept' | 'reject' | 'continue'), or null."
+            }
+          }
+        },
+        "contest_reason": {
+          "oneOf": [{"type": "string"}, {"type": "null"}],
+          "description": "Why a claim is CONTESTED; null otherwise."
+        }
+      }
+    },
+    "ArgumentStrategy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "node_type",
+        "id",
+        "strategy",
+        "inference_type",
+        "premises",
+        "defeaters"
+      ],
+      "properties": {
+        "node_type": {"const": "argument"},
+        "id": {"type": "string"},
+        "strategy": {"type": "string", "description": "How the children support the parent."},
+        "inference_type": {
+          "type": "string",
+          "enum": ["deductive", "inductive", "statistical", "appeal-to-process"],
+          "description": "Exact replay match -> deductive; semantic-match -> inductive."
+        },
+        "premises": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "defeaters": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Conditions that would undermine the inference."
+        }
+      }
+    },
+    "Evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "node_type",
+        "id",
+        "evidence_kind",
+        "artifact_ref",
+        "eval_context",
+        "attestation_ref"
+      ],
+      "properties": {
+        "node_type": {"const": "evidence"},
+        "id": {"type": "string"},
+        "evidence_kind": {
+          "type": "string",
+          "enum": [
+            "eval_result",
+            "judge_aggregate",
+            "replay_attestation",
+            "seal",
+            "policy_decision",
+            "audit_entry",
+            "criterion_binding",
+            "completeness_assertion",
+            "redaction_proof",
+            "lineage_attestation",
+            "energy_receipt",
+            "operator_document"
+          ],
+          "description": "energy_receipt and replay_attestation are enum members so ADR-0093/ADR-0094 compose in with zero schema change."
+        },
+        "artifact_ref": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path_in_bundle", "external_id", "sha256"],
+          "properties": {
+            "kind": {"type": "string", "description": "Artifact kind label."},
+            "path_in_bundle": {
+              "oneOf": [{"type": "string"}, {"type": "null"}],
+              "description": "Path within the Evidence Bundle, or null if external."
+            },
+            "external_id": {
+              "oneOf": [{"type": "string"}, {"type": "null"}],
+              "description": "External identifier (e.g. Rekor index), or null."
+            },
+            "sha256": {
+              "$ref": "#/$defs/ContentHash",
+              "description": "Digest a verifier recomputes against the bundle manifest."
+            }
+          }
+        },
+        "eval_context": {
+          "oneOf": [
+            {"$ref": "#/$defs/EvalContext"},
+            {"type": "null"}
+          ],
+          "description": "REQUIRED (non-null) when evidence_kind is eval_result or judge_aggregate; null otherwise. Enforced by the conditional below (invariant I1)."
+        },
+        "attestation_ref": {
+          "oneOf": [{"type": "string"}, {"type": "null"}],
+          "description": "Path to the covering in-toto envelope, or null."
+        }
+      },
+      "allOf": [
+        {
+          "$comment": "Invariant I1 - no naked claims: eval evidence MUST carry a non-null eval_context with a process_evidence_ref. A bare pass/fail is a schema VIOLATION.",
+          "if": {
+            "properties": {
+              "evidence_kind": {"enum": ["eval_result", "judge_aggregate"]}
+            },
+            "required": ["evidence_kind"]
+          },
+          "then": {
+            "properties": {
+              "eval_context": {"$ref": "#/$defs/EvalContext"}
+            },
+            "required": ["eval_context"]
+          }
+        }
+      ]
+    },
+    "EvalContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "judges",
+        "inter_judge_agreement",
+        "consensus_verdict",
+        "sample_size",
+        "confidence_interval",
+        "process_evidence_ref"
+      ],
+      "properties": {
+        "judges": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Judge identities/models that scored the result."
+        },
+        "inter_judge_agreement": {
+          "oneOf": [{"type": "number"}, {"type": "null"}],
+          "description": "Inter-judge agreement statistic (e.g. kappa); null for a single judge. kappa < 0.6 forces the parent claim to CONTESTED."
+        },
+        "consensus_verdict": {
+          "type": "string",
+          "description": "The agreed verdict (or the lone judge's)."
+        },
+        "sample_size": {
+          "oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}],
+          "description": "n the score was computed over, or null."
+        },
+        "confidence_interval": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {"type": "number"},
+              "minItems": 2,
+              "maxItems": 2
+            },
+            {"type": "null"}
+          ],
+          "description": "e.g. a Wilson interval on the pass rate. Straddling the threshold forces CONTESTED."
+        },
+        "process_evidence_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "REQUIRED ref to what the agent did (trace/tool-calls fact). This is the field that makes a score meaningful; its absence is the naked-claim violation."
+        }
+      }
+    },
+    "ResidualRisk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "basis", "caveat"],
+      "properties": {
+        "value": {
+          "oneOf": [{"type": "number"}, {"type": "null"}],
+          "description": "Quantified residual risk; null unless basis is 'measured'."
+        },
+        "basis": {
+          "type": "string",
+          "enum": ["measured", "estimated", "disavowed-sketch", "not-quantified"],
+          "description": "Provenance of the residual-risk figure. Defaults to not-quantified. 'disavowed-sketch' tags literature toy numbers that MUST NOT be presented as measurements."
+        },
+        "caveat": {
+          "type": "string",
+          "description": "Honest caveat; for disavowed-sketch, names the toy source."
+        }
+      }
+    }
+  }
+}

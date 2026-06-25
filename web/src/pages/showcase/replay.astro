@@ -1,0 +1,45 @@
+---
+import Layout from '../../components/layout/Layout.astro';
+import ShowcaseBadge from '../../components/layout/ShowcaseBadge.astro';
+import ReplayViewer from '../../components/replay/ReplayViewer';
+import CodeBlock from '../../components/ui/CodeBlock.astro';
+---
+
+<Layout
+  title="Replay & diff — NovaFabric Showcase"
+  description="Four replay modes with explicit guarantees, plus a structural diff aligned with the diff-report schema. Honest about what each mode promises."
+>
+  <article class="container-content py-12">
+    <header class="mb-8 max-w-3xl">
+      <ShowcaseBadge variant="page" />
+      <p class="mt-4 text-xs uppercase tracking-wider text-[var(--color-text-faint)]">Primitive 03 — interactive demo</p>
+      <h1 class="mt-1 text-4xl font-medium tracking-tight text-balance">Replay & structural diff</h1>
+      <p class="mt-3 text-[var(--color-text-muted)] max-w-2xl">
+        Pick a replay mode. Read what each one guarantees. The structural diff
+        below shows
+        <code class="text-[var(--color-text)] font-mono text-sm">RUN_A</code> vs
+        <code class="text-[var(--color-text)] font-mono text-sm">RUN_B</code> —
+        same agent, different prompt version, different output.
+      </p>
+    </header>
+
+    <ReplayViewer client:visible />
+
+    <aside class="mt-12 max-w-3xl rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-5 text-sm text-[var(--color-text-muted)] leading-relaxed">
+      <p class="text-[var(--color-text)] font-medium mb-2">The wow moment</p>
+      <p>
+        Click the <strong>Exact</strong> tab. It's greyed out — and the
+        explanation is honest: exact replay of remote LLMs is impossible to
+        promise. Many tools claim to do it anyway. We mark it disabled and
+        document why.
+      </p>
+    </aside>
+
+    <section class="mt-12 max-w-3xl">
+      <h2 class="text-xl font-medium text-[var(--color-text)] tracking-tight mb-4">On your machine</h2>
+      <CodeBlock code="nova replay <run-id> --mode mocked
+nova diff <run-a> <run-b>
+nova diff <run-a> <run-b> --output github-annotation" lang="bash" />
+    </section>
+  </article>
+</Layout>

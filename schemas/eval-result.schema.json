@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/eval-result.schema.json",
+  "$comment": "schema_version 0.1.0; tracks design/spec/eval-result-v0.md. Validates the JSON output of a NovaFabric benchmark eval run (e.g. GAIA, SWE-bench, AgentBench). Extends the OpenLineage DataQualityMetrics facet pattern. Required by v0.9 Standard Eval Suites.",
+  "title": "EvalResult",
+  "description": "Output record of a single benchmark eval run against a Run Capsule. Captures suite identity, OCI image digest for reproducibility, per-metric outcomes, and optional statistical context.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "suite_id",
+    "suite_version",
+    "oci_digest",
+    "run_at",
+    "capsule_id",
+    "passed",
+    "metrics"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "0.1.0",
+      "description": "EvalResult schema version. v0.9 ships 0.1.0."
+    },
+    "suite_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identifier for the benchmark suite, e.g. 'gaia', 'swe-bench-verified', 'agentbench'."
+    },
+    "suite_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Version of the benchmark suite used for this eval, e.g. '2024-06', '1.0.0'."
+    },
+    "oci_digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "Pinned OCI image digest of the eval container. Ensures bit-exact reproducibility of the evaluation environment."
+    },
+    "run_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC timestamp when the eval run started (RFC 3339)."
+    },
+    "capsule_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ID of the Run Capsule being evaluated. Typically a ULID matching run_id in the capsule manifest."
+    },
+    "passed": {
+      "type": "boolean",
+      "description": "Overall pass/fail outcome of the eval run. True only when all required metrics pass their thresholds."
+    },
+    "metrics": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/Metric"
+      },
+      "description": "Per-metric outcomes. Must contain at least one metric."
+    },
+    "statistical_context": {
+      "$ref": "#/$defs/StatisticalContext",
+      "description": "Optional statistical metadata for the eval run (sample size, confidence interval, p-value)."
+    },
+    "notes": {
+      "type": "string",
+      "description": "Free-form human-readable notes about the eval run, e.g. environment caveats or known limitations."
+    }
+  },
+  "$defs": {
+    "Metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value", "unit", "threshold", "passed"],
+      "description": "A single measured metric from the eval run.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Metric identifier, e.g. 'accuracy', 'task_completion', 'pass_at_1'."
+        },
+        "value": {
+          "type": "number",
+          "description": "Measured value of the metric."
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unit of the metric value, e.g. 'percent', 'score', 'count', 'ratio'."
+        },
+        "threshold": {
+          "type": "number",
+          "description": "Minimum acceptable value for the metric to be considered passing."
+        },
+        "passed": {
+          "type": "boolean",
+          "description": "True when value >= threshold for this metric."
+        }
+      }
+    },
+    "StatisticalContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Statistical metadata for interpreting eval results. All fields are optional.",
+      "properties": {
+        "sample_size": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of examples or tasks evaluated."
+        },
+        "confidence_interval": {
+          "type": "array",
+          "items": {"type": "number"},
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "Two-element array [lower, upper] representing the confidence interval for the primary metric."
+        },
+        "p_value": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Statistical p-value for the eval result. Must be in [0, 1]."
+        }
+      }
+    }
+  }
+}

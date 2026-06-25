@@ -1,0 +1,19 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "0076QQR3JM4PAWG3ZFA538XKC2",
+  "global_run_id": "3A7NAMAY54F2VSNM1C558M7MZ2",
+  "run_id": "6VVEW0C9KDZ4THVA1M6RV0PQ44",
+  "parent_run_id": "28SJ7MT0BNF8JD0RCZB3WG597P",
+  "event_type": "run.start",
+  "trace_id": "b1d932157afcdda14a351aab1d798160",
+  "span_id": "1dbd15c31670a1ef",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-platform-eng",
+  "started_at": "2026-05-12T16:31:00.985000+00:00",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

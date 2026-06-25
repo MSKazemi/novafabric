@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "6GWEP37W5E2E2BC3ZP70CWW39P",
+  "global_run_id": "5FYN8PCTHH182YKTAYVJM72W8M",
+  "run_id": "2BNDTMMD69YVZ0QYSBDDA6423P",
+  "parent_run_id": "549CNYHEHHKFSF0H75Z54MY4VB",
+  "event_type": "tool_call",
+  "trace_id": "803ffbc5aeeaf63b13192932347a0c00",
+  "span_id": "c75666b68019d9e7",
+  "agent_id": "custom-agent-v1",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T18:16:00.210000+00:00",
+  "emitter_node_id": "worker-0001",
+  "payload": {
+    "tool_name": "web_search",
+    "tool_call_id": "tc_8204053ba352592d",
+    "arguments": {
+      "input": "example input for web_search"
+    },
+    "duration_ms": 1675
+  },
+  "payload_hash": "sha256:d6b3a88e7300c9204a44cc1b2c1ac5c471fa064cc1cd5ef5bdd5698cf241e8ef",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

@@ -1,0 +1,66 @@
+{
+  "schema_version": "0.1.0",
+  "proof_id": "01KR2E9PD10TPSJ1KSKYTB3Q00",
+  "capsule_run_id": "01KR2E9P1TRANFT6EP0JAMTTQM",
+  "created_at": "2026-05-08T00:02:47Z",
+  "scanner": {
+    "name": "novafabric.secrets",
+    "version": "0.2.0",
+    "engine": "regex",
+    "engine_version": "0.2.0"
+  },
+  "packs": [
+    {
+      "name": "gitleaks-core-v0",
+      "version": "0.2.0",
+      "rules_count": 12,
+      "rules_hash": "sha256:1582e52be6345625d9274caf84c7503402cf2373b8f4292854199e8c2ec7166e"
+    }
+  ],
+  "targets": [
+    {
+      "kind": "model-call-messages",
+      "ref": "model-calls.jsonl",
+      "bytes_scanned": 0,
+      "findings_count": 0,
+      "skipped": false,
+      "binary": false,
+      "hash_before_redaction": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "hash_after_redaction": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "kind": "tool-call-arguments",
+      "ref": "tool-calls.jsonl",
+      "bytes_scanned": 0,
+      "findings_count": 0,
+      "skipped": false,
+      "binary": false,
+      "hash_before_redaction": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "hash_after_redaction": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "kind": "trace",
+      "ref": "trace.jsonl",
+      "bytes_scanned": 298,
+      "findings_count": 0,
+      "skipped": false,
+      "binary": false,
+      "hash_before_redaction": "sha256:8e4d99ea9f62fd07fade05e14cf56fa7789d3ffd6768a790f8d0d6056a94acae",
+      "hash_after_redaction": "sha256:8e4d99ea9f62fd07fade05e14cf56fa7789d3ffd6768a790f8d0d6056a94acae"
+    }
+  ],
+  "findings_count": {
+    "total": 0,
+    "by_severity": {
+      "critical": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "info": 0
+    }
+  },
+  "findings": [],
+  "bytes_scanned": 298,
+  "bytes_redacted": 0,
+  "chain_hash": "sha256:ab2745098988f0fd7ce6ed7f8a3e6958594946493e83a70a9fb2d41f2090fce8"
+}

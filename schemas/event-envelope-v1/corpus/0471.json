@@ -1,0 +1,28 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "18VZM6D4FV2M08FQQ45W1JBNKN",
+  "global_run_id": "f0fbed62-897f-7fd9-904d-613f8ab5c05b",
+  "run_id": "4ZD3D5D7P5TWDGS4NQWJQJDCJJ",
+  "parent_run_id": "1E9TH6JNNBSFRAN5P0PFNR0J8N",
+  "event_type": "model_call",
+  "trace_id": "5e748c8206f764a91539c2aedf90fb6e",
+  "span_id": "577fc2a3a6678c46",
+  "agent_id": "anthropic-sdk",
+  "cluster_id": "local-dev",
+  "tenant_id": "tenant-platform-eng",
+  "started_at": "2026-05-12T17:51:00.343000+00:00",
+  "emitter_node_id": "head-node",
+  "payload": {
+    "model": "mistralai/Mistral-7B-Instruct-v0.3",
+    "system": "openai",
+    "usage": {
+      "input_tokens": 940,
+      "output_tokens": 256
+    },
+    "stop_reason": "max_tokens"
+  },
+  "payload_hash": "sha256:ab287b380ec30b8e3b9d470edb91c21a2926bc44dc79ea306facf07511a51da3",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

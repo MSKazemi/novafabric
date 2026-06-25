@@ -1,0 +1,111 @@
+id: eu-ai-act-high-risk-v1
+name: EU AI Act — High-Risk AI Systems (Chapter 3)
+framework: EU AI Act
+version: "2024/1689"
+controls:
+  - id: AIA-ART11-TECH-DOC
+    title: Technical documentation (Art. 11)
+    description: >
+      Providers of high-risk AI systems must draw up technical documentation
+      before the system is placed on the market or put into service, covering
+      all mandatory elements per Annex IV.
+    evidence_requirements:
+      - evidence_type: model_calls
+        required: true
+        description: Model call records providing AI system usage documentation
+      - evidence_type: lineage
+        required: false
+        description: Lineage records showing model and data provenance (Annex IV elements 3-5)
+
+  - id: AIA-ART12-RECORD-KEEPING
+    title: Record-keeping (Art. 12)
+    description: >
+      High-risk AI systems must be designed and developed to automatically
+      generate logs and retain records sufficient to allow ex-post review
+      of system performance.
+    evidence_requirements:
+      - evidence_type: seal_signature
+        required: true
+        description: Cryptographically sealed evidence bundles for tamper-evident logs
+      - evidence_type: model_calls
+        required: true
+        description: Automatically generated model call records in run capsules
+
+  - id: AIA-ART13-TRANSPARENCY
+    title: Transparency and provision of information to deployers (Art. 13)
+    description: >
+      High-risk AI systems must be designed and developed to ensure that their
+      operation is sufficiently transparent to enable deployers to interpret
+      the system's output.
+    evidence_requirements:
+      - evidence_type: model_calls
+        required: true
+        description: Model call records with prompt/response transparency
+
+  - id: AIA-ART14-HUMAN-OVERSIGHT
+    title: Human oversight (Art. 14)
+    description: >
+      High-risk AI systems must be designed and developed so that they can be
+      effectively overseen by natural persons during the period in which
+      the AI system is in use.
+    evidence_requirements:
+      - evidence_type: policy_events
+        required: true
+        description: Policy enforcement events showing human-in-the-loop decisions
+      - evidence_type: tool_permissions
+        required: true
+        description: Tool permission events showing human oversight of tool usage
+
+  - id: AIA-ART15-ACCURACY
+    title: Accuracy, robustness and cybersecurity (Art. 15)
+    description: >
+      High-risk AI systems must be designed and developed so that they achieve
+      an appropriate level of accuracy, robustness and cybersecurity.
+    evidence_requirements:
+      - evidence_type: model_calls
+        required: true
+        description: Evaluation run capsules documenting accuracy testing
+
+  - id: AIA-ART15-4-CYBERSECURITY
+    title: Cybersecurity resilience (Art. 15(4))
+    description: >
+      High-risk AI systems must be resilient to attempts by unauthorised
+      third parties to alter their use or performance by exploiting
+      the system's vulnerabilities.
+    evidence_requirements:
+      - evidence_type: seal_signature
+        required: true
+        description: Cryptographic seals verifying integrity of AI system records
+      - evidence_type: pii_scan
+        required: false
+        description: PII scan evidence showing personal data protection measures
+
+  - id: AIA-ART9-RISK-MGMT
+    title: Risk management system (Art. 9)
+    description: >
+      A risk management system shall be established, implemented, documented
+      and maintained throughout the lifecycle of the high-risk AI system.
+    evidence_requirements:
+      - evidence_type: policy_events
+        required: true
+        description: Policy decision events forming the risk management trail
+      - evidence_type: model_calls
+        required: true
+        description: Run capsules enabling risk assessment across system lifecycle
+      - evidence_type: lineage
+        required: false
+        description: Lineage graph for lifecycle traceability
+
+  - id: AIA-ART10-DATA-GOVERNANCE
+    title: Data and data governance (Art. 10)
+    description: >
+      High-risk AI systems that make use of techniques involving the training
+      of models shall be developed on the basis of training, validation and
+      testing data sets that meet quality criteria.
+    evidence_requirements:
+      - evidence_type: lineage
+        required: true
+        description: Lineage records showing data set provenance and transformation chain
+      - evidence_type: pii_scan
+        required: false
+        description: PII scan confirming data quality and privacy compliance

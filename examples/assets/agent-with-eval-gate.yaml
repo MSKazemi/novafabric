@@ -1,0 +1,25 @@
+novafabric_spec_version: "1"
+asset_type: agent
+name: support-triage-agent
+version: v1.1.0
+status: staging
+description: "Support triage agent — promoted after passing eval gate"
+tags:
+  team: support-platform
+spec:
+  model:
+    provider: anthropic
+    name: claude-haiku-4-5-20251001
+    temperature: 0.05
+  tools:
+    - search_knowledge_base
+    - create_ticket
+    - escalate_to_human
+  prompts:
+    system: "You are a support triage assistant. Classify tickets by priority and escalate P0 tickets immediately."
+  policies:
+    - rate_limit_10rps
+    - no_pii_in_output
+  evals:
+    - triage_accuracy_suite
+    - pii_safety_suite

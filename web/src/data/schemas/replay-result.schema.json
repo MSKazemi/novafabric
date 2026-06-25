@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/replay-result.schema.json",
+  "$comment": "schema_version 0.1.0; validates replay_result.yaml written by nova replay.",
+  "title": "ReplayResult",
+  "description": "Output manifest of a NovaFabric replay run. Written to .novafabric/replays/<replay-id>/replay_result.yaml.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "replay_id",
+    "replay_of_run_id",
+    "mode",
+    "status",
+    "start_time",
+    "end_time",
+    "duration_ms",
+    "policy_flags_used",
+    "env_warnings",
+    "model_calls_mocked",
+    "tool_calls_mocked"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+",
+      "description": "Replay result schema version."
+    },
+    "replay_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ULID uniquely identifying this replay run."
+    },
+    "replay_of_run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "run_id of the source capsule being replayed."
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["mocked", "forensic", "exact", "semantic"],
+      "description": "Replay mode used."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["success", "failure", "aborted", "dry_run", "interrupted"],
+      "description": "Outcome of the replay."
+    },
+    "start_time": {
+      "type": "string",
+      "description": "ISO-8601 UTC timestamp when the replay started."
+    },
+    "end_time": {
+      "type": "string",
+      "description": "ISO-8601 UTC timestamp when the replay finished."
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Wall-clock duration of the replay in milliseconds."
+    },
+    "policy_flags_used": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Safety ladder flags active during this replay."
+    },
+    "env_warnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "field": {"type": "string"},
+          "recorded": {"type": ["string", "null"]},
+          "current": {"type": ["string", "null"]},
+          "severity": {"type": "string", "enum": ["minor", "major"]},
+          "message": {"type": "string"}
+        }
+      },
+      "description": "Environment differences between recorded env.lock and current runtime."
+    },
+    "model_calls_mocked": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of model calls served from cache."
+    },
+    "tool_calls_mocked": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of tool calls served from cache."
+    },
+    "exit_code": {
+      "type": ["integer", "null"],
+      "description": "Exit code of the replayed command (mocked mode only)."
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "type": {"type": "string"},
+        "message": {"type": "string"}
+      },
+      "description": "Error details if status is failure or aborted."
+    }
+  }
+}

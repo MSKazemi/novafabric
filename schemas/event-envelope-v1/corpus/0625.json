@@ -1,0 +1,20 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "4FN4KTG5BEGTC4XYKAH8VJCHVH",
+  "global_run_id": "2BJE9G2C734JT2TXBMVKKP99YF",
+  "run_id": "27A8WYR7JV4HJBDFY7WHK4GSF7",
+  "parent_run_id": null,
+  "event_type": "run.start",
+  "trace_id": "1f90ae2b807e356398c69b081f7bf40f",
+  "span_id": "41bd91fbc0fa3bf9",
+  "agent_id": "langchain-agent",
+  "cluster_id": "hpc-cluster-01",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T20:25:00.472000+00:00",
+  "emitter_node_id": "node02.cluster.local",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": "DlnNZbFs9SXr7qAaNGnZa/zwQYjdpxjhcdhv1juCAOtXpEyBDFOELdKkMa92sHVxn5b2nzl9gS309YgyLI1c6g==",
+  "nova.batch.signing_key_id": "d732875f-0c07-498f-a7e8-ce73925d2b30"
+}

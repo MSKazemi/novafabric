@@ -1,0 +1,64 @@
+# NovaFabric URL registry — vendored default (RFC-0001 Option C, v0.5.x C-1).
+#
+# Maps outbound URLs to the AI provider that owns them. Wire-level capture
+# hooks (httpx, requests, future aiohttp/urllib3/boto3) consume this registry
+# to decide which HTTP requests to record into `model-calls.jsonl`.
+#
+# Override path (chosen by `load_url_registry()`):
+#   1. $NOVAFABRIC_URL_REGISTRY  (absolute path)
+#   2. ~/.novafabric/url_registry.yaml
+#   3. this vendored file
+#
+# An override file *replaces* the vendored default; merge semantics are
+# deferred to v0.6 with a dedicated ADR.
+schema_version: "0.1.0"
+patterns:
+  - match: "api.openai.com"
+    gen_ai_system: "openai"
+    transport: "http"
+    notes: "OpenAI chat completions, embeddings, assistants, responses APIs."
+  - match: "api.anthropic.com"
+    gen_ai_system: "anthropic"
+    transport: "http"
+    notes: "Anthropic Messages API."
+  - match: "api.cohere.ai"
+    gen_ai_system: "cohere"
+    transport: "http"
+  - match: "api.together.xyz"
+    gen_ai_system: "together"
+    transport: "http"
+  - match: "api.mistral.ai"
+    gen_ai_system: "mistral"
+    transport: "http"
+  - match: "api.replicate.com"
+    gen_ai_system: "replicate"
+    transport: "http"
+  # AWS Bedrock — added 2026-05-09 (C-3.3a) after verifying boto3
+  # transitively goes through urllib3. Match the per-region Bedrock host
+  # pattern. Body parsing is sub-optimal because Bedrock's request shape
+  # is per-provider (Anthropic, Cohere, Titan, Llama all differ); a
+  # per-provider body adapter (C-3.3b) is queued in v0.6-tracks.md.
+  - match: "bedrock-runtime."
+    gen_ai_system: "aws.bedrock"
+    transport: "http"
+    notes: "AWS Bedrock InvokeModel / Converse APIs. Hostname matches all regions (e.g. bedrock-runtime.us-east-1.amazonaws.com)."
+  - match: "bedrock."
+    gen_ai_system: "aws.bedrock"
+    transport: "http"
+    notes: "AWS Bedrock control-plane (model listing, custom model jobs)."
+  # Ollama — default port 11434. Any deployment reachable at localhost
+  # (native install, container with port-forward, etc.) is captured without
+  # configuration.
+  #
+  # Non-default ports or remote hosts: set OLLAMA_BASE_URL (langchain_ollama)
+  # or OLLAMA_HOST (ollama SDK) and the hook will detect them automatically at
+  # call time — even when the env var is loaded by python-dotenv inside the
+  # workload. Alternatively add an entry to ~/.novafabric/url_registry.yaml.
+  - match: "localhost:11434"
+    gen_ai_system: "ollama"
+    transport: "http"
+    notes: "Ollama local inference server (default port)."
+  - match: "127.0.0.1:11434"
+    gen_ai_system: "ollama"
+    transport: "http"
+    notes: "Ollama local inference server (loopback address, default port)."

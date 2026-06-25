@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/event-envelope/1",
+  "title": "EventEnvelope",
+  "description": "NovaFabric Event Envelope v1 — canonical wire format for all evidence events.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "envelope_version",
+    "schema_version",
+    "event_id",
+    "global_run_id",
+    "run_id",
+    "parent_run_id",
+    "event_type",
+    "trace_id",
+    "span_id",
+    "agent_id",
+    "cluster_id",
+    "tenant_id",
+    "started_at"
+  ],
+  "properties": {
+    "envelope_version": {
+      "type": "string",
+      "const": "1",
+      "description": "Always the string '1'. String type allows forward parsers to distinguish unknown future versions."
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "event-envelope/1",
+      "description": "Compound schema identifier. Must be 'event-envelope/1' for this version."
+    },
+    "event_id": {
+      "$ref": "#/$defs/Ulid",
+      "description": "Globally unique ULID for this event. Content-addressable storage key."
+    },
+    "global_run_id": {
+      "$ref": "#/$defs/RunId",
+      "description": "Logical distributed run identifier. Identical across all events in the same distributed run."
+    },
+    "run_id": {
+      "$ref": "#/$defs/Ulid",
+      "description": "Per-process capsule identifier. Equals global_run_id for PARENT/STANDALONE capsules."
+    },
+    "parent_run_id": {
+      "oneOf": [
+        { "$ref": "#/$defs/Ulid" },
+        { "type": "null" }
+      ],
+      "description": "null for STANDALONE/PARENT capsules; non-null for WORKER/COORDINATOR capsules."
+    },
+    "event_type": {
+      "type": "string",
+      "enum": ["run.start", "run.end", "model_call", "tool_call", "span", "capsule.finalize"],
+      "description": "Event kind. Indexed by the metadata database."
+    },
+    "trace_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$",
+      "description": "W3C Trace Context 16-byte trace ID as 32 lowercase hex chars. Must not be all-zeros."
+    },
+    "span_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$",
+      "description": "W3C Trace Context 8-byte span ID as 16 lowercase hex chars. Must not be all-zeros."
+    },
+    "agent_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\s\\x00-\\x1F]+$",
+      "description": "Stable identifier for the emitting agent or SDK component."
+    },
+    "cluster_id": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "null" }
+      ],
+      "description": "Cluster identifier. null in local/single-machine mode."
+    },
+    "tenant_id": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "null" }
+      ],
+      "description": "Multi-tenancy identifier. null in single-tenant/local mode."
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Event start time. ISO 8601 with timezone offset, millisecond precision. Best-effort; do not use for strict ordering."
+    },
+    "emitter_node_id": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "null" }
+      ],
+      "description": "Hostname or node identifier. null when unavailable."
+    },
+    "payload": {
+      "oneOf": [
+        { "type": "object" },
+        { "type": "null" }
+      ],
+      "description": "Event-type-specific payload. Schema is defined per event_type, not here. Unknown keys must be tolerated."
+    },
+    "payload_hash": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        { "type": "null" }
+      ],
+      "description": "SHA-256 of the serialized payload bytes, in 'sha256:<hex>' form."
+    },
+    "nova.batch.signature": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 88,
+          "maxLength": 88
+        },
+        { "type": "null" }
+      ],
+      "description": "Base64-encoded Ed25519 detached signature, attached by the NovaSeal Batch Processor."
+    },
+    "nova.batch.signing_key_id": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        { "type": "null" }
+      ],
+      "description": "UUID identifying the NovaSeal signing key."
+    }
+  },
+  "$defs": {
+    "Ulid": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "description": "26-character Crockford Base32 ULID."
+    },
+    "UuidV7": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "description": "UUID v7 (RFC 9562) as a 36-character hyphenated lowercase string."
+    },
+    "RunId": {
+      "oneOf": [
+        { "$ref": "#/$defs/Ulid" },
+        { "$ref": "#/$defs/UuidV7" }
+      ],
+      "description": "Run identifier: either a 26-char ULID or a 36-char UUID v7."
+    }
+  }
+}

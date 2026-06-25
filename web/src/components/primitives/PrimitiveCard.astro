@@ -1,0 +1,27 @@
+---
+interface Props {
+  href: string;
+  title: string;
+  blurb: string;
+  index: number;
+}
+const { href, title, blurb, index } = Astro.props;
+---
+
+<a
+  href={href}
+  class="group relative flex flex-col gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-5 transition-colors hover:border-[var(--color-border-strong)] hover:bg-[var(--color-bg)]"
+>
+  <div class="flex items-center justify-between">
+    <span class="font-mono text-xs text-[var(--color-text-faint)]">0{index}</span>
+    <slot name="thumbnail" />
+  </div>
+  <h3 class="font-medium text-[var(--color-text)] tracking-tight">{title}</h3>
+  <p class="text-sm text-[var(--color-text-muted)] leading-relaxed">{blurb}</p>
+  <span class="mt-auto inline-flex items-center gap-1 text-xs text-[var(--color-text-muted)] group-hover:text-[var(--color-accent)] transition-colors">
+    Explore
+    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+      <path d="M2 5H8M8 5L5 2M8 5L5 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+  </span>
+</a>

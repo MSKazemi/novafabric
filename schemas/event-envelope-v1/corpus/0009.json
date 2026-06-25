@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "64PYZX2NG09YAR6Z49SGHQGNWK",
+  "global_run_id": "dd3239ca-2c7c-7c7e-ada2-174408470d1d",
+  "run_id": "62KCJYQ1XJ6KGYESTZ2M1PZGKB",
+  "parent_run_id": "2CRN1MAAHC8VYK42NX9MN4P2HM",
+  "event_type": "model_call",
+  "trace_id": "922b9eb05bf9cc33fce3a97cc86239d0",
+  "span_id": "75eb811278d1edee",
+  "agent_id": "langchain-agent",
+  "cluster_id": null,
+  "tenant_id": null,
+  "started_at": "2026-05-12T10:09:00.424000+00:00",
+  "payload": {
+    "model": "gpt-4o",
+    "system": "mistral",
+    "usage": {
+      "input_tokens": 2106,
+      "output_tokens": 392
+    },
+    "stop_reason": "stop"
+  },
+  "payload_hash": "sha256:0815a35945474a6abe36ba61812ce35a90800e0b2ec277955fd2a36b06d16c2a",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

@@ -1,0 +1,28 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "5WADMA5B1GRBQDXHWA2RXP59DY",
+  "global_run_id": "481a6d06-6020-7175-9471-1b600f577624",
+  "run_id": "2BJX7SQ54DV1W0FTQTPDX9Q1AS",
+  "parent_run_id": "6HF86208PP3GQ9TAYQQRCFM874",
+  "event_type": "model_call",
+  "trace_id": "7d18b393dd78d7d0464451e86832afa4",
+  "span_id": "f237451b177a3231",
+  "agent_id": "openai-agents-sdk",
+  "cluster_id": "azure-ml-cluster",
+  "tenant_id": "tenant-acme",
+  "started_at": "2026-05-12T18:51:00.533000+00:00",
+  "emitter_node_id": "node01.cluster.local",
+  "payload": {
+    "model": "gpt-4o",
+    "system": "meta",
+    "usage": {
+      "input_tokens": 796,
+      "output_tokens": 26
+    },
+    "stop_reason": "tool_use"
+  },
+  "payload_hash": "sha256:826da0c4174a9da293551bf5c0a9fd91bfd9dee3efda43f76cf434bf563d665e",
+  "nova.batch.signature": "G0P3fJECZ9Fc96vHT7BNQZZAcUrb64SpThpE2A33sjbkbyYy3w0oQZMHYdobZNYESPA4s+O3jfO2tVEjFms3cw==",
+  "nova.batch.signing_key_id": "865213f8-66d0-4d5c-afcd-60063904c198"
+}

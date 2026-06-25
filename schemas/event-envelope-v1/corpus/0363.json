@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "3M1JWQS6Y00W8Y6MWPQMK99STR",
+  "global_run_id": "1e9642b1-c5b8-76df-8da2-2ec5f2fa3e43",
+  "run_id": "0C9SGYYJ91NT0KQHH4SF19133N",
+  "parent_run_id": "2DY1YPWEAX63MEVK16NQAQGTAQ",
+  "event_type": "model_call",
+  "trace_id": "fde0fd8682e33889421e747d725b4567",
+  "span_id": "3142b7f47b6143a3",
+  "agent_id": "anthropic-sdk",
+  "cluster_id": "slurm-train-v100",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T16:03:00.038000+00:00",
+  "payload": {
+    "model": "gpt-4o",
+    "system": "meta",
+    "usage": {
+      "input_tokens": 3776,
+      "output_tokens": 402
+    },
+    "stop_reason": "tool_use"
+  },
+  "payload_hash": "sha256:73823243915fdf241cdb42072ae53a6b531b7889995a0fdff254445b4b4bee7e",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

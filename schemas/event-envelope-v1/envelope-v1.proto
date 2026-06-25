@@ -1,0 +1,27 @@
+syntax = "proto3";
+package novafabric.envelope.v1;
+option go_package = "github.com/novafabric/collector/envelope/v1";
+
+// EventEnvelope is the canonical evidence event emitted by NovaFabric agents and collectors.
+// Field numbers are assigned in alphabetical field name order for deterministic documentation.
+// Breaking changes require a new package version (envelope/v2); additive changes are fine here.
+message EventEnvelope {
+  string   agent_id                  = 1;   // required; non-empty
+  string   cluster_id                = 2;   // required; empty string = null
+  string   emitter_node_id           = 3;   // optional; empty string = absent
+  string   envelope_version          = 4;   // always "1"
+  string   event_id                  = 5;   // ULID, 26 chars
+  string   event_type                = 6;   // enum value as string
+  string   global_run_id             = 7;   // ULID or UUID v7
+  string   nova_batch_signature      = 8;   // base64 Ed25519 sig; empty = unsigned
+  string   nova_batch_signing_key_id = 9;   // UUID; empty = unsigned
+  string   parent_run_id             = 10;  // ULID or empty string (null)
+  bytes    payload                   = 11;  // JSON-encoded payload bytes
+  string   payload_hash              = 12;  // "sha256:<hex>"; empty = absent
+  string   run_id                    = 13;  // ULID, 26 chars
+  string   schema_version            = 14;  // always "event-envelope/1"
+  string   span_id                   = 15;  // 16 lowercase hex chars
+  string   started_at                = 16;  // ISO 8601 with tz offset
+  string   tenant_id                 = 17;  // non-empty or empty (null)
+  string   trace_id                  = 18;  // 32 lowercase hex chars
+}

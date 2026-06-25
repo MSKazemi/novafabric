@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "6ANQM1G76J3YZNQJJWM0K85B17",
+  "global_run_id": "0BKH643YRK8S7ZFTSRHX90RFHE",
+  "run_id": "2XF1ZTR815F9CXB852V5RHR6D9",
+  "parent_run_id": "62XGHBMV90FWC2CRM2M3NVYRXF",
+  "event_type": "tool_call",
+  "trace_id": "bc11805338736248871f988701ebc81b",
+  "span_id": "1ee0fe86498defe4",
+  "agent_id": "custom-agent-v1",
+  "cluster_id": "hpc-cluster-01",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-13T02:28:00.263000+00:00",
+  "emitter_node_id": "head-node",
+  "payload": {
+    "tool_name": "bash_executor",
+    "tool_call_id": "tc_22e14a9714eb5082",
+    "arguments": {
+      "input": "example input for bash_executor"
+    },
+    "duration_ms": 1014
+  },
+  "payload_hash": "sha256:cf00d1db4fec6369ecc03e0c10137330d6923434459f150befb8b3f1a7dc48eb",
+  "nova.batch.signature": "cwsIe9KKxR4gjqlFBw50I/Mb53t//t4D8kOxRuCFaoexEKJ51+DJE4/h1sJ4U/LwSVCMukV8oXpEPFJxMxWBQg==",
+  "nova.batch.signing_key_id": "3eda6cb9-f632-439c-b379-c2b3790681b6"
+}

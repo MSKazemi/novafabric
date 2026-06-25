@@ -1,0 +1,28 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "4ESCTE2VVN76Q5YEC5V6CBX4AN",
+  "global_run_id": "2c7e3afd-b82d-7ffe-a3a1-fc7e703b57a6",
+  "run_id": "666CRDBJJ0CM073EAW3AAVDY5Y",
+  "parent_run_id": "3BZ33JQ982Z8G53SCHC1CA6DQV",
+  "event_type": "model_call",
+  "trace_id": "1695ac900c6758a27379cceec3bedb67",
+  "span_id": "a565eba5443cb2e4",
+  "agent_id": "langchain-agent",
+  "cluster_id": "azure-ml-cluster",
+  "tenant_id": "tenant-acme",
+  "started_at": "2026-05-12T18:21:00.105000+00:00",
+  "emitter_node_id": "head-node",
+  "payload": {
+    "model": "claude-3-5-sonnet-20241022",
+    "system": "anthropic",
+    "usage": {
+      "input_tokens": 2481,
+      "output_tokens": 230
+    },
+    "stop_reason": "tool_use"
+  },
+  "payload_hash": "sha256:cd8f8b7d820d477985b53a6b8adb40dedfdcb3cce16871f357c46c1942e49ca1",
+  "nova.batch.signature": "NyjX1l85MXn6utuQ51kRwf7uVWaQTilYy7qTCR8mDnMHM1swRYOUzmpmHlbkdK5O+pwXZnRRJXdNahXShRQdow==",
+  "nova.batch.signing_key_id": "1695df39-d20f-43ca-9c42-95f8bd35d609"
+}

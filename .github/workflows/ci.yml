@@ -1,0 +1,236 @@
+name: CI
+
+# Runs the same quality gates the project's PR template asks contributors
+# to run locally: pytest with coverage, ruff lint, mypy strict. Mirrors
+# CONTRIBUTING.md and the v0.6.1-baseline gates (558 tests, 90% coverage,
+# 87 source files clean under mypy strict).
+#
+# Jobs:
+#   unit        — runs on every PR/push; no external services required.
+#   integration — runs on every PR/push; spins up a Postgres 16 service.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-flight runs of the same ref when new commits land. Saves CI
+# minutes on rapid-fire pushes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # --------------------------------------------------------------------------
+  # Unit tests + quality gates
+  # No external services. Must pass without Postgres or any network access.
+  # --------------------------------------------------------------------------
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          # Keep the uv binary cached across runs.
+          enable-cache: true
+
+      - name: Set up Python (matches requires-python in pyproject.toml)
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install project + dev deps
+        run: uv sync --frozen
+
+      - name: Lint (ruff)
+        run: uv run ruff check src tests
+
+      - name: Run unit tests with coverage
+        # Excludes tests/integration/ which requires optional external services.
+        # --cov-fail-under=90 enforces the project's coverage floor at the
+        # CI gate so a regression cannot land silently.
+        # --benchmark-disable skips the 100-round latency benchmark; that gate
+        # runs in the dedicated seal-latency-gate job below.
+        run: uv run pytest tests/ --ignore=tests/integration --benchmark-disable --cov=novafabric --cov-report=term-missing --cov-fail-under=90
+
+      - name: Smoke-test the CLI
+        # Confirms the `nova` entry point installs cleanly and reports
+        # the version. Catches packaging regressions that pure unit
+        # tests miss.
+        run: |
+          uv run nova --version
+          uv run nova --help > /dev/null
+
+  # --------------------------------------------------------------------------
+  # Type check (mypy strict) against the FULL dependency surface
+  # Separate job with --all-extras so optional-extra integrations (sigstore,
+  # kuzu, clickhouse, adapters, …) are type-checked against their real APIs
+  # instead of being silenced as missing imports. The unit job stays lean so
+  # its coverage denominator (and the 90% gate) is unaffected.
+  # --------------------------------------------------------------------------
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python (matches requires-python in pyproject.toml)
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install project + dev deps + all extras
+        run: uv sync --frozen --all-extras
+
+      - name: Type check (mypy strict)
+        run: uv run mypy src
+
+  # --------------------------------------------------------------------------
+  # NovaSeal p99 latency gate
+  # Runs 100 seal() rounds and asserts p99 < 200 ms (ADR-0041).
+  # Separate from the unit job so benchmark overhead does not inflate
+  # the coverage-measurement run.
+  # --------------------------------------------------------------------------
+  seal-latency-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install project + dev deps
+        run: uv sync --frozen
+
+      - name: Run NovaSeal p99 latency gate
+        # --benchmark-json saves results as a JSON artifact for trend tracking.
+        # The p99 < 200 ms assertion is inside the test itself; a failing
+        # assertion fails this step and blocks the PR merge.
+        run: |
+          mkdir -p bench-results
+          uv run pytest tests/seal/test_benchmark.py -v \
+            --benchmark-json=bench-results/seal_latency.json
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: seal-latency-${{ github.sha }}
+          path: bench-results/seal_latency.json
+          retention-days: 90
+
+  # --------------------------------------------------------------------------
+  # Showcase site build
+  # Confirms the Astro site (web/) builds cleanly and TypeScript types check.
+  # e2e tests require a running server so are not run here.
+  # --------------------------------------------------------------------------
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Type check (tsc)
+        working-directory: web
+        run: npm run lint
+
+      - name: Build showcase site
+        working-directory: web
+        run: npm run build
+
+  # --------------------------------------------------------------------------
+  # Integration tests
+  # Spins up a Postgres 16 service container and runs tests/integration/.
+  # Tests that don't need Postgres (server, auth, rbac, storage SQLite) still
+  # run here; Postgres-requiring tests (migration, storage Postgres) are
+  # automatically enabled via the env var.
+  # --------------------------------------------------------------------------
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: novafabric_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python (matches requires-python in pyproject.toml)
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install project + dev deps
+        run: uv sync --frozen
+
+      - name: Run Postgres schema migrations
+        env:
+          NOVAFABRIC_POSTGRES_DSN: postgresql://postgres:test@localhost:5432/novafabric_test
+        run: uv run alembic -c alembic-postgres.ini upgrade head
+
+      - name: Run integration tests
+        env:
+          NOVAFABRIC_TEST_POSTGRES_DSN: postgresql://postgres:test@localhost:5432/novafabric_test
+        run: uv run pytest tests/integration/ -v

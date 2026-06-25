@@ -1,0 +1,28 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "2YQDD4RYNADWV5WECXVFJHJ6JP",
+  "global_run_id": "ec8a3898-2067-7cd4-84c4-a320be26898d",
+  "run_id": "12RB8KPDR7SJAX550QY0KYTMD9",
+  "parent_run_id": null,
+  "event_type": "model_call",
+  "trace_id": "6a8341cb81c8bed19f146fcc060a1ca0",
+  "span_id": "a3402acf23e04a4f",
+  "agent_id": "anthropic-sdk",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-13T01:45:00.401000+00:00",
+  "emitter_node_id": "worker-0001",
+  "payload": {
+    "model": "claude-3-5-sonnet-20241022",
+    "system": "mistral",
+    "usage": {
+      "input_tokens": 1797,
+      "output_tokens": 67
+    },
+    "stop_reason": "tool_use"
+  },
+  "payload_hash": "sha256:0beef7b85c15acf6ff3e83567ac796c29c0ec44734f607c2762b8d8cf712d87d",
+  "nova.batch.signature": "owwVH8+vJS/5fmdxICbuDWJxnhFDJZaBME/o+BeOi/M3MFLqj4Ryik16WptkzSLVfiwyEK1oczpENxmoLzt0rg==",
+  "nova.batch.signing_key_id": "072a5193-f31c-4ef0-bfe5-5eef52c0da87"
+}

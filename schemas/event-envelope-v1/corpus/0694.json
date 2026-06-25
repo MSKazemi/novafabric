@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "6KMGCKA1Z7P3S6CZC34ND8DGJH",
+  "global_run_id": "4VCXNQ2SBNAC9HBT3HD3NSEZW7",
+  "run_id": "3QZD0YEB2PXZ69D1C68SBZWH4V",
+  "parent_run_id": "06AM91NCDJSPH12AS82MFATGAP",
+  "event_type": "tool_call",
+  "trace_id": "4a2c343ab474e1f2db7a53af1e8c5450",
+  "span_id": "22d6995113e59f73",
+  "agent_id": "nova-otel-bridge",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-ml-ops",
+  "started_at": "2026-05-12T21:34:00.096000+00:00",
+  "emitter_node_id": "head-node",
+  "payload": {
+    "tool_name": "web_search",
+    "tool_call_id": "tc_a0c9425dcf189271",
+    "arguments": {
+      "input": "example input for web_search"
+    },
+    "duration_ms": 2913
+  },
+  "payload_hash": "sha256:741114df346fa520b2859a9f13c4dec4e745094789b6c56efcf3c0a6fdd259ec",
+  "nova.batch.signature": "/EfdCp8sChos6LhQOcoVvgS9sTvaDgN4tVpDQLncWwAY0/BBIbzZwFznKP0YX3rsIGeagarzO73h5Iv6VmZAxg==",
+  "nova.batch.signing_key_id": "9167dd8b-a92f-4799-be95-926caaeb5de3"
+}

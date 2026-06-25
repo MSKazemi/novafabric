@@ -1,0 +1,106 @@
+id: iso42001-v1
+name: ISO/IEC 42001 — AI Management System
+framework: ISO/IEC 42001
+version: "2023"
+controls:
+  - id: ISO42-4.1-CONTEXT
+    title: Understanding the organisation and its context (§4.1)
+    description: >
+      The organisation shall determine external and internal issues that are
+      relevant to its purpose and that affect its ability to achieve the
+      intended outcome(s) of its AI management system.
+    evidence_requirements:
+      - evidence_type: model_calls
+        required: true
+        description: Run capsules documenting AI system context and operational environment
+
+  - id: ISO42-6.1-RISK-OPPORTUNITIES
+    title: Actions to address risks and opportunities (§6.1)
+    description: >
+      When planning for the AI management system, the organisation shall
+      consider issues and requirements and determine the risks and
+      opportunities that need to be addressed.
+    evidence_requirements:
+      - evidence_type: policy_events
+        required: true
+        description: Policy decision events as evidence of risk-response actions
+
+  - id: ISO42-7.4-COMMUNICATION
+    title: Communication (§7.4)
+    description: >
+      The organisation shall determine the internal and external communications
+      relevant to the AI management system.
+    evidence_requirements:
+      - evidence_type: model_calls
+        required: true
+        description: Run capsules providing communication audit trail for AI system
+
+  - id: ISO42-8.1-OPERATIONAL-PLANNING
+    title: Operational planning and control (§8.1)
+    description: >
+      The organisation shall plan, implement, control, monitor and review
+      the processes needed to meet requirements, and implement actions
+      determined in accordance with Clause 6.
+    evidence_requirements:
+      - evidence_type: model_calls
+        required: true
+        description: Operational run capsules documenting AI system execution
+      - evidence_type: tool_permissions
+        required: true
+        description: Tool permission records showing operational access controls
+      - evidence_type: lineage
+        required: false
+        description: Lineage records for process traceability
+
+  - id: ISO42-8.4-AI-SYSTEM-IMPACT
+    title: AI system impact assessment (§8.4)
+    description: >
+      The organisation shall assess the impact of the AI system on
+      individuals, groups and society.
+    evidence_requirements:
+      - evidence_type: policy_events
+        required: true
+        description: Policy decision events documenting impact assessment outcomes
+      - evidence_type: pii_scan
+        required: false
+        description: PII scan evidence showing assessment of personal data impact
+
+  - id: ISO42-8.5-RESPONSIBLE-AI
+    title: Responsible AI system development (§8.5)
+    description: >
+      The organisation shall ensure that the AI system is developed and
+      deployed responsibly, with appropriate safeguards.
+    evidence_requirements:
+      - evidence_type: model_calls
+        required: true
+        description: Run capsules as evidence of responsible development practice
+      - evidence_type: seal_signature
+        required: false
+        description: Cryptographic seals ensuring integrity of AI system records
+
+  - id: ISO42-9.1-MONITORING-EVAL
+    title: Monitoring, measurement, analysis and evaluation (§9.1)
+    description: >
+      The organisation shall evaluate the AI management system performance
+      and determine the methods for monitoring, measurement, analysis and
+      evaluation, as applicable.
+    evidence_requirements:
+      - evidence_type: model_calls
+        required: true
+        description: Evaluation run capsules with performance measurements
+      - evidence_type: lineage
+        required: false
+        description: Lineage for tracing evaluation history
+
+  - id: ISO42-10.2-CONTINUAL-IMPROVEMENT
+    title: Continual improvement (§10.2)
+    description: >
+      The organisation shall continually improve the suitability, adequacy
+      and effectiveness of the AI management system.
+    evidence_requirements:
+      - evidence_type: model_calls
+        required: true
+        description: Historical run capsules enabling continual improvement analysis
+      - evidence_type: policy_events
+        required: false
+        description: Policy decisions documenting improvement-driven changes

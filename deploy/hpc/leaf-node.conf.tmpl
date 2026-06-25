@@ -1,0 +1,33 @@
+# NovaFabric NATS Leaf Node Configuration
+# Generated per-job by Slurm Prolog via novafabric-hpc-hub.
+#
+# Template variables (replaced at runtime):
+#   {{.ClusterID}}   — cluster identifier string
+#   {{.NodeID}}      — Slurm node hostname
+#   {{.JobID}}       — Slurm job ID
+#   {{.HubAddress}}  — address of the NATS cluster hub (host:port)
+#   {{.StoreDir}}    — per-job spool directory (absolute path)
+
+server_name: "nova-leaf-{{.ClusterID}}-{{.NodeID}}-{{.JobID}}"
+
+# Leaf node connection to the cluster hub
+leafnodes {
+  remotes = [
+    {
+      url: "nats://{{.HubAddress}}"
+      credentials: "{{.StoreDir}}/leaf-creds.nk"
+    }
+  ]
+}
+
+# JetStream — local spool store for buffering evidence events
+# max_file_store is bounded to prevent runaway disk use on shared Lustre.
+jetstream {
+  enabled: true
+  store_dir: "{{.StoreDir}}/nats-store"
+  max_mem_store: 256MB
+  max_file_store: 1GB
+}
+
+# Subject prefix: nova.<cluster_id>.<job_id>.events
+# The hub stream subscribes to nova.{{.ClusterID}}.> and fans in from all leaves.

@@ -1,0 +1,20 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "3N1HPGVBBKRMT9PMX4JXXPKNCH",
+  "global_run_id": "85d50d59-1e48-76eb-8561-37a489bbc655",
+  "run_id": "0S21FWPV1FBFWYZF66MDETJC34",
+  "parent_run_id": "4THSAYJPVM7KF5DVFFT5XKH7MP",
+  "event_type": "capsule.finalize",
+  "trace_id": "002f6a92976f9716e86caff7ffd5ef83",
+  "span_id": "48062954e7d8902f",
+  "agent_id": "anthropic-sdk",
+  "cluster_id": "azure-ml-cluster",
+  "tenant_id": "tenant-acme",
+  "started_at": "2026-05-12T18:48:00.413000+00:00",
+  "emitter_node_id": "gpu-node-04",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": "P0kuM6KqcGlTveDFsQmwQ6PJbB4CGRISeTgM54s4Wd0YBC0bciVHF+RIm5DngsNSWs/GkRL/xXzHcizMdIKrug==",
+  "nova.batch.signing_key_id": "54760704-7f98-49e9-81b2-ef834aa33535"
+}

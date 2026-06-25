@@ -1,0 +1,14 @@
+service:
+  name: payment-gateway
+  version: "2.4.1"
+  settings:
+    rate_limiting:
+      enabled: true
+      max_requests_per_second: 100
+    connection_pool:
+      max_connections: 1000
+      idle_timeout_seconds: 30
+    retries:
+      max_attempts: 3
+      backoff_multiplier: 2.0
+  environment: production

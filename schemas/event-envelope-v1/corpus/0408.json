@@ -1,0 +1,20 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "0088S60CCAEDQCM4ZF7509ZHGJ",
+  "global_run_id": "51bcb423-5c21-7e7b-a0fc-3df7f0aede81",
+  "run_id": "6SN9JVZ0ZCDGYSP70FE4WAB876",
+  "parent_run_id": "0E1TSKH0JTH4Z6ZNVVZG48VN79",
+  "event_type": "capsule.finalize",
+  "trace_id": "3f0b666f0fd6d8481a7eafb14fc6a8c9",
+  "span_id": "646269ef2f7fb6f4",
+  "agent_id": "langchain-agent",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T16:48:00.732000+00:00",
+  "emitter_node_id": "gpu-node-04",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

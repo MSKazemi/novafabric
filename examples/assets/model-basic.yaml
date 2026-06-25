@@ -1,0 +1,15 @@
+novafabric_spec_version: "1"
+asset_type: model
+name: fraud-detection-model
+version: 1.2.0
+status: development
+description: "XGBoost fraud detection model trained on transactions dataset"
+tags:
+  team: risk-ml
+  project: fraud-v2
+spec:
+  framework: xgboost
+  artifact_path: s3://ml-artifacts/fraud-detection/v1.2.0
+external_refs:
+  dataset: "dataset://transactions-cleaned@2.0.0"
+  experiment: "mlflow://experiments/fraud-detection/runs/abc123"

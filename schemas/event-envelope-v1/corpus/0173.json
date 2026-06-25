@@ -1,0 +1,19 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "0TYCZ87XCB4AHCRK2G7P1SV8GT",
+  "global_run_id": "3BNBA4JE5N6G8Z060GYCVQ0DQQ",
+  "run_id": "1XYPD64DH1REEEKER6JT47E5QR",
+  "parent_run_id": "32S1E7B4K5N1HWX956Y7S6J780",
+  "event_type": "span",
+  "trace_id": "58c51fac802542c5f6ff5c7df8a76a0b",
+  "span_id": "f2317e1fe8fefca8",
+  "agent_id": "custom-agent-v1",
+  "cluster_id": null,
+  "tenant_id": "tenant-ml-ops",
+  "started_at": "2026-05-12T12:53:00.483000+00:00",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

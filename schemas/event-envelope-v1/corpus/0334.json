@@ -1,0 +1,26 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "0EQQTNS04NMB9R92T9V0HWHC3P",
+  "global_run_id": "0NGMPCEW9HDTENAXED6NSG1E1T",
+  "run_id": "44M7FT77E92N5FGTEEMHY8CQR4",
+  "parent_run_id": "3ZY470ASNJSGWZZRYJTARTCR1G",
+  "event_type": "tool_call",
+  "trace_id": "c29ad646dfdf462bb67486871b21d671",
+  "span_id": "d1770cb99b0ced8a",
+  "agent_id": "custom-agent-v1",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-ml-ops",
+  "started_at": "2026-05-12T15:34:00.022000+00:00",
+  "payload": {
+    "tool_name": "file_reader",
+    "tool_call_id": "tc_23f965341e131fe4",
+    "arguments": {
+      "input": "example input for file_reader"
+    },
+    "duration_ms": 725
+  },
+  "payload_hash": "sha256:19b7ec71eb5ae0f8ad0efbc211e4c87c533affa7988394333126f2300bd37e03",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

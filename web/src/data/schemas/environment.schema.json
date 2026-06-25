@@ -1,0 +1,525 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/environment.schema.json",
+  "$comment": "schema_version 0.1.0; tracks design/spec/environment-lock-v0.md. Discriminates on mode: deterministic|best-effort.",
+  "title": "EnvironmentLock",
+  "description": "Content of env.lock inside a NovaFabric Run Capsule. Records every environmental dimension a replay needs to reconstruct the captured run.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "mode",
+    "host",
+    "runtime",
+    "hardware",
+    "runtime_env",
+    "locale",
+    "captured_at",
+    "captured_by"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+",
+      "description": "Schema version. v0.2 ships 0.1.0."
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["deterministic", "best-effort"],
+      "description": "Lock mode. 'deterministic' requires all pinned fields; required for exact replay."
+    },
+    "host": {
+      "$ref": "#/$defs/HostSection",
+      "description": "OS-level identity of the capture machine."
+    },
+    "runtime": {
+      "$ref": "#/$defs/RuntimeSection",
+      "description": "Wall-clock and timezone at capture."
+    },
+    "python": {
+      "$ref": "#/$defs/PythonSection",
+      "description": "Python interpreter and package environment. Required when the run used Python."
+    },
+    "container": {
+      "$ref": "#/$defs/ContainerSection",
+      "description": "OCI container metadata. Optional but required for exact replay of containerized runs."
+    },
+    "hardware": {
+      "$ref": "#/$defs/HardwareSection",
+      "description": "Accelerator inventory at capture time."
+    },
+    "runtime_env": {
+      "$ref": "#/$defs/RuntimeEnvSection",
+      "description": "Filtered snapshot of environment variables. Deny-listed vars are excluded."
+    },
+    "locale": {
+      "$ref": "#/$defs/LocaleSection",
+      "description": "Locale and timezone affecting output formatting."
+    },
+    "captured_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the lock was captured (RFC 3339)."
+    },
+    "captured_by": {
+      "type": "string",
+      "description": "Identity of the tool that captured the lock, e.g. 'novafabric/0.2.0'."
+    },
+    "best_effort_reasons": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/BestEffortReason"},
+      "description": "Populated when mode is 'best-effort'. Explains which required-for-exact fields are missing."
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Vendor extensions. Keys must be reverse-DNS-prefixed."
+    }
+  },
+  "if": {
+    "properties": {
+      "mode": {"const": "best-effort"}
+    },
+    "required": ["mode"]
+  },
+  "then": {
+    "properties": {
+      "best_effort_reasons": {
+        "type": "array",
+        "minItems": 1
+      }
+    },
+    "required": ["best_effort_reasons"]
+  },
+  "$defs": {
+    "HostSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "arch", "cpu_count", "memory_bytes"],
+      "properties": {
+        "os": {
+          "type": "string",
+          "enum": ["linux", "darwin", "windows"],
+          "description": "Operating system."
+        },
+        "os_release": {
+          "type": "string",
+          "description": "Distro release string (e.g. PRETTY_NAME on Linux)."
+        },
+        "kernel": {
+          "type": "string",
+          "description": "Kernel version from uname -r or equivalent."
+        },
+        "arch": {
+          "type": "string",
+          "enum": ["x86_64", "arm64", "riscv64", "s390x", "ppc64le"],
+          "description": "CPU architecture."
+        },
+        "hostname": {
+          "type": "string",
+          "description": "Hostname or 'REDACTED' per secret-policy-v0. Default is redacted."
+        },
+        "cpu_model": {
+          "type": "string",
+          "description": "First CPU model from /proc/cpuinfo or equivalent."
+        },
+        "cpu_count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Logical CPUs available to the process."
+        },
+        "memory_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total memory available to the process in bytes."
+        },
+        "slurm": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["cluster", "partition", "job_id"],
+              "properties": {
+                "cluster": {"type": "string"},
+                "partition": {"type": "string"},
+                "job_id": {"type": "string"},
+                "node_list": {
+                  "type": "array",
+                  "items": {"type": "string"}
+                }
+              }
+            },
+            {"type": "null"}
+          ],
+          "description": "SLURM context when running under a SLURM scheduler."
+        },
+        "kubernetes": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["namespace", "pod", "node"],
+              "properties": {
+                "namespace": {"type": "string"},
+                "pod": {"type": "string"},
+                "node": {"type": "string"},
+                "image_digest": {"type": "string"}
+              }
+            },
+            {"type": "null"}
+          ],
+          "description": "Kubernetes context when running in a pod."
+        }
+      }
+    },
+    "RuntimeSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timezone", "wallclock_at_start"],
+      "properties": {
+        "timezone": {
+          "type": "string",
+          "description": "IANA timezone name, e.g. 'America/New_York', 'UTC'."
+        },
+        "clock_skew_ms": {
+          "type": "integer",
+          "description": "Skew versus NTP at capture time in milliseconds, if measurable."
+        },
+        "wallclock_at_start": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Identical to the capsule's created_at (RFC 3339)."
+        }
+      }
+    },
+    "Package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "source"],
+      "properties": {
+        "name": {"type": "string"},
+        "version": {"type": "string"},
+        "source": {
+          "type": "string",
+          "enum": ["pypi", "git", "path", "url"],
+          "description": "Package source kind."
+        },
+        "source_url": {"type": "string"},
+        "hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "markers": {"type": "string", "description": "PEP 508 environment markers."}
+      }
+    },
+    "PythonSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interpreter",
+        "version",
+        "executable_path",
+        "package_manager",
+        "lock_file_kind",
+        "lock_file_ref",
+        "lock_file_hash"
+      ],
+      "properties": {
+        "interpreter": {
+          "type": "string",
+          "enum": ["cpython", "pypy3"],
+          "description": "Python interpreter implementation."
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+",
+          "description": "Major.minor.patch version."
+        },
+        "executable_path": {
+          "type": "string",
+          "description": "Sanitized path (home directory normalized to ~)."
+        },
+        "package_manager": {
+          "type": "string",
+          "enum": ["uv", "poetry", "pdm", "pip", "none"],
+          "description": "Package manager used."
+        },
+        "lock_file_kind": {
+          "type": "string",
+          "enum": ["uv.lock", "poetry.lock", "pdm.lock", "requirements.txt", "none"],
+          "description": "Kind of lock file embedded in the capsule."
+        },
+        "lock_file_ref": {
+          "oneOf": [
+            {"type": "string"},
+            {"type": "null"}
+          ],
+          "description": "Relative path under the capsule to the embedded lock file."
+        },
+        "lock_file_hash": {
+          "oneOf": [
+            {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+            {"type": "null"}
+          ],
+          "description": "SHA-256 hash of the lock file. Null when lock_file_kind is 'none'."
+        },
+        "installed_packages": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/Package"},
+          "description": "Snapshot from pip list. Used for fast equality checks; lock file is authoritative."
+        },
+        "editable_installs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "path", "content_hash"],
+            "properties": {
+              "name": {"type": "string"},
+              "path": {"type": "string"},
+              "content_hash": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              }
+            }
+          },
+          "description": "pip install -e style installs."
+        },
+        "pyproject_hash": {
+          "oneOf": [
+            {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+            {"type": "null"}
+          ],
+          "description": "SHA-256 of pyproject.toml if present."
+        },
+        "python_path": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "sys.path at capture, sanitized of home directories."
+        }
+      }
+    },
+    "ContainerSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtime"],
+      "properties": {
+        "runtime": {
+          "type": "string",
+          "enum": ["docker", "podman", "containerd", "singularity", "apptainer", "none"],
+          "description": "Container runtime used."
+        },
+        "image_reference": {
+          "type": "string",
+          "description": "registry/repo:tag form. Mutable; informational only."
+        },
+        "image_digest": {
+          "oneOf": [
+            {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+            {"type": "null"}
+          ],
+          "description": "Authoritative OCI image manifest digest. Required for exact replay."
+        },
+        "registry": {
+          "oneOf": [
+            {"type": "string"},
+            {"type": "null"}
+          ],
+          "description": "Container registry, e.g. 'ghcr.io', 'docker.io'."
+        },
+        "pulled_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the runtime resolved this digest (RFC 3339)."
+        },
+        "entrypoint": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Resolved container entrypoint."
+        },
+        "cmd": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Resolved cmd, sanitized of secrets."
+        },
+        "mount_summary": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["host_path", "container_path", "read_only"],
+            "properties": {
+              "host_path": {"type": "string"},
+              "container_path": {"type": "string"},
+              "read_only": {"type": "boolean"}
+            }
+          },
+          "description": "High-level mount information, host paths normalized."
+        }
+      }
+    },
+    "GpuInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "vendor", "count"],
+      "properties": {
+        "model": {"type": "string"},
+        "vendor": {"type": "string"},
+        "driver_version": {"type": "string"},
+        "vbios": {"type": "string"},
+        "vram_bytes": {"type": "integer", "minimum": 0},
+        "count": {"type": "integer", "minimum": 1}
+      }
+    },
+    "HardwareSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gpus"],
+      "properties": {
+        "gpus": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/GpuInfo"},
+          "description": "GPU inventory. Empty array if no GPU."
+        },
+        "cuda_version": {
+          "oneOf": [
+            {"type": "string"},
+            {"type": "null"}
+          ],
+          "description": "CUDA version from nvcc --version, or null."
+        },
+        "cudnn_version": {
+          "oneOf": [
+            {"type": "string"},
+            {"type": "null"}
+          ]
+        },
+        "nccl_version": {
+          "oneOf": [
+            {"type": "string"},
+            {"type": "null"}
+          ]
+        },
+        "rocm_version": {
+          "oneOf": [
+            {"type": "string"},
+            {"type": "null"}
+          ],
+          "description": "ROCm version for AMD GPUs."
+        },
+        "mps": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["enabled"],
+              "properties": {
+                "enabled": {"type": "boolean"},
+                "framework_version": {"type": "string"}
+              }
+            },
+            {"type": "null"}
+          ],
+          "description": "Apple Silicon MPS context."
+        },
+        "accelerator_summary": {
+          "type": "string",
+          "description": "Human-readable one-liner, e.g. '2x A100-80GB'."
+        }
+      }
+    },
+    "RuntimeEnvSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy", "allow_list", "deny_list", "recorded", "dropped_count"],
+      "properties": {
+        "policy": {
+          "type": "string",
+          "description": "'default' or 'user-defined'; references a profile."
+        },
+        "allow_list": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Environment variable names allowed to be recorded."
+        },
+        "deny_list": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Regex patterns for variable names to exclude from the capsule."
+        },
+        "recorded": {
+          "type": "object",
+          "additionalProperties": {"type": "string"},
+          "description": "Allowed environment variables and their values at capture."
+        },
+        "dropped_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count of variables excluded by the deny list."
+        },
+        "dropped_keys_hashed": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "description": "Hashed names of excluded keys for forensic equality without leaking names."
+        }
+      }
+    },
+    "LocaleSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lang", "tz"],
+      "properties": {
+        "lang": {"type": "string", "description": "LANG value, e.g. 'en_US.UTF-8'."},
+        "lc_all": {
+          "oneOf": [{"type": "string"}, {"type": "null"}]
+        },
+        "lc_collate": {
+          "oneOf": [{"type": "string"}, {"type": "null"}]
+        },
+        "lc_ctype": {
+          "oneOf": [{"type": "string"}, {"type": "null"}]
+        },
+        "lc_messages": {
+          "oneOf": [{"type": "string"}, {"type": "null"}]
+        },
+        "lc_monetary": {
+          "oneOf": [{"type": "string"}, {"type": "null"}]
+        },
+        "lc_numeric": {
+          "oneOf": [{"type": "string"}, {"type": "null"}]
+        },
+        "lc_time": {
+          "oneOf": [{"type": "string"}, {"type": "null"}]
+        },
+        "tz": {
+          "type": "string",
+          "description": "IANA timezone name, mirrored from runtime.timezone."
+        }
+      }
+    },
+    "BestEffortReason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "detail"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "missing_lock_file",
+            "container_digest_unresolved",
+            "driver_version_unavailable",
+            "no_gpu_passthrough",
+            "other"
+          ],
+          "description": "Category of why deterministic capture was not possible."
+        },
+        "detail": {
+          "type": "string",
+          "description": "Human-readable explanation."
+        }
+      }
+    }
+  }
+}

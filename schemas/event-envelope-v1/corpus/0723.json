@@ -1,0 +1,28 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "39WH8WMBPPPRY34WRNE61WSST9",
+  "global_run_id": "77ca69db-6fdf-7704-b5cd-60946d31bd63",
+  "run_id": "4MW9DKP5QJDDV9VEXWPA437F4J",
+  "parent_run_id": "64CCJWHEVYTRMV43A57KD9ZNB9",
+  "event_type": "model_call",
+  "trace_id": "b71f4fac08256aa3a5bf30eead3323dd",
+  "span_id": "4a8a19abdcc59c32",
+  "agent_id": "openai-agents-sdk",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T22:03:00.158000+00:00",
+  "emitter_node_id": "node01.cluster.local",
+  "payload": {
+    "model": "gpt-4-turbo",
+    "system": "meta",
+    "usage": {
+      "input_tokens": 724,
+      "output_tokens": 258
+    },
+    "stop_reason": "tool_use"
+  },
+  "payload_hash": "sha256:bb8ddb00d591d988c85b7558f2144992a63f7a35c3a04a65783c2d90e492b87f",
+  "nova.batch.signature": "hiEdPxaBu/paa959mfUKov4LWOdfU91AooNTwbbcYXGgdD86XQmvnvce5KxcAS3bBro+fxqkOaSK6jffIGrXUA==",
+  "nova.batch.signing_key_id": "f0c96b4d-3bce-42f9-9e58-2b87cbff56a2"
+}

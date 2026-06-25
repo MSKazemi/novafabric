@@ -1,0 +1,28 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "34KMMCFDR2NMCTR0M7P4GAQ0H5",
+  "global_run_id": "c6d62d66-28f2-7065-babe-222531ae9c5f",
+  "run_id": "3P1QPSWYK77XGZ1Q8FZCXNGBKS",
+  "parent_run_id": "2CK6HCE76BYB1DXTDHYV5FFSQS",
+  "event_type": "model_call",
+  "trace_id": "43a5b511fff29c55f4cbce1195b73087",
+  "span_id": "c39f7ddecbe78283",
+  "agent_id": "langchain-agent",
+  "cluster_id": "slurm-train-v100",
+  "tenant_id": "tenant-platform-eng",
+  "started_at": "2026-05-12T21:33:00.733000+00:00",
+  "emitter_node_id": "gpu-node-04",
+  "payload": {
+    "model": "gpt-4-turbo",
+    "system": "openai",
+    "usage": {
+      "input_tokens": 2569,
+      "output_tokens": 500
+    },
+    "stop_reason": "max_tokens"
+  },
+  "payload_hash": "sha256:4d89fc2f3e33c3d4cfb9f29ecfce37013c3099aefb1933d95bf5a52016a2b481",
+  "nova.batch.signature": "0d5WkS79hkFUYAlOi7PeaVDqYWPRWckxtryYhwbq94kyKdddEojbYZ70pxgZ7Cw3Wai1M0sdhbzanhoduhbwHQ==",
+  "nova.batch.signing_key_id": "2ce2bf43-8f27-441f-b33f-13d491011ff0"
+}

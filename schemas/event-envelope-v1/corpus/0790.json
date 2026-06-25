@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "30N1M2NAME9WP2RASQ2NF9HCF3",
+  "global_run_id": "0AFPVNCV9XBQBFBY0CWAX9RY8G",
+  "run_id": "3J6EQGH9MA46G7709CPPQ9JCJ7",
+  "parent_run_id": null,
+  "event_type": "tool_call",
+  "trace_id": "308a5ab74513a982c0557cd46817f7a5",
+  "span_id": "d660a333fb305de9",
+  "agent_id": "custom-agent-v1",
+  "cluster_id": "slurm-train-v100",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T23:10:00.296000+00:00",
+  "emitter_node_id": "gpu-node-04",
+  "payload": {
+    "tool_name": "bash_executor",
+    "tool_call_id": "tc_02ca0d33a6aaa273",
+    "arguments": {
+      "input": "example input for bash_executor"
+    },
+    "duration_ms": 2864
+  },
+  "payload_hash": "sha256:d8ee4fe508f0948aad678a83e0233fcb042912937f65847b677907c0757e6e90",
+  "nova.batch.signature": "m2pnQXqQ9+LMoat5oVfum90Ws3AQkpVpcP/BJP2oo5ocQsjquuJpuBhcBZ61rOZMxS/AQwqVDPPehulDeE41Bg==",
+  "nova.batch.signing_key_id": "25207deb-a265-46af-971c-11f7c13b2d0e"
+}

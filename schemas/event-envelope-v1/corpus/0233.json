@@ -1,0 +1,19 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "4B5N0BX0DE8AXNRF2ERBQ2JSH5",
+  "global_run_id": "6Z1Y1Y3DRDZZGBA2RHAKXY4WBR",
+  "run_id": "0MGG2CZD1N1VW9JMEKAGM3TCTW",
+  "parent_run_id": "220CFHAFXV42BVX8WRJBQV022X",
+  "event_type": "span",
+  "trace_id": "c92d2fe1c28da2dd81d665050bf2b939",
+  "span_id": "33fc5b2462f8840e",
+  "agent_id": "anthropic-sdk",
+  "cluster_id": "local-dev",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T13:53:00.971000+00:00",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

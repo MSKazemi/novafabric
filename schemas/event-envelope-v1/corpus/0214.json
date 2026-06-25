@@ -1,0 +1,26 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "4B7B16NXAMG00SAVPGJWME68S9",
+  "global_run_id": "26TBCN9ZSSACAWN62A32JX04CF",
+  "run_id": "1QM6SB42N8MDXMYQB684R3T3NN",
+  "parent_run_id": "4JK84S28TAERWH4GQK13VJV91S",
+  "event_type": "tool_call",
+  "trace_id": "22b774c46c34406688246fa55373ef5a",
+  "span_id": "4c011e47d4fb90c0",
+  "agent_id": "langchain-agent",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T13:34:00.853000+00:00",
+  "payload": {
+    "tool_name": "database_query",
+    "tool_call_id": "tc_dd2a40962ae173ac",
+    "arguments": {
+      "input": "example input for database_query"
+    },
+    "duration_ms": 1787
+  },
+  "payload_hash": "sha256:f978248175c6230011cfa13a64d2a7a1e6c2a9f84f1c150c045aac3be5853af6",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

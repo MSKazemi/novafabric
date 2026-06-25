@@ -1,0 +1,28 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "5PENE2BWCZ6NF9DZKQTESKPZQJ",
+  "global_run_id": "cd0aeb20-b1b8-754b-afd7-d812148f6825",
+  "run_id": "2XAZJWZMKAS5DVR11DG9V6S4MP",
+  "parent_run_id": "4221TY5NJASQD62S0R68MJ4SZK",
+  "event_type": "model_call",
+  "trace_id": "1be059f5032ddc2bb01d0703d26e696a",
+  "span_id": "e70f18f9f0ae9624",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": "azure-ml-cluster",
+  "tenant_id": "tenant-ml-ops",
+  "started_at": "2026-05-12T16:57:00.539000+00:00",
+  "emitter_node_id": "node01.cluster.local",
+  "payload": {
+    "model": "claude-3-5-sonnet-20241022",
+    "system": "meta",
+    "usage": {
+      "input_tokens": 522,
+      "output_tokens": 359
+    },
+    "stop_reason": "tool_use"
+  },
+  "payload_hash": "sha256:a3c43e826d1a214edc028109de8c68baff4f303b53efc85bb25d30d51c8bfc97",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

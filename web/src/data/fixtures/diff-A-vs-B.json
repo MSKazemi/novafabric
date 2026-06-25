@@ -1,0 +1,56 @@
+{
+  "schema_version": "0.1.0",
+  "run_a_id": "01KR5SQZPDGTKE3MDP3ZRX8WP1",
+  "run_b_id": "01KS9K8R2NHQXM7P3D2VBC8LMN",
+  "summary": {
+    "changed": 2,
+    "added": 0,
+    "removed": 0
+  },
+  "sections": {
+    "environment": {
+      "changes": []
+    },
+    "model_calls": {
+      "aligned": 2,
+      "changed": 1,
+      "added": 0,
+      "removed": 0,
+      "pairs": [
+        {
+          "index": 0,
+          "a_call_id": "call_A_001",
+          "b_call_id": "call_B_001",
+          "changes": []
+        },
+        {
+          "index": 1,
+          "a_call_id": "call_A_002",
+          "b_call_id": "call_B_002",
+          "changes": [
+            {
+              "field": "request.messages[0].content",
+              "before": "You are a thorough code reviewer. For the diff below, identify: (1) bugs, (2) edge cases the author may have missed, (3) style inconsistencies. Be specific. Quote line numbers.",
+              "after": "Review this code diff. Note bugs and style issues.",
+              "severity": "major"
+            }
+          ]
+        }
+      ]
+    },
+    "tool_calls": {
+      "aligned": 2,
+      "pairs": []
+    },
+    "outputs": {
+      "changes": [
+        {
+          "path": "outputs/review.md",
+          "before_hash": "a6911021ffa388003a96dd5a1ef2d21a408053a952dc1ffd888a9680b96829af",
+          "after_hash": "833f562a971d0ace28e4f308d5a9adf130191dc65895e8a5b4b0a194de004f94",
+          "severity": "major"
+        }
+      ]
+    }
+  }
+}

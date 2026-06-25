@@ -1,0 +1,20 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "4YT069R1V1E90VHCC6DV86YYTX",
+  "global_run_id": "5129a9be-54a7-785e-a425-eb1286cb5900",
+  "run_id": "490MHECW8AVYSS4ZT6X0YFV50X",
+  "parent_run_id": "3D5XT0P7TADZEXB5J1T4K2KDWH",
+  "event_type": "capsule.finalize",
+  "trace_id": "58c6873f77d4259786c20d562268ff33",
+  "span_id": "1fdcf6eafbce27fe",
+  "agent_id": "openai-agents-sdk",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T18:24:00.786000+00:00",
+  "emitter_node_id": "head-node",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": "WF98NWEo6jBGex/es7FiZbQ15ZnBl8ee3Ps1kek1m3S+LtU7+laIAqF9gOrmSmMgc3RnwDKRbpSi25rE/Scvrg==",
+  "nova.batch.signing_key_id": "3573034f-64c2-4079-8147-5fd650d70bdc"
+}

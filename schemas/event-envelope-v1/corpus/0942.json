@@ -1,0 +1,20 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "0WZMJZGCS6GBD25M763X78EG51",
+  "global_run_id": "d010f5fa-4188-7a94-83ed-d015d4510bd4",
+  "run_id": "4QZT5M168Z7J2GGXYMNKJAW3N3",
+  "parent_run_id": "24448N4BY5TK1AW0X5GQB6CM9Q",
+  "event_type": "capsule.finalize",
+  "trace_id": "c4e3faaafb48c1510dcf39b38a30e0e2",
+  "span_id": "78d6db0c3f2ea5f4",
+  "agent_id": "custom-agent-v1",
+  "cluster_id": "azure-ml-cluster",
+  "tenant_id": "tenant-platform-eng",
+  "started_at": "2026-05-13T01:42:00.434000+00:00",
+  "emitter_node_id": "head-node",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": "XO4LaEcw3GTWxpnToyJh6v1ZFBZsIJ6yqGvMI905Q4G3sGMTjEHeZTBMdsmDMPCKdVt7ko+dHAFC6EKEZdH0Zw==",
+  "nova.batch.signing_key_id": "dab58285-82be-41f2-85b4-61fa5787ff92"
+}

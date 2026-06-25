@@ -1,0 +1,52 @@
+schema_version: "0.1.0"
+novafabric_version: "0.6.12"
+run_id: "01KT2P4Y8WGTHE9MRP4ZRX7QP3"
+created_at: "2026-04-15T10:00:00+00:00"
+finished_at: "2026-05-09T09:15:03+00:00"
+duration_ms: 4127
+command:
+  - "python"
+  - "review.py"
+  - "--diff"
+  - "examples/sample.diff"
+exit_code: 0
+status: "success"
+capture_mode: "cli-wrapper"
+working_directory: "~/projects/code-review-agent"
+host:
+  arch: "x86_64"
+  os: "linux"
+  python: "3.12.4"
+  cpu_count: 16
+  memory_bytes: 67108864000
+  gpu: []
+  hostname_redacted: true
+trace_ref: "trace.jsonl"
+trace_root_span_id: "0123456789abcdef"
+model_calls_ref: "model-calls.jsonl"
+tool_calls_ref: "tool-calls.jsonl"
+assets_ref: "assets.jsonl"
+environment_ref: "env.lock"
+replay_policy_ref: "replay.yaml"
+redaction_proof_ref: "redaction-proof.json"
+lineage_ref: "lineage.jsonl"
+model_call_count: 2
+tool_call_count: 2
+mutating_tool_count: 0
+inputs:
+  -
+    name: "diff"
+    path: "inputs/sample.diff"
+    content_hash: "sha256:2a8439e85cae440ff7e28be7009b7056ccff0597d706a093a7e0c44e90f022b7"
+    size_bytes: 1240
+    media_type: "text/x-diff"
+outputs:
+  -
+    name: "review"
+    path: "outputs/review.md"
+    content_hash: "sha256:5d93970a885c44d5babc3cf3dabcbcbd275e1c3df1fdd020f76126bc14bf5819"
+    size_bytes: 612
+    media_type: "text/markdown"
+metadata:
+  agent: "code-review-agent@0.1.0"
+  prompt: "code-review-prompt@0.1.0"

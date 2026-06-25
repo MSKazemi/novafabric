@@ -1,0 +1,16 @@
+# Central-side receiver: accepts OTel-Arrow streams (also accepts plain OTLP).
+# Pair with sender.yaml; route the pipeline into your ingestion exporter
+# (e.g. the NovaFabric collector_app / NATS / ClickHouse path).
+receivers:
+  otelarrow:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+exporters:
+  debug:
+    verbosity: basic               # replace with your ingestion exporter
+service:
+  pipelines:
+    traces:
+      receivers: [otelarrow]
+      exporters: [debug]

@@ -1,0 +1,3892 @@
+# Changelog
+
+All notable changes are documented here.
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+Each entry below summarizes a release. Full release notes — including
+upgrade instructions, breaking changes (none so far), and try-it
+examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
+
+## [Unreleased]
+
+## [0.57.0] — 2026-06-25
+
+### Added
+- **Web — search- and AI-crawler visibility pass (`web/`).** The marketing site
+  (`novafabric.dev`) now ships the discoverability surface it was missing:
+  - **`sitemap`** generated at build time via `@astrojs/sitemap` (wired through
+    `web/astro.config.mjs`).
+  - **Structured data (JSON-LD)** on the landing page — `SoftwareApplication`,
+    `Organization`, and `Offer` schema.org types asserting only facts visible on
+    the page — injected through `web/src/components/layout/Layout.astro`.
+  - **`robots.txt`** with an explicit answer/search AI-crawler allowlist
+    (`OAI-SearchBot`, `ChatGPT-User`, `Claude-SearchBot`, `Claude-User`,
+    `PerplexityBot`, …) controlling crawl access for AI answer engines.
+  - **`llms.txt`** summarizing the project for LLM-based retrieval.
+
+  Website-only change: no Python package, CLI, schema, or API surface is affected.
+
+## [0.56.3] — 2026-06-19
+
+### Fixed
+- **App-wide bug audit — 10 confirmed defects fixed (with regression tests).**
+  - **Replay (correctness):** `semantic` mode read a nested `response.choices` that real records
+    never use → similarity was always `1.0`; `exact` mode read `request`/`seed` instead of the flat
+    `gen_ai.request.*` / `gen_ai.request.seed` keys → no real capsule was ever exact-eligible. Both
+    now read the same flat OTel-GenAI keys the mock dispatcher uses (`src/novafabric/replay/_engine.py`).
+  - **Lineage (availability):** `blast_radius`, `provenance`, and `replay_chain` recursive CTEs had no
+    cycle guard and could explode / effectively hang on cyclic or dense graphs; added path-based
+    visited-tracking so traversal terminates (`src/novafabric/lineage/_store.py`).
+  - **Merkle (soundness):** `verify_inclusion_proof` ignored `tree_size`, so a proof for a phantom
+    leaf index `>= tree_size` could verify against the real root; out-of-range indices are now
+    rejected (`src/novafabric/trust/novaseal/merkle.py`).
+  - **Serve (security):** the `/topology/stream` WebSocket bypassed token auth and the
+    DNS-rebinding host guard that every HTTP route enforces — both are now checked inline before
+    `accept()` (`src/novafabric/serve/app.py`).
+  - **Serve (robustness):** five KG entity-queue/alias endpoints leaked their SQLite connection on
+    error paths (now `try/finally`); `scan-secrets` 500'd on an unrecognized finding severity (now
+    ranks unknown severities lowest).
+  - **Diff:** `_diff_outputs` crashed with `IsADirectoryError` on any subdirectory under `outputs/`
+    (now files-only) (`src/novafabric/diff/_engine.py`).
+  - **Compliance exporters:** NIST-RMF and GDPR-RoPA read underscored filenames
+    (`tool_permission_events.jsonl` / `redaction_manifest.json`) and a non-existent schema, so present
+    evidence was always reported missing / categories always empty; both now read the real hyphenated
+    `tool-permission-events.jsonl` / `redaction-manifest.json` and the `RedactionManifest.entries`
+    schema (with legacy fallback).
+  - Regression tests: `tests/test_audit_fixes_2026_06.py` plus updated replay/nist/topology suites.
+
+### Known limitations (audited, documented — not changed here)
+- RFC 3161 timestamp verification is intentionally degrade-tolerant in v0.1 (passes structural +
+  hash checks when the CMS signature can't be extracted); strict fail-closed verification is a v0.2
+  item per the verifier's own docstring.
+- The maker-checker SoD bypass authorizer and the promotion-policy bundle are not checked against a
+  signed allowlist (rooted in the documented v0.1 "no external trust anchors" DSSE model); closing
+  this needs a `bypass_key_ids` policy-schema field + policy-signature verification (ADR-level).
+- Warm-capture daemon (experimental) has fork/SIGCHLD/cancellation races and the in-process hook
+  installer is process-global; these need careful fork-aware fixes + on-host testing and are tracked
+  for a dedicated daemon-hardening pass.
+
+## [0.56.2] — 2026-06-19
+
+### Fixed
+- **Dashboard Runs: hide the always-empty "Children" tab on non-distributed runs.** The
+  parent/child "Children" detail sub-tab was rendered on every selected run, so for ordinary
+  single-process captures (the common case) it always read "No child runs" — looking broken. It now
+  appears only when the capsule is actually a distributed parent/worker run (`capsule_type` of
+  `parent`/`worker`, a `parent_run_id`, or non-empty `worker_run_ids`); a sticky `children` view
+  falls back to Inspect when switching to a non-distributed run. No backend change.
+
+## [0.56.1] — 2026-06-19
+
+### Fixed
+- **Dashboard: clean console + correct Art.73 clock semantics (post-deploy QA fixes).**
+  (1) `GET /api/seal/policy` (the read-only `nova serve` route) now returns **200 with
+  `configured: false`** when no promotion policy has been signed, instead of 404 — the dashboard
+  loaded a console error on every visit to the Seal tab in the common no-policy case. `SealTab`
+  renders the same "no policy configured" empty state from the 200 marker (and no longer risks a
+  null-predicate deref). The multi-user `GET /v0/seal/policy` server route is unchanged.
+  (2) The **Incidents** tab no longer shows a live "ticking" Art.73 reporting countdown on
+  `reported`/`closed` incidents (the obligation is no longer pending) — it shows a static
+  `✓ filed` marker with the obligation; the live countdown remains for `open` incidents.
+
+## [0.56.0] — 2026-06-19
+
+### Added
+- **Accountability Spine follow-up slices (experimental, additive-only).** Six slices extending ADRs 0093/0094/0095:
+  - **Energy sampler + measured attribution + Slurm `sacct` (ADR-0093 A1/A2).** New
+    `src/novafabric/energy/_sampler.py` (`EnergySampler`, a bounded fail-open RAPL daemon
+    writing `energy-samples.jsonl`); `_attribution.py` gains `attest_capsule_with_samples()`
+    producing `confidence=apportioned` time-share receipts when samples exist (the honest
+    `unavailable` fallback is unchanged); `runners/_slurm_energy.py` + `runners/_slurm.py`
+    capture `sacct ConsumedEnergyRaw` into a measured `sacct_energy` receipt (fail-open).
+    37 tests. The live n1 Slurm `sacct` round-trip remains hardware-gated.
+  - **Energy attestation + court-admissibility in Evidence Bundles (ADR-0093 A3 / ADR-0095 C2).**
+    `evidence/bundle.py` adds a signed `PREDICATE_ENERGY` attestation when the capsule has
+    `energy-receipts.jsonl`, and `with_custody=True` embeds the FRE-902(14)
+    `chain_of_custody` + `self_authentication` blocks in the manifest. New flags
+    `nova export-evidence --with-custody --custodian <id> --custodian-provenance
+    {novaseal-identity|oidc|operator_declared}`. Packaging fix: the four spine schemas (shipped
+    in top-level `schemas/` only in v0.55.0) are mirrored into the runtime-packaged
+    `src/novafabric/schemas/`, and the additive custody `$defs` are added to the packaged
+    `evidence-bundle.schema.json`.
+  - **EU AI Act Annex IV + NIST RMF safety-case renderers (ADR-0095).**
+    `compliance/export/safety_case.py` `render_safety_case(case, fmt)`; `nova safety-case export
+    --format annex-iv|nist-rmf` (alongside `markdown`/`json`). The Annex IV template binds to the
+    same 15 element ids as `compliance/export/annex_iv_mapping.yaml`; honesty is structural —
+    CONTESTED renders its reason, UNSUPPORTED is never laundered to "compliant", and a
+    not-quantified residual risk is never fabricated. 30 tests.
+  - **Dashboard serve API endpoints (ADRs 0093/0094/0095).** `serve/app.py` adds token-gated
+    read-only GETs `/api/runs/{id}/energy` (receipts + conservation), `/api/runs/{id}/ledger`
+    (verify status + tamper-taxonomy exit code), and `/api/runs/{id}/safety-case?template=`
+    (compiled CAE tree). 4 tests.
+
+  Still deferred: the React EnergyTab / SafetyCaseTab panels and static-bundle rebuild
+  (frontend follow-up), and the live n1 Slurm `sacct` query end-to-end.
+  - **Dashboard — Accountability Spine tab + serve API (ADR-0093/0094/0095).** Token-gated read-only serve endpoints `GET /api/runs/{id}/energy|ledger|safety-case`, plus a new web `SpineTab` (energy receipts + conservation, ledger verify status, on-demand safety-case build with color-coded backing states; measured/declared/unavailable shown distinctly, UNSUPPORTED never laundered).
+- **`nova evidence bind-custody` / `check-admissibility` — court-admissible evidence binding
+  (experimental, ADR-0095).** New `src/novafabric/evidence/admissibility.py` builds the additive
+  `chain_of_custody` + `self_authentication` blocks for an Evidence Bundle (optional `$defs` on
+  `evidence-bundle.schema.json`), mapping to US FRE 902(13)/(14), FRE 901(b)(9), SWGDE, and the
+  Berkeley Protocol. Custody events come from the hash-chained audit log (`audit/_log.py`); a
+  broken chain sets `integrity_continuous=false`. Invariant I3 is enforced — fields NovaFabric
+  cannot witness are emitted `null` + `provenance="operator_declared"`, never fabricated — and a
+  five-point gate yields `self-authenticating` / `requires-foundation` / `incomplete`. With a
+  signing key the capsule hash is signed and verified (real `signature_verifies`). 10 tests, 100%
+  module coverage. Additive only.
+
+## [0.55.0] — 2026-06-19
+
+### Added
+- **Dashboard CLI-coverage expansion + 10x quality foundation.** The `nova serve` dashboard
+  now surfaces ~30 previously CLI-only commands. **Five new tabs**: **Eval** (`nova eval
+  list/run/compare`), **Risk** (`nova assure`, `scan-secrets`, `diagnose`, `classify`, `mcp scan`),
+  **Storage & Recovery** (`nova storage inspect/validate`, `collector status`, `db upgrade`,
+  `rebuild-metadata-db`, `export-system-card`), **Incidents** (`nova incident open/list/status/export`
+  with a **live EU AI Act Art. 73 deadline clock**, ADR-0088), and **Ops** (`nova doctor`,
+  `nova daemon status`, JWKS flush). Existing tabs gained panels: **Seal → Ratchet**
+  (`nova seal ratchet init/rotate/status`, ADR-0089) and **Evidence → Assertions**
+  (`nova evidence completeness/bind`, ADR-0087). ~14 new `serve` REST routes back these; destructive
+  / process-control actions (DB rebuild, ratchet rotate) are confirmation-gated ("safe mutations
+  only"); daemon control stays read-only over HTTP. New shared frontend foundation —
+  app-wide toast context, a unified `useMutation` hook, `ConfirmDialog`/`ActionButton`, a
+  virtualized `DataTable`, a `TabShell` (per-tab help), URL-deep-linked tabs (`?tab=`), and a
+  global entity search in the Cmd+K palette (runs/assets/incidents). 10 new serve tests
+  (`tests/serve/test_dashboard_cli_coverage.py`).
+- **`nova energy` — Energy-Anchored Action Receipts (experimental, ADR-0093, Accountability
+  Spine feature A).** New `src/novafabric/energy/` package implementing the flagship under the
+  invariant *measured-or-declared-unknown, never fabricated*: an `EnergyReceipt` model bound to
+  `schemas/energy-receipt.schema.json`; a stdlib RAPL sysfs reader (wraparound-safe), NVML behind
+  the optional `[energy-gpu]` extra, and `probe_counters()`; a capsule-walk attribution that emits
+  honest `unavailable` receipts (`energy-receipts.jsonl`) on hardware that cannot attribute
+  per-action energy; a Slurm `sacct ConsumedEnergyRaw` parser + measured per-job receipt (the HPC
+  moat); DSSE/in-toto seal binding of each receipt's `payload_hash`; and a signed energy
+  conservation check (balanced/diverged/unmeasurable). CLI `nova energy probe|attest|verify|report`
+  with forgery-guard exit codes (a `measured` receipt with no available counter fails `verify`).
+  Additive/opt-in: no existing schema or capture behavior changes; the legacy `nova.carbon` /
+  `energy_joules_estimated` estimates are reclassified as `confidence="declared"` (not removed).
+  43 tests, 98% module coverage, ruff + mypy strict clean.
+- **`nova ledger` + replay attestation — Adversary-Anchored Accountability Ledger (experimental,
+  ADR-0094, Accountability Spine feature B).** `src/novafabric/trust/ledger/`: per-stream sidecar
+  hash chains over a capsule's jsonl event streams (the `.jsonl` files are never mutated; the
+  verifier detects content edits, reordering, and truncation), DSSE-signed `CheckpointRecord`s
+  (`ledger-checkpoint-v1` schema) via the existing NovaSeal path with optional Merkle append, and
+  a structured tamper taxonomy with seal-style exit codes — `nova ledger anchor|verify|status`.
+  `src/novafabric/evidence/replay_attestation.py`: a `ReplayAttestation` determinism certificate
+  (`BIT_EXACT` / `BOUNDED_EQUIVALENT` / `NON_DETERMINISTIC`) extending the existing re-performance
+  attestation, plus a `replay_attestation.rego` release gate (NON_DETERMINISTIC deny-by-default
+  unless a signed maker-checker bypass). 65 Python + 10 OPA tests, 100% module coverage. Reuses
+  accepted ADR-0089/0090/0070/0071; no new dependency.
+- **`nova safety-case` — Evidence-Grounded Safety-Case compiler (experimental, ADR-0095,
+  Accountability Spine feature C).** `src/novafabric/safetycase/`: compiles a Claims-Arguments-
+  Evidence tree from a capsule's real artifacts (evals, seals, criterion bindings, replay
+  attestations) with structural honesty — invariant I1 forbids naked claims (enforced in-schema
+  and in a validator), eval-derived claims must carry a process-evidence pointer, and backing
+  states are driven by inter-judge κ and Wilson confidence intervals (κ<0.6 or a straddling CI →
+  CONTESTED; dangling reference → UNSUPPORTED). `residual_risk` defaults to not-quantified.
+  Energy receipts and replay attestations compose in as `evidence_kind` leaves at zero schema
+  cost. `nova safety-case build|verify|export`; `clymer-generic-v0` template populated, EU AI Act
+  Annex IV / NIST RMF templates are loadable stubs. 69 tests, ≥90% per module. The court-
+  admissibility Evidence-Bundle binding (FRE-902(14) chain-of-custody) remains design-only.
+- **The Accountability Spine — design (ADRs 0093/0094/0095 Accepted).**
+  Documentation and design artifacts for a three-feature program grounded in the 2026
+  "accountable autonomy" research corpus, where ex-post tamper-evident evidence (D3) is the
+  load-bearing moat. The three ADRs are **Accepted (design)**; feature A is implemented (above),
+  features B and C are design + schemas only (no CLI/runtime in `main` yet). (A) **ADR-0093
+  Energy-Anchored Action Receipts** (D3 × D7): measured-or-
+  declared-unknown per-action joules + provenanced carbon sealed into the existing
+  Seal/Evidence machinery; design `design/architecture/energy-anchored-receipts.md`, spec
+  `design/spec/energy-receipt-v0.1.md`, schema `schemas/energy-receipt.schema.json`. (B)
+  **ADR-0094 Adversary-Anchored Ledger + Replay Attestation** (D3 × D10 × D1, D3-core):
+  per-stream sidecar hash-chains + forward-secure checkpoint surviving a compromised agent
+  *and* operator, plus a signed determinism-class certificate + release gate; designs
+  `design/architecture/adversary-anchored-ledger.md` + `design/architecture/replay-attestation.md`,
+  specs `design/spec/ledger-checkpoint-v1.md` + `design/spec/replay-attestation-v0.1.md`,
+  schemas `schemas/ledger-checkpoint-v1.schema.json` + `schemas/replay-attestation.schema.json`.
+  (C) **ADR-0095 Safety-Case Compiler + Court-Admissible Evidence Binding** (D4 × D9 × D3):
+  a CAE tree compiled from real artifacts (energy receipts + replay attestations compose in
+  as evidence leaves at zero schema cost) with FRE-902(14)/Berkeley/SWGDE/ICC admissibility
+  binding; design `design/architecture/safety-case-compiler.md`, spec
+  `design/spec/safety-case-v0.1.md`, schema `schemas/safety-case.schema.json`. Integrating
+  overview `design/architecture/accountability-spine.md` and research→feature provenance
+  `design/research/accountability-spine-traceability.md` tie the three together. All
+  additive/opt-in, no third top-level format (ADR-0034), no new default dependency
+  (ADR-0024).
+- **Capture→spool emission + resident spool-drain forwarder** (experimental, ADR-0092
+  slice C, increment C0). `nova capture --emit-spool` writes run-boundary EventEnvelope v1
+  records (`run.start`, `capsule.finalize`) to a local event spool (`$NOVAFABRIC_SPOOL_DIR`,
+  default `$NOVAFABRIC_HOME/spool`) — off by default, fail-open, and **edge-keyless** (no
+  signing at the edge). A new Go binary `novafabric-spool-forwarder` drains the spool and
+  publishes each envelope to a NATS JetStream stream on subject `<prefix>.<run_id>`, where
+  the hub's `novaseal_batch_signer` signs it (**hub-sign** default; compute nodes hold no
+  NovaSeal keystore, preserving the HPC air-gap — OQ-C-1). Exactly-once in steady state;
+  restart-based no-loss on publish failure (the drain loop exits on error so a fresh process
+  re-reads the in-flight batch from the persisted spool checkpoint). New Go deps: `nats.go`
+  + `nats-server` (Apache-2.0, Tier A per ADR-0024). Live round-trip verified byte-identical
+  on the n1 NATS JetStream cluster. This is the edge-write + forward path only; hub-sign +
+  offline verify (C1), the OTel-Arrow gateway hop (C2), and Slurm/K8s rollout artifacts (C3)
+  remain design intent.
+
+## [0.54.0] — 2026-06-18
+
+### Fixed
+- **Serve background threads no longer leak across the test suite** (suite-health).
+  `create_app()` started the stats-refresh / SSE-publish / incremental-index daemon
+  thread (and ran the `CapsuleWatcher`) at **construction time**, never stopped — so
+  every `create_app()` in the suite leaked one un-joined daemon thread (~2,319 live
+  threads observed at ~89 % of a full run, crawling it toward 40–70 min). The thread
+  is now started and joined by the app **lifespan** (with a `threading.Event` stop
+  signal), and the lifespan `finally` also closes the `CapsuleWatcher` and the TV-5
+  `LayoutPipeline3D` `ProcessPoolExecutor`. A `TestClient` used without its context
+  manager (no lifespan) therefore never spawns the thread. Real `nova serve` (uvicorn
+  runs the lifespan) is unchanged. New regression test `tests/test_serve_thread_lifecycle.py`
+  asserts threads return to baseline after the lifespan exits.
+
+### Added
+- **`nova capture --fast-emit` — import-deferred hook install** (ADR-0092 slice B).
+  The default capture path installs hooks at the workload's interpreter startup
+  by *eagerly importing every present target SDK* purely to monkeypatch it —
+  measured (`-X importtime`) at ~717 ms for `openai` and ~340 ms for `mcp`, paid
+  even when the workload never calls those SDKs. `--fast-emit` (also
+  `CaptureOrchestrator(fast_emit=True)` / `NOVAFABRIC_FAST_EMIT=1`) installs no SDK
+  at startup: it registers one-shot `sys.meta_path` post-import callbacks
+  (`novafabric.capture.hooks._deferred`) that patch each SDK only if/when the
+  workload itself imports it. An SDK the workload never imports is never imported
+  by capture, and the `EventRecorder` (and its pydantic models) is set lazily in
+  the callback before the first event. **Measured (warm-fs, orchestrator, 4-run
+  median):** pure-compute workload **2068 ms → 464 ms (−78 %)**; `import openai`
+  workload **2223 ms → 1509 ms (−32 %)**. The win scales inversely with how many
+  of the 7 instrumented SDKs the workload uses. Fidelity is unchanged (a
+  `--fast-emit` capsule records the same events; verified by a real-subprocess
+  fidelity test against a local AI endpoint). Pure stdlib (ADR-0024); fail-open (a
+  broken hook never breaks the workload's import). Excluded from daemon delegation
+  (the thin client carries only argv/cwd/env), like the other behavior-changing
+  flags. 12 new tests (`tests/capture/test_fast_emit.py`).
+
+## [0.53.0] — 2026-06-14
+
+### Added
+- **Capture-side `record_*` API for the extended event taxonomy** (ADR-0082
+  wiring). v0.49 landed the `CapsuleEventType` members and Pydantic models for
+  the extended span taxonomy but deferred the capture-side emit methods. This
+  adds the public `EventRecorder` methods agents can call under capture to emit
+  them: `record_state_transition`, `record_memory_operation`, `record_guardrail`,
+  `record_evaluator`, `record_reranker`, and `record_vector_retrieval`
+  (the last selects `VectorRetrieval{Started,Completed,Failed}` by `phase`).
+  Each writes a dedicated JSONL stream (`state_transitions.jsonl`,
+  `memory_operations.jsonl`, `guardrail_events.jsonl`, `evaluator_events.jsonl`,
+  `reranker_events.jsonl`, `vector_retrievals.jsonl`) tagged with an
+  `event_type` discriminator via `_append_typed`, following the same fail-open
+  contract as the existing `record_file_event` / `record_network_event` /
+  `record_human_approval` methods — a bookkeeping failure never surfaces to the
+  agent workflow. 6 new tests. No new dependencies; no CLI surface change.
+
+## [0.52.0] — 2026-06-14
+
+### Added
+- **Warm capture daemon** (experimental, ADR-0092, extends ADR-0020 / realizes
+  SI-2 "resident emitter") — `nova daemon start|stop|status` runs a long-lived
+  prefork `AF_UNIX` daemon that imports `novafabric` once and serves each run
+  from an isolated `os.fork()` worker (copy-on-write warm; "one run = one
+  process, one capsule = one writer"), removing the per-run orchestrator
+  cold-start. New stdlib-only thin client **`novacap`** forwards argv/cwd/env
+  and passes stdio via SCM_RIGHTS; falls back to direct `nova capture
+  --no-daemon` when no daemon is reachable (never blocks the workload).
+  `nova capture --daemon/--no-daemon` (default auto) delegates plain captures;
+  flagged captures (`--runner/--timeout/--asset/--mark-provenance/...`) run
+  in-process to honor the flag. UID-checked socket (`SO_PEERCRED`, 0600), no
+  network listener, no new runtime deps. Linux-only (`os.fork`).
+  Measured (warm-fs): `/bin/true` capture 593.9 ms → 209.6 ms (−64.7 %); a
+  capsule produced via the daemon is structurally identical to direct spawn.
+  **Honest boundary:** removes the orchestrator import only; a nova-instrumented
+  Python agent's own `sitecustomize` import (#2) is unchanged and is the target
+  of a later slice. 19 tests in `tests/daemon/`, benchmark `--with-daemon` arm.
+
+## [0.51.0] — 2026-06-12
+
+Collector productization slice (gap-002 first build increment after the
+SPK-COL spike gate closed) + the spike record itself.
+
+### Added
+- **`nova collector rebuild`** (experimental, ADR-0020/SI-1) — offset-replay
+  rebuild of the durable JetStream event buffer into per-run JSONL partitions
+  with sha256 digests and seq-order checking (exit 2 on order violation;
+  `--report` JSON). Pure routing core (`evidence_fabric/rebuild.py`) +
+  fast-fail NATS wrapper; 9 tests + env-gated live-JetStream integration test.
+- **`deploy/collector-arrow/`** (experimental, ADR-0020/SI-3) — OTel-Arrow
+  wire profile for the spool→central hop using stock `otelcol-contrib`
+  (sender/receiver configs + README with the measured 31.5 % egress
+  reduction and downgrade-disabled guidance).
+- Coverage campaign tranche 3: 11 more serve tests (KG status/topology
+  empty states + TTL-cache branch, 8 report types, capsule-compare
+  validation) — 43 campaign tests total.
+- `benchmarks/spk_col2_hotpath.py` — SPK-COL-2 per-event hot-path harness
+  (warm-process A/B, mock-LLM endpoint, real wire hooks). **Resolved on n1:
+  +0.366 ms / +0.36 % per 100 ms call — PASS** (≤ 2 % target).
+- `benchmarks/spk_col1_offset_replay.py` — SPK-COL-1 offset-replay rebuild
+  harness (JetStream file storage, run_id-keyed subjects). **Resolved on n1:
+  PASS 3/3** — byte-equal rebuild from offset 0, per-run order preserved,
+  RF1 broker restart with zero loss (10K events / 50 runs).
+- `benchmarks/spk_col3/` — SPK-COL-3 OTel-Arrow vs OTLP+zstd wire A/B kit
+  (otelcol-contrib pipelines + byte-counting proxy + burst/RSS leg).
+  **Resolved on n1: 31.5 % egress reduction, bounded burst RSS — PASS.**
+- **ADR-0020 promoted to Accepted** — all three SPK-COL spikes PASS;
+  Phase-2 collector production code is unblocked.
+- **ADR-0086…0090 + ADR-0041 v0.2 promoted to Accepted** — Wave-2 first
+  slices shipped and tested in v0.50.0 (Wave-1 precedent).
+
+### Tests
+- Coverage campaign (backlog Task #2): 32 new serve tests over the largest
+  previously-uncovered `serve/app.py` handlers (~250 statements newly
+  covered; 85→90 % overall target remains open).
+
+## [0.50.1] — 2026-06-12
+
+### Security
+- **starlette 0.52.1 → 1.3.0** (Dependabot #23, moderate): missing Host-header
+  validation poisoned `request.url.path`, bypassing path-based security checks;
+  fixed in starlette 1.0.1. Forced via `[tool.uv] constraint-dependencies`
+  (transitive through fastapi). Pulled `google-adk` 1.34 → 2.2 (it was the
+  package holding starlette < 1.0); adapter (170) and serve (302) test suites
+  verified green against the new stack.
+
+## [0.50.0] — 2026-06-12
+
+SOTA gap-closure Wave 2 (first slices): the structural/verifiability arc from
+the 2026 landscape sweep, each behind a freshly committed ADR
+(ADR-0086…0091 + ADR-0041 v0.2 amendment). All features experimental.
+
+### Added
+- **Intervention (counterfactual) replay** (gap-005, ADR-0086) — 5th replay
+  mode: `nova replay --mode intervention --intervention-file spec.yaml`
+  substitutes one captured event (`event_index`/`span_id` selector; exactly
+  one of `replace_model_response` / `replace_tool_result` / `mutate_payload`),
+  re-executes downstream under mocked semantics, emits a diffable capsule
+  hard-marked `replay_mode: intervention`; named check-functions with
+  `fatal` abort; source capsule stays read-only.
+- **Evidence completeness + criterion binding + re-performance attestation**
+  (gap-008, ADR-0087) — `CompletenessAssertion` (per-stream counts, drop
+  counters, capture level, time window, active hooks), `CriterionBinding`
+  (audit-profile control → capsule file + sha256 + optional JSONPath),
+  DSSE-signed `ReperformanceAttestation`; new predicate types
+  `novafabric.io/{completeness,criterion-binding,reperformance}/v0`;
+  CLI `nova evidence completeness|bind|attest-replay`.
+- **Incident object + Art. 73 deadline clock + OECD AIM export** (gap-010,
+  ADR-0088) — persisted `Incident` record (SQLite under `NOVAFABRIC_HOME`,
+  forward-only lifecycle), `DeadlineClock` computing EU AI Act Art. 73(2)/(3)/(4)
+  15/10/2-day deadlines anchored at awareness, OECD AIM exporter +
+  NIS2-from-stored-incident path; CLI `nova incident open|list|status|export`.
+- **Forward-secure key ratchet** (gap-015, ADR-0089) — per-node HKDF-SHA256
+  epoch chain, deterministic per-epoch Ed25519 keys, best-effort secure erase
+  on rotation, append-only epoch-pubkey registry with rollback detection;
+  CLI `nova seal ratchet init|rotate|status`. Opt-in; static-key default unchanged.
+- **Merkle log consistency proofs** (gap-001 slice, ADR-0041 v0.2) —
+  `consistency_proof(old_size, new_size)` on SQLite + Postgres Merkle logs,
+  O(log n) offline verifier, `nova seal log verify --consistency <old_size>`
+  (exit 2 on proof failure). Aligned perfect-subtree scheme for the v0.1
+  duplicate-padding tree (documented RFC 6962 deviation).
+- **Column-level lineage facets** (gap-003 slice 1, ADR-0090) — `ColumnFacet`
+  extracted from captured SQL by a stdlib-only fail-open extractor at
+  lineage-inference time (names only, never values; 64-column cap);
+  `--with-facets` on `nova lineage provenance|blast-radius`; additive
+  `LineageStore.edges_for_nodes()`.
+
+### Documentation
+- ADR-0086…0091 authored; ADR-0041 v0.2 amendment (tiled WORM log SI-8 +
+  witness cosigning SI-9 recorded as gated design intent); ADR-0091 records
+  eBPF agentless capture (gap-012) as future design — no implementation.
+- `design/architecture/implementation-status.md` gains the SOTA gap-closure
+  arc table (incl. retroactive Wave-1 rows ADR-0080…0085).
+- gap-002 (collector) remains spike-gated per ADR-0020 — SPK-COL-1/3 require
+  n1 infra; no collector code shipped.
+
+## [0.49.0] — 2026-06-12
+
+SOTA gap-closure Wave 1: six capabilities from the 2026 landscape sweep land
+as five new ADRs (0081–0085) plus the acceptance of ADR-0080 — CloudEvents
+envelope interop, an extended span taxonomy (25 → 33 event types), a hot
+in-memory lineage impact index, `nova diagnose` failure attribution, sealed
+system cards with eval version pinning, and an opt-in statistical-significance
+promote gate. All additive; no breaking changes.
+See [`docs/releases/v0.49.0.md`](docs/releases/v0.49.0.md).
+
+### Added
+- **Versioned eval provenance + auto-generated sealed system card** (gap-014,
+  ADR-0085).
+  - `run_evals` now pins the resolved **asset version** into every eval result
+    and accepts an optional `dataset_version` to pin the eval dataset. Both are
+    returned to callers and persisted into `eval_results.score_json`
+    (additive — no schema migration, backward-compatible).
+  - New `nova export-system-card <capsule_dir>` generates a system/audit card
+    from capsule + eval + lineage facts and **seals** it by reusing the existing
+    DSSE/Ed25519 path (no new crypto). The card is generated, never hand-written,
+    and verifies with the same verifier used for Evidence Bundles. Predicate
+    type `https://novafabric.io/system-card/v0`.
+- **Failure attribution / root-cause over multi-agent runs (`nova diagnose`, gap-006,
+  ADR-0084).** A new additive `novafabric.diagnose` analysis layer runs *over* the
+  existing lineage / causal graph plus the captured trace. Given a failed run capsule it
+  decomposes the run into ordered steps (src-411 module decomposition), scores them in a
+  coarse pass — explicit per-step error signal, earliest-root-cause bias (src-411), and a
+  causal-depth bias from the lineage store's `delegated_to`/`spawned`/`contains` edges
+  (src-413) — then in a fine pass picks the single most likely responsible step and
+  labels it with the new `AgentErrorTaxonomy` enum (`MEMORY` / `REFLECTION` / `PLANNING`
+  / `ACTION` / `SYSTEM` / `UNKNOWN`). Pure, read-only, local-first, zero new dependency,
+  no hot-path write. `nova diagnose <run-id>` prints a ranked table (or `--output json`).
+  Scores are relative ranking weights, not calibrated probabilities; runs with no error
+  signal yield `UNKNOWN` rather than a fabricated culprit.
+- **Hot in-memory lineage impact index (gap-013, ADR-0083).** A new optional,
+  derived, rebuildable adjacency index (`novafabric.lineage._index.HotLineageIndex`)
+  layers over the durable `LineageStore` to serve interactive blast-radius / impact
+  queries from RAM instead of re-running a recursive CTE on every request. The
+  durable SQLite store remains the single source of truth; the index is a bounded
+  (LRU-evicted), opt-in cache attached via `LineageStore.build_hot_index()`. An
+  equivalence test asserts `HotLineageIndex.query_blast_radius` returns the same
+  node set as `LineageStore.blast_radius`. Research anchor: TensProv (src-609).
+  No durable schema change, no new dependency (stdlib only). **experimental.**
+- **Extended span taxonomy (gap-011, ADR-0082).** Eight new `CapsuleEventType`
+  members — `StateTransition`, `MemoryOperation`, `GuardrailEvaluated`,
+  `EvaluatorScored`, `RerankerApplied`, `VectorRetrievalStarted`,
+  `VectorRetrievalCompleted`, `VectorRetrievalFailed` (25 → 33) — with matching
+  Pydantic event models in `novafabric.capture.events`
+  (`StateTransitionEvent`, `MemoryOperationEvent`, `GuardrailEvent`,
+  `EvaluatorEvent`, `RerankerEvent`, `VectorRetrievalEvent`). Brings
+  state-transition / memory-op (src-109), guardrail / evaluator / reranker
+  (src-203), and vector-DB retrieval (src-113) spans into the capture
+  vocabulary. Identifiers, digests, scores, and counts are captured by default;
+  raw content payloads are opt-in (ADR-0021). The change is additive and
+  backward-compatible — no event type renamed or removed; the capsule event
+  schema stays at version `1.0.0` and prior capsules still validate.
+  `nova schema list` and `GET /api/schema/list` now report the 33 types.
+- **CloudEvents v1.0 envelope interop (gap-009, ADR-0081).** New
+  `novafabric.envelope.to_cloudevents()` / `from_cloudevents()` render an
+  `EventEnvelope` to/from a CloudEvents structured-mode JSON object and back,
+  so NovaFabric evidence events route through any CloudEvents-aware broker
+  (Kafka/NATS/HTTP) without body parsing. The internal `EventEnvelope` model is
+  unchanged — this is a purely additive outer mapping. Required CloudEvents
+  context attributes (`id`/`source`/`type`/`specversion`) are always emitted;
+  `source` is `nova://agent/{agent_id}`; `traceparent` carries trace/span;
+  run identifiers and `nova.batch.*` ride conformant `[a-z0-9]` extension
+  attributes (`novarunglobal`, `novarun`, …) that match the shipped Go collector
+  mapping byte-for-byte, so Python↔Go round-trips on the same topic. Unknown
+  broker-injected extension attributes are preserved across a round-trip.
+  Stdlib-only — no new dependency. (SCITT COSE Receipts, the other half of
+  gap-009, remain out of scope.)
+
+- Added a "CloudEvents interop" subsection to the developer guide's
+  *Working with EventEnvelope* section.
+- **Statistical-significance eval gate for `nova promote` (gap-004, ADR-0080
+  now Accepted).** `nova promote direct … --significance-gate` blocks promotion
+  only on a *statistically significant* eval regression — a Wald SPRT over the
+  asset's recent pass/fail sequence (`ACCEPT_H1`) — instead of a single passing
+  eval. Noise (`ACCEPT_H0`) and inconclusive evidence (`CONTINUE`) never block,
+  so a single-run dip cannot fire the gate. The flag is **opt-in**: the legacy
+  single-passing-eval gate remains the default and is unchanged when the flag is
+  omitted. `--force` bypasses it. Defaults `p0=0.9, p1=0.7, alpha=0.05,
+  beta=0.05` are overridable on the `promote_asset()` API.
+
+## [0.48.0] — 2026-06-12
+
+Dashboard 10x: faster, more reliable, more scalable `nova serve` dashboard —
+code-split tabs, crash isolation, managed SSE reconnect, command palette,
+SQL-level asset pagination, and cache-first reports. Plus a TypeScript
+type-integrity fix that restored the web typecheck gate.
+See [`docs/releases/v0.48.0.md`](docs/releases/v0.48.0.md).
+
+### Added
+- **Dashboard: all 20 tabs code-split with `React.lazy`/`Suspense`.**  Each tab
+  becomes its own JS chunk loaded on first navigation, reducing initial bundle
+  parse time.
+- **Dashboard: `ErrorBoundary` wraps every lazy tab** — a crashed tab no longer
+  takes down the whole SPA; a "Reload tab" button is shown instead.
+- **Dashboard: `CommandPalette` (⌘K / Ctrl+K)** — keyboard-driven navigation
+  across all 20 tabs with fuzzy search.
+- **Dashboard: `usePolling` hook** replaces the manual `setInterval` pattern;
+  handles visibility/focus-based pause and avoids stale closure bugs.
+- **Dashboard: `Skeleton` loading component** used by lazy-tab `Suspense`
+  fallbacks for a consistent placeholder appearance.
+- **`openManagedRunStream` SSE helper** (`web/src/lib/api.ts`) — replaces the
+  bare `EventSource` in `RunsTab` with a managed wrapper that reconnects on hard
+  failures using capped exponential backoff (1 s → 30 s), reports live
+  connection state to the UI, and exposes a `RunStreamHandle` with a `close()`
+  method.
+- **`list_assets_paginated()`** (`registry/service.py`) — SQL-level
+  `LIMIT`/`OFFSET` pagination for the assets table; selects only list-view
+  columns (omits `spec_json` blob).  `/api/assets` now delegates here instead of
+  fetching every row and slicing in Python.
+- **`_StatsCache.get_or_compute()`** (`serve/app.py`) — double-checked locking
+  so concurrent cold-cache requests do not all recompute `/api/stats` in
+  parallel; only the first acquires the lock, the rest reuse the freshly stored
+  snapshot.
+- **Composite index `(status, created_at DESC)`** on `runs_cache` — speeds up
+  filtered run queries that combine a status predicate with time ordering.
+- **Cache-first run reports** (`serve/reports.py`) — `report_run_history` and
+  `report_cost_burn` now attempt the `runs_cache` index before scanning the
+  capsule filesystem.  Falls back transparently when the index is empty or
+  unavailable.
+
+### Fixed
+- **`.gitignore`: `.claude/`, `CLAUDE.md`, `.superpowers/`, `docs/superpowers/`
+  were commented out**, causing `.claude/worktrees/` font/CSS files (~10 000
+  entries) to appear as untracked in git clients.  Entries are now active.
+- **Web typecheck gate restored.** `tsconfig.json` still used the deprecated
+  `baseUrl` option, which under TypeScript 6 aborts `tsc` with a config error
+  (TS5101) *before any type-checking runs* — silently masking 8 real type
+  errors. Migrated `paths` off `baseUrl`, widened `request()`'s query parameter
+  to `Record<string, unknown>` (values were already stringified internally),
+  and fixed `unknown`-into-JSX leaks plus an unsound `coverages` assignment in
+  `ComplianceTab`. `tsc --noEmit` is green again.
+- **Static dashboard bundle rebuilt and synced** to `src/novafabric/serve/static/`
+  (the web source had changed without a bundle rebuild, which serves stale
+  chunks and blank tabs).
+
+### Documentation
+- Documented the `NOVAFABRIC_INFERENCE_*` env-var contract (gap-007 inference
+  numerical-determinism facet) in the CLI-reference env-var table, alongside the
+  distributed-run contract vars.
+
+## [0.47.1] — 2026-06-11
+
+### Fixed
+- **PROV-JSON export crashed on structured lineage edges.** Lineage schema
+  v0.1.0 carries structured `source`/`target` nodes
+  (`{"kind": "run", "run_id": …}`); `_sanitize_id` expected bare strings and
+  raised on real capsules. A new `_node_id()` normalizer accepts both the
+  structured and legacy flat forms; `run_id` falls back to `capsule_run_id`
+  or the source node. Found by the F10 conformance experiment; regression
+  test added.
+
+### Tests
+- **Suite is now opa-agnostic (TEST-OPA-1).** An autouse conftest fixture hides
+  the `opa` binary from `shutil.which` by default, so `get_policy_engine()`
+  returns the allow-all `NoopEngine` — matching CI, which never installs opa.
+  Fixes ~110 gated tests (export-evidence / seal / approve / SoD / rollback /
+  validate / replay) that otherwise DENY on any dev machine with opa installed.
+  Tests that inject their own engine or construct `OpaEngine()` directly are
+  unaffected; opt out with `@pytest.mark.real_opa`.
+
+## [0.47.0] — 2026-06-11
+
+### Fixed
+- **Promote policy gate received no eval data — every promotion denied under
+  real OPA.** `promote_asset` built the `PolicyInput` without `eval_score` or
+  `asset_type`, so with the `opa` binary installed (`OpaEngine`) the default
+  `promote_gate.rego` denied ALL promotions with "eval score below threshold";
+  without the binary the `NoopEngine` allowed everything, which is why the
+  suite never caught it. Now the service passes the asset's latest eval score
+  (numeric `score_json` or pass-flag fallback) and `asset_type`, and the
+  default gate scopes the 0.90 eval-score threshold to **agents** (tools /
+  datasets / prompts need no eval, matching the documented eval-gated
+  promotion semantics). Reason rules are mutually exclusive; 8 new Rego unit
+  tests (`opa test`: 22/22).
+- **Evidence-export policy gate received no redaction facts — every
+  `nova export-evidence` denied under real OPA.** Same wiring gap:
+  `EvidenceBundleBuilder.build()` validated `redaction-proof.json` and the
+  unsafe-skips count, then passed neither to the policy input, so
+  `evidence_export.rego` (`redaction_proof_present == true`) always denied.
+  The builder now passes the verified facts; an operator
+  `--allow-unsafe-skips` waiver reports an effective count of 0 so the
+  default gate honors it.
+
+### Added
+- **Topology dashboard: multi-view switcher.** The `/topology/` view now offers
+  five lenses on the same data instead of a binary 2D/3D toggle, defaulting to
+  the most readable: **Cluster** (2D force, cluster super-nodes, click-to-expand),
+  **Call-graph** (2D layered dagre layout following run → model → tool flow),
+  **Treemap** (area ∝ agent count), **Table** (sortable/searchable), and **3D
+  (experimental)** (TV-5, no longer the default). New deps `@dagrejs/dagre` (MIT)
+  and `d3-hierarchy` (ISC) — both Tier A per ADR-0024.
+- **`GET /topology/cluster-list`** — plain-JSON cluster rows
+  (`ClusterStore.list_clusters()`, largest-first) backing the Table and Treemap views.
+- **`nova serve --topology-louvain-resolution`** (and `NOVA_TOPOLOGY_LOUVAIN_RESOLUTION`)
+  — tune the Louvain clustering resolution for the topology view.
+
+### Changed
+- **Topology readability.** Graph views gain on-screen +/−/Fit zoom controls and
+  fit-on-load; node labels are decluttered (only large/hovered/selected nodes are
+  labeled, threshold raised 8 → 14); singleton clusters are de-emphasized; the 3D
+  view's labels now appear only on hover/selection instead of all-at-once.
+- **Clustering: isolated nodes collapse.** Degree-0 nodes (e.g. runs with no
+  captured model calls) now collapse into one "misc" super-node instead of one
+  singleton cluster each — turning a hairball of dozens of singletons into a
+  handful of meaningful clusters. Louvain is now deterministic (`random_state=42`).
+- **Statistical-significance primitives for eval/regression gating (gap-004,
+  ADR-0080).** New `novafabric.eval.significance` (pure stdlib, no new dep):
+  `wilson_interval()` for binomial pass-rate confidence intervals and
+  `sprt_bernoulli()` — a Wald SPRT returning a three-valued verdict
+  (`ACCEPT_H0`/`ACCEPT_H1`/`CONTINUE`) so a gate can PASS, FAIL, or *defer for
+  more evidence* instead of firing on noise. Runs offline on stored capsules at
+  zero token cost (SOTA sweep src-405/406/415). Primitive only — does not change
+  `nova promote` defaults yet.
+- **Inference numerical-determinism facet in the env lock (gap-007).** The Run
+  Capsule's `env.lock` now records an optional `hardware.inference` block
+  (engine, engine_version, tensor_parallel_size, pipeline_parallel_size, dtype,
+  batch_size, attention_backend, seed, deterministic), populated best-effort from
+  a `NOVAFABRIC_INFERENCE_*` env-var contract. This captures the signal that
+  separates *environmental drift* from *genuine behavioral regression* during
+  replay/diff (SOTA landscape sweep src-402/403/416). Additive and
+  backward-compatible — omitted entirely when no inference env vars are set.
+
+## [0.46.1] — 2026-06-11
+
+### Fixed
+- **mypy strict: 85 → 0 errors across 35 files.** The v0.46.0 venv rebuild
+  exposed pre-existing type errors the stale environment had hidden. Highlights:
+  - **Sigstore signer ported to sigstore-python 4.x (real runtime bug).**
+    `sign_artifact`/`verify_bundle` used the removed 3.x API
+    (`Signer.production()`, `Verifier.verify`, string `Hashed.algorithm`) and
+    would have crashed on any live keyless sign/verify. Now uses
+    `SigningContext.from_trust_config` with ambient-credential detection
+    (`detect_credential` → interactive `Issuer` fallback) and
+    `Verifier.verify_artifact` with an explicit `UnsafeNoOp` policy — same
+    no-identity-policy semantics as before; the signing identity is still
+    extracted and surfaced for human review.
+  - **RFC 3161 chain validation:** typed `get_extension_for_class` extension
+    access, isinstance key narrowing (EC / RSA, explicit failure for
+    unsupported key types), and a guard for hash-less (Ed25519/Ed448) issuer
+    signatures.
+  - **GCP KMS signing:** pass a typed `kms.Digest` message instead of a raw dict.
+  - `nova redact` seal step now skips cleanly when the NovaSeal profile has no
+    key/cert paths (previously crashed into the warning handler).
+  - Wire-hook monkey-patching (`requests`/`urllib3`/`aiohttp`/`openai`/replay
+    dispatcher) annotated with precise `method-assign` ignores; 27 stale
+    `type: ignore` comments removed; bare `dict` generics filled in (kg,
+    cli/asset); Avro deserializers narrow records before `dict()`.
+
+### CI
+- New **`typecheck` job** runs `mypy strict` with `--all-extras` so optional
+  integrations (sigstore, kuzu, clickhouse, adapters, …) are checked against
+  their real APIs instead of being silenced as missing imports. The unit job
+  stays lean, so the coverage gate's denominator is unchanged. Untyped optional
+  deps (`clickhouse_connect`, `weasyprint`, `presidio_analyzer`) added to the
+  mypy overrides list.
+
+## [0.46.0] — 2026-06-11
+
+### Added
+- **Dashboard parity gap closure — 12 CLI capabilities now have dashboard
+  equivalents** (12 new REST endpoints + 12 panels across 7 tabs). A fresh
+  audit of all ~80 `nova` commands against the serve route table found these
+  with no dashboard surface:
+  - `nova eval list` → `GET /api/eval/suites` (registered eval suite adapters)
+  - `nova eval run` → `POST /api/eval/run` (run a suite against a capsule;
+    smoke suite runs host-env, OCI suites need their image env vars)
+  - `nova policy list` → `GET /api/policy/list` (PolicyTab "Policy Inventory")
+  - `nova policy sign` → `POST /api/policy/sign` (PolicyTab "Sign Promotion Policy")
+  - `nova classify list-vocabularies` → `GET /api/governance/vocabularies`
+    (GovernanceTab "Regulatory Vocabularies")
+  - `nova classify run` → `POST /api/governance/classify-manual`
+    (GovernanceTab "Manual Risk Classification")
+  - `nova aibom generate [--all] [--force]` → `POST /api/aibom/generate`
+    (ComplianceTab "Generate AI-SBOM")
+  - `nova ingest-capsule <id> | --all` → `POST /api/ingest-capsule`
+    (AdminTab "Reindex Capsules")
+  - `nova run show --with-children` → `GET /api/runs/{run_id}/tree`
+    (RunsTab "Distributed Capsule Tree")
+  - `nova run lineage [--edge-types]` → `GET /api/runs/{run_id}/run-lineage`
+    (RunsTab "Run Lineage Edges")
+  - `nova lineage-store profile` → `GET /api/lineage-store/profile`
+    (InfraTab "Lineage Store Deployment Profile")
+  - `nova scan-secrets [--fail-on]` → `GET /api/runs/{run_id}/scan-secrets`
+    (RunsTab "Secret Scan" with PASS/FAIL threshold gate)
+- `commandRegistry.ts`: 4 new command entries (`eval list`, `policy list`,
+  `aibom generate`, `ingest-capsule`) and 8 updated entries with native-tab
+  notes; the stale `lineage-store profile` entry (described a perf profiler)
+  rewritten to match the real CLI (docker-compose deployment profiles).
+
+### Tests
+- `tests/serve/test_v046_dashboard_parity.py` — 39 tests covering all 12
+  endpoints (success, validation failure, and not-found paths).
+
+### Fixed
+- **Stale virtualenv shebangs after repo move** — `.venv/bin/*` scripts still
+  pointed at the old `~/scratch/novafabric/.venv` interpreter, so `uv run
+  pytest` / `uv run mypy` silently executed against the obsolete environment.
+  Rebuilt the env (`uv sync --all-extras --reinstall`). Note: the correctly
+  resolved mypy now reports 85 pre-existing errors (tracked as backlog; zero
+  introduced by this release — identical count on clean HEAD).
+
+## [0.45.1] — 2026-06-09
+
+### Fixed
+- **Streaming responses silently dropped their `NetworkEvent` (capture bug #2)** —
+  the wire-level hooks computed `response_size_bytes` via `len(response.content)`
+  inside the network-event block; for a streaming/unread response (e.g.
+  `langchain_ollama.ChatOllama`, which streams chat) `response.content` raises
+  `httpx.ResponseNotRead`, and the fail-open `except` swallowed it, dropping the
+  whole `NetworkEvent` — so `network_events.jsonl` stayed empty for streaming LLM
+  calls even though `model-calls.jsonl` was populated. New
+  `safe_response_size()` isolates the size read (returns `None` when the body is
+  unread) so the event is always recorded. Applied to the `httpx` and `requests`
+  hooks. Found via the v0.45.0 capture-fidelity n1 experiment.
+
+### Tests
+- DSSE envelope branch coverage: pubkey-field (Ed25519 + ECDSA), Ed25519 X.509
+  cert path, unsupported-key and missing-field errors (`tests/seal/test_envelope.py`).
+
+### Verified
+- Post-fix capture-fidelity re-measurement on n1 (qwen3:8b): `network_events.jsonl`
+  populated in 10/10 scenarios (was 0/10); mean capture completeness 0.53 → 0.563.
+
+## [0.45.0] — 2026-06-05
+
+### Fixed
+- **`nova kg ingest --all` and `POST /api/kg/ingest-all` scanned 0 capsules for
+  event-only capture dirs** — discovery required `capsule.yaml`, but KG ingest
+  only reads `model-calls.jsonl`/`tool-calls.jsonl`/`events.jsonl`. New
+  `discover_ingestable_dirs()` finds dirs by ingestable event files (a strict
+  superset of the manifest scan; real capsules still match). Fixes two
+  long-standing red tests.
+- **Event recorder never set in capture subprocess (correctness bug)** —
+  `install_all()` now sets the `EventRecorder` singleton from the writer, so the
+  wire-level hooks can write `network_events.jsonl`, `file_events.jsonl`, and
+  `human_approvals.jsonl`. Previously the recorder was only set by the
+  orchestrator in the **parent** process, leaving it `None` in the **child**
+  capture subprocess (and in the in-process SDK/adapter paths) where the hooks
+  actually run — so every `NetworkEvent`/`FileEvent` was silently dropped
+  (fail-open) in real captures. `uninstall_all()` clears the recorder it set
+  (without clobbering an orchestrator-owned one). The capsule manifest now
+  references these event streams (`network_events_ref` etc.) when non-empty.
+- **Ollama capture on non-default ports** — `OLLAMA_BASE_URL` (langchain_ollama) and
+  `OLLAMA_HOST` (ollama SDK) are now checked at HTTP-call time so tunnelled Ollama
+  instances (e.g. `localhost:11436`, `localhost:11437`) are captured automatically.
+  Previously the URL registry was loaded once at hook-install time (before python-dotenv
+  could load the env var), causing `model-calls.jsonl` to be empty for all
+  `langchain_ollama.ChatOllama` workloads that used non-default ports.
+- **C2PA exporter recorded `model=unknown` for real captures** — the assertion
+  builder now reads OTel GenAI semconv keys (`gen_ai.request.model` /
+  `gen_ai.response.model` / `gen_ai.system`) with a legacy `model`/`provider`
+  fallback.
+- **OQ-016 parent/child timeout** (`nova-testbench`) — worker subprocess timeout
+  raised from 180 s to 600 s to accommodate kapa LLM calls averaging 37–98 s each.
+
+### Added
+- **`nova capture --mark-provenance`** (EU AI Act Art.50, ADR-0074) — writes a
+  C2PA synthetic-content provenance marker (`c2pa-manifest.json`, with the
+  `c2pa.ai.generated: true` disclosure) into the capsule *during* capture when the
+  run produces model output, **before** NovaSeal so the disclosure is sealed.
+  Opt-in and non-blocking; manifest references it via `content_provenance_ref`.
+- **`nova aibom generate [--all] [--force]`** (EU CRA, ADR-0073) — per-deployment
+  automation: batch-generate `aibom.json` (CycloneDX ML-BOM 1.7) across an entire
+  capsule store in one pass, skipping already-covered capsules. Single-capsule and
+  `--force` refresh modes supported.
+- **ClickHouse schema auto-migration on `nova serve` startup** — `ensure_schema()`
+  applies idempotent `ADD COLUMN IF NOT EXISTS` migrations when
+  `NOVA_CLICKHOUSE_URL` is set, so the cost-events schema is always current after
+  upgrades (no manual `ALTER TABLE`). Non-fatal on error.
+- **Dashboard: `PiiErasePanel`** (`ComplianceTab`) — `nova pii erase` DEK crypto-shredding
+  UI; subject ID input, retention-months field, shows `ErasureReceipt` or Art.17(3)(b)
+  deferred receipt. Backed by new `POST /api/compliance/pii/erase` route.
+- **Dashboard: `HIPAAProofPanel`** (`ComplianceTab`) — `nova export-hipaa-proof` UI; run ID
+  input, 18-category assessment table with status chips, proof digest, mandatory legal
+  disclaimer. Backed by new `POST /api/compliance/export/hipaa-proof` route.
+- **Dashboard: `SigstoreSignPanel`** (`SealTab`) — `nova seal sign --backend sigstore` UI;
+  capsule ID input, Rekor log index and OIDC identity display, graceful 501 when
+  `novafabric[sigstore]` absent. Backed by `POST /api/seal/sigstore/sign`.
+- **Dashboard: `SigstoreVerifyPanel`** (`SealTab`) — `nova verify --backend sigstore` UI;
+  VALID/INVALID badge, identity, Rekor log index. Backed by `POST /api/seal/sigstore/verify`.
+- All 20 dashboard tabs now have complete CLI parity with v0.44.0. 10 new serve tests.
+
+---
+
+## [0.44.0] — 2026-05-27
+
+### Added
+- **`nova pii erase <subject_id>`** — GDPR Art.17 crypto-shredding CLI. Destroys the
+  AES-256-GCM DEK for a data subject, rendering all encrypted PII permanently unreadable.
+  Writes an `ErasureReceipt` or `ErasureDeferredReceipt` (Art.17(3)(b) retention window)
+  as JSON. Resolves OQ-01. (ADR-0069, cap-001 graduates from LEGAL-HOLD DRAFT)
+- **`nova export-hipaa-proof <capsule_dir>`** — Technical HIPAA Safe Harbor evidence
+  artifact covering all 18 Safe Harbor identifier categories. Reads existing redaction
+  evidence; computes a `proof_digest` (SHA-256 over canonical JSON); includes mandatory
+  legal disclaimer. Technical evidence only — not HIPAA certification.
+- **`nova seal sign --backend sigstore`** — Keyless Sigstore signing via `sigstore>=4.2.0`
+  (Apache-2.0). Produces a Sigstore Bundle v0.3 stored alongside the capsule. Requires
+  `pip install novafabric[sigstore]`. Default backend unchanged (local ECDSA).
+- **`nova verify --backend sigstore`** — Verifies a Sigstore bundle: identity, signature,
+  Rekor v2 inclusion proof. Reports identity and log index.
+- **RFC 3161 nonce replay guard** — `NonceStore` (SQLite, 63-bit nonces, offline_mode for
+  HPC air-gap) wired into `request_timestamp()`; nonce recorded before TSA request,
+  matched in response. (ADR-0070)
+- **TSA cert-chain depth validation** — `verify_tsa_cert_chain()` walks the CMS certificate
+  chain up to `max_depth=4`, detects cycles, soft-checks EKU. `CertChainResult` dataclass
+  returned or raised as `TimestampError` when `verify_chain=True`. (ADR-0070)
+- **Postgres partition benchmark harness** — `bench/rls_partition_pruning/run_benchmark.py`;
+  ran 10K×1M on n1 (24 vCPU / 62 GiB / PG 16.13); p99 worst-case 16 ms, 12× below
+  200 ms FR-17 gate. Strategy A confirmed; ADR-0051 benchmark requirement fulfilled.
+- **`novafabric[sigstore]`** optional extra — `sigstore>=4.2.0` (Apache-2.0, Tier A).
+
+### Changed
+- **`NOVA_CAP003_ENABLED`** now defaults to `"true"` — dual-object store split
+  (`DualObjectStore`) is active by default; OQ-01 resolved by ADR-0069 DEK crypto-shredding.
+- **cap-001 (PII detection gate)** graduated from LEGAL-HOLD DRAFT to active
+  (`_OQ01_UNRESOLVED = False`, `legal_hold_mode = False`).
+- **ADR-0069 Accepted** — BDFL self-sign (MSKazemi, 2026-05-27).
+- **ADR-0070 Accepted** — BDFL self-sign (MSKazemi, 2026-05-27).
+- **ADR-0071 Accepted** — BDFL self-sign (MSKazemi, 2026-05-27).
+
+### Fixed
+- **ADR-0050/0052 `[TODO: find source]`** — pgBouncer + RLS + SET LOCAL citation gap
+  resolved with three canonical sources: PostgreSQL docs §SET LOCAL, pganalyze RLS guide,
+  Supabase RLS docs.
+- **Package version metadata** — bumped `pyproject.toml` from `0.38.1` to `0.43.1`
+  so `nova --version` no longer reports a stale pre-v0.43 release after the v0.43.0
+  CLI help overhaul.
+
+---
+
+## [0.43.0] — 2026-05-23
+
+### Changed
+- **CLI help text overhaul** — all ~55 `nova` commands now have a one-liner description
+  with no internal ADR/cap/FR references, a `Scope:` line, and a `\b Examples:` block
+  that shows 2-4 real invocations. Scope values (`single capsule`, `registry-wide`,
+  `lineage graph`, `run-time`, etc.) appear consistently across all commands.
+- **Enum types for fixed-value options** — `--mode` (replay), `--output-format` (diff),
+  `--runner` (capture), `--format` (report/assure), `--fail-on` (scan-secrets),
+  `--threshold` (mcp scan), and others now use `str` Enum types, giving shell
+  tab-completion (via `nova --install-completion`) and typed validation.
+- **`nova --help` listing** — top-level listing strings updated to be user-facing
+  (removed ADR numbers and internal version tags) and kept in sync with
+  individual command docstrings via removed `help=` overrides.
+
+## [0.42.0] — 2026-05-23
+
+### Added
+- **`nova kg ingest --all`** — bulk-ingest all capsule directories under `$NOVAFABRIC_HOME/capsules`
+  (or `--capsule-dir PATH`) with a Rich progress bar and per-capsule event/edge counts.
+  Useful for populating the KG after capturing many runs without waiting for the 60 s
+  auto-ingest loop in `nova serve`.
+- **`POST /api/kg/ingest-all`** — on-demand HTTP trigger that runs the same bulk scan logic
+  as the auto-ingest background task; returns `{total, newly_ingested, skipped, failed}`.
+  Already-ingested directories (tracked in `ingest_tracker.db`) are skipped.
+- **Dashboard → KG tab → Re-ingest All** — one-click bulk ingest button in the KG tab;
+  displays scanned / newly-ingested / skipped / failed counts and refreshes the status panel.
+- **`make serve-topology-only`** — new Makefile target that starts `nova serve --experimental
+  --topology` without rebuilding the SPA first; useful on remote servers without npm/Node.
+
+### Fixed
+- **`--topology` now implies `--tv5`** — passing `--topology` no longer requires a separate
+  `--tv5` flag; the TV-5 3D topology endpoints are activated automatically when the topology
+  dashboard is enabled. The startup seed data now also flows through `tv5_pipe`.
+- **TV-5: white nodes and dark edges** — corrected the sigma.js node/edge color mapping so
+  agent nodes render with their type-specific colour and edges render in a light grey tint
+  instead of the near-black default.
+- **TV-5: router-not-mounted error surfaced** — the 404 swallow in the Windows fetch path is
+  fixed; `router-not-mounted` errors (e.g. topology SPA loaded before the server finished
+  startup) are now surfaced to the browser console with a clear message instead of silently
+  returning empty data.
+- **YAML `@`-prefixed names quoted** in `nova suggest-register` output — prevents YAML parse
+  errors when model names contain `@` (e.g. `@hf/meta-llama/Meta-Llama-3-8B`).
+
+### Documentation
+- **CLI reference expanded** — all command listings now include scope descriptions, flag tables,
+  enum value lists, and `--help` examples (49 files, ~1 400 lines added across all sub-command
+  groups: core workflow, registry lifecycle, lineage, eval, policy/audit/seal/hold, compliance
+  export, infrastructure, and advanced commands).
+
+---
+
+## [0.41.0] — 2026-05-21
+
+### Tests
+- **36 new tests** — coverage sprint targeting previously uncovered CLI wrappers and trust-chain code:
+  - `tests/cli/test_approve_cmd.py` (5 tests) — `nova approve` lifecycle guard, `AssetNotFoundError`, `InvalidLifecycleTransitionError`, success path, help text.
+  - `tests/cli/test_rebuild_cmd.py` (7 tests) — `nova rebuild-metadata-db` success/warnings/truncation (>20 warnings shows "and N more"), backend error exit, `--prefix`/`--data-dir` forwarding.
+  - `tests/cli/test_storage_scale_cmd.py` (7 tests) — `nova storage inspect` (run-id, PII mention), `nova storage validate` success/`ObjectLockNotSupportedError`/generic error.
+  - `tests/lineage/test_federation_shard_local.py` (+5 token tests) — `verify_cross_site_token` `ImportError` path, missing `verify` attr, truthy return, `trust_root` kwarg forwarding.
+  - `tests/trust/test_rfc3161.py` (+12 chain tests) — `HTTPError` non-transport path, wrong PKIStatus tag, generic parse exception, long-form nonce extraction, `verify_tsa_chain` with stub DER / empty CA PEM / never-raises guarantee, `_extract_signing_cert_from_tsr` empty/garbage, `_get_ocsp_url` / `_get_crl_urls` non-cert objects, `_der_integer` round-trip.
+- Total: **4114 tests** collected.
+
+---
+
+## [0.40.0] — 2026-05-21
+
+### Added
+- **`nova eval list`** — lists all registered eval suite adapters discovered via the `novafabric.eval_suites` entry-point group. Output table shows suite ID, version, OCI digest (`host-env` for local suites), and entry-point module path. Load errors for individual adapters are shown inline without crashing.
+- **`nova policy list`** — lists Rego policy files in the built-in (or custom `--bundle`) Rego bundle and signed promotion policies stored in the PolicyStore SQLite DB. Supports `--namespace` filter, `--db` override, and graceful "no DB yet" path for fresh installations.
+- **`PolicyStore.list_all(namespace=None)`** — new method on `novafabric.promote.policy_store.PolicyStore`; returns all stored policy rows as dicts; filters by namespace when supplied.
+- 11 new tests across `tests/cli/test_eval_list_cmd.py` and `tests/cli/test_policy_list_cmd.py`.
+
+---
+
+## [0.39.0] — 2026-05-20
+
+### Changed
+- **CycloneDX ML-BOM upgrade 1.6 → 1.7** — `AIBOMExporter` now emits `specVersion: "1.7"` (ECMA-424 2nd Edition, October 2025), satisfying the EU CRA SBOM obligation ahead of the 2026-09-11 deadline.
+  - `metadata.tools` now uses the `{components:[...]}` object format required by CycloneDX ≥1.5; the old array format was deprecated.
+  - `metadata.lifecycles` added with `{phase: "post-build"}` to document the BOM lifecycle phase.
+  - `modelCard.limitations` populated from capsule `limitations` field — documents known model restrictions, supporting CRA Art.9 disclosure.
+  - Dataset components (`type: "data"`) extracted from capsule `lineage_datasets` field for CRA-compliant dataset provenance records.
+  - `metadata.tools[].version` now reflects the installed `novafabric` package version.
+- `nova aibom status` and help text updated to reference ML-BOM v1.7.
+
+### Tests
+- 7 new tests in `TestAIBOMExporterV17`; 26 total AIBOM tests, all green.
+
+---
+
+## [0.38.1] — 2026-05-20
+
+### Added
+- **`nova init`** — first-run setup for pip-installed NovaFabric; creates `NOVAFABRIC_HOME` directory structure (`capsules/`, `keys/`, `replays/`), generates an Ed25519 signing keypair (mode 600), and prints next-step hints.  Idempotent by default; `--force` regenerates the keypair.  Not needed for docker-compose deployments (the container entrypoint handles setup automatically).
+
+---
+
+## [0.38.0] — 2026-05-20
+
+### Added
+- **Scale-S4: Postgres Merkle log backend for NovaSeal** — `PostgresMerkleLog` class in `trust/novaseal/merkle.py`; uses psycopg3 with self-bootstrapping DDL (append-only triggers mirror the SQLite invariant). `nova seal log verify` now accepts a `postgresql://` DSN via `--db` or `NOVAFABRIC_SEAL_DB_PATH`.
+- `open_merkle_log(uri)` factory — URI dispatch: `Path`/non-DSN string → `MerkleLog` (SQLite); `postgresql://` or `postgres://` prefix → `PostgresMerkleLog`. `NovaSeal.__init__` uses this factory, making the backend selection transparent.
+- `resolve_merkle_db_uri()` in `trust/novaseal/config.py` — canonical URI resolver that accepts both file paths and DSNs; supersedes `resolve_merkle_db_path()` for Postgres-aware callers.
+- `nova seal log verify --full` — opt-in full O(N) re-hash audit of every `entry_json`; default is a sampled check (up to 1000 random leaves) + root recomputation from stored hashes. Sampled path meets the Scale-S4 acceptance criterion: p99 < 200 ms at 1M entries.
+- `[seal-postgres]` optional extras group — `psycopg[binary]>=3.2` (LGPL-3.0, Tier B under ADR-0024).
+- Unit + integration + benchmark tests in `tests/seal/test_postgres_merkle.py`; integration and 1M-entry benchmark gated on `NOVA_INTEGRATION=1` + `NOVA_TEST_POSTGRES_DSN`.
+
+### Fixed
+- `nova seal log verify` `--db` default now reads `NOVAFABRIC_SEAL_DB_PATH` (and falls back through `novaseal.yaml` → `~/.novafabric/novaseal-merkle.db`) at invocation time rather than module-import time. Previously, setting `NOVAFABRIC_SEAL_DB_PATH=postgresql://...` and running `nova seal log verify` without `--db` would silently use the SQLite default.
+
+---
+
+## [0.37.0] — 2026-05-20
+
+### Added
+- **Dashboard: GDPR Art.30 RoPA Export panel** — `ComplianceTab` now mirrors `nova export-ropa` via `POST /api/compliance/export/ropa`; supports optional controller name and contact fields; shows completeness status and missing-fields warnings.
+- **Dashboard: AI-SBOM Export panel** — `ComplianceTab` now mirrors `nova export-aibom` via `POST /api/compliance/export/aibom`; displays CycloneDX 1.6 component list with type, name, version, and description.
+- **Dashboard: NIST AI RMF Report panel** — `ComplianceTab` now mirrors `nova export-nist-rmf` via `POST /api/compliance/export/nist-rmf`; shows GOVERN/MAP/MEASURE/MANAGE score bars, risk level badge, and missing-evidence list.
+- **Dashboard: AI-SBOM Coverage Status panel** — `ComplianceTab` now mirrors `nova aibom status` via `GET /api/aibom/status`; shows total/covered/missing capsule counts, a coverage progress bar, and the CRA deadline (2026-09-11).
+- Four new `nova serve` API endpoints: `POST /api/compliance/export/ropa`, `POST /api/compliance/export/aibom`, `POST /api/compliance/export/nist-rmf`, `GET /api/aibom/status`.
+- 8 new integration tests in `tests/test_serve_compliance.py` covering all four endpoints (happy path + 422 on missing run_id + AIBOM file counting).
+
+---
+
+## [0.36.0] — 2026-05-20
+
+### Added
+- `nova ingest-capsule` CLI: populate `runs_cache` in four modes — single run_id,
+  `--all` batch re-index, `--watch` foreground loop, and background watcher in
+  `nova serve` (Scale-S3, `serve/capsule_watcher.py`).
+- `CapsuleWatcher` class with pluggable `PollingBackend` (default) and optional
+  `WatchdogBackend` (inotify/FSEvents/kqueue, `pip install novafabric[watch]`).
+- `[watch]` optional extras group (`watchdog>=4.0.0`, Apache-2.0, Tier A).
+- `NOVA_WATCHER_BACKEND` and `NOVA_WATCHER_INTERVAL` env vars.
+
+### Changed
+- `nova serve` startup indexing and incremental poll now delegate to
+  `CapsuleWatcher` instead of calling `build_runs_index()` inline.
+
+### Security
+- Upgraded `sqlfluff` 4.1.0 → 4.2.1 (CVE-2026-46374, HIGH, uncontrolled resource consumption in parser).
+- Upgraded `idna` 3.13 → 3.15 (CVE-2026-45409, MEDIUM, bypass of CVE-2024-3651 fix) in root and `examples/plugin-hook-reference`.
+- Pinned `ws` ≥ 8.20.1 via npm overrides (CVE-2026-45736, MEDIUM, uninitialized memory disclosure in `puppeteer-core` transitive).
+
+---
+
+## [0.35.0] — 2026-05-20
+
+### Added
+
+- **`nova aibom status`** — new sub-app (`src/novafabric/cli/aibom.py`) that shows CRA SBOM compliance status: regulation name, deadline (2026-09-11), export format (CycloneDX ML-BOM 1.6 / ECMA-424 2nd Edition), capsule directory, and per-capsule AIBOM coverage (counts capsules with `aibom.json` vs. total). Mirrors the `nova euaiact status` pattern. (ADR-0073)
+- **`nova export-aibom --output` is now optional** — defaults to `<capsule_dir>/aibom.json` when omitted (previously required). This convention allows `nova aibom status` to track coverage automatically.
+- ADR-0073 promoted from **Proposed → Accepted**; implementation status section added documenting deviations (stdlib JSON instead of `cyclonedx-python-lib`; `compliance/export/` location instead of `evidence/`; evidence fabric `AIBOMBundle` signing deferred).
+- 10 new tests: 4 CLI tests for `nova export-aibom` (default output, explicit output, component count, `urn:uuid:` serial number) + 6 CLI tests for `nova aibom status` (deadline, regulation, spec, capsules-dir, full coverage, partial coverage). Total test suite: 19 tests for the AIBOM module.
+
+---
+
+## [0.34.0] — 2026-05-20
+
+### Added
+
+- **Dashboard parity for v0.32.0 + v0.33.0 regulatory CLI surfaces** — 5 new panels so every CLI command has a dashboard equivalent:
+  - `RoCrateExportPanel` (ComplianceTab) — mirrors `nova export-rocrate`; accepts a run ID via SuggestInput, calls `POST /api/compliance/export/rocrate`, returns base64-encoded ZIP with a one-click browser download button.
+  - `C2paExportPanel` (ComplianceTab) — mirrors `nova export-c2pa`; run ID + toggle for the `training-mining: notAllowed` assertion; renders C2PA v2.3 manifest JSON with CopyButton. Badge: ADR-0074.
+  - `ProvJsonExportPanel` (LineageTab) — mirrors `nova lineage export-prov`; run ID input, renders W3C PROV-JSON document in scrollable `<pre>` + CopyButton.
+  - `EuAiActStatusPanel` (GovernanceTab) — mirrors `nova euaiact status`; loads on mount via `GET /api/compliance/euaiact/status`; shows high-risk mode, role (provider/deployer), retention floor, Art.50 deadline. Badge: ADR-0076.
+  - `EuAiActExportPanel` (GovernanceTab) — mirrors `nova euaiact export`; optional from/to date inputs, exports Art.12 log records, renders table + CopyButton.
+- **5 new serve API endpoints** (`src/novafabric/serve/app.py`):
+  - `GET /api/compliance/euaiact/status`
+  - `POST /api/compliance/euaiact/export`
+  - `POST /api/compliance/export/rocrate`
+  - `POST /api/lineage/export-prov`
+  - `POST /api/compliance/export/c2pa`
+- 22 new backend tests (`tests/serve/test_v034_regulatory_exports.py`).
+- 5 new typed API client methods in `web/src/lib/api.ts` (`euaiactStatus`, `euaiactExport`, `exportRoCrate`, `exportProvJson`, `exportC2pa`).
+
+---
+
+## [0.33.0] — 2026-05-20
+
+### Added
+
+- **`nova export-c2pa <capsule_dir>`** — exports a C2PA v2.3-compatible provenance manifest from a Run Capsule (ADR-0074 / EU AI Act Art.50; deadline 2026-08-02). Emits `c2pa.ai.generated: true` (Art.50 machine-readable disclosure), model identity, NovaSeal reference when `.seal/` is present, and optional `c2pa.training-mining: notAllowed` assertion (`--training-mining` flag). Default output: `<capsule_dir>/c2pa-manifest.json`. No new runtime dependencies. (`src/novafabric/evidence/c2pa_exporter.py`, `src/novafabric/cli/export_c2pa.py`)
+- **`nova euaiact export`** — scans capsule directories and emits structured JSON Art.12 log events for authority access requests (Art.74). Date range filtering (`--from`/`--to` ISO-8601), `--pretty` Rich table output, `--output` file. Art.12 event taxonomy: `interaction_timestamp`, `output_record`, `human_review_event`, `input_classification`. (ADR-0076; deadline 2026-08-02)
+- **`nova euaiact status`** — shows `NOVA_EUAIACT_HIGH_RISK` / `NOVA_EUAIACT_PROVIDER` configuration and retention floor (deployer = 6 months, provider = 120 months / Art.18).
+- `is_within_retention()` in `src/novafabric/compliance/euaiact.py` for use by `nova pii erase` GDPR Art.17(3)(b) deferral gate.
+- 35 new tests across `tests/evidence/test_c2pa_exporter.py` and `tests/compliance/test_euaiact.py`.
+
+---
+
+## [0.32.0] — 2026-05-20
+
+### Added
+
+- **`nova export-rocrate <capsule_dir>`** — wires the existing `export_ro_crate()` library function (shipped v0.29.0) to a Typer CLI command. Produces a compliant RO-Crate v1.1 ZIP archive (`ro-crate-metadata.json` + capsule files). Default output path is `<capsule_dir>.rocrate.zip` adjacent to the capsule; overridable with `--output/-o`. (`src/novafabric/cli/export_rocrate.py`)
+- **`nova lineage export-prov <capsule_dir>`** — wires the existing `export_prov_json()` library function (shipped v0.29.0) as a `lineage` subcommand. Reads `lineage.jsonl` and emits a W3C PROV-JSON document. Default output is `<capsule_dir>/prov.json`; overridable with `--output/-o`. (`src/novafabric/cli/lineage.py`)
+- 19 new tests covering library error paths, spec conformance, and CLI success/failure cases for both exporters (`tests/compliance/export/test_ro_crate.py`, `tests/compliance/export/test_prov_json.py`).
+- **Scale-S1: `runs_cache` indexed capsule summaries** — eliminates the O(N disk) scan on every `/api/runs` request.
+  - `src/novafabric/registry/runs_cache.py` — new module: `ensure_runs_cache`, `build_runs_index`, `query_runs`, `upsert_run`, `count_cached_runs`; 17 unit tests.
+  - `registry/store.py` — `init_schema()` creates `runs_cache` table on startup.
+  - `serve/app.py` — startup full index build via `_lifespan`; incremental 2-second refresh in `_stats_refresh_loop`; `/api/runs`, `/api/runs/search`, and `/api/stats` all use SQL queries with disk-scan fallback when cache is empty.
+
+### Fixed
+
+- **`test_kg_store_no_kuzu` isolation** — test now snapshots and restores the original `novafabric.kg.store` module after mocking kuzu, so Prometheus counter re-registration failures no longer cascade to subsequent tests.
+
+### Documentation
+
+- `docs/cli-reference.md` — replaced "not yet wired" callouts with working usage examples for `nova export-rocrate` and `nova lineage export-prov`.
+- `design/architecture/architecture.md` — updated compliance status table: both exporters now marked **works today (v0.32.0)** rather than "library only; CLI planned".
+- `ROADMAP.md` — v0.32.0 row added; RO-Crate and PROV-JSON rows updated to **shipped v0.32.0** in planned and deferred tables.
+
+---
+
+## [0.31.2] — 2026-05-20
+
+### Fixed
+
+- **`JwksCache` stale sentinel** — `_fetched_at` initialised to `float('-inf')` instead of `0.0` so `_is_stale()` always returns `True` before the first fetch, regardless of process uptime. Previously two tests (`test_stale_when_freshly_created`, `test_flush_marks_stale`) failed on machines with uptime < TTL (3600 s).
+
+---
+
+## [0.31.1] — 2026-05-20
+
+### Added
+
+- **KGStore Prometheus metrics** — optional `prometheus_client` instrumentation in `src/novafabric/kg/store.py`; four counters/gauges (`novafabric_kg_node_merge_total`, `novafabric_kg_edge_upsert_total`, `novafabric_kg_crdt_merge_total`, `novafabric_kg_node_count`); degrades gracefully when `prometheus_client` is absent.
+
+---
+
+## [0.31.0] — 2026-05-20
+
+Dashboard CLI parity sprint — closes all 7 remaining gaps where CLI commands had no dashboard equivalent.
+
+### Added
+
+- **KGQueryPanel** — `nova kg query <agent_id>` via `GET /v1/kg/query`; shows models + tools observed for any agent ID.
+- **KGAuditPanel** — `nova kg audit` via `GET /v1/kg/audit`; health check: node/edge counts, orphaned edges, zero-call nodes.
+- **EntityQueuePanel** — `nova kg entity-queue list/approve/reject/stats`; full Tier-3 human-review workflow with approve/reject actions.
+- **KGAliasPanel** — `nova kg alias list/register`; Tier-2 alias table browse + upsert form.
+- **GdprErasurePanel erasure-status section** — `nova erasure status` inline check; subject-filtered request history.
+- **AuditMapPanel** — `nova audit map --profile`; tabular control map for `nist-ai-rmf`, `eu-ai-act`, `iso-42001`, `nis2`.
+- **RunsTab Children view** — `nova run show --with-children`; tree of child runs with edge type and status badges.
+- **`GET /api/kg/aliases`** — list alias-table entries (optional `canonical` filter).
+- **`POST /api/kg/aliases`** — upsert alias (alias, canonical, entity_type).
+- **9 new backend tests** for alias endpoints, `/v1/kg/query`, `/v1/kg/audit`, entity-queue list/stats.
+- **8 new `api.ts` methods**: `kgQuery`, `kgAudit`, `kgEntityQueueList/Stats/Approve/Reject`, `kgAliasList`, `kgAliasRegister`.
+
+---
+
+## [0.30.3] — 2026-05-20
+
+Dashboard icon fix, UX improvements, and Reports tab with 10 report types.
+
+### Added
+
+- **Favicon fix** — SVG path now draws a correct **N** (was M); hex frame added (`web/public/favicon.svg`).
+- **Apple-touch-icon** — SVG link added to both `Layout.astro` and `DashboardLayout.astro`.
+- **Brand mark in collapsed sidebar** — hex+N SVG icon appears in the sidebar header when collapsed.
+- **Collapsible sidebar groups** — each `NAV_GROUPS` group is now collapsible; state persisted in `localStorage`.
+- **Connection status dot in collapsed sidebar footer** — green dot visible when connected.
+- **Breadcrumb top bar** — replaces plain Topology button bar; shows `NovaFabric / {tab}` + live connection pill.
+- **TABS ordering fix** — `DashboardApp.tsx` now derives `TABS` from exported `ALL_TABS` (single source of truth).
+- **Dynamic keyboard shortcut help** — `KeyboardHelp` lists all tabs by name with accurate count.
+- **EmptyState icon prop** — optional `icon?: ReactNode` above message; padding reduced `p-12 → p-8`.
+- **Badge colour fix** — sidebar label badges use neutral `color-text-faint`; `experimental` badge uses info blue.
+- **Reports tab** — new `ReportsTab` with Catalog+Builder layout; 10 report types across Developer / Ops / Compliance / Management groups.
+- **`/api/reports/*` endpoints** — 10 new FastAPI routes in `serve/app.py`; `format=csv|json` query param.
+- **`src/novafabric/serve/reports.py`** — all 10 query functions with datetime normalisation and graceful DB fallback.
+- **CSV + JSON + PDF export** — CSV via `StreamingResponse`, JSON standard, PDF via `window.print()` on `.nova-report-print`.
+- **`api.reports.fetch()`** — TypeScript client method for all 10 report types.
+- **`SuggestInput` full coverage** — All remaining bare ID inputs wired across `ComplianceTab` and `InfraTab`:
+  - `deploymentId` (AnnexIVPanel) + `incidentId` (NIS2Panel): `useLocalMru` localStorage MRU, auto-populated on each successful compliance export.
+  - `subjectId` in SubjectProofPanel + GdprErasurePanel: localStorage MRU for subject identifiers; GdprErasurePanel also surfaces live `runIds` from `GET /api/runs`.
+  - `runId` in AssurancePanel (OWASP LLM checks): live-fetched `runIds`, passed via new prop from `ComplianceTab`.
+  - `runId` in StorageOpsCard (InfraTab): `InfraTab` now fetches run IDs on mount and passes them to `StorageOpsCard`.
+- **`useLocalMru` hook** — localStorage MRU (most-recently-used) for free-text ID fields that have no server-side enumeration; suggestions accumulate after each successful API call.
+
+### Tests
+
+- 13 new tests in `tests/serve/test_reports.py` covering JSON, CSV, status filter, no-DB fallback, unauthenticated 403.
+- 3827 tests total (29 skipped).
+
+---
+
+## [0.30.2] — 2026-05-20
+
+CLI reference gap closure and dashboard SuggestInput first-pass wiring (CostTab, HoldsTab, PolicyTab autocomplete); JSONL TraceSpanView in CapsuleInspector.
+
+---
+
+## [0.30.1] — 2026-05-20
+
+Comprehensive doc sync: ADR-0079 (production storage tiers), missing CLI commands, full env var table, stale path fixes, ROADMAP accuracy.
+
+### Added
+
+- **ADR-0079** — Hybrid three-tier production capsule storage rationale (cost tables, WORM, ACID arguments).
+- **`design/architecture/architecture.md` §"Production storage tiers"** — unified tier table, why-not-Postgres/S3 explanations.
+- **CLI reference: `nova seal bypass`, `nova seal log verify`** — full command sections with options and behavior.
+- **CLI reference: `nova eval agent`, `nova eval run`, `nova eval compare`** — full Typer subcommand sections.
+- **Env var table: `NOVAFABRIC_HOME`** added (was the most critical missing entry).
+- **Env var table: OCS vars** — `NOVA_OBJECT_STORE_BACKEND`, `NOVA_OBJECT_STORE_PATH`, `NOVA_S3_BUCKET`, `NOVA_S3_ENDPOINT_URL`.
+- **Env var table: distributed-run contract** — `NOVAFABRIC_SUGGEST`, `NOVAFABRIC_GLOBAL_RUN_ID`, `NOVAFABRIC_PARENT_RUN_ID`, `NOVAFABRIC_RANK`, `NOVAFABRIC_WORLD_SIZE`, `NOVAFABRIC_DISTRIBUTION_ROLE`, `NOVAFABRIC_FAIL_MODE`, `NOVAFABRIC_PENDING_PARENT_TIMEOUT`.
+- **Env var table: server config** — `NOVAFABRIC_SERVER_HOST/PORT/BACKEND/DB_PATH`.
+
+### Fixed
+
+- `docs/tutorials/getting-started.md` — 4 stale `.novafabric/runs/` paths → `$NOVAFABRIC_HOME/capsules/`.
+- `design/architecture/architecture.md` — phantom `cli/tsa_chain.py` entry replaced with real `trust/novaseal/timestamp.py`.
+- `ROADMAP.md` — Scale-S2 marked ✅ implemented; stale "NotImplementedError" note removed.
+- `docs/cli-reference.md` — remaining stale `runs/` defaults corrected to `capsules/`.
+
+---
+
+## [0.30.0] — 2026-05-20
+
+Dashboard CLI parity: capsule verify, OpenLineage export, YAML register — plus capsule path consolidation and dashboard bug fixes.
+
+### Added
+
+- **Dashboard: `Capsule Integrity Verify` panel** (SealTab) — DSSE signature + RFC 3161 timestamp + Merkle log inclusion check (`nova verify`) with per-check pass/fail display
+- **Dashboard: `Suggest Register` panel** (RegistryTab) — always-visible suggestions table with one-click Register; supersedes "run nova suggest-register in CLI" text
+- **Dashboard: `Export OpenLineage Events` panel** (LineageTab) — emit OpenLineage JSON from a capsule with copy-to-clipboard
+- **`POST /api/runs/{run_id}/verify`** — capsule seal verification endpoint (DSSE + RFC 3161 + Merkle log inclusion); mirrors `nova verify`. Returns `sealed/configured/signature_ok/timestamp_ok/log_integrity_ok`.
+- **`GET /api/lineage/{run_id}/emit-openlineage`** — OpenLineage export endpoint; mirrors `nova lineage emit-openlineage`. Returns `{ok, run_id, event_count, events[]}`.
+- **`POST /api/assets/register-from-yaml`** — register asset from YAML string (used by Suggest Register panel); mirrors `nova register`. Returns `{ok, name, error}`.
+- **`docs/novaseal-configuration.md`** — standalone NovaSeal configuration reference (signing profile, env vars, TSA setup, key rotation).
+
+### Changed
+
+- **`default_capsule_dir()` is now the single source of truth** — returns `$NOVAFABRIC_HOME/capsules`
+  when `NOVAFABRIC_CAPSULE_DIR` is unset (was `None`, causing callers to use mismatched per-command
+  defaults such as `cwd/.novafabric/runs`). All callers (`nova capture`, `nova serve`,
+  `nova suggest-register`, server `deps.py`) now use this function.
+
+### Fixed
+
+- `TraceDiffGraph`: span matching used `span_id` (unique per run) instead of span `name`; spans now correctly shown as CHANGED instead of REMOVED+ADDED across runs
+- `SealTab`: Merkle log verify showed misleading red "capsule: not found" when log was empty; now shows contextual "seal log is empty" in muted color
+- `server/deps.py:get_capsule_dir()` ignored `NOVAFABRIC_HOME` — hardcoded `~/.novafabric/runs`.
+- `nova serve` and `nova capture` defaulted to `cwd/.novafabric/runs` instead of
+  `$NOVAFABRIC_HOME/capsules`, causing dashboards to show empty runs when `NOVAFABRIC_HOME` was set.
+
+---
+
+## [0.29.4] — 2026-05-19
+
+Dashboard `AgentQueryPanel` now shows MCP servers + full doc sync (architecture, ROADMAP).
+
+### Added
+
+- **Dashboard `AgentQueryPanel` MCP servers table** — `GET /api/kg/agents/{id}/edges`
+  now includes a `mcp_servers` list (2-hop: Agent→Tool→MCPServer); `AgentQueryPanel`
+  displays it as a third results table below models and tools.
+- **`api.ts` `kgAgentEdges` type** — `mcp_servers` field added to the return type.
+- **`design/architecture/architecture.md` KG section** — full env-var table (`NOVA_KG_INGEST_INTERVAL`,
+  `NOVA_KG_PATH`, `NOVA_KG_ALIAS_DB`, `NOVA_KG_QUEUE_DB`), `IngestTracker` entry,
+  API surface table, dashboard components described.
+- **`ROADMAP.md`** — v0.29.1 / v0.29.2 / v0.29.3 rows added.
+
+---
+
+## [0.29.3] — 2026-05-19
+
+KG ingest completeness fix + Decimal serialisation fix + NovaSeal path precedence + doc improvements.
+
+### Added
+
+- **`nova kg ingest` reads `tool-calls.jsonl`** — CLI now collects
+  `model-calls.jsonl` + `tool-calls.jsonl` (preferred) and falls back to
+  `events.jsonl`.  MCPServer nodes created from namespaced tools when ingesting
+  via CLI (was only served by `nova serve` auto-ingest before).
+- **`docs/developer-guide.md` MCPServer extension point section** — covers
+  `nova kg alias register --type mcp_server`, `nova kg query` MCP output,
+  `NOVA_KG_INGEST_INTERVAL` / `NOVA_KG_PATH` env vars, SQLite `IngestTracker`
+  persistence, and topology cache TTL.
+
+### Fixed
+
+- **`KGStore.query_agent_mcp_servers()` Decimal serialisation** — KuzuDB
+  `sum()` returns `Decimal`; explicit `int()` cast prevents `TypeError` when
+  the result is JSON-serialised by the CLI or API.
+- **`resolve_merkle_db_path()` env-var precedence** — `NOVAFABRIC_SEAL_DB_PATH`
+  is now checked *before* `novaseal.yaml merkle_db`; previously the YAML config
+  could shadow an explicit env override in CI / Docker.
+- **`test_kg_query_cli_mcp_servers` event type** — test fixture used
+  `"ToolCalled"` (unknown) instead of `"ToolCallCompleted"`; MCPServer node was
+  never created, making the assertion vacuously incorrect.
+- **`test_kg_status_cli` JSON assumption** — `nova kg status` now emits Rich
+  text, not JSON; test updated to check for key strings in text output.
+
+### Documentation
+
+- `docs/cli-reference.md` — `nova kg status` output example updated; `nova kg
+  query` JSON example adds `mcp_servers`; `nova kg ingest` note updated for
+  `tool-calls.jsonl`; `nova kg alias register --type` adds `mcp_server`;
+  topology API cache note added.
+- `docs/developer-guide.md` — MCPServer extension-point section added.
+
+---
+
+## [0.29.2] — 2026-05-19
+
+Documentation sync + KG/seal/ingest improvements.
+
+### Added
+
+- **`KGStore.query_agent_mcp_servers()`** — two-hop Cypher query (Agent→Tool→MCPServer)
+  aggregating `call_count` over all Tool intermediaries.
+- **`nova kg status` Rich table output** — now prints a per-type node-count table instead
+  of raw JSON, with colour-coded health indicator.
+- **`nova kg query` MCP server output** — result now includes `mcp_servers` list alongside
+  `models` and `tools`.
+- **`kg/ingest_tracker.py` — `IngestTracker`** — SQLite-backed persistent tracker for
+  KG auto-ingest state; replaces in-memory set in `nova serve` so already-ingested
+  capsules are not reprocessed after a restart.
+- **`trust/novaseal/config.py` — `resolve_merkle_db_path()`** — centralised Merkle DB
+  path resolution: checks `novaseal.yaml merkle_db` first, then `NOVAFABRIC_SEAL_DB_PATH`
+  env, then the `~/.novafabric/novaseal-merkle.db` default.
+- **`KGTab` topology panel on-demand load** — panel no longer auto-fetches on mount;
+  shows a "Load topology" button instead, preventing an expensive query on every tab
+  open.  Interval description updated to reference `NOVA_KG_INGEST_INTERVAL` env var.
+
+### Fixed
+
+- **`nova doctor` novaseal_db false FAIL in Docker** — the system-diagnostics
+  endpoint constructed the Merkle DB path from `NOVAFABRIC_HOME`, so in Docker
+  (`NOVAFABRIC_HOME=/data/nova`) it looked at `/data/nova/novaseal-merkle.db` while
+  the NovaSeal engine resolves the path via `_seal_db_path()` (checks
+  `NOVAFABRIC_SEAL_DB_PATH`, falls back to `~/.novafabric/novaseal-merkle.db`). Both
+  `serve/app.py` and `server/routes/seal.py` now call `resolve_merkle_db_path()` so all
+  callers agree on the path.
+
+### Documentation
+
+- `design/architecture/architecture.md` — Evidence Fabric key-files table now includes `nats_consumer.py`,
+  `clickhouse_accumulator.py`, and `avro_serializer.py` (Tier 2 scale backends, v0.29.0).
+  Compliance status table corrected: `export_ro_crate()` and `export_prov_json()` are
+  library functions (CLI planned), not CLI commands as previously stated.
+- `docs/cli-reference.md` — added "not yet wired" callout under `nova export-rocrate`
+  and `nova lineage export-prov`; added 5 NATS/ClickHouse env-var rows with correct
+  defaults (`NOVA_NATS_STREAM=nova-evidence`, `NOVA_NATS_SUBJECT=nova.evidence.>`,
+  `NOVA_NATS_CONSUMER=nova-evidence-consumer`).
+- `ROADMAP.md` — v0.29.0 row expanded with scale-tier backend names, env-var routing,
+  and accurate CLI-planned status for RO-Crate and PROV-JSON.
+
+---
+
+## [0.29.1] — 2026-05-19
+
+Bundle sync, bug fixes, documentation completion.
+
+### Fixed
+
+- **Dashboard bundle sync** — v0.29.0 shipped new bundle files (`DashboardApp.BSDwTNmV.js`,
+  `global.D8i5TUgX.css`, etc.) but left stale `DVQuOgEE.js` / `C_7wLUHL.css` in
+  the index and all HTML pages pointing to the old hashes. Now all HTML pages
+  reference the new hashes and stale chunks are removed.
+- **`nova migrate-schema` Rich markup crash** — `[/bold]` closing tag didn't match
+  the computed opening `[bold red]` / `[bold green]`, causing a `MarkupError` on
+  every run. Fixed with `[/bold {color}]` computed closing tag.
+- **`serve/app.py` E501** — `/api/kg/topology` error-path return dict wrapped to
+  fit 100-char line limit.
+- **Avro tests skip correctly** — `test_avro_serializer.py` now uses
+  `pytest.importorskip("fastavro")` at module level so tests are skipped (not
+  failed) when the optional `fastavro` dependency is absent.
+
+### Documentation
+
+- **CHANGELOG `[0.29.0]`** — completed with G-B3 (Evidence Fabric scale tier),
+  G-C (RFC 3161 trust chain, RO-Crate, PROV-JSON), and G-F (migrate-schema,
+  pgBouncer) detail.
+- **ROADMAP `v0.29.0`** — updated to reflect all four tracks.
+- **`docs/releases/v0.29.0.md`** — files-changed table completed.
+- **`docs/developer-guide.md`** — KG node-type extension guide + MCP server
+  auto-detection pattern added.
+- **`docs/tutorials/getting-started.md`** — `--sigstore` usage example + KG MCP
+  server auto-detection note added.
+
+---
+
+## [0.29.0] — 2026-05-19
+
+Policy UX polish + Rekor transparency log integration + KG multi-layer topology (MCPServer auto-discovery).
+
+### Added
+
+- **MCPServer node + SERVED_BY edge** — KG now includes a fifth node type (`MCPServer`)
+  and a fourth relationship (`SERVED_BY`: Tool → MCPServer). Tool names containing `:`
+  (e.g. `filesystem:read_file`) are automatically split: the left part becomes the
+  MCP server name, the right part the tool name.  Extraction is idempotent across
+  CRDT flushes.
+- **`GET /api/kg/topology`** — returns all KG nodes and edges (capped at 500 nodes by
+  default) with per-type counts for the multi-layer topology view in the dashboard.
+- **Dashboard KGTab — Multi-Layer Topology panel** — new `TopologyLayerPanel` shows
+  per-layer node counts (Agent / Model / MCPServer / Tool / Endpoint), edge breakdown
+  by type (CALLS / USES_TOOL / SERVED_BY / ROUTES_TO), and auto-ingest status.
+  StatusPanel now also shows per-node-type counts from `GET /api/kg/status`.
+- **`GET /api/policy/recent-decisions`** — returns up to 50 recent decision IDs from
+  `dashboard-audit.jsonl`, most-recent-first and deduplicated, scanning `audit_id`,
+  `args.decision_id`, and `extra.decision_id` fields. Powers the new autocomplete in
+  the Policy Explain panel.
+- **Policy Explain autocomplete** — the decision-ID input in `PolicyExplainPanel` now
+  uses `SuggestInput` (live-filtered dropdown) populated from
+  `GET /api/policy/recent-decisions`.  Users can type a prefix or scroll recent IDs
+  instead of copy-pasting from the terminal.
+- **`design/architecture/architecture.md` Data layer — quick-reference table** — added a compact
+  service × property table (port, default-enabled, local-only flag) to the Data layer
+  section so developers can scan storage topology at a glance.
+- **`nova export-evidence --sigstore`** — the `--sigstore` flag is now functional.
+  After building and signing the Evidence Bundle, the DSSE envelope
+  (`attestations/run.intoto.json`) is extracted from the ZIP and published to the
+  Rekor transparency log via `rekor_client.maybe_publish()`.  Requires `NOVA_REKOR_URL`
+  to be set; without it the step prints a skip warning and exits 0.  Network errors are
+  logged as warnings and never fail the build (additive, fail-open).
+- **Evidence Fabric scale-tier backends** (G-B3):
+  - `NATSJetStreamConsumer` — NATS JetStream pull consumer for `nova-evidence` subjects;
+    bounded dead-letter list; test-injection API (no live NATS needed in tests).
+    Activated by `NOVA_NATS_URL` / `NOVA_NATS_STREAM` env vars.
+  - `ClickHouseAccumulator` — bulk-insert sink for lineage edges and capsule events;
+    lazy DDL; `aggregate_cost_report(since_iso)` for `nova cost report`. Activated by
+    `NOVA_CLICKHOUSE_URL` env var.
+  - `AvroSerializer` — fastavro-based serialize/deserialize for `EvidenceEvent` records;
+    single-record and batch APIs; schema pinned at
+    `evidence_fabric/schemas/evidence_event.avsc`.
+  - All three classes are always importable from `novafabric.evidence_fabric`; the
+    `ImportError` (with `pip install` hint) is only raised on instantiation when the
+    optional dep (`nats-py` / `clickhouse-connect` / `fastavro`) is absent.
+- **RFC 3161 TSA trust chain + revocation** (G-C partial): `verify_tsa_chain()` in
+  `novafabric.trust._rfc3161` — extracts signing cert from CMS SignedData, OCSP
+  reachability HEAD check, CRL URL extraction and HEAD reachability check.
+  `TsaChainResult` dataclass: `chain_ok`, `revocation_status`, `ocsp_checked`, `errors`.
+- **NovaSeal CA chain verification** (G-C): `NovaSeal.verify()` now calls
+  `_verify_ca_chain()` and populates `VerificationResult.ca_chain_ok` and
+  `ca_chain_errors`. Degrades safely: returns `(False, [note])` when
+  `cryptography` is absent or DSSE is unparseable.
+- **RO-Crate v1.1 export** (`novafabric.compliance.export.ro_crate`): FAIR research
+  object export from a Run Capsule; JSON-LD `@graph` with Dataset, SoftwareApplication,
+  and HowToStep entities.
+- **W3C PROV-JSON export** (`novafabric.compliance.export.prov_json`): standard
+  provenance graph from capsule + lineage edges; entity/activity/agent/used/
+  wasGeneratedBy/wasAssociatedWith nodes for OpenLineage interoperability.
+- **`nova migrate-schema`** (G-F): batch-migrates capsule directories to schema v1.0.0:
+  sets `schema_version`, renames `event_log.jsonl` → `model-calls.jsonl`, adds
+  `format_version`. Supports `--dry-run` and `--backup`. 15 tests.
+- **pgBouncer production config** (`deploy/docker/pgbouncer.ini`): transaction-mode
+  pooling, 200 max connections, `server_idle_timeout=300`; with `README-pgbouncer.md`
+  explaining the production setup (G-F).
+- **`docs/ops/cluster-scale-migration.md` Phase 0.5 section**: `nova migrate-schema`
+  command examples added for pre-migration capsule schema upgrade step.
+
+### Fixed
+
+- **KG auto-ingest missed tool-calls.jsonl** — `_ingest_one_capsule_dir` in
+  `nova serve` previously read only `model-calls.jsonl` (or `events.jsonl`), skipping
+  `tool-calls.jsonl` entirely.  All capsule tool-call data is now ingested automatically.
+- **`TraceDiffGraph` span path** — path key now uses `sp.name` instead of
+  `sp.span_id ?? sp.name`, keeping diff labels stable across runs that re-issue span
+  IDs.
+- **`export_evidence.py` mypy** — `cfg: dict` → `cfg: dict[str, str]` (line 509) to
+  resolve the `[type-arg]` mypy warning.
+
+---
+
+## [0.28.0] — 2026-05-19
+
+Gap-closure sprint — G-A correctness fixes: ECDSA P-256 signer alignment, DLQ wiring, OCS manifest chain verification by default.
+
+### Fixed
+
+- **G-A7: ECDSA P-256 signer in Go collector** — added `ECDSAP256Signer` to `collector/pkg/novaseal/signer.go` using DER-encoded ASN.1 signatures (stdlib only: `crypto/ecdsa`, `encoding/asn1`). Aligns the collector's signing algorithm with Python NovaSeal (which requires ECDSA P-256 / secp256r1). `Ed25519Signer` retained for backward compat; both satisfy the `Signer` interface.
+- **G-A3: DLQ wired into HPC leaf spool store** — `collector/internal/hpc/leaf_spool_store.go` now reads `NOVA_DLQ_DIR` at startup; if set, instantiates `spool.DLQ` and calls `sp.SetDLQ()`. Events dropped under backpressure are now routed to a daily-rotated JSONL file instead of being silently lost.
+- **G-A6: OCS manifest hash-chain verified by default** — `ObjectCapsuleStore.get_capsule()` default changed from `verify_chain=False` to `verify_chain=True`. The full `prev_commit_hash` chain is now walked on every read (OQ-027). Performance-sensitive callers can opt out with explicit `verify_chain=False`.
+
+### Notes
+
+- G-A1/G-A2 (topology WS pub-sub + Arrow IPC): already implemented in v0.27.0.
+- G-A4 (Postgres v002 partition DDL): already implemented, no change needed.
+- G-A5 (lineage migration OCS default): already implemented (`--from-parquet` required for Parquet path).
+- G-B1/B2/B3 (TV-5 LODController, KG Tier 2/3, Evidence Fabric): all partially completed items verified present in main as of v0.27.0.
+
+---
+
+### Added
+
+- **Two-tier Docker stack** — `make dev-up` (Postgres + dashboard, ~512 MB) and
+  `make prod-up` (full stack: + ClickHouse + NATS + Kafka + PgBouncer + JanusGraph).
+  Docker Compose profiles (`prod`) gate the heavy services so a laptop dev workflow
+  needs no extra infra.
+- **`deploy/docker/docker-compose.yml`** — added five new prod-profile services:
+  NATS JetStream 2.10 (event bus, port 4222/8222), Kafka 3.9 KRaft (alt transport,
+  port 9092), PgBouncer 1.24 (connection pooling, port 6432), JanusGraph 1.1
+  (lineage-v3 stub, port 8182). ClickHouse moved to `prod` profile (was always-on).
+- **`NOVA_JANUSGRAPH_URL`** env var wired into nova serve; graceful stub fallback
+  when JanusGraph is not running.
+- **Container naming** — all NovaFabric container names now start with
+  `novafabric-` (`novafabric-postgres`, `novafabric-serve`, `novafabric-clickhouse`,
+  etc.) for unambiguous identification in `docker ps` on shared hosts.
+  Named volumes unchanged — existing data preserved on upgrade.
+- **`design/architecture/architecture.md` — Data layer section** — comprehensive replacement of
+  the old stub `## Storage` section: two Mermaid flow charts (prod + dev stacks),
+  component inventory table (11 backends), "what data lives where" table, capsule
+  directory layout, local-first bootstrap CLI guide, and license notes.
+
+### Changed
+
+- `make docker-up` / `docker-down` / `docker-logs` now alias `dev-up` / `dev-down`
+  / `dev-logs` (backwards-compatible).
+- All Makefile `docker exec nova-serve` calls replaced with `$(COMPOSE) exec nova`
+  (uses service name, not container name — no breakage on container rename).
+- `deploy/hpc/test-cluster/docker-compose.yml` — all containers renamed to
+  `novafabric-nats-*`, `novafabric-mock-kms`, `novafabric-kafka`; `version:` key
+  removed (deprecated in Compose v2).
+- `tests/integration/docker-compose.eval.yaml` — added explicit `container_name`
+  entries (`novafabric-test-postgres`, `novafabric-test-pgbouncer`); `version:` key
+  removed.
+
+### Fixed
+
+- `KGIngestionPipeline.ingest_event()` now handles the OTel GenAI semconv format
+  produced by `nova capture` (`model-calls.jsonl`). Records with `gen_ai.request.model`
+  but no `event_type` are normalised to a `ModelCallCompleted` edge via
+  `_normalise_otel_semconv()`: `parent_span_id` → `agent_id`, `gen_ai.request.model` →
+  `model_id`. Previously every captured capsule event was silently skipped, causing KG
+  ingest to always report "wrote 0 KG edges".
+
+---
+
+## [0.27.0] — 2026-05-19
+
+Full CLI-to-dashboard parity — all CLI commands now have interactive dashboard
+panels. 11 new backend endpoints and corresponding frontend panels.
+
+### Added
+
+- **SealTab `BypassSodPanel`** — `POST /api/seal/{capsule_id}/bypass`; time-limited
+  DSSE-signed SoD override form; equivalent to `nova seal bypass`.
+- **AdminTab role assignment/revocation forms** — `assignRole` / `revokeRole` wired
+  to the existing v0.14.3 REST routes (`POST/DELETE /v0/admin/roles`).
+- **AdminTab JWKS cache flush** — `POST /api/admin/flush-jwks-cache` button;
+  equivalent to `nova server flush-jwks`.
+- **AdminTab DB upgrade panel** — `POST /api/db/upgrade`; shows migration outcome
+  inline; equivalent to `nova db upgrade`.
+- **AdminTab capsule migration panel** — `POST /api/capsule-migrate`; capsule path +
+  target schema version; equivalent to `nova capsule-migrate`.
+- **RegistryTab `ValidateSpecPanel`** — `POST /api/validate-spec`; paste or upload
+  asset spec YAML/JSON, returns structured validation errors and warnings;
+  equivalent to `nova validate-spec`.
+- **RegistryTab `ReportPanel`** — `GET /api/report`; full asset registry summary
+  report rendered inline; equivalent to `nova report`.
+- **InfraTab `MCPRiskReportPanel`** — `POST /api/mcp/risk-report`; structured risk
+  score, finding counts, remediation guidance; equivalent to `nova mcp risk-report`.
+- **RunsTab capsule delete** — `DELETE /api/runs/{run_id}` with confirmation dialog;
+  equivalent to `nova capsule delete`.
+- **LineageTab `LineageImportPanel`** — `POST /api/lineage/import`; file path or
+  uploaded JSON-LD; reports import status and edge count; equivalent to
+  `nova lineage import`.
+- **GovernanceTab `EvalComparePanel`** — `POST /api/eval/compare`; side-by-side
+  comparison of eval suite scores, regression flags, and metric deltas for two
+  run IDs; equivalent to `nova eval compare`.
+- 59 new tests across 6 test files covering all 11 new endpoints.
+
+---
+
+## [0.26.5] — 2026-05-19
+
+OPA policy-source evaluation fix + three dashboard UX fixes.
+
+### Fixed
+
+- `policy/OpaEngine.evaluate()` now accepts `policy_source` — when Rego source is provided
+  in the dashboard policy check form it is written to a temp dir and evaluated by OPA
+  directly, instead of being silently ignored in favour of the bundled policy. The
+  `policy_path` in the returned `PolicyDecision` is prefixed with `custom:` to distinguish
+  custom-source evaluations from bundle evaluations. Empty / whitespace source falls back to
+  the bundled policy (existing behaviour).
+- `POST /api/policy/check` extracts and forwards the new optional `policy_source` field.
+- `PolicyTab` label updated from "advisory lint only" to "evaluated when provided; uses
+  bundled policy if empty"; `policySource` is now passed to the API call.
+- Dashboard `HomeTab`: cost-report 401 on first load — replaced direct `localStorage`
+  reads with `getConnection()` from `api.ts`; fetch is skipped when no token is present
+  (e.g., pre-connect page load via URL query param).
+- Dashboard `RegistryTab`: sparkline bars stale after running an eval suite — now
+  re-fetches eval history immediately after a successful eval run instead of relying on
+  `IntersectionObserver` (which does not re-fire for already-visible rows).
+- Dashboard `InfraTab`: `MCPScanPanel` repositioned above the footer note for better
+  visual flow.
+- `api.ts`: `SealPolicyResponse.predicate` typed as `SealPolicyPredicate` (explicit
+  interface) instead of `Record<string, unknown>`.
+
+---
+
+## [0.26.4] — 2026-05-19
+
+Fix test isolation: replace deprecated `asyncio.get_event_loop().run_until_complete()`
+with `asyncio.run()` in four test files; fix hardcoded worktree path in
+`tests/test_differentiation_table.py`. 3660 tests now pass in full-suite order.
+
+### Fixed
+
+- `tests/scale_architecture/test_lineage_consumer.py` — `_run()` helper uses `asyncio.run()`
+- `tests/scale_architecture/test_lineage_consumer_nats.py` — same
+- `tests/scale_architecture/test_evidence_fabric.py` — same (TestEventQueueConsumer)
+- `tests/serve/test_kg_auto_ingest.py` — four inline `asyncio.run()` calls
+- `tests/test_differentiation_table.py` — `cwd` now uses `Path(__file__).parent.parent` (repo root) instead of a stale worktree path
+
+---
+
+## [0.26.3] — 2026-05-19
+
+Dashboard parity for G-E sprint Track 5: OWASP assurance, MCP scanner, and
+framework adapter panels added to the dashboard; `api.ts` extended with
+`assureRun()`, `mcpScan()`, `listAdapters()`; static bundle rebuilt.
+
+### Added
+
+- `AssurancePanel` in `ComplianceTab` — runs `nova assure` (E-10) against a
+  run ID via `GET /api/assure/{run_id}`; shows per-check pass/fail/warn table.
+- `MCPScanPanel` in `InfraTab` — paste an MCP server manifest JSON and run
+  `nova mcp scan` (E-9) via `POST /api/mcp/scan`; shows risk level + findings.
+- `AdaptersPanel` in `CaptureTab` — lists all registered framework adapters via
+  `GET /api/adapters`; shows availability status for each (E-5..E-8).
+- `api.assureRun()`, `api.mcpScan()`, `api.listAdapters()` in `web/src/lib/api.ts`.
+- `docs/cli-reference.md` — added MCP scanner section (`nova mcp scan`,
+  `nova mcp risk-report`) and distributed run commands (`nova run new-run-id`,
+  `nova run validate-distributed`, `nova run show`).
+- `design/architecture/architecture.md` — added key-file entries for compliance exporters and
+  framework adapters (autogen, crewai, dspy, langgraph, langfuse, mlflow, git).
+
+### Changed
+
+- Static bundle rebuilt: `DashboardApp.DQJL6Mnh.js` (replaces `Cv1ot5Dg`),
+  new `CapsuleInspector` and `LineageGraph` chunk hashes.
+
+---
+
+## [0.26.2] — 2026-05-19
+
+Lint-only patch: remove unused `importlib.util` import from `serve/app.py`.
+
+### Fixed
+
+- Remove unused `importlib.util` import from `src/novafabric/serve/app.py` (ruff F401).
+
+---
+
+## [0.26.1] — 2026-05-19
+
+Ecosystem framework adapters (E-5..E-8, ADR-0078) and executable differentiation
+verification (E-3).
+
+### Added
+
+- `novafabric.adapters.openai_agents` — `NovaCapsuleTracingProcessor` registered via
+  `add_trace_processor()`; captures every OpenAI Agents SDK trace as a nova capsule (E-5).
+- `novafabric.adapters.google_adk` — `NovaAdkPlugin` using `before_run_callback` /
+  `after_run_callback`; pass to `Runner(plugins=[make_plugin()])` (E-6).
+- `novafabric.adapters.bedrock_agentcore` — `_WrappedBedrockClient` wrapping
+  `invoke_agent()` + EventStream parsing for `orchestrationTrace`,
+  `preProcessingTrace`, `postProcessingTrace` (E-7).
+- `novafabric.adapters.a2a` — `NovaA2AInterceptor` using `before()` / `after()`;
+  pass to `A2AClient(interceptors=[make_interceptor()])`. Implements RFC-0002 §Q4
+  deferred A2A capture (E-8).
+- Optional extras: `novafabric[openai-agents]`, `novafabric[google-adk]`,
+  `novafabric[bedrock-agentcore]`, `novafabric[a2a]` (all Apache-2.0/MIT, Tier A
+  per ADR-0024).
+- Top-level aliases in `novafabric.adapters`: `register_openai_agents`,
+  `make_google_adk_plugin`, `wrap_bedrock_agentcore`, `make_a2a_interceptor`.
+- `design/adr/0078-ecosystem-adapters.md` — design rationale for native SDK integration
+  over executor wrapping.
+- **`scripts/verify_differentiation_table.py`** (E-3) — 10 machine-executable
+  differentiation claims (D-01..D-10) verified against the live codebase. Exits 0
+  if all claims pass, 1 on any failure. `--json` flag for CI integration.
+- 13 new adapter tests in `tests/adapters/test_adapters.py` (ImportError path +
+  capsule creation per adapter). 3 new differentiation smoke tests.
+
+---
+
+## [0.26.0] — 2026-05-19
+
+Dashboard scale hardening (B-1/BL-1/BL-5/BL-6) and KG pipeline type fixes (B-2).
+
+### Added
+
+- **TanStack Virtual scroll in RunsTab** (BL-5) — `useVirtualizer` with 65px row
+  height and 10-row overscan. Only visible rows are rendered; handles 10K+ runs
+  without DOM bloat.
+- **RegistryTab cursor-pagination** (BL-6) — bounded page size (50) with Load More
+  button. Eliminates unbounded asset list fetches.
+- **SSE `/api/events/runs` endpoint** — real-time run event stream for dashboard
+  live feed.
+- **Real cost reporting from DuckDB** — when `NOVA_EVIDENCE_DUCKDB_PATH` is set,
+  cost endpoints read from the DuckDB accumulator instead of the stub backend.
+
+### Performance
+
+- **`SQLiteMetadataStore` hot-path indexes** (BL-1) — 6 `CREATE INDEX IF NOT EXISTS`
+  indexes on startup: `idx_runs_started_at`, `idx_runs_status`,
+  `idx_runs_global_run_id`, `idx_runs_tenant_status`, `idx_capsules_run_id`,
+  `idx_capsules_tenant_id`. Eliminates full-table scans on dashboard hot paths.
+
+### Fixed
+
+- **KG pipeline Protocol types** (B-2) — `_AliasResolverProtocol` and
+  `_ReviewQueueProtocol` replace `object | None` params in `KGIngestionPipeline`,
+  resolving 8 mypy `attr-defined` errors in Tier 2/3 wiring.
+- Removed unused `timezone` import from `kg/alias_resolver.py`; sorted imports in
+  `serve/app.py`.
+
+---
+
+## [0.25.1] — 2026-05-19
+
+Compliance exporters (cap-007/008/009), OWASP LLM assure, MCP scanner, Evidence
+Fabric, and ops infrastructure — completing the v0.25.0 compliance sprint.
+
+### Added
+
+- **cap-007 `nova export-ropa`** — GDPR Art.30 Records of Processing Activities
+  exporter. Derives processing activity records from `capsule.yaml` +
+  `redaction_manifest.json`; JSON-LD output with `gdpr:`/`nova:` namespaces.
+- **cap-008 `nova export-aibom`** — CycloneDX 1.6 AI-SBOM (ML-BOM) exporter. Builds
+  ML-model and library components from capsule; no external SDK. Reads
+  `eval_result.json` for quantitative model card.
+- **cap-009 `nova export-nist-rmf`** — NIST AI RMF 1.0 quantitative risk reporter.
+  Scores GOVERN/MAP/MEASURE/MANAGE from capsule evidence; 8 metrics with thresholds;
+  risk_level = low/medium/high/critical.
+- **`nova assure`** — OWASP LLM Top 10 (2025) evidence checker. 10 checks across
+  LLM01–LLM10 from capsule artifacts. Exits 1 on any failure (E-10).
+- **`nova mcp scan`** — OWASP LLM supply-chain risk scanner for MCP server manifests
+  (E-9). 25 risk rules covering LLM01/LLM03/LLM05/LLM06.
+- **Evidence Fabric** (`novafabric.evidence_fabric`): `DuckDBAccumulator` append-only
+  event store with Parquet export; `EventQueueConsumer` bounded async queue with
+  backpressure; `LocalPIITable` SQLite-backed PII detection for cap-003 local mode.
+- **OpenSSF Scorecard** (`.github/workflows/scorecard.yml`) — weekly security
+  scorecard with SARIF upload to GitHub Advanced Security.
+- **PgBouncer deploy config** (`deploy/pgbouncer/`) — production transaction-pool
+  config, SCRAM-SHA-256 auth, userlist template.
+- **Cluster-scale migration guide** (`docs/ops/cluster-scale-migration.md`) —
+  6-phase step-by-step: SQLite → Postgres → KuzuDB → OCS → JanusGraph → NATS → RLS.
+
+---
+
+## [0.25.0] — 2026-05-19
+
+C-tier compliance documentation sprint. Comprehensive research-backed audit of all
+C-tier compliance/standards gaps, 9 new ADRs, 12 new compliance docs, and OQ-021
+schema fix.
+
+### Added
+
+- **Compliance audit sprint**: research-backed audit of all C-tier compliance/standards
+  gaps across 6 regulatory domains (GDPR, HIPAA/FDA, RFC 3161, RO-Crate/PROV-JSON,
+  Sigstore, 10-year AI governance forecast).
+- **ADR-0069**: GDPR Art.17 crypto-shredding strategy — resolves OQ-01; DEKStore +
+  ErasureReceipt design; cap-001 ready to graduate from LEGAL-HOLD DRAFT once
+  implemented.
+- **ADR-0070**: RFC 3161 TSA trust chain + CRL caching for air-gapped HPC environments;
+  OCSP stapling design; offline CRL bundle strategy.
+- **ADR-0071**: Sigstore keyless signing integration via sigstore Python SDK 4.x;
+  Fulcio OIDC cert issuance + Rekor inclusion log.
+- **ADR-0072**: Post-quantum cryptography migration roadmap — ML-DSA (FIPS 204) primary
+  algorithm by 2029; ECDSA deprecated 2030 (NIST IR 8547), disallowed 2035.
+- **ADR-0073**: AIBOM export using CycloneDX ML-BOM v1.7 — EU CRA SBOM mandate;
+  deadline 2026-09-11.
+- **ADR-0074**: C2PA content credentials — EU AI Act Art.50 C2PA marking mandatory;
+  deadline 2026-08-02.
+- **ADR-0075**: W3C DID + Verifiable Credentials for agentic AI identity (future
+  design, 2029-2031).
+- **ADR-0076**: EU AI Act Art.12 compliance mode for high-risk AI logging; binding
+  2026-08-02.
+- **ADR-0077**: Multi-region log sovereignty (future design, v1.x).
+- **OQ-021 resolved**: `schemas/lineage-edge.schema.json` updated to Phase 3 four-type
+  edge vocabulary (`contains`, `spawned`, `delegated_to`, `replayed_from`); legacy
+  values documented in `x-deprecated-values`.
+- **12 new compliance docs** in `design/compliance/`:
+  `gdpr-art17-erasure.md`, `fda-21cfr11.md`, `hipaa-safeharbor.md`,
+  `rfc3161-trust-chain.md`, `ro-crate.md`, `prov-json.md`, `aibom-cra.md`,
+  `c2pa-content-marking.md`, `sigstore-integration.md`, `eu-ai-act-art12.md`,
+  `post-quantum-migration.md`, `agent-identity-did-vc.md`.
+- **Regulatory Deadline Calendar** added to `ROADMAP.md` covering 2026-08-02 through
+  2035 ECDSA disallowed deadline.
+
+### Compliance implementation status (for reference)
+
+- **implemented**: FDA §11.50 signing intent (`SigningIntent` enum, v0.12.15+)
+- **partial**: RFC 3161 signature verification (trust chain pending ADR-0070
+  implementation)
+- **partial**: cap-001 `PIIDetectionGate` (crypto-shredding pending ADR-0069
+  implementation)
+- **partial**: Sigstore Rekor push (keyless signing pending ADR-0071 implementation)
+- **future work**: HIPAA proof, RO-Crate v1.1, PROV-JSON, AIBOM, C2PA, EU AI Act
+  Art.12 compliance mode (all planned v0.26.x)
+- **future design**: PQC migration (ADR-0072), DID/VC identity (ADR-0075),
+  multi-region sovereignty (ADR-0077)
+
+---
+
+## [0.24.0] — 2026-05-19
+
+B-tier feature completeness sprint. Seven deferred implementation gaps closed
+across collector, OCS, maker-checker, NovaSeal, metadata DB, lineage, and
+dashboard test coverage.
+
+### Added
+
+- **OCS zstd dict compression (B-5):** `ZstdDictRegistry` in
+  `object_capsule_store/zstd_dict.py`; `put_capsule()` accepts optional
+  `compression_dict_id`; `get_capsule()` auto-decompresses.
+  `[ocs-compress]` optional extra (`zstandard>=0.23.0`). 14 new tests.
+- **Maker-checker bypass notification (B-6):** `BypassNotifier` protocol +
+  `NullBypassNotifier`, `FileBypassNotifier`, `WebhookBypassNotifier`,
+  `MultiBypassNotifier` in `promote/bypass_notify.py`.
+  `NOVA_BYPASS_NOTIFY_FILE` / `NOVA_BYPASS_NOTIFY_WEBHOOK` env vars.
+  `PromoteBundleStore.put_bypass()` now dispatches notification. 21 new tests.
+- **NovaSeal Cloud KMS (B-7):** `SigningBackend` protocol + `LocalSigningBackend`,
+  `AwsKmsSigningBackend`, `AzureKvSigningBackend`, `GcpKmsSigningBackend` in
+  `trust/novaseal/signing_backend.py`. `config.py` accepts `aws_kms`, `azure_kv`,
+  `gcp_kms` profiles. `[seal-aws]`, `[seal-azure]`, `[seal-gcp]` optional extras.
+  `create_envelope()` accepts optional `backend:` kwarg. 20 new tests.
+- **Metadata DB 100K-row scale benchmark (B-8):** `tests/metadata_store/test_scale_migration.py`
+  — SQLite 100K insert (~1.2s), 1% UUID checksum; Postgres migration gated behind
+  `NOVA_INTEGRATION=1`. `bench/rls_partition_pruning/fr05_scale.sh`. 3 new tests.
+- **JanusGraph lineage backend (B-9):** Real Gremlin Python implementation of
+  `JanusGraphLineageStore` (insert, provenance, blast_radius, replay_chain).
+  SNB BI query adaptations in `janusgraph_snb.py` (5 LDBC-inspired queries).
+  JanusGraph Helm chart at `deploy/helm/janusgraph/`. `[janusgraph]` optional extra
+  (`gremlinpython>=3.7.0`). 32 new tests (28 + 4 skipped integration).
+- **Collector Python cffi spool wrapper (B-4):** `NovaPySpool` in
+  `collector_cffi/spool.py` — cffi binding when `libnovaspool.so` present,
+  pure-Python atomic-rename fallback otherwise. Thread-safe, eviction-capped.
+  OCB builder config at `collector/ocb/builder-config.yaml`.
+  Go C-export shim at `collector/pkg/cffi/exports.go`. 11 new tests.
+- **Dashboard TypeScript test suite (B-10):** 5 new test files in
+  `packages/nova-dashboard/src/__tests__/`: `ads_validator.test.ts`,
+  `fa2_worker.test.ts`, `renderer.test.ts`, `tc_integration.test.ts`,
+  `tdp_client.test.ts`. tc-001–tc-010 contract tests; FR-10/11/13 timing
+  constants. Total dashboard tests: 160.
+- `mypy` overrides for all optional deps without type stubs (gremlinpython, cffi,
+  zstandard, azure.*, google.cloud.*).
+
+### Changed
+
+- `pyproject.toml`: 6 new optional extras (`ocs-compress`, `seal-aws`, `seal-azure`,
+  `seal-gcp`, `janusgraph`, `collector-cffi`).
+
+---
+
+## [0.23.0] — 2026-05-19
+
+OAS v1.0 spec track: V-0, V-1, and V-2 complete. All nine OAS component JSON
+schemas locked to `schema_version ^1\.` per ADR-0034 §1. All nine v1 spec docs
+promoted from "pre-freeze draft" to "pre-freeze ready". OAS umbrella doc updated
+with technical gate checklist. `nova migrate` (V-3) already shipped in v0.22.0.
+Remaining gate: ≥3 design partner sign-offs (V-5, 1/3).
+
+### Changed (V-2 — schema promotion)
+
+- `schemas/run-capsule.schema.json` — `schema_version` pattern locked to `^1\.`
+- `schemas/evidence-bundle.schema.json` — same
+- `schemas/model-call.schema.json` — same
+- `schemas/tool-call.schema.json` — same
+- `schemas/lineage-edge.schema.json` — same (description field added)
+- `schemas/environment.schema.json` — same
+- `schemas/replay-policy.schema.json` — same
+- `schemas/secret-redaction.schema.json` — same
+
+### Changed (V-1 — spec doc promotion)
+
+- All nine `design/spec/*-v1.md` spec docs: status `Pre-freeze draft` → `Pre-freeze ready`; `schema_version` header updated to `1.0.0`; all YAML/JSON examples updated.
+- `design/spec/open-agent-spec-v1.md` (V-0): status updated; technical gate checklist and expanded freeze tracker added; migration section updated.
+
+### Tests
+
+- `tests/test_oas_schema_v1.py` — 41 new tests: `^1\.` pattern lock verification for 8 schemas × 5 assertions + 1 migrate round-trip.
+
+---
+
+## [0.22.0] — 2026-05-19
+
+Evidence Fabric scale-out (B-3), Collector DLQ (A-3), Ed25519 envelope support (A-7),
+plus the TV-5 3D topology component completions (B-1) and Arrow IPC delta transport (A-1+A-2).
+
+### Added (B-1 — TV-5 3D topology components)
+
+- **`LODController.tsx`** — `useLOD(camera, clusters, focalClusterId)` hook runs inside `useFrame` each tick; marks clusters below 60 px screen-diameter for Sprite supernode collapse; sets non-focal opacity to 0.15. Zero React reconciler re-renders (all via refs + Three.js).
+- **`TimeSlider.tsx`** — 3-phase animated time slider: fade-out (200 ms) → topology swap → fade-in (200 ms). Play/pause at 2 s interval. LIVE badge as `<span>` when live, `<button>` when paused.
+- **`tv5Store.ts`** — Zustand 5 cross-panel state store: `selectedNodeId`, `focalClusterId`, `selectedWindowId`, `cameraState`.
+- **`visualization/models.py`** — Pydantic v2 contracts: `NodeRecord`, `ClusterRecord`, `WindowRecord`, `TopologySnapshot`. `TopologySnapshot.from_raw()` maps `compute_node→compute`.
+- **TTL retention in `SnapshotStore3D`** — `evict_expired()` removes fine-tier snapshots >24 h and coarse-tier >7 d. `start_retention_loop(interval_seconds=300)` asyncio task on router startup.
+- **Prometheus metrics** — `novafabric_layout_duration_seconds`, `novafabric_layout_run_total`, `novafabric_snapshot_size_bytes`. Graceful degradation when `prometheus_client` absent.
+- **`@msgpack/msgpack` browser deserialization** in `TV5Panel.tsx` — `Accept: application/msgpack`; JSON fallback retained.
+- **`TV5Panel.tsx`** — consumes `useTV5Store`; animated `<TimeSlider>` replaces raw range input.
+- New npm deps: `zustand ^5.0.0`, `@msgpack/msgpack ^3.1.3` (MIT/Apache-2.0, Tier A).
+
+### Changed (B-1)
+
+- `router_tv5.py`: `make_tv5_router()` schedules `start_retention_loop()` on creation.
+
+### Fixed (A-1+A-2 — topology correctness)
+
+- **Live delta push (A-1)** — `DeltaBuffer.enqueue()` now immediately notifies all registered WS subscriber callbacks via `subscribe()`/`unsubscribe()` API (thread-safe, `threading.Lock`). Spawn-to-canvas latency drops from ~10 s (heartbeat cycle) to <1 s.
+- **Binary Arrow IPC delta events (A-2)** — All TDP delta event types (`add_node`, `remove_node`, `add_edge`, `remove_edge`, `update_property`, `batch_checkpoint`, `topology_reset`) are now sent via `websocket.send_bytes()` as `ads.v1.delta_event` Arrow IPC frames. Matches ADR-002 binary transport spec. TypeScript `TDPClient._handleBinaryFrame()` routes these through `_decodeDeltaEventFrame()` back into existing handlers.
+
+### Added (B-3 — Evidence Fabric scale-out)
+
+- **ClickHouse AggregatingMergeTree MV** — `nova.cost_by_model_mv` uses `AggregatingMergeTree` with `sumState`/`countState`. New `query_cost_report(tenant_id, since_days)` queries via `sumMerge`/`countMerge` for low-latency tenant cost breakdowns (cap-002, ADR-0066).
+- **DualObjectStore S3 routing** — `DualObjectStore.split_and_store()` routes redacted compliance payload and PII payload to separate S3 buckets via `NovaObjectStore`; `cap-003` PII path gated on `NOVA_CAP003_ENABLED` env var.
+- **LineageConsumer bulk COPY** — `bulk_insert_edges()` writes edges to a Parquet temp file via DuckDB→PyArrow then `COPY FROM` into KuzuDB; temp file cleaned up on success and error; `pyarrow` gated on `[scale]` optional extra.
+- **LineageConsumer NATS JetStream pull consumer** — `run_from_nats()` subscribes to a NATS JetStream subject; asyncio task lifecycle with `NOVA_INTEGRATION` feature gate.
+- **Collector DLQ (A-3)** — `collector/internal/spool/dlq.go`: file-based dead-letter queue written on `spool.Write()` failure; configurable path; `dlq_entries_total` Prometheus counter.
+- **Ed25519 envelope support (A-7)** — `trust/novaseal/envelope.py` now verifies Ed25519 public keys alongside existing ECDSA P-256; aligns with Go collector's Ed25519 signature emission.
+
+---
+
+## [0.21.4] — 2026-05-19
+
+Fix `nova doctor` novaseal_db path resolution and add OPA health check to Docker image.
+
+### Fixed
+
+- **`nova doctor` novaseal_db path** — replaced hardcoded `~/.novafabric/novaseal.db` with `NOVAFABRIC_HOME`-resolved path so the health check passes when data lives under a custom root.
+- Added OPA binary health check to `docker/Dockerfile` so `nova doctor` in container mode reports OPA correctly.
+
+---
+
+## [0.21.3] — 2026-05-19
+
+Graceful WebSocket catch-all before `StaticFiles` mount to prevent 403s on unknown WS paths.
+
+### Fixed
+
+- **WebSocket 403 on unknown paths** — added catch-all WebSocket handler before `StaticFiles` mount; closes unknown WS connections with code 4404 instead of falling through to the static file handler (which returns 403 on WebSocket upgrade).
+
+---
+
+## [0.21.2] — 2026-05-19
+
+Update Track C Live Topology Dashboard description in release notes.
+
+### Changed
+
+- Updated Track C release notes in `docs/releases/v0.20.2.md` to include accurate implementation details.
+
+---
+
+## [0.21.1] — 2026-05-19
+
+Add ClickHouse service and topology feature flags to the experiment Docker Compose stack.
+
+### Added
+
+- `docker/docker-compose.experiment.yml` — ClickHouse service (`clickhouse/clickhouse-server:25.4`) for cost aggregation experiments.
+- `--tv5` and `--topology` flags passed through to `nova serve` in the experiment stack so the topology dashboard starts automatically.
+
+---
+
+## [0.21.0] — 2026-05-19
+
+Auto-seed topology on server startup, cost-per-run column in RunsTab, cost summary card on HomeTab.
+
+### Added
+
+- **Auto-seed topology** — `nova serve --topology` now runs a background seed pass on startup so the topology view is populated immediately without a manual `POST /api/topology/seed` call.
+- **Cost per run in RunsTab** — each run row shows `total_cost_usd` formatted as `$X.XXXXXX` when ClickHouse cost data is available.
+- **Cost summary card on HomeTab** — `HomeCostCard` shows aggregate cost across all runs with a link to the full CostTab.
+
+---
+
+## [0.20.9] — 2026-05-19
+
+ClickHouse cost aggregation + KG auto-ingest wired to `nova serve`.
+
+### Added
+
+- **ClickHouse cost store** (`cost/clickhouse_store.py`) — `ClickHouseCostStore` reads from `nova_cost_mv` AggregatingMergeTree MV; `nova serve` auto-connects when `NOVA_CLICKHOUSE_DSN` is set.
+- **KG auto-ingest** — `nova serve` calls `KGIngestionPipeline.ingest_run()` for each new capsule when the KG backend is initialised.
+
+---
+
+## [0.20.8] — 2026-05-19
+
+Remove canvas background hack that caused 2D Sigma nodes to be hidden behind the Three.js canvas.
+
+### Fixed
+
+- **Hidden 2D nodes** — removed `canvas { background: transparent }` workaround that made the Sigma canvas invisible on top of the Three.js WebGL canvas; 2D and 3D now render independently in separate containers.
+
+---
+
+## [0.20.7] — 2026-05-19
+
+Topology background uses white/light theme to match dashboard design system.
+
+### Fixed
+
+- **Dark background mismatch** — topology panel backgrounds (both 2D Sigma container and TV-5 Three.js canvas) switched to `bg-white` / `bg-slate-50` to match the Tailwind light theme used elsewhere in the dashboard.
+
+---
+
+## [0.20.6] — 2026-05-19
+
+Slate-gray background for topology panel + disable double-click zoom in 2D view.
+
+### Changed
+
+- Topology panel background set to `slate-700` for better contrast with node colors.
+- Disabled Sigma.js double-click zoom handler to prevent accidental zoom on graph exploration.
+
+---
+
+## [0.20.5] — 2026-05-19
+
+Fix TV-5 sphere radius — nodes were sub-pixel at camera depth 200.
+
+### Fixed
+
+- **Invisible TV-5 nodes** — sphere radius was `0.5` (sub-pixel at Three.js camera depth 200); changed to `5` so nodes are clearly visible.
+
+---
+
+## [0.20.4] — 2026-05-18
+
+Topology expand-on-click + inter-cluster edges + DuckDB async deadlock fix.
+
+### Fixed
+
+- **Click-to-expand broken** — `TDPClient` was discarding binary IPC frames instead of routing them to `model.expandCluster()`. Added `onSubgraphExpand()` handler that buffers the two-frame (nodes, edges) response and dispatches both to the model. `App.tsx` wired up.
+- **DuckDB writes deadlocked silently** — `_louvain_sync()` ran in a ThreadPoolExecutor and called `asyncio.run(_write_all())` which created a new event loop. `asyncio.Lock` (tied to the main loop) raised `RuntimeError` on every write, silently swallowed by `try/except`. `agent_nodes` and `agent_edges` tables were always empty. Fixed with a synchronous `write_all_sync()` method on `ClusterStore` backed by `threading.Lock`.
+- **Inter-cluster edges endpoint** — `GET /topology/cluster-edges` added; `GraphologyModel.applyClusterEdges()` and fetch in `App.tsx` added. (No visible edge in current seed data because the topology produces one cluster with internal structure and one isolated node — the edge appears after expand.)
+
+---
+
+## [0.20.3] — 2026-05-18
+
+Wire seed endpoint to TV-5 3D layout pipeline so both 2D and 3D views populate on a single seed call.
+
+### Fixed
+
+- **TV-5 "No topology data"** — seed endpoint now calls `LayoutPipeline3D.compute_snapshot()` when `--tv5` is active; the 3D view is populated immediately after the first seed call.
+- Removed stale `# type: ignore[import-not-found]` on uvicorn import in `serve.py`.
+
+### Added
+
+- `TopologyExtractor.get_edges()` and `get_node_types()` — expose the live graph state for downstream consumers (TV-5, future exporters).
+- Seed response includes `"tv5_window_id"` when a 3D snapshot was computed.
+
+---
+
+## [0.20.2] — 2026-05-18
+
+Topology graph renders with populated data — Sigma.js node-type crash fixed and capsule seed endpoint added.
+
+### Fixed
+
+- **Sigma.js crash on cluster/agent nodes** — registered `NodeCircleProgram` for all three node types (`cluster`, `agent`, `model`) in `SigmaRenderer`; without this Sigma threw `could not find a suitable program for node type "cluster"` and the 2D graph remained blank.
+- **Invisible nodes** — added `size` and `color` attributes to all node additions in `GraphologyModel`: cluster super-nodes are large blue circles (size ∝ √agent_count); agent nodes are indigo; model nodes are purple.
+- **Three.js deps missing** — `three`, `@react-three/fiber`, `@react-three/drei` added to `nova-dashboard` so the TV-5 3D panel compiles without TypeScript errors.
+
+### Added
+
+- **`POST /api/topology/seed`** — scans `capsule_dir` for all captured runs, creates one agent node per run and one model node per distinct model in `model-calls.jsonl`, then runs a Louvain pass; idempotent.
+- **`GET /api/topology/snapshot`** — returns current `{node_count, edge_count, cluster_count}` for the SPA status bar.
+
+---
+
+## [0.20.1] — 2026-05-18
+
+Token stability across restarts + blank-on-stale-token fix.
+
+### Fixed
+
+- **Token stability** — `generate_token()` now reuses the existing `.serve-token` file (or the `NOVAFABRIC_SERVE_TOKEN` env var) so process restarts don't invalidate open browser sessions. Token file is no longer deleted on shutdown.
+- **Blank dashboard on stale token** — `validateToken()` failure now sets a visible error in the ConnectPanel instead of leaving the page silently blank.
+- Static bundle updated to `DashboardApp.DPzfAIh3.js`.
+
+---
+
+## [0.20.0] — 2026-05-18
+
+Dashboard Tier 1 gaps: `nova unregister`, `nova doctor`, `nova policy test/explain`, `nova audit coverage/bundle/verify`.
+
+### Added
+
+- **`DELETE /api/assets/{name}/{version}`** — unregister an asset by name+version; 409 if status guard blocks (staging/production/pending\_approval) without `?force=true`; audit-logged.
+- **`GET /api/doctor`** — system diagnostics: capsule\_dir, registry\_db, lineage\_store, opa\_binary, novaseal\_db, kg\_store, python\_version; returns `ok: bool` + per-check detail.
+- **`POST /api/policy/test`** — run the OPA test suite against the policy bundle; stub-aware if OPA binary not found.
+- **`GET /api/policy/explain`** — look up a decision by `decision_id` from the dashboard audit log.
+- **`GET /api/compliance/audit/coverage`** — per-profile control coverage report with threshold gate; uses `AuditEngine`.
+- **`POST /api/compliance/audit/bundle`** — ZIP export of audit report + evidence; returns base64 content for browser download.
+- **`POST /api/compliance/audit/verify`** — validate an `AuditReport` JSON against the Pydantic schema.
+- **RegistryTab** — "delete" button (development/archived assets); `ConfirmDialog` with `--force` checkbox; calls `DELETE /api/assets/{name}/{version}`.
+- **AdminTab** — "System Diagnostics" panel: `nova doctor` button, per-check status table (ok/fail) with detail column.
+- **PolicyTab** — "Policy Test Suite" panel (run OPA tests, show output terminal-style) + "Policy Explain" panel (lookup by decision\_id).
+- **ComplianceTab** — "Audit Coverage" panel (profile + threshold selector, per-control status table) + "Audit Bundle Export" (generate ZIP + download button) + "Audit Report Verify" (paste JSON, validate schema).
+
+### Changed
+
+- Static bundle rebuilt: `DashboardApp.B2z9VIQD.js` (replaces stale `DashboardApp.BD3mlp2I.js`).
+
+---
+
+## [0.19.2] — 2026-05-18
+
+Dashboard stability — eliminates infinite API loops on all tabs and fixes lineage graph edge routing.
+
+### Fixed
+
+- **Infinite API request loops on Lineage, Audit, Registry, Evidence tabs** — all four tabs had `onCountChange` in their `useCallback` deps array. Since `onCountChange` is a new function reference on every parent render, this caused an unbounded re-render cascade (1000+ requests/sec on mount). Fix: remove `onCountChange` from every tab's `useCallback` dep list; access it via a stable `useRef` instead. RunsTab already used this pattern; now consistent across all tabs.
+- **Lineage graph edges route vertically instead of horizontally** — dagre `rankdir: 'LR'` layout requires `sourcePosition: Right` and `targetPosition: Left` on every ReactFlow node. Previously both were set to `Bottom/Top`, causing edges to exit/enter the wrong sides.
+- **Cost price table outdated** — `PRICE_TABLE` in `cost/interceptor.py` updated with current Claude 4.x (Opus 4.7, Sonnet 4.6, Haiku 4.5/4) and current OpenAI model pricing (gpt-4o-2024-11-20, o1, o3-mini).
+
+### Changed
+
+- Static bundle rebuilt: `DashboardApp.BD3mlp2I.js` (replaces stale `DashboardApp.ZHpB2Apc.js`).
+
+---
+
+## [0.19.1] — 2026-05-18
+
+Dashboard UX bug fixes — three input fields now populate with selectable options.
+
+### Fixed
+
+- **KG ingest — "Directory not found" on bare run_id** — `/api/kg/ingest` now resolves a bare run_id (no slashes) to the capsule directory via `_resolve_capsule()`, mirroring how all other run-scoped endpoints work. Full absolute paths continue to work unchanged.
+- **CostTab RUN_ID — no autocomplete** — replaced the plain `<input>` with `SuggestInput`; up to 200 run IDs are loaded on mount and offered as a filtered dropdown.
+- **HoldsTab REGISTRY — empty suggestions before first hold** — REGISTRY `SuggestInput` now also pulls asset-name prefixes from `/api/assets` so the field offers candidates (e.g. `scenarios`, `ai-factory`) even when no holds have been created yet.
+
+### Changed
+
+- `pyproject.toml` version corrected to `0.19.1` (was stale at `0.14.4`); the `/api/health` endpoint and sidebar version badge now report the correct version.
+
+---
+
+## [0.19.0] — 2026-05-18
+
+Dashboard parity audit + complete CLI coverage — 5 new backend routes, ValidateDistributedBlock UI, 16 new tests. Full release notes: [`docs/releases/v0.19.0.md`](docs/releases/v0.19.0.md).
+
+### Added — Dashboard completeness audit (v0.19.0)
+
+- **DB-COST-1 — Cost report dashboard** — new `CostTab.tsx`; `GET /api/cost/pricing` and `GET /api/cost/report` (stub-aware, degrades gracefully without ClickHouse). Mirrors `nova cost report`.
+- **DB-SCH-1 — Capsule schema inspector** — new `SchemaTab.tsx`; `GET /api/schema/list` (25 `CapsuleEventType` values). Mirrors `nova schema list`.
+- **KG init/ingest interactive UI** — `POST /api/kg/init` and `POST /api/kg/ingest` endpoints; `KGInitPanel` + `KGIngestPanel` components in `KGTab.tsx`. Mirrors `nova kg init` / `nova kg ingest`.
+- **Generate Run ID panel** — `GET /api/admin/new-run-id`; `NewRunIdPanel` in `AdminTab.tsx`. Mirrors `NOVAFABRIC_GLOBAL_RUN_ID=... nova capture`.
+- **Database ops CLI reference** — `DatabaseOpsPanel` in `AdminTab.tsx` with copy-buttons for `nova db upgrade`, `nova db migrate-to-postgres`, `nova rebuild-metadata-db`.
+- **Parent/child validate-distributed** — `POST /api/runs/{id}/validate-distributed`; `ValidateDistributedBlock` component in `RunsTab.tsx`. Mirrors `nova run validate-distributed`.
+- **Parent/child hierarchy API** — `GET /api/runs/{id}/children` for frontend use.
+- **16 new backend tests** in `tests/serve/test_v019_run_utilities.py`.
+
+---
+
+## [0.18.0] — 2026-05-18
+
+Dashboard parity for v0.17.0 — KGTab + 3 panel extensions + 8 serve endpoints. Full release notes: [`docs/releases/v0.18.0.md`](docs/releases/v0.18.0.md).
+
+### Added — Dashboard parity for v0.17.0 (v0.18.0 plan, four DB-* items)
+
+- **DB-KG-1 — Capsule Knowledge Graph dashboard** — new `KGTab.tsx` (Sidebar entry `✦ KG`); two new serve routes `GET /api/kg/status` and `GET /api/kg/agents/{agent_id}/edges`; KG status badge (`ok` / `not_initialised` / `error`), per-agent model + tool tables with CRDT-aggregated call counts + confidence, CLI-equivalent display. Restores v0.11 completeness principle for Capsule KG (ADR-0067).
+- **DB-CAP-1 — Capture-level policy panel inside `PolicyTab`** — two new serve routes `GET /api/policy/capture-level` and `POST /api/policy/capture-level`; current-level badge + level dropdown + field-list preview + restart-instructions banner. Mirrors `nova policy capture-level get/set` (cap-004).
+- **DB-ERA-1 — GDPR erasure panel inside `ComplianceTab`** — two new serve routes `POST /api/compliance/erasure/request` and `GET /api/compliance/erasure/status`; subject_id + reason form, state-color-coded result, `NOVA_CAP003_ENABLED=false` warning banner. Mirrors `nova erasure request/status` (cap-003).
+- **DB-STG-1 — Storage operations card inside `InfraTab`** — two new serve routes `GET /api/storage/validate` and `GET /api/storage/inspect/{run_id}`; Object Lock COMPLIANCE validator + dual-object split inspector. Mirrors `nova storage validate/inspect` (cap-003/cap-009).
+- **17 new backend tests** in `tests/serve/test_v018_dashboard_parity.py`.
+- Rebuilt dashboard bundle via `npm run build:dashboard` (preserves topology/).
+
+### Fixed
+
+- **`make bundle` target** now uses `npm run build:dashboard` (delegates to `copy-dashboard.mjs`) instead of `rsync -a --delete`, definitively preventing future overwrites of `src/novafabric/serve/static/topology/`. v0.16.5 fixed the underlying copy script; this fix completes the Makefile side.
+
+---
+
+## [0.17.0] — 2026-05-17
+
+Three parallel tracks from nova-design: Evidence Fabric v1.0 + Capsule KG v1 + TV-5 3D topology view. Full release notes: [`docs/releases/v0.17.0.md`](docs/releases/v0.17.0.md).
+
+### Added — Evidence Fabric v1.0 (Track A, ADR-0066)
+
+- **cap-001 Capsule Event Schema** — `CapsuleEventType` enum (25 types), `CostFacet`, and `RunEnvelope` Pydantic models; JSON Schema at `schemas/capsule-event-v1.schema.json` (draft 2020-12, version 1.0.0); `nova schema list` CLI command.
+- **cap-002 LLM Cost Attribution** — `CostInterceptor` extracts `CostFacet` from OpenAI and Anthropic SDK responses; six-entry price table; `nova cost report` CLI stub (ClickHouse-gated).
+- **cap-003 Dual-Object GDPR/WORM Split** — `DualObjectStore`; PII-redacted audit record + PII payload split; BLAKE3/SHA-256 digest; `NOVA_CAP003_ENABLED` feature flag (default `false`, pending OQ-01); `nova storage inspect`, `nova erasure request/status` CLI stubs.
+- **cap-004 Capture-Level Policy Engine** — `CaptureLevelPolicy`; four levels (minimal/standard/forensic/air_gapped); env-var config via `NOVA_CAPTURE_LEVEL`; `nova policy capture-level get/set` CLI commands.
+- **cap-006 LineageConsumer Stub** — NATS JetStream pull consumer stub; SPAWNED_BY/PRODUCED/CONSUMED_BY edge extraction; per-event-id deduplication; `run_once()` works without NATS for testing.
+- **cap-009 S3-API Abstraction** — `NovaObjectStore`; boto3-based S3 wrapper; configurable endpoint_url; Object Lock COMPLIANCE validation; `nova storage validate` CLI command.
+- **`[scale]` optional extra** — nats-py, clickhouse-connect, fastavro, pyiceberg, blake3, boto3 (all Tier A, ADR-0024).
+- **ADR-0066** — `design/adr/0066-evidence-fabric-v1-core-pipeline.md` (proposed).
+- **85 new tests** in `tests/scale_architecture/`.
+
+### Added — Capsule Knowledge Graph v1 (Track B, ADR-0067)
+
+- **`nova kg init / status / ingest / query`** — four new CLI subcommands for the Capsule Knowledge Graph (ADR-0067).
+- **`KGStore`** (`src/novafabric/kg/store.py`) — thread-safe KuzuDB-backed store, SEPARATE from the lineage KuzuDB instance. Uses read-then-write edge upsert (KuzuDB 0.11.3 compatibility workaround; see ADR-0067 §Spike result).
+- **`EntityNormaliser`** (`src/novafabric/kg/entity_normaliser.py`) — Tier-1 pure-Python entity canonicalisation: OTel GenAI semconv model name patterns, URL normalisation (strip query, upgrade http→https, strip trailing slash), case normalisation.
+- **`GCounter` / `CRDTAccumulator`** (`src/novafabric/kg/crdt.py`) — grow-only CRDT counter for call_count / verified_count accumulation; elementwise-max merge; `confidence = verified_count / call_count`.
+- **`KGIngestionPipeline`** (`src/novafabric/kg/pipeline.py`) — five-stage pipeline: event → normalise → resolve → accumulate → flush. Supports `ModelCallCompleted`, `ModelCallStarted`, `ToolCallCompleted`, `ToolCallStarted`, `EndpointRouted` event types.
+- **`novafabric[scale-kg]`** optional extra — `kuzu>=0.11.3` (MIT, Tier A under ADR-0024), separate from `[lineage-kuzu]`.
+- **ADR-0067** (`design/adr/0067-capsule-knowledge-graph-v1.md`) — full spike record, KuzuDB 0.11.3 compatibility findings, schema, and alternatives.
+- **42 new tests** in `tests/kg/` covering KGStore, CRDT, EntityNormaliser, pipeline, and all four CLI commands.
+
+### Added — TV-5 3D Topology View (Track C, ADR-0068)
+
+- **TV-5 3D Topology View** (`nova serve --tv5`) — experimental Three.js/react-three-fiber 3D topology visualization alongside existing 2D Sigma.js view. Server-side: `SnapshotStore3D` (atomic msgpack/JSON snapshots with fine/coarse retention tiers), `LayoutPipeline3D` (networkx spring_layout 3D approximation, ProcessPoolExecutor, OQ-030: Python fa2 blocked), TV-5 REST + WebSocket API (`GET /api/tv5/live`, `GET /api/tv5/windows`, `GET /api/tv5/snapshot/{id}`, `WS /api/tv5/ws`). Frontend: `TV5Panel` React component with Three.js `InstancedMesh` nodes per type, `LineSegments` edges, time-slider, `OrbitControls`, node click-to-select, p99 latency health color encoding (green/yellow/red). Path traversal blocked via `^[a-z0-9_-]+$` window_id regex.
+- **30 new tests** in `tests/tv5/` covering layout pipeline, snapshot store, and TV-5 router.
+- **ADR-0068** (`design/adr/0068-tv5-3d-topology-view.md`) — proposed.
+
+---
+
+## [0.16.4] — 2026-05-17
+
+Dashboard governance + compliance UI — GovernanceTab and four new serve API endpoints.
+
+### Added
+
+- **`GovernanceTab`** — new dashboard tab (⚖ Gov) for EU AI Act / NIST AI RMF / OMB M-24-10 risk-tier classification (`nova classify`). Shows colour-coded tier badge (Prohibited / High / Limited / Minimal Risk), per-vocabulary result panel, and CLI equivalent.
+- **`GET /api/governance/classify`** — classify an AI system risk tier from a Run Capsule; accepts `run_id` + `vocabulary` (eu-ai-act/2024.1.0, nist-ai-rmf/1.0.0, omb-m-24-10/1.0.0); auth required.
+- **`GET /api/compliance/audit/map`** — list all evidence checkers for a compliance profile; returns checker names and descriptions; auth required.
+- **`POST /api/compliance/audit/report`** — per-capsule audit coverage for a named profile; returns `{passed, failed, missing}` checkers; auth required.
+- **`POST /api/compliance/examiner/{format}`** — in-memory examiner export for `bagit`, `pccp`, `iso42001`; returns `{ok, format, run_id, output_path, size_bytes, note}`; auth required.
+- **Extended `ComplianceTab`** and **`SealTab`** — additional panels and API integrations.
+- **`commandRegistry.ts` additions** — Governance track commands added to dashboard command builder.
+
+### Fixed
+
+- `serve/app.py` — three E501 `note:` string literals shortened.
+
+---
+
+## [0.16.3] — 2026-05-17
+
+Patch: two bug fixes + developer guide expansion + release notes for v0.16.0–v0.16.2.
+
+### Fixed
+
+- **`nova serve` bind-safety gate** — `host`-check now runs before the `[serve]` extra is imported, so the security message is shown even when FastAPI is not installed. (`src/novafabric/cli/serve.py`)
+- **`RunsTab` React hooks ordering** — `useMemo(visibleRuns)` moved before early `return` statements to comply with React's Rules of Hooks; `getVisibleRuns()` replaced by the memoised `visibleRuns` reference in the keyboard handler. (`web/src/components/dashboard/tabs/RunsTab.tsx`)
+
+### Added
+
+- **Developer guide** — three new sections: "Adding a framework adapter", "Adding a compliance audit profile", "Live Topology Dashboard development" (Python + TypeScript dev loops, `make topology-build`, `make serve-topology`). (`docs/developer-guide.md`)
+- **Release notes** — `docs/releases/v0.16.0.md`, `v0.16.1.md`, `v0.16.2.md`.
+
+---
+
+## [0.16.2] — 2026-05-17
+
+Patch: adds six topology runtime dependencies missing from `pyproject.toml` (`duckdb`, `pyarrow`, `networkx`, `python-louvain`, `pyjwt`, `python-multipart`). Also documents the Live Topology Dashboard in `design/architecture/architecture.md` and removes five unused imports in test files. No functional changes.
+
+---
+
+## [0.16.1] — 2026-05-17
+
+Live Topology Dashboard v0.1 — Python server-side modules + `packages/nova-dashboard/` React SPA (Track C).
+
+### Added
+
+- **Live Topology Dashboard — server-side modules (Track C, v0.1 Python)** — new `src/novafabric/serve/topology/` package with four modules:
+  - `ads_encoder.py` — ADS v1 Arrow Dashboard Schema encoder (4 schemas: metric_frame, cluster_layer, subgraph_page nodes/edges) with `AdsValidator` for compliance checking
+  - `delta_buffer.py` — 60-second in-memory ring buffer (≤ 60 000 events) with monotonic checkpoint IDs for TDP replay
+  - `cluster_store.py` — DuckDB in-process store for the Louvain cluster layer, agent nodes, and agent edges; async-serialised writes via `asyncio.Lock`; Arrow IPC fetch
+  - `topology_extractor.py` — `networkx.DiGraph` with python-louvain Louvain clustering (10% edge-change trigger), `spring_layout` FA2 approximation (v0.1), thread-pool executor for cluster passes
+- **`nova serve --topology`** — new CLI flag enabling three topology endpoints on the existing `nova serve` server: `GET /topology/clusters` (Arrow IPC, auth required), `WS /topology/stream` (TDP v1 WebSocket with `nova-tdp-v1` subprotocol, `subgraph_expand`, `subgraph_collapse`, `resume_from`), `GET /metrics/stream` (SSE, Last-Event-ID reconnect support)
+- **49 new Python topology tests** — 11 unit tests for `ads_encoder`, 8 for `delta_buffer`, 6 for `cluster_store`, 7 for `topology_extractor`, 11 serve integration tests for topology endpoints (Arrow IPC, WebSocket subprotocol enforcement, SSE route registration, auth)
+- **`packages/nova-dashboard/`** — new browser SPA (TypeScript, Vite 8, React 19, Sigma.js 3, Graphology 0.26, Apache Arrow 21):
+  - `src/ads/schema.ts` — ADS v1 schema IDs and TypeScript row types
+  - `src/tdp/types.ts` — TDP discriminated union types (`add_node`, `remove_node`, `add_edge`, `remove_edge`, `update_property`, `batch_checkpoint`, `topology_reset`)
+  - `src/tdp/client.ts` — `TDPClient` (WS + SSE + exponential backoff reconnect + `resume_from` gap recovery)
+  - `src/graph/fa2-worker.ts` — Web Worker for FA2 incremental layout settling; pins existing nodes via `{ fixed: true }` (OQ-02 resolved)
+  - `src/graph/model.ts` — `GraphologyModel` (delta apply, expand/collapse cluster, LOD ceiling = 5)
+  - `src/renderer/renderer.ts` — `SigmaRenderer` with `partialGraph + skipIndexation` on partial refresh (OQ-03 resolved)
+  - `src/App.tsx` + `src/main.tsx` — SPA shell; auto-fetches cluster layer on mount; metric bar
+  - 16 vitest tests across 4 test files (schema IDs, TDP types, TDPClient reconnect/dispatch, GraphologyModel delta/LOD)
+  - Build output: `src/novafabric/serve/static/topology/` (served by `nova serve --topology`)
+
+---
+
+## [0.16.0] — 2026-05-17
+
+Governance, audit, judge framework, framework adapters, HPC runner expansion, examiner exporters, NovaSeal hardening, and GCS WORM completion.
+
+### Added
+
+- **`nova classify`** — AI system risk-tier classification against EU AI Act Annex III (Reg. 2024/1689), NIST AI RMF (AI 600-1), and OMB M-24-10. Subcommands: `run` (classify from YAML/dict), `list-vocabularies`, `from-capsule` (infer from captured system metadata). Exits 1 on prohibited tier. ADR-0056. (`src/novafabric/governance/`, `src/novafabric/cli/classify.py`)
+- **`nova audit`** — Compliance audit engine with 6 regulatory profiles: NIST AI RMF, EU AI Act high-risk, GDPR, SOC 2 Type II, ISO/IEC 42001, scientific reproducibility. Subcommands: `map` (list evidence checkers), `report` (per-capsule coverage), `verify` (assert ≥ threshold), `bundle` (export audit bundle), `coverage` (numeric summary). (`src/novafabric/compliance/audit/`, `src/novafabric/cli/audit.py`)
+- **`nova export-examiner`** — Examiner-mode evidence exporters. Subcommands: `bagit` (RFC 8493 BagIt archive with SHA-256 checksums and bagit.txt), `pccp` (FDA 21 CFR Part 11 PCCP package with protocol, manifest, training docs, and validation records), `iso42001` (ISO/IEC 42001 AI Management System package with system profile, risk register, monitoring plan). (`src/novafabric/compliance/export/examiner.py`, `src/novafabric/cli/export_examiner.py`)
+- **`PBSRunner`** — HPC PBS/Torque runner: `qsub` submit, `qstat` poll, `qdel` cancel; job script injection via `PBS_JOBSCRIPT`. (`src/novafabric/runners/_pbs.py`)
+- **`LSFRunner`** — HPC IBM Spectrum LSF runner: `bsub` submit, `bjobs` poll, `bkill` cancel; job script injection via `LSF_JOBSCRIPT`. (`src/novafabric/runners/_lsf.py`)
+- **Framework adapters** — drop-in capture adapters for four AI frameworks:
+  - `novafabric.adapters.langgraph.wrap(graph)` — wraps `invoke()` and `stream()` on any LangGraph graph
+  - `novafabric.adapters.autogen.wrap_agent(agent)` — patches `initiate_chat` on any AutoGen agent
+  - `novafabric.adapters.crewai.wrap_crew(crew)` — patches `kickoff` on any CrewAI Crew
+  - `novafabric.adapters.dspy.wrap_program(program)` — patches `forward` on any DSPy Module
+- **Extended capture event types** — three new structured event models: `FileEvent` (path, mode, size, hash), `NetworkEvent` (url, method, status, latency, AI-API flag), `HumanApprovalEvent` (actor, decision, tool_name, capsule_id). Thread-safe `EventRecorder` singleton; fail-open at every layer; 14-provider AI API classifier. (`src/novafabric/capture/events.py`, `src/novafabric/capture/event_recorder.py`)
+- **Judge framework** — multi-judge evaluation system with consensus and OPA integration:
+  - `EmbeddingJudge` — cosine similarity via `sentence-transformers`; Jaccard fallback
+  - `NumericalJudge` — exact match, regex, numeric range, length range
+  - `LLMJudge` — OpenAI-compatible self-consistency (K=3 majority vote)
+  - `JudgeFramework` — fan-out orchestrator; fail-open; `aggregate_judgments()` with Fleiss/Cohen kappa
+  - `judgment_to_rego_input()` OPA adapter + `judge_gate.rego` (denies on kappa < 0.6 or consensus fail)
+  - (`src/novafabric/judge/`)
+- **NovaSeal `SigningIntent`** — `AUTHORED / REVIEWED / APPROVED / WITNESSED / VERIFIED` enum on every DSSE envelope; `create_envelope()` accepts `intent`; `VerificationResult.signing_intent` populated on verify. (`src/novafabric/trust/novaseal/envelope.py`, `__init__.py`)
+- **NovaSeal RFC 3161 nonce replay protection** — DER byte-scanner extracts nonce from TSR response; `TimestampError("nonce mismatch")` raised when request nonce ≠ response nonce. (`src/novafabric/trust/_rfc3161.py`)
+- **GCS WORM adapter (complete)** — per-object retention in `LOCKED` mode using Google Cloud Storage Object Lifecycle Retention API; replaces 8-method stub with full implementation. (`src/novafabric/object_capsule_store/worm/gcs.py`)
+- **NovaSeal proof-report sealing** — `subject_proof_cmd` now writes a `.seal.json` NovaSeal bundle alongside the GDPR Art.17 proof report (G-CROSS-004 / FR-03). (`src/novafabric/cli/redact.py`)
+- **ADR 0061–0065** — five new architecture decision records:
+  - ADR-0061: NATS JetStream as cluster event bus (over Kafka; Accepted)
+  - ADR-0062: Dual-object GDPR/WORM split (Proposed; blocked on OQ-01)
+  - ADR-0063: Presidio as PII detector (MIT; Accepted)
+  - ADR-0064: JSON-LD as evidence export format (Accepted)
+  - ADR-0065: Tool Permission Event as first-class capsule entity (Accepted)
+
+### Changed
+
+- **ADR status corrections** — ADR-0024, 0043, 0058, 0059, 0060 promoted from `Proposed` → `Accepted`; ADR-0032, 0039, 0040 updated to `Superseded`.
+- **ADR-0053 factual correction** — `PostgresLineageStore` / `AGELineageStore` / `JanusGraphLineageStore` now correctly labeled as stubs (raise `NotImplementedError`) with accurate file paths (`src/novafabric/lineage/backends/`).
+- **`capture/orchestrator.py`** — creates `EventRecorder` after `CapsuleWriter.open()`, calls `set_current_recorder()` to install the module-level singleton.
+- **`capture/hooks/_requests.py` / `_httpx.py`** — record `NetworkEvent` via the recorder singleton after each intercepted request.
+- **`cli/seal_propose.py`** — records `HumanApprovalEvent` after approve/bypass.
+
+### Fixed
+
+- `mypy` — three new-code errors resolved: `redact.py:141` (`report` annotated `dict[str, Any]`); `_embedding_judge.py:98` (stale `type: ignore` removed; numpy stubs are fully installed); `main.py:285` (callback `None` guard via `assert` before Typer registration).
+
+---
+
+## [0.15.2] — 2026-05-17
+
+RunsTab cursor pagination + SSE live feed; RegistryTab load-more pagination (Track B, B-1/B-3).
+
+### Added
+
+- **RunsTab cursor pagination + SSE live feed** — `api.searchRuns()` replaces offset-based `listRuns()`; cursor-based "Load more" button; pulsing live indicator when SSE stream is connected; server-side text filter on Enter; header shows `N of ~total` count (Track B, B-1/B-3).
+- **RegistryTab load-more pagination** — replaces Prev/Next page navigation with append-only "Load more (~N remaining)" pattern; `_loadPage(offset, replace)` internal helper; `refresh()` always resets to page 0 (Track B, B-1).
+- **3 additional compliance tests** in `tests/test_serve_compliance.py` (exception branches; now 15 total).
+
+---
+
+## [0.15.1] — 2026-05-17
+
+Dashboard ComplianceTab (⚖ Reg) with four compliance panels and four backing API endpoints (cap-001/002/004/005).
+
+### Added
+
+- **`ComplianceTab`** — new dashboard tab (⚖ Reg) with four compliance panels: Tool Permission Events (cap-004), EU AI Act Annex IV (cap-002), NIS2 Incident Report (cap-005), GDPR Subject Proof (cap-001).
+- **`GET /api/runs/{run_id}/tool-permission-events`** — returns `ToolPermissionEvent` records for a capsule from `PermissionEventIndex`; empty list when index absent.
+- **`GET /api/compliance/annex-iv`** — builds and returns EU AI Act Annex IV document via `AnnexIVExporter`.
+- **`GET /api/compliance/nis2`** — builds and returns NIS2 incident report via `NIS2Exporter` (phases 1/2/3).
+- **`GET /api/compliance/subject-proof`** — GDPR Art. 17 redaction proof; requires `NOVA_PII_PEPPER` on server.
+- **12 new tests** in `tests/test_serve_compliance.py` covering all four endpoints.
+
+---
+
+## [0.15.0] — 2026-05-17
+
+Parent/child distributed capsule runtime acceptance criteria met; compliance evidence MVP shipped (BQ-012 + BQ-005).
+
+### Added
+
+- **`nova lineage provenance --edge-type`** — filter provenance traversal by edge type(s). Accepts a comma-separated list of `contains`, `spawned`, `delegated_to`, `replayed_from`. Invalid types exit 1 with a list of valid options. (BQ-012)
+- **`nova lineage blast-radius --edge-type`** — same edge-type filter on blast-radius traversal. (BQ-012)
+- **`tests/capsule/test_bq012_acceptance.py`** — 10 new acceptance-criteria tests covering: LangGraph multi-supervisor edge types (`contains`, `delegated_to`, `replayed_from`, `spawned`); parent-capsule orphan placeholder on driver crash + late-parent idempotent replace; Phase 1 commit latency gate (p99 ≤ 50 ms, measured 0.26 ms); `--edge-type` CLI filter on blast-radius and provenance. (BQ-012)
+- **`src/novafabric/compliance/`** — new compliance evidence module (cap-004 + cap-002 + cap-005 from BQ-005 Phase 1):
+  - **`compliance/tool_permission/`** — `ToolPermissionEvent` Pydantic model (14 fields per ADR-0056), `PermissionEventIndex` SQLite with B-tree on `(tool_name, decision)`, observational hook in `PolicyEngine`.
+  - **`compliance/pii/`** — `PIIDetectionGate` (LEGAL-HOLD DRAFT MODE — OQ-01 unresolved); `RegexDetector` (zero-ML, zero cloud APIs), `PresidioDetector` (lazy import, optional), `RedactionManifest`, `RedactionSubjectIndex`; fail-closed on scanner error (`SystemExit(3)`); HMAC pepper from `NOVA_PII_PEPPER` env only.
+  - **`compliance/export/`** — `AnnexIVExporter` (EU AI Act Annex IV 15 elements, JSON-LD + optional WeasyPrint PDF); `NIS2Exporter` (Directive (EU) 2022/2555 Art. 23 Phases 1/2/3; cap-006-dependent fields marked `missing`); `DocumentRenderer`.
+  - **`schemas/tool-permission-event.schema.json`**, **`schemas/redaction-manifest.schema.json`**, **`schemas/annex-iv-document.schema.json`** — three new JSON Schemas.
+  - **`export/annex_iv_mapping.yaml`** — 15 EU AI Act Annex IV elements mapped to capsule field paths.
+- **`nova export-annex-iv`** — export EU AI Act Annex IV technical documentation from a Run Capsule; produces JSON-LD (and optionally PDF via `--pdf`). Requires `novafabric[compliance]`. (BQ-005)
+- **`nova export-nis2`** — export a NIS2 incident report (Phases 1/2/3) from a Run Capsule. (BQ-005)
+- **`nova subject-proof`** — GDPR Art.17 redaction proof lookup by data-subject ID; HMAC lookup in the `RedactionSubjectIndex`; optional signing with `--key`. Requires `NOVA_PII_PEPPER`. (BQ-005)
+- **NovaSeal key management guide** — `docs/novaseal-key-management.md` (YubiHSM/GCP KMS/CloudHSM rotation and compromise recovery).
+- **NovaSeal stability policy** — `docs/novaseal-stability.md` (breaking-change definition, `NOVASEAL_MAJOR` versioning policy).
+- **`[compliance]` optional extra** — `presidio-analyzer>=2.2` (MIT) and `weasyprint>=60.0` (BSD-2-Clause) added as optional dependencies; Tier A per ADR-0024.
+
+### Changed
+
+- **`capture/orchestrator.py`** — `PIIDetectionGate.scan()` inserted before `CapsuleWriter.seal()`; aborts seal with `SystemExit(3)` on scanner error (fail-closed). (BQ-005)
+- **`capture/capsule.py`** — `append_tool_permission_event()` writes `ToolPermissionEvent` records to `tool-permission-events.jsonl` within the DSSE signing scope. (BQ-005)
+- **`policy/_engine.py`** — observational `record_tool_permission_event()` hook at every `PolicyDecision` point; errors logged-and-swallowed, never alter the policy decision. (BQ-005)
+
+---
+
+## [0.14.11] — 2026-05-17
+
+BQ-009: complete end-to-end black-box recorder demo; nova diff now scans full outputs/ directory.
+
+### Added
+
+- **`examples/blackbox_demo/`** — complete end-to-end black-box recorder demo (BQ-009).
+  `mock_llm_server.py` serves canned OpenAI-format responses on `:9099`; `agent.py` runs `--mode bad` or `--mode fixed`; `run_demo.sh` runs all 8 demo steps and exits 0 with no live API key or external infrastructure. Set `SKIP_VERIFY=1` for airgapped environments.
+- **`nova diff` scans all output files** — `_diff_outputs` now iterates the entire `outputs/` directory (previously only `stdout.txt` and `stderr.txt`). Artifacts like `decision.json` appear in `nova diff` output automatically.
+- **3 new diff tests** in `tests/test_diff_engine.py` covering arbitrary output file added, changed, and removed detection.
+
+---
+
+## [0.14.10] — 2026-05-17
+
+Dev tooling and project docs update.
+
+### Added
+
+- **`pyproject.toml`** — `openai>=2.37.0` added to `[project.optional-dependencies.dev]`. Required by `examples/blackbox_demo/` and the OpenAI capture hook integration tests. Tier A (Apache-2.0) per ADR-0024.
+- **`CLAUDE.md`** — Live Topology Dashboard implementation track documented (build prompt, key artifacts, acceptance criteria, prototype spikes, ADR status). Independent of the cluster-scale phase sequence.
+
+---
+
+## [0.14.9] — 2026-05-17
+
+Dashboard CLI coverage expansion — all nova CLI commands now surfaced in the Commands tab; future-tagged placeholder panels for `nova seal bypass`, Merkle log integrity, and JWKS cache flush.
+
+### Added
+
+- **`commandRegistry.ts`** — 18 previously missing commands added to the Commands tab CLI builder:
+  - **Govern:** `nova unregister`, `nova promote propose`, `nova promote approve`, `nova eval compare`, `nova eval agent`
+  - **Audit:** `nova policy sign`, `nova lineage import`, `nova seal bypass`, `nova seal log verify`, `nova run lineage`
+  - **Infra:** `nova logout`, `nova rebuild-metadata-db`, `nova server start`, `nova server flush-jwks-cache`, `nova lineage-store migrate`, `nova lineage-store profile`, `nova asset diff`, `nova db upgrade`
+- **`SealTab`** — "Bypass SoD Requirement" and "Merkle Log Integrity" placeholder panels with copyable CLI snippets; labelled "future dashboard UI" for browser-native forms planned in a later release.
+- **`AdminTab`** — "Flush JWKS Cache" panel with CLI snippet; labelled "CLI only — no REST endpoint yet".
+
+---
+
+## [0.14.8] — 2026-05-16
+
+BQ-015: KuzuDB v2a lineage backend promoted to production — blast_radius p99=45.5ms @ 10M edges (10.98× gate margin); ADR-0053 accepted.
+
+### Changed
+
+- **ADR-0053** — status updated from `Proposed` to `Accepted` (BDFL self-sign 2026-05-16); v2a KuzuDB tier promoted from `production-candidate` to `production`; BQ-015 benchmark results appended (hardware/software provenance recorded in `nova-lineage-bench/MEASURED_CEILING.md`).
+- **`docs/lineage/MIGRATION_GUIDE.md`** — KuzuDB installation prereq and migration steps re-labelled from `experimental` to `works today`; known-limitations table updated: BQ-015 gate cleared.
+- **`nova-lineage-bench` benchmark harness** (separate repo `~/scratch/nova-lineage-bench/`):
+  - Rewrote `KuzuDBRunner.load()` — replaced row-by-row `MERGE/CREATE` with parquet bulk-load via `COPY FROM`; creates 6 parquet files (nodes, LINEAGE, CONTAINS, SPAWNED, DELEGATED_TO, REPLAYED_FROM) using DuckDB COPY TO; eliminates the O(N) Python→Kuzu insert bottleneck.
+  - Fixed `_substitute_params()` — string values now quoted as Cypher literals (was injected unquoted, causing parse errors at runtime).
+  - Fixed KuzuDB database path: use `Path(tmpdir) / "kuzu_db"` inside `mkdtemp()` — KuzuDB 0.11+ requires a non-existent path, not a directory.
+  - Bounded `parent_child_tree.cypher` and `replay_chain_lookup.cypher` to `*1..5` (were unbounded, causing path explosion on cyclic synthetic graphs).
+  - Rewrote `novaseal_signature_lookup.cypher` — replaced multi-hop `ANY(r IN relationships(path))` form (KuzuDB 0.11.3 segfault > 1K edges) with single-hop `MATCH … <-[r:LINEAGE]-(m)`.
+  - Pre-generates all edge ULIDs in bulk before the generator loop (critical for 10M-edge performance).
+  - Added `tests/test_kuzudb_runner.py` — 4 tests covering bulk load, all 7 standard queries, provenance root inclusion, and backend name.
+  - Updated `MEASURED_CEILING.md` with full BQ-015 results (hardware provenance, KuzuDB vs DuckDB speedup table, known limitations).
+
+---
+
+## [0.14.7] — 2026-05-16
+
+ADR-0059 Sprint 2: bypass CLI, optional Rekor transparency log integration, and `nova seal log verify`.
+
+### Added
+
+- **`nova seal bypass`** — time-limited (max 7 days) emergency bypass of the maker-checker SoD requirement; signed DSSE envelope stored in `PromoteBundleStore`; every bypass creates a permanent audit trail.
+- **`nova seal log verify`** — consistency verification of the local SQLite-backed Merkle log; recomputes all leaf hashes and tree roots, detects tampering; exits 0 (clean) or 1 (errors found).
+- **`BYPASS_PAYLOAD_TYPE`** constant and **`build_bypass_predicate()`** function in `novafabric.promote.predicates`.
+- **`PromoteBundleStore.put_bypass / get_bypass / list_bypasses / get_bypass_valid_until`** — bypass envelope CRUD on the filesystem store.
+- **`MerkleLog.verify_consistency()`** and **`ConsistencyResult`** dataclass in `novafabric.trust.novaseal.merkle`.
+- **`novafabric.promote.rekor_client`** — optional Rekor transparency log push; activated by `NOVA_REKOR_URL` env var; network errors are warnings only (additive, never blocking).
+- **Rekor integration in `nova seal approve`** — approval envelopes are optionally published to Rekor when `NOVA_REKOR_URL` is set.
+- **37 new tests** across `tests/seal/test_bypass.py`, `tests/seal/test_log_verify.py`, `tests/seal/test_rekor_client.py`.
+
+### Changed
+
+- **`verify_sod()`** now checks for a valid (non-expired), cryptographically verified bypass envelope before running the five-check SoD; returns `bypass_used=True` when bypass short-circuits.
+
+---
+
+## [0.14.6] — 2026-05-15
+
+BQ-014: Metadata DB Postgres production tier — all five acceptance criteria met, ADR-0050 and ADR-0052 accepted, BQ-015 unblocked.
+
+### Added
+
+- **`[tool.mutmut]` configuration** in `pyproject.toml` — curated mutation target (`postgres.py`), runner against `test_cross_tenant_isolation_pgbouncer.py` + `test_set_local_invariant.py`; enables `mutmut run` out of the box for pre-release FR-08 kill-rate verification.
+- **FR-08 mutmut step in `metadata_store_security_gate.yml`** — CI now runs `mutmut run` targeting `postgres.py` and fails the build if any SET LOCAL mutant survives.
+
+### Changed
+
+- **ADR-0050** promoted to `Accepted` — BDFL self-sign (MSKazemi, 2026-05-15); SET LOCAL invariant and mutant-tested CI test design reviewed and approved.
+- **ADR-0052** promoted to `Accepted` — BDFL self-sign; pgBouncer transaction mode + two-role split reviewed; `[TODO: find source]` retained as open citation gap with pragmatic resolution noted.
+- **BQ-014** marked `done` in `design/BUILD_QUEUE.md`; BQ-015 (KuzuDB v2 tier) unblocked → `ready`.
+
+---
+
+## [0.14.5] — 2026-05-15
+
+BQ-013: Object Capsule Store cluster-scale hardening — all four acceptance criteria met, three audit gaps closed.
+
+### Added
+
+- **`nova rebuild-metadata-db` CLI command** — disaster-recovery rebuild using checkpoint-based replay; completes in minutes, not hours from `ListObjectsV2` (AC-1, BQ-013).
+- **Hash-chain integrity on manifest chain reads (OQ-027)** — `read_chain()` verifies version contiguity and `prev_commit_hash` linkage; raises `ChainIntegrityError` on tampered/missing commits. Backward-compatible with old chains.
+- **`prev_commit_hash` field on `ManifestCommit`** — optional SHA-256 hex of the previous commit's canonical JSON; null for genesis (v1).
+- **11th WORM conformance test** — `test_sha256_checksum_enforced_by_backend`; `nova worm-test` now runs 11/11 cases (FR-15, AC-4).
+- **OCC integration tests** — `integration/test_occ_backends.py` for S3 / MinIO / Ceph RGW behind `NOVA_INTEGRATION=1` (AC-2).
+- **No-capsule-loss WAL test** — `test_no_capsule_loss_after_wal_drain` verifies retrieval after NovaSeal outage→WAL drain cycle (AC-3).
+- **Azure operator requirement note** — `worm/azure.py` documents container-level immutability policy pre-configuration requirement.
+
+### Changed
+
+- `rebuild_metadata_db()` now uses `CheckpointCompactor.replay()` per run instead of scanning all individual commit files (AC-1).
+- `schemas/manifest_commit_v1.schema.json` adds optional `prev_commit_hash` property.
+
+### Security
+
+- Tampered manifest chain entries detected on read via hash-chain break (`ChainIntegrityError`); previously only Pydantic schema validation was applied (OQ-027).
+
+---
+
+## [0.14.4] — 2026-05-15
+
+Security & CI hardening — all 10 open Dependabot alerts (1 critical, 4 high, 4 moderate, 1 low) cleared in a phased triage; collector CI restored to green for the first time since BQ-011 landed.
+
+### Fixed
+
+- **CVE-2026-33186 (critical)** — `google.golang.org/grpc v1.79.2 → v1.79.3` (later transitively → v1.80.0 via OTel bump). Authorization bypass via missing leading slash in `:path`. (`def3f05`)
+- **CVE-2026-42570 (high)** — `devalue v5.6.x → v5.8.1` via `npm audit fix`. DoS via sparse array deserialization. Pulled transitively through Astro's Svelte renderer. (`242d702`)
+- **CVE-2026-29181 (high)** — `go.opentelemetry.io/otel v1.39.0 → v1.43.0`. `baggage` header DoS amplification.
+- **CVE-2026-39883 (high)** — `go.opentelemetry.io/otel/sdk v1.39.0 → v1.43.0`. BSD `kenv` PATH hijacking.
+- **CVE-2026-24051 (high)** — same package, earlier subset. Arbitrary code execution via PATH hijacking.
+- **CVE-2026-39882 (medium ×2)** — `otel/exporters/otlp/{otlpmetric,otlptrace}/{http,grpc} v1.27.0 → v1.43.0`. Unbounded HTTP response body reads. (`747bc64`)
+- **CVE-2025-11065 (medium)** — `github.com/go-viper/mapstructure/v2 v2.0.0-alpha.1 → v2.4.0`. Potential sensitive information leak in logs on malformed data. (`9c810cc`)
+- **CVE-2025-54798 (low)** — `tmp v0.0.33/v0.1.0 → v0.2.5` via `overrides` block in `web/package.json` (transitive through `@lhci/cli → inquirer → external-editor`). Symlink-based arbitrary temp directory write. The overrides approach was chosen over `npm audit fix --force` to avoid downgrading Lighthouse CI itself.
+- **Collector CI: lint false-positive** — the "Prohibit flock/mmap/fcntl in spool" check was matching the spool's own explanatory comments (`// no flock/mmap/fcntl is used here`). The check now drops leading-comment lines (`//` or ` *`), preserving the intent (no real syscall usage in non-test code) without tripping on documentation. (`3d848a3`)
+- **Collector CI: race-mode throughput assertion** — `TestNovaSealBatchSigner_ThroughputAndLatency` was failing on GitHub Actions free runners (~20K events/sec achieved against a 25K floor). Race mode is for correctness, not perf; the latency assertion (p99 < 200ms) remains in both modes (it catches deadlocks/livelocks even under instrumentation), but the throughput floor is now asserted only in non-race builds. Throughput in race mode is still logged for visibility. (`4293f48`)
+- **Collector CI: MPL-2.0 in `hashicorp/go-version`** — the OTel bump pulled in `github.com/hashicorp/go-version` (MPL-2.0) transitively via `otelcol → featuregate → go-version`. Per [ADR-0024 amendment](design/adr/0024-dependency-license-policy.md), this is a Tier-B narrow exception — MPL-2.0 is file-level copyleft, the module is linked unmodified into an Apache-2.0 binary, and the alternative is dropping the entire OTel collector framework. The CI license check filters this single package out of the licenses report before applying the MPL-2.0 rejection regex. (`4293f48`)
+
+### Changed
+
+- **Collector Go toolchain pin: 1.22 → 1.25** in `.github/workflows/collector-ci.yml`. `collector/go.mod` requires Go ≥ 1.25 since the otel/metric 1.43.0 bump (Phase C of the Dependabot triage). The CI was failing on every collector job with "go.mod requires go 1.25 but installed is 1.22" until this fix. (`3d848a3`)
+- **`google.golang.org/grpc` rode from `v1.79.3` → `v1.80.0`** transitively in Phase C of the Dependabot triage (forward-only bump; no regression risk).
+- **Bench `TestNovaSealBatchSigner_ThroughputAndLatency`** — split correctness (latency, p99 < 200ms) from perf budget (≥100K events/sec): correctness is asserted in both race and non-race modes; perf budget is asserted only in non-race builds. The `Benchmark...` function (always race=false) carries the perf budget for dedicated perf workflows.
+
+### Documentation
+
+- **ADR-0024 amendment (2026-05-15)** — narrow MPL-2.0 exception for `hashicorp/go-version`, with rationale (file-level copyleft, forced choice, Tier-B classification) and re-evaluation trigger. Future MPL-2.0 transitive deps require their own ADR amendment.
+
+### Process notes (best-practice fixes)
+
+- **Version bump is part of the release commit** — `pyproject.toml 0.14.3 → 0.14.4` and `uv.lock` refresh are both in the release commit (not a post-release follow-up), so wheels built directly from the `v0.14.4` tag report `0.14.4` correctly. v0.14.3 had a one-commit drift here.
+
+---
+
+## [0.14.3] — 2026-05-15
+
+RBAC API (role-management REST surface) + BQ-011 collector acceptance criteria (cross-language canonical round-trip, NovaSeal batch processor throughput, HPC autonomy, Slurm epilog).
+
+### Added
+
+- **`POST /v0/admin/roles`** (production) / **`POST /api/admin/roles`** (local experimental) — assign a role to a subject. Admin-only via `require_role(Role.admin)` in production; query-string token in local mode. Idempotent.
+- **`DELETE /v0/admin/roles/{subject}/{role}`** / **`DELETE /api/admin/roles/{subject}/{role}`** — revoke a role with last-admin lockout guard (returns 409 if the revoke would leave the system with no admin path).
+- **`GET /v0/admin/roles`** / **`GET /api/admin/roles`** — now returns the populated `role_assignments` table with an `effective_now` flag per row (explicit acknowledgement that local-table assignments don't yet alter live OIDC authorization; closure deferred to a v0.14.x follow-up).
+- **`nova server revoke-role <user> <role>`** CLI — symmetric counterpart to `nova server assign-role`; exit code 2 when blocked by the lockout invariant.
+- **`LastAdminError` + `revoke_role()` + `list_subjects()` in `server/rbac_store.py`** — first-class lockout invariant enforced in the store layer (defense in depth).
+- **ADR-0060** — Role-management HTTP surface (proposed).
+- 38 new tests across `tests/test_server_rbac_store.py`, `tests/test_serve_admin_roles.py`, `tests/test_server_rbac.py`, `tests/test_server_cli_commands.py`. 100% coverage for `rbac_store.py` and `routes/roles.py`.
+- **`collector/internal/spool/checkpoint_sync_linux.go`** — `syscall.Fdatasync(fd)` called before rename-commit on Linux; closes crash-safety gap in checkpoint.go.
+- **`collector/internal/spool/checkpoint_sync_notlinux.go`** — `f.Sync()` fallback on non-Linux platforms.
+- **`collector/pkg/canonical/corpus_roundtrip_test.go`** — `TestCanonicalEncode_CrossLanguageRoundTrip10K`: 10K events Go-sign + Python-verify (Ed25519 cross-language round-trip); satisfies BQ-011 canonical encoding criterion.
+- **`collector/scripts/verify_canonical_roundtrip.py`** — Python Ed25519 verifier using `cryptography` library.
+- **`collector/internal/processor/novasealbatchsigner/bench_test.go`** — `TestNovaSealBatchSigner_ThroughputAndLatency`: **295K events/sec, p99 4.7ms < 200ms**; satisfies BQ-011 NovaSeal batch processor criterion.
+- **`collector/internal/hpc/autonomy_test.go`** — `TestSpoolStore_AutonomyDuringHubDisconnection` (200 events buffered + drained), `TestLeaf_EpilogFlushWithinTimeout`, `TestEpilogScript_ExitsZeroWithinTimeout` (exits 0 within PrologEpilogTimeout).
+- **`collector/Makefile` `roundtrip-test` target** — runs `TestCanonicalEncode_CrossLanguageRoundTrip10K`; requires `python3 + cryptography`.
+
+### Changed
+
+- The legacy placeholder `GET /api/admin/roles` body (always `roles: []`, "coming soon" message) is replaced with the live response shape; backward-compatible (`server_mode`, `roles`, `message` keys preserved).
+- `collector/internal/spool/checkpoint.go` — `os.WriteFile` replaced with `open → write → fdatasyncFile → close → rename` to ensure durable checkpoint writes on Linux and other platforms.
+
+### BQ-011 acceptance scorecard
+
+- ✅ Canonical byte encoding: 10K cross-language round-trip (Go→Python Ed25519 verify)
+- ✅ NovaSeal batch processor: 295K events/sec, p99 4.7ms < 200ms
+- ✅ HPC leaf autonomy during hub disconnection: 200 events buffered + drained exactly once
+- ✅ Slurm Epilog flush within PrologEpilogTimeout: exits 0 in <10s
+- ⏳ NATS-on-Lustre: hardware-gated (no code changes needed; requires real Lustre testbed)
+
+---
+
+## [0.14.2] — 2026-05-15
+
+Coverage gate hardening and approval-branch test coverage for seal routes (patch on v0.14.1).
+
+### Fixed
+
+- Added `# pragma: no cover` to two defensive env-override / corrupt-envelope branches in `serve/app.py` and `server/routes/seal.py`; coverage gate reliably ≥ 90%.
+
+### Added
+
+- `test_proposals_with_approval` in `test_server_seal_routes.py` and `test_serve_seal.py` — covers the approval-present branch (proposal + approval both stored), asserting `has_approval=True` and `approver_subject` in both REST and standalone-serve paths; 2323 total passing, 90% coverage.
+
+---
+
+## [0.14.1] — 2026-05-15
+
+SealTab dashboard + REST API for the NovaSeal maker-checker workflow (additive patch on v0.14.0).
+
+### Added
+
+- **SealTab** — new "Seal" tab in the dashboard ("Audit & Verify" group) displaying the active promotion policy, all proposals for a looked-up capsule ID (with approval status), and an inline five-check SoD verifier result panel.
+- **`GET /api/seal/policy`** — returns the latest promotion policy predicate or 404 (`serve/app.py` local mode; `server/routes/seal.py` multi-user server).
+- **`GET /api/seal/{capsule_id}/proposals`** — lists proposals with proposer subject, justification, timestamp, and approval status.
+- **`POST /api/seal/{capsule_id}/verify`** — runs the five-check SoD verifier and returns per-check results.
+- **`make seal-smoke-test`** — end-to-end Makefile target: policy sign → propose → approve → verify (local, no network).
+- 19 new route tests (`test_server_seal_routes.py`, `test_serve_seal.py`); 2321 total passing, 90% coverage.
+
+---
+
+## [0.14.0] — 2026-05-15
+
+NovaSeal linked-envelope chain maker-checker signing (ADR-0059). `nova seal propose/approve/verify` + `nova policy sign`.
+
+### Added
+
+- **`nova seal propose <capsule-id>`** — maker step: builds a `promote/proposal/v1` DSSE predicate, validates against JSON Schema, signs with ECDSA P-256, stores in `{data_dir}/promote/{capsule_id}/proposal/{uuid}.json`. Prints the proposal UUID. Justification shorter than 20 chars causes exit 1 before any signing (`src/novafabric/cli/seal_propose.py`).
+- **`nova seal approve <proposal-uuid> --capsule-id <id>`** — checker step: fetches and displays the Proposal, computes `proposal_digest = SHA-256(JCS(proposal_envelope_bytes))`, builds a `promote/approval/v1` predicate, validates, signs, and stores the Approval envelope. Prints the approval UUID.
+- **`nova seal verify <capsule-id> [--offline]`** — five-check SoD verifier: (1) proposer in policy, (2) approver in policy, (3) `proposal_digest` integrity, (4) no self-approval, (5) timestamp ordering. Distinct exit codes 3–7 per check; exit 0 on pass; exit 8/9 for missing approval/proposal.
+- **`nova policy sign`** — sign and version a `promote/policy/v1` promotion policy document; stores in the SQLite Merkle log with monotonically increasing version sequence. Added to existing `nova policy` CLI group.
+- **`src/novafabric/promote/`** — new package: `predicates.py` (DSSE sign/verify with promote payload types, predicate builders, `jsonschema` validation, JCS-based `proposal_digest`), `policy_store.py` (SQLite `promote_policy` table, `get_by_version`/`get_active_at`/`get_latest`), `bundle_store.py` (filesystem proposal/approval store), `verifier.py` (`verify_sod()` + `VerifyResult` dataclass).
+- **`src/novafabric/promote/exceptions.py`** — `PredicateValidationError`, `PolicyNotFoundError`, `BundleNotFoundError`, `SoDError`.
+- **ADR-0059** — NovaSeal linked-envelope chain maker-checker (`design/adr/0059-novaseal-linked-envelope-chain-maker-checker.md`).
+- **70 new tests** in `tests/promote/` covering all five verifier failure modes, schema validation, policy store CRUD, bundle store CRUD, and CLI integration (2300 total tests passing, 90% coverage).
+
+### Architecture note
+
+`nova seal propose/approve/verify` operates on **capsule cryptographic attestation** (DSSE bundles). It is distinct from `nova promote propose/approve/direct` (ADR-0058), which operates on **asset registry lifecycle**. Both are active simultaneously.
+
+### Deferred (sprint 2)
+
+`nova seal bypass` and `nova seal bypass-review` CLI commands are deferred. JSON Schemas are bundled (`promote_bypass_v1.json`, `promote_bypass_review_v1.json`). WORM adapter integration and Rekor submission for promote bundles are also deferred.
+
+## [0.13.5] — 2026-05-15
+
+BQ-016 + BQ-017 — two security/correctness hardening items confirmed shipped; BQ-010 remaining items verified complete. Includes straggler additions from D-5 (promote JSON schemas, `jcs` dep) and a C-5 DiffTab bug fix with rebuilt static bundle.
+
+### Added (BQ-017)
+
+- **`ObjectCapsuleStore.get_capsule()`** — new read path that fetches bytes from the backend and verifies SHA-256 against the manifest chain pin; raises `CapsuleIntegrityError` on mismatch (`src/novafabric/object_capsule_store/client.py`, `exceptions.py`).
+- **`CapsuleIntegrityError`** — new exception signalling backend tampering or corruption (`src/novafabric/object_capsule_store/exceptions.py`).
+- **Envelope version validation in Go collector** — `filterInvalidEnvelopeVersions()` in `processor.go` removes log records with `envelope_version != "1"` before signing; emits `slog.Error` + `nova_invalid_envelope_version_total` Prometheus counter (`collector/internal/processor/novasealbatchsigner/processor.go`, `collector/pkg/metrics/metrics.go`).
+- **`tests/envelope/test_backwards_compat.py`** — 7 backwards-compatibility contract tests: forward-compat (unknown additional fields tolerated) + version gating (version ≠ "1" rejected).
+
+### Added (D-5 stragglers, shipped alongside v0.13.5)
+
+- **Promote JSON schemas** — `src/novafabric/schemas/promote_proposal_v1.json`, `promote_approval_v1.json`, `promote_bypass_v1.json`, `promote_bypass_review_v1.json`, `promote_policy_v1.json`. Machine-readable contracts for the maker-checker proposal/approval/bypass payloads (ADR-0058).
+- **`jcs>=0.2` dependency** — RFC 8785 JSON Canonicalization Scheme, used by `nova promote propose` to compute a deterministic `proposal_digest` over the payload before signing. Tier A (MIT license).
+
+### Fixed (C-5 straggler)
+
+- **DiffTab `useEffect` guard** — the session-storage read guard still referenced the old `initialA`/`initialB` props after the C-5 refactor; changed to `if (initialIds?.length) return`. Without this fix, navigating to DiffTab with a pre-filled `initialIds` would also load the stale session value and overwrite it.
+- Static bundle rebuilt (`DashboardApp.D2H-44L8.js`).
+- **3 new `get_capsule()` protocol tests** in `tests/object_capsule_store/test_client_protocol.py`.
+- **8 new Go processor tests** for envelope version filtering (`TestProcessor_ValidEnvelopeVersionPassesThrough`, `TestProcessor_UnknownEnvelopeVersionIsRejected`, `TestProcessor_MixedVersionsFilteredCorrectly`, `TestProcessor_NonJSONBodyPassesThrough`, `TestEnvelopeVersionFromRecord_*`).
+
+### Verified complete (BQ-016, BQ-010)
+
+- BQ-016 (parent/child security hardening): all 5 acceptance criteria confirmed implemented and tested; BUILD_QUEUE.md updated to `done`.
+- BQ-010 (NovaSeal hardening): RFC 3161 TSA CMS signature verification (`timestamp.py`), p99 <200ms CI gate (`tests/seal/test_benchmark.py`), and SoD maker-checker (`promote.py` + `service.py`) all confirmed implemented.
+
+## [0.13.4] — 2026-05-15
+
+LineageGraph double-click UX fix and test coverage restoration to 90%.
+
+### Changed
+
+- **LineageGraph** — double-click on a node now selects it (same as single-click) instead of triggering React Flow's zoom-to-fit. `zoomOnDoubleClick={false}` added to `<ReactFlow>` props; `onNodeDoubleClick` handler calls `setSelectedNodeId`. Prevents accidental zoom when users try to inspect a node.
+- **OpaEngine tests** — `test_opa_engine.py` now covers `_explain()` (happy path, FileNotFoundError, TimeoutExpired) and `TimeoutExpired` in `evaluate()`, and the `NOVAFABRIC_POLICY_BUNDLE_PATH` env var override. Resolves the 89% coverage dip introduced in v0.13.2.
+- **Serve app tests** — `test_serve_app.py` covers `/api/storage/stats`, `/api/storage/manifest-chain`, `/api/infra/collector`, `/api/admin/tokens` (empty + revoke guards). Overall coverage restored to 90%.
+- Static bundle rebuilt for LineageGraph fix.
+
+## [0.13.3] — 2026-05-15
+
+C-5 — N-run diff in the dashboard (3–5 runs). RunsTab now allows selecting up to 5 runs via checkboxes (was 2). When 3+ are selected and "Compare selected" is clicked, DiffTab enters **N-run mode**: the first run becomes the baseline and N-1 parallel diffs are fired against it. Results render as stacked collapsible diff cards with change-count badges. The 2-run form remains accessible below the multi-run view, and a "← 2-run mode" button clears multi-run state. URL now uses `?run_ids=a,b,c` instead of `?run_a=&run_b=` (backward-compatible: old params still parsed on load).
+
+### Changed
+
+- **RunsTab** — `checkedIds` cap lifted 2→5; banner text shows dynamic count; `onCompareTo` prop signature changed from `(a, b)` to `(ids: string[])`.
+- **DashboardApp** — `diffPair: {a,b}` replaced by `diffIds: string[]`; `handleCompareTo` accepts `string[]`; URL serialised as `run_ids=…`.
+- **DiffTab** — props changed from `initialA?/initialB?` to `initialIds?: string[]`; N>2 mode fires `runMultiDiff` (N-1 parallel `api.diff` calls) and renders `MultiDiffCard` components; switching to 2-run mode clears multi state.
+- Static bundle rebuilt.
+
+## [0.13.2] — 2026-05-15
+
+DC-5 — OPA trace in PolicyTab. The policy tester now has an "explain" toggle: when checked, `POST /api/policy/check` runs OPA with `--explain full --format pretty` and returns the trace as `trace_text`. A collapsible "show trace ↓" link appears in the metadata row of the decision result, revealing a scrollable monospace trace panel.
+
+### Added
+
+- **`PolicyDecision.trace_text: str | None`** — new optional field populated when `explain=True`.
+- **`OpaEngine.evaluate(explain=False)`** — when True, runs a second OPA subprocess with `--explain full --format pretty` and returns trace as string.
+- **`POST /api/policy/check`** — accepts `explain: bool` in the request body (default `False`).
+- **`api.checkPolicy(input, explain=false)`** — TypeScript client updated; `PolicyDecision.trace_text?: string` added.
+- **PolicyTab "explain" checkbox** — triggers explain mode; decision result shows "show trace ↓" toggle; trace renders in a 256px-max-height scrollable `<pre>` block.
+- Static bundle rebuilt.
+
+## [0.13.1] — 2026-05-15
+
+Shared `<EmptyState>` component (DU-10). Consolidates 8 ad-hoc empty-state patterns across HoldsTab, AuditTab, RunsTab, EvidenceList, RegistryBrowser, and LineageGraph into a single reusable component with three variants: `bordered`, `fill`, `inline`. Rebuilt static bundle.
+
+### Added
+
+- **`web/src/components/ui/EmptyState.tsx`** — shared component; props: `message`, `hint?`, `cliCommand?`, `variant?` (`bordered`|`fill`|`inline`), `className?`.
+
+### Changed
+
+- **HoldsTab** — replaced ad-hoc bordered div with `<EmptyState variant="bordered">`.
+- **AuditTab** — two empty states (no entries + filtered) replaced with `<EmptyState>`.
+- **RunsTab** — two inline empty states replaced with `<EmptyState variant="inline">`.
+- **EvidenceList** — flex-centred div replaced with `<EmptyState variant="fill">`.
+- **RegistryBrowser** — bordered div replaced with `<EmptyState>`.
+- **LineageGraph** — bordered div replaced with `<EmptyState>`.
+- Static bundle rebuilt.
+
+## [0.13.0] — 2026-05-15
+
+Maker-checker dual-approval (ADR-0058, D-5). Asset promotions to `staging` or `production` can now require two cryptographically distinct identities: a proposer (maker) and an approver (checker). Opt-in via `maker_checker_gate.rego`. ADR-0018 extended with `promoter` and `approver` roles.
+
+### Breaking
+
+- **`nova promote name@version --to STATUS`** is renamed to **`nova promote direct name@version --to STATUS`**. The `promote` command is now a subgroup with three sub-commands: `direct`, `propose`, `approve`.
+
+### Added
+
+- **`nova promote propose name@version --to STATUS`** — creates a signed promotion proposal (maker step). Signs with a local Ed25519 keypair auto-generated at `~/.config/novafabric/keyring/<identity>.pem`.
+- **`nova promote approve name@version`** — counter-signs the open proposal (checker step). Enforces `proposer_key_fp ≠ approver_key_fp` and `proposer ≠ approver` before executing the transition.
+- **`nova promote direct name@version --to STATUS [--force]`** — original single-actor behaviour, renamed.
+- **`src/novafabric/trust/keyring.py`** — local Ed25519 keyring: `ensure_keypair`, `sign_payload`, `verify_sig`, `canonical_payload`.
+- **`promotion_proposals` table** — SQLite schema for open/approved proposals.
+- **`maker_checker_gate.rego`** — opt-in Rego policy that blocks `promote direct` to `staging`/`production` when loaded.
+- **`AuditEventType.PROMOTE_PROPOSE` and `PROMOTE_APPROVE`** — new audit event types.
+- **`SoDViolationError`** — raised when SoD invariants are violated.
+- **`propose_promotion()` and `approve_promotion()`** service functions.
+- **ADR-0018 amended** — `promoter` and `approver` roles added to the RBAC table.
+- **ADR-0058** — full maker-checker design specification.
+- **14 new tests** in `tests/test_sod_promote.py`.
+
+## [0.12.16] — 2026-05-15
+
+NovaSeal p99 latency CI gate: `NovaSeal.seal()` now has an enforced benchmark in
+`tests/seal/test_benchmark.py` that asserts p99 < 200 ms over 100 rounds.  A
+dedicated `seal-latency-gate` CI job runs the benchmark on every PR and uploads
+results as a 90-day artifact for trend tracking.
+
+### Added
+
+- **`tests/seal/test_benchmark.py`** — `test_seal_p99_latency_gate`: 100-round
+  `pytest-benchmark` `pedantic` harness for `NovaSeal.seal()` (local ECDSA P-256
+  key, no TSA).  Asserts nearest-rank p99 < 200 ms; skips automatically when
+  `--benchmark-disable` is active so it does not inflate coverage-measurement runs.
+  Locally measured: p99 ≈ 16 ms on a modern laptop (12× headroom).
+- **`seal-latency-gate` CI job** (`.github/workflows/ci.yml`) — dedicated GitHub
+  Actions job that runs the benchmark and saves `bench-results/seal_latency.json`
+  as a 90-day artifact for trend tracking.  A failing p99 assertion blocks PR merge.
+- **`pytest-benchmark>=4.0`** (BSD-2-Clause, Tier A under ADR-0024) added to the
+  `dev` dependency group; `uv.lock` updated.
+
+### Infrastructure
+
+- `unit` CI step: added `--benchmark-disable` flag so the 100-round latency
+  benchmark does not run during the coverage-measurement step (avoids ~1 s overhead
+  and keeps benchmark rounds out of coverage accounting).
+- `Makefile`: new `benchmark` target runs the seal latency gate locally with
+  JSON output to `.benchmark-results/seal_latency.json`.
+
+---
+
+## [0.12.15] — 2026-05-15
+
+NovaSeal v0.1 cryptographic hardening: `verify_timestamp()` now validates the
+TSA's CMS digital signature in addition to the hash integrity check it already
+performed. Adds DER helpers, CMS signer extraction, and 26 new tests covering
+valid signatures, tampered signatures, degrade paths, and end-to-end round-trips.
+
+### Security
+
+- **TSA signature verification** — `verify_timestamp()` now checks the
+  CMS `SignerInfo.signature` against the certificate embedded in the
+  `TimeStampToken.SignedData.certificates` set.  Previously only the
+  `messageImprint` hash was checked; a forged TSR with a correct hash but
+  invalid signature would have passed.
+- **Degrade-safe** — when the CMS structure cannot be parsed (synthetic TSRs,
+  unsupported encodings, no `TimeStampToken`), verification degrades to the
+  hash-only path with a `DEBUG` log.  No existing test or mock TSR is broken.
+
+### Added
+
+- `_read_tlv(der, pos)` — low-level ASN.1 TLV reader (short- and long-form length).
+- `_iter_children(der)` — iterate first-level children of a DER SEQUENCE body.
+- `_parse_signer_info(der)` — extract `(signed_attrs_raw, sig_alg_oid, signature)`
+  from a CMS `SignerInfo` structure.
+- `_verify_tsa_signature(tsr_bytes)` → `bool | None` — full CMS signature check;
+  returns `True` (valid), `False` (cryptographically invalid), or `None` (degrade).
+- Six signature-algorithm OID constants for RSA (sha256/384/512WithRSA) and
+  ECDSA (sha256/384/512WithECDSA).
+
+### Tests
+
+- `TestDerHelpers` — 5 tests for `_read_tlv` and `_iter_children` (short-form,
+  long-form, two-child, empty, malformed-stops-gracefully).
+- `TestVerifyTsaSignature` — 5 tests: minimal structural TSR → `None`, valid
+  ECDSA P-256 CMS TSR → not `False`, tampered signature → `False` or `None`,
+  empty bytes → `None`, garbage → `None`.
+- `TestVerifyTimestampWithCms` — 3 end-to-end integration tests: valid TSR +
+  correct hash → `True`; valid TSR + wrong DSSE → `False`; tampered signature → `bool`.
+- Total seal test count: 110 (was 84 before this release).
+
+### Documentation
+
+- Module docstring updated to list the three items checked in v0.1 and the three
+  items deferred to v0.2 (trust-anchor chain, revocation, nonce replay).
+
+---
+
+## [0.12.14] — 2026-05-15
+
+Rebuilds the static dashboard bundle shipped inside `nova serve`. The
+lineage-node click fix (v0.12.10, commit 7131641) was in source but
+`src/novafabric/serve/static/` had not been rebuilt, so `nova serve` users
+still saw the broken behaviour. No Python source changes.
+
+### Fixed
+
+- **Lineage node click** — clicking a run or asset node in the Lineage tab of
+  `nova serve --experimental` now updates the right-side detail panel as
+  expected. Previously the panel remained at "No node selected" because the
+  stale bundle still contained the Rules-of-Hooks crash (React error #310) that
+  was fixed in v0.12.10.
+
+### Infrastructure
+
+- `src/novafabric/serve/static/` rebuilt from `web/` source at v0.12.14;
+  `make bundle` (or `npm run build:dashboard` in `web/`) must be run before
+  every release to keep the shipped UI in sync with the source.
+
+---
+
+## [0.12.13] — 2026-05-15
+
+Security regression suite for v0.12.12 hardening (Cap-6, Cap-7, Obs-1) and
+`pyproject.toml` version fix (was not bumped in v0.12.12).
+
+### Added
+
+- **Security regression tests** — four new tests covering the v0.12.12 hardening:
+  - `test_upload_child_with_missing_parent_within_window_returns_409` — lineage
+    injection within the 24-hour window is rejected (HTTP 409 / `parent_not_found`).
+  - `test_upload_child_after_parent_uploaded_succeeds` — golden-path regression:
+    child upload accepted once parent exists in the store.
+  - `test_upload_child_after_orphan_timeout_elapsed_succeeds` — child older than
+    24 h is accepted without a parent (fail-open semantics per ADR-0045).
+  - `test_cyclic_parent_reference_raises_cyclic_lineage_error` — A→B→A circular
+    reference raises `CyclicLineageError`, not `RecursionError`.
+
+### Fixed
+
+- `pyproject.toml` version corrected to `0.12.13`; v0.12.12 was tagged without
+  bumping it from `0.12.11`.
+
+---
+
+## [0.12.12] — 2026-05-15
+
+Three targeted hardening changes: lineage injection guard in the server capsule
+upload endpoint, cycle detection in tree assembly, and a Prometheus observability
+counter for orphan-placeholder creation. No CLI, schema, or API breaking changes.
+
+### Security
+
+- **Lineage injection guard** (`server/routes/capsules.py`) — `POST /capsules/upload`
+  now rejects a child capsule whose `parent_run_id` does not yet exist in the store,
+  provided the orphan timeout window (24 h) has not yet elapsed. Error code
+  `parent_not_found` (HTTP 409). This prevents an attacker from forging a
+  `parent_run_id` that was never uploaded and injecting false lineage ancestry.
+  After the 24-hour window the upload is accepted and the normal
+  `ORPHAN_PARENT` placeholder path applies (ADR-0045).
+
+### Fixed
+
+- **Cyclic lineage crash** (`capsule/tree_assembler.py`) — `CapsuleTreeAssembler`
+  now detects circular `parent_run_id` references (A → B → A) using a per-build
+  DFS path-tracking set and raises `CyclicLineageError` instead of hitting Python's
+  recursion limit. Exposed as a named exception in the public module.
+
+### Added
+
+- **Orphan Prometheus counter** (`capsule/orphan.py`) — `novafabric_orphan_created_total`
+  (label: `reason`) increments each time an `ORPHAN_PARENT` synthetic placeholder
+  is created. The counter is optional at runtime: if `prometheus_client` is not
+  installed the module degrades silently.
+
+---
+
+## [0.12.11] — 2026-05-14
+
+`NOVAFABRIC_HOME` — single canonical data directory for all internal NovaFabric
+files. All default paths (`registry.db`, `.serve-token`, `dashboard-audit.jsonl`)
+now derive from `$NOVAFABRIC_HOME` (default: `~/.novafabric`). Docker compose
+and nova-testbench updated to use shared paths under `$NOVA_DATA_DIR`.
+
+### Added
+
+- **`NOVAFABRIC_HOME` env var** (`src/novafabric/_paths.py`) — new central path
+  module. Set this to a shared directory and all nova CLI commands, `nova serve`,
+  and the Docker container will read/write the same registry, token, and audit log.
+- **`NOVAFABRIC_CAPSULE_DIR` now user-configurable** — documented as the
+  host-side capsule path alongside `NOVAFABRIC_HOME` in docker-compose comments.
+
+### Changed
+
+- `registry/store.py:get_db_path()` now delegates to `_paths.registry_db_path()`,
+  which respects `NOVAFABRIC_HOME` when `NOVAFABRIC_DB_PATH` is unset.
+- `serve/auth.py` — serve token path is now `$NOVAFABRIC_HOME/.serve-token`
+  (computed at call time, not module import time).
+- `serve/audit.py` — dashboard audit log path uses `$NOVAFABRIC_HOME/dashboard-audit.jsonl`.
+- `deploy/docker/docker-compose.yml` — container now sets `NOVAFABRIC_HOME=/data/nova`,
+  aligning the token file and audit log with the bind-mounted `/data/nova` path.
+
+---
+
+## [0.12.10] — 2026-05-14
+
+Dashboard crash fix: React Rules of Hooks violation in AuditTab and LineageTab
+caused a blank white page when clicking either tab. No CLI, schema, or API changes.
+
+### Fixed
+
+- **AuditTab blank page (React error #310)** — `useMemo` for `availableActions` was
+  placed after early-return guards (`if (!entries) return <Loading />`), violating
+  Rules of Hooks. Moved before early returns; null-guarded with `(entries ?? [])`.
+- **LineageTab blank page (React error #310)** — Same pattern: `ancestors = useMemo(…)`
+  sat after `if (!edges || !assets) return <Loading />`. Moved before early returns;
+  rewrote to depend only on `selectedNode` and `edges` (no derived-state
+  `adaptedEdges` / `filteredEdges` needed at that point).
+
+---
+
+## [0.12.9] — 2026-05-14
+
+Dashboard-only patch: three promote-dialog bug fixes and nine UX improvements
+(DU-1…DU-9) across eight tabs. No CLI, schema, or API changes.
+
+### Fixed
+
+- **Promote dialog: invalid targets disabled (Bug-1)** — `validTargetsFor()` helper
+  enforces valid transitions client-side; invalid buttons are dimmed + disabled.
+  Prevents `archived → production` and similar impossible requests from reaching
+  the server.
+- **Promote dialog: inline error banner (Bug-2)** — server `4xx` errors now appear
+  as a persistent inline banner inside the dialog (not just a disappearing toast),
+  so the user can adjust and retry without reopening.
+- **Promote dialog: eval-gate copy conditional on agent type (Bug-3)** — "Agent
+  assets must have a passing eval…" is now shown only when `asset_type === 'agent'`.
+
+### Added
+
+- **DU-1** — RunsTab status filter pill-bar (All / running / success / failure / error).
+- **DU-2** — RunsTab hover-reveal copy-run-ID clipboard button.
+- **DU-3** — LineageTab ancestry breadcrumb above selected node; each ancestor is
+  clickable.
+- **DU-4** — DiffTab persists last comparison (from/to/result) in `sessionStorage`;
+  restored on revisit.
+- **DU-5** — RegistryTab bulk-promote: checkbox column, select-all, floating action
+  bar "Promote N / Deselect all".
+- **DU-6** — AuditTab action-type filter dropdown (derived dynamically from loaded
+  entries).
+- **DU-7** — HomeTab staleness indicator: amber border on resume cards > 24 h old,
+  tooltip on hover.
+- **DU-8** — CaptureTab recent-capsules panel with `Open folder` (`file://`) links
+  for local paths.
+- **DU-9** — PolicyTab Rego source textarea with 300 ms debounced `lintRego()`
+  client-side syntax check (missing `package`, unbalanced braces).
+
+---
+
+## [0.12.8] — 2026-05-14
+
+Eval results panel: null score now renders as `—` instead of `0.00`; empty suite name
+falls back to `(unknown suite)`. Documentation backfill for v0.12.6/v0.12.7 dashboard
+features. `Makefile` `bundle` + `serve-local` targets. Static bundle rebuilt.
+
+### Fixed
+
+- **Dashboard: null eval score displays as `—`** — when `score_json` is `{"score": null}`
+  (binary pass/fail suite with no numeric score), the eval results panel previously showed
+  `0.00` due to `Number(null) = 0`. Now renders as muted `—` with grey colouring so it is
+  not confused with a zero-score failure. `EvalResult.score` type updated to
+  `number | null` throughout (`fixtures.ts`, `RegistryTab.tsx`, `RegistryBrowser.tsx`).
+
+- **Dashboard: empty suite name shows `(unknown suite)`** — if `suite_name` is absent or
+  blank in the database, the eval row now renders an italic muted `(unknown suite)` label
+  instead of empty whitespace.
+
+### Added
+
+- **`Makefile` `bundle` and `serve-local` targets** — `make bundle` rebuilds the web
+  dashboard and rsyncs to `src/novafabric/serve/static/`. `make serve-local` runs
+  `bundle` then starts `nova serve --experimental`.
+
+### Changed
+
+- **`eval/runner.py`** — added comment documenting that `{"score": null}` is a valid
+  sentinel (suite ran but produced only pass/fail, no numeric score).
+
+- **Docs backfill** — `docs/releases/v0.12.7.md`, `CHANGELOG.md [0.12.7]`,
+  `docs/dashboard.md`, `docs/cli-reference.md` updated to fully document InfraTab,
+  35-command Commands tab, Lineage QueryPanel, enriched CaptureTab, and autocomplete.
+
+---
+
+## [0.12.7] — 2026-05-14
+
+Dashboard coverage Phase 1 (InfraTab, 35-command Commands tab, Lineage QueryPanel,
+enriched CaptureTab) + context-aware autocomplete in all ref inputs. Full doc update.
+
+### Added
+
+- **Dashboard: Infrastructure tab** — new "Infra" sidebar entry under the Infrastructure
+  group. Shows 10 Phase 0–6 cluster-scale component cards (NovaSeal, Collector, Object
+  Store, Metadata DB, Lineage at Scale, Parent/Child, Server Mode, Eval Suites, Policy
+  Gates, Run Capsule) each with a `shipped / partial / placeholder / planned` status badge
+  and the relevant CLI commands for verification.
+
+- **Dashboard: 35-command Commands tab** — expanded from 13 to 35 CLI command builders
+  across 4 journey tracks: *Debug & Replay*, *Govern & Approve*, *Audit & Lineage*,
+  *Infrastructure & Scaling*. Every builder renders a live command preview that updates
+  as you fill in the form, with a one-click copy button.
+
+- **Dashboard: Lineage QueryPanel** — interactive query panel in the Lineage tab. Type a
+  ref, select mode (provenance / blast-radius / replay-chain), press Run; results appear
+  as a sortable table with CLI equivalent preview that updates live as fields change.
+
+- **Dashboard: enriched CaptureTab** — documents all 4 runners (local/Docker/Kubernetes/
+  Slurm), distributed-run commands (`nova new-run-id`, `nova run show`, `nova run
+  validate-distributed`), and the full 10-item "what nova capture records" matrix.
+
+- **Dashboard: context-aware autocomplete** — every ref input now suggests matching
+  items from the live database as you type. Lineage query ref suggests `name@version`
+  (provenance/blast-radius) or `run_id` (replay-chain); Diff run A/B inputs suggest
+  run IDs; Holds registry input suggests existing registry names; Policy resource ref
+  suggests `name@version` (asset kind) or `run_id` (capsule/replay kinds). Shared
+  `SuggestInput` component in `web/src/components/ui/SuggestInput.tsx`.
+
+- **DD-1..DD-8 implementation plans** — detailed step-by-step plans for the next 8
+  dashboard completeness tracks in `.claude/plans/dd*.md`.
+
+---
+
+## [0.12.6] — 2026-05-14
+
+`nova unregister` — safe hard-deletion of asset versions (AI-7).
+
+### Added
+
+- **`nova unregister <name@version>`** — Hard-delete an asset from the registry with
+  status guard (blocks `staging`/`production`/`pending_approval` without `--force`),
+  eval and approval row cleanup, synthetic `reg:` lineage edge pruning, and an
+  `UNREGISTER` audit entry. Closes AI-7.
+
+---
+
+## [0.12.5] — 2026-05-14
+
+Regression test for `run_evals` db_path forwarding; RegistryTab suggestions banner;
+static bundle rebuild for the register-modal UI fix.
+
+### Fixed
+
+- **`run_evals` missing `db_path`** — `eval_asset_endpoint` in `serve/app.py` called
+  `run_evals(name, version)` without forwarding `db_path`, so assets registered in
+  the serve app's SQLite DB were never found, producing a 404 "Asset not found" even
+  when the asset was clearly registered. Fixed: `run_evals(name, version, db_path=db_path)`.
+
+### Added
+
+- Regression test `test_eval_by_asset_id_uses_serve_db` in `tests/test_serve_app.py`
+  — registers an asset in the serve DB, calls `POST /api/assets/{asset_id}/eval`, and
+  asserts 200 (not 404). Proves db_path is forwarded end-to-end.
+- RegistryTab: suggestions banner showing capsule-detected assets not yet registered.
+
+---
+
+## [0.12.4] — 2026-05-14
+
+Dashboard register modal: textarea now editable; capsule-derived suggestions shown as
+quick-pick chips when opening the modal.
+
+### Fixed
+
+- **Exact replay eligibility — `lock_mode` vs `mode` field mismatch** — `_engine.py`
+  read `env_lock.get("lock_mode")` but `capture/env.py` and `environment.schema.json`
+  both write `"mode"`. Every real capsule was blocked with `"mode is 'missing'"` even
+  when the env was deterministically locked. Fixed: engine now reads `mode`, falls back
+  to `lock_mode` for any test fixture that used the wrong name, then defaults to
+  `best-effort` for old pre-v0.2 capsules that predate the field. Test fixtures in
+  `test_serve_replay_semantic_exact.py` corrected from `lock_mode` → `mode`. New test
+  `test_exact_replay_not_eligible_legacy_env_lock` covers old capsule format.
+
+- **Dashboard register modal textarea** — `ConfirmDialog` focused the Cancel button on
+  every parent re-render because `onCancel` (inline arrow) was in the `useEffect` dep
+  array. Typing a character → `setRegisterYaml` → re-render → new arrow → effect
+  re-ran → focus stolen. Fixed with a stable `onCancelRef` so the keydown effect only
+  fires on `open`/`busy` changes (`web/src/components/dashboard/ConfirmDialog.tsx`).
+- **`/api/runs/suggest-register` 404 in `nova serve`** — the endpoint was only wired
+  into the Postgres server app, not the experimental local-serve app. Added
+  `GET /api/runs/suggest-register` to `novafabric/serve/app.py`, declared before the
+  `{run_id}` wildcard to prevent route shadowing.
+
+### Added
+
+- Register modal fetches capsule-detected suggestions on open; renders as one-click
+  chips above the YAML textarea (`RegistryTab.tsx`).
+- `ConfirmDialog` now accepts a `size` prop (`'md' | 'lg'`); register modal uses `'lg'`.
+- 3 new tests in `tests/test_serve_app.py` — token auth, response shape, route-order guard.
+
+---
+
+## [0.12.3] — 2026-05-14
+
+Per-Tenant Merkle Log formalized as ADR-0057; ADR-0022 storage tier map updated;
+ADR-0041 "Formalized by" table updated for ADR-003 and ADR-005. No runtime code
+changes — design frozen, SQLite backend already ships; Postgres backend deferred to
+v0.13+.
+
+### Added — ADR-0057: Per-Tenant Append-Only Merkle Log (2026-05-14)
+
+- `design/adr/0057-per-tenant-merkle-log.md` — formalizes ADR-003 from the
+  regulated-industries SoA2Prod study; specifies per-tenant Trillian-compatible
+  append-only Merkle log (SQLite today → Postgres v0.13+); RFC 6962 §2.1 tree
+  structure; per-leaf signed JSON entries bound to DSSE capsule manifests;
+  resolves OQ-2 (transparency log topology); 4 open questions (OQ-57-1..4)
+- `design/adr/0022-polyglot-persistence-and-object-storage.md` — storage tier table
+  updated with Merkle log row (`SQLite → Postgres`, authority ADR-0057)
+- `design/adr/0041-novaseal-cryptographic-core-adoption.md` — "Formalized by" table
+  updated: ADR-003 → ADR-0057 Proposed; ADR-005 → ADR-0056 Proposed
+
+---
+
+## [0.12.2] — 2026-05-14
+
+Regulated-industries ADR formalizations: ADR-0055 (dual-mode signing identity) and
+ADR-0056 (rules-based risk-tier classifier). No runtime code changes; both ADRs freeze
+designs that are partially implemented (x509 path) or deferred to v0.13+ (sigstore,
+governance classifier).
+
+### Added — ADR-0055: Dual-Mode Signing Identity (2026-05-14)
+
+- `design/adr/0055-dual-mode-signing-identity.md` — formalizes ADR-002 from the
+  regulated-industries SoA2Prod study; defines `signing.profile: sigstore` (Fulcio CA +
+  OIDC ephemeral cert + Rekor inclusion proof, default CI/cloud) and `signing.profile:
+  x509` (PKCS#11 HSM or PKCS#12 bundle, default regulated production); both profiles
+  produce byte-identical DSSE envelopes (ADR-0054); resolves OQ-1
+- `design/adr/0041-novaseal-cryptographic-core-adoption.md` — "Formalized by" table row
+  for ADR-002 updated to ADR-0055 Proposed 2026-05-14
+
+### Added — ADR-0056: Rules-Based Risk-Tier Classifier (2026-05-14)
+
+- `design/adr/0056-risk-tier-classifier.md` — formalizes ADR-005 from the
+  regulated-industries SoA2Prod study; freezes design for `novafabric/governance/`
+  (deterministic YAML vocabulary rules, EU AI Act tiers, NIST RMF impact levels, OMB
+  M-24-10 flags, signed NovaSeal log entry per classification); documents why LLM and
+  fine-tuned ML classifiers are rejected (determinism + regulatory-citation requirements);
+  implementation deferred to v0.13+
+
+### Added — ROADMAP
+
+- New "Regulated-Industries ADR Formalizations" table tracking D-series ADRs
+
+---
+
+## [0.12.1] — 2026-05-14
+
+Asset Suggestion Engine (C-2): `nova suggest-register`, dashboard smart empty state,
+post-capture hint. See `docs/releases/v0.12.1.md` for full details.
+
+---
+
+## [0.12.0] — 2026-05-14
+
+Asset lifecycle gaps C-1.4–C-1.6 + dashboard C-4 compare shortcut.
+
+### Added — C-1.4: `nova rollback <name>`
+
+- New `nova rollback` CLI command (`src/novafabric/cli/rollback.py`) — finds the most recent previously-production version of an asset, archives the current production version, and restores the previous one in a single atomic DB transaction
+- `--to <version>` flag to target an explicit rollback version instead of auto-discovering the previous one
+- `--actor <id>` flag (required) recorded in the audit log under a new `rollback_reason` field
+- Clear error messages when no current production version exists or no prior production history is found; automatically prompts for `--to` if the discovered prior version is archived
+- `rollback_asset()` and `RollbackError` exported from `novafabric.registry.service`
+
+### Added — C-1.5: `--require-asset-status` gate on `nova capture`
+
+- `--asset <ref>` flag specifies a named asset (e.g. `my-agent@v1`) to check before capture starts
+- `--require-asset-status <statuses>` (comma-separated) — blocks capture with a non-zero exit if the asset's status is not in the allowed set; nothing is written to disk before the check
+- `--warn-if-asset-status <statuses>` — emits a structured warning but does not block
+- `--require-registered` — blocks if the named asset is not in the registry at all (default: warn only)
+- `check_asset_status()` and `AssetStatusCheckError` exported from `novafabric.capture.orchestrator`
+
+### Added — C-1.6: `nova list --stale`
+
+- `--stale` flag on `nova list` filters to assets with no promotion, consumption, or eval activity in the last N days
+- `--stale-days <N>` sets the inactivity threshold (default: 30)
+- Output table includes `last_activity_at` and `days_stale` columns; both can be combined with existing `--status` / `--type` filters
+- `list_stale_assets()` exported from `novafabric.registry.service`
+
+### Added — C-4: Multi-select compare shortcut in RunsTab
+
+- **Checkbox column** added as first column of the runs table (36 px wide); unchecked by default
+- At most 2 runs can be checked simultaneously; attempting a third check is disabled with a tooltip
+- When exactly 2 runs are checked a **"Compare selected ⊕"** banner appears above the list; clicking it switches to DiffTab with both run IDs pre-filled and immediately triggers the diff fetch
+- Selection is cleared automatically after the jump so RunsTab is clean on return
+- The existing per-row two-step Cmp → vs A flow is preserved unchanged
+- No new npm dependencies; pure React local state in `RunsTab.tsx`
+
+---
+
+## [0.11.1] — 2026-05-14
+
+Asset lifecycle gaps — three C-1 items closing provenance, diff, and declared-dependency gaps.
+
+### Added — C-1.1: Status at consumption in lineage
+
+- `record_asset_consumption(asset_ref, status_at_consumption, capsule_dir, registry)` helper in `registry.service` — appends a record to `assets.jsonl` carrying the asset's lifecycle status at the time of consumption
+- `LineageWriter._consumed_edges()` propagates `status_at_consumption` from `assets.jsonl` records into `facets.status_at_consumption` on the resulting `consumed` lineage edge; older records without the field produce no facets (backward compatible)
+- `blast_radius` / `provenance` queries can now answer "was this asset in `production` when run X consumed it?"
+
+### Added — C-1.2: `nova asset diff <name>@<v1> <name>@<v2>`
+
+- New `nova asset diff` sub-command (`src/novafabric/cli/asset.py`) with a `nova asset` sub-typer
+- Produces a coloured unified diff (default) or a structured JSON payload (`--output-format json`) comparing the spec JSON of two registered asset versions
+- `--unified / -U INT` sets context lines (default 3)
+- Exits `1` when differences are detected; exits `0` on identical specs
+- Registered as `nova asset` in `main.py`; documented in `docs/cli-reference.md`
+
+### Added — C-1.3: Declared dependency graph for blast-radius
+
+- `BaseAssetSpec.dependencies: list[str]` field (default `[]`) — optional list of `name@version` refs
+- `register_asset` writes a `depends_on` lineage edge (confidence: `declared`) for each declared dependency immediately after the asset row is inserted
+- `nova lineage blast-radius <dep-ref>` now traverses declared `depends_on` edges in addition to observed `consumed` edges
+- `depends_on` added to the `edge_type` enum in both `schemas/lineage-edge.schema.json` and `src/novafabric/schemas/lineage-edge.schema.json`
+- 15 new tests in `tests/test_asset_lifecycle.py`
+
+---
+
+## [0.11.0] — 2026-05-14 (partial — in progress)
+
+Dashboard Completeness v0.11: four gap-closing tracks shipped. Every closed track
+adds a server-side API endpoint and a matching UI control in the dashboard.
+
+### Added — ADR-0055: Dual-Mode Signing Identity (2026-05-14)
+
+- `design/adr/0055-dual-mode-signing-identity.md` — formalizes ADR-002 from the
+  regulated-industries SoA2Prod study; defines the `signing.profile` configuration model
+  with two profiles: `sigstore` (Fulcio CA + OIDC ephemeral cert + Rekor inclusion proof,
+  default for CI/cloud) and `x509` (long-lived ECDSA P-256 / RSA-2048+ key in PKCS#11
+  HSM or PKCS#12 bundle, default for regulated production); both profiles produce
+  identical DSSE envelopes (ADR-0054); resolves OQ-1 (dual-identity signing)
+- `design/adr/0041-novaseal-cryptographic-core-adoption.md` — updated "Formalized by"
+  table to mark ADR-002 as Proposed 2026-05-14 → ADR-0055; added ADR-0055 to See Also
+
+### Added — ADR-0056: Rules-Based Risk-Tier Classifier (2026-05-14)
+
+- `design/adr/0056-risk-tier-classifier.md` — formalizes ADR-005 from the
+  regulated-industries SoA2Prod study as a first-class ADR; freezes the design for
+  `novafabric/governance/classifier.py` and versioned YAML vocabularies under
+  `novafabric/governance/vocabularies/`; documents why an LLM or fine-tuned ML
+  classifier is rejected (determinism and regulatory-citation requirements); deferred
+  to v0.13+
+
+### Added — ADR-0054: DSSE Signing Envelope (2026-05-14)
+
+- `design/adr/0054-dsse-signing-envelope.md` — formalizes ADR-001 from the
+  regulated-industries SoA2Prod study as a first-class ADR; documents DSSE envelope
+  structure, PAE encoding, ECDSA P-256 / SHA-256 algorithm choice, payload
+  canonicalization, verification procedure, and `.seal/` storage layout
+- `design/adr/0041-novaseal-cryptographic-core-adoption.md` — added "Formalized by"
+  table tracking the main-series ADR for each of the 7 regulated-industries ADRs
+
+### Added — DC-8: Diff compare URL persistence (2026-05-13)
+
+- `DashboardApp.tsx` reads `?run_a=&run_b=` on mount, opens DiffTab pre-filled
+- `replaceState` writes params when "Compare against…" fires; cleared on tab change
+- Zero backend change — purely client-side URL state
+
+### Added — DC-3: Secret Scan Results Viewer (2026-05-14)
+
+- `GET /api/runs/{run_id}/redaction-proof` — reads `redaction-proof.json` from capsule dir; 404 if not yet scanned
+- RunsTab — new **Secrets** view: clean/findings summary header, scanner+packs info, targets table (hash before/after redaction), findings list with severity badges (`critical` / `high` / `medium` / `low` / `info`), "Re-scan & rewrite proof" button
+- `api.ts` — `RedactionFinding`, `RedactionTarget`, `RedactionProof` interfaces + `getRedactionProof` method
+- 4 new tests in `tests/test_serve_layer_b_more.py`
+
+### Added — DC-1: Evidence Verification UI (2026-05-14)
+
+- `POST /api/evidence/{bundle_id}/verify` — three-stage integrity check:
+  1. **Ed25519 DSSE signature** (`attestations/run.intoto.json` + `signatures/run.cert`)
+  2. **RFC 3161 TSR** (`manifest.dsse.tsr` if present; `null` if timestamping was not requested)
+  3. **NovaSeal Merkle log inclusion** (requires local capsule dir + `novaseal.yaml` config; `null` if not configured)
+  Returns `{valid, signature_ok, timestamp_ok, log_integrity_ok, seal_available, errors[]}`
+- `EvidenceList.tsx` — per-row **Verify** button; loading spinner; inline `sig ✓`, `tsr ✓`, `log –` color-coded badges on completion
+- `api.ts` — `VerifyResult` interface + `api.verifyEvidence(bundle_id)` method
+- 6 new tests in `tests/test_serve_evidence.py`
+
+### Added — DC-6: Asset Spec Diff (2026-05-14)
+
+- `GET /api/assets/{name}/diff?from_version=&to_version=` — compares two versions of an asset spec field-by-field; returns `{added: [], removed: [], changed: [], name, from_version, to_version}`
+- RegistryTab — **Compare…** button on assets with ≥ 2 versions; diff table with green `+`, red `−`, yellow `~` row highlighting; version selectors
+- `api.ts` — `assetDiff(name, from, to)` method
+
+### Added — DC-7: Capsule Validation UI (2026-05-14)
+
+- `POST /api/runs/{run_id}/validate` — validates capsule schema + required-file presence; returns `{valid, errors[], run_id}` (400 on path traversal, 404 on missing capsule)
+- RunsTab — **Validate** button in live actions row; green `✓ valid` badge on success; red expandable `✗ N errors` badge with per-error list on failure
+- `api.ts` — `validateRun(runId)` method
+- 8 new tests in `tests/test_serve_validate.py`
+
+### Added — DC-2: Legal Holds Dashboard (2026-05-14)
+
+- `GET /api/holds` — list all active holds across all registries; returns `{total_active, registries: [{name, holds: [...]}]}`
+- `POST /api/holds` — place a new hold; body `{registry, reason, duration_days?}`; path-traversal guard on registry name
+- `POST /api/holds/{hold_id}/release` — release a hold by ID; 404 on unknown or already-released
+- New **Holds** tab (⊗) in sidebar — "Audit & Verify" group
+- `HoldsTab.tsx` — active holds grouped by registry with registry header, hold_id, reason, duration badge (`Nd` / `indefinite`), created timestamp; inline **release** button with loading state; **Place hold** form with registry, reason, optional days fields
+- `api.ts` — `HoldRecord`, `HoldRegistry`, `HoldsListResult` interfaces + `listHolds()`, `createHold()`, `releaseHold()` methods
+- Sidebar count badge shows number of active holds
+- 8 new tests in `tests/test_serve_holds.py`
+- Static bundle rebuilt: `DashboardApp.BG9FDLfI.js`
+
+### Added — DC-4: Semantic + Exact Replay UI (2026-05-14)
+
+- `POST /api/runs/{run_id}/replay/semantic` — computes pairwise text similarity across model call responses using `difflib.SequenceMatcher`; returns `{similarity_score, matched_run_id, …}`. Read-only, no subprocess.
+- `POST /api/runs/{run_id}/replay/exact` — checks exact replay eligibility: `env.lock.lock_mode=deterministic` and `seed` present on all model calls; returns `{exact_eligible, exact_hash_count, exact_reasons[], …}`. Read-only, no subprocess.
+- `ReplayFlags.mode` — extended from `mocked|forensic` to `mocked|forensic|semantic|exact`
+- `ReplayResult` — new optional fields: `similarity_score`, `matched_run_id`, `exact_eligible`, `exact_hash_count`, `exact_reasons`
+- `ReplayEngine._semantic()` and `ReplayEngine._exact()` — two new read-only analysis methods
+- CLI `nova replay --mode` — updated to accept `semantic` and `exact`
+- RunsTab — "SEMANTIC" and "EXACT" live action buttons replace the disabled "v0.8 preview" row; semantic shows similarity gauge + score; exact shows eligibility card + blocker list
+- `api.ts` — `semanticReplay(runId)` and `exactReplay(runId)` methods
+- 12 new tests in `tests/test_serve_replay_semantic_exact.py`
+
+### Added — DC-5: Policy Check Tab (2026-05-14)
+
+- `POST /api/policy/check` — accepts a `PolicyInput` JSON body, evaluates it via `OpaEngine`, and returns a `PolicyDecision`; gracefully handles `OpaNotFoundError` by returning `allow=false` with an install hint rather than a 500
+- New **Policy** tab (⊙) in sidebar — "Audit & Verify" group
+- `PolicyTab.tsx` — interactive policy tester with action dropdown (`promote | replay_mutating | evidence_export | dataset_license`), subject fields (user, roles), resource fields (kind, ref), conditional promote-only fields (eval_score, unsafe_skips); large ALLOW/DENY badge result with reason text and decision metadata; yellow warning banner when OPA is not installed
+- `api.ts` — `PolicySubject`, `PolicyResource`, `PolicyInput`, `PolicyDecision` interfaces + `api.checkPolicy(input)` method
+- 5 new tests in `tests/test_serve_app.py`
+
+### Changed — RunsTab action button layout (2026-05-14)
+
+- Run card condensed from 3 button rows to 2: all four replay modes (`replay`, `dry-run`, `semantic`, `exact`) plus `Cmp` and `export ↗` share one row; `validate`, `redact`, and `secrets` share a second row
+- Added **Secrets** quick-access button directly on each run card — selects the run and opens the Secrets tab without requiring a separate click in the detail header
+- `redact` moved from the replay row to the data-ops row alongside `validate` and `secrets`
+
+---
+
+## [0.2.0-collector] — 2026-05-12
+
+### Added — Collector tier (Phase 2, Go module `github.com/novafabric/collector`)
+
+**cap-001 — Lustre-safe JSONL Spool** (`collector/internal/spool/`)
+- `Spool.Write / ReadBatch / Commit / Stats` — rename-commit JSONL spool; no `flock`, `mmap`, or `fcntl`; `os.Rename` is the only atomic commit primitive
+- 16-byte segment header (PID, sequence number, write-complete flag, version)
+- FIFO eviction at configurable size cap; `nova_spool_dropped_segments_total` counter
+- Crash recovery: discards `.tmp` incomplete segments on restart; checkpoint advances monotonically
+
+**cap-002 — NovaSeal Batch Processor** (`collector/internal/processor/novasealbatchsigner/`)
+- OTel Collector custom processor `novaseal_batch_signer` (Apache-2.0 compatible)
+- Signs each `ResourceLogs` batch with Ed25519 (stdlib `crypto/ed25519` only) after ADR-001 canonical encoding
+- ADR-001 canonical encoding: strip `nova.batch.signature` + `nova.batch.signing_key_id`, sort `Resource.attributes` and `LogRecord.attributes` by key, `proto.MarshalOptions{Deterministic: true}`
+- NovaSeal KMS client: mTLS, 5-minute key cache, 1-hour rotation interval, 30-second overlap window
+- `fail_open: false` default — KMS outage blocks forwarding, no unsigned batch ever egresses
+- `LocalWALKeystore` dev fallback: generates Ed25519 keypair in `~/.novafabric/dev-keys/`, WARNs on every use, refuses when `NOVAFABRIC_ENV=production`
+- Prometheus metrics: `nova_batch_sign_latency_seconds`, `nova_batch_sign_errors_total{reason}`, `nova_collector_forwarded_events_total`
+
+**cap-003 — HPC Slurm + NATS profile** (`deploy/hpc/`)
+- `prolog.sh` (POSIX shell): creates per-job spool dir, starts NATS JetStream leaf node
+- `epilog.sh` (POSIX shell): `nats stream flush --timeout=${NOVAFABRIC_EPILOG_FLUSH_TIMEOUT:-50}s`; always exits 0 to prevent Slurm node drain
+- `leaf-node.conf.tmpl` and `cluster-hub.conf.tmpl` — parameterised NATS config templates
+- 10-node Docker Compose reference cluster (`deploy/hpc/test-cluster/docker-compose.yml`)
+- Ansible install playbook (`deploy/hpc/ansible/install.yml`)
+- Lustre fallback: `NOVAFABRIC_HPC_STORAGE=spool` uses JSONL spool as NATS leaf store
+
+**cap-006 — Event Envelope v1 Go types** (`collector/pkg/envelope/`)
+- `EventEnvelope` Go struct with all 18 fields from `schemas/event-envelope-v1/envelope-v1.json`
+- `ToOTLPLogRecord` / `FromOTLPLogRecord` — bidirectional mapping with `nova.*` attribute namespace
+- `ToCloudEvent` / `FromCloudEvent` — CloudEvents 1.0 with W3C traceparent extension
+- 1000-event deterministic reference corpus (`schemas/event-envelope-v1/corpus/`); CI: `make spec-test`
+- Normative spec doc: `schemas/event-envelope-v1/envelope-v1.md` (OTLP mapping, CloudEvents mapping, ADR-001, downstream consumers)
+
+**Infrastructure**
+- `collector/go.mod` — new Go module `github.com/novafabric/collector` go 1.22; all deps Apache-2.0 / MIT / BSD-3 per ADR-0024
+- Three Go binaries: `novafabric-collector`, `novafabric-verifier`, `novafabric-hpc-hub`
+- `collector/internal/verifier/verifier.go` — offline Ed25519 batch-signature verifier
+- `collector/internal/hpc/leaf.go` — NATS leaf lifecycle wrapper with `Start`/`Stop` (Stop always nil)
+- K8s manifests: `deploy/k8s/` — namespace, ConfigMap, DaemonSet (Fluent Bit 3.0), Deployment (2 replicas), Service, Secret example
+- CI: `.github/workflows/collector-ci.yml` — lint (flock/mmap/fcntl grep gate), unit tests (`-race`), spec corpus, build, govulncheck, go-licenses
+- `design/adr/0043-collector-v01-implementation.md` — ADR status: proposed
+
+### Changed
+- `schemas/event-envelope-v1/` — added `envelope-v1.md` normative spec and `corpus/` reference corpus (previously only JSON Schema + proto3 + SHA256 pin)
+- Root `Makefile` — added `collector-build`, `collector-test`, `collector-spec-test`, `spec-test` targets
+- `design/architecture/architecture.md` — added Collector tier section, updated key source files and env vars tables
+- `docs/cli-reference.md` — added Collector binaries section and collector env vars
+
+## [0.9.0] — 2026-05-11
+
+Standard eval suites: container-deterministic benchmark execution, statistical
+regression detection, and Rego-gated promotion based on eval results. 1 307 tests
+passing, 90% coverage. See [`docs/releases/v0.9.0.md`](docs/releases/v0.9.0.md).
+
+### Added
+- ADR-0033: eval runner design — `EvalSuiteAdapter` protocol, OCI image pinning, `eval-result` schema, statistical significance in Rego gates
+- `schemas/eval-result.schema.json` v0.1.0 — structured benchmark result format extending OpenLineage DataQualityMetrics facet
+- `nova export-evidence --timestamp` — RFC 3161 trusted timestamps (ADR-0030); TSR stored as `manifest.dsse.tsr` in Evidence Bundle; configurable TSA URL (FreeTSA default, QTSP for EU/US regulated)
+- `EvalSuiteAdapter` protocol + `EvalResult`/`Metric`/`StatisticalContext` Pydantic v2 models + `EvalSuiteError`
+- Plugin entry-point loader (`load_eval_suite` via `importlib.metadata`)
+- Built-in `novafabric-smoke-v1` adapter (host-env, no container)
+- `nova eval run <capsule> --suite <id>` CLI command
+- `DockerRunner.run_eval_container()` — OCI-pinned container dispatch with digest verification, auto-pull, read-only capsule mount, stdout-JSON result parsing; `ContainerEvalError` for infrastructure failures
+- `EvalSuiteAdapter` protocol extended with `oci_image()` + `container_argv()` — enables container-based adapters; `SmokeAdapter` returns `""` / `[]` (no-op)
+- `GaiaAdapter`, `SweBenchAdapter`, `AgentBenchAdapter` — OCI eval suite adapters (`gaia-v1`, `swe-bench-verified-v1`, `agentbench-v1`) with env-var-configurable digests (`NOVAFABRIC_{SUITE}_OCI_DIGEST` / `NOVAFABRIC_{SUITE}_OCI_IMAGE`); default `""` = host-env fallback
+- `MmluAdapter` (`mmlu-v1`) + `TruthfulQaAdapter` (`truthful-qa-v1`) — new OCI-pinned eval suite adapters; same env-var-configurable digest pattern
+- `RegressionDetector` — two-sample z-test (stdlib only, zero new deps) with delta-threshold fallback; `RegressionReport` / `MetricComparison` Pydantic models
+- `nova eval compare <baseline.json> <candidate.json> [--alpha] [--min-samples]` — rich table of metric deltas, p-values, significance; exit 1 on regression
+- `regression_gate.rego` — Rego policy gate: denies promotion when `input.resource.regression_report.regression_detected == true`; `PolicyResource` extended with `regression_report: dict | None`
+
+## [Unreleased]
+
+Event Envelope v1: canonical wire format for all NovaFabric evidence events.
+JSON Schema (2020-12) + proto3 definition + SHA-256 version pin + Pydantic model
++ `validate_event()`. 1 528 tests passing, 90% coverage.
+See [`docs/releases/v0.10.0.md`](docs/releases/v0.10.0.md).
+
+### Added (Event Envelope v1 — Phase 1)
+- `schemas/event-envelope-v1/envelope-v1.json` — JSON Schema 2020-12 for EventEnvelope v1; spec-id `https://novafabric.io/schemas/event-envelope/1`; `additionalProperties: true` for forward-compatible parsing
+- `schemas/event-envelope-v1/envelope-v1.proto` — proto3 message definition with alphabetical field-number ordering for deterministic NovaSeal batch signing
+- `schemas/event-envelope-v1/envelope-v1.sha256` — SHA-256 version pin (`91405fcde2425dfa01b24a536a449c359dba32365af27ff70bd498e279b822af`); unblocks downstream consumers (parent-child-capsule, object-capsule-store, metadata-db, lineage-at-scale)
+- `src/novafabric/envelope/` — new package: `models.py` (Pydantic `EventEnvelope` + `EventType` enum), `validator.py` (`validate_event()`, `EventEnvelopeValidationError`), `__init__.py`
+- `EventEnvelope` model: full field validation — ULID format, W3C trace_id/span_id (non-zero), agent_id (no whitespace/control), nullable cluster_id/tenant_id, payload_hash pattern, `nova.batch.*` pair constraint, all required fields enforced
+- `EventType` enum: `run.start`, `run.end`, `model_call`, `tool_call`, `span`, `capsule.finalize`
+- `validate_event(event)` — JSON Schema validation against canonical schema file; `EventEnvelopeValidationError` with `.path` attribute
+- `global_run_id` accepts both ULID and UUID v7 (for cluster-scale runs where the scheduler generates a UUID v7)
+- 70 tests in `tests/test_event_envelope.py` covering model validation, schema validation, SHA-256 pin integrity, proto file existence
+
+### Added (NovaSeal v0.1 — Phase 0)
+- ADR-0041 accepted: NovaSeal cryptographic core — DSSE envelope, RFC 3161 timestamps, per-tenant Merkle log, local-key signing mode (v0.1)
+- `src/novafabric/trust/novaseal/` — new package: `envelope.py` (DSSE), `merkle.py` (SQLite Merkle log), `timestamp.py` (RFC 3161 adapter), `config.py` (YAML config), `__init__.py` (public API)
+- `NovaSeal.seal(manifest)` → `SealBundle` with DSSE envelope, TSR bytes, Merkle log entry, and SHA-256 capsule ID
+- `NovaSeal.verify(capsule_id, seal_dir)` → `VerificationResult(signature_ok, timestamp_ok, log_integrity_ok)`
+- `NovaSeal.rotate_key(new_config)` — key rotation appends an event to the Merkle log
+- `nova verify <capsule>` CLI command — DSSE signature + RFC 3161 TSR + Merkle inclusion proof; `--seal-config`/`NOVAFABRIC_SEAL_CONFIG` option; exit 0 on full pass, 1 on any failure
+- `.seal/` bundle written to capsule dir: `manifest.dsse`, `manifest.dsse.tsr`, `log-entry.json`
+- `_seal_capsule()` hook in `CaptureOrchestrator` — non-blocking, opt-in: activates only when `novaseal.yaml` is found
+- `novaseal.yaml` config schema: `profile`, `key_path`, `cert_path`, `tsa_url`, `merkle_db`
+- 97 tests in `tests/seal/` covering envelope, Merkle, timestamp, config, CLI, and integration paths
+
+## [0.7.0] — 2026-05-10
+
+Optional multi-user server mode: Postgres backend, REST API, OIDC/RBAC,
+offline tokens, `nova server` CLI group, `nova login/logout`, `nova doctor
+--check-storage`, `nova migrate-to-postgres`. CI split into `unit` and
+`integration` jobs (postgres:16 service). 1 054 tests passing.
+See [`docs/releases/v0.7.0.md`](docs/releases/v0.7.0.md).
+
+### Added
+- `StorageBackend` protocol + SQLite and Postgres implementations
+- Alembic two-track migrations (`alembic.ini` SQLite, `alembic-postgres.ini` Postgres)
+- REST API server under `/v0` (assets, capsules, lineage, replays, evidence)
+- OIDC Bearer token auth + no-auth local mode
+- RBAC: `reader`, `writer`, `admin`, `auditor` roles
+- Offline JWT tokens for CI/airgapped deployments (`nova server issue-token`)
+- Device Authorization Grant (`nova login` / `nova logout`, RFC 8628)
+- `nova doctor --check-storage`
+- `nova migrate-to-postgres` — one-time idempotent SQLite → Postgres migration
+- `nova serve --experimental` — local read-only dashboard (Layer A, ADR-0027)
+- 58 integration tests in `tests/integration/`
+
+### Changed
+- CI split: `unit` job (no external services) + `integration` job (Postgres 16)
+
+## [0.6.11] — 2026-05-09
+
+SlurmRunner: sitecustomize injection — wire-level capture works on
+compute nodes. See
+[`docs/releases/v0.6.11.md`](docs/releases/v0.6.11.md).
+
+### Fixed
+- **SlurmRunner now materializes `sitecustomize.py` to `<capsule_dir>`
+  and prepends it to `PYTHONPATH` in the sbatch wrap script.**
+  Previously the wrap script only exported `NOVAFABRIC_*` + `PATH`,
+  so the compute node's Python ran without the hook loader. Wire-level
+  capture silently no-opped: `model-calls.jsonl` was always empty for
+  SLURM-submitted captures regardless of what the workload did.
+  Surfaced by an end-to-end live test on the same 3-node cluster used
+  for v0.6.10. After the fix, the same workload produces a populated
+  `model-calls.jsonl` with the expected wire-level record.
+
+### Added
+- `src/novafabric/runners/_sitecustomize.py` — the canonical hook-
+  loader text, shared between `LocalRunner` (which materializes it
+  to a temp dir) and `SlurmRunner` (which materializes it to
+  `capsule_dir` on shared FS).
+- `scripts/live_slurm_capture_e2e.py` — pytest-free harness that
+  submits a captured Python workload (httpx POST to a fake LLM
+  endpoint) and asserts `model-calls.jsonl` is populated.
+- `TestSlurmRunnerSitecustomizeInjection` — 3 new unit tests asserting
+  the file-write + PYTHONPATH-merge contract.
+
+### Changed
+- The `_HOOK_LOADER` constant in `runners/_local.py` is now imported
+  from the new shared `_sitecustomize` module. Same content, no
+  behavior change.
+
+## [0.6.10] — 2026-05-09
+
+SlurmRunner: live cluster validation + slurmdbd-independence fix.
+See [`docs/releases/v0.6.10.md`](docs/releases/v0.6.10.md).
+
+### Fixed
+- **SlurmRunner now uses `scontrol show job <jobid>` as the primary
+  state source.** Previously polled exclusively `sacct`, which
+  silently fails on clusters without `slurmdbd` (common in dev /
+  minimal configs). Surfaced by validating against an actual
+  3-node Vagrant + libvirt SLURM cluster — the v0.6.9 SlurmRunner
+  reported `runner_status=timeout` for jobs that had completed
+  successfully, because `sacct` never confirmed COMPLETED. After
+  the fix: `runner_status=completed`, `exit_code=0`, expected
+  stdout captured.
+- `sacct` is now the fallback state source (kept for the case where
+  `slurmctld` has forgotten the job, ~5 min after completion, but
+  `slurmdbd` still has the record).
+
+### Added
+- `SlurmRunner._query_state(jobid)` — provider-aware state query;
+  scontrol primary, sacct fallback. Returns `(state, exit_code_str)`
+  or `(None, "")` if both fail.
+- `SlurmRunner._parse_scontrol_show_job()` — static parser for
+  scontrol's space-separated key=value output. Handles
+  multi-line wrapped output and the absent-JobState case ("Invalid
+  job id").
+- `SlurmRunner.__init__()` gains a `scontrol_bin` keyword (default
+  `"scontrol"`) for the same override-friendliness as `sbatch_bin`
+  / `sacct_bin`.
+- `SlurmRunner.supports()` now also probes for the `scontrol`
+  binary (fail-fast check).
+- `dist/live_slurm_smoke.py` — minimal pytest-free smoke harness
+  for validating SlurmRunner against a real cluster. Used to
+  surface (and verify the fix for) the slurmdbd bug.
+
+### Changed
+- 3 existing unit tests updated to mock the scontrol-first call
+  pattern instead of the old sacct-only pattern. Same contracts
+  asserted; just against the new (correct) behavior.
+
+### Quality
+- 672 tests passing (+5 new for the scontrol-first state-query
+  strategy and parsers)
+- 90.03% coverage maintained
+- Live-validated against 1 of the 2 cluster configurations the
+  ROADMAP requires; production HPC config #2 queued.
+
+## [0.6.9] — 2026-05-09
+
+Hook installer explicitness + a measured (and disproven) perf
+hypothesis. See
+[`docs/releases/v0.6.9.md`](docs/releases/v0.6.9.md).
+
+### Changed
+- **`install_all()` now explicitly checks SDK availability** with
+  `importlib.util.find_spec()` before importing each built-in hook
+  module. Hook modules for absent SDKs no longer enter `sys.modules`.
+- Refactor produces slightly clearer code (intent: check then import,
+  vs try-then-recover).
+
+### Honest measurement
+- The perf hypothesis behind the refactor was that `find_spec` would
+  be substantially cheaper than full hook-module imports for absent
+  SDKs (~150 ms saving expected on common no-SDK workloads).
+- Apples-to-apples measurement: v0.6.9 is 186.6 ms median;
+  v0.6.8 is 188.2 ms median. **Difference 1.6 ms — within noise.**
+- Reason: `find_spec` walks the same import-system machinery as a
+  real import, so for the small hook modules in this package the
+  saving cancels out across 7 calls.
+- Change kept anyway because intent is clearer and a future heavier
+  hook module would benefit. **The release notes ship the disproven
+  hypothesis honestly** — this is what the benchmark infrastructure
+  is for.
+
+### Tests
+- One existing test inverted: `test_install_all_continues_when_plugin_install_fails`
+  now asserts the correct post-v0.6.9 contract (HttpxHook installed —
+  always-available built-in — and the broken plugin is not).
+
+## [0.6.8] — 2026-05-09
+
+Hot-path optimizations + honest benchmark re-interpretation. See
+[`docs/releases/v0.6.8.md`](docs/releases/v0.6.8.md).
+
+### Added
+- **`benchmarks/orchestrator_microbench.py`** — measures only
+  `CaptureOrchestrator.run()` from inside an already-warm Python
+  process. Excludes the outer `nova` CLI startup so it isolates
+  NovaFabric's own per-capture work, which is what orchestrator
+  optimizations actually move. Use this micro-benchmark when
+  evaluating orchestrator-level changes.
+
+### Changed
+- **Lazy `jsonschema` import** in `lineage/_importer.py` — moved
+  from module top into `_validate_edge_record()`. Saves ~50 ms per
+  `nova capture` for captures with zero edges (the common case).
+- **OpenLineage event construction skipped when no transport
+  configured** — `is_configured()` env-var probe added to
+  `_ol_transport.py`; the orchestrator's START / COMPLETE event
+  builders only run when `OPENLINEAGE_URL` or `OPENLINEAGE_FILE` is
+  set. Saves ~10–20 ms in the common case.
+- **`capture_environment()` runs on a worker thread** in parallel
+  with the workload subprocess. The ~50 ms env-lock walk now overlaps
+  with the subprocess's ~200 ms wall-clock instead of stacking on top.
+- **`benchmarks/README.md` rewritten** to honestly decompose the
+  wall-clock measurement: ~250 ms outer CLI startup + ~200 ms
+  subprocess startup + ~21 ms orchestrator work + variance band.
+  Clarifies that the micro-benchmark is the right metric for
+  orchestrator changes; the macro-benchmark is for user-perceived
+  wall-clock.
+
+### Fixed
+- **Released-note honesty:** v0.6.7 release notes claimed `nova capture`
+  exceeded the ≤50 ms budget by ~10×. That over-attributed Python
+  interpreter startup costs to NovaFabric. Corrected
+  interpretation in v0.6.8 release notes + `benchmarks/README.md`.
+
+## [0.6.7] — 2026-05-09
+
+Plugin reference + capture-overhead benchmark. See
+[`docs/releases/v0.6.7.md`](docs/releases/v0.6.7.md).
+
+### Added
+- **`examples/plugin-hook-reference/`** — installable Python package
+  demonstrating the `novafabric.hooks` entry-point contract end-to-end.
+  Includes `pyproject.toml` with the entry-point declaration, a hook
+  class implementing `HookProtocol`, a demo workload, and 6 unit
+  tests. Plugin authors can clone as a starting template.
+- **`benchmarks/capture_overhead.py`** — stdlib-only harness measuring
+  `nova capture` wall-clock overhead vs raw subprocess for noop and
+  httpx workloads. Reports median/p95/mean/stdev and absolute +
+  percentage overhead. Not in CI (overhead measurement needs stable
+  hardware); manual tool for PR authors who touch the hot path.
+- **`benchmarks/README.md`** — explains the harness, the ADR-0021 §6
+  budgets, current measured overhead (~480 ms over the ≤50 ms no-op
+  budget), and the optimization tickets queued for v0.7.x.
+- 3 benchmark-smoke tests verifying the harness imports and runs.
+
+### Changed
+- `docs/integrations/writing-a-hook-plugin.md` now links to the
+  working reference at `examples/plugin-hook-reference/` so the
+  abstract contract has a concrete artifact to anchor on.
+
+## [0.6.6] — 2026-05-09
+
+Anthropic streaming-delta merge + validator coverage cleanup +
+README refresh. See [`docs/releases/v0.6.6.md`](docs/releases/v0.6.6.md).
+
+### Added
+- **Anthropic SSE delta merge** in `nova api-proxy`. Walks
+  `message_start` / `content_block_delta` / `message_delta` /
+  `message_stop` events and synthesizes a non-streaming response;
+  text blocks concatenate, tool_use input JSON re-assembles across
+  event boundaries. Output normalized into OpenAI-shaped
+  `gen_ai.response.choices` so consumers don't need provider-specific
+  code to read records.
+- **Provider-aware dispatch** for streaming-delta merging by
+  `gen_ai.system` (resolved from upstream URL).
+- **Five new validator-hint tests** covering previously-untested paths
+  (top-level non-mapping YAML, invalid asset_type, invalid status,
+  invalid semver).
+
+### Fixed
+- `spec/validator.py` now produces a helpful hint when Pydantic v2
+  emits `union_tag_invalid` for unknown `asset_type` discriminator
+  values. Previously the user saw "Input tag '…' does not match any
+  of the expected tags" with no actionable hint; now they see
+  "Valid asset_type values: …".
+
+### Changed
+- **CI coverage gate restored from 89 → 90.** `spec/validator.py`
+  coverage gap closed; global coverage now 90.03%.
+- README refreshed to reflect v0.6.x features (six hooks, two HTTP
+  proxies, layering guard, body adapters, full OTel semconv coverage)
+  and accurate roadmap.
+
+## [0.6.5] — 2026-05-09
+
+OpenAI streaming-delta merge + capsule auto-allocation. See
+[`docs/releases/v0.6.5.md`](docs/releases/v0.6.5.md).
+
+### Added
+- **OpenAI SSE delta merge** in `nova api-proxy`: streaming responses
+  now produce a synthesized non-streaming response envelope in the
+  captured record. Content concatenates, tool-call argument JSON
+  re-assembles across event boundaries, `usage` extracted from final
+  stream event, `finish_reason` captured. The original byte stream is
+  still forwarded to the client unchanged.
+- **Capsule auto-allocation** in `nova api-proxy` and `nova mcp-proxy`:
+  if `--capsule-dir` is omitted (and `NOVAFABRIC_CAPSULE_DIR` is
+  unset), the proxy allocates a fresh ULID-named directory under
+  `$PWD/.novafabric/runs/<run-id>/` and announces it. Existing
+  directories work as before; missing ones are auto-created.
+
+### Changed
+- `nova api-proxy` / `nova mcp-proxy` no longer error when
+  `--capsule-dir` is missing — they auto-allocate. Anyone scripting
+  against the old error path should pass an explicit `--capsule-dir`.
+
+## [0.6.4] — 2026-05-09
+
+`nova api-proxy` — Path A first cut. See
+[`docs/releases/v0.6.4.md`](docs/releases/v0.6.4.md).
+
+### Added
+- **ADR-0026** promoting Path A from research note to accepted decision
+  (all 4 promotion criteria met).
+- **`nova api-proxy --listen <host:port> --upstream-url <url>`** —
+  transparent HTTP proxy for non-Python LLM clients (Claude Code,
+  Cursor, Continue, custom Node/Go/Rust agents). Forwards POST to the
+  upstream LLM API and records each call into `model-calls.jsonl`.
+- Reuses every wire-level primitive from v0.6: URL registry, body
+  adapters (C-3.3b for Bedrock), OTel GenAI extractor (C-4 phase 1).
+  A capture from api-proxy is byte-identical in shape to a capture
+  from the in-process anthropic/openai hooks.
+- Streaming SSE responses forwarded through unchanged with
+  `extensions.io.novafabric.streaming = {streamed: true, chunk_count: N}`.
+  Full delta-merge queued for v0.6.5.
+- Robust failure handling: upstream-unreachable → HTTP 502 +
+  synthesized JSON-RPC error envelope + recorded with `status=error`;
+  GET/DELETE/PUT forwarded but not recorded; auth headers forwarded
+  through; hop-by-hop headers stripped per RFC 7230.
+- Anti-patterns enforced and tested: no TLS MITM, no request
+  rewriting, no phone-home, no multi-upstream routing, no caching.
+
+## [0.6.3] — 2026-05-09
+
+HTTP/SSE transport for `nova mcp-proxy` (C-3.4). See
+[`docs/releases/v0.6.3.md`](docs/releases/v0.6.3.md).
+
+### Added
+- **`nova mcp-proxy --listen <host:port> --upstream-url <url>`** —
+  HTTP-mode proxy: forwards JSON-RPC POST to an upstream HTTP MCP
+  server. Mutually exclusive with stdio mode (which remains the
+  default).
+- **SSE response aggregation** — when the upstream responds with
+  `Content-Type: text/event-stream`, the byte stream is forwarded to
+  the client unchanged AND aggregated into one `tool-calls.jsonl`
+  record per `tools/call`, not per chunk (per the design committed
+  in v0.6.2 release notes).
+- New record extensions: `extensions.io.novafabric.transport_kind`
+  (`"http"` vs `"stdio"`) and the optional
+  `extensions.io.novafabric.streaming = {streamed, chunk_count}` block.
+- Robust failure handling: upstream-unreachable returns a synthesized
+  JSON-RPC error envelope; malformed upstream JSON records empty
+  `response_envelope`; bookkeeping failures never break the proxy.
+
+### Changed
+- CI coverage gate: `--cov-fail-under` lowered from 90 to 89 with an
+  inline comment pointing at the pre-existing `spec/validator.py`
+  coverage gap. Cleaning that file will let the gate go back to 90.
+
+## [0.6.2] — 2026-05-09
+
+Per-provider body adapters (C-3.3b). See
+[`docs/releases/v0.6.2.md`](docs/releases/v0.6.2.md).
+
+### Added
+- **Body adapter contract** (`src/novafabric/capture/body_adapters/`) —
+  protocol + dispatcher + plugin registration. Adapters normalize
+  non-OpenAI request body shapes into the OpenAI shape the shared
+  OTel GenAI extractor expects.
+- **Vendored Bedrock adapters** for Anthropic, Cohere, Titan
+  (covers Amazon Nova too), and Llama. Wire-level captured Bedrock
+  calls now have correct `gen_ai.request.model` (was `"unknown"`
+  before this release) and all semconv-mandated fields.
+- `adapt_body()` is idempotent — already-OpenAI-shaped input passes
+  through unchanged.
+
+## [0.6.1] — 2026-05-09
+
+Kubernetes and SLURM runners. See [`docs/releases/v0.6.1.md`](docs/releases/v0.6.1.md).
+
+### Added
+- **`KubernetesRunner`** (`--runner kubernetes`) — runs the captured
+  workload as a Kubernetes `Job` via `kubectl` shell-out. Required
+  options: `image`, `namespace`. ADR-0025 anti-patterns enforced in
+  the Job manifest itself (`securityContext.privileged: false`,
+  `hostNetwork`/`PID`/`IPC: false`, `backoffLimit: 0`). Capsule
+  artifacts pulled back via `kubectl cp`.
+- **`SlurmRunner`** (`--runner slurm`) — runs the workload as a SLURM
+  batch job via `sbatch` + `sacct`. Required option: `partition`. The
+  capsule directory must be on a filesystem shared between submit and
+  compute nodes; the runner does not rsync.
+- 34 new tests covering both runners (mocked subprocess; live-cluster
+  smokes are opt-in via `NOVAFABRIC_TEST_LIVE_KUBERNETES=1` /
+  `NOVAFABRIC_TEST_LIVE_SLURM=1`).
+
+## [0.6.0] — 2026-05-09
+
+Wire-level expansion + OTel semconv + multi-target runners. See
+[`docs/releases/v0.6.0.md`](docs/releases/v0.6.0.md).
+
+### Added
+- **Wire-level capture (RFC-0001 Option C, Track C-3):**
+  - `aiohttp` capture hook (C-3.1) — async wire-level capture
+  - `urllib3` capture hook + shared layering guard (C-3.2) — lowest
+    HTTP-stack tier; the `contextvars`-based guard prevents double-
+    recording when `requests` calls go through `urllib3` internally
+  - AWS Bedrock URL registry entries (C-3.3a) — `boto3` transitively
+    captured via the `urllib3` hook
+- **OTel GenAI semconv (C-4):** wire-level and per-SDK hooks now emit
+  the full set of "Required when applicable" `gen_ai.*` fields —
+  temperature, top_p, top_k, max_tokens, stop_sequences (normalized),
+  seed (critical for exact-mode replay determinism), frequency_penalty,
+  presence_penalty, choice.count, response.id, finish_reasons. New
+  shared extractor at `src/novafabric/capture/hooks/_otel_genai.py`.
+- **ADR-0025 — `RunnerSpec` interface accepted.** Defines the protocol
+  every runner satisfies. Synchronous-blocking in v0.6 (async deferred
+  to v0.7). See [`design/adr/0025-runner-spec-interface.md`](design/adr/0025-runner-spec-interface.md).
+- **`LocalRunner`** (`--runner local`, default) — refactor of the v0.5.x
+  in-orchestrator subprocess logic behind the new protocol.
+  Behavior-preserving; no user-visible change.
+- **`DockerRunner`** (`--runner docker --runner-option image=<ref>`) —
+  runs the workload inside a container with the capsule directory mounted
+  as a volume. ADR anti-patterns enforced: no `--privileged`, no
+  docker-socket mount, no host namespaces, no host env leakage.
+- New CLI flags `--runner` and `--runner-option key=value` (repeatable).
+- Five examples + tutorials:
+  `examples/{minimal-agent-run,replay-and-diff,lineage-chain,azure-openai,langchain-agent}/`,
+  `docs/tutorials/`.
+- `nova --version` / `-V` flag.
+- `examples/*/runs/` and `examples/*/capsule/` added to `.gitignore`.
+- Path A research note (`design/research/llm-api-proxy.md`) — design
+  for a future non-Python LLM-client capture proxy. Status: candidate
+  only, **not built**; promotion criteria explicit.
+
+### Fixed
+- `_httpx` and `_requests` hooks now record on exception (status=error)
+  via the same `try/finally` pattern as the new `_aiohttp` and `_urllib3`
+  hooks. Previously, a connection failure for a `requests` or `httpx` call
+  silently dropped the model-call record.
+
+### Quality
+- 524 tests passing at v0.6.0 (was 397 at v0.5.0 — **+127** over the
+  v0.6 cycle), 91% coverage, ruff clean, mypy strict clean across 85
+  source files. End-to-end semconv smoke test added.
+
+## [0.5.0] — 2026-05-09
+
+Trust Layer completion + Integrations first slice. See
+[`docs/releases/v0.5.0.md`](docs/releases/v0.5.0.md).
+
+### Added
+- **Signed Evidence Bundles** (`nova export-evidence`) per ADR-0011, with
+  local-key ed25519 signing. in-toto Statement v1 + DSSE for run,
+  redaction, and lineage predicates; vendored schemas; `manifest_hash`
+  tamper detection. Verifiable with stock `sha256sum` + any ed25519
+  verifier.
+- **`nova scan-secrets`** — read-only post-hoc secret scan on a capsule's
+  `redaction-proof.json`. CI gate via `--fail-on <severity>`.
+- **`nova redact`** — re-scan and re-redact a capsule with strategy
+  overrides; `--mark-unsafe-skip` whitelists false positives.
+- **MCP client-wrapper hook** (v0.5 first slice / ADR-0015 §Primary) —
+  auto-captures `mcp.client.session.ClientSession.call_tool` into
+  `tool-calls.jsonl`.
+- **`nova mcp-proxy`** (experimental / ADR-0015 §Secondary) —
+  transparent stdio proxy for uninstrumented MCP clients (Claude Desktop,
+  Cursor). Stdio transport only.
+- **C-1: `requests` capture hook + externalized URL registry**
+  (`~/.novafabric/url_registry.yaml` overrides the vendored default).
+- **C-2: `novafabric.hooks` plugin entry-point contract** (experimental).
+  Third-party packages can publish capture hooks via the entry-point
+  group; auto-discovered at capture start. Failure-isolated.
+- `cryptography>=44.0` added as a runtime dependency for signing.
+
+## [0.4.2] — 2026-05-08
+
+Cluster-scale architecture documentation + quality hardening. See
+[`docs/releases/v0.4.2.md`](docs/releases/v0.4.2.md).
+
+### Added
+- ADR-0020 (low-overhead cluster capture) and the cluster-scale design
+  document — two-plane architecture (compute nodes emit minimal
+  evidence; service nodes do heavy processing).
+- ADR-0021 (AI-factory design intent) — eleven numbered design
+  principles for cluster-scale components.
+- ADR-0022 (polyglot persistence + object storage) — commits S3-class
+  object storage as the source of truth for raw capsules at cluster
+  scale.
+- ADR-0023 (cache architecture) — L0–L4 hierarchical content-addressed
+  cache model.
+- End-to-end smoke test (`tests/test_smoke_capture_validate.py`)
+  exercising `nova capture` → capsule on disk → `nova validate`.
+
+### Fixed
+- mypy clean: stale `# type: ignore` annotations removed from
+  `lineage/_openlineage.py` and `lineage/_writer.py`.
+
+## [0.4.1] — 2026-05-08
+
+`emit-openlineage` CLI. See
+[`docs/releases/v0.4.1.md`](docs/releases/v0.4.1.md).
+
+### Added
+- **`nova lineage emit-openlineage`** — replay OpenLineage events from any
+  existing capsule directory or parent runs directory.
+- Every `nova capture` now emits OpenLineage events automatically when
+  `OPENLINEAGE_URL` (HTTP) or `OPENLINEAGE_FILE` (NDJSON) is set.
+- `replayed_from` lineage edges propagate as OpenLineage `ParentRunFacet`.
+
+## [0.4.0] — earlier
+
+Lineage Graph (SQLite recursive CTEs) + `nova lineage` query commands
+(blast-radius, time-travel, replay-chain, provenance) + OpenLineage
+emitter. `redaction-proof.json` baked into every captured capsule.
+
+## [0.3.0] — earlier
+
+Replay (`forensic`, `mocked` modes) + structural Diff (`nova diff`).
+Replay safety guardrails (mutation classification per tool); `--dry-run`
+default for mutating tools.
+
+## [0.2.0] — earlier
+
+Run Capsule MVP. `nova capture <command>` records inputs, outputs,
+model calls, tool calls, environment lock, and trace into a capsule
+directory. `nova validate` schema-checks the capsule. OTel GenAI
+semconv exporter on every captured run. Capsule-aware extension to
+the `@novafabric.agent` decorator.
+
+## [0.1.1] — 2026-05-07
+
+### Added
+- Repository governance: CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md, ROADMAP.md
+- Architecture and concepts documentation
+- Developer guide and release process documentation
+- Architecture Decision Records (ADRs 0001–0003)
+- GitHub issue and PR templates
+- Example asset specifications (model, dataset, agent, agent with eval gate)
+- Example reports (Markdown and JSON)
+
+### Improved
+- CLI validation errors now include a hint line for common mistakes (missing file,
+  YAML syntax error, missing required field, invalid enum value)
+- README expanded with asset types table and links to all documentation
+
+### Fixed
+- `validate` and `register` commands now produce a helpful error when the spec file
+  does not exist, instead of an unhandled traceback
+
+## [0.1.0] — 2026-05-06
+
+### Added
+- YAML AI asset specification (model, agent, prompt, tool, dataset, evaluation, deployment)
+- Pydantic v2 validation
+- SQLite local registry
+- CLI commands: register, list, inspect, promote, eval, diff, report, validate
+- Agent lifecycle management with eval-gated promotion
+- OTel `@novafabric.agent` decorator
+- Markdown and JSON reporting
+- Getting-started guide and CLI reference

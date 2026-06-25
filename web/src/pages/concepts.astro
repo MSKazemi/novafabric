@@ -1,0 +1,99 @@
+---
+import Layout from '../components/layout/Layout.astro';
+import ShowcaseBadge from '../components/layout/ShowcaseBadge.astro';
+---
+
+<Layout
+  title="Concepts — NovaFabric"
+  description="The five primitives, four replay modes, and how they compose into a time machine for AI systems."
+>
+  <article class="container-content py-16 md:py-24">
+    <header class="max-w-2xl">
+      <ShowcaseBadge variant="page" />
+      <h1 class="mt-4 text-4xl md:text-5xl font-medium tracking-tight text-balance">Concepts</h1>
+      <p class="mt-4 text-lg text-[var(--color-text-muted)]">
+        The five primitives, the four replay modes, and the boundaries that
+        keep NovaFabric local-first and CLI-first.
+      </p>
+    </header>
+
+    <div class="mt-16 container-prose space-y-10 text-[var(--color-text-muted)] leading-relaxed">
+      <section>
+        <h2 class="text-2xl font-medium text-[var(--color-text)] tracking-tight mb-3">Five primitives</h2>
+        <p>
+          <strong class="text-[var(--color-text)]">Asset Registry</strong> names every model, agent, prompt,
+          tool, dataset, evaluation, and deployment with <code class="text-[var(--color-text)]">name@version</code>
+          identity. Promotion from development to production is gated by eval suites that pass or fail.
+        </p>
+        <p class="mt-3">
+          <strong class="text-[var(--color-text)]">Run Capsule</strong> is a self-contained, schema-validated
+          record of one AI run: the command, every model call, every tool call, the environment, the assets
+          referenced. Stored as a directory under <code class="text-[var(--color-text)]">.novafabric/runs/</code>.
+        </p>
+        <p class="mt-3">
+          <strong class="text-[var(--color-text)]">Replay</strong> reconstructs a run under one of four modes
+          with explicit guarantees. You always know what was real and what was reconstructed.
+        </p>
+        <p class="mt-3">
+          <strong class="text-[var(--color-text)]">Lineage</strong> is the causation graph that links runs to
+          the assets they consumed and the artifacts they produced — answers "what depended on what" without
+          guesswork.
+        </p>
+        <p class="mt-3">
+          <strong class="text-[var(--color-text)]">Evidence Bundle</strong> is the signed, portable proof of
+          what happened: in-toto DSSE Statement v1, ed25519 signature, vendored schemas, a tamper-evident manifest hash.
+        </p>
+      </section>
+
+      <section id="replay-modes">
+        <h2 class="text-2xl font-medium text-[var(--color-text)] tracking-tight mb-3">Four replay modes</h2>
+        <ul class="space-y-3">
+          <li>
+            <strong class="text-[var(--color-text)]">exact</strong> — re-execute end-to-end. Available only
+            for local models or fully containerized environments. Greyed out for remote LLMs because we will
+            not pretend a remote API call is deterministic.
+          </li>
+          <li>
+            <strong class="text-[var(--color-text)]">mocked</strong> — re-execute the agent code, serve every
+            model and tool call from the capsule's cache. Same control flow, same outputs, no network.
+          </li>
+          <li>
+            <strong class="text-[var(--color-text)]">semantic</strong> — re-execute, then a judge model
+            compares meaning. Requires a judge model in real use. Useful for "did the meaning change?"
+          </li>
+          <li>
+            <strong class="text-[var(--color-text)]">forensic</strong> — no re-execution. Read-only inspection
+            of what the capsule recorded. The audit mode.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2 class="text-2xl font-medium text-[var(--color-text)] tracking-tight mb-3">Why local-first</h2>
+        <p>
+          AI runs accumulate sensitive data: prompts, intermediate reasoning, internal documents pulled by
+          tools. Shipping that to a hosted service means signing a DPA, picking a region, paying per GB,
+          waiting for a backup window when audit asks. NovaFabric keeps it on your machine until you choose
+          otherwise. v0.7 adds an optional server mode for teams; v0.x stays single-machine.
+        </p>
+      </section>
+
+      <section>
+        <h2 class="text-2xl font-medium text-[var(--color-text)] tracking-tight mb-3">Why CLI-first</h2>
+        <p>
+          Web UIs are expensive to build, maintain, and design well. They divert engineering effort from
+          the primitives. The CLI emits JSON; you can plug it into Grafana, Jaeger, Tempo, or a notebook.
+          A read-only browser viewer (<code class="text-[var(--color-text)]">nova serve</code>) is planned
+          for v1.x — and this showcase site sets the visual bar so it doesn't get over-built.
+        </p>
+      </section>
+    </div>
+
+    <footer class="mt-16 pt-8 border-t border-[var(--color-border)] text-sm text-[var(--color-text-muted)]">
+      <p>
+        Ready to try it? <a href="/install" class="text-[var(--color-text)] underline underline-offset-4 decoration-[var(--color-border-strong)] hover:decoration-[var(--color-text)]">Install</a>,
+        or explore the showcase: <a href="/showcase/lineage" class="text-[var(--color-text)] underline underline-offset-4 decoration-[var(--color-border-strong)] hover:decoration-[var(--color-text)]">Lineage</a>.
+      </p>
+    </footer>
+  </article>
+</Layout>

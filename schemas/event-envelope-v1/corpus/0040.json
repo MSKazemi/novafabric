@@ -1,0 +1,26 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "3Z2QJJVMFP3GJV51AW458DXB9G",
+  "global_run_id": "3V2QEZS9SZDW4J26FVZ2YR2DXD",
+  "run_id": "4EJX6T9FT9JFQ7S49MM3N95XM0",
+  "parent_run_id": null,
+  "event_type": "tool_call",
+  "trace_id": "e8c21c8dda4ab19d08575e1233e9d888",
+  "span_id": "c171de745de9c5b0",
+  "agent_id": "langchain-agent",
+  "cluster_id": null,
+  "tenant_id": null,
+  "started_at": "2026-05-12T10:40:00.834000+00:00",
+  "payload": {
+    "tool_name": "bash_executor",
+    "tool_call_id": "tc_3d23221bc1cc01c8",
+    "arguments": {
+      "input": "example input for bash_executor"
+    },
+    "duration_ms": 490
+  },
+  "payload_hash": "sha256:bc5e51c1287e073a215df520776a5d538aaec3ac76b1d2410695039bd0e315b1",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

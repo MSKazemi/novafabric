@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "257M2R2AAE6M3EYCS4MM0D81CJ",
+  "global_run_id": "5F0CNEFSHAX8PMCHNASS98P7PG",
+  "run_id": "3PEFDYG75X6RZNX2SMEHQC5EFP",
+  "parent_run_id": "1H41EJYYX8HZAY12XTS0X2166P",
+  "event_type": "tool_call",
+  "trace_id": "398426047c543769eb5c6caa00fce50b",
+  "span_id": "91cb3af6d60e1c40",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-acme",
+  "started_at": "2026-05-13T01:58:00.742000+00:00",
+  "emitter_node_id": "node01.cluster.local",
+  "payload": {
+    "tool_name": "web_search",
+    "tool_call_id": "tc_190952c89c9e8965",
+    "arguments": {
+      "input": "example input for web_search"
+    },
+    "duration_ms": 1347
+  },
+  "payload_hash": "sha256:22b0bcabe17768cd53668612db958b60f8be4e227fb71d44cdf9b6cf35203287",
+  "nova.batch.signature": "H8VpGkkFJxUekI0TyY0mV0tQqsY7a0AGHxHv85LlcX+rszCi9M+zlqGGGzqq3T0ZHP8dbwzDHihfZUgF93dxFQ==",
+  "nova.batch.signing_key_id": "94f85031-0da8-4fd2-992c-19756c7a323a"
+}

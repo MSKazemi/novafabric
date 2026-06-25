@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "6XRNB9DV15753Q4NYV137BPB13",
+  "global_run_id": "ab81f087-efe0-7077-8db8-eeb666a43315",
+  "run_id": "4H7HNFSK1V8B6K8YGGF7W7A6FZ",
+  "parent_run_id": null,
+  "event_type": "model_call",
+  "trace_id": "8de7a6d466437c04c100a2de93594f85",
+  "span_id": "622537ce0c7f66e7",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": "azure-ml-cluster",
+  "tenant_id": "tenant-acme",
+  "started_at": "2026-05-12T16:15:00.978000+00:00",
+  "payload": {
+    "model": "claude-3-5-sonnet-20241022",
+    "system": "anthropic",
+    "usage": {
+      "input_tokens": 3523,
+      "output_tokens": 324
+    },
+    "stop_reason": "tool_use"
+  },
+  "payload_hash": "sha256:f00c69fb8dbdbe54bae393d227fb56cde7abd0bbb28dd736675941ae7a4da00a",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

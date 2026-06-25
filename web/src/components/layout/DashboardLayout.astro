@@ -1,0 +1,45 @@
+---
+import '../../styles/global.css';
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const {
+  title = 'Dashboard — NovaFabric (experimental)',
+  description = 'Live local dashboard for nova serve --experimental.',
+} = Astro.props;
+
+const canonical = new URL(Astro.url.pathname, Astro.site).toString();
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="generator" content={Astro.generator} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+    <link rel="canonical" href={canonical} />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#0a0a0c" />
+    <script is:inline>
+      (function () {
+        try {
+          var t = localStorage.getItem('novafabric.theme');
+          if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+          var a = localStorage.getItem('novafabric.accent');
+          if (a) document.documentElement.setAttribute('data-accent', a);
+          var d = localStorage.getItem('novafabric.density');
+          if (d === 'compact') document.documentElement.setAttribute('data-density', 'compact');
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body class="h-screen overflow-hidden">
+    <slot />
+  </body>
+</html>

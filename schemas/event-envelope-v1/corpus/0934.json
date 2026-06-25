@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "6XJTBW4JDVBVGD44X4ZHEFK1RB",
+  "global_run_id": "1A3X01AW314VNTE7BKMHMWDV6V",
+  "run_id": "2M241FS2763PZPXD07N3EMV7PY",
+  "parent_run_id": "14THGCEBKT9H794C79H3V1B26X",
+  "event_type": "tool_call",
+  "trace_id": "251822e70e08fba5368c053535d9c852",
+  "span_id": "bb38de01214fcb7f",
+  "agent_id": "custom-agent-v1",
+  "cluster_id": "local-dev",
+  "tenant_id": "tenant-ml-ops",
+  "started_at": "2026-05-13T01:34:00.319000+00:00",
+  "emitter_node_id": "worker-0001",
+  "payload": {
+    "tool_name": "bash_executor",
+    "tool_call_id": "tc_de0a7f5972408d8f",
+    "arguments": {
+      "input": "example input for bash_executor"
+    },
+    "duration_ms": 2377
+  },
+  "payload_hash": "sha256:d12edc5173e05112c581c633db796758f650e710350dcca3cfa62b384fbda5f3",
+  "nova.batch.signature": "cuzb2iz0E7ageNr0LtfHFWuAHNRRla8iVPDb8l9sHu0oyBFW6bftlI7R9qhCGtQwfG4ZzwbichEyq0SHt7NA/g==",
+  "nova.batch.signing_key_id": "c0c4cb96-b415-4286-9a31-7ff1a26c19b7"
+}

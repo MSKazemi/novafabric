@@ -1,0 +1,19 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "6XZHBH7JMEQM13NT76ZDK6A5V8",
+  "global_run_id": "2GZSV5R7ETHK4J7NRTNAXWWKAQ",
+  "run_id": "6613QACRPSEGTBMDD13G26EJ72",
+  "parent_run_id": null,
+  "event_type": "span",
+  "trace_id": "357c2e5421a6629cca7246c5cea06900",
+  "span_id": "ca68643ef935a71b",
+  "agent_id": "nova-otel-bridge",
+  "cluster_id": "local-dev",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T16:35:00.115000+00:00",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

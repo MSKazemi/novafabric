@@ -1,0 +1,177 @@
+@theme {
+  /* Restrained, engineering-honest palette. Dark is the default. */
+  --color-bg: #0a0a0c;
+  --color-bg-raised: #111114;
+  --color-bg-sunken: #050507;
+  --color-border: #1f1f24;
+  --color-border-strong: #2a2a32;
+
+  --color-text: #e6e6ea;
+  --color-text-muted: #a8a8b3;
+  --color-text-faint: #74747f;
+
+  --color-accent: #c4f0a8;
+  --color-accent-hover: #d4f5be;
+  --color-accent-fg: #0a0a0c;
+
+  --color-edge-consumed: #6ea8fe;
+  --color-edge-produced-by: #c4f0a8;
+  --color-edge-replayed-from: #f0c4a8;
+  --color-edge-derived-from: #a8c4f0;
+  --color-edge-evaluated-by: #f0a8c4;
+  --color-edge-attested-by: #c4a8f0;
+  --color-edge-contains: #a8f0ef;
+  --color-edge-delegated-to: #f0dfa8;
+  --color-edge-spawned: #daf0a8;
+
+  --color-status-success: #c4f0a8;
+  --color-status-failure: #f0a8a8;
+  --color-status-pending: #f0e0a8;
+
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+  --text-4xl: 2.25rem;
+  --text-5xl: 3rem;
+  --text-6xl: 3.75rem;
+
+  --spacing-px: 1px;
+  --spacing-0_5: 0.125rem;
+  --spacing-1: 0.25rem;
+  --spacing-2: 0.5rem;
+  --spacing-3: 0.75rem;
+  --spacing-4: 1rem;
+  --spacing-6: 1.5rem;
+  --spacing-8: 2rem;
+  --spacing-12: 3rem;
+  --spacing-16: 4rem;
+  --spacing-24: 6rem;
+  --spacing-32: 8rem;
+
+  --radius-sm: 0.25rem;
+  --radius: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+
+  --max-width-prose: 64ch;
+  --max-width-content: 1100px;
+
+  /* Dashboard sidebar */
+  --sidebar-w: 13rem;
+  --sidebar-w-collapsed: 2.75rem;
+  --row-h: 2rem;
+}
+
+/*
+ * Light-mode overrides. Two paths so the user gets BOTH automatic and manual
+ * control:
+ *   1. [data-theme="light"]  on <html> — set by the manual toggle
+ *   2. (prefers-color-scheme: light) when no explicit theme is set
+ */
+
+[data-theme='light'] {
+  --color-bg: #fbfbfc;
+  --color-bg-raised: #ffffff;
+  --color-bg-sunken: #f3f3f5;
+  --color-border: #d8d8dd;
+  --color-border-strong: #b4b4bd;
+
+  --color-text: #14141a;
+  --color-text-muted: #4a4a55;        /* AAA contrast on bg-raised */
+  --color-text-faint: #6a6a75;        /* AA contrast on bg-raised */
+
+  --color-accent: #2f6a14;            /* darker forest-green so accent FG is white */
+  --color-accent-hover: #265411;
+  --color-accent-fg: #ffffff;
+
+  --color-status-success: #1f7a2c;
+  --color-status-failure: #b6262c;
+  --color-status-pending: #7a5900;  /* WCAG AA: ≥4.5:1 on tinted bg-sunken backgrounds */
+
+  --color-edge-consumed: #1c5fc7;
+  --color-edge-produced-by: #1f7a2c;
+  --color-edge-replayed-from: #a55a14;
+  --color-edge-derived-from: #4a3eb8;
+  --color-edge-evaluated-by: #b03366;
+  --color-edge-attested-by: #6a3eb8;
+  --color-edge-contains: #0e7a7a;
+  --color-edge-delegated-to: #7a6200;
+  --color-edge-spawned: #4a7a0e;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    --color-bg: #fbfbfc;
+    --color-bg-raised: #ffffff;
+    --color-bg-sunken: #f3f3f5;
+    --color-border: #d8d8dd;
+    --color-border-strong: #b4b4bd;
+
+    --color-text: #14141a;
+    --color-text-muted: #4a4a55;
+    --color-text-faint: #6a6a75;
+
+    --color-accent: #2f6a14;
+    --color-accent-hover: #265411;
+    --color-accent-fg: #ffffff;
+
+    --color-status-success: #1f7a2c;
+    --color-status-failure: #b6262c;
+    --color-status-pending: #7a5900;  /* WCAG AA: ≥4.5:1 on tinted bg-sunken backgrounds */
+
+    --color-edge-consumed: #1c5fc7;
+    --color-edge-produced-by: #1f7a2c;
+    --color-edge-replayed-from: #a55a14;
+    --color-edge-derived-from: #4a3eb8;
+    --color-edge-evaluated-by: #b03366;
+    --color-edge-attested-by: #6a3eb8;
+    --color-edge-contains: #0e7a7a;
+    --color-edge-delegated-to: #7a6200;
+    --color-edge-spawned: #4a7a0e;
+  }
+}
+
+/* ─── Accent presets ─────────────────────────────────────────────────────────
+ * Set [data-accent="..."] on <html> to switch the active accent colour.
+ * Dark variants are the default (overrides the :root baseline above).
+ * Light variants target the explicit [data-theme='light'] attribute.
+ * System/auto light mode variants are inside the media query below.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/* dark-mode accent presets */
+[data-accent="green"]  { --color-accent: #c4f0a8; --color-accent-hover: #d4f5be; --color-accent-fg: #0a0a0c; }
+[data-accent="violet"] { --color-accent: #c4a8f0; --color-accent-hover: #d4c0f8; --color-accent-fg: #0a0a0c; }
+[data-accent="cyan"]   { --color-accent: #a8e4f0; --color-accent-hover: #c0eef8; --color-accent-fg: #0a0a0c; }
+[data-accent="amber"]  { --color-accent: #f0d4a8; --color-accent-hover: #f5e0c0; --color-accent-fg: #0a0a0c; }
+[data-accent="rose"]   { --color-accent: #f0a8c4; --color-accent-hover: #f8c0d4; --color-accent-fg: #0a0a0c; }
+
+/* explicit light-mode accent overrides */
+[data-theme='light'][data-accent="green"]  { --color-accent: #2f6a14; --color-accent-hover: #265411; --color-accent-fg: #ffffff; }
+[data-theme='light'][data-accent="violet"] { --color-accent: #6b2fb3; --color-accent-hover: #5a269a; --color-accent-fg: #ffffff; }
+[data-theme='light'][data-accent="cyan"]   { --color-accent: #0e7a96; --color-accent-hover: #0a6880; --color-accent-fg: #ffffff; }
+[data-theme='light'][data-accent="amber"]  { --color-accent: #8a5a00; --color-accent-hover: #704a00; --color-accent-fg: #ffffff; }
+[data-theme='light'][data-accent="rose"]   { --color-accent: #b02060; --color-accent-hover: #961a50; --color-accent-fg: #ffffff; }
+
+/* system/auto light-mode accent overrides */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark'])[data-accent="green"]  { --color-accent: #2f6a14; --color-accent-hover: #265411; --color-accent-fg: #ffffff; }
+  :root:not([data-theme='dark'])[data-accent="violet"] { --color-accent: #6b2fb3; --color-accent-hover: #5a269a; --color-accent-fg: #ffffff; }
+  :root:not([data-theme='dark'])[data-accent="cyan"]   { --color-accent: #0e7a96; --color-accent-hover: #0a6880; --color-accent-fg: #ffffff; }
+  :root:not([data-theme='dark'])[data-accent="amber"]  { --color-accent: #8a5a00; --color-accent-hover: #704a00; --color-accent-fg: #ffffff; }
+  :root:not([data-theme='dark'])[data-accent="rose"]   { --color-accent: #b02060; --color-accent-hover: #961a50; --color-accent-fg: #ffffff; }
+}
+
+/* ─── Compact density ────────────────────────────────────────────────────────
+ * Set [data-density="compact"] on <html> to tighten vertical rhythm.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+[data-density="compact"] {
+  --row-h: 1.625rem;
+}

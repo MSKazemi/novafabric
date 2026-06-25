@@ -1,0 +1,8 @@
+novafabric_spec_version: "1"
+asset_type: model
+name: duplicate-model
+version: 1.0.0
+status: development
+spec:
+  framework: sklearn
+  artifact_path: /tmp/duplicate-model

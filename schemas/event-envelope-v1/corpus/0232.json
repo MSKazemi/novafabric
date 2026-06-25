@@ -1,0 +1,26 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "5JV3G8B2H5HGX780WB76XGD6NV",
+  "global_run_id": "07MQWCPVRJ7KW4REAAWAFGY46H",
+  "run_id": "6MSYZQXECNQC5XGMJEQFQ5W6F6",
+  "parent_run_id": "4BZFRRPD3Z63K5J8RP5Y7GPVRV",
+  "event_type": "tool_call",
+  "trace_id": "0f9cf51d8ba12b5828e54a46a8d839d8",
+  "span_id": "29a47e3363d407bf",
+  "agent_id": "nova-otel-bridge",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-platform-eng",
+  "started_at": "2026-05-12T13:52:00.155000+00:00",
+  "payload": {
+    "tool_name": "database_query",
+    "tool_call_id": "tc_c33e40d4e79a6f4a",
+    "arguments": {
+      "input": "example input for database_query"
+    },
+    "duration_ms": 1828
+  },
+  "payload_hash": "sha256:440beb6cbe6dc6e4f4166dedadacbc1b18d8e24681a7d4a9c2c8342133f3816f",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

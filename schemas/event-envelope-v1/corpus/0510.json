@@ -1,0 +1,20 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "6ZVJX7BYS6X85CKK6VGVN9KNKY",
+  "global_run_id": "e4f5c1b7-3238-7395-a86d-bd76827ef2fe",
+  "run_id": "26XQJ3V2ZG0G8NSJ8DC57E8H6N",
+  "parent_run_id": null,
+  "event_type": "capsule.finalize",
+  "trace_id": "a1225473af9bfd92b99b89f8e7c95af6",
+  "span_id": "39b11682ed009782",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": "azure-ml-cluster",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T18:30:00.704000+00:00",
+  "emitter_node_id": "node02.cluster.local",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": "B5uHw/uwC/m7DonOJERAgfw3jyknzf1o2pyuFsr/3Smdzzgy6OzCwWspOQ9k6GGsTupv0faZMWEXircAheiBjA==",
+  "nova.batch.signing_key_id": "2d48dc30-b07e-43bc-8af0-68559694717a"
+}

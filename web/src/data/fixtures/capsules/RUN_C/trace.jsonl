@@ -1,0 +1,5 @@
+{"span_id": "root", "name": "code-review-agent", "duration_ms": 4127, "kind": "internal"}
+{"span_id": "model_001", "parent": "root", "name": "openai.completion", "duration_ms": 1240, "kind": "client"}
+{"span_id": "tool_001", "parent": "root", "name": "mcp.read-file", "duration_ms": 312, "kind": "client"}
+{"span_id": "tool_002", "parent": "root", "name": "mcp.run-tests", "duration_ms": 2105, "kind": "client"}
+{"span_id": "model_002", "parent": "root", "name": "openai.completion", "duration_ms": 980, "kind": "client"}

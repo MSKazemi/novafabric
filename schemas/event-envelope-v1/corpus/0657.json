@@ -1,0 +1,28 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "31FTKTYPMX2A51RJ6M22DDSS05",
+  "global_run_id": "043c7dfb-7710-7bfe-83ba-f7444b6ce325",
+  "run_id": "39QYY9WN8CDVWA3Z3BKS36SNDK",
+  "parent_run_id": "3FC4ZJPMTNW5QK4C7W79ZDVBT8",
+  "event_type": "model_call",
+  "trace_id": "8ead743ee0014dc34adf722f01715986",
+  "span_id": "d810695ab5cbd9cf",
+  "agent_id": "nova-otel-bridge",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-acme",
+  "started_at": "2026-05-12T20:57:00.670000+00:00",
+  "emitter_node_id": "gpu-node-04",
+  "payload": {
+    "model": "mistralai/Mistral-7B-Instruct-v0.3",
+    "system": "anthropic",
+    "usage": {
+      "input_tokens": 1421,
+      "output_tokens": 384
+    },
+    "stop_reason": "tool_use"
+  },
+  "payload_hash": "sha256:f23ecce4d12dbadcd44babedda519a076f7f8eed406587fbf216caf828eda398",
+  "nova.batch.signature": "2ECpv1pS11/NKsCG96zdZxnA6NbaQ/QSUFnLEcDzT3pvJ6WqMEx6nIxD3H4VEVlWqTNhBfCiApcC62YtMsVtPw==",
+  "nova.batch.signing_key_id": "be18dd2c-60f9-4f02-b387-aeaec2df914d"
+}

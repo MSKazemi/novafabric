@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: novafabric-gateway-collector
+  namespace: novafabric
+  labels:
+    app.kubernetes.io/name: novafabric
+    app.kubernetes.io/component: gateway-collector
+spec:
+  type: ClusterIP
+  selector:
+    app: novafabric-gateway-collector
+  ports:
+    - name: grpc
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+    - name: http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
+    - name: metrics
+      port: 8888
+      targetPort: 8888
+      protocol: TCP

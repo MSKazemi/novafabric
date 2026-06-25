@@ -1,0 +1,28 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "68ZP2D7AF67NWFKR0D754XNQ50",
+  "global_run_id": "9526647a-dfec-7ea9-ae80-042345bbeb5e",
+  "run_id": "5GVWD64G4NC13AFNCKQ9AKBWW3",
+  "parent_run_id": "1JEA98CESF72BZF71QSDVFEYE2",
+  "event_type": "model_call",
+  "trace_id": "0810880c5a3b5e853a24b8c7f6d3b659",
+  "span_id": "e91f97f5abcd07c6",
+  "agent_id": "anthropic-sdk",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-platform-eng",
+  "started_at": "2026-05-12T19:09:00.604000+00:00",
+  "emitter_node_id": "gpu-node-04",
+  "payload": {
+    "model": "gpt-4o",
+    "system": "meta",
+    "usage": {
+      "input_tokens": 2875,
+      "output_tokens": 455
+    },
+    "stop_reason": "max_tokens"
+  },
+  "payload_hash": "sha256:bd84734b7c4cbe72d01aca8dd9f3062f14acf953d855e60b6b2224aa55869e63",
+  "nova.batch.signature": "R6pbyWO9Go5mjEMO7bLj8cnHJX0AcwjQAjaixeH7Yy+OSUmI/GUfxEoLr7+WZyRQtl6KbBMHXp4xVs8QaqqdXA==",
+  "nova.batch.signing_key_id": "5feb5a98-cd12-447f-a797-4cea5e1b85e7"
+}

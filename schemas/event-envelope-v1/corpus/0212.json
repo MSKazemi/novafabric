@@ -1,0 +1,19 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "00967BYE91FZ4NNKBRZENFS2GR",
+  "global_run_id": "69ENQWY3WEAJ7VW62KY7ZWZG57",
+  "run_id": "6DRSJ8T0THG0P9YPNX4G9P021G",
+  "parent_run_id": "32MFES6R9KFX0NY8MN8Q941BVS",
+  "event_type": "run.end",
+  "trace_id": "e8978d76bed37a238899ac08341458ec",
+  "span_id": "1b7b48e0f964a3a1",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": "slurm-train-v100",
+  "tenant_id": "tenant-ml-ops",
+  "started_at": "2026-05-12T13:32:00.897000+00:00",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

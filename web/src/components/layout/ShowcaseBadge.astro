@@ -1,0 +1,21 @@
+---
+interface Props {
+  variant?: 'header' | 'page';
+}
+const { variant = 'header' } = Astro.props;
+---
+
+<span
+  class:list={[
+    'inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium tracking-wide uppercase',
+    variant === 'header'
+      ? 'border-[var(--color-border)] text-[var(--color-text-muted)] bg-[var(--color-bg-raised)]'
+      : 'border-[var(--color-border-strong)] text-[var(--color-text-muted)] bg-[var(--color-bg-sunken)]',
+  ]}
+  title="This is documentation, not a viewer. The CLI is the canonical interface."
+>
+  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+    <circle cx="6" cy="6" r="2.5" fill="currentColor" />
+  </svg>
+  Showcase — explanatory, not a viewer
+</span>

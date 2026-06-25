@@ -1,0 +1,26 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "5NRA7Y0F4RQVFDVZFWDJVPW3BV",
+  "global_run_id": "574ZPFC3HR3HDC6J07BF8C6HF4",
+  "run_id": "3NG1EHN97MPGV0JSXDWXJSZMWA",
+  "parent_run_id": "0X280GE7QF8TYAZTKCPFQJME44",
+  "event_type": "tool_call",
+  "trace_id": "690e8d2f05009c9158ee39add456221b",
+  "span_id": "89419c9ae6930859",
+  "agent_id": "openai-agents-sdk",
+  "cluster_id": "local-dev",
+  "tenant_id": "tenant-platform-eng",
+  "started_at": "2026-05-12T15:16:00.601000+00:00",
+  "payload": {
+    "tool_name": "bash_executor",
+    "tool_call_id": "tc_75ac9b06d61cc870",
+    "arguments": {
+      "input": "example input for bash_executor"
+    },
+    "duration_ms": 4121
+  },
+  "payload_hash": "sha256:7ee70be229e5b108a0434e8c1fd6063ebb349b5b37144dde61936ab1be83bdd8",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

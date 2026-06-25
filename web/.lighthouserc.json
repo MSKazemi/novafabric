@@ -1,0 +1,38 @@
+{
+  "ci": {
+    "collect": {
+      "staticDistDir": "./dist",
+      "url": [
+        "http://localhost/index.html",
+        "http://localhost/concepts/index.html",
+        "http://localhost/install/index.html",
+        "http://localhost/why/index.html",
+        "http://localhost/spec/index.html",
+        "http://localhost/showcase/lineage/index.html",
+        "http://localhost/showcase/capsule/index.html",
+        "http://localhost/showcase/replay/index.html",
+        "http://localhost/showcase/registry/index.html",
+        "http://localhost/showcase/evidence/index.html"
+      ],
+      "settings": {
+        "preset": "desktop",
+        "skipAudits": [
+          "uses-http2",
+          "redirects-http"
+        ]
+      }
+    },
+    "assert": {
+      "assertions": {
+        "categories:performance": ["error", { "minScore": 0.9 }],
+        "categories:accessibility": ["error", { "minScore": 0.9 }],
+        "categories:best-practices": ["error", { "minScore": 0.9 }],
+        "categories:seo": ["warn", { "minScore": 0.85 }]
+      }
+    },
+    "upload": {
+      "target": "filesystem",
+      "outputDir": "./.lighthouseci"
+    }
+  }
+}

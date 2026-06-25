@@ -1,0 +1,65 @@
+# robots.txt — novafabric.dev
+# Controls CRAWLING, not indexing. Use a <meta name="robots" content="noindex"> tag
+# or X-Robots-Tag header to keep a specific page out of search results.
+
+# === ANSWER / SEARCH crawlers: explicitly allowed for AI visibility ===
+# ChatGPT search + live retrieval
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+# Claude search + live retrieval
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
+# Perplexity search indexing
+User-agent: PerplexityBot
+Allow: /
+
+# Google Search, Google Images, Google News, and Google AI Overviews / AI Mode
+# NOTE: Google-Extended (below) only controls Gemini training — NOT this.
+User-agent: Googlebot
+Allow: /
+
+# Bing index — also gates Copilot and contributes to ChatGPT live retrieval
+User-agent: bingbot
+Allow: /
+
+# Apple Siri, Spotlight, Safari search
+User-agent: Applebot
+Allow: /
+
+# === Default: allow everything else (including minor search crawlers) ===
+User-agent: *
+Allow: /
+
+# === TRAINING-ONLY crawlers ===
+# These bots feed model-training corpora, NOT search/answer visibility.
+# Blocking them does NOT affect your appearance in ChatGPT, Claude, Gemini, or Perplexity.
+# Uncomment any block below to opt out of that vendor's model training.
+#
+# RECOMMENDATION FOR MOHSEN: leaving training bots allowed maximises the chance
+# that future model versions know about NovaFabric. Block them only if you have
+# a legal or policy reason to do so. No silent changes made here.
+#
+# User-agent: GPTBot
+# Disallow: /
+#
+# User-agent: ClaudeBot
+# Disallow: /
+#
+# User-agent: Google-Extended
+# Disallow: /
+#
+# User-agent: Applebot-Extended
+# Disallow: /
+#
+# User-agent: CCBot
+# Disallow: /
+
+Sitemap: https://novafabric.dev/sitemap-index.xml

@@ -1,0 +1,254 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/replay-attestation.schema.json",
+  "$comment": "schema_version 0.1.0; tracks design/spec/replay-attestation-v0.1.md and ADR-0094 (B). Additive superset of the ReperformanceAttestation produced by src/novafabric/evidence/reperformance.py — NOT a fork. Emitted as an in-capsule record and wrapped as an in-toto predicate (predicateType https://novafabric.io/replay-attestation/v0); never a third top-level format (ADR-0034 two-format rule).",
+  "title": "ReplayAttestation",
+  "description": "A signed reproducibility certificate for a NovaFabric replay (ADR-0094). Extends the re-performance attestation with a determinism_class, the pinned environment/model block that justifies the class, an optional bounded-equivalence record, the input authorization, and a ledger_ref back-link (B -> A) to the Adversary-Anchored Accountability Ledger checkpoint that sealed the run.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "capsule_hash",
+    "replayed_at",
+    "replay_mode",
+    "outcome_digest",
+    "match",
+    "determinism_class",
+    "pinned"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^0\\.",
+      "description": "Replay-attestation schema version. v0.1.x while the certificate format is experimental."
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "run_id of the source capsule that was replayed (carried unchanged from ReperformanceAttestation)."
+    },
+    "capsule_hash": {
+      "type": "string",
+      "description": "SHA-256 over the source capsule manifest (carried unchanged from ReperformanceAttestation)."
+    },
+    "replayed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the replay was performed (RFC 3339, UTC)."
+    },
+    "replay_mode": {
+      "type": "string",
+      "enum": ["forensic", "mocked", "semantic", "exact", "intervention"],
+      "description": "Replay mode used (replay/_engine.py). The certificate never hides which mode produced the verdict."
+    },
+    "outcome_digest": {
+      "type": "string",
+      "description": "Stable digest over the replay's outcome facets, EXCLUDING wall-clock fields (reuses outcome_digest_of in reperformance.py). Two byte-identical outcomes digest identically."
+    },
+    "match": {
+      "type": "string",
+      "enum": ["exact", "semantic-match", "mismatch"],
+      "description": "Match verdict (carried unchanged from ReperformanceAttestation). Recorded separately from determinism_class: 'match' is about THIS replay vs the recording; determinism_class is the reproducibility property of the run."
+    },
+    "determinism_class": {
+      "type": "string",
+      "enum": ["BIT_EXACT", "BOUNDED_EQUIVALENT", "NON_DETERMINISTIC"],
+      "description": "The reproducibility class. BIT_EXACT: outcome_digest reproduced byte-for-byte under a fully pinned environment (exact-mode success with all pinned fields present). BOUNDED_EQUIVALENT: outcome differs but stays within a stated bounded_equivalence threshold (semantic-mode). NON_DETERMINISTIC: no determinism guarantee could be established (missing pins, unpinned seed/temperature, or mismatch). Deny-by-default at the release gate."
+    },
+    "pinned": {
+      "$ref": "#/$defs/PinnedBlock",
+      "description": "The model and environment dimensions pinned for this run. These are the evidence that justifies the determinism_class — an unpinned seed or floating model digest forces NON_DETERMINISTIC."
+    },
+    "bounded_equivalence": {
+      "$ref": "#/$defs/BoundedEquivalence",
+      "description": "Required when determinism_class is BOUNDED_EQUIVALENT: the metric, measured distance, and threshold that bound the equivalence. Reuses the _semantic similarity from replay/_engine.py."
+    },
+    "input_authorization": {
+      "$ref": "#/$defs/InputAuthorization",
+      "description": "Records who/what authorized the replay inputs, so a certificate cannot be silently produced over substituted inputs."
+    },
+    "ledger_ref": {
+      "$ref": "#/$defs/LedgerRef",
+      "description": "Back-link (B -> A) to the Adversary-Anchored Accountability Ledger checkpoint (ledger-checkpoint-v1) that sealed the source run. Lets a verifier confirm the run this certificate attests was itself tamper-evidently logged."
+    },
+    "reasons": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Human-readable reason collection for the classification, reusing the _exact reason-collection from replay/_engine.py (e.g. which fields diverged, which pin was missing)."
+    },
+    "replayer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"type": "string"},
+        "version": {"type": "string"}
+      },
+      "description": "Identity of the tool that performed the replay (carried from ReperformanceAttestation)."
+    },
+    "notes": {
+      "oneOf": [{"type": "string"}, {"type": "null"}],
+      "description": "Optional free-form notes (carried from ReperformanceAttestation)."
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Vendor extensions. Keys must be reverse-DNS-prefixed."
+    }
+  },
+  "if": {
+    "properties": {
+      "determinism_class": {"const": "BOUNDED_EQUIVALENT"}
+    },
+    "required": ["determinism_class"]
+  },
+  "then": {
+    "required": ["bounded_equivalence"]
+  },
+  "$defs": {
+    "Sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Lowercase hex SHA-256 digest, sha256:-prefixed."
+    },
+    "PinnedBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "env"],
+      "properties": {
+        "model": {
+          "$ref": "#/$defs/PinnedModel",
+          "description": "Model identity and sampling parameters pinned from the gen_ai.* fields of model-call.schema.json."
+        },
+        "env": {
+          "$ref": "#/$defs/PinnedEnv",
+          "description": "Environment pins drawn from environment.schema.json (mode, container image digest, lock-file hash)."
+        }
+      },
+      "description": "The pinned dimensions. A BIT_EXACT class requires every required pin present and concrete; any null/missing required pin downgrades the class."
+    },
+    "PinnedModel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_model", "response_model"],
+      "properties": {
+        "request_model": {
+          "type": "string",
+          "description": "gen_ai.request.model — the model id as requested."
+        },
+        "response_model": {
+          "type": "string",
+          "description": "gen_ai.response.model — the model id the provider reported serving. A drift between request and response model is recorded, not hidden."
+        },
+        "model_digest": {
+          "oneOf": [{"$ref": "#/$defs/Sha256"}, {"type": "null"}],
+          "description": "Content digest of the served model weights when available (local inference). Null for hosted endpoints that do not expose it — a null here precludes BIT_EXACT."
+        },
+        "seed": {
+          "oneOf": [{"type": "integer"}, {"type": "null"}],
+          "description": "gen_ai.request.seed. Null (unpinned) precludes BIT_EXACT."
+        },
+        "temperature": {
+          "oneOf": [{"type": "number"}, {"type": "null"}],
+          "description": "gen_ai.request.temperature. Non-zero, unpinned temperature precludes BIT_EXACT."
+        },
+        "top_p": {
+          "oneOf": [{"type": "number"}, {"type": "null"}],
+          "description": "gen_ai.request.top_p."
+        }
+      }
+    },
+    "PinnedEnv": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lock_mode"],
+      "properties": {
+        "lock_mode": {
+          "type": "string",
+          "enum": ["deterministic", "best-effort"],
+          "description": "environment.schema.json mode. 'best-effort' precludes BIT_EXACT (some required-for-exact field is missing)."
+        },
+        "container_image_digest": {
+          "oneOf": [{"$ref": "#/$defs/Sha256"}, {"type": "null"}],
+          "description": "OCI image manifest digest from environment.schema.json container.image_digest. Null for a non-containerized or unresolved run."
+        },
+        "python_lock_file_hash": {
+          "oneOf": [{"$ref": "#/$defs/Sha256"}, {"type": "null"}],
+          "description": "SHA-256 of the embedded Python lock file (environment.schema.json python.lock_file_hash). Null when lock_file_kind is 'none'."
+        },
+        "inference_deterministic": {
+          "oneOf": [{"type": "boolean"}, {"type": "null"}],
+          "description": "Whether the serving engine ran in a documented deterministic mode (environment.schema.json hardware.inference.deterministic)."
+        }
+      }
+    },
+    "BoundedEquivalence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metric", "distance", "threshold"],
+      "properties": {
+        "metric": {
+          "type": "string",
+          "description": "Name of the equivalence metric, e.g. 'semantic-cosine', 'levenshtein-ratio', 'numeric-l2'. The metric used by the _semantic similarity path in replay/_engine.py."
+        },
+        "distance": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Measured distance between the recorded and replayed outcomes under the metric."
+        },
+        "threshold": {
+          "type": "number",
+          "minimum": 0,
+          "description": "The threshold below which the outcomes are considered bounded-equivalent. distance MUST be <= threshold for the BOUNDED_EQUIVALENT class to hold."
+        },
+        "higher_is_closer": {
+          "type": "boolean",
+          "description": "When true, the metric is a similarity (compare distance >= threshold); when false (default), it is a distance (compare distance <= threshold)."
+        }
+      },
+      "description": "Quantitative bound that justifies BOUNDED_EQUIVALENT. The certificate states the number so a verifier can re-check the comparison."
+    },
+    "InputAuthorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inputs_digest"],
+      "properties": {
+        "inputs_digest": {
+          "$ref": "#/$defs/Sha256",
+          "description": "Digest over the replay inputs, so substituted inputs invalidate the certificate."
+        },
+        "authorized_by": {
+          "oneOf": [{"type": "string"}, {"type": "null"}],
+          "description": "Principal (OIDC/RBAC subject) that authorized the replay inputs."
+        },
+        "authorized_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the inputs were authorized (RFC 3339)."
+        }
+      },
+      "description": "Binds the certificate to a specific, authorized input set."
+    },
+    "LedgerRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["checkpoint_id"],
+      "properties": {
+        "checkpoint_id": {
+          "type": "string",
+          "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+          "description": "checkpoint_id of the ledger-checkpoint-v1 record that sealed the source run."
+        },
+        "capsule_id": {
+          "oneOf": [{"type": "string"}, {"type": "null"}],
+          "description": "capsule_id the checkpoint covers (should equal run_id)."
+        },
+        "merkle_root": {
+          "oneOf": [{"$ref": "#/$defs/Sha256"}, {"type": "null"}],
+          "description": "Merkle root the checkpoint was included under, for a direct cross-check."
+        }
+      },
+      "description": "B -> A link to the Adversary-Anchored Accountability Ledger checkpoint."
+    }
+  }
+}

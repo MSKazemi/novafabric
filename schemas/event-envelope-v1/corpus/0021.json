@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "0CCA8EVSKGDD4JRYXJ39HBDCFK",
+  "global_run_id": "a9605f68-e8a4-7168-b256-4a930241d467",
+  "run_id": "58MCBC51E8TJ4P3NSDR71CGYNX",
+  "parent_run_id": "4WF2WPGWSNK3R5ZZS4DZDZMT8X",
+  "event_type": "model_call",
+  "trace_id": "0429b0e53bee0d447b1d2f7d46a33dbc",
+  "span_id": "dd82482de03dd37e",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": null,
+  "tenant_id": null,
+  "started_at": "2026-05-12T10:21:00.721000+00:00",
+  "payload": {
+    "model": "gpt-4-turbo",
+    "system": "meta",
+    "usage": {
+      "input_tokens": 1558,
+      "output_tokens": 853
+    },
+    "stop_reason": "max_tokens"
+  },
+  "payload_hash": "sha256:805320e28bb082ec4a09ee5c8debd95cc4180cde6193acc199a2a7c15299fe26",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

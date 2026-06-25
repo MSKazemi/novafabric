@@ -1,0 +1,18 @@
+---
+interface Props {
+  variant?: 'default' | 'success' | 'failure' | 'pending' | 'muted';
+}
+const { variant = 'default' } = Astro.props;
+
+const styles: Record<string, string> = {
+  default: 'border-[var(--color-border)] text-[var(--color-text-muted)] bg-[var(--color-bg-raised)]',
+  success: 'border-[color-mix(in_oklab,var(--color-status-success)_30%,transparent)] text-[var(--color-status-success)] bg-[color-mix(in_oklab,var(--color-status-success)_8%,transparent)]',
+  failure: 'border-[color-mix(in_oklab,var(--color-status-failure)_30%,transparent)] text-[var(--color-status-failure)] bg-[color-mix(in_oklab,var(--color-status-failure)_8%,transparent)]',
+  pending: 'border-[color-mix(in_oklab,var(--color-status-pending)_30%,transparent)] text-[var(--color-status-pending)] bg-[color-mix(in_oklab,var(--color-status-pending)_8%,transparent)]',
+  muted: 'border-[var(--color-border)] text-[var(--color-text-faint)] bg-transparent',
+};
+---
+
+<span class:list={['inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-medium', styles[variant]]}>
+  <slot />
+</span>

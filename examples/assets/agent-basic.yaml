@@ -1,0 +1,22 @@
+novafabric_spec_version: "1"
+asset_type: agent
+name: support-triage-agent
+version: v1.0.0
+status: development
+description: "LLM agent that triages incoming support tickets"
+tags:
+  team: support-platform
+spec:
+  model:
+    provider: anthropic
+    name: claude-haiku-4-5-20251001
+    temperature: 0.1
+  tools:
+    - search_knowledge_base
+    - create_ticket
+  prompts:
+    system: "You are a support triage assistant. Classify incoming tickets by priority."
+  policies:
+    - rate_limit_10rps
+  evals:
+    - triage_accuracy_suite

@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "31F14V04SE6N7Q5QNEQT5Q9G86",
+  "global_run_id": "59afccab-206e-7b8a-867f-77dd983859e0",
+  "run_id": "4A9VC4AJCXE6NDK8AK0HBS9BRM",
+  "parent_run_id": null,
+  "event_type": "model_call",
+  "trace_id": "f66c90086bbb3d24e7cea3755f1fcc90",
+  "span_id": "316eca5f14cdb6fd",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": null,
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T13:15:00.261000+00:00",
+  "payload": {
+    "model": "claude-3-opus-20240229",
+    "system": "anthropic",
+    "usage": {
+      "input_tokens": 2870,
+      "output_tokens": 993
+    },
+    "stop_reason": "stop"
+  },
+  "payload_hash": "sha256:dc4ebfabc786c7f88eca28677cff3b7915d2cbe9cf72ffc5ced1ef7c25b8ef9b",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

@@ -1,0 +1,56 @@
+# Self-contained NovaFabric capture-hook plugin reference (v0.6.7).
+#
+# Demonstrates the `novafabric.hooks` entry-point contract end-to-end:
+# install this package alongside novafabric, run `nova capture <cmd>`,
+# and the hook in src/novafabric_example_plugin/hook.py auto-loads
+# alongside the built-in hooks.
+#
+# Plugin authors can clone this directory as a starting template:
+#
+#     cp -r examples/plugin-hook-reference my-novafabric-plugin
+#     cd my-novafabric-plugin
+#     # rename src/novafabric_example_plugin -> src/novafabric_<your_name>
+#     # edit pyproject.toml: name + entry-point target
+#     # edit hook.py: patch your target SDK
+#     uv pip install -e .
+#     nova capture python your_workload.py
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "novafabric-example-plugin"
+version = "0.1.0"
+description = "Reference NovaFabric capture-hook plugin (demonstrates the C-2 entry-point contract)"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.12"
+# Depends on novafabric for the HookPluginInfo dataclass and the
+# CapsuleWriter type. In a real plugin you'd pin a known-good version
+# range; this reference uses an open lower-bound for development.
+dependencies = [
+    "novafabric>=0.5.0",
+]
+
+# THE entry-point: this is what NovaFabric discovers at capture time.
+# Format: <ep-name> = "<module>:<class>"
+[project.entry-points."novafabric.hooks"]
+example = "novafabric_example_plugin.hook:ExampleHook"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/novafabric_example_plugin"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+# For local development inside this repo: use the workspace novafabric
+# instead of the PyPI release (which doesn't exist yet). External users
+# who clone this directory as a starting template should DELETE this
+# section — they'll resolve novafabric from PyPI normally.
+[tool.uv.sources]
+novafabric = { path = "../..", editable = true }

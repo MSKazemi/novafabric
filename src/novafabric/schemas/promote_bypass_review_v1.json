@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/promote_bypass_review_v1.json",
+  "title": "PromoteBypassReview",
+  "description": "Review record for a bypass attestation.",
+  "type": "object",
+  "required": [
+    "bypass_attestation_digest",
+    "review_decision",
+    "reviewer_subject",
+    "review_timestamp"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "bypass_attestation_digest": {
+      "type": "object",
+      "required": ["sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "review_decision": {
+      "type": "string",
+      "enum": ["accepted", "escalated"]
+    },
+    "reviewer_subject": {
+      "type": "string"
+    },
+    "review_timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "review_notes": {
+      "type": "string"
+    }
+  }
+}

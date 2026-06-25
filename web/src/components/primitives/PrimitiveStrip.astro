@@ -1,0 +1,50 @@
+---
+import PrimitiveCard from './PrimitiveCard.astro';
+
+const primitives = [
+  {
+    href: '/showcase/registry',
+    title: 'Asset Registry',
+    blurb: 'Identity layer for every model, agent, prompt, tool, dataset. Eval-gated promotion from development → production.',
+  },
+  {
+    href: '/showcase/capsule',
+    title: 'Run Capsule',
+    blurb: 'A self-contained record of one AI run. Inputs, outputs, model calls, tools, environment — schema-validated.',
+  },
+  {
+    href: '/showcase/replay',
+    title: 'Replay',
+    blurb: 'Reconstruct yesterday\'s run today. Four modes — exact, mocked, semantic, forensic — with honest guarantees.',
+  },
+  {
+    href: '/showcase/lineage',
+    title: 'Lineage',
+    blurb: 'Causation graph linking runs, assets, and artifacts. Provenance, blast radius, replay chain — three queries.',
+  },
+  {
+    href: '/showcase/evidence',
+    title: 'Evidence Bundle',
+    blurb: 'Signed, portable proof of what happened. in-toto DSSE, ed25519 — verifiable in your browser, right now.',
+  },
+];
+---
+
+<section class="container-content py-16 md:py-24">
+  <header class="mb-10">
+    <p class="text-xs uppercase tracking-wider text-[var(--color-text-faint)] mb-2">The five primitives</p>
+    <h2 class="text-3xl md:text-4xl font-medium tracking-tight text-balance">
+      Five primitives that compose into a time machine.
+    </h2>
+    <p class="mt-3 text-[var(--color-text-muted)] max-w-2xl">
+      Each one stands alone. Together they capture, replay, and prove what
+      your AI system did — yesterday, last quarter, two years ago.
+    </p>
+  </header>
+
+  <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+    {primitives.map((p, i) => (
+      <PrimitiveCard href={p.href} title={p.title} blurb={p.blurb} index={i + 1} />
+    ))}
+  </div>
+</section>

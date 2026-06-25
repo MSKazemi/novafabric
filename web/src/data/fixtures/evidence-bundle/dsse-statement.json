@@ -1,0 +1,27 @@
+{
+  "_type": "https://in-toto.io/Statement/v1",
+  "subject": [
+    {
+      "name": "run:01KR5SQZPDGTKE3MDP3ZRX8WP1",
+      "digest": {
+        "sha256": "1215e8dd557a386b96a6517f4599560ec3fc31679f7a808b3310f58ed94aa78b"
+      }
+    }
+  ],
+  "predicateType": "https://novafabric.dev/schemas/run-capsule/v0.1.0",
+  "predicate": {
+    "schema_version": "0.1.0",
+    "run_id": "01KR5SQZPDGTKE3MDP3ZRX8WP1",
+    "manifest_hash": "8171166756424187f680c1ef0c788275bcaa7aac1053d9103c44b4fbfc6b105c",
+    "lineage_edge_count": 8,
+    "redaction_findings": 0
+  },
+  "signature": {
+    "keyid": "demo-key-2026",
+    "alg": "ed25519",
+    "sig_b64": "mehFh2YPsMVGv2GEp/CkPS+PeIHdEWH9/8f76DBYSTuuUPCT6WEMovN9jQivaYeSCL8RSjHQlatnb0Vgms9/Bw==",
+    "message_hash_sha256": "aa6b5d6559b287a48899d4464edee36c1979813dea9109a6b65b601c15fa7361",
+    "canonical_message_length": 1268
+  },
+  "_note": "This signature is real ed25519. The browser verifies it via SubtleCrypto."
+}

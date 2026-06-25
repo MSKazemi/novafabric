@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nova-worm-conformance"
+version = "0.1.0"
+description = "WORM behavioral test suite for NovaFabric-compatible object storage backends"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.12"
+# Standalone package — no novafabric dependency (as spec'd in build prompt)
+dependencies = [
+    # boto3 (Apache-2.0) — S3-family backends
+    "boto3>=1.38",
+    # typer (MIT) — CLI
+    "typer>=0.15",
+    # rich (MIT) — output formatting
+    "rich>=13.9",
+]
+
+[project.optional-dependencies]
+azure = [
+    "azure-storage-blob>=12.25",
+]
+sign = [
+    # For --sign: requires NovaSeal — installed separately
+]
+
+[project.scripts]
+nova-worm-test = "nova_worm_conformance.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nova_worm_conformance"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "ruff>=0.9",
+    "mypy>=1.14",
+]

@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "4BPJWBFJKBBWAMPCJME9BWTWHK",
+  "global_run_id": "d1c6c4d7-8df5-794f-ab6b-3b91b4957b0a",
+  "run_id": "3W7KYJJTYD1DMK62Y1V7GP7YFV",
+  "parent_run_id": "347BH1WHZ1NYB6ET6C0ME5R2AC",
+  "event_type": "model_call",
+  "trace_id": "fb2de2efeca8c1a11a24e7b503ca7694",
+  "span_id": "38c2f3ba3b12fe4b",
+  "agent_id": "custom-agent-v1",
+  "cluster_id": null,
+  "tenant_id": "tenant-ml-ops",
+  "started_at": "2026-05-12T13:09:00.177000+00:00",
+  "payload": {
+    "model": "meta-llama/Llama-3.1-70B-Instruct",
+    "system": "anthropic",
+    "usage": {
+      "input_tokens": 3215,
+      "output_tokens": 456
+    },
+    "stop_reason": "stop"
+  },
+  "payload_hash": "sha256:598cf7b0881b3bc4d9453daf630b28ceecc24939717b194b691e12ad4cb0a4cf",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

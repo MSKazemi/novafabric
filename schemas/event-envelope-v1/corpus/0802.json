@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "6XDAXR7SVHDDMBQJQWJQ2NHWQW",
+  "global_run_id": "6P7PXZ5HXB30SN0GHVPC9QEDJC",
+  "run_id": "1J8S4DPCNH1MT186JXMTKNP7MV",
+  "parent_run_id": "67TNJ8BB14V8DNC1FMVEHVN3F0",
+  "event_type": "tool_call",
+  "trace_id": "dc251a4cc46157bbaa5ec82271df5abd",
+  "span_id": "0937ba9c26fa3a47",
+  "agent_id": "langchain-agent",
+  "cluster_id": "local-dev",
+  "tenant_id": "tenant-acme",
+  "started_at": "2026-05-12T23:22:00.050000+00:00",
+  "emitter_node_id": "worker-0001",
+  "payload": {
+    "tool_name": "code_interpreter",
+    "tool_call_id": "tc_00e427e184de9781",
+    "arguments": {
+      "input": "example input for code_interpreter"
+    },
+    "duration_ms": 4563
+  },
+  "payload_hash": "sha256:53f5a638847e3cf5661371a731d13d3f0666675c552c6d95c79809ab02d4538d",
+  "nova.batch.signature": "d4SD71fc9NKhft2vlur2khDaJMqnZYraRZX4Kg/CxbDsllJY+wozsfbD26/O0TEKdVKuarKN/3oBlhpsPMvgfA==",
+  "nova.batch.signing_key_id": "8710f4c3-c12c-4071-a46f-84639823ef20"
+}

@@ -1,0 +1,20 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "56S3B0DPMNM08DX4QAT4AXN5RZ",
+  "global_run_id": "5P651M2NXT9KKS10XTY4813Q47",
+  "run_id": "58QFXMJBRHRJV1W5WTGSA4HJJK",
+  "parent_run_id": "4HPJP2HYFTM3XKXQER98YN8FQX",
+  "event_type": "run.start",
+  "trace_id": "bce02a8b4291bfd0724e463278bb4c35",
+  "span_id": "6a85b25f49c986fc",
+  "agent_id": "custom-agent-v1",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-acme",
+  "started_at": "2026-05-12T18:49:00.044000+00:00",
+  "emitter_node_id": "gpu-node-04",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": "ytmD3ww60ZaNRnjnBCiUI6y7IRayOOH5qPDBKk55vufBw1HJGSsq3HtUd8ZRv2Dg3mwS5x89az/I5Bl9f0R2Mg==",
+  "nova.batch.signing_key_id": "6956e9dd-080e-40cb-b009-824cacf73ee3"
+}

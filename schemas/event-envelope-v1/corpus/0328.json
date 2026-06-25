@@ -1,0 +1,26 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "5T4QGKT4MWFBFK8CVAT8Y99DZK",
+  "global_run_id": "3H3EP6SFXJ2VJMZMTGSX8E20J3",
+  "run_id": "61PBQ5FC2ZQK40EXJPB0188BVT",
+  "parent_run_id": "3N1XQWFDSW55EH5X6PAE37FCQY",
+  "event_type": "tool_call",
+  "trace_id": "fbe77a4c8a75d5c94736ad98562a7e51",
+  "span_id": "783f14ea77637bff",
+  "agent_id": "nova-sdk/python",
+  "cluster_id": "local-dev",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T15:28:00.197000+00:00",
+  "payload": {
+    "tool_name": "bash_executor",
+    "tool_call_id": "tc_87cfd7dffda886ac",
+    "arguments": {
+      "input": "example input for bash_executor"
+    },
+    "duration_ms": 1436
+  },
+  "payload_hash": "sha256:a61cf4adddae615ae6cf75334b06bdf024a275fd4b6a7ad74d15592d34e7fc9e",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

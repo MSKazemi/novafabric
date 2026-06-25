@@ -1,0 +1,26 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "2HH2EHHV6CMK3WCRCNQ3178VWY",
+  "global_run_id": "0T2G0J6QGJ671M2GM2MHZDX5VT",
+  "run_id": "44JNNG337RXMZG5HWBP0ZGRFYJ",
+  "parent_run_id": "41DF18D8XMXGZQ88PYJNFWJSX8",
+  "event_type": "tool_call",
+  "trace_id": "569e3ce34a0a17fe6cf4a684989e5176",
+  "span_id": "1df23aee665552cc",
+  "agent_id": "custom-agent-v1",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T16:28:00.370000+00:00",
+  "payload": {
+    "tool_name": "bash_executor",
+    "tool_call_id": "tc_9430b8c4ab6c875b",
+    "arguments": {
+      "input": "example input for bash_executor"
+    },
+    "duration_ms": 3619
+  },
+  "payload_hash": "sha256:1639316c3eb72c18dd18572dbaff858880b06fcdff2fcc272fb49821dcd748b4",
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

@@ -1,0 +1,19 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "1EDW7QHH2DQRKKH46XNW4YBGK6",
+  "global_run_id": "842e9243-908a-720f-8512-a53804165f70",
+  "run_id": "4VEF2115YDF9VG95E8HDZ7RTZ4",
+  "parent_run_id": null,
+  "event_type": "capsule.finalize",
+  "trace_id": "9b0842c506e7dbbbd2d4b5bf5971d5cf",
+  "span_id": "cd3a22c5b63ff853",
+  "agent_id": "langchain-agent",
+  "cluster_id": "k8s-prod-us-east-1",
+  "tenant_id": "tenant-platform-eng",
+  "started_at": "2026-05-12T15:30:00.101000+00:00",
+  "payload": null,
+  "payload_hash": null,
+  "nova.batch.signature": null,
+  "nova.batch.signing_key_id": null
+}

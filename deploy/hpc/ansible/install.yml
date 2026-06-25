@@ -1,0 +1,129 @@
+---
+# NovaFabric HPC Ansible Playbook
+# Deploys Slurm Prolog/Epilog scripts and NATS configuration templates
+# to Slurm compute nodes and the cluster hub.
+#
+# Usage:
+#   ansible-playbook -i inventory.example.ini install.yml
+#
+# Variables (set in inventory or via --extra-vars):
+#   novafabric_install_dir     Installation root (default: /opt/novafabric)
+#   novafabric_cluster_id      Cluster identifier string
+#   novafabric_hub_address     NATS hub address (host:port)
+
+- name: Install NovaFabric collector on Slurm compute nodes
+  hosts: slurm_compute
+  become: true
+  vars:
+    novafabric_install_dir: /opt/novafabric
+    novafabric_bin_dir: "{{ novafabric_install_dir }}/bin"
+    novafabric_conf_dir: "{{ novafabric_install_dir }}/conf"
+    novafabric_etc_dir: /etc/novafabric
+
+  tasks:
+    - name: Create NovaFabric bin directory
+      ansible.builtin.file:
+        path: "{{ novafabric_bin_dir }}"
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Create NovaFabric conf directory
+      ansible.builtin.file:
+        path: "{{ novafabric_conf_dir }}"
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Create NovaFabric etc directory
+      ansible.builtin.file:
+        path: "{{ novafabric_etc_dir }}"
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Copy prolog.sh to compute nodes
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../prolog.sh"
+        dest: "{{ novafabric_bin_dir }}/prolog.sh"
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Copy epilog.sh to compute nodes
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../epilog.sh"
+        dest: "{{ novafabric_bin_dir }}/epilog.sh"
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Copy leaf-node.conf.tmpl to compute nodes
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../leaf-node.conf.tmpl"
+        dest: "{{ novafabric_conf_dir }}/leaf-node.conf.tmpl"
+        mode: "0644"
+        owner: root
+        group: root
+
+    - name: Write environment variable configuration to /etc/novafabric/env
+      ansible.builtin.template:
+        src: env.j2
+        dest: "{{ novafabric_etc_dir }}/env"
+        mode: "0640"
+        owner: root
+        group: slurm
+      vars:
+        env_content: |
+          NOVAFABRIC_SPOOL_BASE=/tmp/novafabric
+          NOVAFABRIC_HUB_ADDRESS={{ novafabric_hub_address | default('localhost:4222') }}
+          NOVAFABRIC_CLUSTER_ID={{ novafabric_cluster_id | default('local') }}
+          NOVAFABRIC_ENV=hpc
+
+    - name: Show slurm.conf instructions
+      ansible.builtin.debug:
+        msg: |
+          Add the following lines to /etc/slurm/slurm.conf on the Slurm controller,
+          then run `scontrol reconfigure`:
+
+            Prolog={{ novafabric_bin_dir }}/prolog.sh
+            Epilog={{ novafabric_bin_dir }}/epilog.sh
+            PrologFlags=Alloc
+
+- name: Install NovaFabric NATS hub on hub server
+  hosts: slurm_hub
+  become: true
+  vars:
+    novafabric_install_dir: /opt/novafabric
+    novafabric_conf_dir: "{{ novafabric_install_dir }}/conf"
+
+  tasks:
+    - name: Create NovaFabric conf directory on hub
+      ansible.builtin.file:
+        path: "{{ novafabric_conf_dir }}"
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Copy cluster-hub.conf.tmpl to hub server
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../cluster-hub.conf.tmpl"
+        dest: "{{ novafabric_conf_dir }}/cluster-hub.conf.tmpl"
+        mode: "0644"
+        owner: root
+        group: root
+
+    - name: Show hub configuration instructions
+      ansible.builtin.debug:
+        msg: |
+          To configure the NATS hub, render the template and start NATS:
+
+            ClusterID={{ novafabric_cluster_id | default('local') }} \
+            HubAddress={{ novafabric_hub_address | default('localhost:4222') }} \
+            envsubst < {{ novafabric_conf_dir }}/cluster-hub.conf.tmpl > /etc/nats/nova-hub.conf
+
+            nats-server -c /etc/nats/nova-hub.conf

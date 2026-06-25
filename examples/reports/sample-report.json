@@ -1,0 +1,26 @@
+[
+  {
+    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "support-triage-agent",
+    "asset_type": "agent",
+    "version": "v1.1.0",
+    "status": "staging",
+    "git_commit_sha": null,
+    "created_at": "2026-05-07T10:00:00+00:00",
+    "promoted_at": "2026-05-07T10:30:00+00:00",
+    "promoted_by": "cli-user",
+    "forced_promotion": false
+  },
+  {
+    "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+    "name": "fraud-detection-model",
+    "asset_type": "model",
+    "version": "1.2.0",
+    "status": "development",
+    "git_commit_sha": "abc1234567890abcdef1234567890abcdef123456",
+    "created_at": "2026-05-07T11:00:00+00:00",
+    "promoted_at": null,
+    "promoted_by": null,
+    "forced_promotion": false
+  }
+]

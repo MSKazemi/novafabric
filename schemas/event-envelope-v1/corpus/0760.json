@@ -1,0 +1,27 @@
+{
+  "envelope_version": "1",
+  "schema_version": "event-envelope/1",
+  "event_id": "0QRNJHF87FMDBYYSR2K24YJ6BW",
+  "global_run_id": "1RVZC6ZPYGT3MN3MS4MX4VE7KD",
+  "run_id": "6BGE92D84M2WXJZ81XXZ7H6HPJ",
+  "parent_run_id": null,
+  "event_type": "tool_call",
+  "trace_id": "841334f657d4af32cb826be640a44292",
+  "span_id": "031e8ea9ea0d528e",
+  "agent_id": "langchain-agent",
+  "cluster_id": "hpc-cluster-01",
+  "tenant_id": "tenant-research-lab",
+  "started_at": "2026-05-12T22:40:00.287000+00:00",
+  "emitter_node_id": "worker-0001",
+  "payload": {
+    "tool_name": "database_query",
+    "tool_call_id": "tc_9a45de56021e1ad1",
+    "arguments": {
+      "input": "example input for database_query"
+    },
+    "duration_ms": 1090
+  },
+  "payload_hash": "sha256:5b6ee06e8c95474e175abf659c41830aaaa89c99727b21d9cf53a3ede49bfbac",
+  "nova.batch.signature": "tRShzQ5xapfqqZtnIxARYwhZv6EcSFLfhpPoAKAUZKH9HPFYEh/mvWC4A7wxKrsGh6I+Yx3ST01rm/icLHe5/Q==",
+  "nova.batch.signing_key_id": "246a0f0d-cd7c-4764-9eaa-624d122b0f87"
+}

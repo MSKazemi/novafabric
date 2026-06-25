@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.dev/schemas/annex-iv-document.schema.json",
+  "title": "AnnexIVDocument",
+  "description": "EU AI Act Annex IV technical documentation package (Regulation EU 2024/1689). 15 mandatory elements.",
+  "type": "object",
+  "required": ["deployment_id", "generated_at", "elements"],
+  "properties": {
+    "@context": {
+      "type": "string",
+      "description": "JSON-LD context URI"
+    },
+    "@type": {
+      "type": "string",
+      "const": "AnnexIVDocument"
+    },
+    "deployment_id": {
+      "type": "string",
+      "description": "Operator-assigned identifier for the AI system deployment"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp of document generation"
+    },
+    "schema_ref": {
+      "type": "string",
+      "description": "JSON Schema reference for validation"
+    },
+    "elements": {
+      "type": "array",
+      "minItems": 15,
+      "maxItems": 15,
+      "items": { "$ref": "#/$defs/AnnexIVElement" },
+      "description": "All 15 Annex IV elements"
+    }
+  },
+  "$defs": {
+    "AnnexIVElement": {
+      "type": "object",
+      "required": [
+        "element_id",
+        "element_title",
+        "population_method",
+        "completeness_flag"
+      ],
+      "properties": {
+        "element_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 15,
+          "description": "Annex IV element number 1-15"
+        },
+        "element_title": {
+          "type": "string",
+          "description": "Short title of the element"
+        },
+        "content": {
+          "type": ["string", "null"],
+          "description": "Populated content for this element"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "References to capsule IDs, eval results, or other evidence"
+        },
+        "population_method": {
+          "type": "string",
+          "enum": ["capsule_derived", "operator_declared", "not_applicable"],
+          "description": "How this element was populated"
+        },
+        "completeness_flag": {
+          "type": "string",
+          "enum": ["complete", "partial", "missing"],
+          "description": "Completeness status of this element"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

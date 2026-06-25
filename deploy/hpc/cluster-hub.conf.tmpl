@@ -1,0 +1,40 @@
+# NovaFabric NATS Cluster Hub Configuration
+# Deployed on the head node or dedicated hub server.
+#
+# Template variables (replaced at deployment time):
+#   {{.ClusterID}}   — cluster identifier string
+#   {{.HubAddress}}  — bind address for this hub (host:port)
+#   {{.KafkaBroker}} — Kafka bootstrap server (host:port) for the forwarder
+
+server_name: "nova-hub-{{.ClusterID}}"
+
+# Listen for incoming leaf node connections
+leafnodes {
+  listen: "0.0.0.0:7422"
+}
+
+# JetStream with source fan-in from leaf nodes.
+# The aggregate stream (nova.<cluster_id>.aggregate) is configured via
+# `nats stream add` after server startup — see deploy/hpc/README.md.
+jetstream {
+  enabled: true
+  max_mem_store: 2GB
+  max_file_store: 100GB
+}
+
+# Hub-level stream: aggregates from all leaf subjects.
+# Create after server startup:
+#
+#   nats stream add nova-{{.ClusterID}}-aggregate \
+#     --subjects "nova.{{.ClusterID}}.>" \
+#     --storage file \
+#     --retention limits \
+#     --max-age 24h \
+#     --replicas 1
+#
+# The novafabric-forwarder (deploy/hpc/forwarder.yaml) consumes from this
+# stream and publishes to Kafka topic nova.{{.ClusterID}}.evidence after
+# NovaSeal batch signing.
+
+# Logging — structured JSON for the evidence fabric log pipeline
+logtime: true

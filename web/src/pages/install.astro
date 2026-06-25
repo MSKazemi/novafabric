@@ -1,0 +1,52 @@
+---
+import Layout from '../components/layout/Layout.astro';
+import ShowcaseBadge from '../components/layout/ShowcaseBadge.astro';
+import InstallBlock from '../components/hero/InstallBlock.astro';
+import CodeBlock from '../components/ui/CodeBlock.astro';
+---
+
+<Layout title="Install — NovaFabric" description="Install NovaFabric and capture your first AI run.">
+  <article class="container-content py-16 md:py-24">
+    <header class="max-w-2xl">
+      <ShowcaseBadge variant="page" />
+      <h1 class="mt-4 text-4xl md:text-5xl font-medium tracking-tight text-balance">Install</h1>
+      <p class="mt-4 text-lg text-[var(--color-text-muted)]">
+        Three commands. No accounts. No telemetry. Capsules stay on your machine.
+      </p>
+    </header>
+
+    <div class="mt-12 container-prose space-y-10">
+      <section>
+        <h2 class="text-xl font-medium text-[var(--color-text)] tracking-tight mb-4">1. Install</h2>
+        <InstallBlock command="pip install novafabric" variant="hero" />
+        <p class="mt-3 text-sm text-[var(--color-text-muted)]">Requires Python 3.11+.</p>
+      </section>
+
+      <section>
+        <h2 class="text-xl font-medium text-[var(--color-text)] tracking-tight mb-4">2. Capture your first run</h2>
+        <p class="text-[var(--color-text-muted)] mb-4 leading-relaxed">
+          Wrap any command — Python, shell, container — and NovaFabric records every model call, tool
+          invocation, and environment fact into a self-contained capsule directory.
+        </p>
+        <CodeBlock code="nova capture python your_agent.py" lang="bash" />
+      </section>
+
+      <section>
+        <h2 class="text-xl font-medium text-[var(--color-text)] tracking-tight mb-4">3. Inspect or replay</h2>
+        <CodeBlock code="nova inspect <run-id>
+nova replay <run-id> --mode mocked
+nova lineage provenance <run-id>" lang="bash" />
+      </section>
+
+      <section class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-6">
+        <h3 class="font-medium text-[var(--color-text)] mb-2">Want a guided tour first?</h3>
+        <p class="text-sm text-[var(--color-text-muted)]">
+          Walk through the <a href="/showcase/lineage" class="underline underline-offset-2 hover:text-[var(--color-text)]">lineage demo</a>,
+          the <a href="/showcase/replay" class="underline underline-offset-2 hover:text-[var(--color-text)]">replay diff</a>, and the
+          <a href="/showcase/evidence" class="underline underline-offset-2 hover:text-[var(--color-text)]">evidence verifier</a> — all
+          run on a baked-in fixture, no install needed.
+        </p>
+      </section>
+    </div>
+  </article>
+</Layout>
