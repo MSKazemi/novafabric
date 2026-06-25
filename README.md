@@ -215,7 +215,8 @@ Use NovaFabric when you need to:
 - **Produce portable, signed evidence** of what an agent or model actually did —
   for governance, auditability, and compliance *support*.
 - **Capture without changing application code** — SDK hooks, wire-level hooks, and
-  transparent proxies capture runs of any command, fully **local and offline**.
+  transparent proxies capture runs of any command, entirely in **your own
+  environment**, online or air-gapped.
 
 ### When *not* to use NovaFabric
 
@@ -240,7 +241,7 @@ trace in a hosted database.
 
 | | **NovaFabric** | Self-hosted observability (Langfuse, Arize Phoenix) | Hosted SaaS (LangSmith, W&B, Helicone) |
 |---|---|---|---|
-| Deployment | Local-first CLI, **no account** | Self-hosted server + database | Managed cloud service |
+| Deployment | Self-hosted CLI, server optional, **no account** | Self-hosted server + database (required) | Managed cloud service |
 | Primary artifact | Portable evidence **capsule** (a folder) | Trace row in a database | Trace row in a vendor cloud |
 | Where data lives | **On your machine** | Your server | Vendor cloud |
 | Replay of a run | **✓ 4 modes** (exact / mocked / semantic / forensic) | ✗ | ✗ |
@@ -315,17 +316,19 @@ See [`CHANGELOG.md`](CHANGELOG.md) for release-by-release details.
 ## FAQ
 
 **What is NovaFabric?**
-An open-source, local-first CLI toolkit that captures, replays, diffs, and audits
-AI agent and model runs as portable, redacted evidence capsules. It is built around
-five primitives: Asset Registry, Run Capsule, Replay, Lineage, and Evidence Bundle.
+An open-source, self-hosted CLI toolkit that captures, replays, diffs, and audits
+AI agent and model runs as portable, redacted evidence capsules. It runs in your
+own infrastructure — from a laptop to a cluster — and is built around five
+primitives: Asset Registry, Run Capsule, Replay, Lineage, and Evidence Bundle.
 
 **Is it free and open source?**
 Yes — Apache-2.0 licensed. There is no paid tier or hosted service required.
 
 **Does NovaFabric send my data anywhere?**
-No. NovaFabric is local-first: captured data stays on your machine. There are no
-accounts and no telemetry, and core features (capture, validate, replay, diff,
-lineage) work fully offline.
+No. NovaFabric is self-hosted: captured data stays in your own infrastructure —
+on your machine in local mode, or in your own server in server mode — never a
+vendor cloud. There are no accounts and no telemetry, and core features (capture,
+validate, replay, diff, lineage) work fully offline.
 
 **Do I have to change my code to use it?**
 No. `nova capture <command>` captures any command with no application changes.
@@ -344,7 +347,7 @@ network, no subprocess).
 
 **How is this different from LangSmith / Langfuse / W&B?**
 Those are observability platforms centered on traces in a (hosted or self-hosted)
-database. NovaFabric is local-first and centered on portable, signed, *replayable*
+database. NovaFabric is self-hosted and centered on portable, signed, *replayable*
 capsules you own, with run-to-run structural diff and cryptographic provenance.
 See [How NovaFabric compares](#how-novafabric-compares).
 

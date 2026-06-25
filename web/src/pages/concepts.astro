@@ -13,7 +13,7 @@ import ShowcaseBadge from '../components/layout/ShowcaseBadge.astro';
       <h1 class="mt-4 text-4xl md:text-5xl font-medium tracking-tight text-balance">Concepts</h1>
       <p class="mt-4 text-lg text-[var(--color-text-muted)]">
         The five primitives, the four replay modes, and the boundaries that
-        keep NovaFabric local-first and CLI-first.
+        keep NovaFabric self-hosted and CLI-first.
       </p>
     </header>
 
@@ -69,12 +69,13 @@ import ShowcaseBadge from '../components/layout/ShowcaseBadge.astro';
       </section>
 
       <section>
-        <h2 class="text-2xl font-medium text-[var(--color-text)] tracking-tight mb-3">Why local-first</h2>
+        <h2 class="text-2xl font-medium text-[var(--color-text)] tracking-tight mb-3">Why self-hosted</h2>
         <p>
           AI runs accumulate sensitive data: prompts, intermediate reasoning, internal documents pulled by
           tools. Shipping that to a hosted service means signing a DPA, picking a region, paying per GB,
-          waiting for a backup window when audit asks. NovaFabric keeps it on your machine until you choose
-          otherwise. v0.7 adds an optional server mode for teams; v0.x stays single-machine.
+          waiting for a backup window when audit asks. NovaFabric runs in your own infrastructure instead —
+          on your machine for a single user, or in your own self-hosted server (server mode, with OIDC and
+          RBAC) for teams. Your run data never leaves your environment unless you choose to move it.
         </p>
       </section>
 
