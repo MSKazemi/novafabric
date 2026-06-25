@@ -1,0 +1,116 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "novafabric.fullname" . }}
+  labels:
+    {{- include "novafabric.labels" . | nindent 4 }}
+spec:
+  # Single writer over the registry/capsule volume — not horizontally scaled.
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "novafabric.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "novafabric.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "novafabric.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      initContainers:
+        # Wait for Postgres, then apply schema migrations (stop at v001; later
+        # partition DDL is gated behind a benchmark — matches the Docker entrypoint).
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command:
+            - sh
+            - -c
+            - |
+              echo "[nova] waiting for postgres at $PGHOST:$PGPORT ..."
+              until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -q; do sleep 2; done
+              echo "[nova] postgres ready; running migrations ..."
+              nova db upgrade --backend postgres --revision v001
+          env:
+            {{- include "novafabric.env" . | nindent 12 }}
+      containers:
+        - name: nova
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command: ["nova"]
+          args:
+            - serve
+            - --experimental
+            - --host
+            - 0.0.0.0
+            - --no-browser
+            {{- if .Values.serve.insecure }}
+            - --insecure
+            {{- end }}
+            {{- if .Values.serve.topology }}
+            - --topology
+            {{- end }}
+            {{- if .Values.serve.tv5 }}
+            - --tv5
+            {{- end }}
+            - --capsule-dir
+            - /data/capsules
+            - --db-path
+            - /data/nova/registry.db
+            - --port
+            - {{ .Values.serve.port | quote }}
+            {{- range .Values.serve.extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          env:
+            {{- include "novafabric.env" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.serve.port }}
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 45
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "novafabric.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

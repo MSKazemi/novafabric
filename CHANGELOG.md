@@ -9,6 +9,29 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.58.0] — 2026-06-25
+
+### Added
+- **Container image + Helm chart publishing from the public repo.** Two new
+  tag-triggered CI workflows complete the deployment story alongside the existing
+  PyPI Trusted Publisher:
+  - **`.github/workflows/publish-image.yml`** builds the runtime image
+    (`deploy/docker/Dockerfile`) for `linux/amd64,linux/arm64` and pushes it to
+    **GHCR** (`ghcr.io/novafabric/novafabric`) using the built-in `GITHUB_TOKEN`
+    (no stored secret). **Docker Hub is an optional mirror** — pushed only when a
+    `DOCKERHUB_TOKEN` secret is configured.
+  - **`.github/workflows/publish-chart.yml`** lints, packages, and pushes the
+    Helm chart as an **OCI artifact to GHCR** (`oci://ghcr.io/novafabric/charts`),
+    with chart/app version derived from the git tag.
+  - Both jobs are guarded `if: github.repository == 'novafabric/novafabric'` so a
+    tag in the private mirror never publishes.
+- **`deploy/helm/novafabric/` — first-party Helm chart** deploying `nova serve`
+  (dashboard + REST API) backed by Postgres. Optional bundled Postgres for
+  evaluation, external-database mode for production, optional persistence and
+  ingress, schema migration via an init container, and non-root pod defaults
+  (uid/gid/fsGroup 1000, all capabilities dropped). `make helm-lint` /
+  `make helm-template` smoke targets added.
+
 ## [0.57.0] — 2026-06-25
 
 ### Added

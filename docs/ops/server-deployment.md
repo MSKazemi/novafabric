@@ -283,6 +283,51 @@ The key file must be owned by the server process user and have mode `0600`.
 
 ---
 
+## Scenario 5 — Kubernetes (Helm)
+
+**Status: experimental.** Deploys the read-only `nova serve` dashboard + REST API
+backed by Postgres. Harden the access model (TLS, auth) before exposing publicly.
+
+### Install distribution channels
+
+NovaFabric ships to three channels from the public repository, each on a `v*` tag:
+
+| Channel | Location | Pull |
+|---|---|---|
+| **PyPI** | `pypi.org/project/novafabric` | `pip install novafabric` |
+| **Container image (GHCR)** | `ghcr.io/novafabric/novafabric` | `docker pull ghcr.io/novafabric/novafabric:<X.Y.Z>` |
+| **Helm chart (GHCR OCI)** | `oci://ghcr.io/novafabric/charts/novafabric` | `helm install … oci://ghcr.io/novafabric/charts/novafabric` |
+
+Images are multi-arch (`linux/amd64`, `linux/arm64`). Docker Hub is an optional
+mirror, populated only when a `DOCKERHUB_TOKEN` secret is configured on the repo.
+
+### Quick start (bundled Postgres, evaluation only)
+
+```bash
+helm install nova oci://ghcr.io/novafabric/charts/novafabric --version <X.Y.Z>
+kubectl rollout status deploy/nova-novafabric
+kubectl port-forward svc/nova-novafabric 4321:4321
+# open http://localhost:4321/dashboard  (access token printed in `kubectl logs`)
+```
+
+### Production (external managed Postgres)
+
+```bash
+helm install nova oci://ghcr.io/novafabric/charts/novafabric --version <X.Y.Z> \
+  --set postgres.enabled=false \
+  --set externalDatabase.host=my-pg.example.com \
+  --set externalDatabase.existingSecret=nova-db \
+  --set ingress.enabled=true \
+  --set ingress.hosts[0].host=novafabric.example.com
+```
+
+The chart runs non-root by default (uid/gid/fsGroup 1000, all capabilities
+dropped) and applies schema migrations via an init container. See
+[`deploy/helm/novafabric/README.md`](../../deploy/helm/novafabric/README.md) for
+the full values reference.
+
+---
+
 ## Role assignment
 
 **Status: experimental.** Roles are enforced on all server API endpoints per

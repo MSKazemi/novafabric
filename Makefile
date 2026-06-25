@@ -264,6 +264,19 @@ docker-logs: dev-logs
 docker-build:
 	$(COMPOSE) build nova
 
+# ── Helm chart (deploy/helm/novafabric) ─────────────────────────────────────
+helm-lint: ## Lint the NovaFabric Helm chart
+	helm lint deploy/helm/novafabric
+
+helm-template: ## Render the chart (bundled + external-DB modes) to validate templates
+	helm template r deploy/helm/novafabric >/dev/null
+	helm template r deploy/helm/novafabric \
+		--set postgres.enabled=false \
+		--set externalDatabase.host=pg.example.com \
+		--set externalDatabase.password=changeme \
+		--set ingress.enabled=true >/dev/null
+	@echo "helm chart renders cleanly (bundled + external-DB modes)"
+
 # git pull → rebuild nova image → rolling restart (databases untouched)
 update:
 	git pull

@@ -1,0 +1,37 @@
+NovaFabric is installed. The dashboard + API run as Deployment {{ include "novafabric.fullname" . }}.
+
+1. Wait for the pod to become ready:
+
+   kubectl --namespace {{ .Release.Namespace }} rollout status deploy/{{ include "novafabric.fullname" . }}
+
+2. Reach the dashboard:
+{{- if .Values.ingress.enabled }}
+   {{- range .Values.ingress.hosts }}
+   http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+   {{- end }}
+{{- else }}
+   kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "novafabric.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+   # then open http://localhost:{{ .Values.service.port }}/dashboard
+{{- end }}
+
+{{- if .Values.serve.insecure }}
+
+3. `nova serve` runs in --insecure mode and prints an access token at startup.
+   Retrieve it from the logs:
+
+   kubectl --namespace {{ .Release.Namespace }} logs deploy/{{ include "novafabric.fullname" . }} | grep -i token
+
+   For production, terminate TLS at the ingress and review the access model.
+{{- end }}
+
+{{- if not .Values.persistence.enabled }}
+
+WARNING: persistence.enabled=false — capsules and the registry live in an
+emptyDir and are LOST when the pod restarts. Enable persistence for any real use.
+{{- end }}
+
+{{- if .Values.postgres.enabled }}
+
+NOTE: a bundled single-replica Postgres is running for evaluation. For production,
+set postgres.enabled=false and point externalDatabase at a managed Postgres.
+{{- end }}

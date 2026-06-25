@@ -1,0 +1,62 @@
+name: Publish Helm chart
+
+# Lints, packages, and pushes the NovaFabric Helm chart as an OCI artifact to
+# GHCR (oci://ghcr.io/novafabric/charts). One registry + one auth model for
+# both the container image (publish-image.yml) and the chart.
+#
+# Install from the published chart with:
+#   helm install nova oci://ghcr.io/novafabric/charts/novafabric --version X.Y.Z
+#
+# Fires when a v* tag is pushed. Chart version and appVersion are derived from
+# the tag (v0.57.0 -> 0.57.0), so the chart always pins the matching image tag.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  chart:
+    name: Package and push chart
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Publish only from the public repo (never from the private mirror).
+    if: github.repository == 'novafabric/novafabric'
+    permissions:
+      contents: read
+      # Required to push the OCI chart to GHCR with the built-in GITHUB_TOKEN.
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
+      - name: Lint chart
+        run: helm lint deploy/helm/novafabric
+
+      - name: Package chart
+        id: package
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          helm package deploy/helm/novafabric \
+            --version "$version" \
+            --app-version "$version" \
+            --destination "$RUNNER_TEMP"
+          echo "path=$RUNNER_TEMP/novafabric-$version.tgz" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Push chart
+        run: helm push "${{ steps.package.outputs.path }}" oci://ghcr.io/novafabric/charts

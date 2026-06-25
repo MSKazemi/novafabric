@@ -1,0 +1,23 @@
+apiVersion: v2
+name: novafabric
+description: NovaFabric — replayable AI infrastructure. Deploys the read-only dashboard + REST API (nova serve) backed by a metadata store.
+type: application
+# Chart version. The publish-chart.yml workflow overrides this with the git tag
+# at release time, so the chart version tracks the application version.
+version: 0.1.0
+# Default container image tag when image.tag is unset. Overridden to the git tag
+# by the release workflow.
+appVersion: "0.58.0"
+keywords:
+  - novafabric
+  - ai
+  - agent
+  - observability
+  - lineage
+  - audit
+  - mlops
+home: https://github.com/novafabric/novafabric
+sources:
+  - https://github.com/novafabric/novafabric
+maintainers:
+  - name: NovaFabric

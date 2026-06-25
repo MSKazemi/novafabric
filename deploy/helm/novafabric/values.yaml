@@ -1,0 +1,115 @@
+# Default values for the novafabric chart.
+# Deploys `nova serve` (dashboard + REST API). See deploy/helm/novafabric/README.md.
+
+image:
+  repository: ghcr.io/novafabric/novafabric
+  # Defaults to .Chart.AppVersion when empty.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# Secrets for pulling from a private registry, e.g. [{ name: ghcr-creds }].
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Single replica: nova serve is one writer over the local registry/capsule
+# volume. Scaling out is a server-mode (Postgres) concern, not a chart concern.
+replicaCount: 1
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Pod- and container-level hardening. No-root by default (CLAUDE.md anti-pattern):
+# the app runs as uid/gid 1000 and writes only to the mounted data volume, whose
+# group ownership is set via fsGroup.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+
+serve:
+  port: 4321
+  # nova serve is experimental/read-only; --insecure serves over HTTP with a
+  # printed access token (see `kubectl logs`). Front with TLS at the ingress.
+  insecure: true
+  topology: true
+  tv5: true
+  # Extra args appended verbatim to the `nova serve` command, e.g. ["--no-browser"].
+  extraArgs: []
+
+service:
+  type: ClusterIP
+  port: 4321
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: novafabric.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# Persistent volume for capsules + SQLite registry + embedded KuzuDB (mounted at
+# /data). Disable to use an ephemeral emptyDir (data lost on pod restart).
+persistence:
+  enabled: true
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 5Gi
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+# Bundled Postgres for evaluation. For production, set enabled: false and point
+# externalDatabase at a managed Postgres.
+postgres:
+  enabled: true
+  image: postgres:16-alpine
+  auth:
+    username: nova
+    password: nova
+    database: nova
+  persistence:
+    enabled: true
+    storageClass: ""
+    size: 8Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+# Used only when postgres.enabled is false.
+externalDatabase:
+  host: ""
+  port: 5432
+  username: nova
+  password: ""
+  database: nova
+  # Read the password from an existing secret instead of externalDatabase.password.
+  existingSecret: ""
+  existingSecretPasswordKey: password
+
+# Extra environment variables for the nova container, e.g. [{ name: FOO, value: bar }].
+extraEnv: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
