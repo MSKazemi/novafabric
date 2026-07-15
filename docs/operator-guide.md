@@ -1,13 +1,44 @@
 # NovaFabric Operator Guide
 
-This document is for HPC system administrators and platform engineers who need
-to deploy NovaFabric on shared infrastructure — from a single workstation to a
-multi-node SLURM cluster. It covers installation, runner configuration, wire-level
-capture setup, and site-specific URL registry customization.
+This guide is for HPC system administrators and platform engineers who deploy
+NovaFabric on shared infrastructure — from a single workstation to a multi-node
+SLURM cluster or a Kubernetes namespace. NovaFabric captures, replays, diffs, and
+audits AI-agent and model runs, turning any command into a portable, schema-valid,
+secret-redacted **Run Capsule** you own. This document covers the operational
+mechanics: installation, runner configuration, wire-level capture, site-specific
+URL-registry customization, cryptographic sealing, and a full Docker Compose
+deployment.
+
+### What you will learn
+
+- **The capture mechanism** — how a single `sitecustomize.py` hook loader makes
+  every runner work the same way, with no application code changes (§1).
+- **Prerequisites** — Python, package install, and what compute nodes need (§2).
+- **Four deployment scenarios**, in increasing order of operational constraint:
+  Local (§3.1), Docker/OCI (§3.2), SLURM (§3.3), and Kubernetes (§3.4).
+- **URL-registry configuration** — how to capture private inference servers
+  (Ollama, vLLM, TGI) and site-wide provider mappings (§4).
+- **Troubleshooting** — the failure modes actually seen in live-cluster
+  validation, with concrete diagnostics (§5).
+- **NovaSeal** — opt-in ECDSA P-256 signing, RFC 3161 timestamps, and Merkle-log
+  inclusion proofs (§5b).
+- **Docker Compose** — the full `nova serve` + Postgres stack, including the
+  data-path variables that silently produce empty dashboard tabs if set wrong (§7).
+
+### The mental model
+
+Every runner does exactly one job: guarantee that the capsule directory is
+writable, that `sitecustomize.py` is reachable on `PYTHONPATH`, and that all
+capsule artifacts are on the local filesystem before `nova capture` returns.
+Everything else — Local subprocess, Docker container, SLURM batch job, Kubernetes
+Job — is a variation on that theme. The capsule is the source of truth; nothing
+leaves the node unless you explicitly push it.
 
 For developer onboarding (contributing code, running tests), see
-[CONTRIBUTING.md](../CONTRIBUTING.md). For CLI usage reference, see
-[docs/cli-reference.md](cli-reference.md).
+[CONTRIBUTING.md](../CONTRIBUTING.md). For the complete CLI usage reference (every
+command, flag, and default), see [docs/cli-reference.md](cli-reference.md). For the
+full NovaSeal configuration reference, see
+[docs/novaseal-configuration.md](novaseal-configuration.md).
 
 ---
 
@@ -28,7 +59,7 @@ For developer onboarding (contributing code, running tests), see
 
 ## 1. Deployment model overview
 
-NovaFabric is **local-first**: there is no server, no agent daemon, and no
+NovaFabric is **self-contained**: there is no server, no agent daemon, and no
 persistent network service required to capture a run. Capture happens in-process
 inside the workload's own Python interpreter.
 
@@ -108,6 +139,21 @@ API calls, and only if the workload makes them.
 
 ## 3. Deployment scenarios
 
+All four runners share the same capture mechanism (§1) and the same URL registry
+(§4). They differ only in where the workload executes and how capsule artifacts
+return to the submit node. Pick the runner that matches where your workload runs:
+
+| Runner | `--runner` | Where the workload runs | Key operational constraint |
+|--------|-----------|-------------------------|----------------------------|
+| Local | `local` (default) | Submit node, as a subprocess | None — self-contained on disk |
+| Docker | `docker` | A container on the submit node | Image must have NovaFabric installed |
+| SLURM | `slurm` | A batch job on an allocated compute node | Capsule dir **must** be on shared filesystem |
+| Kubernetes | `kubernetes` | A Kubernetes `Job` | Namespace RBAC; image must have NovaFabric |
+
+Runner defaults can be set per project in `.novafabric/runners.yaml` and overridden
+per invocation with `--runner-option key=value`. The subsections below document each
+runner in increasing order of operational constraint.
+
 ### 3.1 Laptop or single workstation (LocalRunner)
 
 **Works today.** This is the default runner and requires no configuration beyond
@@ -121,12 +167,20 @@ nova capture python my_agent.py
 `sitecustomize.py` into a temporary directory on `PYTHONPATH`, and writes the
 capsule to `$NOVAFABRIC_HOME/capsules/<run-id>/` (override with `NOVAFABRIC_CAPSULE_DIR`).
 
-To inspect a run:
+To validate and inspect a run:
 
 ```bash
-nova validate <run-id>
-nova show <run-id>
+# Validate the capsule against its schema
+nova validate ~/.novafabric/capsules/<run-id>/
+
+# Inspect the manifest directly (capsule.yaml is human-readable)
+cat ~/.novafabric/capsules/<run-id>/capsule.yaml
 ```
+
+`nova validate` accepts a spec file, a capsule directory, or a replay directory.
+Because the capsule is a plain directory on disk, every other artifact
+(`model-calls.jsonl`, `trace.jsonl`, `outputs/`) is directly readable without any
+NovaFabric runtime.
 
 No shared filesystem, no scheduler, no network service needed. The capsule is
 self-contained on disk.
@@ -726,11 +780,9 @@ the copy will fail. This is more likely when:
 - The cluster's pod garbage collection (`completedJobsHistoryLimit`) runs
   aggressively.
 
-Check the runner metadata on the capsule:
+Check the runner metadata on the capsule by reading the manifest directly:
 
 ```bash
-nova show <run-id>
-# or read capsule.yaml directly:
 cat ~/.novafabric/capsules/<run-id>/capsule.yaml
 ```
 
@@ -761,11 +813,18 @@ print('vendored default:', _VENDORED_DEFAULT_PATH)
 
 ---
 
-## 5b. NovaSeal configuration (cryptographic signing, v0.10)
+## 5b. NovaSeal configuration (cryptographic signing)
 
-NovaSeal signs capsules with ECDSA P-256 and timestamps them via RFC 3161.
-It is **opt-in** — if `~/.novafabric/novaseal.yaml` (or `NOVAFABRIC_SEAL_CONFIG`)
-is absent, capture works exactly as before.
+NovaSeal is the sealing layer beneath the Evidence Bundle: it signs a capsule with
+an **ECDSA P-256** DSSE signature, timestamps it via **RFC 3161**, and records an
+inclusion proof in an append-only **Merkle log**. `nova verify` checks all three
+layers and exits `0` only if the capsule is unmodified since signing. This is what
+turns "here is a capsule" into "here is a capsule I can prove was not tampered with."
+
+NovaSeal is **opt-in** — if `~/.novafabric/novaseal.yaml` (or the
+`NOVAFABRIC_SEAL_CONFIG` environment variable) is absent, capture behaves exactly
+as before and no sealing occurs. This keeps the default path zero-dependency and
+air-gap friendly.
 
 For the full configuration reference (all profiles, env vars, Docker/SLURM
 patterns, path resolution order, troubleshooting) see:
@@ -800,7 +859,14 @@ and configure `merkle_db:` inside it. See [novaseal-configuration.md §3.2](nova
 
 ```bash
 nova verify /path/to/capsule/
-# signature_ok=True, timestamp_ok=True, log_integrity_ok=True
+# Checks three layers of integrity in the .seal/ directory:
+#   • ECDSA P-256 DSSE signature   → signature_ok=True
+#   • RFC 3161 timestamp           → timestamp_ok=True
+#   • Merkle log inclusion proof   → log_integrity_ok=True
+# Exits 0 if all checks pass, 1 otherwise.
+
+# Explicit config path (instead of ~/.novafabric/novaseal.yaml):
+nova verify --seal-config ~/configs/novaseal.yaml /path/to/capsule/
 ```
 
 **Network note:** The TSA request (`tsa_url`) requires outbound HTTPS on port 443.
@@ -951,3 +1017,46 @@ make nova-dashboard
 
 The target uses `docker compose exec nova` (service name, not container name)
 to read the token — this is robust to container renames across deploys.
+
+---
+
+## 8. Summary and next steps
+
+You now have the operational picture for deploying NovaFabric across every runner:
+
+- **One mechanism, four runners.** Local, Docker, SLURM, and Kubernetes all rely on
+  the `sitecustomize.py` hook loader on `PYTHONPATH` (§1). The runner's only
+  responsibility is to make the capsule directory writable and reachable and to
+  return artifacts to the submit node.
+- **The single most important SLURM constraint** is that the capsule directory must
+  live on a filesystem shared by the submit node and every compute node (§3.3). Get
+  this wrong and jobs fail the moment the scheduler places them off the submit node.
+- **Wire-level classification is driven by the URL registry** (§4). Private
+  inference servers (Ollama, vLLM, TGI, llama.cpp) are captured by adding a
+  `host:port` match; an override file **replaces** the vendored default entirely, so
+  copy in the entries you still need.
+- **Sealing is opt-in** (§5b). Without `novaseal.yaml`, capture is unchanged; with
+  it, `nova verify` proves signature, timestamp, and Merkle-log integrity.
+
+### Suggested first-run checklist
+
+1. `pip install novafabric` (or `uv pip install novafabric`) on Python 3.12+.
+2. Capture a local run: `nova capture python my_agent.py`.
+3. Validate it: `nova validate ~/.novafabric/capsules/<run-id>/`.
+4. Confirm wire capture fired: check that `model-calls.jsonl` is non-empty; if not,
+   see §5 "model-calls.jsonl is empty or missing".
+5. For SLURM/K8s, verify the compute-node environment can `import novafabric` and
+   that the capsule directory is on shared storage before scaling out.
+
+### Where to go next
+
+| If you want to… | See |
+|-----------------|-----|
+| Look up any command, flag, or default | [docs/cli-reference.md](cli-reference.md) |
+| Configure signing in depth (profiles, KMS, air-gap) | [docs/novaseal-configuration.md](novaseal-configuration.md) |
+| Understand SLURM validation history | [v0.6.12 release notes](releases/v0.6.12.md) |
+| Contribute code or run the test suite | [CONTRIBUTING.md](../CONTRIBUTING.md) |
+| Request an unsupported capability (§6) | [RFC process](../design/governance/RFC-0000-rfc-process.md) |
+
+For anything listed in §6 "What is not supported yet," do not build production
+workflows against it — open an issue or follow the RFC process instead.

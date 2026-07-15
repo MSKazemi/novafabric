@@ -11,7 +11,10 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import TYPE_CHECKING, Annotated, Any, Optional
+
+if TYPE_CHECKING:
+    from novafabric.kg.spkg.graph_store import SpkgGraphStore
 
 import typer
 from rich.console import Console
@@ -871,3 +874,397 @@ def kg_queue_stats_cmd(
         f"  approved: [green]{s['approved']}[/green]\n"
         f"  rejected: [red]{s['rejected']}[/red]"
     )
+
+
+# ---------------------------------------------------------------------------
+# nova kg build-provenance (SPKG P1, ADR-0111 — experimental)
+# ---------------------------------------------------------------------------
+
+
+@kg_app.command("build-provenance")
+def kg_build_provenance_cmd(
+    capsule_dir: Annotated[
+        Path,
+        typer.Argument(help="Path to a capsule directory (reads its lineage.jsonl)."),
+    ],
+    output: Annotated[
+        Optional[Path],
+        typer.Option("--output", "-o", help="Write the RDF graph here (default: stdout)."),
+    ] = None,
+    rdf_format: Annotated[
+        str,
+        typer.Option("--format", help="RDF serialization: turtle | nt | json-ld."),
+    ] = "turtle",
+    validate: Annotated[
+        bool,
+        typer.Option(
+            "--validate/--no-validate",
+            help="SHACL-validate the graph (ADR-0111 R11); exit 1 if invalid facts are found.",
+        ),
+    ] = True,
+) -> None:
+    """Build the SPKG PROV-O provenance graph for a capsule (experimental, ADR-0111).
+
+    Maps the capsule's ``lineage.jsonl`` to W3C PROV-O RDF and, by default, SHACL-validates
+    it (R11: invalid facts are rejected). Requires ``novafabric[spkg]`` (rdflib + pyshacl).
+
+    Scope: single capsule.
+
+    \b
+    Examples:
+      nova kg build-provenance path/to/capsule/
+      nova kg build-provenance path/to/capsule/ -o prov.ttl --format turtle
+      nova kg build-provenance path/to/capsule/ --no-validate
+    """
+    try:
+        from novafabric.kg.spkg.provo_mapping import (
+            capsule_lineage_to_provo,
+            validate_provo,
+        )
+    except ImportError as exc:
+        console.print(
+            f"[red]Error:[/red] {exc} — install the SPKG extra: pip install novafabric[spkg]",
+            highlight=False,
+        )
+        raise typer.Exit(1)
+
+    graph = capsule_lineage_to_provo(capsule_dir)
+    triple_count = len(graph)
+
+    if validate:
+        conforms, report = validate_provo(graph)
+        if not conforms:
+            console.print(
+                f"[red]✗[/red] SHACL validation failed for {capsule_dir.name} "
+                f"({triple_count} triples):",
+                highlight=False,
+            )
+            console.print(report, highlight=False)
+            raise typer.Exit(1)
+        console.print(
+            f"[green]✓[/green] SHACL-valid: {triple_count} PROV-O triples "
+            f"from {capsule_dir.name}"
+        )
+
+    serialized = graph.serialize(format=rdf_format)
+    if output is not None:
+        output.write_text(serialized, encoding="utf-8")
+        console.print(f"[green]✓[/green] provenance graph written: {output}")
+    else:
+        typer.echo(serialized)
+
+
+# ---------------------------------------------------------------------------
+# nova kg build (SPKG P1, ADR-0111 — experimental)
+# ---------------------------------------------------------------------------
+
+_DEFAULT_SPKG_PATH = ".nova/kg/spkg.kuzu"
+
+
+@kg_app.command("build")
+def kg_build_cmd(
+    capsule_dir: Annotated[
+        Path,
+        typer.Argument(help="Path to a capsule directory (reads its lineage.jsonl)."),
+    ],
+    path: Annotated[
+        str,
+        typer.Option(
+            "--path",
+            envvar="NOVA_SPKG_PATH",
+            help="KùzuDB path for the SPKG operational graph (separate from the Capsule KG).",
+        ),
+    ] = _DEFAULT_SPKG_PATH,
+    validate: Annotated[
+        bool,
+        typer.Option(
+            "--validate/--no-validate",
+            help="SHACL-gate the canonical layer before writing the LPG (ADR-0111 R11).",
+        ),
+    ] = True,
+) -> None:
+    """Build the SPKG for a capsule: canonical PROV-O (SHACL-gated) + operational LPG.
+
+    The canonical RDF layer is validated first (R11) — on failure nothing is written to the
+    operational KùzuDB store; then the LPG is (re)built from the same capsule (R4: the LPG
+    holds no state not derivable from the capsule). Requires ``novafabric[spkg]``.
+
+    Scope: single capsule.
+
+    \b
+    Examples:
+      nova kg build path/to/capsule/
+      nova kg build path/to/capsule/ --path .nova/kg/spkg.kuzu
+      nova kg build path/to/capsule/ --no-validate
+    """
+    try:
+        from novafabric.kg.spkg.build import SpkgValidationError, build_spkg
+        from novafabric.kg.spkg.graph_store import SpkgGraphStore
+    except ImportError as exc:
+        console.print(
+            f"[red]Error:[/red] {exc} — install the SPKG extra: pip install novafabric[spkg]",
+            highlight=False,
+        )
+        raise typer.Exit(1)
+
+    store = SpkgGraphStore(path)
+    try:
+        result = build_spkg(capsule_dir, store, validate=validate)
+    except SpkgValidationError as exc:
+        console.print(f"[red]✗[/red] {exc}", highlight=False)
+        raise typer.Exit(1)
+    finally:
+        store.close()
+
+    gate = "SHACL-valid" if result.validated else "unvalidated"
+    console.print(
+        f"[green]✓[/green] SPKG built from {capsule_dir.name} ({gate}): "
+        f"{result.triples} PROV-O triples · {result.edges_ingested} LPG edges → {path}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# nova kg detect (SPKG P1, ADR-0111 SP-2 baseline — experimental)
+# ---------------------------------------------------------------------------
+
+
+@kg_app.command("detect")
+def kg_detect_cmd(
+    capsule_dir: Annotated[
+        Path,
+        typer.Argument(help="Capsule directory to score for anomalous lineage edges."),
+    ],
+    baseline: Annotated[
+        list[Path],
+        typer.Option(
+            "--baseline",
+            help="Capsule dir(s) to learn 'normal' from (repeatable). "
+            "Default: self-baseline on the target capsule.",
+        ),
+    ] = [],
+    top: Annotated[
+        int, typer.Option("--top", "-k", help="Number of most-anomalous edges to report.")
+    ] = 5,
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Emit schema-valid AnomalyFinding records instead of a table."),
+    ] = False,
+    output: Annotated[
+        Optional[Path],
+        typer.Option("--output", "-o", help="Write findings JSON here (with --json)."),
+    ] = None,
+) -> None:
+    """Rank the most anomalous lineage edges in a capsule (unsupervised, no labels).
+
+    A Tier-A structural outlier detector learns the fleet's own edge distribution (from
+    ``--baseline`` capsules, or the target itself) and flags edges with high combined
+    surprisal. Every reported edge carries a MITRE ATT&CK technique (ADR-0111 R2 — no bare
+    score). This is the dependency-free SP-2 baseline; the PyGOD/TGN GNN detector is a later,
+    resource-gated upgrade. **Needs no optional extra.**
+
+    Scope: single capsule (optionally baselined on a corpus).
+
+    \b
+    Examples:
+      nova kg detect path/to/capsule/
+      nova kg detect path/to/capsule/ --baseline normal1/ --baseline normal2/ -k 10
+      nova kg detect path/to/capsule/ --json -o findings.json
+    """
+    from novafabric.kg.spkg.detect import StructuralAnomalyDetector, to_findings
+    from novafabric.kg.spkg.provo_mapping import read_lineage_edges
+
+    target_edges = read_lineage_edges(capsule_dir)
+    if not target_edges:
+        console.print(f"[yellow]No lineage edges in {capsule_dir.name}.[/yellow]")
+        return
+
+    fit_edges: list[dict[str, Any]] = []
+    for b in baseline:
+        fit_edges.extend(read_lineage_edges(b))
+    if not fit_edges:
+        fit_edges = target_edges  # self-baseline
+
+    detector = StructuralAnomalyDetector().fit(fit_edges)
+    scored = detector.top_k(target_edges, k=top)
+
+    if as_json:
+        findings = to_findings(scored)
+        text = json.dumps(findings, indent=2)
+        if output is not None:
+            output.write_text(text + "\n", encoding="utf-8")
+            console.print(f"[green]✓[/green] {len(findings)} findings written: {output}")
+        else:
+            typer.echo(text)
+        return
+
+    baseline_note = (
+        f"{len(fit_edges)} baseline edges" if baseline else "self-baseline"
+    )
+    table = Table(
+        title=f"SPKG anomaly scan — {capsule_dir.name} (top {len(scored)}, {baseline_note})"
+    )
+    table.add_column("#", justify="right")
+    table.add_column("score", justify="right")
+    table.add_column("edge_type")
+    table.add_column("source → target")
+    table.add_column("ATT&CK")
+    for i, se in enumerate(scored, 1):
+        src = se.edge.get("source", {}) or {}
+        tgt = se.edge.get("target", {}) or {}
+        edge_flow = f"{src.get('ref', '?')} → {tgt.get('ref', '?')}"
+        technique = to_findings([se])[0]["explanation"]["attack_technique_id"]
+        table.add_row(
+            str(i),
+            f"{se.score:.3f}",
+            str(se.edge.get("edge_type", "")),
+            edge_flow,
+            technique,
+        )
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------
+# nova kg attack-path / blast-radius (SPKG UC2/UC3, ADR-0111 — experimental)
+# ---------------------------------------------------------------------------
+
+
+def _parse_entity(spec: str) -> tuple[str, str]:
+    """Parse a ``kind:ref`` entity spec (ref may itself contain ':')."""
+    if ":" not in spec:
+        console.print(
+            f"[red]Error:[/red] entity must be 'kind:ref' (got {spec!r}), "
+            "e.g. run:my-run or model:gpt-4o",
+            highlight=False,
+        )
+        raise typer.Exit(2)
+    kind, ref = spec.split(":", 1)
+    return kind, ref
+
+
+def _spkg_store_from_capsule(capsule_dir: Path) -> SpkgGraphStore:
+    """Build a throwaway in-process SPKG LPG from a capsule's lineage edges."""
+    try:
+        from novafabric.kg.spkg.graph_store import SpkgGraphStore
+        from novafabric.kg.spkg.provo_mapping import read_lineage_edges
+    except ImportError as exc:
+        console.print(
+            f"[red]Error:[/red] {exc} — install the SPKG extra: pip install novafabric[spkg]",
+            highlight=False,
+        )
+        raise typer.Exit(1)
+    edges = read_lineage_edges(capsule_dir)
+    store = SpkgGraphStore()
+    store.ingest_edges(edges)
+    return store
+
+
+@kg_app.command("attack-path")
+def kg_attack_path_cmd(
+    capsule_dir: Annotated[
+        Path, typer.Argument(help="Capsule directory (its lineage builds the SPKG graph).")
+    ],
+    from_entity: Annotated[
+        str, typer.Option("--from", help="Source entity as 'kind:ref', e.g. run:attacker.")
+    ],
+    to_entity: Annotated[
+        str, typer.Option("--to", help="Target entity as 'kind:ref', e.g. dataset:secrets.")
+    ],
+    max_depth: Annotated[
+        int, typer.Option("--max-depth", help="Maximum path length to search.")
+    ] = 6,
+) -> None:
+    """Shortest attack path between two entities in the SPKG (UC2 lateral-movement).
+
+    Builds the operational graph from the capsule's lineage, then runs a bounded
+    shortest-path query. Exit 0 whether or not a path exists (informational).
+
+    \b
+    Examples:
+      nova kg attack-path capsule/ --from run:attacker --to dataset:aws_credentials
+      nova kg attack-path capsule/ --from agent:a1 --to artifact:report.md --max-depth 4
+    """
+    from novafabric.lineage._types import node_id_for
+
+    s_kind, s_ref = _parse_entity(from_entity)
+    t_kind, t_ref = _parse_entity(to_entity)
+    store = _spkg_store_from_capsule(capsule_dir)
+    try:
+        hops = store.attack_path(
+            node_id_for(s_kind, s_ref), node_id_for(t_kind, t_ref), max_depth=max_depth
+        )
+    finally:
+        store.close()
+
+    if hops is None:
+        console.print(
+            f"[green]✓[/green] No attack path {from_entity} → {to_entity} "
+            f"within {max_depth} hops.",
+            highlight=False,
+        )
+    else:
+        console.print(
+            f"[yellow]⚠ Attack path found:[/yellow] {from_entity} → {to_entity} "
+            f"in [bold]{hops}[/bold] hop(s).",
+            highlight=False,
+        )
+
+
+@kg_app.command("blast-radius")
+def kg_blast_radius_cmd(
+    capsule_dir: Annotated[
+        Path, typer.Argument(help="Capsule directory (its lineage builds the SPKG graph).")
+    ],
+    entity: Annotated[
+        str, typer.Option("--entity", help="Entity as 'kind:ref', e.g. model:gpt-4o.")
+    ],
+    upstream: Annotated[
+        bool,
+        typer.Option(
+            "--upstream/--downstream",
+            help="--downstream (default): what this entity affects (blast radius, UC3). "
+            "--upstream: what influenced it (provenance).",
+        ),
+    ] = False,
+    max_depth: Annotated[
+        int, typer.Option("--max-depth", help="Maximum traversal depth.")
+    ] = 6,
+) -> None:
+    """Impact/blast-radius of an entity across the SPKG (UC3 supply-chain propagation).
+
+    ``--downstream`` (default) lists everything reachable *from* the entity — e.g. the runs
+    and artifacts a poisoned model touched. ``--upstream`` lists its provenance.
+
+    \b
+    Examples:
+      nova kg blast-radius capsule/ --entity model:poisoned-model
+      nova kg blast-radius capsule/ --entity artifact:report.md --upstream
+    """
+    from novafabric.lineage._types import node_id_for
+
+    kind, ref = _parse_entity(entity)
+    store = _spkg_store_from_capsule(capsule_dir)
+    try:
+        node_id = node_id_for(kind, ref)
+        affected = (
+            store.ancestors(node_id, max_depth)
+            if upstream
+            else store.descendants(node_id, max_depth)
+        )
+    finally:
+        store.close()
+
+    direction = "provenance (upstream)" if upstream else "blast radius (downstream)"
+    if not affected:
+        console.print(
+            f"[green]✓[/green] No {direction} for {entity} within {max_depth} hops.",
+            highlight=False,
+        )
+        return
+    table = Table(
+        title=f"SPKG {direction} — {entity} (≤{max_depth} hops, {len(affected)} entities)"
+    )
+    table.add_column("kind")
+    table.add_column("ref")
+    for _nid, k, r in sorted(affected, key=lambda x: (x[1], x[2])):
+        table.add_row(k, r)
+    console.print(table)

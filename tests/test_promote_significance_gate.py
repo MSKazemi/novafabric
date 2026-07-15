@@ -58,6 +58,29 @@ def _register_agent(tmp_db: Path, fixtures_dir: Path) -> str:
         conn.close()
 
 
+_SCORE_DIGEST = "sha256:" + "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+
+
+def _write_scores_file(path: Path, observations: list[int], metric: str = "task_pass") -> Path:
+    """Write a scores.jsonl of boolean *metric* scores from a 0/1 sequence."""
+    from novafabric.eval.scores import Score, ScoreSource, ScoreValueType, write_scores
+
+    scores = [
+        Score(
+            subject=_SCORE_DIGEST,
+            name=metric,
+            value=bool(o),
+            value_type=ScoreValueType.BOOLEAN,
+            source=ScoreSource.CODE,
+            evaluator_id="ev",
+            eval_card_digest=_SCORE_DIGEST,
+        )
+        for o in observations
+    ]
+    write_scores(path, scores)
+    return path
+
+
 def _seed_eval_sequence(tmp_db: Path, asset_id: str, observations: list[int]) -> None:
     """Insert ``observations`` (0/1) as chronologically-ordered eval_results rows."""
     conn = get_connection(tmp_db)
@@ -153,6 +176,57 @@ class TestPromoteSignificanceGate:
                 AssetStatus.staging,
                 actor="tester",
                 significance_gate=True,
+                db_path=tmp_db,
+            )
+
+        assert result["status"] == "staging"
+
+    def test_scores_file_source_blocks(
+        self, tmp_db: Path, fixtures_dir: Path, tmp_path: Path
+    ) -> None:
+        """NF-007: with --scores-file, the gate sources the sequence from scores.jsonl.
+
+        eval_results is seeded all-passing (would NOT block), proving the verdict comes
+        from the scores file's regression sequence, not the eval table.
+        """
+        asset_id = _register_agent(tmp_db, fixtures_dir)
+        _seed_eval_sequence(tmp_db, asset_id, [1] * 30)  # passing → would not block
+        scores = _write_scores_file(tmp_path / "scores.jsonl", [0] * 26 + [1] * 4)
+
+        with patch(
+            "novafabric.registry.service.get_policy_engine", return_value=_allow_engine()
+        ):
+            with pytest.raises(PromotionBlockedError) as exc_info:
+                promote_asset(
+                    "kube-rca-agent",
+                    "v1.0.0",
+                    AssetStatus.staging,
+                    actor="tester",
+                    significance_gate=True,
+                    sig_scores_path=scores,
+                    db_path=tmp_db,
+                )
+
+        assert "regression" in str(exc_info.value).lower()
+
+    def test_scores_file_source_no_block(
+        self, tmp_db: Path, fixtures_dir: Path, tmp_path: Path
+    ) -> None:
+        """A high pass-rate scores.jsonl does not block, even if eval_results regressed."""
+        asset_id = _register_agent(tmp_db, fixtures_dir)
+        _seed_eval_sequence(tmp_db, asset_id, [0] * 26 + [1] * 4)  # would block if used
+        scores = _write_scores_file(tmp_path / "scores.jsonl", [1] * 29 + [0])
+
+        with patch(
+            "novafabric.registry.service.get_policy_engine", return_value=_allow_engine()
+        ):
+            result = promote_asset(
+                "kube-rca-agent",
+                "v1.0.0",
+                AssetStatus.staging,
+                actor="tester",
+                significance_gate=True,
+                sig_scores_path=scores,
                 db_path=tmp_db,
             )
 

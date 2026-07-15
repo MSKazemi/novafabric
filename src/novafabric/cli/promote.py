@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import getpass
+import hashlib
+import json
+from pathlib import Path
+from typing import Any, Optional
 
 import typer
 from rich.console import Console
@@ -37,6 +41,70 @@ def _parse_ref(asset_ref: str) -> tuple[str, str]:
     return name, version
 
 
+class _KeyringSigner:
+    """Adapt a keyring Ed25519 key to the DSSE signer protocol (`sign` + `keyid`)."""
+
+    def __init__(self, private_key: Any, key_fp: str) -> None:
+        self._key = private_key
+        self.keyid = key_fp
+
+    def sign(self, data: bytes) -> bytes:
+        return self._key.sign(data)  # type: ignore[no-any-return]
+
+
+def _emit_slsa_provenance(
+    *,
+    result: dict[str, Any],
+    name: str,
+    version: str,
+    identity: str,
+    gated: bool,
+    out: Optional[Path],
+    ml_profile: bool = False,
+) -> Path:
+    """Emit a DSSE-signed SLSA v1 provenance for a successful promotion (NF-031/NF-057)."""
+    from novafabric.envelopes.slsa import (  # noqa: PLC0415
+        ml_promotion_provenance,
+        promotion_provenance,
+    )
+    from novafabric.evidence.intoto import dsse_sign  # noqa: PLC0415
+
+    # Content-address the asset by the sha256 of its registered spec (authoritative content).
+    spec_json = result.get("spec_json") or ""
+    asset_sha256 = hashlib.sha256(spec_json.encode("utf-8")).hexdigest()
+    gate = "significance-gate/v1" if gated else None
+    if ml_profile:
+        # SLSA-for-ML (NF-057): bind the promoted model to the digest of the gating
+        # eval verdict (content-addressed over the recorded decision context).
+        verdict_ctx = json.dumps(
+            {"asset": f"{name}@{version}", "asset_sha256": asset_sha256,
+             "decision": "promoted", "gate": gate},
+            sort_keys=True,
+        )
+        eval_verdict_sha256 = hashlib.sha256(verdict_ctx.encode("utf-8")).hexdigest()
+        statement = ml_promotion_provenance(
+            asset_ref=f"{name}@{version}",
+            asset_sha256=asset_sha256,
+            eval_verdict_sha256=eval_verdict_sha256,
+            decision="promoted",
+            gate=gate,
+            invocation_id=result.get("id"),
+        )
+    else:
+        statement = promotion_provenance(
+            asset_ref=f"{name}@{version}",
+            asset_sha256=asset_sha256,
+            decision="promoted",
+            gate=gate,
+            invocation_id=result.get("id"),
+        )
+    private_key, key_fp = ensure_keypair(identity)
+    envelope = dsse_sign(statement, _KeyringSigner(private_key, key_fp))
+    out_path = out or Path(f"{name}-{version}.slsa.json")
+    out_path.write_text(json.dumps(envelope, indent=2), encoding="utf-8")
+    return out_path
+
+
 @promote_app.command("direct")
 def promote_direct_cmd(
     asset_ref: str = typer.Argument(..., help="name@version"),
@@ -52,6 +120,43 @@ def promote_direct_cmd(
             "(Wald SPRT over the recent pass/fail sequence, ADR-0080) instead of a "
             "single passing eval. Noise / inconclusive evidence does not block."
         ),
+    ),
+    scores_file: Optional[Path] = typer.Option(
+        None,
+        "--scores-file",
+        help=(
+            "With --significance-gate: source the pass/fail sequence from this "
+            "evidence-grade scores.jsonl instead of the eval_results table (NF-007)."
+        ),
+    ),
+    metric: str = typer.Option(
+        "task_pass", "--metric", help="Boolean metric name to read from --scores-file."
+    ),
+    slsa_provenance: bool = typer.Option(
+        False,
+        "--slsa-provenance",
+        help=(
+            "On successful promotion, also emit a DSSE-signed SLSA v1 provenance "
+            "(slsa.dev/provenance/v1, NF-031/ADR-0096) recording the promotion decision "
+            "and gate. Written to <name>-<version>.slsa.json (or --slsa-out). Opt-in; "
+            "promotion behavior is otherwise unchanged."
+        ),
+    ),
+    slsa_ml_profile: bool = typer.Option(
+        False,
+        "--slsa-ml-profile",
+        help=(
+            "With --slsa-provenance, emit the SLSA-for-ML profile (NF-057, ADR-0105): "
+            "buildType promote-ml/v1 plus an eval-verdict digest byproduct binding the "
+            "promoted model to the gating eval verdict. Use for model assets."
+        ),
+    ),
+    slsa_out: Optional[Path] = typer.Option(
+        None, "--slsa-out", help="Output path for the --slsa-provenance envelope."
+    ),
+    identity: str = typer.Option(
+        default_factory=getpass.getuser,
+        help="Signing identity (keyring key) for --slsa-provenance.",
     ),
 ) -> None:
     """Promote an asset directly (single-actor, no maker-checker).
@@ -83,6 +188,8 @@ def promote_direct_cmd(
             actor="cli-user",
             force=force,
             significance_gate=significance_gate,
+            sig_scores_path=scores_file,
+            sig_scores_metric=metric,
         )
     except (AssetNotFoundError, InvalidLifecycleTransitionError, PromotionBlockedError) as exc:
         console.print(f"[red]{exc}[/red]")
@@ -90,6 +197,19 @@ def promote_direct_cmd(
 
     tag = " [yellow](forced)[/yellow]" if result["forced_promotion"] else ""
     console.print(f"[green]Promoted[/green] {name}@{version} → {result['status']}{tag}")
+
+    if slsa_provenance:
+        prov_path = _emit_slsa_provenance(
+            result=result,
+            name=name,
+            version=version,
+            identity=identity,
+            gated=significance_gate,
+            out=slsa_out,
+            ml_profile=slsa_ml_profile,
+        )
+        profile = "SLSA-for-ML " if slsa_ml_profile else ""
+        console.print(f"[green]✓[/green] {profile}SLSA provenance written: {prov_path}")
 
 
 @promote_app.command("propose")

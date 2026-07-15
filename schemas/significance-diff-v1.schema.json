@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/significance-diff-v1.schema.json",
+  "$comment": "schema_version 1.0.0; tracks design/spec/features/NF-007-009-statistical-regression-diff.md (NF-007) and ADR-0099; extends ADR-0080. A statistical regression-diff record: compares a baseline vs candidate run set by Wilson interval + Wald SPRT (three-valued verdict), never by raw delta. Planned/experimental. Offline, zero-token — arithmetic over already-stored outcomes.",
+  "title": "SignificanceDiff",
+  "description": "Statistically-grounded behavioral regression diff between two run sets. A regression is ACCEPT_H1 only; a single-run dip cannot fire the gate.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["diff_id", "metric", "baseline", "candidate", "sprt", "created_at"],
+  "properties": {
+    "diff_id": {"type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+    "metric": {"type": "string", "minLength": 1},
+    "baseline": {"$ref": "#/$defs/proportion"},
+    "candidate": {"$ref": "#/$defs/proportion"},
+    "sprt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verdict", "llr", "p0", "p1", "alpha", "beta"],
+      "properties": {
+        "verdict": {"type": "string", "enum": ["accept_h0", "accept_h1", "continue"]},
+        "llr": {"type": "number"},
+        "p0": {"type": "number"},
+        "p1": {"type": "number"},
+        "alpha": {"type": "number"},
+        "beta": {"type": "number"}
+      }
+    },
+    "numeric": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["baseline_mean", "candidate_mean", "baseline_n", "candidate_n"],
+      "properties": {
+        "baseline_mean": {"type": "number"},
+        "candidate_mean": {"type": "number"},
+        "baseline_n": {"type": "integer"},
+        "candidate_n": {"type": "integer"}
+      }
+    },
+    "drift": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["detected", "method", "mean_shift", "ci"],
+      "properties": {
+        "detected": {"type": "boolean"},
+        "method": {"type": "string"},
+        "mean_shift": {"type": "number"},
+        "ci": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2}
+      }
+    },
+    "fingerprint": {
+      "type": ["object", "null"],
+      "description": "Optional NF-008 behavioral-fingerprint extension point (W2)."
+    },
+    "created_at": {"type": "string"}
+  },
+  "$defs": {
+    "proportion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["successes", "n", "wilson"],
+      "properties": {
+        "successes": {"type": "integer", "minimum": 0},
+        "n": {"type": "integer", "minimum": 0},
+        "run_ids": {"type": "array", "items": {"type": "string"}},
+        "wilson": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2}
+      }
+    }
+  }
+}

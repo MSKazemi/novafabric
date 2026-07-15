@@ -7,7 +7,9 @@
 
 **Created and maintained by [Mohsen Seyedkazemi Ardebili](https://github.com/MSKazemi)** — AI systems engineer, platform architect, HPC researcher. Part of the [NovaFabric](https://github.com/novafabric) open-source lab.
 
-> **NovaFabric turns commands, scripts, model runs, and AI-agent executions into portable execution capsules:** structured, validated, redacted, and ready for inspection, replay, governance, and future automation.
+> **NovaFabric turns any command — a script, an agent, a model run, an HPC training job, a notebook cell — into a portable execution capsule:** a schema-valid, secret-redacted, replayable evidence folder you own, produced with no application code changes.
+
+Tracing tells you *what happened*. NovaFabric tells you whether a past run can be **replayed**, **compared**, and **proven** — entirely inside your own infrastructure, laptop to cluster, online or air-gapped, with no accounts and no telemetry.
 
 ```bash
 # Capture any command — script, agent, training run, experiment
@@ -17,9 +19,42 @@ nova capture python my_agent.py
 nova validate .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/
 ```
 
-Every captured run produces a `.novafabric/runs/<ulid>/` directory containing a
-schema-valid, secret-redacted, portable evidence folder. Works with any command.
-No application changes required.
+Every captured run produces a `.novafabric/runs/<ulid>/` directory: a schema-valid,
+secret-redacted, portable evidence folder. Works with any command. No application
+changes required.
+
+---
+
+## What you will learn from this README
+
+- **[The idea in one minute](#the-idea-in-one-minute)** — why reproducibility is a different problem than observability
+- **[Quick start](#quick-start)** — install, capture, validate, replay, diff, and trace lineage in a few commands
+- **[The five primitives](#the-five-primitives)** — Asset Registry, Run Capsule, Replay, Lineage, Evidence Bundle
+- **[How capture works](#how-capture-works)** — zero-code-change hooks and transparent proxies
+- **[When to use it (and when not to)](#when-to-use-novafabric)** — an honest fit guide
+- **[How NovaFabric compares](#how-novafabric-compares)** — versus LLM-observability platforms
+- **[Roadmap and status](#roadmap)** — what ships today, what is `experimental`, what is `planned`
+
+---
+
+## The idea in one minute
+
+When an AI agent runs, you get output — and then it is gone. You cannot reliably
+reproduce the run later, see exactly what changed between two runs, or produce
+portable proof of what the agent actually did. The relevant standards exist only as
+fragments: [OpenTelemetry GenAI semconv](https://opentelemetry.io/docs/specs/semconv/gen-ai/)
+for spans, [SLSA](https://slsa.dev/) for build provenance, [MCP](https://modelcontextprotocol.io/)
+for tools, [OpenLineage](https://openlineage.io/) for pipeline lineage. No project
+unifies them into a developer-friendly **replay fabric** for complete AI systems.
+
+NovaFabric's unit of value is not a trace row in a hosted database — it is a
+**portable, signed, replayable capsule you own**: a folder on your own filesystem you
+can `tar`, archive, share, and read air-gapped, with no running server. The product
+thesis is **replayable AI infrastructure**, and the strategic verb chain across the
+primitives is **Capture → Seal → Replay → Diff → Audit**.
+
+The analogy: observability is a *flight recorder* — it tells you what happened.
+NovaFabric is a *flight simulator* — it re-flies the route.
 
 ---
 
@@ -33,15 +68,15 @@ pip install novafabric
 uv add novafabric
 ```
 
-NovaFabric requires Python 3.12+.
+NovaFabric requires **Python 3.12+**.
 
-### Capture a run
+### 1. Capture a run
 
 ```bash
 nova capture python my_agent.py --dataset data.csv
 ```
 
-This produces:
+This produces a ULID-named capsule directory:
 
 ```
 .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/
@@ -58,27 +93,39 @@ This produces:
     stderr.txt
 ```
 
-### Validate a capsule
+Capsules are written on **both success and failure**. A failed run produces a
+complete capsule with `status: failure`, `exit_code: N`, and an `error` block — so a
+crash is captured evidence, not lost state.
+
+### 2. Validate a capsule
 
 ```bash
 nova validate .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/
 # ✓ Valid capsule: 01HXAY7M5JZ8R7K4P9DPBYK2WX  status=success
 ```
 
-### Replay a capsule (v0.3)
+A capsule that lacks its `redaction-proof.json` is **invalid** and cannot be exported —
+verifiable redaction is a precondition for evidence, not an afterthought.
+
+### 3. Replay a capsule
+
+Replay re-executes or inspects a capsule with external calls controlled. A replay is
+itself a new capsule you can diff.
 
 ```bash
-# Forensic: read-only inspection, no network, no subprocess
+# Forensic: read-only inspection, no network, no subprocess — for audit / post-incident
 nova replay .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --mode forensic
 
-# Mocked: re-run command, all model and tool calls served from cache
+# Mocked: re-run the command, all model and tool calls served from the capsule cache
 nova replay .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --mode mocked
 
 # Dry-run: see what would be mocked before committing
 nova replay .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --dry-run
 ```
 
-### Diff two capsules (v0.3)
+See [the four replay modes](#3-replay-v03) below for `semantic` and `exact`.
+
+### 4. Diff two runs
 
 ```bash
 nova diff .novafabric/runs/01HX.../ .novafabric/runs/01HY.../
@@ -87,22 +134,28 @@ nova diff .novafabric/runs/01HX.../ .novafabric/runs/01HY.../
 # Model calls:
 #   ~ call at span 657bff2c61ddad1c
 
-# CI gate: fail if behavior changed
+# CI gate: exit 1 if behavior changed
 nova diff cap-a/ cap-b/ --assert-no-regressions
 ```
 
-### Lineage graph (v0.4)
+`nova diff --assert-no-regressions` is the CI primitive for a flaky agent that
+"worked yesterday, fails today": align the two runs' model and tool calls, and fail
+the build on behavioral change.
 
-Every capture run automatically emits `lineage.jsonl` with three mechanical edge types
-(`consumed`, `produced_by`, `replayed_from`). Query the graph with:
+### 5. Trace lineage
+
+Every capture automatically emits `lineage.jsonl` with three mechanical edge types
+(`consumed`, `produced_by`, `replayed_from`). Query the derived graph:
 
 ```bash
-nova lineage provenance <run-id>          # what this run depended on
-nova lineage blast-radius <asset-ref>     # what runs consume this asset
+nova lineage provenance <run-id>          # what this run depended on (ancestors)
+nova lineage blast-radius <asset-ref>     # what runs consume this asset (impact)
 nova lineage replay-chain <run-id>        # replay ancestry
 ```
 
 ### SDK decorator (in-process capture)
+
+For code you control, a decorator is an alternative to the `nova capture` wrapper:
 
 ```python
 from novafabric.sdk.agent import agent
@@ -116,78 +169,30 @@ def run():
 run()
 ```
 
-The `capsule_dir` parameter is optional. Without it, the decorator behaves as
-in v0.1 — OTel spans only, no capsule written.
+The `capsule_dir` parameter is optional. Without it, the decorator behaves as in
+v0.1 — OTel spans only, no capsule written.
 
 ---
 
-## How it works
+## The five primitives
 
-`nova capture <cmd>` injects a `sitecustomize.py` loader into the subprocess
-via `PYTHONPATH`, which installs monkey-patches for:
+NovaFabric is framed around **exactly five primitives**, each with a public spec and
+JSON Schema. Cryptographic sealing is part of the Evidence Bundle / trust layer, not
+a sixth primitive.
 
-- **Per-SDK hooks** — `openai.resources.chat.completions.Completions.create`,
-  `anthropic.resources.messages.Messages.create`,
-  `mcp.client.session.ClientSession.call_tool`
-- **Wire-level hooks** — `httpx.Client.send`, `requests.Session.send`,
-  `aiohttp.ClientSession._request`, `urllib3.HTTPConnectionPool.urlopen`
-  — URL-classified via a vendored registry (OpenAI, Anthropic, Cohere,
-  Together, Mistral, Replicate, AWS Bedrock; user-extensible at
-  `~/.novafabric/url_registry.yaml`)
-- **Layering guard** — when `requests` calls go through `urllib3`
-  internally, exactly one record is produced (not two) — see
-  [ADR-0025](design/adr/) and v0.6.0 release notes
-- **Body adapters** — Bedrock-Anthropic / Cohere / Titan / Llama bodies
-  are normalized into OpenAI shape so `gen_ai.request.model` populates
-  correctly across all providers
-- **OTel GenAI semconv** — every `gen_ai.*` field defined as "Required
-  when applicable" is extracted: temperature, top_p, top_k, max_tokens,
-  stop_sequences, seed, frequency_penalty, presence_penalty,
-  response.id, finish_reasons
+### 1. Asset Registry (identity layer, v0.1)
 
-All patches are removed after the run. If an SDK is not installed, its hook is
-silently skipped. Capture works even if none of the AI SDKs are present.
+A local SQLite registry (`~/.novafabric/registry.db`) of versioned AI assets across
+seven types — model, agent, prompt, tool, dataset, evaluation, deployment. Each asset
+is addressed as `name@version`, pinned to a git SHA, and carries a six-state
+lifecycle:
 
-For **non-Python clients** (Claude Code, Cursor, Continue, Node/Go agents),
-two transparent HTTP proxies provide the same capture without modifying
-the client:
+```
+development → validated → pending_approval → staging → production → archived
+```
 
-- **`nova api-proxy`** — captures LLM API calls (point your client at
-  `http://127.0.0.1:8765` via `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL`).
-  Streaming responses are merged into a synthesized non-streaming
-  envelope for the record.
-- **`nova mcp-proxy`** — captures MCP tool exchanges (stdio transport
-  for Claude Desktop / Cursor; HTTP/SSE transport for HTTP MCP servers).
-
-Both proxies auto-allocate a capsule directory if `--capsule-dir` is omitted.
-
-Secret scanning runs against every artifact before the capsule is finalized.
-Detected values are redacted in-place; a cryptographically chained proof record
-is written to `redaction-proof.json`.
-
----
-
-## What is captured
-
-| Artifact | Contents |
-|---|---|
-| `capsule.yaml` | Run id (ULID), status, command, timing, artifact refs |
-| `trace.jsonl` | Root span + any child spans (OpenTelemetry-compatible) |
-| `model-calls.jsonl` | One record per LLM call, OTel GenAI semconv fields |
-| `tool-calls.jsonl` | Tool invocations (populated by future tool hooks) |
-| `env.lock` | Python version, packages, OS, CPU, GPU, locale, env vars |
-| `redaction-proof.json` | Scan summary, findings count, chain hash |
-| `replay.yaml` | Replay mode and constraints |
-
-Capsules are written on **success and failure**. A failed run produces a
-complete capsule with `status: failure`, `exit_code: N`, and an `error` block.
-
----
-
-## Asset registry (v0.1, included)
-
-NovaFabric also ships the **Asset Registry** — a local SQLite registry for
-AI assets:
+Promotion is eval-gated for agents and is **governance metadata only** — it updates
+one DB record and does not restart, deploy, or redeploy anything.
 
 ```bash
 nova register my-model.yaml
@@ -202,6 +207,106 @@ nova validate spec.yaml   # asset spec or capsule directory
 
 See [`docs/getting-started.md`](docs/getting-started.md) for the full registry walkthrough.
 
+### 2. Run Capsule (execution snapshot, v0.2)
+
+The fundamental unit of capture: a ULID-named directory holding all observable facts
+of one execution (see the [Quick start](#1-capture-a-run) layout above). Capsules
+support additive, optional `extensions:` blocks (slurm, kubernetes, ray, openlineage)
+so the schema can grow without a new top-level format.
+
+### 3. Replay (v0.3)
+
+Re-execute or inspect a capsule with external calls controlled, in **four honest,
+falsifiable modes**:
+
+| Mode | What it does | Use for |
+|---|---|---|
+| `forensic` | Read-only inspection; no subprocess, no network | Audit, post-incident review |
+| `mocked` | Re-spawns the command; LLM calls served from the capsule cache; tool calls gated by a safety ladder | CI, regression |
+| `semantic` | Re-executes and judges *meaning* not tokens (0.0–1.0 similarity score) | Drifting remote LLMs |
+| `exact` | Byte-exact eligibility requiring a deterministic env and per-call seed | Local / on-prem / compliance |
+
+NovaFabric explicitly does **not** claim exact replay of *remote* LLM calls.
+
+### 4. Lineage (causation layer, v0.4)
+
+A directed provenance graph in SQLite — a rebuildable cache derived from
+`lineage.jsonl` — with mechanical edge types (`consumed`, `produced_by`,
+`replayed_from`) and two confidence levels (`observed` at runtime vs `inferred` from
+structure). Queries: `provenance` (ancestors), `blast-radius` (descendants /
+impact), `replay-chain`, and `time-travel`. NovaFabric emits
+[OpenLineage](https://openlineage.io/) events (START / COMPLETE / FAIL) to Marquez,
+Atlan, or OpenMetadata.
+
+### 5. Evidence Bundle (signed audit export, v0.4)
+
+A signed, self-contained ZIP built by `nova export-evidence`, embedding the capsule,
+a lineage subgraph, [in-toto](https://in-toto.io/) DSSE attestations, ed25519
+signatures, and vendored JSON schemas. It is verifiable with only `sha256sum` plus an
+ed25519 verifier — **no NovaFabric runtime required** — which is the compliance
+primitive for regulated industries.
+
+---
+
+## How capture works
+
+`nova capture <cmd>` needs **no code changes**. It injects a `sitecustomize.py`
+loader into the subprocess via `PYTHONPATH`, which installs monkey-patches for:
+
+- **Per-SDK hooks** — `openai.resources.chat.completions.Completions.create`,
+  `anthropic.resources.messages.Messages.create`,
+  `mcp.client.session.ClientSession.call_tool`
+- **Wire-level hooks** — `httpx.Client.send`, `requests.Session.send`,
+  `aiohttp.ClientSession._request`, `urllib3.HTTPConnectionPool.urlopen` —
+  URL-classified via a vendored registry (OpenAI, Anthropic, Cohere, Together,
+  Mistral, Replicate, AWS Bedrock; user-extensible at
+  `~/.novafabric/url_registry.yaml`)
+- **Layering guard** — when `requests` calls go through `urllib3` internally,
+  exactly one record is produced (not two) — see [ADR-0025](design/adr/) and the
+  v0.6.0 release notes
+- **Body adapters** — Bedrock-Anthropic / Cohere / Titan / Llama bodies are
+  normalized into OpenAI shape so `gen_ai.request.model` populates correctly across
+  all providers
+- **OTel GenAI semconv** — every `gen_ai.*` field defined as "Required when
+  applicable" is extracted: temperature, top_p, top_k, max_tokens, stop_sequences,
+  seed, frequency_penalty, presence_penalty, response.id, finish_reasons
+
+All patches are removed after the run. If an SDK is not installed, its hook is
+silently skipped; capture works even if none of the AI SDKs are present.
+Third-party plugins are auto-discovered via the `novafabric.hooks` entry-point group.
+
+### Non-Python clients
+
+For clients such as Claude Code, Cursor, Continue, or Node/Go agents, two transparent
+HTTP proxies provide the same capture without modifying the client:
+
+- **`nova api-proxy`** — captures LLM API calls (point your client at
+  `http://127.0.0.1:8765` via `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL`). Streaming
+  responses are merged into a synthesized non-streaming envelope for the record.
+- **`nova mcp-proxy`** — captures MCP tool exchanges (stdio transport for Claude
+  Desktop / Cursor; HTTP/SSE transport for HTTP MCP servers).
+
+Both proxies auto-allocate a capsule directory if `--capsule-dir` is omitted.
+
+### Redaction is a precondition
+
+Secret scanning runs against **every** artifact before the capsule is finalized.
+Detected values are redacted in place (`[REDACTED:rule-id]`), and a cryptographically
+chained proof record is written to `redaction-proof.json`. A capsule without that
+proof is invalid to `nova validate` and cannot be exported.
+
+### What is captured
+
+| Artifact | Contents |
+|---|---|
+| `capsule.yaml` | Run id (ULID), status, command, timing, artifact refs |
+| `trace.jsonl` | Root span + any child spans (OpenTelemetry-compatible) |
+| `model-calls.jsonl` | One record per LLM call, OTel GenAI semconv fields |
+| `tool-calls.jsonl` | Tool invocations |
+| `env.lock` | Python version, packages, OS, CPU, GPU, locale, safe env vars (secrets excluded) |
+| `redaction-proof.json` | Scan summary, findings count, chain hash |
+| `replay.yaml` | Replay mode and constraints |
+
 ---
 
 ## When to use NovaFabric
@@ -212,24 +317,39 @@ Use NovaFabric when you need to:
   debugging or incident forensics, instead of guessing what changed.
 - **Diff two runs** — see exactly which model calls, tool calls, or outputs changed
   between yesterday and today, and gate CI on behavioral change.
-- **Produce portable, signed evidence** of what an agent or model actually did —
-  for governance, auditability, and compliance *support*.
+- **Produce portable, signed evidence** of what an agent or model actually did — for
+  governance, auditability, and compliance *support*.
 - **Capture without changing application code** — SDK hooks, wire-level hooks, and
-  transparent proxies capture runs of any command, entirely in **your own
-  environment**, online or air-gapped.
+  transparent proxies capture any command, entirely in **your own environment**,
+  online or air-gapped.
+
+### Who it is for
+
+| Persona | Job to be done |
+|---|---|
+| ML / platform engineers | Wire `nova diff --assert-no-regressions` as a CI gate against agent regressions |
+| HPC / research teams | Port laptop ↔ cluster (Slurm), use the shared-filesystem registry as a multi-team handoff protocol |
+| Compliance officers | Human-sign-off audit trails and tamper-evident provenance ("what model processed user data on March 15th?") |
+| Incident responders | Forensic replay, blast-radius analysis, rollback |
+| OSS agent-framework authors | Adopt a standard, reproducible run format |
 
 ### When *not* to use NovaFabric
 
 Be honest about the trade-offs — NovaFabric is **not** the right tool when:
 
-- You want a fully managed, hosted observability dashboard with zero operations —
-  a SaaS LLM-observability platform will be less work.
-- You need large-scale, real-time, multi-user team analytics **today** — server mode
-  and the live dashboard are `experimental`.
+- You want a fully managed, hosted observability dashboard with zero operations — a
+  SaaS LLM-observability platform will be less work.
+- You need large-scale, real-time, multi-user team analytics as a turnkey product —
+  server mode and the live dashboard are `experimental`.
 - You need a compliance *certification* — NovaFabric produces evidence that
   *supports* compliance workflows; it does not certify or guarantee compliance.
 - You need frozen, long-term-stable on-disk formats right now — the Run Capsule and
   Evidence Bundle formats are not frozen until the v1.0 schema freeze.
+
+NovaFabric is also deliberately **not** an orchestrator, a model trainer, an
+inference server, a vector DB, an LLM gateway, or a CI/CD runner. It records what
+LangGraph / AutoGen / CrewAI / DSPy / the OpenAI Agents SDK do — framework-neutral —
+and sits *beside* vLLM / Ray Serve / Triton / Ollama, never in the request path.
 
 ---
 
@@ -250,23 +370,49 @@ trace in a hosted database.
 | Capture without code changes | **✓** SDK + wire-level + proxy | SDK instrumentation | SDK / proxy |
 | Works fully offline | **✓** | self-host only | ✗ |
 
-**Where the alternatives are stronger:** hosted and self-hosted observability
-platforms offer richer turnkey dashboards, managed evaluation UIs, and team
-analytics out of the box. NovaFabric trades that for portability, offline
-operation, and signed, replayable artifacts you own. They are complementary —
-NovaFabric emits OpenTelemetry GenAI and OpenLineage, so you can feed an existing
-observability stack while keeping portable capsules for replay and audit.
+**They are complementary, not competitors.** Observability platforms (Langfuse is the
+common reference) are genuinely stronger at real-time cost/token analytics, production
+alerting, prompt A/B testing, and hosted multi-user convenience — "how is my system
+performing *right now*?" NovaFabric answers a different question — "can I *prove,
+replay, and compare* any past run weeks or months later?" NovaFabric emits
+OpenTelemetry GenAI and OpenLineage, so you can feed an existing observability stack
+while keeping portable capsules for replay and audit.
 
 See [`docs/concepts.md`](docs/concepts.md) for the five primitives and four replay
 modes in depth.
 
 ---
 
+## Architecture in brief
+
+**Only two invented top-level formats exist: Run Capsule and Evidence Bundle.**
+Everything else — event envelopes, lineage edges, env locks, redaction proofs, BOMs,
+transparency logs — lives *inside* them or is transport encoding. Introducing a third
+top-level format requires an accepted ADR (a design invariant).
+
+A guiding design principle: **the capsule is the source of truth; the registry,
+metadata DB, and lineage graph are derived, rebuildable indexes.** Storage tiers are
+strictly additive:
+
+| Tier | Backend | Requires network? |
+|---|---|---|
+| Local (default) | SQLite — registry at `~/.novafabric/registry.db` + lineage cache (crash-safe WAL) | No |
+| Server mode (v0.7+, `experimental`) | Postgres, same data over a REST API | Yes |
+
+Local mode never requires server mode, and server mode never requires any larger
+tier. Additional design invariants: capture never blocks the workload; heavy crypto
+runs at the collection boundary, never on a compute-node hot path; schema changes are
+additive-only and old capsules stay readable forever.
+
+---
+
 ## Roadmap
 
-> All shipped items (`✓`) are `experimental` unless marked `prototype`. Interfaces and
-> formats may change until the v1.0 schema freeze. See [`ROADMAP.md`](ROADMAP.md) for
-> per-feature maturity labels.
+> **Label glossary:** `experimental` — ships and works, interface may change before
+> v1.0 schema freeze; `prototype` — implemented but not validated at target scale;
+> `planned` — not yet implemented. No item is listed as shipped until tests pass and
+> the feature ships in a release. See [`ROADMAP.md`](ROADMAP.md) for per-feature
+> maturity labels.
 
 ```text
 v0.1  ✓  Asset Registry — SQLite, 8 CLI commands, eval-gated promotion
@@ -309,32 +455,58 @@ v0.19 ✓  Complete dashboard parity — CostTab + SchemaTab; all 7 v0.17 CLI su
 v1.0     OAS v1.0 schema freeze + production-ready governance [planned]
 ```
 
-See [`CHANGELOG.md`](CHANGELOG.md) for release-by-release details.
+The most recent releases (v0.45–v0.58) deepen capture fidelity, the accountability
+spine (`nova energy` / `nova ledger` / `nova safety-case`), significance-gated
+promotion, and supply-chain evidence (SLSA-for-ML, AI-BOM, signed dataset provenance
+cards). See [`CHANGELOG.md`](CHANGELOG.md) for release-by-release detail.
+
+> **Not yet frozen:** on-disk Run Capsule and Evidence Bundle formats change until the
+> v1.0 schema freeze. Do not treat capsule internals as a stable contract before then.
+
+---
+
+## Standards adopted
+
+[OpenTelemetry GenAI semconv](https://opentelemetry.io/docs/specs/semconv/gen-ai/) ·
+[Anthropic MCP](https://modelcontextprotocol.io/) ·
+[OpenLineage](https://openlineage.io/) ·
+[in-toto](https://in-toto.io/) ·
+[SLSA](https://slsa.dev/) ·
+Sigstore ·
+[RFC 3161](https://www.rfc-editor.org/rfc/rfc3161) trusted timestamps ·
+JSON Schema 2020-12 ·
+OCI ·
+OPA/Rego ·
+[NIST AI RMF](https://www.nist.gov/itl/ai-risk-management-framework)
+
+NovaFabric produces primitives that *support* regulatory workflows (EU AI Act, NIST
+AI RMF, ISO/IEC 42001, FDA 21 CFR Part 11, SOC 2, GDPR, HIPAA) but takes no
+standards-body posture before v1.0. It attests only that a capsule is unmodified since
+signing; it does not vouch for content compliance or certify any regulation.
 
 ---
 
 ## FAQ
 
 **What is NovaFabric?**
-An open-source, self-hosted CLI toolkit that captures, replays, diffs, and audits
-AI agent and model runs as portable, redacted evidence capsules. It runs in your
-own infrastructure — from a laptop to a cluster — and is built around five
-primitives: Asset Registry, Run Capsule, Replay, Lineage, and Evidence Bundle.
+An open-source, self-hosted CLI toolkit that captures, replays, diffs, and audits AI
+agent and model runs as portable, redacted evidence capsules. It runs in your own
+infrastructure — from a laptop to a cluster — and is built around five primitives:
+Asset Registry, Run Capsule, Replay, Lineage, and Evidence Bundle.
 
 **Is it free and open source?**
 Yes — Apache-2.0 licensed. There is no paid tier or hosted service required.
 
 **Does NovaFabric send my data anywhere?**
-No. NovaFabric is self-hosted: captured data stays in your own infrastructure —
-on your machine in local mode, or in your own server in server mode — never a
-vendor cloud. There are no accounts and no telemetry, and core features (capture,
-validate, replay, diff, lineage) work fully offline.
+No. NovaFabric is self-hosted: captured data stays in your own infrastructure — on
+your machine in local mode, or in your own server in server mode — never a vendor
+cloud. There are no accounts and no telemetry, and core features (capture, validate,
+replay, diff, lineage) work fully offline.
 
 **Do I have to change my code to use it?**
-No. `nova capture <command>` captures any command with no application changes.
-Python SDKs (OpenAI, Anthropic, MCP, httpx, requests, aiohttp, urllib3, Bedrock)
-are auto-hooked; non-Python clients are captured via `nova api-proxy` and
-`nova mcp-proxy`.
+No. `nova capture <command>` captures any command with no application changes. Python
+SDKs (OpenAI, Anthropic, MCP, httpx, requests, aiohttp, urllib3, Bedrock) are
+auto-hooked; non-Python clients are captured via `nova api-proxy` and `nova mcp-proxy`.
 
 **What is an "evidence capsule"?**
 A portable `.novafabric/runs/<ulid>/` folder containing a schema-valid,
@@ -343,13 +515,13 @@ environment lock, a redaction proof, and a replay policy.
 
 **Can I replay a captured run?**
 Yes — four modes: `exact`, `mocked`, `semantic`, and `forensic` (read-only, no
-network, no subprocess).
+network, no subprocess). NovaFabric does not claim exact replay of *remote* LLM calls.
 
 **How is this different from LangSmith / Langfuse / W&B?**
 Those are observability platforms centered on traces in a (hosted or self-hosted)
 database. NovaFabric is self-hosted and centered on portable, signed, *replayable*
-capsules you own, with run-to-run structural diff and cryptographic provenance.
-See [How NovaFabric compares](#how-novafabric-compares).
+capsules you own, with run-to-run structural diff and cryptographic provenance. See
+[How NovaFabric compares](#how-novafabric-compares).
 
 **Is NovaFabric production-ready?**
 It is **beta** (v0.58.0). Local capture, replay, diff, lineage, the trust layer,
@@ -423,23 +595,30 @@ redaction), the asset registry, policy/approval gates, and standard eval suites.
 `Experimental`: server mode, the cluster-scale collector, the Object Capsule Store,
 and the live dashboard (see [ROADMAP.md](ROADMAP.md) and [CHANGELOG.md](CHANGELOG.md)
 for per-feature maturity labels and the authoritative release history). Run Capsule
-and Evidence Bundle formats are **not frozen** — expect schema changes until the
-v1.0 freeze. NovaFabric produces evidence that *supports* compliance workflows; it
-does not certify or guarantee compliance.
+and Evidence Bundle formats are **not frozen** — expect schema changes until the v1.0
+freeze. NovaFabric produces evidence that *supports* compliance workflows; it does not
+certify or guarantee compliance.
 
 ---
 
-## Standards adopted
+## Next steps
 
-OpenTelemetry GenAI semconv · Anthropic MCP · OpenLineage · in-toto · SLSA ·
-Sigstore · JSON Schema 2020-12 · OCI · OPA/Rego · NIST AI RMF
+- **New here?** Run the three commands in [Quick start](#quick-start): capture,
+  validate, replay.
+- **Wiring CI?** Add `nova diff --assert-no-regressions` between a known-good capsule
+  and each new run.
+- **Auditing or forensics?** Read the [Evidence Bundle](#5-evidence-bundle-signed-audit-export-v04)
+  primitive, then `nova export-evidence`.
+- **Going deeper?** Read [`docs/concepts.md`](docs/concepts.md) for the five
+  primitives and four replay modes, and [`ROADMAP.md`](ROADMAP.md) for what is shipped
+  versus planned.
 
 ---
 
 ## Citation
 
-If you use NovaFabric in your research or tooling, please cite it. Citation
-metadata lives in [`CITATION.cff`](CITATION.cff); a BibTeX entry:
+If you use NovaFabric in your research or tooling, please cite it. Citation metadata
+lives in [`CITATION.cff`](CITATION.cff); a BibTeX entry:
 
 ```bibtex
 @software{novafabric,

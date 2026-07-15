@@ -73,6 +73,37 @@ def aibom_generate_cmd(
             help="Regenerate aibom.json even if one already exists.",
         ),
     ] = False,
+    citations: Annotated[
+        bool,
+        typer.Option(
+            "--citations",
+            help="NF-056: bind each model/dataset component to its source capsule/evidence "
+            "digest (+ ADR-0097 inclusion proof when present). Default off (byte-stable).",
+        ),
+    ] = False,
+    tlp: Annotated[
+        Optional[str],
+        typer.Option(
+            "--tlp",
+            help="NF-056: TLP 2.0 distribution marker "
+            "(TLP:CLEAR|GREEN|AMBER|AMBER+STRICT|RED). Default: none.",
+        ),
+    ] = None,
+    model_card: Annotated[
+        Optional[str],
+        typer.Option(
+            "--model-card",
+            help="NF-056: add a model-card externalReference to each model component. "
+            "'auto' derives a registry URI; or pass an explicit path/URI. Default: none.",
+        ),
+    ] = None,
+    include_datasets: Annotated[
+        bool,
+        typer.Option(
+            "--include-datasets/--no-include-datasets",
+            help="Emit type:data dataset components from lineage (default on).",
+        ),
+    ] = True,
 ) -> None:
     """Generate CycloneDX 1.7 AI-BOM(s) for one or all capsules.
 
@@ -93,11 +124,17 @@ def aibom_generate_cmd(
       # Refresh all (overwrite existing)
       nova aibom generate --all --force
     """
-    from novafabric.compliance.export.aibom import AIBOMExporter
+    from novafabric.compliance.export.aibom import TLP_MARKERS, AIBOMExporter
 
     if not all_capsules and capsule_dir is None:
         console.print(
             "[red]✗[/red] Provide a capsule directory or use [bold]--all[/bold]."
+        )
+        raise typer.Exit(code=2)
+
+    if tlp is not None and tlp not in TLP_MARKERS:
+        console.print(
+            f"[red]✗[/red] Invalid --tlp {tlp!r}; expected one of {sorted(TLP_MARKERS)}."
         )
         raise typer.Exit(code=2)
 
@@ -108,7 +145,13 @@ def aibom_generate_cmd(
         out_path = cap / _AIBOM_FILENAME
         if out_path.exists() and not force:
             return False
-        doc = exporter.build_aibom(cap)
+        doc = exporter.build_aibom(
+            cap,
+            citations=citations,
+            tlp=tlp,
+            model_card_ref=model_card,
+            include_datasets=include_datasets,
+        )
         exporter.export_json(doc, out_path)
         return True
 
@@ -208,3 +251,55 @@ def aibom_status_cmd(
             "\n[dim]Run [bold]nova export-aibom <capsule_dir> --output "
             f"<capsule_dir>/{_AIBOM_FILENAME}[/bold] for each uncovered capsule.[/dim]"
         )
+
+
+@aibom_app.command("validate")
+def aibom_validate_cmd(
+    bom_file: Annotated[
+        Path,
+        typer.Argument(help="Path to a CycloneDX 1.7 AI-BOM JSON file to validate."),
+    ],
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit the validation result as JSON.")
+    ] = False,
+) -> None:
+    """Validate a CycloneDX 1.7 ML-BOM (NF-056 structural + NovaFabric-binding check).
+
+    Checks the required CycloneDX 1.7 fields (specVersion, bomFormat, serialNumber),
+    TLP marker validity, and per-component binding (name/bom-ref/hash-alg/citation
+    digest). Exits ``0`` if the BOM passes, ``1`` on validation errors, ``2`` on a
+    missing/malformed file.
+
+    Scope: single BOM file.
+
+    \b
+    Examples:
+      nova aibom validate path/to/aibom.json
+    """
+    import json as _json
+
+    from novafabric.compliance.export.aibom import AIBOMExporter
+
+    if not bom_file.is_file():
+        console.print(f"[red]✗[/red] Not a file: {bom_file}")
+        raise typer.Exit(code=2)
+    try:
+        payload = _json.loads(bom_file.read_text(encoding="utf-8"))
+    except (ValueError, OSError) as exc:
+        console.print(f"[red]✗[/red] Could not parse BOM JSON: {exc}")
+        raise typer.Exit(code=2) from exc
+    if not isinstance(payload, dict):
+        console.print("[red]✗[/red] BOM must be a JSON object.")
+        raise typer.Exit(code=2)
+
+    errors = AIBOMExporter.validate(payload)
+    if as_json:
+        console.print_json(_json.dumps({"valid": not errors, "errors": errors}))
+    elif errors:
+        console.print(f"[red]✗[/red] {len(errors)} validation error(s):")
+        for err in errors:
+            console.print(f"  [red]•[/red] {err}")
+    else:
+        console.print(f"[green]✓[/green] Valid CycloneDX 1.7 AI-BOM: {bom_file}")
+    if errors:
+        raise typer.Exit(code=1)

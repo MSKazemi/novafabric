@@ -10,7 +10,7 @@ Most questions are answered in the docs:
 - **Concepts** (the five primitives, four replay modes): [docs/concepts.md](docs/concepts.md)
 - **CLI reference:** [docs/cli-reference.md](docs/cli-reference.md)
 - **Python API:** [docs/python-api.md](docs/python-api.md)
-- **Website:** <https://novafabric.dev>
+- **Website:** <https://novafabric.ai>
 - **FAQ:** see the [FAQ section in the README](README.md#faq)
 
 ## Ask a question
@@ -36,4 +36,4 @@ NovaFabric is maintained by
 [Mohsen Seyedkazemi Ardebili](https://github.com/MSKazemi) as part of the
 [NovaFabric](https://github.com/novafabric) open-source lab. For research
 collaboration or larger questions, reach out via the contact links on
-<https://novafabric.dev>.
+<https://novafabric.ai>.

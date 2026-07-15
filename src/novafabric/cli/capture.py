@@ -162,6 +162,29 @@ def capture_cmd(
             ),
         ),
     ] = False,
+    emit_otel_genai: Annotated[
+        bool,
+        typer.Option(
+            "--emit-otel-genai",
+            help=(
+                "After capture, emit OTel GenAI gen_ai.* spans (OTLP-shaped JSON) "
+                "alongside the capsule at <capsule>/otel-genai-spans.json (NF-032, "
+                "ADR-0098). Portable, additive; message content is omitted unless "
+                "--capture-content is also set."
+            ),
+        ),
+    ] = False,
+    capture_content: Annotated[
+        bool,
+        typer.Option(
+            "--capture-content",
+            help=(
+                "With --emit-otel-genai, include request messages in the emitted "
+                "spans, routed through the ADR-0009 secret-redaction gate and "
+                "size-bounded (NF-033 opt-in content bridge). Off by default."
+            ),
+        ),
+    ] = False,
     daemon: Annotated[
         bool,
         typer.Option(
@@ -219,6 +242,7 @@ def capture_cmd(
         and not mark_provenance
         and not fast_emit
         and not emit_spool
+        and not emit_otel_genai
         and output_dir is None
     )
     if daemon and _is_plain:
@@ -283,6 +307,22 @@ def capture_cmd(
         f"{status_icon} Capsule written: {result.capsule_dir}  "
         f"(run_id={result.run_id})"
     )
+
+    # NF-032/033: opt-in OTel GenAI span emission alongside the capsule.
+    if emit_otel_genai:
+        import json as _json
+
+        from novafabric.otel.genai_emitter import emit_spans
+
+        spans = emit_spans(result.capsule_dir, capture_content=capture_content)
+        spans_path = result.capsule_dir / "otel-genai-spans.json"
+        spans_path.write_text(_json.dumps(spans, indent=2), encoding="utf-8")
+        content_note = "with redacted content" if capture_content else "no content"
+        console.print(
+            f"[green]✓[/green] OTel GenAI spans: {spans_path} "
+            f"({len(spans)} spans, {content_note})"
+        )
+
     if result.exit_code == 0 and os.environ.get("NOVAFABRIC_SUGGEST", "1") != "0":
         _print_suggestion_hint(result.capsule_dir, registry_db_path)
     if result.exit_code != 0:

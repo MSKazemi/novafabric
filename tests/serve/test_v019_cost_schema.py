@@ -86,7 +86,7 @@ class TestCostRoutes:
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """When NOVA_CLICKHOUSE_URL is unset, /api/cost/report falls back to
-        the local DuckDB accumulator (Evidence Fabric local-first mode).
+        the local DuckDB accumulator (Evidence Fabric self-contained mode).
         Response shape is preserved; backend is "duckdb" and ok is True.
         """
         monkeypatch.delenv("NOVA_CLICKHOUSE_URL", raising=False)

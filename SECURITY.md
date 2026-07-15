@@ -16,7 +16,7 @@ We will acknowledge reports within 5 business days and aim to release a fix with
 
 ## Scope
 
-NovaFabric is a local-first CLI tool. The primary attack surfaces are:
+NovaFabric is a self-contained CLI tool. The primary attack surfaces are:
 
 - YAML parsing (malicious spec files)
 - SQLite database access (local filesystem)

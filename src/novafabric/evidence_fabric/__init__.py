@@ -1,9 +1,9 @@
-"""Evidence Fabric — local-first and scale-tier accumulator stack.
+"""Evidence Fabric — self-contained and scale-tier accumulator stack.
 
 Implements the Evidence Fabric v1.0 primitives (cap-001..cap-006/009,
 ADR-0066).
 
-Local-first backends (no optional deps required):
+Self-contained backends (no optional deps required):
   DuckDBAccumulator  — in-process DuckDB lineage-edge + capsule-event store
   EventQueueConsumer — asyncio.Queue consumer with NATS-compatible interface
   LocalPIITable      — Parquet-backed PII event log with Iceberg-compat sidecar

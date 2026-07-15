@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/features/translog-checkpoint-v0.schema.json",
+  "$comment": "schema_version 0.x (v0, not frozen); tracks design/spec/features/NF-041-047-verifiable-transparency-log.md. Standalone additive/optional fragment. This models the parsed/structured form of a C2SP signed-note checkpoint referenced from an Evidence Bundle via extensions/. The canonical wire form is the C2SP signed-note text body (origin\\ntree_size\\nbase64(root_hash)\\n[ext lines]) plus '— <keyname> <base64 sig>' lines; this schema is the decoded object.",
+  "title": "TransparencyLogCheckpoint",
+  "description": "Additive/optional — v0, not frozen. A C2SP-style transparency-log checkpoint / signed note (NF-042). Emitted for every log head: origin, tree_size, root_hash (base64), timestamp, and the origin-signer signature(s) plus K-of-M witness cosignatures (NF-043). A head is 'witness-final' only with a quorum of valid witness cosignatures. Optional extension lines (sparse-Merkle map root, RFC 3161 TSA digest) are forward-compatible; unknown extensions are ignored.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["origin", "tree_size", "root_hash", "signatures"],
+  "properties": {
+    "origin": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Log origin string / signed-note first line, e.g. 'novafabric.dev/log/tenant-a'."
+    },
+    "tree_size": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of leaves in the Merkle tree at this head (RFC 6962/9162)."
+    },
+    "root_hash": {
+      "$ref": "#/$defs/Base64",
+      "description": "Base64-encoded Merkle tree root hash at tree_size (RFC 6962/9162 tree hashing)."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this checkpoint was emitted (RFC 3339). Optional; C2SP notes are timestampless, but NovaFabric records emission time."
+    },
+    "extension_lines": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/ExtensionLine"},
+      "description": "Optional signed-note extension lines (e.g. ADR-0090 sparse-Merkle map root, ADR-0030 RFC 3161 TSA digest). Consumers MUST ignore unknown keys (forward-compat, NF-042 req 4)."
+    },
+    "signatures": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/Signature"},
+      "description": "Origin-signer signature(s) over the note body. At least one required."
+    },
+    "witness_cosignatures": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Signature"},
+      "description": "C2SP tlog-witness cosignatures (NF-043). A head is witness-final only with a K-of-M quorum of distinct valid witness signature lines (default 2-of-3)."
+    },
+    "witness_quorum": {
+      "$ref": "#/$defs/WitnessQuorum",
+      "description": "Configured K-of-M witness quorum this checkpoint must satisfy to be witness-final."
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Vendor extensions. Keys must be reverse-DNS-prefixed."
+    }
+  },
+  "$defs": {
+    "Base64": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9+/]+={0,2}$",
+      "description": "Standard base64-encoded bytes."
+    },
+    "ExtensionLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "value"],
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "Extension key, e.g. 'nova-sparse-map', 'nova-tsa-sha256'."
+        },
+        "value": {
+          "type": "string",
+          "description": "Extension value (opaque; hex or base64 per the key's convention)."
+        }
+      }
+    },
+    "Signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key_name", "sig"],
+      "properties": {
+        "key_name": {
+          "type": "string",
+          "description": "Signed-note key name, e.g. 'novafabric-witness-1' or the origin signer name."
+        },
+        "alg": {
+          "type": "string",
+          "enum": ["ed25519"],
+          "description": "Signature algorithm. C2SP signed notes use Ed25519.",
+          "default": "ed25519"
+        },
+        "sig": {
+          "$ref": "#/$defs/Base64",
+          "description": "Base64-encoded signature over the signed-note body."
+        }
+      }
+    },
+    "WitnessQuorum": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["k", "m"],
+      "properties": {
+        "k": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum number of valid distinct witness cosignatures required (default 2)."
+        },
+        "m": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Total configured witnesses (default 3)."
+        }
+      }
+    }
+  },
+  "x-novafabric": {
+    "governed_by": "NF-042 (checkpoint / signed note); part of NF-041/043/044/045/047/048/050 transparency log",
+    "adr": "ADR-0097 (verifiable, witness-cosigned transparency log); extends ADR-0041 NovaSeal Merkle log; relates to ADR-0089, ADR-0090, ADR-0030, ADR-0031, ADR-0024",
+    "spec": "design/spec/features/NF-041-047-verifiable-transparency-log.md",
+    "status": "planned",
+    "stability": "v0 — additive, optional, not frozen",
+    "wire_form": "C2SP signed note: body = origin\\ntree_size\\nbase64(root_hash)\\n[extension lines]; blank line; one '— <keyname> <base64 sig>' per signature/cosignature"
+  }
+}

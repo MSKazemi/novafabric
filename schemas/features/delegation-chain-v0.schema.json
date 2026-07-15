@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/features/delegation-chain-v0.schema.json",
+  "$comment": "schema_version 0.x (v0, not frozen); tracks design/spec/features/NF-083-089-agent-identity-delegation.md. Standalone additive/optional fragment intended to live under the capsule's additive facets surface as facets.delegation. Does not modify run-capsule.schema.json. Fail-open: a capsule without this facet is as valid as today.",
+  "title": "DelegationChain",
+  "description": "Additive/optional — v0, not frozen. The 'acted-as' evidence object (NF-084): an ordered chain of signed grant references user -> agent -> sub-agent. NovaFabric stores and verifies the chain; it does not issue the credentials. Each hop's scope MUST be a subset of its parent's (monotonic narrowing); a widening or expired hop is flagged. Secrets-never-captured (I-2): only public identifiers, scopes, expiries, grant-reference digests, and signatures — never a bearer token, VC signing key, or SVID private key.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["chain"],
+  "properties": {
+    "root_intent_digest": {
+      "$ref": "#/$defs/ContentHash",
+      "description": "SHA-256 of the originating user intent the chain descends from."
+    },
+    "chain": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/Hop"},
+      "description": "Ordered delegation hops. Verifier walks the chain offline; scope must narrow monotonically along it."
+    },
+    "verified": {
+      "$ref": "#/$defs/VerifiedFlags",
+      "description": "Offline-walk verification summary. Recorded by the verifier; a widening/expired/broken hop sets broken_hop and clears the corresponding flag."
+    },
+    "standard_versions": {
+      "type": "object",
+      "additionalProperties": {"type": "string"},
+      "description": "Version pins for the standards parsed (e.g. {'w3c_vc':'2.0','jwt_svid':'…'}) (NF req 13)."
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Vendor extensions. Keys must be reverse-DNS-prefixed."
+    }
+  },
+  "$defs": {
+    "ContentHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "SHA-256 content hash in sha256:<hex> form."
+    },
+    "Base64": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9+/]+={0,2}$",
+      "description": "Standard base64-encoded bytes."
+    },
+    "Hop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hop", "granter", "grantee", "scope", "grant_type", "grant_ref", "not_after", "sig"],
+      "properties": {
+        "hop": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Zero-based position of this hop in the chain."
+        },
+        "granter": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Public identity granting authority, e.g. 'user:did:example:alice' or a SPIFFE ID. Never a secret."
+        },
+        "grantee": {
+          "type": "string",
+          "minLength": 1,
+          "description": "SPIFFE ID (or public identity) receiving the delegated authority, e.g. 'spiffe://acme.example/ns/agents/sa/planner'."
+        },
+        "scope": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Granted scope tokens, e.g. ['read:tickets','spend:usd<=100']. MUST be a subset of the parent hop's scope (monotonic narrowing, NF-084 req 6)."
+        },
+        "grant_type": {
+          "type": "string",
+          "enum": ["w3c_vc", "jwt_svid"],
+          "description": "Credential kind backing this grant."
+        },
+        "grant_ref": {
+          "$ref": "#/$defs/ContentHash",
+          "description": "Digest (or URI) of the signed grant credential — the reference, never the secret credential itself (I-2)."
+        },
+        "not_after": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Grant expiry (RFC 3339). A hop past its expiry sets broken_hop and no_expired_hop:false."
+        },
+        "sig": {
+          "$ref": "#/$defs/Base64",
+          "description": "Base64-encoded signature over this grant, verified during the offline walk. A signature only — no signing key is ever stored."
+        }
+      }
+    },
+    "VerifiedFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "walk_ok": {"type": "boolean", "description": "The full chain walked without a broken link."},
+        "all_signatures_ok": {"type": "boolean", "description": "Every hop signature verified."},
+        "scope_monotonic": {"type": "boolean", "description": "Each hop's scope is a subset of its parent's; false flags a widening hop."},
+        "no_expired_hop": {"type": "boolean", "description": "No hop was past not_after at verification time."},
+        "broken_hop": {
+          "oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}],
+          "description": "Index of the first broken/expired/widening hop, or null when the chain verifies."
+        }
+      }
+    }
+  },
+  "x-novafabric": {
+    "governed_by": "NF-084 (delegation-chain 'acted-as' evidence object); part of NF-083…NF-089 identity & authority layer",
+    "adr": "ADR-0106 (agent identity & delegated authority); extends ADR-0088, ADR-0090, ADR-0087, ADR-0009, ADR-0024",
+    "spec": "design/spec/features/NF-083-089-agent-identity-delegation.md",
+    "status": "future design",
+    "stability": "v0 — additive, optional, not frozen; gated on ADR-0106 spikes",
+    "secrets_boundary": "audience/scope/expiry metadata + grant-reference digests + signatures only; NEVER a bearer token, VC signing key, or SVID private key (I-2)",
+    "compliance_honesty": "records and verifies claims; does not assert a delegation was lawful or correctly scoped (I-4)"
+  }
+}

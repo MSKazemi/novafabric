@@ -21,7 +21,7 @@ Plain-English guides for engineers at every level. Read in any order.
 |---|---|
 | [How capture works](how-capture-works.md) | What HTTP is, what `requests` and `aiohttp` are, how monkey-patching intercepts LLM calls without code changes, the URL registry, all four capture modes |
 | [Multi-agent capture](multi-agent-capture.md) | Same-process vs separate-process topologies, how to capture each, MCP sub-agents, the parent/child linking design (ADR-0032) |
-| [Cluster scale — 1,000,000 agents](cluster-scale.md) | Where capsules live (always filesystem), why the current single-cluster design doesn't reach 1M agents, the local-first rule, the four-layer architecture, the three hard problems (storage, lineage, identity), and the phased build plan |
+| [Cluster scale — 1,000,000 agents](cluster-scale.md) | Where capsules live (always filesystem), why the current single-cluster design doesn't reach 1M agents, the self-contained rule, the four-layer architecture, the three hard problems (storage, lineage, identity), and the phased build plan |
 
 ---
 

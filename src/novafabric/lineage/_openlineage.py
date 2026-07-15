@@ -75,6 +75,10 @@ def build_complete_event(
     exit_code: int,
     finished_at: str,
     started_at: str,
+    *,
+    with_facets: bool = False,
+    with_otel_correlation: bool = False,
+    manifest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     event_type = "COMPLETE" if exit_code == 0 else "FAIL"
     job_name = _stable_job_name(command)
@@ -86,6 +90,19 @@ def build_complete_event(
             "nominalEndTime": finished_at,
         },
     }
+
+    # NF-036: additive NovaFabric custom facets (opt-in). A consumer that ignores
+    # custom facets sees an unchanged core OL event (R7).
+    if with_facets:
+        from novafabric.lineage._run_facets import build_run_facets
+
+        run_facets.update(
+            build_run_facets(
+                capsule_dir,
+                manifest or {"run_id": run_id},
+                with_otel_correlation=with_otel_correlation,
+            )
+        )
     inputs: list[dict[str, Any]] = []
     outputs: list[dict[str, Any]] = []
 
@@ -144,7 +161,12 @@ def build_complete_event(
     }
 
 
-def build_events_from_capsule(capsule_dir: Path) -> list[dict[str, Any]]:
+def build_events_from_capsule(
+    capsule_dir: Path,
+    *,
+    with_facets: bool = False,
+    with_otel_correlation: bool = False,
+) -> list[dict[str, Any]]:
     capsule_yaml = capsule_dir / "capsule.yaml"
     if not capsule_yaml.exists():
         return []
@@ -172,5 +194,8 @@ def build_events_from_capsule(capsule_dir: Path) -> list[dict[str, Any]]:
             exit_code=exit_code,
             finished_at=finished_at,
             started_at=started_at,
+            with_facets=with_facets,
+            with_otel_correlation=with_otel_correlation,
+            manifest=manifest,
         ),
     ]

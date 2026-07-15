@@ -126,6 +126,65 @@ def test_dsse_signature_roundtrip(tmp_path: Path) -> None:
         public_key.verify(sig, pae)  # raises on failure
 
 
+def test_dsse_flag_emits_verifiable_outer_envelope(tmp_path: Path) -> None:
+    # NF-029/ADR-0096: --dsse wraps the final bundle manifest in a standard DSSE envelope.
+    from novafabric.envelopes.dsse import BUNDLE_PAYLOAD_TYPE
+
+    capsule_dir = _make_capsule(tmp_path)
+    key_path = _make_keypair(tmp_path)
+    pub_path = key_path.parent / "ed25519.pub.pem"
+    out = tmp_path / "evidence.zip"
+    result = runner.invoke(
+        app,
+        ["export-evidence", str(capsule_dir), "--key", str(key_path), "--output", str(out), "--dsse"],
+    )
+    assert result.exit_code == 0, result.output
+
+    dsse_path = Path(str(out) + ".dsse.json")
+    assert dsse_path.exists()
+    envelope = json.loads(dsse_path.read_text())
+    assert envelope["payloadType"] == BUNDLE_PAYLOAD_TYPE
+
+    # payload is the final manifest bytes verbatim (wrap, don't replace)
+    with zipfile.ZipFile(out) as zf:
+        manifest_bytes = zf.read("manifest.json")
+    assert base64.b64decode(envelope["payload"]) == manifest_bytes
+
+    # signature verifies with the same key
+    public_key = serialization.load_pem_public_key(pub_path.read_bytes())
+    sig = base64.b64decode(envelope["signatures"][0]["sig"])
+    pae = dsse_pae(envelope["payloadType"], manifest_bytes)
+    public_key.verify(sig, pae)  # raises on failure
+
+
+def test_no_dsse_flag_writes_no_envelope(tmp_path: Path) -> None:
+    capsule_dir = _make_capsule(tmp_path)
+    key_path = _make_keypair(tmp_path)
+    out = tmp_path / "evidence.zip"
+    runner.invoke(
+        app,
+        ["export-evidence", str(capsule_dir), "--key", str(key_path), "--output", str(out)],
+    )
+    assert not Path(str(out) + ".dsse.json").exists()
+
+
+def test_dsse_envelope_verifiable_via_verify_envelope_cli(tmp_path: Path) -> None:
+    capsule_dir = _make_capsule(tmp_path)
+    key_path = _make_keypair(tmp_path)
+    pub_path = key_path.parent / "ed25519.pub.pem"
+    out = tmp_path / "evidence.zip"
+    runner.invoke(
+        app,
+        ["export-evidence", str(capsule_dir), "--key", str(key_path), "--output", str(out), "--dsse"],
+    )
+    dsse_path = Path(str(out) + ".dsse.json")
+    result = runner.invoke(
+        app, ["verify-envelope", str(dsse_path), "--key", str(pub_path)]
+    )
+    assert result.exit_code == 0, result.output
+    assert "verified" in result.output
+
+
 def test_unsafe_skips_blocks_export(tmp_path: Path) -> None:
     capsule_dir = _make_capsule(tmp_path)
     proof_path = capsule_dir / "redaction-proof.json"

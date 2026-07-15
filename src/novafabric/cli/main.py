@@ -19,6 +19,7 @@ from novafabric.cli.classify import app as classify_app
 from novafabric.cli.collector import collector_app
 from novafabric.cli.cost import app as cost_app
 from novafabric.cli.daemon import app as daemon_app
+from novafabric.cli.dataset import dataset_app
 from novafabric.cli.diagnose import diagnose_cmd
 from novafabric.cli.diff import diff_cmd
 from novafabric.cli.doctor import doctor_cmd
@@ -76,6 +77,7 @@ from novafabric.cli.suggest_register import suggest_register_cmd
 from novafabric.cli.unregister import unregister_cmd
 from novafabric.cli.validate import validate_cmd
 from novafabric.cli.verify import verify_cmd
+from novafabric.cli.verify_envelope import verify_envelope_cmd
 from novafabric.metadata_store.cli import metadata_db_app
 
 
@@ -133,6 +135,7 @@ app.add_typer(
     help="Scan MCP servers for supply-chain risks.",
 )
 app.command("api-proxy")(api_proxy_cmd)
+app.command("verify-envelope")(verify_envelope_cmd)
 app.add_typer(
     daemon_app,
     name="daemon",
@@ -176,6 +179,11 @@ app.add_typer(
     aibom_app,
     name="aibom",
     help="AI Bill of Materials (AI-SBOM) — CycloneDX ML-BOM v1.7 status and CRA compliance.",
+)
+app.add_typer(
+    dataset_app,
+    name="dataset",
+    help="Dataset supply-chain provenance (signed provenance cards, NF-058).",
 )
 app.add_typer(
     incident_app,

@@ -11,6 +11,7 @@ NovaFabric?" question. Each one is a regression test under
 | [`minimal-agent-run/`](minimal-agent-run/) | NovaFabric capturing a real Anthropic LLM round-trip into a single capsule | `anthropic`, `ANTHROPIC_API_KEY` |
 | [`replay-and-diff/`](replay-and-diff/) | Why replay and diff matter — capture two runs of the same script with a controlled change, then have NovaFabric tell you what differs | none (pure stdlib) |
 | [`lineage-chain/`](lineage-chain/) | What the lineage graph answers — "if this dataset changes, which runs depend on it?" | none (pure stdlib) |
+| [`spkg-anomaly-scan/`](spkg-anomaly-scan/) | The Security & Provenance KG flagging a suspicious lineage edge with a MITRE ATT&CK label (`nova kg detect`, experimental) | none (pure stdlib) |
 | [`azure-openai/`](azure-openai/) | NovaFabric working against non-default OpenAI endpoints (Azure, on-prem, gateways) | `openai`, Azure deployment |
 | [`langchain-agent/`](langchain-agent/) | Capturing a real LangChain (+ LangGraph) tool-using agent without code changes | `langgraph` + `langchain-anthropic` *or* `langchain-openai` + key |
 

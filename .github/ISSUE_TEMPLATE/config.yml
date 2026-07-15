@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: Documentation
-    url: https://novafabric.dev
+    url: https://novafabric.ai
     about: Guides, concepts, CLI reference, and the FAQ.
   - name: Questions & ideas (Discussions)
     url: https://github.com/novafabric/novafabric/discussions

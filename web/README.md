@@ -89,7 +89,7 @@ library:
 
 | Target | Build command | Data source | Audience |
 |---|---|---|---|
-| Public showcase site | `npm run build` → `dist/` | Baked-in fixtures (`src/data/fixtures/`) | First-time visitors at `novafabric.dev` |
+| Public showcase site | `npm run build` → `dist/` | Baked-in fixtures (`src/data/fixtures/`) | First-time visitors at `novafabric.ai` |
 | Embedded dashboard SPA | `npm run build:dashboard` → `src/novafabric/serve/static/` | Live `/api/*` endpoints from a running `nova serve --experimental` | Existing users with their own capsules |
 
 The two share `LineageGraph`, `CapsuleInspector`, `RegistryBrowser`, and

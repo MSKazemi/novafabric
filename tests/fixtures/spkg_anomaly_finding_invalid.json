@@ -1,0 +1,14 @@
+{
+  "schema_version": "0.1.0",
+  "finding_id": "01HZY8Q9K5M3N7P0R2S4T6V8W0",
+  "created_at": "2026-07-02T14:03:11.000Z",
+  "subject_kind": "edge",
+  "subject_ref": "spkg:edge:agent-7->tool:shell:call-4821",
+  "score": 0.94,
+  "method": "tgn_link_surprise",
+  "unsupervised": true,
+  "detector_id": "spkg-tgn-v0",
+  "explanation": {
+    "rationale": "Score is high but no ATT&CK technique or D3FEND artifact is attached."
+  }
+}

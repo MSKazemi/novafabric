@@ -1,5 +1,72 @@
 # Developer Guide
 
+This guide is for **contributors working inside the NovaFabric tree** — not end users.
+It documents how to build, test, and extend the code that produces NovaFabric's two
+top-level artifacts (the **Run Capsule** and the **Evidence Bundle**) and the five
+primitives around them (Asset Registry, Run Capsule, Replay, Lineage, Evidence Bundle).
+
+If you are *using* the `nova` CLI rather than modifying it, start with
+[`docs/cli-reference.md`](cli-reference.md) instead.
+
+## What you will learn
+
+- How to set up a local dev environment and run the quality gates (tests, ruff, mypy).
+- The repeatable extension patterns for the parts of the codebase you are most likely
+  to touch: **asset types, CLI commands, `nova serve` endpoints, report formats, and
+  framework adapters**.
+- How to work on the internal subsystems that back the trust and lineage layers —
+  the NovaSeal signing code, the maker-checker `promote` package, the Event Envelope
+  wire format, the standard outer envelopes, and the Security & Provenance Knowledge
+  Graph (SPKG).
+- The extension points (protocols and entry-point groups) that let you plug in signing
+  backends, watcher backends, eval suites, and lineage backends without forking core.
+
+> **Maturity note.** NovaFabric follows a strict docs-honesty rule: every feature is
+> either *works today*, *experimental*, *planned*, or *future design*. Many subsystems
+> described here (NovaSeal, the Go collector tier, topology dashboards, object capsule
+> store) are **in-tree engineering work toward capabilities that are not part of the
+> released local-first product surface**. Sections that document such work are marked
+> **experimental** or reference the ADR that tracks their design intent. When a section
+> is unmarked, it covers a shipped surface. Never describe an experimental or planned
+> subsystem as a stable product feature in user-facing docs — see
+> [the docs-honesty rule](#docs-honesty-and-maturity-labels) below.
+
+## Contents
+
+- [Local installation](#local-installation)
+- [Quality gates](#quality-gates) — tests, ruff, mypy
+- **Common extension patterns**
+  - [Adding a new asset type](#adding-a-new-asset-type)
+  - [Adding a new CLI command](#adding-a-new-cli-command)
+  - [Adding a new dashboard tab or input](#adding-a-new-dashboard-tab-or-input)
+  - [Adding a new `nova serve` API endpoint](#adding-a-new-nova-serve-api-endpoint)
+  - [Adding a new report format](#adding-a-new-report-format)
+  - [Extending failure attribution](#extending-failure-attribution-diagnose-adr-0084)
+  - [Adding a framework adapter](#adding-a-framework-adapter)
+  - [Adding a compliance audit profile](#adding-a-compliance-audit-profile)
+  - [Adding a compliance exporter](#compliance-exporters--adding-a-new-format)
+- **Trust and provenance subsystems**
+  - [Working with NovaSeal](#working-with-novaseal-trustnovaseal) *(experimental)*
+  - [Working with the Promote package](#working-with-the-promote-package-promote)
+  - [Working with EventEnvelope](#working-with-eventenvelope-envelope)
+  - [Standard outer envelopes](#standard-outer-envelopes-envelopes--experimental) *(experimental)*
+  - [Working with the SPKG](#working-with-the-spkg-kgspkg--experimental) *(experimental)*
+- **Scale-out and topology work** *(engineering toward planned architecture)*
+  - [Building the collector tier](#building-the-collector-tier-go-phase-2)
+  - [Live Topology Dashboard development](#live-topology-dashboard-development)
+  - [TV-5 3D Topology View development](#tv-5-3d-topology-view-development)
+  - [Warm capture daemon development](#warm-capture-daemon-development-daemon-adr-0092)
+- **Pluggable extension points**
+  - [Signing / KMS, notifier, compression, lineage, and spool backends](#extension-points)
+  - [Extending the Capsule Knowledge Graph](#extending-the-capsule-knowledge-graph)
+  - [Extending CapsuleWatcher backends](#extending-capsulewatcher-backends)
+  - [Registering a third-party eval suite adapter](#registering-a-third-party-eval-suite-adapter)
+  - [Querying and extending PolicyStore](#querying-and-extending-policystore)
+- [Docs-honesty and maturity labels](#docs-honesty-and-maturity-labels)
+- [Where to go next](#where-to-go-next)
+
+---
+
 ## Local installation
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
@@ -34,26 +101,34 @@ nova init --home /data/nova  # custom NOVAFABRIC_HOME
 This is not needed for docker-compose deployments — `make dev-up` handles
 all first-boot setup inside the container.
 
-## Running tests
+---
+
+## Quality gates
+
+Run all three gates before opening a PR. Coverage must stay **≥ 90%**, and both ruff
+and mypy must be clean. These are the same commands enforced in CI (see also
+`CONTRIBUTING.md`).
+
+### Tests
 
 ```bash
 uv run pytest --cov=novafabric --cov-report=term-missing
 ```
 
-Coverage must stay ≥ 90%. Run specific tests with `-k`:
+Run a focused subset with `-k`:
 
 ```bash
 uv run pytest -k test_validate -v
 ```
 
-## Running ruff
+### Ruff (lint)
 
 ```bash
 uv run ruff check src tests
 uv run ruff check --fix src tests   # auto-fix safe issues
 ```
 
-## Running mypy
+### mypy (types)
 
 ```bash
 uv run mypy src
@@ -62,7 +137,12 @@ uv run mypy src
 mypy is configured with `strict = true` in `pyproject.toml`. All type errors must
 be resolved before merging.
 
+---
+
 ## Adding a new asset type
+
+The Asset Registry supports seven asset types (model, agent, prompt, tool, dataset,
+evaluation, deployment). To add an eighth:
 
 1. Add a new value to `AssetType` in `src/novafabric/spec/models.py`.
 2. Add `<Type>SpecFields` and `<Type>Spec` Pydantic models following the existing
@@ -83,6 +163,13 @@ type annotation. This gives shell tab-completion (via `nova --install-completion
 exits 2 with a clear error on invalid input instead of a runtime failure. See
 `src/novafabric/cli/capture.py` (`RunnerName`) or `src/novafabric/cli/replay.py`
 (`ReplayMode`) for the canonical pattern.
+
+After any CLI change, verify the help text matches the implementation:
+
+```bash
+uv run nova --help
+uv run nova <command> --help
+```
 
 ## Adding a new dashboard tab or input
 
@@ -111,7 +198,9 @@ cp -r dist/* ../src/novafabric/serve/static/
 
 ## Adding a new `nova serve` API endpoint
 
-All serve endpoints follow the same three-part pattern:
+Every serve endpoint mirrors an equivalent `nova` CLI command — the CLI + JSON surface
+is canonical, and the dashboard is a thin read-only view over it. All serve endpoints
+follow the same three-part pattern:
 
 1. **Resolve the capsule** using `_resolve_capsule(run_id, capsule_dir)` — raises HTTP 404 if the directory doesn't exist.
 2. **Require auth** with `dependencies=[Depends(verify_token)]` on the route decorator.
@@ -162,9 +251,87 @@ Do **not** write attribution results back into the lineage store from this modul
 it is read-only by design (ADR-0084). Scores are relative ranking weights, never
 presented as calibrated probabilities.
 
+## Adding a compliance audit profile
+
+Compliance profiles live in `src/novafabric/compliance/audit/profiles/` as YAML files.
+Each file defines a list of evidence checkers:
+
+```yaml
+# src/novafabric/compliance/audit/profiles/my-standard.yaml
+profile_id: my-standard
+name: My Standard v1.0
+version: "1.0"
+checkers:
+  - id: MS-01
+    name: Capsule Schema Present
+    weight: 1.0
+    required_fields:
+      - capsule_id
+      - schema_version
+  - id: MS-02
+    name: Seal Present
+    weight: 2.0
+    required_fields:
+      - seal
+```
+
+Add the profile ID to the `--profile` option help text in `src/novafabric/cli/audit.py`.
+Run `nova audit map --profile my-standard` to confirm it loads.
+
+> **Compliance-honesty reminder.** Audit profiles and exporters produce *evidence that
+> supports* a compliance workflow. NovaFabric attests only that a capsule is unmodified
+> since signing; it does not certify or guarantee compliance with any regulation
+> (EU AI Act, NIST AI RMF, ISO/IEC 42001, GDPR, HIPAA, FDA 21 CFR Part 11, SOC 2, etc.).
+
+## Compliance exporters — adding a new format
+
+Compliance exporters live in `src/novafabric/compliance/export/`. Each exporter
+follows a two-method pattern:
+
+```python
+class MyExporter:
+    def build_report(self, capsule_dir: Path) -> MyReport:
+        """Build the report model from capsule files."""
+        ...
+
+    def export_json(self, report: MyReport, output_path: Path) -> Path:
+        """Serialise to JSON and return the written path."""
+        ...
+```
+
+**Wiring up a new exporter:**
+
+1. Create `src/novafabric/compliance/export/my_format.py` with the two-method class.
+2. Add a CLI command in `src/novafabric/cli/export_evidence.py` (see `export_ropa_cmd` as a template).
+3. Register the CLI command in `src/novafabric/cli/main.py`.
+4. Add a `nova serve` endpoint in `src/novafabric/serve/app.py` following the `compliance_export_ropa_endpoint` pattern — import the exporter inside the function to avoid unconditional heavy imports.
+5. Add an `api.ts` method in `web/src/lib/api.ts` (see `exportRopa` as a template).
+6. Add a `<MyFormatExportPanel>` component in `web/src/components/dashboard/tabs/ComplianceTab.tsx` and render it in the `ComplianceTab` default export.
+7. Write integration tests in `tests/test_serve_compliance.py` — one happy-path test and one 422 on missing `run_id`.
+
+**Existing exporters for reference:**
+
+| Exporter | File | Cap | Dashboard panel |
+|---|---|---|---|
+| `GDPRRoPAExporter` | `compliance/export/gdpr_ropa.py` | cap-007 | `RoPAExportPanel` |
+| `AIBOMExporter` | `compliance/export/aibom.py` | cap-008 | `AIBOMExportPanel` — CycloneDX 1.7 |
+| `NISTAIRMFReporter` | `compliance/export/nist_rmf.py` | cap-009 | `NISTRMFExportPanel` |
+| `AnnexIVExporter` | `compliance/export/annex_iv.py` | cap-002 | `AnnexIVPanel` |
+| `NIS2Exporter` | `compliance/export/nis2.py` | cap-005 | `NIS2Panel` |
+| `ROCrateExporter` | `compliance/export/ro_crate.py` | — | `RoCrateExportPanel` |
+
+---
+
 ## Working with NovaSeal (trust/novaseal/)
 
-The NovaSeal signing subsystem lives entirely in `src/novafabric/trust/novaseal/`.
+> **Maturity: experimental / engineering toward planned architecture.** NovaSeal is the
+> in-tree signing subsystem tracked by ADR-0041. It is *not* part of the shipped
+> local-first product surface as a supported feature; interfaces here may change. The
+> shipped trust primitive is the ed25519-signed **Evidence Bundle** built by
+> `nova export-evidence`, verifiable offline with only `sha256sum` plus an ed25519
+> verifier.
+
+The NovaSeal signing code lives entirely in `src/novafabric/trust/novaseal/`.
 Its tests are in `tests/seal/`. All tests in that directory run fast (no network
 calls — TSA requests are mocked).
 
@@ -189,7 +356,7 @@ normal `make test` runs.  Results are written to
 `.benchmark-results/seal_latency.json` by `make benchmark` and saved as a
 90-day artifact in the `seal-latency-gate` CI job.
 
-**Adding a new signing profile** (e.g. Sigstore keyless — planned for v0.2):
+**Adding a new signing profile** (e.g. Sigstore keyless — planned):
 
 1. Add a new `profile:` value to `SigningProfile` in `config.py`.
 2. In `config.py._parse_profile`, add validation for the new profile's required fields.
@@ -197,7 +364,7 @@ normal `make test` runs.  Results are written to
 4. Add fixtures in `tests/seal/` for the new profile.
 5. Write an ADR if this changes the public wire format (DSSE envelope schema).
 
-**Using the Postgres Merkle log backend (Scale-S4, shipped v0.38.0):**
+**Using the Postgres Merkle log backend:**
 
 Install the optional extra:
 
@@ -233,7 +400,7 @@ All sealing code writes to `<capsule_dir>/.seal/`:
 
 ## Working with the Promote package (promote/)
 
-The NovaSeal linked-envelope chain maker-checker lives in `src/novafabric/promote/`.
+The maker-checker linked-envelope chain lives in `src/novafabric/promote/`.
 Tests are in `tests/promote/`. Test key fixtures are at `tests/fixtures/promote/keys/`
 (ECDSA P-256, committed with `git add -f` despite the `*.pem` gitignore rule — test-only keys, not production credentials).
 
@@ -265,7 +432,7 @@ These are distinct from the single-signer NovaSeal `PAYLOAD_TYPE` (`application/
 
 **Adding a new predicate type (e.g. `promote/bypass/v1`):**
 
-1. Add a JSON Schema to `src/novafabric/schemas/promote_bypass_v1.json` (already present — schema exists, CLI deferred to sprint 2).
+1. Add a JSON Schema to `src/novafabric/schemas/promote_bypass_v1.json` (already present — schema exists, CLI deferred to a later sprint).
 2. Add `BYPASS_PAYLOAD_TYPE` to `predicates.py`.
 3. Add `build_bypass_predicate()` to `predicates.py`.
 4. Add CLI command in `src/novafabric/cli/seal_propose.py` under `seal_app`.
@@ -288,8 +455,6 @@ echo y | uv run nova seal approve "$UUID" --capsule-id test-capsule-001 \
 uv run nova seal verify test-capsule-001 --db "$TMPDIR/m.db" --data-dir "$TMPDIR"
 # Expected: SoD verification passed
 ```
-
-Or use `make seal-smoke-test` for an automated version.
 
 ---
 
@@ -333,7 +498,7 @@ Adding an optional field is backwards-compatible (additive). Steps:
 
 **Schema hash pin enforcement:**
 
-Downstream consumers (parent-child-capsule, object-capsule-store, metadata-database, lineage-at-scale) embed the sha256 in their schema references. A mismatch between the expected and actual hash is a build-time error. Always recompute the pin after editing `envelope-v1.json`.
+Downstream consumers embed the sha256 in their schema references. A mismatch between the expected and actual hash is a build-time error. Always recompute the pin after editing `envelope-v1.json`.
 
 **CloudEvents interop (gap-009, ADR-0081):**
 
@@ -378,7 +543,117 @@ under the model's `cloudevents_extensions` extra block). Tests:
 
 ---
 
+## Standard outer envelopes (envelopes/) — experimental
+
+The `src/novafabric/envelopes/` package (NF-029/030/031, ADR-0096, **experimental**) wraps
+NovaFabric's inner artifacts in stock, third-party-verifiable envelopes — **wrap, don't replace**:
+the inner bytes become the envelope payload verbatim and are never rewritten. Tests live in
+`tests/envelopes/`.
+
+| Module | Emitter | Envelope |
+|---|---|---|
+| `envelopes/dsse.py` | `wrap_bundle(bundle_bytes, signer)` | DSSE, `payloadType application/vnd.novafabric.bundle+json` |
+| `envelopes/intoto.py` | `capsule_statement(capsule_dir, …)` | in-toto Statement v1, `predicateType novafabric.dev/capsule/v1` (per-file sha256 subjects) |
+| `envelopes/slsa.py` | `promotion_provenance(…)` | in-toto Statement, `predicateType https://slsa.dev/provenance/v1` |
+
+**Single DSSE writer (do not fork).** All three emitters sign through the one PAE + signer
+implementation in `evidence/intoto.py` — `dsse_sign_payload(payload, payload_type, signer)` (and its
+statement-level wrapper `dsse_sign(statement, signer)`). A `signer` is any object exposing
+`sign(bytes) -> bytes` and `keyid: str` (e.g. `evidence/signing.py::LocalSigner`, or the keyring-key
+adapter in `cli/promote.py`). **Never add a second DSSE code path** (requirement 2 of ADR-0096).
+
+**Digest fidelity.** `capsule_statement(..., expected_digests=...)` raises `SubjectDigestMismatch` if a
+recomputed per-file sha256 disagrees with an expected one — the emitter refuses to produce a
+verifying-but-wrong attestation.
+
+**Schema conformance.** `envelopes/_schemas/` vendors the in-toto Statement v1 and SLSA Provenance v1
+required-field contracts; `envelopes/schema.py::validate_intoto_statement()` /
+`validate_slsa_provenance()` assert emitter output against them (raising `EnvelopeSchemaError`), so a
+renamed/missing field fails fast instead of producing an envelope a stock verifier would reject. These
+JSON files are shipped as wheel package data (`pyproject.toml [tool.hatch.build.targets.wheel].include`) —
+add any new vendored schema to that list.
+
+**CLI surfaces (all opt-in; output byte-for-byte unchanged when the flag is absent):**
+- `nova export-evidence --dsse` — DSSE-wraps the final bundle `manifest.json` → `<bundle>.dsse.json`.
+- `nova promote direct --slsa-provenance` — emits a DSSE-signed SLSA provenance → `<name>-<version>.slsa.json`.
+- `nova verify-envelope <env.json> --key <pem>` — verifies any of the above with an Ed25519 key.
+
+> **Three distinct DSSE verify paths now coexist — do not cross them:**
+> 1. **`trust/novaseal/envelope.py::verify_envelope()`** — a *capsule's* NovaSeal seal
+>    (`application/vnd.novafabric.capsule+json`; also checks RFC 3161 + Merkle). Used by `nova verify`.
+> 2. **`promote/predicates.py::verify_promote_envelope()`** — maker-checker promote bundles
+>    (`…promote.proposal/approval/policy+json`).
+> 3. **`cli/verify_envelope.py` (`nova verify-envelope`)** — the *outer* envelopes above
+>    (`…bundle+json`, in-toto, SLSA), verifying the signature only via `evidence/intoto.py::dsse_verify`.
+>
+> They share the DSSE *PAE* encoding but carry different payload types and check different things.
+> Pick by artifact: capsule seal → (1); promote bundle → (2); standard outer envelope → (3).
+
+**Adding a new outer envelope type:** add an emitter module under `envelopes/` that builds the
+statement/payload and signs via `dsse_sign`/`dsse_sign_payload` (never a new signer), add tests under
+`tests/envelopes/`, and — if it introduces a user-facing surface — wire an opt-in CLI flag and graduate
+the `CAPABILITY_MAP.md` row to `experimental`. Write an ADR only if it changes a public payload type.
+
+---
+
+## Working with the SPKG (`kg/spkg/`) — experimental
+
+The Security & Provenance Knowledge Graph (ADR-0111, spec in private `design/`) turns capsule lineage
+into a security-reasoning graph. It has two layers and a detector, all under `src/novafabric/kg/spkg/`:
+
+| Module | Role | Heavy deps? |
+|---|---|---|
+| `ontology.py` | Namespace IRIs (PROV-O, ATT&CK, D3FEND) + SHACL shapes (incl. `nf:FindingShape`) | rdflib **lazy** — imports without the extra |
+| `provo_mapping.py` | `read_lineage_edges()`, `lineage_edge_to_provo()`, `capsule_lineage_to_provo()`, `finding_to_rdf()`, `validate_provo()` | rdflib/pyshacl **lazy** |
+| `graph_store.py` | `SpkgGraphStore` — embedded KùzuDB LPG (Entity/EDGE), `attack_path()` | kuzu (eager, needs `[spkg]`) |
+| `build.py` | `build_spkg(capsule_dir, store)` — canonical RDF (SHACL-gated) **then** LPG rebuild from the same capsule | via the above |
+| `entity_resolution.py` | `EntityResolver` — in-house Fellegi–Sunter cross-vendor linker (stdlib) | none |
+| `detect.py` | `StructuralAnomalyDetector` + `to_findings()` — unsupervised edge-level scorer | **none (pure stdlib)** |
+
+CLI surfaces (`cli/kg.py`): `nova kg build-provenance` (RDF export), `nova kg build` (populate both
+stores), `nova kg detect` (anomaly scan). The first two need `pip install novafabric[spkg]`; **`detect`
+needs no extra**.
+
+Serve/dashboard surface (`serve/app.py`), read-only server-side parity for the CLI, behind the same token
++ localhost host guard as the other `/api/kg/*` routes:
+- `POST /api/kg/detect` — mirrors `nova kg detect` (body `{capsule_path, top}` → `{ok, count, findings}`); no extra.
+- `POST /api/kg/attack-path` — mirrors `nova kg attack-path` (body `{capsule_path, from_entity, to_entity, max_depth}` → `{ok, path_found, hops}`); needs `[spkg]`.
+- `POST /api/kg/blast-radius` — mirrors `nova kg blast-radius` (body `{capsule_path, entity, upstream, max_depth}` → `{ok, direction, count, entities}`); needs `[spkg]`.
+
+All resolve a bare `run_id` to its capsule dir. The dashboard React panels that consume these are a
+follow-up built with the `packages/nova-dashboard` toolchain (not part of this Python slice).
+
+**Two hard invariants** — do not break these:
+
+1. **R2 — no bare score.** Every finding MUST carry a MITRE ATT&CK technique and/or a D3FEND
+   countermeasure. This is enforced twice: the JSON `spkg-anomaly-finding-v1.schema.json` contract and
+   the RDF `nf:FindingShape` SHACL constraint (`sh:or` over `nf:mapsToTechnique`/`nf:mapsToCountermeasure`).
+   When you add a detector, emit findings via `to_findings()` / `finding_to_rdf()`; never invent a second
+   finding shape.
+2. **R11 — SHACL gate before write.** `build_spkg` validates the canonical PROV-O layer *before* touching
+   the operational store; on failure it raises `SpkgValidationError` and leaves the LPG untouched. Any new
+   ingest path must validate first.
+
+**Keep the detector dependency-free.** The v0.1 `StructuralAnomalyDetector` is deliberately pure-stdlib so
+`nova kg detect` runs on base `novafabric`. The PyGOD/TGN GNN upgrade is a **resource-gated** slice — it
+pulls torch/torch_geometric, whose wheels bundle third-party components that need a full distribution-
+license audit under [ADR-0024]. Do not add it without that audit and an ADR pointer.
+
+**Adding a new finding type or detector:** implement scoring in a new module (or extend `detect.py`),
+return findings through `to_findings()`, add tests under `tests/kg/` (assert the injected malicious edge
+ranks top-k *and* the finding is schema/SHACL-valid), and — if user-facing — add a `nova kg <verb>`
+command mirroring `detect` (import lazily; only guard with the `[spkg]` message if you actually need rdflib
+/kuzu). Update `CHANGELOG.md`, `docs/cli-reference.md`, and the `design/BUILD_QUEUE.md` BQ-SPKG-01 entry.
+
+---
+
 ## Building the collector tier (Go, Phase 2)
+
+> **Maturity: engineering toward planned architecture.** The Go collector tier targets
+> the cluster-scale ingestion path documented as design intent in ADR-0020/0039. It is
+> *not* part of the shipped local-first product surface. The shipped capture path needs
+> no collector at all — see the capture data flow in
+> [`design/architecture/overview.md`](../design/architecture/overview.md).
 
 The collector is a separate Go 1.22 module at `collector/`. Install Go:
 
@@ -450,11 +725,12 @@ These tests require Docker + `docker compose` for the Slurm-in-Docker and 10-nod
 
 ---
 
-## Adding a framework adapter (v0.16.0)
+## Adding a framework adapter
 
 Framework adapters live in `src/novafabric/adapters/`. Each adapter is a single
 module that monkey-patches or wraps the framework's entry-point method to record
-`nova capture`-compatible events.
+`nova capture`-compatible events. NovaFabric is framework-neutral — it *records* what
+LangGraph/AutoGen/CrewAI/DSPy/OpenAI Agents SDK do rather than orchestrating them.
 
 Pattern (using `crewai.py` as the model):
 
@@ -488,7 +764,7 @@ Rules:
 4. Add an entry to `src/novafabric/adapters/__init__.py`.
 5. Register the adapter in `docs/cli-reference.md` and `design/architecture/capture-runtime.md`.
 
-### Typed `record_*` methods (extended event taxonomy, v0.53.0)
+### Typed `record_*` methods (extended event taxonomy, ADR-0082)
 
 Beyond the generic recorder, `EventRecorder` exposes typed convenience methods
 for the extended span taxonomy (ADR-0082). Each validates a Pydantic model,
@@ -517,75 +793,13 @@ if recorder:
 
 ---
 
-## Adding a compliance audit profile (v0.16.0)
+## Live Topology Dashboard development
 
-Compliance profiles live in `src/novafabric/compliance/audit/profiles/` as YAML files.
-Each file defines a list of evidence checkers:
-
-```yaml
-# src/novafabric/compliance/audit/profiles/my-standard.yaml
-profile_id: my-standard
-name: My Standard v1.0
-version: "1.0"
-checkers:
-  - id: MS-01
-    name: Capsule Schema Present
-    weight: 1.0
-    required_fields:
-      - capsule_id
-      - schema_version
-  - id: MS-02
-    name: Seal Present
-    weight: 2.0
-    required_fields:
-      - seal
-```
-
-Add the profile ID to the `--profile` option help text in `src/novafabric/cli/audit.py`.
-Run `nova audit map --profile my-standard` to confirm it loads.
-
----
-
-## Compliance exporters — adding a new format (v0.37.0)
-
-Compliance exporters live in `src/novafabric/compliance/export/`. Each exporter
-follows a two-method pattern:
-
-```python
-class MyExporter:
-    def build_report(self, capsule_dir: Path) -> MyReport:
-        """Build the report model from capsule files."""
-        ...
-
-    def export_json(self, report: MyReport, output_path: Path) -> Path:
-        """Serialise to JSON and return the written path."""
-        ...
-```
-
-**Wiring up a new exporter:**
-
-1. Create `src/novafabric/compliance/export/my_format.py` with the two-method class.
-2. Add a CLI command in `src/novafabric/cli/export_evidence.py` (see `export_ropa_cmd` as a template).
-3. Register the CLI command in `src/novafabric/cli/main.py`.
-4. Add a `nova serve` endpoint in `src/novafabric/serve/app.py` following the `compliance_export_ropa_endpoint` pattern — import the exporter inside the function to avoid unconditional heavy imports.
-5. Add an `api.ts` method in `web/src/lib/api.ts` (see `exportRopa` as a template).
-6. Add a `<MyFormatExportPanel>` component in `web/src/components/dashboard/tabs/ComplianceTab.tsx` and render it in the `ComplianceTab` default export.
-7. Write integration tests in `tests/test_serve_compliance.py` — one happy-path test and one 422 on missing `run_id`.
-
-**Existing exporters for reference:**
-
-| Exporter | File | Cap | Dashboard panel |
-|---|---|---|---|
-| `GDPRRoPAExporter` | `compliance/export/gdpr_ropa.py` | cap-007 | `RoPAExportPanel` (v0.37.0) |
-| `AIBOMExporter` | `compliance/export/aibom.py` | cap-008 | `AIBOMExportPanel` (v0.37.0) — CycloneDX 1.7 (v0.39.0) |
-| `NISTAIRMFReporter` | `compliance/export/nist_rmf.py` | cap-009 | `NISTRMFExportPanel` (v0.37.0) |
-| `AnnexIVExporter` | `compliance/export/annex_iv.py` | cap-002 | `AnnexIVPanel` |
-| `NIS2Exporter` | `compliance/export/nis2.py` | cap-005 | `NIS2Panel` |
-| `ROCrateExporter` | `compliance/export/ro_crate.py` | — | `RoCrateExportPanel` |
-
----
-
-## Live Topology Dashboard development (v0.16.1)
+> **Maturity: engineering toward planned architecture.** The topology dashboard is
+> prototype work; a live topology view (`nova serve --topology`) is planned and depends
+> on prototype spikes. The shipped serve surface is the local-only, read-only
+> `nova serve --experimental` dashboard (Layer A). Do not present topology views as a
+> released feature.
 
 The topology dashboard has two separate development loops.
 
@@ -622,7 +836,10 @@ make topology-build   # rsync packages/nova-dashboard/dist/ → src/novafabric/s
 The SPA talks to the Python server at the same origin. In dev mode, configure
 `vite.config.ts` proxy to point at your running `nova serve` instance.
 
-## TV-5 3D Topology View development (v0.17.0)
+## TV-5 3D Topology View development
+
+> **Maturity: engineering toward planned architecture** — same caveat as the 2D
+> topology dashboard above.
 
 TV-5 adds a Three.js 3D topology view alongside the existing 2D Sigma.js view.
 
@@ -673,7 +890,56 @@ npm run build  # produces static bundle including TV5Panel
 
 ---
 
-## Extension points added in v0.24.0
+## Warm capture daemon development (daemon/, ADR-0092)
+
+The warm capture daemon (`src/novafabric/daemon/`) is a **prefork** `AF_UNIX`
+server: the parent imports `novafabric` once, then `os.fork()`s one worker per
+run. User-facing docs are in [`docs/warm-capture-daemon.md`](warm-capture-daemon.md);
+this section is for working on the daemon itself.
+
+Module layout:
+
+| File | Responsibility |
+|---|---|
+| `protocol.py` | length-prefixed JSON frames + SCM_RIGHTS fd passing (server/worker side) |
+| `client.py` | **stdlib-only** thin client (`novacap`); must not import the `novafabric` package |
+| `server.py` | forking server: peercred check, request dispatch, fork, SIGCHLD reaper |
+| `worker.py` | post-fork: dup2 stdio, `setpgrp`, run `CaptureOrchestrator`, cancel watcher |
+
+Hard rules when editing here:
+
+- **The prefork model depends on `import novafabric` starting no background
+  threads.** A fork after a thread is started corrupts the child. There is a gate
+  test for this — `tests/daemon/test_fork_safety_preflight.py`. If you add an
+  import-time thread anywhere in the import graph, that test fails and the daemon
+  is unsafe; make the thread lazy instead.
+- **`client.py` must stay stdlib-only.** Importing it must not pull in the
+  `novafabric` package, or the thin client re-acquires the cold-start the daemon
+  exists to remove. It carries its own small copies of the frame helpers. There is
+  no test that mechanically enforces this — keep its imports to the standard
+  library by hand.
+- **`run_worker` runs only in a forked child.** It rebinds stdio, calls
+  `setpgrp`, and may `killpg` its own process group — never call it in-process. It
+  is exercised for real (via an explicit `os.fork`) in
+  `tests/daemon/test_worker_integration.py` and end-to-end in
+  `tests/daemon/test_fidelity_e2e.py`; fork/loop-only branches are marked
+  `# pragma: no cover` with a pointer to those tests.
+- **Fidelity is the contract.** The worker must run the existing
+  `CaptureOrchestrator` unchanged so a daemon capsule stays structurally identical
+  to a direct one. `tests/daemon/test_fidelity_e2e.py` enforces this — keep it green.
+
+To extend the protocol (e.g. a new `op`), add it in `server._handle` (the parent
+reads the first frame and decides whether to fork) and mirror any client-side
+framing in `client.py`. Liveness probes are a bare connect that the parent reads as
+`None` and closes — they must never fork.
+
+---
+
+## Extension points
+
+These are the plug-in surfaces that let you integrate NovaFabric with your own
+infrastructure **without forking core**. Each is a `typing.Protocol` or an entry-point
+group with a stable contract.
 
 ### BypassNotifier — bypass event dispatch
 
@@ -747,6 +1013,10 @@ chain = store.provenance("run-b", depth=3)
 LDBC SNB BI queries via `LineageSnbQueries`; deploy the included Helm chart at
 `deploy/helm/janusgraph/`. Install with `pip install novafabric[janusgraph]`.
 
+> **Note.** SQLite is the default local-mode lineage store and needs no network; it is
+> the source-of-truth-derived, rebuildable cache. Alternative backends like this one are
+> strictly additive — local mode never requires them.
+
 ### NovaPySpool — Python cffi spool binding
 
 `NovaPySpool` (`src/novafabric/collector_cffi/spool.py`) provides a Python-native spool
@@ -765,51 +1035,6 @@ Install with `pip install novafabric[collector-cffi]`.
 
 ---
 
-## Warm capture daemon development (daemon/, ADR-0092)
-
-The warm capture daemon (`src/novafabric/daemon/`) is a **prefork** `AF_UNIX`
-server: the parent imports `novafabric` once, then `os.fork()`s one worker per
-run. User-facing docs are in [`docs/warm-capture-daemon.md`](warm-capture-daemon.md);
-this section is for working on the daemon itself.
-
-Module layout:
-
-| File | Responsibility |
-|---|---|
-| `protocol.py` | length-prefixed JSON frames + SCM_RIGHTS fd passing (server/worker side) |
-| `client.py` | **stdlib-only** thin client (`novacap`); must not import the `novafabric` package |
-| `server.py` | forking server: peercred check, request dispatch, fork, SIGCHLD reaper |
-| `worker.py` | post-fork: dup2 stdio, `setpgrp`, run `CaptureOrchestrator`, cancel watcher |
-
-Hard rules when editing here:
-
-- **The prefork model depends on `import novafabric` starting no background
-  threads.** A fork after a thread is started corrupts the child. There is a gate
-  test for this — `tests/daemon/test_fork_safety_preflight.py`. If you add an
-  import-time thread anywhere in the import graph, that test fails and the daemon
-  is unsafe; make the thread lazy instead.
-- **`client.py` must stay stdlib-only.** Importing it must not pull in the
-  `novafabric` package, or the thin client re-acquires the cold-start the daemon
-  exists to remove. It carries its own small copies of the frame helpers. There is
-  no test that mechanically enforces this — keep its imports to the standard
-  library by hand.
-- **`run_worker` runs only in a forked child.** It rebinds stdio, calls
-  `setpgrp`, and may `killpg` its own process group — never call it in-process. It
-  is exercised for real (via an explicit `os.fork`) in
-  `tests/daemon/test_worker_integration.py` and end-to-end in
-  `tests/daemon/test_fidelity_e2e.py`; fork/loop-only branches are marked
-  `# pragma: no cover` with a pointer to those tests.
-- **Fidelity is the contract.** The worker must run the existing
-  `CaptureOrchestrator` unchanged so a daemon capsule stays structurally identical
-  to a direct one. `tests/daemon/test_fidelity_e2e.py` enforces this — keep it green.
-
-To extend the protocol (e.g. a new `op`), add it in `server._handle` (the parent
-reads the first frame and decides whether to fork) and mirror any client-side
-framing in `client.py`. Liveness probes are a bare connect that the parent reads as
-`None` and closes — they must never fork.
-
----
-
 ## Extending the Capsule Knowledge Graph
 
 The KG schema has 5 node tables and 4 relationship tables.  To add a new node type:
@@ -823,7 +1048,7 @@ The KG schema has 5 node tables and 4 relationship tables.  To add a new node ty
 6. Add the type to `KGTopology` in `web/src/lib/api.ts` and update `TopologyLayerPanel`
    in `web/src/components/dashboard/tabs/KGTab.tsx`.
 
-**MCP server auto-detection pattern** (added v0.29.0): tool names containing `:` are
+**MCP server auto-detection pattern:** tool names containing `:` are
 split on the first `:` in `_resolve_entities()`.  The left part becomes the `MCPServer`
 name; the right part is the `Tool` name.  A `SERVED_BY` (Tool → MCPServer) edge is added
 in addition to the standard `USES_TOOL` (Agent → Tool) edge.  Follow this pattern when
@@ -840,7 +1065,7 @@ nova kg alias register "filesystem" "nova-mcp-filesystem" --type mcp_server
 
 ### `nova kg query` MCP server output
 
-`nova kg query <agent-id>` now includes a `mcp_servers` key in the JSON result and
+`nova kg query <agent-id>` includes a `mcp_servers` key in the JSON result and
 prints a "MCP servers reachable" section in text mode.  The 2-hop path is
 `Agent → Tool → MCPServer` via `USES_TOOL` + `SERVED_BY`.
 
@@ -865,7 +1090,7 @@ process-local (not shared across workers) and is invalidated on process restart.
 Dashboard `TopologyLayerPanel` is lazy-loaded — it fetches only when the user clicks
 "Load topology", not on panel mount.
 
-## Extending CapsuleWatcher backends (v0.36.0)
+## Extending CapsuleWatcher backends
 
 `CapsuleWatcher` (`src/novafabric/serve/capsule_watcher.py`) abstracts capsule
 directory scanning behind `_BackendProtocol` (a `typing.Protocol`):
@@ -904,7 +1129,7 @@ Built-in backends:
 `NOVA_WATCHER_BACKEND` (default: `auto`).  The poll interval is controlled by
 `NOVA_WATCHER_INTERVAL` (default: `2.0` s).
 
-## Registering a third-party eval suite adapter (v0.40.0)
+## Registering a third-party eval suite adapter
 
 Eval suites are discovered at runtime via the `novafabric.eval_suites` entry-point group. To ship a custom suite in your own package, implement `EvalSuiteAdapter` and register it:
 
@@ -937,7 +1162,11 @@ my-suite-v1 = "my_package.my_suite:MySuiteAdapter"
 
 After `pip install -e .`, `nova eval list` will show the new suite. `nova eval run <capsule> --suite my-suite-v1` will invoke it.
 
-## Querying and extending PolicyStore (v0.40.0)
+The built-in suites (GAIA, SWE-bench, AgentBench, MMLU, Smoke) ship as OCI-pinned
+containers and can gate promotion on regression via OPA/Rego — see the eval sections of
+[`docs/cli-reference.md`](cli-reference.md).
+
+## Querying and extending PolicyStore
 
 `novafabric.promote.policy_store.PolicyStore` stores signed promotion policy bundles in a SQLite DB. Key methods:
 
@@ -949,4 +1178,53 @@ After `pip install -e .`, `nova eval list` will show the new suite. `nova eval r
 | `get_active_at(timestamp, namespace)` | Return the policy active at a given UTC timestamp |
 | `list_all(namespace=None)` | Return all rows as `list[dict]`; optional namespace filter |
 
-The default DB path searched by `nova policy list` is `NOVAFABRIC_HOME/promote/policy.db`, falling back to `~/.local/share/novafabric/merkle.db` for backwards compatibility with installations created before v0.40.0.
+The default DB path searched by `nova policy list` is `NOVAFABRIC_HOME/promote/policy.db`, falling back to `~/.local/share/novafabric/merkle.db` for backwards compatibility with older installations.
+
+---
+
+## Docs-honesty and maturity labels
+
+When you touch any documentation surface, apply NovaFabric's four-label rule. Every
+mention of a feature must be classifiable as exactly one of:
+
+| Label | Meaning |
+|---|---|
+| **works today** | Implemented in main, tests pass, part of the shipped surface. |
+| **experimental** | Implemented but unstable — the interface may change before the v1.0 schema freeze. |
+| **planned** | On the roadmap with a target version; design intent captured in an ADR. |
+| **future design** | Documented intent only, no implementation. |
+
+Two hard rules that apply throughout this guide:
+
+1. **Never claim a planned or experimental subsystem as a stable, shipped product
+   feature in user-facing docs.** In-tree code can exist and have tests while the
+   corresponding *product capability* is still experimental or planned — keep the two
+   distinct. The scale-out subsystems in this guide (collector tier, topology
+   dashboards, object capsule store) are engineering work toward planned architecture,
+   not released features.
+2. **NovaFabric produces evidence that *supports* compliance; it does not certify
+   compliance.** It attests only that a capsule is unmodified since signing. Do not
+   describe any exporter or profile as making a run "compliant" with the EU AI Act,
+   NIST AI RMF, ISO/IEC 42001, GDPR, HIPAA, FDA 21 CFR Part 11, SOC 2, or any other
+   framework.
+
+See the "Docs honesty rule" and "Anti-patterns" sections of the repo `CLAUDE.md`, and
+`design/vision/north-star.md` for the canonical "honest limitations" voice.
+
+---
+
+## Where to go next
+
+| If you want to… | Go to |
+|---|---|
+| Use the CLI (flags, commands, defaults) | [`docs/cli-reference.md`](cli-reference.md) |
+| Understand the subsystem map and code structure | `design/architecture/overview.md` |
+| Read the capture data-flow internals | `design/architecture/capture-runtime.md` |
+| See release sequencing and roadmap | [`ROADMAP.md`](../ROADMAP.md) |
+| Follow the contribution / RFC / commit rules | [`CONTRIBUTING.md`](../CONTRIBUTING.md) |
+| Review a per-decision history | `design/adr/` |
+| Run the warm capture daemon as a user | [`docs/warm-capture-daemon.md`](warm-capture-daemon.md) |
+
+Before opening a PR, re-run the three [quality gates](#quality-gates) (pytest ≥ 90%
+coverage, ruff, mypy) and, for any CLI change, smoke-test `uv run nova --help` and the
+affected sub-command.

@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/features/determinism-facet-v0.schema.json",
+  "$comment": "schema_version 0.x (v0, not frozen); tracks design/spec/features/NF-012-014-determinism-attestation.md. Standalone additive/optional fragment intended to live under environment.schema.json extensions as a 'determinism' $def. Does not modify environment.schema.json or run-capsule.schema.json.",
+  "title": "DeterminismFacet",
+  "description": "Additive/optional — v0, not frozen. The additive 'determinism' block (NF-012/013/014) recorded inside a capsule env.lock. Records batch-invariance config, tensor-parallel size + reduction order, dtype, and speculative-decoding state so an attested-exact replay can assert bit-identical logits. Absence of this block ⇒ attested:false and today's replay behavior unchanged. 'attested' is computed true only when batch_invariance.enabled and the replay bit-identity assertion has passed; 'degradation_reason' carries the honest non-attested path.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["attested"],
+  "properties": {
+    "attested": {
+      "type": "boolean",
+      "description": "Computed field: true only when batch_invariance.enabled and the replay bit-identity assertion passed. Absence of the block ⇒ false. Never true on a non-invariant or facet-less path (SPK-DET-4 honest-degradation invariant)."
+    },
+    "degradation_reason": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": ["no-facet", "non-invariant-kernels", "unsupported-platform", "tp-mismatch", "spec-mismatch"]
+        },
+        {"type": "null"}
+      ],
+      "description": "Populated (non-null) whenever attested is false; null when attested is true. The honest non-attested path (NF-012 §4.2)."
+    },
+    "batch_invariance": {
+      "$ref": "#/$defs/BatchInvariance",
+      "description": "Batch-invariant kernel set + digest. batch_invariant_ops (Apache-2.0) is an optional capture-side dependency (NF-012 req 9)."
+    },
+    "tensor_parallel": {
+      "$ref": "#/$defs/TensorParallel",
+      "description": "TP size + reduction-order profile (NF-013). Enables asserting bit-identity when replayed at a different TP size / single node."
+    },
+    "speculative_decoding": {
+      "$ref": "#/$defs/SpeculativeDecoding",
+      "description": "Speculative-decoding flag + draft-model identity + acceptance-trace reference (NF-014)."
+    },
+    "dtype": {
+      "type": "string",
+      "description": "Compute/storage dtype affecting numerical reproducibility, e.g. 'bfloat16', 'float16', 'float32', 'fp8'."
+    },
+    "rng": {
+      "$ref": "#/$defs/Rng",
+      "description": "Recorded RNG seeds."
+    },
+    "compute": {
+      "$ref": "#/$defs/Compute",
+      "description": "Compute environment (GPU/driver/CUDA/kernel) that bounds bit-identity claims."
+    },
+    "logits_digest": {
+      "$ref": "#/$defs/ContentHash",
+      "description": "SHA-256 over the recorded logits the attested-exact replay compares against."
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Vendor extensions. Keys must be reverse-DNS-prefixed."
+    }
+  },
+  "if": {
+    "properties": {"attested": {"const": false}},
+    "required": ["attested"]
+  },
+  "then": {
+    "required": ["degradation_reason"]
+  },
+  "$defs": {
+    "ContentHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "SHA-256 content hash in sha256:<hex> form."
+    },
+    "BatchInvariance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether batch-invariant kernels were in use. Required for attested:true (NF-012 §4.1)."
+        },
+        "kernel_set": {
+          "type": "string",
+          "description": "Kernel set name, e.g. 'batch_invariant_ops'."
+        },
+        "kernel_digest": {
+          "$ref": "#/$defs/ContentHash",
+          "description": "SHA-256 pinning the kernel-set build."
+        },
+        "version": {
+          "type": "string",
+          "description": "Kernel-set version, e.g. '0.3.1'."
+        }
+      }
+    },
+    "TensorParallel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["size"],
+      "properties": {
+        "size": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Tensor-parallel degree at capture (tp_size)."
+        },
+        "reduction_order_profile": {
+          "type": "string",
+          "description": "Reduction-order profile enabling cross-TP bit-identity, e.g. 'tree-fixed-v1'."
+        }
+      }
+    },
+    "SpeculativeDecoding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether speculative decoding was used; when true, replay re-verifies acceptance decisions (NF-014)."
+        },
+        "draft_model": {
+          "oneOf": [{"type": "string"}, {"type": "null"}],
+          "description": "Draft-model identity, or null when speculative decoding is off."
+        },
+        "acceptance_trace_ref": {
+          "oneOf": [{"type": "string"}, {"type": "null"}],
+          "description": "Relative reference to the recorded draft/verify acceptance trace, or null."
+        }
+      }
+    },
+    "Rng": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["seeds"],
+      "properties": {
+        "seeds": {
+          "type": "object",
+          "additionalProperties": {"type": "integer"},
+          "description": "Named RNG seeds, e.g. {'global':1234,'torch':1234,'cuda':1234}."
+        }
+      }
+    },
+    "Compute": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gpu": {"type": "string", "description": "Accelerator model, e.g. 'H100-80GB'."},
+        "driver": {"type": "string", "description": "GPU driver version."},
+        "cuda": {"type": "string", "description": "CUDA version."},
+        "kernel": {"type": "string", "description": "OS kernel version."}
+      }
+    }
+  },
+  "x-novafabric": {
+    "governed_by": "NF-012 (batch-invariant replay attestation), NF-013 (TP-size determinism facet), NF-014 (verified-speculation check)",
+    "adr": "ADR-0100 (determinism replay attestation); extends gap-007 env.lock facet + ADR-0086; composes with ADR-0080, ADR-0099, ADR-0024",
+    "spec": "design/spec/features/NF-012-014-determinism-attestation.md",
+    "status": "future design",
+    "stability": "v0 — additive, optional, not frozen; gated on SPK-DET-1..5",
+    "attested_rule": "attested = batch_invariance.enabled AND replay bit-identity assertion passed; else false with a degradation_reason"
+  }
+}

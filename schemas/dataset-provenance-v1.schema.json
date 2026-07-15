@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/dataset-provenance-v1.schema.json",
+  "$comment": "schema_version 1.x (v1); tracks design/spec/features/NF-024-028-inspect-interop.md §4.2. Additive/optional capsule facet stored under extensions/dev.novafabric.dataset-provenance/. Does not modify run-capsule.schema.json.",
+  "title": "DatasetProvenanceFacet",
+  "description": "Additive/optional (NF-028). Records the dataset + split content hashes an eval ran against so a capsule can be flagged when it was run on a contaminated or superseded benchmark version. Detection/flagging only — no remediation. Absence of the facet ⇒ contamination status 'unknown'.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "dataset_hash", "status"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Benchmark/dataset name, e.g. 'swe-bench'."
+    },
+    "version": {
+      "type": "string",
+      "description": "Dataset version/tag, e.g. '2024-06' or a release id."
+    },
+    "dataset_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{4,64}$",
+      "description": "Content hash of the dataset (never the dataset bytes — SPK-HARN-4)."
+    },
+    "split_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{4,64}$",
+      "description": "Content hash of the specific split the eval consumed."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["current", "superseded", "contaminated", "unknown"],
+      "description": "Contamination/staleness flag. 'contaminated'/'superseded' set an audit flag; 'current' is clean; 'unknown' when no registry match is available."
+    }
+  }
+}

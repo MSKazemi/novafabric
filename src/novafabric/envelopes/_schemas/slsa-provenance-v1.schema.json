@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.dev/schemas/envelopes/slsa-provenance-v1.schema.json",
+  "title": "SLSA Provenance v1 predicate",
+  "description": "Structural schema for the SLSA Provenance v1 predicate (https://slsa.dev/provenance/v1). Vendored by NovaFabric to validate emitter output against the standard's required-field contract: buildDefinition{buildType, externalParameters, ...} + runDetails{builder{id}, ...}.",
+  "type": "object",
+  "required": ["buildDefinition", "runDetails"],
+  "properties": {
+    "buildDefinition": {
+      "type": "object",
+      "required": ["buildType", "externalParameters"],
+      "properties": {
+        "buildType": {"type": "string", "format": "uri"},
+        "externalParameters": {"type": "object"},
+        "internalParameters": {"type": "object"},
+        "resolvedDependencies": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/resourceDescriptor"}
+        }
+      }
+    },
+    "runDetails": {
+      "type": "object",
+      "required": ["builder"],
+      "properties": {
+        "builder": {
+          "type": "object",
+          "required": ["id"],
+          "properties": {
+            "id": {"type": "string", "format": "uri"},
+            "builderDependencies": {
+              "type": "array",
+              "items": {"$ref": "#/$defs/resourceDescriptor"}
+            },
+            "version": {"type": "object"}
+          }
+        },
+        "metadata": {"type": "object"},
+        "byproducts": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/resourceDescriptor"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "resourceDescriptor": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string"},
+        "uri": {"type": "string"},
+        "digest": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        },
+        "content": {"type": "string"},
+        "mediaType": {"type": "string"}
+      }
+    }
+  }
+}

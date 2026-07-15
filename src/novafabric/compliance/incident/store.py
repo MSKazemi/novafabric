@@ -13,7 +13,7 @@
 # limitations under the License.
 """SQLite store for Incident records (ADR-0088).
 
-Mirrors the local-first storage pattern of the registry /
+Mirrors the self-contained storage pattern of the registry /
 :class:`~novafabric.compliance.tool_permission.index.PermissionEventIndex`:
 parameterised queries only, schema created on open, lives under
 ``NOVAFABRIC_HOME``.
@@ -59,7 +59,7 @@ def incidents_db_path() -> Path:
 
 
 class IncidentStore:
-    """Local-first SQLite persistence for :class:`Incident` records."""
+    """Self-contained SQLite persistence for :class:`Incident` records."""
 
     def __init__(self, db_path: Path | None = None) -> None:
         self._db_path = db_path if db_path is not None else incidents_db_path()

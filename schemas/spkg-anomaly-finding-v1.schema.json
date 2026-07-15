@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/spkg-anomaly-finding-v1.schema.json",
+  "$comment": "schema_version 0.1.0; tracks design/adr/0111-security-provenance-knowledge-graph.md (ADR-0111) and design/architecture/security-provenance-knowledge-graph.md. Additive/optional: zero or more AnomalyFinding records (one per line of an OPTIONAL sidecar `spkg-findings.jsonl`). A capsule/graph without findings remains valid. Future design — not yet a frozen v1 format; emitted only when the SPKG detector runs (opt-in, non-blocking).",
+  "title": "AnomalyFinding",
+  "description": "One graph-based anomaly/threat finding emitted by the NovaFabric Security & Provenance Knowledge Graph (SPKG) detector. Edge-level by default (which lineage edge / tool call is anomalous). Per ADR-0111 R2, every finding MUST carry an explanation mapped to a MITRE ATT&CK technique and/or a D3FEND artifact — a bare score is not a valid finding.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "finding_id",
+    "created_at",
+    "subject_kind",
+    "subject_ref",
+    "score",
+    "method",
+    "unsupervised",
+    "detector_id",
+    "explanation"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "0.1.0",
+      "description": "SPKG anomaly-finding schema version."
+    },
+    "finding_id": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "description": "ULID; time-sortable unique id for this finding."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 timestamp when the finding was produced."
+    },
+    "subject_kind": {
+      "type": "string",
+      "enum": ["edge", "node", "subgraph", "run"],
+      "description": "Granularity of the anomalous element. Edge-level is the ADR-0111 default (actionable forensics)."
+    },
+    "subject_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable identity of the anomalous element: for edge/node, the SPKG graph element id (KuzuDB/AGE); for run/subgraph, a content hash (sha256:...) or capsule id."
+    },
+    "score": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Normalized anomaly score in [0,1]; higher = more anomalous (reconstruction error / link-prediction surprise / outlier score, rescaled)."
+    },
+    "method": {
+      "type": "string",
+      "enum": [
+        "graph_autoencoder",
+        "tgn_link_surprise",
+        "kge_outlier",
+        "structural_outlier",
+        "temporal_forecast_residual"
+      ],
+      "description": "Detection method family (ADR-0111 D3). All Tier-A: PyGOD (graph_autoencoder/structural_outlier), TGN (tgn_link_surprise), PyG-Temporal (temporal_forecast_residual), PyKEEN (kge_outlier)."
+    },
+    "unsupervised": {
+      "type": "boolean",
+      "description": "MUST be true for the v0.1 detector — no labeled attack data is used (ADR-0111 D3, N2)."
+    },
+    "detector_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable id of the detector model/config that produced this finding."
+    },
+    "detector_version": {
+      "type": "string",
+      "description": "Optional detector/model version string for reproducibility."
+    },
+    "capsule_ref": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Optional content hash of the source run capsule (provenance pointer back to the evidence)."
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["info", "low", "medium", "high", "critical"],
+      "description": "Optional analyst-facing severity; distinct from the raw score."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["open", "triaged", "false_positive", "confirmed"],
+      "description": "Optional triage state (human-in-the-loop; findings are not auto-blocking, ADR-0111 R15)."
+    },
+    "explanation": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Required explanation (ADR-0111 R2). MUST include a rationale and at least one of an ATT&CK technique or a D3FEND artifact.",
+      "required": ["rationale"],
+      "anyOf": [
+        { "required": ["attack_technique_id"] },
+        { "required": ["d3fend_artifact"] }
+      ],
+      "properties": {
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable, interpretable explanation of why the element is anomalous (DeepAID lesson)."
+        },
+        "attack_technique_id": {
+          "type": "string",
+          "pattern": "^T\\d{4}(\\.\\d{3})?$",
+          "description": "MITRE ATT&CK technique or sub-technique id, e.g. T1078 or T1078.004."
+        },
+        "d3fend_artifact": {
+          "type": "string",
+          "pattern": "^d3f:[A-Za-z0-9]+$",
+          "description": "MITRE D3FEND digital-artifact/technique id, e.g. d3f:ProcessLineage."
+        }
+      }
+    },
+    "ledger_anchor": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Optional adversary-anchored-ledger checkpoint digest attesting this finding (ADR-0111 UC6 / ADR-0094)."
+    }
+  }
+}

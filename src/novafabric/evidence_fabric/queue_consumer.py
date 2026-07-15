@@ -1,4 +1,4 @@
-"""In-process asyncio queue consumer for Evidence Fabric local-first mode.
+"""In-process asyncio queue consumer for Evidence Fabric self-contained mode.
 
 Provides the same pull-consumer interface as a NATS JetStream consumer but
 backed by an in-process ``asyncio.Queue``.  Events are batched and written

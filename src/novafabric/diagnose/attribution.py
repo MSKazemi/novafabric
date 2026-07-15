@@ -294,7 +294,7 @@ def _downstream_run_ids(
     Used for the src-413 causal-depth bias: a step that belongs to a downstream
     (delegated/spawned) run is a more proximate cause than its coordinator
     ancestor. Absent a lineage store or edges, returns an empty set and the bias
-    term is zero (flat-trace attribution still works — local-first).
+    term is zero (flat-trace attribution still works — self-contained).
     """
     if lineage_store is None:
         return set()

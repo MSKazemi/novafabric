@@ -4405,7 +4405,7 @@ def create_app(
         """Return aggregated LLM cost (DB-COST-1 / cap-002).
 
         When ``NOVA_CLICKHOUSE_URL`` is set, queries ClickHouse.  Otherwise
-        falls back to the local DuckDB accumulator (Evidence Fabric local-first
+        falls back to the local DuckDB accumulator (Evidence Fabric self-contained
         mode) so cost data is always available without external infrastructure.
         """
         import datetime as _dt  # noqa: PLC0415
@@ -4431,7 +4431,7 @@ def create_app(
                     "by_model": [],
                 }
 
-        # Local-first fallback: query the DuckDB accumulator.
+        # Self-contained fallback: query the DuckDB accumulator.
         try:
             from novafabric.evidence_fabric.duckdb_accumulator import (
                 DuckDBAccumulator,  # noqa: PLC0415
@@ -4671,6 +4671,154 @@ def create_app(
             }
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "ingested": 0, "written": 0, "error": str(exc), "note": ""}
+
+    @app.post("/api/kg/detect", dependencies=[Depends(verify_token)])
+    async def kg_detect_endpoint(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        """Unsupervised SPKG anomaly scan of a capsule — mirrors `nova kg detect` (ADR-0111).
+
+        Read-only. Ranks the most anomalous lineage edges by structural surprisal; every
+        finding carries a MITRE ATT&CK technique (R2 — never a bare score). Pure-stdlib
+        detector, so this needs no optional extra.
+        """
+        capsule_path_str: str = body.get("capsule_path", "")
+        top: int = int(body.get("top", 5))
+        if not capsule_path_str:
+            raise HTTPException(status_code=422, detail="capsule_path is required")
+        # Accept bare run_id (no slashes) — resolve to its capsule directory.
+        if not capsule_path_str.startswith("/") and "/" not in capsule_path_str:
+            target = _resolve_capsule(capsule_path_str, capsule_dir)
+        else:
+            target = Path(capsule_path_str)
+            if not target.is_dir():
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Directory not found: {capsule_path_str}",
+                )
+        from novafabric.kg.spkg.detect import StructuralAnomalyDetector, to_findings
+        from novafabric.kg.spkg.provo_mapping import read_lineage_edges
+
+        edges = read_lineage_edges(target)
+        if not edges:
+            return {"ok": True, "count": 0, "findings": [], "capsule_path": capsule_path_str}
+        scored = StructuralAnomalyDetector().fit(edges).top_k(edges, k=top)
+        findings = to_findings(scored)
+        return {
+            "ok": True,
+            "count": len(findings),
+            "findings": findings,
+            "capsule_path": capsule_path_str,
+        }
+
+    def _spkg_parse_entity(spec: str) -> tuple[str, str]:
+        if ":" not in spec:
+            raise HTTPException(
+                status_code=422,
+                detail=f"entity must be 'kind:ref' (got {spec!r}), e.g. run:my-run",
+            )
+        kind, ref = spec.split(":", 1)
+        return kind, ref
+
+    @app.post("/api/kg/attack-path", dependencies=[Depends(verify_token)])
+    async def kg_attack_path_endpoint(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        """Shortest attack path between two entities — mirrors `nova kg attack-path` (UC2).
+
+        Read-only. Builds an in-process SPKG LPG from the capsule's lineage, then runs a
+        bounded shortest-path query. Requires the ``[spkg]`` extra.
+        """
+        capsule_path_str: str = body.get("capsule_path", "")
+        from_entity: str = body.get("from_entity", "")
+        to_entity: str = body.get("to_entity", "")
+        max_depth: int = int(body.get("max_depth", 6))
+        if not capsule_path_str or not from_entity or not to_entity:
+            raise HTTPException(
+                status_code=422,
+                detail="capsule_path, from_entity, and to_entity are required",
+            )
+        if not capsule_path_str.startswith("/") and "/" not in capsule_path_str:
+            target = _resolve_capsule(capsule_path_str, capsule_dir)
+        else:
+            target = Path(capsule_path_str)
+            if not target.is_dir():
+                raise HTTPException(
+                    status_code=404, detail=f"Directory not found: {capsule_path_str}"
+                )
+        try:
+            from novafabric.kg.spkg.graph_store import SpkgGraphStore
+            from novafabric.kg.spkg.provo_mapping import read_lineage_edges
+            from novafabric.lineage._types import node_id_for
+        except ImportError as exc:
+            return {"ok": False, "error": str(exc), "note": "Install novafabric[spkg]."}
+        s_kind, s_ref = _spkg_parse_entity(from_entity)
+        t_kind, t_ref = _spkg_parse_entity(to_entity)
+        store = SpkgGraphStore()
+        try:
+            store.ingest_edges(read_lineage_edges(target))
+            hops = store.attack_path(
+                node_id_for(s_kind, s_ref), node_id_for(t_kind, t_ref), max_depth=max_depth
+            )
+        finally:
+            store.close()
+        return {
+            "ok": True,
+            "from_entity": from_entity,
+            "to_entity": to_entity,
+            "max_depth": max_depth,
+            "path_found": hops is not None,
+            "hops": hops,
+        }
+
+    @app.post("/api/kg/blast-radius", dependencies=[Depends(verify_token)])
+    async def kg_blast_radius_endpoint(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        """Impact/blast-radius of an entity — mirrors `nova kg blast-radius` (UC3).
+
+        Read-only. ``downstream`` (default) lists what the entity affects; ``upstream``
+        lists its provenance. Requires the ``[spkg]`` extra.
+        """
+        capsule_path_str: str = body.get("capsule_path", "")
+        entity: str = body.get("entity", "")
+        upstream: bool = bool(body.get("upstream", False))
+        max_depth: int = int(body.get("max_depth", 6))
+        if not capsule_path_str or not entity:
+            raise HTTPException(
+                status_code=422, detail="capsule_path and entity are required"
+            )
+        if not capsule_path_str.startswith("/") and "/" not in capsule_path_str:
+            target = _resolve_capsule(capsule_path_str, capsule_dir)
+        else:
+            target = Path(capsule_path_str)
+            if not target.is_dir():
+                raise HTTPException(
+                    status_code=404, detail=f"Directory not found: {capsule_path_str}"
+                )
+        try:
+            from novafabric.kg.spkg.graph_store import SpkgGraphStore
+            from novafabric.kg.spkg.provo_mapping import read_lineage_edges
+            from novafabric.lineage._types import node_id_for
+        except ImportError as exc:
+            return {"ok": False, "error": str(exc), "note": "Install novafabric[spkg]."}
+        kind, ref = _spkg_parse_entity(entity)
+        store = SpkgGraphStore()
+        try:
+            store.ingest_edges(read_lineage_edges(target))
+            node_id = node_id_for(kind, ref)
+            affected = (
+                store.ancestors(node_id, max_depth)
+                if upstream
+                else store.descendants(node_id, max_depth)
+            )
+        finally:
+            store.close()
+        return {
+            "ok": True,
+            "entity": entity,
+            "direction": "upstream" if upstream else "downstream",
+            "max_depth": max_depth,
+            "count": len(affected),
+            "entities": [
+                {"kind": k, "ref": r}
+                for _nid, k, r in sorted(affected, key=lambda x: (x[1], x[2]))
+            ],
+        }
 
     @app.post("/api/kg/ingest-all", dependencies=[Depends(verify_token)])
     async def kg_ingest_all_endpoint(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:

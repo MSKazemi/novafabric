@@ -4,7 +4,7 @@ import sitemap from '@astrojs/sitemap';
 import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
-  site: 'https://novafabric.dev',
+  site: 'https://novafabric.ai',
   integrations: [
     react(),
     sitemap(),

@@ -1,4 +1,4 @@
-"""Local Parquet PII event table for Evidence Fabric local-first mode.
+"""Local Parquet PII event table for Evidence Fabric self-contained mode.
 
 Writes PII detection records to a partitioned Parquet file and generates an
 Iceberg-compatible metadata sidecar (no Iceberg SDK required).

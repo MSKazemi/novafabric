@@ -1,4 +1,4 @@
-"""Tests for Evidence Fabric local-first DuckDB stack.
+"""Tests for Evidence Fabric self-contained DuckDB stack.
 
 Covers:
 - DuckDBAccumulator: round-trip ingest, query_cost_report, query_lineage_summary,

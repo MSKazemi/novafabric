@@ -1,0 +1,21 @@
+{
+  "name": "novafabric",
+  "description": "Instrument AI agents with NovaFabric (replayable, signed Run Capsules) and deploy the NovaFabric dashboard to Docker or Kubernetes.",
+  "version": "0.1.0",
+  "author": {
+    "name": "NovaFabric"
+  },
+  "homepage": "https://github.com/novafabric/novafabric",
+  "repository": "https://github.com/novafabric/novafabric",
+  "license": "Apache-2.0",
+  "keywords": [
+    "novafabric",
+    "ai",
+    "agent",
+    "observability",
+    "replay",
+    "lineage",
+    "audit",
+    "deployment"
+  ]
+}

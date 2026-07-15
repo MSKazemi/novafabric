@@ -45,16 +45,17 @@ def dsse_pae(payload_type: str, payload: bytes) -> bytes:
     )
 
 
-def dsse_sign(statement: dict[str, Any], signer: Any) -> dict[str, Any]:
-    """Wrap an in-toto Statement in a signed DSSE envelope.
+def dsse_sign_payload(payload: bytes, payload_type: str, signer: Any) -> dict[str, Any]:
+    """Wrap arbitrary *payload* bytes in a signed DSSE envelope (the single DSSE writer).
 
-    `signer` must expose `sign(bytes) -> bytes` and `keyid: str`.
+    `signer` must expose `sign(bytes) -> bytes` and `keyid: str`. This is the one place
+    DSSE PAE + signing happens; higher-level wrappers (in-toto statements, Evidence-Bundle
+    envelopes) all funnel through here so there is never a second DSSE code path.
     """
-    payload = json.dumps(statement, sort_keys=True, separators=(",", ":")).encode()
-    pae = dsse_pae(DSSE_PAYLOAD_TYPE, payload)
+    pae = dsse_pae(payload_type, payload)
     signature = signer.sign(pae)
     return {
-        "payloadType": DSSE_PAYLOAD_TYPE,
+        "payloadType": payload_type,
         "payload": base64.b64encode(payload).decode(),
         "signatures": [
             {
@@ -63,6 +64,15 @@ def dsse_sign(statement: dict[str, Any], signer: Any) -> dict[str, Any]:
             }
         ],
     }
+
+
+def dsse_sign(statement: dict[str, Any], signer: Any) -> dict[str, Any]:
+    """Wrap an in-toto Statement in a signed DSSE envelope.
+
+    `signer` must expose `sign(bytes) -> bytes` and `keyid: str`.
+    """
+    payload = json.dumps(statement, sort_keys=True, separators=(",", ":")).encode()
+    return dsse_sign_payload(payload, DSSE_PAYLOAD_TYPE, signer)
 
 
 def dsse_verify(envelope: dict[str, Any], verify_fn: Any) -> dict[str, Any]:

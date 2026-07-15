@@ -402,6 +402,7 @@ def _significant_regression(
     p1: float = _SIG_DEFAULT_P1,
     alpha: float = _SIG_DEFAULT_ALPHA,
     beta: float = _SIG_DEFAULT_BETA,
+    observations: list[int] | None = None,
 ) -> tuple[bool, str]:
     """Decide whether the recent eval sequence shows a *significant* regression.
 
@@ -413,7 +414,10 @@ def _significant_regression(
     """
     from novafabric.eval.significance import SprtVerdict, sprt_bernoulli  # noqa: PLC0415
 
-    observations = _recent_eval_sequence(conn, asset_id)
+    # Default source is the shipped eval_results sequence; callers may override with an
+    # evidence-grade Score sequence read from a capsule's scores.jsonl (NF-007).
+    if observations is None:
+        observations = _recent_eval_sequence(conn, asset_id)
     verdict, llr = sprt_bernoulli(observations, p0=p0, p1=p1, alpha=alpha, beta=beta)
     if verdict is SprtVerdict.ACCEPT_H1:
         return True, (
@@ -436,6 +440,8 @@ def promote_asset(
     sig_p1: float = _SIG_DEFAULT_P1,
     sig_alpha: float = _SIG_DEFAULT_ALPHA,
     sig_beta: float = _SIG_DEFAULT_BETA,
+    sig_scores_path: Path | None = None,
+    sig_scores_metric: str = "task_pass",
 ) -> dict[str, Any]:
     conn = get_connection(db_path)
     init_schema(conn)
@@ -507,8 +513,27 @@ def promote_asset(
             and to_status in _AGENT_GATE_STATUSES
             and not force
         ):
+            # Optionally source the sequence from an evidence-grade scores.jsonl
+            # (NF-007). When no path is given the shipped eval_results path is used —
+            # default behavior is byte-for-byte unchanged.
+            observations: list[int] | None = None
+            if sig_scores_path is not None:
+                from novafabric.eval.scores import (  # noqa: PLC0415
+                    boolean_metric_outcomes,
+                    read_scores,
+                )
+
+                observations = boolean_metric_outcomes(
+                    read_scores(sig_scores_path), sig_scores_metric
+                )
             blocked, sig_reason = _significant_regression(
-                conn, row["id"], p0=sig_p0, p1=sig_p1, alpha=sig_alpha, beta=sig_beta
+                conn,
+                row["id"],
+                p0=sig_p0,
+                p1=sig_p1,
+                alpha=sig_alpha,
+                beta=sig_beta,
+                observations=observations,
             )
             if blocked:
                 raise PromotionBlockedError(

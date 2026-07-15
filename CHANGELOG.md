@@ -10,10 +10,287 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 ## [Unreleased]
 
 ### Added
+- **NF-058 signed dataset provenance cards — `nova dataset provenance-card <asset> --sign` (ADR-0105; experimental).**
+  New `nova dataset` command group + `src/novafabric/supplychain/dataset_card.py`: builds a dataset provenance
+  card recording `source`/`version`/content `hash`/`license`/`tlp` and a **transform history** — each entry a
+  content-addressed operation digest (never raw values, prompts, or cell contents; I-4). `--from-capsule`
+  derives the `transformHistory[]` from a capsule's `lineage.jsonl` derivation edges (each `signedOpDigest` is
+  the content hash of the recorded edge). The card is Ed25519-signed reusing the NovaSeal/Evidence-Bundle
+  keyring path (`trust.keyring`) — the signature is taken over the canonical-JSON body *excluding* the signature
+  block, so signing never changes the signed body and an **unsigned card is schema-invalid** (not evidence).
+  Validates against `schemas/features/dataset-provenance-card-v0.schema.json`; feeds NF-056 (AI-BOM) and NF-057
+  (SLSA-for-ML). **No new dependency.** `dataset_card.py` at 100% coverage; 15 new tests; ruff + mypy clean.
+- **NF-057 SLSA-for-ML promotion provenance — `nova promote direct --slsa-provenance --slsa-ml-profile` (ADR-0105; experimental).**
+  Extends the shipped NF-031 SLSA emitter (`envelopes/slsa.py`) with the **SLSA-for-ML profile**: new
+  `ml_promotion_provenance()` builds a `slsa.dev/provenance/v1` Statement whose `buildType` is
+  `https://novafabric.dev/promote-ml/v1`, whose `buildDefinition` captures dataset versions/hashes + seeds +
+  eval-container digest, and whose `runDetails.byproducts` add a `gate-rule` entry and an **`eval-verdict`
+  digest** binding the promoted model to the exact gating eval verdict (NF-057 R). The generic
+  `promotion_provenance()` gains additive, backward-compatible `build_type` / `gate_byproduct_name` /
+  `eval_verdict_sha256` parameters — default output is unchanged (no `eval-verdict` byproduct). A new
+  `--slsa-ml-profile` flag on `nova promote direct` (used with `--slsa-provenance`) emits the ML profile,
+  DSSE-signed and `nova verify-envelope`-verifiable like the generic one; it validates against the upstream
+  SLSA v1 schema. **No new dependency.** `slsa.py` at 100% coverage; 4 new tests; ruff + mypy clean.
+- **NF-028 dataset-provenance facet + `nova eval contamination-check` (ADR-0108; experimental).**
+  Records the **dataset + split content hashes** an eval ran against so a capsule can be flagged when it was run
+  on a contaminated or superseded benchmark version (contamination silently inflates scores). New
+  `schemas/dataset-provenance-v1.schema.json` facet (`name`/`version`/`dataset_hash`/`split_hash`/`status` ∈
+  `current|superseded|contaminated|unknown`) is stored additively in the capsule's
+  `extensions/dev.novafabric.dataset-provenance/` namespace — absence leaves today's behavior unchanged (never
+  the dataset bytes, SPK-HARN-4). `src/novafabric/eval/dataset_provenance.py` provides the facet model, a
+  configurable `ContaminationRegistry` (`{contaminated, superseded}` sha256-hash lists; no hardcoded URL), and
+  `check_contamination()` which resolves each facet against the registry — the registry can *upgrade* a facet's
+  severity but never downgrade its recorded status. `nova eval contamination-check <capsule> [--registry <json>]
+  [--json]` reports the status per dataset and **exits `4` when any dataset is contaminated or superseded**
+  (CI-gateable), `0` when all current/unknown, `2` on usage error. Detection/flagging only — no remediation.
+  **No new dependency**; both modules at 100% coverage; 21 new tests; ruff + mypy clean. (The larger NF-024
+  Inspect-AI import/export bridge remains `planned`.)
+- **NF-032/033 OTel GenAI canonical-span emitter + opt-in content bridge — `nova capture --emit-otel-genai [--capture-content]` (ADR-0098; experimental).**
+  New `src/novafabric/otel/` package maps an already-captured capsule *outward* to OTel GenAI `gen_ai.*` spans —
+  the portable form of a run (NF-032). `genai_emitter.emit_spans(capsule)` reads the capsule's `model-calls.jsonl`
+  (which already stores the OTel GenAI semconv attributes) and `tool-calls.jsonl`, and wraps each in an
+  OTLP-shaped span: a root `invoke_agent` span, a `chat` `SPAN_KIND_CLIENT` span per model call, and an
+  `execute_tool` span per tool call, all sharing one deterministic trace id. Every span carries
+  `novafabric.mapping_version` (R3) and an **honest** `novafabric.semconv_maturity` — `stable` on LLM client
+  spans, `development` on agent/tool spans (OTel GenAI agent spans are Development-status in early 2026) (R4).
+  `content_bridge` (NF-033) is the opt-in message bridge: **off by default no message/choice content reaches a
+  span** (ADR-0021 content opt-in); with `--capture-content` each message is routed through the **same
+  ADR-0009 secret-redaction rules** the sealer uses (`capture.secrets`) and size-bounded (4000 chars). The CLI
+  writes the spans to `<capsule>/otel-genai-spans.json` after capture. **No new dependency** (stdlib + the
+  existing `opentelemetry`/`yaml` deps); the OTLP/OpenInference *ingestion* endpoint (NF-034) is deliberately
+  out of scope here (it needs a protobuf decode dependency). `otel/` package at 99% coverage; 17 new tests;
+  ruff + mypy clean.
+- **NF-036 OpenLineage custom run facets — `nova lineage emit-openlineage --with-facets [--otel-correlation]` (ADR-0096; experimental).**
+  Extends the v0.4 OpenLineage emitter with the three NovaFabric custom facets plus the standard
+  `executionParameters` facet, all **opt-in and additive** — with `--with-facets` off the emitted core OL
+  events are byte-for-byte unchanged (R7). New `src/novafabric/lineage/_run_facets.py` builds, from
+  capsule-resident data only: `novafabric_capsule` (capsule id / run id / `capsule_merkle_root` hash, R3),
+  `novafabric_eval` (verdict `passed`/`failed`/`n/a` from `eval_result.json` + suite + metrics, R4),
+  `novafabric_policy` (promotion gate id + policy decision `allow`/`deny`/`n/a`, R5), the standard
+  `ExecutionParametersRunFacet` populated with reproducibility params (model/seed/temperature/…, R6), and —
+  under `--otel-correlation` — `novafabric_otel_correlation` (`trace_id`/`span_id`, NF-037 R9/R10) when the
+  capsule records well-formed ids. Every facet carries a resolvable `_producer` + `_schemaURL` (R2) and is
+  validated against an embedded vendored schema *before* attachment; a malformed facet raises
+  `FacetValidationError` rather than emitting an invalid event (R11). Threaded through `build_complete_event`
+  / `build_events_from_capsule` and the CLI (`--with-facets`, `--otel-correlation`; the latter implies the
+  former). **No new dependency** (jsonschema already present). `_run_facets.py` at 99% coverage,
+  `_openlineage.py` at 90%; 21 new tests; ruff + mypy clean; the 39 pre-existing OpenLineage tests still pass.
+- **NF-056 AI-BOM CycloneDX 1.7 extensions — citations, TLP, model-card, `nova aibom validate` (ADR-0105; experimental).**
+  Extends the shipped `nova aibom generate` (does not re-implement it) with the three ECMA-424 2nd-edition
+  capabilities the exporter did not emit, all **opt-in and additive** — with every new flag at its default
+  the BOM is byte-for-byte identical to before. `--citations` binds every model/dataset component to its
+  source capsule/evidence digest (`capsule_merkle_root`) as a CycloneDX `citations[]` entry, folding in an
+  ADR-0097 inclusion proof (`log`/`treeSize`/`proof`) when the capsule manifest records one (NF-056 R4).
+  `--tlp TLP:CLEAR|GREEN|AMBER|AMBER+STRICT|RED` records a TLP 2.0 distribution marker in
+  `metadata.properties` (`novafabric:tlp`), validated against the five TLP values (R5). `--model-card auto|<path>`
+  adds a `model-card` `externalReferences[]` entry to each `machine-learning-model` component (`auto` derives a
+  `registry://` URI) (R6). `--citations` also emits `hashes[]` (`alg: SHA-256`) on components with a recorded
+  digest (R2). `--include-datasets/--no-include-datasets` toggles the lineage-sourced `type:data` components.
+  Every generated BOM now carries `$schema` pointing at the ECMA-424 2nd-edition schema (R1). New
+  `nova aibom validate <bom.json>` runs a dependency-free structural + NovaFabric-binding check
+  (specVersion/bomFormat/serialNumber, TLP-marker validity, per-component name/bom-ref/hash-alg/citation-digest),
+  exit `0` valid / `1` on errors / `2` on a bad file, `--json` for `{valid, errors}`. **No new dependency** —
+  the exporter continues to hand-build CycloneDX 1.7 JSON (the spec's optional `cyclonedx-python-lib` wrapper
+  is not adopted); stdlib only. Exporter module at 95% coverage; 22 new tests; ruff + mypy clean; the 35
+  pre-existing AI-BOM tests still pass.
+- **NF-009 metamorphic check-spec CLI — `nova eval offline --check metamorphic --spec <yaml>` (ADR-0099; experimental).**
+  Closes the last deferred slice of the NF-009 trace-first offline-eval track. `run_metamorphic` shipped as a
+  programmatic function; this adds its declarative, zero-token CLI surface. A new additive check-spec schema
+  `schemas/features/metamorphic-check-v0.schema.json` (v0, not frozen) describes the spec: records whose *input*
+  collapses to the same value under a named `transform` (`identity`/`lower`/`strip`/`collapse_whitespace`/
+  `remove_punctuation`, composable) form metamorphic pairs, and every pair's *output* must satisfy a named
+  `invariant` (`equal`/`equal_normalized`/`numeric_close`/`length_within`, with `tolerance`). `run_metamorphic_spec()`
+  in `eval/offline.py` loads the spec, groups the capsule's recorded `(input, output)` records, and delegates to
+  the existing `run_metamorphic` — emitting a boolean `code` `Score` bound to the capsule Merkle root (sealable with
+  `--emit-score`). Records missing either field are skipped; no metamorphic pair ⇒ vacuously true; an unknown
+  transform/invariant or malformed spec exits `2`. Stdlib + PyYAML only (both already present) — **zero new
+  dependency, zero model calls**. `eval/offline.py` and `cli/eval_offline.py` remain at 100% coverage;
+  17 new tests (13 library + 5 CLI - 1 shared), ruff + mypy clean.
+- **Security & Provenance Knowledge Graph (SPKG) — first slices (ADR-0111, BQ-SPKG-01; future design).**
+  ADR-0111 accepted 2026-07-02 (authorizes build; nothing ships until spikes SP-1..SP-4 pass).
+  Three additive, opt-in slices landed: (1) the `AnomalyFinding` data contract
+  `schemas/spkg-anomaly-finding-v1.schema.json` — the detector's output record, enforcing the
+  invariant that every finding carries a MITRE ATT&CK technique and/or D3FEND artifact explanation
+  (no bare scores); (2) the canonical PROV-O layer `src/novafabric/kg/spkg/` — maps a lineage edge
+  to W3C PROV-O RDF and SHACL-validates it (spike SP-4 round-trip proven), behind a new Tier-A
+  `[spkg]` extra (rdflib BSD-3 + pyshacl Apache-2.0). Reuses the existing `kg/` KuzuDB/AGE substrate
+  (RQ-018 / KG-ADR-001) — no second graph store. (3) the operational LPG store
+  `src/novafabric/kg/spkg/graph_store.py` — embedded KùzuDB (MIT, added to `[spkg]`) with an
+  `attack_path()` shortest-path query (UC2 lateral-movement) + a parameterizable `bench.py`; spike
+  SP-1 (KùzuDB half) proven — attack-path p99 well under the 500 ms budget at CI scale (the 1M-edge
+  acceptance runs the same `benchmark()` on a host). (4) the **ATT&CK/D3FEND ontology skeleton + R2
+  SHACL gate** — `ontology.py` adds the ATT&CK/D3FEND namespaces + IRI helpers and an `nf:FindingShape`
+  that (via `sh:or`) rejects any finding lacking a MITRE ATT&CK technique and/or D3FEND countermeasure,
+  enforcing ADR-0111 R2 ("a raw score alone is not a valid finding") in RDF; `provo_mapping.finding_to_rdf()`
+  builds the labelled finding node. This is the RDF/SHACL enforcement half complementing the JSON-schema
+  data contract in (1); `ontology.py`/`provo_mapping.py` at 100% coverage. (5) **capsule batch ingest** —
+  `provo_mapping.capsule_lineage_to_provo(capsule_dir)` maps an entire capsule's `lineage.jsonl` to one
+  PROV-O graph (defaulting a missing `capsule_run_id` to the capsule dir name) for a single SHACL-gated
+  ingest, reusing the same edge records the lineage importer consumes. (6) **`nova kg build-provenance`
+  CLI** (experimental) — SPKG's first user-facing surface: maps a capsule's lineage to PROV-O RDF,
+  SHACL-validates by default (exit 1 on invalid facts, ADR-0111 R11 ingest gate), and serializes
+  turtle/nt/json-ld to stdout or `-o`; prints a clear "install novafabric[spkg]" hint if the extra is
+  absent. (7) **build orchestration** `kg/spkg/build.py::build_spkg(capsule_dir, store)` — builds and
+  SHACL-gates the canonical PROV-O layer *before* rebuilding the operational KùzuDB LPG from the identical
+  capsule edge set (ADR-0111 R4 "the LPG holds no state not derivable from a capsule"; R11 gate — an
+  invalid canonical layer raises `SpkgValidationError` and leaves the store untouched). (8) **cross-vendor
+  entity resolution** `kg/spkg/entity_resolution.py` (spike SP-3, F1 = 1.0 on a two-vendor fixture) — a
+  self-contained probabilistic (Fellegi–Sunter) linker on the Python standard library (`difflib` + a
+  union-find), **not Splink**: Splink (direct license MIT) was evaluated and rejected because Splink 4.x
+  **hard-depends on igraph (GPL-2.0, Tier C)** — a reminder that the ADR-0024 license gate must audit the
+  *full transitive dependency tree*, not just the top-level package (ADR-0111 §License verification updated).
+  (9) **`nova kg build` CLI** — the spec's Phase-1-named command; wraps `build_spkg` to populate both SPKG
+  layers from a capsule (canonical PROV-O SHACL-gated + operational KùzuDB LPG at `--path`, default
+  `.nova/kg/spkg.kuzu`), complementing `nova kg build-provenance` (which *exports* the RDF). This completes
+  the no-dependency Phase-1 SPKG build surface.
+  (9) **unsupervised edge-level anomaly detector** `kg/spkg/detect.py` (spike SP-2, baseline) — a
+  self-contained, **dependency-free** structural-outlier scorer that learns the fleet's own
+  edge/entity/kind-triple distribution and flags high-surprisal edges (no labels, edge-level); on a
+  benign fleet with injected CALDERA-style attack edges (`tool:shell`, `dataset:aws_credentials`) the
+  malicious edges rank in the top-k, and `to_findings()` emits schema-valid AnomalyFinding records with
+  ATT&CK mapping (shell→T1059.004, creds→T1078) — proving the detection→finding→explanation pipeline.
+  (10) **`nova kg detect` CLI** exposes that detector: ranks a capsule's most anomalous edges (self- or
+  `--baseline`-corpus-baselined) as a Rich table (with an ATT&CK column) or `--json` `AnomalyFinding`
+  records — **needs no optional extra** (the detector is pure standard-library). This is SPKG's detection
+  surface — the security core — reachable from the CLI with no extra install.
+  The GNN upgrade (PyGOD DOMINANT autoencoder + TGN) is deferred: PyGOD is BSD-2 but its detectors need
+  torch+torch_geometric, whose wheels bundle third-party components requiring a full distribution-license
+  audit under ADR-0024 (and torch is ~1 GB) — a resource-gated slice. The 1M-edge host benchmark also
+  remains resource-gated. (10) **`nova kg attack-path` + `blast-radius` CLI** (experimental) — the
+  security-analyst query surface: `attack-path --from kind:ref --to kind:ref` runs the KùzuDB
+  shortest-path lateral-movement query (UC2), and `blast-radius --entity kind:ref [--upstream]` lists
+  downstream impact (UC3 — e.g. everything a poisoned model touched) or upstream provenance, both built
+  from a capsule's lineage. (11) **`POST /api/kg/detect` serve endpoint** — read-only server-side
+  dashboard parity for `nova kg detect` (body `{capsule_path, top}`; resolves a bare `run_id`; returns
+  `{ok, count, findings}` with ATT&CK-labelled findings), behind the same token + localhost host guard as
+  the other `/api/kg/*` routes; needs no extra. (12) **`POST /api/kg/attack-path` + `/api/kg/blast-radius`
+  serve endpoints** — read-only server-side parity for the `nova kg attack-path`/`blast-radius` CLIs
+  (UC2 lateral-movement shortest-path + UC3 downstream/upstream impact over the KùzuDB LPG; need `[spkg]`).
+  The consuming dashboard React panels are a follow-up on the `nova-dashboard` build toolchain. This closes the feasible-in-sandbox Phase-1 + P2 work; what remains
+  (SP-1 1M-edge host run, Apache AGE half, the torch-gated GNN detector, UC4 hybrid retrieval, UC6 ledger
+  anchoring) is resource-gated. Backed by a 151-tool + 44-paper open-source survey, independently
+  license-verified — with two transitive-license traps caught en route (Splink→igraph GPL; torch wheels).
+- **Standard outer envelopes — DSSE bundle wrap (NF-029, ADR-0096; experimental).**
+  First slice of BQ-W1-01: a new additive `src/novafabric/envelopes/` package with `dsse.py` —
+  `wrap_bundle(bundle_bytes, signer)` emits a DSSE envelope whose `payload` is the canonical Evidence
+  Bundle bytes verbatim (`payloadType: application/vnd.novafabric.bundle+json`), so upstream
+  `cosign verify-blob-attestation` can verify it with no NovaFabric dependency (wrap, don't replace).
+  Reuses the single DSSE writer (a generalized `dsse_sign_payload()` extracted from
+  `evidence/intoto.py`, behavior-preserving) — **no second DSSE code path**. `verify_bundle_envelope`
+  round-trips and detects tampering.
+  Also `envelopes/intoto.py` (NF-030): `capsule_statement()` builds a portable in-toto Statement
+  (`predicateType: novafabric.dev/capsule/v1`) whose `subject[]` are the capsule's per-file sha256
+  (ADR-0087 completeness) digests; supplying `expected_digests` fails emission with
+  `SubjectDigestMismatch` on any mismatch (never a verifying-but-wrong attestation). The Statement is
+  the DSSE payload via the existing `dsse_sign`. No CLI surface yet (`export-evidence --dsse` /
+  `nova verify-envelope` are a later slice).
+  Also `envelopes/slsa.py` (NF-031): `promotion_provenance()` emits a `https://slsa.dev/provenance/v1`
+  predicate (in-toto Statement) whose `buildDefinition` captures the sealed eval closure (container
+  digest, dataset hashes, seeds) and `runDetails` records the promotion decision + gate — additive, signed
+  as the DSSE payload via the existing `dsse_sign`. (NF-035 CloudEvents is already provided by the shipped
+  ADR-0081 `envelope/cloudevents.py`, which mirrors the Go collector byte-for-byte — not duplicated here.)
+  **`nova verify-envelope <envelope.json> --key <pem>`** verifies any of these DSSE envelopes with a local
+  Ed25519 key (accepts a public or private PEM), giving the same verdict a third party gets from stock
+  `cosign` — exit non-zero on tampering or wrong key. 25 envelope tests total, 100% coverage on all three
+  emitter modules + the CLI; ruff + mypy clean; evidence suite unaffected (59 tests green).
+  **`nova export-evidence --dsse`** now emits the DSSE outer envelope on the emit side: after the bundle
+  ZIP (and any RFC 3161 timestamp) is assembled, the final `manifest.json` bytes — which chain custody over
+  every artifact via their sha256 + `manifest_hash` — are DSSE-wrapped with the same signing key and written
+  to `<bundle>.dsse.json`, verifiable by `nova verify-envelope` or stock `cosign`. Fully opt-in: without the
+  flag the bundle output is byte-for-byte unchanged (21 export-evidence tests, all green).
+  **`nova promote direct --slsa-provenance`** completes the emit side: on a successful promotion it emits a
+  DSSE-signed `slsa.dev/provenance/v1` attestation (subject = sha256 of the registered asset spec; byproducts
+  record the decision + `significance-gate/v1` when gated) to `<name>-<version>.slsa.json` (or `--slsa-out`),
+  signed with the keyring Ed25519 key and verifiable by `nova verify-envelope`. Opt-in; promotion behavior is
+  otherwise unchanged. **BQ-W1-01 feature-complete** — all four standard envelopes (DSSE, in-toto, SLSA,
+  CloudEvents) now have library emitters + CLI surfaces; 50 tests across the feature, all green.
+  Adds **vendored standard schemas** (`envelopes/_schemas/intoto-statement-v1.schema.json`,
+  `slsa-provenance-v1.schema.json`) + `envelopes/schema.py` (`validate_intoto_statement`,
+  `validate_slsa_provenance`, `EnvelopeSchemaError`): emitter output is now asserted against the
+  in-toto Statement v1 and SLSA Provenance v1 required-field contracts (spec acceptance criterion —
+  "SLSA predicate validates against upstream SLSA v1 schema"), so field drift fails fast rather than
+  producing an envelope a stock in-toto/SLSA verifier would reject. `envelopes/` package now at 100%
+  coverage (25 tests).
+- **Evidence-grade evaluation — `Score` schema + signed eval cards (NF-002/NF-010, ADR-0099; experimental).**
+  Library-level implementation slices of the 100-feature program's Wave-1 evaluation track (BQ-W1-04):
+  - **`Score` record + `scores.jsonl`** (`src/novafabric/eval/scores.py` + `schemas/score-v1.schema.json`):
+    an additive, optional per-capsule score log. A `Score` binds
+    `(value, evaluator-identity, subject-span-digest, verdict)` — ULID id, `sha256:` content-addressed
+    `subject`/`eval_card_digest`, `value_type` (boolean/categorical/numeric) with strict value agreement,
+    `source` provenance (human/heuristic/code/judge), optional ADR-0080 `significance` block, and JSONL
+    reader/writer. **Additive/backward-compatible:** a capsule without `scores.jsonl` stays valid (SPK-EVAL-1).
+  - **Signed `EvalCard`** (`src/novafabric/eval/card.py` + `schemas/eval-card-v1.schema.json`): the
+    reproducibility key for a score — pins judge model (identity + `endpoint_ref` only, no hardcoded URL),
+    prompt version, rubric, dataset version and human-agreement calibration. Content-addressed
+    (`eval_card_digest` = sha256 over canonical JSON *excluding* the signature) and Ed25519-signed
+    **reusing the existing `trust/keyring` path (no new crypto dependency)**; judge cards must be complete.
+  - **Content-addressed eval-card registry** (`src/novafabric/eval/registry.py`): registers signed cards
+    by content digest in an additive `eval_cards` table inside the existing registry SQLite DB (no new
+    storage backend; the shared `AssetType` enum / promotion lifecycle is intentionally left unchanged —
+    a full `asset_type: eval-card` integration is a documented follow-up). `card_exists(digest)` is the
+    resolution hook a `Score` uses; registration is gated (unsigned/duplicate rejected).
+  - **CLI — `nova eval card` / `nova eval score`** (`src/novafabric/cli/eval_card.py`, wired into the
+    existing `nova eval` group): `card new/sign/register/show/verify` and `score add/list`. `verify` exits
+    non-zero on a broken signature, a local key mismatch, or a judge card missing calibration; `score add`
+    refuses an unregistered `--card` ref. Judge models are referenced by identity + a configurable endpoint
+    (`env:NOVA_JUDGE_ENDPOINT`) — no hardcoded URL. Documented in `docs/cli-reference.md` and promoted to
+    `experimental` in the capability map.
+  - **Capsule-seal integration** (`nova eval score add --capsule <dir>`): writes the score into the
+    capsule's `scores.jsonl`, which the capsule Merkle root already covers — so any Evidence Bundle built
+    from that capsule detects score tampering (NF-002 req 10). Verified end-to-end by
+    `tests/eval/test_score_sealing.py`. **No change to the sealing/evidence-bundle code was needed** — the
+    existing glob-based `capsule_merkle_root` and `copytree` staging already hash every capsule file.
+  69 tests, 100% coverage on the library modules; ruff + mypy clean; existing eval + evidence tests unaffected.
+  This completes the BQ-W1-04 implementation (Score schema → eval card → registry → CLI → seal).
+- **Statistical regression diff — substrate (NF-007, ADR-0099; extends ADR-0080; experimental).**
+  First slice of BQ-W1-05: `src/novafabric/eval/regression_diff.py` + `schemas/significance-diff-v1.schema.json`.
+  `significance_diff(baseline_outcomes, candidate_outcomes, …)` compares two run sets by **statistical
+  significance, not raw delta** — a Wilson interval per side plus a Wald SPRT over the candidate sequence,
+  yielding a three-valued verdict (`ACCEPT_H0`/`ACCEPT_H1`/`CONTINUE`) so a single-run dip cannot fire the
+  gate. `is_regression()`/`exit_code()` return exit `3` only on `ACCEPT_H1`. Optional numeric metrics add a
+  Welch mean-shift + `drift` boolean reported **separately** from the pass-rate verdict; an optional
+  `fingerprint` callable is a reserved NF-008 (W2) extension point. **Reuses the shipped ADR-0080
+  `wilson_interval`/`sprt_bernoulli` unchanged; stdlib-only, zero-token, offline.** No CLI surface yet —
+  `nova eval offline` + the promotion gate are the next slices. 13 tests, 100% coverage; ruff + mypy clean.
+- **`nova diff --significance` CLI** (`src/novafabric/cli/diff.py`; experimental): a statistical
+  regression-diff mode over stored `scores.jsonl` (or capsule dirs). Reads a boolean metric, prints Wilson
+  bands + the SPRT verdict, and **exits `3` only on a significant regression** (`accept_h1`) so CI can gate
+  on it — `0` for no-block, `2` for usage errors. Additive to the existing `nova diff` command (positional
+  refs are now optional; legacy asset/capsule diff behavior is unchanged — 42 existing diff tests still
+  pass). Documented in `docs/cli-reference.md`. 10 CLI tests; combined `cli/diff.py` coverage 98%; ruff + mypy clean.
+- **Trace-first zero-token offline eval — library (NF-009, ADR-0099; experimental).**
+  `src/novafabric/eval/offline.py`: structural assertions over an already-stored capsule that run with
+  **zero model calls**, each emitting a `code` `Score` bound to the capsule Merkle root. `run_coverage`
+  (fraction of declared tools exercised, over `tool-calls.jsonl`), `run_contract` (fraction of recorded
+  outputs satisfying a JSON-schema contract), and `run_metamorphic` (does a recorded transform preserve an
+  invariant). Built-in `code` eval cards give each check a reproducible digest. 11 tests, 100% coverage.
+- **`nova eval offline` CLI** (`src/novafabric/cli/eval_offline.py`, wired into the `nova eval` group;
+  experimental): runs the `coverage` or `contract` check over a `--capsule` and prints the resulting `code`
+  score; `--emit-score` appends it to `<capsule>/scores.jsonl` (sealed by the capsule Merkle root). Zero
+  model calls. Documented in `docs/cli-reference.md`. 7 CLI tests, 100% coverage; ruff + mypy clean; existing
+  eval commands unaffected. (The `metamorphic` check remains programmatic; its YAML check-spec CLI is planned.)
+- **`nova promote direct --significance-gate` can source from `scores.jsonl`** (NF-007; experimental).
+  New optional `--scores-file` / `--metric` flags: when a scores file is given, the ADR-0080 significance
+  gate runs its SPRT over the evidence-grade boolean metric sequence from that file instead of the
+  `eval_results` table. **Default behavior is byte-for-byte unchanged** — with no `--scores-file` the gate
+  reads `eval_results` exactly as before (`promote_asset`'s new `sig_scores_path` defaults to `None`).
+  `boolean_metric_outcomes()` is the pure bridge (in `eval/scores.py`). This completes the BQ-W1-05
+  implementation (regression-diff substrate → `nova diff --significance` → NF-009 offline lib + CLI →
+  promote-gate scores source). Existing promote/registry/eval suites unaffected (96 tests green).
+- **NovaFabric Claude Code plugin (`integrations/claude-plugin/`).** A distributable
+  Claude Code plugin so any Claude Code user can onboard or deploy NovaFabric in plain
+  language. Two skills: `novafabric-instrument` (add capture to a Python agent —
+  `pip install` → `nova init` → `nova capture` → `nova validate`/`verify`) and
+  `novafabric-deploy` (deploy `nova serve` to Docker or Kubernetes via the published
+  `ghcr.io/novafabric/novafabric` image and `oci://ghcr.io/novafabric/charts/novafabric`
+  Helm chart). Repo-root `.claude-plugin/marketplace.json` makes the repo installable
+  via `/plugin marketplace add novafabric/novafabric` → `/plugin install novafabric@novafabric`.
+  Both skills state NovaFabric's honest limits inline (capture is Python-only/self-hosted;
+  `nova serve` is experimental/read-only).
 - **Repo discoverability / LLM-SEO pass.** Make the public repository crawlable,
   understandable, and citable by search and AI answer engines:
   - GitHub repository metadata: keyword-rich About description, `homepageUrl`
-    (`https://novafabric.dev`), and 20 topics.
+    (`https://novafabric.ai`), and 20 topics.
   - `CITATION.cff` (Citation File Format 1.2.0) and a BibTeX entry in the README.
   - `SUPPORT.md`, `.github/FUNDING.yml`, and `.github/ISSUE_TEMPLATE/config.yml`
     (routes support questions to docs / Discussions / security disclosure).
@@ -21,10 +298,47 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
     to use** sections; PyPI version badge.
 
 ### Changed
+- **Positioning reframed from "self-contained" to "self-hosted, runs from laptop to
+  cluster"** across the README, GitHub About, `llms.txt`, `CITATION.cff`, the website
+  (`index.astro`, `concepts.astro`), and the Claude plugin docs. "Self-contained" read as
+  a single-user / non-production limitation; the self-hosted framing reflects server
+  mode (OIDC/RBAC), multi-target runners (Docker/K8s/Slurm), and the data-sovereignty
+  benefit (your run data never leaves your infrastructure).
 - README status corrected from `pre-alpha` to **beta (v0.58.0)** with an honest
   stable-vs-experimental feature breakdown (was stale at "usable through v0.12").
+- Website structured data (`SoftwareApplication` JSON-LD) and hero badge corrected
+  from `0.7.0` to `0.58.0`.
 - `web/public/llms.txt` version corrected (`v0.7.0` → `v0.58.0`) and Python floor
   (`3.11+` → `3.12+`) to match `pyproject.toml`.
+- **Docs discoverability for the five experimental supply-chain / eval-integrity / OTel
+  surfaces.** These were fully covered in `docs/cli-reference.md` but absent from every
+  entry-point doc a new user reads first. Added a hands-on **feature-tour §17 "Prove
+  supply-chain provenance & eval integrity"** covering dataset provenance cards (NF-058),
+  benchmark-contamination checks (NF-028), SLSA-for-ML promotion (NF-057), OTel GenAI span
+  export (NF-032/033), and OpenLineage run facets (NF-036/037); wired matching
+  completeness entries into `docs/user-guide.md` (`nova capture --emit-otel-genai`,
+  `nova lineage emit-openlineage --with-facets/--otel-correlation`,
+  `nova eval contamination-check`, `nova promote direct --slsa-ml-profile`), a run-facets
+  concept note in `docs/concepts.md`, and next-step pointers from
+  `docs/getting-started.md`. All five carry the same `experimental` label as the
+  CHANGELOG; no feature is presented as stable.
+
+### Security
+- **Dependency advisories patched across all three ecosystems (Dependabot).**
+  - pip (`pyproject.toml` bounds + `uv.lock`): `cryptography` → 48.0.1,
+    `pyjwt` → 2.13.0, `python-multipart` → 0.0.32, and transitive constraints
+    raised — `starlette` → 1.3.1 (via FastAPI), `joserfc` → 1.7.2, `pydantic-settings`
+    → 2.14.2. Verified in-env; the auth/JWT test suite (174 passed) exercises the
+    bumped `pyjwt`/`starlette` directly.
+  - npm (`web/package-lock.json`, all within existing ranges): `astro` 6.4.8,
+    `ws` 8.21.0, `js-yaml` 4.3.0, `vite` 7.3.6, `@babel/core` 7.29.7 — `npm audit`
+    reports 0 vulnerabilities.
+  - Go (`collector/go.mod`): `golang.org/x/net` 0.54.0 → 0.55.0 (indirect); built,
+    vetted, and full collector unit suite green on Go 1.25.
+
+### Fixed
+- `serve` test `test_health_ok` asserted a non-existent `status` key; `/api/health`
+  returns `{"ok": true, ...}`.
 
 ## [0.58.0] — 2026-06-25
 
@@ -53,7 +367,7 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Added
 - **Web — search- and AI-crawler visibility pass (`web/`).** The marketing site
-  (`novafabric.dev`) now ships the discoverability surface it was missing:
+  (`novafabric.ai`) now ships the discoverability surface it was missing:
   - **`sitemap`** generated at build time via `@astrojs/sitemap` (wired through
     `web/astro.config.mjs`).
   - **Structured data (JSON-LD)** on the landing page — `SoftwareApplication`,
@@ -469,7 +783,7 @@ See [`docs/releases/v0.49.0.md`](docs/releases/v0.49.0.md).
   causal-depth bias from the lineage store's `delegated_to`/`spawned`/`contains` edges
   (src-413) — then in a fine pass picks the single most likely responsible step and
   labels it with the new `AgentErrorTaxonomy` enum (`MEMORY` / `REFLECTION` / `PLANNING`
-  / `ACTION` / `SYSTEM` / `UNKNOWN`). Pure, read-only, local-first, zero new dependency,
+  / `ACTION` / `SYSTEM` / `UNKNOWN`). Pure, read-only, self-contained, zero new dependency,
   no hot-path write. `nova diagnose <run-id>` prints a ranked table (or `--output json`).
   Scores are relative ranking weights, not calibrated probabilities; runs with no error
   signal yield `UNKNOWN` rather than a fabricated culprit.
@@ -1477,7 +1791,7 @@ Gap-closure sprint — G-A correctness fixes: ECDSA P-256 signer alignment, DLQ 
 - **`design/architecture/architecture.md` — Data layer section** — comprehensive replacement of
   the old stub `## Storage` section: two Mermaid flow charts (prod + dev stacks),
   component inventory table (11 backends), "what data lives where" table, capsule
-  directory layout, local-first bootstrap CLI guide, and license notes.
+  directory layout, self-contained bootstrap CLI guide, and license notes.
 
 ### Changed
 

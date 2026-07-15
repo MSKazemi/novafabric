@@ -1,6 +1,146 @@
 # CLI Reference
 
-Both `nova` and `novafabric` refer to the same binary.
+Both `nova` and `novafabric` refer to the same binary. NovaFabric is a
+self-hosted, Apache-2.0 command-line toolkit that **captures, replays, diffs,
+and audits** AI-agent and model runs. Every command works locally, without a
+server, without accounts, and without network access to any NovaFabric-operated
+service.
+
+## What you will learn
+
+This page is the complete reference for the `nova` CLI: every command, every
+flag, every exit code, and the environment variables that configure them. It is
+organized around the five NovaFabric primitives, so you can find the command by
+knowing what you are trying to do:
+
+- **Capture** a run into a portable, secret-redacted **Run Capsule** — see
+  [Capture commands](#capture-commands-v02).
+- **Replay** that capsule in one of four honest modes, or **diff** two runs as a
+  CI gate — see [Replay commands](#replay-commands-v03).
+- Trace **Lineage** (provenance, blast-radius, replay-chain, time-travel) and
+  emit OpenLineage — see [Lineage commands](#lineage-commands-v04).
+- Build a signed **Evidence Bundle** an auditor can verify offline with only
+  `sha256sum` and an ed25519 verifier — see
+  [Trust layer commands](#trust-layer-commands-v04).
+- Manage the **Asset Registry** and its eval-gated, maker-checker promotion
+  lifecycle — see [Registry commands](#registry-commands-v01) and
+  [Policy and governance](#policy-and-governance-v08).
+
+### Getting the help you need at the terminal
+
+Every command self-documents. When a detail here is ambiguous, the terminal is
+the source of truth:
+
+```bash
+nova --help              # top-level command list
+nova capture --help      # any sub-command's flags, defaults, and examples
+nova <group> <cmd> --help
+nova --version           # installed NovaFabric version
+nova --install-completion  # shell tab-completion for commands, flags, and enums
+```
+
+### Maturity legend
+
+NovaFabric has shipped v0.1–v0.9 (and point releases beyond). Most surfaces are
+**experimental** in the sense that they work today and are covered by tests, but
+their interfaces may change before the v1.0 on-disk schema freeze. This
+reference labels each capability so you never mistake intent for implementation:
+
+| Label | Meaning |
+|---|---|
+| **works today** | Implemented in `main`; tests pass; usable now |
+| **experimental** | Implemented and tested, but the interface may change before v1.0 |
+| **planned** / **future** | Documented design intent only — **not implemented**. Never invoke as if it exists. |
+
+A handful of sections below describe **planned** cluster-scale surfaces (for
+example, the NovaSeal signing service and the live topology dashboard). They are
+included so the reference is complete about direction, and are marked
+accordingly. Local capture, replay, diff, lineage, and Evidence Bundles never
+require any of them.
+
+## Command index
+
+Commands grouped by primitive and task. Each entry links to its full section.
+
+### Capture and proxies
+
+| Command | Purpose |
+|---|---|
+| [`nova init`](#setup-v038) | Set up a local installation and signing keypair |
+| [`nova capture`](#nova-capture-cmd) | Wrap any command; record it as a Run Capsule |
+| [`nova validate`](#nova-validate-path) | Validate a capsule or an asset spec |
+| [`nova api-proxy`](#nova-api-proxy-v064) | Transparent LLM API proxy for non-Python clients |
+| [`nova mcp-proxy`](#nova-mcp-proxy-experimental-v05x) | Transparent MCP stdio capture proxy |
+| [`nova suggest-register`](#nova-suggest-register-capsule-ref-options) | Suggest assets to register from captured evidence |
+
+### Replay, diff, and diagnose
+
+| Command | Purpose |
+|---|---|
+| [`nova replay`](#nova-replay-capsule) | Re-run a capsule (forensic / mocked / semantic / exact) |
+| [`nova diff`](#nova-diff-capsule-a-capsule-b) | Structurally compare two capsules; CI regression gate |
+| [`nova diagnose`](#nova-diagnose-run-id) | Attribute a failed run to its responsible step |
+
+### Lineage
+
+| Command | Purpose |
+|---|---|
+| [`nova lineage provenance`](#nova-lineage-provenance) | What a node depends on (forward) |
+| [`nova lineage blast-radius`](#nova-lineage-blast-radius) | What depends on a node (backward) |
+| [`nova lineage replay-chain`](#nova-lineage-replay-chain) | Trace a run back to its original capture |
+| [`nova lineage time-travel`](#nova-lineage-time-travel) | Lineage state as of a timestamp |
+| [`nova lineage emit-openlineage`](#nova-lineage-emit-openlineage) | Emit OpenLineage 2.0.2 events |
+
+### Trust layer and evidence
+
+| Command | Purpose |
+|---|---|
+| [`nova scan-secrets`](#nova-scan-secrets-capsule) | Report secrets/PII in a capsule's redaction proof |
+| [`nova redact`](#nova-redact-capsule) | Re-scan and update a capsule's redaction proof |
+| [`nova export-evidence`](#nova-export-evidence-capsule---output-bundlezip) | Build a signed Evidence Bundle ZIP |
+| [`nova verify-envelope`](#nova-verify-envelope-envelopejson---key-pem) | Verify a DSSE envelope's Ed25519 signature |
+| [`nova assure`](#nova-assure-capsule-path-v025-e-10) | OWASP LLM Top 10 evidence checks |
+| [`nova verify`](#nova-verify-capsule) | Verify a capsule's NovaSeal seal (experimental) |
+
+### Registry, promotion, and evaluation
+
+| Command | Purpose |
+|---|---|
+| [`nova register`](#nova-register-specyaml) / [`nova list`](#nova-list---type-type---status-status---stale---stale-days-n) / [`nova inspect`](#nova-inspect-nameversion) | Register and browse assets |
+| [`nova promote`](#nova-promote) | Direct or maker-checker promotion through the lifecycle |
+| [`nova rollback`](#nova-rollback-name---actor-id) / [`nova unregister`](#nova-unregister-nameversion) | Roll back or remove asset versions |
+| [`nova eval`](#nova-eval-agentversion) | Run and compare evaluation suites |
+| [`nova approve`](#nova-approve-nameversion) | Approve a `pending_approval` asset |
+
+### Compliance and governance exports
+
+| Command | Regulation |
+|---|---|
+| [`nova export-annex-iv`](#nova-export-annex-iv-capsule---output-dir-dir---deployment-id-id) | EU AI Act Annex IV |
+| [`nova export-nis2`](#nova-export-nis2-capsule---output-file---incident-id-id) | NIS2 Directive Art. 23 |
+| [`nova export-ropa`](#nova-export-ropa-capsule---output-file) | GDPR Art. 30 RoPA |
+| [`nova export-nist-rmf`](#nova-export-nist-rmf-capsule---output-file) | NIST AI RMF 1.0 |
+| [`nova classify run`](#nova-classify-run) | EU AI Act / NIST RMF / OMB risk tier |
+| [`nova audit map`](#nova-audit-map) / [`nova audit report`](#nova-audit-report) | Multi-profile control coverage |
+
+> The compliance surfaces above produce **evidence that supports** compliance
+> workflows. They do not certify or guarantee compliance with any regulation.
+> See the disclaimers on each command.
+
+### Server mode and storage
+
+| Command | Purpose |
+|---|---|
+| [`nova serve --experimental`](#nova-serve---experimental) | Read-only local dashboard (loopback, single-user) |
+| [`nova server start`](#nova-server-start) | Multi-user REST API (Postgres/SQLite, OIDC, RBAC) |
+| [`nova login`](#nova-login) / [`nova logout`](#nova-logout) | Authenticate with a NovaFabric server |
+| [`nova doctor`](#nova-doctor---check-storage) | Installation and storage diagnostics |
+| [`nova migrate-to-postgres`](#nova-migrate-to-postgres) | Migrate the local SQLite registry to Postgres |
+
+For everything else — the knowledge graph, energy receipts, the accountability
+ledger, HPC collector binaries, and the full environment-variable table — use
+your browser's find, or jump to
+[Environment variables](#environment-variables).
 
 ---
 
@@ -61,6 +201,8 @@ Options:
 - `--mark-provenance` — write a C2PA synthetic-content provenance marker (`c2pa-manifest.json`, with the `c2pa.ai.generated: true` EU AI Act Art.50 disclosure) into the capsule when the run produces model output. The marker is written before NovaSeal so it is covered by the capsule signature (ADR-0074). Opt-in; non-blocking. Example: `nova capture --mark-provenance python agent.py`
 - `--fast-emit` — install capture hooks **lazily** in the workload subprocess (ADR-0092 slice B). The default path imports every present SDK (`openai`, `mcp`, `requests`, …) at startup purely to patch it — measured at ~717 ms for `openai`, ~340 ms for `mcp`, paid even if the workload never calls them. `--fast-emit` patches each SDK only if/when the workload itself imports it, so unused SDKs are never imported by capture. **Measured (warm-fs, orchestrator):** a compute-only workload **2068 ms → 464 ms (−78 %)**; an `import openai` workload **2223 ms → 1509 ms (−32 %)** — the saving scales inversely with SDK usage. Fidelity is unchanged. Runs in-process (not delegated to the warm daemon). Example: `nova capture --fast-emit python agent.py`
 - `--emit-spool` — **experimental** (ADR-0092 slice C). Also write run-boundary EventEnvelope v1 records (`run.start`, `capsule.finalize`) to the local event spool (`$NOVAFABRIC_SPOOL_DIR`, default `$NOVAFABRIC_HOME/spool`) so the resident `novafabric-spool-forwarder` can drain and forward them to the collector tier over NATS JetStream. Off by default; fail-open; **edge-keyless** — signing happens at the hub, not here (hub-sign default). Runs in-process (not delegated to the warm daemon). Example: `nova capture --emit-spool python agent.py`
+- `--emit-otel-genai` — **experimental** (NF-032, [ADR-0098](../design/adr/0098-otel-genai-canonical-spans.md)). After capture, emit the run outward as OTel GenAI `gen_ai.*` spans (OTLP-shaped JSON) to `<capsule>/otel-genai-spans.json`: a root `invoke_agent` span plus a `chat` client span per model call and an `execute_tool` span per tool call. Every span carries `novafabric.mapping_version` and an honest `novafabric.semconv_maturity` (`stable` on LLM client spans, `development` on agent/tool spans — OTel GenAI agent spans are Development-status). Additive; runs in-process. Example: `nova capture --emit-otel-genai python agent.py`
+- `--capture-content` — **opt-in** (NF-033). With `--emit-otel-genai`, include request messages in the emitted spans, routed through the ADR-0009 secret-redaction gate and size-bounded (ADR-0021 span cap). Off by default — spans carry no message/choice content unless this is set.
 
 Use `--` to separate `nova capture` options from commands that contain flags:
 
@@ -592,13 +734,15 @@ nova lineage import <path>
 ### nova lineage emit-openlineage
 
 ```
-nova lineage emit-openlineage <path> [--output TARGET]
+nova lineage emit-openlineage <path> [--output TARGET] [--with-facets] [--otel-correlation]
 ```
 
 Emit capsule runs as OpenLineage 2.0.2 events.
 
 - `<path>` — a single capsule directory or a parent `runs/` directory (all capsules inside are emitted)
 - `--output, -o TARGET` — destination: `-` for stdout, an `http://...` URL, or a file path
+- `--with-facets` — **(NF-036, [ADR-0096](../design/adr/0096-standard-outer-envelopes.md))** attach NovaFabric custom run facets to the COMPLETE event: `novafabric_capsule` (capsule id/run id/hash), `novafabric_eval` (verdict `passed`/`failed`/`n/a` + suite + metrics), `novafabric_policy` (promotion gate + decision), and the standard `executionParameters` facet (reproducibility run params). Additive — a consumer that ignores custom facets sees unchanged core OL events. Every facet is schema-validated before emission.
+- `--otel-correlation` — also attach the `novafabric_otel_correlation` facet (`trace_id`/`span_id`) when the capsule records them, so a lineage node links to its OTel GenAI spans (NF-037). Implies `--with-facets`.
 
 If `--output` is omitted, the target is resolved from `OPENLINEAGE_URL` → `OPENLINEAGE_FILE` → stdout.
 
@@ -608,6 +752,9 @@ nova lineage emit-openlineage .novafabric/runs/01HX.../  --output -
 
 # HTTP endpoint (Marquez, Atlan, etc.)
 nova lineage emit-openlineage .novafabric/runs/ --output http://marquez:5000
+
+# With NovaFabric custom facets + OTel correlation
+nova lineage emit-openlineage .novafabric/runs/01HX.../ --with-facets --otel-correlation
 
 # Environment variable
 OPENLINEAGE_URL=http://marquez:5000 nova lineage emit-openlineage .novafabric/runs/
@@ -835,6 +982,14 @@ Options:
 - `--custodian-provenance {novaseal-identity|oidc|operator_declared}` — provenance of the
   custodian identity; only `novaseal-identity`/`oidc` can make a bundle
   `self-authenticating` (used with `--with-custody`).
+- `--dsse` (experimental, NF-029/[ADR-0096](../design/adr/0096-standard-outer-envelopes.md)) —
+  also emit a **standard DSSE outer envelope** wrapping the final bundle manifest, written to
+  `<bundle>.dsse.json` (payloadType `application/vnd.novafabric.bundle+json`, signed with the
+  same `--key`). The manifest chains custody over every artifact via their sha256 +
+  `manifest_hash`, so the envelope transitively covers the whole bundle. Verify it with
+  `nova verify-envelope` or stock `cosign verify-blob-attestation`. **Opt-in:** without this flag
+  the bundle output is byte-for-byte unchanged. Emitted after any `--timestamp` rewrite, so it
+  wraps the final canonical manifest.
 
 When the capsule has an `energy-receipts.jsonl` stream, a signed `PREDICATE_ENERGY` energy
 attestation is added to the bundle automatically (experimental, ADR-0093).
@@ -970,10 +1125,38 @@ openssl req -new -x509 -key ~/.novafabric/seal.key -days 365 \
 
 ---
 
+### nova verify-envelope \<envelope.json\> --key \<pem\>
+
+Verify the Ed25519 signature on a **standard outer envelope** — a DSSE envelope produced
+by NovaFabric's `envelopes/` emitters (Evidence Bundle wrap, in-toto capsule Statement, or
+SLSA provenance). Gives the same verdict a third party gets from stock
+`cosign verify-blob-attestation`, with no NovaFabric dependency on the verifier side.
+**experimental** — NF-029/030/031, [ADR-0096](../design/adr/0096-standard-outer-envelopes.md).
+
+```bash
+nova verify-envelope bundle.dsse.json --key seal.pub.pem      # public-key PEM
+nova verify-envelope capsule.intoto.json --key seal.key       # private-key PEM also accepted
+```
+
+Options:
+- `--key PATH` — PEM-encoded Ed25519 key (public or private; the public half is derived from a private PEM). **Required.**
+
+Exit codes: `0` (signature verifies), `1` (signature failure, tampered payload, or malformed
+envelope), `2` (key is not an Ed25519 key / usage error).
+
+The envelope's inner artifact is carried verbatim as the DSSE `payload` (**wrap, don't
+replace**) — the original bundle/statement bytes are never rewritten. This command checks the
+outer signature only; use `nova verify` for a capsule's full NovaSeal seal (signature +
+RFC 3161 timestamp + Merkle inclusion). `nova export-evidence --dsse` emits a bundle DSSE
+envelope today; the `promote --slsa-provenance` emit flag is still **planned** (its SLSA library
+emitter ships today).
+
+---
+
 ### nova incident (experimental, v0.50.0, ADR-0088)
 
 First-class incident records with an EU AI Act Art. 73 deadline clock and
-two export regimes (OECD AIM + NIS2). Local-first: the record lives in
+two export regimes (OECD AIM + NIS2). Self-contained: the record lives in
 `$NOVAFABRIC_HOME/incidents.db` (override: `NOVAFABRIC_INCIDENTS_DB_PATH`).
 Deadline outputs are operational aids, not legal advice.
 
@@ -1296,6 +1479,12 @@ nova aibom status --capsules-dir ~/novafabric-data/capsules
 nova aibom generate .novafabric/runs/01HX.../          # generate one (skips if present)
 nova aibom generate --all                              # batch: every capsule missing an aibom.json
 nova aibom generate --all --force                      # batch: refresh all (overwrite)
+# NF-056 CycloneDX 1.7 extensions (opt-in; default output unchanged):
+nova aibom generate <cap> --citations --force          # bind components to capsule/evidence digests
+nova aibom generate <cap> --tlp TLP:AMBER --force      # distribution marker in metadata.properties
+nova aibom generate <cap> --model-card auto --force    # model-card externalReference per model
+nova aibom generate <cap> --no-include-datasets --force # suppress type:data components
+nova aibom validate <cap>/aibom.json                   # structural + binding check (exit 1 on error)
 ```
 
 Options (`nova export-aibom`):
@@ -1309,6 +1498,34 @@ Options (`nova aibom generate`) — **per-deployment automation (CRA)**:
 - `--all` — batch-generate across `--capsules-dir`, skipping capsules that already have an `aibom.json`
 - `--capsules-dir PATH` — capsule store for `--all` (default: `$NOVAFABRIC_CAPSULE_DIR` or `$NOVAFABRIC_HOME/capsules`)
 - `--force` — regenerate even when an `aibom.json` already exists
+- `--citations` — **(NF-056, [ADR-0105](../design/adr/0105-ai-supply-chain-bom.md))** bind each model/dataset component to its source capsule/evidence digest (+ ADR-0097 inclusion proof when the manifest records one). Default off (byte-stable output).
+- `--tlp TLP:CLEAR|GREEN|AMBER|AMBER+STRICT|RED` — TLP 2.0 distribution marker in `metadata.properties` (`novafabric:tlp`). Default: none.
+- `--model-card auto|<path>` — add a `model-card` externalReference to each model component (`auto` derives a `registry://` URI). Default: none.
+- `--include-datasets / --no-include-datasets` — emit `type:data` dataset components from lineage (default on).
+
+Options (`nova aibom validate <bom.json>`) — **NF-056**: structural CycloneDX 1.7 + NovaFabric-binding check (specVersion/bomFormat/serialNumber, TLP marker validity, per-component name/bom-ref/hash-alg/citation digest). Exit `0` valid, `1` on validation errors, `2` on a missing/malformed file. `--json` emits `{valid, errors}`.
+
+#### nova dataset provenance-card \<asset\> (experimental)
+
+> **Experimental — NF-058, [ADR-0105](../design/adr/0105-ai-supply-chain-bom.md).** Emit (and optionally
+> sign) a dataset provenance card recording a dataset's source, version, content hash, and **transform
+> history**. Feeds the AI-BOM (NF-056) and the SLSA-for-ML attestation (NF-057). Op digests only — never raw
+> values, prompts, or cell contents.
+
+```bash
+nova dataset provenance-card dataset:gaia@2026-05 \
+    --source oci://reg/gaia:2026-05 --version 2026-05 --hash b17a... \
+    --license CC-BY-4.0 --tlp TLP:CLEAR --registry-digest b17a... --sign
+# pull the transform history from a capsule's lineage derivation edges:
+nova dataset provenance-card dataset:x@1 --source oci://x --version 1 --hash <sha256> \
+    --from-capsule ./my-capsule --sign --out card.json
+```
+
+- `--source`, `--version`, `--hash` (required) — the dataset's source URI, version label, and content sha256.
+- `--from-capsule <dir>` — derive `transformHistory[]` from the capsule's `lineage.jsonl` derivation edges (each `signedOpDigest` is the content hash of the recorded edge).
+- `--license`, `--tlp`, `--registry-digest`, `--retrieved-at` — optional card fields.
+- `--sign [--identity <id>]` — Ed25519-sign the card with the keyring key (reuses the NovaSeal/Evidence-Bundle path). The signature is taken over the canonical-JSON body excluding the signature block. **An unsigned card is schema-invalid** — a signed card is evidence.
+- `--out, -o <path>` — write the card JSON (default: stdout).
 
 #### nova export-c2pa \<capsule_dir\>
 
@@ -1477,9 +1694,36 @@ gate. Default hypotheses are `p0=0.9, p1=0.7, alpha=0.05, beta=0.05` (overridabl
 via the `promote_asset()` API). The flag is opt-in: omitting it preserves the
 default single-passing-eval behavior. `--force` bypasses it.
 
+**`--scores-file <path> [--metric task_pass]`** (NF-007, experimental) — source the
+gate's pass/fail sequence from an evidence-grade `scores.jsonl` (the boolean `--metric`)
+instead of the `eval_results` table. Omitting `--scores-file` preserves the exact
+`eval_results` behavior.
+
+**`--slsa-provenance [--slsa-out <path>] [--identity <id>]`** (NF-031, experimental,
+[ADR-0096](../design/adr/0096-standard-outer-envelopes.md)) — on a **successful** promotion,
+also emit a DSSE-signed SLSA v1 provenance (`slsa.dev/provenance/v1`) recording the promotion
+decision (and the `significance-gate/v1` gate when `--significance-gate` is set). The subject
+digest is the sha256 of the registered asset spec; the attestation is signed with the keyring
+Ed25519 key for `--identity` (default: OS username) and written to `<name>-<version>.slsa.json`
+(or `--slsa-out`). Verify it with `nova verify-envelope`. **Opt-in:** without the flag, promotion
+behavior and output are unchanged.
+
+**`--slsa-ml-profile`** (NF-057, experimental, [ADR-0105](../design/adr/0105-ai-supply-chain-bom.md)) — with
+`--slsa-provenance`, emit the **SLSA-for-ML profile** instead of the generic one: the build type becomes
+`https://novafabric.dev/promote-ml/v1`, a `gate-rule` byproduct records the gating rule, and an `eval-verdict`
+byproduct carries the sha256 digest of the gating eval verdict — binding the promoted model to the exact eval
+result that justified it. Use for model assets. Still a valid `slsa.dev/provenance/v1` Statement, DSSE-signed
+and `nova verify-envelope`-verifiable.
+
 ```bash
 nova promote direct my-agent@v1.1 --to staging                       # default gate
-nova promote direct my-agent@v1.1 --to staging --significance-gate   # statistical gate
+nova promote direct my-agent@v1.1 --to staging --significance-gate   # statistical gate (eval_results)
+nova promote direct my-agent@v1.1 --to staging --significance-gate \
+    --scores-file cand/scores.jsonl --metric task_pass               # gate on evidence-grade scores
+nova promote direct my-model@1.0.0 --to staging --slsa-provenance \
+    --slsa-out my-model.slsa.json                                    # emit SLSA v1 provenance
+nova promote direct my-model@1.0.0 --to staging --slsa-provenance \
+    --slsa-ml-profile --slsa-out my-model.slsa.json                  # SLSA-for-ML (NF-057)
 ```
 
 The dashboard Promote dialog (`Registry tab → PROMOTE →`) maps to `nova promote direct`.
@@ -1786,10 +2030,134 @@ Built-in suites:
 
 Third-party suites register via `[project.entry-points."novafabric.eval_suites"]` in their `pyproject.toml`. Any load errors for registered adapters are shown inline without crashing the command.
 
+### nova eval card / nova eval score (experimental)
+
+> **Experimental — NF-002 / NF-010, [ADR-0099](../design/adr/0099-evidence-grade-evaluation.md).**
+> Evidence-grade evaluation: a **score is not a number — it is a signed record** binding
+> `(value, evaluator-identity, subject-span-digest, verdict)`. Library + CLI are shipped
+> behind the experimental label; the API may change and there is no dashboard UI yet.
+
+An **eval card** is the reproducibility key for a score: it pins the exact evaluator
+(judge model identity + endpoint reference, prompt version, rubric, dataset version,
+human-agreement calibration), is content-addressed (`eval_card_digest` = sha256 over the
+card's canonical JSON excluding its signature), and is Ed25519-signed with the local
+keyring. A **score** is one line of an additive, optional `scores.jsonl` file; a capsule
+without that file remains valid.
+
+```bash
+# create → sign → register an evaluator
+nova eval card new --source code --card-id exact-match --name "Exact Match" --out card.json
+nova eval card sign card.json                       # local Ed25519 keyring; prints digest
+nova eval card register card.json                   # into the eval-card registry (must be signed)
+nova eval card show   exact-match@0.1.0             # card JSON + digest
+nova eval card verify exact-match@0.1.0             # signature_ok / calibration → exit code
+
+# record and list evidence-grade scores
+nova eval score add  --card exact-match@0.1.0 --subject sha256:<hex> \
+                     --value true --value-type boolean --source code \
+                     --name exact_match --capsule ./my-capsule      # or --scores-file scores.jsonl
+nova eval score list --capsule ./my-capsule [--source judge] [--json]
+```
+
+`nova eval card verify` exits non-zero on a broken signature, a missing local key
+(`key_id` mismatch → exit 2), or missing calibration on a `judge` card. `nova eval score
+add` refuses a `--card` ref that does not resolve to a registered eval card. Judge models
+are referenced by identity + a configurable endpoint (`env:NOVA_JUDGE_ENDPOINT`); no
+external URL is hardcoded. **Writing a score into a `--capsule` directory seals it:** the
+score log (`scores.jsonl`) is covered by the capsule Merkle root, so any Evidence Bundle
+built from that capsule (`nova export-evidence`) detects score tampering — no separate
+re-seal step is required.
+
+### nova eval contamination-check (experimental)
+
+> **Experimental — NF-028, [ADR-0108](../design/adr/0108-eval-harness-interop.md).** Flags a capsule that
+> was run against a *contaminated* or *superseded* benchmark version (contamination silently inflates eval
+> scores). Detection/flagging only — no remediation.
+
+```bash
+# check a capsule's dataset_provenance facets (recorded status only)
+nova eval contamination-check ./my-capsule
+
+# resolve against a configurable known-bad hash registry (no default URL)
+nova eval contamination-check ./my-capsule --registry known-bad.json --json
+```
+
+Reads the additive `dataset_provenance` facets stored under the capsule's
+`extensions/dev.novafabric.dataset-provenance/` namespace (schema
+[`schemas/dataset-provenance-v1.schema.json`](../schemas/dataset-provenance-v1.schema.json)) — each carrying
+`name`, `version`, `dataset_hash`, `split_hash`, and `status` ∈ `current|superseded|contaminated|unknown`. The
+`--registry` JSON (`{"contaminated": [...], "superseded": [...]}` of `sha256:` hashes) upgrades a facet's status
+when a dataset/split hash matches; the registry never downgrades a facet's recorded severity. **Exit codes:**
+`4` when any dataset is contaminated or superseded (CI-gateable), `0` when all are current/unknown, `2` on a
+usage error.
+
+### nova eval offline (experimental)
+
+> **Experimental — NF-009, [ADR-0099](../design/adr/0099-evidence-grade-evaluation.md).** Trace-first
+> structural checks over an already-stored capsule that run with **zero model calls** and emit a `code`
+> score bound to the capsule Merkle root.
+
+```bash
+# did the run exercise every declared tool? (reads tool-calls.jsonl)
+nova eval offline --capsule ./my-capsule --check coverage --declared-tools search,fetch,write [--emit-score]
+
+# do recorded outputs satisfy a JSON-schema contract?
+nova eval offline --capsule ./my-capsule --check contract --schema out.schema.json [--field output] [--emit-score]
+
+# does a recorded input transform preserve a recorded invariant? (declarative check-spec)
+nova eval offline --capsule ./my-capsule --check metamorphic --spec check-spec.yaml [--emit-score]
+```
+
+`--emit-score` appends the resulting score to `<capsule>/scores.jsonl`, so it is sealed by the capsule
+Merkle root (see `nova eval score`). Because the capsule is already on disk, these checks spend **zero
+tokens** — they are pure arithmetic/validation over recorded events.
+
+The `metamorphic` check is driven by a declarative check-spec
+([`schemas/features/metamorphic-check-v0.schema.json`](../schemas/features/metamorphic-check-v0.schema.json)):
+records whose *input* collapses to the same value under `transform` form metamorphic pairs, and every
+pair's *output* must satisfy `invariant`. Example `check-spec.yaml`:
+
+```yaml
+records_file: tool-calls.jsonl   # where the (input, output) records live (default)
+input_field: input               # record field forming the pairing key (default)
+output_field: output             # record field the invariant is asserted over (default)
+transform: [lower, strip]        # identity | lower | strip | collapse_whitespace | remove_punctuation
+invariant: equal                 # equal | equal_normalized | numeric_close | length_within
+tolerance: 0                     # slack for numeric_close / length_within
+```
+
+A passing check means equivalent inputs produced consistent outputs (a zero-token consistency/robustness
+signal); it emits a boolean `code` score. A malformed spec or unknown transform/invariant exits `2`.
+
 ### nova diff \<name@v1\> \<name@v2\>
 
 Show field-level differences between two registered versions of an asset.
 Both arguments must contain `@` to trigger asset diff; otherwise capsule diff is used (see above).
+
+### nova diff --significance (experimental)
+
+> **Experimental — NF-007, [ADR-0099](../design/adr/0099-evidence-grade-evaluation.md); extends
+> [ADR-0080](../design/adr/0080-statistical-significance-eval-gate.md).** Compares two run sets by
+> **statistical significance, not raw delta**, so a single-run dip cannot fire a regression gate.
+
+Reads a boolean pass/fail metric from stored `scores.jsonl` files (or capsule directories) and computes a
+Wilson interval per side plus a Wald SPRT over the candidate sequence, yielding a three-valued verdict
+(`accept_h0` / `accept_h1` / `continue`). It is **offline and zero-token** — pure arithmetic over
+already-recorded outcomes; the workload is never re-run.
+
+```bash
+nova diff --significance \
+    --baseline base/scores.jsonl --candidate cand/scores.jsonl \
+    --metric task_pass [--p0 0.9 --p1 0.7 --alpha 0.05 --beta 0.05] [--json]
+```
+
+Exit codes: `0` = `accept_h0`/`continue` (no block), **`3` = `accept_h1`** (significant regression — gate
+CI on this), `2` = usage error (unknown metric, non-boolean metric, or invalid SPRT parameters).
+`--baseline`/`--candidate` accept either a `scores.jsonl` path or a capsule directory (reads
+`<dir>/scores.jsonl`). Known limitation: the SPRT assumes i.i.d. Bernoulli outcomes; correlated
+early-token cascades violate this (see ADR-0080). Related shipped surfaces: `nova eval offline`
+(zero-token structural checks) and `nova promote direct --significance-gate` (which can also read its
+sequence from a `scores.jsonl`).
 
 ---
 
@@ -3285,6 +3653,153 @@ Supported event types (read from `model-calls.jsonl`, `tool-calls.jsonl`, or `ev
 for the next auto-ingest tick.  Already-ingested directories are tracked in a
 SQLite sidecar (`ingest_tracker.db`) that persists across server restarts.
 
+### nova kg build-provenance
+
+**Experimental** (SPKG, [ADR-0111](../design/adr/0111-security-provenance-knowledge-graph.md); requires
+`pip install novafabric[spkg]`). Map a capsule's `lineage.jsonl` to a W3C **PROV-O** RDF graph — the
+canonical semantic layer of the Security & Provenance Knowledge Graph — and SHACL-validate it on the way
+out (ADR-0111 R11: invalid provenance facts are rejected). This is the provenance-graph *export* step; to
+populate the operational store used by `nova kg detect`, `attack-path`, and `blast-radius`, use
+`nova kg build`.
+
+```
+nova kg build-provenance CAPSULE_DIR [-o OUTPUT] [--format turtle|nt|json-ld] [--validate/--no-validate]
+```
+
+| Argument / Flag | Description |
+|---|---|
+| `CAPSULE_DIR` | Path to a capsule directory (reads its `lineage.jsonl`). |
+| `--output, -o PATH` | Write the RDF graph to this file (default: stdout). |
+| `--format` | RDF serialization: `turtle` (default), `nt`, or `json-ld`. |
+| `--validate / --no-validate` | SHACL-validate the graph (default on). Exit `1` if invalid facts are found (R11 ingest gate). |
+
+Exit codes: `0` (built, and SHACL-valid when `--validate`), `1` (SHACL validation failed, or the `[spkg]`
+extra is not installed).
+
+```bash
+nova kg build-provenance .novafabric/runs/01HXAY7M
+# ✓ SHACL-valid: 7 PROV-O triples from 01HXAY7M
+# @prefix nf: <https://novafabric.io/ns/spkg#> . …
+
+nova kg build-provenance .novafabric/runs/01HXAY7M -o prov.ttl --format turtle
+```
+
+Findings emitted by `nova kg detect` must map to a MITRE ATT&CK technique and/or a D3FEND
+countermeasure — a raw anomaly score alone is rejected by the `nf:FindingShape` SHACL constraint
+(ADR-0111 R2).
+
+### nova kg build
+
+**Experimental** (SPKG, [ADR-0111](../design/adr/0111-security-provenance-knowledge-graph.md); requires
+`pip install novafabric[spkg]`). Build **both** SPKG layers for a capsule: the canonical W3C **PROV-O**
+RDF (SHACL-gated) and the operational **KùzuDB labeled-property graph** (LPG) that powers attack-path /
+blast-radius traversal. The canonical layer is validated first (ADR-0111 R11) — on failure nothing is
+written to the operational store; the LPG is then rebuilt from the same capsule, so it holds no state not
+derivable from a capsule (R4). Where `build-provenance` *exports* the RDF, `build` *populates the stores*.
+
+```
+nova kg build CAPSULE_DIR [--path KG_PATH] [--validate/--no-validate]
+```
+
+| Argument / Flag | Description |
+|---|---|
+| `CAPSULE_DIR` | Path to a capsule directory (reads its `lineage.jsonl`). |
+| `--path` | KùzuDB path for the SPKG operational graph, separate from the Capsule KG (default: `.nova/kg/spkg.kuzu`; env `NOVA_SPKG_PATH`). |
+| `--validate / --no-validate` | SHACL-gate the canonical layer before writing the LPG (default on). Exit `1` if invalid facts are found (R11). |
+
+Exit codes: `0` (both layers built), `1` (SHACL validation failed, or the `[spkg]` extra is not installed).
+
+```bash
+nova kg build .novafabric/runs/01HXAY7M
+# ✓ SPKG built from 01HXAY7M (SHACL-valid): 7 PROV-O triples · 3 LPG edges → .nova/kg/spkg.kuzu
+```
+
+### nova kg detect
+
+**Experimental** (SPKG, [ADR-0111](../design/adr/0111-security-provenance-knowledge-graph.md)). Rank a
+capsule's most **anomalous lineage edges** with an unsupervised, label-free structural outlier detector:
+it learns the fleet's own edge distribution (from `--baseline` capsules, or the target itself) and flags
+edges with high combined surprisal (rare edge-type / entity / kind-triple). Every reported edge carries a
+MITRE ATT&CK technique (ADR-0111 R2 — never a bare score). This is the dependency-free SP-2 baseline; the
+PyGOD/TGN GNN detector is a later, resource-gated upgrade. **Needs no optional extra** (the detector is
+pure standard-library).
+
+```
+nova kg detect CAPSULE_DIR [--baseline DIR ...] [--top/-k K] [--json] [-o OUTPUT]
+```
+
+| Argument / Flag | Description |
+|---|---|
+| `CAPSULE_DIR` | Capsule directory to score (reads its `lineage.jsonl`). |
+| `--baseline DIR` | Capsule dir(s) to learn "normal" from — repeatable. Default: self-baseline on the target. |
+| `--top, -k` | Number of most-anomalous edges to report (default 5). |
+| `--json` | Emit schema-valid `AnomalyFinding` records instead of the table. |
+| `--output, -o PATH` | Write findings JSON here (with `--json`). |
+
+Exit code `0` (an anomaly scan is informational — a finding is not a failure).
+
+```bash
+nova kg detect .novafabric/runs/01HXAY7M -k 10
+# SPKG anomaly scan — 01HXAY7M (top 10, self-baseline)  → ranked table with ATT&CK column
+
+nova kg detect suspect/ --baseline normal-week-1/ --baseline normal-week-2/ --json -o findings.json
+```
+
+### nova kg attack-path
+
+**Experimental** (SPKG, [ADR-0111](../design/adr/0111-security-provenance-knowledge-graph.md); requires
+`pip install novafabric[spkg]`). Build the operational graph from a capsule's lineage, then run a bounded
+**shortest-path** query between two entities (UC2 lateral-movement). Entities are `kind:ref` pairs, e.g.
+`run:attacker`, `dataset:aws_credentials`. Informational — exit `0` whether or not a path exists.
+
+```
+nova kg attack-path CAPSULE_DIR --from KIND:REF --to KIND:REF [--max-depth N]
+```
+
+| Argument / Flag | Description |
+|---|---|
+| `CAPSULE_DIR` | Capsule directory whose `lineage.jsonl` builds the SPKG graph. |
+| `--from KIND:REF` | Source entity, e.g. `run:attacker`. Required. |
+| `--to KIND:REF` | Target entity, e.g. `dataset:aws_credentials`. Required. |
+| `--max-depth N` | Maximum path length to search (default: `6`). |
+
+```bash
+nova kg attack-path .novafabric/runs/01HXAY7M \
+  --from run:attacker --to dataset:aws_credentials
+# ⚠ Attack path found: run:attacker → … → dataset:aws_credentials in 3 hop(s)
+
+nova kg attack-path .novafabric/runs/01HXAY7M \
+  --from agent:a1 --to artifact:report.md --max-depth 4
+# ✓ No attack path from agent:a1 to artifact:report.md within 4 hop(s)
+```
+
+### nova kg blast-radius
+
+**Experimental** (SPKG, [ADR-0111](../design/adr/0111-security-provenance-knowledge-graph.md); requires
+`pip install novafabric[spkg]`). Build the operational graph from a capsule's lineage, then traverse the
+**impact / blast radius** of an entity (UC3 supply-chain propagation). `--downstream` (default) lists
+everything reachable *from* the entity — e.g. every run and artifact a poisoned model touched;
+`--upstream` lists the entity's provenance instead. Prints a Rich table of affected entities (kind, ref).
+
+```
+nova kg blast-radius CAPSULE_DIR --entity KIND:REF [--downstream|--upstream] [--max-depth N]
+```
+
+| Argument / Flag | Description |
+|---|---|
+| `CAPSULE_DIR` | Capsule directory whose `lineage.jsonl` builds the SPKG graph. |
+| `--entity KIND:REF` | Entity to analyse, e.g. `model:poisoned-model`. Required. |
+| `--downstream / --upstream` | `--downstream` (default): what this entity affects (blast radius, UC3). `--upstream`: what influenced it (provenance). |
+| `--max-depth N` | Maximum traversal depth (default: `6`). |
+
+```bash
+# What did the poisoned model touch? (downstream / impact)
+nova kg blast-radius .novafabric/runs/01HXAY7M --entity model:poisoned-model
+
+# Where did this artifact come from? (upstream / provenance)
+nova kg blast-radius .novafabric/runs/01HXAY7M --entity artifact:report.md --upstream
+```
+
 ### nova kg query
 
 Query models and tools called by a specific agent.
@@ -3801,3 +4316,62 @@ Authorization: Bearer <token>
 Response is the compiled CAE tree with backing states (SUPPORTED / UNSUPPORTED / CONTESTED /
 UNKNOWN). The React SafetyCaseTab panel that renders this is the remaining frontend
 follow-up (**not yet built**).
+
+---
+
+## Summary and next steps
+
+The `nova` CLI is a complete, self-hosted toolkit: capture a run, replay it,
+diff two runs, trace lineage, and export signed evidence — all locally, offline,
+with no accounts. A typical first pass through the five primitives looks like:
+
+```bash
+# 1. Capture — turn any command into a Run Capsule
+nova capture python agent.py
+
+# 2. Validate — confirm the capsule is schema-valid and secret-redacted
+nova validate .novafabric/runs/<ulid>/
+
+# 3. Replay — re-run against the recorded LLM/tool calls (default: mocked)
+nova replay .novafabric/runs/<ulid>/
+
+# 4. Diff — structurally compare two runs; fail CI on any regression
+nova diff .novafabric/runs/<ulid-a>/ .novafabric/runs/<ulid-b>/ --assert-no-regressions
+
+# 5. Trace — see what a run consumed and what it would impact
+nova lineage provenance <ulid>
+nova lineage blast-radius <ulid>
+
+# 6. Prove — build a signed Evidence Bundle an auditor can verify offline
+nova export-evidence .novafabric/runs/<ulid>/ --key ~/.novafabric/keys/ed25519.pem \
+  --output evidence.zip
+```
+
+The resulting `evidence.zip` verifies with only `sha256sum` and an ed25519
+verifier — no NovaFabric runtime required. The vendored schemas make it a time
+capsule: it still verifies years later against the same schemas it was built
+with.
+
+### Where to go from here
+
+- **Concepts and the five-primitive model** — see the project README and
+  [`docs/`](.) guides.
+- **Writing a capture hook plugin** — [`docs/integrations/writing-a-hook-plugin.md`](integrations/writing-a-hook-plugin.md).
+- **NovaSeal configuration** (signature + RFC 3161 timestamp + Merkle log) —
+  [`docs/novaseal-configuration.md`](novaseal-configuration.md).
+- **Server deployment** (Postgres, OIDC, RBAC) —
+  [`docs/ops/server-deployment.md`](ops/server-deployment.md).
+- **Dashboard capabilities and CLI-parity matrix** — [`docs/dashboard.md`](dashboard.md).
+
+### A note on what is planned versus shipped
+
+Several sections above (the NovaSeal signing **service**, the cluster-scale
+collector binaries, parent/child capsules, the production RLS MetadataStore, the
+object capsule store, lineage-at-scale, and the live topology dashboard) describe
+**planned or experimental** cluster-scale direction. They are documented here for
+completeness, but the local-first core — capture, validate, replay, diff,
+lineage, signed Evidence Bundles, the SQLite registry, and OPA/Rego promotion
+gates — is what works today and never depends on any of them.
+
+When in doubt, run `nova <command> --help`: the terminal is always the
+authoritative description of the installed version.

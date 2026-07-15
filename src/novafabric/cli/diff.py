@@ -8,6 +8,14 @@ from typing import Annotated, Any
 import typer
 from rich.console import Console
 
+from novafabric.eval.regression_diff import (
+    DEFAULT_ALPHA,
+    DEFAULT_BETA,
+    DEFAULT_P0,
+    DEFAULT_P1,
+    significance_diff,
+)
+from novafabric.eval.scores import SCORES_FILENAME, ScoreValueType, read_scores
 from novafabric.registry.service import AssetNotFoundError, get_asset
 
 
@@ -57,9 +65,66 @@ def _capsule_diff(
         raise typer.Exit(code=1)
 
 
+def _resolve_scores(path: Path) -> Path:
+    return path / SCORES_FILENAME if path.is_dir() else path
+
+
+def _read_outcomes(path: Path, metric: str) -> list[int]:
+    """Read a boolean metric from a scores.jsonl (or capsule dir) as a 0/1 sequence."""
+    scores = [s for s in read_scores(_resolve_scores(path)) if s.name == metric]
+    if not scores:
+        raise typer.BadParameter(f"no scores named {metric!r} in {path}")
+    outcomes: list[int] = []
+    for s in scores:
+        if s.value_type is not ScoreValueType.BOOLEAN:
+            raise typer.BadParameter(
+                f"metric {metric!r} must be a boolean pass/fail score for --significance"
+            )
+        outcomes.append(1 if s.value else 0)
+    return outcomes
+
+
+def _run_significance(
+    baseline: Path | None,
+    candidate: Path | None,
+    metric: str,
+    p0: float,
+    p1: float,
+    alpha: float,
+    beta: float,
+    as_json: bool,
+) -> None:
+    """NF-007: statistically-grounded regression diff over stored scores (zero-token)."""
+    if baseline is None or candidate is None:
+        raise typer.BadParameter("--significance requires --baseline and --candidate")
+    base = _read_outcomes(baseline, metric)
+    cand = _read_outcomes(candidate, metric)
+    try:
+        diff = significance_diff(base, cand, metric=metric, p0=p0, p1=p1, alpha=alpha, beta=beta)
+    except ValueError as exc:  # invalid p0/p1/alpha/beta from the SPRT primitive
+        raise typer.BadParameter(str(exc)) from exc
+    if as_json:
+        console.print_json(diff.model_dump_json())
+    else:
+        bw = diff.baseline.wilson
+        cw = diff.candidate.wilson
+        console.print(f"metric: {metric}")
+        console.print(f"baseline:  {diff.baseline.successes}/{diff.baseline.n}  "
+                      f"wilson=[{bw[0]:.3f}, {bw[1]:.3f}]")
+        console.print(f"candidate: {diff.candidate.successes}/{diff.candidate.n}  "
+                      f"wilson=[{cw[0]:.3f}, {cw[1]:.3f}]")
+        color = "red" if diff.is_regression() else "green"
+        console.print(
+            f"SPRT verdict: [{color}]{diff.sprt.verdict.value}[/{color}]  llr={diff.sprt.llr:.2f}"
+        )
+    code = diff.exit_code()
+    if code != 0:
+        raise typer.Exit(code=code)
+
+
 def diff_cmd(
-    ref_a: Annotated[str, typer.Argument(help="name@version  or  path/to/capsule-a")],
-    ref_b: Annotated[str, typer.Argument(help="name@version  or  path/to/capsule-b")],
+    ref_a: Annotated[str | None, typer.Argument(help="name@version  or  path/to/capsule-a")] = None,
+    ref_b: Annotated[str | None, typer.Argument(help="name@version  or  path/to/capsule-b")] = None,
     output_format: Annotated[
         DiffOutputFormat,
         typer.Option("--output-format", help="Output format.")
@@ -67,6 +132,21 @@ def diff_cmd(
     assert_no_regressions: Annotated[
         bool, typer.Option("--assert-no-regressions", help="Exit 1 if any changes detected")
     ] = False,
+    significance: Annotated[
+        bool, typer.Option("--significance", help="Statistical regression diff (NF-007).")
+    ] = False,
+    baseline: Annotated[
+        Path | None, typer.Option(help="Baseline scores.jsonl or capsule dir (--significance).")
+    ] = None,
+    candidate: Annotated[
+        Path | None, typer.Option(help="Candidate scores.jsonl or capsule dir (--significance).")
+    ] = None,
+    metric: Annotated[str, typer.Option(help="Boolean metric name for the gate.")] = "task_pass",
+    p0: Annotated[float, typer.Option(help="Acceptable pass-rate H0.")] = DEFAULT_P0,
+    p1: Annotated[float, typer.Option(help="Regression-threshold pass-rate H1.")] = DEFAULT_P1,
+    alpha: Annotated[float, typer.Option(help="False-positive budget.")] = DEFAULT_ALPHA,
+    beta: Annotated[float, typer.Option(help="False-negative budget.")] = DEFAULT_BETA,
+    sig_json: Annotated[bool, typer.Option("--json", help="Emit the diff record as JSON.")] = False,
 ) -> None:
     """Compare two asset versions or two run capsules.
 
@@ -83,12 +163,19 @@ def diff_cmd(
       # Compare two registered asset versions
       nova diff my-agent@v1.0 my-agent@v1.1
 
-      # Output GitHub annotation format (for CI)
-      nova diff --output-format github-annotation runs/run-01/ runs/run-02/
+      # Statistical regression diff over stored scores (exit 3 on a significant regression)
+      nova diff --significance --baseline base/ --candidate cand/ --metric task_pass
 
       # Fail CI if any difference is found
       nova diff --assert-no-regressions my-agent@v1.0 my-agent@v1.1
     """
+    # NF-007 statistical regression diff — a distinct mode with no positional refs.
+    if significance:
+        _run_significance(baseline, candidate, metric, p0, p1, alpha, beta, sig_json)
+        return
+    if ref_a is None or ref_b is None:
+        raise typer.BadParameter("provide two refs to compare, or use --significance")
+
     # Route to capsule diff if neither arg looks like an asset ref (name@version)
     if "@" not in ref_a or "@" not in ref_b:
         _capsule_diff(

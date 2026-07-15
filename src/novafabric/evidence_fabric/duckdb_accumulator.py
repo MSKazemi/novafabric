@@ -1,4 +1,4 @@
-"""DuckDB Arrow accumulator for Evidence Fabric local-first mode.
+"""DuckDB Arrow accumulator for Evidence Fabric self-contained mode.
 
 Provides in-process DuckDB storage for lineage edges and capsule events,
 with PyArrow batch writes and aggregation queries.  No external ClickHouse

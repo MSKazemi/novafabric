@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/features/eval-card-v0.schema.json",
+  "$comment": "schema_version 0.x (v0, not frozen); tracks design/spec/features/NF-002-010-signed-eval-cards.md. Standalone additive/optional fragment referenced from a capsule via extensions/. Does not modify run-capsule.schema.json.",
+  "title": "SignedEvalCard",
+  "description": "Additive/optional — v0, not frozen. A content-addressed, signed eval card (NF-002): the reproducibility key an evaluator's Score references by digest. Carries evaluator identity, judge model + version, prompt version, rubric, dataset version, and a human-agreement calibration summary. eval_card_digest = sha256 over canonical-JSON of this object with the 'signature' block excluded (NF-002 req 5).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["card_id", "name", "version", "source", "signature"],
+  "properties": {
+    "card_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9._-]{1,64}$",
+      "description": "Stable evaluator identifier, e.g. 'faithfulness-judge'. Registered as eval-card:<card_id>@<version>+sha256:<hex>."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-friendly evaluator name, e.g. 'Answer Faithfulness Judge'."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+",
+      "description": "Semantic version of the eval card."
+    },
+    "source": {
+      "type": "string",
+      "enum": ["human", "heuristic", "code", "judge"],
+      "description": "Evaluator kind / score provenance. Only 'judge' cards MAY spend tokens; 'heuristic'/'code' run zero-token offline (NF-002 req 8). 'human' captures a manual determination."
+    },
+    "judge_model": {
+      "$ref": "#/$defs/JudgeModel",
+      "description": "Required for source=judge. Pins the judge model identity + configurable private endpoint reference only — never the model bytes (NF-002 req 9)."
+    },
+    "prompt_version": {
+      "$ref": "#/$defs/ContentHash",
+      "description": "Content hash of the judge prompt template. Required for source=judge."
+    },
+    "rubric": {
+      "type": "string",
+      "description": "Scoring rubric text. Required for source=judge."
+    },
+    "dataset_version": {
+      "type": "string",
+      "description": "Dataset identity + content pin, e.g. 'golden-faithfulness@3.1.0+sha256:bb22…'. Required for source=judge."
+    },
+    "calibration": {
+      "$ref": "#/$defs/Calibration",
+      "description": "Human-agreement calibration summary. Required for source=judge (NF-002 req 4); 'nova eval card verify' exits non-zero on a judge card missing it."
+    },
+    "bias_flags": {
+      "$ref": "#/$defs/BiasFlags",
+      "description": "Optional calibrated judge-bias magnitudes (NF-004 hook, NF-002 req 6)."
+    },
+    "signature": {
+      "$ref": "#/$defs/Signature",
+      "description": "Detached signature over the canonical-JSON card body excluding this block. Unsigned cards are rejected at registration (NF-002 req 4)."
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Vendor extensions. Keys must be reverse-DNS-prefixed (e.g. 'io.langsmith.template')."
+    }
+  },
+  "if": {
+    "properties": {"source": {"const": "judge"}},
+    "required": ["source"]
+  },
+  "then": {
+    "required": ["judge_model", "prompt_version", "rubric", "dataset_version", "calibration"]
+  },
+  "$defs": {
+    "ContentHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "SHA-256 content hash in sha256:<hex> form."
+    },
+    "JudgeModel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "endpoint_ref"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Model identity, e.g. 'self-hosted/llama-3.3-70b'."
+        },
+        "version": {
+          "type": "string",
+          "description": "Judge model version / revision tag when available."
+        },
+        "endpoint_ref": {
+          "type": "string",
+          "description": "Reference to a configurable private endpoint (e.g. 'env:NOVA_JUDGE_ENDPOINT'). Never a hardcoded external URL (NF-002 req 9)."
+        }
+      }
+    },
+    "Calibration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["human_agreement", "n", "metric", "measured_at"],
+      "properties": {
+        "human_agreement": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1,
+          "description": "Agreement coefficient against human labels (e.g. Cohen's kappa)."
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of human-labeled samples in the calibration set."
+        },
+        "metric": {
+          "type": "string",
+          "description": "Agreement metric name, e.g. 'cohen_kappa', 'accuracy'."
+        },
+        "measured_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the calibration was measured (RFC 3339)."
+        }
+      }
+    },
+    "BiasFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "position": {"type": "number", "description": "Calibrated position-bias magnitude."},
+        "verbosity": {"type": "number", "description": "Calibrated verbosity-bias magnitude."},
+        "self_enhancement": {"type": "number", "description": "Calibrated self-enhancement-bias magnitude."}
+      }
+    },
+    "Signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["alg", "key_id", "sig"],
+      "properties": {
+        "alg": {
+          "type": "string",
+          "enum": ["ed25519"],
+          "description": "Signature algorithm. Reuses the Evidence-Bundle Ed25519 path (no new crypto dependency)."
+        },
+        "key_id": {
+          "type": "string",
+          "description": "Signer key identifier, e.g. 'nf-signer-1'."
+        },
+        "sig": {
+          "type": "string",
+          "description": "Base64-encoded signature over the canonical-JSON card body with this block excluded."
+        }
+      }
+    }
+  },
+  "x-novafabric": {
+    "governed_by": "NF-002 (evaluator registry + signed eval cards); companion NF-010 unified score schema",
+    "adr": "ADR-0099 (evidence-grade evaluation); extends ADR-0080, ADR-0082, ADR-0024",
+    "spec": "design/spec/features/NF-002-010-signed-eval-cards.md",
+    "status": "planned",
+    "stability": "v0 — additive, optional, not frozen",
+    "digest_rule": "eval_card_digest = sha256(canonical_json(card_without_signature))"
+  }
+}

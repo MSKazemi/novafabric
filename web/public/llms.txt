@@ -13,19 +13,19 @@ Install with: pip install novafabric
 
 ## Core pages
 
-- [Home](https://novafabric.dev/): overview, 90-second story, five primitives
-- [Why now](https://novafabric.dev/why): motivation and non-goals
-- [Concepts](https://novafabric.dev/concepts): the five primitives and four replay modes in depth
-- [Install](https://novafabric.dev/install): three-command quickstart
-- [Spec](https://novafabric.dev/spec): JSON Schema 2020-12 definitions for every format
+- [Home](https://novafabric.ai/): overview, 90-second story, five primitives
+- [Why now](https://novafabric.ai/why): motivation and non-goals
+- [Concepts](https://novafabric.ai/concepts): the five primitives and four replay modes in depth
+- [Install](https://novafabric.ai/install): three-command quickstart
+- [Spec](https://novafabric.ai/spec): JSON Schema 2020-12 definitions for every format
 
 ## Interactive showcase
 
-- [Run capsule inspector](https://novafabric.dev/showcase/capsule): inspect a real captured run in the browser
-- [Lineage graph](https://novafabric.dev/showcase/lineage): interactive DAG — provenance, blast radius, replay chain
-- [Replay & diff](https://novafabric.dev/showcase/replay): four replay modes with explicit guarantees
-- [Asset registry](https://novafabric.dev/showcase/registry): eval-gated promotion for models, agents, prompts
-- [Evidence bundle](https://novafabric.dev/showcase/evidence): signed in-toto DSSE Statement v1, verified in-browser
+- [Run capsule inspector](https://novafabric.ai/showcase/capsule): inspect a real captured run in the browser
+- [Lineage graph](https://novafabric.ai/showcase/lineage): interactive DAG — provenance, blast radius, replay chain
+- [Replay & diff](https://novafabric.ai/showcase/replay): four replay modes with explicit guarantees
+- [Asset registry](https://novafabric.ai/showcase/registry): eval-gated promotion for models, agents, prompts
+- [Evidence bundle](https://novafabric.ai/showcase/evidence): signed in-toto DSSE Statement v1, verified in-browser
 
 ## Key facts
 

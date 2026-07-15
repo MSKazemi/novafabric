@@ -11,7 +11,7 @@
 | Version | Feature | Status |
 |---|---|---|
 | v0.58.0 | **Container image + Helm chart publishing** — NovaFabric now ships to three install channels from the public repo, each cut from a single `v*` tag: a multi-arch (`amd64`+`arm64`) runtime image to **GHCR** (`ghcr.io/novafabric/novafabric`, OIDC — no stored secret) with an optional Docker Hub mirror (`kazemi/novafabric`, gated on `DOCKERHUB_TOKEN`), and a first-party **Helm chart** (`deploy/helm/novafabric/`, `nova serve` + Postgres, non-root defaults) packaged as an OCI artifact to `oci://ghcr.io/novafabric/charts`. All publish jobs guarded to the public repo. No package/CLI/schema/API change. | **works today** |
-| v0.57.0 | **Web — search & AI-crawler visibility pass** — the marketing site (`novafabric.dev`) gains the discoverability surface it lacked: a build-time `sitemap` (`@astrojs/sitemap`), `SoftwareApplication`/`Organization`/`Offer` JSON-LD structured data on the landing page (only page-visible facts asserted), a `robots.txt` with an explicit answer-engine crawler allowlist (`OAI-SearchBot`, `ChatGPT-User`, `Claude-SearchBot`, `Claude-User`, `PerplexityBot`, …), and an `llms.txt`. Website-only — no package/CLI/schema/API change. | **works today** |
+| v0.57.0 | **Web — search & AI-crawler visibility pass** — the marketing site (`novafabric.ai`) gains the discoverability surface it lacked: a build-time `sitemap` (`@astrojs/sitemap`), `SoftwareApplication`/`Organization`/`Offer` JSON-LD structured data on the landing page (only page-visible facts asserted), a `robots.txt` with an explicit answer-engine crawler allowlist (`OAI-SearchBot`, `ChatGPT-User`, `Claude-SearchBot`, `Claude-User`, `PerplexityBot`, …), and an `llms.txt`. Website-only — no package/CLI/schema/API change. | **works today** |
 | v0.56.3 | **App-wide bug audit — 10 confirmed defects fixed** — replay `semantic`/`exact` read the wrong record keys (similarity always 1.0 / never exact-eligible); lineage `blast_radius`/`provenance`/`replay_chain` recursive CTEs lacked cycle guards (hang on cyclic graphs); Merkle `verify_inclusion_proof` ignored `tree_size` (phantom-index soundness gap); `/topology/stream` WebSocket bypassed token + host auth; 5 KG endpoints leaked SQLite connections; `scan-secrets` 500'd on an unknown severity; diff crashed on an `outputs/` subdirectory; NIST-RMF + GDPR-RoPA read wrong (underscored) filenames/schema so present evidence read as missing. Regression tests added. Documented-but-unchanged v0.1 limits (timestamp degrade-tolerance, SoD bypass allowlist, daemon fork races) noted in CHANGELOG. | **experimental** |
 | v0.56.2 | **Dashboard fix — hide always-empty "Children" tab on non-distributed runs** — the parent/child detail tab rendered on every run and always read "No child runs" for ordinary single-process captures; it now appears only for real distributed parent/worker capsules. | **experimental** |
 | v0.56.1 | **Dashboard fixes — clean console + correct Art.73 clock** — `GET /api/seal/policy` (serve) returns 200 `configured:false` instead of 404 when no policy is signed (no more per-load console error); the Incidents tab shows a static `✓ filed` marker (not a live ticking countdown) for `reported`/`closed` incidents. | **experimental** |
@@ -448,6 +448,206 @@ These are design intent only. No implementation scheduled.
 | Cell-based fabric (cell scheduler, placement policy, nova rollout) | `architecture/cluster-scale.md` in `design/` |
 | Human impact ledger (`human_impact` capsule field, sampling policy) | `architecture/governance.md` in `design/` |
 | Jurisdiction policy (`jurisdiction` metadata, export_allowed enforcement) | `architecture/governance.md` in `design/` |
+
+---
+
+## Planned — 2026 100-Feature Program (waves W1–W5)
+
+> **Status label:** every item below is `planned` or `future design`, **except the first W1 additive
+> slices now marked `experimental`** (implemented on `main`, API may change, not yet in a tagged
+> release): DSSE/in-toto/SLSA bundle envelopes, signed eval cards + unified score schema, and the
+> statistical regression gate + zero-token offline eval. This section records the design direction
+> from a 2026-07 state-of-the-art sweep synthesized into 100 prioritized features across five
+> delivery waves, each behind an accepted ADR + spike.
+
+A 2026-07 landscape sweep (157 candidates across observability, standards, agent-reliability,
+provenance, scale-systems, and governance) was synthesized into a prioritized program of 100
+features (27 category-defining). Sequenced additive-first, structural-later:
+
+| Wave | Theme | Representative planned features | Status |
+|---|---|---|---|
+| **W1** | Standards & interop envelopes + additive eval wins | **`experimental` (on main):** DSSE/in-toto/SLSA bundle envelopes, signed eval cards, statistical regression gate + zero-token offline eval (incl. metamorphic check-spec CLI), OTel-GenAI canonical span emitter + opt-in content bridge (NF-032/033), OpenLineage custom facets (NF-036), CycloneDX 1.7 AI-BOM citations/TLP/model-card + `aibom validate` (NF-056), dataset-provenance contamination-check (NF-028). **`planned`:** Inspect-AI interop (NF-024), OTLP ingest endpoint (NF-034), capture-overhead CI gate | partially implemented (`experimental`) |
+| **W2** | Verifiable-evidence core + evaluation depth | **`experimental` (on main):** SLSA-for-ML promotion provenance (NF-057), signed dataset provenance cards (NF-058). **future design:** Witness-cosigned tiled transparency log, COSE receipts, offline-verifiable bundle, batch-invariant replay attestation, intervention-driven auto-debug, Sigstore model signing | partially implemented (`experimental`) |
+| **W3** | Cluster-scale collector + storage plane | OTAP-native collector, two-tier agent→gateway topology, JetStream durable spool, eBPF black-box capture, Iceberg-v3 object capsule store | future design |
+| **W4** | Agent identity/authz + compliance exporters | SPIFFE identity binding, delegation-chain "acted-as" evidence, EU AI Act Art.12/72/50 exporters, GPAI Art.53 form, ISO 42001/42006 mapping | future design |
+| **W5** | Fine-grained lineage at scale + planet-scale | Cell-level lineage, sparse-Merkle verifiable map, KuzuDB hot lineage tier, multi-region catalog federation | future design |
+
+Design artifacts (private `design/`): register `research/novafabric-100-features-2026/FEATURE_REGISTER.md`,
+roadmap `architecture/100-feature-roadmap.md`, ADRs 0096–0110. **Compliance note:** exporters produce
+evidence that *supports* compliance workflows; they do not guarantee compliance with any regulation.
+
+---
+
+## Security & Provenance Knowledge Graph (SPKG)
+
+> **Status label:** the **no-dependency Phase-1 slices are `experimental`** (on `main`, behind the
+> optional `[spkg]` extra where RDF is involved; the detector needs no extra). Later phases remain
+> `future design` / `planned`. Records the direction from a 2026-07 open-source landscape sweep
+> (151 tools + 44 papers, all SPDX-verified against [ADR-0024]) synthesized in **[ADR-0111]** and spec
+> `design/architecture/security-provenance-knowledge-graph.md` (private `design/`).
+
+Unify siloed provenance (capsules, lineage, evidence, identity ADR-0106, AI-BOM ADR-0105,
+cross-node proofs ADR-0110) into one queryable, temporally-versioned knowledge graph, and
+add unsupervised graph-based anomaly detection and threat reasoning — grounded in the
+provenance-based intrusion detection (PIDS) SOTA (Kairos, MAGIC, threaTrace, Euler) and
+the emerging LLM-agent security literature. **Fully Tier-A / self-hostable / offline.**
+
+| Phase | Theme | Representative features | Tier-A stack | Status |
+|---|---|---|---|---|
+| **P1** | Ontology + ingest | PROV-O + ATT&CK/D3FEND schema; capsule lineage→RDF; SHACL ingest gate; `nova kg build-provenance` | rdflib, pySHACL | **experimental** ✅ |
+| **P2** | SPKG build/query | canonical RDF + operational LPG rebuilt from capsule; `nova kg build`; attack-path traversal | KùzuDB | **experimental** ✅ (single-node; 1M-edge host run + Apache AGE half `planned`) |
+| **P3** | Entity resolution | dedup multi-vendor entities into one graph | in-house Fellegi–Sunter (stdlib) | **experimental** ✅ (Splink rejected — igraph GPL-2.0 transitive) |
+| **P4** | Detection | unsupervised edge-level anomaly; `nova kg detect`; ATT&CK-mapped explanations | stdlib baseline shipped; PyGOD/TGN GNN `planned` | **experimental** ✅ baseline (GNN upgrade resource-gated) |
+| **P5** | Hybrid retrieval | vector+graph threat hunting; dashboard anomaly overlay | pgvector, DuckDB-VSS, LightRAG/GraphRAG, Sigma.js | future design |
+| **P6** | Attestation fusion | cross-node proofs as edges; findings anchored to adversary ledger | ADR-0110, ADR-0094 | future design |
+
+**Shipped experimental (2026-07):** `nova kg build-provenance` (capsule→PROV-O RDF, SHACL-gated),
+`nova kg build` (canonical RDF + KùzuDB LPG), `nova kg detect` (unsupervised anomaly scan, ATT&CK-labelled,
+no extra required), `nova kg attack-path` (UC2 lateral-movement shortest path) and `nova kg blast-radius`
+(UC3 downstream impact / upstream provenance). Every finding must map to a MITRE ATT&CK technique and/or
+D3FEND countermeasure (ADR-0111 R2 — a bare anomaly score is SHACL-rejected).
+
+**Rejected as defaults (fit but wrong license):** ArangoDB/Memgraph/SurrealDB/Fluree (BSL),
+Quine (Commons Clause), Neo4j (GPL), Elasticsearch/Redis (AGPL/SSPL), igraph/Raphtory/Neo4j-GDS
+(GPL), **Splink** (direct MIT but hard-depends on igraph GPL-2.0 → reimplemented in-house), Zingg (AGPL).
+Tier-A substitutes chosen for every capability.
+
+---
+
+## Langfuse-parity, NovaFabric-native (research-grounded, ADRs 0112–0141)
+
+> **Status label:** every item below is **`future design`** — design intent only, nothing
+> implemented. This epic records the outcome of a 2026-07 gap analysis of the Langfuse LLM-engineering
+> platform (136 catalogued features) filtered through NovaFabric's philosophy: **only capabilities
+> that fit local-first / evidence / replay / Tier-A were kept, and each was reframed natively** (e.g.
+> variant *attribution* is record-only, never allocation; "analytics" is an offline CLI query over the
+> local capsule store, not a live SaaS dashboard). Rejected as anti-philosophy: live dashboards/alerting
+> as the primary surface, cost *recommendations*, inference serving/gateways, variant *allocation* /
+> A-B orchestration, agent orchestration, vector-DB/RAG management, SaaS-first hosting.
+
+Design artifacts (private `design/`): umbrella record `governance/langfuse-parity-record.md`,
+consolidated plan `spec/langfuse-parity-implementation-plan.md`, ADRs **0112–0141** + companion specs.
+Authored in six themed batches:
+
+| Theme | ADRs | Features | Status |
+|---|---|---|---|
+| **A — Prompt & asset lifecycle** | 0112–0116 | Prompt as versioned content-addressed asset; deployment labels; protected labels (maker-checker); prompt composability with capture-time snapshot; variant *attribution* (record-only) | future design — **ADRs accepted** (2026-07-13, /mska-approve) |
+| **B — Evaluation & scoring** | 0117–0121 | Score configuration catalog; human annotation queues; external score-submission API; dataset-experiment regression harness; append-only capsule/asset comments | future design — **ADRs accepted** (2026-07-13, /mska-approve) |
+| **C — Capture completeness** | 0122–0128 | Session capsule; session replay; agent execution-graph reconstruction; multi-modal capture (content-addressed blobs); deployment-environment field; observation log levels; tool-call schema validation | future design — **ADRs accepted** (2026-07-13, /mska-approve) |
+| **D — Offline query & analytics** | 0129–0133 | Offline metrics query DSL (CLI, no server); saved views/queries; score/cost trend reports; token usage-type accounting; local model-pricing catalog | future design — **ADRs accepted** (2026-07-13, /mska-approve) |
+| **E — Governance & lifecycle** | 0134–0139 | Data-retention policy scheduler; pluggable PII masking pipeline; cost/energy budget policy gate; lifecycle event webhooks; SAML SSO (server mode); SCIM provisioning (server mode) | future design — **ADRs accepted** (2026-07-13, /mska-approve) |
+| **F — Portability & sharing** | 0140–0141 | Self-contained shareable capsule viewer (single-file HTML); batch capsule export to blob storage with signed manifest | future design — **ADRs accepted** (2026-07-13, /mska-approve) |
+
+All slices are **additive and optional** (no Run Capsule / Asset Spec / CLI break), **local-first**
+(work with `pip install novafabric`, no server, no internet for core behavior; server mode is an
+optional enhancement), and **Tier-A only** per [ADR-0024]. **Note:** these features *support*
+prompt-engineering, evaluation, and governance workflows; they do not turn NovaFabric into an
+observability or experimentation platform — see `governance/langfuse-parity-record.md` for the
+philosophy fit of each.
+
+---
+
+## Next-100 Agentic Frontier (2027 program, ADRs 0142–0151)
+
+> **Status label:** every item below is **`future design`** or **`planned`** — design intent only,
+> nothing implemented. This epic records the outcome of a 2026-07 web sweep of the *agent-to-agent
+> era* (A2A 1.0, AGNTCY, MCP 2026-07-28, memory-type architectures, the guardrail three-layer stack,
+> OWASP-LLM, NIST FIPS 204/205, W3C VC-DI-BBS, EU AI Act Art.14/50/86), filtered through NovaFabric's
+> philosophy: **only capabilities that fit local-first / evidence / replay / record-only / Tier-A were
+> kept.** It is strictly *additive* to the 2026 program (NF-001..100) and the Langfuse-parity cohort
+> (NF/ADR 0112–0141) — zero feature or ID overlap (grep-verified).
+
+Design artifacts (private `design/`): study `research/novafabric-next-100-agentic-2027/`
+(register `FEATURE_REGISTER.md` = **NF-101..NF-200**; SoA/gap/PRD/architecture/eval/build outputs),
+roadmap `architecture/next-100-feature-roadmap.md`, ADRs **0142–0151** + companion specs
+`spec/features/NF-1NN-….md`. Sequenced into five waves **W6–W10** (continuing W1–W5):
+
+| Wave | Clusters (ADRs) | Features | Status |
+|---|---|---|---|
+| **W6 — Multi-agent + memory/context evidence** | C1 A2A message/handoff (0142) · C2 memory/context provenance (0143) | NF-101–120 | future design — **ADRs accepted** (2026-07-15, /mska-approve) |
+| **W7 — Behavioral-equivalence replay + runtime-safety evidence** | C3 equivalence replay (0144) · C4 guardrail/safety evidence (0145) | NF-121–140 | future design — **ADRs accepted** (2026-07-15, /mska-approve) |
+| **W8 — Agent cost/SLA + drift/continuous assurance** | C5 cost/energy/SLA (0146) · C6 drift/assurance (0147) | NF-141–160 | future design — **ADRs accepted** (2026-07-15, /mska-approve) |
+| **W9 — Multi-modal/tool-schema + standard interop + human-agent** | C7 C2PA/tool-schema (0148) · C8 A2A/AGNTCY/OCI/SCITT interop (0149) · C9 human-agent accountability (0150) | NF-161–190 | future design — **ADRs accepted** (2026-07-15, /mska-approve) |
+| **W10 — Verifiability frontier** | C10 PQC / ZK / TEE / selective-disclosure (0151) | NF-191–200 | future design — **ADRs accepted** (2026-07-15, /mska-approve) |
+
+All slices are **additive and optional** (no Run Capsule / Asset Spec / CLI break), **record-only**
+(NovaFabric records what agents, guardrails, breakers, and humans did — it never orchestrates,
+enforces, adjudicates, remediates, or optimizes), **local-first**, and **Tier-A only** per [ADR-0024]
+(PQC/ZK/BBS+ libraries and proprietary detectors are pattern-only until a specific Tier-A
+implementation is cleared). Deliberately excluded as out-of-mission (see the study's
+`output/03_gap_analysis.md` boundary appendix): runtime enforcement/PEP, agent orchestration,
+RAG-corpus management, cost optimization, and dispute adjudication.
+
+---
+
+## Third-100: Agentic Evidence Ecosystem & Vertical Depth (2027-H2 program, ADRs 0152–0161)
+
+> **Status label:** every item below is **`future design`** or **`planned`** — design intent only,
+> nothing implemented. A 2026-07 web sweep of the *evidence ecosystem* around agentic systems, filtered
+> through NovaFabric's philosophy (local-first / evidence / record-only / Tier-A). Strictly *additive*
+> to the 2026 core (NF-001..100) and the 2027 frontier (NF-101..200) — zero feature or ID overlap
+> (grep-verified). The two regulated-sector packs (finance, health) are **evidence exporters** in the
+> shipped `nova export-*` pattern (NF-090..094) — **not** a compliance product (regulations are design
+> input, per non-goals).
+
+Design artifacts (private `design/`): study `research/novafabric-third-100-ecosystem-2027/` (register
+`FEATURE_REGISTER.md` = **NF-201..NF-300**; SoA/gap/PRD/architecture/eval/build outputs), roadmap
+`architecture/third-100-feature-roadmap.md`, ADRs **0152–0161** + specs `spec/features/NF-2NN-….md`.
+Sequenced into five waves **W11–W15** (continuing W1–W10):
+
+| Wave | Clusters (ADRs) | Features | Status |
+|---|---|---|---|
+| **W11 — Provenance into the run** | E1 training/model-provenance (0152) · E2 retrieval-source authority (0153) | NF-201–220 | future design — **ADRs 0152/0153 accepted 2026-07-13** (`/mska-approve`); build unblocked, nothing shipped |
+| **W12 — Integrity & investigation** | E3 eval/benchmark integrity (0154) · E4 DFIR/forensics/chain-of-custody (0155) | NF-221–240 | future design — **ADRs accepted** (2026-07-13, /mska-approve) |
+| **W13 — Reach & ecosystem** | E5 third-party verifier/consumer ecosystem (0156) · E6 edge/on-device/offline (0157) | NF-241–260 | future design — **ADRs accepted** (2026-07-13, /mska-approve) |
+| **W14 — Reporting & regulated sectors** | E7 responsible-AI/ESG (0158) · E8 finance evidence pack (0159) · E9 healthcare evidence pack (0160) | NF-261–290 | future design — **ADRs accepted** (2026-07-13, /mska-approve) |
+| **W15 — Data governance at fleet scale** | E10 data-governance & subject-rights at scale (0161) | NF-291–300 | future design — **ADRs accepted** (2026-07-13, /mska-approve) |
+
+All slices are **additive and optional** (`facets` / `nova export-*`; no Run Capsule / Asset Spec / CLI
+break), **record-only** (NovaFabric records/assembles/exports evidence — it never trains, serves,
+orchestrates, adjudicates a rights request, runs a benchmark/SOC/DSAR-workflow, or optimizes an
+outcome), **local-first**, and **Tier-A only** per [ADR-0024]. Regime text is version-pinned to what
+was true at authoring (e.g. **SR 11-7 → SR 26-2** 2026-04-17; MiFID RTS-28 deleted, best-execution
+retained; ICH E6(R3)). Excluded out-of-mission ideas are listed in the study's
+`output/03_gap_analysis.md` boundary appendix.
+
+---
+
+## Fourth-100: Frontier Worlds — Physical, Scientific, Economic, Civic & Long-Horizon (2027-H2+ program, ADRs 0162–0171)
+
+> **Status label:** every item below is **`future design`** or **`planned`** — design intent only,
+> nothing implemented. A 2026-07 web sweep of the frontier *worlds* agentic systems are entering
+> (physical action, machine commerce, autonomous science, decade-scale evidence, machine-checkable
+> assurance, frontier-safety, cross-org federation, public accountability, insurance/liability, and
+> organizational memory), filtered through NovaFabric's philosophy (local-first / evidence /
+> record-only / Tier-A). Strictly *additive* to the 2026 core (NF-001..100), the 2027 frontier
+> (NF-101..200), and the evidence ecosystem (NF-201..300) — zero feature or ID overlap (grep-verified,
+> 100 contiguous IDs NF-301..400). The economic/civic/insurance packs (F2/F8/F9) are **evidence
+> exporters** in the shipped `nova export-*` pattern (NF-090..094) — **not** a fintech / registry /
+> insurance product (those are non-goals; regulations & markets are design input).
+
+Design artifacts (private `design/`): study `research/novafabric-fourth-100-frontier-2027/` (register
+`FEATURE_REGISTER.md` = **NF-301..NF-400**; SoA/gap/PRD/architecture/eval/build outputs), roadmap
+`architecture/fourth-100-feature-roadmap.md`, ADRs **0162–0171** + specs `spec/features/NF-3NN-….md`.
+Sequenced into five waves **W16–W20** (continuing W1–W15):
+
+| Wave | Clusters (ADRs) | Features | Status |
+|---|---|---|---|
+| **W16 — Physical & economic action** | F1 embodied/cyber-physical (0162) · F2 agentic commerce & settlement (0163) | NF-301–320 | future design — **ADRs accepted** (2026-07-13, /mska-approve) |
+| **W17 — Science & longevity** | F3 scientific reproducibility (0164) · F4 evidence longevity & preservation (0165) | NF-321–340 | future design — **ADRs accepted** (2026-07-13, /mska-approve) |
+| **W18 — Assurance & safety** | F5 assurance cases & continuous cert (0166) · F6 runtime safety/frontier-safety-framework (0167) | NF-341–360 | future design — **ADRs accepted** (2026-07-13, /mska-approve) |
+| **W19 — Federation & the public** | F7 federation & cross-org trust (0168) · F8 public transparency & accountability (0169) | NF-361–380 | future design — **ADRs accepted** (2026-07-13, /mska-approve) |
+| **W20 — Risk transfer & org memory** | F9 insurance/liability/actuarial (0170) · F10 persistent-knowledge & org-memory governance (0171) | NF-381–400 | future design — **ADRs accepted** (2026-07-13, /mska-approve) |
+
+All slices are **additive and optional** (`facets` / `nova export-*`; no Run Capsule / Asset Spec / CLI
+break), **record-only** (NovaFabric records/assembles/exports evidence — it never controls a robot,
+drives, processes a payment, runs an experiment, certifies, enforces a safety guardrail, operates a
+registry, underwrites/adjudicates a claim, or hosts a memory store), **local-first**, and **Tier-A only**
+per [ADR-0024] (C2PA/ISO/UN/IEEE/ETSI/SPIFFE/SCITT/GSN/SACM/FIPS-204-205/OSCAL referenced by shape, never
+vendored). Regime text is version-pinned to authoring (EU **AILD withdrawn** / **PLD 2024/2853** in force;
+ISO **CG 40 47/48** GenAI GL exclusions live 1 Jan 2026; NIST **IR 8547** / CNSA 2.0 PQC timeline). F4
+additionally holds a **never-break-the-original-seal-chain** invariant. Excluded out-of-mission ideas are
+catalogued in the study's `output/03_gap_analysis.md` boundary appendix.
 
 ---
 

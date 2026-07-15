@@ -440,3 +440,259 @@ class TestAIBOMGenerate:
         result = runner.invoke(app, ["aibom", "generate", str(bad)])
         assert result.exit_code == 1
         assert "Not a valid capsule" in result.output
+
+
+class TestAIBOM056Extensions:
+    """NF-056 CycloneDX 1.7 extensions: citations, TLP, model-card, validate."""
+
+    def _cap(self, tmp_path: Path, extra: dict | None = None) -> Path:
+        d = tmp_path / "cap-056"
+        d.mkdir()
+        manifest = {
+            "schema_version": "1.0.0",
+            "run_id": "run-056",
+            "model": "summarizer",
+            "model_version": "1.0.0",
+            "provider": "local",
+            "lineage_datasets": [
+                {"name": "corpus", "version": "3", "type": "training", "hash": "sha256:aa11"}
+            ],
+        }
+        if extra:
+            manifest.update(extra)
+        with open(d / "capsule.yaml", "w") as f:
+            yaml.dump(manifest, f)
+        return d
+
+    def test_default_output_is_byte_stable(self, tmp_path: Path) -> None:
+        """With no NF-056 flags, no citations/tlp/hashes/externalRefs are emitted."""
+        from novafabric.compliance.export.aibom import AIBOMExporter
+
+        exp = AIBOMExporter()
+        payload = exp.to_payload(exp.build_aibom(self._cap(tmp_path)))
+        for comp in payload["components"]:
+            assert "citations" not in comp
+            assert "hashes" not in comp
+            assert "externalReferences" not in comp
+        assert "properties" not in payload["metadata"]  # no TLP
+
+    def test_schema_field_present(self, tmp_path: Path) -> None:
+        from novafabric.compliance.export.aibom import AIBOMExporter
+
+        exp = AIBOMExporter()
+        payload = exp.to_payload(exp.build_aibom(self._cap(tmp_path)))
+        assert payload["$schema"] == "https://cyclonedx.org/schema/bom-1.7.schema.json"
+
+    def test_tlp_marker_recorded(self, tmp_path: Path) -> None:
+        from novafabric.compliance.export.aibom import AIBOMExporter
+
+        exp = AIBOMExporter()
+        payload = exp.to_payload(exp.build_aibom(self._cap(tmp_path), tlp="TLP:AMBER"))
+        props = payload["metadata"]["properties"]
+        assert {"name": "novafabric:tlp", "value": "TLP:AMBER"} in props
+
+    def test_invalid_tlp_raises(self, tmp_path: Path) -> None:
+        from novafabric.compliance.export.aibom import AIBOMExporter
+
+        with pytest.raises(ValueError, match="invalid TLP"):
+            AIBOMExporter().build_aibom(self._cap(tmp_path), tlp="TLP:PURPLE")
+
+    def test_model_card_auto_ref(self, tmp_path: Path) -> None:
+        from novafabric.compliance.export.aibom import AIBOMExporter
+
+        doc = AIBOMExporter().build_aibom(self._cap(tmp_path), model_card_ref="auto")
+        model = next(c for c in doc.components if c.type == "machine-learning-model")
+        assert model.external_references == [
+            {"type": "model-card", "url": "registry://models/summarizer/1.0.0/card.md"}
+        ]
+
+    def test_model_card_explicit_path(self, tmp_path: Path) -> None:
+        from novafabric.compliance.export.aibom import AIBOMExporter
+
+        doc = AIBOMExporter().build_aibom(
+            self._cap(tmp_path), model_card_ref="./cards/summarizer.md"
+        )
+        model = next(c for c in doc.components if c.type == "machine-learning-model")
+        assert model.external_references[0]["url"] == "./cards/summarizer.md"
+
+    def test_citations_bind_capsule_and_dataset(self, tmp_path: Path) -> None:
+        from novafabric.compliance.export.aibom import AIBOMExporter
+
+        doc = AIBOMExporter().build_aibom(self._cap(tmp_path), citations=True)
+        model = next(c for c in doc.components if c.type == "machine-learning-model")
+        assert model.citations and model.citations[0]["content"].startswith("sha256:")
+        assert model.citations[0]["location"].startswith("capsule://run-056/")
+        ds = next(c for c in doc.components if c.type == "data")
+        assert ds.citations and ds.citations[0]["content"] == "sha256:aa11"
+        assert ds.hashes == [{"alg": "SHA-256", "content": "aa11"}]
+
+    def test_citations_include_inclusion_proof(self, tmp_path: Path) -> None:
+        from novafabric.compliance.export.aibom import AIBOMExporter
+
+        cap = self._cap(
+            tmp_path,
+            {"inclusion_proof": {"log": "nf-tlog", "tree_size": 42, "proof": "rekor://x"}},
+        )
+        doc = AIBOMExporter().build_aibom(cap, citations=True)
+        model = next(c for c in doc.components if c.type == "machine-learning-model")
+        ev = model.citations[0]["evidence"]
+        assert ev == {"log": "nf-tlog", "treeSize": 42, "proof": "rekor://x"}
+
+    def test_model_hashes_from_manifest(self, tmp_path: Path) -> None:
+        from novafabric.compliance.export.aibom import AIBOMExporter
+
+        cap = self._cap(tmp_path, {"model_digest": "sha256:deadbeef"})
+        doc = AIBOMExporter().build_aibom(cap, citations=True)
+        model = next(c for c in doc.components if c.type == "machine-learning-model")
+        assert model.hashes == [{"alg": "SHA-256", "content": "deadbeef"}]
+
+    def test_no_include_datasets_suppresses_data_components(self, tmp_path: Path) -> None:
+        from novafabric.compliance.export.aibom import AIBOMExporter
+
+        doc = AIBOMExporter().build_aibom(self._cap(tmp_path), include_datasets=False)
+        assert not any(c.type == "data" for c in doc.components)
+
+    def test_validate_passes_on_generated_bom(self, tmp_path: Path) -> None:
+        from novafabric.compliance.export.aibom import AIBOMExporter
+
+        exp = AIBOMExporter()
+        payload = exp.to_payload(
+            exp.build_aibom(
+                self._cap(tmp_path), citations=True, tlp="TLP:GREEN", model_card_ref="auto"
+            )
+        )
+        assert exp.validate(payload) == []
+
+    def test_validate_catches_bad_spec_version_and_tlp(self) -> None:
+        from novafabric.compliance.export.aibom import AIBOMExporter
+
+        errors = AIBOMExporter.validate(
+            {
+                "bomFormat": "CycloneDX",
+                "specVersion": "1.6",
+                "serialNumber": "not-a-urn",
+                "metadata": {"properties": [{"name": "novafabric:tlp", "value": "TLP:X"}]},
+                "components": [{"type": "machine-learning-model"}],
+            }
+        )
+        joined = " ".join(errors)
+        assert "specVersion" in joined
+        assert "serialNumber" in joined
+        assert "tlp" in joined
+        assert "missing name" in joined
+
+    def test_cli_generate_with_all_flags(self, tmp_path: Path) -> None:
+        cap = self._cap(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(
+            app,
+            ["aibom", "generate", str(cap), "--citations", "--tlp", "TLP:AMBER",
+             "--model-card", "auto", "--force"],
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads((cap / "aibom.json").read_text())
+        assert payload["metadata"]["properties"][0]["value"] == "TLP:AMBER"
+        model = next(c for c in payload["components"] if c["type"] == "machine-learning-model")
+        assert "citations" in model and "externalReferences" in model
+
+    def test_cli_generate_rejects_bad_tlp(self, tmp_path: Path) -> None:
+        cap = self._cap(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(app, ["aibom", "generate", str(cap), "--tlp", "TLP:NOPE"])
+        assert result.exit_code == 2
+        assert "Invalid --tlp" in result.output
+
+    def test_cli_validate_ok_and_fail(self, tmp_path: Path) -> None:
+        cap = self._cap(tmp_path)
+        runner = CliRunner()
+        gen = runner.invoke(app, ["aibom", "generate", str(cap), "--force"])
+        assert gen.exit_code == 0, gen.output
+        bom = cap / "aibom.json"
+        ok = runner.invoke(app, ["aibom", "validate", str(bom)])
+        assert ok.exit_code == 0, ok.output
+        assert "Valid CycloneDX 1.7" in ok.output
+
+        bad = tmp_path / "bad.json"
+        bad.write_text('{"bomFormat": "CycloneDX", "specVersion": "1.4", "components": []}')
+        res = runner.invoke(app, ["aibom", "validate", str(bad)])
+        assert res.exit_code == 1
+        assert "validation error" in res.output
+
+    def test_cli_validate_json_output(self, tmp_path: Path) -> None:
+        cap = self._cap(tmp_path)
+        runner = CliRunner()
+        runner.invoke(app, ["aibom", "generate", str(cap), "--force"])
+        res = runner.invoke(app, ["aibom", "validate", str(cap / "aibom.json"), "--json"])
+        assert res.exit_code == 0, res.output
+        assert '"valid": true' in res.output
+
+    def test_cli_validate_missing_file(self, tmp_path: Path) -> None:
+        runner = CliRunner()
+        res = runner.invoke(app, ["aibom", "validate", str(tmp_path / "nope.json")])
+        assert res.exit_code == 2
+
+
+class TestAIBOM056ValidateBranches:
+    """Cover NF-056 validate() and citation edge branches."""
+
+    def test_validate_components_not_list(self) -> None:
+        from novafabric.compliance.export.aibom import AIBOMExporter
+
+        errors = AIBOMExporter.validate(
+            {"bomFormat": "CycloneDX", "specVersion": "1.7",
+             "serialNumber": "urn:uuid:x", "components": "nope"}
+        )
+        assert any("components must be a list" in e for e in errors)
+
+    def test_validate_unsupported_hash_alg(self) -> None:
+        from novafabric.compliance.export.aibom import AIBOMExporter
+
+        errors = AIBOMExporter.validate(
+            {"bomFormat": "CycloneDX", "specVersion": "1.7", "serialNumber": "urn:uuid:x",
+             "components": [{"type": "machine-learning-model", "name": "m", "bom-ref": "r",
+                             "hashes": [{"alg": "MD5", "content": "x"}]}]}
+        )
+        assert any("unsupported hash alg" in e for e in errors)
+
+    def test_validate_citation_missing_content(self) -> None:
+        from novafabric.compliance.export.aibom import AIBOMExporter
+
+        errors = AIBOMExporter.validate(
+            {"bomFormat": "CycloneDX", "specVersion": "1.7", "serialNumber": "urn:uuid:x",
+             "components": [{"type": "data", "name": "d", "bom-ref": "r",
+                             "citations": [{"location": "capsule://x"}]}]}
+        )
+        assert any("citation missing 'content'" in e for e in errors)
+
+    def test_inclusion_proof_alternate_keys(self, tmp_path: Path) -> None:
+        from novafabric.compliance.export.aibom import AIBOMExporter
+
+        d = tmp_path / "cap-alt"
+        d.mkdir()
+        with open(d / "capsule.yaml", "w") as f:
+            yaml.dump(
+                {"run_id": "r", "model": "m", "model_version": "1",
+                 "tlog": {"treeSize": 9, "proof_uri": "rekor://y"}}, f
+            )
+        doc = AIBOMExporter().build_aibom(d, citations=True)
+        model = next(c for c in doc.components if c.type == "machine-learning-model")
+        ev = model.citations[0]["evidence"]
+        assert ev["treeSize"] == 9
+        assert ev["proof"] == "rekor://y"
+        assert ev["log"] == "novafabric-tlog"  # default when unset
+
+    def test_dataset_without_hash_still_cited(self, tmp_path: Path) -> None:
+        from novafabric.compliance.export.aibom import AIBOMExporter
+
+        d = tmp_path / "cap-nohash"
+        d.mkdir()
+        with open(d / "capsule.yaml", "w") as f:
+            yaml.dump(
+                {"run_id": "r", "model": "m", "model_version": "1",
+                 "lineage_datasets": [{"name": "ds"}]}, f
+            )
+        doc = AIBOMExporter().build_aibom(d, citations=True)
+        ds = next(c for c in doc.components if c.type == "data")
+        # no dataset hash → falls back to the capsule digest, no hashes[]
+        assert ds.hashes == []
+        assert ds.citations[0]["content"].startswith("sha256:")

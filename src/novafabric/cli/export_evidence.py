@@ -269,6 +269,16 @@ def export_evidence_cmd(
         "--custodian-provenance",
         help="novaseal-identity | oidc | operator_declared (for --with-custody).",
     ),
+    dsse: bool = typer.Option(
+        False,
+        "--dsse",
+        help=(
+            "Also emit a standard DSSE outer envelope wrapping the bundle manifest "
+            "(<bundle>.dsse.json, payloadType application/vnd.novafabric.bundle+json, "
+            "NF-029/ADR-0096). Verifiable with `nova verify-envelope` or stock cosign. "
+            "Opt-in: without this flag the bundle output is byte-for-byte unchanged."
+        ),
+    ),
 ) -> None:
     """Build a signed Evidence Bundle ZIP from a capsule.
 
@@ -351,6 +361,20 @@ def export_evidence_cmd(
                     "[yellow]⚠[/yellow] Rekor publish skipped "
                     "(set NOVA_REKOR_URL to enable)"
                 )
+
+    if dsse:
+        from novafabric.envelopes.dsse import wrap_bundle  # noqa: PLC0415
+
+        try:
+            with zipfile.ZipFile(out_path) as _zf:
+                manifest_bytes = _zf.read("manifest.json")
+        except (KeyError, zipfile.BadZipFile) as exc:
+            console.print(f"[red]✗[/red] could not read manifest for DSSE wrap: {exc}")
+            raise typer.Exit(code=1) from exc
+        envelope = wrap_bundle(manifest_bytes, signer)
+        dsse_path = Path(str(out_path) + ".dsse.json")
+        dsse_path.write_text(json.dumps(envelope, indent=2), encoding="utf-8")
+        console.print(f"[green]✓[/green] DSSE envelope written: {dsse_path}")
 
     console.print(
         f"[green]✓[/green] evidence bundle written: {out_path} "

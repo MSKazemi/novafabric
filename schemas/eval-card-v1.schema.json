@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/eval-card-v1.schema.json",
+  "$comment": "schema_version 1.0.0; tracks design/spec/features/NF-002-010-signed-eval-cards.md (NF-002) and ADR-0099. A signed, content-addressed evaluator card stored as an Asset-Registry asset (asset_type: eval-card). eval_card_digest = sha256 over the canonical-JSON bytes of the card EXCLUDING the signature block. Planned/experimental.",
+  "title": "EvalCard",
+  "description": "The reproducibility key for an evidence-grade Score: pins the exact evaluator (judge model, prompt version, rubric, dataset version, human-agreement calibration) that produced a score, and carries an Ed25519 signature so the binding is tamper-evident.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["card_id", "name", "version", "source"],
+  "properties": {
+    "card_id": {"type": "string", "minLength": 1},
+    "name": {"type": "string", "minLength": 1},
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+([-+].*)?$",
+      "description": "Semantic version of the evaluator."
+    },
+    "source": {
+      "type": "string",
+      "enum": ["human", "heuristic", "code", "judge"],
+      "description": "Evaluator kind. judge cards MUST also carry judge_model/prompt_version/rubric/dataset_version/calibration."
+    },
+    "judge_model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "endpoint_ref"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "endpoint_ref": {
+          "type": "string",
+          "description": "Reference to a configurable private endpoint (e.g. env:NOVA_JUDGE_ENDPOINT). No hardcoded external URL (ADR-0024)."
+        }
+      }
+    },
+    "prompt_version": {"type": "string", "minLength": 1},
+    "rubric": {"type": "string", "minLength": 1},
+    "dataset_version": {"type": "string", "minLength": 1},
+    "calibration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["human_agreement", "n", "metric"],
+      "properties": {
+        "human_agreement": {"type": "number", "minimum": -1, "maximum": 1},
+        "n": {"type": "integer", "minimum": 1},
+        "metric": {"type": "string", "minLength": 1},
+        "measured_at": {"type": "string"}
+      }
+    },
+    "bias_flags": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "position": {"type": "number"},
+        "verbosity": {"type": "number"},
+        "self_enhancement": {"type": "number"}
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["alg", "key_id", "sig"],
+      "properties": {
+        "alg": {"type": "string", "enum": ["ed25519"]},
+        "key_id": {"type": "string", "minLength": 1},
+        "sig": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

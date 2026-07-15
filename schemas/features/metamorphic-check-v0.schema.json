@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/features/metamorphic-check-v0.schema.json",
+  "$comment": "schema_version 0.x (v0, not frozen); tracks design/spec/features/NF-007-009-statistical-regression-diff.md §4.2. Declarative check-spec consumed by `nova eval offline --check metamorphic --spec <yaml>`. Standalone additive/optional fragment; does not modify any capsule schema.",
+  "title": "MetamorphicCheckSpec",
+  "description": "Additive/optional — v0, not frozen. A zero-token NF-009 metamorphic check over an already-stored capsule: records whose *input* collapses to the same value under `transform` form metamorphic pairs, and every pair's *output* MUST satisfy `invariant`. Read-only over the capsule; no model call. The boolean result is emitted as a `code` Score bound to the capsule Merkle root.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["transform", "invariant"],
+  "properties": {
+    "records_file": {
+      "type": "string",
+      "description": "JSONL file within the capsule holding the recorded (input, output) records. Default 'tool-calls.jsonl'.",
+      "default": "tool-calls.jsonl"
+    },
+    "input_field": {
+      "type": "string",
+      "description": "Record field holding the input value used to form metamorphic pairs. Default 'input'.",
+      "default": "input"
+    },
+    "output_field": {
+      "type": "string",
+      "description": "Record field holding the output value the invariant is asserted over. Default 'output'.",
+      "default": "output"
+    },
+    "transform": {
+      "description": "Ordered string transforms applied to the input to derive the pairing key. Records with an equal key are metamorphically equivalent inputs. A single transform name or an ordered list (composed left-to-right).",
+      "oneOf": [
+        {"$ref": "#/$defs/transformName"},
+        {"type": "array", "items": {"$ref": "#/$defs/transformName"}, "minItems": 1}
+      ]
+    },
+    "invariant": {
+      "$ref": "#/$defs/invariantName",
+      "description": "The relation every metamorphic pair's outputs MUST satisfy for the check to pass."
+    },
+    "tolerance": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Slack for the 'numeric_close' (absolute numeric difference) and 'length_within' (absolute string-length difference) invariants. Ignored by exact relations. Default 0.",
+      "default": 0
+    },
+    "name": {
+      "type": "string",
+      "description": "Optional score name; default 'metamorphic'."
+    }
+  },
+  "$defs": {
+    "transformName": {
+      "type": "string",
+      "enum": ["identity", "lower", "strip", "collapse_whitespace", "remove_punctuation"],
+      "description": "identity=unchanged; lower=casefold; strip=trim ends; collapse_whitespace=join on single spaces; remove_punctuation=drop ASCII punctuation."
+    },
+    "invariantName": {
+      "type": "string",
+      "enum": ["equal", "equal_normalized", "numeric_close", "length_within"],
+      "description": "equal=outputs identical; equal_normalized=identical after lower+strip+collapse_whitespace; numeric_close=|a-b|<=tolerance (numeric outputs); length_within=|len(a)-len(b)|<=tolerance."
+    }
+  }
+}

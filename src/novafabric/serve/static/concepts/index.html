@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"> <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="generator" content="Astro v6.3.1"><link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="apple-touch-icon" href="/favicon.svg"><link rel="canonical" href="https://novafabric.dev/concepts/"><title>Concepts — NovaFabric</title><meta name="description" content="The five primitives, four replay modes, and how they compose into a time machine for AI systems."><meta property="og:type" content="website"><meta property="og:title" content="Concepts — NovaFabric"><meta property="og:description" content="The five primitives, four replay modes, and how they compose into a time machine for AI systems."><meta property="og:url" content="https://novafabric.dev/concepts/"><meta property="og:image" content="https://novafabric.dev/og.png"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Concepts — NovaFabric"><meta name="twitter:description" content="The five primitives, four replay modes, and how they compose into a time machine for AI systems."><meta name="theme-color" content="#0a0a0c"><script>
+<!DOCTYPE html><html lang="en"> <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="generator" content="Astro v6.3.1"><link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="apple-touch-icon" href="/favicon.svg"><link rel="canonical" href="https://novafabric.ai/concepts/"><title>Concepts — NovaFabric</title><meta name="description" content="The five primitives, four replay modes, and how they compose into a time machine for AI systems."><meta property="og:type" content="website"><meta property="og:site_name" content="NovaFabric"><meta property="og:title" content="Concepts — NovaFabric"><meta property="og:description" content="The five primitives, four replay modes, and how they compose into a time machine for AI systems."><meta property="og:url" content="https://novafabric.ai/concepts/"><meta property="og:image" content="https://novafabric.ai/og.png"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Concepts — NovaFabric"><meta name="twitter:description" content="The five primitives, four replay modes, and how they compose into a time machine for AI systems."><meta name="twitter:image" content="https://novafabric.ai/og.png"><meta name="theme-color" content="#0a0a0c"><!-- JSON-LD: Organization (sitewide) --><script type="application/ld+json">{"@context":"https://schema.org","@type":"Organization","name":"NovaFabric","url":"https://novafabric.ai","logo":"https://novafabric.ai/favicon.svg","description":"Open-source CLI toolkit for capturing, replaying, and auditing AI system runs.","sameAs":["https://github.com/novafabric/novafabric"]}</script><!-- JSON-LD: SoftwareApplication (per-page, homepage only) --><script>
       (function () {
         try {
           var t = localStorage.getItem('novafabric.theme');
@@ -11,7 +11,7 @@ GitHub
 Showcase — explanatory, not a viewer
 </span> <h1 class="mt-4 text-4xl md:text-5xl font-medium tracking-tight text-balance">Concepts</h1> <p class="mt-4 text-lg text-[var(--color-text-muted)]">
 The five primitives, the four replay modes, and the boundaries that
-        keep NovaFabric local-first and CLI-first.
+        keep NovaFabric self-hosted and CLI-first.
 </p> </header> <div class="mt-16 container-prose space-y-10 text-[var(--color-text-muted)] leading-relaxed"> <section> <h2 class="text-2xl font-medium text-[var(--color-text)] tracking-tight mb-3">Five primitives</h2> <p> <strong class="text-[var(--color-text)]">Asset Registry</strong> names every model, agent, prompt,
           tool, dataset, evaluation, and deployment with <code class="text-[var(--color-text)]">name@version</code>
 identity. Promotion from development to production is gated by eval suites that pass or fail.
@@ -34,11 +34,12 @@ identity. Promotion from development to production is gated by eval suites that 
             compares meaning. Requires a judge model in real use. Useful for "did the meaning change?"
 </li> <li> <strong class="text-[var(--color-text)]">forensic</strong> — no re-execution. Read-only inspection
             of what the capsule recorded. The audit mode.
-</li> </ul> </section> <section> <h2 class="text-2xl font-medium text-[var(--color-text)] tracking-tight mb-3">Why local-first</h2> <p>
+</li> </ul> </section> <section> <h2 class="text-2xl font-medium text-[var(--color-text)] tracking-tight mb-3">Why self-hosted</h2> <p>
 AI runs accumulate sensitive data: prompts, intermediate reasoning, internal documents pulled by
           tools. Shipping that to a hosted service means signing a DPA, picking a region, paying per GB,
-          waiting for a backup window when audit asks. NovaFabric keeps it on your machine until you choose
-          otherwise. v0.7 adds an optional server mode for teams; v0.x stays single-machine.
+          waiting for a backup window when audit asks. NovaFabric runs in your own infrastructure instead —
+          on your machine for a single user, or in your own self-hosted server (server mode, with OIDC and
+          RBAC) for teams. Your run data never leaves your environment unless you choose to move it.
 </p> </section> <section> <h2 class="text-2xl font-medium text-[var(--color-text)] tracking-tight mb-3">Why CLI-first</h2> <p>
 Web UIs are expensive to build, maintain, and design well. They divert engineering effort from
           the primitives. The CLI emits JSON; you can plug it into Grafana, Jaeger, Tempo, or a notebook.

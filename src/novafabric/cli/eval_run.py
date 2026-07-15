@@ -23,6 +23,18 @@ eval_app = typer.Typer(
     no_args_is_help=True,
 )
 
+# NF-002/NF-010 evidence-grade evaluation (ADR-0099, experimental): signed eval cards
+# + evidence-grade scores. Additive nested groups — `nova eval card …` / `nova eval score …`.
+from novafabric.cli.eval_card import card_app, score_app  # noqa: E402
+from novafabric.cli.eval_contamination import contamination_check_cmd  # noqa: E402
+from novafabric.cli.eval_offline import offline_cmd  # noqa: E402
+
+eval_app.add_typer(card_app, name="card")
+eval_app.add_typer(score_app, name="score")
+eval_app.command("offline")(offline_cmd)
+# NF-028 (ADR-0108): benchmark-contamination flag over dataset_provenance facets.
+eval_app.command("contamination-check")(contamination_check_cmd)
+
 
 @eval_app.command("agent")
 def eval_agent_cmd(

@@ -13,7 +13,7 @@
 # limitations under the License.
 """First-class incident object with Art. 73 deadline clock (ADR-0088, gap-010).
 
-Experimental. Local-first: everything here works offline against the SQLite
+Experimental. Self-contained: everything here works offline against the SQLite
 store under ``NOVAFABRIC_HOME``.
 """
 

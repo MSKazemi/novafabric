@@ -37,7 +37,7 @@ class ClaimResult:
 
 
 def _check_d01_local_first() -> None:
-    """D-01: Local-first — registry store + capsule writer importable without network."""
+    """D-01: Self-contained — registry store + capsule writer importable without network."""
     from novafabric._paths import nova_home  # noqa: F401
     from novafabric.capture.capsule import CapsuleWriter  # noqa: F401
     from novafabric.registry import store as _registry_store  # noqa: F401
@@ -145,7 +145,7 @@ def _check_d10_eval_gated_promotion() -> None:
 CLAIMS: list[Claim] = [
     Claim(
         id="D-01",
-        title="Local-first, no cloud required",
+        title="Self-contained, no cloud required",
         vs="LangSmith (cloud-only), Langfuse (requires Postgres for self-host)",
         verify=_check_d01_local_first,
     ),

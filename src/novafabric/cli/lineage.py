@@ -395,6 +395,22 @@ def emit_openlineage_cmd(
         Optional[str],
         typer.Option("--output", "-o", help="Target: - (stdout), http://..., or file path"),
     ] = None,
+    with_facets: Annotated[
+        bool,
+        typer.Option(
+            "--with-facets",
+            help="NF-036: attach NovaFabric custom run facets "
+            "(novafabric_capsule/eval/policy + executionParameters). Additive.",
+        ),
+    ] = False,
+    otel_correlation: Annotated[
+        bool,
+        typer.Option(
+            "--otel-correlation",
+            help="NF-037: also attach the novafabric_otel_correlation facet "
+            "(trace_id/span_id) when the capsule records them. Implies --with-facets.",
+        ),
+    ] = False,
 ) -> None:
     """Emit OpenLineage events from capsules to stdout, a file, or an HTTP endpoint.
 
@@ -410,6 +426,9 @@ def emit_openlineage_cmd(
 
       # Write to an NDJSON file
       nova lineage emit-openlineage path/to/my-capsule/ --output events.ndjson
+
+      # Attach NovaFabric custom facets (capsule/eval/policy) + OTel correlation
+      nova lineage emit-openlineage path/to/my-capsule/ --with-facets --otel-correlation
     """
     if not path.exists():
         console.print(f"[red]x[/red] Path not found: {path}")
@@ -439,8 +458,13 @@ def emit_openlineage_cmd(
     from novafabric.lineage._ol_transport import emit_to
     from novafabric.lineage._openlineage import build_events_from_capsule
 
+    effective_facets = with_facets or otel_correlation
     for capsule_dir in capsule_dirs:
-        events = build_events_from_capsule(capsule_dir)
+        events = build_events_from_capsule(
+            capsule_dir,
+            with_facets=effective_facets,
+            with_otel_correlation=otel_correlation,
+        )
         if not events:
             console.print(f"[yellow]![/yellow] skipped {capsule_dir.name} (no capsule.yaml)")
             continue

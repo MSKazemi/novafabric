@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/features/dataset-provenance-card-v0.schema.json",
+  "$comment": "schema_version 0.x (v0, not frozen); tracks design/spec/features/NF-055-057-058-supply-chain.md. Standalone additive/optional fragment. A signed dataset provenance card feeds the CycloneDX AI-BOM (NF-056) and the SLSA-for-ML attestation (NF-057); it is referenced from a capsule/registry via extensions/. Does not modify run-capsule.schema.json.",
+  "title": "DatasetProvenanceCard",
+  "description": "Additive/optional — v0, not frozen. A signed dataset provenance card (NF-058): source, version, content hash, transform history, license, and a signature. Each transformHistory entry references an ADR-0090/0109 signed operation content-hash that produced a derivation. Bound to content-addressed registry/capsule digests. MUST NOT contain secrets, raw prompts, or cell values (I-4) — only op digests/types.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "asset", "source", "version", "hash", "signature"],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "description": "Card schema identity, e.g. 'dataset-provenance-card/1'."
+    },
+    "asset": {
+      "type": "string",
+      "description": "Registry asset reference, e.g. 'dataset:gaia@2026-05'."
+    },
+    "source": {
+      "$ref": "#/$defs/Source",
+      "description": "Where the dataset was retrieved from and when."
+    },
+    "version": {
+      "type": "string",
+      "description": "Dataset version label, e.g. '2026-05'."
+    },
+    "hash": {
+      "$ref": "#/$defs/DigestMap",
+      "description": "Content hash(es) of the dataset. At minimum a sha256 digest."
+    },
+    "license": {
+      "type": "string",
+      "description": "SPDX license identifier or license string, e.g. 'CC-BY-4.0'."
+    },
+    "tlp": {
+      "type": "string",
+      "description": "Traffic Light Protocol marking, e.g. 'TLP:CLEAR'."
+    },
+    "transformHistory": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Transform"},
+      "description": "Ordered derivation operations. Each references a signed operation digest (ADR-0090/0109) — never raw values (NF-058 req 9)."
+    },
+    "boundTo": {
+      "$ref": "#/$defs/BoundTo",
+      "description": "Content-addressed registry/capsule digests this card binds to (NF-058 req 9)."
+    },
+    "signature": {
+      "$ref": "#/$defs/Signature",
+      "description": "Signature over the canonical-JSON card body. An unsigned card is not evidence (NF-058)."
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Vendor extensions. Keys must be reverse-DNS-prefixed."
+    }
+  },
+  "$defs": {
+    "ContentHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "SHA-256 content hash in sha256:<hex> form."
+    },
+    "DigestMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256"],
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Hex SHA-256 digest (in-toto DigestSet form, bare hex)."
+        }
+      }
+    },
+    "Source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uri"],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "description": "Source URI, e.g. 'oci://…/gaia:2026-05'. Configurable to a private endpoint; never a hardcoded external default."
+        },
+        "retrievedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the dataset was retrieved (RFC 3339)."
+        }
+      }
+    },
+    "Transform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "signedOpDigest"],
+      "properties": {
+        "op": {
+          "type": "string",
+          "description": "Transform operation name, e.g. 'filter', 'dedup', 'sample'."
+        },
+        "signedOpDigest": {
+          "$ref": "#/$defs/ContentHash",
+          "description": "Content hash of the ADR-0090/0109 signed transform facet that produced this derivation."
+        },
+        "opType": {
+          "type": "string",
+          "description": "Structured op type, e.g. 'tool_call/filter'."
+        },
+        "producedEdge": {
+          "type": "string",
+          "description": "Reference to the lineage edge produced, e.g. 'lineage:edge:01HX…'. Metadata only — no raw values."
+        }
+      }
+    },
+    "BoundTo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["registryDigest"],
+      "properties": {
+        "registryDigest": {
+          "$ref": "#/$defs/ContentHash",
+          "description": "Content-addressed registry digest this card is bound to."
+        },
+        "capsuleDigest": {
+          "$ref": "#/$defs/ContentHash",
+          "description": "Optional content-addressed capsule digest this card is bound to."
+        }
+      }
+    },
+    "Signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["keyid", "sig"],
+      "properties": {
+        "keyid": {
+          "type": "string",
+          "description": "Signer key identifier; defaults to NovaSeal key material, e.g. 'novaseal:2026-07' (ADR-0041/0089)."
+        },
+        "alg": {
+          "type": "string",
+          "enum": ["ed25519"],
+          "description": "Signature algorithm. Reuses the NovaSeal/Evidence-Bundle Ed25519 path.",
+          "default": "ed25519"
+        },
+        "sig": {
+          "type": "string",
+          "description": "Base64-encoded signature over the canonical-JSON card body excluding this block."
+        }
+      }
+    }
+  },
+  "x-novafabric": {
+    "governed_by": "NF-058 (signed dataset provenance cards); companion NF-055 model signing, NF-057 SLSA-for-ML",
+    "adr": "ADR-0105 (AI supply-chain BOM); extends v0.1 Asset Registry + v0.4 Lineage + v0.8 nova promote; relates to ADR-0097, ADR-0090, ADR-0041/0089, ADR-0031, ADR-0024",
+    "spec": "design/spec/features/NF-055-057-058-supply-chain.md",
+    "status": "planned",
+    "stability": "v0 — additive, optional, not frozen",
+    "secrets_boundary": "op digests/types + content-addressed registry digests only; NEVER secrets, raw prompts, or cell values (I-4)"
+  }
+}

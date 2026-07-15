@@ -1,4 +1,4 @@
-# robots.txt — novafabric.dev
+# robots.txt — novafabric.ai
 # Controls CRAWLING, not indexing. Use a <meta name="robots" content="noindex"> tag
 # or X-Robots-Tag header to keep a specific page out of search results.
 
@@ -62,4 +62,4 @@ Allow: /
 # User-agent: CCBot
 # Disallow: /
 
-Sitemap: https://novafabric.dev/sitemap-index.xml
+Sitemap: https://novafabric.ai/sitemap-index.xml
