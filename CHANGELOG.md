@@ -9,6 +9,8 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.60.0] — 2026-07-16
+
 ### Added
 - **Dashboard CommandsTab now mirrors the complete `nova` CLI (227 commands).** A generated
   command registry (`web/src/components/dashboard/commands/generatedCommands.ts`), derived from the
@@ -20,8 +22,6 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   builder stays **copy-only** (Layer C, ADR-0027) — the dashboard never executes commands. A pytest
   guard (`tests/serve/test_command_registry_coverage.py`) fails CI if the registry drifts from the CLI.
   The command list gained a filter box and per-group counts to navigate the full surface.
-
-### Added
 - **OTLP/protobuf trace ingest (ADR-0177).** `otel.ingest_otlp_protobuf` / `parse_otlp_protobuf`
   decode the binary OTLP `ExportTraceServiceRequest` (the default OTLP encoding) and reuse the
   existing JSON ingest path, so both wire encodings converge on identical capsule events. The
