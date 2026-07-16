@@ -2784,6 +2784,9 @@ ocs-compress = [
 openai-agents = [
     { name = "openai-agents" },
 ]
+otlp = [
+    { name = "opentelemetry-proto" },
+]
 scale = [
     { name = "blake3" },
     { name = "boto3" },
@@ -2908,6 +2911,7 @@ requires-dist = [
     { name = "nats-py", marker = "extra == 'scale'", specifier = ">=2.9.0" },
     { name = "networkx", specifier = ">=3.6.1" },
     { name = "openai-agents", marker = "extra == 'openai-agents'", specifier = ">=0.17.3" },
+    { name = "opentelemetry-proto", marker = "extra == 'otlp'", specifier = ">=1.20" },
     { name = "opentelemetry-sdk", specifier = ">=1.29" },
     { name = "opentelemetry-semantic-conventions", specifier = ">=0.50b0" },
     { name = "presidio-analyzer", marker = "extra == 'compliance'", specifier = ">=2.2" },
@@ -2936,7 +2940,7 @@ requires-dist = [
     { name = "weasyprint", marker = "extra == 'compliance'", specifier = ">=60.0" },
     { name = "zstandard", marker = "extra == 'ocs-compress'", specifier = ">=0.23.0" },
 ]
-provides-extras = ["scale", "worm-s3", "worm-azure", "worm-gcs", "seal-aws", "seal-azure", "seal-gcp", "sigstore", "spkg", "seal-postgres", "serve", "federation", "server", "lineage-kuzu", "janusgraph", "lineage-migration", "compliance", "scale-kg", "ocs-compress", "openai-agents", "google-adk", "bedrock-agentcore", "a2a", "watch"]
+provides-extras = ["scale", "worm-s3", "worm-azure", "worm-gcs", "seal-aws", "seal-azure", "seal-gcp", "sigstore", "spkg", "seal-postgres", "serve", "federation", "server", "lineage-kuzu", "janusgraph", "lineage-migration", "compliance", "scale-kg", "ocs-compress", "openai-agents", "google-adk", "bedrock-agentcore", "a2a", "watch", "otlp"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3108,6 +3112,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/fa/fc/b7564cbef36601aef0d6c9bc01f7badb64be8e862c2e1c3c5c3b43b53e4f/opentelemetry_api-1.41.1.tar.gz", hash = "sha256:0ad1814d73b875f84494387dae86ce0b12c68556331ce6ce8fe789197c949621", size = 71416, upload-time = "2026-04-24T13:15:38.262Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/29/59/3e7118ed140f76b0982ba4321bdaed1997a0473f9720de2d10788a577033/opentelemetry_api-1.41.1-py3-none-any.whl", hash = "sha256:a22df900e75c76dc08440710e51f52f1aa6b451b429298896023e60db5b3139f", size = 69007, upload-time = "2026-04-24T13:15:15.662Z" },
+]
+
+[[package]]
+name = "opentelemetry-proto"
+version = "1.43.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e0/b9/d357faefb40bda1d4799913e6af611171ff22a2dedcb93576bc92242d056/opentelemetry_proto-1.43.0.tar.gz", hash = "sha256:224778df17e1f3fafeaaa21d874236ca5f6ffc2f86e0899298ec7351aac27924", size = 46481, upload-time = "2026-06-24T15:20:07.625Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ed/a7/3e5308cf548b8f72529c7db1afdb3a404211982376a12927fd7759f77bf3/opentelemetry_proto-1.43.0-py3-none-any.whl", hash = "sha256:c58f1f7ef84bc7dc2834016c0c37fe0081dde7ca9f6339be1970fbf9cdaaa90d", size = 72489, upload-time = "2026-06-24T15:19:51.164Z" },
 ]
 
 [[package]]

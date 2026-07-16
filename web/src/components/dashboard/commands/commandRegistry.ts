@@ -1,9 +1,15 @@
+import { GENERATED_COMMANDS } from './generatedCommands';
+
 export type FieldType = 'text' | 'number' | 'select' | 'toggle';
 export type Journey = 'debug' | 'govern' | 'audit' | 'infra';
 
+// `flag` overrides the emitted option string. When absent, the builder falls
+// back to `--${key}` (the historic behaviour used by the hand-curated defs).
+// Generated defs always set `flag` so the exact CLI option name is preserved
+// even when it differs from the field key (e.g. key `output-dir` → `--output-dir`).
 export type CommandField =
-  | { key: string; label: string; type: 'text' | 'number' | 'toggle'; required?: boolean; positional?: boolean; defaultValue?: string; suggestions?: string[]; hint: string; runnerOption?: boolean; visibleWhen?: { field: string; value: string }; sectionBefore?: string }
-  | { key: string; label: string; type: 'select'; required?: boolean; positional?: boolean; defaultValue?: string; options: string[]; hint: string; runnerOption?: boolean; visibleWhen?: { field: string; value: string }; sectionBefore?: string };
+  | { key: string; label: string; type: 'text' | 'number' | 'toggle'; required?: boolean; positional?: boolean; defaultValue?: string; suggestions?: string[]; hint: string; runnerOption?: boolean; flag?: string; visibleWhen?: { field: string; value: string }; sectionBefore?: string }
+  | { key: string; label: string; type: 'select'; required?: boolean; positional?: boolean; defaultValue?: string; options: string[]; hint: string; runnerOption?: boolean; flag?: string; visibleWhen?: { field: string; value: string }; sectionBefore?: string };
 
 export interface CommandDef {
   id: string;
@@ -13,6 +19,8 @@ export interface CommandDef {
   fields: CommandField[];
   docsPath: string;
   nativeTabNote?: string;
+  /** True for defs derived automatically from the Typer app (vs. hand-curated). */
+  generated?: boolean;
 }
 
 export function buildCommandString(
@@ -30,21 +38,22 @@ export function buildCommandString(
     const val = values[field.key] ?? field.defaultValue ?? '';
     if (!val) continue;
 
+    const flag = field.flag ?? `--${field.key}`;
     if (field.type === 'toggle') {
-      if (val === 'true') parts.push(`--${field.key}`);
+      if (val === 'true') parts.push(flag);
     } else if (field.positional) {
       parts.push(val);
     } else if (field.runnerOption) {
       parts.push('--runner-option', `${field.key}=${val}`);
     } else {
-      parts.push(`--${field.key}`, val);
+      parts.push(flag, val);
     }
   }
 
   return parts.join(' ');
 }
 
-export const COMMANDS: readonly CommandDef[] = [
+const CURATED_COMMANDS: readonly CommandDef[] = [
   // ── Debug & Investigate ────────────────────────────────────────────────
   {
     id: 'nova-capture',
@@ -953,3 +962,34 @@ export const JOURNEY_LABELS: Record<Journey, string> = {
   audit: 'Audit & Verify',
   infra: 'Infrastructure',
 };
+
+// ── Full CLI coverage ──────────────────────────────────────────────────────
+// GENERATED_COMMANDS is auto-derived from the live Typer app by
+// `web/scripts/gen-command-registry.py` and covers every `nova` command. The
+// hand-curated defs above provide richer copy (hints, native-tab notes) for the
+// most-used commands and WIN on collision. Every other command still appears in
+// the CommandsTab as a generated form, so the dashboard mirrors the full CLI.
+//
+// To refresh after adding/removing a CLI command:
+//   uv run python web/scripts/gen-command-registry.py
+// A pytest guard (tests/dashboard/test_command_registry_coverage.py) fails CI if
+// any CLI command is missing from this registry.
+
+const _curatedNames = new Set(CURATED_COMMANDS.map((c) => c.name));
+
+/**
+ * The complete command set shown in the dashboard: every hand-curated def, plus
+ * a generated def for each remaining `nova` command not covered by a curated one.
+ */
+export const COMMANDS: readonly CommandDef[] = [
+  ...CURATED_COMMANDS,
+  ...GENERATED_COMMANDS.filter((c) => !_curatedNames.has(c.name)),
+];
+
+/** The "family" of a command — its first token after `nova` (e.g. `seal`, `kg`),
+ *  or the command name itself for top-level single commands. Used to sub-group
+ *  the long command list in the sidebar. */
+export function commandFamily(cmd: CommandDef): string {
+  const parts = cmd.name.split(' '); // ['nova', 'seal', 'sign']
+  return parts.length > 2 ? parts[1] : parts[1] ?? '';
+}

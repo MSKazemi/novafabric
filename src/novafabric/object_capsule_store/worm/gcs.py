@@ -38,6 +38,7 @@ OPERATOR REQUIREMENTS:
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -215,10 +216,18 @@ class GcsWormAdapter(WormAdapter):
                 raise ConditionalPutConflict(key) from exc
             raise
 
+    def iter_objects(self, prefix: str) -> Iterator[str]:
+        """Stream keys via the GCS list_blobs lazy iterator (ADR-0175).
+
+        ``list_blobs`` returns a page-lazy iterator, so yielding from it keeps
+        peak memory bounded regardless of namespace size.
+        """
+        for b in self._client.list_blobs(self._bucket_name, prefix=prefix):
+            yield b.name
+
     def list_objects(self, prefix: str) -> list[str]:
         """List all object keys under *prefix* (sorted)."""
-        blobs = self._client.list_blobs(self._bucket_name, prefix=prefix)
-        return sorted(b.name for b in blobs)
+        return sorted(self.iter_objects(prefix))
 
     def delete_object(self, key: str) -> None:
         """Attempt to delete *key*.

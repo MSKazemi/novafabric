@@ -84,15 +84,15 @@ def rebuild_metadata_db(
     """)
     conn.commit()
 
-    # Discover unique (tenant, run_id) pairs from a single list_objects call.
-    # NOTE: For namespaces >10M capsules the S3 paginator returns all keys in
-    # one in-memory list; application-level pagination is not yet implemented
-    # (OQ-028).  Checkpoint files serve as the fast read path.
+    # Discover unique (tenant, run_id) pairs by STREAMING the chain-log keys
+    # (ADR-0175). `iter_objects` yields page-by-page from the backend paginator,
+    # so peak memory is bounded by the number of distinct (tenant, run_id) pairs
+    # rather than the total key count — safe for namespaces with millions of
+    # capsules (OQ-028). Checkpoint files remain the fast read path.
     log_prefix = f"_capsule_log/{prefix}"
-    all_keys = adapter.list_objects(log_prefix)
 
     pairs: set[tuple[str, str]] = set()
-    for key in all_keys:
+    for key in adapter.iter_objects(log_prefix):
         parts = key.split("/")
         if len(parts) >= 4:
             pairs.add((parts[1], parts[2]))

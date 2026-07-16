@@ -356,33 +356,57 @@ def export_prov_cmd(
     ],
     output: Annotated[
         Optional[str],
-        typer.Option("--output", "-o", help="Output file path (default: <capsule_dir>/prov.json)"),
+        typer.Option("--output", "-o", help="Output file path (default: <capsule_dir>/prov.<ext>)"),
     ] = None,
+    fmt: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-f",
+            help="Serialization: 'prov-json' (default) or 'prov-n' (W3C PROV-N text).",
+        ),
+    ] = "prov-json",
 ) -> None:
-    """Export a W3C PROV-JSON document from a capsule's lineage graph.
+    """Export a W3C PROV document from a capsule's lineage graph.
 
-    Scope: single capsule.
+    Two serializations of the same provenance graph are available: PROV-JSON
+    (default) and PROV-N (the human-readable notation). Scope: single capsule.
 
     \b
     Examples:
-      # Export to the capsule directory (default output path)
+      # PROV-JSON to the capsule directory (default output path)
       nova lineage export-prov path/to/my-capsule/
 
-      # Export to a specific file
-      nova lineage export-prov path/to/my-capsule/ --output /tmp/prov.json
+      # PROV-N text to a specific file
+      nova lineage export-prov path/to/my-capsule/ --format prov-n -o /tmp/prov.provn
     """
-    from novafabric.compliance.export.prov_json import export_prov_json
+    fmt_norm = fmt.strip().lower()
+    if fmt_norm not in {"prov-json", "prov-n"}:
+        console.print(
+            f"[red]x[/red] Unknown --format {fmt!r}; choose 'prov-json' or 'prov-n'."
+        )
+        raise typer.Exit(code=2)
 
     try:
-        doc = export_prov_json(capsule_dir)
+        if fmt_norm == "prov-n":
+            from novafabric.compliance.export.prov_n import export_prov_n
+
+            rendered = export_prov_n(capsule_dir)
+            default_name = "prov.provn"
+        else:
+            from novafabric.compliance.export.prov_json import export_prov_json
+
+            rendered = json.dumps(export_prov_json(capsule_dir), indent=2)
+            default_name = "prov.json"
     except FileNotFoundError as exc:
         console.print(f"[red]x[/red] {exc}")
         raise typer.Exit(code=1) from exc
 
-    out_path = Path(output) if output else capsule_dir / "prov.json"
+    out_path = Path(output) if output else capsule_dir / default_name
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
-    console.print(f"[green]✓[/green] PROV-JSON written to {out_path}")
+    out_path.write_text(rendered, encoding="utf-8")
+    label = "PROV-N" if fmt_norm == "prov-n" else "PROV-JSON"
+    console.print(f"[green]✓[/green] {label} written to {out_path}")
 
 
 @lineage_app.command("emit-openlineage")

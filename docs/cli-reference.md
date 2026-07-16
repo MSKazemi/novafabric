@@ -2136,17 +2136,20 @@ Options:
 
 #### nova lineage export-prov \<capsule_dir\>
 
-Export the W3C PROV-JSON provenance graph from a capsule's `lineage.jsonl`.
+Export a W3C PROV provenance graph from a capsule's `lineage.jsonl`, as PROV-JSON
+(default) or PROV-N text — both serializations of the same graph.
 
-**works today** — implemented in v0.32.0.
+**works today** — PROV-JSON since v0.32.0; PROV-N added (ADR-0176).
 
 ```bash
 nova lineage export-prov .novafabric/runs/01HX.../
 nova lineage export-prov .novafabric/runs/01HX.../ --output prov.json
+nova lineage export-prov .novafabric/runs/01HX.../ --format prov-n -o prov.provn
 ```
 
 Options:
-- `--output, -o PATH` — path to write PROV-JSON (default: `<capsule_dir>/prov.json`)
+- `--format, -f {prov-json,prov-n}` — serialization (default `prov-json`)
+- `--output, -o PATH` — output path (default: `<capsule_dir>/prov.json` or `prov.provn`)
 
 #### nova export-hipaa-proof \<capsule_dir\>
 

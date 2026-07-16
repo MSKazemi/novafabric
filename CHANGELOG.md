@@ -9,6 +9,47 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Added
+- **Dashboard CommandsTab now mirrors the complete `nova` CLI (227 commands).** A generated
+  command registry (`web/src/components/dashboard/commands/generatedCommands.ts`), derived from the
+  live Typer app by `web/scripts/gen-command-registry.py`, gives every CLI command — including the
+  experimental cohort (`prompt`, `label`, `annotate`, `score`, `experiment`, `session`, `kg`, `seal
+  ratchet`, `energy`, `ledger`, `retention`, …) — a fillable, copyable form in the dashboard. The
+  hand-curated defs still win for the most-used commands (richer hints, native-tab notes); everything
+  else is auto-filled from the CLI's own parameter metadata (options, choices, defaults, flags). The
+  builder stays **copy-only** (Layer C, ADR-0027) — the dashboard never executes commands. A pytest
+  guard (`tests/serve/test_command_registry_coverage.py`) fails CI if the registry drifts from the CLI.
+  The command list gained a filter box and per-group counts to navigate the full surface.
+
+### Added
+- **OTLP/protobuf trace ingest (ADR-0177).** `otel.ingest_otlp_protobuf` / `parse_otlp_protobuf`
+  decode the binary OTLP `ExportTraceServiceRequest` (the default OTLP encoding) and reuse the
+  existing JSON ingest path, so both wire encodings converge on identical capsule events. Adds the
+  optional `novafabric[otlp]` extra (`opentelemetry-proto`, Apache-2.0, ADR-0024 Tier A); lazily
+  imported, with a clear install message when absent. Tests in `tests/otel/test_genai_ingest_protobuf.py`.
+- **`nova lineage export-prov --format prov-n` — W3C PROV-N text export (ADR-0176).** The
+  `export-prov` command gains a `--format {prov-json,prov-n}` flag (default `prov-json`, so no
+  behaviour change). PROV-N is rendered from the same PROV-JSON graph builder
+  (`compliance/export/prov_n.py`), so both serializations describe an identical provenance graph;
+  entities/activities/`wasGeneratedBy`/`used`/`wasDerivedFrom` are emitted per the PROV-N grammar.
+  Tests in `tests/compliance/export/test_prov_n.py`.
+
+### Changed
+- **Object Capsule Store gained a streaming `iter_objects` listing; disaster-recovery rebuild is now
+  bounded-memory (ADR-0175).** `WormAdapter.iter_objects(prefix)` yields keys page-by-page (default
+  delegates to `list_objects`; S3/MinIO/Ceph/GCS/Azure override it to stream from their native
+  paginators). `rebuild_metadata_db` consumes it, so peak memory is bounded by the number of distinct
+  `(tenant, run_id)` pairs instead of the total key count — safe for namespaces with millions of
+  capsules (closes OQ-028). `list_objects` is unchanged (now `sorted(iter_objects(...))`); no public
+  contract break. New tests in `tests/object_capsule_store/test_iter_objects.py`.
+- **DuckDB evidence-fabric `query_lineage_summary` now computes true multi-hop blast radius.**
+  Previously the `depth` argument was ignored and only direct (1-hop) children were counted; it
+  now walks the transitive closure of `from_ref → to_ref` edges up to `depth` hops (default 3) via
+  a recursive CTE, clamps `depth < 1` to 1, and is cycle-safe (the depth cap bounds traversal;
+  counts are over distinct reachable nodes). Direct-neighbour results (`depth=1`) are unchanged, so
+  existing callers keep their behaviour. Covered by new multi-hop and cycle tests in
+  `tests/scale_architecture/test_evidence_fabric.py`.
+
 ### Docs
 - **New runnable example `examples/prompt-and-analytics/`** — why manage prompts as
   versioned, labeled registry assets and analyze runs offline: `nova prompt register`

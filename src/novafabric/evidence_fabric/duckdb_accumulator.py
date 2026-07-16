@@ -292,29 +292,49 @@ class DuckDBAccumulator:
     ) -> dict[str, int]:
         """Return blast-radius counts for the top 20 capsule refs.
 
-        Counts how many distinct ``to_ref`` values each ``from_ref`` has in
-        the lineage graph for a given tenant.
+        Counts how many distinct nodes are reachable *downstream* of each
+        ``from_ref`` within ``depth`` hops of the lineage graph for a given
+        tenant. A node's blast radius is the transitive closure of its
+        ``from_ref → to_ref`` edges, capped at ``depth`` levels — i.e. direct
+        children (depth 1), their children (depth 2), and so on. Cycles are
+        safe: the depth cap bounds the traversal, and the count is over
+        distinct reachable nodes.
 
         Args:
             tenant: Tenant to filter by.
-            depth:  Kept for API compatibility; not used in the local DuckDB
-                    implementation (full-depth hop expansion is not implemented
-                    here — use the dedicated lineage store for multi-hop).
+            depth:  Maximum number of hops to expand (default 3). ``depth=1``
+                    reproduces the direct-neighbour count. Values ``< 1`` are
+                    clamped to 1.
 
         Returns:
             ``{capsule_ref: blast_radius_count}`` for the top 20 capsules
             ordered by blast radius descending.
         """
+        max_hops = max(1, int(depth))
+        # Recursive CTE walks the edge set breadth-first, tagging each reachable
+        # node with the root it descends from. UNION (not UNION ALL) dedups rows
+        # so a diamond/cycle can't blow up the frontier; the `hop < ?` guard
+        # bounds depth. The outer query counts DISTINCT reachable nodes per root.
         sql = """
-            SELECT from_ref, COUNT(DISTINCT to_ref) AS blast_radius
-            FROM lineage_edges
-            WHERE tenant = ?
-            GROUP BY from_ref
-            ORDER BY blast_radius DESC
+            WITH RECURSIVE reachable(root, node, hop) AS (
+                SELECT from_ref AS root, to_ref AS node, 1 AS hop
+                FROM lineage_edges
+                WHERE tenant = ?
+                UNION
+                SELECT r.root, e.to_ref, r.hop + 1
+                FROM reachable r
+                JOIN lineage_edges e
+                  ON e.from_ref = r.node AND e.tenant = ?
+                WHERE r.hop < ?
+            )
+            SELECT root AS from_ref, COUNT(DISTINCT node) AS blast_radius
+            FROM reachable
+            GROUP BY root
+            ORDER BY blast_radius DESC, from_ref ASC
             LIMIT 20
         """
         with self._lock:
-            result = self._conn.execute(sql, [tenant]).fetchall()
+            result = self._conn.execute(sql, [tenant, tenant, max_hops]).fetchall()
         return {row[0]: int(row[1]) for row in result}
 
     # ------------------------------------------------------------------

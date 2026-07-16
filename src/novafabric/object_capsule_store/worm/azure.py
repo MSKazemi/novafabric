@@ -41,6 +41,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -159,9 +160,17 @@ class AzureWormAdapter(WormAdapter):
                 raise ConditionalPutConflict(key) from exc
             raise
 
+    def iter_objects(self, prefix: str) -> Iterator[str]:
+        """Stream keys via the Azure list_blobs lazy iterator (ADR-0175).
+
+        ``list_blobs`` returns an auto-paging ``ItemPaged`` iterator, so yielding
+        from it keeps peak memory bounded regardless of namespace size.
+        """
+        for b in self._container_client.list_blobs(name_starts_with=prefix):
+            yield b.name
+
     def list_objects(self, prefix: str) -> list[str]:
-        blobs = self._container_client.list_blobs(name_starts_with=prefix)
-        return sorted(b.name for b in blobs)
+        return sorted(self.iter_objects(prefix))
 
     def delete_object(self, key: str) -> None:
         blob_client = self._container_client.get_blob_client(key)

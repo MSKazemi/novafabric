@@ -21,6 +21,7 @@ on data + NovaSeal sibling via a single adapter call).
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 
@@ -123,6 +124,20 @@ class WormAdapter(ABC):
     @abstractmethod
     def list_objects(self, prefix: str) -> list[str]:
         """List all object keys under *prefix* (non-recursive, sorted)."""
+
+    def iter_objects(self, prefix: str) -> Iterator[str]:
+        """Stream object keys under *prefix* without materializing them all (ADR-0175).
+
+        The default implementation delegates to :meth:`list_objects`, which is
+        adequate for small namespaces and the in-memory adapter. Cloud backends
+        override this to yield keys directly from their native paginators so a
+        namespace with millions of keys never has to fit in memory (OQ-028).
+
+        Unlike :meth:`list_objects`, this method does **not** guarantee global
+        sort order — streaming overrides yield in backend/page order. Callers
+        that need sorted output must use :meth:`list_objects`.
+        """
+        yield from self.list_objects(prefix)
 
     @abstractmethod
     def delete_object(self, key: str) -> None:

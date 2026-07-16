@@ -38,8 +38,11 @@ Honesty rules (ADR-0021 §4, ADR-0009):
   native capture. Ingested text passes through the ADR-0009 secret scanner
   before the manifest is written.
 
-OTLP/**protobuf** ingest is out of scope for this slice (needs a decode
-dependency); only the OTLP JSON encoding is accepted.
+OTLP/**protobuf** ingest is also supported (ADR-0177) via
+:func:`parse_otlp_protobuf` / :func:`ingest_otlp_protobuf`, which decode the
+binary ``ExportTraceServiceRequest`` and reuse the JSON path — so both wire
+encodings converge on identical events. Protobuf decoding requires the ``otlp``
+extra (``pip install 'novafabric[otlp]'``, opentelemetry-proto, Apache-2.0).
 """
 
 from __future__ import annotations
@@ -381,6 +384,87 @@ def ingest_otlp_json(payload: Any) -> GenAIIngestResult:
     result.unmapped_keys.sort()
     result.dropped_keys.sort()
     return result
+
+
+# ── OTLP/protobuf decoding (ADR-0177) ────────────────────────────────────────
+
+
+def _b64_to_hex(value: Any) -> Any:
+    """Convert a base64 string to lowercase hex; pass non-base64 through unchanged."""
+    if not isinstance(value, str) or not value:
+        return value
+    import base64
+    import binascii
+
+    try:
+        return base64.b64decode(value, validate=True).hex()
+    except (binascii.Error, ValueError):
+        return value  # already hex or malformed — leave as-is for parse_otlp_json
+
+
+def _normalize_protobuf_ids(payload: dict[str, Any]) -> None:
+    """Convert trace/span IDs from base64 (MessageToDict) to hex (OTLP/JSON), in place.
+
+    ``google.protobuf.json_format.MessageToDict`` encodes proto ``bytes`` fields as
+    base64, but the OTLP/JSON convention — which :func:`parse_otlp_json` follows —
+    uses lowercase hex for ``traceId``/``spanId``/``parentSpanId``. Normalizing here
+    lets both wire encodings produce identical normalized spans.
+    """
+    for rs in payload.get("resourceSpans", []) or []:
+        for ss in rs.get("scopeSpans", []) or []:
+            for sp in ss.get("spans", []) or []:
+                for key in ("traceId", "spanId", "parentSpanId"):
+                    if key in sp:
+                        sp[key] = _b64_to_hex(sp[key])
+
+
+def _protobuf_to_payload(data: bytes) -> dict[str, Any]:
+    """Decode a binary OTLP ``ExportTraceServiceRequest`` into the OTLP/JSON dict shape."""
+    try:
+        from google.protobuf.json_format import MessageToDict
+        from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
+            ExportTraceServiceRequest,
+        )
+    except ImportError as exc:  # pragma: no cover - import guard
+        raise OTLPIngestError(
+            "OTLP/protobuf ingest requires the 'otlp' extra: "
+            "pip install 'novafabric[otlp]' (adds opentelemetry-proto, Apache-2.0)."
+        ) from exc
+
+    req = ExportTraceServiceRequest()
+    try:
+        req.ParseFromString(data)
+    except Exception as exc:  # protobuf DecodeError and friends
+        raise OTLPIngestError(
+            f"not a decodable OTLP/protobuf trace export: {exc}"
+        ) from exc
+
+    payload: dict[str, Any] = MessageToDict(req)
+    # MessageToDict omits empty repeated fields, so a zero-span export yields {}.
+    # An empty OTLP request is valid and means "no spans" — normalize it so the
+    # JSON parser sees an (empty) resourceSpans array instead of raising.
+    payload.setdefault("resourceSpans", [])
+    _normalize_protobuf_ids(payload)
+    return payload
+
+
+def parse_otlp_protobuf(data: bytes) -> list[dict[str, Any]]:
+    """Flatten an OTLP/**protobuf** trace export into normalized span dicts (ADR-0177).
+
+    Decodes the binary ``ExportTraceServiceRequest`` and reuses
+    :func:`parse_otlp_json`, so the two wire encodings converge on identical
+    normalized spans. Requires the ``otlp`` extra (opentelemetry-proto).
+    """
+    return parse_otlp_json(_protobuf_to_payload(data))
+
+
+def ingest_otlp_protobuf(data: bytes) -> GenAIIngestResult:
+    """Map an OTLP/**protobuf** trace export to capsule events (ADR-0177).
+
+    Binary sibling of :func:`ingest_otlp_json`; both converge on identical events
+    for the same spans. Requires the ``otlp`` extra (opentelemetry-proto).
+    """
+    return ingest_otlp_json(_protobuf_to_payload(data))
 
 
 # ── capsule sealing ──────────────────────────────────────────────────────────

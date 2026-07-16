@@ -348,6 +348,40 @@ class TestDuckDBAccumulatorLineageSummary:
         assert acc.query_lineage_summary(tenant="nobody") == {}
         acc.close()
 
+    def test_multi_hop_transitive_blast_radius(self, tmp_path: Path) -> None:
+        # Chain: root -> a -> b -> c  (three downstream nodes transitively).
+        acc = _make_accumulator(tmp_path)
+        edges = [
+            {"from_ref": "root", "to_ref": "a", "edge_type": "spawned", "tenant": "t1"},
+            {"from_ref": "a", "to_ref": "b", "edge_type": "spawned", "tenant": "t1"},
+            {"from_ref": "b", "to_ref": "c", "edge_type": "spawned", "tenant": "t1"},
+        ]
+        acc.ingest_edges(edges)
+        # depth=1 -> only the direct child; depth>=3 -> all three descendants.
+        assert acc.query_lineage_summary(tenant="t1", depth=1)["root"] == 1
+        assert acc.query_lineage_summary(tenant="t1", depth=2)["root"] == 2
+        assert acc.query_lineage_summary(tenant="t1", depth=3)["root"] == 3
+        # depth beyond the chain length saturates at 3.
+        assert acc.query_lineage_summary(tenant="t1", depth=9)["root"] == 3
+        # depth < 1 is clamped to 1 (direct neighbours only).
+        assert acc.query_lineage_summary(tenant="t1", depth=0)["root"] == 1
+        acc.close()
+
+    def test_cycle_is_bounded_by_depth(self, tmp_path: Path) -> None:
+        # A cycle must not loop forever; the depth cap bounds the traversal and
+        # the count is over DISTINCT reachable nodes.
+        acc = _make_accumulator(tmp_path)
+        edges = [
+            {"from_ref": "x", "to_ref": "y", "edge_type": "spawned", "tenant": "t1"},
+            {"from_ref": "y", "to_ref": "x", "edge_type": "spawned", "tenant": "t1"},
+        ]
+        acc.ingest_edges(edges)
+        summary = acc.query_lineage_summary(tenant="t1", depth=5)
+        # x reaches {y, x}, y reaches {x, y} — two distinct nodes each.
+        assert summary["x"] == 2
+        assert summary["y"] == 2
+        acc.close()
+
 
 # ===========================================================================
 # EventQueueConsumer tests

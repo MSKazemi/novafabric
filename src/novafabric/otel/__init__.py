@@ -18,14 +18,18 @@
 `gen_ai.*` spans; `content_bridge` is the opt-in, ADR-0009-redacted message bridge;
 `genai_ingest` is the inbound half — OTLP/HTTP **JSON** traces carrying GenAI spans
 become run capsules (`capture_level: ingested-otlp`). OTLP/**protobuf** ingest is
-still not implemented — it requires a protobuf decode dependency.
+also supported (ADR-0177) and reuses the JSON path after decoding, so both wire
+encodings converge on identical events; protobuf decoding needs the `otlp` extra
+(`pip install 'novafabric[otlp]'`, opentelemetry-proto, Apache-2.0).
 """
 
 from novafabric.otel.genai_emitter import MAPPING_VERSION, emit_spans
 from novafabric.otel.genai_ingest import (
     OTLPIngestError,
     ingest_otlp_json,
+    ingest_otlp_protobuf,
     parse_otlp_json,
+    parse_otlp_protobuf,
     write_ingest_capsule,
 )
 
@@ -34,6 +38,8 @@ __all__ = [
     "OTLPIngestError",
     "emit_spans",
     "ingest_otlp_json",
+    "ingest_otlp_protobuf",
     "parse_otlp_json",
+    "parse_otlp_protobuf",
     "write_ingest_capsule",
 ]

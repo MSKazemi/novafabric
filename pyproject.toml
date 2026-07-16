@@ -214,6 +214,11 @@ watch = [
     # Install: pip install 'novafabric[watch]'
     "watchdog>=4.0.0",
 ]
+otlp = [
+    # opentelemetry-proto (Apache-2.0) — Tier A under ADR-0024.
+    # Decodes binary OTLP ExportTraceServiceRequest for OTLP/protobuf ingest (ADR-0177).
+    "opentelemetry-proto>=1.20",
+]
 
 [dependency-groups]
 dev = [
@@ -359,6 +364,12 @@ module = [
     # Lazily imported in energy/_readers.py for GPU energy; RAPL path needs no dep.
     "pynvml",
     "pynvml.*",
+    # opentelemetry-proto (Apache-2.0, Tier A) — optional extra novafabric[otlp]
+    # (ADR-0177). Lazily imported in otel/genai_ingest.py for OTLP/protobuf ingest.
+    # google.protobuf ships no py.typed, so silence import-untyped in both lean and
+    # --all-extras (CI) envs.
+    "google.protobuf.*",
+    "opentelemetry.proto.*",
 ]
 ignore_missing_imports = true
 

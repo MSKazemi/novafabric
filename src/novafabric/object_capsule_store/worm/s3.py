@@ -19,6 +19,7 @@ Requires: ``pip install novafabric[worm-s3]``  (boto3 >=1.35, Apache-2.0)
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -142,14 +143,20 @@ class S3WormAdapter(WormAdapter):
                 raise ConditionalPutConflict(key) from exc
             raise
 
-    def list_objects(self, prefix: str) -> list[str]:
+    def iter_objects(self, prefix: str) -> Iterator[str]:
+        """Stream keys page-by-page via the S3 paginator (ADR-0175).
+
+        boto3 pages at 1000 keys by default, so peak memory stays bounded even
+        for namespaces with millions of objects — nothing is accumulated here.
+        """
         kwargs: dict[str, Any] = {"Bucket": self._bucket, "Prefix": prefix}
-        keys: list[str] = []
         paginator = self._client.get_paginator("list_objects_v2")
         for page in paginator.paginate(**kwargs):
             for obj in page.get("Contents", []):
-                keys.append(obj["Key"])
-        return sorted(keys)
+                yield obj["Key"]
+
+    def list_objects(self, prefix: str) -> list[str]:
+        return sorted(self.iter_objects(prefix))
 
     def delete_object(self, key: str) -> None:
         self._client.delete_object(Bucket=self._bucket, Key=key)
