@@ -131,8 +131,9 @@ underlying capability as design intent — never as a shipped guarantee:
 - **Runs & capsules** — parent/child and `validate-distributed` routes correspond to the
   **PLANNED** parent/child capsule model (ADR-0039). Local single-node capture is the
   shipped case. `POST /api/otlp/v1/traces` (NF-034) is **experimental**: it accepts
-  OTLP/HTTP **JSON** traces only (no protobuf yet) and seals GenAI spans into a
-  lower-fidelity capsule labeled `capture_level: ingested-otlp`.
+  OTLP/HTTP **JSON** (default) or OTLP/**protobuf** (`Content-Type: application/x-protobuf`,
+  ADR-0177; the server needs the `otlp` extra) — both converge on the same events —
+  and seals GenAI spans into a lower-fidelity capsule labeled `capture_level: ingested-otlp`.
 - **Storage & infrastructure** — object-store, manifest-chain, and collector routes
   correspond to the **PLANNED** object capsule store and cluster-scale collector. SQLite is
   the shipped local default.
@@ -167,7 +168,7 @@ slash-containing values.
 | Method | Path | Summary |
 |---|---|---|
 | `POST` | `/api/capsule-migrate` | Migrate a v0.1.x capsule directory to v1.0.0 format (ADR-0034 §6). |
-| `POST` | `/api/otlp/v1/traces` | Ingest OTLP/HTTP JSON OTel GenAI spans into a run capsule (NF-034, experimental). |
+| `POST` | `/api/otlp/v1/traces` | Ingest OTLP OTel GenAI spans (JSON or protobuf via Content-Type) into a run capsule (NF-034, experimental). |
 | `GET` | `/api/runs` | list runs |
 | `GET` | `/api/runs/cost-summary` | Return per-run token and cost totals from ClickHouse. |
 | `GET` | `/api/runs/search` | Cursor-based run listing. |

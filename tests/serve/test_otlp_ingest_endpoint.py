@@ -132,3 +132,41 @@ def test_otlp_ingest_no_genai_spans_writes_nothing(
     assert body["spans_ingested"] == 0
     assert body["spans_skipped"] == 1
     assert list(capsule_base.iterdir()) == []
+
+
+def _protobuf_body() -> bytes:
+    from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
+        ExportTraceServiceRequest,
+    )
+
+    req = ExportTraceServiceRequest()
+    sp = req.resource_spans.add().scope_spans.add().spans.add()
+    sp.name = "chat gpt-4o"
+    sp.trace_id = bytes.fromhex("0123456789abcdef0123456789abcdef")
+    sp.span_id = bytes.fromhex("0123456789abcdef")
+    sp.start_time_unix_nano = 1_700_000_000_000_000_000
+    sp.end_time_unix_nano = 1_700_000_001_000_000_000
+    for key, val in (
+        ("gen_ai.system", "openai"),
+        ("gen_ai.request.model", "gpt-4o"),
+        ("gen_ai.operation.name", "chat"),
+    ):
+        kv = sp.attributes.add()
+        kv.key = key
+        kv.value.string_value = val
+    return req.SerializeToString()
+
+
+def test_otlp_ingest_protobuf_body(client: TestClient, capsule_base: Path) -> None:
+    # OTLP/protobuf ingest (ADR-0177): Content-Type dispatch → same events as JSON.
+    pytest.importorskip("opentelemetry.proto.collector.trace.v1.trace_service_pb2")
+    resp = client.post(
+        f"/api/otlp/v1/traces?token={VALID_TOKEN}",
+        content=_protobuf_body(),
+        headers={**HEADERS, "content-type": "application/x-protobuf"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["spans_ingested"] == 1
+    assert body["model_call_count"] == 1
+    assert body["capture_level"] == "ingested-otlp"

@@ -24,9 +24,12 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 ### Added
 - **OTLP/protobuf trace ingest (ADR-0177).** `otel.ingest_otlp_protobuf` / `parse_otlp_protobuf`
   decode the binary OTLP `ExportTraceServiceRequest` (the default OTLP encoding) and reuse the
-  existing JSON ingest path, so both wire encodings converge on identical capsule events. Adds the
-  optional `novafabric[otlp]` extra (`opentelemetry-proto`, Apache-2.0, ADR-0024 Tier A); lazily
-  imported, with a clear install message when absent. Tests in `tests/otel/test_genai_ingest_protobuf.py`.
+  existing JSON ingest path, so both wire encodings converge on identical capsule events. The
+  dashboard endpoint `POST /api/otlp/v1/traces` now dispatches on `Content-Type`
+  (`application/x-protobuf` → protobuf, else JSON). Adds the optional `novafabric[otlp]` extra
+  (`opentelemetry-proto`, Apache-2.0, ADR-0024 Tier A); lazily imported, with a clear install
+  message when absent. Tests in `tests/otel/test_genai_ingest_protobuf.py` and
+  `tests/serve/test_otlp_ingest_endpoint.py`.
 - **`nova lineage export-prov --format prov-n` — W3C PROV-N text export (ADR-0176).** The
   `export-prov` command gains a `--format {prov-json,prov-n}` flag (default `prov-json`, so no
   behaviour change). PROV-N is rendered from the same PROV-JSON graph builder

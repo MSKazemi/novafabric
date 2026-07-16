@@ -1724,26 +1724,35 @@ def create_app(
     # ---------- OTLP GenAI ingest (NF-034, ADR-0098; experimental) ----------
 
     @app.post("/api/otlp/v1/traces", dependencies=[Depends(verify_token)])
-    async def otlp_ingest_traces(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
-        """Ingest OTLP/HTTP JSON OTel GenAI spans into a run capsule (NF-034, experimental).
+    async def otlp_ingest_traces(request: Request) -> dict[str, Any]:
+        """Ingest OTLP OTel GenAI spans into a run capsule (NF-034, experimental).
 
-        Accepts an ExportTraceServiceRequest-shaped JSON body, converts spans
-        carrying gen_ai.* attributes into capsule events, and seals a capsule
-        with capture_level 'ingested-otlp'. Spans without gen_ai.* attributes
-        are skipped (counted, never guessed). Protobuf bodies are not accepted
-        in this slice — OTLP JSON only.
+        Accepts an ExportTraceServiceRequest as OTLP/HTTP **JSON** (default), or as
+        OTLP/**protobuf** when the request ``Content-Type`` is
+        ``application/x-protobuf`` (ADR-0177; needs the server to have the ``otlp``
+        extra installed — otherwise a clear 400 is returned). Spans carrying
+        gen_ai.* attributes become capsule events sealed at capture_level
+        'ingested-otlp'; other spans are skipped (counted, never guessed). Both wire
+        encodings converge on identical events.
         """
         from novafabric.otel.genai_ingest import (  # noqa: PLC0415
             CAPTURE_LEVEL,
             OTLPIngestError,
             ingest_otlp_json,
+            ingest_otlp_protobuf,
             write_ingest_capsule,
         )
 
+        content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
         try:
-            result = ingest_otlp_json(body)
+            if content_type == "application/x-protobuf":
+                result = ingest_otlp_protobuf(await request.body())
+            else:
+                result = ingest_otlp_json(await request.json())
         except OTLPIngestError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400, detail=f"invalid JSON body: {exc}") from exc
 
         if result.genai_spans == 0:
             return {
