@@ -114,6 +114,10 @@ class Score(BaseModel):
     significance: SignificanceBlock | None = None
     created_at: str = Field(default_factory=_now_iso)
     run_id: str | None = None
+    #: ADR-0119 (additive, optional): the ``score_id`` of a prior record this score
+    #: *corrects*. The prior record is never modified or removed — a correction is a
+    #: new appended record that points at it. ``None`` for an original score.
+    supersedes: str | None = None
 
     @model_validator(mode="after")
     def _check(self) -> Score:
@@ -131,6 +135,8 @@ class Score(BaseModel):
             )
         if self.run_id is not None and not _ULID_RE.match(self.run_id):
             raise ValueError(f"run_id is not a valid ULID: {self.run_id!r}")
+        if self.supersedes is not None and not _ULID_RE.match(self.supersedes):
+            raise ValueError(f"supersedes is not a valid ULID: {self.supersedes!r}")
         # value/value_type agreement (requirement 1). bool is a subclass of int but
         # NOT of float, so these isinstance checks are mutually exclusive.
         if self.value_type is ScoreValueType.BOOLEAN and not isinstance(self.value, bool):

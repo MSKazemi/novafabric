@@ -1,0 +1,10 @@
+{
+  "input_tokens": -1,
+  "output_tokens": 8730,
+  "cached_tokens": 22150,
+  "reasoning_tokens": 6100,
+  "audio_input_tokens": 512,
+  "extra": {
+    "video_input_tokens": 1280
+  }
+}

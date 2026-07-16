@@ -31,6 +31,8 @@ class ReplayResult:
     exact_eligible: bool | None = None
     exact_hash_count: int | None = None
     exact_reasons: list[str] | None = None
+    # tool-call schema drift findings (ADR-0128; additive, optional)
+    schema_drift: list[dict[str, Any]] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -63,6 +65,8 @@ class ReplayResult:
             d["exact_hash_count"] = self.exact_hash_count
         if self.exact_reasons is not None:
             d["exact_reasons"] = self.exact_reasons
+        if self.schema_drift is not None:
+            d["schema_drift"] = self.schema_drift
         return d
 
 

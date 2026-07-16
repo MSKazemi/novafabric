@@ -1,0 +1,13 @@
+{
+  "schema_version": "0.1.0",
+  "comment_id": "01HXB0M9RT2YZ2K7N9DPBYK2WA",
+  "subject": "asset://prompt/triage-router@3.1.0",
+  "subject_kind": "asset",
+  "author": "m.ardebili",
+  "body": "Keep for the eval baseline.",
+  "created_at": "2026-07-12T09:14:02.101Z",
+  "tags": [
+    "prompt",
+    "baseline"
+  ]
+}

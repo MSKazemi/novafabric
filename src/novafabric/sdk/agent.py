@@ -4,7 +4,7 @@ import functools
 import json
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
@@ -24,7 +24,28 @@ def agent(
     name: str,
     version: str,
     capsule_dir: Path | str | None = None,
+    deployment_environment: str | None = None,
+    variant: Mapping[str, Any] | None = None,
+    session_id: str | None = None,
+    session_sequence: int | None = None,
 ) -> Callable[[F], F]:
+    """Capture decorator. ``deployment_environment`` (ADR-0126) tags the capsule
+    with its delivery-lifecycle context (e.g. ``production``); the CLI flag and
+    the ``NOVAFABRIC_ENVIRONMENT`` env var take precedence over this argument.
+
+    ``variant`` (ADR-0116, record-only) records which A/B experiment/variant an
+    *external* allocator had active — a mapping with ``experiment_id``,
+    ``variant_id``, and ``assignment_source`` (plus optional ``variant_label``,
+    ``assigned_at``, ``extensions``), copied verbatim into the capsule's
+    optional ``variant`` block. NovaFabric never assigns variants. The
+    ``NOVAFABRIC_VARIANT*`` env vars take precedence over this argument.
+
+    ``session_id``/``session_sequence`` (ADR-0122, record-only) tag the capsule
+    as one ordered turn of a multi-turn session; ``session_id`` must be a ULID
+    (create one with ``nova session new``). The ``NOVAFABRIC_SESSION_ID`` /
+    ``NOVAFABRIC_SESSION_SEQUENCE`` env vars take precedence over these
+    arguments. Absent = a standalone run (today's behavior).
+    """
     def decorator(fn: F) -> F:
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -37,7 +58,13 @@ def agent(
                 if capsule_dir is None:
                     return fn(*args, **kwargs)
 
-                return _run_with_capture(fn, args, kwargs, name, version, Path(capsule_dir))
+                return _run_with_capture(
+                    fn, args, kwargs, name, version, Path(capsule_dir),
+                    deployment_environment=deployment_environment,
+                    variant=variant,
+                    session_id=session_id,
+                    session_sequence=session_sequence,
+                )
 
         return wrapper  # type: ignore[return-value]
 
@@ -51,13 +78,35 @@ def _run_with_capture(
     agent_name: str,
     agent_version: str,
     cap_dir: Path,
+    deployment_environment: str | None = None,
+    variant: Mapping[str, Any] | None = None,
+    session_id: str | None = None,
+    session_sequence: int | None = None,
 ) -> Any:
     from novafabric.capture._ulid import new_span_id, new_ulid
     from novafabric.capture.capsule import CapsuleWriter
+    from novafabric.capture.deployment_env import resolve_deployment_environment
     from novafabric.capture.env import capture_environment
     from novafabric.capture.hooks import install_all, uninstall_all
     from novafabric.capture.replay import minimal_replay_policy
     from novafabric.capture.secrets import SecretScannerV0
+    from novafabric.capture.variant import resolve_variant_attribution
+
+    # ADR-0126: resolve pre-flight (env var beats the SDK argument); an invalid
+    # explicit sdk-arg raises here, before the workload runs.
+    deployment_env = resolve_deployment_environment(sdk_value=deployment_environment)
+    # ADR-0116: resolve pre-flight (NOVAFABRIC_VARIANT* env vars beat the SDK
+    # argument); an incomplete/invalid explicit block raises here, before the
+    # workload runs. Record-only — values are copied verbatim, never derived.
+    variant_attr = resolve_variant_attribution(sdk_values=variant)
+    # ADR-0122: resolve pre-flight (NOVAFABRIC_SESSION_* env vars beat the SDK
+    # arguments); an invalid explicit membership raises here, before the
+    # workload runs. Record-only back-reference; session.json is authoritative.
+    from novafabric.capture.session import resolve_session_membership
+
+    session_membership = resolve_session_membership(
+        sdk_session_id=session_id, sdk_sequence=session_sequence
+    )
 
     run_id = new_ulid()
     root_span_id = new_span_id()
@@ -156,6 +205,18 @@ def _run_with_capture(
             "mutating_tool_count": 0,
             "exit_code": exit_code,
         }
+        # ADR-0126: additive optional deployment-context tag (absent = unchanged manifest).
+        if deployment_env is not None:
+            manifest["deployment_environment"] = deployment_env.value
+            manifest["environment_source"] = deployment_env.source
+        # ADR-0116: additive optional variant-attribution block (absent = unchanged manifest).
+        if variant_attr is not None:
+            manifest["variant"] = variant_attr.to_manifest_block()
+        # ADR-0122: additive optional session back-reference (absent = unchanged manifest).
+        if session_membership is not None:
+            manifest["session_id"] = session_membership.session_id
+            if session_membership.sequence is not None:
+                manifest["sequence"] = session_membership.sequence
         if error:
             manifest["error"] = error
 

@@ -1,0 +1,12 @@
+{
+  "type": "document",
+  "media_type": "application/pdf",
+  "content_hash": "sha256:139d544b821b13ebea14f1b0fe18577222e415c2966e3a3511c4196055232202",
+  "blob_ref": "outputs/139d544b821b13ebea14f1b0fe18577222e415c2966e3a3511c4196055232202.pdf",
+  "byte_size": 40211,
+  "redacted": false,
+  "sampled": {
+    "strategy": "first-page",
+    "original_byte_size": 410221
+  }
+}

@@ -21,6 +21,7 @@ class AuditEventType(str, enum.Enum):
     UNREGISTER = "unregister"
     PROMOTE_PROPOSE = "promote.propose"
     PROMOTE_APPROVE = "promote.approve"
+    RETENTION_ACTION = "retention.action"
 
 
 class AuditEntry(BaseModel):

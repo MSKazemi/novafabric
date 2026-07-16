@@ -1,0 +1,60 @@
+{
+  "schema_version": "0.1.0",
+  "root": {
+    "name": "triage-agent",
+    "version": "v9",
+    "hash": "sha256:9c7a268e1e2c9683bd5f4ccbcb4273b5e03062b32a8476dc3eb9b450da81a2f5"
+  },
+  "included": [
+    {
+      "name": "triage-agent",
+      "version": "v9",
+      "hash": "sha256:9c7a268e1e2c9683bd5f4ccbcb4273b5e03062b32a8476dc3eb9b450da81a2f5",
+      "depth": 0
+    },
+    {
+      "name": "system-preamble",
+      "version": "v4",
+      "hash": "sha256:3d4467f30edd313223f89bc2868bc9239b7c633776aa35587c29bcbac765a0d8",
+      "depth": 1
+    },
+    {
+      "name": "org-header",
+      "version": "v2",
+      "hash": "sha256:f269a3098620a7311040aeedd2bc3d98e830d2875d7ef80e1bd9758ee348ee90",
+      "depth": 2
+    },
+    {
+      "name": "safety-footer",
+      "version": "v7",
+      "hash": "sha256:915ebc5acb83c72e7077d03a2f374d8512f10aae4cf666c6f5a79eaeca18b4f7",
+      "depth": 1
+    }
+  ],
+  "edges": [
+    {
+      "parent_hash": "sha256:9c7a268e1e2c9683bd5f4ccbcb4273b5e03062b32a8476dc3eb9b450da81a2f5",
+      "ref": "@prompt:system-preamble@production",
+      "selector_kind": "label",
+      "resolved_version": "v4",
+      "resolved_hash": "sha256:3d4467f30edd313223f89bc2868bc9239b7c633776aa35587c29bcbac765a0d8"
+    },
+    {
+      "parent_hash": "sha256:3d4467f30edd313223f89bc2868bc9239b7c633776aa35587c29bcbac765a0d8",
+      "ref": "@prompt:org-header@v2",
+      "selector_kind": "version",
+      "resolved_version": "v2",
+      "resolved_hash": "sha256:f269a3098620a7311040aeedd2bc3d98e830d2875d7ef80e1bd9758ee348ee90"
+    },
+    {
+      "parent_hash": "sha256:9c7a268e1e2c9683bd5f4ccbcb4273b5e03062b32a8476dc3eb9b450da81a2f5",
+      "ref": "@prompt:safety-footer@v7",
+      "selector_kind": "version",
+      "resolved_version": "v7",
+      "resolved_hash": "sha256:915ebc5acb83c72e7077d03a2f374d8512f10aae4cf666c6f5a79eaeca18b4f7"
+    }
+  ],
+  "assembled_prompt_hash": "sha256:34553bbdce61d99ce50dd016e82518076fae85b6269fec21500a8ea3cb847f43",
+  "max_depth": 9,
+  "resolved_at": "2026-07-12T09:14:22.001Z"
+}

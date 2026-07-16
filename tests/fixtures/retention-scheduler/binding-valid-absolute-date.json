@@ -1,0 +1,9 @@
+{
+  "id": "fixed-cutoff",
+  "match": {
+    "asset": "prompt:*"
+  },
+  "window": "2031-01-01",
+  "action": "purge",
+  "legal_hold": false
+}

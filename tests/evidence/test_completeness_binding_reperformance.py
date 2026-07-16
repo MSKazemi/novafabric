@@ -242,6 +242,19 @@ class TestCli:
         envelope = json.loads(out.read_text())
         assert envelope["signatures"]
 
+    def test_completeness_output_creates_parent_dirs(self, tmp_path: Path) -> None:
+        """-o some/new/dir/file.json must create the directories, not crash."""
+        capsule = _capsule(tmp_path)
+        priv, _ = generate_keypair(tmp_path / "keys")
+        out = tmp_path / "does" / "not" / "exist" / "completeness.intoto.json"
+        runner = CliRunner()
+        result = runner.invoke(
+            evidence_app,
+            ["completeness", str(capsule), "--key", str(priv), "-o", str(out)],
+        )
+        assert result.exit_code == 0, result.output
+        assert json.loads(out.read_text())["signatures"]
+
     def test_bind_writes_bindings_file(self, tmp_path: Path) -> None:
         capsule = _capsule(tmp_path)
         out = tmp_path / "bindings.json"

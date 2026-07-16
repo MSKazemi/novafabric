@@ -1,0 +1,12 @@
+{
+  "type": "image",
+  "media_type": "image/png",
+  "content_hash": "sha256:8f8cbb7dcf46e0bc7d53265749a6c17d116093a6ba95e442764060c76fd4a86c",
+  "blob_ref": "outputs/8f8cbb7dcf46e0bc7d53265749a6c17d116093a6ba95e442764060c76fd4a86c.png",
+  "byte_size": 51234,
+  "redacted": false,
+  "dimensions": {
+    "width": 512,
+    "height": 512
+  }
+}

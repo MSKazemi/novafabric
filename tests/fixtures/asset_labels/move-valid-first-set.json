@@ -1,0 +1,9 @@
+{
+  "schema_version": "0.1.0",
+  "label": "staging",
+  "asset_name": "system-prompt",
+  "target_version": "v3",
+  "previous_version": null,
+  "moved_at": "2026-07-01T09:22:40.000Z",
+  "moved_by": "bob"
+}

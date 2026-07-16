@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/lifecycle-event.schema.json",
+  "$comment": "Governed by ADR-0137 (accepted 2026-07-13); graduated from design/spec/schemas/ on first implementation slice (experimental). schema_version 0.1.0. Tracks design/spec/lifecycle-webhooks-v0.md. One append-only lifecycle Event (events.jsonl line / webhook body). Emit-and-forget: durable local log, best-effort webhooks; no broker/ordering/exactly-once guarantees. payload/subject carry only refs/digests/enums/counts - never prompt text or secrets.",
+  "title": "LifecycleEvent",
+  "description": "One structured, non-sensitive lifecycle event record.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "type",
+    "subject",
+    "occurred_at",
+    "payload"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "event_id": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "type": {
+      "enum": [
+        "capsule.created",
+        "capsule.validated",
+        "promotion.proposed",
+        "promotion.approved",
+        "promotion.rejected",
+        "policy.failed",
+        "retention.applied",
+        "promotion.bypass.created",
+        "promotion.bypass.approved",
+        "promotion.bypass.expired"
+      ]
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "digest"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "capsule",
+            "asset",
+            "promotion",
+            "policy",
+            "retention"
+          ]
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "payload": {
+      "type": "object"
+    },
+    "signature": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "alg",
+            "keyid",
+            "value"
+          ],
+          "properties": {
+            "alg": {
+              "enum": [
+                "hmac-sha256",
+                "novaseal"
+              ]
+            },
+            "keyid": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "source": {
+      "type": "string"
+    },
+    "nova.version": {
+      "type": "string"
+    },
+    "extensions": {
+      "type": "object"
+    }
+  }
+}

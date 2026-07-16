@@ -1,0 +1,13 @@
+{
+  "schema_version": "0.1.0",
+  "models": [
+    {
+      "model_id": "x",
+      "pricing": {
+        "input": {
+          "amount": -1
+        }
+      }
+    }
+  ]
+}

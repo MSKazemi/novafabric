@@ -1,0 +1,8 @@
+[
+  {
+    "ref": "@prompt:system-preamble@production",
+    "resolved_version": "v4",
+    "resolved_hash": "sha256:3d4467f30edd313223f89bc2868bc9239b7c633776aa35587c29bcbac765a0d8",
+    "selector_kind": "tag"
+  }
+]

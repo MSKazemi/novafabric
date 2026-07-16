@@ -1,0 +1,28 @@
+{
+  "schema_version": "0.1.0",
+  "models": [
+    {
+      "model_id": "my-org/finetune-v3",
+      "currency": "USD",
+      "source": "vendor price sheet 2026-07-01",
+      "pricing": {
+        "input": {
+          "amount": 3.0,
+          "unit": "per_1m"
+        },
+        "output": {
+          "amount": 15.0,
+          "unit": "per_1m"
+        },
+        "cached": {
+          "amount": 0.3,
+          "unit": "per_1m"
+        },
+        "reasoning": {
+          "amount": 15.0,
+          "unit": "per_1m"
+        }
+      }
+    }
+  ]
+}

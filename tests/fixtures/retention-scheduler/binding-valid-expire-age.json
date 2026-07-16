@@ -1,0 +1,13 @@
+{
+  "id": "dev-scratch-expire",
+  "match": {
+    "deployment_environment": [
+      "dev",
+      "staging"
+    ],
+    "age": "P30D"
+  },
+  "window": "P90D",
+  "action": "expire-metadata",
+  "enabled": true
+}

@@ -99,6 +99,20 @@
         "message": {"type": "string"}
       },
       "description": "Error details if status is failure or aborted."
+    },
+    "schema_drift": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "tool_call_id": {"type": ["string", "null"]},
+          "tool_name": {"type": ["string", "null"]},
+          "arguments_valid": {"type": ["boolean", "null"]},
+          "result_valid": {"type": ["boolean", "null"]},
+          "errors": {"type": "array"}
+        }
+      },
+      "description": "Tool calls whose stored arguments/result no longer conform to their declared *_schema_ref (ADR-0128). Additive, optional; recorded in every mode, gating only in exact."
     }
   }
 }

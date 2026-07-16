@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/label-protection-config.schema.json",
+  "$comment": "Experimental — governed by ADR-0114 (accepted 2026-07-13). Graduated from design/spec/schemas/ on first implementation; schema_version 0.1.0. Tracks design/spec/protected-labels-v0.md.",
+  "title": "LabelProtectionConfig",
+  "description": "Per-(asset,label) protection setting. Absence = free label (ADR-0113 default).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "asset_name",
+    "label",
+    "protected"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "asset_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "label": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "protected": {
+      "type": "boolean"
+    },
+    "required_approvals": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "policy_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "created_by": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "note": {
+      "type": "string"
+    }
+  }
+}

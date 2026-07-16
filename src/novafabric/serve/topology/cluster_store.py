@@ -52,7 +52,12 @@ def _default_db_path() -> Path:
     env = os.environ.get("NOVA_DASHBOARD_DUCKDB_PATH")
     if env:
         return Path(env)
-    return Path.home() / ".novafabric" / "dashboard.duckdb"
+    # Derive from nova_home() (NOVAFABRIC_HOME-aware) — a hardcoded
+    # Path.home()/.novafabric here bypassed the _paths.py contract, so custom-home
+    # deployments (and hermetic tests) all locked one shared dashboard.duckdb.
+    from novafabric._paths import nova_home
+
+    return nova_home() / "dashboard.duckdb"
 
 
 class ClusterStore:

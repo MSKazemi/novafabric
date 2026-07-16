@@ -9,7 +9,11 @@ from __future__ import annotations
 import json
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import TYPE_CHECKING, Annotated, Optional
+
+if TYPE_CHECKING:
+    from novafabric.evidence.replay_attestation import LedgerRef
+    from novafabric.trust.ledger._checkpoint import CheckpointRecord
 
 import typer
 from rich.console import Console
@@ -29,12 +33,22 @@ from novafabric.evidence.completeness import (
     compute_completeness,
 )
 from novafabric.evidence.reperformance import (
+    ReperformanceAttestation,
     build_reperformance_attestation,
     sign_reperformance,
 )
 from novafabric.evidence.signing import LocalSigner
 
 console = Console()
+
+
+def _write_output(path: Path, text: str) -> None:
+    """Write *text* to *path*, creating parent directories.
+
+    `-o some/new/dir/file.json` previously crashed with FileNotFoundError.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
 
 evidence_app = typer.Typer(
     help=(
@@ -110,14 +124,14 @@ def evidence_completeness_cmd(
     if key is None:
         payload = assertion.model_dump_json(indent=2)
         if output:
-            output.write_text(payload + "\n")
+            _write_output(output, payload + "\n")
             console.print(f"Wrote unsigned assertion to {output}")
         else:
             typer.echo(payload)
         return
     envelope = attest_completeness(capsule_dir, assertion, _load_signer(key))
     path = output or Path("completeness.intoto.json")
-    path.write_text(json.dumps(envelope, indent=2) + "\n")
+    _write_output(path, json.dumps(envelope, indent=2) + "\n")
     console.print(f"[green]✓[/green] Signed completeness attestation: {path}")
 
 
@@ -155,7 +169,7 @@ def evidence_bind_cmd(
     doc = {"bindings": [b.model_dump() for b in bindings]}
     if key is None:
         path = output or Path("criterion-bindings.json")
-        path.write_text(json.dumps(doc, indent=2) + "\n")
+        _write_output(path, json.dumps(doc, indent=2) + "\n")
         console.print(
             f"Wrote {len(bindings)} binding(s) to {path} "
             f"({sum(1 for b in bindings if b.binding_status == 'satisfied')} satisfied)"
@@ -165,7 +179,7 @@ def evidence_bind_cmd(
         capsule_dir, capsule_dir.name, bindings, _load_signer(key)
     )
     path = output or Path("criterion-bindings.intoto.json")
-    path.write_text(json.dumps(envelope, indent=2) + "\n")
+    _write_output(path, json.dumps(envelope, indent=2) + "\n")
     console.print(f"[green]✓[/green] Signed criterion bindings: {path}")
 
 
@@ -187,11 +201,33 @@ def evidence_attest_replay_cmd(
         Optional[Path],
         typer.Option("--output-dir", help="Base dir for replay output"),
     ] = None,
+    certify: Annotated[
+        bool,
+        typer.Option(
+            "--certify",
+            help=(
+                "Also emit a signed determinism certificate (ReplayAttestation, "
+                "ADR-0094 B): BIT_EXACT | BOUNDED_EQUIVALENT | NON_DETERMINISTIC"
+            ),
+        ),
+    ] = False,
+    anchor: Annotated[
+        bool,
+        typer.Option(
+            "--anchor",
+            help=(
+                "Anchor the attestation digest into the capsule's accountability "
+                "ledger (per-stream hash chain + signed checkpoint, ADR-0094 A)"
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Replay the run and emit a signed re-performance attestation.
 
     Records that a replay at time T reproduced outcome digest D under mode M
-    with verdict V — audit-grade re-performance evidence.
+    with verdict V — audit-grade re-performance evidence. ``--certify`` and
+    ``--anchor`` (ADR-0094, experimental) are additive: without them the
+    behavior is unchanged, including exit 2 on mismatch.
 
     Scope: single capsule; runs the replay engine under its safety defaults.
 
@@ -199,6 +235,7 @@ def evidence_attest_replay_cmd(
     Examples:
       nova evidence attest-replay 01HX... --key ed25519.pem
       nova evidence attest-replay 01HX... --key ed25519.pem --mode exact
+      nova evidence attest-replay 01HX... --key ed25519.pem --certify --anchor
     """
     from novafabric.replay._engine import ReplayEngine
     from novafabric.replay._flags import ReplayFlags
@@ -211,13 +248,127 @@ def evidence_attest_replay_cmd(
     attestation = build_reperformance_attestation(capsule_dir, result)
     envelope = sign_reperformance(attestation, signer)
     path = output or Path(f"reperformance-{capsule_dir.name}.intoto.json")
-    path.write_text(json.dumps(envelope, indent=2) + "\n")
+    _write_output(path, json.dumps(envelope, indent=2) + "\n")
     console.print(
         f"[green]✓[/green] Re-performance attestation: {path} "
         f"(mode={attestation.replay_mode}, match={attestation.match})"
     )
+    checkpoint = _anchor_attestation(capsule_dir, path, signer) if anchor else None
+    if certify:
+        _certify_attestation(capsule_dir, attestation, signer, path, checkpoint)
     if attestation.match == "mismatch":
         raise typer.Exit(code=2)
+
+
+def _anchor_attestation(
+    capsule_dir: Path, attestation_path: Path, signer: LocalSigner
+) -> "CheckpointRecord":
+    """Seal the attestation digest via the ADR-0094 A local anchor path.
+
+    Appends one digest record to ``<capsule>/attestations.jsonl`` (a new
+    evidence stream — existing streams are never modified), then runs the
+    shared ledger anchor path: per-stream sidecar chains + a DSSE-signed
+    checkpoint with a local finalize anchor. Returns the checkpoint record.
+    """
+    import hashlib
+    from datetime import datetime, timezone
+
+    from novafabric.trust.ledger import anchor_capsule
+
+    record = {
+        "kind": "reperformance-attestation",
+        "run_id": capsule_dir.name,
+        "attestation_file": attestation_path.name,
+        "attestation_sha256": hashlib.sha256(
+            attestation_path.read_bytes()
+        ).hexdigest(),
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+    }
+    stream_path = capsule_dir / "attestations.jsonl"
+    with stream_path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
+
+    checkpoint = anchor_capsule(capsule_dir, signer)
+    console.print(
+        f"[green]✓[/green] Anchored attestation digest into ledger "
+        f"(checkpoint {checkpoint.checkpoint_id})"
+    )
+    return checkpoint
+
+
+def _certify_attestation(
+    capsule_dir: Path,
+    attestation: ReperformanceAttestation,
+    signer: LocalSigner,
+    attestation_path: Path,
+    checkpoint: "CheckpointRecord | None",
+) -> None:
+    """Emit the DSSE-signed determinism certificate (ADR-0094 B).
+
+    Reuses the shipped determinism-cert module: pins are extracted from the
+    capsule (missing pins are recorded as null, never fabricated), the class
+    follows the normative downgrade rule, and ``ledger_ref`` back-links to
+    the checkpoint from ``--anchor`` or a pre-existing one when present.
+    """
+    from novafabric.evidence.replay_attestation import (
+        LedgerRef,
+        attest_replay,
+        classify_match_verdict,
+        from_reperformance,
+        pinned_block_from_capsule,
+    )
+
+    ledger_ref: Optional[LedgerRef] = None
+    if checkpoint is not None:
+        ledger_ref = LedgerRef(
+            checkpoint_id=checkpoint.checkpoint_id,
+            capsule_id=checkpoint.capsule_id,
+            merkle_root=(checkpoint.merkle or {}).get("root"),
+        )
+    else:
+        ledger_ref = _existing_ledger_ref(capsule_dir)
+
+    pinned = pinned_block_from_capsule(capsule_dir)
+    determinism_class, reasons = classify_match_verdict(attestation.match, pinned)
+    certificate = from_reperformance(
+        attestation,
+        determinism_class=determinism_class,
+        pinned=pinned,
+        ledger_ref=ledger_ref,
+        reasons=reasons or None,
+    )
+    cert_envelope = attest_replay(certificate, signer)
+    cert_path = (
+        attestation_path.parent
+        / f"replay-attestation-{capsule_dir.name}.intoto.json"
+    )
+    _write_output(cert_path, json.dumps(cert_envelope, indent=2) + "\n")
+    console.print(
+        f"[green]✓[/green] Determinism certificate: {cert_path} "
+        f"(class={determinism_class})"
+    )
+
+
+def _existing_ledger_ref(capsule_dir: Path) -> "LedgerRef | None":
+    """LedgerRef for a pre-existing checkpoint, or None when not anchored."""
+    from novafabric.evidence.replay_attestation import LedgerRef
+    from novafabric.trust.ledger._checkpoint import checkpoint_path
+
+    path = checkpoint_path(capsule_dir)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    checkpoint_id = data.get("checkpoint_id")
+    if not checkpoint_id:
+        return None
+    return LedgerRef(
+        checkpoint_id=str(checkpoint_id),
+        capsule_id=data.get("capsule_id"),
+        merkle_root=(data.get("merkle") or {}).get("root"),
+    )
 
 
 @evidence_app.command("bind-custody")
@@ -282,7 +433,7 @@ def evidence_bind_custody_cmd(
     )
     payload = json.dumps(block, indent=2)
     if output:
-        output.write_text(payload + "\n")
+        _write_output(output, payload + "\n")
         console.print(
             f"[green]✓[/green] custody block "
             f"({block['admissibility_status']}) → {output}"

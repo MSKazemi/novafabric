@@ -24,7 +24,7 @@ is derived from, a `nova` command you can run without a server.
 - **The authentication and network model** — why it binds to localhost only and how the
   one-shot token works.
 - **How the endpoints map to the five NovaFabric primitives** and to `nova` CLI commands.
-- **The full endpoint catalogue** — 182 routes across 21 functional domains.
+- **The full endpoint catalogue** — 184 routes across 21 functional domains.
 - **Honesty notes** on routes that surface PLANNED / experimental capabilities.
 
 ## Two different APIs — do not confuse them
@@ -36,7 +36,7 @@ NovaFabric ships two distinct HTTP surfaces. **This document describes the first
 | Purpose | Local, read-first dashboard over your own capsules | Shared, multi-user server mode |
 | Audience | A single operator on one machine | Teams, with OIDC / RBAC |
 | Binds to | `127.0.0.1` only (localhost) | A network interface |
-| Auth | One-shot session `?token=…` query parameter | OIDC / RBAC, offline CI tokens |
+| Auth | One-shot session `?token=…` query parameter | OIDC / RBAC, offline CI tokens, SCIM provisioning (experimental) |
 | Backend | SQLite (default), no network required | Postgres 16 |
 | Spec | This file (generated from `serve/app.py`) | `api/openapi.yaml` (OpenAPI) |
 | Maturity | experimental (Layer A, read-only) | experimental (v0.7+) |
@@ -130,7 +130,9 @@ underlying capability as design intent — never as a shipped guarantee:
   Bundles, in-toto DSSE attestations, and verifiable redaction proofs.
 - **Runs & capsules** — parent/child and `validate-distributed` routes correspond to the
   **PLANNED** parent/child capsule model (ADR-0039). Local single-node capture is the
-  shipped case.
+  shipped case. `POST /api/otlp/v1/traces` (NF-034) is **experimental**: it accepts
+  OTLP/HTTP **JSON** traces only (no protobuf yet) and seals GenAI spans into a
+  lower-fidelity capsule labeled `capture_level: ingested-otlp`.
 - **Storage & infrastructure** — object-store, manifest-chain, and collector routes
   correspond to the **PLANNED** object capsule store and cluster-scale collector. SQLite is
   the shipped local default.
@@ -142,7 +144,7 @@ regulation and vouches only that a signed capsule is unmodified since signing.
 
 ## Endpoint catalogue
 
-182 routes across 21 domains. Each row shows the HTTP method, the path, and a one-line
+184 routes across 21 domains. Each row shows the HTTP method, the path, and a one-line
 summary. Path parameters use `{name}` notation; `{ref:path}` and `{filepath:path}` accept
 slash-containing values.
 
@@ -160,11 +162,12 @@ slash-containing values.
 | `POST` | `/api/validate-spec` | Validate an asset YAML spec without registering — mirrors `nova validate <spec>`. |
 | `GET` | `/docs/oauth2-redirect` | swagger ui redirect |
 
-## Runs & capsules  (28)
+## Runs & capsules  (30)
 
 | Method | Path | Summary |
 |---|---|---|
 | `POST` | `/api/capsule-migrate` | Migrate a v0.1.x capsule directory to v1.0.0 format (ADR-0034 §6). |
+| `POST` | `/api/otlp/v1/traces` | Ingest OTLP/HTTP JSON OTel GenAI spans into a run capsule (NF-034, experimental). |
 | `GET` | `/api/runs` | list runs |
 | `GET` | `/api/runs/cost-summary` | Return per-run token and cost totals from ClickHouse. |
 | `GET` | `/api/runs/search` | Cursor-based run listing. |
@@ -187,6 +190,7 @@ slash-containing values.
 | `GET` | `/api/runs/{run_id}/run-lineage` | List spool lineage edges for a distributed run — nova run lineage. |
 | `GET` | `/api/runs/{run_id}/safety-case` | Compile an evidence-grounded safety case for a run (ADR-0095). |
 | `GET` | `/api/runs/{run_id}/scan-secrets` | Report secret/PII findings from the redaction log — nova scan-secrets. |
+| `POST` | `/api/runs/{run_id}/scores` | Append one externally-computed score to the run's scores.jsonl (ADR-0119, experimental) — nova score submit. |
 | `GET` | `/api/runs/{run_id}/tool-permission-events` | Return ToolPermissionEvent records for a capsule. |
 | `GET` | `/api/runs/{run_id}/tree` | Show the parent/child capsule tree — nova run show --with-children. |
 | `POST` | `/api/runs/{run_id}/validate` | Validate a capsule's schema and required files. |

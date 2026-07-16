@@ -1,0 +1,14 @@
+{
+  "type": "video",
+  "media_type": "video/mp4",
+  "content_hash": "sha256:1ff838dc6ca9680d88455341118157d59a055fe6d0e3870f9c002847bebe4663",
+  "blob_ref": "outputs/1ff838dc6ca9680d88455341118157d59a055fe6d0e3870f9c002847bebe4663.mp4",
+  "byte_size": 8388608,
+  "redacted": false,
+  "duration_ms": 12000,
+  "sampled": {
+    "strategy": "clip",
+    "original_byte_size": 734003200,
+    "note": "first 12s captured; source exceeded per-part cap"
+  }
+}

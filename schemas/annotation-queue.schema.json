@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/annotation-queue.schema.json",
+  "$comment": "Graduated from design/spec/schemas/ on ADR-0118 acceptance (2026-07-13); first slice implemented 2026-07-15 (experimental). schema_version 0.1.0. Tracks design/spec/annotation-queue-v0.md. Workflow layer only; completion writes existing HUMAN-source Score records (ADR-0099), unchanged.",
+  "title": "AnnotationQueue",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "queue_id",
+    "name",
+    "criteria",
+    "assignment_policy",
+    "subject_selector",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "queue_id": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "criteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "assignment_policy": {
+      "enum": [
+        "round-robin",
+        "manual"
+      ]
+    },
+    "subject_selector": {
+      "type": "object",
+      "properties": {
+        "subject_kind": {
+          "enum": [
+            "span",
+            "capsule"
+          ]
+        },
+        "run_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+          }
+        },
+        "tool_names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sample": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "require_checker": {
+      "type": "boolean"
+    },
+    "seal": {
+      "type": "boolean"
+    },
+    "description": {
+      "type": "string"
+    },
+    "extensions": {
+      "type": "object"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": "0.1.0",
+  "asset_type": "prompt",
+  "asset_name": "system-prompt",
+  "requested_ref": "prompt:system-prompt@production",
+  "resolved_via": "label",
+  "resolved_label": "production",
+  "resolved_version": "v3",
+  "resolved_content_hash": "sha256:9f2c1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d8356",
+  "resolved_at": "2026-07-12T14:07:55.001Z",
+  "label_move_id": "01J2Q8ZK7M4YZ2K7N9DPBYK2WX",
+  "label_moved_at": "2026-07-12T14:03:11.482Z",
+  "live": true
+}

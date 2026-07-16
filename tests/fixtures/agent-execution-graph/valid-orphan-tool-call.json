@@ -1,0 +1,36 @@
+{
+  "schema_version": "0.1.0",
+  "capsule_id": "01HXAY7C0P5B0E0000000000042",
+  "nodes": [
+    {
+      "id": "01HXAY7MZ0OB0T0N9DPBYK2W00",
+      "kind": "tool_call",
+      "label": "send_email",
+      "started_at": "2026-05-07T10:24:00.000Z",
+      "duration_ms": 100,
+      "mutation_class": "external-side-effect"
+    },
+    {
+      "id": "root",
+      "kind": "root",
+      "label": "root",
+      "started_at": null,
+      "duration_ms": null
+    }
+  ],
+  "edges": [
+    {
+      "type": "span_parent",
+      "from": "01HXAY7MZ0OB0T0N9DPBYK2W00",
+      "to": "root"
+    }
+  ],
+  "graph_digest": "sha256:d9162c857fc470600f5a6a2f9568774bd952cf46758e91461efe7e7322bdb81e",
+  "reconstruction_notes": [
+    {
+      "kind": "orphan_tool_call",
+      "node_id": "01HXAY7MZ0OB0T0N9DPBYK2W00",
+      "detail": "agent_call_id null and no parent span; attached to synthetic root"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "config_id": "01JABCD7QK4YZ2K7N9DPBYK2WX",
+  "name": "helpfulness",
+  "value_type": "categorical",
+  "description": "How helpful the assistant turn was.",
+  "categories": [
+    {
+      "value": "bad",
+      "ordinal": 0
+    },
+    {
+      "value": "ok",
+      "ordinal": 1
+    },
+    {
+      "value": "good",
+      "ordinal": 2
+    }
+  ],
+  "version": 1,
+  "content_digest": "sha256:eea388e790a6e4e179ca73ad56940201cb0aa126bb4812645bbe8ab16f4a1e6e",
+  "created_at": "2026-07-12T09:00:00.000000Z"
+}

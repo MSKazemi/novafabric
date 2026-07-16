@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import platform
 import time
@@ -14,10 +15,19 @@ import yaml
 
 from novafabric.capture._ulid import new_span_id, new_ulid
 from novafabric.capture.capsule import CapsuleWriter
+from novafabric.capture.deployment_env import (
+    resolve_deployment_environment,
+    unconventional_warning,
+)
 from novafabric.capture.env import capture_environment
 from novafabric.capture.replay import minimal_replay_policy
-from novafabric.capture.secrets import SecretScannerV0
+from novafabric.capture.secrets import SecretScannerV0, recompute_chain_hash
+from novafabric.capture.session import resolve_session_membership
+from novafabric.capture.variant import resolve_variant_attribution
+from novafabric.cost.usage_types import usage_totals_from_model_calls
 from novafabric.runners import LocalRunner, RunnerJobSpec, RunnerSpec
+
+logger = logging.getLogger(__name__)
 
 
 def _now() -> str:
@@ -191,6 +201,8 @@ class CaptureOrchestrator:
         fast_emit: bool = False,
         emit_spool: bool = False,
         spool_dir: Path | None = None,
+        masking_pipeline: Any | None = None,
+        capture_media: bool = False,
     ) -> None:
         self._base_dir = base_dir or (Path.cwd() / ".novafabric" / "runs")
         self._base_dir.mkdir(parents=True, exist_ok=True)
@@ -204,6 +216,13 @@ class CaptureOrchestrator:
         # time (EU AI Act Art.50). Writes c2pa-manifest.json into the capsule
         # before sealing so the disclosure is covered by the NovaSeal signature.
         self._mark_provenance = mark_provenance
+        # ADR-0135 (experimental): opt-in pluggable PII masking pipeline. Runs
+        # after the built-in ADR-0009 scanner (which is never disabled) and
+        # before the capsule is finalized; every mask/failure is recorded in
+        # redaction-proof.json (masker_findings[]/masker_errors[]). Fail-closed
+        # on secrets, fail-safe for the workload: a masker error redacts the
+        # field and never blocks capture. None ⇒ exact ADR-0009 behavior.
+        self._masking_pipeline = masking_pipeline
         # ADR-0092 slice B: opt-in import-deferred hook install in the workload
         # subprocess (--fast-emit). Avoids importing unused SDKs at startup just
         # to patch them; honored by the sitecustomize loader via the
@@ -216,6 +235,10 @@ class CaptureOrchestrator:
         # OQ-C-1): no signing happens here.
         self._emit_spool = emit_spool
         self._spool_dir = spool_dir
+        # ADR-0125 D2: opt-in byte capture for multimodal message parts
+        # (--capture-media). Default off: MediaPart records reference metadata
+        # only (content_hash + byte_size), per ADR-0021 §4 privacy-by-default.
+        self._capture_media = capture_media
 
     def run(
         self,
@@ -227,6 +250,14 @@ class CaptureOrchestrator:
         warn_if_asset_statuses: list[str] | None = None,
         require_registered: bool = False,
         registry_db_path: Path | None = None,
+        environment: str | None = None,
+        experiment: str | None = None,
+        variant: str | None = None,
+        variant_label: str | None = None,
+        variant_source: str | None = None,
+        variant_assigned_at: str | None = None,
+        session_id: str | None = None,
+        session_sequence: int | None = None,
     ) -> CaptureResult:
         # ------------------------------------------------------------------
         # C-1.5: Pre-flight asset status check — must happen BEFORE anything
@@ -245,6 +276,41 @@ class CaptureOrchestrator:
                 require_registered=require_registered,
                 db_path=registry_db_path,
             )
+
+        # ADR-0126: resolve the deployment-environment tag pre-flight (CLI flag
+        # > NOVAFABRIC_ENVIRONMENT env var; explicit sources only — never
+        # inferred). An invalid explicit value raises here, BEFORE anything is
+        # written to disk; if no source supplies a value the fields stay absent.
+        deployment_env = resolve_deployment_environment(cli_value=environment)
+        if deployment_env is not None:
+            _warn = unconventional_warning(deployment_env.value)
+            if _warn is not None:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(_warn)
+
+        # ADR-0116: resolve the variant attribution pre-flight (CLI flags >
+        # NOVAFABRIC_VARIANT* env vars; record-only — every field is copied
+        # verbatim, never derived or defaulted). An incomplete/invalid explicit
+        # block raises here, BEFORE anything is written to disk; if no source
+        # supplies a block the manifest stays unchanged.
+        variant_attr = resolve_variant_attribution(
+            cli_values={
+                "experiment_id": experiment,
+                "variant_id": variant,
+                "variant_label": variant_label,
+                "assignment_source": variant_source,
+                "assigned_at": variant_assigned_at,
+            }
+        )
+
+        # ADR-0122: resolve the session back-reference pre-flight (CLI flags >
+        # NOVAFABRIC_SESSION_ID / NOVAFABRIC_SESSION_SEQUENCE env vars; explicit
+        # sources only — never inferred). An invalid explicit value raises here,
+        # BEFORE anything is written to disk; if no source supplies a value the
+        # fields stay absent (a standalone run — today's behavior).
+        session_membership = resolve_session_membership(
+            cli_session_id=session_id, cli_sequence=session_sequence
+        )
 
         run_id = new_ulid()
         root_span_id = new_span_id()
@@ -305,6 +371,10 @@ class CaptureOrchestrator:
         runner_env["NOVAFABRIC_SPAN_ID"] = root_span_id
         if self._fast_emit:
             runner_env["NOVAFABRIC_FAST_EMIT"] = "1"
+        if self._capture_media:
+            # ADR-0125 D2: enable media byte capture in the workload
+            # subprocess, where the hooks (and CapsuleWriter funnel) run.
+            runner_env["NOVAFABRIC_CAPTURE_MEDIA"] = "1"
 
         # Hot-path optimization (v0.6.8 / benchmark finding): the env-lock
         # capture (importlib.metadata walk over installed packages) costs
@@ -359,6 +429,23 @@ class CaptureOrchestrator:
 
         scanner = SecretScannerV0(capsule_dir=capsule_dir, run_id=run_id)
         proof = scanner.scan_and_redact()
+        # ADR-0135: operator-registered maskers run after the built-in scanner
+        # (built-ins are never disabled) and before the proof is written, so no
+        # raw value the maskers redact ever persists. Absent pipeline ⇒ the
+        # proof is byte-for-byte ADR-0009.
+        if self._masking_pipeline is not None:
+            try:
+                masker_findings, masker_errors = self._masking_pipeline.run(
+                    capsule_dir, run_id=run_id
+                )
+                proof["masker_findings"] = masker_findings
+                proof["masker_errors"] = masker_errors
+                proof = recompute_chain_hash(proof)
+            except Exception:  # noqa: BLE001 — fail-safe: never block capture
+                logger.exception(
+                    "novafabric: masking pipeline failed; built-in redaction "
+                    "already applied, capture continues"
+                )
         writer.write_text("redaction-proof.json", json.dumps(proof, indent=2))
 
         writer.write_text("replay.yaml", yaml.dump(minimal_replay_policy(), allow_unicode=True))
@@ -374,6 +461,17 @@ class CaptureOrchestrator:
             for line in (capsule_dir / "tool-calls.jsonl").read_text().splitlines()
             if line.strip()
         )
+
+        # ADR-0125: list every stored media blob as an output Artifact so its
+        # content_hash is inside the sealed manifest (NovaSeal signing scope) —
+        # post-hoc blob tampering is then detectable. Empty when no media blob
+        # was captured (the pre-ADR-0125 manifest is byte-identical). Fail-open.
+        media_artifacts: list[dict[str, Any]] = []
+        try:
+            from novafabric.capture.media import collect_media_artifacts
+            media_artifacts = collect_media_artifacts(capsule_dir)
+        except Exception:  # noqa: BLE001 — manifest build must never fail on media
+            media_artifacts = []
 
         manifest: dict[str, Any] = {
             "schema_version": "0.1.0",
@@ -399,12 +497,39 @@ class CaptureOrchestrator:
             # actually wrote them, so consumers can rely on the ref existing.
             **_event_stream_refs(capsule_dir),
             "inputs": [],
-            "outputs": [],
+            "outputs": media_artifacts,
             "model_call_count": model_call_count,
             "tool_call_count": tool_call_count,
             "mutating_tool_count": 0,
             "exit_code": exit_code,
         }
+        # ADR-0126: additive optional deployment-context tag. Absent when no
+        # explicit source supplied it — the manifest is byte-compatible with
+        # pre-ADR-0126 capsules in that case.
+        if deployment_env is not None:
+            manifest["deployment_environment"] = deployment_env.value
+            manifest["environment_source"] = deployment_env.source
+        # ADR-0116: additive optional variant-attribution block (record-only —
+        # which experiment/variant an EXTERNAL allocator had active). Absent
+        # when no explicit source supplied it — the manifest is byte-compatible
+        # with pre-ADR-0116 capsules in that case.
+        if variant_attr is not None:
+            manifest["variant"] = variant_attr.to_manifest_block()
+        # ADR-0122: additive optional session back-reference (record-only —
+        # the session.json manifest stays the authoritative ordered index).
+        # Absent when no explicit source supplied it — the manifest is
+        # byte-compatible with pre-ADR-0122 capsules in that case.
+        if session_membership is not None:
+            manifest["session_id"] = session_membership.session_id
+            if session_membership.sequence is not None:
+                manifest["sequence"] = session_membership.sequence
+        # ADR-0132 D3: per-usage-type roll-up over the nova.usage blocks in
+        # model-calls.jsonl. Pure sum; absent per-call fields are skipped
+        # (absent != zero). The key itself is absent when no call reported a
+        # usage breakdown — additive and optional.
+        usage_totals = usage_totals_from_model_calls(capsule_dir / "model-calls.jsonl")
+        if usage_totals is not None:
+            manifest["usage_totals"] = usage_totals
         if status == "failure":
             manifest["error"] = {
                 "type": "NonZeroExit",
@@ -525,6 +650,28 @@ class CaptureOrchestrator:
                 )
             finally:
                 _spool_sink.close()
+
+        # --- ADR-0137: capsule.created lifecycle event (opt-in via
+        # NOVA_EVENTS_*; NullSink no-op when unconfigured; fail-safe) ---
+        try:
+            from novafabric.events.emitter import emit_lifecycle_event
+
+            emit_lifecycle_event(
+                event_type="capsule.created",
+                subject_kind="capsule",
+                subject_ref=run_id,
+                subject_digest=_sha256((capsule_dir / "capsule.yaml").read_bytes()),
+                payload={
+                    "status": status,
+                    "exit_code": exit_code,
+                    "duration_ms": duration_ms,
+                    "model_call_count": model_call_count,
+                    "tool_call_count": tool_call_count,
+                },
+                source="nova capture",
+            )
+        except Exception:  # noqa: BLE001 — emission must never block the run
+            pass
 
         return CaptureResult(run_id=run_id, capsule_dir=capsule_dir, exit_code=exit_code)
 

@@ -10,6 +10,21 @@ from __future__ import annotations
 import pytest
 
 
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Pin every metadata_store test to one xdist worker (suite-health 2026-07-15).
+
+    The ``postgres_url`` fixture is session-scoped, but under pytest-xdist each
+    worker has its own session — ``-n 12`` would start up to 12 simultaneous
+    Postgres containers and container-start contention makes the tier flaky.
+    With ``--dist=loadgroup`` (the documented gate invocation) this single group
+    runs on one worker and shares one container; under plain ``--dist=load`` the
+    marker is inert.
+    """
+    for item in items:
+        if "tests/metadata_store" in str(item.path):
+            item.add_marker(pytest.mark.xdist_group("metadata-store-postgres"))
+
+
 @pytest.fixture(scope="session")
 def postgres_url():
     """Return a psycopg3-compatible connection URL to an ephemeral Postgres container.

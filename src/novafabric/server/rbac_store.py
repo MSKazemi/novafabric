@@ -127,6 +127,15 @@ def revoke_role(
     """
     conn = _get_conn(db_path)
     try:
+        exists = conn.execute(
+            "SELECT COUNT(*) AS c FROM role_assignments WHERE subject = ? AND role = ?",
+            (subject, role),
+        ).fetchone()["c"]
+        if exists == 0:
+            # Deleting a row that does not exist can never cause admin lockout —
+            # report not-found instead of tripping the last-admin guard below
+            # (which previously fired on an empty store and masked the 404).
+            return False
         if role == "admin" and not os.environ.get("NOVA_OIDC_ISSUER"):
             remaining = conn.execute(
                 "SELECT COUNT(*) AS c FROM role_assignments "

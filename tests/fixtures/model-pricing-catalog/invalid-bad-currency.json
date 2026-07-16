@@ -1,0 +1,14 @@
+{
+  "schema_version": "0.1.0",
+  "models": [
+    {
+      "model_id": "x",
+      "currency": "dollars",
+      "pricing": {
+        "input": {
+          "amount": 1
+        }
+      }
+    }
+  ]
+}

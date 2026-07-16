@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import warnings
 
+from ._budget import budget_block_from_capsule
 from ._engine import PolicyEngine
 from ._models import PolicyDecision, PolicyDeniedError, PolicyInput, PolicyResource, PolicySubject
 from ._noop_engine import NoopEngine
@@ -36,5 +37,6 @@ __all__ = [
     "NoopEngine",
     "OpaEngine",
     "OpaNotFoundError",
+    "budget_block_from_capsule",
     "get_policy_engine",
 ]

@@ -45,6 +45,7 @@ equivalent exists it is noted so you can cross-check behaviour with
 | [Spec validation](#spec-validation) | `novafabric.spec` | `nova validate-spec` |
 | [Report generation](#report-generation) | `novafabric.report.generator` | `nova report` |
 | [NovaSeal signing](#novaseal-signing) | `novafabric.trust.novaseal` | `nova seal` / `nova verify` |
+| [Score submission](#score-submission) | `novafabric.scores` | `nova score submit` |
 | [Utility](#utility) | `novafabric.capture` | — |
 
 ---
@@ -55,7 +56,7 @@ equivalent exists it is noted so you can cross-check behaviour with
 from novafabric.sdk.agent import agent
 ```
 
-### `@agent(name, version, capsule_dir=None)`
+### `@agent(name, version, capsule_dir=None, deployment_environment=None, variant=None, session_id=None, session_sequence=None)`
 
 Wraps an agent function with capture hooks. LLM calls made inside the
 function are recorded into a capsule. This is the in-process alternative to
@@ -69,6 +70,15 @@ process, e.g. a single function inside a larger long-lived service.
 | `name` | `str` | Asset name (matches a registered asset, if any) |
 | `version` | `str` | Asset version (semver) |
 | `capsule_dir` | `Path \| str \| None` | Directory to write the capsule. If `None`, OTel spans only — no capsule is written. |
+| `deployment_environment` | `str \| None` | **Experimental (ADR-0126).** Delivery-lifecycle tag for the run (e.g. `production`, `staging`), recorded verbatim as the additive optional `deployment_environment` manifest field with `environment_source: sdk-arg`. The `nova capture --environment` flag and the `NOVAFABRIC_ENVIRONMENT` env var take precedence. |
+| `variant` | `Mapping[str, Any] \| None` | **Experimental (ADR-0116, record-only).** Which A/B experiment/variant an *external* allocator had active: a mapping with `experiment_id`, `variant_id`, `assignment_source` (plus optional `variant_label`, `assigned_at`, `extensions`), copied verbatim into the capsule's optional `variant` block. NovaFabric never assigns variants; an incomplete explicit block raises before the workload runs. `NOVAFABRIC_VARIANT*` env vars take precedence. |
+| `session_id` | `str \| None` | **Experimental (ADR-0122, record-only).** ULID of the session this run is one turn of (create with `nova session new`); recorded as an additive optional back-reference — the `session.json` manifest stays authoritative. `NOVAFABRIC_SESSION_ID` takes precedence. |
+| `session_sequence` | `int \| None` | **Experimental (ADR-0122).** The run's turn number within the session; requires `session_id`. `NOVAFABRIC_SESSION_SEQUENCE` takes precedence. |
+
+All four tagging parameters are optional and additive: leave them unset and the
+capsule is byte-identical to previous releases. Invalid explicit values raise
+**before** the wrapped function runs; ambient env-var values that are invalid
+warn and are ignored rather than blocking the workload.
 
 **Returns** — the decorated function's return value unchanged.
 
@@ -688,6 +698,46 @@ if profile:
 > qualified timestamps, Sigstore-keyless mode) described in ADR-0041 is a
 > **planned** capability. The `novafabric.trust.novaseal` library documented here
 > is the in-process signing core.
+
+---
+
+## Score submission
+
+**Maturity: experimental (ADR-0119).** The documented, supported way for an *external*
+evaluation pipeline — a CI job, a third-party LLM-as-judge, a human tool — to submit an
+already-computed score into a capsule's append-only `scores.jsonl`. Works offline, no
+server, no model call.
+
+### `novafabric.scores.submit(capsule_dir, *, name, value, value_type, evaluator_id, subject, ...) → SubmitResult`
+
+```python
+from novafabric.scores import submit
+
+result = submit(
+    "./capsules/run-01HX...",
+    name="answer_correct", value=True, value_type="boolean",
+    source="judge", evaluator_id="ci://acme/repo#judge@v3",
+    subject="sha256:...",            # must exist in the target capsule
+    eval_card_digest="sha256:...",   # required — the eval card reproducibility key
+    score_id=None,                   # supply a client-minted ULID for idempotency
+    supersedes=None,                 # prior score_id being corrected (append-only)
+)
+result.score.score_id     # the appended (or replayed) evidence-grade Score
+result.idempotent_replay  # True → score_id already existed; no second line appended
+result.config_bound       # True → an ADR-0117 ScoreConfig validated the value
+```
+
+Remaining keyword-only parameters: `source` (`"code"` default; `human` /
+`heuristic` / `judge`), `subject_kind` (`"span"` default), `run_id`,
+`significance` (an ADR-0080 `SignificanceBlock`), and `db_path` (registry
+override for score-config lookup).
+
+Validation is **fail-closed** — on any rejection nothing is written, and a named
+exception is raised (`SubmissionInvalidError`, `CapsuleNotFoundError`,
+`SubjectNotFoundError`, `SupersedesNotFoundError`, `IdempotencyConflictError`,
+`ScoreConfigViolation` — all importable from `novafabric.scores`). Corrections never
+edit a prior record: submit a *new* score whose `supersedes` names the prior
+`score_id`; both lines stay in the log. CLI equivalent: `nova score submit`.
 
 ---
 

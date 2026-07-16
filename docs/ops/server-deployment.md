@@ -356,6 +356,74 @@ assignment table takes precedence over JWT claims for the same subject.
 
 ---
 
+## SCIM provisioning (experimental)
+
+**Status: experimental** (ADR-0139, first slice: discovery + Users). Lets an
+enterprise IdP (Okta, Entra ID, OneLogin, Keycloak) push the user lifecycle —
+create, deactivate, delete — into the server over standard SCIM 2.0
+(RFC 7643/7644). Server-mode only; local mode is structurally unaffected.
+
+### Enable it
+
+SCIM is doubly opt-in and **disabled by default**. Both of these must be set
+before the `/scim/v2/*` endpoints exist (otherwise they return plain 404):
+
+```yaml
+# server config (ADR-0029)
+scim:
+  enabled: true
+```
+
+```bash
+# The dedicated provisioning bearer token — env var only, never YAML.
+export NOVAFABRIC_SCIM_TOKEN="<long random secret>"
+# (flag can also be set via env: NOVAFABRIC_SERVER_SCIM_ENABLED=true)
+```
+
+The IdP authenticates with `Authorization: Bearer $NOVAFABRIC_SCIM_TOKEN`.
+This token is provisioning-scoped: it is not a JWT and grants **no** access
+to the `/v0/` API, capsules, assets, lineage, or evidence.
+
+### Endpoints (first slice)
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/scim/v2/Users` | Provision a user (409 `uniqueness` on duplicate `userName`). |
+| `GET` | `/scim/v2/Users/{id}` | Read one user. |
+| `GET` | `/scim/v2/Users?filter=…` | List; `eq` filter on `userName`/`externalId`/`active`; `startIndex`/`count` pagination. |
+| `PATCH` | `/scim/v2/Users/{id}` | Partial update — `active: false` **de-provisions** (Okta and Entra ID PATCH dialects accepted). |
+| `DELETE` | `/scim/v2/Users/{id}` | Hard delete (discouraged; prefer deactivate — it preserves the trail). |
+| `GET` | `/scim/v2/ServiceProviderConfig`, `/ResourceTypes`, `/Schemas` | SCIM capability discovery. |
+
+Responses use `application/scim+json` and the RFC 7644 error envelope, not
+the NovaFabric `/v0/` error model.
+
+### De-provisioning semantics
+
+- `active: false` (or `DELETE`) revokes **all** of the subject's
+  `role_assignments` rows immediately — the same table `nova server
+  assign-role` writes; the `userName` is the auth subject.
+- The ADR-0060 **last-admin lockout guard** applies: a SCIM deprovision that
+  would remove the last admin (with no OIDC issuer configured) is refused
+  with a SCIM `409` and *nothing* is mutated — the user stays active and
+  keeps its roles.
+- Every mutation appends an event (`user.create` / `user.update` /
+  `user.deactivate` / `user.delete`, with `roles_before`/`roles_after`) to
+  the append-only `scim_audit_events` table.
+- PII minimization: only `userName`, `active`, `externalId`, `displayName`
+  and `emails` are stored. Other wire attributes (enterprise extension,
+  addresses, phone numbers, …) are accepted but dropped, never persisted.
+
+### Not implemented yet (planned)
+
+Groups → role mapping (`/scim/v2/Groups`, ADR-0139 P3), the
+`nova server issue-scim-token` / `scim-map-group` / `list-scim-events` CLI
+commands, and PUT full-replace. Until group mapping lands, roles are still
+assigned via `nova server assign-role` or OIDC claims; SCIM manages the user
+lifecycle and *revokes* roles on deprovision.
+
+---
+
 ## Config file reference
 
 The canonical config file is `nova-server.yaml`. Full key reference:
@@ -378,6 +446,10 @@ oidc:
   audience: ""
   roles_claim: "nova_roles"
   jwks_refresh_interval: 3600
+
+scim:
+  enabled: false         # SCIM 2.0 provisioning (ADR-0139, experimental).
+                         # Also requires $NOVAFABRIC_SCIM_TOKEN (env only).
 
 offline_key_path: ""     # Path to ed25519 private key PEM
 

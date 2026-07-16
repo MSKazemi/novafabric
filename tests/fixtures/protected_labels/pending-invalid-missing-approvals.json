@@ -1,0 +1,14 @@
+{
+  "schema_version": "0.1.0",
+  "move_id": "01J2Q8ZK7M4YZ2K7N9DPBYK2WX",
+  "asset_name": "triage-agent",
+  "label": "production",
+  "from_version": "v7",
+  "proposed_version": "v8",
+  "proposed_by": "mohsen@local",
+  "proposed_at": "2026-07-12T10:00:00.000000Z",
+  "reason": "v8 passed the eval gate; promoting after canary soak",
+  "policy_ref": "policies/protected_label.rego",
+  "required_approvals": 2,
+  "state": "pending"
+}

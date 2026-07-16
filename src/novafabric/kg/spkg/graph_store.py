@@ -54,27 +54,46 @@ class SpkgGraphStore:
         self._conn.execute(_DDL_REL)
 
     def ingest_edges(self, edges: Iterable[dict[str, Any]]) -> int:
-        """Ingest lineage-shaped edge dicts. Returns the number of edges written."""
-        n = 0
-        for edge in edges:
+        """Ingest lineage-shaped edge dicts. Returns the number of edges written.
+
+        Runs as a single explicit transaction with node MERGEs deduplicated up
+        front: KùzuDB auto-commits (and checkpoints) every statement outside a
+        transaction, which made the original per-edge 3-statement loop ~38 ms/edge
+        — pathological at benchmark scale (SP-1).
+        """
+        edge_list = list(edges)
+        seen_nodes: dict[str, tuple[str, str]] = {}
+        rows: list[tuple[str, str, dict[str, Any]]] = []
+        for edge in edge_list:
             src = edge.get("source", {}) or {}
             tgt = edge.get("target", {}) or {}
             s_id, t_id = _node_id(src), _node_id(tgt)
-            self._merge_node(s_id, str(src.get("kind", "")), str(src.get("ref", "")))
-            self._merge_node(t_id, str(tgt.get("kind", "")), str(tgt.get("ref", "")))
-            self._conn.execute(
-                "MATCH (a:Entity {node_id: $s}), (b:Entity {node_id: $t}) "
-                "CREATE (a)-[:EDGE {edge_type: $et, capsule_run_id: $c, created_at: $ca}]->(b)",
-                {
-                    "s": s_id,
-                    "t": t_id,
-                    "et": str(edge.get("edge_type", "")),
-                    "c": str(edge.get("capsule_run_id", "")),
-                    "ca": str(edge.get("created_at", "")),
-                },
-            )
-            n += 1
-        return n
+            # Last write wins for kind/ref, matching the old per-edge MERGE…SET order.
+            seen_nodes[s_id] = (str(src.get("kind", "")), str(src.get("ref", "")))
+            seen_nodes[t_id] = (str(tgt.get("kind", "")), str(tgt.get("ref", "")))
+            rows.append((s_id, t_id, edge))
+
+        self._conn.execute("BEGIN TRANSACTION")
+        try:
+            for node_id, (kind, ref) in seen_nodes.items():
+                self._merge_node(node_id, kind, ref)
+            for s_id, t_id, edge in rows:
+                self._conn.execute(
+                    "MATCH (a:Entity {node_id: $s}), (b:Entity {node_id: $t}) "
+                    "CREATE (a)-[:EDGE {edge_type: $et, capsule_run_id: $c, created_at: $ca}]->(b)",
+                    {
+                        "s": s_id,
+                        "t": t_id,
+                        "et": str(edge.get("edge_type", "")),
+                        "c": str(edge.get("capsule_run_id", "")),
+                        "ca": str(edge.get("created_at", "")),
+                    },
+                )
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+        return len(rows)
 
     def _merge_node(self, node_id: str, kind: str, ref: str) -> None:
         self._conn.execute(

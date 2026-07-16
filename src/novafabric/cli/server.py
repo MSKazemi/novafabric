@@ -6,6 +6,7 @@ Subcommands:
   nova server revoke-token   — Revoke an offline token by token ID.
   nova server assign-role    — Assign a role to a subject (role_assignments table).
   nova server flush-jwks-cache — Flush the JWKS cache on the running server.
+  nova server saml-metadata  — Emit this SP's SAML metadata XML (ADR-0138, experimental).
 
 Install the [server] extra to use: pip install novafabric[server]
 """
@@ -375,6 +376,66 @@ def flush_jwks_cache_cmd(
     except Exception as exc:  # noqa: BLE001
         typer.echo(f"Failed: {exc}", err=True)
         raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
+# nova server saml-metadata
+# ---------------------------------------------------------------------------
+
+
+@server_app.command("saml-metadata")
+def saml_metadata_cmd(
+    config: Annotated[
+        Optional[Path],  # noqa: UP007
+        typer.Option(
+            "--config",
+            "-c",
+            help=(
+                "Path to server YAML config file. "
+                "Defaults to ~/.config/novafabric/server.yaml."
+            ),
+            exists=False,
+            file_okay=True,
+            dir_okay=False,
+        ),
+    ] = None,
+) -> None:
+    """Emit this SP's SAML metadata XML for IdP registration (ADR-0138).
+
+    Read-only, no side effects. Requires a ``saml:`` block in the server
+    config with ``enabled: true``. Prints the metadata XML to stdout so the
+    IdP administrator can register NovaFabric as a Service Provider.
+
+    Experimental (ADR-0138 partial slice): SP metadata and config work today;
+    live assertion consumption is pending the D5 library license gate.
+
+    Scope: single server.
+
+    \b
+    Examples:
+      nova server saml-metadata
+      nova server saml-metadata --config /etc/novafabric/server.yaml > sp-metadata.xml
+    """
+    try:
+        from novafabric.server.config import load_config
+        from novafabric.server.saml import render_sp_metadata
+    except ImportError as exc:
+        typer.echo(
+            f"Server module not available: {exc}. Run: pip install novafabric[server]",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    cfg = load_config(config)
+    if cfg.saml is None or not cfg.saml.enabled:
+        typer.echo(
+            "SAML is not configured: add a `saml:` block with `enabled: true` "
+            "to the server config (see docs/operator-guide.md, ADR-0138).",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    typer.echo(render_sp_metadata(cfg.saml), nl=False)
 
 
 # ---------------------------------------------------------------------------

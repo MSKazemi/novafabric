@@ -239,6 +239,11 @@ class NATSJetStreamConsumer:
                             pass
                     if raw_batch:
                         await self._process_raw(raw_batch)
+                    else:
+                        # A fetch that returns no messages without blocking (e.g. an
+                        # empty stream, or a mocked client) must still yield control,
+                        # or this loop starves the event loop and stop() can never run.
+                        await asyncio.sleep(0)
                 except Exception:  # noqa: BLE001 — timeout or fetch error
                     await asyncio.sleep(0.05)
             else:

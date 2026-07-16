@@ -20,6 +20,7 @@ of PII without modifying capsule manifest chains or WORM storage.
 from .store import (
     DataSubjectDEK,
     DEKStore,
+    DEKSubjectRecord,
     ErasureDeferredReceipt,
     ErasureReceipt,
     open_dek_store,
@@ -27,6 +28,7 @@ from .store import (
 
 __all__ = [
     "DEKStore",
+    "DEKSubjectRecord",
     "DataSubjectDEK",
     "ErasureDeferredReceipt",
     "ErasureReceipt",

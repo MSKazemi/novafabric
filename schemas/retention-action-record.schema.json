@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/retention-action-record.schema.json",
+  "$comment": "schema_version 0.1.0 \u2014 ADR-0134 (accepted 2026-07-13), graduated from design/spec/. Thin orchestration over ADR-0031 policy / ADR-0069 crypto-shred / ADR-0062 dual-object; adds NO new retention semantics or deletion primitive. Deletion is evidence.",
+  "title": "RetentionActionRecord",
+  "description": "One append-only signed evidence entry per sweep decision (who/what/when/why).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "record_id",
+    "swept_at",
+    "principal",
+    "registry",
+    "binding_id",
+    "item_kind",
+    "item_id",
+    "action",
+    "outcome",
+    "due_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "record_id": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "swept_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "principal": {
+      "type": "string",
+      "minLength": 1
+    },
+    "registry": {
+      "type": "string",
+      "minLength": 1
+    },
+    "binding_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "item_kind": {
+      "enum": [
+        "capsule",
+        "asset"
+      ]
+    },
+    "item_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "action": {
+      "enum": [
+        "expire-metadata",
+        "purge",
+        "crypto-shred"
+      ]
+    },
+    "outcome": {
+      "enum": [
+        "applied",
+        "dry-run",
+        "skipped",
+        "deferred",
+        "error"
+      ]
+    },
+    "due_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "worm_locked_until": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "format": "date-time"
+        }
+      ]
+    },
+    "erasure_receipt_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "dual_object": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "description": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

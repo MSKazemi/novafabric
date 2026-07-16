@@ -41,6 +41,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from novafabric.cli.score_config import config_app
 from novafabric.eval.card import (
     Calibration,
     CardVerification,
@@ -58,6 +59,8 @@ from novafabric.eval.registry import (
     get_card,
     register_card,
 )
+from novafabric.eval.score_config import ScoreConfigViolation, validate_score_against_config
+from novafabric.eval.score_config_catalog import find_config_for_score
 from novafabric.eval.scores import (
     SCORES_FILENAME,
     Score,
@@ -74,6 +77,7 @@ card_app = typer.Typer(name="card", help="Manage signed eval cards.", no_args_is
 score_app = typer.Typer(
     name="score", help="Record and list evidence-grade scores.", no_args_is_help=True
 )
+score_app.add_typer(config_app, name="config")
 
 
 def _parse_ref(ref: str) -> tuple[str, str]:
@@ -266,12 +270,21 @@ def score_add(
     name: Annotated[str, typer.Option(help="Metric name.")] = "score",
     subject_kind: Annotated[str, typer.Option(help="span|capsule.")] = "span",
     run_id: Annotated[str | None, typer.Option(help="Optional run/capsule ULID.")] = None,
+    validate_scores: Annotated[
+        bool,
+        typer.Option(
+            "--validate-scores",
+            help="Validate against a registered score config for --name (ADR-0117; "
+            "default off — no matching config still appends a free score).",
+        ),
+    ] = False,
 ) -> None:
     """Append an evidence-grade Score to a scores.jsonl file.
 
     Writing into a ``--capsule`` dir seals the score into any Evidence Bundle built from
     that capsule (it is covered by the capsule Merkle root). Refuses if the card ref does
-    not resolve to a registered eval card (req 2).
+    not resolve to a registered eval card (req 2), or — with ``--validate-scores`` — if
+    the value violates the score config governing ``--name`` (ADR-0117 D2).
     """
     target = _resolve_scores_path(scores_file, capsule)
     card_id, version = _parse_ref(card)
@@ -299,6 +312,14 @@ def score_add(
     except ValueError as exc:
         console.print(f"[red]Invalid score:[/red] {exc}")
         raise typer.Exit(code=1) from exc
+    if validate_scores:
+        config = find_config_for_score(name)
+        if config is not None:
+            try:
+                validate_score_against_config(score, config)
+            except ScoreConfigViolation as exc:
+                console.print(f"[red]Score config violation:[/red] {exc} — not appended")
+                raise typer.Exit(code=1) from exc
     append_score(target, score)
     console.print(
         f"[green]Recorded[/green] {score.score_id}  {name}={score.value}  → {target}"

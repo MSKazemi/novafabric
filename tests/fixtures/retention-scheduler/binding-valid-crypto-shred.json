@@ -1,0 +1,9 @@
+{
+  "id": "gdpr-subject-pii",
+  "description": "GDPR Art.17 crypto-shred",
+  "match": {
+    "tag": "contains-pii"
+  },
+  "window": "P180D",
+  "action": "crypto-shred"
+}

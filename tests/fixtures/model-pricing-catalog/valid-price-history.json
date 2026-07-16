@@ -1,0 +1,35 @@
+{
+  "schema_version": "0.1.0",
+  "models": [
+    {
+      "model_id": "claude-opus-4",
+      "effective_from": "2026-01-01",
+      "source": "list price H1",
+      "pricing": {
+        "input": {
+          "amount": 0.015,
+          "unit": "per_1k"
+        },
+        "output": {
+          "amount": 0.075,
+          "unit": "per_1k"
+        }
+      }
+    },
+    {
+      "model_id": "claude-opus-4",
+      "effective_from": "2026-07-01",
+      "source": "enterprise rate H2",
+      "pricing": {
+        "input": {
+          "amount": 0.012,
+          "unit": "per_1k"
+        },
+        "output": {
+          "amount": 0.06,
+          "unit": "per_1k"
+        }
+      }
+    }
+  ]
+}

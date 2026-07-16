@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/retention-binding.schema.json",
+  "$comment": "schema_version 0.1.0 \u2014 ADR-0134 (accepted 2026-07-13), graduated from design/spec/. Thin orchestration over ADR-0031 policy / ADR-0069 crypto-shred / ADR-0062 dual-object; adds NO new retention semantics or deletion primitive. Deletion is evidence.",
+  "title": "RetentionBinding",
+  "description": "One policy\u2192item\u2192action binding under retention-policy.yaml `bindings:`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "match",
+    "window",
+    "action"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "asset": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "deployment_environment": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "tag": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "age": {
+          "type": "string",
+          "pattern": "^P[0-9YMWDTHS]+$"
+        }
+      }
+    },
+    "window": {
+      "type": "string",
+      "pattern": "^(P[0-9YMWDTHS]+|\\d{4}-\\d{2}-\\d{2})$"
+    },
+    "action": {
+      "enum": [
+        "expire-metadata",
+        "purge",
+        "crypto-shred"
+      ]
+    },
+    "legal_hold": {
+      "type": "boolean"
+    },
+    "description": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "enabled": {
+      "type": "boolean"
+    }
+  }
+}

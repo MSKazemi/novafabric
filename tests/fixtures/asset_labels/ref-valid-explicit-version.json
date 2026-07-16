@@ -1,0 +1,11 @@
+{
+  "schema_version": "0.1.0",
+  "asset_type": "prompt",
+  "asset_name": "router",
+  "requested_ref": "prompt:router@v9",
+  "resolved_via": "explicit-version",
+  "resolved_label": null,
+  "resolved_version": "v9",
+  "resolved_content_hash": "sha256:9f2c1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d8356",
+  "resolved_at": "2026-07-12T14:08:00.000Z"
+}

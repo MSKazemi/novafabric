@@ -1,0 +1,12 @@
+{
+  "schema_version": "0.1.0",
+  "move_id": "01J2Q8ZK7M4YZ2K7N9DPBYK2WX",
+  "asset_name": "router",
+  "label": "production",
+  "from_version": null,
+  "proposed_version": "v1",
+  "proposed_by": "bob",
+  "proposed_at": "2026-07-12T11:00:00.000000Z",
+  "state": "pending",
+  "approvals": []
+}

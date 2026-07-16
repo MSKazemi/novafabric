@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/masker-error.schema.json",
+  "$comment": "schema_version 0.1.0; tracks design/spec/pii-masking-pipeline-v0.md (ADR-0135, accepted 2026-07-13; implementation experimental). Additive, opt-in, offline, Tier-A plugin point layered AFTER the built-in ADR-0009 scanners; extends redaction-proof.json. Absent config => ADR-0009 behavior unchanged. Maskers are pure/deterministic/offline; raw value never stored.",
+  "title": "MaskerError",
+  "description": "One redaction-proof.json masker_errors[] entry — a fail-closed masker failure/abort.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "masker_id",
+    "masker_version",
+    "target_ref",
+    "reason",
+    "action_taken"
+  ],
+  "properties": {
+    "masker_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "masker_version": {
+      "type": "string"
+    },
+    "target_ref": {
+      "type": "string"
+    },
+    "reason": {
+      "enum": [
+        "raised",
+        "timeout",
+        "oversize",
+        "declined_invalid"
+      ]
+    },
+    "action_taken": {
+      "enum": [
+        "redact",
+        "drop"
+      ]
+    },
+    "detail_hash": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      ]
+    }
+  }
+}

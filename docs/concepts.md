@@ -23,7 +23,7 @@ signed evidence is produced.
   metadata only — it never restarts or redeploys anything.
 - What is **shipped today** versus **planned** (clearly labeled throughout).
 
-> **Maturity note.** NovaFabric is local-first and has shipped v0.1–v0.9. Nearly
+> **Maturity note.** NovaFabric is local-first and in beta (v0.59.0). Nearly
 > all shipped surfaces carry `experimental` maturity: they work today and are
 > tested, but on-disk formats are **not frozen** until the v1.0 schema freeze.
 > Anything labeled **PLANNED** or **FUTURE DESIGN** below is documented design
@@ -87,6 +87,25 @@ Capsules support additive, optional `extensions:` blocks (for example `slurm`,
 `kubernetes`, `ray`, `openlineage`) so the schema can grow without introducing a
 new top-level format. Readers tolerate unknown fields; old capsules stay readable
 forever.
+
+### Sessions vs parent/child (two different groupings)
+
+Two distinct, composable ways of relating capsules exist — do not conflate them:
+
+- **Session (experimental, ADR-0122).** A *logical, multi-turn* grouping: N
+  independent runs (e.g. the turns of a conversation or the stages of a
+  workflow) referenced in order by a content-addressed `session.json` manifest
+  (`nova session new/add/list/show`). Members are ordinary capsules, each with
+  its own writer; the session copies no capsule data. `nova session replay`
+  (experimental, ADR-0123) replays the members in sequence order.
+- **Parent/child (prototype, ADR-0039).** A *physical, distributed-run*
+  hierarchy: one logical execution fanned out across nodes (e.g. a Slurm DDP
+  job) recorded as a PARENT capsule plus N WORKER capsules under a single
+  `global_run_id`.
+
+A session member may itself be a distributed-run PARENT. A capsule that belongs
+to a session carries two additive optional back-reference fields (`session_id`,
+`sequence`); absence means a standalone run, byte-identical to before.
 
 > **Related:** [Replay Modes](#replay-modes) (a replay is itself a new capsule
 > you can diff), [Lineage Graph](#lineage-graph), and
@@ -156,9 +175,12 @@ Runner details:
   home). The runner does not rsync artifacts; it trusts the shared FS.
 
 > **Note.** The single-node runner is the smallest case of a distributed run.
-> Cluster-scale ingestion (compute plane → node collector → cluster collector →
-> evidence plane) and parent/child capsules are **PLANNED architecture**,
-> documented as design intent in the ADRs — not implemented.
+> The cluster-scale tiers shipped in v0.10+ with honest maturity labels:
+> parent/child capsules (`nova run …`) are a **prototype** — implemented and
+> tested, not yet validated at target scale — and the collector tier, object
+> capsule store, and Postgres metadata DB are **experimental**. See
+> [ROADMAP.md](../ROADMAP.md) for per-component labels; the federation and
+> at-scale graph tiers remain **future design**.
 
 ---
 
@@ -346,6 +368,17 @@ This is the mechanism behind the "worked yesterday, fails today" flaky-agent
 problem: wire `nova diff --assert-no-regressions` into CI and a structural
 regression stops the merge.
 
+### Offline analytics over capsules (experimental)
+
+Because every metric a run produced — cost, tokens, latency, scores — is already
+recorded inside its capsule, analytics never needs a server. The **experimental**
+v0.59 surfaces read those recorded facts, offline and read-only: `nova query` is
+a bounded filter → group-by → aggregate DSL over the local capsule directory,
+`nova view` persists a named query as a small versionable file, and `nova trend`
+buckets one metric over time or by asset into a JSON/HTML report. Nothing is
+recomputed or fetched; the capsule directory is never written. See the
+[CLI reference](cli-reference.md#offline-metrics-query-experimental-adr-0129).
+
 ---
 
 ## Lineage Graph
@@ -360,8 +393,9 @@ derived from each capsule's `lineage.jsonl`. It has two table types:
 Because the graph is derived from the capsules, it can always be rebuilt from
 them — the capsules remain the source of truth. The SQLite backend is the
 local-mode default and is crash-safe (WAL); it is well suited below roughly one
-million edges. (Lineage at billion-edge scale on a KuzuDB v2 tier is
-**PLANNED / FUTURE DESIGN**, not implemented.)
+million edges. (A KuzuDB-backed v2 tier for larger graphs is **experimental** —
+`nova lineage-store migrate`; billion-edge federation and the Postgres/Apache
+AGE backends remain **FUTURE DESIGN**, not implemented.)
 
 ### Edge types
 
@@ -433,6 +467,16 @@ Assets are described by YAML spec files and stored in the local Asset Registry.
 Every registered asset is addressed as `name@version`, pinned to a git commit
 SHA, and carries a lifecycle status that tracks where it is in your
 development-to-production pipeline.
+
+**Prompts as versioned assets (experimental, ADR-0112).** Beyond the YAML spec
+route, `nova prompt register` turns a prompt into an **immutable,
+content-addressed** registry version: every edit registers a new version (never
+a mutation), and a run references it as `prompt:<id>@<version>+sha256:<hex>` —
+so a capsule can be tied to exactly the prompt bytes that ran. Mutable
+deployment labels (`nova label`, ADR-0113) point a name like `production` at one
+immutable version, and prompt composition (`nova prompt compose`, ADR-0115)
+snapshots pinned includes so an assembled prompt rebuilds byte-identically.
+NovaFabric never renders or serves prompts — it versions and proves them.
 
 ---
 
@@ -661,15 +705,17 @@ in-toto DSSE attestations, secret scanning with verifiable redaction proofs,
 OPA/Rego policy gates with maker-checker promotion, and WORM storage adapters
 (S3 Object Lock / Azure immutable blob / GCS Bucket Lock, with legal holds).
 
-> **PLANNED — NovaSeal signing service.** A dedicated signing service —
-> DSSE (ECDSA P-256) plus **RFC 3161 / 5816 trusted timestamps** plus an
-> append-only Merkle transparency log — is documented design intent in
-> [ADR-0041](../design/adr/0041-novaseal-cryptographic-core-adoption.md) and the
-> regulated-industries study. It is **not implemented.** RFC-3161 timestamping,
-> WORM-backed retention at the seal layer, Sigstore-keyless and cloud-KMS
-> signing, and PQC/ML-DSA are all PLANNED / FUTURE DESIGN. Do not treat the
-> sealing service as shipped. What ships **today** toward this space is the
-> ed25519 / in-toto DSSE Evidence Bundle described above.
+> **Experimental — NovaSeal signing core.** The in-process NovaSeal core
+> shipped in v0.10+ (`experimental`): DSSE signing (ECDSA P-256), best-effort
+> **RFC 3161 trusted timestamps**, and an append-only SQLite Merkle log,
+> verified offline by `nova verify` (`signature_ok` / `timestamp_ok` /
+> `log_integrity_ok`), plus the maker-checker `nova seal propose/approve/verify`
+> chain (ADR-0059). Still **PLANNED / FUTURE DESIGN** per
+> [ADR-0041](../design/adr/0041-novaseal-cryptographic-core-adoption.md): the
+> dedicated network signing *service*, qualified timestamps, Sigstore-keyless
+> signing as the default path, WORM-backed retention at the seal layer, and
+> PQC/ML-DSA. The most stable portable proof today remains the ed25519 /
+> in-toto DSSE Evidence Bundle described above.
 
 ---
 
@@ -708,8 +754,9 @@ You now have the vocabulary NovaFabric is built on:
 - **Registry + lifecycle** — versioned assets with a six-state lifecycle where
   promotion is governance metadata only.
 - **Evidence Bundle** — offline-verifiable signed export; the NovaSeal signing
-  service, RFC-3161 timestamping, and seal-layer WORM retention remain
-  **PLANNED**.
+  core (DSSE + RFC 3161 timestamps + Merkle log, `nova verify`) is
+  **experimental**, while the dedicated signing service and seal-layer WORM
+  retention remain **PLANNED**.
 
 Where to go next:
 

@@ -121,6 +121,20 @@
       "enum": ["success", "error", "timeout", "denied"],
       "description": "Outcome of the tool invocation."
     },
+    "log_level": {
+      "type": "string",
+      "enum": ["debug", "info", "warn", "error"],
+      "description": "ADR-0127: optional severity of this observation — a stored forensic attribute, never a live signal. Absent is read as 'info' by filters; absence is preserved (never back-filled)."
+    },
+    "status_message": {
+      "type": ["string", "null"],
+      "description": "ADR-0127: optional one-line human-readable reason for the level. Secret-scanned and redacted at capture (ADR-0009); an annotation, not a log stream."
+    },
+    "log_level_source": {
+      "type": "string",
+      "enum": ["framework", "span-status", "adapter", "user"],
+      "description": "ADR-0127: provenance of log_level; on disagreement the most severe source wins at capture and is recorded here."
+    },
     "agent_call_id": {
       "oneOf": [
         {"$ref": "#/$defs/Ulid"},
@@ -188,6 +202,10 @@
       "$ref": "#/$defs/ReplayHint",
       "description": "Per-call replay guidance written by the framework adapter at capture time."
     },
+    "schema_validation": {
+      "$ref": "#/$defs/SchemaValidationVerdict",
+      "description": "Optional recorded verdict of validating arguments/result against the declared *_schema_ref JSON Schemas (ADR-0128). Additive; absence means 'not validated' and is never a failure."
+    },
     "extensions": {
       "type": "object",
       "description": "Vendor extensions. Keys must be reverse-DNS-prefixed (e.g. 'io.langgraph.thread_id')."
@@ -203,6 +221,68 @@
     "required": ["mcp"]
   },
   "$defs": {
+    "SchemaValidationVerdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["arguments_valid", "result_valid", "validator", "errors"],
+      "properties": {
+        "arguments_valid": {
+          "type": ["boolean", "null"],
+          "description": "True/false if arguments were checked against arguments_schema_ref; null if no arguments schema was declared."
+        },
+        "result_valid": {
+          "type": ["boolean", "null"],
+          "description": "True/false if result was checked against result_schema_ref; null if no result schema was declared or the tool errored."
+        },
+        "validator": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Validator + dialect id, e.g. 'jsonschema/2020-12'."
+        },
+        "errors": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/SchemaError"},
+          "description": "Structured failures. Empty when everything checked was valid. Bounded (capped with a synthetic 'truncated' entry)."
+        },
+        "checked_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When validation ran (capture time, or backfill time for --write)."
+        },
+        "arguments_schema_ref": {
+          "type": ["string", "null"],
+          "description": "Echo of the arguments_schema_ref actually resolved."
+        },
+        "result_schema_ref": {
+          "type": ["string", "null"],
+          "description": "Echo of the result_schema_ref actually resolved."
+        }
+      },
+      "description": "ADR-0128 verdict block: records whether the declared *_schema_ref contract was met. null means 'no schema declared' — not a failure."
+    },
+    "SchemaError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "path", "message"],
+      "properties": {
+        "target": {
+          "enum": ["arguments", "result", "output"],
+          "description": "Which payload the error applies to."
+        },
+        "path": {
+          "type": "string",
+          "description": "JSON Pointer / path to the offending value, e.g. '$.items[0].price'."
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable, secret-sanitized failure message."
+        },
+        "keyword": {
+          "type": "string",
+          "description": "The JSON Schema keyword that failed (type, required, ...), or 'schema-unresolved' / 'truncated'."
+        }
+      }
+    },
     "Ulid": {
       "type": "string",
       "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",

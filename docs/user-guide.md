@@ -39,7 +39,9 @@ contents to jump to what you need.
 > `experimental` maturity: they work, but on-disk formats and interface details
 > may change before the v1.0 schema freeze. Anything labeled **planned** or
 > **future design** is documented intent only and is **not** implemented — do
-> not build on it. See [ROADMAP.md](../ROADMAP.md) for sequencing.
+> not build on it. See [ROADMAP.md](../ROADMAP.md) for sequencing, and
+> [What shipped experimental in v0.59](#what-shipped-experimental-in-v059) for
+> the newest command groups.
 
 ---
 
@@ -66,7 +68,7 @@ contents to jump to what you need.
 5. [Trust layer](#trust-layer)
    - [nova redact](#nova-redact)
    - [nova export-evidence](#nova-export-evidence)
-   - [Cryptographic sealing (planned)](#cryptographic-sealing-planned)
+   - [Cryptographic sealing (experimental)](#cryptographic-sealing-experimental)
 6. [Non-Python client capture](#non-python-client-capture)
    - [nova mcp-proxy (experimental)](#nova-mcp-proxy-experimental)
    - [nova api-proxy (experimental)](#nova-api-proxy-experimental)
@@ -83,7 +85,8 @@ contents to jump to what you need.
 8. [Local dashboard](#local-dashboard)
    - [nova serve (experimental)](#nova-serve-experimental)
 9. [Environment variables](#environment-variables)
-10. [Summary and next steps](#summary-and-next-steps)
+10. [What shipped experimental in v0.59](#what-shipped-experimental-in-v059)
+11. [Summary and next steps](#summary-and-next-steps)
 
 ---
 
@@ -203,6 +206,13 @@ The capsule structure is identical to `nova capture`. Without `capsule_dir`,
 the decorator emits OTel spans only — no capsule is written. This is the
 original v0.1 observability mode and is still useful if you only need traces.
 
+**Optional record-only tags (experimental, v0.59).** The decorator also accepts
+`deployment_environment=` (ADR-0126), `variant=` (ADR-0116, A/B attribution),
+and `session_id=`/`session_sequence=` (ADR-0122, multi-turn sessions). Each is
+recorded verbatim as an additive optional manifest field, never inferred; the
+matching CLI flags and `NOVAFABRIC_*` env vars take precedence. See
+[Python API: SDK decorator](python-api.md#sdk-decorator).
+
 See `examples/minimal-agent-run/agent.py` for a complete working example.
 
 **When to use which.** Prefer `nova capture` for anything you can invoke as a
@@ -278,10 +288,13 @@ nova capture --runner slurm \
   python train.py
 ```
 
-> **Planned.** Multi-node distributed runs recorded as a **parent/child capsule
-> tree** under a single `global_run_id` are design intent (ADR-0039), not
-> implemented. Today each `nova capture` produces one capsule with one writer;
-> a one-node run is the degenerate case of the future distributed model.
+> **Prototype.** Multi-node distributed runs recorded as a **parent/child
+> capsule tree** under a single `global_run_id` shipped as a prototype in
+> v0.10+ (ADR-0039; `nova run new-run-id / validate-distributed / show /
+> lineage` — see the [CLI reference](cli-reference.md)). It is implemented and
+> tested but not yet validated at target scale. Each single-node `nova capture`
+> still produces one capsule with one writer; a one-node run is the degenerate
+> case of the distributed model.
 
 ---
 
@@ -651,9 +664,11 @@ The graph is fully derivable from `lineage.jsonl` files in the capsule
 directories — losing the SQLite index is not data loss.
 
 > **Scale note.** The SQLite lineage graph is the local-mode default and is
-> designed for graphs below roughly 1M edges. Lineage at cluster scale (a
-> KuzuDB-backed v2 tier for million-to-billion edges) is **future design**, not
-> implemented.
+> designed for graphs below roughly 1M edges. A KuzuDB-backed v2 tier for
+> larger graphs shipped as **experimental** in v0.10+ (`nova lineage-store
+> migrate` / `profile`; see the [lineage migration guide](lineage/migration-guide.md)).
+> Postgres/Apache AGE backends and the billion-edge federation tier remain
+> **future design**, not implemented.
 
 ---
 
@@ -798,27 +813,27 @@ evidence.zip
 
 ---
 
-### Cryptographic sealing (planned)
+### Cryptographic sealing (experimental)
 
-> **Status: planned / design intent — NOT implemented. Do not depend on this.**
+> **Status: experimental — shipped in v0.10+, interfaces may change before the
+> v1.0 schema freeze.**
 >
-> A dedicated **NovaSeal** signing service — DSSE signing plus an
-> [RFC 3161](https://www.rfc-editor.org/rfc/rfc3161) trusted timestamp plus an
-> append-only Merkle transparency log, with an accompanying `nova verify`
-> command that would report `signature_ok`, `timestamp_ok`, and
-> `log_integrity_ok` — is documented design intent (ADR-0041), not shipped code.
-> RFC 3161 timestamping, the Merkle inclusion log, sealed-at-capture behavior,
-> and cloud-KMS / Sigstore-keyless signing are all part of that planned work.
+> The **NovaSeal** in-process signing core is implemented and tested: DSSE
+> signing (ECDSA P-256), a best-effort
+> [RFC 3161](https://www.rfc-editor.org/rfc/rfc3161) trusted timestamp, and an
+> append-only SQLite Merkle log, verified by `nova verify <capsule>` — which
+> reports `signature_ok`, `timestamp_ok`, and `log_integrity_ok`. Sealing is
+> opt-in via `~/.novafabric/novaseal.yaml`; maker-checker seal flows are
+> `nova seal propose / approve / verify` (ADR-0059). See the
+> [NovaSeal configuration guide](novaseal-configuration.md) and the
+> [CLI reference](cli-reference.md#nova-verify-capsule).
 
-**What is shipped today toward this space** — and what you should use now — is
-the [Evidence Bundle](#nova-export-evidence) above: ed25519-signed bundles with
+**Still planned** (ADR-0041 design intent, not shipped): the dedicated,
+network-hardened NovaSeal signing *service*, qualified timestamps,
+Sigstore-keyless signing as the default path, and WORM-backed retention at the
+seal layer. For the most stable portable proof today, use the
+[Evidence Bundle](#nova-export-evidence) above — ed25519-signed bundles with
 in-toto DSSE attestations and verifiable redaction proofs, verifiable offline.
-The gap between what ships today (integrity signatures on an exported bundle) and
-the planned seal layer (per-capsule trusted timestamps and a transparency log)
-is the single most important honesty point for regulated-industry positioning:
-without the planned seal subsystem, NovaFabric does not yet provide trusted
-timestamps or a tamper-evident inclusion log. See [ROADMAP.md](../ROADMAP.md)
-and ADR-0041 for the intended design.
 
 ---
 
@@ -1319,11 +1334,12 @@ Override with `NOVA_WATCHER_BACKEND=watchdog` and `NOVA_WATCHER_INTERVAL=<second
 - **Home tab** — staleness indicator (amber border on resume cards > 24 h).
 - **Capture tab** — recent capsules panel with "Open folder" links for local paths.
 
-> The dashboard also surfaces a component-status view that lists **planned**
+> The dashboard also surfaces a component-status view covering the
 > cluster-scale subsystems (NovaSeal, collector, object store, metadata DB,
-> parent/child capsules) alongside the shipped ones. Those planned components are
-> design intent only — their presence in the status view is not a claim that they
-> are implemented.
+> parent/child capsules). These shipped in v0.10+ as **experimental /
+> prototype** tiers — implemented and tested, but not validated at target
+> scale. Check each component's maturity label in [ROADMAP.md](../ROADMAP.md)
+> rather than treating presence in the status view as production readiness.
 
 **What requires the CLI.** Some operations are intentionally CLI-only:
 `nova report`, lineage time-travel, OpenLineage emission, `nova mcp-proxy`,
@@ -1364,6 +1380,26 @@ may change between minor versions.
 
 ---
 
+## What shipped experimental in v0.59
+
+v0.59.0 added a large cohort of **experimental** command groups — first slices of
+the Langfuse-parity ADRs (0112–0141) plus interop and forensics surfaces. All are
+additive, off unless you opt in, and their interfaces may change. This guide does
+not duplicate them; each is fully documented in the
+[CLI reference](cli-reference.md), and the grouped overview lives in the
+[v0.59.0 release notes](releases/v0.59.0.md):
+
+| Area | Commands / surfaces (all experimental) |
+|---|---|
+| Prompt lifecycle | `nova prompt register/get/list/history/diff/compose/tree`, `nova label` (deployment labels + protected maker-checker moves) |
+| Evaluation & annotation | `nova eval score config`, `nova annotate`, `nova score submit` (+ `novafabric.scores.submit`), `nova comment`, `nova experiment run/compare` |
+| Capture completeness | `nova session new/add/list/show/replay`, `nova graph agent`, `nova capture --capture-media` + `nova media list`, `--environment`, variant attribution (`--experiment`/`--variant`), observation log levels, `nova validate --schemas` |
+| Offline analytics | `nova query`, `nova view`, `nova trend`, per-usage-type token accounting, `nova pricing` + `nova cost estimate` |
+| Governance | `nova retention plan/apply/status/explain`, PII masking plugins (`--masker`), the budget promotion gate (Rego), `nova events` webhooks, SCIM 2.0 provisioning, partial SAML SSO (metadata/policy only; login refuses with 501) |
+| Portability & interop | `nova export --html`, `nova export-blob` + manifest `nova verify`, OTLP GenAI-span ingest (`POST /api/otlp/v1/traces`), `nova eval import-inspect/export-inspect`, `nova diagnose --intervene`, `nova pii status` |
+
+---
+
 ## Summary and next steps
 
 You now have the full shipped `nova` command surface, organized around the five
@@ -1377,9 +1413,10 @@ primitives:
 | **Evidence Bundle** | `nova redact`, `nova export-evidence` |
 | **Asset Registry** | `nova register`, `nova suggest-register`, `nova list`, `nova inspect`, `nova promote`, `nova rollback`, `nova eval`, `nova report` |
 
-The strategic verb chain across them is **Capture → (Seal, planned) → Replay →
-Diff → Audit**. Everything above the "planned" line runs locally today, offline,
-with no accounts and no telemetry.
+The strategic verb chain across them is **Capture → Seal → Replay → Diff →
+Audit** (sealing is opt-in and `experimental` — see
+[Cryptographic sealing](#cryptographic-sealing-experimental)). Everything above
+runs locally today, offline, with no accounts and no telemetry.
 
 **A good next move, depending on your goal:**
 

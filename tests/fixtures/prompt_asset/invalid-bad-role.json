@@ -1,0 +1,26 @@
+{
+  "schema_version": "0.1.0",
+  "asset_type": "prompt",
+  "prompt_id": "triage",
+  "version": 7,
+  "content_hash": "sha256:06856c578bcaec07ad3351a9c06b19e4af46ad8aab0b346793747465d1a362c5",
+  "template": [
+    {
+      "role": "root",
+      "content": "nope"
+    }
+  ],
+  "variables": [
+    "ticket_body"
+  ],
+  "config": {
+    "temperature": 0.2
+  },
+  "commit_message": "Split instruction into system message; parameterize ticket body.",
+  "created_at": "2026-07-12T09:20:41.500Z",
+  "status": "production",
+  "labels": [
+    "prod"
+  ],
+  "registry": "local"
+}

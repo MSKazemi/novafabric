@@ -1721,6 +1721,50 @@ def create_app(
             }
         return {"ok": True, "run_id": run_id, "event_count": len(events), "events": events}
 
+    # ---------- OTLP GenAI ingest (NF-034, ADR-0098; experimental) ----------
+
+    @app.post("/api/otlp/v1/traces", dependencies=[Depends(verify_token)])
+    async def otlp_ingest_traces(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        """Ingest OTLP/HTTP JSON OTel GenAI spans into a run capsule (NF-034, experimental).
+
+        Accepts an ExportTraceServiceRequest-shaped JSON body, converts spans
+        carrying gen_ai.* attributes into capsule events, and seals a capsule
+        with capture_level 'ingested-otlp'. Spans without gen_ai.* attributes
+        are skipped (counted, never guessed). Protobuf bodies are not accepted
+        in this slice — OTLP JSON only.
+        """
+        from novafabric.otel.genai_ingest import (  # noqa: PLC0415
+            CAPTURE_LEVEL,
+            OTLPIngestError,
+            ingest_otlp_json,
+            write_ingest_capsule,
+        )
+
+        try:
+            result = ingest_otlp_json(body)
+        except OTLPIngestError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        if result.genai_spans == 0:
+            return {
+                "capsule_id": None,
+                "spans_ingested": 0,
+                "spans_skipped": result.skipped_spans + result.unclassified_spans,
+                "capture_level": CAPTURE_LEVEL,
+                "note": "no OTel GenAI spans in payload; no capsule written",
+            }
+
+        cdir = write_ingest_capsule(result, capsule_dir)
+        return {
+            "capsule_id": cdir.name,
+            "spans_ingested": result.genai_spans,
+            "spans_skipped": result.skipped_spans + result.unclassified_spans,
+            "model_call_count": len(result.model_calls),
+            "tool_call_count": len(result.tool_calls),
+            "capture_level": CAPTURE_LEVEL,
+            "unmapped_attribute_keys": result.unmapped_keys,
+        }
+
     @app.get("/api/diff", dependencies=[Depends(verify_token)])
     async def diff_runs(
         run_a: str = Query(...),
@@ -2745,6 +2789,86 @@ def create_app(
                 errors.append(f"missing directory: {dname}")
 
         return {"valid": len(errors) == 0, "errors": errors, "run_id": run_id}
+
+    # ---------- Layer B: External score submission (ADR-0119, experimental) ----------
+
+    @app.post("/api/runs/{run_id}/scores", status_code=201)
+    async def submit_score_endpoint(
+        run_id: str,
+        body: dict = Body(...),  # type: ignore[type-arg]
+        actor_fp: str = Depends(verify_token),
+    ) -> JSONResponse:
+        """Append one externally-computed score to the run's ``scores.jsonl``.
+
+        The ADR-0119 ingest surface over the shared validation core
+        (``novafabric.eval.score_submission``): fail-closed (a rejection writes
+        nothing), append-only (corrections are new ``supersedes`` records, never
+        edits), idempotent by ``score_id`` (identical replay → 200, no second
+        line). Mirrors ``nova score submit``.
+        """
+        from datetime import datetime, timezone  # noqa: PLC0415
+
+        from pydantic import ValidationError as _PydanticValidationError  # noqa: PLC0415
+
+        from novafabric.eval.score_config import ScoreConfigViolation  # noqa: PLC0415
+        from novafabric.eval.score_submission import (  # noqa: PLC0415
+            CapsuleNotFoundError,
+            IdempotencyConflictError,
+            ScoreSubmissionRequest,
+            SubjectNotFoundError,
+            SubmissionInvalidError,
+            SupersedesNotFoundError,
+            submit_request,
+        )
+
+        cdir = _resolve_capsule(run_id, capsule_dir)
+        try:
+            request = ScoreSubmissionRequest.model_validate(body)
+        except _PydanticValidationError as exc:
+            raise HTTPException(status_code=400, detail=f"malformed score submission: {exc}")
+
+        def _audit(result: str, error: str | None = None, **extra: Any) -> None:
+            audit.append(
+                action="score_submit",
+                args={"run_id": run_id, "name": request.name,
+                      "evaluator_id": request.evaluator_id},
+                cli_equivalent=f"nova score submit --capsule {cdir} --name {request.name}",
+                actor_token_fp=actor_fp,
+                result=result,
+                error=error,
+                extra=extra or None,
+            )
+
+        try:
+            result = submit_request(cdir, request, db_path=db_path)
+        except SubmissionInvalidError as exc:
+            _audit("error", error=str(exc))
+            raise HTTPException(status_code=400, detail=str(exc))
+        except (CapsuleNotFoundError, SubjectNotFoundError) as exc:
+            _audit("error", error=str(exc))
+            raise HTTPException(status_code=404, detail=str(exc))
+        except IdempotencyConflictError as exc:
+            _audit("error", error=str(exc))
+            raise HTTPException(status_code=409, detail=str(exc))
+        except (SupersedesNotFoundError, ScoreConfigViolation) as exc:
+            _audit("error", error=str(exc))
+            raise HTTPException(status_code=422, detail=str(exc))
+
+        _audit("ok", score_id=result.score.score_id,
+               idempotent_replay=result.idempotent_replay)
+        return JSONResponse(
+            status_code=200 if result.idempotent_replay else 201,
+            content={
+                "score": json.loads(result.score.model_dump_json(exclude_none=True)),
+                "idempotent_replay": result.idempotent_replay,
+                "config_bound": result.config_bound,
+                "submission": {
+                    "principal": f"token:{actor_fp}",
+                    "scope": "scores:write",
+                    "received_at": datetime.now(timezone.utc).isoformat(),
+                },
+            },
+        )
 
     # ---------- Policy check (DC-5) ----------
 

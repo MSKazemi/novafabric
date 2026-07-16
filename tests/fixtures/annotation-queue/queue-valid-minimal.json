@@ -1,0 +1,11 @@
+{
+  "schema_version": "0.1.0",
+  "queue_id": "01HXB0Q7M4YZ2K7N9DPBYK2WX0",
+  "name": "q2",
+  "criteria": [
+    "helpfulness"
+  ],
+  "assignment_policy": "manual",
+  "subject_selector": {},
+  "created_at": "2026-07-12T09:00:00.000000Z"
+}

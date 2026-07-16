@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/prompt-asset.schema.json",
+  "$comment": "Experimental \u2014 governed by ADR-0112 (accepted 2026-07-13). Graduated from design/spec/schemas/ on first implementation; schema_version 0.1.0. Tracks design/spec/prompt-asset-v0.md.",
+  "title": "PromptAsset",
+  "description": "A first-class, managed registry asset recording a prompt as a versioned, content-addressed, immutable record. Extends the generic AssetSpec (asset_type='prompt') with prompt-native fields.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "asset_type",
+    "prompt_id",
+    "version",
+    "content_hash",
+    "template",
+    "commit_message",
+    "created_at",
+    "status"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "asset_type": {
+      "const": "prompt"
+    },
+    "prompt_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+      "description": "Stable logical identity across versions; the <name> in prompt:<name>@<version>."
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonic, immutable per prompt_id. No version 0."
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "sha256 over the canonical body (see spec Canonicalization)."
+    },
+    "template": {
+      "description": "Text form (string) or chat form (ordered array of {role, content}).",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "role",
+              "content"
+            ],
+            "properties": {
+              "role": {
+                "enum": [
+                  "system",
+                  "user",
+                  "assistant",
+                  "tool"
+                ]
+              },
+              "content": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "commit_message": {
+      "type": "string",
+      "description": "Human rationale; MAY be empty, MUST be present."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "status": {
+      "enum": [
+        "development",
+        "validated",
+        "pending_approval",
+        "staging",
+        "production",
+        "archived"
+      ]
+    },
+    "variables": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Declared placeholder names; documentation/validation only (never rendered)."
+    },
+    "config": {
+      "type": "object",
+      "description": "Model-agnostic hints (model, temperature, max_tokens, top_p, stop, ...). Additional keys allowed.",
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "temperature": {
+          "type": "number"
+        },
+        "max_tokens": {
+          "type": "integer"
+        },
+        "top_p": {
+          "type": "number"
+        },
+        "stop": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "composition": {
+      "type": "array",
+      "description": "Direct {{@prompt:...}} references this version declares, each snapshotted to the version+hash it resolved to at register time (ADR-0115). Omitted entirely when the prompt has no references. Items track schemas/prompt-composition-block.schema.json.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ref",
+          "resolved_version",
+          "resolved_hash"
+        ],
+        "properties": {
+          "ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "resolved_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "resolved_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "selector_kind": {
+            "enum": [
+              "version",
+              "label"
+            ]
+          }
+        }
+      }
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "registry": {
+      "enum": [
+        "local",
+        "server"
+      ],
+      "default": "local"
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Vendor extensions; reverse-DNS keys."
+    }
+  }
+}

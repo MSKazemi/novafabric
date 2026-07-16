@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/session-manifest.schema.json",
+  "$comment": "schema_version 0.1.0; tracks design/spec/session-capsule-v0.md (ADR-0122, experimental). Validates session.json — an ordered, by-reference grouping of N independent Run Capsules; copies no capsule data. Distinct from parent/child (ADR-0039). Graduated from the design draft on acceptance. Cross-item invariants (unique ascending sequence, manifest-wins conflict resolution, dangling/tampered member reporting) are behavioral, enforced by novafabric.session, not expressible in JSON Schema.",
+  "title": "SessionManifest",
+  "description": "session.json — ordered, by-reference grouping of N independent Run Capsules.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "session_id",
+    "session_kind",
+    "created_at",
+    "member_runs"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "session_id": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "session_kind": {
+      "enum": [
+        "conversation",
+        "workflow",
+        "custom"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "member_runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "run_id",
+          "capsule_ref",
+          "sequence",
+          "started_at"
+        ],
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+          },
+          "capsule_ref": {
+            "type": "string",
+            "pattern": "^(.+@)?sha256:[0-9a-f]{64}$"
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "role": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "user_ref": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "finalized_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

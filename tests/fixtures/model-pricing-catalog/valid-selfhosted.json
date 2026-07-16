@@ -1,0 +1,20 @@
+{
+  "schema_version": "0.1.0",
+  "models": [
+    {
+      "model_id": "mistral-7b-local",
+      "currency": "USD",
+      "source": "internal GPU chargeback 2026-Q3",
+      "pricing": {
+        "input": {
+          "amount": 0.1,
+          "unit": "per_1m"
+        },
+        "output": {
+          "amount": 0.3,
+          "unit": "per_1m"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/media-part.schema.json",
+  "$comment": "schema_version 0.1.0; tracks design/spec/multimodal-capture-v0.md (ADR-0125, accepted 2026-07-13; graduated from design/spec/schemas/ 2026-07-15, experimental). Additive MediaPart reference block on a model-call ContentPart ('media' key); reuses the outputs/ blob store + sha256 content-addressing. Byte capture opt-in (ADR-0021 §4).",
+  "title": "MediaPart",
+  "description": "Content-addressed reference to image/audio/video/document on a model-call message part.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "media_type",
+    "content_hash",
+    "byte_size",
+    "redacted"
+  ],
+  "properties": {
+    "type": {
+      "enum": [
+        "image",
+        "audio",
+        "video",
+        "document"
+      ]
+    },
+    "media_type": {
+      "type": "string",
+      "pattern": "^[a-z]+/[A-Za-z0-9.+-]+$"
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "byte_size": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "redacted": {
+      "type": "boolean"
+    },
+    "blob_ref": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^outputs/[0-9a-f]{64}\\.[A-Za-z0-9]+$"
+        }
+      ]
+    },
+    "sampled": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "strategy",
+            "original_byte_size"
+          ],
+          "properties": {
+            "strategy": {
+              "enum": [
+                "thumbnail",
+                "clip",
+                "first-page"
+              ]
+            },
+            "original_byte_size": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "note": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "source_hint": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "inline",
+                "url",
+                "provider_ref"
+              ]
+            },
+            "uri": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "provider": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "dimensions": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "width",
+            "height"
+          ],
+          "properties": {
+            "width": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "extensions": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "image",
+              "document"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "duration_ms"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "audio",
+              "document"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "dimensions"
+          ]
+        }
+      }
+    }
+  ]
+}

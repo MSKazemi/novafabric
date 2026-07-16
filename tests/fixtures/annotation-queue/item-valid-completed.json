@@ -1,0 +1,16 @@
+{
+  "schema_version": "0.1.0",
+  "item_id": "01HXB0Q8N5YZ2K7N9DPBYK2WX1",
+  "queue_id": "01HXB0Q7M4YZ2K7N9DPBYK2WX0",
+  "subject": "sha256:9f2c1e77a4b3c8d5e6f70819a2b3c4d5e6f70819a2b3c4d5e6f70819a2b3c4d5",
+  "subject_kind": "span",
+  "state": "completed",
+  "assignee": "reviewer:mska",
+  "assigned_at": "2026-07-12T09:12:00.000000Z",
+  "completed_at": "2026-07-12T09:15:40.000000Z",
+  "resulting_score_ids": [
+    "01HXB0QAP6YZ2K7N9DPBYK2WX2",
+    "01HXB0QAP7YZ2K7N9DPBYK2WX3"
+  ],
+  "capsule_ref": "capsules/run-01HXB0.../"
+}

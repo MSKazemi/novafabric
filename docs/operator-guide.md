@@ -53,6 +53,8 @@ full NovaSeal configuration reference, see
    - 3.4 [Kubernetes (KubernetesRunner)](#34-kubernetes-kubernetesrunner)
 4. [URL registry configuration](#4-url-registry-configuration)
 5. [Troubleshooting](#5-troubleshooting)
+   - 5b. [NovaSeal configuration](#5b-novaseal-configuration-cryptographic-signing)
+   - 5c. [SAML 2.0 SSO (server mode — experimental, partial)](#5c-saml-20-sso-server-mode--experimental-partial)
 6. [What is not supported yet](#6-what-is-not-supported-yet)
 
 ---
@@ -875,6 +877,87 @@ TSA inside the cluster and point `tsa_url` at it.
 
 ---
 
+## 5c. SAML 2.0 SSO (server mode — experimental, partial)
+
+**Status: experimental partial slice ([ADR-0138](../design/adr/0138-saml-sso-server-mode.md),
+[spec](../design/spec/saml-sso-v0.md)). Config, SP metadata, role mapping, and the
+assertion validation policy work today; live SAML login does not — see the honest
+status below.** SAML is a **server-mode-only** concern: local-first mode
+(`nova capture|validate|replay|diff|lineage`) never touches it, and `pip install
+novafabric` installs zero SAML dependencies.
+
+### Enabling the backend
+
+Add an optional `saml:` block to the server YAML config
+(`~/.config/novafabric/server.yaml` or `--config`). Absent block ⇒ backend
+disabled ⇒ behavior identical to an OIDC-only deployment.
+
+```yaml
+saml:
+  enabled: true
+  sp_entity_id: "https://nova.example.org/saml/metadata"
+  acs_url: "https://nova.example.org/v0/auth/saml/acs"
+  sp_cert_path: /etc/novafabric/saml/sp.crt
+  sp_key_path: /etc/novafabric/saml/sp.key        # mode 0600, never logged
+  subject_attribute: email                         # optional; default: NameID
+  allow_idp_initiated: false                       # default false (more replay-exposed)
+  clock_skew_seconds: 120                          # hard cap 300
+  idp:
+    entity_id: "http://www.okta.com/exk1abcXYZ"
+    sso_url: "https://example.okta.com/app/nova/exk1abcXYZ/sso/saml"
+    x509_cert_path: /etc/novafabric/saml/okta.crt
+  attribute_role_map:
+    attribute: groups
+    mapping:
+      nova-admins: [admin]
+      nova-writers: [writer]
+      nova-auditors: [auditor, reader]
+    default_roles: [reader]                        # never defaults to admin
+```
+
+The config is a closed schema: unknown keys, roles outside the six existing
+ADR-0018/ADR-0058 roles (`reader,writer,admin,auditor,promoter,approver`), and
+`clock_skew_seconds > 300` are rejected at load time. Unmapped attribute values
+fail closed to `default_roles` (default `[]`) — never to `admin`. If
+`attribute_role_map` is absent, roles come from the existing local
+role-assignment table (`nova server assign-role`), same as the OIDC fallback.
+
+### Registering NovaFabric with the IdP
+
+```bash
+nova server saml-metadata --config /etc/novafabric/server.yaml > sp-metadata.xml
+# or, from a running server:
+curl https://nova.example.org/v0/auth/saml/metadata
+```
+
+Hand `sp-metadata.xml` to the IdP administrator. When `sp_cert_path` points at
+a readable PEM certificate, the metadata embeds it as the SP signing key.
+
+### Honest status — what works and what refuses
+
+| Piece | Status |
+|---|---|
+| `server.saml` config block (closed schema, role allow-list, skew cap) | works today |
+| `nova server saml-metadata` + `GET /v0/auth/saml/metadata` | works today |
+| Attribute→role mapping and assertion validation policy (issuer, audience, time bounds, recipient, replay store, `InResponseTo`, status — spec rules V3–V9, V11) | implemented and tested against synthetic assertions |
+| `GET /v0/auth/saml/login`, `POST /v0/auth/saml/acs` — live SSO | **refuses with HTTP 501 (`saml_not_available`)** |
+| Single Logout (SLO) | future design (ADR-0138 P4) |
+
+**Why the refusal:** XML-DSIG signature verification (spec rules V1/V2) and the
+XXE-hardened parser (V10) require a SAML library, and ADR-0138 §D5 leaves that
+library as an **open pre-adoption gate** — the ADR-0024 license audit must pass
+over the library's full transitive tree (and its bundled native `xmlsec`/
+`libxml2`) before any library is pinned. Hand-rolling XML signature validation
+is explicitly forbidden. Until the gate closes, NovaFabric **refuses to consume
+assertions rather than skip signature validation** — the ACS never parses the
+posted XML. There is no configuration that bypasses this.
+
+If your IdP estate can speak OIDC, use the shipped OIDC backend (ADR-0018)
+today; an OIDC bridge (Keycloak/Dex fronting the SAML IdP) remains a documented
+interim option.
+
+---
+
 ## 6. What is not supported yet
 
 The following capabilities are **not implemented** in the current release.
@@ -886,6 +969,7 @@ They are on the roadmap but have no code in `main`.
 | NovaSeal: Cloud KMS (AWS KMS, Azure KV, GCP KMS) | planned | v0.2 |
 | NovaSeal: X.509 HSM / PKCS#11 | planned | v0.2 |
 | NovaSeal: Postgres Merkle log | planned (ADR-0040) | v0.2 |
+| SAML SSO: live login (assertion consumption at the ACS) | blocked on the ADR-0138 D5 library license gate — endpoint refuses with 501; config/metadata/policy shipped (see §5c) | unscheduled |
 | Federation across clusters | future design (ADR-0021 §federation-topology) | v0.9+ |
 | Parent/child capsule relationships | future design (ADR-0039) | v1.x |
 | interLink K8s-to-SLURM integration | proposed (ADR-0028, no code) | unscheduled |

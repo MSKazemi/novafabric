@@ -12,7 +12,8 @@ Run:
     export AZURE_OPENAI_API_KEY=<your-azure-key>
     export AZURE_OPENAI_DEPLOYMENT=<your-deployment-name>   # e.g. gpt-4o-mini
     uv pip install openai
-    uv run nova capture --output-dir examples/azure-openai/runs python examples/azure-openai/agent.py
+    uv run nova capture --output-dir examples/azure-openai/runs \
+        python examples/azure-openai/agent.py
 
 Skips cleanly if any of the three env vars or the openai SDK is missing.
 """
@@ -20,7 +21,6 @@ from __future__ import annotations
 
 import os
 import sys
-
 
 REQUIRED_ENV = ("AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_DEPLOYMENT")
 

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "novafabric"
-version = "0.58.0"
+version = "0.59.0"
 description = "Open-source AI Asset Registry and Agent Lifecycle Management"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.12"
@@ -222,6 +222,12 @@ dev = [
     # pytest-benchmark (BSD-2-Clause) — Tier A under ADR-0024.  Latency
     # benchmarking for the NovaSeal p99 CI gate (ADR-0041, tests/seal/test_benchmark.py).
     "pytest-benchmark>=4.0",
+    # pytest-timeout (MIT) — Tier A under ADR-0024.  Suite-health: a hung test
+    # fails by name instead of stalling the whole run (suite-health backlog item 2).
+    "pytest-timeout>=2.3",
+    # pytest-xdist (MIT) — Tier A under ADR-0024.  Parallel test execution for
+    # the 5.5K-test suite (suite-health backlog item 3); dev runs use `-n auto`.
+    "pytest-xdist>=3.6",
     "ruff>=0.9",
     "mypy>=1.14",
     "types-PyYAML>=6.0",
@@ -264,6 +270,11 @@ dev = [
     "watchdog>=4.0.0",
 ]
 
+# ADR-0135 (experimental): reference masker for the pluggable PII masking
+# pipeline. Third parties register theirs under the same group.
+[project.entry-points."novafabric.maskers"]
+novafabric-email = "novafabric.masking.examples:EmailMasker"
+
 [project.entry-points."novafabric.eval_suites"]
 novafabric-smoke-v1 = "novafabric.evals.suites.smoke:SmokeAdapter"
 gaia-v1 = "novafabric.evals.suites.gaia:GaiaAdapter"
@@ -291,6 +302,9 @@ include = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "packages/nova_worm_conformance/src", "tests"]
+# Suite-health (2026-07-15): no single test may hang the run. 300s is ~20x the
+# slowest legitimate test outside the benchmark suite; hangs fail by name.
+timeout = 300
 
 [tool.coverage.run]
 omit = [

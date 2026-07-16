@@ -1,0 +1,10 @@
+{
+  "name": "answer_correct",
+  "value": 0.87,
+  "value_type": "numeric",
+  "source": "code",
+  "evaluator_id": "code://checks/contract",
+  "subject": "sha256:9f2c1e77a4b3c8d5e6f70819a2b3c4d5e6f70819a2b3c4d5e6f70819a2b3c4d5",
+  "eval_card_digest": "sha256:ab12cd34ef56ab78cd90ef12ab34cd56ef78ab90cd12ef34ab56cd78ef90ab12",
+  "weight": 1
+}

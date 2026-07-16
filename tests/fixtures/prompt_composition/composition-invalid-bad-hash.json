@@ -1,0 +1,8 @@
+[
+  {
+    "ref": "@prompt:system-preamble@production",
+    "resolved_version": "v4",
+    "resolved_hash": "sha256:xyz",
+    "selector_kind": "label"
+  }
+]

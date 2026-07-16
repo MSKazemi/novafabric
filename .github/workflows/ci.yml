@@ -148,6 +148,53 @@ jobs:
           retention-days: 90
 
   # --------------------------------------------------------------------------
+  # Capture-overhead gate
+  # Runs 30 full captured runs of `python -c pass` through
+  # CaptureOrchestrator(fast_emit=True) and asserts p95 < 2000 ms
+  # (ROADMAP W1; ADR-0021 §6, ADR-0092). Separate from the unit job so
+  # benchmark overhead does not inflate the coverage-measurement run.
+  # --------------------------------------------------------------------------
+  capture-overhead-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install project + dev deps
+        run: uv sync --frozen
+
+      - name: Run capture-overhead p95 gate
+        # --benchmark-json saves results as a JSON artifact for trend tracking.
+        # The p95 < 2000 ms assertion is inside the test itself; a failing
+        # assertion fails this step and blocks the PR merge.
+        run: |
+          mkdir -p bench-results
+          uv run pytest tests/bench/test_capture_overhead_gate.py -v \
+            --benchmark-json=bench-results/capture_overhead.json
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capture-overhead-${{ github.sha }}
+          path: bench-results/capture_overhead.json
+          retention-days: 90
+
+  # --------------------------------------------------------------------------
   # Showcase site build
   # Confirms the Astro site (web/) builds cleanly and TypeScript types check.
   # e2e tests require a running server so are not run here.

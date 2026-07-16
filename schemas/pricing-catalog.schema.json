@@ -1,0 +1,314 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/pricing-catalog.schema.json",
+  "$comment": "Governed by ADR-0133 (accepted 2026-07-13). schema_version 0.1.0. Tracks design/spec/model-pricing-catalog-v0.md. A local YAML/JSON pricing file MERGED over the built-in PRICE_TABLE (ADR-0066); layers builtin < user < project < explicit. Fully offline \u2014 no remote registry, no fetch. Prices keyed by ADR-0132 usage type; effective-dated; user-asserted estimates. Runtime validation: pydantic models in src/novafabric/cost/pricing_catalog.py.",
+  "title": "PricingCatalog",
+  "description": "A local, user-extensible model pricing catalog merged over the built-in price table.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "models"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "models": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "model_id",
+          "pricing"
+        ],
+        "properties": {
+          "model_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "pricing": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "input": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "amount"
+                ],
+                "properties": {
+                  "amount": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "unit": {
+                    "enum": [
+                      "per_1k",
+                      "per_1m",
+                      "per_image"
+                    ]
+                  }
+                }
+              },
+              "output": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "amount"
+                ],
+                "properties": {
+                  "amount": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "unit": {
+                    "enum": [
+                      "per_1k",
+                      "per_1m",
+                      "per_image"
+                    ]
+                  }
+                }
+              },
+              "cached": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "amount"
+                ],
+                "properties": {
+                  "amount": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "unit": {
+                    "enum": [
+                      "per_1k",
+                      "per_1m",
+                      "per_image"
+                    ]
+                  }
+                }
+              },
+              "reasoning": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "amount"
+                ],
+                "properties": {
+                  "amount": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "unit": {
+                    "enum": [
+                      "per_1k",
+                      "per_1m",
+                      "per_image"
+                    ]
+                  }
+                }
+              },
+              "audio": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "amount"
+                ],
+                "properties": {
+                  "amount": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "unit": {
+                    "enum": [
+                      "per_1k",
+                      "per_1m",
+                      "per_image"
+                    ]
+                  }
+                }
+              },
+              "image": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "amount"
+                ],
+                "properties": {
+                  "amount": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "unit": {
+                    "enum": [
+                      "per_1k",
+                      "per_1m",
+                      "per_image"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          },
+          "effective_from": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "source": {
+            "type": "string"
+          },
+          "tiers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "when",
+                "pricing"
+              ],
+              "properties": {
+                "when": {
+                  "type": "object"
+                },
+                "pricing": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "input": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "amount"
+                      ],
+                      "properties": {
+                        "amount": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "unit": {
+                          "enum": [
+                            "per_1k",
+                            "per_1m",
+                            "per_image"
+                          ]
+                        }
+                      }
+                    },
+                    "output": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "amount"
+                      ],
+                      "properties": {
+                        "amount": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "unit": {
+                          "enum": [
+                            "per_1k",
+                            "per_1m",
+                            "per_image"
+                          ]
+                        }
+                      }
+                    },
+                    "cached": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "amount"
+                      ],
+                      "properties": {
+                        "amount": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "unit": {
+                          "enum": [
+                            "per_1k",
+                            "per_1m",
+                            "per_image"
+                          ]
+                        }
+                      }
+                    },
+                    "reasoning": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "amount"
+                      ],
+                      "properties": {
+                        "amount": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "unit": {
+                          "enum": [
+                            "per_1k",
+                            "per_1m",
+                            "per_image"
+                          ]
+                        }
+                      }
+                    },
+                    "audio": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "amount"
+                      ],
+                      "properties": {
+                        "amount": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "unit": {
+                          "enum": [
+                            "per_1k",
+                            "per_1m",
+                            "per_image"
+                          ]
+                        }
+                      }
+                    },
+                    "image": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "amount"
+                      ],
+                      "properties": {
+                        "amount": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "unit": {
+                          "enum": [
+                            "per_1k",
+                            "per_1m",
+                            "per_image"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

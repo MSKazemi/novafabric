@@ -1,0 +1,13 @@
+{
+  "type": "audio",
+  "media_type": "audio/wav",
+  "content_hash": "sha256:4275d71e90f7f09f9dcbba2aeeaafb3f30576780bc4d5419ff086d1c6f02a654",
+  "blob_ref": "outputs/4275d71e90f7f09f9dcbba2aeeaafb3f30576780bc4d5419ff086d1c6f02a654.wav",
+  "byte_size": 176400,
+  "redacted": false,
+  "duration_ms": 2000,
+  "dimensions": {
+    "width": 1,
+    "height": 1
+  }
+}

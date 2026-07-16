@@ -1,0 +1,69 @@
+{
+  "schema_version": "0.1.0",
+  "capsule_id": "01HXAY7C0P5B0E0000000000000",
+  "nodes": [
+    {
+      "id": "01HXAY7M6FN9TQGE0V0M7PAY1Q",
+      "kind": "llm",
+      "label": "claude-sonnet-4-7",
+      "started_at": "2026-05-07T10:23:00.100Z",
+      "duration_ms": 900
+    },
+    {
+      "id": "01HXAY7M7QM4YZ2K7N9DPBYK2W",
+      "kind": "tool_call",
+      "label": "web_search",
+      "started_at": "2026-05-07T10:23:00.234Z",
+      "duration_ms": 178,
+      "mutation_class": "read-only"
+    },
+    {
+      "id": "01HXAY7M8RT2YZ2K7N9DPBYK2W",
+      "kind": "tool_call",
+      "label": "git.status",
+      "started_at": "2026-05-07T10:23:01.001Z",
+      "duration_ms": 121,
+      "mutation_class": "read-only"
+    },
+    {
+      "id": "9b2d04dac8e91f3a",
+      "kind": "span",
+      "label": "agent.turn",
+      "started_at": "2026-05-07T10:23:00.050Z",
+      "duration_ms": 1100
+    }
+  ],
+  "edges": [
+    {
+      "type": "agent_invokes_tool",
+      "from": "01HXAY7M6FN9TQGE0V0M7PAY1Q",
+      "to": "01HXAY7M7QM4YZ2K7N9DPBYK2W"
+    },
+    {
+      "type": "agent_invokes_tool",
+      "from": "01HXAY7M6FN9TQGE0V0M7PAY1Q",
+      "to": "01HXAY7M8RT2YZ2K7N9DPBYK2W"
+    },
+    {
+      "type": "follows",
+      "from": "01HXAY7M7QM4YZ2K7N9DPBYK2W",
+      "to": "01HXAY7M8RT2YZ2K7N9DPBYK2W"
+    },
+    {
+      "type": "span_parent",
+      "from": "01HXAY7M6FN9TQGE0V0M7PAY1Q",
+      "to": "9b2d04dac8e91f3a"
+    },
+    {
+      "type": "span_parent",
+      "from": "01HXAY7M7QM4YZ2K7N9DPBYK2W",
+      "to": "9b2d04dac8e91f3a"
+    },
+    {
+      "type": "span_parent",
+      "from": "01HXAY7M8RT2YZ2K7N9DPBYK2W",
+      "to": "9b2d04dac8e91f3a"
+    }
+  ],
+  "graph_digest": "sha256:796fdc3c2e2854ff373e47feea5c24dfdf6968ab47c294663720cef50bc0adde"
+}

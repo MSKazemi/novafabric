@@ -1,0 +1,13 @@
+# Metamorphic check-spec for examples/eval-and-intervention
+# (schemas/features/metamorphic-check-v0.schema.json)
+#
+# Records whose *input* collapses to the same value under `transform` form
+# metamorphic pairs; every pair's *output* must satisfy `invariant`.
+# "Hello World" and "  hello   world " collapse to the same key, so the two
+# word_count calls must agree — a zero-token consistency check.
+name: whitespace_consistency
+records_file: tool-calls.jsonl
+input_field: input
+output_field: output
+transform: [lower, strip, collapse_whitespace]
+invariant: equal

@@ -32,6 +32,7 @@ class PolicyResource(BaseModel):
     dataset_expires_at: datetime | None = None
     lineage: dict[str, Any] = {}
     regression_report: dict[str, Any] | None = None  # serialized RegressionReport via .model_dump()
+    budget: dict[str, Any] | None = None  # recorded budget rollup (ADR-0136) — see _budget.py
 
 
 class PolicyInput(BaseModel):

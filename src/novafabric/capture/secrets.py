@@ -10,7 +10,7 @@ from typing import Any
 from novafabric.capture._ulid import new_ulid
 
 PACK_NAME = "gitleaks-core-v0"
-PACK_VERSION = "0.2.0"
+PACK_VERSION = "0.2.1"
 
 # 12 LLM provider key patterns — ordered from most to least specific to avoid false positives
 _RULES: list[dict[str, Any]] = [
@@ -32,8 +32,14 @@ _RULES: list[dict[str, Any]] = [
      "pattern": re.compile(r"qdrant_[A-Za-z0-9]{30,50}")},
     {"id": "cohere-api-key", "severity": "high",
      "pattern": re.compile(r"(?<![A-Za-z0-9])[A-Za-z0-9]{40}(?![A-Za-z0-9])")},
+    # False-positive guard (pack 0.2.1, ADR-0125): a bare 64-hex string that is
+    # a capsule content address — prefixed "sha256:" (Artifact/MediaPart
+    # content_hash) or "outputs/" (content-addressed blob ref) — is NOT a
+    # Together API key. Real keys never carry those prefixes.
     {"id": "together-api-key", "severity": "high",
-     "pattern": re.compile(r"(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])")},
+     "pattern": re.compile(
+         r"(?<![0-9a-f])(?<!sha256:)(?<!outputs/)[0-9a-f]{64}(?![0-9a-f])"
+     )},
     {"id": "mistral-api-key", "severity": "high",
      "pattern": re.compile(r"(?<![A-Za-z0-9])[A-Za-z0-9]{32}(?![A-Za-z0-9])")},
     {"id": "pinecone-api-key", "severity": "medium",
@@ -53,6 +59,10 @@ _SCAN_TARGETS = [
     ("capsule.yaml", "capsule-yaml"),
 ]
 
+# Public alias: the ADR-0135 masking pipeline walks exactly the same targets
+# the built-in scanner does (design/spec/pii-masking-pipeline-v0.md).
+SCAN_TARGETS: list[tuple[str, str]] = _SCAN_TARGETS
+
 
 def _sha256(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
@@ -70,6 +80,22 @@ def _replacement(rule_id: str, strategy: str, matched: str) -> str:
     if strategy == "drop":
         return ""
     raise ValueError(f"unknown strategy: {strategy!r}")
+
+
+def redact_secrets_in_text(text: str) -> str:
+    """Mask every rule match in ``text`` — same pack the capsule scanner uses.
+
+    Reused by the lifecycle-event emitter (ADR-0137 D5) as the
+    scan-before-emit payload-hygiene pass. Always applies the ``mask``
+    strategy; returns the redacted text.
+    """
+    for rule in _RULES:
+        rule_id = str(rule["id"])
+        text = rule["pattern"].sub(
+            lambda m, rid=rule_id: _replacement(rid, "mask", m.group()),
+            text,
+        )
+    return text
 
 
 def recompute_chain_hash(proof: dict[str, Any]) -> dict[str, Any]:

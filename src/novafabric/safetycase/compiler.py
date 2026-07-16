@@ -327,6 +327,18 @@ class SafetyCaseCompiler:
         data = _load_json(path)
         if data is None:
             return None
+        if "payload" in data and "payloadType" in data:
+            # `nova evidence attest-replay` emits a DSSE envelope wrapping an
+            # in-toto Statement whose predicate is the attestation. Unwrap it
+            # instead of misreading the envelope as a raw attestation (which
+            # produced a misleading CONTESTED "match == ''" verdict).
+            import base64
+
+            try:
+                statement = json.loads(base64.b64decode(data["payload"]))
+                data = statement.get("predicate") or {}
+            except (ValueError, TypeError):
+                data = {}
         match = str(data.get("match", ""))
         ev = Evidence(
             id=self._next_evidence_id("replay"),

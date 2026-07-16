@@ -1,0 +1,38 @@
+{
+  "schema_version": "0.1.0",
+  "session_id": "sess_01HXCD8A0TURN000000000003",
+  "session_manifest_hash": "sha256:6e6108832ed63fcb62ad858d2d28b713c3368d899c2d7132d0851651a2aeec7a",
+  "mode": "exact",
+  "on_divergence": "stop",
+  "whole_session_verdict": "refused",
+  "continue_past_refusal": false,
+  "started_at": "2026-07-12T09:20:00Z",
+  "finished_at": "2026-07-12T09:20:03Z",
+  "turns": [
+    {
+      "sequence": 1,
+      "source_capsule_id": "01HXAY7M5JZ8R7K4P9DPBYK2W0",
+      "effective_mode": "exact",
+      "status": "reproduced",
+      "replay_capsule_id": "01HXBM1Y3K2NGH9V0RD9P0ZDC4",
+      "state_in_hash": null,
+      "state_out_hash": "sha256:68e170118d612b10832d991801c33ff921f470e2e057581d11652723e37f3b7f",
+      "state_seam_match": true,
+      "divergence": null
+    },
+    {
+      "sequence": 2,
+      "source_capsule_id": "01HXAY9Q6KA0S8M5Q0EQCZ3XY0",
+      "effective_mode": "exact",
+      "status": "refused",
+      "replay_capsule_id": null,
+      "state_in_hash": "sha256:68e170118d612b10832d991801c33ff921f470e2e057581d11652723e37f3b7f",
+      "state_out_hash": null,
+      "state_seam_match": null,
+      "divergence": {
+        "kind": "precondition_refusal",
+        "detail": "OCI image not available locally; registry unreachable"
+      }
+    }
+  ]
+}

@@ -67,7 +67,7 @@ Task- and workflow-oriented references for day-to-day use.
 
 | Document | Audience |
 |---|---|
-| [User guide](user-guide.md) | Every shipped `nova` command, organized by workflow |
+| [User guide](user-guide.md) | Every shipped `nova` command, organized by workflow — including a summary of what shipped `experimental` in v0.59 |
 | [Operator guide](operator-guide.md) | Deploying on shared infrastructure — local, Docker, Kubernetes, SLURM |
 | [Dashboard](dashboard.md) | The local web dashboard (`nova serve --experimental`) — capabilities and limits |
 | [Warm capture daemon](warm-capture-daemon.md) | Removing per-run cold-start cost for fleets, HPC job arrays, and CI farms (experimental, Linux only) |
@@ -81,8 +81,8 @@ Look up an exact detail — commands, flags, endpoints, and on-disk formats.
 | Document | What it covers |
 |---|---|
 | [Concepts](concepts.md) | Capsule format, capture hooks, replay modes, lineage edges — the mental model and the five primitives |
-| [CLI reference](cli-reference.md) | Exhaustive flag/option/example reference for every `nova` command |
-| [Python API](python-api.md) | Programmatic API: `@agent` decorator, `CaptureOrchestrator`, Replay, Lineage, Registry |
+| [CLI reference](cli-reference.md) | Exhaustive flag/option/example reference for every `nova` command, including the v0.59 experimental groups (`prompt`, `label`, `session`, `query`/`view`/`trend`, `annotate`, `score`, `retention`, `events`, `experiment`, `graph`, `pricing`, …) |
+| [Python API](python-api.md) | Programmatic API: `@agent` decorator, `CaptureOrchestrator`, Replay, Lineage, Registry, `novafabric.scores.submit` |
 | [REST API reference](api-reference.md) | The `nova serve` FastAPI route table — endpoints, methods, and auth |
 
 ## NovaSeal (cryptographic sealing — regulated environments)
@@ -140,6 +140,9 @@ Not sure where to start? Follow the path that matches your goal.
 
 - **"I want to extend or integrate it."**
   [Developer guide](developer-guide.md) → [Python API](python-api.md) → [Writing a hook plugin](integrations/writing-a-hook-plugin.md).
+
+- **"I'm coming from an LLM-observability platform (prompts, scores, sessions, analytics)."**
+  [NovaFabric vs Langfuse](tutorials/novafabric-vs-langfuse.md) → [User guide](user-guide.md#what-shipped-experimental-in-v059) (the v0.59 experimental cohort: prompt versioning, sessions, offline analytics, annotation queues) → [CLI reference](cli-reference.md). All of these surfaces are **experimental**.
 
 ---
 

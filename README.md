@@ -16,10 +16,10 @@ Tracing tells you *what happened*. NovaFabric tells you whether a past run can b
 nova capture python my_agent.py
 
 # Validate the resulting capsule against schema
-nova validate .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/
+nova validate ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/
 ```
 
-Every captured run produces a `.novafabric/runs/<ulid>/` directory: a schema-valid,
+Every captured run produces a `~/.novafabric/capsules/<ulid>/` directory: a schema-valid,
 secret-redacted, portable evidence folder. Works with any command. No application
 changes required.
 
@@ -79,7 +79,7 @@ nova capture python my_agent.py --dataset data.csv
 This produces a ULID-named capsule directory:
 
 ```
-.novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/
+~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/
   capsule.yaml          ← run manifest (id, status, timing, refs)
   trace.jsonl           ← execution spans
   model-calls.jsonl     ← LLM API calls (OTel GenAI semconv)
@@ -100,7 +100,7 @@ crash is captured evidence, not lost state.
 ### 2. Validate a capsule
 
 ```bash
-nova validate .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/
+nova validate ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/
 # ✓ Valid capsule: 01HXAY7M5JZ8R7K4P9DPBYK2WX  status=success
 ```
 
@@ -114,13 +114,13 @@ itself a new capsule you can diff.
 
 ```bash
 # Forensic: read-only inspection, no network, no subprocess — for audit / post-incident
-nova replay .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --mode forensic
+nova replay ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --mode forensic
 
 # Mocked: re-run the command, all model and tool calls served from the capsule cache
-nova replay .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --mode mocked
+nova replay ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --mode mocked
 
 # Dry-run: see what would be mocked before committing
-nova replay .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --dry-run
+nova replay ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --dry-run
 ```
 
 See [the four replay modes](#3-replay-v03) below for `semantic` and `exact`.
@@ -128,7 +128,7 @@ See [the four replay modes](#3-replay-v03) below for `semantic` and `exact`.
 ### 4. Diff two runs
 
 ```bash
-nova diff .novafabric/runs/01HX.../ .novafabric/runs/01HY.../
+nova diff ~/.novafabric/capsules/01HX.../ ~/.novafabric/capsules/01HY.../
 # Diff: 01HX... → 01HY...
 #   changed=1  added=0  removed=0
 # Model calls:
@@ -460,6 +460,46 @@ spine (`nova energy` / `nova ledger` / `nova safety-case`), significance-gated
 promotion, and supply-chain evidence (SLSA-for-ML, AI-BOM, signed dataset provenance
 cards). See [`CHANGELOG.md`](CHANGELOG.md) for release-by-release detail.
 
+### New in v0.59 — all `experimental`
+
+v0.59.0 ships first slices of a large observability-parity cohort (ADRs 0112–0141)
+plus interop and forensics surfaces. **Everything below is `experimental`** — it works
+and is tested, but interfaces may change; every capability is additive and off unless
+you opt in:
+
+- **Prompt lifecycle** — prompts as immutable, content-addressed registry versions
+  (`nova prompt register/get/list/history/diff`), pinned prompt composition
+  (`nova prompt compose/tree`), mutable deployment labels over immutable versions
+  (`nova label`), and protected labels with maker-checker moves.
+- **Evaluation & annotation** — typed score-configuration catalog, human annotation
+  queues (`nova annotate`), an external score-submission API
+  (`novafabric.scores.submit` / `nova score submit` / REST), append-only capsule
+  comments (`nova comment`), and a dataset-experiment regression harness
+  (`nova experiment run/compare`).
+- **Capture completeness** — multi-turn session capsules and per-turn session replay
+  (`nova session`), agent execution-graph reconstruction (`nova graph agent`),
+  content-addressed multi-modal capture (`--capture-media`, `nova media list`),
+  a first-class `deployment_environment` tag, variant (A/B) attribution recorded
+  verbatim, observation log levels, and tool-call schema validation
+  (`nova validate --schemas`).
+- **Offline analytics** — a read-only metrics query DSL over local capsules
+  (`nova query`), saved views (`nova view`), trend reports (`nova trend`),
+  per-usage-type token accounting, and a local model-pricing catalog
+  (`nova pricing`, `nova cost estimate`). No server, no network.
+- **Governance** — declarative retention sweeps with WORM/legal-hold precedence
+  (`nova retention`), a pluggable PII-masking pipeline, a cost/energy budget
+  promotion gate (Rego), opt-in lifecycle webhooks (`nova events`), SCIM 2.0
+  provisioning for server mode, and a partial SAML SSO slice (SP metadata + policy;
+  live login deliberately refuses with 501 pending a license gate).
+- **Portability & interop** — a single-file offline HTML capsule viewer
+  (`nova export --html`), batch capsule export with a signed completeness manifest
+  (`nova export-blob`), an OTLP/HTTP GenAI-span ingest endpoint, Inspect-AI eval-log
+  import/export, intervention-verified failure attribution
+  (`nova diagnose --intervene`), and a per-capsule PII status report (`nova pii status`).
+
+See [`docs/releases/v0.59.0.md`](docs/releases/v0.59.0.md) for the full grouped list
+and [`docs/cli-reference.md`](docs/cli-reference.md) for per-command detail.
+
 > **Not yet frozen:** on-disk Run Capsule and Evidence Bundle formats change until the
 > v1.0 schema freeze. Do not treat capsule internals as a stable contract before then.
 
@@ -509,7 +549,7 @@ SDKs (OpenAI, Anthropic, MCP, httpx, requests, aiohttp, urllib3, Bedrock) are
 auto-hooked; non-Python clients are captured via `nova api-proxy` and `nova mcp-proxy`.
 
 **What is an "evidence capsule"?**
-A portable `.novafabric/runs/<ulid>/` folder containing a schema-valid,
+A portable `~/.novafabric/capsules/<ulid>/` folder containing a schema-valid,
 secret-redacted record of a run: the manifest, traces, model/tool calls, the
 environment lock, a redaction proof, and a replay policy.
 
@@ -524,10 +564,10 @@ capsules you own, with run-to-run structural diff and cryptographic provenance. 
 [How NovaFabric compares](#how-novafabric-compares).
 
 **Is NovaFabric production-ready?**
-It is **beta** (v0.58.0). Local capture, replay, diff, lineage, the trust layer,
+It is **beta** (v0.59.0). Local capture, replay, diff, lineage, the trust layer,
 policy gates, eval suites, and the asset registry are usable; server mode, the
-cluster-scale collector, and the dashboard are `experimental`. On-disk formats are
-not frozen until the v1.0 schema freeze.
+cluster-scale collector, the dashboard, and the entire v0.59 parity cohort are
+`experimental`. On-disk formats are not frozen until the v1.0 schema freeze.
 
 **What Python version is required?**
 Python 3.12 or newer.
@@ -553,6 +593,7 @@ See [Citation](#citation) below, or the [`CITATION.cff`](CITATION.cff) file.
 - [Strategy: Agentic Research-to-Production OS](design/strategy/agentic-research-to-production-os.md)
 
 ### Release notes
+- [v0.59.0 — Langfuse-parity cohort first slices, supply-chain provenance, evidence-grade eval](docs/releases/v0.59.0.md)
 - [v0.19.0 — Complete dashboard parity](docs/releases/v0.19.0.md)
 - [v0.18.0 — Dashboard parity for v0.17.0](docs/releases/v0.18.0.md)
 - [v0.17.0 — Evidence Fabric v1.0 + Capsule KG + TV-5 3D](docs/releases/v0.17.0.md)
@@ -589,12 +630,15 @@ Requirements: [uv](https://docs.astral.sh/uv/).
 
 ## Status
 
-**Beta — actively developed (v0.58.0).** Stable and usable today: local capture,
+**Beta — actively developed (v0.59.0).** Stable and usable today: local capture,
 replay, diff, lineage (SQLite), the trust layer (signing, secret scanning,
 redaction), the asset registry, policy/approval gates, and standard eval suites.
 `Experimental`: server mode, the cluster-scale collector, the Object Capsule Store,
-and the live dashboard (see [ROADMAP.md](ROADMAP.md) and [CHANGELOG.md](CHANGELOG.md)
-for per-feature maturity labels and the authoritative release history). Run Capsule
+the live dashboard, and the whole v0.59 cohort (prompt lifecycle, sessions, offline
+analytics, annotation queues, retention, webhooks, and the rest of the
+[New in v0.59](#new-in-v059--all-experimental) list; see [ROADMAP.md](ROADMAP.md)
+and [CHANGELOG.md](CHANGELOG.md) for per-feature maturity labels and the
+authoritative release history). Run Capsule
 and Evidence Bundle formats are **not frozen** — expect schema changes until the v1.0
 freeze. NovaFabric produces evidence that *supports* compliance workflows; it does not
 certify or guarantee compliance.
@@ -625,7 +669,7 @@ lives in [`CITATION.cff`](CITATION.cff); a BibTeX entry:
   author  = {Seyedkazemi Ardebili, Mohsen},
   title   = {{NovaFabric}: Replayable AI Infrastructure},
   url      = {https://github.com/novafabric/novafabric},
-  version = {0.58.0},
+  version = {0.59.0},
   license = {Apache-2.0}
 }
 ```

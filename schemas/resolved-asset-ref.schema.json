@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/resolved-asset-ref.schema.json",
+  "$comment": "Experimental \u2014 governed by ADR-0113 (accepted 2026-07-13). Graduated from design/spec/schemas/ on first implementation; schema_version 0.1.0. Tracks design/spec/asset-labels-v0.md.",
+  "title": "ResolvedAssetReference",
+  "description": "Capsule-freeze record: the concrete version+hash a label resolved to at capture time. Replay MUST use resolved_version, never re-resolve the label.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "asset_type",
+    "asset_name",
+    "requested_ref",
+    "resolved_via",
+    "resolved_label",
+    "resolved_version",
+    "resolved_content_hash",
+    "resolved_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "asset_type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "asset_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "requested_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "resolved_via": {
+      "enum": [
+        "label",
+        "explicit-version"
+      ]
+    },
+    "resolved_label": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "resolved_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "resolved_content_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "resolved_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "label_move_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "label_moved_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "registry_uri": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "resolved_via": {
+            "const": "label"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "resolved_label": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resolved_via": {
+            "const": "explicit-version"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "resolved_label": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ]
+}

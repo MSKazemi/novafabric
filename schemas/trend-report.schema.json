@@ -1,0 +1,263 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/trend-report.schema.json",
+  "$comment": "Accepted (ADR-0131, 2026-07-13); implemented experimental 2026-07-15. Graduated from design/spec/schemas/ — identity metadata changed only, contract unchanged. schema_version 0.1.0. Tracks design/spec/trend-report-v0.md. Offline snapshot of one metric (cost | latency | score:<name>) bucketed by day/week/asset over local capsules (ADR-0129 extraction/filter path). No thresholds/alerts (that is ADR-0136). JSON is source of truth; optional self-contained static HTML is a projection.",
+  "title": "TrendReport",
+  "description": "Canonical JSON output of `nova trend` — bucketed series of one metric.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "generator",
+    "metric",
+    "group_by",
+    "window",
+    "unit",
+    "capsule_count",
+    "skipped_count",
+    "series"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "generator": {
+      "type": "string"
+    },
+    "metric": {
+      "type": "string",
+      "pattern": "^(cost|latency|score:[A-Za-z0-9_.\\-]+)$"
+    },
+    "group_by": {
+      "enum": [
+        "day",
+        "week",
+        "asset"
+      ]
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "since",
+        "until"
+      ],
+      "properties": {
+        "since": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "until": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "unit": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "currency"
+          ],
+          "properties": {
+            "kind": {
+              "const": "currency"
+            },
+            "currency": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "stat"
+          ],
+          "properties": {
+            "kind": {
+              "const": "duration_ms"
+            },
+            "stat": {
+              "enum": [
+                "p50",
+                "p95",
+                "p99",
+                "mean"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "name"
+          ],
+          "properties": {
+            "kind": {
+              "const": "score"
+            },
+            "name": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "capsule_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "skipped_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "series": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "bucket",
+          "value",
+          "n",
+          "bucket_start"
+        ],
+        "properties": {
+          "bucket": {
+            "type": "string"
+          },
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "n": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "bucket_start": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "format": "date-time"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "view": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "filters": {
+      "type": "object"
+    },
+    "stat": {
+      "enum": [
+        "p50",
+        "p95",
+        "p99",
+        "mean"
+      ]
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "extensions": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "metric": {
+            "const": "cost"
+          }
+        },
+        "required": [
+          "metric"
+        ]
+      },
+      "then": {
+        "properties": {
+          "unit": {
+            "properties": {
+              "kind": {
+                "const": "currency"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "metric": {
+            "const": "latency"
+          }
+        },
+        "required": [
+          "metric"
+        ]
+      },
+      "then": {
+        "properties": {
+          "unit": {
+            "properties": {
+              "kind": {
+                "const": "duration_ms"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "metric": {
+            "pattern": "^score:"
+          }
+        },
+        "required": [
+          "metric"
+        ]
+      },
+      "then": {
+        "properties": {
+          "unit": {
+            "properties": {
+              "kind": {
+                "const": "score"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

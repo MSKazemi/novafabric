@@ -14,6 +14,8 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, Field, model_validator
 
+from novafabric.server.saml import SamlConfig
+
 
 class OidcConfig(BaseModel):
     issuer_url: str = ""
@@ -22,6 +24,12 @@ class OidcConfig(BaseModel):
     @property
     def enabled(self) -> bool:
         return bool(self.issuer_url and self.audience)
+
+
+class ScimConfig(BaseModel):
+    """SCIM 2.0 provisioning flag (ADR-0139). Default off — endpoints 404."""
+
+    enabled: bool = False
 
 
 class ServerConfig(BaseModel):
@@ -33,10 +41,16 @@ class ServerConfig(BaseModel):
     db_path: str | None = None
     # OIDC — issuer_url="" means auth disabled
     oidc: OidcConfig = Field(default_factory=OidcConfig)
+    # SAML SSO (ADR-0138, experimental partial) — absent block ⇒ backend disabled
+    saml: SamlConfig | None = None
+    # SCIM provisioning (ADR-0139) — disabled by default; also requires the
+    # NOVAFABRIC_SCIM_TOKEN secret before the /scim/v2 endpoints activate.
+    scim: ScimConfig = Field(default_factory=ScimConfig)
 
     # Secrets — only from env vars, never from YAML
     postgres_dsn: str | None = Field(default=None, exclude=True)
     offline_key_path: str | None = Field(default=None, exclude=True)
+    scim_token: str | None = Field(default=None, exclude=True)
 
     # ------------------------------------------------------------------ #
 
@@ -55,7 +69,16 @@ class ServerConfig(BaseModel):
             self.postgres_dsn = val
         if val := os.environ.get("NOVAFABRIC_OFFLINE_KEY_PATH"):
             self.offline_key_path = val
+        if val := os.environ.get("NOVAFABRIC_SERVER_SCIM_ENABLED"):
+            self.scim.enabled = val.lower() in ("1", "true", "yes", "on")
+        if val := os.environ.get("NOVAFABRIC_SCIM_TOKEN"):
+            self.scim_token = val
         return self
+
+    @property
+    def scim_active(self) -> bool:
+        """SCIM is live only when explicitly enabled AND a token is configured."""
+        return bool(self.scim.enabled and self.scim_token)
 
 
 _DEFAULT_CONFIG_PATH = Path.home() / ".config" / "novafabric" / "server.yaml"
@@ -67,7 +90,7 @@ def load_config(config_path: Path | None = None) -> ServerConfig:
     if path.exists():
         raw = yaml.safe_load(path.read_text()) or {}
         # Strip secret keys that must not come from YAML
-        for secret_key in ("postgres_dsn", "offline_key_path"):
+        for secret_key in ("postgres_dsn", "offline_key_path", "scim_token"):
             raw.pop(secret_key, None)
         return ServerConfig.model_validate(raw)
     return ServerConfig()

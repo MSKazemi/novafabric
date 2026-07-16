@@ -77,7 +77,7 @@
 | v0.27.0 | **Full CLI-to-dashboard parity** — 11 new backend endpoints + frontend panels: seal bypass (`BypassSodPanel`), admin role assign/revoke, JWKS flush, DB upgrade, capsule migrate, validate-spec (`ValidateSpecPanel`), asset report (`ReportPanel`), MCP risk report (`MCPRiskReportPanel`), capsule delete, lineage import (`LineageImportPanel`), eval compare (`EvalComparePanel`). 59 new tests. | **experimental** |
 | v0.27.1 | **Two-tier Docker stack + deploy docs** — `make dev-up` (Postgres + dashboard) and `make prod-up` (full: + ClickHouse + NATS + Kafka + PgBouncer + JanusGraph); `novafabric-` container naming; comprehensive Data layer section in `design/architecture/cluster-scale.md`; `NOVA_JANUSGRAPH_URL` env var. | **experimental** |
 | v0.28.0 | **G-A correctness gap closure** — G-A7: `ECDSAP256Signer` in Go collector aligns with Python NovaSeal DER format (15 new tests); G-A3: `NOVA_DLQ_DIR` wired into HPC leaf spool store (DLQ struct existed since v0.22.0 but was never instantiated); G-A6: `get_capsule()` defaults to `verify_chain=True` (OQ-027). G-A1/A2/A4/A5 + G-B1/B2/B3 confirmed already closed. | **experimental** |
-| v0.29.0 | **KG multi-layer topology + Policy UX + Rekor + Evidence Fabric scale tier + Compliance + v1 criteria** — `MCPServer`/`SERVED_BY` auto-discovery; `GET /api/kg/topology`; Policy Explain autocomplete; `nova export-evidence --sigstore`; `NATSJetStreamConsumer` + `ClickHouseAccumulator` + `AvroSerializer` scale backends (`NOVA_NATS_URL`/`NOVA_CLICKHOUSE_URL` env routing; `pip install novafabric[nats\|clickhouse\|avro]`) (G-B3); RFC 3161 full trust chain + CRL/OCSP revocation; `export_ro_crate()` RO-Crate v1.1 + `export_prov_json()` W3C PROV-JSON library functions (CLI planned) (G-C); `nova migrate-schema` batch capsule migration + pgBouncer deploy config + cluster-scale migration runbook (G-F). | **experimental** |
+| v0.29.0 | **KG multi-layer topology + Policy UX + Rekor + Evidence Fabric scale tier + Compliance + v1 criteria** — `MCPServer`/`SERVED_BY` auto-discovery; `GET /api/kg/topology`; Policy Explain autocomplete; `nova export-evidence --sigstore`; `NATSJetStreamConsumer` + `ClickHouseAccumulator` + `AvroSerializer` scale backends (`NOVA_NATS_URL`/`NOVA_CLICKHOUSE_URL` env routing; `pip install novafabric[nats\|clickhouse\|avro]`) (G-B3); RFC 3161 full trust chain + CRL/OCSP revocation; `export_ro_crate()` RO-Crate v1.1 + `export_prov_json()` W3C PROV-JSON library functions (CLI shipped v0.32.0: `nova export-rocrate`, `nova lineage export-prov`) (G-C); `nova migrate-schema` batch capsule migration + pgBouncer deploy config + cluster-scale migration runbook (G-F). | **experimental** |
 | v0.29.1 | **Patch** — bundle sync, `nova migrate-schema` Rich markup fix, avro test skip guard. | **experimental** |
 | v0.29.2 | **KG scalability + dashboard polish** — `IngestTracker` SQLite-backed persistent ingest state (survives restarts); `query_agent_mcp_servers()` two-hop Cypher query; `nova kg status` Rich table with per-type node counts; `TopologyLayerPanel` lazy-load; `resolve_merkle_db_path()` centralised NovaSeal path logic; docs fully synced (architecture/CLI-ref/ROADMAP). | **experimental** |
 | v0.29.3 | **KG ingest completeness + bug fixes** — `nova kg ingest` reads `tool-calls.jsonl` alongside `model-calls.jsonl`; `query_agent_mcp_servers()` Decimal cast fix; `NOVAFABRIC_SEAL_DB_PATH` env-var now beats `novaseal.yaml`; dashboard `AgentQueryPanel` shows MCP servers table; `GET /api/kg/agents/{id}/edges` includes `mcp_servers`; `docs/developer-guide.md` MCPServer extension section. | **experimental** |
@@ -256,9 +256,9 @@ code not yet implemented unless noted.
 | ADR | Title | Status |
 |---|---|---|
 | ADR-0054 | DSSE Signing Envelope — PAE encoding, ECDSA P-256/SHA-256, `.seal/` layout | **Proposed** (x509 path ships as **experimental** in NovaSeal v0.12; 2026-05-14) |
-| ADR-0055 | Dual-Mode Signing Identity — `profile: sigstore` (Fulcio+Rekor) vs `profile: x509` (PKCS#11 HSM / PKCS#12) | **Proposed** (x509 path ships as **experimental**; Sigstore path design-frozen, deferred; 2026-05-14) |
-| ADR-0056 | Rules-Based Risk-Tier Classifier — deterministic YAML vocabularies, EU AI Act / NIST RMF / OMB M-24-10 tiers | **planned** (design frozen; `novafabric/governance/` implementation deferred to v0.13+; 2026-05-14) |
-| ADR-0057 | Per-Tenant Merkle Log — Trillian-compatible append-only log (SQLite dev / Postgres prod); RFC 6962 tree; signed leaf entries | **Proposed** (SQLite backend ships as **experimental**; Postgres deferred to v0.13+; 2026-05-14) |
+| ADR-0055 | Dual-Mode Signing Identity — `profile: sigstore` (Fulcio+Rekor) vs `profile: x509` (PKCS#11 HSM / PKCS#12) | **experimental** — both modes shipped (`nova seal-propose --backend local\|sigstore`, Cloud KMS backends); PKCS#11 real-HSM verification still infra-gated (2026-07-15 audit) |
+| ADR-0056 | Rules-Based Risk-Tier Classifier — deterministic YAML vocabularies, EU AI Act / NIST RMF / OMB M-24-10 tiers | **works today** — shipped v0.16.0 (`nova classify`, `src/novafabric/governance/`; label was stale, corrected 2026-07-15) |
+| ADR-0057 | Per-Tenant Merkle Log — Trillian-compatible append-only log (SQLite dev / Postgres prod); RFC 6962 tree; signed leaf entries | **experimental** — SQLite + `PostgresMerkleLog` (`seal-postgres` extra) both shipped, consistency proofs via `--consistency` (v0.50.0; label corrected 2026-07-15) |
 | ~~ADR-0058~~ | Maker-Checker Dual-Approval for `nova promote` — `propose`/`approve` sub-commands, Ed25519 keyring, SoD at crypto level, opt-in Rego gate | **experimental** (v0.13.0, 2026-05-15) |
 
 ADR-004 (WormAdapter) and ADR-007 (RFC 3161) were already formalized as ADR-0031 and
@@ -266,7 +266,12 @@ ADR-0030 respectively; ADR-001 as ADR-0054.
 
 ---
 
-## Planned — Dashboard UI Completeness Phase 2
+## Shipped — Dashboard UI Completeness Phase 2 (label corrected 2026-07-15)
+
+> **All eight DD tracks below shipped** across v0.27.0–v0.48.0 (verified against
+> `serve/app.py` + the served `api.ts` bundle: rollback endpoint, approvals,
+> collector status, `doctor` health card, lineage time-travel, manifest-chain
+> browser, admin tokens/roles). This section had been left labeled "Planned".
 
 Goal: every shipped CLI capability and cluster-scale component has a dashboard UI or
 a clear, interactive placeholder with CLI guidance. Phase 1 shipped 2026-05-14
@@ -286,7 +291,11 @@ Detailed plans: `.claude/plans/dashboard-capability-coverage.md`.
 
 ---
 
-## Planned — v0.13 Live Dashboard + Scale
+## Partially shipped — v0.13 Live Dashboard + Scale (labels corrected 2026-07-15)
+
+> **SC-1 (SSE live feed), SC-2 (virtualized tables), SC-3 (default time-window on
+> `/api/runs`) shipped** (v0.26.0 BL-6 SSE stream, v0.48.0 virtualized DataTable,
+> `searchRuns` `since`/`until`). **SC-4/SC-5/SC-6 remain `planned`.**
 
 Goal: dashboard works correctly under sustained write load and shows live experiment
 progress. **All items need state-of-the-art engineering research before implementation.**
@@ -303,7 +312,13 @@ See `.claude/plans/dashboard-scale-v013.md` (to be written after research).
 
 ---
 
-## Planned — v1.1 AI Topology Visualization
+## Partially shipped — v1.1 AI Topology Visualization (labels corrected 2026-07-15)
+
+> **TV-1 (cross-capsule KG aggregation), TV-3 (topology node/edge kinds incl.
+> `MCPServer`/`SERVED_BY`, v0.29.0), TV-4 (Sigma.js 2D dashboard,
+> `packages/nova-dashboard/`), TV-5 (3D experimental view, v0.47.0 5-mode
+> switcher) shipped.** **TV-2 (HMAC node pseudonym) and TV-6 (edge-weight
+> metrics) remain `planned`.**
 
 Goal: after collecting many capsules, show an interactive map of agents, tools, models,
 compute nodes, and their communication patterns. Phase 5 + Phase 6 blockers now cleared.
@@ -342,7 +357,7 @@ live n1 `sacct` round-trip remain the only deferred pieces.
 |---|---|---|---|---|
 | Spine-A | **Energy-Anchored Action Receipts** — measured-or-declared-unknown per-action joules + provenanced carbon, sealed into Seal/Evidence; honest-degradation default; Slurm `sacct` measured class (`nova energy probe/attest/verify/report`) | D3 × D7 (#1 wedge, no competitor) | ADR-0093 | **experimental** (core + follow-up: `EnergySampler` daemon, measured time-share attribution, Slurm `sacct` capture, signed `PREDICATE_ENERGY` bundle attestation; 80 tests) — *deferred:* live n1 sacct round-trip, React EnergyTab |
 | Spine-B1 | **Adversary-Anchored Accountability Ledger** — per-stream sidecar hash-chains + signed multi-stream checkpoint; tamper-evident against a compromised agent *and* a malicious operator (`nova ledger anchor/verify/status`) | D3 × D10 × D1 | ADR-0094 (A half) | **experimental** (core; 65 tests) — *deferred:* live-capture wiring, hub anchoring cadence |
-| Spine-B2 | **Deterministic Replay Attestation** — signed `BIT_EXACT`/`BOUNDED_EQUIVALENT`/`NON_DETERMINISTIC` certificate + `replay_attestation.rego` release gate; back-links to the ledger via `ledger_ref` | D3-core (no deterministic agent replay exists) | ADR-0094 (B half) | **experimental** (`replay_attestation.py` + gate; 10 OPA tests) — *deferred:* `nova evidence attest-replay --certify/--anchor` flags |
+| Spine-B2 | **Deterministic Replay Attestation** — signed `BIT_EXACT`/`BOUNDED_EQUIVALENT`/`NON_DETERMINISTIC` certificate + `replay_attestation.rego` release gate; back-links to the ledger via `ledger_ref` | D3-core (no deterministic agent replay exists) | ADR-0094 (B half) | **experimental** (`replay_attestation.py` + gate + `nova evidence attest-replay --certify/--anchor`; 10 OPA tests) — *deferred:* `--require-deterministic` CLI gate flag |
 | Spine-C | **Safety-Case Compiler + Court-Admissible Evidence Binding** — CAE tree from real sealed artifacts (energy receipts + replay attestations compose in as `evidence_kind` leaves at zero schema cost); in-schema honesty / κ + CI backing states (`nova safety-case build/verify/export`) | D4 × D9 × D3 | ADR-0095 | **experimental** (compiler core + follow-up: FRE-902(14) admissibility binding auto-embedded via `nova export-evidence --with-custody`, Annex IV + NIST RMF renderers via `nova safety-case export --format annex-iv|nist-rmf`, three read-only serve endpoints `/api/runs/{id}/energy|ledger|safety-case`; 99+ tests) — *deferred:* React dashboard panels |
 
 ---
@@ -399,7 +414,7 @@ Comprehensive research-backed audit completed in v0.25.0. Status per item after 
 | W3C DID/VC agent identity | **future design** — ADR-0075 accepted; EU binding 2031–2033 |
 | Multi-region log sovereignty | **future design** — ADR-0077 accepted; v1.x |
 | X.509 CA chain validation | **future work** — planned v0.26.x |
-| cap-006/007 (NIS2 Phase 2+3, GDPR RoPA) | **future work** — cap-005 (Phase 1) shipped; later phases planned |
+| cap-006/007 (NIS2 Phase 2+3, GDPR RoPA) | **shipped** — NIS2 Phases 1/2/3 (v0.15.0) and `nova export-ropa` (v0.25.1); row was stale, corrected 2026-07-15 |
 
 ### v1.0 trigger criteria status
 
@@ -407,9 +422,9 @@ Comprehensive research-backed audit completed in v0.25.0. Status per item after 
 |---|---|
 | ≥ 3 design partner sign-offs | 1/3 |
 | OAS v1.0 `open-agent-spec-v1.md` + `oas-extensions-registry.md` | Not started |
-| `nova migrate` v0.x → v1.0 capsule conversion | Not implemented |
+| `nova migrate` v0.x → v1.0 capsule conversion | ✅ shipped v0.22.0 (51 tests; row was stale, corrected 2026-07-15) |
 | LF AI & Data Sandbox application | Draft only; no sponsor yet |
-| OpenSSF Scorecard ≥ 4 | Not configured |
+| OpenSSF Scorecard ≥ 4 | Workflow configured (`.github/workflows/scorecard.yml`, v0.25.1); score itself not yet ≥ 4-verified |
 
 ---
 
@@ -466,7 +481,7 @@ features (27 category-defining). Sequenced additive-first, structural-later:
 
 | Wave | Theme | Representative planned features | Status |
 |---|---|---|---|
-| **W1** | Standards & interop envelopes + additive eval wins | **`experimental` (on main):** DSSE/in-toto/SLSA bundle envelopes, signed eval cards, statistical regression gate + zero-token offline eval (incl. metamorphic check-spec CLI), OTel-GenAI canonical span emitter + opt-in content bridge (NF-032/033), OpenLineage custom facets (NF-036), CycloneDX 1.7 AI-BOM citations/TLP/model-card + `aibom validate` (NF-056), dataset-provenance contamination-check (NF-028). **`planned`:** Inspect-AI interop (NF-024), OTLP ingest endpoint (NF-034), capture-overhead CI gate | partially implemented (`experimental`) |
+| **W1** | Standards & interop envelopes + additive eval wins | **`experimental` (on main):** DSSE/in-toto/SLSA bundle envelopes, signed eval cards, statistical regression gate + zero-token offline eval (incl. metamorphic check-spec CLI), OTel-GenAI canonical span emitter + opt-in content bridge (NF-032/033), OTLP/HTTP JSON GenAI ingest endpoint `POST /api/otlp/v1/traces` (NF-034 — JSON only; protobuf + OpenInference mapping still `planned`), OpenLineage custom facets (NF-036), CycloneDX 1.7 AI-BOM citations/TLP/model-card + `aibom validate` (NF-056), dataset-provenance contamination-check (NF-028), Inspect-AI eval-log interop score-level bridge — `nova eval import-inspect`/`export-inspect` (NF-024; span-tree import still `planned`), capture-overhead CI gate (p95 < 2000 ms, `tests/bench/test_capture_overhead_gate.py` + `capture-overhead-gate` CI job). **All three former W1 `planned` items shipped 2026-07-15.** | implemented (`experimental`) |
 | **W2** | Verifiable-evidence core + evaluation depth | **`experimental` (on main):** SLSA-for-ML promotion provenance (NF-057), signed dataset provenance cards (NF-058). **future design:** Witness-cosigned tiled transparency log, COSE receipts, offline-verifiable bundle, batch-invariant replay attestation, intervention-driven auto-debug, Sigstore model signing | partially implemented (`experimental`) |
 | **W3** | Cluster-scale collector + storage plane | OTAP-native collector, two-tier agent→gateway topology, JetStream durable spool, eBPF black-box capture, Iceberg-v3 object capsule store | future design |
 | **W4** | Agent identity/authz + compliance exporters | SPIFFE identity binding, delegation-chain "acted-as" evidence, EU AI Act Art.12/72/50 exporters, GPAI Art.53 form, ISO 42001/42006 mapping | future design |
@@ -517,7 +532,14 @@ Tier-A substitutes chosen for every capability.
 ## Langfuse-parity, NovaFabric-native (research-grounded, ADRs 0112–0141)
 
 > **Status label:** every item below is **`future design`** — design intent only, nothing
-> implemented. This epic records the outcome of a 2026-07 gap analysis of the Langfuse LLM-engineering
+> implemented — **except ADR-0121, whose first slice is now `experimental`** (see Theme B).
+> This epic records the outcome of a 2026-07 gap analysis of the Langfuse LLM-engineering
+> **Status label:** items below are **`future design`** unless a row says otherwise (first
+> exception: ADR-0112's first slice shipped as `experimental` on 2026-07-15). This epic records
+> the outcome of a 2026-07 gap analysis of the Langfuse LLM-engineering
+> **Status label:** every item below is **`future design`** — design intent only — except where a
+> row's Status column says otherwise (currently: ADR-0129 `nova query` and ADR-0130 `nova view`,
+> both **experimental** since 2026-07-15). This epic records the outcome of a 2026-07 gap analysis of the Langfuse LLM-engineering
 > platform (136 catalogued features) filtered through NovaFabric's philosophy: **only capabilities
 > that fit local-first / evidence / replay / Tier-A were kept, and each was reframed natively** (e.g.
 > variant *attribution* is record-only, never allocation; "analytics" is an offline CLI query over the
@@ -531,12 +553,12 @@ Authored in six themed batches:
 
 | Theme | ADRs | Features | Status |
 |---|---|---|---|
-| **A — Prompt & asset lifecycle** | 0112–0116 | Prompt as versioned content-addressed asset; deployment labels; protected labels (maker-checker); prompt composability with capture-time snapshot; variant *attribution* (record-only) | future design — **ADRs accepted** (2026-07-13, /mska-approve) |
-| **B — Evaluation & scoring** | 0117–0121 | Score configuration catalog; human annotation queues; external score-submission API; dataset-experiment regression harness; append-only capsule/asset comments | future design — **ADRs accepted** (2026-07-13, /mska-approve) |
-| **C — Capture completeness** | 0122–0128 | Session capsule; session replay; agent execution-graph reconstruction; multi-modal capture (content-addressed blobs); deployment-environment field; observation log levels; tool-call schema validation | future design — **ADRs accepted** (2026-07-13, /mska-approve) |
-| **D — Offline query & analytics** | 0129–0133 | Offline metrics query DSL (CLI, no server); saved views/queries; score/cost trend reports; token usage-type accounting; local model-pricing catalog | future design — **ADRs accepted** (2026-07-13, /mska-approve) |
-| **E — Governance & lifecycle** | 0134–0139 | Data-retention policy scheduler; pluggable PII masking pipeline; cost/energy budget policy gate; lifecycle event webhooks; SAML SSO (server mode); SCIM provisioning (server mode) | future design — **ADRs accepted** (2026-07-13, /mska-approve) |
-| **F — Portability & sharing** | 0140–0141 | Self-contained shareable capsule viewer (single-file HTML); batch capsule export to blob storage with signed manifest | future design — **ADRs accepted** (2026-07-13, /mska-approve) |
+| **A — Prompt & asset lifecycle** | 0112–0116 | Prompt as versioned content-addressed asset; deployment labels; protected labels (maker-checker); prompt composability with capture-time snapshot; variant *attribution* (record-only) | **0112 first slice shipped as `experimental`** (2026-07-15): `nova prompt register\|get\|list\|history\|diff`, graduated `schemas/prompt-asset.schema.json`, immutable content-addressed versions over the existing registry (promote alias + replay-exact wiring pending). **0113 P1 shipped `experimental`** (2026-07-15): `nova label set\|get\|list\|history`, additive append-only `asset_label_history` table, auto-maintained `latest`, `resolve_asset_ref()` resolution-freeze API + graduated `asset-label-move`/`resolved-asset-ref` schemas (capture wiring P2 + server P3 pending). **0114 P1–P2 shipped `experimental`** (2026-07-15): `nova label protect\|propose-move\|approve-move\|status`, Ed25519 maker-checker moves with crypto-level SoD (ADR-0058 keyring), atomic apply into `asset_label_history`, additive append-only `asset_label_protection`/`asset_label_move_approvals` tables, graduated `label-protection-config`/`protected-label-pending-move` schemas (NovaSeal evidence P3 + server RBAC P4 pending). **0115 P1–P3 shipped `experimental`** (2026-07-15): `{{@prompt:<name>@<version\|label>}}` references, register-time DAG gate (cycle/depth-8/unknown-ref fail-closed), frozen `composition` block, `nova prompt compose\|tree` + `resolve_composition()`/`rebuild_from_manifest()` byte-identical rebuild, graduated `prompt-composition-block`/`resolved-composition-manifest` schemas (capsule wiring at capture + replay verification P4 pending). **0116 variant attribution `experimental`** (2026-07-15: additive `variant` capsule block, `nova capture --experiment/--variant`, `nova diff --group-by variant`, query dimension). **Theme A complete (first slices)** |
+| **B — Evaluation & scoring** | 0117–0121 | Score configuration catalog; human annotation queues; external score-submission API; dataset-experiment regression harness; append-only capsule/asset comments | future design — **ADRs accepted** (2026-07-13, /mska-approve). **0117 score-config catalog `experimental`** (2026-07-15: `nova eval score config add\|list\|get\|show`, immutable content-digested versions in the registry, opt-in `--validate-scores` on `nova eval score add`). **0121 first slice `experimental`** (2026-07-15): `Comment` record + optional `comments.jsonl` + `nova comment add \| list` with the ADR-0009 secret gate; `asset://` comments (P3) and `nova comment thread` still planned. **0118 annotation queues `experimental`** (2026-07-15: `nova annotate queue create|add|list|show` + `next|submit|confirm|skip`, ADR-0117-validated typed scores landing in scores.jsonl with human provenance, maker-checker Ed25519 SoD). **0120 dataset-experiment harness `experimental`** (2026-07-15: `nova experiment run|list|show|compare`, one capsule per item with ADR-0108 provenance facet, SPRT verdicts via ADR-0080 feeding the Rego regression gate). **0119 score-submission API `experimental`** (2026-07-15: `novafabric.scores.submit`, `nova score submit`, `POST /api/runs/{id}/scores` + `/v0/capsules/{id}/scores`, fail-closed six-rule validation, idempotency keys, additive `supersedes`). **Theme B complete (first slices)** |
+| **C — Capture completeness** | 0122–0128 | Session capsule; session replay; agent execution-graph reconstruction; multi-modal capture (content-addressed blobs); deployment-environment field; observation log levels; tool-call schema validation | future design — **ADRs accepted** (2026-07-13, /mska-approve). **0126 P1 shipped `experimental`** (2026-07-15): additive optional `deployment_environment`/`environment_source` capsule fields + `nova capture --environment` / `NOVAFABRIC_ENVIRONMENT` / SDK arg; P2 query/filter + P3 policy hook remain future design. **0128 tool-call schema validation `experimental`** (2026-07-15: record-only verdicts at capture, `schema_drift` at replay incl. exact-mode hard refusal, `nova validate --schemas [--fail-on-schema-violation] [--write]`, local-only ref resolution). **0122 session capsule `experimental`** (2026-07-15: additive `session_id`/`sequence` fields, `nova capture --session-id/--session-sequence`, `nova session new|add|list|show`, content-addressed session manifests). **0123 session replay `experimental`** (2026-07-15: `nova session replay` — per-turn engine orchestration in sequence order, refusal/divergence honesty, session replay result schema). **0125 multimodal capture `experimental`** (2026-07-15: content-addressed media references on model calls, opt-in `--capture-media` blob storage in the Merkle chain, `nova media list`). **Theme C complete — ALL 30 Langfuse-parity ADRs (0112–0141) now have shipped first slices.** **0124 agent graph `experimental`** (2026-07-15: `nova graph agent` — deterministic digested DAG from recorded spans, dot/mermaid). **0127 log levels `experimental`** (2026-07-15: additive `log_level`/`status_message`/`log_level_source` on model+tool calls, write-time domain gate, OTLP error-span mapping, `nova query` filter). **0124 agent execution-graph P1–P2 shipped `experimental`** (2026-07-15: `nova graph agent [--format json\|dot\|mermaid] [--digest] [--stats]`, deterministic content-addressed within-run DAG projection over `model-calls`/`tool-calls`/`trace` with synthetic-root `reconstruction_notes` — never inferred edges; graduated `schemas/agent-execution-graph.schema.json` + 11 fixtures; P3 replay/diff annotation + P4 cache/dashboard view remain future design) |
+| **D — Offline query & analytics** | 0129–0133 | Offline metrics query DSL (CLI, no server); saved views/queries; score/cost trend reports; token usage-type accounting; local model-pricing catalog | **0129 `nova query` shipped `experimental`** (2026-07-15, first slice: parser + in-memory DuckDB/SQLite index + execution + `--json`); **0130 saved views `experimental`** (2026-07-15: `nova view save|run|list|show|rm`, one YAML per view under `.novafabric/views/`, deterministic `view_hash`, fail-closed save through the 0129 parser); **0132 usage-type accounting `experimental`** (2026-07-15: additive `nova.usage` block on model calls + `usage_totals` manifest roll-up — cached/cache-write/reasoning/audio/image tokens, absent≠zero; cost report `cached_tokens` wired); **0133 pricing catalog `experimental`** (2026-07-15: `nova pricing list|show|add` + `nova cost estimate`, layered effective-dated catalog, recorded-cost-never-overwritten, digest-labeled estimates); **0131 `nova trend` shipped `experimental`** (2026-07-15: cost/score:<name>/latency bucketed by day/week/asset over local capsules on the 0129 extraction path; TrendReport JSON + optional single self-contained static HTML with stdlib inline SVG, no JS; explicit gap buckets; `--view` selector; schema graduated to `schemas/trend-report.schema.json`) — **Theme D complete**; ADRs accepted (2026-07-13, /mska-approve) |
+| **E — Governance & lifecycle** | 0134–0139 | Data-retention policy scheduler; pluggable PII masking pipeline; cost/energy budget policy gate; lifecycle event webhooks; SAML SSO (server mode); SCIM provisioning (server mode) | **ADRs accepted** (2026-07-13, /mska-approve). **0135 masking pipeline `experimental`** (2026-07-15: `nova capture --masker/--masking-config`, `novafabric.maskers` entry-point group, `masker_findings[]`/`masker_errors[]` in the redaction proof). **0137 first slice `experimental`** (2026-07-15: `nova events tail\|emit`, opt-in `NOVA_EVENTS_*` file/webhook sinks, HMAC signing, `capsule.created`/`capsule.validated` wired; remaining wiring + command sink planned). **0136 budget gate `experimental`** (2026-07-15: `PolicyResource.budget` recorded cost/energy rollup + `budget_gate.rego` deny-over-ceiling with honest no-data pass; promote auto-consult planned). **0134 retention scheduler `experimental`** (2026-07-15: `nova retention plan|apply|status|explain`, `bindings:` block in retention-policy.yaml, WORM/legal-hold precedence, hash-chained audit; server-mode scheduling planned). **0138 SAML SSO first slice `experimental`** (2026-07-15: additive `server.saml` config block, `nova server saml-metadata` + `GET /v0/auth/saml/metadata`, fail-closed attribute→role mapping, assertion validation policy V3–V9/V11, closed redacted audit record; **live login/ACS refuse with 501** — XML-signature verification is blocked on the ADR-0138 D5 library license gate, never skipped). **0139 SCIM first slice `experimental`** (2026-07-15: /scim/v2 Users CRUD+filter+discovery, deprovision revokes roles with last-admin refusal; Groups P3 planned). **Theme E complete (first slices)** |
+| **F — Portability & sharing** | 0140–0141 | Self-contained shareable capsule viewer (single-file HTML); batch capsule export to blob storage with signed manifest | **0140 first slice `experimental`** (2026-07-15: `nova export --html`, P1 projection + P2 single-file HTML; P3 verification panel + P4 graph view still future design); **0141 `experimental`** (2026-07-15: `nova export-blob` + `nova verify <export-manifest.json>` — local dir + S3; `azure://`/`gcs://` planned per ADR-0141 P2) — ADRs accepted 2026-07-13 |
 
 All slices are **additive and optional** (no Run Capsule / Asset Spec / CLI break), **local-first**
 (work with `pip install novafabric`, no server, no internet for core behavior; server mode is an

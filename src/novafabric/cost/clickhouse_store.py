@@ -170,6 +170,16 @@ def ingest_capsule(run_id: str, capsule_dir: Path, tenant_id: str = "default") -
             provider: str = ev.get("gen_ai.system", "unknown")
             input_tokens = int(ev.get("gen_ai.usage.input_tokens", 0))
             output_tokens = int(ev.get("gen_ai.usage.output_tokens", 0))
+            # ADR-0132: the optional nova.usage block carries the per-type
+            # breakdown; cached_tokens feeds the (pre-existing) column.
+            # The column is non-nullable, so unknown is stored as 0 here —
+            # the capsule record stays the source of truth for absent vs zero.
+            nova_usage = ev.get("nova.usage")
+            cached_tokens = 0
+            if isinstance(nova_usage, dict):
+                raw_cached = nova_usage.get("cached_tokens")
+                if isinstance(raw_cached, int) and not isinstance(raw_cached, bool):
+                    cached_tokens = max(raw_cached, 0)
             # Compute estimated cost
             cost_usd = CostInterceptor._estimate_cost(
                 model, input_tokens, output_tokens
@@ -186,7 +196,7 @@ def ingest_capsule(run_id: str, capsule_dir: Path, tenant_id: str = "default") -
                     provider,
                     input_tokens,
                     output_tokens,
-                    0,  # cached_tokens — not in model-calls.jsonl semconv yet
+                    cached_tokens,
                     cost_usd,
                 )
             )
@@ -261,6 +271,7 @@ def cost_report(
         SELECT
             sum(input_tokens)  AS total_input,
             sum(output_tokens) AS total_output,
+            sum(cached_tokens) AS total_cached,
             sum(cost_usd)      AS total_cost
         FROM nova.cost_events
         WHERE {base_filter}
@@ -271,6 +282,7 @@ def cost_report(
             provider,
             sum(input_tokens)  AS input_tokens,
             sum(output_tokens) AS output_tokens,
+            sum(cached_tokens) AS cached_tokens,
             sum(cost_usd)      AS cost_usd,
             count()            AS calls
         FROM nova.cost_events
@@ -281,7 +293,9 @@ def cost_report(
     """
 
     totals_res = client.query(totals_sql, parameters=params)
-    totals_row = totals_res.result_rows[0] if totals_res.result_rows else (0, 0, 0.0)
+    totals_row = (
+        totals_res.result_rows[0] if totals_res.result_rows else (0, 0, 0, 0.0)
+    )
 
     by_model_res = client.query(by_model_sql, parameters=params)
     by_model = [
@@ -290,8 +304,9 @@ def cost_report(
             "provider": row[1],
             "input_tokens": row[2],
             "output_tokens": row[3],
-            "cost_usd": round(float(row[4]), 6),
-            "calls": row[5],
+            "cached_tokens": row[4],
+            "cost_usd": round(float(row[5]), 6),
+            "calls": row[6],
         }
         for row in by_model_res.result_rows
     ]
@@ -304,7 +319,11 @@ def cost_report(
         "totals": {
             "input_tokens": int(totals_row[0]),
             "completion_tokens": int(totals_row[1]),
-            "cost_usd": round(float(totals_row[2]), 6),
+            # ADR-0132: cached (prompt-cache read) usage type in the report.
+            # ClickHouse stores unknown as 0 (non-nullable column); the capsule
+            # nova.usage / usage_totals blocks remain the absent-vs-zero truth.
+            "cached_tokens": int(totals_row[2]),
+            "cost_usd": round(float(totals_row[3]), 6),
         },
         "by_model": by_model,
     }

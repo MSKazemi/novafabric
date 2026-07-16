@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Tool output contract for examples/eval-and-intervention",
+  "type": "object",
+  "required": ["value"],
+  "properties": {
+    "value": {"type": ["integer", "string"]}
+  },
+  "additionalProperties": false
+}

@@ -29,7 +29,8 @@ BAD_CONTENT = json.dumps({
 
 FIXED_CONTENT = json.dumps({
     "action": "reduce_max_connections",
-    "reason": "Reducing max_connections from 1000 to 500 prevents connection exhaustion under burst load.",
+    "reason": "Reducing max_connections from 1000 to 500 prevents connection exhaustion "
+    "under burst load.",
     "value": 500,
 })
 

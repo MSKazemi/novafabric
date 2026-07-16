@@ -1,0 +1,34 @@
+{
+  "schema_version": "0.1.0",
+  "session_id": "sess_01HXCD8A0TURN000000000001",
+  "session_manifest_hash": "sha256:891809c735ff5e4e047caeba0599a3213ebf6cdb7f519b68237a5ca09a5b1812",
+  "mode": "mocked",
+  "on_divergence": "stop",
+  "whole_session_verdict": "reproduced",
+  "started_at": "2026-07-12T09:00:00Z",
+  "finished_at": "2026-07-12T09:00:04Z",
+  "turns": [
+    {
+      "sequence": 1,
+      "source_capsule_id": "01HXAY7M5JZ8R7K4P9DPBYK2W0",
+      "effective_mode": "mocked",
+      "status": "reproduced",
+      "replay_capsule_id": "01HXBM1Y3K2NGH9V0RD9P0ZDC4",
+      "state_in_hash": null,
+      "state_out_hash": "sha256:68e170118d612b10832d991801c33ff921f470e2e057581d11652723e37f3b7f",
+      "state_seam_match": true,
+      "divergence": null
+    },
+    {
+      "sequence": 2,
+      "source_capsule_id": "01HXAY9Q6KA0S8M5Q0EQCZ3XY0",
+      "effective_mode": "mocked",
+      "status": "reproduced",
+      "replay_capsule_id": "01HXBM3Z4M3PHK0W1SE0Q1AED5",
+      "state_in_hash": "sha256:68e170118d612b10832d991801c33ff921f470e2e057581d11652723e37f3b7f",
+      "state_out_hash": "sha256:0c7e4bc57ad2b7d41133091f979ebe92b79db0df7baf8c5c69e589ea2b80f726",
+      "state_seam_match": null,
+      "divergence": null
+    }
+  ]
+}

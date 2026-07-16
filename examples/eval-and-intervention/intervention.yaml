@@ -1,0 +1,15 @@
+# InterventionSpec for examples/eval-and-intervention (ADR-0086, experimental)
+#
+# Counterfactual: "what if the second word_count call had answered 3?"
+# One target selector + exactly one substitution + optional named checks.
+target:
+  stream: tool-calls
+  event_index: 1
+mutate_payload:
+  output: {value: 3}
+checks:
+  - name: substitution_applied
+    stream: tool-calls
+    event_index: 1
+    field: output.value
+    equals: 3

@@ -1,0 +1,13 @@
+{
+  "type": "image",
+  "media_type": "image/jpeg",
+  "content_hash": "sha256:cd6357efdd966de8c0cb2f876cc89ec74ce35f0968e11743987084bd42fb8944",
+  "blob_ref": null,
+  "byte_size": 284119,
+  "redacted": false,
+  "dimensions": {
+    "width": 1024,
+    "height": 768
+  },
+  "duration_ms": 500
+}

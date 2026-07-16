@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/asset-label-move.schema.json",
+  "$comment": "Experimental \u2014 governed by ADR-0113 (accepted 2026-07-13). Graduated from design/spec/schemas/ on first implementation; schema_version 0.1.0. Tracks design/spec/asset-labels-v0.md.",
+  "title": "AssetLabelMove",
+  "description": "Append-only audit row written when a deployment label is set or moved. Current pointer = newest row per (asset_name,label).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "label",
+    "asset_name",
+    "target_version",
+    "moved_at",
+    "moved_by"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "label": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "asset_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "moved_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "moved_by": {
+      "type": "string",
+      "minLength": 1
+    },
+    "previous_version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "asset_type": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "content_hash": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "move_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    }
+  }
+}

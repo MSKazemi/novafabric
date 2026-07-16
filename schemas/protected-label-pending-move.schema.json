@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/protected-label-pending-move.schema.json",
+  "$comment": "Experimental — governed by ADR-0114 (accepted 2026-07-13). Graduated from design/spec/schemas/ on first implementation; schema_version 0.1.0. Additive optional fields over the draft: proposer_key_fp/proposer_signature and per-approval approver_key_fp/approver_signature carry the Ed25519 maker-checker crypto (ADR-0058 keyring); signature_ref stays reserved for NovaSeal (P3). Tracks design/spec/protected-labels-v0.md.",
+  "title": "ProtectedLabelPendingMove",
+  "description": "In-flight protected move + its approvals (maker-checker).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "move_id",
+    "asset_name",
+    "label",
+    "from_version",
+    "proposed_version",
+    "proposed_by",
+    "proposed_at",
+    "state",
+    "approvals"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "move_id": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "asset_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "label": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "from_version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "proposed_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "proposed_by": {
+      "type": "string",
+      "minLength": 1
+    },
+    "proposer_key_fp": {
+      "type": "string",
+      "minLength": 1
+    },
+    "proposer_signature": {
+      "type": "string",
+      "minLength": 1
+    },
+    "proposed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "state": {
+      "enum": [
+        "pending",
+        "approved",
+        "applied",
+        "rejected",
+        "expired"
+      ]
+    },
+    "approvals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "approver",
+          "approved_at",
+          "decision"
+        ],
+        "properties": {
+          "approver": {
+            "type": "string",
+            "minLength": 1
+          },
+          "approved_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "decision": {
+            "enum": [
+              "approve",
+              "reject"
+            ]
+          },
+          "approver_key_fp": {
+            "type": "string",
+            "minLength": 1
+          },
+          "approver_signature": {
+            "type": "string",
+            "minLength": 1
+          },
+          "signature_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "reason": {
+      "type": "string"
+    },
+    "policy_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "required_approvals": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "evidence_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "applied_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

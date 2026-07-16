@@ -1,10 +1,10 @@
 # NovaFabric examples
 
-Five runnable examples, each answering a different "why would I use
-NovaFabric?" question. Each one is a regression test under
+Runnable examples, each answering a different "why would I use
+NovaFabric?" question. Most are regression tests under
 `tests/test_example_*.py`, so the docs cannot drift from working code.
 
-## The five
+## The examples
 
 | Example | Use it to see... | External deps |
 |---|---|---|
@@ -12,15 +12,23 @@ NovaFabric?" question. Each one is a regression test under
 | [`replay-and-diff/`](replay-and-diff/) | Why replay and diff matter — capture two runs of the same script with a controlled change, then have NovaFabric tell you what differs | none (pure stdlib) |
 | [`lineage-chain/`](lineage-chain/) | What the lineage graph answers — "if this dataset changes, which runs depend on it?" | none (pure stdlib) |
 | [`spkg-anomaly-scan/`](spkg-anomaly-scan/) | The Security & Provenance KG flagging a suspicious lineage edge with a MITRE ATT&CK label (`nova kg detect`, experimental) | none (pure stdlib) |
+| [`eval-and-intervention/`](eval-and-intervention/) | The zero-token eval loop (`nova eval offline`, `nova diff --significance`) and counterfactual intervention replay (`nova replay --mode intervention`, experimental) | none (pure stdlib) |
+| [`prompt-and-analytics/`](prompt-and-analytics/) | Why manage prompts as versioned, labeled assets and analyze runs offline — `nova prompt`/`label`, variant-tagged captures, then `nova query`/`view`/`trend`/`session`/`diff --group-by variant` (experimental) | none (pure stdlib) |
 | [`azure-openai/`](azure-openai/) | NovaFabric working against non-default OpenAI endpoints (Azure, on-prem, gateways) | `openai`, Azure deployment |
 | [`langchain-agent/`](langchain-agent/) | Capturing a real LangChain (+ LangGraph) tool-using agent without code changes | `langgraph` + `langchain-anthropic` *or* `langchain-openai` + key |
+| [`blackbox_demo/`](blackbox_demo/) | End-to-end "black box for agents" walkthrough (capture → seal → verify → replay) | none (pure stdlib) |
+| [`plugin-hook-reference/`](plugin-hook-reference/) | The wire-level hook plugin contract — a minimal third-party capture plugin | none (pure stdlib) |
 
-The first three need no external dependencies and run in any clean
-checkout. The last two need provider keys and SDKs but **all five exit
-cleanly with a skip message** when prerequisites are missing — safe in
-CI and on first-time clones.
+Support directories (not runnable examples): `assets/` (sample asset
+specs), `capsules/` (sample captured capsules), `reports/` (sample
+report output).
 
-## Quick all-three sanity sweep (no keys needed)
+The stdlib-only examples run in any clean checkout. The provider-backed
+ones need keys and SDKs but **all indexed examples exit cleanly with a
+skip message** when prerequisites are missing — safe in CI and on
+first-time clones.
+
+## Quick sanity sweep (no keys needed)
 
 ```bash
 # replay-and-diff

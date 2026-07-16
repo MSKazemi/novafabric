@@ -1,0 +1,14 @@
+[
+  {
+    "ref": "@prompt:system-preamble@production",
+    "resolved_version": "v4",
+    "resolved_hash": "sha256:3d4467f30edd313223f89bc2868bc9239b7c633776aa35587c29bcbac765a0d8",
+    "selector_kind": "label"
+  },
+  {
+    "ref": "@prompt:safety-footer@v7",
+    "resolved_version": "v7",
+    "resolved_hash": "sha256:915ebc5acb83c72e7077d03a2f374d8512f10aae4cf666c6f5a79eaeca18b4f7",
+    "selector_kind": "version"
+  }
+]

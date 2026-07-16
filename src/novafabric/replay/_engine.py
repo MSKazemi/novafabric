@@ -105,6 +105,13 @@ class ReplayEngine:
         run_id = manifest.get("run_id", "unknown")
         evaluator = PolicyEvaluator(replay_policy, self._flags)
 
+        # ADR-0128: re-validate stored tool calls against their *current*
+        # declared schemas. Drift is recorded on the replay result in every
+        # mode; only `exact` gates on it (hard refusal via exact_reasons).
+        from novafabric.capture.schema_validation import revalidate_tool_calls
+
+        schema_drift = revalidate_tool_calls(tool_calls, self._capsule_dir)
+
         # Policy gate — only for mutating replay; read-only/forensic modes are
         # never blocked because they never execute live side-effecting tools.
         if self._flags.allow_mutating:
@@ -139,13 +146,17 @@ class ReplayEngine:
             return self._dry_run(run_id, evaluator, tool_calls, env_warnings)
 
         if self._flags.mode == "forensic":
-            return self._forensic(run_id, manifest, model_calls, tool_calls, env_warnings)
+            return self._forensic(
+                run_id, manifest, model_calls, tool_calls, env_warnings, schema_drift
+            )
 
         if self._flags.mode == "semantic":
-            return self._semantic(run_id, model_calls, env_warnings)
+            return self._semantic(run_id, model_calls, env_warnings, schema_drift)
 
         if self._flags.mode == "exact":
-            return self._exact(run_id, env_lock, model_calls, env_warnings)
+            return self._exact(
+                run_id, env_lock, model_calls, env_warnings, schema_drift
+            )
 
         if self._flags.mode == "intervention":
             return self._intervention(
@@ -153,7 +164,13 @@ class ReplayEngine:
             )
 
         return self._mocked(
-            manifest, run_id, model_calls, tool_calls, evaluator, env_warnings
+            manifest,
+            run_id,
+            model_calls,
+            tool_calls,
+            evaluator,
+            env_warnings,
+            schema_drift,
         )
 
     def _intervention(
@@ -273,6 +290,7 @@ class ReplayEngine:
         model_calls: list[dict[str, Any]],
         tool_calls: list[dict[str, Any]],
         env_warnings: list[Any],
+        schema_drift: list[dict[str, Any]] | None = None,
     ) -> ReplayResult:
         start = _now()
         t0 = time.monotonic()
@@ -291,6 +309,7 @@ class ReplayEngine:
             env_warnings=[w.as_dict() for w in env_warnings],
             model_calls_mocked=len(model_calls),
             tool_calls_mocked=len(tool_calls),
+            schema_drift=schema_drift or None,
         )
         write_replay_result(result, result_dir)
         return result
@@ -332,6 +351,7 @@ class ReplayEngine:
         run_id: str,
         model_calls: list[dict[str, Any]],
         env_warnings: list[Any],
+        schema_drift: list[dict[str, Any]] | None = None,
     ) -> ReplayResult:
         start = _now()
         t0 = time.monotonic()
@@ -370,6 +390,7 @@ class ReplayEngine:
             model_calls_mocked=len(model_calls),
             similarity_score=similarity_score,
             matched_run_id=run_id,
+            schema_drift=schema_drift or None,
         )
         write_replay_result(result, result_dir)
         return result
@@ -380,6 +401,7 @@ class ReplayEngine:
         env_lock: dict[str, Any],
         model_calls: list[dict[str, Any]],
         env_warnings: list[Any],
+        schema_drift: list[dict[str, Any]] | None = None,
     ) -> ReplayResult:
         start = _now()
         t0 = time.monotonic()
@@ -412,6 +434,15 @@ class ReplayEngine:
                 )
                 break  # one warning is enough to flag the issue
 
+        # ADR-0128: a stored tool result that no longer conforms to its
+        # declared schema is a hard refusal in exact mode (fail-closed).
+        for finding in schema_drift or []:
+            tool_call_id = str(finding.get("tool_call_id") or "?")
+            reasons.append(
+                f"tool_call {tool_call_id[:10]} does not conform to its declared "
+                "schema_ref — schema drift blocks exact replay (ADR-0128)"
+            )
+
         eligible = len(reasons) == 0
 
         result = ReplayResult(
@@ -428,6 +459,7 @@ class ReplayEngine:
             exact_eligible=eligible,
             exact_hash_count=hash_count,
             exact_reasons=reasons,
+            schema_drift=schema_drift or None,
         )
         write_replay_result(result, result_dir)
         return result
@@ -440,6 +472,7 @@ class ReplayEngine:
         tool_calls: list[dict[str, Any]],
         evaluator: PolicyEvaluator,
         env_warnings: list[Any],
+        schema_drift: list[dict[str, Any]] | None = None,
     ) -> ReplayResult:
         start = _now()
         t0 = time.monotonic()
@@ -477,6 +510,7 @@ class ReplayEngine:
             model_calls_mocked=len(model_calls),
             tool_calls_mocked=len(tool_calls),
             exit_code=exit_code,
+            schema_drift=schema_drift or None,
         )
         if status == "failure":
             result.error = {

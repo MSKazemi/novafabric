@@ -1,0 +1,10 @@
+{
+  "id": "dev-scratch-expire",
+  "match": {
+    "tag": "x",
+    "age": "30 days"
+  },
+  "window": "P90D",
+  "action": "expire-metadata",
+  "enabled": true
+}

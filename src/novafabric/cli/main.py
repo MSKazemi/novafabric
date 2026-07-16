@@ -7,6 +7,7 @@ import typer
 
 from novafabric.capsule.cli import capsule_phase3_app
 from novafabric.cli.aibom import aibom_app
+from novafabric.cli.annotate import annotate_app
 from novafabric.cli.api_proxy import api_proxy_cmd
 from novafabric.cli.approve import approve_cmd
 from novafabric.cli.asset import asset_app
@@ -17,6 +18,7 @@ from novafabric.cli.capture import capture_cmd
 from novafabric.cli.capture_level import app as capture_level_app
 from novafabric.cli.classify import app as classify_app
 from novafabric.cli.collector import collector_app
+from novafabric.cli.comment import app as comment_app
 from novafabric.cli.cost import app as cost_app
 from novafabric.cli.daemon import app as daemon_app
 from novafabric.cli.dataset import dataset_app
@@ -27,7 +29,10 @@ from novafabric.cli.energy import app as energy_app
 from novafabric.cli.erasure import app as erasure_app
 from novafabric.cli.euaiact import euaiact_app
 from novafabric.cli.eval_run import eval_app
+from novafabric.cli.events import events_app
 from novafabric.cli.evidence import evidence_app
+from novafabric.cli.experiment import experiment_app
+from novafabric.cli.export_blob import export_blob_cmd
 from novafabric.cli.export_c2pa import export_c2pa_cmd
 from novafabric.cli.export_evidence import (
     export_aibom_cmd,
@@ -39,14 +44,17 @@ from novafabric.cli.export_evidence import (
     export_ropa_cmd,
 )
 from novafabric.cli.export_examiner import app as export_examiner_app
+from novafabric.cli.export_html import export_cmd
 from novafabric.cli.export_rocrate import export_rocrate_cmd
 from novafabric.cli.export_system_card import export_system_card_cmd
+from novafabric.cli.graph import graph_app
 from novafabric.cli.hold import app as hold_app
 from novafabric.cli.incident import incident_app
 from novafabric.cli.ingest_capsule import ingest_capsule_cmd
 from novafabric.cli.init_ import init_cmd
 from novafabric.cli.inspect_ import inspect_cmd
 from novafabric.cli.kg import kg_app
+from novafabric.cli.label import label_app
 from novafabric.cli.ledger import ledger_app
 from novafabric.cli.lineage import lineage_app
 from novafabric.cli.lineage_migrate import lineage_store_app
@@ -54,30 +62,39 @@ from novafabric.cli.list_ import list_cmd
 from novafabric.cli.login import login_cmd, logout_cmd
 from novafabric.cli.mcp_ import app as mcp_app
 from novafabric.cli.mcp_proxy import mcp_proxy_cmd
+from novafabric.cli.media import media_app
 from novafabric.cli.migrate import migrate_to_postgres_cmd
 from novafabric.cli.migrate_capsule import migrate_capsule_cmd
 from novafabric.cli.migrate_schema import migrate_schema_cmd
 from novafabric.cli.pii_erase import app as pii_app
 from novafabric.cli.policy import app as policy_app
+from novafabric.cli.pricing import app as pricing_app
 from novafabric.cli.promote import promote_app
+from novafabric.cli.prompt import prompt_app
+from novafabric.cli.query import query_cmd
 from novafabric.cli.rebuild import app as rebuild_app
 from novafabric.cli.redact import redact_cmd, subject_proof_cmd
 from novafabric.cli.register import register_cmd
 from novafabric.cli.replay import replay_cmd
 from novafabric.cli.report import report_cmd
+from novafabric.cli.retention import app as retention_app
 from novafabric.cli.rollback import rollback_cmd
 from novafabric.cli.safety_case import safety_case_app
 from novafabric.cli.scan_secrets import scan_secrets_cmd
 from novafabric.cli.schema import app as schema_app
+from novafabric.cli.score import score_app
 from novafabric.cli.seal_propose import seal_app
 from novafabric.cli.serve import serve_cmd
 from novafabric.cli.server import server_app
+from novafabric.cli.session import session_app
 from novafabric.cli.storage_scale import app as storage_scale_app
 from novafabric.cli.suggest_register import suggest_register_cmd
+from novafabric.cli.trend import trend_cmd
 from novafabric.cli.unregister import unregister_cmd
 from novafabric.cli.validate import validate_cmd
 from novafabric.cli.verify import verify_cmd
 from novafabric.cli.verify_envelope import verify_envelope_cmd
+from novafabric.cli.view import view_app
 from novafabric.metadata_store.cli import metadata_db_app
 
 
@@ -146,10 +163,54 @@ app.add_typer(
     name="promote",
     help="Promote an asset through the lifecycle (direct or maker-checker).",
 )
+app.add_typer(
+    prompt_app,
+    name="prompt",
+    help=(
+        "Prompt versioning: register, get, list, history, diff + "
+        "composition: compose, tree (experimental, ADR-0112/0115)."
+    ),
+)
+app.add_typer(
+    label_app,
+    name="label",
+    help=(
+        "Deployment labels: set, get, list, history + protected-label "
+        "maker-checker: protect, propose-move, approve-move, status "
+        "(experimental, ADR-0113/0114)."
+    ),
+)
 app.command("approve")(approve_cmd)
 app.command("rollback")(rollback_cmd)
 app.command("unregister")(unregister_cmd)
 app.add_typer(eval_app, name="eval", help="Run and manage evaluation suites.")
+app.add_typer(
+    experiment_app,
+    name="experiment",
+    help="Dataset-experiment harness: run, list, show, compare (experimental, ADR-0120).",
+)
+app.add_typer(
+    media_app,
+    name="media",
+    help=(
+        "Content-addressed media on model calls: list "
+        "(experimental, ADR-0125)."
+    ),
+)
+app.add_typer(
+    session_app,
+    name="session",
+    help=(
+        "Group N independent runs into one multi-turn session: new, add, "
+        "list, show (experimental, ADR-0122); replay them in order "
+        "(experimental, ADR-0123)."
+    ),
+)
+app.add_typer(
+    events_app,
+    name="events",
+    help="Lifecycle event log and outbound webhooks (experimental, opt-in).",
+)
 app.command("export-evidence")(export_evidence_cmd)
 app.add_typer(
     evidence_app,
@@ -167,6 +228,8 @@ app.add_typer(
     name="export-examiner",
     help="Export examiner-mode evidence packages (BagIt, FDA PCCP, ISO 42001).",
 )
+app.command("export")(export_cmd)
+app.command("export-blob")(export_blob_cmd)
 app.command("export-rocrate")(export_rocrate_cmd)
 app.command("export-c2pa")(export_c2pa_cmd)
 app.command("export-system-card")(export_system_card_cmd)
@@ -195,18 +258,47 @@ app.add_typer(
     name="collector",
     help="Event-buffer operations: offset-replay rebuild (experimental, ADR-0020).",
 )
+app.add_typer(
+    comment_app,
+    name="comment",
+    help="Append-only comments on capsule evidence (experimental, ADR-0121).",
+)
+app.add_typer(
+    annotate_app,
+    name="annotate",
+    help="Human annotation queues — route subjects to reviewers, emit HUMAN scores "
+    "(experimental, ADR-0118).",
+)
+app.add_typer(
+    score_app,
+    name="score",
+    help="Submit externally-computed scores into a capsule's append-only "
+    "scores.jsonl (experimental, ADR-0119).",
+)
 app.command("diff")(diff_cmd)
 app.command("diagnose")(diagnose_cmd)
 app.command("redact")(redact_cmd)
 app.command("subject-proof")(subject_proof_cmd)
 app.command("replay")(replay_cmd)
 app.command("report")(report_cmd)
+app.command("query")(query_cmd)
+app.add_typer(
+    view_app,
+    name="view",
+    help="Saved views: named, persisted nova query definitions (experimental, ADR-0130).",
+)
+app.command("trend")(trend_cmd)
 app.command("scan-secrets")(scan_secrets_cmd)
 app.command("assure")(assure_cmd)
 app.command("validate")(validate_cmd)
 app.command("verify")(verify_cmd)
 app.command("serve")(serve_cmd)
 app.add_typer(lineage_app, name="lineage")
+app.add_typer(
+    graph_app,
+    name="graph",
+    help="Execution-graph projections from captured capsules (experimental, ADR-0124).",
+)
 app.add_typer(
     lineage_store_app,
     name="lineage-store",
@@ -216,6 +308,11 @@ app.add_typer(
     hold_app,
     name="hold",
     help="Place and release legal holds to prevent capsule deletion.",
+)
+app.add_typer(
+    retention_app,
+    name="retention",
+    help="Apply data-retention policy bindings: plan, apply, status, explain (ADR-0134).",
 )
 app.add_typer(
     asset_app,
@@ -300,6 +397,11 @@ app.add_typer(
     cost_app,
     name="cost",
     help="Report LLM cost attribution per run.",
+)
+app.add_typer(
+    pricing_app,
+    name="pricing",
+    help="Local model-pricing catalog: list, show, add (ADR-0133, experimental).",
 )
 app.add_typer(
     energy_app,

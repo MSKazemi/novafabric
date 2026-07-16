@@ -1,0 +1,257 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/capsule-view.schema.json",
+  "$comment": "schema_version 0.1.0; tracks design/spec/capsule-viewer-v0.md (ADR-0140, accepted 2026-07-13; graduated from design/spec/schemas/ on first implementation slice). The CapsuleView summary document embedded inline in a single self-contained HTML file (zero external requests, opens from file://). A PROJECTION of fields the capsule already carries \u2014 never adds content, preserves redaction markers verbatim, never un-redacts (ADR-0009).",
+  "title": "CapsuleView",
+  "description": "Bounded non-sensitive summary of one Run Capsule, embedded inline in the shareable HTML.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generator",
+    "generated_at",
+    "capsule",
+    "model_calls",
+    "tool_calls",
+    "scores",
+    "lineage_refs"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "generator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "const": "novafabric"
+        },
+        "version": {
+          "type": "string"
+        }
+      }
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "capsule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "capture_mode",
+        "started_at",
+        "finished_at"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "capture_mode": {
+          "type": "string"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "finished_at": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "capsule_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "model_calls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "model_call_id",
+          "model",
+          "status"
+        ],
+        "properties": {
+          "model_call_id": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "input_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "output_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "latency_ms": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "tool_calls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tool_call_id",
+          "tool_name",
+          "mutation_class",
+          "status"
+        ],
+        "properties": {
+          "tool_call_id": {
+            "type": "string"
+          },
+          "tool_name": {
+            "type": "string"
+          },
+          "mutation_class": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "scores": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "suite"
+        ],
+        "properties": {
+          "suite": {
+            "type": "string"
+          },
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "lineage_refs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nodes",
+        "edges"
+      ],
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "from",
+              "to",
+              "type"
+            ],
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "is_rendered_claim",
+        "verify_command"
+      ],
+      "properties": {
+        "signature_ok": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "capsule_hash_match": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "log_integrity_ok": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "checked_at": {
+          "type": "string"
+        },
+        "is_rendered_claim": {
+          "const": true
+        },
+        "verify_command": {
+          "type": "string"
+        }
+      }
+    },
+    "title": {
+      "type": "string"
+    },
+    "notes": {
+      "type": "string"
+    }
+  }
+}

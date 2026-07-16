@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0.0",
+  "run_id": "01HXAY7M5JZ8R7K4P9DPBYK2WX",
+  "created_at": "2026-07-15T10:00:00.000000Z",
+  "finished_at": "2026-07-15T10:00:01.000000Z",
+  "duration_ms": 1000,
+  "status": "success",
+  "command": [
+    "python",
+    "agent.py"
+  ],
+  "capture_mode": "cli-wrapper",
+  "novafabric_version": "0.59.0",
+  "working_directory": "~/project",
+  "host": {
+    "os": "linux",
+    "arch": "x86_64",
+    "python": "3.12.0",
+    "cpu_count": 8,
+    "memory_bytes": 16000000000,
+    "gpu": [],
+    "hostname_redacted": true
+  },
+  "environment_ref": "env.lock",
+  "replay_policy_ref": "replay.yaml",
+  "redaction_proof_ref": "redaction-proof.json",
+  "trace_ref": "trace.jsonl",
+  "trace_root_span_id": "a1b2c3d4e5f60718",
+  "model_calls_ref": "model-calls.jsonl",
+  "tool_calls_ref": "tool-calls.jsonl",
+  "assets_ref": "assets.jsonl",
+  "inputs": [],
+  "outputs": [],
+  "model_call_count": 0,
+  "tool_call_count": 0,
+  "mutating_tool_count": 0,
+  "exit_code": 0,
+  "session_id": "01HZ8S9K3M4YZ2K7N9DPBYK2W0"
+}

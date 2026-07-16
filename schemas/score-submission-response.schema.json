@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/score-submission-response.schema.json",
+  "$comment": "schema_version 0.1.0; graduated 2026-07-15 from design/spec/schemas/ on ADR-0119 acceptance. Tracks design/spec/score-submission-api-v0.md. Experimental. Ingest contract over the existing Score model (ADR-0099); adds only the optional 'supersedes' field.",
+  "title": "ScoreSubmissionResponse",
+  "description": "201 (appended) / 200 (idempotent replay) body.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "score",
+    "idempotent_replay",
+    "config_bound"
+  ],
+  "properties": {
+    "score": {
+      "type": "object",
+      "required": [
+        "score_id",
+        "subject",
+        "name",
+        "value",
+        "value_type",
+        "source",
+        "evaluator_id",
+        "eval_card_digest",
+        "created_at"
+      ],
+      "properties": {
+        "score_id": {
+          "type": "string",
+          "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+        },
+        "subject": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "subject_kind": {
+          "enum": [
+            "span",
+            "capsule"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "type": [
+            "boolean",
+            "number",
+            "string"
+          ]
+        },
+        "value_type": {
+          "enum": [
+            "boolean",
+            "categorical",
+            "numeric"
+          ]
+        },
+        "source": {
+          "enum": [
+            "human",
+            "heuristic",
+            "code",
+            "judge"
+          ]
+        },
+        "evaluator_id": {
+          "type": "string"
+        },
+        "eval_card_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "supersedes": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "idempotent_replay": {
+      "type": "boolean"
+    },
+    "config_bound": {
+      "type": "boolean"
+    },
+    "submission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "principal",
+        "scope",
+        "received_at"
+      ],
+      "properties": {
+        "principal": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "received_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    }
+  }
+}

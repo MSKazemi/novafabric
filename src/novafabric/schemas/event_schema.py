@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, field_validator
 
@@ -59,7 +60,14 @@ class CapsuleEventType(str, Enum):
 
 
 class CostFacet(BaseModel):
-    """Per-model-call cost attribution facet (cap-002, ADR-0066)."""
+    """Per-model-call cost attribution facet (cap-002, ADR-0066).
+
+    ``usage`` (ADR-0132, additive, optional) carries the full provider-reported
+    token usage-type breakdown (``nova.usage`` shape: cached / cache-write /
+    reasoning / audio / image tokens plus an open ``extra`` map). ``None``
+    means the provider reported no per-type breakdown — absent, not zero.
+    The three legacy scalars are unchanged; ``usage`` is a superset view.
+    """
 
     model_id: str
     provider: str
@@ -68,6 +76,7 @@ class CostFacet(BaseModel):
     cached_tokens: int = 0
     cost_usd_estimated: float
     energy_joules_estimated: float | None = None
+    usage: dict[str, Any] | None = None
 
 
 class RunEnvelope(BaseModel):

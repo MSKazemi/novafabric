@@ -1,0 +1,10 @@
+{
+  "input_tokens": 640,
+  "output_tokens": 88,
+  "audio_input_tokens": 512,
+  "audio_output_tokens": 64,
+  "extra": {
+    "video_input_tokens": 1280,
+    "tool_use_tokens": 40
+  }
+}

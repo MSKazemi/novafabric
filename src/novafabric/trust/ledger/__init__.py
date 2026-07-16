@@ -13,6 +13,7 @@ never changes existing capsule behavior by default.
 
 from __future__ import annotations
 
+from novafabric.trust.ledger._anchor import anchor_capsule, discover_jsonl_streams
 from novafabric.trust.ledger._chain import (
     ChainLink,
     ChainTamperClass,
@@ -46,8 +47,10 @@ __all__ = [
     "LedgerExit",
     "LedgerVerdict",
     "StreamHead",
+    "anchor_capsule",
     "build_chain",
     "build_checkpoint",
+    "discover_jsonl_streams",
     "exit_code_for",
     "sign_checkpoint",
     "verify_chain",

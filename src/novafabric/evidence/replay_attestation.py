@@ -24,8 +24,11 @@ Determinism classification (normative downgrade rule, ADR-0094 §B):
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any, Literal
 
+import yaml
 from pydantic import BaseModel, Field
 
 from novafabric.evidence.intoto import dsse_sign, make_intoto_statement
@@ -159,6 +162,82 @@ def classify_determinism(
             return "BOUNDED_EQUIVALENT"
 
     return "NON_DETERMINISTIC"
+
+
+def pinned_block_from_capsule(capsule_dir: Path) -> PinnedBlock:
+    """Extract the pinned model/env dimensions recorded in a capsule.
+
+    Reads the first record of ``model-calls.jsonl`` (OTel ``gen_ai.*`` pins,
+    plus the optional ``model_digest`` extension) and ``env.lock`` (lock mode,
+    container image digest, python lock-file hash, inference determinism).
+    Missing values are recorded as ``None`` — never fabricated — which
+    honestly precludes ``BIT_EXACT`` via the normative downgrade rule.
+    """
+    model = PinnedModel(request_model="unknown", response_model="unknown")
+    calls_path = capsule_dir / "model-calls.jsonl"
+    if calls_path.exists():
+        for line in calls_path.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                break
+            request_model = str(rec.get("gen_ai.request.model", "unknown"))
+            model = PinnedModel(
+                request_model=request_model,
+                response_model=str(rec.get("gen_ai.response.model", request_model)),
+                model_digest=rec.get("model_digest"),
+                seed=rec.get("gen_ai.request.seed"),
+                temperature=rec.get("gen_ai.request.temperature"),
+                top_p=rec.get("gen_ai.request.top_p"),
+            )
+            break
+
+    env = PinnedEnv(lock_mode="best-effort")
+    lock_path = capsule_dir / "env.lock"
+    if lock_path.exists():
+        try:
+            data = yaml.safe_load(lock_path.read_text()) or {}
+        except yaml.YAMLError:
+            data = {}
+        if isinstance(data, dict):
+            mode = data.get("mode")
+            container = data.get("container") or {}
+            python = data.get("python") or {}
+            inference = (data.get("hardware") or {}).get("inference") or {}
+            env = PinnedEnv(
+                lock_mode=mode if mode == "deterministic" else "best-effort",
+                container_image_digest=container.get("image_digest"),
+                python_lock_file_hash=python.get("lock_file_hash"),
+                inference_deterministic=inference.get("deterministic"),
+            )
+    return PinnedBlock(model=model, env=env)
+
+
+def classify_match_verdict(
+    match: str, pinned: PinnedBlock
+) -> tuple[DeterminismClass, list[str]]:
+    """Classify a replay's match verdict without a measured bounded metric.
+
+    Reuses :func:`classify_determinism`: an ``exact`` verdict means the replay
+    reproduced the sealed outcome digest, so equal/unequal digest sentinels
+    stand in for the digest pair. With no bounded-equivalence measurement, any
+    non-exact verdict downgrades to ``NON_DETERMINISTIC`` (normative downgrade
+    rule, ADR-0094 §B). Returns the class plus the honest reasons for any
+    downgrade.
+    """
+    replay_digest = "outcome" if match == "exact" else "outcome:diverged"
+    determinism_class = classify_determinism("outcome", replay_digest, pinned)
+    reasons: list[str] = []
+    if match != "exact":
+        reasons.append(
+            f"replay verdict is '{match}' (not exact) and no bounded metric was measured"
+        )
+    missing = _is_fully_pinned(pinned)
+    if missing:
+        reasons.append("missing required pins for BIT_EXACT: " + ", ".join(missing))
+    return determinism_class, reasons
 
 
 def from_reperformance(

@@ -15,7 +15,12 @@ err_console = Console(stderr=True)
 def verify_cmd(
     capsule_dir: Annotated[
         Path,
-        typer.Argument(help="Path to the capsule directory to verify"),
+        typer.Argument(
+            help=(
+                "Path to the capsule directory to verify, or to an "
+                "export-manifest.json (batch export, ADR-0141)"
+            )
+        ),
     ],
     seal_config: Annotated[
         str | None,
@@ -66,6 +71,27 @@ def verify_cmd(
             help="NovaFabric home dir for Sigstore bundle lookup (default: ~/.novafabric).",
         ),
     ] = "",
+    public_key: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--public-key",
+            help=(
+                "PEM-encoded ed25519 public key of the export signer "
+                "(required when verifying an export-manifest.json)."
+            ),
+        ),
+    ] = None,
+    dest: Annotated[
+        Optional[str],
+        typer.Option(
+            "--dest",
+            help=(
+                "Override the destination to read exported member blobs from "
+                "(export-manifest verification only; default: the manifest's "
+                "recorded dest, falling back to the manifest's own directory)."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Verify a capsule's cryptographic seal, timestamp, and Merkle log inclusion.
 
@@ -100,6 +126,11 @@ def verify_cmd(
     # Handle --check-redaction standalone check
     if check_redaction is not None:
         _verify_redaction_seal(check_redaction)
+        return
+
+    # Batch export manifest (ADR-0141): a JSON file, not a capsule directory.
+    if capsule_dir.is_file() and _is_export_manifest(capsule_dir):
+        _verify_export_manifest_cli(capsule_dir, public_key=public_key, dest=dest)
         return
 
     # Handle Sigstore backend path
@@ -190,6 +221,57 @@ def verify_cmd(
     console.print(str(result))
 
     if not result.valid:
+        raise typer.Exit(code=1)
+
+
+def _is_export_manifest(path: Path) -> bool:
+    """True if *path* looks like an ADR-0141 export-manifest.json."""
+    import json
+
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return False
+    return (
+        isinstance(data, dict) and "export_id" in data and "batch_digest" in data
+    )
+
+
+def _verify_export_manifest_cli(
+    manifest_path: Path, *, public_key: Path | None, dest: str | None
+) -> None:
+    """Verify an export manifest offline: signature, batch digest, every member."""
+    from novafabric.export_blob.service import VerifyStatus, verify_export_manifest
+
+    if public_key is None:
+        err_console.print(
+            "[red]Error:[/red] --public-key <pem> is required to verify an "
+            "export manifest (the signer's ed25519 public key, obtained "
+            "out-of-band or via `nova export-blob --public-key-out`)."
+        )
+        raise typer.Exit(code=1)
+    try:
+        pem = public_key.read_bytes()
+    except OSError as exc:
+        err_console.print(f"[red]Error:[/red] cannot read --public-key: {exc}")
+        raise typer.Exit(code=1)
+
+    report = verify_export_manifest(manifest_path, pem, dest_override=dest)
+
+    console.print(f"\n[bold]Export manifest verification:[/bold] {manifest_path}")
+    invalid = report.status is VerifyStatus.INVALID
+    _print_check("Signature (DSSE ed25519) + batch digest", not invalid)
+    _print_check(
+        f"Members at destination ({report.members_ok}/{report.members_total})",
+        report.status is VerifyStatus.VALID,
+    )
+    for problem in report.problems:
+        console.print(f"  [red]✗[/red] {problem}")
+    color = {"VALID": "green", "INCOMPLETE": "yellow", "INVALID": "red"}[
+        report.status.value
+    ]
+    console.print(f"\n[{color}]{report.status.value}[/{color}]")
+    if report.status is not VerifyStatus.VALID:
         raise typer.Exit(code=1)
 
 

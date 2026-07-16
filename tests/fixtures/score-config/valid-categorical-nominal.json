@@ -1,0 +1,17 @@
+{
+  "config_id": "01JABCG3TP4YZ2K7N9DPBYK2WX",
+  "name": "category",
+  "value_type": "categorical",
+  "description": "Nominal bucket, no order.",
+  "categories": [
+    {
+      "value": "a"
+    },
+    {
+      "value": "b"
+    }
+  ],
+  "version": 1,
+  "content_digest": "sha256:e63a1402170bba4f92123203b07fd2810841267fbacff28714b9a1dc1d15b029",
+  "created_at": "2026-07-12T09:03:00.000000Z"
+}

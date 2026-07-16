@@ -1,0 +1,87 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "vanilla-otel-agent"}}
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {"name": "opentelemetry.instrumentation.genai", "version": "0.3.0"},
+          "spans": [
+            {
+              "traceId": "5b8efff798038103d269b633813fc60c",
+              "spanId": "aaaa19b7ec3c1b17",
+              "name": "invoke_agent summarizer",
+              "kind": 1,
+              "startTimeUnixNano": "1783420800000000000",
+              "endTimeUnixNano": "1783420803000000000",
+              "attributes": [
+                {"key": "gen_ai.operation.name", "value": {"stringValue": "invoke_agent"}},
+                {"key": "gen_ai.agent.id", "value": {"stringValue": "agent-0042"}},
+                {"key": "gen_ai.agent.name", "value": {"stringValue": "summarizer"}},
+                {"key": "gen_ai.system", "value": {"stringValue": "openai"}}
+              ],
+              "status": {}
+            },
+            {
+              "traceId": "5b8efff798038103d269b633813fc60c",
+              "spanId": "bbbb19b7ec3c1b17",
+              "parentSpanId": "aaaa19b7ec3c1b17",
+              "name": "chat gpt-4o",
+              "kind": 3,
+              "startTimeUnixNano": "1783420800500000000",
+              "endTimeUnixNano": "1783420801500000000",
+              "attributes": [
+                {"key": "gen_ai.system", "value": {"stringValue": "openai"}},
+                {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                {"key": "gen_ai.request.model", "value": {"stringValue": "gpt-4o"}},
+                {"key": "gen_ai.response.model", "value": {"stringValue": "gpt-4o-2024-11-20"}},
+                {"key": "gen_ai.request.temperature", "value": {"doubleValue": 0.2}},
+                {"key": "gen_ai.request.max_tokens", "value": {"intValue": "256"}},
+                {"key": "gen_ai.usage.input_tokens", "value": {"intValue": "42"}},
+                {"key": "gen_ai.usage.output_tokens", "value": {"intValue": "7"}},
+                {
+                  "key": "gen_ai.response.finish_reasons",
+                  "value": {"arrayValue": {"values": [{"stringValue": "stop"}]}}
+                },
+                {"key": "gen_ai.future.attribute", "value": {"stringValue": "unknown-to-mapping-v1"}}
+              ],
+              "status": {}
+            },
+            {
+              "traceId": "5b8efff798038103d269b633813fc60c",
+              "spanId": "cccc19b7ec3c1b17",
+              "parentSpanId": "aaaa19b7ec3c1b17",
+              "name": "execute_tool search_web",
+              "kind": 1,
+              "startTimeUnixNano": "1783420801600000000",
+              "endTimeUnixNano": "1783420802100000000",
+              "attributes": [
+                {"key": "gen_ai.operation.name", "value": {"stringValue": "execute_tool"}},
+                {"key": "gen_ai.tool.name", "value": {"stringValue": "search_web"}},
+                {"key": "gen_ai.tool.call.id", "value": {"stringValue": "call_0001"}}
+              ],
+              "status": {}
+            },
+            {
+              "traceId": "5b8efff798038103d269b633813fc60c",
+              "spanId": "dddd19b7ec3c1b17",
+              "parentSpanId": "aaaa19b7ec3c1b17",
+              "name": "GET /healthz",
+              "kind": 3,
+              "startTimeUnixNano": "1783420802200000000",
+              "endTimeUnixNano": "1783420802300000000",
+              "attributes": [
+                {"key": "http.request.method", "value": {"stringValue": "GET"}},
+                {"key": "url.path", "value": {"stringValue": "/healthz"}}
+              ],
+              "status": {}
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

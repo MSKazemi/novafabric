@@ -18,6 +18,29 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_novafabric_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Hermetic ``NOVAFABRIC_*`` environment for every test (suite-health 2026-07-15).
+
+    A developer shell that exports real data paths (e.g. ``NOVAFABRIC_HOME=~/novafabric-data/nova``,
+    ``NOVAFABRIC_CAPSULE_DIR=…``) leaks the developer's live registry/capsule store into any test
+    that resolves paths through ``novafabric._paths`` without overriding every var — tests then
+    *read* real role assignments (test_serve_admin) and *write* capsules into the real store
+    (tests/daemon). CI has none of these vars, so the breakage is dev-machine-only. Stripping the
+    whole prefix makes every test see the same clean environment CI sees; tests that need a var
+    set it afterwards via their own ``monkeypatch.setenv``, which always wins over this fixture.
+
+    ``NOVAFABRIC_HOME`` is then *pointed at a per-test tmp dir* rather than merely deleted:
+    with it unset, path resolution falls back to the real ``~/.novafabric`` (e.g. the topology
+    store's ``dashboard.duckdb``), which both touches real user data and makes parallel xdist
+    workers fight over one DuckDB file lock.
+    """
+    for key in list(os.environ):
+        if key.startswith("NOVAFABRIC_"):
+            monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("NOVAFABRIC_HOME", str(tmp_path / ".nova-home-hermetic"))
+
+
+@pytest.fixture(autouse=True)
 def _default_noop_policy_engine(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[None]:

@@ -1,0 +1,8 @@
+{
+  "input_tokens": 1024,
+  "output_tokens": 3120,
+  "cached_tokens": 768,
+  "reasoning_tokens": 2560,
+  "total_tokens": 4144,
+  "raw_ref": "extensions/io.openai/usage"
+}

@@ -3,13 +3,19 @@ from __future__ import annotations
 import os
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import TYPE_CHECKING, Annotated, Optional
+
+if TYPE_CHECKING:
+    from novafabric.masking import MaskingPipeline
 
 import typer
 from rich.console import Console
 
 from novafabric._paths import default_capsule_dir
+from novafabric.capture.deployment_env import InvalidDeploymentEnvironmentError
 from novafabric.capture.orchestrator import AssetStatusCheckError, CaptureOrchestrator
+from novafabric.capture.session import InvalidSessionMembershipError
+from novafabric.capture.variant import InvalidVariantAttributionError
 from novafabric.runners import (
     UnknownRunnerError,
     get_runner,
@@ -114,6 +120,97 @@ def capture_cmd(
             ),
         ),
     ] = None,
+    environment: Annotated[
+        Optional[str],
+        typer.Option(
+            "--environment",
+            help=(
+                "Deployment-environment tag recorded on the capsule as "
+                "deployment_environment (ADR-0126): conventionally production | "
+                "staging | development | test, or any custom string (e.g. "
+                "prod-eu). Recorded verbatim, never inferred. Overrides the "
+                "NOVAFABRIC_ENVIRONMENT env var. Distinct from the env.lock "
+                "technical environment. Omitted = absent (unknown)."
+            ),
+        ),
+    ] = None,
+    experiment: Annotated[
+        Optional[str],
+        typer.Option(
+            "--experiment",
+            help=(
+                "A/B experiment id recorded verbatim in the capsule's optional "
+                "variant block (ADR-0116, record-only). Requires --variant and "
+                "--variant-source. NovaFabric never assigns variants."
+            ),
+        ),
+    ] = None,
+    variant: Annotated[
+        Optional[str],
+        typer.Option(
+            "--variant",
+            help=(
+                "Active A/B variant (arm) id recorded verbatim in the capsule's "
+                "optional variant block (ADR-0116, record-only). Requires "
+                "--experiment and --variant-source; overrides the "
+                "NOVAFABRIC_VARIANT* env vars. Omitted = no variant recorded."
+            ),
+        ),
+    ] = None,
+    variant_label: Annotated[
+        Optional[str],
+        typer.Option(
+            "--variant-label",
+            help="Optional human-readable arm name (e.g. control) for the variant block.",
+        ),
+    ] = None,
+    variant_source: Annotated[
+        Optional[str],
+        typer.Option(
+            "--variant-source",
+            help=(
+                "The EXTERNAL system that assigned the arm (e.g. launchdarkly, "
+                "statsig, upstream-router), recorded verbatim as "
+                "assignment_source. Required with --variant/--experiment — "
+                "NovaFabric never allocates, so it never defaults this."
+            ),
+        ),
+    ] = None,
+    variant_assigned_at: Annotated[
+        Optional[str],
+        typer.Option(
+            "--variant-assigned-at",
+            help=(
+                "Optional RFC 3339 UTC timestamp of the external assignment. "
+                "Never defaulted to the capture time."
+            ),
+        ),
+    ] = None,
+    session_id: Annotated[
+        Optional[str],
+        typer.Option(
+            "--session-id",
+            help=(
+                "Session (multi-turn conversation/workflow) this run belongs "
+                "to, recorded as the optional session_id back-reference on the "
+                "capsule (ADR-0122, experimental). Must be a ULID — create one "
+                "with `nova session new`. Overrides NOVAFABRIC_SESSION_ID. "
+                "Omitted = a standalone run. Not the parent/child hierarchy."
+            ),
+        ),
+    ] = None,
+    session_sequence: Annotated[
+        Optional[int],
+        typer.Option(
+            "--session-sequence",
+            help=(
+                "Zero-based turn index of this run within --session-id, "
+                "recorded as the optional sequence back-reference (ADR-0122). "
+                "Requires --session-id; the session.json manifest stays the "
+                "authoritative ordered index."
+            ),
+        ),
+    ] = None,
     require_registered: Annotated[
         bool,
         typer.Option(
@@ -185,6 +282,47 @@ def capture_cmd(
             ),
         ),
     ] = False,
+    capture_media: Annotated[
+        bool,
+        typer.Option(
+            "--capture-media",
+            help=(
+                "EXPERIMENTAL (ADR-0125): store the bytes of multimodal message "
+                "parts (inline base64 images/audio/documents on model calls) "
+                "content-addressed in the capsule blob store "
+                "(outputs/<sha256>.<ext>), bounded per part. Off by default "
+                "(ADR-0021 privacy-by-default): parts record reference metadata "
+                "only — media_type, sha256 content_hash, byte_size — and the "
+                "bytes are discarded after hashing."
+            ),
+        ),
+    ] = False,
+    masker: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--masker",
+            help=(
+                "EXPERIMENTAL (ADR-0135): enable a registered PII masker for "
+                "this capture, by 'novafabric.maskers' entry-point name or "
+                "dotted import path (repeatable). Maskers run AFTER the "
+                "built-in secret scanner — built-ins always run — and every "
+                "mask is recorded in redaction-proof.json. "
+                "Example: --masker novafabric-email"
+            ),
+        ),
+    ] = None,
+    masking_config: Annotated[
+        Path | None,
+        typer.Option(
+            "--masking-config",
+            help=(
+                "EXPERIMENTAL (ADR-0135): path to a masking.yaml describing "
+                "the custom masking pipeline. Defaults to "
+                ".novafabric/masking.yaml when that file exists. Absent or "
+                "'enabled: false' ⇒ exact ADR-0009 built-in behavior."
+            ),
+        ),
+    ] = None,
     daemon: Annotated[
         bool,
         typer.Option(
@@ -193,7 +331,8 @@ def capture_cmd(
                 "Delegate a plain capture to the warm capture daemon if one is "
                 "running (eliminates per-run cold-start). Auto: falls back to "
                 "in-process direct spawn when no daemon is reachable. Ignored when "
-                "any of --runner/--runner-option/--timeout/--asset/--mark-provenance/"
+                "any of --runner/--runner-option/--timeout/--asset/--environment/"
+                "--experiment/--variant*/--session*/--mark-provenance/--capture-media/"
                 "--output-dir are set (those run in-process to honor the flags)."
             ),
         ),
@@ -220,6 +359,15 @@ def capture_cmd(
       # Set a 5-minute wall-clock deadline
       nova capture --timeout 300 python agent.py
 
+      # Tag the run with its deployment environment (ADR-0126)
+      nova capture --environment production -- python agent.py
+
+      # Record which externally assigned A/B variant was active (ADR-0116, record-only)
+      nova capture --experiment exp1 --variant arm-b --variant-source statsig -- python agent.py
+
+      # Tag the run as turn 2 of a multi-turn session (ADR-0122, experimental)
+      nova capture --session-id 01HZ8S9K3M4YZ2K7N9DPBYK2W0 --session-sequence 2 -- python agent.py
+
       # Mark AI-generated output for EU AI Act Art.50 (writes c2pa-manifest.json)
       nova capture --mark-provenance python agent.py
     """
@@ -227,6 +375,19 @@ def capture_cmd(
     cmd = list(command) + list(ctx.args)
     if not cmd:
         raise typer.BadParameter("COMMAND is required", param_hint="'COMMAND'")
+
+    # ADR-0135 (experimental): resolve the custom masking pipeline before the
+    # workload runs — registration is fail-closed, so a mis-configured masker
+    # aborts capture at start rather than silently skipping expected masking.
+    _default_masking_yaml = Path(".novafabric") / "masking.yaml"
+    _masking_requested = (
+        bool(masker)
+        or masking_config is not None
+        or _default_masking_yaml.is_file()
+    )
+    pipeline = None
+    if _masking_requested:
+        pipeline = _build_masking_pipeline(masker, masking_config, _default_masking_yaml)
 
     # Warm-daemon delegation (ADR-0092): only for a *plain* invocation. The thin
     # client forwards argv/cwd/env only, so any flag the daemon worker does not
@@ -238,12 +399,22 @@ def capture_cmd(
         and asset_ref is None
         and require_asset_status is None
         and warn_if_asset_status is None
+        and environment is None
+        and experiment is None
+        and variant is None
+        and variant_label is None
+        and variant_source is None
+        and variant_assigned_at is None
+        and session_id is None
+        and session_sequence is None
         and not require_registered
         and not mark_provenance
         and not fast_emit
         and not emit_spool
         and not emit_otel_genai
+        and not capture_media
         and output_dir is None
+        and pipeline is None
     )
     if daemon and _is_plain:
         from novafabric._paths import daemon_socket_path
@@ -285,6 +456,8 @@ def capture_cmd(
         mark_provenance=mark_provenance,
         fast_emit=fast_emit,
         emit_spool=emit_spool,
+        masking_pipeline=pipeline,
+        capture_media=capture_media,
     )
 
     try:
@@ -297,10 +470,24 @@ def capture_cmd(
             warn_if_asset_statuses=warn_statuses,
             require_registered=require_registered,
             registry_db_path=registry_db_path,
+            environment=environment,
+            experiment=experiment,
+            variant=variant,
+            variant_label=variant_label,
+            variant_source=variant_source,
+            variant_assigned_at=variant_assigned_at,
+            session_id=session_id,
+            session_sequence=session_sequence,
         )
     except AssetStatusCheckError as exc:
         console.print(f"[red]Asset status check failed:[/red] {exc}")
         raise typer.Exit(code=1)
+    except InvalidDeploymentEnvironmentError as exc:
+        raise typer.BadParameter(str(exc), param_hint="'--environment'") from exc
+    except InvalidVariantAttributionError as exc:
+        raise typer.BadParameter(str(exc), param_hint="'--variant'") from exc
+    except InvalidSessionMembershipError as exc:
+        raise typer.BadParameter(str(exc), param_hint="'--session-id'") from exc
 
     status_icon = "[green]✓[/green]" if result.exit_code == 0 else "[red]✗[/red]"
     console.print(
@@ -327,6 +514,47 @@ def capture_cmd(
         _print_suggestion_hint(result.capsule_dir, registry_db_path)
     if result.exit_code != 0:
         raise typer.Exit(code=result.exit_code)
+
+
+def _build_masking_pipeline(
+    maskers: list[str] | None,
+    masking_config: Path | None,
+    default_path: Path,
+) -> "MaskingPipeline | None":
+    """Resolve the ADR-0135 masking pipeline for this capture (fail-closed).
+
+    An explicit ``--masking-config`` wins over the discovered
+    ``.novafabric/masking.yaml``. ``--masker NAME`` entries are appended with
+    default bounds. A config or registration error aborts capture *before*
+    the workload runs — expected masking is never silently skipped.
+    """
+    from novafabric.masking import (
+        MaskerRegistrationError,
+        MaskerSpec,
+        MaskingConfigError,
+        MaskingPipeline,
+        load_maskers,
+        load_masking_config,
+    )
+
+    config_path = masking_config
+    if config_path is None and default_path.is_file():
+        config_path = default_path
+
+    try:
+        specs: list[MaskerSpec] = []
+        if config_path is not None:
+            cfg = load_masking_config(config_path)
+            if cfg.masking.enabled:
+                specs.extend(cfg.masking.maskers)
+        for name in maskers or []:
+            specs.append(MaskerSpec(id=name))
+        if not specs:
+            return None
+        return MaskingPipeline(load_maskers(specs))
+    except (MaskingConfigError, MaskerRegistrationError) as exc:
+        console.print(f"[red]Masking pipeline error (fail-closed):[/red] {exc}")
+        raise typer.Exit(code=2) from exc
 
 
 def _print_suggestion_hint(capsule_dir: Path, db_path: Path | None) -> None:

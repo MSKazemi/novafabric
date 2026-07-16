@@ -16,9 +16,7 @@ module exposes ``ledger_app``; it is wired into the top-level CLI elsewhere.
 
 from __future__ import annotations
 
-import hashlib
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -26,12 +24,12 @@ import typer
 from rich.console import Console
 
 from novafabric.evidence.signing import LocalSigner, verify_with_pem
+from novafabric.trust.ledger._anchor import anchor_capsule, discover_jsonl_streams
 from novafabric.trust.ledger._chain import (
     jsonl_path_for,
     verify_chain,
-    write_chain,
 )
-from novafabric.trust.ledger._checkpoint import build_checkpoint, sign_checkpoint
+from novafabric.trust.ledger._checkpoint import checkpoint_path
 from novafabric.trust.ledger._verify import exit_code_for, verify_ledger
 
 console = Console()
@@ -54,7 +52,7 @@ def _resolve_capsule(ref: str) -> Path:
 
 
 def _discover_jsonl_streams(capsule_dir: Path) -> list[str]:
-    return sorted(p.name[: -len(".jsonl")] for p in capsule_dir.glob("*.jsonl"))
+    return discover_jsonl_streams(capsule_dir)
 
 
 @ledger_app.command("anchor")
@@ -102,30 +100,15 @@ def ledger_anchor_cmd(
         console.print(f"[red]Failed to load signing key:[/red] {exc}")
         raise typer.Exit(code=1) from exc
 
-    for stream in streams:
-        write_chain(capsule_dir, stream)
-
-    record = build_checkpoint(
+    record = anchor_capsule(
         capsule_dir,
+        signer,
         node_id=node_id,
         epoch=epoch,
-        epoch_pubkey=signer.public_pem.decode(),
         agent_id=agent_id,
         principal=principal,
     )
-    sign_checkpoint(record, signer, capsule_dir=capsule_dir, persist=False)
-
-    # Local finalize anchor: bind the signature digest (offline-safe; no TSA).
-    sig_value = str((record.signature or {}).get("value", ""))
-    record.anchor = {
-        "method": "none",
-        "anchored_value": "sha256:" + hashlib.sha256(sig_value.encode()).hexdigest(),
-        "anchored_at": datetime.now(timezone.utc).isoformat(),
-    }
-    from novafabric.trust.ledger._checkpoint import checkpoint_path
-
     path = checkpoint_path(capsule_dir)
-    path.write_text(json.dumps(record.to_record(), indent=2) + "\n")
 
     console.print(
         f"[green]✓[/green] Anchored {len(streams)} stream(s); "

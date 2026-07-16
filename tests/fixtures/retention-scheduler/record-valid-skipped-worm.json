@@ -1,0 +1,15 @@
+{
+  "schema_version": "0.1.0",
+  "record_id": "01HXB0R7Q0000000000000000B",
+  "swept_at": "2026-07-12T09:00:02Z",
+  "principal": "cron://nightly-retention",
+  "registry": "my-trading-registry",
+  "binding_id": "mifid-trade-5y",
+  "item_kind": "capsule",
+  "item_id": "01HXAY7M8RT2YZ2K7N9DPBYK2W",
+  "action": "purge",
+  "outcome": "skipped",
+  "due_at": "2026-07-01T00:00:00Z",
+  "reason": "worm_hold",
+  "worm_locked_until": "2028-01-01T00:00:00Z"
+}

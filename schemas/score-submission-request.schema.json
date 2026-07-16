@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/score-submission-request.schema.json",
+  "$comment": "schema_version 0.1.0; graduated 2026-07-15 from design/spec/schemas/ on ADR-0119 acceptance. Tracks design/spec/score-submission-api-v0.md. Experimental. Ingest contract over the existing Score model (ADR-0099); adds only the optional 'supersedes' field.",
+  "title": "ScoreSubmissionRequest",
+  "description": "POST /v1/capsules/{id}/scores body (also the SDK/CLI argument shape).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "name",
+    "value",
+    "value_type",
+    "source",
+    "evaluator_id",
+    "subject",
+    "eval_card_digest"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "value": {
+      "type": [
+        "boolean",
+        "number",
+        "string"
+      ]
+    },
+    "value_type": {
+      "enum": [
+        "boolean",
+        "categorical",
+        "numeric"
+      ]
+    },
+    "source": {
+      "enum": [
+        "human",
+        "heuristic",
+        "code",
+        "judge"
+      ]
+    },
+    "evaluator_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "subject": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "subject_kind": {
+      "enum": [
+        "span",
+        "capsule"
+      ]
+    },
+    "eval_card_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "score_id": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "supersedes": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "run_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "significance": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

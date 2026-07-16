@@ -6,7 +6,7 @@
 COMPOSE      := docker compose -f deploy/docker/docker-compose.yml
 COMPOSE_PROD := docker compose -f deploy/docker/docker-compose.yml --profile prod
 
-.PHONY: whitepaper help test lint typecheck coverage benchmark \
+.PHONY: whitepaper help test lint typecheck coverage benchmark benchmark-capture \
         bundle serve-local \
         topology-build topology-test serve-topology \
         compliance-smoke classify-smoke audit-smoke migrate-schema-smoke \
@@ -54,7 +54,10 @@ print(f'[whitepaper] → {out} ({len(html)} chars)')"
 help:
 	@echo "NovaFabric — available targets:"
 	@echo "  test              Run Python test suite (pytest, benchmarks skipped)"
+	@echo "  test-fast         Fast dev loop: parallel (-n auto), no coverage, skips integration + testcontainers tiers (~90 s)"
+	@echo "  test-par          Full suite in parallel with coverage (~5 min; same scope as test)"
 	@echo "  benchmark         Run NovaSeal p99 latency gate (100 rounds, < 200 ms)"
+	@echo "  benchmark-capture Run capture-overhead p95 gate (30 captured runs, < 2000 ms)"
 	@echo "  lint              Run ruff linter on src/ and tests/"
 	@echo "  typecheck         Run mypy on src/"
 	@echo "  whitepaper        Build PDF from docs/whitepaper/novafabric-position-paper.md"
@@ -105,10 +108,29 @@ help:
 test:
 	uv run pytest --benchmark-disable --cov=novafabric --cov-report=term-missing
 
+# Fast dev loop (~90 s): parallel, no coverage, skips the two infra-heavy tiers
+# (tests/integration is CI-only; tests/metadata_store spins a testcontainers
+# Postgres that adds ~4 min). Full `make test` / `make test-par` remain the
+# release gates.
+test-fast:
+	uv run pytest -n auto --dist=load --benchmark-disable -q \
+		--ignore=tests/integration --ignore=tests/metadata_store
+
+# Full suite, parallel, with coverage (~5 min incl. the testcontainers Postgres
+# session). Same scope as `make test`, ~10x faster on a multi-core machine.
+test-par:
+	uv run pytest -n auto --dist=loadgroup --benchmark-disable \
+		--cov=novafabric --cov-report=term-missing
+
 benchmark:
 	mkdir -p .benchmark-results
 	uv run pytest tests/seal/test_benchmark.py -v \
 		--benchmark-json=.benchmark-results/seal_latency.json
+
+benchmark-capture:
+	mkdir -p .benchmark-results
+	uv run pytest tests/bench/test_capture_overhead_gate.py -v \
+		--benchmark-json=.benchmark-results/capture_overhead.json
 
 lint:
 	uv run ruff check src tests

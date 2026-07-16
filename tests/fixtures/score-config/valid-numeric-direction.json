@@ -1,0 +1,14 @@
+{
+  "config_id": "01JABCE9RM4YZ2K7N9DPBYK2WX",
+  "name": "toxicity",
+  "value_type": "numeric",
+  "description": "Probability toxic; lower better.",
+  "range": {
+    "min": 0.0,
+    "max": 1.0,
+    "direction": "lower-better"
+  },
+  "version": 1,
+  "content_digest": "sha256:b9b1726fed57e99713c1053230779afa1283d777447d44bf7bb5cc962c4e038e",
+  "created_at": "2026-07-12T09:01:00.000000Z"
+}

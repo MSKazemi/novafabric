@@ -17,16 +17,29 @@ all you need.
 ```bash
 git clone git@github.com:novafabric/novafabric.git
 cd novafabric
-uv sync --dev
+uv sync --all-extras
 ```
+
+> Use `--all-extras`: a plain `uv sync` strips the optional extras
+> (sigstore/nats/clickhouse/psycopg…) from the venv and the ~30 tests that
+> exercise them fail with import/backend errors.
 
 ## Running tests
 
+The suite is ~5.6K tests — use the tiered targets instead of a serial full run:
+
 ```bash
-uv run pytest --benchmark-disable --cov=novafabric --cov-report=term-missing
+make test-fast   # dev loop: parallel (-n auto), no coverage, skips integration
+                 # + the testcontainers Postgres tier (~90 s)
+make test-par    # full scope + coverage, parallel (~5 min) — release gate
+make test        # full scope + coverage, serial — same gate, slower
 ```
 
 Coverage must remain at or above 90%.
+
+Suite health: a suite-wide `pytest-timeout` (300 s per test) makes hangs fail by
+name, and an autouse fixture strips ambient `NOVAFABRIC_*` env vars so tests
+never read or write a developer's real registry/capsule store.
 
 The `--benchmark-disable` flag skips the 100-round NovaSeal latency benchmark so
 normal test runs complete quickly.  To run the benchmark and enforce the p99 gate:

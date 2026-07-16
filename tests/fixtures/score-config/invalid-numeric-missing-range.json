@@ -1,0 +1,9 @@
+{
+  "config_id": "01JABCE9RM4YZ2K7N9DPBYK2WX",
+  "name": "toxicity",
+  "value_type": "numeric",
+  "description": "Probability toxic; lower better.",
+  "version": 1,
+  "content_digest": "sha256:4092a48a4f7402900e5653fcd03cc0f7119803159b8ee79ca5fcee1f9d1c86c8",
+  "created_at": "2026-07-12T09:01:00.000000Z"
+}

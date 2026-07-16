@@ -6,6 +6,22 @@ import pytest
 
 from novafabric.capture.capsule import CapsuleWriter
 
+
+@pytest.fixture(autouse=True)
+def _clean_global_hook_state() -> None:
+    """Reset the process-global hook installer + recorder before every test.
+
+    The hook installer and current-recorder are process-global (a documented
+    v0.1 limitation); a test elsewhere in the same xdist worker that leaves a
+    recorder or installed hooks behind flips the semantics of install_all()
+    here. Start each test from the same clean slate serial runs see.
+    """
+    from novafabric.capture.event_recorder import set_current_recorder
+    from novafabric.capture.hooks import uninstall_all
+
+    uninstall_all()
+    set_current_recorder(None)
+
 RUN_ID = "01HXTEST000000000000000000"
 
 

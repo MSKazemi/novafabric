@@ -581,6 +581,75 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /capsules/{run_id}/scores:
+    post:
+      operationId: submitCapsuleScore
+      summary: Submit an externally-computed score into the capsule's append-only scores.jsonl (ADR-0119, experimental)
+      description: >
+        Writer-role required (the scores:write capability). Fail-closed: a rejection
+        writes nothing. Append-only: a correction is a new record whose `supersedes`
+        names a prior score_id; no line is ever mutated. Idempotent by score_id
+        (identical replay returns 200 and appends no second line).
+      tags: [capsules]
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, value, value_type, source, evaluator_id, subject, eval_card_digest]
+              properties:
+                name: {type: string, minLength: 1}
+                value: {}
+                value_type: {type: string, enum: [boolean, categorical, numeric]}
+                source: {type: string, enum: [human, heuristic, code, judge]}
+                evaluator_id: {type: string, minLength: 1}
+                subject: {type: string, pattern: "^sha256:[0-9a-f]{64}$"}
+                subject_kind: {type: string, enum: [span, capsule]}
+                eval_card_digest: {type: string, pattern: "^sha256:[0-9a-f]{64}$"}
+                score_id: {type: string, nullable: true}
+                supersedes: {type: string, nullable: true}
+                run_id: {type: string, nullable: true}
+                significance: {type: object, nullable: true}
+                created_at: {type: string, format: date-time}
+      responses:
+        "201":
+          description: Score appended (see schemas/score-submission-response.schema.json).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [score, idempotent_replay, config_bound]
+                properties:
+                  score: {type: object}
+                  idempotent_replay: {type: boolean}
+                  config_bound: {type: boolean}
+                  submission:
+                    type: object
+                    properties:
+                      principal: {type: string}
+                      scope: {type: string}
+                      received_at: {type: string, format: date-time}
+        "200":
+          description: Idempotent replay — score_id already present with an identical body; no second line appended.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   # ======================== LINEAGE ========================
 
   /lineage/nodes:

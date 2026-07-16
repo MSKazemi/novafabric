@@ -5,7 +5,12 @@ cap-002 / ADR-0066.  Prices are estimates; actual billing may differ.
 
 from __future__ import annotations
 
+import logging
+
+from novafabric.cost.usage_types import usage_from_anthropic, usage_from_openai
 from novafabric.schemas.event_schema import CostFacet
+
+log = logging.getLogger(__name__)
 
 
 class CostInterceptor:
@@ -55,7 +60,33 @@ class CostInterceptor:
         completion_tokens: int,
         cached_tokens: int = 0,
     ) -> float:
-        """Return estimated cost in USD.  Returns 0.0 for unknown models."""
+        """Return estimated cost in USD.  Returns 0.0 for unknown models.
+
+        Consults the local model-pricing catalog (ADR-0133) merged over
+        ``PRICE_TABLE``: a user/project/explicit catalog entry overrides the
+        built-in price; with no catalog files on disk the merged catalog is
+        exactly ``PRICE_TABLE`` and the figures are unchanged. Pricing must
+        never fail a capture, so any catalog error falls back to the legacy
+        built-in-table math.
+        """
+        try:
+            from novafabric.cost import (  # noqa: PLC0415 — avoid import cycle
+                pricing_catalog,
+            )
+
+            catalog = pricing_catalog.load_merged_catalog()
+            resolved = pricing_catalog.resolve_entry(catalog, model)
+            if resolved is not None:
+                return pricing_catalog.price_usage(
+                    resolved.entry,
+                    {
+                        "input": input_tokens,
+                        "output": completion_tokens,
+                        "cached": cached_tokens,
+                    },
+                )
+        except Exception as exc:  # noqa: BLE001 — pricing must never fail a capture
+            log.debug("pricing catalog unavailable, using built-in table: %s", exc)
         prices = cls.PRICE_TABLE.get(model)
         if prices is None:
             return 0.0
@@ -99,6 +130,8 @@ class CostInterceptor:
             cost_usd_estimated=cls._estimate_cost(
                 model, input_tokens, completion_tokens, cached_tokens
             ),
+            # ADR-0132: full usage-type breakdown, verbatim; None when absent.
+            usage=usage_from_openai(usage),
         )
 
     @classmethod
@@ -130,4 +163,6 @@ class CostInterceptor:
             cost_usd_estimated=cls._estimate_cost(
                 model, input_tokens, completion_tokens, cached_tokens
             ),
+            # ADR-0132: full usage-type breakdown, verbatim; None when absent.
+            usage=usage_from_anthropic(usage),
         )

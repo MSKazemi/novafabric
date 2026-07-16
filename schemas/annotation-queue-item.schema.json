@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/annotation-queue-item.schema.json",
+  "$comment": "Graduated from design/spec/schemas/ on ADR-0118 acceptance (2026-07-13); first slice implemented 2026-07-15 (experimental). schema_version 0.1.0. Tracks design/spec/annotation-queue-v0.md. Workflow layer only; completion writes existing HUMAN-source Score records (ADR-0099), unchanged.",
+  "title": "QueueItem",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "item_id",
+    "queue_id",
+    "subject",
+    "subject_kind",
+    "state"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "item_id": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "queue_id": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "subject": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "subject_kind": {
+      "enum": [
+        "span",
+        "capsule"
+      ]
+    },
+    "state": {
+      "enum": [
+        "pending",
+        "assigned",
+        "checker_pending",
+        "completed",
+        "skipped"
+      ]
+    },
+    "assignee": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "checker": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "assigned_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "completed_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "resulting_score_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+      }
+    },
+    "capsule_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "note": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "extensions": {
+      "type": "object"
+    }
+  }
+}

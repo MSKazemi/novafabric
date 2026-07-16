@@ -1,0 +1,27 @@
+{
+  "schema_version": "0.1.0",
+  "models": [
+    {
+      "model_id": "vol-model",
+      "pricing": {
+        "input": {
+          "amount": 2.0,
+          "unit": "per_1m"
+        }
+      },
+      "tiers": [
+        {
+          "when": {
+            "min_monthly_tokens": 1000000
+          },
+          "pricing": {
+            "input": {
+              "amount": 1.5,
+              "unit": "per_1m"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

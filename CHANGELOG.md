@@ -9,7 +9,682 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Docs
+- **New runnable example `examples/prompt-and-analytics/`** — why manage prompts as
+  versioned, labeled registry assets and analyze runs offline: `nova prompt register`
+  v1/v2 + `nova label set production`, two variant-tagged captures of a pure-stdlib
+  agent that resolves its prompt from the registry at runtime, then
+  `nova query --group-by variant`, `nova view save`/`run`, `nova trend --metric latency`,
+  `nova session show`, and `nova diff --group-by variant` (all experimental surfaces).
+  Regression-tested end-to-end in `tests/test_example_prompt_and_analytics.py`.
+- **Feature tour: four verified walkthroughs for the Langfuse-parity cohort (ADRs 0112–0141, experimental).**
+  New §22–§25 of `docs/tutorials/feature-tour.md` cover the prompt lifecycle (`nova prompt
+  register/get/list/history/diff/compose/tree`, deployment labels, protected-label maker-checker moves),
+  offline analytics (`nova query`, `nova view`, `nova trend --html`, `nova pricing add` + `nova cost
+  estimate`, ADR-0132 usage-type accounting), session capsules and execution-graph reconstruction
+  (`nova session new/add/show/replay`, `nova capture --session-id/--session-sequence`, `nova graph agent
+  --format mermaid`), and the team evaluation workflow (`nova eval score config`, `nova annotate`
+  maker-checker queues, `nova score submit`, `nova experiment run/compare`). Every command was run
+  against real scratch capsules; outputs in the tutorial are real (trimmed). Tutorials index updated.
+
+## [0.59.0] — 2026-07-15
+
+### Fixed
+- **Safety-case compiler now unwraps DSSE-enveloped replay attestations.** `nova evidence
+  attest-replay` writes a DSSE envelope, but `_resolve_replay` misread it as a raw attestation and
+  contested the claim with a misleading `match == ''` reason; the in-toto predicate is now unwrapped
+  (found by the verified-tutorials pass).
+- **Server-mode `POST /v0/capsules/{run_id}/scores` now writes a durable audit record** on
+  success and every rejection (THREAT_MODEL R-4) — the response body alone is not evidence.
+- **`nova export-blob` gained the redaction gate `nova export-evidence` already had (THREAT_MODEL I-11).**
+  A batch member whose `redaction-proof.json` records `unsafe_skips` now refuses the whole export
+  (exit 2) unless `--allow-unsafe-skips` — exporting distributes capsule bytes, so incompletely
+  redacted capsules must not leave quietly. Found by the v0.59 threat-model delta review.
+- **`nova prompt register` ref line no longer soft-wraps mid-hash** (same Rich-wrap class as the
+  `nova diff` JSON fix; machine-copyable output now bypasses Rich).
+- **`nova diff --output-format json|github-annotation` no longer corrupts machine output.** Rich's
+  `console.print` soft-wraps at terminal width, inserting newlines inside long JSON string values
+  (absolute capsule paths); machine formats now bypass Rich via `typer.echo`.
+- **KG ingestion pipeline no longer crashes with `Duplicated timeseries` after a module reload.**
+  `_init_metrics` now tolerates the process-global prometheus REGISTRY already holding this module's
+  collectors (sys.modules eviction, e.g. `mock.patch.dict` in tests) — metrics disable instead of raising.
+- **`nova evidence … -o path/into/new/dir` no longer crashes.** Every evidence output write
+  now creates parent directories first (previously `FileNotFoundError`; found while verifying
+  the new tutorials against real capsules).
+- **`nova energy verify` on a receipt with an out-of-enum `measurement_source` now exits 3**
+  (integrity failure) with a clear message instead of a raw pydantic traceback.
+- **Topology `ClusterStore` ignored `NOVAFABRIC_HOME`.** `_default_db_path()` hardcoded
+  `~/.novafabric/dashboard.duckdb` instead of deriving from `nova_home()`, so custom-home
+  deployments (and hermetic tests) all opened — and file-locked — one shared DuckDB. Now
+  resolves through `novafabric._paths.nova_home()`; `NOVA_DASHBOARD_DUCKDB_PATH` still wins.
+- **`revoke_role` returned 409 instead of 404 for a nonexistent assignment.** The last-admin
+  lockout guard ran before the existence check, so revoking a never-assigned `admin` role on
+  an empty store tripped `LastAdminError`. Deleting a nonexistent row can never cause lockout —
+  the store now reports not-found first (endpoint: 404), and the guard fires only for real rows.
+- **`NATSJetStreamConsumer` drain-loop event-loop starvation.** A `fetch` that returned an
+  empty batch without blocking (empty stream edge case; deterministic with a mocked client)
+  never yielded control to the event loop, so `stop()` could never run and the consumer —
+  and any test exercising it — hung forever. The loop now yields (`asyncio.sleep(0)`) on
+  every empty batch. Surfaced by the new suite-wide `pytest-timeout` gate.
+- **SPKG `ingest_edges` ~200× faster (SP-1).** KùzuDB auto-commits (and checkpoints) every
+  statement outside a transaction; the per-edge 3-statement loop cost ~38 ms/edge (19 s for
+  500 edges) and made the SP-1 CI benchmark time out. Ingest now deduplicates node MERGEs
+  and runs as one explicit transaction — `tests/kg/` drops from >2 min (hang) to ~12 s total.
+- **`/api/ingest-capsule` error-branch test updated** to expect the endpoint's deliberate
+  `400 — provide run_id or all=true` guard for an empty body.
+
+### Changed
+- **Hermetic test suite (suite-health, 2026-07-15).** New autouse fixture strips all ambient
+  `NOVAFABRIC_*` env vars, so a developer shell exporting real data paths
+  (`NOVAFABRIC_HOME`, `NOVAFABRIC_CAPSULE_DIR`, …) can no longer leak the live
+  registry/role/capsule store into tests (which previously *read* real role assignments and
+  *wrote* test capsules into the real store on dev machines — CI was unaffected). New dev
+  dependencies `pytest-timeout` (hangs now fail by name; suite-wide 300 s cap) and
+  `pytest-xdist` (`uv run pytest -n 12` runs the 5.6K-test suite in ~1–5 min instead of
+  15–70 min serial). Both MIT, Tier A per ADR-0024.
+
 ### Added
+- **Session replay — `nova session replay <session_id>` (ADR-0123 P1 + divergence policy;
+  Langfuse-parity Theme C; experimental).** Replays every member capsule of an ADR-0122
+  session in ascending `sequence` order by orchestrating the **existing** single-capsule
+  replay engine (the four ADR-0005 modes, default `mocked`) once per turn — no new replay
+  mode, no engine change, no bypass of the inherited mutating-tool/secret-gate defaults
+  (ADR-0012). Each turn produces its own replay capsule; the session gets one additive
+  `SessionReplayResult` record (graduated `schemas/session-replay-result.schema.json`
+  v0.1.0 + 14 golden fixtures; one additive divergence kind `replay_failed` vs the
+  accepted draft) with ordered per-turn verdicts and a `whole_session_verdict`. Honest by
+  construction: a `missing`/`tampered` member (ADR-0122 view resolution) or an
+  `exact`-mode precondition failure is a hard per-turn **refusal** that halts the session
+  unless `--continue-past-refusal` (logged into the result); a non-zero-exit
+  re-execution is a soft divergence that halts under the default `--on-divergence stop`;
+  turns after a halt are absent, never `skipped`; sequence gaps and empty sessions refuse
+  outright. Exit code 0 only on `reproduced`. New `novafabric.session.replay` module
+  (`replay_session()`, `SessionReplayResult`, `TurnReplayResult`); local-first, read-only
+  over the source session, no new dependency. *Still future design: P2 content-addressed
+  state-seam verification between turns (`state_*` fields emitted `null`), P4 composed
+  session attestation (`--attest`), P5 sub-range/`--dry-run`, session-wide cost ceiling.*
+- **Multi-modal capture — content-addressed media on model calls (ADR-0125 P1–P2 +
+  integrity verification, experimental).** When a model call's messages carry inline media
+  (Anthropic `source.type: base64` image/document blocks, OpenAI `image_url` data-URLs,
+  OpenAI `input_audio`), the capture layer now rewrites each part to a content-addressed
+  **`media` reference block** on the `ContentPart` — IANA `media_type`, `sha256:<hex>`
+  `content_hash` over the raw decoded bytes, `byte_size`, `redacted` — so inline base64
+  never lands in `model-calls.jsonl`. **Byte capture is opt-in** (`nova capture
+  --capture-media`, ADR-0021 §4 privacy-by-default): by default the hash is computed at the
+  boundary and the bytes are discarded (`blob_ref: null`, reference-only — identity, dedup
+  and diff by hash without holding the pixels); with the flag the bytes are stored once,
+  deduplicated, at `outputs/<sha256>.<ext>` and listed as an `Artifact` (same
+  `content_hash`) in the sealed manifest — NovaSeal's DSSE over `capsule.yaml` therefore
+  covers every blob hash. Bounded per part (default 10 MiB, `NOVAFABRIC_MEDIA_MAX_BYTES`
+  override; oversized ⇒ reference-only, never inlined); URL-referenced media is never
+  fetched; the media path is fail-open per part and never blocks the workload. `nova
+  validate` re-hashes every captured blob against its recorded `content_hash` (missing or
+  tampered blob ⇒ validation fails) and schema-checks each `media` block; `nova media list
+  [--json]` is the read surface. Schema: `media-part.schema.json` graduated from
+  `design/spec/schemas/` into both schema dirs and folded into both `model-call.schema.json`
+  copies as an additive optional `$defs/MediaPart` (text-only records stay byte-identical;
+  15 golden fixtures graduated to `tests/fixtures/multimodal-capture/`). Also fixes a
+  secret-scanner false positive (pack `gitleaks-core-v0` 0.2.1): a bare 64-hex string
+  prefixed `sha256:` or `outputs/` is a content address, not a Together API key, and is no
+  longer mangled by redaction. No new dependency (stdlib `hashlib`/`base64`). *Planned
+  (P3–P5): media redaction/secret pass (`redacted` is recorded but always `false` today),
+  bounded-capture sampling (`sampled`), replay-time `content_hash → blob_ref` resolution,
+  perceptual hashing.*
+- **SAML 2.0 SSO for server mode — first slice (ADR-0138 P1 + policy layer; experimental,
+  partial).** Server mode gains the optional, additive `server.saml` config block (closed
+  schema: role allow-list restricted to the six existing ADR-0018/ADR-0058 roles, clock-skew
+  hard cap 300 s, unknown keys rejected), the SP metadata emitter — `nova server saml-metadata`
+  and unauthenticated `GET /v0/auth/saml/metadata` (entity ID, HTTP-POST ACS, embedded SP PEM
+  cert) — plus the pure-logic pieces behind the flow: fail-closed attribute→RBAC-role mapping
+  (unmapped values never escalate; `default_roles` default `[]`), the normative assertion
+  validation policy (spec rules V3–V9, V11: issuer/audience/time-bounds/recipient/replay-store/
+  `InResponseTo`/status) over signature-verified assertion views, and the closed redacted
+  audit record (`sha256:` subject hash; NameID/attributes/raw XML structurally rejected).
+  **Live SAML login is deliberately not shipped:** `GET /v0/auth/saml/login` and
+  `POST /v0/auth/saml/acs` refuse with HTTP 501 `saml_not_available` — XML-DSIG verification
+  (rules V1/V2) and the XXE-hardened parser (V10) require the SAML library that ADR-0138 §D5
+  leaves as an **open pre-adoption license gate** (ADR-0024 full-transitive-tree audit), and
+  NovaFabric refuses assertions rather than skip signature validation; the ACS never parses
+  the posted XML. No new dependency; absent `saml:` block ⇒ behavior identical to today;
+  local-first mode unaffected.
+- **SCIM 2.0 provisioning for server mode (ADR-0139 P1+P2, experimental).** An enterprise
+  IdP (Okta, Entra ID, OneLogin, Keycloak) can now push the user lifecycle into the
+  `nova server` REST API over standard RFC 7643/7644: `POST/GET/PATCH/DELETE
+  /scim/v2/Users` (create, read, `eq`-filter on `userName`/`externalId`/`active` with
+  RFC 7644 pagination, deactivate, delete) plus the `ServiceProviderConfig`/
+  `ResourceTypes`/`Schemas` discovery endpoints — served with `application/scim+json`
+  and the SCIM error envelope, outside `/v0/`. Doubly opt-in and **off by default**:
+  endpoints return plain 404 unless `server.scim.enabled` is set *and* the dedicated
+  provisioning-scoped bearer token is configured via `NOVAFABRIC_SCIM_TOKEN` (env only,
+  never YAML; not a JWT — grants nothing on `/v0/`). De-provisioning (`active: false`
+  or DELETE) honestly revokes the subject's `role_assignments` and preserves the
+  ADR-0060 last-admin lockout invariant (a deprovision that would remove the last
+  admin is refused with a SCIM 409 and no partial mutation); every mutation lands in a
+  new append-only `scim_audit_events` table with `roles_before`/`roles_after`.
+  PII-minimal storage (closed subset; enterprise-extension attributes dropped on the
+  wire, never persisted). Additive SQLite tables only; local mode structurally
+  unaffected; no new dependency. *Planned (P3+): `/scim/v2/Groups` → role mapping,
+  `nova server issue-scim-token`/`scim-map-group`/`list-scim-events`.*
+- **Agent execution-graph reconstruction — `nova graph agent` (ADR-0124 P1–P2, experimental).**
+  A deterministic, read-only, content-addressed **within-run DAG projection** over one
+  captured capsule: model calls, tool calls, and OTel spans become nodes; exactly three
+  edge types are derived from links the capsule already holds (`span_parent` from the
+  span tree, `agent_invokes_tool` from `agent_call_id`→`model_call_id`, `follows` for
+  observed sibling order, ties broken by source-file order). A projection, not a
+  capture — no capsule field added, no record written at run time; works offline on any
+  capsule ever captured. Nodes and edges are canonically sorted and hashed into a
+  `graph_digest` (SHA-256 of the canonical JSON), so two reconstructions of the same
+  capsule are byte-identical — a digest diff is a cheap control-flow shape-change check.
+  Nothing is inferred beyond what the spans encode: missing parents, orphan tool calls,
+  and malformed cycles attach to a synthetic `root` with explicit
+  `reconstruction_notes`, never a heuristic repair; the output is always a DAG.
+  `nova graph agent CAPSULE_DIR [--format json|dot|mermaid] [-o FILE] [--digest]
+  [--stats]` — JSON canonical, dot/mermaid deterministic text exports, stdlib-only.
+  New module `novafabric.agent_graph` (`build_agent_graph`, `to_dot`, `to_mermaid`);
+  `schemas/agent-execution-graph.schema.json` + 11 golden fixtures graduated from the
+  accepted design drafts. Distinct from cross-run lineage (ADR-0090) and the fleet SPKG
+  (ADR-0111). *Planned (P3/P4): replay/diff shape-change annotation, derived cache +
+  optional dashboard view.*
+- **Session capsule — group N independent runs into one multi-turn session (`nova session`,
+  experimental, ADR-0122 P1–P2 + list).** A *session* (conversation or workflow) is a local,
+  content-addressed `session.json` manifest that references its member Run Capsules in turn
+  order — by relative path + sha256 of each member's `capsule.yaml` — copying no capsule data
+  and never writing a member capsule (one capsule = one writer). Distinct from and composable
+  with the parent/child distributed-run hierarchy (ADR-0032/0039): a session member may itself
+  be a distributed-run PARENT. `nova session new|add|list|show`: `add` auto-assigns the turn
+  `sequence` and refuses duplicates/finalized sessions (`--reopen`); `show` reports each member
+  as `ok` / `missing` (deleted or moved) / `tampered` (content-hash mismatch — reported, never
+  repaired, never fatal) with aggregate stats (turns, duration, `usage_totals` tokens, recorded
+  `nova.cost` by currency); `list` scans the sessions root (`$NOVAFABRIC_SESSION_DIR`, default
+  `$NOVAFABRIC_HOME/sessions`) — the P3 SQLite index stays future design. Capture side: two
+  additive optional back-reference fields on the capsule manifest, `session_id` (ULID) +
+  `sequence` (requires `session_id`), settable via `nova capture --session-id/--session-sequence`
+  > `NOVAFABRIC_SESSION_ID`/`NOVAFABRIC_SESSION_SEQUENCE` env vars > SDK
+  `session_id=`/`session_sequence=` args (atomic per tier; invalid explicit values fail before
+  capture, invalid ambient env warns and never blocks the workload). Absent = a standalone run,
+  byte-identical to pre-ADR-0122 capsules; the `session.json` manifest stays authoritative over
+  the advisory capsule-side fields. New `novafabric.session` module and
+  `schemas/session-manifest.schema.json` + 11 golden fixtures graduated from the accepted design
+  drafts. Local-first, stdlib+existing deps only. *Session replay is the sibling ADR-0123
+  (planned); the `member_of_session` lineage edge and portable session bundle (P4) remain future
+  design.*
+- **External score-submission API — `novafabric.scores.submit`, `nova score submit`, REST
+  ingest (experimental, ADR-0119 P1–P4; completes Langfuse-parity Theme B).** A documented,
+  validated, attributed ingest seam for scores computed *outside* NovaFabric (CI jobs,
+  third-party judges, human tools): one shared validation core
+  (`novafabric.eval.score_submission`) behind three surfaces — the stable SDK function
+  `novafabric.scores.submit(...)` (offline, no server), the CLI `nova score submit`
+  (JSON in / JSON out), and optional server endpoints (`POST /api/runs/{run_id}/scores`
+  on the token-gated, audit-logged dashboard; `POST /v0/capsules/{run_id}/scores` on the
+  multi-user server, writer-role RBAC with the authenticated principal recorded in the
+  response `submission` block). Fail-closed: a rejection writes nothing — well-formed
+  `Score` invariants (400), ADR-0117 config validation at the ingest boundary (422; no
+  matching config ⇒ accepted with `config_bound: false`), subject anchoring to digests
+  that exist in the target capsule (404), append-only corrections via the new optional
+  `supersedes` field on `Score` (a correction is a *new* record pointing at the prior
+  `score_id`, which stays byte-identical in the log; dangling target ⇒ 422), and
+  idempotency by client-minted `score_id` (identical replay ⇒ 200 no-op; differing body ⇒
+  409 collision). The only `Score` schema change is the additive, optional
+  `supersedes: ULID | null` (ADR-0034-compatible). `schemas/score-submission-{request,response}.schema.json`
+  + 11 golden fixtures graduated from the accepted design drafts. NovaFabric records the
+  externally-computed value; it never runs the evaluator — no model call, no new dependency.
+- **Prompt composability with capture-time snapshot — `nova prompt compose|tree` (ADR-0115; experimental).**
+  A prompt body may now reference other registered prompt assets inline —
+  `{{@prompt:<name>@<version|label>}}` — spliced in at the reference site (ADR-0112 versions,
+  ADR-0113 labels). The composition graph is a bounded acyclic DAG: cycles, trees deeper than
+  8 levels, unknown references, and chat-form children are rejected **at register time** with
+  named errors (`CompositionCycleError`, `CompositionDepthError`, `CompositionRefError`,
+  `CompositionFormError` — fail-closed, no row written). Each direct reference is snapshotted
+  (resolved version + content hash) into the version's frozen `composition` block.
+  `nova prompt compose <ref>` resolves the whole DAG into a content-addressed
+  `resolved_composition_manifest` (every included version + hash, resolved edges, final
+  `assembled_prompt_hash`); `rebuild_from_manifest()` reconstructs the assembled prompt from
+  the manifest's pins only — **byte-identical** even after children are edited or labels move,
+  with any divergence raising `CompositionDriftError`. `nova prompt tree` prints the DAG with
+  `[label]` provenance flags. New `schemas/prompt-composition-block.schema.json` +
+  `schemas/resolved-composition-manifest.schema.json` (graduated from the design drafts) and
+  an additive optional `composition` property on `prompt-asset.schema.json`. Local-first,
+  stdlib-only resolution, no new dependency. *Capsule wiring at `nova capture` and replay
+  verification are planned (ADR-0115 P4).*
+- **Human annotation queues (`nova annotate`, experimental, ADR-0118 P1–P4).** A
+  local-first workflow layer that routes review subjects (capsules/spans) to human
+  reviewers and lands every completed annotation as a typed `HUMAN`-source `Score` in
+  the subject capsule's append-only `scores.jsonl` — the existing ADR-0099 evidence
+  path, no new record format. `nova annotate queue create|add|list|show`,
+  `nova annotate next|submit|confirm|skip`. Criteria are ADR-0117 score configs
+  (registered up front; every submitted value is validated against its config before
+  any write — all-or-nothing, retryable). Optional maker-checker (`--require-checker`):
+  the maker's submission and the checker's confirmation are Ed25519-signed via the
+  existing ADR-0058 keyring, and the checker's identity **and** key fingerprint must
+  both differ from the maker's (ADR-0003 separation of duties). Atomic state-guarded
+  claims; queue/item state in the registry SQLite DB; new
+  `schemas/annotation-queue{,-item}.schema.json` + 13 golden fixtures graduated from
+  the accepted design drafts. Planned (P2/P5): selector-driven auto-population,
+  evidence-bundle/NovaSeal sealing, server-mode multi-user assignment.
+- **`nova trend` — offline score/cost/latency trend reports (experimental, ADR-0131).**
+  Buckets one metric (`cost` | `score:<name>` | `latency`, `--stat p50|p95|p99|mean` for
+  latency) by `day`/`week` (UTC calendar buckets) or `asset` over the local capsule
+  directory, via the ADR-0129 extraction/filter path — read-only, offline, no server.
+  Emits canonical `TrendReport` JSON (stdout or `--json FILE`; schema graduated to
+  `schemas/trend-report.schema.json`) and optionally **one** self-contained static HTML
+  artifact (`--html FILE`: inline CSS, stdlib pre-rendered inline SVG, embedded JSON,
+  no JS, zero external requests). Gap buckets are emitted explicitly (`value: null`,
+  `n: 0`); unreadable / missing-metric / unresolvable-currency capsules are tallied in
+  `skipped_count` with warnings, never aborting the report. `--view NAME` runs a saved
+  view (ADR-0130) as the capsule selector. A snapshot artifact, not a monitor — no
+  thresholds or alerts (that concern is the ADR-0136 budget gate). New module
+  `novafabric.trend`; additive indexer extension (`CallRow.cost_currency`,
+  `scan_capsule`). This completes Langfuse-parity Theme D (ADRs 0129–0133).
+- **Variant attribution — record-only A/B-variant provenance on the capsule (ADR-0116 P1–P3,
+  experimental).** New additive optional `variant` block on the Run Capsule manifest
+  (`experiment_id`, `variant_id`, `assignment_source`, optional `variant_label`, `assigned_at`,
+  `extensions`) in both schema copies — records verbatim *which experiment/variant an external
+  allocator had active* for a run; NovaFabric never assigns, splits, samples, or analyzes
+  variants (`strategy/non-goals.md`). Populated at capture from explicit sources only, resolved
+  atomically per tier: `nova capture --experiment/--variant/--variant-source`
+  (+ `--variant-label/--variant-assigned-at`) > `NOVAFABRIC_VARIANT*` env vars > SDK
+  `@agent(variant={...})`. Nothing is derived or defaulted — an incomplete explicit block fails
+  before capture, incomplete ambient env vars warn and are ignored, and `assigned_at` is never
+  substituted with the capture time. Read conveniences over recorded facts: `variant` in
+  `nova query` filters/group-bys now reads the block's canonical `variant_id`, and
+  `nova diff --group-by variant` groups two capsules by `(experiment_id, variant_id)` and labels
+  the diff cross-arm vs within-arm. Absence changes nothing: capsules without the block are
+  byte-identical to before and fully valid. New golden fixtures at
+  `tests/fixtures/capsule-variant/`.
+- **Dataset-experiment regression harness — `nova experiment run | list | show | compare` (ADR-0120; experimental).**
+  Run a target command across **every item** of a pinned local JSONL dataset — one Run Capsule per item
+  through the existing capture path — and record an **immutable, content-addressed `Experiment`**
+  (`schemas/experiment.schema.json`) binding `dataset_hash`/`split_hash` (reused ADR-0108 provenance-facet
+  discipline; the facet is also written into each item capsule so per-item contamination checks keep
+  working), per-item `capsule_ref` + `score_ids[]` (ADR-0099 `scores.jsonl`, appended by a built-in
+  zero-token exact-match `code` scorer), and per-metric aggregates (`pass_rate` + ADR-0080 Wilson band,
+  numeric `mean`). `nova experiment compare` (and `run --baseline` for one-shot CI) aligns two experiments
+  by `item_id` and delegates the verdict **verbatim** to the shipped ADR-0080 significance gate — exit `3`
+  only on a *statistically significant* regression; mismatched pinned datasets and boolean/numeric metric
+  disagreements are hard errors; unmatched/errored items are excluded from the SPRT sequences. The
+  comparison record (`schemas/experiment-comparison.schema.json`) renders a `regression_report`-shaped
+  input for the existing Rego regression gate (ADR-0003/0019). New modules
+  `src/novafabric/eval/experiment{,_dataset,_runner,_compare}.py` + `cli/experiment.py`; records stored
+  locally under `.novafabric/experiments/`. Fully local, offline, zero-token; purely additive — no change
+  to the Run Capsule, `Score`, or eval schemas; no new dependency.
+- **Batch capsule blob export with a signed completeness manifest — `nova export-blob` + `nova verify <export-manifest.json>` (ADR-0141; experimental).**
+  New `src/novafabric/export_blob/` module + `nova export-blob --dest <dir|s3://…>`: selects capsules
+  (explicit `--capsule` ids/paths, or a `--since`/`--until` `created_at` scan frozen at export start),
+  packs each one deterministically, and writes it **content-addressed** under `objects/<sha256>` —
+  reusing the ADR-0103 CAS addressing (`object_capsule_store/cas.py`) and, for `--worm` on S3, the
+  shipped ADR-0031 `S3WormAdapter` (Object Lock COMPLIANCE; any S3-compatible endpoint via
+  `NOVA_S3_ENDPOINT_URL`; `azure://`/`gcs://` are planned, ADR-0141 P2). Already-present blobs are
+  skipped, so re-runs are **idempotent** and interrupted exports **resume**. One Ed25519/DSSE-signed
+  `export-manifest.json` (new graduated `schemas/export-manifest.schema.json`; signing reuses the
+  existing `evidence/intoto.py` DSSE writer + keyring/`--key` paths) is written **last** as the atomic
+  completion marker, carrying every member's `capsule_id`/`content_hash`/`size` and an
+  order-independent `batch_digest`. `nova verify <export-manifest.json> --public-key <pem>` (additive
+  extension of `nova verify`) checks signature, batch digest, and every member's bytes at the
+  destination, offline — `VALID` / `INCOMPLETE` (member missing or tampered) / `INVALID` (manifest
+  tampered, e.g. a quietly dropped member). Source capsules are never mutated; export failure never
+  blocks a workload (non-zero exit, resumable partial state). **No new dependency** (boto3 stays an
+  optional extra). 73 new tests (incl. golden-fixture digest reproduction); new modules at 100%
+  coverage; ruff + mypy clean.
+- **ADR-0127 observation log levels — a stored, filterable severity on capsule records
+  (Langfuse-parity Theme C; experimental).** Tool-call and model-call records may now carry
+  an additive optional severity trio: `log_level` (`debug|info|warn|error`, lower-case),
+  a secret-scanned one-line `status_message`, and a `log_level_source` provenance
+  (`framework|span-status|adapter|user`). Recorded once at capture, never acted on — no
+  alerting, paging, or blocking. `CapsuleWriter` rejects an out-of-domain level at write
+  (`InvalidLogLevelError`); a record without the fields is byte-identical to before, so
+  old capsules stay valid and read identically (missing level reads as `info`, absence
+  preserved — never back-filled). The OTLP trace import maps a `STATUS_CODE_ERROR` span
+  to `log_level: error` / `log_level_source: span-status`. Capture API:
+  `novafabric.capture.log_level` — `normalize_log_level` (`WARNING`→`warn`,
+  `CRITICAL`/`FATAL`→`error`, `TRACE`→`debug`), `resolve_log_level` (most-severe source
+  wins, provenance recorded), OTel span-status mapping. Read side was already live:
+  `nova query --where 'log_level >= warn'` (severity-ordered, ADR-0129) now filters the
+  real recorded field. Schemas: three optional properties added to
+  `tool-call.schema.json` + `model-call.schema.json` (both the OAS v1 and shipped copies;
+  additive — validators never require them). No new dependency.
+- **`nova label protect|propose-move|approve-move|status` — protected labels with
+  maker-checker moves (experimental, ADR-0114 P1–P2).** A protected deployment label
+  (ADR-0113) refuses direct `nova label set` (with guidance) and moves only through a
+  two-principal transaction: `propose-move` (maker) creates an Ed25519-signed pending
+  move; `approve-move` by a *distinct* checker applies it. Separation of duties is
+  enforced at the crypto level — matching keyring key fingerprints or identities are
+  refused, reusing the ADR-0058 promote keyring — and a duplicate approver counts once
+  toward `--required-approvals N`. The apply is atomic: the ADR-0113 append-only
+  `asset_label_history` audit row (reusing the pending move's ULID) and the state
+  transition commit together; protect/unprotect events and checker decisions live in
+  new additive append-only tables (`asset_label_protection`,
+  `asset_label_move_approvals`; SQLite-trigger enforced). Optional `--policy-ref` Rego
+  gate (ADR-0019) snapshots at propose time and fails closed on an unreadable policy;
+  `reject`/expiry are terminal. Free labels are unchanged. Graduated
+  `schemas/label-protection-config.schema.json` +
+  `schemas/protected-label-pending-move.schema.json` with 13 golden fixtures.
+  Local-first, no server, no new dependency. NovaSeal-signed evidence bundles on apply
+  (P3) and server-mode RBAC principals (P4) are planned.
+- **Local model-pricing catalog (ADR-0133; Langfuse-parity Theme D — experimental).**
+  Offline, user-extensible per-usage-type pricing for self-hosted / fine-tuned / private
+  models — no remote registry, no price fetch, no network. A single local YAML/JSON
+  catalog (`schemas/pricing-catalog.schema.json`, `schema_version 0.1.0`) is merged over
+  the built-in `PRICE_TABLE` (layers: builtin < user `~/.config/novafabric/pricing.yaml` <
+  project `./.novafabric/pricing.yaml` < `--pricing-catalog PATH`; per-entry replacement
+  on `model_id` collision). Prices are keyed by the ADR-0132 usage types
+  (input/output/cached/reasoning/audio/image) with `per_1k`/`per_1m`/`per_image` unit
+  math, ISO-4217 currency (never converted), and optional `effective_from` dating (the
+  resolver picks the price in force at capture time). New CLI: `nova pricing list|show|add`
+  (idempotent per `(model_id, effective_from)`) and `nova cost estimate CAPSULE_DIR` —
+  fully offline per-capsule cost where a recorded `nova.cost` is reported verbatim
+  (`basis=recorded`, never overwritten) and catalog-derived figures are labeled
+  `basis=estimated` with their source layer and the merged catalog's `sha256:` digest for
+  reproducibility. `nova capture` cost estimation (`CostInterceptor`) consults the merged
+  catalog automatically; with no catalog files the figures are bit-for-bit unchanged, an
+  unknown model still costs 0.0, and a malformed catalog is skipped with a warning — it
+  never fails a capture. Core: `src/novafabric/cost/pricing_catalog.py`; 15 golden
+  fixtures graduated to `tests/fixtures/model-pricing-catalog/`; 93 new tests.
+  **No new dependency** (PyYAML/pydantic/stdlib only, Tier A per ADR-0024).
+- **`nova label set|get|list|history` — asset deployment labels (experimental, ADR-0113 P1).**
+  Mutable named pointers (`production`, `staging`, custom) from an asset name to one immutable
+  registry version, scoped per asset. Every move appends an audit row to the new additive
+  `asset_label_history` table (append-only, enforced by SQLite triggers; the current pointer is
+  a projection of the newest row); the reserved `latest` label is auto-maintained and read-only.
+  The capture-time **resolution freeze** API (`novafabric.registry.labels.resolve_asset_ref`)
+  resolves a `<type>:<name>@<label>` reference to the concrete version + content hash as a
+  capsule-ready `resolved-asset-ref` record, so replay never depends on the label's current
+  value. Graduated `schemas/asset-label-move.schema.json` +
+  `schemas/resolved-asset-ref.schema.json` with 14 golden fixtures. Wiring the freeze into
+  `nova capture` and protected-label maker-checker moves (ADR-0114) are planned.
+- **`nova view` — saved views / saved queries (experimental, ADR-0130).** Name a
+  `nova query` once and persist it as a small, human-readable, version-controllable
+  file under `.novafabric/views/<view_id>.yaml` (JSON equally valid): `nova view
+  save|run|list|show|rm`. A view is data, not code — a verbatim ADR-0129 query
+  object plus optional advisory display prefs (`columns`/`sort`/`format`); `nova
+  view run` is exactly `nova query` over the stored query (invariant I2). Saving
+  is fail-closed through the ADR-0129 parser (an invalid query is refused and
+  nothing is written), overwrites require `--force` (preserving `created_at`), and
+  every view carries a deterministic content hash (`view_hash`, timestamps/author
+  excluded) so a report can record exactly which view version produced it. Broken
+  view files fail only their own command — never any other operation. New:
+  `src/novafabric/views/`, `nova view` CLI, graduated
+  `schemas/saved-view.schema.json`; additive `validate_query_object` helper in the
+  ADR-0129 parser. Local-first: no server, no network, no new dependency.
+- **Capture-overhead CI gate (ROADMAP W1; experimental).** New pytest-benchmark gate
+  `tests/bench/test_capture_overhead_gate.py`: 30 full captured runs of a trivial `python -c pass`
+  workload through `CaptureOrchestrator(fast_emit=True)` must keep **p95 < 2000 ms** — a deliberately
+  generous (~4x) ceiling over the ~464 ms compute-only fast-emit baseline measured in v0.54, sized to
+  absorb shared-CI-runner noise while catching order-of-magnitude regressions (e.g. re-introducing eager
+  SDK imports on the capture startup path). Gates on p95 rather than the NovaSeal gate's p99 because at
+  30 samples nearest-rank p99 equals the single worst round (pure scheduler noise). Skipped under the
+  default `--benchmark-disable` run (still performs one captured run for correctness); enforced by the new
+  `capture-overhead-gate` CI job (mirrors `seal-latency-gate`, uploads `capture_overhead.json` artifact)
+  and runnable locally via `make benchmark-capture`. **No new dependency** (pytest-benchmark already in
+  dev deps for the NovaSeal gate). Measured locally: median ~107 ms, max ~141 ms over 30 rounds.
+- **`nova pii status <capsule-id-or-path>` — read-only per-capsule PII encryption/erasure report (ADR-0069).**
+  Closes the `planned` gap in the CLI reference: correlates the capsule's `redaction_manifest.json`
+  (encrypted fields, detection rules, subject HMACs, redaction timestamps) against the v0.44.0 DEK store
+  at `$NOVAFABRIC_HOME/dek.db` and reports each subject's `dek_state` — `active` (live DEK),
+  `erased` (crypto-shredded or `dek.db` absent), or `unknown` (`NOVA_PII_PEPPER` unavailable, HMACs
+  cannot be correlated). Resolves the capsule by directory path or by scanning `--capsule-dir` for a
+  matching `capsule_id`; `--json` emits a machine-readable `PIIStatusReport`. Strictly read-only
+  (never creates `dek.db`), local-first, no server required; subjects appear only as HMACs — no key
+  material or plaintext PII in output. New `src/novafabric/pii/status.py` (100% coverage) + additive
+  `DEKStore.list_subjects()` returning key-free `DEKSubjectRecord`s. **No new dependency.**
+  18 new tests; ruff + mypy clean.
+- **Spine-B2 — `nova evidence attest-replay --certify/--anchor` (ADR-0094; experimental).**
+  The two deferred flags on the re-performance attestation command now ship, reusing the v0.55.0
+  determinism-cert and ledger modules (no reimplementation). `--certify` emits a DSSE-signed
+  determinism certificate (`ReplayAttestation`, predicate `novafabric.io/replay-attestation/v0`) after
+  the re-performance attestation: pins are extracted from the capsule's recorded facts
+  (`model-calls.jsonl` `gen_ai.*` + `env.lock`; missing pins recorded as null, never fabricated) and
+  `determinism_class` follows the normative downgrade rule via the shipped `classify_determinism` —
+  a non-`exact` verdict or missing seed/model-digest honestly classifies `NON_DETERMINISTIC` with
+  reasons. `--anchor` appends the attestation digest to a new `<capsule>/attestations.jsonl` evidence
+  stream and seals it via the shared ledger anchor path (per-stream sidecar hash chain + DSSE-signed
+  checkpoint with local finalize anchor), making the attestation tamper-evident under
+  `nova ledger verify`; with both flags the certificate back-links to the checkpoint via `ledger_ref`
+  (B → A). The anchor path is factored into `trust/ledger/_anchor.py::anchor_capsule`, now shared by
+  `nova ledger anchor` (behavior unchanged). Both flags default off — without them `attest-replay`
+  is byte-identical to before, including exit 2 on mismatch; existing `.jsonl` streams are never
+  modified. **No new dependency, no schema change.** 17 new tests; `replay_attestation.py` at 100%
+  coverage; ruff + mypy clean.
+- **ADR-0121 append-only capsule comments — `nova comment add | list` (experimental).**
+  First slice of the Langfuse-parity cohort (Theme B): a `Comment` record — an append-only, immutable,
+  secret-scanned free-text annotation bound to a content-addressed subject — stored one JSON line per
+  comment in a new **optional** capsule file `comments.jsonl`, mirroring the `scores.jsonl` pattern
+  (ADR-0099; a capsule without it stays valid, Run Capsule schema untouched). New
+  `src/novafabric/capsule/comments.py`: Pydantic `Comment` model (ULID id, `subject`/`subject_kind`
+  agreement enforced both ways), append-only JSONL IO (**no overwrite/delete API** — an edit is a new
+  comment via `in_reply_to`, a delete is a tombstone record; bytes are never removed), a bounded,
+  cycle-reporting thread resolver, a tombstone default-view filter, and the mandatory ADR-0009
+  secret-scan gate on `body` (reuses the sealer's `capture.secrets` rules: **refuse by default**, exit 3,
+  secret never echoed; `--redact` masks in place and sets `redaction_applied`; a body emptied by
+  redaction is refused). The draft schema graduated from `design/spec/schemas/` to
+  `schemas/comment.schema.json` (draft 2020-12, closed, two `if/then` subject-kind branches); its 13
+  golden fixtures graduated to `tests/fixtures/capsule-comments/`. `comments.jsonl` is covered by the
+  capsule Merkle root at Evidence-Bundle time exactly like `scores.jsonl` (sealing-parity tested; no
+  change to the seal path). `asset://` subjects (registry note table, P3) and `nova comment thread`
+  (P2 remainder) stay **planned**. **No new dependency.** Both new modules at 100% coverage; 54 new
+  tests; ruff + mypy strict clean.
+- **NF-034 OTLP ingest endpoint — `POST /api/otlp/v1/traces` (ADR-0098; experimental).**
+  The inbound half of the OTel GenAI canonical vocabulary: new `src/novafabric/otel/genai_ingest.py`
+  parses an OTLP/HTTP **JSON** `ExportTraceServiceRequest` payload (`resourceSpans` → `scopeSpans` →
+  `spans`), filters spans carrying `gen_ai.*` attributes, and inverts the NF-032 emitter mapping into
+  capsule events — `chat`-family client spans become `model-calls.jsonl` records, `execute_tool` spans
+  become `tool-calls.jsonl` records, the first `invoke_agent` span provides manifest metadata. The new
+  token-gated serve endpoint seals them into a run capsule that passes `nova validate`, reusing the
+  native capture utilities (`CapsuleWriter`, env lock, ADR-0009 secret scanner, replay policy).
+  Honesty per ADR-0021 §4: non-GenAI spans are skipped and counted (never guessed), message content is
+  ingested only when present in the span (never fabricated), unknown `gen_ai.*`/`novafabric.*`
+  attributes ride under `otlp.unmapped` and are enumerated, every event is stamped with the emitter's
+  `novafabric.mapping_version`, and the capsule records `capture_mode: otel-import` +
+  `metadata.capture_level: ingested-otlp` (lower-fidelity than native capture). Malformed payloads
+  return 400; a payload with zero GenAI spans writes no capsule. OTLP/**protobuf** bodies and
+  OpenInference attribute mapping are still **planned** — JSON + OTel GenAI semconv only in this slice.
+  **No new dependency.** `genai_ingest.py` at 99% coverage; 26 new tests; ruff + mypy clean.
+- **Shareable capsule viewer — `nova export --html <capsule-dir>` (ADR-0140; experimental).**
+  First slice of the Langfuse-parity Theme F viewer (P1 summary projection + P2 single-file HTML): a new
+  `src/novafabric/viewer/` module projects a capsule into a bounded, redaction-preserving `CapsuleView`
+  summary (graduated `schemas/capsule-view.schema.json`, `schema_version 0.1.0`) and renders it as exactly
+  **one** self-contained HTML file — inline CSS, **no JavaScript**, zero external requests (no CDN, fonts,
+  images, or scripts; guarded by an invariant test) — that opens offline from `file://` with no NovaFabric
+  install and no server. Sections: capsule header, model calls, tool calls, eval scores (`scores.jsonl`),
+  lineage references (`lineage.jsonl`); the summary JSON is embedded inline
+  (`<script type="application/json" id="capsule-view-data">`) for View-Source inspection. Projection only —
+  tool arguments/results and message bodies are never surfaced; redaction markers render verbatim; no
+  un-redact flag (ADR-0009). The page is a human-readable view, **not** a cryptographic verifier — it points
+  to `nova verify` / the signed Evidence Bundle (ADR-0011), which it complements. `--include-verification`
+  panel and `--graph` lineage view remain planned (ADR-0140 P3/P4). **No new dependency** (Jinja2, already
+  Tier-A runtime). New modules at 100% coverage; 36 new tests; ruff + mypy clean.
+- **NF-017/NF-022 intervention-verified attribution — `nova diagnose <run-id> --intervene` (ADR-0101; experimental).**
+  First slice of the hypothesis-verification loop: for the **top** ADR-0084 hypothesis, `nova diagnose` now
+  auto-synthesizes an `InterventionSpec` (ADR-0086), drives the shipped intervention replay engine in-process
+  (mocked semantics, zero-token), and appends a verification block — hypothesis, intervention applied, original
+  vs counterfactual outcome, and an **evidence-based verdict, never guessed**: `CONFIRMED` (re-execution flipped
+  failure → success), `REFUTED` (still failed), or `INCONCLUSIVE` (flip not measurable — reason always recorded).
+  Deterministic auto-mappable subset: **model-call hypotheses only** (corrective `mutate_payload` clearing the
+  error signal at the implicated call); other hypothesis classes report an honest
+  `cannot auto-intervene for this hypothesis class`. New `src/novafabric/diagnose/verify.py`
+  (`verify_hypothesis`, `Verdict`, `HypothesisVerification`); reuses the ADR-0086 engine and ADR-0084 taxonomy —
+  nothing reimplemented. Read-only `nova diagnose` output is unchanged without the flag; the intervened capsule
+  stays hard-marked `replay_mode: intervention`. **No new dependency.** `verify.py` at 100% coverage; 18 new
+  tests; ruff + mypy clean.
+- **NF-024 Inspect-AI eval interop — `nova eval import-inspect` / `export-inspect` (ADR-0108; experimental).**
+  Score-level bridge between Inspect AI (UK AISI) JSON eval logs and NovaFabric's evidence-grade `scores.jsonl`.
+  New `src/novafabric/eval/inspect_interop.py`: `import_inspect_log()` maps each sample scorer result and each
+  aggregate `results` metric to a typed `Score` — `"C"`/`"I"` verdicts stay `categorical`, `model_graded_*`
+  scorers → `source: judge`, others → `source: code` — provenance-stamped with `evaluator_id: inspect-ai:<scorer>`,
+  a versioned mapping (`INSPECT_MAPPING_VERSION`), and a synthetic content-addressed `eval_card_digest` for the
+  foreign scorer (explicitly *not* a signed NovaFabric eval card). Only pinned Inspect log versions are accepted
+  (unsupported `version` errors naming it). **Honest mapping:** fields with no `Score` target are preserved in an
+  `unmapped` block (written to `extensions/org.inspect/import.json`), content-bearing fields (prompts/outputs)
+  are enumerated in `omitted` but never copied (ADR-0021 §4), and the dataset name lands as an NF-028
+  `dataset_provenance` facet. `export_inspect_log()` emits an Inspect-compatible JSON log from a capsule's score
+  log (valid empty log for a score-less capsule; imported capsules restore the preserved Inspect header).
+  **Pure stdlib parsing — no `inspect-ai` dependency.** The spec's Solver-steps → span-tree import and byte-equal
+  native round-trip remain *planned*. Both new modules at 100% coverage; 32 new tests; ruff + mypy clean.
+- **ADR-0112 prompt as versioned asset — `nova prompt register|get|list|history|diff` (experimental).**
+  First slice of the Langfuse-parity Theme A cohort: prompts become first-class, **immutable,
+  content-addressed** registry versions. New `nova prompt` command group
+  (`src/novafabric/cli/prompt.py`) + `src/novafabric/registry/prompts.py` +
+  `src/novafabric/spec/prompt_asset.py`; the graduated `schemas/prompt-asset.schema.json`
+  (Draft 2020-12, `0.1.0`) with 10 golden fixtures (3 valid / 7 invalid) under
+  `tests/fixtures/prompt_asset/`. Every edit registers `version = max(existing)+1` — never a
+  mutation; re-registering identical content is idempotent (same content, same version);
+  `content_hash = sha256(canonical {template, sorted variables, config})` per the normative
+  spec §Canonicalization, making the run-capsule reference `prompt:<id>@<version>+sha256:<hex>`
+  resolve to exactly one verifiable version (`nova prompt get` prints the frozen ref). Versions
+  are stored as generic rows in the **existing** `assets` table (`spec_json` holds the record) —
+  zero registry schema change, and the existing eval-gated `nova promote` works on prompt
+  versions unchanged (ADR-0112 D3). Declared `--var` placeholders are documentation-only —
+  mismatches warn, never block, and NovaFabric never renders or serves prompts. **No new
+  dependency** (SQLite + stdlib `hashlib`); local-first, offline. 60 new tests; new modules at
+  96–100% coverage; ruff + mypy clean.
+- **Lifecycle event webhooks — `nova events tail|emit` + opt-in outbound sinks (ADR-0137; experimental).**
+  New `src/novafabric/events/` emitter generalizing the proven `promote/bypass_notify.py` pattern: on defined
+  lifecycle transitions NovaFabric emits one structured, non-sensitive `LifecycleEvent` (ULID `event_id`,
+  10-value additive taxonomy, `subject` with refs/digests only) to a local append-only `events.jsonl` and,
+  optionally, POSTs it to user-configured webhook URLs. **Strictly opt-in** — the default is a no-op `NullSink`;
+  nothing is emitted until `NOVA_EVENTS_LOG` / `NOVA_EVENTS_WEBHOOK` is set, and there is no default destination
+  (no silent telemetry). Delivery is emit-and-forget and **fail-safe by construction**: every sink failure is
+  logged and swallowed (a dead webhook can never break a capture or validation), retries are **bounded**
+  (`NOVA_EVENTS_MAX_RETRIES`, default 2) with no queue, daemon, or delivery guarantee — the local log is the
+  durable record. Every event passes the capsule secret-scanner rule pack before leaving the process (payload
+  hygiene; labeled `sha256:`-style digests exempt), and opt-in HMAC-SHA256 signing (`NOVA_EVENTS_SIGN_SECRET`,
+  stdlib `hmac`) signs the canonical body and adds an `X-NovaFabric-Signature` webhook header — a missing secret
+  fails closed on signing only (emit unsigned + warn). This slice wires `capsule.created` (`nova capture`) and
+  `capsule.validated` (`nova validate`); the full taxonomy is defined in the graduated
+  `schemas/lifecycle-event.schema.json` and can be emitted manually via `nova events emit`. Wiring `promotion.*`
+  / `policy.failed` / `retention.applied`, the local command sink, `tail --follow`, and NovaSeal signing remain
+  **planned** (ADR-0137 P3–P5). **No new dependency** (httpx already a runtime dep). 61 new tests incl. a live
+  local-HTTP-server webhook round-trip; new modules ≥ 91% coverage; ruff + mypy clean.
+- **ADR-0126 first-class capsule deployment-environment field — `nova capture --environment <env>` (Langfuse-parity Theme C; experimental).**
+  Two **additive optional** top-level fields on the Run Capsule manifest: `deployment_environment`
+  (the delivery-lifecycle context of the run — conventionally `production` | `staging` |
+  `development` | `test`, or any custom string like `prod-eu`; pattern `^[A-Za-z0-9._:-]{1,64}$`)
+  and `environment_source` (its provenance: `cli-flag` | `env-var` | `sdk-arg`; schema-enforced to
+  require the value when present). **Distinct from the `env.lock` technical environment (ADR-0007)**
+  — this is an operator-chosen deployment tag, never a reproducibility fingerprint, and it is
+  **recorded verbatim from an explicit source, never inferred** (precedence: `--environment` flag >
+  `NOVAFABRIC_ENVIRONMENT` env var > SDK `@agent(..., deployment_environment=…)` argument; empty
+  string normalizes to absent). Absence changes nothing: a capsule without the fields is
+  byte-identical to today's format and every existing capsule stays valid (`additionalProperties`
+  schema edit is additive-only, no version bump). Values outside the conventional four emit a
+  case-insensitive *warning* (capture log + `nova validate`), never an error; an invalid explicit
+  CLI/SDK value fails fast **before** capture starts, while an invalid ambient env-var value is
+  warned about and dropped (never blocks the workload). New `capture/deployment_env.py` resolver at
+  100% coverage; 10 golden fixtures (`tests/fixtures/capsule-environment/`) verified against both
+  schema copies; 65 new tests; ruff + mypy clean. **No new dependency.** Query/filter surface
+  (ADR-0126 P2) and the Rego policy hook (P3) are still `future design`.
+- **Offline metrics query DSL — `nova query` (ADR-0129; experimental).** First shipped slice of the
+  Langfuse-parity Theme D: a bounded, declarative, read-only `filter → group-by → aggregate` over the
+  **local** capsule directory — no server, no network, no raw SQL. New `src/novafabric/query/` package
+  (parser / indexer / engine / executor) + `nova query` CLI: `--select` (`count()`,
+  `sum/avg/min/max/pXX` over `cost`, tokens, `latency`, `score[<name>]`), `--where` (closed allow-list
+  of 8 dimensions, `AND`-joined, `IN (...)`), `--group-by`, `--since/--until`, `--limit` (default 100,
+  ceiling 10 000, group-cardinality cap 10 000), `--order-by`, `--query-file` (JSON/YAML query object;
+  flags override), `--json` (canonical output per the `capsule-query-dsl-v0` spec). Everything outside
+  the allow-list is a hard parse error before any storage access. Metrics are read from already-recorded
+  facts (recorded `nova.cost` per ADR-0066, `model-calls.jsonl` tokens/latency, `scores.jsonl` via
+  `eval/scores.py`) — never recomputed. Derived index is built **in memory** per query on DuckDB
+  (already a dependency) with a stdlib-`sqlite3` fallback and identical results; the capsule dir is
+  never written. **No new dependency.** 120 new tests (both engines); new modules ≥ 92% coverage;
+  ruff + mypy clean.
+- **ADR-0135 pluggable PII masking pipeline — `nova capture --masker` / `--masking-config` (experimental).**
+  New `src/novafabric/masking/` package: operator-registered maskers (imperative masking logic — validated
+  national IDs, internal case numbers, format-preserving tokenizers) run at capture **after** the built-in
+  ADR-0009 secret scanner (built-ins always run; a plugin can never disable or un-redact them) and **before**
+  the capsule is finalized, over the same targets the scanner walks. Registration is stdlib-only (Tier-A):
+  the `novafabric.maskers` entry-point group or a dotted import path in `.novafabric/masking.yaml`
+  (auto-discovered; explicit `--masking-config PATH` wins). Every mask is attributed in
+  `redaction-proof.json` via the new additive optional `masker_findings[]` array (`masker_id`, `pattern_id`,
+  `target_ref`, `match_hash` of the pre-mask bytes — **raw value never stored**); every failure is recorded in
+  `masker_errors[]`. Bounded execution (per-masker `timeout_ms` + `max_input_bytes`) and **fail-closed on
+  secrets, fail-safe for the workload**: a crashing/hanging/invalid masker redacts (or drops) the field and
+  never blocks capture; an unresolvable masker aborts capture *before* the workload runs. Absent config ⇒
+  behavior is byte-for-byte ADR-0009. Chain-hash semantics unchanged (the new arrays are covered).
+  Graduated `schemas/masking-config.schema.json`, `masker-finding.schema.json`, `masker-error.schema.json`
+  from `design/spec/`; extended `secret-redaction.schema.json` additively. Reference masker
+  `novafabric.masking.examples.EmailMasker` ships registered as `novafabric-email`. **No new dependency.**
+  46 new tests; new modules ≥92% coverage (96% package total); ruff + mypy clean.
+- **ADR-0136 cost/energy budget policy gate — `budget_gate.rego` + recorded budget rollup (experimental).**
+  Langfuse-parity Theme E: turns already-recorded cost (ADR-0066 `nova.cost`), energy (ADR-0093
+  `measured_joules`), and token evidence into a *promotion acceptance criterion* — a deterministic Rego gate
+  over sealed evidence, never a live spend alert (record-not-drive). `PolicyResource` gains an additive
+  optional `budget` field (mirrors the v0.9 `regression_report` precedent); new
+  `novafabric.policy.budget_block_from_capsule(capsule_dir)` assembles the spec rollup
+  (`total_cost`/`cost_per_run`/`energy_kwh`/`tokens` + a `measured` map) with record-only honesty — absent
+  evidence is `null` + `measured=false`, **never a fabricated zero**; a recorded `$0.00` local run is measured
+  evidence; mixed currencies are never silently summed. New reference policy
+  `policies/novafabric/defaults/budget_gate.rego` (+ 16-case `budget_gate_test.rego`, in `nova policy test`)
+  denies promotion when a measured quantity exceeds a declared ceiling (`input.context.budget_ceilings`),
+  denies on currency mismatch, passes with an explicit "no data" reason when no ceiling/evidence applies
+  (`skip_unmeasured` default), and fail-closes declared-but-unmeasured ceilings under
+  `missing_evidence: "require_measured"`. Absent a budget policy, `nova promote` behaves exactly as before.
+  The `nova policy budget` authoring CLI and the budget-gate verdict record stay future design (P2/P3).
+  **No new dependency**; `_budget.py` at 100% coverage; 15 new Python tests; ruff + mypy clean.
+  Spec: `design/spec/budget-gate-v0.md`.
+- **Score-configuration catalog — `nova eval score config add|list|get|show` + opt-in `--validate-scores` (ADR-0117; experimental).**
+  First Langfuse-parity Theme B slice: a local catalog of **named, immutable, content-addressed score definitions**
+  that make scores comparable across capsules. New `src/novafabric/eval/score_config.py` (`ScoreConfig` Pydantic
+  model reusing the shipped `ScoreValueType` — no new enum; categorical `categories` with optional ordinal ranks,
+  inclusive numeric `range` with `higher-better|lower-better` direction; C1–C5 invariants enforced, incl.
+  `content_digest` = sha256 over the canonical definition body, mismatch rejected at parse time) and
+  `src/novafabric/eval/score_config_catalog.py` (additive `score_configs` table in the existing registry SQLite —
+  same storage decision as the eval-card registry; auto version bump on a changed body, identical-body re-register
+  is a no-op, `(name, version)` immutable; resolve by `name`, `name@version`, or digest). The **opt-in D2 hook**
+  (`nova eval score add --validate-scores`, default **off**) refuses an append — nothing written — on a
+  `ScoreConfigViolation` (value_type disagreement, unknown category, out-of-range value); a metric with no config
+  stays a free score, byte-identical to previous behavior. `Score`/`scores.jsonl`/`score-v1.schema.json` are
+  untouched; new wire contract `schemas/score-config-v0.schema.json` + 11 golden fixtures graduated to
+  `tests/fixtures/score-config/`. **No new dependency.** New modules at 100% coverage; 85 new tests; ruff + mypy clean.
+- **ADR-0134 data-retention policy scheduler — `nova retention plan | apply | status | explain` (Langfuse-parity Theme E).**
+  A WORM-aware, crypto-shred-integrated, audited sweep that applies the shipped ADR-0031 retention windows *over
+  time*. New optional `bindings:` block in the existing `retention-policy.yaml` (additive — a registry with no
+  bindings is swept for nothing): each binding is `match` (tag / deployment_environment / asset glob / min-age,
+  ANDed) + `window` (ISO-8601 duration from `created_at`, or absolute date) + `action`
+  (`expire-metadata` | `purge` | `crypto-shred`). Safety invariants are fixed, not configurable: a **WORM/legal
+  hold always wins** (a WORM-retained capsule is never purged or shredded before `locked_until` — recorded
+  `skipped: worm_hold`, never silently dropped); `purge` is refused under `deletion_mode: prohibited`;
+  `crypto-shred` dispatches to the existing ADR-0069 `DEKStore` (never reimplemented) and defers inside the
+  Art.17(3)(b) window. Every decision — including every skip — appends one hash-chained `retention.action`
+  audit entry carrying a `RetentionActionRecord`: deletion is itself evidence. `plan` (and `apply --dry-run`)
+  shares the identical due-computation code path and touches nothing; `apply` is confirm-gated (`--yes` for
+  cron/CI), idempotent, bounded (`--limit`), and fail-safe (per-item errors are recorded and the sweep
+  continues). **No daemon**: periodic execution is the operator's cron/systemd wiring (local-first).
+  Two schemas graduated from `design/spec/` to `schemas/` (`retention-binding`, `retention-action-record`)
+  with all 17 golden fixtures verified in CI. New `src/novafabric/retention/` package. **No new dependency.**
+  107 new tests; new modules at 98% coverage (CLI 100%); ruff + mypy strict clean.
+- **Token usage-type accounting (ADR-0132; Langfuse-parity Theme D — works today).**
+  New `src/novafabric/cost/usage_types.py` extends the existing cost subsystem (ADR-0066) with the full
+  provider-reported token usage breakdown. Capture (OpenAI + Anthropic SDK hooks and `CostInterceptor`) now
+  records an **additive, optional** `nova.usage` block on each model-call record — `cached_tokens` (prompt-cache
+  read), `cache_write_tokens` (Anthropic `cache_creation_input_tokens`), `reasoning_tokens`,
+  `audio_input_tokens`/`audio_output_tokens`, `image_input_tokens`/`image_output_tokens`, `total_tokens`, plus an
+  open snake_case `extra` map that absorbs provider usage types NovaFabric does not yet name (zero schema churn).
+  Values are copied **verbatim** from the provider usage payload — never re-tokenized locally; **absent ≠ zero**
+  (an unreported type is absent, never zero-guessed), and extraction can never fail the user workload. At capsule
+  finalize the per-type sums roll up into an optional `usage_totals` block in `capsule.yaml` (pure sum; absent
+  per-call fields skipped) — all offline. `CostFacet` gains an optional `usage` superset field (legacy
+  `input_tokens`/`completion_tokens`/`cached_tokens` scalars unchanged and always matched when present).
+  Schemas: `nova.usage` added to `model-call.schema.json`, `usage_totals` to `run-capsule.schema.json` (both
+  additive + optional); standalone `schemas/token-usage.schema.json` + `schemas/usage-totals.schema.json` and the
+  13 golden fixtures graduate from `design/spec/` to `/schemas/` + `tests/fixtures/token-usage-types/`. The
+  ClickHouse cost report (`/api/cost/report` totals and per-model rows) now also carries `cached_tokens`, and
+  capsule ingest fills the previously always-zero `cached_tokens` column from `nova.usage`. Per-usage-type
+  *pricing* (ADR-0133) and trend reports (ADR-0131) remain planned. **No new dependency.** `usage_types.py` at
+  100% coverage; 57 new tests; ruff + mypy clean.
+- **Tool-call schema validation — capture verdicts, replay drift, `nova validate --schemas` (ADR-0128; experimental).**
+  Enforces the tool-call format's long-declared but inert `arguments_schema_ref`/`result_schema_ref` pointers
+  (Langfuse-parity Theme C). New `src/novafabric/capture/schema_validation.py`: when a captured tool-call record
+  declares a schema_ref, its `arguments`/`result` are validated against the referenced JSON Schema (Draft 2020-12)
+  and an **additive optional `schema_validation` verdict block** is recorded on the record — **record-only, never
+  raised into the workload**; `null` means "no schema declared" and is not a failure; records without refs stay
+  byte-identical. Resolution is **local-only** (relative refs confined to the capsule dir, absolute local paths;
+  `http(s)://` refs are never fetched — recorded as `schema-unresolved`); `errors[]` is capped (50 + synthetic
+  `truncated` entry) and messages are secret-sanitized. Replay re-validates stored tool calls against their
+  *current* schemas: drift surfaces as an additive `schema_drift` list in `replay_result.yaml` in every mode and
+  hard-refuses (`exact_eligible: false`) in `exact` mode only. New `nova validate --schemas CAPSULE_DIR`
+  conformance report (report-only; `--fail-on-schema-violation` for CI; `--write` backfills historical capsules).
+  `tool-call.schema.json` gains the optional `SchemaValidationVerdict`/`SchemaError` defs (additive; no break).
+  Model structured-output parity (ADR-0128 P5) is still pending. **No new dependency** (`jsonschema` already
+  Tier-A runtime). 32 new tests; validator module at 92% coverage; ruff + mypy clean.
 - **NF-058 signed dataset provenance cards — `nova dataset provenance-card <asset> --sign` (ADR-0105; experimental).**
   New `nova dataset` command group + `src/novafabric/supplychain/dataset_card.py`: builds a dataset provenance
   card recording `source`/`version`/content `hash`/`license`/`tlp` and a **transform history** — each entry a
@@ -298,6 +973,10 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
     to use** sections; PyPI version badge.
 
 ### Changed
+- `ROADMAP.md` — corrected the stale "(CLI planned)" note on the v0.29.0 row for
+  `export_ro_crate()` / `export_prov_json()`: the CLI surface shipped in v0.32.0 as
+  `nova export-rocrate <capsule_dir>` and `nova lineage export-prov <capsule_dir>`
+  (already documented in the v0.32.0 row and `docs/cli-reference.md`).
 - **Positioning reframed from "self-contained" to "self-hosted, runs from laptop to
   cluster"** across the README, GitHub About, `llms.txt`, `CITATION.cff`, the website
   (`index.astro`, `concepts.astro`), and the Claude plugin docs. "Self-contained" read as
@@ -339,6 +1018,33 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 ### Fixed
 - `serve` test `test_health_ok` asserted a non-existent `status` key; `/api/health`
   returns `{"ok": true, ...}`.
+
+### Docs
+- **Tutorial coverage for the v0.47–v0.56 experimental surfaces that had CLI-reference
+  entries but no hands-on walkthrough.** Four new feature-tour sections (§18–§21), every
+  command verified against a real captured capsule and pasted with real (trimmed) output:
+  - **§18 Evidence-grade eval loop** — zero-token `nova eval offline`
+    (coverage / contract / metamorphic + `--emit-score`), signed eval cards
+    (`nova eval card new/sign/register/verify`, `nova eval score list`),
+    significance-gated regression diff (`nova diff --significance`, all three SPRT
+    verdicts incl. the honest `continue` on thin evidence), and the
+    `nova eval contamination-check` exit-4 CI gate.
+  - **§19 Intervention replay** (ADR-0086, the 5th replay mode) — InterventionSpec
+    walkthrough producing a diffable counterfactual capsule, closed back into the
+    zero-token metamorphic check to measure the downstream behavioral consequence.
+  - **§20 Accountability Spine** (ADRs 0093–0095) — energy receipts with the
+    forgery-guard tamper demo (exit 3), per-stream ledger sealing with content-edit /
+    truncation tamper demos (exits 3/5), and the evidence-grounded safety case built
+    from real `nova evidence` artifacts, exported as `annex-iv` / `nist-rmf`, with the
+    artifact-hash tamper demo (exit 4). Documents the real DSSE-vs-raw-attestation
+    integration seam between `nova evidence attest-replay` and `nova safety-case build`.
+  - **§21 Incident workflow** (ADR-0088) — Art. 73 deadline clock (15-day standard vs
+    2-day critical-infrastructure classification), OECD AIM / NIS2 exports, forward-only
+    lifecycle.
+  - New stdlib-only, fully-offline example `examples/eval-and-intervention/` (agent with
+    self-reported tool calls, contract schema, metamorphic check-spec, InterventionSpec,
+    synthetic `scores.jsonl` generator) powering §18–§20; indexed in `examples/README.md`
+    and `docs/tutorials/README.md`. All four sections carry the `experimental` label.
 
 ## [0.58.0] — 2026-06-25
 
@@ -3704,7 +4410,7 @@ passing, 90% coverage. See [`docs/releases/v0.9.0.md`](docs/releases/v0.9.0.md).
 - `nova eval compare <baseline.json> <candidate.json> [--alpha] [--min-samples]` — rich table of metric deltas, p-values, significance; exit 1 on regression
 - `regression_gate.rego` — Rego policy gate: denies promotion when `input.resource.regression_report.regression_detected == true`; `PolicyResource` extended with `regression_report: dict | None`
 
-## [Unreleased]
+## [0.10.0] — 2026-05-12
 
 Event Envelope v1: canonical wire format for all NovaFabric evidence events.
 JSON Schema (2020-12) + proto3 definition + SHA-256 version pin + Pydantic model

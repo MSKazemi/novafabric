@@ -1,0 +1,13 @@
+{
+  "schema_version": "0.1.0",
+  "label": "production",
+  "asset_name": "system-prompt",
+  "asset_type": "prompt",
+  "target_version": "v3",
+  "previous_version": "v4",
+  "content_hash": "sha256:9f2c1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d8356",
+  "moved_at": "2026-07-12T14:03:11.482Z",
+  "moved_by": "alice",
+  "reason": "rollback: v4 regressed on eval GAIA",
+  "move_id": "not-a-ulid"
+}

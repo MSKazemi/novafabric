@@ -29,6 +29,14 @@ from novafabric.server.routes.evidence import router as evidence_router
 from novafabric.server.routes.lineage import router as lineage_router
 from novafabric.server.routes.replays import router as replays_router
 from novafabric.server.routes.roles import router as roles_router
+from novafabric.server.routes.saml import router as saml_router
+from novafabric.server.routes.scim import (
+    _ScimError,
+    scim_error_handler,
+)
+from novafabric.server.routes.scim import (
+    router as scim_router,
+)
 from novafabric.server.routes.seal import router as seal_router
 from novafabric.server.routes.suggestions import router as suggestions_router
 
@@ -86,6 +94,8 @@ def create_app(config: ServerConfig) -> FastAPI:
     # Auth exception handlers
     app.add_exception_handler(_Unauthenticated, unauthenticated_handler)  # type: ignore[arg-type]
     app.add_exception_handler(_Forbidden, forbidden_handler)  # type: ignore[arg-type]
+    # SCIM error envelope (RFC 7644 §3.12) — ADR-0139
+    app.add_exception_handler(_ScimError, scim_error_handler)  # type: ignore[arg-type]
 
     # Health check — unauthenticated
     @app.get("/health")
@@ -106,7 +116,13 @@ def create_app(config: ServerConfig) -> FastAPI:
     app.include_router(admin_router, prefix="/v0")
     app.include_router(roles_router, prefix="/v0")
     app.include_router(auth_router, prefix="/v0")
+    app.include_router(saml_router, prefix="/v0")
     app.include_router(suggestions_router, prefix="/v0")
     app.include_router(seal_router, prefix="/v0")
+
+    # SCIM provisioning (ADR-0139, experimental) — own /scim/v2 prefix per
+    # RFC 7644, NOT under /v0. Inert (404) unless server.scim.enabled AND
+    # NOVAFABRIC_SCIM_TOKEN are both configured.
+    app.include_router(scim_router)
 
     return app

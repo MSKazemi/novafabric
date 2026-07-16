@@ -1,0 +1,109 @@
+{
+  "version": 2,
+  "status": "success",
+  "eval": {
+    "run_id": "cSNvBpqsDsRFCsSLLh9oPK",
+    "created": "2026-07-01T12:00:00+00:00",
+    "task": "example/hello",
+    "task_id": "kDzUJTAyLCyxYwaEZAdT26",
+    "task_version": 0,
+    "model": "openai/gpt-4o",
+    "dataset": {
+      "name": "hello-dataset",
+      "samples": 2,
+      "shuffled": false
+    },
+    "revision": {
+      "type": "git",
+      "origin": "https://example.invalid/evals.git",
+      "commit": "a1b2c3d"
+    },
+    "packages": {
+      "inspect_ai": "0.3.46"
+    },
+    "config": {
+      "epochs": 1
+    }
+  },
+  "plan": {
+    "name": "plan",
+    "steps": [
+      {"solver": "generate", "params": {}}
+    ]
+  },
+  "results": {
+    "total_samples": 2,
+    "completed_samples": 2,
+    "scores": [
+      {
+        "name": "match",
+        "scorer": "match",
+        "metrics": {
+          "accuracy": {"name": "accuracy", "value": 0.5},
+          "stderr": {"name": "stderr", "value": 0.3535}
+        }
+      },
+      {
+        "name": "model_graded_qa",
+        "scorer": "model_graded_qa",
+        "metrics": {
+          "accuracy": {"name": "accuracy", "value": 0.75}
+        }
+      }
+    ]
+  },
+  "stats": {
+    "started_at": "2026-07-01T12:00:00+00:00",
+    "completed_at": "2026-07-01T12:01:30+00:00"
+  },
+  "samples": [
+    {
+      "id": 1,
+      "epoch": 1,
+      "input": "What is the capital of France?",
+      "target": "Paris",
+      "output": {
+        "model": "openai/gpt-4o",
+        "completion": "Paris"
+      },
+      "scores": {
+        "match": {
+          "value": "C",
+          "answer": "Paris",
+          "explanation": null
+        },
+        "model_graded_qa": {
+          "value": 1,
+          "answer": "Paris",
+          "explanation": "The answer is correct."
+        }
+      },
+      "metadata": {"category": "geography"}
+    },
+    {
+      "id": 2,
+      "epoch": 1,
+      "input": "What is the capital of Australia?",
+      "target": "Canberra",
+      "output": {
+        "model": "openai/gpt-4o",
+        "completion": "Sydney"
+      },
+      "scores": {
+        "match": {
+          "value": "I",
+          "answer": "Sydney",
+          "explanation": null
+        },
+        "model_graded_qa": {
+          "value": 0.5,
+          "answer": "Sydney",
+          "explanation": "Partially incorrect."
+        },
+        "custom_struct_scorer": {
+          "value": {"precision": 0.4, "recall": 0.6}
+        }
+      }
+    }
+  ]
+}

@@ -10,7 +10,7 @@ Plain-English guides for engineers at every level. Read in any order.
 |---|---|
 | [Why NovaFabric?](why-novafabric.md) | The problem it solves, with five concrete scenarios using real testbench workloads |
 | [Getting Started](../getting-started.md) | The 15-minute first run: install, capture, validate, replay, diff, lineage, seal |
-| [Feature tour](feature-tour.md) | Hands-on tour of every capability — proxies, all providers, LangChain, evidence bundles, knowledge graph, capture-level policy, GDPR erasure, dashboard reports, topology, compliance exports |
+| [Feature tour](feature-tour.md) | Hands-on tour of every capability — proxies, all providers, LangChain, evidence bundles, knowledge graph, capture-level policy, GDPR erasure, dashboard reports, topology, compliance exports, the zero-token eval loop, intervention replay, the Accountability Spine (energy / ledger / safety case), incident tracking, plus the Langfuse-parity cohort: prompt lifecycle and labels, offline analytics (query / views / trends / pricing), sessions and the execution graph, and the team evaluation workflow |
 | [5-minute black-box recorder demo](../../examples/blackbox_demo/README.md) | End-to-end demo: capture → validate → scan-secrets → replay → diff → lineage → verify; no live API key required |
 
 ---

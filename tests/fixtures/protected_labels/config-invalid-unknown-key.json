@@ -1,0 +1,12 @@
+{
+  "schema_version": "0.1.0",
+  "asset_name": "triage-agent",
+  "label": "production",
+  "protected": true,
+  "required_approvals": 2,
+  "policy_ref": "policies/protected_label.rego",
+  "created_by": "mohsen@local",
+  "created_at": "2026-07-12T09:00:00.000000Z",
+  "note": "production label gates live traffic; two-person control required",
+  "enforce": true
+}

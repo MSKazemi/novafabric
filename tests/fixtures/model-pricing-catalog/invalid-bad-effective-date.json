@@ -1,0 +1,14 @@
+{
+  "schema_version": "0.1.0",
+  "models": [
+    {
+      "model_id": "x",
+      "effective_from": "2026/01/01",
+      "pricing": {
+        "input": {
+          "amount": 1
+        }
+      }
+    }
+  ]
+}

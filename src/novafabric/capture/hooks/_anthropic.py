@@ -10,6 +10,7 @@ from novafabric.capture.hooks._otel_genai import (
     build_record_envelope,
     extract_request_attributes,
 )
+from novafabric.cost.usage_types import usage_from_anthropic
 
 if TYPE_CHECKING:
     from novafabric.capture.capsule import CapsuleWriter
@@ -95,6 +96,11 @@ class AnthropicHook:
         record["gen_ai.response.choices"] = choices
         record["gen_ai.usage.input_tokens"] = getattr(usage, "input_tokens", 0) if usage else 0
         record["gen_ai.usage.output_tokens"] = getattr(usage, "output_tokens", 0) if usage else 0
+        # ADR-0132: additive, optional per-type usage block (verbatim from the
+        # provider payload; absent when the provider reports no breakdown).
+        usage_block = usage_from_anthropic(usage)
+        if usage_block is not None:
+            record["nova.usage"] = usage_block
         record["gen_ai.response.finish_reasons"] = [finish_reason]
         response_id = getattr(response, "id", None)
         if response_id:

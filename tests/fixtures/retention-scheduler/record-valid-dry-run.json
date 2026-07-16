@@ -1,0 +1,13 @@
+{
+  "schema_version": "0.1.0",
+  "record_id": "01HXB0R7Q0000000000000000C",
+  "swept_at": "2026-07-12T09:00:00Z",
+  "principal": "m.ardebili",
+  "registry": "my-trading-registry",
+  "binding_id": "gdpr-subject-pii",
+  "item_kind": "asset",
+  "item_id": "prompt:triage@3.1.0",
+  "action": "crypto-shred",
+  "outcome": "dry-run",
+  "due_at": "2026-06-30T00:00:00Z"
+}

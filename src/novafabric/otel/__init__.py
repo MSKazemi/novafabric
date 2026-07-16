@@ -12,14 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OTel GenAI canonical-span emission (NF-032/033, ADR-0098).
+"""OTel GenAI canonical-span emission and ingest (NF-032/033/034, ADR-0098).
 
 `genai_emitter.emit_spans` maps an already-captured capsule outward to OTel GenAI
-`gen_ai.*` spans; `content_bridge` is the opt-in, ADR-0009-redacted message bridge.
-The OTLP/OpenInference *ingestion* endpoint (NF-034) is intentionally not implemented
-here — it requires a protobuf decode dependency and is tracked separately.
+`gen_ai.*` spans; `content_bridge` is the opt-in, ADR-0009-redacted message bridge;
+`genai_ingest` is the inbound half — OTLP/HTTP **JSON** traces carrying GenAI spans
+become run capsules (`capture_level: ingested-otlp`). OTLP/**protobuf** ingest is
+still not implemented — it requires a protobuf decode dependency.
 """
 
 from novafabric.otel.genai_emitter import MAPPING_VERSION, emit_spans
+from novafabric.otel.genai_ingest import (
+    OTLPIngestError,
+    ingest_otlp_json,
+    parse_otlp_json,
+    write_ingest_capsule,
+)
 
-__all__ = ["MAPPING_VERSION", "emit_spans"]
+__all__ = [
+    "MAPPING_VERSION",
+    "OTLPIngestError",
+    "emit_spans",
+    "ingest_otlp_json",
+    "parse_otlp_json",
+    "write_ingest_capsule",
+]

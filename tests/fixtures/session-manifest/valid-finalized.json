@@ -1,0 +1,35 @@
+{
+  "schema_version": "0.1.0",
+  "session_id": "01HZ8S9K3M4YZ2K7N9DPBYK2W0",
+  "session_kind": "conversation",
+  "created_at": "2026-07-12T09:00:00.000Z",
+  "user_ref": "user:sha256:50c9c4aeb40b5b206b6d98f516f8b8c0efd29ce2e56a76b345fb9240c225a1b7",
+  "member_runs": [
+    {
+      "run_id": "01HZ8T0A00YZ2K7N9DPBYK2W01",
+      "capsule_ref": "../runs/01HZ8T0A00YZ2K7N9DPBYK2W01@sha256:c9c244bb7612f30e8940f16f13d42e00d91db2094c0e9f38611714db2111fa9c",
+      "sequence": 0,
+      "started_at": "2026-07-12T09:00:01.100Z",
+      "role": "user-turn"
+    },
+    {
+      "run_id": "01HZ8T1B00YZ2K7N9DPBYK2W02",
+      "capsule_ref": "../runs/01HZ8T1B00YZ2K7N9DPBYK2W02@sha256:8f38a26f4faba874c06e6ee0796d00aff9912b8a13e26a35cf64b74ad61babd5",
+      "sequence": 1,
+      "started_at": "2026-07-12T09:01:01.100Z",
+      "role": "agent-turn"
+    },
+    {
+      "run_id": "01HZ8T2C00YZ2K7N9DPBYK2W03",
+      "capsule_ref": "../runs/01HZ8T2C00YZ2K7N9DPBYK2W03@sha256:a4446ff596b79fd105cca3b069006c164570b6a00a834a00f45260ad04f7c7eb",
+      "sequence": 2,
+      "started_at": "2026-07-12T09:02:01.100Z",
+      "role": "user-turn"
+    }
+  ],
+  "metadata": {
+    "channel": "support-bot",
+    "ticket": "SUP-4821"
+  },
+  "finalized_at": "2026-07-12T09:30:00.000Z"
+}

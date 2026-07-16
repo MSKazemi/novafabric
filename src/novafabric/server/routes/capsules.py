@@ -1,9 +1,10 @@
 """Capsules resource — /v0/capsules.
 
 Implements:
-  GET  /v0/capsules           list (cursor pagination)
-  POST /v0/capsules           upload capsule ZIP (multipart/form-data)
-  GET  /v0/capsules/{run_id}  get capsule detail
+  GET  /v0/capsules                  list (cursor pagination)
+  POST /v0/capsules                  upload capsule ZIP (multipart/form-data)
+  GET  /v0/capsules/{run_id}         get capsule detail
+  POST /v0/capsules/{run_id}/scores  submit an external score (ADR-0119, experimental)
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import yaml
 from fastapi import APIRouter, Depends, Query, UploadFile
 
 from novafabric.server.auth import AuthContext
-from novafabric.server.deps import get_capsule_dir, get_metadata_store_dep
+from novafabric.server.deps import get_capsule_dir, get_db_path, get_metadata_store_dep
 from novafabric.server.errors import BadRequestError, ConflictError, NotFoundError
 from novafabric.server.pagination import clamp_limit, decode_cursor, paginate
 from novafabric.server.rbac import Role, require_role
@@ -186,6 +187,99 @@ async def get_capsule(
     detail["mutating_tool_count"] = manifest.get("mutating_tool_count", 0)
     detail["capture_mode"] = manifest.get("capture_mode")
     return detail
+
+
+# ---------- external score submission (ADR-0119, experimental) ----------
+
+
+@router.post("/{run_id}/scores", status_code=201, response_model=None)
+async def submit_score(
+    run_id: str,
+    body: dict[str, Any],
+    capsule_dir: Annotated[Path, Depends(get_capsule_dir)] = None,  # type: ignore[assignment]
+    db_path: Annotated[Path | None, Depends(get_db_path)] = None,
+    auth: Annotated[AuthContext, Depends(require_role(Role.writer))] = None,  # type: ignore[assignment]
+) -> Any:
+    """Append one externally-computed score to the capsule's ``scores.jsonl``.
+
+    ADR-0119 D2: the same validation core as the local SDK/CLI, exposed over the
+    v0.7 REST API. Append-only and fail-closed (a rejection writes nothing);
+    idempotent by ``score_id`` (identical replay → 200, no second line). The
+    ``scores:write`` capability maps to the ``writer`` role in the shipped RBAC
+    model; the authenticated principal is recorded in the ``submission`` block so
+    *who submitted* stays distinguishable from *what evaluator produced the value*.
+    """
+    from datetime import datetime, timezone
+
+    from fastapi.responses import JSONResponse
+    from pydantic import ValidationError as _PydanticValidationError
+
+    from novafabric.eval.score_config import ScoreConfigViolation
+    from novafabric.eval.score_submission import (
+        CapsuleNotFoundError,
+        IdempotencyConflictError,
+        ScoreSubmissionRequest,
+        SubjectNotFoundError,
+        SubmissionInvalidError,
+        SupersedesNotFoundError,
+        submit_request,
+    )
+    from novafabric.serve import audit
+    from novafabric.server.errors import ValidationError
+
+    def _audit(result_str: str, error: str | None = None) -> None:
+        # Durable audit record (THREAT_MODEL R-4): the response body alone is
+        # not evidence — mirror the serve-app route and the roles endpoints.
+        audit.append(
+            action="score_submit",
+            args={"run_id": run_id},
+            cli_equivalent=f"nova score submit {run_id} …",
+            actor_token_fp=auth.subject,
+            result=result_str,
+            error=error,
+        )
+
+    cdir = _resolve(run_id, capsule_dir)
+    try:
+        request = ScoreSubmissionRequest.model_validate(body)
+    except _PydanticValidationError as exc:
+        _audit("error", f"malformed: {exc}")
+        raise BadRequestError(f"malformed score submission: {exc}")
+
+    try:
+        result = submit_request(cdir, request, db_path=db_path)
+    except SubmissionInvalidError as exc:
+        _audit("error", str(exc))
+        raise BadRequestError(str(exc))
+    except (CapsuleNotFoundError, SubjectNotFoundError) as exc:
+        _audit("error", str(exc))
+        raise NotFoundError(str(exc))
+    except IdempotencyConflictError as exc:
+        _audit("error", str(exc))
+        raise ConflictError(str(exc), code="idempotency_conflict")
+    except SupersedesNotFoundError as exc:
+        _audit("error", str(exc))
+        raise ValidationError(str(exc), code="supersedes_not_found")
+    except ScoreConfigViolation as exc:
+        _audit("error", str(exc))
+        raise ValidationError(str(exc), code="score_config_violation")
+    _audit("ok")
+
+    import json as _json
+
+    return JSONResponse(
+        status_code=200 if result.idempotent_replay else 201,
+        content={
+            "score": _json.loads(result.score.model_dump_json(exclude_none=True)),
+            "idempotent_replay": result.idempotent_replay,
+            "config_bound": result.config_bound,
+            "submission": {
+                "principal": auth.subject,
+                "scope": "scores:write",
+                "received_at": datetime.now(timezone.utc).isoformat(),
+            },
+        },
+    )
 
 
 # ---------- helpers ----------

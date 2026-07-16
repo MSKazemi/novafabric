@@ -1,0 +1,19 @@
+{
+  "schema_version": "0.1.0",
+  "record_id": "01HXB0R7Q0000000000000000A",
+  "swept_at": "2026-07-12T09:00:01Z",
+  "principal": "cron://nightly-retention",
+  "registry": "my-trading-registry",
+  "item_kind": "capsule",
+  "item_id": "01HXAY7M7QM4YZ2K7N9DPBYK2W",
+  "action": "crypto-shred",
+  "outcome": "applied",
+  "due_at": "2026-06-30T00:00:00Z",
+  "worm_locked_until": "2033-06-30T00:00:00Z",
+  "erasure_receipt_ref": "evidence/erasure/01HXAY7M7QM4.receipt.json",
+  "dual_object": {
+    "acted_on": "pii",
+    "retained_object_locked_until": "2033-06-30T00:00:00Z"
+  },
+  "description": "GDPR Art.17 crypto-shred"
+}

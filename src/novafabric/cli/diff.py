@@ -38,11 +38,39 @@ def _flatten(d: dict[str, Any], prefix: str = "") -> dict[str, Any]:
     return result
 
 
+#: Group label for a capsule that recorded no ADR-0116 variant block.
+_NO_VARIANT_GROUP = "(no variant)"
+
+
+def _variant_group(capsule: Path) -> str:
+    """Read-only ADR-0116 group key ``experiment_id/variant_id`` from capsule.yaml.
+
+    Operates purely on recorded attribution — never assigns, defaults, or
+    mutates anything. A capsule without a ``variant`` block (or with a
+    malformed one) groups under ``(no variant)``.
+    """
+    import yaml
+
+    try:
+        manifest = yaml.safe_load((capsule / "capsule.yaml").read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return _NO_VARIANT_GROUP
+    block = manifest.get("variant") if isinstance(manifest, dict) else None
+    if not isinstance(block, dict):
+        return _NO_VARIANT_GROUP
+    experiment_id = block.get("experiment_id")
+    variant_id = block.get("variant_id")
+    if not isinstance(experiment_id, str) or not isinstance(variant_id, str):
+        return _NO_VARIANT_GROUP
+    return f"{experiment_id}/{variant_id}"
+
+
 def _capsule_diff(
     capsule_a: Path,
     capsule_b: Path,
     output_format: DiffOutputFormat,
     assert_no_regressions: bool,
+    group_by: str | None = None,
 ) -> None:
     from novafabric.diff._engine import DiffEngine
     from novafabric.diff._format import format_github_annotations, format_json, format_text
@@ -52,13 +80,42 @@ def _capsule_diff(
             console.print(f"[red]Not a valid capsule directory: {p}[/red]")
             raise typer.Exit(code=1)
 
+    # ADR-0116: read-only grouping by recorded (experiment_id, variant_id).
+    groups: dict[str, str] | None = None
+    if group_by == "variant":
+        groups = {
+            str(capsule_a): _variant_group(capsule_a),
+            str(capsule_b): _variant_group(capsule_b),
+        }
+
     report = DiffEngine().compare(capsule_a, capsule_b)
 
     if output_format == "json":
-        console.print(format_json(report))
+        # Machine-readable output must bypass Rich: console.print soft-wraps at
+        # terminal width, inserting newlines inside long JSON string values
+        # (e.g. absolute capsule paths) and corrupting the document.
+        if groups is not None:
+            payload = {
+                "variant_groups": groups,
+                "cross_arm": len(set(groups.values())) > 1,
+                "diff": report.as_dict(),
+            }
+            typer.echo(json.dumps(payload, indent=2))
+        else:
+            typer.echo(format_json(report))
     elif output_format == "github-annotation":
-        console.print(format_github_annotations(report))
+        typer.echo(format_github_annotations(report))
     else:
+        if groups is not None:
+            group_a, group_b = groups[str(capsule_a)], groups[str(capsule_b)]
+            console.print("Variant groups (ADR-0116, recorded attribution):")
+            console.print(f"  {group_a}: {capsule_a}")
+            console.print(f"  {group_b}: {capsule_b}")
+            if group_a == group_b:
+                console.print(f"Within-arm diff (both capsules in group {group_a}):")
+            else:
+                console.print(f"Cross-arm diff: {group_a} → {group_b}")
+            console.print("")
         console.print(format_text(report))
 
     if assert_no_regressions and report.changed_count > 0:
@@ -132,6 +189,19 @@ def diff_cmd(
     assert_no_regressions: Annotated[
         bool, typer.Option("--assert-no-regressions", help="Exit 1 if any changes detected")
     ] = False,
+    group_by: Annotated[
+        str | None,
+        typer.Option(
+            "--group-by",
+            help=(
+                "Group the capsules under comparison by a recorded dimension "
+                "before diffing. Only 'variant' is supported (ADR-0116): groups "
+                "by the capsule's recorded (experiment_id, variant_id) and "
+                "labels the diff as cross-arm or within-arm. Read-only; "
+                "capsule paths only; text/json output only."
+            ),
+        ),
+    ] = None,
     significance: Annotated[
         bool, typer.Option("--significance", help="Statistical regression diff (NF-007).")
     ] = False,
@@ -166,6 +236,9 @@ def diff_cmd(
       # Statistical regression diff over stored scores (exit 3 on a significant regression)
       nova diff --significance --baseline base/ --candidate cand/ --metric task_pass
 
+      # Group two capsules by their recorded A/B variant (ADR-0116, record-only)
+      nova diff --group-by variant runs/arm-a/ runs/arm-b/
+
       # Fail CI if any difference is found
       nova diff --assert-no-regressions my-agent@v1.0 my-agent@v1.1
     """
@@ -176,12 +249,33 @@ def diff_cmd(
     if ref_a is None or ref_b is None:
         raise typer.BadParameter("provide two refs to compare, or use --significance")
 
+    # ADR-0116: --group-by is a read-only convenience over recorded attribution.
+    if group_by is not None and group_by != "variant":
+        raise typer.BadParameter(
+            f"unsupported --group-by dimension {group_by!r}: only 'variant' is supported",
+            param_hint="'--group-by'",
+        )
+    if group_by is not None and output_format == DiffOutputFormat.github_annotation:
+        raise typer.BadParameter(
+            "--group-by is not supported with --output-format github-annotation "
+            "(use text or json)",
+            param_hint="'--group-by'",
+        )
+
     # Route to capsule diff if neither arg looks like an asset ref (name@version)
     if "@" not in ref_a or "@" not in ref_b:
         _capsule_diff(
-            Path(ref_a), Path(ref_b), output_format, assert_no_regressions
+            Path(ref_a), Path(ref_b), output_format, assert_no_regressions,
+            group_by=group_by,
         )
         return
+
+    if group_by is not None:
+        raise typer.BadParameter(
+            "--group-by applies to capsule diffs only (asset refs carry no "
+            "variant attribution)",
+            param_hint="'--group-by'",
+        )
 
     def parse_ref(ref: str) -> tuple[str, str]:
         n, v = ref.rsplit("@", 1)

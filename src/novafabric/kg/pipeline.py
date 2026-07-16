@@ -94,6 +94,16 @@ def _init_metrics() -> None:
         _metrics_ready = True
     except ImportError:
         pass  # prometheus-client not installed — metrics silently disabled
+    except ValueError:
+        # Duplicated timeseries: this module object was re-created (sys.modules
+        # eviction, e.g. mock.patch.dict in tests) while the process-global
+        # prometheus REGISTRY still holds the previous incarnation's collectors.
+        # Metrics stay disabled for this incarnation instead of crashing ingest.
+        _metrics_ready = True
+        logger.debug(
+            "KG metrics already registered by a previous module incarnation — "
+            "metrics disabled for this one"
+        )
 
 
 def _incr_events(event_type: str) -> None:

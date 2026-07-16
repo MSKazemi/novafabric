@@ -188,6 +188,43 @@ class TestEdges:
         assert rec is not None
         assert rec.backing_state is BackingState.CONTESTED
 
+    def test_dsse_wrapped_reperformance_is_unwrapped(self, tmp_path: Path) -> None:
+        """`nova evidence attest-replay` writes a DSSE envelope, not the raw
+        attestation — the resolver must read `match` from the in-toto predicate
+        instead of contesting with the misleading "match == ''" reason."""
+        import base64
+
+        cap = _capsule(tmp_path)
+        statement = {
+            "_type": "https://in-toto.io/Statement/v1",
+            "predicateType": "https://novafabric.io/reperformance/v0",
+            "subject": [{"name": f"run-capsule/{cap.name}", "digest": {"sha256": "0" * 64}}],
+            "predicate": {"run_id": cap.name, "match": "exact"},
+        }
+        envelope = {
+            "payloadType": "application/vnd.in-toto+json",
+            "payload": base64.b64encode(json.dumps(statement).encode()).decode(),
+            "signatures": [{"keyid": "k", "sig": "unchecked-here"}],
+        }
+        _write(cap / "attestations" / "reperformance.json", envelope)
+        case = SafetyCaseCompiler().build(cap, "clymer-generic-v0")
+        rec = case.get_claim("C-record-integrity")
+        assert rec is not None
+        assert rec.backing_state is BackingState.SUPPORTED
+
+    def test_dsse_with_garbage_payload_contests(self, tmp_path: Path) -> None:
+        cap = _capsule(tmp_path)
+        envelope = {
+            "payloadType": "application/vnd.in-toto+json",
+            "payload": "!!not-base64!!",
+            "signatures": [],
+        }
+        _write(cap / "attestations" / "reperformance.json", envelope)
+        case = SafetyCaseCompiler().build(cap, "clymer-generic-v0")
+        rec = case.get_claim("C-record-integrity")
+        assert rec is not None
+        assert rec.backing_state is BackingState.CONTESTED
+
     def test_eval_stored_ci_without_counts_used(self, tmp_path: Path) -> None:
         # no successes/sample_size -> the stored confidence_interval is used directly
         cap = _capsule(tmp_path)

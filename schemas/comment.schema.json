@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/comment.schema.json",
+  "$comment": "schema_version 0.1.0; governed by ADR-0121 (accepted 2026-07-13); tracks design/spec/capsule-comments-v0.md. Graduated from design/spec/schemas/comment.schema.json. One line of the OPTIONAL capsule file `comments.jsonl` (capsule/span/run/score subjects) or one registry note row (asset subjects, P3 planned); append-only, mirrors scores.jsonl (ADR-0099). A capsule without comments.jsonl remains valid. Experimental — not yet a frozen format.",
+  "title": "Comment",
+  "description": "Append-only human annotation on a capsule/span/run/score digest or an asset ref.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "comment_id",
+    "subject",
+    "subject_kind",
+    "author",
+    "body",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "comment_id": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 1
+    },
+    "subject_kind": {
+      "enum": [
+        "capsule",
+        "span",
+        "run",
+        "score",
+        "asset"
+      ]
+    },
+    "author": {
+      "type": "string",
+      "minLength": 1
+    },
+    "body": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "in_reply_to": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+        }
+      ]
+    },
+    "tags": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "tombstone": {
+      "type": "boolean"
+    },
+    "redaction_applied": {
+      "type": "boolean"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "subject_kind": {
+            "const": "asset"
+          }
+        },
+        "required": [
+          "subject_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "subject": {
+            "pattern": "^asset://[^/]+/[^@]+@.+$"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "subject_kind": {
+            "enum": [
+              "capsule",
+              "span",
+              "run",
+              "score"
+            ]
+          }
+        },
+        "required": [
+          "subject_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "subject": {
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      }
+    }
+  ]
+}

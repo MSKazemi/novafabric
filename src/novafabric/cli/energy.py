@@ -70,7 +70,15 @@ def verify(
     capsule_dir: Annotated[Path, typer.Argument(help="Run Capsule directory.")],
 ) -> None:
     """Verify receipt integrity + energy conservation (forgery-guard exit codes)."""
-    receipts = load_receipts(capsule_dir)
+    from pydantic import ValidationError  # noqa: PLC0415
+
+    try:
+        receipts = load_receipts(capsule_dir)
+    except ValidationError as exc:
+        # A receipt that no longer parses (e.g. an out-of-enum measurement_source
+        # written by tampering) is an integrity failure, not a crash.
+        typer.echo(f"FAIL: receipt does not conform to the EnergyReceipt schema: {exc}")
+        raise typer.Exit(_EXIT_INTEGRITY) from exc
     if not receipts:
         typer.echo("no energy-receipts.jsonl found")
         raise typer.Exit(_EXIT_OK)

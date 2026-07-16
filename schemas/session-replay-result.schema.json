@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/session-replay-result.schema.json",
+  "$comment": "Governed by ADR-0123 (accepted 2026-07-13); graduated from design/spec/schemas/ on the P1 implementation (2026-07-15). schema_version 0.1.0. Tracks design/spec/session-replay-v0.md. SessionReplayResult is an additive record over the per-capsule replay engine (ADR-0005); adds no new mode and no new top-level format. Delta vs the accepted draft: one additive divergence kind `replay_failed` (P1: the re-executed turn exited non-zero).",
+  "title": "SessionReplayResult",
+  "description": "One record per `nova session replay` \u2014 ordered per-turn results + whole-session verdict.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "session_id",
+    "session_manifest_hash",
+    "mode",
+    "on_divergence",
+    "whole_session_verdict",
+    "turns",
+    "started_at",
+    "finished_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_manifest_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "mode": {
+      "enum": [
+        "forensic",
+        "mocked",
+        "semantic",
+        "exact"
+      ]
+    },
+    "on_divergence": {
+      "enum": [
+        "stop",
+        "continue"
+      ]
+    },
+    "whole_session_verdict": {
+      "enum": [
+        "reproduced",
+        "diverged",
+        "refused",
+        "partial"
+      ]
+    },
+    "turns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sequence",
+          "source_capsule_id",
+          "effective_mode",
+          "status",
+          "replay_capsule_id",
+          "state_in_hash",
+          "state_out_hash",
+          "state_seam_match",
+          "divergence"
+        ],
+        "properties": {
+          "sequence": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "source_capsule_id": {
+            "type": "string",
+            "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+          },
+          "effective_mode": {
+            "enum": [
+              "forensic",
+              "mocked",
+              "semantic",
+              "exact"
+            ]
+          },
+          "status": {
+            "enum": [
+              "reproduced",
+              "diverged",
+              "refused",
+              "skipped"
+            ]
+          },
+          "replay_capsule_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+              }
+            ]
+          },
+          "state_in_hash": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              }
+            ]
+          },
+          "state_out_hash": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              }
+            ]
+          },
+          "state_seam_match": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "divergence": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "detail"
+                ],
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "semantic_below_threshold",
+                      "call_count",
+                      "state_seam",
+                      "precondition_refusal",
+                      "secret_gate",
+                      "replay_failed"
+                    ]
+                  },
+                  "detail": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          },
+          "per_turn_attestation": {
+            "type": [
+              "object",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "continue_past_refusal": {
+      "type": "boolean"
+    },
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "to": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "whole_session_verdict",
+        "turn_verdicts",
+        "all_seams_matched",
+        "determinism_class",
+        "conditional"
+      ],
+      "properties": {
+        "whole_session_verdict": {
+          "type": "string"
+        },
+        "turn_verdicts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "sequence",
+              "status",
+              "state_seam_match"
+            ],
+            "properties": {
+              "sequence": {
+                "type": "integer"
+              },
+              "status": {
+                "type": "string"
+              },
+              "state_seam_match": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "all_seams_matched": {
+          "type": "boolean"
+        },
+        "determinism_class": {
+          "type": "string"
+        },
+        "conditional": {
+          "type": "boolean"
+        }
+      }
+    },
+    "max_cost_usd": {
+      "type": "number",
+      "minimum": 0
+    },
+    "total_cost_usd": {
+      "type": "number",
+      "minimum": 0
+    },
+    "notes": {
+      "type": "string"
+    }
+  }
+}

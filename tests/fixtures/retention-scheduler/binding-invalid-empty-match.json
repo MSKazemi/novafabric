@@ -1,0 +1,7 @@
+{
+  "id": "mifid-trade-5y",
+  "description": "MiFID II Art.16 \u2014 5y then defensible purge",
+  "match": {},
+  "window": "P1825D",
+  "action": "purge"
+}

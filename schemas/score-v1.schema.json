@@ -82,6 +82,11 @@
     "run_id": {
       "type": ["string", "null"],
       "description": "Optional ULID of the run/capsule this score belongs to."
+    },
+    "supersedes": {
+      "type": ["string", "null"],
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "description": "ADR-0119 (additive, optional): score_id of a prior record this score corrects. The prior record stays in the log unchanged; a correction is a new appended record."
     }
   }
 }

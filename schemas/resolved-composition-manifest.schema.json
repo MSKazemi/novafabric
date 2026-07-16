@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/resolved-composition-manifest.schema.json",
+  "$comment": "Experimental — governed by ADR-0115 (accepted 2026-07-13). Graduated from design/spec/schemas/ on first implementation; schema_version 0.1.0. Tracks design/spec/prompt-composition-v0.md.",
+  "title": "ResolvedCompositionManifest",
+  "description": "Flattened, content-addressed evidence of the entire transitive composition tree + final assembled prompt hash, frozen at capture.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "root",
+    "included",
+    "edges",
+    "assembled_prompt_hash",
+    "max_depth",
+    "resolved_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "root": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version",
+        "hash"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    },
+    "included": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "version",
+          "hash",
+          "depth"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "depth": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8
+          }
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "parent_hash",
+          "ref",
+          "resolved_version",
+          "resolved_hash"
+        ],
+        "properties": {
+          "parent_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "selector_kind": {
+            "enum": [
+              "version",
+              "label"
+            ]
+          },
+          "resolved_version": {
+            "type": "string"
+          },
+          "resolved_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      }
+    },
+    "assembled_prompt_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "max_depth": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 8
+    },
+    "resolved_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

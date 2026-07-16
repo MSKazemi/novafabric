@@ -1,0 +1,20 @@
+{
+  "schema_version": "0.1.0",
+  "root": {
+    "name": "simple",
+    "version": "v1",
+    "hash": "sha256:9c7a268e1e2c9683bd5f4ccbcb4273b5e03062b32a8476dc3eb9b450da81a2f5"
+  },
+  "included": [
+    {
+      "name": "simple",
+      "version": "v1",
+      "hash": "sha256:9c7a268e1e2c9683bd5f4ccbcb4273b5e03062b32a8476dc3eb9b450da81a2f5",
+      "depth": 0
+    }
+  ],
+  "edges": [],
+  "assembled_prompt_hash": "sha256:34553bbdce61d99ce50dd016e82518076fae85b6269fec21500a8ea3cb847f43",
+  "max_depth": 0,
+  "resolved_at": "2026-07-12T09:00:00.000Z"
+}

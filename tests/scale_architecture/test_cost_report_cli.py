@@ -58,8 +58,8 @@ SAMPLE_ROWS = [
 class TestCostReportMissingURL:
     def test_exits_with_error_when_url_not_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("NOVA_CLICKHOUSE_URL", raising=False)
-        # Typer single-command app: invoke without the command name
-        result = runner.invoke(app, [])
+        # `nova cost` grew a second command (estimate, ADR-0133); name report explicitly.
+        result = runner.invoke(app, ["report"])
         assert result.exit_code != 0
         assert "NOVA_CLICKHOUSE_URL" in result.output or "NOVA_CLICKHOUSE_URL" in (
             result.stderr or ""
@@ -76,7 +76,7 @@ class TestCostReportTableFormat:
         monkeypatch.setenv("NOVA_CLICKHOUSE_URL", "http://localhost:8123/nova")
 
         with _mock_query_cost_report(SAMPLE_ROWS):
-            result = runner.invoke(app, ["--format", "table"])
+            result = runner.invoke(app, ["report", "--format", "table"])
 
         assert result.exit_code == 0
         assert "gpt-4o" in result.output
@@ -86,7 +86,7 @@ class TestCostReportTableFormat:
         monkeypatch.setenv("NOVA_CLICKHOUSE_URL", "http://localhost:8123/nova")
 
         with _mock_query_cost_report(SAMPLE_ROWS):
-            result = runner.invoke(app, [])
+            result = runner.invoke(app, ["report"])
 
         assert result.exit_code == 0
         assert "model_id" in result.output
@@ -98,7 +98,7 @@ class TestCostReportTableFormat:
         monkeypatch.setenv("NOVA_CLICKHOUSE_URL", "http://localhost:8123/nova")
 
         with _mock_query_cost_report([]):
-            result = runner.invoke(app, [])
+            result = runner.invoke(app, ["report"])
 
         assert result.exit_code == 0
         assert "No cost data" in result.output
@@ -114,7 +114,7 @@ class TestCostReportJsonFormat:
         monkeypatch.setenv("NOVA_CLICKHOUSE_URL", "http://localhost:8123/nova")
 
         with _mock_query_cost_report(SAMPLE_ROWS):
-            result = runner.invoke(app, ["--format", "json"])
+            result = runner.invoke(app, ["report", "--format", "json"])
 
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -128,7 +128,7 @@ class TestCostReportJsonFormat:
         monkeypatch.setenv("NOVA_CLICKHOUSE_URL", "http://localhost:8123/nova")
 
         with _mock_query_cost_report([]):
-            result = runner.invoke(app, ["--format", "json"])
+            result = runner.invoke(app, ["report", "--format", "json"])
 
         assert result.exit_code == 0
         assert json.loads(result.output) == []
@@ -144,7 +144,7 @@ class TestCostReportCsvFormat:
         monkeypatch.setenv("NOVA_CLICKHOUSE_URL", "http://localhost:8123/nova")
 
         with _mock_query_cost_report(SAMPLE_ROWS):
-            result = runner.invoke(app, ["--format", "csv"])
+            result = runner.invoke(app, ["report", "--format", "csv"])
 
         assert result.exit_code == 0
         lines = result.output.strip().splitlines()
@@ -155,7 +155,7 @@ class TestCostReportCsvFormat:
         monkeypatch.setenv("NOVA_CLICKHOUSE_URL", "http://localhost:8123/nova")
 
         with _mock_query_cost_report(SAMPLE_ROWS):
-            result = runner.invoke(app, ["--format", "csv"])
+            result = runner.invoke(app, ["report", "--format", "csv"])
 
         assert result.exit_code == 0
         lines = result.output.strip().splitlines()
@@ -168,7 +168,7 @@ class TestCostReportCsvFormat:
         monkeypatch.setenv("NOVA_CLICKHOUSE_URL", "http://localhost:8123/nova")
 
         with _mock_query_cost_report([]):
-            result = runner.invoke(app, ["--format", "csv"])
+            result = runner.invoke(app, ["report", "--format", "csv"])
 
         assert result.exit_code == 0
         # Empty data produces empty string
@@ -187,7 +187,7 @@ class TestCostReportOptions:
         monkeypatch.setenv("NOVA_CLICKHOUSE_URL", "http://localhost:8123/nova")
 
         with _mock_query_cost_report([]) as mock_fn:
-            runner.invoke(app, ["--tenant", "acme"])
+            runner.invoke(app, ["report", "--tenant", "acme"])
 
         mock_fn.assert_called_once()
         assert mock_fn.call_args.kwargs.get("tenant_id") == "acme"
@@ -198,7 +198,7 @@ class TestCostReportOptions:
         monkeypatch.setenv("NOVA_CLICKHOUSE_URL", "http://localhost:8123/nova")
 
         with _mock_query_cost_report([]) as mock_fn:
-            runner.invoke(app, ["--since-days", "90"])
+            runner.invoke(app, ["report", "--since-days", "90"])
 
         mock_fn.assert_called_once()
         assert mock_fn.call_args.kwargs.get("since_days") == 90
@@ -208,5 +208,5 @@ class TestCostReportOptions:
     ) -> None:
         monkeypatch.setenv("NOVA_CLICKHOUSE_URL", "http://localhost:8123/nova")
 
-        result = runner.invoke(app, ["--format", "xml"])
+        result = runner.invoke(app, ["report", "--format", "xml"])
         assert result.exit_code != 0

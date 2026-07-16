@@ -1,0 +1,21 @@
+{
+  "schema_version": "0.1.0",
+  "asset_type": "prompt",
+  "prompt_id": "system-prompt",
+  "version": 3,
+  "content_hash": "md5:deadbeef",
+  "template": "You are a careful triage assistant. Given {user_query} and {context}, answer only from context.",
+  "variables": [
+    "context",
+    "user_query"
+  ],
+  "config": {
+    "model": "claude-family",
+    "temperature": 0.0,
+    "max_tokens": 1024
+  },
+  "commit_message": "Constrain answers to provided context; drop chattiness.",
+  "created_at": "2026-07-12T09:14:02.001Z",
+  "status": "validated",
+  "registry": "local"
+}

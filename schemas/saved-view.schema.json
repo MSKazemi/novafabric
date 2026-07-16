@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/saved-view.schema.json",
+  "$comment": "Accepted (ADR-0130, 2026-07-13); implemented experimental 2026-07-15. Graduated from design/spec/schemas/ \u2014 identity metadata changed only, contract unchanged. schema_version 0.1.0. Tracks design/spec/saved-views-v0.md. The saved-view ENVELOPE: a named, versioned file wrapping an ADR-0129 query object (carried by reference, kept opaque here). Data, not code; adds persistence/ergonomics, not query power. Stored locally under .novafabric/views/.",
+  "title": "SavedView",
+  "description": "A named, versioned query definition wrapping an ADR-0129 query object.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "view_id",
+    "name",
+    "query",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "view_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "query": {
+      "type": "object"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "description": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "created_by": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "updated_at": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "format": "date-time"
+        }
+      ]
+    },
+    "display": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "columns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "sort": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "field",
+                  "order"
+                ],
+                "properties": {
+                  "field": {
+                    "type": "string"
+                  },
+                  "order": {
+                    "enum": [
+                      "asc",
+                      "desc"
+                    ]
+                  }
+                }
+              }
+            },
+            "format": {
+              "enum": [
+                "table",
+                "json",
+                "csv"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

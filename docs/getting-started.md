@@ -63,7 +63,7 @@ Confirm the install:
 
 ```bash
 nova --version
-# novafabric 0.58.0
+# novafabric 0.59.0
 ```
 
 Both `nova` and `novafabric` are the same binary. The examples throughout this
@@ -75,9 +75,9 @@ guide use `nova`.
 > use — but handy if you want the directory tree in place up front. Re-running it
 > is safe; use `nova init --force` to regenerate the keypair.
 
-> **Maturity.** NovaFabric is in beta (v0.1–v0.9 shipped). Most surfaces work
-> today but carry `experimental` maturity: interfaces may change before the v1.0
-> schema freeze. On-disk formats are **not** frozen until v1.0. See
+> **Maturity.** NovaFabric is in beta (v0.59.0). Most surfaces work today but
+> carry `experimental` maturity: interfaces may change before the v1.0 schema
+> freeze. On-disk formats are **not** frozen until v1.0. See
 > [ROADMAP.md](../ROADMAP.md) for the sequencing.
 
 ---
@@ -431,14 +431,15 @@ See [User guide: export-evidence](user-guide.md#nova-export-evidence) for the
 full bundle layout and the offline verification procedure.
 
 > **Experimental — cryptographic sealing (NovaSeal).** Beyond ed25519 Evidence
-> Bundles, NovaFabric includes an **experimental, opt-in** sealing path
-> (`nova verify`, driven by an optional `~/.novafabric/novaseal.yaml`) exploring
-> DSSE ECDSA P-256 signatures, RFC 3161 trusted timestamps, and Merkle-log
-> inclusion. This is **preview / design-intent work (ADR-0041), not a stable
-> shipped guarantee** — the dedicated NovaSeal signing service, RFC-3161
-> timestamping, and WORM-backed retention at the seal layer are **PLANNED**. Do
-> not rely on it for production compliance yet. For portable proof that works
-> today, use the **Evidence Bundle** above. Sealing is fully opt-in: without a
+> Bundles, NovaFabric ships an **experimental, opt-in** in-process sealing core
+> (v0.10+): DSSE ECDSA P-256 signatures, best-effort RFC 3161 trusted
+> timestamps, and an append-only Merkle log, verified with `nova verify`
+> (`signature_ok` / `timestamp_ok` / `log_integrity_ok`), driven by an optional
+> `~/.novafabric/novaseal.yaml`. Its interfaces may change before the v1.0
+> schema freeze; the dedicated, hardened NovaSeal signing *service* (network
+> service, qualified timestamps, Sigstore-keyless by default — ADR-0041)
+> remains **planned**. For portable proof with the most stable surface today,
+> use the **Evidence Bundle** above. Sealing is fully opt-in: without a
 > `novaseal.yaml`, capture and export behave exactly as in Steps 2–8.
 
 ---
@@ -464,6 +465,10 @@ A few directions to explore:
 | Browse capsules in a local read-only web dashboard | [User guide: nova serve](user-guide.md#nova-serve-experimental) |
 | Hands-on tour of every capability (proxies, providers, KG, compliance) | [tutorials/feature-tour.md](tutorials/feature-tour.md) |
 | Prove supply-chain provenance & eval integrity (dataset cards, contamination checks, SLSA-for-ML, OTel export) | [feature tour §17](tutorials/feature-tour.md#17-prove-supply-chain-provenance--eval-integrity) |
+| Group runs into multi-turn sessions and replay them in order (experimental) | [CLI reference: nova session](cli-reference.md#nova-session-experimental-adr-0122) |
+| Version prompts as immutable registry assets + deployment labels (experimental) | [CLI reference: nova prompt](cli-reference.md#prompt-versioning-commands-experimental-adr-0112) |
+| Query cost / tokens / scores offline over your capsules (experimental) | [CLI reference: nova query](cli-reference.md#nova-query-experimental-adr-0129) |
+| Everything that shipped experimental in v0.59, in one list | [User guide: v0.59 summary](user-guide.md#what-shipped-experimental-in-v059) |
 | Why NovaFabric — plain-English value guide | [tutorials/why-novafabric.md](tutorials/why-novafabric.md) |
 | How capture works under the hood | [tutorials/how-capture-works.md](tutorials/how-capture-works.md) |
 | Capturing multi-agent systems | [tutorials/multi-agent-capture.md](tutorials/multi-agent-capture.md) |

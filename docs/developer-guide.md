@@ -61,6 +61,7 @@ If you are *using* the `nova` CLI rather than modifying it, start with
   - [Extending the Capsule Knowledge Graph](#extending-the-capsule-knowledge-graph)
   - [Extending CapsuleWatcher backends](#extending-capsulewatcher-backends)
   - [Registering a third-party eval suite adapter](#registering-a-third-party-eval-suite-adapter)
+  - [Writing a custom PII masker](#writing-a-custom-pii-masker-adr-0135--experimental) *(experimental)*
   - [Querying and extending PolicyStore](#querying-and-extending-policystore)
 - [Docs-honesty and maturity labels](#docs-honesty-and-maturity-labels)
 - [Where to go next](#where-to-go-next)
@@ -1165,6 +1166,82 @@ After `pip install -e .`, `nova eval list` will show the new suite. `nova eval r
 The built-in suites (GAIA, SWE-bench, AgentBench, MMLU, Smoke) ship as OCI-pinned
 containers and can gate promotion on regression via OPA/Rego — see the eval sections of
 [`docs/cli-reference.md`](cli-reference.md).
+
+## Writing a custom PII masker (ADR-0135) — experimental
+
+Capture-time redaction is extensible: operator-registered **maskers** run at
+capture **after** the built-in [ADR-0009](../design/adr/0009-secret-scanning.md)
+secret scanner and **before** the capsule is finalized. Built-ins always run and
+can never be disabled by a plugin. Use a masker for imperative masking logic that
+declarative regex packs cannot express — checksum-validated national IDs, internal
+case numbers, format-preserving tokenizers.
+
+A masker is a pure, deterministic, **offline** callable — no sockets, no capsule
+writes; it returns a value, the pipeline writes and proves:
+
+```python
+# my_package/maskers.py
+import re
+from novafabric.masking import UNCHANGED, MaskContext, MaskField
+
+class CaseIdMasker:
+    masker_id = "acme-case-id"      # stable identity, attributed in the proof
+    masker_version = "1"            # bump on behavior change
+    pattern_ids = ("acme-case-number",)
+
+    _RE = re.compile(r"ACME-CASE-\d+")
+
+    def mask(self, field: MaskField, value: str, context: MaskContext) -> str | object:
+        masked = self._RE.sub("[MASKED:acme-case-id]", value)
+        return UNCHANGED if masked == value else masked   # decline with UNCHANGED
+```
+
+Register it either as a `novafabric.maskers` entry point:
+
+```toml
+[project.entry-points."novafabric.maskers"]
+acme-case-id = "my_package.maskers:CaseIdMasker"
+```
+
+or by dotted import path in `.novafabric/masking.yaml` (auto-discovered by
+`nova capture`; override with `--masking-config PATH`):
+
+```yaml
+masking:
+  enabled: true
+  maskers:
+    - id: acme-case-id            # entry-point name or my_package.maskers:CaseIdMasker
+      version: "1"
+      timeout_ms: 50              # per-call budget; exceeding it fail-closes the field
+      max_input_bytes: 65536      # per-call input cap
+      on_error: redact            # redact (default) | drop — the fail-closed action
+      config:                     # opaque, surfaced as context.masker_config
+        prefix: "ACME-CASE"
+```
+
+Failure semantics (the contract your masker lives under):
+
+- **Built-ins first, always.** Your masker observes already-redacted markers; it can
+  never un-redact them.
+- **Fail-closed on secrets.** If your masker raises, times out, exceeds the input cap,
+  returns a non-string, or returns output still containing the raw value, the field is
+  redacted (or dropped, per `on_error`) and the failure is recorded in the proof's
+  `masker_errors[]`. The raw value is never written.
+- **Fail-safe for the workload.** A masker failure never crashes or blocks the captured
+  command; capture continues. A masker that cannot be *loaded*, however, aborts capture
+  before the workload starts — expected masking is never silently skipped.
+- **Every mask is evidence.** Each applied mask emits a `masker_findings[]` entry in
+  `redaction-proof.json` (`masker_id`, `pattern_id`, `target_ref`, `match_hash` of the
+  pre-mask bytes, `chain_position`); the proof stays hash-chained. An auditor can verify
+  a candidate value with `hash(candidate) == match_hash` without the capsule ever
+  holding the bytes.
+
+Reference implementation: `novafabric.masking.examples.EmailMasker` (registered as
+`novafabric-email`). Spec: `design/spec/pii-masking-pipeline-v0.md`; schemas:
+`schemas/masking-config.schema.json`, `schemas/masker-finding.schema.json`,
+`schemas/masker-error.schema.json`. ML-based PII detectors (e.g. Presidio) are **not**
+bundled — an external masker package may wrap one, but it must stay offline and clear
+the [ADR-0024](../design/adr/0024-dependency-license-policy.md) license audit.
 
 ## Querying and extending PolicyStore
 

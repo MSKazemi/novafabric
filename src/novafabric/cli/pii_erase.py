@@ -27,12 +27,14 @@ from typing import Optional
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 from novafabric.pii.dek import (
     ErasureDeferredReceipt,
     ErasureReceipt,
     open_dek_store,
 )
+from novafabric.pii.status import PIIStatusError, build_pii_status
 
 console = Console()
 
@@ -182,3 +184,108 @@ def erase_cmd(
 
     if output is None:
         sys.stdout.write(receipt_json + "\n")
+
+
+_DEK_STATE_STYLE = {"active": "green", "erased": "red", "unknown": "yellow"}
+
+
+@app.command("status")
+def status_cmd(
+    capsule: str = typer.Argument(
+        ...,
+        help="Capsule ID or path to a capsule directory.",
+    ),
+    capsule_dir: Optional[Path] = typer.Option(  # noqa: UP007
+        None,
+        "--capsule-dir",
+        exists=False,
+        file_okay=False,
+        dir_okay=True,
+        help=(
+            "Directory scanned for the capsule's redaction_manifest.json when a "
+            "bare capsule ID is given. Defaults to $NOVAFABRIC_HOME/capsules/ or "
+            "~/.novafabric/capsules/."
+        ),
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the status report as JSON instead of human-readable text.",
+    ),
+) -> None:
+    """Show PII encryption/erasure status for a capsule (read-only, ADR-0069).
+
+    Reports which fields are encrypted (from the capsule's redaction
+    manifest), which subjects have active DEKs, and which have been
+    crypto-shredded — correlated against $NOVAFABRIC_HOME/dek.db.
+    Subjects appear only as HMACs; no key material or plaintext PII is shown.
+
+    Requires NOVA_PII_PEPPER to correlate subjects to DEKs; without it,
+    per-subject DEK state is reported as 'unknown'. Never creates or
+    modifies dek.db. Local-first: no server required.
+
+    Scope: single capsule.
+
+    \b
+    Examples:
+      nova pii status 01HXAMPLECAPSULEID
+      nova pii status .novafabric/runs/01HX.../
+      nova pii status 01HXAMPLECAPSULEID --json
+      NOVA_PII_PEPPER=secret nova pii status 01HXAMPLECAPSULEID
+    """
+    try:
+        report = build_pii_status(capsule, capsule_dir=capsule_dir)
+    except PIIStatusError as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    if json_output:
+        sys.stdout.write(report.model_dump_json(indent=2) + "\n")
+        return
+
+    console.print(f"[bold]Capsule:[/bold] {report.capsule_id}")
+    if report.capsule_dir:
+        console.print(f"  dir: {report.capsule_dir}", markup=False, highlight=False)
+    if report.manifest_present:
+        console.print(
+            f"  manifest: present — {report.encrypted_field_count} encrypted PII field(s)"
+        )
+    else:
+        console.print("  manifest: not found — no PII fields recorded for this capsule")
+    dek_store_state = "present" if report.dek_store_present else "absent"
+    console.print(
+        f"  DEK store: {report.dek_store_path} ({dek_store_state})",
+        markup=False,
+        highlight=False,
+    )
+    if not report.pepper_available:
+        console.print(
+            "  [yellow]⚠[/yellow] NOVA_PII_PEPPER not set — "
+            "per-subject DEK state is 'unknown'"
+        )
+
+    if report.subjects:
+        console.print("[bold]Subjects:[/bold]")
+        for subject in report.subjects:
+            style = _DEK_STATE_STYLE[subject.dek_state]
+            created = (
+                f" (DEK created {subject.dek_created_at.isoformat()})"
+                if subject.dek_created_at is not None
+                else ""
+            )
+            rules = escape(", ".join(subject.detection_rule_ids))
+            console.print(
+                f"  {escape(subject.subject_id_hmac[:23])}… — "
+                f"[{style}]{subject.dek_state}[/{style}]{created} — "
+                f"{subject.field_count} field(s): {rules}",
+                highlight=False,
+            )
+    if report.fields:
+        console.print("[bold]Encrypted fields:[/bold]")
+        for field in report.fields:
+            console.print(
+                f"  {field.field_path} — {field.detection_rule_id} "
+                f"(redacted {field.redacted_at_utc})",
+                markup=False,
+                highlight=False,
+            )

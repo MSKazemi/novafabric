@@ -27,6 +27,7 @@ eval_app = typer.Typer(
 # + evidence-grade scores. Additive nested groups — `nova eval card …` / `nova eval score …`.
 from novafabric.cli.eval_card import card_app, score_app  # noqa: E402
 from novafabric.cli.eval_contamination import contamination_check_cmd  # noqa: E402
+from novafabric.cli.eval_interop import export_inspect_cmd, import_inspect_cmd  # noqa: E402
 from novafabric.cli.eval_offline import offline_cmd  # noqa: E402
 
 eval_app.add_typer(card_app, name="card")
@@ -34,6 +35,9 @@ eval_app.add_typer(score_app, name="score")
 eval_app.command("offline")(offline_cmd)
 # NF-028 (ADR-0108): benchmark-contamination flag over dataset_provenance facets.
 eval_app.command("contamination-check")(contamination_check_cmd)
+# NF-024 (ADR-0108): Inspect-AI eval-log interop (score-level bridge).
+eval_app.command("import-inspect")(import_inspect_cmd)
+eval_app.command("export-inspect")(export_inspect_cmd)
 
 
 @eval_app.command("agent")

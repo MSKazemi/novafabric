@@ -59,6 +59,20 @@ class DataSubjectDEK(BaseModel):
     model_config = {"frozen": True}
 
 
+class DEKSubjectRecord(BaseModel):
+    """Key-free view of a DEK row — subject identity and creation time only.
+
+    Used by read-only status reporting (``nova pii status``).  Deliberately
+    excludes ``dek_hex`` so key material never leaves the store for queries.
+    """
+
+    subject_id: str = Field(..., description="Data subject identifier (opaque string)")
+    tenant_id: str = Field(default="default", description="Tenant namespace")
+    created_at: datetime = Field(..., description="UTC timestamp of key creation")
+
+    model_config = {"frozen": True}
+
+
 class ErasureReceipt(BaseModel):
     """Confirmation that a DEK has been destroyed (GDPR Art.17 erasure complete)."""
 
@@ -243,6 +257,28 @@ class DEKStore:
             dek_hex=row[2],
             created_at=datetime.fromisoformat(row[3]),
         )
+
+    def list_subjects(self) -> list[DEKSubjectRecord]:
+        """Return all subjects with an active (non-erased) DEK, without key material.
+
+        Read-only.  Erased subjects do not appear (their rows are deleted by
+        :meth:`erase_subject`).
+
+        Returns:
+            List of :class:`DEKSubjectRecord` ordered by ``subject_id``.
+        """
+        cur = self._conn.execute(
+            "SELECT subject_id, tenant_id, created_at "
+            "FROM data_subject_deks ORDER BY subject_id",
+        )
+        return [
+            DEKSubjectRecord(
+                subject_id=row[0],
+                tenant_id=row[1],
+                created_at=datetime.fromisoformat(row[2]),
+            )
+            for row in cur.fetchall()
+        ]
 
     def erase_subject(
         self,

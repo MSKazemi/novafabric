@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.io/schemas/masking-config.schema.json",
+  "$comment": "schema_version 0.1.0; tracks design/spec/pii-masking-pipeline-v0.md (ADR-0135, accepted 2026-07-13; implementation experimental). Additive, opt-in, offline, Tier-A plugin point layered AFTER the built-in ADR-0009 scanners; extends redaction-proof.json. Absent config => ADR-0009 behavior unchanged. Maskers are pure/deterministic/offline; raw value never stored.",
+  "title": "MaskingConfig",
+  "description": ".novafabric/masking.yaml — the optional masking pipeline configuration.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "masking"
+  ],
+  "properties": {
+    "masking": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maskers"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "maskers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "version": {
+                "type": "string"
+              },
+              "timeout_ms": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "max_input_bytes": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "on_error": {
+                "enum": [
+                  "redact",
+                  "drop"
+                ]
+              },
+              "config": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

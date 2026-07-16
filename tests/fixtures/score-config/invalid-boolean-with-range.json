@@ -1,0 +1,13 @@
+{
+  "config_id": "01JABCF1SN4YZ2K7N9DPBYK2WX",
+  "name": "grounded",
+  "value_type": "boolean",
+  "description": "True iff every claim is supported.",
+  "version": 1,
+  "content_digest": "sha256:a12ac37370b93b546d1ac36a7c8a4cdbdf7c0b6e49cabcb694be420c785be90a",
+  "created_at": "2026-07-12T09:02:00.000000Z",
+  "range": {
+    "min": 0,
+    "max": 1
+  }
+}
