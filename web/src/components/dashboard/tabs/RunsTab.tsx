@@ -83,6 +83,7 @@ export default function RunsTab({
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<RunSummary | null>(null);
   const [capsule, setCapsule] = useState<FullCapsule | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [actionTarget, setActionTarget] = useState<{ run: RunSummary; action: RunAction } | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [search, setSearch] = useState('');
@@ -232,8 +233,12 @@ export default function RunsTab({
   }, [runs]);
 
   useEffect(() => {
-    if (!selected) { setCapsule(null); return; }
-    api.getRun(selected.run_id).then(setCapsule).catch(e => setError((e as Error).message));
+    if (!selected) { setCapsule(null); setDetailError(null); return; }
+    setCapsule(null);
+    setDetailError(null);
+    api.getRun(selected.run_id)
+      .then(setCapsule)
+      .catch(e => setDetailError((e as Error).message));
   }, [selected]);
 
   // Keyboard: j/k to move selection in the run list
@@ -833,9 +838,22 @@ export default function RunsTab({
             </p>
           </div>
         )}
-        {selected && !capsule && <Loading />}
+        {selected && !capsule && !detailError && <Loading />}
+        {selected && !capsule && detailError && (
+          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-8 text-center h-full flex items-center justify-center">
+            <p className="text-sm text-[var(--color-text-muted)]">
+              Could not load run detail: {detailError}
+            </p>
+          </div>
+        )}
         {selected && capsule && (
           <div>
+            {capsule.capsule_available === false && (
+              <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-[var(--color-text-muted)]">
+                Capsule files are unavailable on disk for this run — showing indexed
+                metadata only (status, command, timings). Sub-file sections will be empty.
+              </div>
+            )}
             {/* Parent/Child hierarchy (DD-1) */}
             {(() => {
               const manifest = capsule.manifest as Record<string, unknown>;

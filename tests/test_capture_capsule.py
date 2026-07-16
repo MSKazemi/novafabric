@@ -87,3 +87,19 @@ def test_replay_policy_validates(tmp_path: Path) -> None:
     from novafabric.capture.replay import minimal_replay_policy
 
     jsonschema.validate(minimal_replay_policy(), schema)
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "/", "..", ".", "a/b"])
+def test_writer_rejects_invalid_run_id(bad: str, tmp_path: Path) -> None:
+    """An empty/blank/path-like run_id must be rejected so capsule files can
+    never be written to the store root (base_dir / '' == base_dir)."""
+    with pytest.raises(ValueError, match="valid run_id"):
+        CapsuleWriter(run_id=bad, base_dir=tmp_path)
+
+
+def test_writer_empty_run_id_does_not_write_to_store_root(tmp_path: Path) -> None:
+    """Guard rejects before open(), so no jsonl files land at the store root."""
+    with pytest.raises(ValueError):
+        CapsuleWriter(run_id="", base_dir=tmp_path).open()
+    assert not (tmp_path / "model-calls.jsonl").exists()
+    assert not (tmp_path / "tool-calls.jsonl").exists()

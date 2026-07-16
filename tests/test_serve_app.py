@@ -1144,3 +1144,63 @@ def test_kg_entity_queue_stats_returns_ok(client: TestClient) -> None:
     data = res.json()
     assert data["ok"] is True
     assert "pending" in data
+
+
+# ---------- Run-detail graceful degrade (missing capsule on disk) ----------
+
+def test_get_run_missing_capsule_degrades_to_metadata(
+    capsule_dir: Path, empty_db: Path
+) -> None:
+    """A run indexed in runs_cache but with no capsule dir on disk returns a
+    degraded 200 payload (capsule_available=False) instead of a hard 404."""
+    from novafabric.registry.runs_cache import upsert_run
+    from novafabric.registry.store import get_connection, init_schema
+
+    conn = get_connection(empty_db)
+    init_schema(conn)
+    upsert_run(
+        conn,
+        {
+            "run_id": "01GHOST0000000000000000001",
+            "status": "success",
+            "created_at": "2026-07-16T09:31:00+00:00",
+            "finished_at": "2026-07-16T09:31:01+00:00",
+            "duration_ms": 759.0,
+            "exit_code": 0,
+            "command": ["python3", "-c", "print('hi')"],
+            "model_call_count": 0,
+            "tool_call_count": 0,
+            "mutating_tool_count": 0,
+            "novafabric_version": "0.60.0",
+            "capsule_path": "/data/capsules/01GHOST0000000000000000001",
+        },
+    )
+    conn.commit()
+    conn.close()
+
+    app = create_app(
+        token=VALID_TOKEN, capsule_dir=capsule_dir, db_path=empty_db, static_dir=None
+    )
+    with TestClient(app) as c:
+        res = c.get(
+            f"/api/runs/01GHOST0000000000000000001?token={VALID_TOKEN}",
+            headers=LOCALHOST_HEADERS,
+        )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["capsule_available"] is False
+    assert body["run_id"] == "01GHOST0000000000000000001"
+    assert body["manifest"]["status"] == "success"
+    assert body["manifest"]["command"] == ["python3", "-c", "print('hi')"]
+    assert body["trace"] == []
+    assert body["model_calls"] == []
+    assert body["outputs"] == []
+
+
+def test_get_run_unknown_and_uncached_still_404(client: TestClient) -> None:
+    """A run neither on disk nor in the index still returns 404."""
+    res = client.get(
+        f"/api/runs/01UNKNOWN000000000000000001?token={VALID_TOKEN}",
+        headers=LOCALHOST_HEADERS,
+    )
+    assert res.status_code == 404

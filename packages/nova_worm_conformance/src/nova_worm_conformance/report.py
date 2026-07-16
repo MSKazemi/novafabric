@@ -50,13 +50,31 @@ class ConformanceReport:
     passed: int
     failed: int
     records: list[TestRecord] = field(default_factory=list)
-    novaseal_signature: str | None = None  # Populated when --sign is used (FR-13)
+    # --- Signing block (FR-13). Populated by nova_worm_conformance.signing. ---
+    # ``novaseal_signature`` holds a REAL signature or None — never a bare hash.
+    signing_status: str = "unsigned"  # "signed" | "unsigned"
+    content_sha256: str | None = None  # honest SHA-256 digest of ``signable_bytes()``
+    signing_method: str | None = None  # e.g. "novaseal-ecdsa-p256" when truly signed
+    signing_detail: str | None = None  # human-readable note (e.g. why it is unsigned)
+    signing_cert: str | None = None  # base64 DER X.509 cert of the signer, when signed
+    novaseal_signature: str | None = None  # base64 real signature; None unless signed
+
+    # Fields excluded from the signed payload (a report cannot sign itself).
+    _SIGNING_FIELDS = (
+        "signing_status",
+        "content_sha256",
+        "signing_method",
+        "signing_detail",
+        "signing_cert",
+        "novaseal_signature",
+    )
 
     @property
     def all_passed(self) -> bool:
         return self.failed == 0
 
-    def to_dict(self) -> dict[str, Any]:
+    def body_dict(self) -> dict[str, Any]:
+        """Report content excluding the signing block (the payload that gets signed)."""
         return {
             "backend": self.backend,
             "endpoint": self.endpoint,
@@ -68,7 +86,6 @@ class ConformanceReport:
             "passed": self.passed,
             "failed": self.failed,
             "all_passed": self.all_passed,
-            "novaseal_signature": self.novaseal_signature,
             "records": [
                 {
                     "test_name": r.test_name,
@@ -84,6 +101,28 @@ class ConformanceReport:
                 for r in self.records
             ],
         }
+
+    def signable_bytes(self) -> bytes:
+        """Canonical bytes of the report body that a signature covers.
+
+        Deterministic (sorted keys) and independent of the signing block, so a
+        signature verifies against exactly what was signed.
+        """
+        return json.dumps(self.body_dict(), sort_keys=True, default=str).encode("utf-8")
+
+    def to_dict(self) -> dict[str, Any]:
+        d = self.body_dict()
+        d.update(
+            {
+                "signing_status": self.signing_status,
+                "content_sha256": self.content_sha256,
+                "signing_method": self.signing_method,
+                "signing_detail": self.signing_detail,
+                "signing_cert": self.signing_cert,
+                "novaseal_signature": self.novaseal_signature,
+            }
+        )
+        return d
 
     def to_json(self, indent: int = 2) -> str:
         return json.dumps(self.to_dict(), indent=indent, default=str)

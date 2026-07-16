@@ -32,8 +32,8 @@ from novafabric.server.config import ServerConfig  # noqa: E402
 @pytest.fixture
 def no_auth_client(tmp_path: Path) -> TestClient:
     """TestClient backed by a fresh SQLite DB with auth disabled (local mode)."""
-    cfg = ServerConfig(db_path=str(tmp_path / "auth-integ.db"))
-    # oidc.issuer_url is empty by default → auth disabled → every request is admin
+    # ADR-0184: anonymous admin now requires the explicit insecure opt-out.
+    cfg = ServerConfig(db_path=str(tmp_path / "auth-integ.db"), insecure_no_auth=True)
     app = create_app(cfg)
     return TestClient(app, raise_server_exceptions=False)
 

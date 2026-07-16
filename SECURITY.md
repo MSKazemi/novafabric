@@ -8,6 +8,40 @@ Use GitHub's [private vulnerability reporting](https://github.com/novafabric/nov
 
 We will acknowledge reports within 5 business days and aim to release a fix within 30 days for confirmed vulnerabilities.
 
+## Vulnerability response
+
+The severity-tiered targets below refine the general promise above. NovaFabric
+is a pre-1.0 open-source project maintained by a small team: these are
+**best-effort commitments, not a contractual SLA**. They cover both privately
+reported vulnerabilities (disclosure flow above — unchanged) and dependency
+CVEs surfaced by our automated scanners.
+
+Severity follows CVSS as assigned by the advisory source; triage may adjust it
+for NovaFabric's actual exposure (e.g. a vulnerable code path we never call).
+
+| Severity | Triage (acknowledge + assess) | Fix or mitigate |
+|----------|-------------------------------|-----------------|
+| Critical | 72 hours                      | 14 days         |
+| High     | 7 days                        | 30 days         |
+| Moderate | —                             | 90 days         |
+| Low      | best effort                   | best effort     |
+
+"Fix or mitigate" includes a documented workaround or a default-off toggle
+when a complete fix needs longer than the window.
+
+### Dependency scanning and waivers
+
+- CI runs [pip-audit](https://pypi.org/project/pip-audit/) against the locked
+  dependency set on every pull request and weekly; HIGH/CRITICAL findings
+  block merges.
+- Release container images are scanned with trivy; CRITICAL findings with an
+  available fix block the release.
+- Exceptions go through the checked-in waiver file
+  [`.pip-audit-waivers.toml`](.pip-audit-waivers.toml): every waiver carries
+  the vulnerability id, a written justification, and an **expiry date**. An
+  expired waiver fails CI by construction, so accepted risk is always
+  time-boxed and re-reviewed — waivers cannot rot into permanence.
+
 ## Supported versions
 
 | Version | Supported |

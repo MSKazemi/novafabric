@@ -27,6 +27,7 @@ eval_app = typer.Typer(
 # + evidence-grade scores. Additive nested groups — `nova eval card …` / `nova eval score …`.
 from novafabric.cli.eval_card import card_app, score_app  # noqa: E402
 from novafabric.cli.eval_contamination import contamination_check_cmd  # noqa: E402
+from novafabric.cli.eval_cost import eval_cost_cmd  # noqa: E402
 from novafabric.cli.eval_interop import export_inspect_cmd, import_inspect_cmd  # noqa: E402
 from novafabric.cli.eval_offline import offline_cmd  # noqa: E402
 
@@ -38,6 +39,8 @@ eval_app.command("contamination-check")(contamination_check_cmd)
 # NF-024 (ADR-0108): Inspect-AI eval-log interop (score-level bridge).
 eval_app.command("import-inspect")(import_inspect_cmd)
 eval_app.command("export-inspect")(export_inspect_cmd)
+# NF-229 (ADR-0154): self-reported eval-cost / compute disclosure.
+eval_app.command("cost")(eval_cost_cmd)
 
 
 @eval_app.command("agent")

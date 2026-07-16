@@ -186,6 +186,25 @@ def query_runs(
     return out, total
 
 
+def get_run_summary(
+    conn: sqlite3.Connection, run_id: str
+) -> dict[str, Any] | None:
+    """Return the cached summary for a single run, or ``None`` if absent.
+
+    Used by the run-detail endpoint to degrade gracefully when a capsule
+    directory is missing on disk but the run's metadata is still indexed.
+    """
+    row = conn.execute(
+        "SELECT * FROM runs_cache WHERE run_id = ?", (run_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    d = dict(row)
+    cmd = d.pop("command_json", None)
+    d["command"] = json.loads(cmd) if cmd else []
+    return d
+
+
 def count_cached_runs(conn: sqlite3.Connection) -> int:
     """Return total rows in runs_cache. Zero means the cache is unpopulated."""
     return int(conn.execute("SELECT COUNT(*) FROM runs_cache").fetchone()[0])

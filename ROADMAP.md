@@ -10,6 +10,9 @@
 
 | Version | Feature | Status |
 |---|---|---|
+| v0.61.0 | **Enterprise-readiness cohort (ADRs 0178–0189, first + second slices)** — secure-by-default local server auth (auto-generated bearer token; `--insecure-no-auth` explicit + audited; ADR-0184); organizations / workspaces / service accounts over the unchanged `tenant_id` RLS key (ADR-0178); SCIM Groups→role mapping with provenance-safe reconciliation + Group `PUT` + `nova server scim-map-group` (ADR-0139/0190); self-observability — Prometheus `/metrics`, `/livez`/`/readyz`, `/v0/version`, opt-in self-tracing (ADR-0182); `nova backup create/verify` + `nova restore` with DSSE-signed manifests, pg profile, crypto-shred replay (ADR-0181); `nova support-bundle` allowlist-only diagnostics (ADR-0187); in-process rate limiting + storage quotas, default off (ADR-0179); opt-in envelope encryption at rest, KMS-wrapped per-object DEKs, encrypt-before-WORM (ADR-0185); blocking pip-audit gate + Dependabot + trivy + CVE SLAs (ADR-0186); RFC 9745/8594 deprecation/sunset mechanism + register + drift gate (ADR-0188); HA single-writer active-passive posture + expand-contract N/N+1 migration release gate (ADR-0180); serve→server consolidation begun with ratcheting route guard (ADR-0183); trust surfaces `nova merkle-tree`/`trust-radar`/`redaction-xray`/`passport` (ADRs 0172/0173/0174/0149); WORM-report signing honesty (backlog A5). Security-Architect review remains a pre-production blocking condition for 0178/0184/0185/0186. | **experimental** |
+| v0.60.0 | **Full-CLI dashboard + streaming object store + PROV-N + OTLP/protobuf** — CommandsTab covers the complete `nova` CLI via a generated, CI-guarded command registry (copy-only builder, ADR-0027 Layer C); `WormAdapter.iter_objects` streaming listing + bounded-memory disaster-recovery rebuild (ADR-0175); `nova lineage export-prov --format prov-n` W3C PROV-N export (ADR-0176); OTLP/protobuf trace ingest on `POST /api/otlp/v1/traces` with the `novafabric[otlp]` extra (ADR-0177); DuckDB `query_lineage_summary` true multi-hop blast radius (cycle-safe recursive CTE); feature-tour §22–25 + `examples/prompt-and-analytics/`. | **experimental** |
+| v0.59.0 | **Observability-parity cohort first slices (ADRs 0112–0141) + interop & forensics** — prompt lifecycle (immutable content-addressed prompt registry, composition, deployment labels), typed score configs + annotation queues + external score API + capsule comments + experiment harness, session capsules + agent execution graphs + multi-modal capture + tool-schema validation, offline analytics (`nova query`/`view`/`trend`/`pricing`), retention sweeps + PII-masking pipeline + budget gates + lifecycle webhooks + SCIM provisioning + partial SAML SP, single-file HTML capsule viewer + signed batch export + OTLP/HTTP GenAI ingest + Inspect-AI import/export + intervention-verified failure attribution. | **experimental** |
 | v0.58.0 | **Container image + Helm chart publishing** — NovaFabric now ships to three install channels from the public repo, each cut from a single `v*` tag: a multi-arch (`amd64`+`arm64`) runtime image to **GHCR** (`ghcr.io/novafabric/novafabric`, OIDC — no stored secret) with an optional Docker Hub mirror (`kazemi/novafabric`, gated on `DOCKERHUB_TOKEN`), and a first-party **Helm chart** (`deploy/helm/novafabric/`, `nova serve` + Postgres, non-root defaults) packaged as an OCI artifact to `oci://ghcr.io/novafabric/charts`. All publish jobs guarded to the public repo. No package/CLI/schema/API change. | **works today** |
 | v0.57.0 | **Web — search & AI-crawler visibility pass** — the marketing site (`novafabric.ai`) gains the discoverability surface it lacked: a build-time `sitemap` (`@astrojs/sitemap`), `SoftwareApplication`/`Organization`/`Offer` JSON-LD structured data on the landing page (only page-visible facts asserted), a `robots.txt` with an explicit answer-engine crawler allowlist (`OAI-SearchBot`, `ChatGPT-User`, `Claude-SearchBot`, `Claude-User`, `PerplexityBot`, …), and an `llms.txt`. Website-only — no package/CLI/schema/API change. | **works today** |
 | v0.56.3 | **App-wide bug audit — 10 confirmed defects fixed** — replay `semantic`/`exact` read the wrong record keys (similarity always 1.0 / never exact-eligible); lineage `blast_radius`/`provenance`/`replay_chain` recursive CTEs lacked cycle guards (hang on cyclic graphs); Merkle `verify_inclusion_proof` ignored `tree_size` (phantom-index soundness gap); `/topology/stream` WebSocket bypassed token + host auth; 5 KG endpoints leaked SQLite connections; `scan-secrets` 500'd on an unknown severity; diff crashed on an `outputs/` subdirectory; NIST-RMF + GDPR-RoPA read wrong (underscored) filenames/schema so present evidence read as missing. Regression tests added. Documented-but-unchanged v0.1 limits (timestamp degrade-tolerance, SoD bypass allowlist, daemon fork races) noted in CHANGELOG. | **experimental** |
@@ -444,6 +447,28 @@ See [Storage Architecture](design/architecture/cluster-scale.md#production-stora
 
 ---
 
+## Trust-surface visualizations (ADR-0172/0173/0174)
+
+**Shipped experimental (2026-07):**
+- the **data/CLI half** of the Evidence Provenance Merkle proof tree (ADR-0172, feature F-04) —
+  a pure read-only `merkle_layers()` in `trust/novaseal/merkle.py` (enumerates tree layers using
+  the canonical `_compute_root` rule; a test locks `layers[-1] == [root]`), `trust/merkle_view.py`
+  (`build_proof_tree` → `leaf/intermediate/seal-root/tsr` node model; field-path labels only, hash
+  prefixes only, no value field), and `nova merkle-tree <doc.json>` (rich or `--json`; exit 1 on a
+  seal-root mismatch). No capsule-schema change.
+- the **data/CLI half** of the Trust Attestation Radar (ADR-0173, feature F-05) —
+  `novafabric.trust.radar.build_trust_radar` projects a capsule's seven verification guarantees
+  onto a fixed-axis radar model, and `nova trust-radar <verify.json>` renders it (rich or `--json`;
+  exit 1 only on a `critical` seal-integrity failure). Zero new dependency, no schema change.
+- the **data/CLI half** of the Redaction / Secret-scan X-Ray (ADR-0174, feature F-06) —
+  `novafabric.masking.xray.build_field_xray` projects per-field protection state
+  (`clear/redacted/secret_scrubbed/never_captured/unknown`) with a coverage meter, values never
+  carried (enforced at the type level); `nova redaction-xray <doc.json>` renders it. No schema change.
+
+**Future design:** the `web/` capsule-detail glyphs themselves — the interactive Merkle proof tree
+(ADR-0172, client-side verify-on-click), the trust radar SVG (ADR-0173), the redaction heat-overlay
+(ADR-0174).
+
 ## Future design — v1.x and beyond
 
 These are design intent only. No implementation scheduled.
@@ -463,6 +488,33 @@ These are design intent only. No implementation scheduled.
 | Cell-based fabric (cell scheduler, placement policy, nova rollout) | `architecture/cluster-scale.md` in `design/` |
 | Human impact ledger (`human_impact` capsule field, sampling policy) | `architecture/governance.md` in `design/` |
 | Jurisdiction policy (`jurisdiction` metadata, export_allowed enforcement) | `architecture/governance.md` in `design/` |
+
+### Enterprise readiness (2026-07 program)
+
+> **Status update 2026-07-16 (same day):** all twelve ADRs **accepted (BDFL direction)
+> with first slices shipped `experimental`** — see CHANGELOG [Unreleased] for exactly what
+> each slice contains and what honestly remains planned (`nova restore`, Postgres backup
+> profile, quota enforcement, store-wired encryption, cloud-KMS wrap, self-tracing, route
+> migration waves, SAML ACS still license-gated). Security-Architect review remains a
+> pre-production blocking condition for 0178/0184/0185/0186. The assessment, phasing, and
+> rationale live in
+> [`design/enterprise-readiness-plan-2026-07.md`](design/enterprise-readiness-plan-2026-07.md);
+> sign-off record in `design/governance/acceptance-record.md`.
+
+| Feature | ADR |
+|---|---|
+| Workspace/organization model + service accounts (tenant_id stays the sole RLS key) | ADR-0178 |
+| API rate limiting & quotas (in-process token bucket, 429/`Retry-After`) | ADR-0179 |
+| HA & upgrade posture (single-writer active-passive contract, expand-contract migrations) | ADR-0180 |
+| Backup/restore & DR tooling (`nova backup` / `nova restore`, keys excluded, shred-preserving) | ADR-0181 |
+| Self-observability (`/metrics`, `/livez`, `/readyz`, `/v0/version`, opt-in self-tracing) | ADR-0182 |
+| HTTP server consolidation (`server/` strategic, `serve/` frozen, strangler migration) | ADR-0183 |
+| Secure-by-default local server auth (no anonymous admin) | ADR-0184 |
+| Optional application-layer encryption at rest (KMS-wrapped DEKs) | ADR-0185 |
+| Dependency & vulnerability management (pip-audit gate, Dependabot, trivy, CVE SLAs) | ADR-0186 |
+| Support bundle (`nova support-bundle`, deny-by-default redaction) | ADR-0187 |
+| API deprecation & sunset policy (RFC 8594 headers, deprecation register) | ADR-0188 |
+| Entitlement stance (no license keys, no enforcement, no phone-home — ever) | ADR-0189 |
 
 ---
 

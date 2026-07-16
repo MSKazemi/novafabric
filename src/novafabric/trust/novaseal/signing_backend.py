@@ -13,6 +13,13 @@ Provides a ``SigningBackend`` Protocol and four implementations:
 All cloud backends store the X.509 certificate locally (the cloud KMS does not
 issue one automatically); operators must export/obtain the cert for their KMS key
 and point ``cert_path`` at it.
+
+ADR-0185 (experimental) adds an *additive, optional* KMS capability protocol,
+``KeyWrappingBackend`` (``wrap_key``/``unwrap_key``/``kek_ref``), used by
+``novafabric.trust.envelope_encryption`` for per-object DEK wrapping.  It is
+implemented by ``LocalSigningBackend`` (when given a ``kek_path``) and by the
+test-only ``MockKmsBackend``; the cloud wrap paths are planned and infra-gated.
+The ``SigningBackend`` Protocol itself is unchanged.
 """
 
 from __future__ import annotations
@@ -37,6 +44,63 @@ class SigningBackend(Protocol):
         ...
 
 
+@runtime_checkable
+class KeyWrappingBackend(Protocol):
+    """Additive, optional KMS capability: wrap/unwrap a data-encryption key.
+
+    Part of ADR-0185 (application-layer envelope encryption at rest,
+    **experimental**).  This is a *separate* capability protocol — the
+    ``SigningBackend`` Protocol above is deliberately untouched per ADR-0185,
+    and backends that do not implement wrapping simply cannot be selected for
+    envelope encryption (``novafabric.trust.envelope_encryption`` raises
+    ``NotImplementedError`` with a clear message for such backends).
+
+    Implemented today by :class:`LocalSigningBackend` (KEK from a local key
+    file, for dev/test parity) and :class:`MockKmsBackend` (in-memory KEK, for
+    tests).  The AWS/Azure/GCP wrap paths (KMS Encrypt/Decrypt, Key Vault
+    wrapKey/unwrapKey, Cloud KMS encrypt/decrypt) are **planned** and
+    infra-gated on live cloud credentials (ADR-0185 Bucket C).
+    """
+
+    def wrap_key(self, plaintext_key: bytes) -> bytes:
+        """Wrap (encrypt) *plaintext_key* under the backend's KEK; return opaque bytes."""
+        ...
+
+    def unwrap_key(self, wrapped_key: bytes) -> bytes:
+        """Unwrap *wrapped_key* (produced by :meth:`wrap_key`); return the plaintext key."""
+        ...
+
+    def kek_ref(self) -> str:
+        """Return a stable, non-secret identifier for the KEK (for audit/manifest use)."""
+        ...
+
+
+def _aes_gcm_wrap(kek: bytes, plaintext_key: bytes) -> bytes:
+    """Wrap *plaintext_key* with AES-256-GCM under *kek*: ``nonce(12) || ct+tag``."""
+    import os
+
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    nonce = os.urandom(12)
+    return nonce + AESGCM(kek).encrypt(nonce, plaintext_key, None)
+
+
+def _aes_gcm_unwrap(kek: bytes, wrapped_key: bytes) -> bytes:
+    """Reverse :func:`_aes_gcm_wrap`; raises ``cryptography.exceptions.InvalidTag`` on tamper."""
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    if len(wrapped_key) < 13:
+        raise ValueError("wrapped key too short: expected nonce(12) || ciphertext+tag")
+    return AESGCM(kek).decrypt(wrapped_key[:12], wrapped_key[12:], None)
+
+
+def _kek_fingerprint(kek: bytes) -> str:
+    """Return a short non-secret fingerprint of *kek* for ``kek_ref`` identifiers."""
+    import hashlib
+
+    return hashlib.sha256(kek).hexdigest()[:16]
+
+
 # ---------------------------------------------------------------------------
 # Local (PEM file) backend
 # ---------------------------------------------------------------------------
@@ -44,14 +108,24 @@ class SigningBackend(Protocol):
 class LocalSigningBackend:
     """Signs with a local ECDSA P-256 PEM private key and X.509 certificate.
 
+    Optionally implements the :class:`KeyWrappingBackend` capability (ADR-0185,
+    experimental) when *kek_path* is provided: the KEK is a 256-bit AES key
+    read from a local file (32 raw bytes, or 64 hex characters), used to wrap
+    per-object DEKs with AES-256-GCM.  For dev/test parity only — production
+    deployments should use a cloud-KMS-held KEK (planned, infra-gated).
+
     Args:
         key_path:  Path to the ECDSA P-256 PEM private key file.
         cert_path: Path to the PEM-encoded X.509 certificate.
+        kek_path:  Optional path to a local 256-bit KEK file (raw 32 bytes or
+                   64 hex chars).  Without it, ``wrap_key``/``unwrap_key``
+                   raise ``NotImplementedError``.
     """
 
-    def __init__(self, key_path: Path, cert_path: Path) -> None:
+    def __init__(self, key_path: Path, cert_path: Path, kek_path: Path | None = None) -> None:
         self._key_path = key_path
         self._cert_path = cert_path
+        self._kek_path = kek_path
 
     def sign_digest(self, digest: bytes) -> bytes:
         """Sign *digest* with ECDSA P-256 / SHA-256; return DER signature.
@@ -82,6 +156,76 @@ class LocalSigningBackend:
         pem = self._cert_path.read_bytes()
         cert = load_pem_x509_certificate(pem)
         return cert.public_bytes(serialization.Encoding.DER)
+
+    # -- KeyWrappingBackend capability (ADR-0185, experimental) --------------
+
+    def _load_kek(self) -> bytes:
+        if self._kek_path is None:
+            raise NotImplementedError(
+                "LocalSigningBackend was constructed without a kek_path, so it has no "
+                "KMS key-wrapping capability (wrap_key/unwrap_key). Pass kek_path= a "
+                "local 256-bit KEK file to enable envelope encryption (ADR-0185)."
+            )
+        raw = self._kek_path.read_bytes()
+        if len(raw) == 32:
+            return raw
+        text = raw.decode("ascii", errors="strict").strip() if len(raw) <= 66 else ""
+        if len(text) == 64:
+            return bytes.fromhex(text)
+        raise ValueError(
+            f"KEK file {self._kek_path} must contain exactly 32 raw bytes or 64 hex "
+            f"characters (got {len(raw)} bytes)"
+        )
+
+    def wrap_key(self, plaintext_key: bytes) -> bytes:
+        """Wrap *plaintext_key* with AES-256-GCM under the local file KEK."""
+        return _aes_gcm_wrap(self._load_kek(), plaintext_key)
+
+    def unwrap_key(self, wrapped_key: bytes) -> bytes:
+        """Unwrap a key previously wrapped by :meth:`wrap_key`."""
+        return _aes_gcm_unwrap(self._load_kek(), wrapped_key)
+
+    def kek_ref(self) -> str:
+        """Return a non-secret identifier for the local KEK (fingerprint, not path)."""
+        return f"local-kek:{_kek_fingerprint(self._load_kek())}"
+
+
+# ---------------------------------------------------------------------------
+# Mock KMS backend (tests / CI — ADR-0185 Bucket B)
+# ---------------------------------------------------------------------------
+
+class MockKmsBackend:
+    """In-memory KMS fake implementing the :class:`KeyWrappingBackend` capability.
+
+    For tests and CI only (ADR-0185 "Bucket B" verification split): a real
+    AES-256-GCM wrap/unwrap over an in-memory KEK, with no cloud SDK and no
+    filesystem state.  Never use in production — the KEK lives in process
+    memory and vanishes with the instance.
+
+    Args:
+        kek: Optional 32-byte KEK; a random one is generated when omitted.
+    """
+
+    def __init__(self, kek: bytes | None = None) -> None:
+        import os
+
+        if kek is None:
+            kek = os.urandom(32)
+        if len(kek) != 32:
+            raise ValueError(f"MockKmsBackend KEK must be 32 bytes, got {len(kek)}")
+        self._kek = kek
+
+    def wrap_key(self, plaintext_key: bytes) -> bytes:
+        """Wrap *plaintext_key* with AES-256-GCM under the in-memory KEK."""
+        return _aes_gcm_wrap(self._kek, plaintext_key)
+
+    def unwrap_key(self, wrapped_key: bytes) -> bytes:
+        """Unwrap a key previously wrapped by :meth:`wrap_key`."""
+        return _aes_gcm_unwrap(self._kek, wrapped_key)
+
+    def kek_ref(self) -> str:
+        """Return a non-secret identifier for the in-memory KEK."""
+        return f"mock-kms:{_kek_fingerprint(self._kek)}"
 
 
 # ---------------------------------------------------------------------------

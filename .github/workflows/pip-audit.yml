@@ -1,0 +1,96 @@
+name: pip-audit
+
+# Dependency vulnerability gate (ADR-0186). Audits the LOCKED dependency set
+# (uv.lock exported as a fully pinned requirements file) against the PyPA
+# advisory databases via pip-audit, then applies the severity + waiver gate
+# (scripts/pip_audit_gate.py):
+#
+#   - HIGH/CRITICAL findings (and findings whose severity cannot be
+#     determined — fail closed) BLOCK the job.
+#   - MODERATE/LOW findings report without blocking.
+#   - Exceptions go through .pip-audit-waivers.toml (id, justification,
+#     expiry); an EXPIRED waiver fails the job by construction.
+#
+# This extends — does not replace — Scorecard (posture) and CodeQL (our own
+# code): pip-audit scans what we consume.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly re-audit — newly published advisories must surface even when
+    # the lockfile has not changed. Tuesdays 06:30 UTC (Scorecard runs
+    # Mondays at the same time).
+    - cron: "30 6 * * 2"
+  # Allow a manual run from the Actions tab (e.g. to confirm a waiver).
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Cancel in-flight runs of the same ref when new commits land.
+concurrency:
+  group: pip-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: pip-audit (locked deps)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python (matches requires-python in pyproject.toml)
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Export the locked dependency set
+        # --all-extras: audit the full resolved environment (dev group
+        # included by default), not just top-level pins (ADR-0186).
+        # --no-emit-project: skip novafabric itself — it is what we ship,
+        # not what we consume, and pip-audit cannot look it up on PyPI.
+        # --no-hashes: pip-audit resolves via `pip --dry-run`, which may
+        # select a wheel uploaded after uv.lock recorded its hash set and
+        # then fail hash verification; versions are what get audited, and
+        # the hashes still gate real installs via uv.lock itself.
+        run: uv export --frozen --all-extras --no-emit-project --no-hashes -o requirements-audit.txt
+
+      - name: Run pip-audit against the locked set
+        # --no-deps: the export is already a complete pinned closure, so no
+        # resolution (and no package installation) is needed.
+        # pip-audit exits non-zero when it finds anything; the severity +
+        # waiver gate below decides what actually blocks, so findings are
+        # not a failure of THIS step — a missing/empty report is.
+        run: |
+          pipx run pip-audit -r requirements-audit.txt --no-deps \
+            --format json --output pip-audit-report.json \
+            || echo "pip-audit reported findings; the gate step decides below"
+          test -s pip-audit-report.json
+
+      - name: Severity + waiver gate
+        # Blocks on HIGH/CRITICAL (or undeterminable severity); an expired
+        # or malformed waiver in .pip-audit-waivers.toml also fails here.
+        run: |
+          python3 scripts/pip_audit_gate.py \
+            --report pip-audit-report.json \
+            --waivers .pip-audit-waivers.toml
+
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-${{ github.sha }}
+          path: pip-audit-report.json
+          retention-days: 90

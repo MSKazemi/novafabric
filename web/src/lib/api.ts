@@ -36,6 +36,9 @@ export interface CapsuleFileMeta {
 export interface FullCapsule {
   run_id: string;
   capsule_path: string;
+  /** False when the capsule directory is missing on disk and only indexed
+   *  metadata (manifest) is available — sub-file lists will be empty. */
+  capsule_available?: boolean;
   manifest: Record<string, unknown>;
   trace: Array<Record<string, unknown>>;
   model_calls: Array<Record<string, unknown>>;

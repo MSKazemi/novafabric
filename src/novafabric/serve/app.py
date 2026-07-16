@@ -20,7 +20,17 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, WebSocket, status
+from fastapi import (
+    Body,
+    Depends,
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    WebSocket,
+    status,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -43,6 +53,7 @@ from novafabric.serve.capsule_loader import (
     load_full_capsule,
     load_jsonl,
 )
+from novafabric.serve.routers.holds import build_holds_router
 
 logger = logging.getLogger(__name__)
 
@@ -216,12 +227,6 @@ class ExactReplayRequest(BaseModel):
 
 class RedactRequest(BaseModel):
     confirmed: bool = False
-
-
-class PlaceHoldRequest(BaseModel):
-    registry: str
-    reason: str
-    duration_days: int | None = None
 
 
 class RollbackRequest(BaseModel):
@@ -547,6 +552,43 @@ def create_app(
             "novaseal_configured": novaseal_configured,
             "schema_version": "0.1.0",
         }
+
+    # ---------- self-observability surface (ADR-0182, experimental) ----------
+    # /livez + /readyz probe endpoints (unauthenticated, like /api/health) and
+    # /metrics behind the existing serve token. /api/health above is unchanged
+    # as the compatibility alias. Helpers shared with the server app.
+    from novafabric.server.observability import (  # noqa: PLC0415
+        CHECK_SKIPPED,
+        check_migrations_sqlite,
+        check_sqlite_db,
+        install_http_metrics_middleware,
+        livez_payload,
+        maybe_http_metrics,
+        metrics_response,
+        readiness_response,
+    )
+
+    _http_metrics = maybe_http_metrics("serve")
+    if _http_metrics is not None:
+        app.state.http_metrics = _http_metrics
+        install_http_metrics_middleware(app, _http_metrics)
+
+    @app.get("/livez", include_in_schema=False)
+    async def livez() -> dict[str, str]:
+        return livez_payload()
+
+    @app.get("/readyz", include_in_schema=False)
+    async def readyz() -> JSONResponse:
+        return readiness_response({
+            "db": lambda: check_sqlite_db(db_path),
+            "migrations": lambda: check_migrations_sqlite(db_path),
+            # serve has no object-store configuration surface — spec: skipped.
+            "object_store": lambda: CHECK_SKIPPED,
+        })
+
+    @app.get("/metrics", include_in_schema=False, dependencies=[Depends(verify_token)])
+    async def metrics_endpoint() -> Response:
+        return metrics_response(_http_metrics)
 
     def _compute_stats() -> dict[str, Any]:
         """Compute fresh aggregate stats. May be called from background thread."""
@@ -937,9 +979,64 @@ def create_app(
             },
         )
 
+    def _run_metadata_only(run_id: str) -> dict[str, Any] | None:
+        """Degraded run-detail payload built from the runs_cache index.
+
+        Returned when the capsule directory is missing on disk but the run is
+        still indexed (e.g. metadata persisted while the capsule was not). Keeps
+        the same top-level shape as :func:`load_full_capsule` — with empty
+        sub-file lists and ``capsule_available: False`` — so the dashboard can
+        render the run's summary instead of hanging on a hard 404.
+        """
+        from novafabric.registry.runs_cache import get_run_summary  # noqa: PLC0415
+        from novafabric.registry.store import get_connection, init_schema  # noqa: PLC0415
+
+        conn = get_connection(db_path)
+        try:
+            init_schema(conn)
+            summary = get_run_summary(conn, run_id)
+        finally:
+            conn.close()
+        if summary is None:
+            return None
+        return {
+            "run_id": run_id,
+            "capsule_available": False,
+            "capsule_path": summary.get("capsule_path"),
+            "manifest": {
+                "run_id": run_id,
+                "status": summary.get("status"),
+                "created_at": summary.get("created_at"),
+                "finished_at": summary.get("finished_at"),
+                "duration_ms": summary.get("duration_ms"),
+                "exit_code": summary.get("exit_code"),
+                "command": summary.get("command"),
+                "model_call_count": summary.get("model_call_count"),
+                "tool_call_count": summary.get("tool_call_count"),
+                "mutating_tool_count": summary.get("mutating_tool_count"),
+                "novafabric_version": summary.get("novafabric_version"),
+            },
+            "trace": [],
+            "model_calls": [],
+            "tool_calls": [],
+            "lineage": [],
+            "assets": [],
+            "inputs": [],
+            "outputs": [],
+        }
+
     @app.get("/api/runs/{run_id}", dependencies=[Depends(verify_token)])
     async def get_run(run_id: str) -> dict[str, Any]:
-        cdir = _resolve_capsule(run_id, capsule_dir)
+        try:
+            cdir = _resolve_capsule(run_id, capsule_dir)
+        except HTTPException as exc:
+            # Capsule missing on disk — degrade to indexed metadata rather than
+            # leaving the dashboard stuck on "Loading…". Only for 404s.
+            if exc.status_code == 404:
+                degraded = _run_metadata_only(run_id)
+                if degraded is not None:
+                    return degraded
+            raise
         return load_full_capsule(cdir)
 
     @app.get("/api/runs/{run_id}/file/{filepath:path}", dependencies=[Depends(verify_token)])
@@ -1800,108 +1897,11 @@ def create_app(
         return {"count": len(entries), "entries": entries}
 
     # ---------- legal holds (ADR-0031) ----------
+    # Migrated to serve/routers/holds.py in the first ADR-0183 strangler wave.
+    # The router carries the same paths/auth/behavior; serve injects its
+    # shared-token dependency, server/ can mount it behind OIDC/RBAC.
 
-    def _holds_base() -> Path:
-        return capsule_dir.parent / "registries"
-
-    def _read_holds_file(registry: str) -> list[dict[str, Any]]:
-        path = _holds_base() / registry / "holds.jsonl"
-        if not path.exists():
-            return []
-        return [
-            json.loads(line)
-            for line in path.read_text().splitlines()
-            if line.strip()
-        ]
-
-    def _active_holds(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return [h for h in records if h.get("released_at") is None]
-
-    @app.get("/api/holds", dependencies=[Depends(verify_token)])
-    async def list_holds() -> dict[str, Any]:
-        base = _holds_base()
-        registries: list[dict[str, Any]] = []
-        total_active = 0
-        if base.exists():
-            for reg_dir in sorted(base.iterdir()):
-                if not reg_dir.is_dir():
-                    continue
-                all_records = _read_holds_file(reg_dir.name)
-                active = _active_holds(all_records)
-                total_active += len(active)
-                registries.append({"name": reg_dir.name, "holds": active})
-        return {"total_active": total_active, "registries": registries}
-
-    @app.post("/api/holds", dependencies=[Depends(verify_token)])
-    async def create_hold(body: PlaceHoldRequest = Body(...)) -> dict[str, Any]:
-        import uuid as _uuid
-        from datetime import datetime, timezone
-
-        for param, val in (("registry", body.registry),):
-            if "/" in val or ".." in val:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"invalid {param}: must not contain '/' or '..'",
-                )
-        if not body.registry.strip():
-            raise HTTPException(status_code=422, detail="registry must not be empty")
-        if not body.reason.strip():
-            raise HTTPException(status_code=422, detail="reason must not be empty")
-
-        hold_id = f"hold-{_uuid.uuid4().hex[:8]}"
-        path = _holds_base() / body.registry / "holds.jsonl"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        record: dict[str, Any] = {
-            "hold_id": hold_id,
-            "registry": body.registry,
-            "reason": body.reason,
-            "duration_days": body.duration_days,
-            "created_at": datetime.now(tz=timezone.utc).isoformat(),
-            "released_at": None,
-        }
-        with path.open("a") as f:
-            f.write(json.dumps(record) + "\n")
-        return {k: v for k, v in record.items() if k != "released_at"}
-
-    @app.post("/api/holds/{hold_id}/release", dependencies=[Depends(verify_token)])
-    async def release_hold(hold_id: str) -> dict[str, Any]:
-        import os as _os
-        from datetime import datetime, timezone
-
-        if "/" in hold_id or ".." in hold_id:
-            raise HTTPException(status_code=400, detail="invalid hold_id")
-
-        base = _holds_base()
-        if not base.exists():
-            raise HTTPException(status_code=404, detail=f"hold not found: {hold_id}")
-
-        for reg_dir in base.iterdir():
-            if not reg_dir.is_dir():
-                continue
-            holds_file = reg_dir / "holds.jsonl"
-            if not holds_file.exists():
-                continue
-            lines = holds_file.read_text().splitlines()
-            updated: list[str] = []
-            registry = reg_dir.name
-            released = False
-            for line in lines:
-                if not line.strip():
-                    continue
-                h = json.loads(line)
-                if h["hold_id"] == hold_id and h["released_at"] is None:
-                    h["released_at"] = datetime.now(tz=timezone.utc).isoformat()
-                    released = True
-                updated.append(json.dumps(h))
-            if released:
-                tmp = holds_file.with_suffix(".tmp")
-                tmp.write_text("\n".join(updated) + "\n")
-                _os.replace(tmp, holds_file)
-                return {"released": True, "hold_id": hold_id, "registry": registry}
-
-        raise HTTPException(
-            status_code=404, detail=f"hold not found or already released: {hold_id}"
-        )
+    app.include_router(build_holds_router(verify_token, capsule_dir=capsule_dir))
 
     # ---------- Layer B mutations (per ADR-0027 §1) ----------
     # Safe mutations only: registry writes, eval runs, evidence exports.

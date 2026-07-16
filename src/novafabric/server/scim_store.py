@@ -64,6 +64,23 @@ CREATE TABLE IF NOT EXISTS scim_audit_events (
     roles_after     TEXT NOT NULL,
     scim_request_id TEXT
 );
+CREATE TABLE IF NOT EXISTS scim_groups (
+    id            TEXT PRIMARY KEY,
+    display_name  TEXT NOT NULL,
+    external_id   TEXT,
+    created       TEXT NOT NULL,
+    last_modified TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS scim_group_members (
+    group_id TEXT NOT NULL,
+    user_id  TEXT NOT NULL,
+    PRIMARY KEY (group_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS scim_group_role_grants (
+    subject TEXT NOT NULL,   -- RBAC subject (userName) SCIM granted a role to
+    role    TEXT NOT NULL,
+    PRIMARY KEY (subject, role)
+);
 """
 
 #: The only attributes persisted for a filter query (least-surface subset).
@@ -272,6 +289,297 @@ def delete_user(user_id: str, *, db_path: Path | None = None) -> bool:
 # ---------------------------------------------------------------------------
 # Append-only provisioning audit log (ADR-0139 D5)
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# SCIM Groups (ADR-0139 D3) — storage + membership
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ScimGroup:
+    id: str
+    display_name: str
+    external_id: str | None
+    members: list[str]  # SCIM User ids
+    created: str
+    last_modified: str
+
+
+def _group_member_ids(conn: sqlite3.Connection, group_id: str) -> list[str]:
+    rows = conn.execute(
+        "SELECT user_id FROM scim_group_members WHERE group_id = ? ORDER BY user_id",
+        (group_id,),
+    ).fetchall()
+    return [r["user_id"] for r in rows]
+
+
+def create_group(
+    display_name: str,
+    *,
+    external_id: str | None = None,
+    member_ids: list[str] | None = None,
+    db_path: Path | None = None,
+) -> ScimGroup:
+    """Create a SCIM Group with an optional initial membership."""
+    group_id = new_ulid()
+    now = _now()
+    conn = _get_conn(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO scim_groups (id, display_name, external_id, created, last_modified)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (group_id, display_name, external_id, now, now),
+        )
+        for uid in member_ids or []:
+            conn.execute(
+                "INSERT OR IGNORE INTO scim_group_members (group_id, user_id) VALUES (?, ?)",
+                (group_id, uid),
+            )
+        conn.commit()
+        members = _group_member_ids(conn, group_id)
+    finally:
+        conn.close()
+    return ScimGroup(group_id, display_name, external_id, members, now, now)
+
+
+def get_group(group_id: str, *, db_path: Path | None = None) -> ScimGroup | None:
+    conn = _get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT * FROM scim_groups WHERE id = ?", (group_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        members = _group_member_ids(conn, group_id)
+    finally:
+        conn.close()
+    return ScimGroup(
+        row["id"], row["display_name"], row["external_id"], members,
+        row["created"], row["last_modified"],
+    )
+
+
+def list_groups(*, db_path: Path | None = None) -> list[ScimGroup]:
+    conn = _get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT * FROM scim_groups ORDER BY display_name"
+        ).fetchall()
+        return [
+            ScimGroup(
+                r["id"], r["display_name"], r["external_id"],
+                _group_member_ids(conn, r["id"]), r["created"], r["last_modified"],
+            )
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+def replace_group(
+    group_id: str,
+    *,
+    display_name: str,
+    external_id: str | None = None,
+    member_ids: list[str] | None = None,
+    db_path: Path | None = None,
+) -> ScimGroup | None:
+    """RFC 7644 §3.5.1 full replace: displayName, externalId and membership.
+
+    All mutations happen in one transaction (single connection, one commit), so
+    a PUT never leaves a group half-replaced. Returns the updated group, or
+    None if *group_id* does not exist (nothing is mutated in that case).
+    """
+    now = _now()
+    conn = _get_conn(db_path)
+    try:
+        cursor = conn.execute(
+            "UPDATE scim_groups SET display_name = ?, external_id = ?,"
+            " last_modified = ? WHERE id = ?",
+            (display_name, external_id, now, group_id),
+        )
+        if cursor.rowcount == 0:
+            conn.rollback()
+            return None
+        conn.execute(
+            "DELETE FROM scim_group_members WHERE group_id = ?", (group_id,)
+        )
+        for uid in member_ids or []:
+            conn.execute(
+                "INSERT OR IGNORE INTO scim_group_members (group_id, user_id) VALUES (?, ?)",
+                (group_id, uid),
+            )
+        conn.commit()
+        members = _group_member_ids(conn, group_id)
+        row = conn.execute(
+            "SELECT created FROM scim_groups WHERE id = ?", (group_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    return ScimGroup(group_id, display_name, external_id, members, row["created"], now)
+
+
+def add_group_member(group_id: str, user_id: str, *, db_path: Path | None = None) -> None:
+    conn = _get_conn(db_path)
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO scim_group_members (group_id, user_id) VALUES (?, ?)",
+            (group_id, user_id),
+        )
+        conn.execute(
+            "UPDATE scim_groups SET last_modified = ? WHERE id = ?", (_now(), group_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def remove_group_member(group_id: str, user_id: str, *, db_path: Path | None = None) -> None:
+    conn = _get_conn(db_path)
+    try:
+        conn.execute(
+            "DELETE FROM scim_group_members WHERE group_id = ? AND user_id = ?",
+            (group_id, user_id),
+        )
+        conn.execute(
+            "UPDATE scim_groups SET last_modified = ? WHERE id = ?", (_now(), group_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_group(group_id: str, *, db_path: Path | None = None) -> bool:
+    conn = _get_conn(db_path)
+    try:
+        cur = conn.execute("DELETE FROM scim_groups WHERE id = ?", (group_id,))
+        conn.execute("DELETE FROM scim_group_members WHERE group_id = ?", (group_id,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def group_display_names_for_user(user_id: str, *, db_path: Path | None = None) -> list[str]:
+    """Return the displayNames of every group the given SCIM User id belongs to."""
+    conn = _get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT g.display_name FROM scim_groups g "
+            "JOIN scim_group_members m ON m.group_id = g.id WHERE m.user_id = ?",
+            (user_id,),
+        ).fetchall()
+        return [r["display_name"] for r in rows]
+    finally:
+        conn.close()
+
+
+#: ``assigned_by`` provenance marker for RBAC rows SCIM created (ADR-0190).
+SCIM_ROLE_SOURCE = "scim:group"
+
+
+@dataclass(frozen=True)
+class ReconcileResult:
+    """Effect of reconciling a subject's SCIM-owned roles to a desired set."""
+
+    before: set[str]
+    after: set[str]
+    granted: set[str]
+    revoked: set[str]
+
+
+def _scim_owned_roles(subject: str, *, db_path: Path | None) -> set[str]:
+    conn = _get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT role FROM scim_group_role_grants WHERE subject = ?", (subject,)
+        ).fetchall()
+        return {row["role"] for row in rows}
+    finally:
+        conn.close()
+
+
+def _record_scim_grant(subject: str, role: str, *, db_path: Path | None) -> None:
+    conn = _get_conn(db_path)
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO scim_group_role_grants (subject, role) VALUES (?, ?)",
+            (subject, role),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _drop_scim_grant(subject: str, role: str, *, db_path: Path | None) -> None:
+    conn = _get_conn(db_path)
+    try:
+        conn.execute(
+            "DELETE FROM scim_group_role_grants WHERE subject = ? AND role = ?",
+            (subject, role),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def reconcile_subject_roles(
+    subject: str,
+    desired_roles: set[str],
+    actor: str,
+    *,
+    scim_request_id: str | None = None,
+    db_path: Path | None = None,
+) -> ReconcileResult:
+    """Make the subject's SCIM-owned RBAC roles equal ``desired_roles`` (ADR-0190).
+
+    Only rows SCIM owns (``assigned_by == "scim:group"``) are ever granted or
+    revoked; a role an operator/OIDC already owns is never seized or removed. The
+    ADR-0060 last-admin guard fires on revoke (``LastAdminError`` propagates with
+    no partial mutation of that role). One append-only audit event is written when
+    the SCIM-owned role set changes.
+    """
+    from novafabric.server import rbac_store
+
+    prev = _scim_owned_roles(subject, db_path=db_path)
+    desired = set(desired_roles)
+    granted: set[str] = set()
+    revoked: set[str] = set()
+
+    for role in sorted(desired - prev):
+        existing = rbac_store.get_assigned_by(subject, role, db_path=db_path)
+        if existing is None:
+            rbac_store.assign_role(subject, role, SCIM_ROLE_SOURCE, db_path=db_path)
+            _record_scim_grant(subject, role, db_path=db_path)
+            granted.add(role)
+        elif existing == SCIM_ROLE_SOURCE:
+            _record_scim_grant(subject, role, db_path=db_path)
+            granted.add(role)
+        # else: an operator/OIDC grant owns this role — defer, do not seize it.
+
+    for role in sorted(prev - desired):
+        # revoke_role may raise LastAdminError; let it propagate before we drop
+        # the intent row, so a refused revoke leaves state unchanged.
+        if rbac_store.get_assigned_by(subject, role, db_path=db_path) == SCIM_ROLE_SOURCE:
+            rbac_store.revoke_role(subject, role, db_path=db_path)
+            revoked.add(role)
+        _drop_scim_grant(subject, role, db_path=db_path)
+
+    after = _scim_owned_roles(subject, db_path=db_path)
+    if after != prev:
+        append_audit_event(
+            actor=actor,
+            operation="group-role-remap",
+            resource_type="Group",
+            subject=subject,
+            roles_before=sorted(prev),
+            roles_after=sorted(after),
+            scim_request_id=scim_request_id,
+            db_path=db_path,
+        )
+
+    return ReconcileResult(before=prev, after=after, granted=granted, revoked=revoked)
 
 
 def append_audit_event(

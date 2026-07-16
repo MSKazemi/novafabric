@@ -9,9 +9,544 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.61.0] — 2026-07-16
+
+### Fixed
+- **Dashboard run-detail no longer hangs on "Loading…" when a run's capsule is missing on disk.**
+  `/api/runs/{run_id}` now degrades to indexed metadata (`capsule_available: false`, empty sub-file
+  lists) instead of a hard 404 when a run is in the index but its capsule directory is absent. The
+  dashboard renders the run summary with an "indexed metadata only" banner, and a failed detail
+  fetch now shows an error instead of an infinite spinner.
+- **Capture: `CapsuleWriter` rejects an empty/blank/path-like `run_id`** so capsule files
+  (`model-calls.jsonl`, `tool-calls.jsonl`, …) can never be written to the capsule store root
+  instead of an isolated `<run_id>/` subdir.
+
+### Added — enterprise-readiness second slices (same day, all experimental)
+- **`nova restore` + Postgres backup profile (ADR-0181).** Local-profile restore in the spec's
+  normative order: mandatory set verification, safe home preparation (non-empty refused; `--force`
+  moves data aside, never deletes), traversal-safe extraction, migrations, **crypto-shred replay**
+  (shredded data cannot be resurrected from an older backup), closing verification chain — restore
+  reports ok only when verification passes. `nova backup create --profile pg` adds a
+  `pg_dump --format=custom` member with strict DSN hygiene (never logged or stored); live-Postgres
+  verification stays infra-gated.
+- **Storage-quota enforcement (ADR-0179).** Warn-then-reject at the capsule-ingest routes:
+  soft limit → success + `X-NovaFabric-Quota-Warning` header + one audit event per window;
+  hard limit → 429 `quota_exceeded`. Usage derived from the capsule store with a TTL cache;
+  fully inert unless configured.
+- **Opt-in self-tracing + completed metric inventory (ADR-0182).** One OTLP/JSON span per HTTP
+  request into the deployment's **own** OTLP ingest (bounded queue, fire-and-forget, non-loopback
+  endpoints refused — explicitly not telemetry); `nova_ingest_events_total`,
+  `nova_readyz_check_status`, db-pool gauges; `/v0/version` reports the real flag.
+- **Opt-in store encryption (ADR-0185).** `NOVA_OBJECT_STORE_ENCRYPTION=1` +
+  `NOVA_OBJECT_STORE_KEK_PATH` wrap any WORM backend in an `EncryptingAdapter` — encrypt-before-WORM,
+  hashes address the ciphertext (verification never needs the KEK), pre-existing plaintext objects
+  stay readable, shredded objects fail closed.
+- **First serve→router migration wave (ADR-0183).** Legal-holds routes extracted to
+  `serve/routers/holds.py` with byte-identical behavior; inline-route freeze ratcheted 187→184.
+- **SCIM Group `PUT` + `scim-map-group --list` (ADR-0139).** RFC 7644 full-replace with ADR-0190
+  provenance-safe role reconciliation (last-admin refusal → SCIM 409); live-tenant conformance
+  stays partner-gated.
+- **Deprecation drift gate + bounded log collection (ADR-0188/0187).** CI test pins the runtime
+  register, `api/openapi.yaml`, and the docs register together; `nova support-bundle` gains a
+  windowed, tail-truncated, line-redacted `logs/` member (ruleset v2), honest README when no logs exist.
+- **THREAT_MODEL.md** gained the full "Enterprise-Readiness Surfaces — Threat Delta"
+  (S-12/S-13, T-13, R-6, I-14/I-15, D-13/D-14, E-11/E-12).
+
+### Added — enterprise-readiness first slices (ADRs 0178–0189, all experimental)
+- **Workspace/organization model + service accounts (ADR-0178).** Additive server-registry tier:
+  `/v0/orgs`, `/v0/workspaces` (+ memberships), `/v0/service-accounts` (offline ed25519 tokens
+  bound to `svc:<name>`, shown once, revoked on disable); effective roles = union of global
+  assignments and org/workspace memberships (global-only deployments short-circuit identically);
+  default org/workspace auto-bootstrap. `tenant_id` remains the sole RLS isolation key — the
+  Postgres metadata-store layer is untouched (invariant I1; Security Architect review required
+  before production).
+- **API rate limiting (ADR-0179).** In-process token-bucket middleware, default **off**:
+  per-class budgets (ingest 100/200, read 50/100, admin 10/20), 429 with the standard error
+  envelope + `Retry-After` + `X-RateLimit-*`; `/health` `/livez` `/readyz` `/metrics` never
+  limited; sustained limiting emits an audit record. Storage-quota config parses; enforcement planned.
+- **Self-observability surface (ADR-0182).** `/livez`, `/readyz` (itemized db/migrations/object-store
+  checks, 503 when degraded), reader-gated `/v0/version`, Prometheus `/metrics` on both apps
+  (route-template labels only, no tenant identifiers; gated by default). New optional dependency
+  `prometheus-client` in the `[server]` extra (Tier A).
+- **`nova backup create` / `nova backup verify` (ADR-0181, local profile).** Evidence-grade backup
+  sets: live-writer-safe SQLite snapshot, capsule dirs, secret-redacted config; DSSE-signed manifest
+  when a local NovaSeal profile is configured (honest `unsigned` otherwise); key material excluded
+  by a normative deny-filter. `nova restore` + Postgres profile remain planned.
+- **`nova support-bundle` (ADR-0187).** One-command, secret-safe diagnostics tarball: allowlisted
+  members only (doctor/versions/env-names/health/redacted-config) with an evidence-grade manifest
+  (SHA-256 per member, redaction ruleset v1); deny-by-default.
+- **Envelope encryption crypto layer (ADR-0185).** Per-object AES-256-GCM DEKs wrapped via a new
+  additive `KeyWrappingBackend` KMS capability (local KEK file + mock KMS); hashes over ciphertext
+  so verification never needs KMS access; `shred()` = single-key-deletion crypto-shred (ADR-0134
+  synergy). Not the default; store wiring + cloud-KMS wrap paths remain planned.
+- **API deprecation & sunset mechanism (ADR-0188).** RFC 9745 `Deprecation` / RFC 8594 `Sunset` /
+  `Link rel="deprecation"` header dependency plus a published (currently empty) deprecation
+  register in `docs/api-reference.md` and an `x-deprecation-policy` block in `api/openapi.yaml`.
+- **Server-consolidation route freeze (ADR-0183).** `tests/serve/test_route_freeze_guard.py` pins
+  serve inline routes (may only decrease); new endpoints land as routers.
+- **HA/upgrade posture (ADR-0180).** Expand-contract N/N+1 migration compatibility is now release
+  gate §0 in `docs/release-process.md`; single-writer active-passive contract documented.
+- **Entitlement stance (ADR-0189).** Governance decision: no license keys, no entitlement checks,
+  no phone-home — ever, in the open-source product.
+
+### Changed
+- **Secure-by-default local server auth (ADR-0184; breaking for the local default).** With OIDC
+  disabled, `nova server` now requires an auto-generated local bearer token (printed at startup,
+  stored at `~/.novafabric/.server-token` mode 0600, pinnable via `NOVAFABRIC_SERVER_TOKEN`);
+  requests without it get 401. The old anonymous-admin behavior requires the explicit
+  `--insecure-no-auth` opt-out (warned + audited) and refuses non-loopback binds without
+  `--i-know-this-is-public`. `/health` stays unauthenticated; OIDC deployments unchanged.
+
+### Security
+- **Dependency & vulnerability management (ADR-0186).** CI pip-audit gate over the locked set
+  (blocking HIGH/CRITICAL, time-boxed waiver file where expired waivers fail by construction),
+  weekly grouped Dependabot (uv, actions, npm, docker), trivy scan of the release image
+  (fixable-CRITICAL blocks), SECURITY.md "Vulnerability response" SLAs. Bumped pillow
+  12.2.0 → 12.3.0 in `uv.lock` (fixes 6 HIGH PYSEC advisories).
+
+### Documentation
+- **Enterprise-readiness program (design only; no behavior change).** New assessment +
+  phased design plan `design/enterprise-readiness-plan-2026-07.md` scoring every enterprise
+  dimension against v0.60.0 evidence; **twelve proposed ADRs 0178–0189** (workspace/org model +
+  service accounts, rate limiting & quotas, HA/upgrade posture, backup/restore & DR, self-observability,
+  HTTP server consolidation, secure-by-default local auth, opt-in encryption at rest, dependency &
+  vulnerability management, support bundle, API deprecation/sunset policy, entitlement stance);
+  four future-design specs (`design/spec/{workspace-org-model,rate-limiting-quotas,ops-observability-surface,backup-restore}-v0.md`);
+  two operator docs (`docs/ops/server-admin-guide.md`, `docs/ops/backup-restore.md` — works-today
+  procedures with clearly labelled planned sections); registries updated (ROADMAP future-design block,
+  backlog plan §2b, acceptance-record sign-off gates, implementation-status rows). Nothing is
+  implemented; every ADR is `proposed`.
+### Added
+- **Evidence Provenance Merkle proof tree — ADR-0172 data/CLI slice (experimental).** Three parts:
+  (1) a pure, read-only `merkle_layers(leaf_hashes)` in `novafabric.trust.novaseal.merkle` that
+  enumerates every tree layer using the exact `_compute_root` pairing/padding rule — a test locks
+  `merkle_layers(x)[-1] == [_compute_root(x)]`, so the projection can never diverge from the sealed
+  root, and the addition touches no signing/verification path (full seal suite still green);
+  (2) `novafabric.trust.merkle_view.build_proof_tree` → a `ProofTree` of `leaf/intermediate/
+  seal-root/tsr` nodes, verifying (or flagging `mismatch` on) the seal-root against a supplied
+  `sealed_root`. **Leaf labels are the field path only (ADR-0009); `ProofNode` has no value field**
+  and hashes are short prefixes only; (3) new read-only `nova merkle-tree <doc.json>` renders it
+  (rich or `--json`; exit 1 on a seal-root mismatch). No schema change — the Python/JSON half of
+  feature F-04 that feeds the `web/` interactive proof tree (which remains future design). Tests:
+  `tests/test_merkle_layers.py`, `tests/test_merkle_view.py`, `tests/test_cli_merkle_tree.py`.
+### Added
+- **Token usage-type breakdown projection — ADR-0132 D3/D4 (experimental).** New
+  `novafabric.cost.usage_breakdown` provides `UsageBreakdown` and `compute_usage_breakdown(usage_totals)`
+  — a descriptive projection over the persisted `usage_totals` manifest aggregate that reports the
+  **composition** of a capsule's token volume (each usage type's share of the counted tokens, including
+  `extra.<key>` entries), the cached-read ratio, and factual `has_reasoning_tokens` / `is_multimodal`
+  flags. It honours the ADR-0132 **absent ≠ zero** rule (an unreported type is absent, never zero-filled;
+  an uncomputable ratio is `None`) and reports **composition only** — no cost/dollars (pricing is
+  ADR-0133) and no efficient/within-budget/verdict field; `total_tokens` is excluded to avoid
+  double-counting. New `nova cost usage-breakdown <manifest|usage.json>` (rich or `--json`). Reuses the
+  capture-layer `NAMED_USAGE_FIELDS` (not a fork). Tests: `tests/test_usage_breakdown.py`,
+  `tests/test_cli_cost_usage_breakdown.py`.
+- **DSAR-SLA turnaround — ADR-0161 D7 / NF-298 first slice (experimental).** New
+  `novafabric.compliance.governance.dsar_sla` provides `DSARSLARecord` and `compute_dsar_sla(*,
+  request_open, fulfilled_at, deadline=None, subject_hmac=None)` — computes a subject-rights request's
+  turnaround from a controller-supplied request-open timestamp to fulfilment against a deadline
+  (default GDPR Art. 12(3), one month = 30d), a computation over recorded timestamps, not a workflow
+  clock. The output field is `met_deadline` — a factual `fulfilled_at <= deadline` comparison (same
+  shape as the incident clock's `overdue`), deliberately not named as a compliance verdict; there is no
+  within_sla/compliant/verdict field. Timestamps must be timezone-aware and `fulfilled_at` may not
+  precede `request_open`; keyed on the DSAR HMAC pseudonym, never a raw subject id. New `nova dsar sla
+  <document>` (rich or `--json`) exits `0` whether or not the deadline was met / `2` on bad input.
+  Sealing into a signed proof and sourcing `fulfilled_at` from `assemble_dsar` are follow-ons. Tests:
+  `tests/test_dsar_sla.py`, `tests/test_cli_dsar.py`.
+- **EU DORA major-ICT-incident profile — ADR-0159 D5 / NF-279 first slice (experimental).** New
+  `novafabric.compliance.incident.dora_export` provides `DoraIncidentReport` and
+  `build_dora_report(incident, *, now)` — a sibling of the shipped OECD-AIM / NIS2 profiles that renders
+  a **DRAFT** EU DORA (Reg. (EU) 2022/2554) major-ICT-incident report from a stored `Incident`, chaining
+  the three DORA stage deadlines from the incident anchor — `initial_notification` (24h from awareness)
+  → `intermediate_report` (+72h) → `final_report` (+1 month) — reusing the ADR-0088 `now`-injected clock
+  convention (never a second clock). It **transmits nothing** (`transmitted` forced `False`) and carries
+  no compliant/reported/verdict field; the tighter 4h-from-classification bound needs a `classified_at`
+  timestamp NovaFabric does not store, surfaced honestly in `completeness_summary`. New `nova incident
+  export <id> --format dora` — which, unlike `aim`/`nis2`, does **not** transition the incident (a draft
+  is not a filing). Tests: `tests/test_dora_export.py`, `tests/compliance/incident/test_incident_cli.py`.
+- **Drift root-cause linkage — ADR-0147 D5 / NF-157 first slice (experimental).** New
+  `novafabric.drift.root_cause` provides `RootCauseHypothesis` and `find_root_cause(baseline, drifted,
+  *, kinds)` — diffs the lineage provenance ancestors of a baseline run against a drifted run to the
+  model/prompt/tool/dataset ref that changed between them. The result is a **correlation, not a cause**:
+  `correlation_only` is forced `True`, `confidence` is a descriptive category (`no_change`/`sole_change`/
+  `multiple_changes`) not a grade, and there is no caused/cause_proven/verdict/blame field. New `nova
+  drift root-cause <document>` (rich or `--json`) exits `0` whether or not anything changed / `2` on bad
+  input; it only reads lineage, never writes. The collector reading the two runs' provenance from
+  `LineageStore.provenance` is a documented follow-on. Tests: `tests/test_drift_root_cause.py`,
+  `tests/test_cli_drift.py`.
+- **Wasted/failure-spend attribution — ADR-0146 D3 / NF-148 first slice (experimental).** New
+  `novafabric.cost.spend_attribution` provides `SpendAttribution` and `attribute_spend(runs, *,
+  productive_statuses)` — splits the cost a set of runs already recorded into **productive** spend (a
+  productive terminal status, default `success`) vs **wasted** spend (failure/aborted/other), with the
+  wasted fraction and a per-status breakdown. It **attributes, never re-captures**: descriptive
+  arithmetic over the USD each capsule already holds, with no verdict/threshold/quota/over_budget field
+  — whether the spend was acceptable is the operator's call. Negative cost is rejected; empty input is a
+  safe all-zero. New `nova cost attribute <document>` (rich or `--json`) exits `0` on render / `2` on
+  bad input. The NF-149 tenant split (metadata-store field) and NF-147 retry split (no tested facet)
+  stay gated; the cost-interceptor collector is a documented follow-on. Tests:
+  `tests/test_spend_attribution.py`, `tests/test_cli_cost_attribute.py`.
+- **Silent-failure detector — ADR-0147 D6 / NF-158 first slice (experimental).** New
+  `novafabric.drift.silent_failure` provides `SilentFailureRecord`/`SilentFailureReport` and
+  `detect_silent_failures(runs, *, threshold, success_statuses)` — flags a run that reported a
+  terminal **success** status yet whose independent quality signal fell **below** the threshold
+  (quality is higher-is-better; equal is not "below"). A run that already reported failure/aborted is
+  never a *silent* failure. `silent_failure` is a detector observation surfaced **for review**, not a
+  determination that the run failed — no failed/passed/quality_ok/verdict field, mirroring the D2
+  `drifted` fact. New `nova drift silent-failure <document>` (rich or `--json`) exits `0` whether or
+  not any run is flagged (evidence, not a gate) and `2` on bad input; drift/detectors.py untouched.
+  The collector reading status+score from sealed capsules is a documented follow-on. Tests:
+  `tests/test_silent_failure.py`, `tests/test_cli_drift.py`.
+- **Portable agent-passport projection — ADR-0149 / NF-179 first slice (experimental).** New
+  `novafabric.interop.passport` provides the `PassportDocument` model and `build_passport(...)` — a
+  pure projection (like the AIBOM/PROV-JSON exporters) that gathers the identity/lineage/AIBOM/card/
+  package/delegation refs NovaFabric already produces into one portable passport, verifiable offline
+  as `green` (all components present), `amber` (identity present but a component absent or **opaque**),
+  or `red` (identity anchor absent). It **never claims ancestry NovaFabric cannot attest** — an opaque
+  ancestor is honest `amber`, never `green` — and carries refs/digests only, never component bodies.
+  There is no valid/trusted/certified/verdict field beyond the status. New `nova passport issue`
+  (project, rich or `--json`) and `nova passport verify` (re-derive the verdict offline; exit `3` on a
+  tampered status). This first slice is an **unsigned** projection over supplied refs; capsule-loading
+  (`--asset`) and seal-path signing are documented follow-ons. Tests: `tests/interop/test_passport.py`,
+  `tests/cli/test_passport_cli.py`.
+- **Eval-cost / compute disclosure — ADR-0154 D2 / NF-229 first slice (experimental).** New
+  `novafabric.eval.integrity.cost` provides the `EvalCost` model and `build_eval_cost(...)` — the
+  eval-cost disclosure carrying `wall_seconds`, `token_in`, `token_out`, `usd_cost` (required,
+  validated non-negative) and optional `energy_wh` + `hardware_ref` for carbon-aware reporting. Per
+  NF-229 every value is **self-reported**: the record is always flagged `self_reported=True` (forced)
+  — NovaFabric discloses what the harness reported, it does not measure/verify/certify these figures,
+  and there is no measured/verified/verdict field. New read-only `nova eval cost <document>` renders it
+  (rich or `--json`; registered on the existing `eval` command group) and exits `2` on a negative
+  figure. No capsule mutation, no capture-path change; the capture-side facet populating
+  `facets.eval_cost` (additive/optional) is a documented follow-on. Tests: `tests/test_eval_cost.py`,
+  `tests/test_cli_eval_cost.py`.
+- **Governance-control attestation export — ADR-0170 D5 / NF-387 first slice (experimental).** New
+  `novafabric.compliance.export.control_attestation` provides `build_control_attestation(...)`, which
+  maps a declared control catalog to the **shipped** NovaFabric governance evidence present for a
+  capsule (`GOVERNANCE_EVIDENCE_KINDS`: sealing, HITL/oversight, eval-gated promotion, redaction),
+  marking each control `evidenced` (carrying the present ref), `not_evidenced` (an honest gap, never
+  fabricated), or `declared` (an operator assertion). It **presents** governance evidence for an
+  insurer to reason over — it does **not** certify a control is adequate (no certified/pass/verdict
+  field), and carries refs/digests only, never PII. It reads only already-shipped surfaces; the
+  `facets.risk_transfer` capture facet (ADR-0170 D1–D4) is **not** read and stays gated. New read-only
+  `nova export-control-attestation <document>` renders it (rich or `--json`). No capsule mutation, no
+  capture-path change. Tests: `tests/test_control_attestation.py`,
+  `tests/test_cli_export_control_attestation.py`.
+- **Tool-schema replay-impact analysis — ADR-0148 D2 / NF-165 first slice (experimental).** New
+  `novafabric.supplychain.toolschema.impact` provides `compute_schema_impact(...)`, which — given a
+  **new** schema for a tool — re-validates the **historical** captured tool-call payloads against it
+  and emits a `schema_impact` report naming exactly the runs that break (`broken_run_ids` with per-run
+  `failing_paths`, plus `checked` and the `new_schema_digest`). **Reuse, don't fork:** it imports the
+  shipped ADR-0128 validator core (`capture.schema_validation._check_target`) and does **not**
+  reimplement schema validation (a test asserts the import identity). The report is **evidence, not a
+  gate** — no verdict/promote/pass field. New read-only `nova toolschema impact <document> --new-schema
+  <path>` renders it (rich or `--json`) and exits `0` whether or not runs break (so it can run in CI
+  without blocking), `2` on bad input. No capsule mutation, no capture-path change; the collector that
+  gathers a tool's records across sealed capsules is a documented follow-on. Tests:
+  `tests/test_toolschema_impact.py`, `tests/test_cli_toolschema.py`.
+- **Offline drift detectors — ADR-0147 D2 / NF-151+NF-152 first slice (experimental).** New
+  `novafabric.drift.detectors` provides pure, **stdlib-only** two-sample statistics — `psi`
+  (Population Stability Index), `ks_statistic` (two-sample Kolmogorov–Smirnov, `[0,1]`), and
+  `jensen_shannon_distance` (categorical, base-2, `[0,1]`) — plus the `OutputDriftRecord` (NF-151) and
+  `BehavioralDriftRecord` (NF-152) models and `build_output_drift` / `build_behavioral_drift`. Drift is
+  computed **offline over supplied baseline/window samples at zero token cost, with no model
+  re-invocation**; `drifted` is a `value >= threshold` fact and the records carry **no**
+  remediate/promote/pass/verdict field (NovaFabric detects and evidences drift, never remediates or
+  gates here). Numeric dimensions use PSI/KS; a tool-call mix uses Jensen–Shannon. New read-only
+  `nova drift detect <document>` renders it (rich or `--json`) and exits `0` whether or not drift is
+  found (evidence, not a gate), `2` on bad input. No capsule mutation, no capture-path change; the
+  collector reading baseline/window samples from sealed capsules is a documented follow-on. Tests:
+  `tests/test_drift_detectors.py`, `tests/test_cli_drift.py`.
+- **Declared accessibility-conformance claim — ADR-0169 D5 / NF-380 (experimental).** New
+  `novafabric.compliance.export.public._accessibility` renders a **declared** accessibility claim over
+  a public disclosure (`build_accessibility_claim`): a `declared_standard` (a validated two-value enum
+  `wcag_2_2_aa` / `en_301_549_v4_1_1`), an `audit_digest` (a record-only reference to a *declared*
+  audit), and an `export_format_check` (asserts the export format, not the content, is
+  accessible-shaped). NovaFabric performs **no** accessibility audit itself; evidence *supports* the
+  claim and it is **never** a `compliance_guaranteed` — no compliance/audit-performed/verdict field.
+  New read-only `nova export-accessibility-claim <document> [--standard <s>]` renders it (rich or
+  `--json`; the flag overrides the document) and exits `2` on an absent/invalid standard. No capsule
+  mutation, no capture-path change. Tests: `tests/test_public_accessibility.py`,
+  `tests/test_cli_export_accessibility.py`. **This completes ADR-0169's clean-safe public-exporter
+  family — 9 of 10 slices shipped (NF-371–375, 377–380); NF-376 (prove-without-revealing) remains
+  future design, gated on ADR-0151.**
+- **Election/democratic-process disclosure — ADR-0169 D5 / NF-379 (experimental).** New
+  `novafabric.compliance.export.public._election` renders a content-provenance + agent-evidence record
+  for AI-generated political/civic content (`build_election_disclosure`): `content_ref`,
+  `provenance_receipt_ref` (binds an NF-094 / C2PA / SynthID receipt **by digest**), `disclosure_label`
+  (a validated three-value enum `ai_generated` / `ai_assisted` / `synthetic_media`), and `capsule_refs`
+  (order preserved). It records a *disclosure* and **adjudicates nothing** (I-4) — no
+  lawful/deceptive/election_regulated/verdict field; the label states what was recorded about
+  provenance, never a legal conclusion. New read-only `nova export-election-disclosure <document>`
+  renders it (rich or `--json`) and exits `2` on an invalid label. No capsule mutation, no
+  capture-path change. Tests: `tests/test_public_election.py`, `tests/test_cli_export_election.py`.
+- **Public-interest incident disclosure — ADR-0169 D5 / NF-378 (experimental).** New
+  `novafabric.compliance.export.public._public_incident` assembles a public-audience incident summary
+  from a sealed NF-269/ADR-0088 `Incident` (`build_public_incident_disclosure`): `incident_ref`,
+  `public_summary`, `affected_scope` (**aggregate — no per-subject data**), `remediation_ref`. Two
+  invariants enforced: it is always a **DRAFT, never transmitted** (`draft` forced `True`; NovaFabric
+  never publishes/notifies) and the summary/scope must be **aggregate** — a validator rejects any
+  per-subject raw identifier (SSN, email, …) so a public summary never becomes a per-subject
+  disclosure. It **adjudicates nothing** (no `compliance_guaranteed`/verdict field). New read-only
+  `nova export-public-incident <document>` renders it (rich or `--json`) and exits `2` on a per-subject
+  identifier. No capsule mutation, no capture-path change. Tests: `tests/test_public_incident.py`,
+  `tests/test_cli_export_public_incident.py`.
+- **Citizen-facing decision-explanation export — ADR-0169 D1 / NF-377 (experimental).** New
+  `novafabric.compliance.export.public._citizen` renders a plain-language, subject-facing record of
+  *meaningful information* (`build_citizen_explanation`): `decision_ref`, the recorded non-secret
+  `factors`, `human_involvement` (a validated three-value enum `solely_automated` /
+  `human_in_the_loop` / `human_reviewed`), `contest_channel_ref`, `logic_summary_ref`. Two honesty
+  constraints are enforced: it **never claims legal sufficiency** (no legal-sufficiency/verdict field)
+  and it **refuses** any `factor` exposing model internals (weights/logits/activations/…) or a raw
+  sensitive identifier (`disallowed_factor_content`) — such content never enters a public explanation.
+  New read-only `nova export-citizen-explanation <document>` renders it (rich or `--json`) and exits
+  `2` on an invalid involvement level or a refused factor. No capsule mutation, no capture-path change.
+  Tests: `tests/test_public_citizen.py`, `tests/test_cli_export_citizen.py`.
+- **Whistleblower source-protecting attestation — ADR-0169 D1 / NF-375 (experimental).** New
+  `novafabric.compliance.export.public._whistleblower` renders a tamper-evident, **source-protecting**
+  statement over an already-sealed bundle (`build_whistleblower_attestation`): a `content_digest`, an
+  `authenticity_attestation` (a reference to the bundle's **existing** Evidence-Bundle Ed25519
+  signature — this slice **never signs**, so it never touches the seal path), and an optional
+  `anonymity_set_ref`. The hard source-protection invariant (I-5) is enforced two ways: the model has
+  **no field** that could hold source data, and a validator (`source_identifying_fields`) **rejects**
+  any supplied field matching a source-identity / contact / routing shape — a leaked `submitter_email`
+  or `ip_address` is a hard `ValueError`, never silently carried. New read-only
+  `nova export-whistleblower <document>` renders it (rich or `--json`) and exits `2` on such a leak.
+  No capsule mutation, no capture-path change. Tests: `tests/test_public_whistleblower.py`,
+  `tests/test_cli_export_whistleblower.py`.
+- **FOIA / public-records decision export — ADR-0169 D1 / NF-374 DRAFT-crosswalk half (experimental).**
+  New `novafabric.compliance.export.public._foia` assembles a **DRAFT** public-records export
+  (`build_foia_export`): a complete, **ordered** `record_index` of included capsule/artifact digests
+  (order preserved, never re-sorted), `redactions` (each a *salted* `digest` + a **claimed**
+  `exemption_ref` — never NovaFabric's judgment; the withheld bytes are **absent**), and a
+  deterministic `custody_digest` (sha256 over the canonical record) chaining the export to the sealed
+  `decision_ref`. `status` is always `DRAFT`. New read-only `nova export-foia <document>` renders it
+  (rich or `--json`). No capsule mutation, no capture-path change. The D2 selective-disclosure
+  *prove-without-revealing* crypto (NF-376 — Merkle-redaction / SD-JWT / BBS `root_proof`) is
+  **explicitly out of scope**, gated on ADR-0151; this is the redaction-aware record, not a
+  cryptographic disclosure proof. Tests: `tests/test_public_foia.py`, `tests/test_cli_export_foia.py`.
+- **Public-sector agentic-AI disclosure record — ADR-0169 D1 / NF-373 (experimental).** New
+  `novafabric.compliance.export.public._public_sector` assembles a **DRAFT** public-sector disclosure
+  *document* (`build_public_sector_disclosure`) that **references, never re-authors or asserts**:
+  `authority_ref` is a *declared* reference to the public body (never a NovaFabric assertion),
+  `system_card_ref` binds an E7 system card **by digest** (its body is never re-authored — the
+  E7/public-audience boundary), and `capsule_refs` are digests of the sealed runs summarized. Any of
+  the five required fields left empty is listed in `manual_completion_required`, **never fabricated**;
+  `status` is always `DRAFT`. New read-only `nova export-public-disclosure <document>` renders it
+  (rich or `--json`). No capsule mutation, no capture-path change; the collector gathering run digests
+  from the sealed capsule set is a documented follow-on. Tests:
+  `tests/test_public_sector_disclosure.py`, `tests/test_cli_export_public_disclosure.py`.
+- **Algorithmic-transparency-register crosswalk — ADR-0169 D1 / NF-372 (experimental).** New
+  `novafabric.compliance.export.public._transparency_register` assembles a **DRAFT** algorithm-register
+  record (`build_transparency_register`) for the `--standard`-selected register — UK **ATRS**, or the
+  **Amsterdam** / **Helsinki** algorithm registers — each **standard-version-pinned** with its own
+  required-field set. Each field is `capsule_evidence` (a digest/ref into the sealed capsule, **never
+  the raw value**) or `operator_declared`, capsule evidence taking precedence; a field backed by
+  neither is listed in `manual_completion_required`, **never fabricated**. `status` is always `DRAFT`
+  (NovaFabric never registers/publishes/transmits) and an unknown standard is rejected. New read-only
+  `nova export-transparency-register <document> --standard atrs|amsterdam|helsinki` renders it (rich or
+  `--json`). No capsule mutation, no capture-path change; the register field sets are register-shaped
+  starting points, not an official schema, and the collector reading field values from the sealed
+  capsule is a documented follow-on. Tests: `tests/test_public_transparency_register.py`,
+  `tests/test_cli_export_transparency_register.py`.
+- **Structural argument coverage — ADR-0166 D4 / NF-348 (experimental).** New
+  `novafabric.assure.coverage` reports the **structural** coverage of an assurance-case argument
+  graph over the in-tree D1 graph, D4 defeaters, and D2 currency ledger: `total_goals`,
+  `goals_with_resolvable_leaf`, `unsupported_leaves`, `open_defeaters`, `overdue_nodes`
+  (`compute_argument_coverage`). Per the ADR it is **coverage, never a grade** — there is deliberately
+  no grade/score/pass/verdict field, and no numeric "assurance score" that could read as a verdict.
+  Currency (`overdue_nodes`) is only ever computed against an explicit `--as-of` sealed time, never
+  the system clock (D2). New read-only `nova assure-coverage <document>` renders it (rich or `--json`)
+  and exits `0` whenever it renders — open defeaters and unsupported leaves are coverage facts, not a
+  failing verdict. Reuses the shipped D1/D2/D4 models; no capsule mutation, no capture-path change.
+  Tests: `tests/test_assurance_coverage.py`, `tests/test_cli_assure_coverage.py`.
+- **21 CFR Part 11 electronic-records evidence artifact — ADR-0160 D1/D2 / NF-282 first slice
+  (experimental).** New `novafabric.compliance.export.healthcare.part11` renders the Part 11
+  electronic-records/signatures elements a run recorded — signer identity, §11.50 signing intent,
+  DSSE signature binding, record integrity, trusted (RFC 3161) timestamp, audit trail — each
+  `complete` / `partial` / `missing` with a source ref or a machine-readable reason
+  (`build_part11_record`). It **renders facts, never a Part 11 conformity determination** (no
+  conformity/verdict field — a qualified human makes the call), nothing is fabricated (a missing
+  element carries no ref), and the standard tag is version-pinned. Per ADR-0160 the binding
+  medical-honesty banner is carried in the record and printed in **every** CLI output. New read-only
+  `nova export-part11 <document>` renders it (rich or `--json`). No capsule mutation, no
+  capture-path change; the collector reading elements from the sealed capsule is a documented
+  follow-on. Tests: `tests/test_healthcare_part11.py`, `tests/test_cli_export_part11.py`.
+- **Responsible-AI coverage scorecard — ADR-0158 D4 / NF-262 first slice (experimental).** New
+  `novafabric.compliance.rai.scorecard` records presence/coverage of evidence per RAI dimension
+  (`supported` / `partial` / `unsupported` / `not_applicable`) over eight fixed dimensions
+  (`build_rai_scorecard`). It is **coverage, never a numeric responsibility score** — no
+  score/rating/grade field, no threshold, no fair/unfair or pass/fail label (ADR-0158 I-4). A
+  `not_applicable` declaration wins over evidence; a flagged dimension is `partial`. New read-only
+  `nova export-rai-scorecard <document>` renders it (rich or `--json`). No capsule mutation, no
+  capture-path change. Tests: `tests/test_rai_scorecard.py`, `tests/test_cli_export_rai.py`.
+- **Public Annex VIII disclosure exporter — ADR-0169 D1 / NF-371 first slice (experimental).** New
+  `novafabric.compliance.export.public.annex_viii` assembles a **DRAFT** EU AI Act Annex VIII / Art.
+  71 public-DB entry (`build_annex_viii_entry`), marking each required field `capsule_evidence` (a
+  digest/ref into the sealed capsule — carried as a ref, **never the raw value**) or
+  `operator_declared`, with capsule evidence taking precedence. Required fields backed by neither are
+  listed in `unmapped_required`, **never fabricated**. Status is always `DRAFT` — NovaFabric never
+  registers/publishes/transmits — and the `Regulation (EU) 2024/1689` tag is version-pinned. New
+  read-only `nova export-public-annex-viii <document>` renders it (rich or `--json`). No capsule
+  mutation, no capture-path change. Tests: `tests/test_public_annex_viii.py`,
+  `tests/test_cli_export_public.py`.
+- **Agent cost/energy fairness ledger — ADR-0146 D5 / NF-150 first slice (experimental).** New
+  `novafabric.cost.fairness` reports each agent's relative share of a resource (cost/energy/calls) as
+  a normalized descriptive statistic — per-agent share, Gini coefficient, and max/mean ratio
+  (`compute_fairness` / `build_fairness_report`). It is **descriptive evidence, never a verdict**: no
+  threshold/quota/pass-fail field. Shares are sorted for byte-identical output; an all-zero input is
+  safe. New read-only `nova cost fairness <totals.json>` renders it (rich or `--json`). No new capture
+  primitive — cost/energy are derived from records the capsule already holds. Tests:
+  `tests/test_cost_fairness.py`, `tests/test_cli_cost_fairness.py`.
+- **Cross-capsule DSAR assembler — ADR-0161 D1 / NF-291 first slice (experimental).** New
+  `novafabric.compliance.governance.dsar` unions the per-capsule records that processed a subject
+  into one deterministic `DSARPackage` (`assemble_dsar`): capsules ordered by id (byte-identical on
+  re-run), duplicates collapsed, missing capsules recorded as `gaps` (fail-open). The **load-bearing
+  invariant is enforced at the type level** — the package is keyed on the HMAC pseudonym
+  (`subject_hmac`) and has no raw subject-id/direct-identifier field, so a raw id can't be serialized
+  into the sealed artifact. New read-only `nova dsar assemble <document>` (a `dsar` sub-app) renders
+  it (rich or `--json`). No capsule mutation, no capture-path change. Tests:
+  `tests/test_dsar_assemble.py`, `tests/test_cli_dsar.py`.
+- **Finance model-risk evidence pack — ADR-0159 D2 / NF-271 first slice (experimental).** New
+  `novafabric.compliance.export.finance.model_risk` assembles the four SR 26-2 / SR 11-7 model-risk
+  pillars (development, independent-validation, ongoing-monitoring, model-inventory) into a
+  `ModelRiskFile`, marking each `complete` / `partial` / `missing` with source refs or a
+  machine-readable reason (`build_model_risk_file`). It **assembles, never assesses** — no
+  rating/verdict/score field — and never fabricates: a `missing` pillar carries no refs. The regime
+  tag `SR 26-2 (2026-04-17)` is version-pinned. New read-only `nova export-model-risk <evidence.json>`
+  renders it (rich or `--json`). Pure exporter over sealed evidence — no capsule mutation, no
+  capture-path change. Tests: `tests/test_finance_model_risk.py`, `tests/test_cli_export_model_risk.py`.
+- **Incident forensic timeline — ADR-0155 D1 first slice (experimental).** New
+  `novafabric.forensics.timeline` folds an incident's evidence records into a **deterministically
+  ordered** `ForensicsTimeline` tie-broken on `(ts, source_capsule, seq)` — byte-identical on re-run
+  over the same sealed inputs — recording missing evidence as `gaps` rather than raising (fail-open).
+  Events carry references/summaries only (never raw values/PII), and `ts` is a sealed timestamp
+  string (never the system clock). New read-only `nova forensics timeline <evidence.json>` (a
+  `forensics` sub-app) renders it (rich or `--json`). No capture-path or schema change — a pure view
+  over already-sealed evidence. Tests: `tests/test_forensics_timeline.py`, `tests/test_cli_forensics.py`.
+- **Assurance-case assessor package + renewal delta — ADR-0166 D5 first slice (experimental).** New
+  `novafabric.assure.package` composes the D1–D4 models into an `AssessorPackage` — the argument
+  graph, bound capsule roots (`BoundCapsule`), conformance map, currency ledger, open defeaters, and
+  a coverage metric — a self-contained, re-walkable bundle carrying **no verdict** (evidence to
+  re-walk, never a decision), with a deterministic content digest (`package_digest`, canonical JSON
+  excluding the label). `compute_renewal_delta` diffs two packages into `nodes_added /
+  evidence_refreshed / defeaters_opened / defeaters_closed / clauses_revised`. Per the ADR this
+  reuses the Evidence-Bundle seal path and adds no new format or capsule-schema field; the pure model
+  + digest + delta ships now, the DSSE/timestamp sealing wiring is deferred. Tests:
+  `tests/test_assurance_package.py`.
+- **Trust-surface contract spec (docs).** New `design/spec/features/trust-surface-contract-v0.md`
+  is the single source of truth for the contracts shared across the trust-surface trio (ADR-0172/
+  0173/0174): the fixed 7-axis trust-guarantee set + radar verdicts (§1, realized by `trust/radar.py`),
+  the five-state field contract + coverage formula (§2, realized by `masking/xray.py`), and the
+  future Merkle node model (§3). Fulfils the ADR-0173 §100 follow-up so the radar, X-Ray, checklist,
+  and future glyphs read one definition. Every claim cross-checked against source; implemented vs
+  future clearly labelled.
+- **Redaction / Secret-scan X-Ray — ADR-0174 data/CLI slice (experimental).** New
+  `novafabric.masking.xray` projects a capsule's per-field protection state (`clear`, `redacted`,
+  `secret_scrubbed`, `never_captured`, `unknown`) into an `XRayReport` with per-state counts and a
+  coverage meter (`build_field_xray`). The load-bearing invariant — **values are never shown** — is
+  enforced at the type level: `FieldXRay` carries only `path` + `state`, so a value handed in
+  alongside a record can never reach the model or its output. `field_states_from_findings` adapts raw
+  `MaskingPipeline` findings (path + strategy only, never the digest/replacement). New read-only
+  `nova redaction-xray <doc.json>` renders it (rich or `--json`). No schema change — the Python/JSON
+  half of feature F-06 that feeds the `web/` heat-overlay tree (which remains future design). Tests:
+  `tests/test_redaction_xray.py`, `tests/test_cli_redaction_xray.py`.
+- **Trust Attestation Radar — ADR-0173 data/CLI slice (experimental).** New
+  `novafabric.trust.radar` projects a capsule's seven Trust-Layer verification guarantees onto a
+  fixed 7-axis radar model (`build_trust_radar`): booleans → `0/1`, `redaction_coverage` → clamped
+  ratio, an absent/`None` guarantee → an `na` axis distinct from a `fail`. Verdict is `unsealed`
+  (no signature), `critical` (a seal-integrity anchor — signature/log-integrity — failed),
+  `attested`, or `partial`. New read-only `nova trust-radar <verify.json>` renders it (rich or
+  `--json`; exit 1 only on `critical`). Zero new dependency, no schema change — the Python/JSON half
+  of feature F-05 that feeds the `web/` SVG glyph (which remains future design). Tests:
+  `tests/test_trust_radar.py`, `tests/test_cli_trust_radar.py`.
+- **Assurance-case argument graph — ADR-0166 D1 first slice (experimental).** New
+  `novafabric.assure.case` models a GSN/SACM/CAE assurance case (`goal / strategy /
+  solution / context / assumption / justification`) whose `solution` nodes bind to sealed
+  capsule roots **by digest only** (`EvidenceRef` carries just `ref` + `digest` — no clause
+  bodies, findings, or PII). `validate_case` enforces the structural invariants — exactly one
+  top goal, acyclic `supported_by` graph, no orphan, unique ids, resolvable references — and
+  reports `solution` nodes with no resolvable evidence as non-fatal `unsupported_leaf`s, so an
+  in-progress argument stays valid while flagging its gaps. Pure/offline; no schema or CLI
+  change yet. Tests: `tests/test_assurance_case.py`.
+- **Assurance-case currency ledger — ADR-0166 D2 first slice (experimental).** New
+  `novafabric.assure.currency` computes each node's `interval_status`
+  (`current | due | overdue`) from its `evidence_window` + `last_refreshed`, **offline against
+  a caller-supplied sealed timestamp — never a system/network clock** — via
+  `compute_interval_status` / `CurrencyLedger.statuses`. `drift_records` emits a `stale`
+  `DriftRecord` (reason `evidence_expired`) for each overdue node, so continuous certification
+  records that the *argument* drifted without re-deciding it. Tests:
+  `tests/test_assurance_currency.py`.
+- **Assurance-case conformance-receipt — ADR-0166 D3 first slice (experimental).** New
+  `novafabric.assure.conformance` binds argument nodes to named standard clauses
+  (`ConformanceMapEntry` = node_id + `Standard` + clause_id + claim_digest; standards: ISO/IEC
+  42001/42005, UL 4600, EU AI Act, NIST AI RMF, ISO/IEC/IEEE 15026) and `conformance_receipt`
+  renders a deterministic OSCAL-shaped receipt — each mapped node → an `observation`; a mapping
+  to an absent node or an unsupported leaf → a `gap`. It is explicitly a **receipt** ("this
+  argument was assembled against these clauses"), never a conformance verdict or certificate.
+  Tests: `tests/test_assurance_conformance.py`.
+- **Assurance-case defeaters — ADR-0166 D4 first slice (experimental).** New
+  `novafabric.assure.defeater` records challenges to argument nodes: a `Defeater` (target
+  node + statement + `open|rebutted|withdrawn`) undermines its node while `open`; `rebutted`
+  requires the answering evidence (`resolved_by`, validator-enforced), and `rebut()` transitions
+  open→rebutted with that binding. `defeated_nodes` reports currently-defeated nodes and
+  `defeater_drift_records` emits `defeater_open` drift records — a defeated argument is recorded,
+  not silently re-decided. Tests: `tests/test_assurance_defeater.py`.
+- **`nova assure-case` CLI — ADR-0166 D6 read side first slice (experimental).** New
+  `novafabric.cli.assure_case` adds the read-only `nova assure-case <document>` command: it loads
+  an *assurance-case document* (a JSON bundle of the D1 argument graph plus optional D2 currency
+  ledger, D3 conformance map, and D4 defeaters) and reports structural validity, currency/drift, a
+  conformance receipt, and open defeaters — in rich or `--json` form. Exits `1` when the case is
+  structurally invalid **or** any defeater is open (the argument is defeated), and refuses to
+  evaluate a currency ledger without an explicit `--as-of` (never the system clock, honouring D2).
+  Tests: `tests/test_cli_assure_case.py`. (D5 sealed-facet binding into an in-toto attestation
+  remains future design — a dangerous shared-schema + NovaSeal track, deferred.)
+
 ## [0.60.0] — 2026-07-16
+### Fixed
+- **WORM conformance report `--sign` no longer presents a bare hash as a signature.**
+  The standalone `nova-worm-conformance` package's `--sign` path previously stored a base64
+  SHA-256 digest in the report's `novaseal_signature` field — a hash masquerading as a
+  cryptographic signature. It now produces a **real** ECDSA-P256 signature via NovaSeal's
+  `LocalSigningBackend` when a `--signing-key`/`--signing-cert` and NovaSeal are available
+  (`signing_status: "signed"`, verifiable against `signing_cert` over `content_sha256`);
+  otherwise the report is left honestly **unsigned** (`novaseal_signature: null`,
+  `signing_status: "unsigned"`, a `signing_detail` note) while still recording a
+  `content_sha256` integrity digest. The package stays standalone (NovaSeal import is
+  optional/guarded). New tests in `packages/nova_worm_conformance/tests/test_signing_honesty.py`
+  verify both paths, including cryptographic verification of the real signature. (Backlog A5.)
 
 ### Added
+- **`nova server scim-map-group` — declare an IdP-group → RBAC-role mapping (ADR-0139 D3).**
+  Writes/removes `scim.group_role_map` entries in the server config (ADR-0029), validated
+  against the six roles; `--remove` deletes a mapping, `--config` targets a file, other config
+  fields are preserved. The operator counterpart to the `/scim/v2/Groups` routes. Tests:
+  `tests/test_cli_scim_map_group.py`.
+- **`nova server list-scim-events` — read-only SCIM provisioning audit trail (ADR-0139 D5).**
+  Lists the append-only provisioning events (user create/deactivate/delete, `group-role-remap`)
+  for auditors; `--subject` filters to one identity, `--json` emits a machine-readable array,
+  `--db-path` targets a specific store. Tests: `tests/test_cli_list_scim_events.py`.
+- **SCIM `/scim/v2/Groups` route-wiring — group membership now drives RBAC roles (ADR-0139 D3
+  / ADR-0190, experimental).** POST create / GET / list / PATCH (add+remove members) / DELETE
+  Group endpoints (server-mode, behind `server.scim.enabled` + provisioning token). Adding a
+  user to a mapped group grants the role; removing them (or deleting the group) revokes it.
+  Revocation is **provenance-scoped** (ADR-0190): SCIM only touches rows it created
+  (`assigned_by="scim:group"`) — a manually- or OIDC-granted role is never seized or removed —
+  and the ADR-0060 last-admin guard surfaces as a SCIM 409 with no partial mutation. New
+  `scim_groups` / `scim_group_members` / `scim_group_role_grants` tables (additive; the
+  `role_assignments` table is unchanged). Tests: `tests/test_scim_group_provenance.py`,
+  `tests/test_scim_groups_routes.py`.
+- **SCIM Group → RBAC role mapping — core resolver (ADR-0139 D3, experimental).** New
+  `novafabric.server.scim_group_mapping` implements the config-driven mapping from an IdP
+  group `displayName` to one of the six RBAC roles (`reader`/`writer`/`admin`/`auditor` +
+  the ADR-0058 SoD `promoter`/`approver`): `GroupRoleMapping.from_config` (rejects unknown
+  roles), the pure `resolve_roles` (mapped groups grant their role, unmapped grant nothing,
+  no-membership users are unaffected), and `apply_group_membership` (resolves a membership
+  change to a role change and emits exactly one append-only `group-role-remap` audit event
+  when the effective roles change). Operators declare the map in server config
+  (`ScimConfig.group_role_map`, ADR-0029) — validated against the six roles on load, exposed
+  as `config.scim.role_mapping()`. Role *enforcement* stays in `server.rbac`; wiring the
+  `/scim/v2/Groups` HTTP routes to the resolver remains future design. Tests in
+  `tests/test_scim_group_role_mapping.py`.
 - **Dashboard CommandsTab now mirrors the complete `nova` CLI (227 commands).** A generated
   command registry (`web/src/components/dashboard/commands/generatedCommands.ts`), derived from the
   live Typer app by `web/scripts/gen-command-registry.py`, gives every CLI command — including the

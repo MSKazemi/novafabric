@@ -122,7 +122,8 @@ def capsule_dir(tmp_path: Path) -> Path:
 @pytest.fixture
 def client(tmp_path: Path, capsule_dir: Path) -> TestClient:
     db = tmp_path / "integ.db"
-    cfg = ServerConfig(db_path=str(db))
+    # ADR-0184: anonymous admin now requires the explicit insecure opt-out.
+    cfg = ServerConfig(db_path=str(db), insecure_no_auth=True)
     app = create_app(cfg)
     app.dependency_overrides[deps.get_capsule_dir] = lambda: capsule_dir
     return TestClient(app, raise_server_exceptions=False)

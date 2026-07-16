@@ -1,0 +1,41 @@
+# Docker build-context excludes — keep the context lean for fast rebuilds.
+# The Dockerfile (deploy/docker/Dockerfile) only needs pyproject.toml, uv.lock,
+# src/, and deploy/docker/. Everything below is either huge, host-only, or
+# regenerated inside the image, so it must never enter the build context.
+# (Do NOT add README.md / pyproject-referenced metadata files here — the wheel
+#  build reads them.)
+
+# Version control / local virtualenv (the two biggest offenders)
+.git
+.gitignore
+.venv
+venv/
+env/
+
+# Private design corpus — 96M, never shipped in the image
+design/
+.claude/
+2public/
+
+# Node / dashboard build artifacts (source is compiled during the image build)
+**/node_modules
+web/dist/
+web/.astro/
+packages/**/dist/
+
+# Python caches & build artifacts
+**/__pycache__/
+**/*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+htmlcov/
+.coverage
+.coverage.*
+
+# Local scratch / benches / logs
+bench/
+*.log

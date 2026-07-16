@@ -21,6 +21,7 @@ from novafabric.server.auth import AuthContext
 from novafabric.server.deps import get_capsule_dir, get_db_path, get_metadata_store_dep
 from novafabric.server.errors import BadRequestError, ConflictError, NotFoundError
 from novafabric.server.pagination import clamp_limit, decode_cursor, paginate
+from novafabric.server.quotas import enforce_storage_quota
 from novafabric.server.rbac import Role, require_role
 
 router = APIRouter(prefix="/capsules", tags=["capsules"])
@@ -68,6 +69,8 @@ async def upload_capsule(
     capsule: UploadFile,
     capsule_dir: Annotated[Path, Depends(get_capsule_dir)] = None,  # type: ignore[assignment]
     _auth: Annotated[AuthContext, Depends(require_role(Role.writer))] = None,  # type: ignore[assignment]
+    # ADR-0179 second slice: storage quota (warn-then-reject) at capsule ingest.
+    _quota: Annotated[None, Depends(enforce_storage_quota)] = None,
 ) -> dict[str, Any]:
     """Accept a capsule ZIP, unpack it under the capsule_dir."""
     content = await capsule.read()
@@ -199,6 +202,8 @@ async def submit_score(
     capsule_dir: Annotated[Path, Depends(get_capsule_dir)] = None,  # type: ignore[assignment]
     db_path: Annotated[Path | None, Depends(get_db_path)] = None,
     auth: Annotated[AuthContext, Depends(require_role(Role.writer))] = None,  # type: ignore[assignment]
+    # ADR-0179 second slice: scores append bytes into the capsule store.
+    _quota: Annotated[None, Depends(enforce_storage_quota)] = None,
 ) -> Any:
     """Append one externally-computed score to the capsule's ``scores.jsonl``.
 

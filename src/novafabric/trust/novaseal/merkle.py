@@ -100,6 +100,27 @@ def _compute_root(leaf_hashes: list[str]) -> str:
     return nodes[0]
 
 
+def merkle_layers(leaf_hashes: list[str]) -> list[list[str]]:
+    """Return every layer of the Merkle tree, leaves first and the root last.
+
+    Read-only companion to :func:`_compute_root` for visualization (ADR-0172): it applies the
+    **same pairing and odd-duplicate padding rule**, so ``merkle_layers(x)[-1] ==
+    [_compute_root(x)]`` always holds. The first layer is the leaves exactly as given (unpadded);
+    each subsequent layer is the paired level above it. The input list is not mutated. This touches
+    no signing or verification path — it only re-derives the hashes the root computation discards.
+    """
+    if not leaf_hashes:
+        raise MerkleError("Empty tree has no layers")
+    layers: list[list[str]] = [list(leaf_hashes)]
+    nodes = list(leaf_hashes)
+    while len(nodes) > 1:
+        if len(nodes) % 2 == 1:
+            nodes = [*nodes, nodes[-1]]  # pad with duplicate (new list; never mutate a layer)
+        nodes = [_node_hash(nodes[i], nodes[i + 1]) for i in range(0, len(nodes), 2)]
+        layers.append(list(nodes))
+    return layers
+
+
 # ---------------------------------------------------------------------------
 # Inclusion proof
 # ---------------------------------------------------------------------------

@@ -125,7 +125,8 @@ def db_path(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def cfg(tmp_path: Path, db_path: Path, capsule_dir: Path) -> ServerConfig:
-    return ServerConfig(db_path=str(db_path))
+    # ADR-0184: anonymous admin now requires the explicit insecure opt-out.
+    return ServerConfig(db_path=str(db_path), insecure_no_auth=True)
 
 
 @pytest.fixture

@@ -1,0 +1,24 @@
+# pip-audit waiver file (ADR-0186 — dependency and vulnerability management).
+#
+# Each [[waiver]] entry temporarily accepts a known vulnerability in a locked
+# dependency. CI reads this file (.github/workflows/pip-audit.yml →
+# scripts/pip_audit_gate.py):
+#
+#   - a waived finding does not block CI, until the waiver expires;
+#   - an EXPIRED waiver fails CI by construction — waivers cannot rot into
+#     permanence;
+#   - a malformed entry fails CI; it is never silently skipped.
+#
+# Required fields per entry (no others allowed):
+#   id            — the vulnerability id as reported by pip-audit
+#                   (GHSA-…, PYSEC-…, or CVE-…); aliases match too.
+#   justification — why this is acceptable for now: exposure analysis,
+#                   upstream issue link, planned remediation.
+#   expires       — ISO date (YYYY-MM-DD); the waiver's last valid day.
+#
+# Example (keep commented out):
+#
+# [[waiver]]
+# id = "GHSA-xxxx-xxxx-xxxx"
+# justification = "Vulnerable code path unreachable: we never call X. Upstream fix tracked at <link>; remove when 1.2.3 releases."
+# expires = "2026-09-30"

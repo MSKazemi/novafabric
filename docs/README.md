@@ -103,6 +103,8 @@ implemented versus design intent.
 | Document | What it covers |
 |---|---|
 | [Server deployment](ops/server-deployment.md) | Deployment scenarios from local SQLite to Postgres and Kubernetes |
+| [Server admin guide](ops/server-admin-guide.md) | Operating `nova server` in production — auth, tokens, RBAC, quotas, observability endpoints |
+| [Backup & restore runbook](ops/backup-restore.md) | `nova backup` / `nova restore`, verification, DR procedure (works today + planned sections) |
 | [Cluster-scale migration](ops/cluster-scale-migration.md) | Migrating from SQLite + filesystem toward Postgres + object storage + graph DB |
 | [Lineage store migration](lineage/migration-guide.md) | Migrating the lineage store from SQLite to KuzuDB |
 

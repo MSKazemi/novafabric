@@ -1,7 +1,9 @@
 """Tests for OIDC token validation middleware (Track S-3).
 
 Covers:
-- OIDC disabled → all endpoints 200 without token
+- OIDC disabled + insecure_no_auth opt-out → all endpoints 200 without token
+  (ADR-0184: without the opt-out, local mode requires the local bearer token —
+  see tests/test_server_local_token_auth.py)
 - OIDC enabled + mock JWKS: valid token → 200, expired → 401, wrong aud → 401, no token → 401
 - JWKS re-fetch on unknown key ID
 """
@@ -73,7 +75,8 @@ def _make_token(
 
 
 def _no_auth_config(tmp_path: Path) -> ServerConfig:
-    return ServerConfig(db_path=str(tmp_path / "test.db"))
+    # ADR-0184: anonymous admin now requires the explicit insecure opt-out.
+    return ServerConfig(db_path=str(tmp_path / "test.db"), insecure_no_auth=True)
 
 
 def _oidc_config(tmp_path: Path) -> ServerConfig:

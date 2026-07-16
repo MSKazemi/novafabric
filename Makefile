@@ -7,7 +7,7 @@ COMPOSE      := docker compose -f deploy/docker/docker-compose.yml
 COMPOSE_PROD := docker compose -f deploy/docker/docker-compose.yml --profile prod
 
 .PHONY: whitepaper help test lint typecheck coverage benchmark benchmark-capture \
-        bundle serve-local \
+        bundle serve-local deploy-local \
         topology-build topology-test serve-topology \
         compliance-smoke classify-smoke audit-smoke migrate-schema-smoke \
         verify-smoke suggest-register-smoke reports-smoke \
@@ -307,6 +307,23 @@ update:
 	$(COMPOSE) up -d --no-deps nova
 	$(MAKE) _wait-token
 	$(MAKE) docker-token
+
+# deploy-local — build & run novafabric-serve straight from the CURRENT working
+# tree. No `git pull`, no GitHub round-trip: whatever is checked out here is what
+# deploys. The fast dev-iteration path. Prints the working-tree commit (+ -dirty
+# when there are uncommitted changes) so "what's running on n1" stays answerable.
+deploy-local:
+	@REV=$$(git rev-parse --short HEAD 2>/dev/null || echo nogit); \
+	git diff --quiet 2>/dev/null && git diff --cached --quiet 2>/dev/null || REV="$$REV-dirty"; \
+	echo "[nova] deploy-local: building novafabric-serve from working tree @ $$REV (no pull)"
+	$(COMPOSE) build nova
+	$(COMPOSE) up -d postgres
+	$(COMPOSE) up -d --no-deps nova
+	$(MAKE) _wait-token
+	$(MAKE) docker-token
+	@REV=$$(git rev-parse --short HEAD 2>/dev/null || echo nogit); \
+	git diff --quiet 2>/dev/null && git diff --cached --quiet 2>/dev/null || REV="$$REV-dirty"; \
+	echo "[nova] deploy-local complete — novafabric-serve now running working tree @ $$REV"
 
 # Print the dashboard URL with the live token from the running container
 docker-token:

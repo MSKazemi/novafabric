@@ -63,11 +63,34 @@ def start_cmd(
             help="Bind port (default from config or 7433).",
         ),
     ] = None,
+    insecure_no_auth: Annotated[
+        bool,
+        typer.Option(
+            "--insecure-no-auth",
+            help=(
+                "INSECURE: disable local-token auth and treat every request "
+                "as anonymous admin (pre-ADR-0184 behaviour). "
+                "Env: NOVAFABRIC_SERVER_INSECURE_NO_AUTH."
+            ),
+        ),
+    ] = False,
+    i_know_this_is_public: Annotated[
+        bool,
+        typer.Option(
+            "--i-know-this-is-public",
+            help=(
+                "Second confirmation required to combine --insecure-no-auth "
+                "with a non-loopback --host (ADR-0184)."
+            ),
+        ),
+    ] = False,
 ) -> None:
-    """Start the multi-user REST API server with Postgres and OIDC.
+    """Start the multi-user REST API server.
 
-    Requires novafabric[server] and a running Postgres instance.
-    Set NOVAFABRIC_DB_URL and NOVAFABRIC_OIDC_ISSUER before starting.
+    With OIDC configured, requests authenticate with OIDC JWTs. Without OIDC
+    (local mode, ADR-0184) the server requires an auto-generated local bearer
+    token — printed at startup and stored at $NOVAFABRIC_HOME/.server-token
+    (mode 0600); pin it via NOVAFABRIC_SERVER_TOKEN.
 
     Scope: run-time (long-running server process).
 
@@ -75,7 +98,10 @@ def start_cmd(
     Examples:
       nova server start
       nova server start --host 0.0.0.0 --port 8080
+      nova server start --insecure-no-auth   # anonymous admin, loopback only
     """
+    import logging
+
     try:
         import uvicorn
     except ImportError:
@@ -87,8 +113,10 @@ def start_cmd(
         raise typer.Exit(code=1)
 
     try:
+        import pydantic
+
         from novafabric.server.app import create_app
-        from novafabric.server.config import load_config
+        from novafabric.server.config import InsecureBindError, check_insecure_bind, load_config
     except ImportError as exc:
         typer.echo(
             f"Server module not available: {exc}. "
@@ -97,7 +125,11 @@ def start_cmd(
         )
         raise typer.Exit(code=1)
 
-    cfg = load_config(config)
+    try:
+        cfg = load_config(config)
+    except pydantic.ValidationError as exc:
+        typer.echo(f"Invalid server config: {exc}", err=True)
+        raise typer.Exit(code=2)
 
     # CLI flags override config / env vars
     if backend is not None:
@@ -106,6 +138,55 @@ def start_cmd(
         cfg.host = host
     if port is not None:
         cfg.port = port
+    if insecure_no_auth:
+        cfg.insecure_no_auth = True
+    if i_know_this_is_public:
+        cfg.i_know_this_is_public = True
+
+    # ADR-0184: re-check after CLI overrides (assignment skips model validation).
+    try:
+        check_insecure_bind(cfg)
+    except InsecureBindError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2)
+
+    # Structured startup logging (uvicorn configures its own loggers later).
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        )
+    log = logging.getLogger("novafabric.server")
+
+    # OIDC-enabled deployments authenticate with OIDC JWTs; the local token
+    # only exists in no-OIDC local mode (ADR-0184).
+    if not cfg.oidc.enabled:
+        if cfg.insecure_no_auth:
+            log.warning(
+                "INSECURE: --insecure-no-auth is set — every request is "
+                "anonymous admin. Do not expose this server beyond loopback "
+                "(bind host: %s). See ADR-0184.",
+                cfg.host,
+            )
+        else:
+            from novafabric.server.local_token import TOKEN_ENV, ensure_local_token
+
+            token, token_path = ensure_local_token()
+            cfg.local_token = token
+            log.info("Local auth token (OIDC disabled, ADR-0184): %s", token)
+            log.info(
+                "Pass it on every request: Authorization: Bearer %s "
+                "(e.g. curl -H 'Authorization: Bearer %s' http://%s:%d/v0/assets)",
+                token,
+                token,
+                cfg.host,
+                cfg.port,
+            )
+            log.info(
+                "Token stored at %s (mode 0600); pin a stable token via %s.",
+                token_path,
+                TOKEN_ENV,
+            )
 
     typer.echo(
         f"Starting NovaFabric server on {cfg.host}:{cfg.port} "
@@ -275,6 +356,175 @@ def assign_role_cmd(
         raise typer.Exit(code=1)
 
     typer.echo(f"Role '{role}' assigned to '{user}'.")
+
+
+# ---------------------------------------------------------------------------
+# nova server list-scim-events
+# ---------------------------------------------------------------------------
+
+
+@server_app.command("list-scim-events")
+def list_scim_events_cmd(
+    subject: Annotated[
+        Optional[str],  # noqa: UP007
+        typer.Option("--subject", help="Filter the trail to one subject (userName)."),
+    ] = None,
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Emit the events as a JSON array for tooling."),
+    ] = False,
+    db_path: Annotated[
+        Optional[Path],  # noqa: UP007
+        typer.Option("--db-path", help="SQLite DB path. Defaults to registry default."),
+    ] = None,
+) -> None:
+    """List the append-only SCIM provisioning audit trail (ADR-0139 D5).
+
+    Read-only. For auditors reviewing who was provisioned or deprovisioned, when,
+    and every group→role remap. Scope: single server.
+
+    \b
+    Examples:
+      nova server list-scim-events
+      nova server list-scim-events --subject alice@example.com
+      nova server list-scim-events --json
+    """
+    from novafabric.server.scim_store import list_audit_events
+
+    events = list_audit_events(subject=subject, db_path=db_path)
+
+    if as_json:
+        import json
+
+        typer.echo(json.dumps(events, indent=2, default=str))
+        return
+
+    if not events:
+        typer.echo("No SCIM provisioning events recorded.")
+        return
+
+    from rich.console import Console
+    from rich.table import Table
+
+    table = Table(title="SCIM provisioning audit trail")
+    table.add_column("occurred_at", style="cyan", no_wrap=True)
+    table.add_column("operation")
+    table.add_column("type")
+    table.add_column("subject", style="bold")
+    table.add_column("roles: before → after")
+    for ev in events:
+        before = ", ".join(ev["roles_before"]) or "—"
+        after = ", ".join(ev["roles_after"]) or "—"
+        table.add_row(
+            ev["occurred_at"],
+            ev["operation"],
+            ev["resource_type"],
+            ev["subject"],
+            f"{before} → {after}",
+        )
+    # Wide, non-terminal console so long values are not truncated in pipes.
+    Console(width=200).print(table)
+
+
+# ---------------------------------------------------------------------------
+# nova server scim-map-group
+# ---------------------------------------------------------------------------
+
+
+@server_app.command("scim-map-group")
+def scim_map_group_cmd(
+    group: Annotated[
+        Optional[str],  # noqa: UP007
+        typer.Argument(help="IdP group displayName (omit with --list)."),
+    ] = None,
+    role: Annotated[
+        Optional[str],  # noqa: UP007
+        typer.Argument(
+            help="RBAC role: reader, writer, admin, auditor, promoter, approver."
+        ),
+    ] = None,
+    remove: Annotated[
+        bool,
+        typer.Option("--remove", help="Remove the mapping for <group> instead of setting it."),
+    ] = False,
+    list_mappings: Annotated[
+        bool,
+        typer.Option(
+            "--list",
+            help="Print the effective group→role map (config + env overrides) and exit.",
+        ),
+    ] = False,
+    config: Annotated[
+        Optional[Path],  # noqa: UP007
+        typer.Option(
+            "--config",
+            help="Server YAML config path. Defaults to ~/.config/novafabric/server.yaml.",
+        ),
+    ] = None,
+) -> None:
+    """Declare, --remove, or --list IdP-group → RBAC-role mappings in the server config.
+
+    ADR-0139 D3: SCIM Groups map to RBAC roles via this operator-declared config
+    (`scim.group_role_map`, ADR-0029). Membership then grants/revokes the role
+    through the /scim/v2/Groups routes. --list reads the effective loaded config;
+    add/remove edit the YAML in place (a running server picks the change up on
+    restart). Scope: single server.
+
+    \b
+    Examples:
+      nova server scim-map-group Engineering writer
+      nova server scim-map-group SRE-Admins admin
+      nova server scim-map-group Engineering --remove
+      nova server scim-map-group --list
+    """
+    import yaml
+
+    from novafabric.server.config import _DEFAULT_CONFIG_PATH, load_config
+    from novafabric.server.scim_group_mapping import VALID_SCIM_ROLES
+
+    if list_mappings:
+        current = load_config(config).scim.group_role_map
+        if not current:
+            typer.echo("No group→role mappings configured.")
+            return
+        width = max(len(g) for g in current)
+        for name in sorted(current):
+            typer.echo(f"{name.ljust(width)}  ->  {current[name]}")
+        return
+
+    if group is None:
+        typer.echo("A group displayName is required unless --list is given.", err=True)
+        raise typer.Exit(code=1)
+    if not remove:
+        if role is None:
+            typer.echo("A role is required unless --remove or --list is given.", err=True)
+            raise typer.Exit(code=1)
+        if role not in VALID_SCIM_ROLES:
+            roles_str = ", ".join(sorted(VALID_SCIM_ROLES))
+            typer.echo(f"Invalid role '{role}'. Choose from: {roles_str}", err=True)
+            raise typer.Exit(code=1)
+
+    path = config or _DEFAULT_CONFIG_PATH
+    raw = (yaml.safe_load(path.read_text()) or {}) if path.exists() else {}
+    scim = raw.get("scim") or {}
+    raw["scim"] = scim
+    mapping = scim.get("group_role_map") or {}
+    scim["group_role_map"] = mapping
+
+    if remove:
+        existed = mapping.pop(group, None) is not None
+        msg = (
+            f"Removed group→role mapping for '{group}'."
+            if existed
+            else f"No mapping existed for group '{group}'."
+        )
+    else:
+        mapping[group] = role
+        msg = f"Mapped group '{group}' → role '{role}'."
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(raw, sort_keys=False))
+    typer.echo(msg)
 
 
 # ---------------------------------------------------------------------------

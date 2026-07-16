@@ -21,7 +21,8 @@ FIXTURE_KEYS = Path(__file__).parent / "fixtures" / "promote" / "keys"
 
 @pytest.fixture()
 def client(tmp_path: Path) -> TestClient:
-    cfg = ServerConfig(db_path=str(tmp_path / "test.db"))
+    # ADR-0184: anonymous admin now requires the explicit insecure opt-out.
+    cfg = ServerConfig(db_path=str(tmp_path / "test.db"), insecure_no_auth=True)
     app = create_app(cfg)
     return TestClient(app, raise_server_exceptions=False)
 

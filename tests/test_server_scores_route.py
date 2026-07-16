@@ -66,7 +66,8 @@ def capsule_dir(tmp_path: Path) -> Path:
 def client(tmp_path: Path, capsule_dir: Path) -> TestClient:
     from novafabric.server import deps
 
-    app = create_app(ServerConfig(db_path=str(tmp_path / "server.db")))
+    # ADR-0184: anonymous admin now requires the explicit insecure opt-out.
+    app = create_app(ServerConfig(db_path=str(tmp_path / "server.db"), insecure_no_auth=True))
     app.dependency_overrides[deps.get_capsule_dir] = lambda: capsule_dir
     return TestClient(app, raise_server_exceptions=False)
 

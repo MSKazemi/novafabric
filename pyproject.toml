@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "novafabric"
-version = "0.59.0"
+version = "0.61.0"
 description = "Open-source AI Asset Registry and Agent Lifecycle Management"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.12"
@@ -144,6 +144,10 @@ server = [
     # asyncpg (Apache-2.0) — Tier A under ADR-0024.  High-performance async Postgres
     # driver; required by sqlalchemy[asyncio] for the MetadataStore async session pool.
     "asyncpg>=0.30",
+    # prometheus-client (Apache-2.0) — Tier A under ADR-0024.  Prometheus text
+    # exposition for the self-observability surface (/metrics, ADR-0182).
+    # Lazy import: lean installs never load it; /metrics 503s with an install hint.
+    "prometheus-client>=0.21",
 ]
 lineage-kuzu = [
     # kuzu (MIT) — Tier A under ADR-0024.  Embedded openCypher graph DB for

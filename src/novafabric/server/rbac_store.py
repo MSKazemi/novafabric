@@ -87,6 +87,25 @@ def get_roles(subject: str, *, db_path: Path | None = None) -> list[str]:
         conn.close()
 
 
+def get_assigned_by(
+    subject: str, role: str, *, db_path: Path | None = None
+) -> str | None:
+    """Return the ``assigned_by`` provenance of a (subject, role) row, or None.
+
+    Used by SCIM reconcile (ADR-0190) to touch only the rows it owns
+    (``assigned_by == "scim:group"``) and never a manual / OIDC grant.
+    """
+    conn = _get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT assigned_by FROM role_assignments WHERE subject = ? AND role = ?",
+            (subject, role),
+        ).fetchone()
+        return row["assigned_by"] if row is not None else None
+    finally:
+        conn.close()
+
+
 def list_assignments(*, db_path: Path | None = None) -> list[dict[str, str]]:
     """Return all role assignments."""
     conn = _get_conn(db_path)

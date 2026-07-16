@@ -18,11 +18,19 @@
 
 ``InMemoryWormAdapter`` is a non-WORM, in-memory adapter for unit tests that
 must not touch the network.  It is NOT suitable for regulated deployments.
+
+Opt-in envelope encryption (ADR-0185, experimental): when
+``NOVA_OBJECT_STORE_ENCRYPTION=1`` and ``NOVA_OBJECT_STORE_KEK_PATH`` point at
+a local 256-bit KEK file, ``make_adapter`` wraps the chosen backend in an
+``EncryptingAdapter`` so every capsule payload is envelope-encrypted before
+the WORM write.  Absent that configuration, behavior is byte-for-byte
+unchanged — encryption is never the default.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from novafabric.object_capsule_store.worm.base import (
@@ -35,9 +43,57 @@ log = logging.getLogger(__name__)
 
 _BACKENDS = ("s3", "minio", "ceph_rgw", "azure_blob", "local")
 
+# Opt-in envelope-encryption configuration (ADR-0185, experimental).
+ENV_ENCRYPTION = "NOVA_OBJECT_STORE_ENCRYPTION"
+ENV_KEK_PATH = "NOVA_OBJECT_STORE_KEK_PATH"
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _maybe_wrap_encryption(adapter: WormAdapter) -> WormAdapter:
+    """Wrap *adapter* in an ``EncryptingAdapter`` when opted in via env (ADR-0185).
+
+    Opt-in requires BOTH ``NOVA_OBJECT_STORE_ENCRYPTION`` truthy ("1"/"true"/
+    "yes"/"on") AND ``NOVA_OBJECT_STORE_KEK_PATH`` naming a local 256-bit KEK
+    file (32 raw bytes or 64 hex chars).  A truthy flag without a KEK path is a
+    misconfiguration and fails closed — silently writing plaintext when the
+    operator asked for encryption would violate ADR-0185.
+
+    Returns *adapter* unchanged when the flag is absent/falsy (the default:
+    zero behavior change).
+    """
+    flag = os.environ.get(ENV_ENCRYPTION, "").strip().lower()
+    if flag not in _TRUTHY:
+        return adapter
+    kek_value = os.environ.get(ENV_KEK_PATH, "").strip()
+    if not kek_value:
+        raise ValueError(
+            f"{ENV_ENCRYPTION} is set but {ENV_KEK_PATH} is not: envelope encryption "
+            "(ADR-0185) requires a local 256-bit KEK file (32 raw bytes or 64 hex "
+            "chars). Refusing to fall back to plaintext writes."
+        )
+    from pathlib import Path
+
+    from novafabric.object_capsule_store.encryption_wrapper import EncryptingAdapter
+    from novafabric.trust.novaseal.signing_backend import LocalSigningBackend
+
+    kek_path = Path(kek_value)
+    # key_path/cert_path are unused by the wrap capability; only kek_path matters.
+    backend = LocalSigningBackend(kek_path, kek_path, kek_path=kek_path)
+    log.info(
+        "object-capsule-store envelope encryption enabled (ADR-0185, experimental): "
+        "wrapping %s with EncryptingAdapter (local KEK)",
+        type(adapter).__name__,
+    )
+    return EncryptingAdapter(adapter, backend)
+
 
 def make_adapter(backend: str, **kwargs: Any) -> WormAdapter:
     """Factory that returns the correct ``WormAdapter`` for *backend*.
+
+    When envelope encryption is opted in via ``NOVA_OBJECT_STORE_ENCRYPTION=1``
+    + ``NOVA_OBJECT_STORE_KEK_PATH`` (ADR-0185, experimental), the returned
+    adapter is wrapped in an ``EncryptingAdapter``; otherwise the bare adapter
+    is returned unchanged.
 
     Args:
         backend: One of ``"s3"``, ``"minio"``, ``"ceph_rgw"``, ``"azure_blob"``,
@@ -48,29 +104,33 @@ def make_adapter(backend: str, **kwargs: Any) -> WormAdapter:
         A concrete ``WormAdapter`` instance.
 
     Raises:
-        ValueError: for unknown backend tags.
+        ValueError: for unknown backend tags, or when encryption is enabled
+                    without a KEK path.
     """
+    adapter: WormAdapter
     if backend == "s3":
         from novafabric.object_capsule_store.worm.s3 import S3WormAdapter
 
-        return S3WormAdapter(**kwargs)
-    if backend == "minio":
+        adapter = S3WormAdapter(**kwargs)
+    elif backend == "minio":
         from novafabric.object_capsule_store.worm.minio import MinioWormAdapter
 
-        return MinioWormAdapter(**kwargs)
-    if backend == "ceph_rgw":
+        adapter = MinioWormAdapter(**kwargs)
+    elif backend == "ceph_rgw":
         from novafabric.object_capsule_store.worm.ceph import CephWormAdapter
 
-        return CephWormAdapter(**kwargs)
-    if backend == "azure_blob":
+        adapter = CephWormAdapter(**kwargs)
+    elif backend == "azure_blob":
         from novafabric.object_capsule_store.worm.azure import AzureWormAdapter
 
-        return AzureWormAdapter(**kwargs)
-    if backend == "local":
-        return InMemoryWormAdapter()
-    raise ValueError(
-        f"Unknown backend {backend!r}. Valid choices: {', '.join(_BACKENDS)}"
-    )
+        adapter = AzureWormAdapter(**kwargs)
+    elif backend == "local":
+        adapter = InMemoryWormAdapter()
+    else:
+        raise ValueError(
+            f"Unknown backend {backend!r}. Valid choices: {', '.join(_BACKENDS)}"
+        )
+    return _maybe_wrap_encryption(adapter)
 
 
 class InMemoryWormAdapter(WormAdapter):

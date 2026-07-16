@@ -17,6 +17,18 @@ servers:
   - url: /v0
     description: NovaFabric server (versioned)
 
+# API deprecation & sunset policy (ADR-0188). Deprecated endpoints emit
+# Deprecation (RFC 9745), Sunset (RFC 8594), and Link rel="deprecation"
+# headers, stay working for at least two minor releases, and are listed in
+# the deprecation register; removals land only in a minor bump pre-1.0
+# (major post-1.0). No endpoint is currently deprecated.
+x-deprecation-policy:
+  adr: design/adr/0188-api-deprecation-sunset-policy.md
+  register: docs/api-reference.md#deprecation-register-adr-0188
+  headers: [Deprecation, Sunset, Link]
+  minimum-window: two minor releases
+  currently-deprecated: []
+
 # --------------------------------------------------------------------------- #
 # Reusable components
 # --------------------------------------------------------------------------- #

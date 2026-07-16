@@ -51,13 +51,23 @@ All 10 test cases are always executed:
 
 ## Signing Reports (FR-13)
 
-Use `--sign` to attach a NovaSeal signature to the report:
+Use `--sign` with a NovaSeal signing key + certificate to attach a **real**
+ECDSA-P256 signature to the report:
 
 ```bash
-nova-worm-test ... --sign --output signed-report.json
+nova-worm-test ... --sign --signing-key key.pem --signing-cert cert.pem \
+    --output signed-report.json
 ```
 
-The `novaseal_signature` field in the JSON report is independently verifiable.
+When signing succeeds the report carries `signing_status: "signed"`,
+`signing_method: "novaseal-ecdsa-p256"`, the base64 signature in
+`novaseal_signature`, and the signer certificate in `signing_cert` — the
+signature verifies against that certificate over `content_sha256`.
+
+If NovaSeal is not installed or a key/cert is not supplied, the report is left
+**unsigned** on purpose: `signing_status: "unsigned"`, `novaseal_signature: null`,
+and a `signing_detail` note. A `content_sha256` integrity digest is always
+recorded, but an unsigned report is never presented as if it were signed.
 
 ## Compatibility
 

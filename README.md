@@ -455,7 +455,7 @@ v0.19 ✓  Complete dashboard parity — CostTab + SchemaTab; all 7 v0.17 CLI su
 v1.0     OAS v1.0 schema freeze + production-ready governance [planned]
 ```
 
-The most recent releases (v0.45–v0.58) deepen capture fidelity, the accountability
+The most recent releases (v0.45–v0.61) deepen capture fidelity, the accountability
 spine (`nova energy` / `nova ledger` / `nova safety-case`), significance-gated
 promotion, and supply-chain evidence (SLSA-for-ML, AI-BOM, signed dataset provenance
 cards). See [`CHANGELOG.md`](CHANGELOG.md) for release-by-release detail.
@@ -499,6 +499,28 @@ you opt in:
 
 See [`docs/releases/v0.59.0.md`](docs/releases/v0.59.0.md) for the full grouped list
 and [`docs/cli-reference.md`](docs/cli-reference.md) for per-command detail.
+
+### New in v0.60 and v0.61 — all `experimental`
+
+v0.60.0 makes the dashboard mirror the **complete `nova` CLI** through a generated,
+CI-guarded command registry, adds streaming (bounded-memory) object-store listing and
+disaster-recovery rebuild (ADR-0175), W3C **PROV-N** lineage export (ADR-0176),
+**OTLP/protobuf** trace ingest (ADR-0177), and true multi-hop blast-radius queries in
+the evidence fabric.
+
+v0.61.0 is the **enterprise-readiness release** (ADRs 0178–0189): secure-by-default
+local server auth (auto-generated bearer token; anonymous admin now requires an
+explicit opt-out), organizations / workspaces / service accounts, SCIM Groups→role
+mapping with provenance-safe reconciliation, Prometheus `/metrics` + `/livez` +
+`/readyz` self-observability, `nova backup` / `nova restore` with DSSE-signed
+manifests and crypto-shred replay, `nova support-bundle` (allowlist-only, redacted),
+in-process rate limiting and storage quotas (default off), opt-in envelope
+**encryption at rest** (KMS-wrapped per-object DEKs), a blocking dependency-CVE gate,
+an RFC 9745/8594 API deprecation mechanism, and the trust surfaces
+(`nova merkle-tree`, `nova trust-radar`, `nova redaction-xray`, `nova passport`).
+
+See [`docs/releases/v0.60.0.md`](docs/releases/v0.60.0.md) and
+[`docs/releases/v0.61.0.md`](docs/releases/v0.61.0.md).
 
 > **Not yet frozen:** on-disk Run Capsule and Evidence Bundle formats change until the
 > v1.0 schema freeze. Do not treat capsule internals as a stable contract before then.
@@ -564,10 +586,11 @@ capsules you own, with run-to-run structural diff and cryptographic provenance. 
 [How NovaFabric compares](#how-novafabric-compares).
 
 **Is NovaFabric production-ready?**
-It is **beta** (v0.59.0). Local capture, replay, diff, lineage, the trust layer,
+It is **beta** (v0.61.0). Local capture, replay, diff, lineage, the trust layer,
 policy gates, eval suites, and the asset registry are usable; server mode, the
-cluster-scale collector, the dashboard, and the entire v0.59 parity cohort are
-`experimental`. On-disk formats are not frozen until the v1.0 schema freeze.
+cluster-scale collector, the dashboard, and the v0.59–v0.61 cohorts (observability
+parity + enterprise readiness) are `experimental`. On-disk formats are not frozen
+until the v1.0 schema freeze.
 
 **What Python version is required?**
 Python 3.12 or newer.
@@ -593,6 +616,8 @@ See [Citation](#citation) below, or the [`CITATION.cff`](CITATION.cff) file.
 - [Strategy: Agentic Research-to-Production OS](design/strategy/agentic-research-to-production-os.md)
 
 ### Release notes
+- [v0.61.0 — Enterprise readiness: secure-by-default auth, orgs/workspaces, backup/restore, encryption at rest, observability](docs/releases/v0.61.0.md)
+- [v0.60.0 — Full-CLI dashboard, streaming object store, PROV-N, OTLP/protobuf ingest](docs/releases/v0.60.0.md)
 - [v0.59.0 — Langfuse-parity cohort first slices, supply-chain provenance, evidence-grade eval](docs/releases/v0.59.0.md)
 - [v0.19.0 — Complete dashboard parity](docs/releases/v0.19.0.md)
 - [v0.18.0 — Dashboard parity for v0.17.0](docs/releases/v0.18.0.md)
@@ -630,13 +655,14 @@ Requirements: [uv](https://docs.astral.sh/uv/).
 
 ## Status
 
-**Beta — actively developed (v0.59.0).** Stable and usable today: local capture,
+**Beta — actively developed (v0.61.0).** Stable and usable today: local capture,
 replay, diff, lineage (SQLite), the trust layer (signing, secret scanning,
 redaction), the asset registry, policy/approval gates, and standard eval suites.
 `Experimental`: server mode, the cluster-scale collector, the Object Capsule Store,
-the live dashboard, and the whole v0.59 cohort (prompt lifecycle, sessions, offline
-analytics, annotation queues, retention, webhooks, and the rest of the
-[New in v0.59](#new-in-v059--all-experimental) list; see [ROADMAP.md](ROADMAP.md)
+the live dashboard, and the v0.59–v0.61 cohorts (prompt lifecycle, sessions, offline
+analytics, annotation queues, retention, webhooks, and the enterprise-readiness
+surfaces in the [New in v0.60 and v0.61](#new-in-v060-and-v061--all-experimental)
+list; see [ROADMAP.md](ROADMAP.md)
 and [CHANGELOG.md](CHANGELOG.md) for per-feature maturity labels and the
 authoritative release history). Run Capsule
 and Evidence Bundle formats are **not frozen** — expect schema changes until the v1.0

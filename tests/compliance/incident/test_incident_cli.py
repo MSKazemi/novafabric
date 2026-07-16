@@ -100,6 +100,26 @@ class TestIncidentCli:
         assert payload["incident_id"] == incident_id
         assert payload["preliminary_classification"] == "unauthorized_tool_use"
 
+    def test_export_dora_is_draft_and_does_not_transition(self, tmp_path: Path) -> None:
+        incident_id = _open_incident()
+        out = tmp_path / "dora.json"
+        result = runner.invoke(
+            incident_app,
+            ["export", incident_id, "--format", "dora", "--output", str(out)],
+        )
+        assert result.exit_code == 0, result.output
+        # DORA is a non-transmitted DRAFT — it must NOT transition the incident.
+        assert "open -> reported" not in result.output
+        payload = json.loads(out.read_text())
+        assert payload["report_type"] == "eu-dora-major-ict-incident"
+        assert payload["transmitted"] is False
+        assert [d["stage"] for d in payload["deadlines"]] == [
+            "initial_notification", "intermediate_report", "final_report",
+        ]
+        # The incident is still open (draft render did not report it).
+        status = runner.invoke(incident_app, ["status", incident_id])
+        assert "reported" not in status.output.lower()
+
     def test_open_rejects_aware_before_occurred(self) -> None:
         result = runner.invoke(
             incident_app,

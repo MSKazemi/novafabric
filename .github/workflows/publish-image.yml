@@ -87,3 +87,39 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Scan image (trivy, full report — informational)
+        # Vulnerability scan of the image we just published (ADR-0186).
+        # This pass reports ALL severities for the release record and never
+        # blocks by itself; the gate is the next step.
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}
+          format: table
+          output: trivy-report.txt
+          exit-code: "0"
+
+      - name: Upload trivy scan report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report-${{ github.sha }}
+          path: trivy-report.txt
+          retention-days: 90
+
+      - name: Gate on fixable CRITICAL vulnerabilities (trivy)
+        # ADR-0186: block the release on CRITICAL findings that have an
+        # available fix. Unfixable criticals (ignore-unfixed) report in the
+        # full scan above but do not wedge the release behind upstream
+        # base-image lag; if they persist they enter the waiver discipline.
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          # trivy is already installed and its DB cached by the report step.
+          skip-setup-trivy: true
+        env:
+          TRIVY_SKIP_DB_UPDATE: true
+          TRIVY_SKIP_JAVA_DB_UPDATE: true

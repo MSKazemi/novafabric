@@ -31,6 +31,7 @@ from novafabric.compliance.incident.aim_export import (
     build_nis2_report_from_incident,
 )
 from novafabric.compliance.incident.clock import DeadlineClock
+from novafabric.compliance.incident.dora_export import build_dora_report
 from novafabric.compliance.incident.models import (
     Incident,
     IncidentNotFoundError,
@@ -56,6 +57,7 @@ class ExportFormat(str, enum.Enum):
 
     AIM = "aim"
     NIS2 = "nis2"
+    DORA = "dora"
 
 
 def _parse_ts(value: str, param_name: str) -> datetime:
@@ -197,15 +199,17 @@ def incident_status_cmd(
 def incident_export_cmd(
     incident_id: str = typer.Argument(..., help="Incident identifier"),
     format_: ExportFormat = typer.Option(
-        ExportFormat.AIM, "--format", help="Report target: aim|nis2"
+        ExportFormat.AIM, "--format", help="Report target: aim|nis2|dora"
     ),
     output: Path | None = typer.Option(
         None, "--output", help="Output path (default: incident-<id>-<format>.json)"
     ),
 ) -> None:
-    """Render an incident report (OECD AIM or NIS2) from the stored record.
+    """Render an incident report (OECD AIM, NIS2, or EU DORA) from the stored record.
 
-    Writing the export transitions an `open` incident to `reported`.
+    Writing an `aim` or `nis2` export transitions an `open` incident to `reported`. The `dora`
+    format is a **DRAFT projection** (``transmitted: false``, ADR-0159 D5) and does **not**
+    transition the incident — it transmits nothing.
 
     Scope: local incident store under NOVAFABRIC_HOME; writes one JSON file.
 
@@ -213,6 +217,7 @@ def incident_export_cmd(
     Examples:
       nova incident export inc-0123abcd4567 --format aim
       nova incident export inc-0123abcd4567 --format nis2 --output report.json
+      nova incident export inc-0123abcd4567 --format dora
     """
     with IncidentStore() as store:
         try:
@@ -222,11 +227,16 @@ def incident_export_cmd(
             raise typer.Exit(1) from exc
         if format_ is ExportFormat.AIM:
             payload = build_aim_report(incident)
+        elif format_ is ExportFormat.DORA:
+            payload = build_dora_report(
+                incident, now=datetime.now(timezone.utc)
+            ).model_dump(mode="json")
         else:
             payload = build_nis2_report_from_incident(incident).model_dump()
         path = output or Path(f"incident-{incident.id}-{format_.value}.json")
         path.write_text(json.dumps(payload, indent=2, default=str) + "\n")
-        if incident.status is IncidentStatus.OPEN:
+        # DORA is a non-transmitted DRAFT — never transition the incident on it.
+        if format_ is not ExportFormat.DORA and incident.status is IncidentStatus.OPEN:
             store.transition(incident.id, IncidentStatus.REPORTED)
             typer.echo(f"Incident {incident.id}: open -> reported")
     typer.echo(f"Wrote {format_.value} report to {path}")

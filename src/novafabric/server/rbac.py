@@ -90,16 +90,42 @@ def _as_role(value: str) -> Role | None:
 # ---------------------------------------------------------------------------
 
 
+def _scoped_satisfies(auth: AuthContext, minimum: Role) -> bool:
+    """ADR-0178 (experimental): workspace/org membership fallback.
+
+    Consulted ONLY after the token's own roles failed to satisfy *minimum* —
+    the global-only path above short-circuits identically to pre-ADR-0178
+    behavior. Deployments that never create scoped memberships or service
+    accounts return False here (``feature_in_use`` is empty), so their 403
+    path is byte-identical too. Any store error fails closed (403).
+    """
+    try:
+        from novafabric.server import workspace_store
+
+        if not workspace_store.feature_in_use():
+            return False
+        effective = set(auth.roles) | workspace_store.effective_roles(auth.subject)
+        return _satisfies(list(effective), minimum)
+    except Exception:  # noqa: BLE001 — authorization fallback must fail closed
+        logger.exception("workspace-scoped role resolution failed; failing closed")
+        return False
+
+
 def require_role(minimum: Role) -> Callable[..., AuthContext]:
     """Return a FastAPI dependency that enforces *minimum* role.
 
     Raises HTTP 401 if not authenticated, HTTP 403 if insufficient privilege.
+
+    Role sources, in order (ADR-0178): the token's own roles first (unchanged
+    fast path); if those are insufficient, the union of the principal's global
+    ``role_assignments`` rows and org/workspace-scoped memberships — consulted
+    only when the workspace/org feature is actually in use.
     """
 
     async def _check_role(
         auth: Annotated[AuthContext, Depends(verify_token)],
     ) -> AuthContext:
-        if not _satisfies(auth.roles, minimum):
+        if not _satisfies(auth.roles, minimum) and not _scoped_satisfies(auth, minimum):
             raise _Forbidden(
                 f"Role '{minimum.value}' or higher required; "
                 f"token has {auth.roles!r}"

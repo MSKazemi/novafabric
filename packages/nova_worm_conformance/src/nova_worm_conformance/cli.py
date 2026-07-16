@@ -49,6 +49,14 @@ def run_suite(
     sign: Annotated[
         bool, typer.Option("--sign/--no-sign", help="Sign report with NovaSeal (FR-13)")
     ] = False,
+    signing_key: Annotated[
+        Optional[str],
+        typer.Option(help="PEM ECDSA P-256 private key for --sign (NovaSeal LocalSigningBackend)"),
+    ] = None,
+    signing_cert: Annotated[
+        Optional[str],
+        typer.Option(help="PEM X.509 certificate matching --signing-key, for signer identity"),
+    ] = None,
     access_key: Annotated[
         str, typer.Option(help="Storage access key / client ID", envvar="WORM_ACCESS_KEY")
     ] = "minioadmin",
@@ -93,12 +101,24 @@ def run_suite(
     with console.status("Running tests..."):
         report = suite.run()
 
-    # Optionally sign the report
+    # Optionally sign the report — honestly. A real signature requires the
+    # NovaSeal backend plus a key/cert; otherwise the report is left unsigned
+    # (with an integrity digest), never stamped with a hash pretending to be one.
     if sign:
-        try:
-            report.novaseal_signature = _sign_report(report.to_json())
-        except Exception as e:
-            console.print(f"[yellow]Warning: signing failed: {e}[/yellow]")
+        from pathlib import Path
+
+        from nova_worm_conformance.signing import apply_signing
+
+        apply_signing(
+            report,
+            key_path=Path(signing_key) if signing_key else None,
+            cert_path=Path(signing_cert) if signing_cert else None,
+        )
+        if report.signing_status == "signed":
+            console.print(f"[green]Report signed[/green] ({report.signing_method})")
+        else:
+            console.print(f"[yellow]Report NOT signed[/yellow]: {report.signing_detail}")
+            console.print(f"  content_sha256 = {report.content_sha256}")
 
     # Display results table
     table = Table(title="WORM Conformance Results")
@@ -132,15 +152,6 @@ def _build_client(backend: str, endpoint: str, access_key: str, secret_key: str)
         aws_access_key_id=access_key,
         aws_secret_access_key=secret_key,
     )
-
-
-def _sign_report(report_json: str) -> str:
-    """Sign report JSON with NovaSeal if available (FR-13)."""
-    import base64
-    import hashlib
-    # Placeholder: in a full implementation, this would call NovaSealClient.sign_bytes()
-    digest = hashlib.sha256(report_json.encode("utf-8")).digest()
-    return base64.b64encode(digest).decode("ascii")
 
 
 if __name__ == "__main__":

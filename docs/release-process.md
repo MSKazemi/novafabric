@@ -2,6 +2,17 @@
 
 Follow these steps to cut a NovaFabric release.
 
+## 0. Migration compatibility rule (ADR-0180, expand-contract)
+
+Every Alembic migration shipped in a release MUST be backward-compatible with
+the previous minor version's code (the N/N+1 window): additive changes first
+(new tables/columns nullable or defaulted), destructive contraction (drops,
+renames, type narrowing) only after one full minor cycle in which no shipped
+code path needs the old shape. A release containing a migration that breaks
+the previous minor's code against the new schema is **blocked** until the
+migration is split. Rationale and the full posture (single-writer
+active-passive, fencing invariant): ADR-0180.
+
 ## 1. Run tests
 
 ```bash

@@ -1,16 +1,19 @@
 """OIDC token validation middleware for the NovaFabric REST API.
 
-ADR-0018: OIDC Device Authorization Grant, JWKS cache with TTL, no-auth local mode.
-
-When ``ServerConfig.oidc.issuer_url`` is empty, auth is disabled and every
-request is treated as an anonymous admin (local-mode default).
+ADR-0018: OIDC Device Authorization Grant, JWKS cache with TTL.
+ADR-0184 (experimental): secure-by-default local mode — when
+``ServerConfig.oidc.issuer_url`` is empty, requests must present the
+auto-generated local bearer token (subject ``local-admin``, role ``admin``).
+Anonymous admin survives only behind the explicit ``insecure_no_auth`` opt-out.
 """
 
 from __future__ import annotations
 
 import logging
+import secrets
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -19,6 +22,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from novafabric.server.config import ServerConfig
+from novafabric.server.local_token import LOCAL_ADMIN_SUBJECT, ensure_local_token
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +46,8 @@ class AuthContext:
         return role in self.roles
 
 
-# Anonymous admin used in no-auth local mode.
+# Anonymous admin — ADR-0184: only reachable via the explicit
+# ``insecure_no_auth`` opt-out (pre-0184 this was the no-OIDC default).
 LOCAL_AUTH = AuthContext(subject="local", roles=["admin"])
 
 # ---------------------------------------------------------------------------
@@ -132,17 +137,104 @@ def _get_jwks_cache(config: ServerConfig) -> JwksCache | None:
 _AUTH_CONTEXT_KEY = "nova_auth_context"
 
 
+def _verify_local_token(request: Request, config: ServerConfig) -> AuthContext:
+    """Validate the local bearer token when OIDC is disabled (ADR-0184).
+
+    The expected token is resolved once (env → token file → fresh, persisted
+    mode 0600) and cached on the config. Comparison is constant-time.
+    """
+    expected = config.local_token
+    if not expected:
+        expected, _ = ensure_local_token()
+        config.local_token = expected
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise _unauthenticated(
+            "Local token required: OIDC is disabled, so requests must send "
+            "'Authorization: Bearer <local-token>' (printed at startup; "
+            "stored at $NOVAFABRIC_HOME/.server-token). See ADR-0184."
+        )
+    presented = auth_header.removeprefix("Bearer ").strip()
+    if not secrets.compare_digest(presented.encode(), expected.encode()):
+        raise _unauthenticated("Invalid local token")
+
+    ctx = AuthContext(subject=LOCAL_ADMIN_SUBJECT, roles=["admin"])
+    request.state.auth = ctx
+    return ctx
+
+
+def _try_offline_token(request: Request, config: ServerConfig) -> AuthContext | None:
+    """Accept an offline ed25519 JWT when ``offline_key_path`` is configured.
+
+    ADR-0178 (experimental): service-account tokens are offline ed25519 JWTs
+    (ADR-0018) with subject ``svc:<name>``. This path only activates when the
+    operator configures ``NOVAFABRIC_OFFLINE_KEY_PATH`` AND the presented
+    bearer credential is JWT-shaped (the opaque ADR-0184 local token never
+    is), so pre-existing deployments are unaffected.
+
+    Returns None when not applicable; raises ``_Unauthenticated`` when a
+    JWT-shaped token fails verification, is revoked, or belongs to a disabled
+    or unknown service account (spec I4).
+    """
+    if not config.offline_key_path:
+        return None
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return None
+    raw_token = auth_header.removeprefix("Bearer ").strip()
+    if raw_token.count(".") != 2:
+        return None  # not JWT-shaped — leave it to the local-token comparison
+
+    from novafabric.server.offline_tokens import verify_offline_token
+
+    try:
+        ctx = verify_offline_token(raw_token, Path(config.offline_key_path))
+    except Exception as exc:  # noqa: BLE001 — any failure is a clean 401
+        raise _unauthenticated(f"Invalid offline token: {exc}")
+
+    if ctx.subject.startswith("svc:"):
+        # Spec I4: a disabled service account invalidates all its outstanding
+        # tokens at verification time, independent of per-token revocation.
+        from novafabric.server import workspace_store
+
+        account = workspace_store.get_service_account_by_name(
+            ctx.subject.removeprefix("svc:")
+        )
+        if account is None or account["disabled"]:
+            raise _unauthenticated(
+                f"Service account for subject {ctx.subject!r} is disabled or unknown"
+            )
+
+    request.state.auth = ctx
+    return ctx
+
+
 async def verify_token(request: Request) -> AuthContext:
     """FastAPI dependency that validates the Bearer JWT and returns AuthContext.
 
     Raises HTTP 401 (as JSONResponse) if the token is missing or invalid.
-    OIDC disabled → returns LOCAL_AUTH immediately.
+    OIDC disabled → requires the local bearer token (ADR-0184), unless the
+    explicit ``insecure_no_auth`` opt-out restores anonymous LOCAL_AUTH.
+    When ``offline_key_path`` is configured, offline ed25519 JWTs (service
+    accounts, ADR-0178) are also accepted in local mode.
     """
     config: ServerConfig = request.app.state.config
 
     if not config.oidc.enabled:
-        request.state.auth = LOCAL_AUTH
-        return LOCAL_AUTH
+        try:
+            offline_ctx = _try_offline_token(request, config)
+        except _Unauthenticated:
+            if not config.insecure_no_auth:
+                raise
+            # insecure opt-out keeps its pre-0178 anonymous-admin behavior
+            offline_ctx = None
+        if offline_ctx is not None:
+            return offline_ctx
+        if config.insecure_no_auth:
+            request.state.auth = LOCAL_AUTH
+            return LOCAL_AUTH
+        return _verify_local_token(request, config)
 
     # Extract Bearer token
     auth_header = request.headers.get("Authorization", "")

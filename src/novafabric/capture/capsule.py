@@ -9,6 +9,12 @@ from novafabric.capture.log_level import validate_severity_fields
 
 class CapsuleWriter:
     def __init__(self, run_id: str, base_dir: Path) -> None:
+        # Guard against an empty/blank run_id: ``base_dir / "" == base_dir`` would
+        # write capsule files (model-calls.jsonl, tool-calls.jsonl, …) directly
+        # into the capsule store root instead of an isolated ``<run_id>/`` subdir,
+        # corrupting the store and breaking run-detail resolution.
+        if not run_id or not run_id.strip() or "/" in run_id or run_id in {".", ".."}:
+            raise ValueError(f"CapsuleWriter requires a valid run_id, got: {run_id!r}")
         self._run_id = run_id
         self._base_dir = base_dir
         self._dir: Path | None = None

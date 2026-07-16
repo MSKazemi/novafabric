@@ -53,6 +53,11 @@ def serve_token_path() -> Path:
     return nova_home() / ".serve-token"
 
 
+def server_token_path() -> Path:
+    """Local server auth token file (ADR-0184): ``$NOVAFABRIC_HOME/.server-token``."""
+    return nova_home() / ".server-token"
+
+
 def dashboard_audit_path() -> Path:
     """Dashboard mutation audit log path.
 

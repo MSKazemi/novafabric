@@ -1,8 +1,10 @@
 """SCIM 2.0 provisioning surface — /scim/v2 (ADR-0139, experimental).
 
-RFC 7643/7644 subset, first slice (ADR-0139 P1+P2): discovery endpoints plus
-the ``Users`` resource — create, read, list/filter, PATCH (deactivate),
-DELETE. Groups → role mapping is P3 (planned, not implemented here).
+RFC 7643/7644 subset (ADR-0139 P1–P3): discovery endpoints, the ``Users``
+resource — create, read, list/filter, PATCH (deactivate), DELETE — and the
+``Groups`` resource (create, read, list, PATCH, PUT full-replace, DELETE)
+whose membership drives RBAC role grants via the operator-declared
+``scim.group_role_map`` (ADR-0190 provenance rules).
 
 Server-mode only and doubly opt-in: the endpoints return 404 unless
 ``server.scim.enabled`` is true in the server config *and* the dedicated
@@ -42,6 +44,7 @@ router = APIRouter(prefix="/scim/v2", tags=["scim"])
 SCIM_MEDIA_TYPE = "application/scim+json"
 
 USER_URN = "urn:ietf:params:scim:schemas:core:2.0:User"
+GROUP_URN = "urn:ietf:params:scim:schemas:core:2.0:Group"
 PATCH_OP_URN = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
 LIST_RESPONSE_URN = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
 ERROR_URN = "urn:ietf:params:scim:api:messages:2.0:Error"
@@ -543,4 +546,206 @@ async def delete_user(user_id: str, actor: _Actor) -> Response:
         roles_before=roles_before,
         roles_after=roles_after,
     )
+    return Response(status_code=204)
+
+
+# ---------------------------------------------------------------------------
+# Groups (ADR-0139 D3 / ADR-0190) — group→role mapping wired to RBAC
+# ---------------------------------------------------------------------------
+
+# RFC 7644 §3.5.2 remove path: members[value eq "<id>"]
+_MEMBER_PATH_RE = re.compile(r'^members\[value eq "(?P<value>[^"]+)"\]$')
+
+
+def _parse_group_payload(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise _ScimError(400, "Request body must be a SCIM Group object", "invalidSyntax")
+    schemas = payload.get("schemas")
+    if not isinstance(schemas, list) or GROUP_URN not in schemas:
+        raise _ScimError(400, f"schemas must contain {GROUP_URN!r}", "invalidValue")
+    display_name = payload.get("displayName")
+    if not isinstance(display_name, str) or not display_name:
+        raise _ScimError(400, "displayName is required", "invalidValue")
+    external_id = payload.get("externalId")
+    if external_id is not None and not isinstance(external_id, str):
+        raise _ScimError(400, "externalId must be a string", "invalidValue")
+    member_ids: list[str] = []
+    raw_members = payload.get("members")
+    if raw_members is not None:
+        if not isinstance(raw_members, list):
+            raise _ScimError(400, "members must be an array", "invalidValue")
+        for entry in raw_members:
+            if not isinstance(entry, dict) or not isinstance(entry.get("value"), str):
+                raise _ScimError(400, "each member needs a string 'value'", "invalidValue")
+            member_ids.append(entry["value"])
+    return {"display_name": display_name, "external_id": external_id, "member_ids": member_ids}
+
+
+def _group_resource(group: scim_store.ScimGroup) -> dict[str, Any]:
+    resource: dict[str, Any] = {
+        "schemas": [GROUP_URN],
+        "id": group.id,
+        "displayName": group.display_name,
+        "members": [{"value": uid} for uid in group.members],
+        "meta": {
+            "resourceType": "Group",
+            "created": group.created,
+            "lastModified": group.last_modified,
+            "location": f"/scim/v2/Groups/{group.id}",
+        },
+    }
+    if group.external_id is not None:
+        resource["externalId"] = group.external_id
+    return resource
+
+
+def _reconcile_member(request: Request, user_id: str, actor: str) -> None:
+    """Recompute and apply the RBAC roles a SCIM member should have from all groups.
+
+    Unknown member ids are ignored (SCIM allows references the server doesn't hold).
+    A LastAdminError from the reconcile surfaces as a SCIM 409 with no mutation.
+    """
+    user = scim_store.get_user(user_id)
+    if user is None:
+        return
+    config: ServerConfig = request.app.state.config
+    from novafabric.server.scim_group_mapping import resolve_roles
+
+    display_names = scim_store.group_display_names_for_user(user_id)
+    desired = resolve_roles(display_names, config.scim.role_mapping())
+    try:
+        scim_store.reconcile_subject_roles(user.user_name, desired, actor)
+    except rbac_store.LastAdminError as exc:
+        raise _ScimError(409, str(exc), "mutability") from exc
+
+
+@router.post("/Groups")
+async def create_group(request: Request, actor: _Actor) -> JSONResponse:
+    try:
+        payload = await request.json()
+    except Exception as exc:  # noqa: BLE001 — malformed JSON body
+        raise _ScimError(400, f"Malformed JSON body: {exc}", "invalidSyntax") from exc
+    fields = _parse_group_payload(payload)
+    group = scim_store.create_group(
+        fields["display_name"],
+        external_id=fields["external_id"],
+        member_ids=fields["member_ids"],
+    )
+    for uid in fields["member_ids"]:
+        _reconcile_member(request, uid, actor)
+    return _scim_response(_group_resource(group), status_code=201)
+
+
+@router.get("/Groups")
+async def list_groups(_actor: _Actor) -> JSONResponse:
+    groups = scim_store.list_groups()
+    return _scim_response(
+        {
+            "schemas": [LIST_RESPONSE_URN],
+            "totalResults": len(groups),
+            "startIndex": 1,
+            "itemsPerPage": len(groups),
+            "Resources": [_group_resource(g) for g in groups],
+        }
+    )
+
+
+@router.get("/Groups/{group_id}")
+async def get_group(group_id: str, _actor: _Actor) -> JSONResponse:
+    group = scim_store.get_group(group_id)
+    if group is None:
+        raise _ScimError(404, f"Group {group_id} not found", "invalidValue")
+    return _scim_response(_group_resource(group))
+
+
+@router.patch("/Groups/{group_id}")
+async def patch_group(group_id: str, request: Request, actor: _Actor) -> JSONResponse:
+    group = scim_store.get_group(group_id)
+    if group is None:
+        raise _ScimError(404, f"Group {group_id} not found", "invalidValue")
+    try:
+        payload = await request.json()
+    except Exception as exc:  # noqa: BLE001 — malformed JSON body
+        raise _ScimError(400, f"Malformed JSON body: {exc}", "invalidSyntax") from exc
+    if not isinstance(payload, dict) or PATCH_OP_URN not in (payload.get("schemas") or []):
+        raise _ScimError(400, f"schemas must contain {PATCH_OP_URN!r}", "invalidValue")
+    operations = payload.get("Operations")
+    if not isinstance(operations, list) or not operations:
+        raise _ScimError(400, "Operations must be a non-empty array", "invalidValue")
+
+    affected: list[str] = []
+    for op in operations:
+        if not isinstance(op, dict):
+            raise _ScimError(400, "each Operation must be an object", "invalidSyntax")
+        verb = str(op.get("op", "")).lower()
+        path = op.get("path")
+        if verb == "add" and path == "members":
+            for entry in op.get("value") or []:
+                if isinstance(entry, dict) and isinstance(entry.get("value"), str):
+                    scim_store.add_group_member(group_id, entry["value"])
+                    affected.append(entry["value"])
+        elif verb == "remove" and isinstance(path, str):
+            match = _MEMBER_PATH_RE.match(path)
+            if match is None:
+                raise _ScimError(400, f"unsupported patch path {path!r}", "invalidPath")
+            uid = match.group("value")
+            scim_store.remove_group_member(group_id, uid)
+            affected.append(uid)
+        else:
+            raise _ScimError(400, f"unsupported patch op {verb!r}", "invalidValue")
+
+    for uid in affected:
+        _reconcile_member(request, uid, actor)
+    updated = scim_store.get_group(group_id)
+    assert updated is not None  # just fetched/patched
+    return _scim_response(_group_resource(updated))
+
+
+@router.put("/Groups/{group_id}")
+async def put_group(group_id: str, request: Request, actor: _Actor) -> JSONResponse:
+    """RFC 7644 §3.5.1 full replace of a Group.
+
+    ``displayName`` and ``members`` are replaced atomically (one transaction);
+    role reconciliation then runs for every member added, removed, or kept —
+    exactly as PATCH does: new members of a mapped group gain the role, removed
+    members lose only SCIM-owned grants (ADR-0190), and a revoke that would
+    remove the last admin surfaces as a SCIM 409 (ADR-0060).
+    """
+    group = scim_store.get_group(group_id)
+    if group is None:
+        raise _ScimError(404, f"Group {group_id} not found", "invalidValue")
+    try:
+        payload = await request.json()
+    except Exception as exc:  # noqa: BLE001 — malformed JSON body
+        raise _ScimError(400, f"Malformed JSON body: {exc}", "invalidSyntax") from exc
+    fields = _parse_group_payload(payload)
+
+    old_members = set(group.members)
+    updated = scim_store.replace_group(
+        group_id,
+        display_name=fields["display_name"],
+        external_id=fields["external_id"],
+        member_ids=fields["member_ids"],
+    )
+    if updated is None:  # pragma: no cover — row deleted between read and write
+        raise _ScimError(404, f"Group {group_id} not found", "invalidValue")
+
+    # Reconcile the union: removed members lose SCIM-owned grants, added
+    # members gain them, and kept members are remapped on a displayName rename.
+    for uid in sorted(old_members | set(fields["member_ids"])):
+        _reconcile_member(request, uid, actor)
+    return _scim_response(_group_resource(updated))
+
+
+@router.delete("/Groups/{group_id}", status_code=204)
+async def delete_group(group_id: str, request: Request, actor: _Actor) -> Response:
+    group = scim_store.get_group(group_id)
+    if group is None:
+        raise _ScimError(404, f"Group {group_id} not found", "invalidValue")
+    members = list(group.members)
+    scim_store.delete_group(group_id)
+    # After the group is gone, each member's role set is recomputed from the
+    # groups that remain — dropping the role this group granted (if unique).
+    for uid in members:
+        _reconcile_member(request, uid, actor)
     return Response(status_code=204)

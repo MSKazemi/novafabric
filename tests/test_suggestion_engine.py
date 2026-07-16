@@ -637,7 +637,7 @@ def _server_client(tmp_path: Path) -> TestClient:
     db_path = tmp_path / "reg.db"
     capsule_dir = tmp_path / "runs"
     capsule_dir.mkdir()
-    cfg = ServerConfig(db_path=str(db_path))
+    cfg = ServerConfig(db_path=str(db_path), insecure_no_auth=True)  # ADR-0184
     server_app = create_app(cfg)
     server_app.dependency_overrides[deps.get_capsule_dir] = lambda: capsule_dir
     return TestClient(server_app, raise_server_exceptions=False)
@@ -652,7 +652,7 @@ def test_suggest_register_route_empty(tmp_path: Path):
     db_path = tmp_path / "reg.db"
     capsule_dir = tmp_path / "runs"
     capsule_dir.mkdir()
-    cfg = ServerConfig(db_path=str(db_path))
+    cfg = ServerConfig(db_path=str(db_path), insecure_no_auth=True)  # ADR-0184
     server_app = create_app(cfg)
     server_app.dependency_overrides[deps.get_capsule_dir] = lambda: capsule_dir
     client = TestClient(server_app, raise_server_exceptions=False)
@@ -685,7 +685,7 @@ def test_suggest_register_route_with_model_calls(tmp_path: Path):
     manifest = {"run_id": "01SRVTEST", "schema_version": "0.1.0", "command": ["python", "a.py"], "exit_code": 0, "status": "success"}
     (d / "capsule.yaml").write_text(yaml.dump(manifest))
 
-    cfg = ServerConfig(db_path=str(db_path), auth_disabled=True)
+    cfg = ServerConfig(db_path=str(db_path), insecure_no_auth=True)  # ADR-0184
     server_app = create_app(cfg)
     server_app.dependency_overrides[deps.get_capsule_dir] = lambda: capsule_dir
     client = TestClient(server_app, raise_server_exceptions=False)

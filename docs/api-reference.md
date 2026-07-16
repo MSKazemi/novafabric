@@ -1,8 +1,8 @@
 # NovaFabric REST API Reference
 
-**Maturity:** experimental (v0.58.0). This is the HTTP surface of the local, read-only
-`nova serve --experimental` dashboard. It works today, but — like every v0.1–v0.9
-surface — its routes, request/response shapes, and behaviour may change before the v1.0
+**Maturity:** experimental (v0.61.0). This is the HTTP surface of the local, read-only
+`nova serve --experimental` dashboard. It works today, but its routes, request/response
+shapes, and behaviour may change before the v1.0
 schema freeze. The CLI remains the canonical interface; every endpoint below mirrors, or
 is derived from, a `nova` command you can run without a server.
 
@@ -437,6 +437,50 @@ slash-containing values.
 | Method | Path | Summary |
 |---|---|---|
 | `GET` | `/api/ops/daemon-status` | Report whether the warm capture daemon socket is alive (read-only). |
+
+## Deprecation register (ADR-0188)
+
+**Maturity:** mechanism works today (experimental); the register is empty and the CI
+drift gate is future design. Policy and machinery:
+[ADR-0188](../design/adr/0188-api-deprecation-sunset-policy.md).
+
+**Scope.** The lifecycle policy applies to the multi-user `nova server` API only
+(`api/openapi.yaml`, `/v0` and later). The `nova serve` dashboard API documented in the
+tables above remains **experimental/unversioned** — no lifecycle promises — until the
+planned ADR-0183 consolidation.
+
+**Breaking-change definition (normative).** Breaking: removing or renaming a path,
+query parameter, or response field; narrowing a type or enum; tightening auth or
+required scopes on an existing endpoint; changing error-envelope semantics (codes,
+envelope shape). Non-breaking: adding optional fields, endpoints, enum values
+documented as open, or response headers. If it is not on the breaking list, it may
+ship in any release; if it is, the lifecycle below is mandatory.
+
+**Lifecycle.** A deprecation is announced in `CHANGELOG.md`, the release notes, and
+this register, all at once. From the deprecating release onward the endpoint emits
+three headers on every response (implemented in
+`src/novafabric/server/deprecation.py`):
+
+| Header | Format | Meaning |
+|---|---|---|
+| `Deprecation:` | `@<unix-timestamp>` or `true` (RFC 9745) | The endpoint is deprecated (and since when, if known). |
+| `Sunset:` | HTTP-date (RFC 8594) | Earliest date the endpoint may be removed. |
+| `Link:` | `<url>; rel="deprecation"` | Points at this register's entry for the endpoint. |
+
+**Minimum window.** A deprecated endpoint stays working for **at least two minor
+releases**. Removal lands only in a **minor** version bump pre-1.0 and only in a
+**major** bump post-1.0. No silent removals, ever. Every register row names the
+deprecating release, an earliest-removal release at least two minors later, and a
+replacement (or an explicit "none"); each row must match a `deprecated: true`
+operation in `api/openapi.yaml` (drift gate: future CI).
+
+### Register
+
+*No endpoints are currently deprecated.*
+
+| Endpoint | Deprecated in | Earliest removal | Sunset date | Replacement |
+|---|---|---|---|---|
+| — | — | — | — | — |
 
 ## Interactive API docs
 
