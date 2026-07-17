@@ -7,7 +7,7 @@ Subcommands:
   nova server assign-role    — Assign a role to a subject (role_assignments table).
   nova server flush-jwks-cache — Flush the JWKS cache on the running server.
   nova server saml-metadata  — Emit this SP's SAML metadata XML (ADR-0138, experimental).
-  nova server api-key create|list|revoke — Manage first-class API keys (ADR-0193, experimental).
+  nova server api-key create|list|revoke|rotate — Manage first-class API keys (ADR-0193).
 
 Install the [server] extra to use: pip install novafabric[server]
 """
@@ -690,7 +690,7 @@ def saml_metadata_cmd(
 
 
 # ---------------------------------------------------------------------------
-# nova server api-key create|list|revoke (ADR-0193 Track 1, experimental)
+# nova server api-key create|list|revoke|rotate (ADR-0193 Track 1, experimental)
 # ---------------------------------------------------------------------------
 
 api_key_app = typer.Typer(
@@ -872,6 +872,77 @@ def api_key_revoke_cmd(
         raise typer.Exit(code=1)
 
     typer.echo(f"API key '{key_id}' revoked.")
+
+
+@api_key_app.command("rotate")
+def api_key_rotate_cmd(
+    key_id: Annotated[str, typer.Argument(help="Public key_id to rotate.")],
+    overlap_seconds: Annotated[
+        Optional[int],  # noqa: UP007
+        typer.Option(
+            "--overlap-seconds",
+            help=(
+                "Overlap window (seconds) during which BOTH keys stay valid. "
+                "Default: NOVA_API_KEY_ROTATE_OVERLAP_S or 86400 (24h)."
+            ),
+        ),
+    ] = None,
+    rotated_by: Annotated[
+        str,
+        typer.Option("--rotated-by", help="Actor recorded in the audit log."),
+    ] = "cli",
+    db_path: Annotated[
+        Optional[Path],  # noqa: UP007
+        typer.Option("--db-path", help="SQLite DB path. Defaults to registry default."),
+    ] = None,
+) -> None:
+    """Rotate an API key: mint a successor and print it ONCE (ADR-0193 D3).
+
+    The successor inherits the predecessor's owner, roles, workspace, and
+    expiry. Both keys stay valid for the overlap window; after it elapses the
+    predecessor is auto-revoked (checked at verify time — no background job).
+    A zero-downtime credential swap for deployed agents.
+
+    Scope: single server.
+
+    \b
+    Examples:
+      nova server api-key rotate a1b2c3d4
+      nova server api-key rotate a1b2c3d4 --overlap-seconds 3600
+    """
+    from novafabric.server.api_keys import (
+        RevokedKeyError,
+        UnknownKeyError,
+        rotate_key,
+    )
+
+    try:
+        key, record = rotate_key(
+            key_id,
+            actor=rotated_by,
+            overlap_seconds=overlap_seconds,
+            db_path=db_path,
+        )
+    except UnknownKeyError as exc:
+        typer.echo(str(exc.args[0]) if exc.args else str(exc), err=True)
+        raise typer.Exit(code=1)
+    except RevokedKeyError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1)
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"Failed to rotate API key: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    overlap = record["rotate_overlap_seconds"]
+    typer.echo(
+        f"API key rotated (successor key_id: {record['key_id']}). "
+        f"Both keys stay valid for the overlap window of {overlap}s "
+        f"(predecessor auto-revokes after {record['rotate_expires_at']})."
+    )
+    typer.echo(
+        "This successor key is shown once and cannot be recovered — store it now:"
+    )
+    typer.echo(key)
 
 
 # ---------------------------------------------------------------------------

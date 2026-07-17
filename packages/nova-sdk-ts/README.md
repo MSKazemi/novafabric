@@ -17,6 +17,14 @@ design and asserted by test.
 - `getCapsule(runId)` / `listCapsules({limit, cursor})` — run capsule read + list
 - `iterateCapsules({limit})` — async iterator that lazily walks `next_cursor` pages
 - `getAsset(id)` / `listAssets({limit, cursor, asset_type, status})` — registry read + list
+- `submitScore(runId, score)` — submit an externally-computed evaluation into
+  the capsule's append-only `scores.jsonl` (`POST /capsules/{run_id}/scores`,
+  ADR-0119). Typed request/response; a `200` idempotent replay returns
+  `data: null` (inspect `meta.status` to distinguish it from a `201`)
+- `otlpTraceEndpoint()` — configuration helper (ADR-0177): returns
+  `{ url, headers }` for pointing an existing OTel JS exporter at the
+  deployment's OTLP ingest (`/api/otlp/v1/traces`, on the serve surface — NOT
+  under `/v0`). It does NOT encode or send OTLP — **you bring your own exporter**
 - Auth: static bearer token **or** an async token-provider callback
   (`() => Promise<string>`) so your app owns refresh against its IdP
 - Typed `NovaFabricApiError` mapped from the standard error envelope
@@ -37,11 +45,9 @@ design and asserted by test.
 - **No default base URL** — private deployments are the norm; the constructor
   requires `baseUrl` and omitting it is a compile-time and runtime error
 
-Planned for a later slice (not in this package yet): score submission
-(`POST /capsules/{run_id}/scores`), the OTLP-ingest configuration helper
-(ADR-0177), evidence helpers, and CJS output (the package is currently
-**ESM-only** with bundled `.d.ts`; CJS compatibility is an honest follow-up,
-not silently claimed).
+Planned for a later slice (not in this package yet): evidence helpers and CJS
+output (the package is currently **ESM-only** with bundled `.d.ts`; CJS
+compatibility is an honest follow-up, not silently claimed).
 
 ## Usage
 
@@ -69,6 +75,27 @@ try {
     console.error(err.status, err.code, err.message);
   }
 }
+
+// Submit an externally-computed score (append-only; ADR-0119).
+const { data, meta } = await client.submitScore("run-01H...", {
+  name: "faithfulness",
+  value: 0.92,
+  value_type: "numeric",
+  source: "judge",
+  evaluator_id: "eval-01H",
+  subject: "sha256:...",
+  subject_kind: "capsule",
+  eval_card_digest: "sha256:...",
+});
+if (meta.status === 200) {
+  // idempotent replay — identical body already present; data is null
+}
+
+// Point YOUR OWN OTel exporter at the deployment's OTLP ingest (ADR-0177).
+// The SDK returns the URL + auth headers; it does not encode/send OTLP.
+const { url, headers } = await client.otlpTraceEndpoint();
+// import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+// const exporter = new OTLPTraceExporter({ url, headers });
 ```
 
 ## Development
@@ -89,8 +116,11 @@ regeneration fails the gate. Generation runs through
 because of a pre-existing spec bug (two dangling `$ref`s on
 `/admin/flush-jwks`); see the comment in that script.
 
-CI wiring for these gates is a follow-up (ADR-0194 first-slice note); the
-package is published to npm from the public repo only.
+These gates run in CI via `.github/workflows/sdk-ts.yml`, path-scoped to
+`packages/nova-sdk-ts/**` and `api/openapi.yaml` (so a contract change that
+skips regeneration trips the drift gate). The workflow does **not** publish —
+publication to npm is manual and happens from the public repo only, in lockstep
+with the release tags (ADR-0194 D5).
 
 ## License
 

@@ -53,6 +53,8 @@ from novafabric.serve.capsule_loader import (
     load_full_capsule,
     load_jsonl,
 )
+from novafabric.serve.routers.admin_keys import build_admin_keys_router
+from novafabric.serve.routers.alerts import build_alerts_router
 from novafabric.serve.routers.analytics import build_analytics_router
 from novafabric.serve.routers.holds import build_holds_router
 
@@ -2021,6 +2023,14 @@ def create_app(
     # ---------- analytics summary (dashboard analytics slice) ----------
     # New route group per the ADR-0183 freeze: lands as a router, not inline.
     app.include_router(build_analytics_router(verify_token, db_path=db_path))
+
+    # ---------- recent operational alerts (ADR-0192 D6 read surface) ----------
+    app.include_router(build_alerts_router(verify_token, db_path=db_path))
+
+    # ---------- admin API-keys read view (ADR-0193 slice 2) ----------
+    # Read-only, secret-free projection for the dashboard admin console.
+    # Mutations (create/revoke/rotate) live behind server /v0/api-keys.
+    app.include_router(build_admin_keys_router(verify_token, db_path=db_path))
 
     # ---------- Layer B mutations (per ADR-0027 §1) ----------
     # Safe mutations only: registry writes, eval runs, evidence exports.

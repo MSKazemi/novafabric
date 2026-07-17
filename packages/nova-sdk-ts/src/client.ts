@@ -5,7 +5,7 @@
  * by api/openapi.yaml. Zero runtime dependencies. No default base URL, no
  * telemetry, no requests other than the ones the caller invokes.
  */
-import type { components } from "./types.gen.js";
+import type { components, operations } from "./types.gen.js";
 
 // ---------------------------------------------------------------------------
 // Re-exported contract types (generated from api/openapi.yaml)
@@ -22,6 +22,22 @@ export type AssetListResponse = components["schemas"]["AssetListResponse"];
 export type CapsuleSummary = components["schemas"]["CapsuleSummary"];
 export type CapsuleDetail = components["schemas"]["CapsuleDetail"];
 export type CapsuleListResponse = components["schemas"]["CapsuleListResponse"];
+
+/**
+ * Request body for `submitScore` — an externally-computed evaluation record
+ * appended to a run capsule's `scores.jsonl` (ADR-0119). Generated from the
+ * `submitCapsuleScore` operation in api/openapi.yaml.
+ */
+export type ScoreSubmission =
+  operations["submitCapsuleScore"]["requestBody"]["content"]["application/json"];
+
+/**
+ * `201 Created` body returned when a score is appended — the stored record plus
+ * idempotency/config-binding flags. A `200` idempotent replay carries no body
+ * (see `submitScore`, which returns `data: null` in that case).
+ */
+export type ScoreSubmissionResponse =
+  operations["submitCapsuleScore"]["responses"][201]["content"]["application/json"];
 
 // ---------------------------------------------------------------------------
 // Client options and response metadata
@@ -62,6 +78,23 @@ export interface ResponseMeta {
 export interface ApiResult<T> {
   data: T;
   meta: ResponseMeta;
+}
+
+/**
+ * Coordinates for pointing an existing OTel JS trace exporter at the
+ * deployment's OTLP ingest (ADR-0177 / ADR-0098). The SDK does NOT implement an
+ * OTLP encoder — you bring your own exporter (`@opentelemetry/exporter-trace-otlp-http`)
+ * and feed it these values. See `otlpTraceEndpoint`.
+ */
+export interface OtlpEndpoint {
+  /** Absolute URL of the OTLP/HTTP traces endpoint (`.../api/otlp/v1/traces`). */
+  url: string;
+  /**
+   * Headers to attach — carries `Authorization: Bearer <token>` when the client
+   * was constructed with a token (empty object otherwise). The exporter sets its
+   * own `Content-Type` (OTLP/JSON or OTLP/protobuf); the SDK does not.
+   */
+  headers: Record<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -222,6 +255,63 @@ export class NovaFabricClient {
     });
   }
 
+  // ------------------------------- scores --------------------------------
+
+  /**
+   * POST /capsules/{run_id}/scores — submit an externally-computed score into
+   * the capsule's append-only `scores.jsonl` (ADR-0119; requires the
+   * `scores:write` capability). Append-only and fail-closed: a correction is a
+   * new record whose `supersedes` names a prior `score_id`.
+   *
+   * Returns the stored record (`ApiResult<ScoreSubmissionResponse>`) on a
+   * `201 Created`. On a `200` idempotent replay (an identical body for a
+   * `score_id` already present) the server appends no second line and returns
+   * no body — `data` is then `null`; inspect `meta.status` to distinguish.
+   */
+  async submitScore(
+    runId: string,
+    score: ScoreSubmission,
+  ): Promise<ApiResult<ScoreSubmissionResponse | null>> {
+    const { response, meta } = await this.send(
+      "POST",
+      `/capsules/${encodeURIComponent(runId)}/scores`,
+      "POST /capsules/{run_id}/scores",
+      { body: score },
+    );
+    // 200 = idempotent replay, no body; 201 = the appended score record.
+    if (response.status === 200) return { data: null, meta };
+    const data = (await response.json()) as ScoreSubmissionResponse;
+    return { data, meta };
+  }
+
+  // -------------------------------- OTLP ---------------------------------
+
+  /**
+   * Coordinates for pointing an existing OTel JS trace exporter at this
+   * deployment's OTLP ingest (ADR-0177 / ADR-0098). Configuration help only —
+   * the SDK does NOT encode or send OTLP itself.
+   *
+   * The ingest lives on the deployment's serve/server surface at
+   * `/api/otlp/v1/traces` (NOT under the `/v0` API prefix), so the URL is
+   * derived by stripping a trailing `/v0` segment from `baseUrl`. The returned
+   * `headers` carry the bearer token when one was configured; the exporter sets
+   * its own `Content-Type`.
+   *
+   * Example (bring your own exporter):
+   * ```ts
+   * const { url, headers } = await client.otlpTraceEndpoint();
+   * const exporter = new OTLPTraceExporter({ url, headers });
+   * ```
+   */
+  async otlpTraceEndpoint(): Promise<OtlpEndpoint> {
+    const root = this.baseUrl.replace(/\/v0$/, "");
+    const url = `${root}/api/otlp/v1/traces`;
+    const headers: Record<string, string> = {};
+    const auth = await this.authHeader();
+    if (auth !== undefined) headers["Authorization"] = auth;
+    return { url, headers };
+  }
+
   // ------------------------------ internals ------------------------------
 
   private async authHeader(): Promise<string | undefined> {
@@ -230,15 +320,21 @@ export class NovaFabricClient {
     return `Bearer ${raw}`;
   }
 
-  private async request<T>(
+  /**
+   * Shared request core: builds the URL, applies auth + optional JSON body,
+   * surfaces deprecation headers, and throws a typed error on any non-2xx.
+   * Returns the raw `Response` so callers decode the body as their contract
+   * requires (a JSON page, or an empty idempotent-replay 200).
+   */
+  private async send(
     method: string,
     path: string,
     endpoint: string,
-    query?: Record<string, QueryValue>,
-  ): Promise<ApiResult<T>> {
+    opts: { query?: Record<string, QueryValue>; body?: unknown } = {},
+  ): Promise<{ response: Response; meta: ResponseMeta }> {
     const search = new URLSearchParams();
-    if (query !== undefined) {
-      for (const [key, value] of Object.entries(query)) {
+    if (opts.query !== undefined) {
+      for (const [key, value] of Object.entries(opts.query)) {
         if (value !== undefined) search.set(key, String(value));
       }
     }
@@ -249,7 +345,13 @@ export class NovaFabricClient {
     const auth = await this.authHeader();
     if (auth !== undefined) headers.set("Authorization", auth);
 
-    const response = await this.fetchImpl(url, { method, headers });
+    const init: RequestInit = { method, headers };
+    if (opts.body !== undefined) {
+      headers.set("Content-Type", "application/json");
+      init.body = JSON.stringify(opts.body);
+    }
+
+    const response = await this.fetchImpl(url, init);
 
     const meta: ResponseMeta = { status: response.status };
     const deprecation = response.headers.get("deprecation");
@@ -261,6 +363,17 @@ export class NovaFabricClient {
     if (!response.ok) {
       throw await this.toApiError(response, meta);
     }
+    return { response, meta };
+  }
+
+  private async request<T>(
+    method: string,
+    path: string,
+    endpoint: string,
+    query?: Record<string, QueryValue>,
+  ): Promise<ApiResult<T>> {
+    const opts = query === undefined ? {} : { query };
+    const { response, meta } = await this.send(method, path, endpoint, opts);
     const data = (await response.json()) as T;
     return { data, meta };
   }

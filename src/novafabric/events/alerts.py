@@ -53,6 +53,13 @@ from pathlib import Path
 from typing import Any
 
 from novafabric.audit import AUDIT_LOG_PATH, AuditEventType, AuditLog
+from novafabric.events.adapters import (
+    Adapter,
+    build_email_message,
+    render_pagerduty,
+    render_slack,
+    send_email,
+)
 from novafabric.events.emitter import (
     _float_env,
     _int_env,
@@ -87,6 +94,15 @@ ENV_TIMEOUT_S = "NOVA_ALERTS_TIMEOUT_S"
 ENV_SIGN_SECRET = "NOVA_ALERTS_SIGN_SECRET"
 ENV_SIGN_KEYID = "NOVA_ALERTS_SIGN_KEYID"
 ENV_AUDIT_LOG = "NOVA_ALERTS_AUDIT_LOG"
+# Notification render adapters (ADR-0192 D5).
+ENV_ADAPTER = "NOVA_ALERTS_ADAPTER"
+ENV_PAGERDUTY_ROUTING_KEY = "NOVA_ALERTS_PAGERDUTY_ROUTING_KEY"
+ENV_SMTP_HOST = "NOVA_ALERTS_SMTP_HOST"
+ENV_SMTP_PORT = "NOVA_ALERTS_SMTP_PORT"
+ENV_EMAIL_FROM = "NOVA_ALERTS_EMAIL_FROM"
+ENV_EMAIL_TO = "NOVA_ALERTS_EMAIL_TO"
+
+DEFAULT_SMTP_PORT = 25
 
 # The ADR-0137 signing convention the alerts config falls back to (ADR-0192 D4).
 _ENV_EVENTS_SIGN_SECRET = "NOVA_EVENTS_SIGN_SECRET"
@@ -110,12 +126,24 @@ _SEVERITY_ORDER: dict[EventSeverity, int] = {
 
 @dataclass(frozen=True)
 class AlertEndpoint:
-    """One allowlisted alert destination (URL, minimum severity, type filter)."""
+    """One allowlisted alert destination (URL, minimum severity, type filter).
+
+    ``adapter`` selects the render shape (ADR-0192 D5); ``webhook`` (the
+    default) keeps slice-1 behavior byte-identical. PagerDuty needs
+    ``routing_key``; email needs ``smtp_host``/``smtp_port``/``mail_from``/
+    ``mail_to`` (``url`` is unused for email).
+    """
 
     endpoint_id: str
     url: str
     min_severity: EventSeverity = DEFAULT_MIN_SEVERITY
     event_types: frozenset[str] = OPS_EVENT_TYPES
+    adapter: Adapter = Adapter.WEBHOOK
+    routing_key: str | None = None
+    smtp_host: str | None = None
+    smtp_port: int = DEFAULT_SMTP_PORT
+    mail_from: str | None = None
+    mail_to: str | None = None
 
     def accepts(self, event_type: str, severity: EventSeverity) -> bool:
         return (
@@ -183,6 +211,30 @@ def _parse_types(raw: str) -> frozenset[str]:
     return accepted or OPS_EVENT_TYPES
 
 
+def _parse_adapters(raw: str, count: int) -> list[Adapter]:
+    """One value applies to all endpoints; a list maps positionally.
+
+    Unknown names fall back to ``webhook`` with a warning (never raise).
+    """
+    values = [v.strip().lower() for v in raw.split(",") if v.strip()]
+    parsed: list[Adapter] = []
+    for value in values:
+        try:
+            parsed.append(Adapter(value))
+        except ValueError:
+            logger.warning(
+                "ignoring unknown %s value %r (expected webhook|slack|pagerduty|email)",
+                ENV_ADAPTER,
+                value,
+            )
+            parsed.append(Adapter.WEBHOOK)
+    if not parsed:
+        return [Adapter.WEBHOOK] * count
+    if len(parsed) == 1:
+        return parsed * count
+    return (parsed + [Adapter.WEBHOOK] * count)[:count]
+
+
 def load_alerts_config_from_env(
     env: Mapping[str, str] | None = None,
 ) -> AlertsConfig:
@@ -193,12 +245,24 @@ def load_alerts_config_from_env(
     ]
     severities = _parse_severities(env.get(ENV_MIN_SEVERITY, ""), len(urls))
     event_types = _parse_types(env.get(ENV_TYPES, ""))
+    adapters = _parse_adapters(env.get(ENV_ADAPTER, ""), len(urls))
+    routing_key = env.get(ENV_PAGERDUTY_ROUTING_KEY, "").strip() or None
+    smtp_host = env.get(ENV_SMTP_HOST, "").strip() or None
+    smtp_port = _int_env(env, ENV_SMTP_PORT, DEFAULT_SMTP_PORT)
+    mail_from = env.get(ENV_EMAIL_FROM, "").strip() or None
+    mail_to = env.get(ENV_EMAIL_TO, "").strip() or None
     endpoints = tuple(
         AlertEndpoint(
-            endpoint_id=f"webhook-{i + 1}",
+            endpoint_id=f"{adapters[i].value}-{i + 1}",
             url=url,
             min_severity=severities[i],
             event_types=event_types,
+            adapter=adapters[i],
+            routing_key=routing_key,
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            mail_from=mail_from,
+            mail_to=mail_to,
         )
         for i, url in enumerate(urls)
     )
@@ -294,8 +358,38 @@ class AlertRouter:
                 record, self._config.sign_secret, self._config.sign_keyid
             )
         for endpoint in matching:
-            result = self._sinks[endpoint.endpoint_id].deliver(record)
+            result = self._deliver(endpoint, record)
             self._audit_attempt(endpoint, event, result)
+
+    def _deliver(
+        self, endpoint: AlertEndpoint, record: dict[str, Any]
+    ) -> DeliveryResult:
+        """Render per the endpoint's adapter, then deliver over the shared core.
+
+        Slack/PagerDuty render a target-shaped body and POST it via the same
+        :class:`WebhookSink`; email builds an RFC 5322 message and sends it via
+        stdlib SMTP. All paths are fail-safe (:class:`DeliveryResult`).
+        """
+        adapter = endpoint.adapter
+        if adapter is Adapter.SLACK:
+            return self._sinks[endpoint.endpoint_id].deliver(render_slack(record))
+        if adapter is Adapter.PAGERDUTY:
+            return self._sinks[endpoint.endpoint_id].deliver(
+                render_pagerduty(record, routing_key=endpoint.routing_key or "")
+            )
+        if adapter is Adapter.EMAIL:
+            message = build_email_message(
+                record,
+                mail_from=endpoint.mail_from or "",
+                mail_to=endpoint.mail_to or "",
+            )
+            return send_email(
+                message,
+                host=endpoint.smtp_host or "localhost",
+                port=endpoint.smtp_port,
+                timeout=self._config.timeout_s,
+            )
+        return self._sinks[endpoint.endpoint_id].deliver(record)
 
     def _suppressed(self, type_value: str, subject_ref: str) -> bool:
         """At most one delivery per (event type, subject, window)."""
@@ -330,6 +424,8 @@ class AlertRouter:
                 "endpoint_id": endpoint.endpoint_id,
                 "event_id": event.event_id,
                 "event_type": event.type.value,
+                "severity": event.severity.value if event.severity else None,
+                "subject": event.subject.ref,
                 "outcome": "delivered" if result.ok else "error",
                 "attempts": result.attempts,
             }

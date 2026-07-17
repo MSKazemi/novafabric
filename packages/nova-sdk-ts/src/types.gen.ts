@@ -429,6 +429,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List API keys (metadata only)
+         * @description Returns key metadata only — never secrets or hashes. Requires admin role. Each row carries a derived status (active/revoked/expired).
+         */
+        get: operations["listApiKeys"];
+        put?: never;
+        /**
+         * Create an API key
+         * @description Creates a first-class API key bound to an owning principal, a role set (drawn from the existing RBAC vocabulary), an optional workspace scope, and an optional expiry. The full key string is returned exactly ONCE in the response and is unrecoverable thereafter — only its sha256 is stored. Requires admin role.
+         */
+        post: operations["createApiKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api-keys/{key_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke an API key
+         * @description Revokes the key immediately — verification is a DB lookup, so the key is rejected on the very next request. Requires admin role.
+         */
+        delete: operations["revokeApiKey"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api-keys/{key_id}/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rotate an API key
+         * @description Mints a successor key with identical bindings (owner, roles, workspace, expiry). Both keys stay valid for a bounded overlap window; after it elapses the predecessor auto-revokes at verify time (no background job). The successor's full key is returned exactly ONCE. Requires admin role.
+         */
+        post: operations["rotateApiKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -444,6 +508,30 @@ export interface components {
         };
         ErrorEnvelope: {
             error: components["schemas"]["ErrorDetail"];
+        };
+        /** @description Secret-free API-key metadata. Never contains the secret or its hash. */
+        ApiKeyMetadata: {
+            /** @description Public 8-char identifier, safe in logs and listings. */
+            key_id: string;
+            owner: string;
+            roles: ("reader" | "writer" | "admin" | "auditor")[];
+            workspace?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            expires_at?: string | null;
+            /**
+             * Format: date-time
+             * @description Coarse last-used timestamp (at most one write per interval).
+             */
+            last_used_at?: string | null;
+            /** Format: date-time */
+            revoked_at?: string | null;
+            /**
+             * @description Derived on read; present on list responses.
+             * @enum {string}
+             */
+            status?: "active" | "revoked" | "expired";
         };
         PaginationMeta: {
             /** @description Opaque cursor for the next page; null when no more pages. */
@@ -1495,6 +1583,138 @@ export interface operations {
                 };
                 content?: never;
             };
+        };
+    };
+    listApiKeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description API keys with derived status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        api_keys: components["schemas"]["ApiKeyMetadata"][];
+                        total: number;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createApiKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Owning principal (user or svc:<name>). */
+                    owner: string;
+                    /**
+                     * @default [
+                     *       "reader"
+                     *     ]
+                     */
+                    roles?: ("reader" | "writer" | "admin" | "auditor")[];
+                    /** @description Optional workspace scope (ADR-0178). */
+                    workspace?: string | null;
+                    expires_in_days?: number | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Key created; the full key is shown once. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description The full nvfk_ key — shown once, store it now. */
+                        key: string;
+                        api_key: components["schemas"]["ApiKeyMetadata"];
+                        note: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    revokeApiKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Key revoked. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        ok: boolean;
+                        key_id: string;
+                        revoked: boolean;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    rotateApiKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successor minted; the successor key is shown once. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description The successor nvfk_ key — shown once. */
+                        key: string;
+                        api_key: components["schemas"]["ApiKeyMetadata"];
+                        overlap_seconds: number;
+                        /** Format: date-time */
+                        rotate_expires_at: string;
+                        note: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
 }

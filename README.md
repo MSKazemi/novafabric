@@ -586,9 +586,9 @@ capsules you own, with run-to-run structural diff and cryptographic provenance. 
 [How NovaFabric compares](#how-novafabric-compares).
 
 **Is NovaFabric production-ready?**
-It is **beta** (v0.62.0). Local capture, replay, diff, lineage, the trust layer,
+It is **beta** (v0.63.0). Local capture, replay, diff, lineage, the trust layer,
 policy gates, eval suites, and the asset registry are usable; server mode, the
-cluster-scale collector, the dashboard, and the v0.59–v0.62 cohorts (observability
+cluster-scale collector, the dashboard, and the v0.59–v0.63 cohorts (observability
 parity + enterprise readiness) are `experimental`. On-disk formats are not frozen
 until the v1.0 schema freeze.
 
@@ -616,6 +616,7 @@ See [Citation](#citation) below, or the [`CITATION.cff`](CITATION.cff) file.
 - [Strategy: Agentic Research-to-Production OS](design/strategy/agentic-research-to-production-os.md)
 
 ### Release notes
+- [v0.63.0 — Enterprise-audit second slices: notification adapters, Alerts tab, API-key rotation + REST, SDK helpers](docs/releases/v0.63.0.md)
 - [v0.62.0 — Audit-closure: SIEM egress, ops alerting, API keys, TypeScript SDK, FIPS posture, Analytics tab](docs/releases/v0.62.0.md)
 - [v0.61.0 — Enterprise readiness: secure-by-default auth, orgs/workspaces, backup/restore, encryption at rest, observability](docs/releases/v0.61.0.md)
 - [v0.60.0 — Full-CLI dashboard, streaming object store, PROV-N, OTLP/protobuf ingest](docs/releases/v0.60.0.md)
@@ -656,11 +657,11 @@ Requirements: [uv](https://docs.astral.sh/uv/).
 
 ## Status
 
-**Beta — actively developed (v0.62.0).** Stable and usable today: local capture,
+**Beta — actively developed (v0.63.0).** Stable and usable today: local capture,
 replay, diff, lineage (SQLite), the trust layer (signing, secret scanning,
 redaction), the asset registry, policy/approval gates, and standard eval suites.
 `Experimental`: server mode, the cluster-scale collector, the Object Capsule Store,
-the live dashboard, and the v0.59–v0.62 cohorts (prompt lifecycle, sessions, offline
+the live dashboard, and the v0.59–v0.63 cohorts (prompt lifecycle, sessions, offline
 analytics, annotation queues, retention, webhooks, and the enterprise-readiness
 surfaces in the [New in v0.60 and v0.61](#new-in-v060-and-v061--all-experimental)
 list; see [ROADMAP.md](ROADMAP.md)

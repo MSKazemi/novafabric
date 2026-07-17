@@ -168,7 +168,7 @@ Commands grouped by primitive and task. Each entry links to its full section.
 | [`nova serve --experimental`](#nova-serve---experimental) | Read-only local dashboard (loopback, single-user) |
 | [`nova server start`](#nova-server-start) | Multi-user REST API (Postgres/SQLite, OIDC, RBAC) |
 | [`nova server saml-metadata`](#nova-server-saml-metadata) | Emit the SAML SP metadata XML for IdP registration (experimental) |
-| [`nova server api-key`](#nova-server-api-key-create-experimental-adr-0193) | First-class API keys: create, list, revoke (experimental) |
+| [`nova server api-key`](#nova-server-api-key-create-experimental-adr-0193) | First-class API keys: create, list, revoke, rotate (experimental) |
 | [`nova login`](#nova-login) / [`nova logout`](#nova-logout) | Authenticate with a NovaFabric server |
 | [`nova doctor`](#nova-doctor---check-storage) | Installation and storage diagnostics |
 | [`nova migrate-to-postgres`](#nova-migrate-to-postgres) | Migrate the local SQLite registry to Postgres |
@@ -4432,6 +4432,44 @@ Options:
 Exit codes:
 - `0` — success (key revoked)
 - `1` — key_id not found, or other failure
+
+---
+
+### nova server api-key rotate \<key-id\> (experimental, ADR-0193)
+
+Rotate an API key: mint a **successor** with identical bindings (owner, roles,
+workspace, expiry) and print it **once**. Both the predecessor and successor
+stay valid for a bounded, configurable **overlap window**; after it elapses the
+predecessor is auto-revoked at verify time (checked on the next request — there
+is no background job). A zero-downtime credential swap for deployed agents.
+Both transitions are appended to the hash-chained audit log.
+
+```bash
+nova server api-key rotate a1b2c3d4
+nova server api-key rotate a1b2c3d4 --overlap-seconds 3600
+```
+
+Arguments:
+- `KEY_ID` (required) — the public key identifier to rotate
+
+Options:
+- `--overlap-seconds INT` — overlap window in seconds during which BOTH keys
+  verify (default: `NOVA_API_KEY_ROTATE_OVERLAP_S`, or `86400` = 24h)
+- `--rotated-by TEXT` — actor recorded in the audit log (default: `cli`)
+- `--db-path PATH` — SQLite database path (overrides default)
+
+Exit codes:
+- `0` — success (successor printed once)
+- `1` — key_id not found, key already revoked, or other failure
+
+> The successor key is shown once and cannot be recovered — store it
+> immediately. `last_used_at` (coarse, at most one write per
+> `NOVA_API_KEY_LASTUSED_INTERVAL_S`, default daily) is surfaced by `list`.
+
+The same lifecycle is also available over REST at the admin-gated
+`/v0/api-keys` resource (`POST` create, `GET` list, `DELETE {key_id}` revoke,
+`POST {key_id}/rotate`); the dashboard admin console reads it read-only via
+`GET /api/admin/api-keys`.
 
 ---
 

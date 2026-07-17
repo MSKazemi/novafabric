@@ -26,6 +26,7 @@ from novafabric.server.quotas import install_quota_enforcement
 from novafabric.server.rate_limit import install_rate_limiting
 from novafabric.server.rbac import _Forbidden, forbidden_handler
 from novafabric.server.routes.admin import router as admin_router
+from novafabric.server.routes.api_keys import router as api_keys_router
 from novafabric.server.routes.assets import router as assets_router
 from novafabric.server.routes.auth import router as auth_router
 from novafabric.server.routes.capsules import router as capsules_router
@@ -165,6 +166,9 @@ def create_app(config: ServerConfig) -> FastAPI:
     app.include_router(orgs_router, prefix="/v0")
     app.include_router(workspaces_router, prefix="/v0")
     app.include_router(service_accounts_router, prefix="/v0")
+    # ADR-0193 (experimental): first-class API keys REST resource — admin-gated
+    # create/list/revoke/rotate over the hash-only key store.
+    app.include_router(api_keys_router, prefix="/v0")
 
     # SCIM provisioning (ADR-0139, experimental) — own /scim/v2 prefix per
     # RFC 7644, NOT under /v0. Inert (404) unless server.scim.enabled AND

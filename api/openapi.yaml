@@ -56,6 +56,47 @@ components:
         error:
           $ref: "#/components/schemas/ErrorDetail"
 
+    # -------- API keys (ADR-0193) --------
+    ApiKeyMetadata:
+      type: object
+      description: >
+        Secret-free API-key metadata. Never contains the secret or its hash.
+      required: [key_id, owner, roles, created_at]
+      properties:
+        key_id:
+          type: string
+          description: Public 8-char identifier, safe in logs and listings.
+        owner:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+            enum: [reader, writer, admin, auditor]
+        workspace:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Coarse last-used timestamp (at most one write per interval).
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+          enum: [active, revoked, expired]
+          description: Derived on read; present on list responses.
+
     # -------- pagination --------
     PaginationMeta:
       type: object
@@ -1293,6 +1334,190 @@ paths:
                     format: date-time
         "401": {description: Unauthorized}
 
+  # --------------------------------------------------------------------------- #
+  # API keys (ADR-0193, experimental) — admin-gated first-class credentials.
+  # Hash-only storage, shown once at create/rotate, RBAC-scoped, audited.
+  # --------------------------------------------------------------------------- #
+
+  /api-keys:
+    get:
+      operationId: listApiKeys
+      summary: List API keys (metadata only)
+      description: >
+        Returns key metadata only — never secrets or hashes. Requires admin
+        role. Each row carries a derived status (active/revoked/expired).
+      tags: [api-keys]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: API keys with derived status.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [api_keys, total]
+                properties:
+                  api_keys:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ApiKeyMetadata"
+                  total:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: createApiKey
+      summary: Create an API key
+      description: >
+        Creates a first-class API key bound to an owning principal, a role set
+        (drawn from the existing RBAC vocabulary), an optional workspace scope,
+        and an optional expiry. The full key string is returned exactly ONCE in
+        the response and is unrecoverable thereafter — only its sha256 is
+        stored. Requires admin role.
+      tags: [api-keys]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [owner]
+              properties:
+                owner:
+                  type: string
+                  description: Owning principal (user or svc:<name>).
+                roles:
+                  type: array
+                  items:
+                    type: string
+                    enum: [reader, writer, admin, auditor]
+                  default: [reader]
+                workspace:
+                  type: string
+                  nullable: true
+                  description: Optional workspace scope (ADR-0178).
+                expires_in_days:
+                  type: integer
+                  nullable: true
+                  minimum: 1
+                  maximum: 3650
+      responses:
+        "201":
+          description: Key created; the full key is shown once.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [key, api_key, note]
+                properties:
+                  key:
+                    type: string
+                    description: The full nvfk_ key — shown once, store it now.
+                  api_key:
+                    $ref: "#/components/schemas/ApiKeyMetadata"
+                  note:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api-keys/{key_id}:
+    delete:
+      operationId: revokeApiKey
+      summary: Revoke an API key
+      description: >
+        Revokes the key immediately — verification is a DB lookup, so the key
+        is rejected on the very next request. Requires admin role.
+      tags: [api-keys]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Key revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, key_id, revoked]
+                properties:
+                  ok:
+                    type: boolean
+                  key_id:
+                    type: string
+                  revoked:
+                    type: boolean
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api-keys/{key_id}/rotate:
+    post:
+      operationId: rotateApiKey
+      summary: Rotate an API key
+      description: >
+        Mints a successor key with identical bindings (owner, roles, workspace,
+        expiry). Both keys stay valid for a bounded overlap window; after it
+        elapses the predecessor auto-revokes at verify time (no background
+        job). The successor's full key is returned exactly ONCE. Requires admin
+        role.
+      tags: [api-keys]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: Successor minted; the successor key is shown once.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [key, api_key, overlap_seconds, rotate_expires_at, note]
+                properties:
+                  key:
+                    type: string
+                    description: The successor nvfk_ key — shown once.
+                  api_key:
+                    $ref: "#/components/schemas/ApiKeyMetadata"
+                  overlap_seconds:
+                    type: integer
+                  rotate_expires_at:
+                    type: string
+                    format: date-time
+                  note:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 tags:
   - name: federation
     description: Cross-site lineage federation endpoints (Phase 6 C-1..C-6)
+  - name: api-keys
+    description: First-class API keys — admin-gated, hash-only, shown once (ADR-0193)

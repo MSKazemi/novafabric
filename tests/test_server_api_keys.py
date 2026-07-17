@@ -32,10 +32,13 @@ from novafabric.audit import AuditLog  # noqa: E402
 from novafabric.server.api_keys import (  # noqa: E402
     KEY_PREFIX,
     InvalidRoleError,
+    RevokedKeyError,
     create_key,
+    key_status,
     list_keys,
     parse_key,
     revoke_key,
+    rotate_key,
     verify_key,
 )
 from novafabric.server.app import create_app  # noqa: E402
@@ -248,6 +251,184 @@ class TestAudit:
         types = [e.event_type.value for e in entries]
         assert types == ["api_key.create", "api_key.revoke"]
         assert all(e.actor == "admin@example.com" for e in entries)
+
+
+# ---------------------------------------------------------------------------
+# Rotation (ADR-0193 D3, slice 2)
+# ---------------------------------------------------------------------------
+
+
+class TestRotate:
+    def test_rotate_creates_valid_successor_with_identical_bindings(
+        self, db: Path
+    ) -> None:
+        _, record = create_key(
+            "svc:ci-bot",
+            ["reader", "writer"],
+            actor="test",
+            db_path=db,
+            workspace="ml-team",
+            expires_in_days=30,
+        )
+        successor, succ_record = rotate_key(
+            record["key_id"], actor="test", db_path=db
+        )
+        # successor is a brand-new, distinct, immediately-valid key
+        assert succ_record["key_id"] != record["key_id"]
+        ctx = verify_key(successor, db_path=db)
+        assert ctx is not None
+        assert ctx.subject == "svc:ci-bot"
+        assert sorted(ctx.roles) == ["reader", "writer"]
+        # identical bindings copied from the predecessor
+        assert succ_record["owner"] == "svc:ci-bot"
+        assert succ_record["roles"] == ["reader", "writer"]
+        assert succ_record["workspace"] == "ml-team"
+        assert succ_record["expires_at"] is not None
+
+    def test_predecessor_valid_during_overlap_window(self, db: Path) -> None:
+        key, record = create_key("alice@x", ["reader"], actor="test", db_path=db)
+        assert verify_key(key, db_path=db) is not None
+        rotate_key(record["key_id"], actor="test", db_path=db, overlap_seconds=3600)
+        # Both old and new are valid inside the window.
+        assert verify_key(key, db_path=db) is not None
+
+    def test_predecessor_rejected_after_window_zero_overlap(self, db: Path) -> None:
+        key, record = create_key("alice@x", ["reader"], actor="test", db_path=db)
+        rotate_key(record["key_id"], actor="test", db_path=db, overlap_seconds=0)
+        # Window already elapsed → predecessor rejected at verify time.
+        assert verify_key(key, db_path=db) is None
+
+    def test_predecessor_rejected_after_window_backdated(self, db: Path) -> None:
+        key, record = create_key("alice@x", ["reader"], actor="test", db_path=db)
+        rotate_key(record["key_id"], actor="test", db_path=db, overlap_seconds=3600)
+        past = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        conn = sqlite3.connect(str(db))
+        conn.execute(
+            "UPDATE api_keys SET rotate_expires_at = ? WHERE key_id = ?",
+            (past, record["key_id"]),
+        )
+        conn.commit()
+        conn.close()
+        assert verify_key(key, db_path=db) is None
+
+    def test_rotate_is_audited_on_both_keys(self, db: Path, tmp_path: Path) -> None:
+        _, record = create_key(
+            "alice@x", ["reader"], actor="admin@x", db_path=db
+        )
+        _, succ = rotate_key(record["key_id"], actor="admin@x", db_path=db)
+
+        log = AuditLog(_audit_path(tmp_path))
+        assert log.verify() == []
+        pred_types = [
+            e.event_type.value for e in log.query(resource_id=record["key_id"])
+        ]
+        assert "api_key.rotate" in pred_types
+        succ_types = [
+            e.event_type.value for e in log.query(resource_id=succ["key_id"])
+        ]
+        assert "api_key.create" in succ_types
+
+    def test_rotate_records_never_leak_secret(
+        self, db: Path, tmp_path: Path
+    ) -> None:
+        _, record = create_key("alice@x", ["reader"], actor="test", db_path=db)
+        successor, _ = rotate_key(record["key_id"], actor="test", db_path=db)
+        _, secret = parse_key(successor)  # type: ignore[misc]
+        audit_raw = _audit_path(tmp_path).read_text()
+        assert secret not in audit_raw
+        assert hashlib.sha256(secret.encode()).hexdigest() not in audit_raw
+
+    def test_rotate_unknown_key_raises(self, db: Path) -> None:
+        with pytest.raises(KeyError):
+            rotate_key("nosuchid", actor="test", db_path=db)
+
+    def test_rotate_revoked_key_raises(self, db: Path) -> None:
+        _, record = create_key("alice@x", ["reader"], actor="test", db_path=db)
+        revoke_key(record["key_id"], actor="test", db_path=db)
+        with pytest.raises(RevokedKeyError):
+            rotate_key(record["key_id"], actor="test", db_path=db)
+
+    def test_rotated_predecessor_status_is_revoked_after_window(
+        self, db: Path
+    ) -> None:
+        _, record = create_key("alice@x", ["reader"], actor="test", db_path=db)
+        rotate_key(record["key_id"], actor="test", db_path=db, overlap_seconds=0)
+        rows = {r["key_id"]: r for r in list_keys(db_path=db)}
+        assert key_status(rows[record["key_id"]]) == "revoked"
+
+
+# ---------------------------------------------------------------------------
+# Coarse last_used_at tracking (ADR-0193 D4, slice 2)
+# ---------------------------------------------------------------------------
+
+
+class TestLastUsed:
+    def _last_used(self, db: Path, key_id: str) -> str | None:
+        return {r["key_id"]: r for r in list_keys(db_path=db)}[key_id]["last_used_at"]
+
+    def test_last_used_set_on_first_verify(self, db: Path) -> None:
+        key, record = create_key("alice@x", ["reader"], actor="test", db_path=db)
+        assert self._last_used(db, record["key_id"]) is None
+        assert verify_key(key, db_path=db) is not None
+        assert self._last_used(db, record["key_id"]) is not None
+
+    def test_last_used_not_updated_within_interval(self, db: Path) -> None:
+        key, record = create_key("alice@x", ["reader"], actor="test", db_path=db)
+        verify_key(key, db_path=db, lastused_interval_seconds=86400)
+        first = self._last_used(db, record["key_id"])
+        # A second verify inside the interval must not rewrite last_used_at.
+        verify_key(key, db_path=db, lastused_interval_seconds=86400)
+        assert self._last_used(db, record["key_id"]) == first
+
+    def test_last_used_updates_after_interval(self, db: Path) -> None:
+        key, record = create_key("alice@x", ["reader"], actor="test", db_path=db)
+        verify_key(key, db_path=db, lastused_interval_seconds=86400)
+        # Backdate last_used_at beyond the interval, then verify again.
+        old = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+        conn = sqlite3.connect(str(db))
+        conn.execute(
+            "UPDATE api_keys SET last_used_at = ? WHERE key_id = ?",
+            (old, record["key_id"]),
+        )
+        conn.commit()
+        conn.close()
+        verify_key(key, db_path=db, lastused_interval_seconds=86400)
+        assert self._last_used(db, record["key_id"]) != old
+
+    def test_last_used_zero_interval_updates_each_time(self, db: Path) -> None:
+        key, record = create_key("alice@x", ["reader"], actor="test", db_path=db)
+        verify_key(key, db_path=db, lastused_interval_seconds=0)
+        first = self._last_used(db, record["key_id"])
+        assert first is not None
+
+
+# ---------------------------------------------------------------------------
+# CLI rotate — nova server api-key rotate
+# ---------------------------------------------------------------------------
+
+
+class TestCliRotate:
+    def test_rotate_cli_prints_successor_once_with_window(self, db: Path) -> None:
+        from novafabric.cli.main import app
+
+        _, record = create_key("alice@x", ["reader"], actor="test", db_path=db)
+        result = runner.invoke(
+            app,
+            ["server", "api-key", "rotate", record["key_id"], "--db-path", str(db)],
+        )
+        assert result.exit_code == 0, result.output
+        assert "shown once" in result.output.lower()
+        assert "overlap" in result.output.lower()
+        successor = result.output.strip().splitlines()[-1].strip()
+        assert verify_key(successor, db_path=db) is not None
+
+    def test_rotate_cli_unknown_key_fails(self, db: Path) -> None:
+        from novafabric.cli.main import app
+
+        result = runner.invoke(
+            app, ["server", "api-key", "rotate", "nosuchkey", "--db-path", str(db)]
+        )
+        assert result.exit_code == 1
 
 
 # ---------------------------------------------------------------------------

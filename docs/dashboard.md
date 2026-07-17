@@ -10,13 +10,14 @@ The dashboard is an **opt-in local-only HTTP server** (`nova serve --experimenta
 
 ## Dashboard tabs (complete inventory)
 
-The dashboard ships **26 tabs**, grouped by workflow. (Source of truth:
+The dashboard ships **27 tabs**, grouped by workflow. (Source of truth:
 `web/src/components/dashboard/Sidebar.tsx`.)
 
 | Tab | Group | Since | What it does |
 |---|---|---|---|
 | Home | Overview | v0.8 | Journey cards, status bar, resume session |
 | Analytics | Overview | Unreleased | Time-bucketed run analytics from the runs index: volume + failure stacked bars, duration p50/p95 lines, stat tiles, 7/30/90-day ranges, chart/table toggle (`/api/analytics/summary`) |
+| Alerts | Infrastructure | Unreleased | Operational alerts feed (quota/rate-limit/policy/drift/seal/backup) + delivery outcomes from the audit log; severity badges, stat tiles, live refresh (`/api/alerts/recent`, ADR-0192) |
 | Runs | Debug & investigate | v0.7 | Run list, search/filter, inspect capsule, validate, replay, verify; capsule tree, run lineage edges, secret scan (v0.46.0) |
 | Diff | Debug & investigate | v0.7 | N-run comparison (2–5), word-level diff, mutation badges |
 | Registry | Govern & promote | v0.7 | Asset lifecycle: eval, promote, rollback, register, suggest-register, unregister |

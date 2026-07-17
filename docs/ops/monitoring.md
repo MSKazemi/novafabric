@@ -259,6 +259,74 @@ Alert-specific guarantees on top of the ADR-0137 fail-safe rules:
   event id, outcome, attempt count) to the hash-chained audit log
   (`NOVA_ALERTS_AUDIT_LOG`, default the house audit log).
 
+### Notification adapters (Slack / PagerDuty / email)
+
+**Status: experimental** — the same alert can be *rendered* into a
+provider-specific shape instead of the generic webhook JSON. Adapters are
+**renderers, not integrations**: each takes the canonical event and produces
+the target payload over the same delivery core — no OAuth, no account
+management, no bundled MTA, and no hardcoded SaaS URL (even PagerDuty's Events
+API endpoint is your config). Zero new dependencies.
+
+Select the adapter per endpoint with `NOVA_ALERTS_ADAPTER`
+(`webhook` | `slack` | `pagerduty` | `email`; default `webhook`, so unset
+behavior is unchanged). One value applies to all endpoints; a comma-separated
+list maps positionally to `NOVA_ALERTS_WEBHOOK`. An unknown value falls back to
+`webhook` with a warning.
+
+```bash
+# Slack — incoming-webhook JSON (text + minimal blocks) to your webhook URL
+export NOVA_ALERTS_WEBHOOK="https://hooks.slack.com/services/T000/B000/XXXX"
+export NOVA_ALERTS_ADAPTER="slack"
+
+# PagerDuty — Events API v2 (severity maps critical→critical, warning→warning,
+# info→info); the endpoint URL and routing key are both your config
+export NOVA_ALERTS_WEBHOOK="https://events.pagerduty.com/v2/enqueue"
+export NOVA_ALERTS_ADAPTER="pagerduty"
+export NOVA_ALERTS_PAGERDUTY_ROUTING_KEY="R0UT1NGK3Y"
+
+# email — RFC 5322 via stdlib smtplib to your SMTP relay (no default relay)
+export NOVA_ALERTS_WEBHOOK="smtp"          # a slot to position the endpoint; unused for email
+export NOVA_ALERTS_ADAPTER="email"
+export NOVA_ALERTS_SMTP_HOST="mail.internal.example"
+export NOVA_ALERTS_SMTP_PORT="25"
+export NOVA_ALERTS_EMAIL_FROM="novafabric@ops.example"
+export NOVA_ALERTS_EMAIL_TO="oncall@ops.example"
+```
+
+### Dashboard read endpoint — `GET /api/alerts/recent`
+
+**Status: experimental.** `nova serve` exposes recent alert activity for the
+dashboard (shared-token auth, same as the other read routes):
+
+```
+GET /api/alerts/recent?limit=50        # limit 1..200, default 50
+```
+
+It returns the delivery audit trail (`alert.delivery` entries — endpoint,
+outcome, attempts) **merged** with recent `ops.*` events from the durable
+`events.jsonl` (emitted-but-maybe-undelivered ⇒ outcome `emitted`), newest
+first and capped at `limit`. It is a bounded read (no capsule scans) and
+fail-safe — a missing audit log or events file yields an empty list, never a
+500:
+
+```json
+{
+  "alerts": [
+    {
+      "id": "…", "timestamp": "2026-07-17T12:00:00+00:00",
+      "event_type": "ops.quota.breached", "severity": "critical",
+      "subject": "quota:capsules", "outcome": "delivered",
+      "endpoint_id": "webhook-1", "attempts": 1
+    }
+  ],
+  "total": 1,
+  "alerting_configured": true
+}
+```
+
+`alerting_configured` reflects whether a `NOVA_ALERTS_*` endpoint is configured.
+
 Full variable reference and normative semantics:
 `design/spec/lifecycle-webhooks-v0.md` §"Operational alerts";
 decision record: `design/adr/0192-alerting-notification-bus.md`.

@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import AppearancePanel from './AppearancePanel';
 
-export type Tab = 'home' | 'analytics' | 'runs' | 'registry' | 'lineage' | 'diff' | 'capture' | 'audit' | 'evidence' | 'holds' | 'policy' | 'seal' | 'infra' | 'commands' | 'admin' | 'compliance' | 'governance' | 'kg' | 'cost' | 'schema' | 'reports' | 'eval' | 'risk' | 'storage' | 'incidents' | 'spine' | 'ops';
+export type Tab = 'home' | 'analytics' | 'runs' | 'registry' | 'lineage' | 'diff' | 'capture' | 'audit' | 'evidence' | 'holds' | 'policy' | 'seal' | 'infra' | 'commands' | 'admin' | 'compliance' | 'governance' | 'kg' | 'cost' | 'schema' | 'reports' | 'eval' | 'risk' | 'storage' | 'incidents' | 'spine' | 'ops' | 'alerts';
 
 interface NavItem {
   id: Tab;
@@ -64,6 +64,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { id: 'infra',    label: 'Infra',    icon: '⬢' },
       { id: 'storage',  label: 'Storage',  icon: '⛁', badge: 'WORM' },
       { id: 'ops',      label: 'Ops',      icon: '⚙' },
+      { id: 'alerts',   label: 'Alerts',   icon: '⚡', badge: 'ops' },
     ],
   },
   {

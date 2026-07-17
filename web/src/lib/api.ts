@@ -36,6 +36,53 @@ export interface AnalyticsSummary {
   until: string | null;
 }
 
+// ADR-0192 operational alerts (read model for the dashboard).
+export type AlertOutcome =
+  | 'emitted'
+  | 'delivered'
+  | 'failed'
+  | 'dropped'
+  | 'deduped'
+  | 'no-endpoint';
+export type AlertSeverity = 'info' | 'warning' | 'critical';
+
+export interface AlertRow {
+  id: string;
+  timestamp: string;
+  event_type: string;
+  severity: AlertSeverity | null;
+  subject: string;
+  outcome: AlertOutcome;
+  endpoint_id: string | null;
+  attempts: number;
+}
+
+export interface AlertsRecentResult {
+  alerts: AlertRow[];
+  total: number;
+  alerting_configured: boolean;
+}
+
+// ADR-0193 API keys (read-only view for the admin console; never secrets/hashes).
+export type ApiKeyStatus = 'active' | 'revoked' | 'expired';
+
+export interface ApiKeyRow {
+  key_id: string;
+  owner: string;
+  roles: string[];
+  workspace: string | null;
+  created_at: string;
+  expires_at: string | null;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  status: ApiKeyStatus;
+}
+
+export interface AdminApiKeysResult {
+  keys: ApiKeyRow[];
+  total: number;
+}
+
 export interface RunSummary {
   run_id: string;
   status: string | null;
@@ -970,6 +1017,14 @@ export const api = {
     deleteRequest<RevokeTokenResult>(`/api/admin/tokens/${encodeURIComponent(fingerprint)}`),
   listRoles: () =>
     request<RolesListResult>('/api/admin/roles'),
+
+  // ---------- admin: API keys read (ADR-0193) ----------
+  adminApiKeys: () =>
+    request<AdminApiKeysResult>('/api/admin/api-keys'),
+
+  // ---------- operational alerts (ADR-0192) ----------
+  alertsRecent: (limit = 50) =>
+    request<AlertsRecentResult>('/api/alerts/recent', { limit }),
 
   // ---------- NovaSeal maker-checker (ADR-0059) ----------
   sealGetPolicy: () =>

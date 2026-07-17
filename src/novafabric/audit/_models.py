@@ -25,6 +25,7 @@ class AuditEventType(str, enum.Enum):
     ALERT_DELIVERY = "alert.delivery"  # ADR-0192: one entry per attempted alert delivery
     API_KEY_CREATE = "api_key.create"  # ADR-0193
     API_KEY_REVOKE = "api_key.revoke"  # ADR-0193
+    API_KEY_ROTATE = "api_key.rotate"  # ADR-0193 (slice 2)
 
 
 class AuditEntry(BaseModel):

@@ -1,0 +1,65 @@
+name: SDK (TypeScript)
+
+# Quality gates for the official TypeScript SDK (packages/nova-sdk-ts,
+# @novafabric/sdk — ADR-0194). Mirrors the gates a contributor runs locally:
+# install, strict type-check, vitest, and the OpenAPI type-drift gate.
+#
+# Path-scoped: runs only when the package changes OR when api/openapi.yaml
+# changes — the latter so the regenerate-and-diff drift gate (ADR-0194 D1)
+# fails whenever the contract moves without a matching `npm run generate:types`.
+#
+# NOTE: this workflow deliberately does NOT publish. Publication to npm is
+# manual and happens from the PUBLIC repo only, in lockstep with the release
+# tags (ADR-0194 D5); no publish automation touches this (private) repo.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/nova-sdk-ts/**"
+      - "api/openapi.yaml"
+      - ".github/workflows/sdk-ts.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "packages/nova-sdk-ts/**"
+      - "api/openapi.yaml"
+      - ".github/workflows/sdk-ts.yml"
+
+# Cancel in-flight runs of the same ref when new commits land.
+concurrency:
+  group: sdk-ts-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sdk-ts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: packages/nova-sdk-ts/package-lock.json
+
+      - name: Install dependencies
+        working-directory: packages/nova-sdk-ts
+        run: npm ci
+
+      - name: Type check (tsc --noEmit)
+        working-directory: packages/nova-sdk-ts
+        run: npx tsc --noEmit
+
+      - name: Unit tests (vitest)
+        working-directory: packages/nova-sdk-ts
+        run: npx vitest run
+
+      - name: OpenAPI type-drift gate
+        working-directory: packages/nova-sdk-ts
+        run: npm run check:drift

@@ -9,6 +9,34 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+
+## [0.63.0] — 2026-07-17
+
+### Added — enterprise-audit follow-up second slices (ADRs 0192–0194, experimental)
+- **Notification adapters (ADR-0192 slice 2).** Slack (incoming-webhook), PagerDuty
+  (Events API v2, severity-mapped), and email (stdlib `smtplib`, user-configured
+  relay) render adapters over the existing alert webhook core — selected per endpoint
+  via an `adapter` config field; zero new dependencies. Payload shapes are
+  fixture-pinned.
+- **Dashboard Alerts tab + `GET /api/alerts/recent`.** A severity-coded operational-
+  alert feed (Infrastructure group): stat tiles (total / critical / delivery
+  failures), per-row severity badge, delivery outcome + endpoint + attempt count,
+  15s live refresh, and an honest "alerting not configured" banner. The read endpoint
+  (a serve router per the ADR-0183 freeze) merges the hash-chained audit log's
+  `alert.delivery` entries with recent `ops.*` events — bounded, fail-safe, no
+  capsule scans.
+- **API-key rotation & REST (ADR-0193 slice 2).** `nova server api-key rotate` with a
+  bounded, configurable overlap window (predecessor auto-revokes at verify time);
+  coarse `last_used_at` tracking (at most one write per interval); the full
+  `/v0/api-keys` REST resource (create/list/revoke/rotate, RBAC-gated); and a
+  read-only `GET /api/admin/api-keys` projection powering a new **Admin console
+  API-keys panel** (key_id/owner/roles/workspace/last-used/status — never secrets).
+- **TypeScript SDK helpers (ADR-0194 slice 2).** `submitScore()` (typed, targets
+  `POST /capsules/{run_id}/scores`) and `otlpTraceEndpoint()` (returns the ADR-0177
+  ingest URL + auth headers; bring-your-own OTel exporter). A path-scoped
+  `sdk-ts` CI lane runs tsc + vitest + the openapi drift gate. Still zero runtime
+  dependencies.
+
 ## [0.62.0] — 2026-07-17
 
 ### Added — enterprise-audit follow-up first slices (ADRs 0191–0195, all experimental)

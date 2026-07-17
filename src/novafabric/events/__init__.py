@@ -10,6 +10,14 @@ emit-and-forget: a sink failure is logged and swallowed, never raised into the
 capture/validate/promote workload path.
 """
 
+from novafabric.events.adapters import (
+    PAGERDUTY_SEVERITY,
+    Adapter,
+    build_email_message,
+    render_pagerduty,
+    render_slack,
+    send_email,
+)
 from novafabric.events.alerts import (
     OPS_EVENT_TYPES,
     AlertEndpoint,
@@ -45,7 +53,9 @@ from novafabric.events.sinks import (
 
 __all__ = [
     "OPS_EVENT_TYPES",
+    "PAGERDUTY_SEVERITY",
     "SCHEMA_VERSION",
+    "Adapter",
     "AlertEndpoint",
     "AlertRouter",
     "AlertsConfig",
@@ -62,12 +72,16 @@ __all__ = [
     "Subject",
     "SubjectKind",
     "WebhookSink",
+    "build_email_message",
     "build_emitter_from_env",
     "canonical_body",
     "emit_lifecycle_event",
     "emit_ops_alert",
     "load_alerts_config_from_env",
     "load_config_from_env",
+    "render_pagerduty",
+    "render_slack",
+    "send_email",
     "sign_record",
     "verify_record",
 ]

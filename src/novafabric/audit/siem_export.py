@@ -123,6 +123,7 @@ OCSF_CLASS_MAP: Final[dict[str, tuple[int, str, int]]] = {
     # CLI/API surface (credential *logon* events would be Authentication).
     "api_key.create": (_API_ACTIVITY, "API Activity", 1),  # Create
     "api_key.revoke": (_API_ACTIVITY, "API Activity", 4),  # Delete
+    "api_key.rotate": (_API_ACTIVITY, "API Activity", 3),  # Update
 }
 
 #: Conservative fallback for event types not (yet) in the map: API Activity,
