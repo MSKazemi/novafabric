@@ -1,6 +1,6 @@
 # NovaFabric REST API Reference
 
-**Maturity:** experimental (v0.61.0). This is the HTTP surface of the local, read-only
+**Maturity:** experimental (v0.63.0). This is the HTTP surface of the local, read-only
 `nova serve --experimental` dashboard. It works today, but its routes, request/response
 shapes, and behaviour may change before the v1.0
 schema freeze. The CLI remains the canonical interface; every endpoint below mirrors, or
@@ -24,7 +24,7 @@ is derived from, a `nova` command you can run without a server.
 - **The authentication and network model** — why it binds to localhost only and how the
   one-shot token works.
 - **How the endpoints map to the five NovaFabric primitives** and to `nova` CLI commands.
-- **The full endpoint catalogue** — ~190 routes across 25 functional domains (regenerate the tables with `design/scripts/gen_api_reference.py` for the exact live count).
+- **The full endpoint catalogue** — ~193 routes across 28 functional domains (regenerate the tables with `design/scripts/gen_api_reference.py` for the exact live count).
 - **Honesty notes** on routes that surface PLANNED / experimental capabilities.
 
 ## Two different APIs — do not confuse them
@@ -147,7 +147,7 @@ regulation and vouches only that a signed capsule is unmodified since signing.
 
 ## Endpoint catalogue
 
-~190 routes across 25 domains. Each row shows the HTTP method, the path, and a one-line
+~193 routes across 28 domains. Each row shows the HTTP method, the path, and a one-line
 summary. Path parameters use `{name}` notation; `{ref:path}` and `{filepath:path}` accept
 slash-containing values.
 
@@ -363,6 +363,18 @@ slash-containing values.
 | Method | Path | Summary |
 |---|---|---|
 | `GET` | `/api/analytics/summary` | Time-bucketed run aggregates (volume, failures, duration percentiles) from the runs index — powers the dashboard Analytics tab. |
+
+## Operational alerts  (1)
+
+| Method | Path | Summary |
+|---|---|---|
+| `GET` | `/api/alerts/recent` | Recent operational alerts (`ops.*`) and their delivery outcomes, merged from the hash-chained audit log's `alert.delivery` entries — powers the dashboard Alerts tab (ADR-0192). |
+
+## Admin — API keys  (1)
+
+| Method | Path | Summary |
+|---|---|---|
+| `GET` | `/api/admin/api-keys` | Read-only, secret-free view of server API keys (key_id/owner/roles/workspace/status) — powers the dashboard Admin API-keys panel. Mutations live behind server `/v0/api-keys` (ADR-0193). |
 
 ## Reports  (11)
 
