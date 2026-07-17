@@ -10,6 +10,14 @@ emit-and-forget: a sink failure is logged and swallowed, never raised into the
 capture/validate/promote workload path.
 """
 
+from novafabric.events.alerts import (
+    OPS_EVENT_TYPES,
+    AlertEndpoint,
+    AlertRouter,
+    AlertsConfig,
+    emit_ops_alert,
+    load_alerts_config_from_env,
+)
 from novafabric.events.emitter import (
     EventsConfig,
     LifecycleEventEmitter,
@@ -19,6 +27,7 @@ from novafabric.events.emitter import (
 )
 from novafabric.events.model import (
     SCHEMA_VERSION,
+    EventSeverity,
     EventType,
     LifecycleEvent,
     Signature,
@@ -35,7 +44,12 @@ from novafabric.events.sinks import (
 )
 
 __all__ = [
+    "OPS_EVENT_TYPES",
     "SCHEMA_VERSION",
+    "AlertEndpoint",
+    "AlertRouter",
+    "AlertsConfig",
+    "EventSeverity",
     "EventSink",
     "EventType",
     "EventsConfig",
@@ -51,6 +65,8 @@ __all__ = [
     "build_emitter_from_env",
     "canonical_body",
     "emit_lifecycle_event",
+    "emit_ops_alert",
+    "load_alerts_config_from_env",
     "load_config_from_env",
     "sign_record",
     "verify_record",

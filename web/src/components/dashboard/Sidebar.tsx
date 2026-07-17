@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import AppearancePanel from './AppearancePanel';
 
-export type Tab = 'home' | 'runs' | 'registry' | 'lineage' | 'diff' | 'capture' | 'audit' | 'evidence' | 'holds' | 'policy' | 'seal' | 'infra' | 'commands' | 'admin' | 'compliance' | 'governance' | 'kg' | 'cost' | 'schema' | 'reports' | 'eval' | 'risk' | 'storage' | 'incidents' | 'spine' | 'ops';
+export type Tab = 'home' | 'analytics' | 'runs' | 'registry' | 'lineage' | 'diff' | 'capture' | 'audit' | 'evidence' | 'holds' | 'policy' | 'seal' | 'infra' | 'commands' | 'admin' | 'compliance' | 'governance' | 'kg' | 'cost' | 'schema' | 'reports' | 'eval' | 'risk' | 'storage' | 'incidents' | 'spine' | 'ops';
 
 interface NavItem {
   id: Tab;
@@ -21,6 +21,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Overview',
     items: [
       { id: 'home', label: 'Home', icon: '⌂' },
+      { id: 'analytics', label: 'Analytics', icon: '∿' },
     ],
   },
   {

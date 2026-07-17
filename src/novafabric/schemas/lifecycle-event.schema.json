@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/lifecycle-event.schema.json",
-  "$comment": "Governed by ADR-0137 (accepted 2026-07-13); graduated from design/spec/schemas/ on first implementation slice (experimental). schema_version 0.1.0. Tracks design/spec/lifecycle-webhooks-v0.md. One append-only lifecycle Event (events.jsonl line / webhook body). Emit-and-forget: durable local log, best-effort webhooks; no broker/ordering/exactly-once guarantees. payload/subject carry only refs/digests/enums/counts - never prompt text or secrets.",
+  "$comment": "Governed by ADR-0137 (accepted 2026-07-13); graduated from design/spec/schemas/ on first implementation slice (experimental). schema_version 0.1.0. Tracks design/spec/lifecycle-webhooks-v0.md. ops.* family + optional severity added additively by ADR-0192 (accepted 2026-07-17, experimental). One append-only lifecycle Event (events.jsonl line / webhook body). Emit-and-forget: durable local log, best-effort webhooks; no broker/ordering/exactly-once guarantees. payload/subject carry only refs/digests/enums/counts - never prompt text or secrets.",
   "title": "LifecycleEvent",
   "description": "One structured, non-sensitive lifecycle event record.",
   "type": "object",
@@ -33,7 +33,13 @@
         "retention.applied",
         "promotion.bypass.created",
         "promotion.bypass.approved",
-        "promotion.bypass.expired"
+        "promotion.bypass.expired",
+        "ops.quota.breached",
+        "ops.rate_limit.sustained",
+        "ops.policy.violation",
+        "ops.drift.detected",
+        "ops.seal.verify_failed",
+        "ops.backup.failed"
       ]
     },
     "subject": {
@@ -51,7 +57,8 @@
             "asset",
             "promotion",
             "policy",
-            "retention"
+            "retention",
+            "ops"
           ]
         },
         "ref": {
@@ -72,6 +79,13 @@
     },
     "payload": {
       "type": "object"
+    },
+    "severity": {
+      "enum": [
+        "info",
+        "warning",
+        "critical"
+      ]
     },
     "signature": {
       "oneOf": [

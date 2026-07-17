@@ -15,7 +15,7 @@ on:
 
 env:
   # go.mod requires Go ≥ 1.25 since the OTel 1.43.0 bump (Dependabot Phase C).
-  GO_VERSION: "1.25"
+  GO_VERSION: "1.26.5"
   GOPATH: ${{ github.workspace }}/.gopath
 
 jobs:

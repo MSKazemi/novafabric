@@ -1,0 +1,50 @@
+{
+  "name": "@novafabric/sdk",
+  "version": "0.1.0",
+  "description": "Official TypeScript client for the NovaFabric /v0 REST API — thin, typed, zero runtime dependencies (ADR-0194). Experimental.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "generate:types": "node scripts/generate-types.mjs",
+    "check:drift": "bash scripts/check-types-drift.sh",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^26.1.1",
+    "js-yaml": "^5.2.1",
+    "openapi-typescript": "^7.13.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  },
+  "keywords": [
+    "novafabric",
+    "sdk",
+    "api-client",
+    "openapi",
+    "typescript"
+  ]
+}

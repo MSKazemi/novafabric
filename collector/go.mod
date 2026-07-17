@@ -1,6 +1,6 @@
 module github.com/novafabric/collector
 
-go 1.25.0
+go 1.26.5
 
 require (
 	github.com/cloudevents/sdk-go/v2 v2.16.2

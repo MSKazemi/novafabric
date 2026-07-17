@@ -24,7 +24,7 @@ is derived from, a `nova` command you can run without a server.
 - **The authentication and network model** — why it binds to localhost only and how the
   one-shot token works.
 - **How the endpoints map to the five NovaFabric primitives** and to `nova` CLI commands.
-- **The full endpoint catalogue** — 184 routes across 21 functional domains.
+- **The full endpoint catalogue** — ~190 routes across 25 functional domains (regenerate the tables with `design/scripts/gen_api_reference.py` for the exact live count).
 - **Honesty notes** on routes that surface PLANNED / experimental capabilities.
 
 ## Two different APIs — do not confuse them
@@ -124,19 +124,21 @@ A handful of domains expose routes for capabilities that are **PLANNED / FUTURE 
 not yet shipped as a general service. The routes exist in the dashboard, but treat the
 underlying capability as design intent — never as a shipped guarantee:
 
-- **Sealing & trust** — routes referencing a Merkle log, Sigstore keyless signing, RFC 3161
-  timestamps, and signing-epoch ratchets correspond to the **PLANNED NovaSeal** signing
-  service (ADR-0041). What *is* shipped today toward this space: ed25519-signed Evidence
-  Bundles, in-toto DSSE attestations, and verifiable redaction proofs.
-- **Runs & capsules** — parent/child and `validate-distributed` routes correspond to the
-  **PLANNED** parent/child capsule model (ADR-0039). Local single-node capture is the
-  shipped case. `POST /api/otlp/v1/traces` (NF-034) is **experimental**: it accepts
-  OTLP/HTTP **JSON** (default) or OTLP/**protobuf** (`Content-Type: application/x-protobuf`,
-  ADR-0177; the server needs the `otlp` extra) — both converge on the same events —
-  and seals GenAI spans into a lower-fidelity capsule labeled `capture_level: ingested-otlp`.
-- **Storage & infrastructure** — object-store, manifest-chain, and collector routes
-  correspond to the **PLANNED** object capsule store and cluster-scale collector. SQLite is
-  the shipped local default.
+- **Sealing & trust** — the NovaSeal signing core (DSSE envelopes, Merkle log, RFC 3161
+  timestamps, signing-epoch ratchets, Sigstore keyless via the `sigstore` extra) is
+  **implemented and tested** (`tests/seal/`, ADR-0041/0054); these routes surface it.
+  Routes are still `experimental` — response shapes may change before the v1.0 freeze.
+- **Runs & capsules** — parent/child and `validate-distributed` routes surface the
+  **experimental** parent/child capsule model (ADR-0039, shipped; Slurm DDP runs produce
+  PARENT + WORKER capsules). `POST /api/otlp/v1/traces` (NF-034) is **experimental**: it
+  accepts OTLP/HTTP **JSON** (default) or OTLP/**protobuf**
+  (`Content-Type: application/x-protobuf`, ADR-0177; the server needs the `otlp` extra) —
+  both converge on the same events — and seals GenAI spans into a lower-fidelity capsule
+  labeled `capture_level: ingested-otlp`.
+- **Storage & infrastructure** — object-store and manifest-chain routes surface the
+  **experimental** object capsule store (CAS/WAL/WORM adapters, shipped); collector routes
+  surface the **experimental** cluster-scale collector. SQLite + filesystem remains the
+  shipped local default; the at-scale Postgres/AGE lineage tier is still **planned**.
 - **Topology (live)** — the live topology dashboard (`--topology`) is experimental and
   gated behind prototype spikes.
 
@@ -145,7 +147,7 @@ regulation and vouches only that a signed capsule is unmodified since signing.
 
 ## Endpoint catalogue
 
-184 routes across 21 domains. Each row shows the HTTP method, the path, and a one-line
+~190 routes across 25 domains. Each row shows the HTTP method, the path, and a one-line
 summary. Path parameters use `{name}` notation; `{ref:path}` and `{filepath:path}` accept
 slash-containing values.
 
@@ -355,6 +357,12 @@ slash-containing values.
 | `GET` | `/api/cost/pricing` | Return the per-1k-token price table from CostInterceptor (DB-COST-1). |
 | `GET` | `/api/cost/report` | Return aggregated LLM cost (DB-COST-1 / cap-002). |
 | `GET` | `/metrics/stream` | SSE metrics stream (FR-21: Last-Event-ID reconnect support). |
+
+## Analytics  (1)
+
+| Method | Path | Summary |
+|---|---|---|
+| `GET` | `/api/analytics/summary` | Time-bucketed run aggregates (volume, failures, duration percentiles) from the runs index — powers the dashboard Analytics tab. |
 
 ## Reports  (11)
 

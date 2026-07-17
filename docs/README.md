@@ -72,6 +72,9 @@ Task- and workflow-oriented references for day-to-day use.
 | [Dashboard](dashboard.md) | The local web dashboard (`nova serve --experimental`) — capabilities and limits |
 | [Warm capture daemon](warm-capture-daemon.md) | Removing per-run cold-start cost for fleets, HPC job arrays, and CI farms (experimental, Linux only) |
 | [Security & Provenance Knowledge Graph](security-knowledge-graph.md) | `nova kg` (experimental) — anomaly detection, attack-path, and blast-radius over a capsule's lineage |
+| [Trust surfaces](trust-surfaces.md) | `nova merkle-tree`, `nova trust-radar`, `nova redaction-xray`, `nova passport` (experimental) — human-readable projections of a capsule's trust evidence |
+| [Drift detection](drift-gate.md) | `nova drift` (experimental) — offline two-sample drift, silent-failure flags, and root-cause correlation over sealed runs |
+| [Assurance cases](assurance-cases.md) | `nova assure-case` / `nova assure-coverage` (experimental) — machine-checkable argument graphs bound to sealed evidence |
 | [Developer guide](developer-guide.md) | Local dev setup, extension points, adding asset types and commands |
 
 ## Reference
@@ -105,6 +108,13 @@ implemented versus design intent.
 | [Server deployment](ops/server-deployment.md) | Deployment scenarios from local SQLite to Postgres and Kubernetes |
 | [Server admin guide](ops/server-admin-guide.md) | Operating `nova server` in production — auth, tokens, RBAC, quotas, observability endpoints |
 | [Backup & restore runbook](ops/backup-restore.md) | `nova backup` / `nova restore`, verification, DR procedure (works today + planned sections) |
+| [Sizing guide](ops/sizing-guide.md) | Capacity planning — storage growth drivers, SQLite vs Postgres, rough sizing tables (estimates), single-writer limits |
+| [Upgrade guide](ops/upgrade-guide.md) | Version-to-version upgrades — expand-contract N/N+1 rule, Alembic dual-track, migrations, downgrade honesty |
+| [Incident runbook](ops/incident-runbook.md) | On-call symptom → diagnosis → action tables — probes, auth lockout, 429s, WORM/disk, index drift, seal failures |
+| [Air-gapped install](ops/air-gapped-install.md) | Offline deployment — wheel mirroring, offline ed25519 tokens, no-phone-home guarantee, private-endpoint configuration |
+| [Monitoring & self-observability](ops/monitoring.md) | Prometheus `/metrics`, `/livez` vs `/readyz`, `/v0/version`, opt-in self-tracing (experimental) |
+| [Quotas & rate limits](ops/quotas-and-rate-limits.md) | API token-bucket rate limiting (429 contract) + warn-then-reject storage quotas (experimental, off by default) |
+| [Encryption at rest](ops/encryption-at-rest.md) | Opt-in envelope encryption for the object capsule store — KMS-wrapped DEKs, crypto-shred (experimental, never the default) |
 | [Cluster-scale migration](ops/cluster-scale-migration.md) | Migrating from SQLite + filesystem toward Postgres + object storage + graph DB |
 | [Lineage store migration](lineage/migration-guide.md) | Migrating the lineage store from SQLite to KuzuDB |
 

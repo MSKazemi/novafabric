@@ -10,10 +10,14 @@ from typing import Any
 from novafabric.capture._ulid import new_ulid
 
 PACK_NAME = "gitleaks-core-v0"
-PACK_VERSION = "0.2.1"
+PACK_VERSION = "0.3.0"
 
-# 12 LLM provider key patterns — ordered from most to least specific to avoid false positives
+# 13 key patterns — ordered from most to least specific to avoid false positives
 _RULES: list[dict[str, Any]] = [
+    # ADR-0193: our own credential format (`nvfk_<key_id>_<secret>`) — detect a
+    # leaked NovaFabric API key in a capsule before anyone else does.
+    {"id": "novafabric-api-key", "severity": "critical",
+     "pattern": re.compile(r"nvfk_[A-Za-z0-9\-_]{8}_[A-Za-z0-9\-_]{30,60}")},
     {"id": "anthropic-api-key", "severity": "critical",
      "pattern": re.compile(r"sk-ant-[A-Za-z0-9\-_]{20,80}")},
     {"id": "openai-api-key", "severity": "critical",

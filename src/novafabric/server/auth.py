@@ -164,6 +164,35 @@ def _verify_local_token(request: Request, config: ServerConfig) -> AuthContext:
     return ctx
 
 
+# ADR-0193 (experimental): first-class API keys are prefix-dispatched before
+# any JWT parsing — an ``nvfk_``-shaped bearer never falls through to the
+# OIDC / offline-JWT / local-token paths.
+API_KEY_PREFIX = "nvfk_"
+
+
+def _try_api_key(request: Request) -> AuthContext | None:
+    """Resolve an ``Authorization: Bearer nvfk_...`` credential (ADR-0193).
+
+    Returns None when the bearer is not API-key-shaped (non-``nvfk_`` tokens
+    follow the existing paths unchanged). Raises ``_Unauthenticated`` when an
+    ``nvfk_``-shaped key is malformed, unknown, revoked, or expired.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return None
+    raw_token = auth_header.removeprefix("Bearer ").strip()
+    if not raw_token.startswith(API_KEY_PREFIX):
+        return None
+
+    from novafabric.server.api_keys import verify_key
+
+    ctx = verify_key(raw_token)
+    if ctx is None:
+        raise _unauthenticated("Invalid, revoked, or expired API key")
+    request.state.auth = ctx
+    return ctx
+
+
 def _try_offline_token(request: Request, config: ServerConfig) -> AuthContext | None:
     """Accept an offline ed25519 JWT when ``offline_key_path`` is configured.
 
@@ -220,6 +249,18 @@ async def verify_token(request: Request) -> AuthContext:
     accounts, ADR-0178) are also accepted in local mode.
     """
     config: ServerConfig = request.app.state.config
+
+    # ADR-0193: API keys resolve first, in both OIDC and local modes. The
+    # insecure_no_auth opt-out keeps its anonymous-admin behavior (matching
+    # the offline-token path below).
+    try:
+        api_key_ctx = _try_api_key(request)
+    except _Unauthenticated:
+        if config.oidc.enabled or not config.insecure_no_auth:
+            raise
+        api_key_ctx = None
+    if api_key_ctx is not None:
+        return api_key_ctx
 
     if not config.oidc.enabled:
         try:

@@ -33,6 +33,21 @@ class EventType(str, Enum):
     PROMOTION_BYPASS_CREATED = "promotion.bypass.created"
     PROMOTION_BYPASS_APPROVED = "promotion.bypass.approved"
     PROMOTION_BYPASS_EXPIRED = "promotion.bypass.expired"
+    # Operational alerting family (ADR-0192; additive, curated, closed).
+    OPS_QUOTA_BREACHED = "ops.quota.breached"
+    OPS_RATE_LIMIT_SUSTAINED = "ops.rate_limit.sustained"
+    OPS_POLICY_VIOLATION = "ops.policy.violation"
+    OPS_DRIFT_DETECTED = "ops.drift.detected"
+    OPS_SEAL_VERIFY_FAILED = "ops.seal.verify_failed"
+    OPS_BACKUP_FAILED = "ops.backup.failed"
+
+
+class EventSeverity(str, Enum):
+    """First-class severity for `ops.*` events (ADR-0192 D1)."""
+
+    INFO = "info"
+    WARNING = "warning"
+    CRITICAL = "critical"
 
 
 class SubjectKind(str, Enum):
@@ -41,6 +56,7 @@ class SubjectKind(str, Enum):
     PROMOTION = "promotion"
     POLICY = "policy"
     RETENTION = "retention"
+    OPS = "ops"
 
 
 class Subject(BaseModel):
@@ -84,6 +100,7 @@ class LifecycleEvent(BaseModel):
     subject: Subject
     occurred_at: str = Field(default_factory=_now_rfc3339)
     payload: dict[str, Any] = Field(default_factory=dict)
+    severity: EventSeverity | None = None
     signature: Signature | None = None
     source: str | None = None
     nova_version: str | None = Field(default=None, serialization_alias="nova.version")
@@ -97,7 +114,7 @@ class LifecycleEvent(BaseModel):
         as ``null`` — the schema requires the key.
         """
         record = self.model_dump(mode="json", by_alias=True)
-        for key in ("signature", "source", "nova.version", "extensions"):
+        for key in ("severity", "signature", "source", "nova.version", "extensions"):
             if record.get(key) is None:
                 record.pop(key, None)
         return record

@@ -86,6 +86,8 @@ Commands grouped by primitive and task. Each entry links to its full section.
 | [`nova trend`](#nova-trend-experimental-adr-0131) | Score/cost/latency trend report over local capsules: JSON + optional static HTML (experimental) |
 | [`nova cost estimate`](#nova-cost-estimate-experimental-adr-0133) | Offline per-capsule cost: recorded vs catalog-estimated (experimental) |
 | [`nova pricing`](#nova-pricing-listshowadd-experimental-adr-0133) | Local model-pricing catalog: list, show, add (experimental) |
+| [`nova drift`](#offline-drift-and-tool-schema-analysis-experimental-adr-01470148) | Offline drift, silent-failure, and root-cause detectors over sealed capsules (experimental) |
+| [`nova toolschema impact`](#nova-toolschema-impact-experimental-adr-0148) | Which historical runs break under a new tool schema (experimental) |
 
 ### Lineage
 
@@ -113,6 +115,12 @@ Commands grouped by primitive and task. Each entry links to its full section.
 | [`nova comment`](#nova-comment-add--list-experimental-adr-0121) | Append-only human annotations on capsule evidence |
 | [`nova annotate`](#nova-annotate-experimental-adr-0118) | Human annotation queues — route subjects to reviewers, emit HUMAN scores |
 | [`nova score submit`](#nova-score-submit-experimental-adr-0119) | Submit an externally-computed score into a capsule's append-only scores.jsonl |
+| [`nova merkle-tree`](#nova-merkle-tree-document-experimental-adr-0172) | Render an Evidence Provenance Merkle proof tree from a sealed capsule's hashes (experimental) |
+| [`nova trust-radar`](#nova-trust-radar-verification-experimental-adr-0173) | Trust Attestation Radar over a capsule's verification output (experimental) |
+| [`nova redaction-xray`](#nova-redaction-xray-document-experimental-adr-0174) | Redaction / secret-scan X-Ray of a capsule's protection metadata (experimental) |
+| [`nova assure-case`](#nova-assure-case-document-experimental-adr-0166) | Inspect an assurance-case document: validity, currency, conformance, defeaters (experimental) |
+| [`nova assure-coverage`](#nova-assure-coverage-document-experimental-adr-0166) | Structural coverage of an assurance case — counts and gaps, never a grade (experimental) |
+| [`nova passport`](#nova-passport-issue--verify-experimental-adr-0149) | Portable agent passport: issue + offline verify (experimental) |
 
 ### Registry, promotion, and evaluation
 
@@ -138,6 +146,9 @@ Commands grouped by primitive and task. Each entry links to its full section.
 | [`nova classify run`](#nova-classify-run) | EU AI Act / NIST RMF / OMB risk tier |
 | [`nova audit map`](#nova-audit-map) / [`nova audit report`](#nova-audit-report) | Multi-profile control coverage |
 | [`nova retention`](#retention-scheduler-adr-0134) | WORM-aware, audited retention sweep (plan/apply/status/explain) |
+| [`nova forensics timeline`](#nova-forensics-timeline-experimental-adr-0155) | Incident forensic timeline over sealed evidence (experimental) |
+| [`nova dsar`](#nova-dsar-assemble-experimental-adr-0161) | Subject-rights (DSAR) package assembly + SLA clock (experimental) |
+| [Sector & transparency exports](#sector-and-transparency-export-commands-experimental) | 13 `nova export-*` renderers (experimental): SR 11-7 model risk, 21 CFR Part 11, RAI scorecard, EU AI Act Annex VIII, algorithm registers, public-sector disclosure, FOIA, whistleblower, citizen explanation, public incident, election disclosure, accessibility claim, control attestation |
 
 > The compliance surfaces above produce **evidence that supports** compliance
 > workflows. They do not certify or guarantee compliance with any regulation.
@@ -157,9 +168,13 @@ Commands grouped by primitive and task. Each entry links to its full section.
 | [`nova serve --experimental`](#nova-serve---experimental) | Read-only local dashboard (loopback, single-user) |
 | [`nova server start`](#nova-server-start) | Multi-user REST API (Postgres/SQLite, OIDC, RBAC) |
 | [`nova server saml-metadata`](#nova-server-saml-metadata) | Emit the SAML SP metadata XML for IdP registration (experimental) |
+| [`nova server api-key`](#nova-server-api-key-create-experimental-adr-0193) | First-class API keys: create, list, revoke (experimental) |
 | [`nova login`](#nova-login) / [`nova logout`](#nova-logout) | Authenticate with a NovaFabric server |
 | [`nova doctor`](#nova-doctor---check-storage) | Installation and storage diagnostics |
 | [`nova migrate-to-postgres`](#nova-migrate-to-postgres) | Migrate the local SQLite registry to Postgres |
+| [`nova backup`](#nova-backup-create-experimental-adr-0181) / [`nova restore`](#nova-restore-set-path-experimental-adr-0181) | Evidence-grade local backup sets: create, verify offline, restore (experimental) |
+| [`nova support-bundle`](#nova-support-bundle-experimental-adr-0187) | Secret-safe diagnostics tarball for support (experimental) |
+| [`nova audit-log`](#nova-audit-log-export-experimental-adr-0191) | Export local audit logs for SIEM ingestion (OCSF / native JSONL, experimental) |
 
 For everything else — the knowledge graph, energy receipts, the accountability
 ledger, HPC collector binaries, and the full environment-variable table — use
@@ -1043,6 +1058,94 @@ capsule directory, unresolvable saved view) exit 1; an empty result exits 0.
 
 ---
 
+## Offline drift and tool-schema analysis (experimental, ADR-0147/0148)
+
+Read-only, offline detectors over sealed capsule evidence. Each command loads a
+JSON document from a path, prints a terminal report (or a machine-readable one
+with `--json`), and never mutates any capsule. A flagged drift, silent failure,
+or breaking schema change is a **detector observation to investigate, never a
+verdict or gate** — the commands exit `0` whether or not anything is flagged,
+and `2` only on missing or malformed input. This first slice takes the
+samples/runs directly in the document; a collector that reads them from sealed
+capsules over a `--baseline`/`--window` range is a documented follow-on.
+
+### nova drift detect (experimental, ADR-0147)
+
+Compute an offline two-sample drift record from supplied samples — no model
+re-invocation, zero token cost.
+
+```bash
+nova drift detect drift.json
+nova drift detect drift.json --json
+```
+
+Options:
+- `<document>` (positional, required) — JSON: `{kind: output|behavioral, ...samples..., threshold}`. `output` documents carry `{metric, statistic, baseline[], window[], window_meta, baseline_id?}`; `behavioral` documents carry `{dimension, distance, baseline, window}`
+- `--json` — emit the drift record as JSON
+
+Exit codes: `0` (record rendered, drifted or not), `2` (missing or malformed input).
+
+---
+
+### nova drift silent-failure (experimental, ADR-0147)
+
+Flag runs that reported success but whose quality signal fell below a
+threshold. A silent failure is surfaced for review — it is a detector
+observation, not a determination that the run failed.
+
+```bash
+nova drift silent-failure runs.json
+nova drift silent-failure runs.json --json
+```
+
+Options:
+- `<document>` (positional, required) — JSON: `{runs: [{run_id, status, quality_signal}], threshold, success_statuses?}`
+- `--json` — emit the silent-failure report as JSON
+
+Exit codes: `0` (report rendered, whether or not any run is flagged), `2` (bad input).
+
+---
+
+### nova drift root-cause (experimental, ADR-0147)
+
+Link an observed drift to the input(s) that changed between a baseline and a
+drifted run. Diffs the two runs' lineage provenance ancestors down to the
+model/prompt/tool/dataset that changed. The result is a **correlation, not a
+cause** — a hypothesis to investigate.
+
+```bash
+nova drift root-cause rc.json
+nova drift root-cause rc.json --json
+```
+
+Options:
+- `<document>` (positional, required) — JSON: `{baseline: [{kind, ref}], drifted: [{kind, ref}], kinds?}`
+- `--json` — emit the root-cause hypothesis as JSON
+
+Exit codes: `0` (rendered, whether or not anything changed), `2` (bad input).
+
+---
+
+### nova toolschema impact (experimental, ADR-0148)
+
+Report which historical runs break under a new tool schema: validates each
+recorded tool call's arguments against the proposed JSON Schema using the
+shipped ADR-0128 validator — it does not reimplement validation.
+
+```bash
+nova toolschema impact calls.json --new-schema new.json
+nova toolschema impact calls.json --new-schema new.json --json
+```
+
+Options:
+- `<document>` (positional, required) — JSON: `{tool_id, tool_calls: [{run_id, arguments}]}`
+- `--new-schema PATH` (required) — the new JSON Schema to test past runs against
+- `--json` — emit the `schema_impact` report as JSON
+
+Exit codes: `0` (report rendered), `2` (missing or malformed input).
+
+---
+
 ## Lineage commands (v0.4)
 
 ### nova lineage provenance
@@ -1815,6 +1918,211 @@ Notes:
 
 ---
 
+## Trust visualization and assurance commands (experimental, v0.59–v0.61)
+
+Read-only projections over trust-layer evidence. Each command loads a JSON
+document, renders a terminal report (or `--json`), and prints only references,
+states, and short hash prefixes — never evidence bodies, field values, or full
+hashes.
+
+### nova merkle-tree \<document\> (experimental, ADR-0172)
+
+Render an Evidence Provenance Merkle proof tree from a sealed capsule's hashes:
+`leaf → intermediate → seal-root → tsr`. The tree is derived from NovaSeal's
+canonical layer enumerator, so the recomputed root matches the sealed root
+byte-for-byte. Full leaf hashes are never printed — only short prefixes
+(ADR-0009); leaf labels are field paths, never values.
+
+```bash
+nova merkle-tree tree.json
+nova merkle-tree tree.json --json --capsule-id run-42
+```
+
+Options:
+- `<document>` (positional, required) — JSON with `leaf_hashes` (+ optional `labels` / `sealed_root` / `tsr_hash`)
+- `--capsule-id TEXT` — capsule id to label the tree with
+- `--json` — emit the proof tree as JSON
+
+Exit codes: `0` (rendered — sealed+verified, or unsealed), `1` (seal-root mismatch — tamper evidence), `2` (missing or malformed input).
+
+---
+
+### nova trust-radar \<verification\> (experimental, ADR-0173)
+
+Render a Trust Attestation Radar from a capsule's verification output. The
+input is a JSON object of the seven Trust-Layer guarantees (`signature_ok`,
+`timestamp_ok`, `log_integrity_ok`, `redaction_coverage`, `secret_scan_clean`,
+`policy_pass`, `eval_gate_pass`) — for example the summarized output of
+`nova verify` plus the evidence-bundle scan flags. Any absent/null guarantee
+becomes an `n/a` axis (e.g. an unsealed capsule has no `signature_ok`).
+
+```bash
+nova trust-radar verify.json
+nova trust-radar verify.json --json --capsule-id run-42
+```
+
+Options:
+- `<verification>` (positional, required) — path to a JSON object of the 7 verification guarantees
+- `--capsule-id TEXT` — capsule id to label the radar with
+- `--json` — emit the radar model as JSON
+
+Exit codes: `0` (attested / partial / unsealed — informational), `1` (critical: a seal-integrity anchor — signature or log-integrity — failed), `2` (missing or malformed input).
+
+---
+
+### nova redaction-xray \<document\> (experimental, ADR-0174)
+
+Render a Redaction / Secret-scan X-Ray from a capsule's protection metadata: a
+per-field state overlay, a coverage meter, and per-state counts. **No field
+value is ever printed** — the command surfaces field paths and states only
+(ADR-0174 §1); any value handed in alongside a record is dropped by the
+projection.
+
+```bash
+nova redaction-xray xray.json
+nova redaction-xray xray.json --json --capsule-id run-42
+```
+
+Options:
+- `<document>` (positional, required) — JSON with either `fields` (`[{path, state}]`, state one of `clear|redacted|secret_scrubbed|never_captured|unknown`) or raw `findings` (MaskingPipeline finding records)
+- `--capsule-id TEXT` — capsule id to label the report with
+- `--json` — emit the X-Ray report as JSON
+
+Exit codes: `0` (report rendered), `2` (missing or malformed input).
+
+---
+
+### nova assure-case \<document\> (experimental, ADR-0166)
+
+Inspect an assurance-case document: structural validity, currency/drift, a
+conformance receipt, and open defeaters. Prints only references and digests,
+never evidence bodies.
+
+The document is a JSON object with:
+- `case` (required) — the argument graph: `{case_id, nodes[]}`
+- `resolvable_digests` (optional) — evidence digests that currently resolve
+- `currency` (optional) — `{nodes[]}`, a currency ledger (needs `--as-of`)
+- `conformance` (optional) — `{entries[]}`, standard/clause mappings
+- `defeaters` (optional) — recorded challenges to nodes
+
+```bash
+nova assure-case case.json
+nova assure-case case.json --as-of 2026-06-01T00:00:00Z
+nova assure-case case.json --json
+```
+
+Options:
+- `--as-of TEXT` — ISO-8601 instant to evaluate currency at (required if the document carries a currency ledger; never inferred from the system clock)
+- `--json` — emit a machine-readable JSON report
+
+Exit codes: `0` (case structurally valid AND no defeater open), `1` (structurally invalid, or at least one defeater open — argument defeated), `2` (document missing/malformed, or a currency ledger present without `--as-of`).
+
+---
+
+### nova assure-coverage \<document\> (experimental, ADR-0166)
+
+Report structural coverage of an assurance case — **counts and gaps, never a
+grade**. Takes the same document shape as `nova assure-case` (minus
+`conformance`).
+
+```bash
+nova assure-coverage case.json
+nova assure-coverage case.json --as-of 2026-06-01T00:00:00Z --json
+```
+
+Options:
+- `--as-of TEXT` — ISO-8601 instant to evaluate currency at (required if the document carries a currency ledger; never inferred from the system clock)
+- `--json` — emit the coverage report as JSON
+
+Exit codes: `0` (coverage report rendered), `2` (missing or malformed input).
+
+---
+
+### nova passport issue | verify (experimental, ADR-0149)
+
+Portable agent-passport projection (ADR-0149 / NF-179): a green/amber/red
+verdict projected from component refs, re-derivable offline.
+
+```bash
+nova passport issue refs.json          # human-readable passport
+nova passport issue refs.json --json   # passport document (feed to verify)
+nova passport verify agent-passport.json
+```
+
+`issue` options:
+- `<document>` (positional, required) — JSON: `{agent_ref, present: {component: ref}, opaque: [...]}`
+- `--json` — emit the passport document as JSON
+
+`verify` takes a passport document produced by `nova passport issue --json`,
+re-derives the verdict offline, and confirms it matches the document.
+
+Exit codes: `issue` — `0` (rendered), `2` (malformed input). `verify` — `0` (recomputed status matches the document), `3` (status mismatch), `2` (malformed input).
+
+---
+
+## Incident forensics and subject-rights commands (experimental, ADR-0155/0161)
+
+Read-only reconstructions over already-sealed evidence supplied as a JSON
+document. Missing evidence is shown as `gaps`, never raised (fail-open); the
+commands print references and states only.
+
+### nova forensics timeline (experimental, ADR-0155)
+
+Render an incident's forensic timeline: a deterministic
+(byte-identical-on-re-run) view over the incident's collected sealed evidence.
+
+```bash
+nova forensics timeline incident-evidence.json
+nova forensics timeline incident-evidence.json --json
+```
+
+Options:
+- `<evidence>` (positional, required) — JSON: `{incident_id, events: [{ts, source_capsule, seq, kind}], gaps?}`
+- `--json` — emit the timeline as JSON
+
+Exit codes: `0` (timeline rendered), `2` (missing or malformed input).
+
+---
+
+### nova dsar assemble (experimental, ADR-0161)
+
+Assemble a subject's cross-capsule DSAR package: a deterministic assembly of
+every capsule that processed a subject, keyed on the **HMAC pseudonym** — the
+raw subject id never enters the artifact.
+
+```bash
+nova dsar assemble subject-records.json
+nova dsar assemble subject-records.json --json
+```
+
+Options:
+- `<document>` (positional, required) — JSON: `{subject_hmac, records: [{capsule_id, categories}], gaps?}`
+- `--json` — emit the DSAR package as JSON
+
+Exit codes: `0` (package rendered), `2` (missing or malformed input).
+
+---
+
+### nova dsar sla (experimental, ADR-0161)
+
+Compute a DSAR's turnaround against a deadline (default GDPR Art. 12(3), one
+month). `met_deadline` is a factual `fulfilled_at <= deadline` comparison over
+recorded timestamps — evidence a request was met on time, not a compliance
+verdict.
+
+```bash
+nova dsar sla request.json
+nova dsar sla request.json --json
+```
+
+Options:
+- `<document>` (positional, required) — JSON: `{request_open, fulfilled_at, deadline?, subject_hmac?}` (ISO 8601 UTC)
+- `--json` — emit the SLA record as JSON
+
+Exit codes: `0` (record rendered, whether or not the deadline was met), `2` (bad input).
+
+---
+
 ## Lifecycle events and webhooks (experimental, ADR-0137)
 
 Opt-in outbound surface: on defined lifecycle transitions NovaFabric emits one
@@ -1990,6 +2298,212 @@ Options:
 - `--output, -o PATH` — path to write `redaction_proof_report.json` (default: stdout)
 
 Exit codes: `0` (subject found), `1` (env var missing, compliance extra missing, or DB error).
+
+---
+
+## Sector and transparency export commands (experimental)
+
+Thirteen read-only renderers that project supplied references and sealed
+evidence into sector-specific disclosure and attestation artifacts. Shared
+conventions:
+
+- each command takes one positional JSON document path and supports `--json`
+  for a machine-readable artifact;
+- exit codes are `0` (artifact rendered) and `2` (missing or malformed input) —
+  rendering never mutates a capsule;
+- outputs are **evidence artifacts, not judgments**: register/database entries
+  are explicitly `DRAFT`, claims are declared claims, and the scorecard is
+  coverage — the commands never certify, score, or judge compliance.
+
+| Command | Framework / audience | ADR |
+|---|---|---|
+| [`nova export-model-risk`](#nova-export-model-risk-evidence) | SR 26-2 / SR 11-7 model-risk evidence | ADR-0159 |
+| [`nova export-part11`](#nova-export-part11-document) | 21 CFR Part 11 electronic records | ADR-0160 |
+| [`nova export-rai-scorecard`](#nova-export-rai-scorecard-document) | Responsible-AI coverage scorecard | ADR-0158 |
+| [`nova export-public-annex-viii`](#nova-export-public-annex-viii-document) | EU AI Act Annex VIII public DB (DRAFT) | ADR-0169 |
+| [`nova export-transparency-register`](#nova-export-transparency-register-document) | Algorithm registers: ATRS / Amsterdam / Helsinki (DRAFT) | ADR-0169 |
+| [`nova export-public-disclosure`](#nova-export-public-disclosure-document) | Public-sector disclosure record (DRAFT) | ADR-0169 |
+| [`nova export-foia`](#nova-export-foia-document) | FOIA / public-records decision export (DRAFT) | ADR-0169 |
+| [`nova export-whistleblower`](#nova-export-whistleblower-document) | Source-protecting whistleblower attestation | ADR-0169 |
+| [`nova export-citizen-explanation`](#nova-export-citizen-explanation-document) | Subject-facing decision explanation | ADR-0169 |
+| [`nova export-public-incident`](#nova-export-public-incident-document) | Public-interest incident summary (DRAFT) | ADR-0169 |
+| [`nova export-election-disclosure`](#nova-export-election-disclosure-document) | Election / civic content-provenance disclosure | ADR-0169 |
+| [`nova export-accessibility-claim`](#nova-export-accessibility-claim-document) | Declared accessibility-conformance claim | ADR-0169 |
+| [`nova export-control-attestation`](#nova-export-control-attestation-document) | Governance-control attestation pack | ADR-0170 |
+
+### nova export-model-risk \<evidence\>
+
+Assemble an SR 26-2 / SR 11-7 model-risk evidence file from per-pillar refs.
+
+```bash
+nova export-model-risk evidence.json --json
+```
+
+- `<evidence>` — JSON: `{model_id, development[], independent_validation[], ongoing_monitoring[], model_inventory[], partial[]}`
+
+---
+
+### nova export-part11 \<document\>
+
+Render a 21 CFR Part 11 electronic-records evidence artifact — the
+records/signatures elements a run recorded (signer identity, §11.50 signing
+intent, DSSE signature binding, record integrity, trusted timestamp, audit
+trail), each `complete` / `partial` / `missing`. **Facts, never a Part 11
+call.**
+
+```bash
+nova export-part11 part11.json --json
+```
+
+- `<document>` — JSON: `{capsule_root, elements: {name: ref}, partial: {name: reason}}`
+
+---
+
+### nova export-rai-scorecard \<document\>
+
+Render a Responsible-AI coverage scorecard — presence of evidence per
+dimension (`supported` / `partial` / `unsupported` / `not_applicable`),
+**never a score**: no threshold, no fair/unfair or pass/fail label.
+
+```bash
+nova export-rai-scorecard rai.json --json
+```
+
+- `<document>` — JSON: `{evidence: {dimension: ...}, not_applicable[], partial[]}`
+
+---
+
+### nova export-public-annex-viii \<document\>
+
+Render a DRAFT EU AI Act Annex VIII / Art. 71 public-database entry from
+sealed evidence + operator declarations. Each field is either
+`capsule_evidence` (a digest/ref into the sealed capsule — never the raw
+value) or `operator_declared` (the operator's public declaration).
+
+```bash
+nova export-public-annex-viii entry.json --json
+```
+
+- `<document>` — JSON: `{capsule_root, capsule_evidence{}, operator_declared{}}`
+
+---
+
+### nova export-transparency-register \<document\>
+
+Render a DRAFT algorithm-register record from sealed evidence + operator
+declarations, crosswalked to a public register shape.
+
+```bash
+nova export-transparency-register reg.json --standard atrs
+nova export-transparency-register reg.json --standard amsterdam --json
+```
+
+- `<document>` — JSON: `{capsule_root, capsule_evidence{}, operator_declared{}}`
+- `--standard TEXT` — register shape: `atrs` | `amsterdam` | `helsinki` (default: `atrs`)
+
+---
+
+### nova export-public-disclosure \<document\>
+
+Render a DRAFT public-sector disclosure record from supplied references.
+
+```bash
+nova export-public-disclosure disclosure.json --json
+```
+
+- `<document>` — JSON: `{authority_ref, agent_ref, decision_scope, human_oversight_ref, capsule_refs[], system_card_ref?}`
+
+---
+
+### nova export-foia \<document\>
+
+Render a DRAFT FOIA/public-records decision export from a decision's ordered
+record index + redaction claims (each redaction a salted digest plus the
+**claimed** statutory `exemption_ref`).
+
+```bash
+nova export-foia foia.json --json
+```
+
+- `<document>` — JSON: `{decision_ref, record_index[], redactions[{digest, exemption_ref}]}`
+
+---
+
+### nova export-whistleblower \<document\>
+
+Render a source-protecting whistleblower attestation over a sealed bundle.
+
+```bash
+nova export-whistleblower wb.json --json
+```
+
+- `<document>` — JSON: `{content_digest, authenticity_attestation, anonymity_set_ref?}`
+
+---
+
+### nova export-citizen-explanation \<document\>
+
+Render a plain-language, subject-facing decision explanation.
+
+```bash
+nova export-citizen-explanation cit.json --json
+```
+
+- `<document>` — JSON: `{decision_ref, factors[], human_involvement, contest_channel_ref?, logic_summary_ref?}`
+
+---
+
+### nova export-public-incident \<document\>
+
+Render a DRAFT public-interest incident summary from a sealed incident.
+
+```bash
+nova export-public-incident incident.json --json
+```
+
+- `<document>` — JSON: `{incident_ref, public_summary?, affected_scope?, remediation_ref?}`
+
+---
+
+### nova export-election-disclosure \<document\>
+
+Render an election/democratic-process content-provenance disclosure —
+**records, never judges**. Binds a provenance receipt (e.g. NF-094 / C2PA /
+SynthID) by digest.
+
+```bash
+nova export-election-disclosure elec.json --json
+```
+
+- `<document>` — JSON: `{content_ref, provenance_receipt_ref, disclosure_label, capsule_refs[]}`
+
+---
+
+### nova export-accessibility-claim \<document\>
+
+Render a declared accessibility-conformance claim — **a declared claim, never
+a guarantee**.
+
+```bash
+nova export-accessibility-claim a11y.json
+nova export-accessibility-claim a11y.json --standard en_301_549_v4_1_1 --json
+```
+
+- `<document>` — JSON: `{declared_standard?, audit_digest?, export_format_check?}`
+- `--standard TEXT` — declared standard (`wcag_2_2_aa` | `en_301_549_v4_1_1`); overrides the document
+
+---
+
+### nova export-control-attestation \<document\>
+
+Render a governance-control attestation pack — **presents evidence, never
+certifies**.
+
+```bash
+nova export-control-attestation ctrl.json --json
+```
+
+- `<document>` — JSON: `{capsule_root, catalog: [{control_id, evidence_kind?}], present_evidence{}, declared[]}`
 
 ---
 
@@ -3849,6 +4363,78 @@ verified signatures.
 
 ---
 
+### nova server api-key create (experimental, ADR-0193)
+
+**Experimental (ADR-0193, first slice).** Create a first-class API key
+`nvfk_<key_id>_<secret>` bound to an owning principal and a role set from the
+existing RBAC vocabulary (`reader`, `writer`, `admin`, `auditor`). Only the
+sha256 of the secret is stored — the full key is printed **once** and cannot
+be recovered later. Creation is appended to the hash-chained audit log
+([spec](../design/spec/api-keys-v0.md)).
+
+```bash
+nova server api-key create --owner alice@example.com --roles reader
+nova server api-key create --owner svc:ci-bot --roles reader,writer --expires-in 90d
+```
+
+Requests then authenticate with `Authorization: Bearer nvfk_...`; the server
+resolves the key before any JWT parsing, so keys work in both OIDC and local
+modes.
+
+Options:
+- `--owner TEXT` (required) — owning principal (user or `svc:<name>`)
+- `--roles TEXT` — comma-separated roles (default: `reader`)
+- `--workspace TEXT` — optional workspace scope (ADR-0178; stored, not yet enforced)
+- `--expires-in TEXT` — optional lifetime, e.g. `90d` (default: no expiry)
+- `--created-by TEXT` — actor recorded in the audit log (default: `cli`)
+- `--db-path PATH` — SQLite database path (overrides default)
+
+Honest status: `create`/`list`/`revoke` work today; `rotate` (successor key
+with an overlap window) and `last_used_at` tracking are the next ADR-0193
+slice and are **not implemented yet**.
+
+---
+
+### nova server api-key list (experimental, ADR-0193)
+
+List API keys — metadata only (key_id, owner, roles, workspace, created,
+expiry, status). Secrets and hashes are never stored, so they can never be
+shown.
+
+```bash
+nova server api-key list
+nova server api-key list --json
+```
+
+Options:
+- `--json` — emit a JSON array for tooling
+- `--db-path PATH` — SQLite database path (overrides default)
+
+---
+
+### nova server api-key revoke \<key-id\> (experimental, ADR-0193)
+
+Revoke an API key by its public `key_id` — effective on the next request
+(verification is a DB lookup; there is no token-style revocation-propagation
+gap). The revocation is appended to the hash-chained audit log.
+
+```bash
+nova server api-key revoke a1b2c3d4
+```
+
+Arguments:
+- `KEY_ID` (required) — the public key identifier shown by `create` and `list`
+
+Options:
+- `--revoked-by TEXT` — actor recorded in the audit log (default: `cli`)
+- `--db-path PATH` — SQLite database path (overrides default)
+
+Exit codes:
+- `0` — success (key revoked)
+- `1` — key_id not found, or other failure
+
+---
+
 ### nova login
 
 Authenticate with a NovaFabric server via Device Authorization Grant (RFC 8628,
@@ -3883,6 +4469,150 @@ nova logout                                           # remove all servers
 
 Options:
 - `--server TEXT` — server URL to log out of; omit to remove all stored credentials
+
+---
+
+## Backup, restore, and support diagnostics (experimental)
+
+Evidence-grade operational tooling: signed local backup sets with offline
+verification (ADR-0181), a verification-gated restore path, and a secret-safe
+diagnostics tarball for support (ADR-0187).
+
+### nova backup create (experimental, ADR-0181)
+
+Create a backup set (registry, capsules, redacted config; the `pg` profile
+adds a `pg_dump` member). The registry is snapshotted with the SQLite
+online-backup API, so a live writer is safe. Signing keys, tokens, and env
+values are excluded by a normative deny-filter — key material never travels in
+a backup set. Connection strings are treated as secrets: the DSN never appears
+in the set, the manifest, or any output.
+
+```bash
+nova backup create
+nova backup create -o /mnt/backups/
+nova backup create -o nightly.tar.gz
+nova backup create --profile pg --dsn postgresql://…  -o pg-nightly.tar.gz
+```
+
+Options:
+- `--output, -o PATH` — target `.tar.gz` file (or existing directory). Default: `./nova-backup-<set_id>.tar.gz`
+- `--home PATH` — NovaFabric home to back up (default: `NOVAFABRIC_HOME` or `~/.novafabric`)
+- `--profile TEXT` — backup profile: `local` (SQLite deployment) or `pg` (adds a `pg_dump --format=custom` member). Default: `local`
+- `--dsn TEXT` — Postgres DSN for `--profile pg` (default: `NOVA_DSN` or `NOVAFABRIC_POSTGRES_DSN`). Never logged; the manifest stores only the redacted host/dbname
+
+Exit codes: `0` (set created), `1` (backup error).
+
+---
+
+### nova backup verify (experimental, ADR-0181)
+
+Verify a backup set offline against its manifest. Recomputes every member's
+SHA-256 and, when the set is signed, verifies the manifest's DSSE envelope.
+Requires no live deployment, network, or private keys.
+
+```bash
+nova backup verify nova-backup-01J....tar.gz
+```
+
+Options:
+- `<set-path>` (positional, required) — backup-set archive (`.tar.gz`) to verify offline
+
+Exit codes: `0` (all members and signature verify), `1` (any mismatch).
+
+---
+
+### nova restore \<set-path\> (experimental, ADR-0181)
+
+Restore a local-profile backup set, then run the verification chain. Normative
+order (ADR-0181 / backup-restore-v0 spec): verify the set → prepare the home →
+extract → migrate to head → replay crypto-shreds (shredded data stays
+shredded) → doctor storage check + seal log verify. The restore is complete
+ONLY when verification passes — there is no flag to skip it.
+
+Restoring a `pg`-dump set is not automated in this slice: use the `pg_restore`
+runbook (`docs/ops/backup-restore.md` §1.2).
+
+```bash
+nova restore nova-backup-01J….tar.gz
+nova restore set.tar.gz --home /srv/novafabric --force
+```
+
+Options:
+- `<set-path>` (positional, required) — backup-set archive (`.tar.gz`) to restore from (local profile)
+- `--home PATH` — target NovaFabric home (default: `NOVAFABRIC_HOME` or `~/.novafabric`)
+- `--force` — restore into a non-empty home: existing data is moved aside into a timestamped `.pre-restore-…/` directory (never deleted)
+
+Exit codes: `0` (restore + verification chain passed), `1` (any failed step).
+
+---
+
+### nova support-bundle (experimental, ADR-0187)
+
+Produce a secret-safe diagnostics tarball for support. Contains ONLY
+allowlisted members: `doctor.json`, `versions.json`, `env.txt`
+(`NOVAFABRIC_*`/`NOVA_*` variable **names** only — never values),
+`health.json`, `config.redacted.yaml` (if a server config exists, with
+secret-keyed values redacted), and a `manifest.json` with the SHA-256 of every
+member plus the redaction ruleset version. No tokens, keys, credentials,
+capsule payloads, prompts, or responses are ever included. Scope: global
+(snapshots the whole installation).
+
+```bash
+nova support-bundle                     # default name in the current directory
+nova support-bundle -o /tmp/diag.tar.gz
+```
+
+Options:
+- `--output, -o PATH` — output tarball path (default: `./nova-support-bundle-<timestamp>.tar.gz`)
+- `--log-window-hours INT` — bound for the structured-log window recorded in the manifest (default: `24`)
+
+Exit codes: `0` (bundle written), `1` (bundle error).
+
+---
+
+## Audit-log SIEM egress (experimental, ADR-0191)
+
+Export local audit logs in SIEM-native formats. NovaFabric produces correctly
+formatted, correctly redacted lines; the site's own shipper (Splunk UF,
+Filebeat, Vector, Fluent Bit, rsyslog) does transport — there is no network
+sender, no default endpoint, no background egress.
+
+### nova audit-log export (experimental, ADR-0191)
+
+One-shot export of an audit source over a time window, one JSON line per
+entry, to stdout or a file. The first output line is a header entry recording
+the redaction-ruleset versions in force. Every line passes the deny-by-default
+redaction pipeline (strict field allowlist plus the ADR-0187 support-bundle
+secret ruleset) — non-allowlisted fields never leave.
+
+For `--source audit` (the hash-chained log) the chain is re-verified during
+the walk; `entry_hash`/`prev_hash` are exported verbatim in `jsonl` and ride
+in the OCSF `unmapped` object, so a SIEM analyst can check that what the SIEM
+holds is what the chain produced. In `ocsf` format, audit event types map onto
+OCSF classes (API Activity 6003, Application Lifecycle 6002, Authentication
+3002) per the mapping table in `design/spec/audit-siem-egress-v0.md`; fields
+OCSF has no slot for are preserved verbatim under `unmapped` — no silent loss.
+
+`cef` format, `tail --follow` mode, and the `server` source are deferred to a
+later slice (ADR-0191 D3).
+
+```bash
+nova audit-log export
+nova audit-log export --source audit --format ocsf --out audit.ocsf.jsonl
+nova audit-log export --source dashboard --since 2026-07-01T00:00:00Z
+nova audit-log export --since 2026-07-01T00:00:00Z --until 2026-07-08T00:00:00Z
+```
+
+Options:
+- `--source TEXT` — audit source: `audit` (hash-chained log) or `dashboard` (`nova serve` mutation log). Default: `audit`
+- `--format TEXT` — output format: `jsonl` (native, zero-mapping-loss) or `ocsf`. Default: `jsonl`
+- `--since TEXT` — inclusive ISO-8601 lower bound (naive timestamps are treated as UTC)
+- `--until TEXT` — exclusive ISO-8601 upper bound (naive timestamps are treated as UTC)
+- `--out PATH` — output file (default: stdout)
+
+Exit codes: `0` (exported OK), `2` (bad parameters), `3` (chain verification
+failed — the export is still written, so pipelines can alert on the tamper
+evidence itself).
 
 ---
 

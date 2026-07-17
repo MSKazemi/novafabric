@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -28,6 +29,18 @@ DEFAULT_BACKOFF_S = 0.5
 
 class EventSink(Protocol):
     def send(self, record: dict[str, Any]) -> None: ...
+
+
+@dataclass(frozen=True)
+class DeliveryResult:
+    """Outcome of one webhook delivery (used by the ADR-0192 alert audit trail).
+
+    ``attempts`` counts every HTTP POST made, including bounded retries.
+    """
+
+    ok: bool
+    attempts: int
+    error: str | None = None
 
 
 class NullSink:
@@ -77,6 +90,14 @@ class WebhookSink:
         self._backoff = max(0.0, backoff_s)
 
     def send(self, record: dict[str, Any]) -> None:
+        self.deliver(record)
+
+    def deliver(self, record: dict[str, Any]) -> DeliveryResult:
+        """Same bounded-retry POST loop as :meth:`send`, reporting the outcome.
+
+        Used by the ADR-0192 alert router so every delivery attempt can be
+        audited; still fail-safe — no exception ever propagates.
+        """
         body = json.dumps(record, ensure_ascii=False).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         signature = record.get("signature")
@@ -90,7 +111,7 @@ class WebhookSink:
                     self._url, content=body, headers=headers, timeout=self._timeout
                 )
                 response.raise_for_status()
-                return
+                return DeliveryResult(ok=True, attempts=attempt + 1)
             except Exception as exc:  # noqa: BLE001 — fail-safe, never blocks
                 last_error = exc
                 if attempt < self._max_retries and self._backoff > 0:
@@ -100,6 +121,9 @@ class WebhookSink:
             self._url,
             self._max_retries + 1,
             last_error,
+        )
+        return DeliveryResult(
+            ok=False, attempts=self._max_retries + 1, error=str(last_error)
         )
 
 

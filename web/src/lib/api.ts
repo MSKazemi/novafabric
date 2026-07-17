@@ -13,6 +13,29 @@
 const TOKEN_KEY = 'novafabric.serve-token';
 const BASE_KEY = 'novafabric.serve-base';
 
+export interface AnalyticsBucket {
+  bucket: string;
+  run_count: number;
+  failed_count: number;
+  model_call_count: number;
+  tool_call_count: number;
+  duration_ms_p50: number | null;
+  duration_ms_p95: number | null;
+  duration_ms_max: number | null;
+}
+
+export interface AnalyticsSummary {
+  buckets: AnalyticsBucket[];
+  totals: {
+    run_count: number;
+    failed_count: number;
+    model_call_count: number;
+    tool_call_count: number;
+  };
+  since: string | null;
+  until: string | null;
+}
+
 export interface RunSummary {
   run_id: string;
   status: string | null;
@@ -742,6 +765,14 @@ export const api = {
   },
 
   getRun: (run_id: string) => request<FullCapsule>(`/api/runs/${encodeURIComponent(run_id)}`),
+
+  // Analytics summary — pre-aggregated day buckets from the runs index.
+  analyticsSummary: (q: { since?: string; until?: string } = {}) => {
+    const params: Record<string, unknown> = {};
+    if (q.since) params.since = q.since;
+    if (q.until) params.until = q.until;
+    return request<AnalyticsSummary>('/api/analytics/summary', params);
+  },
   getRunFile: (run_id: string, filepath: string) =>
     request<{ filename: string; content: string }>(`/api/runs/${encodeURIComponent(run_id)}/file/${filepath}`),
 

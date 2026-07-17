@@ -144,14 +144,23 @@ def query_runs(
     until: str | None = None,
     status: str | None = None,
     q: str | None = None,
+    after: tuple[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """Return (page, total_count) from the index.
 
     Filters are applied at the SQL layer so only matching rows are read.
     Returns empty lists when the cache is unpopulated (caller must fall back).
+
+    ``after`` enables keyset (cursor) pagination: only rows strictly after
+    the ``(created_at, run_id)`` position in the DESC sort order are
+    returned, and ``offset`` is ignored. O(page) instead of O(offset).
     """
     where_parts = ["1=1"]
     params: list[Any] = []
+    if after is not None:
+        # DESC keyset: strictly older than the cursor position.
+        where_parts.append("(created_at, run_id) < (?, ?)")
+        params.extend([after[0], after[1]])
     if since:
         where_parts.append("created_at >= ?")
         params.append(since)
@@ -175,7 +184,7 @@ def query_runs(
     rows = conn.execute(
         f"SELECT * FROM runs_cache WHERE {where} ORDER BY created_at DESC, run_id DESC"
         f" LIMIT ? OFFSET ?",
-        [*params, limit, offset],
+        [*params, limit, 0 if after is not None else offset],
     ).fetchall()
     out = []
     for row in rows:

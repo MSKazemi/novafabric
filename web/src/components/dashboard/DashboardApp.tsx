@@ -18,6 +18,7 @@ import { ToastProvider, useToast } from '../../lib/ToastContext';
 
 // Tabs are code-split: each becomes its own chunk, loaded on first navigation
 // instead of shipping all ~20 in the initial bundle.
+const AnalyticsTab = lazy(() => import('./tabs/AnalyticsTab'));
 const RunsTab = lazy(() => import('./tabs/RunsTab'));
 const RegistryTab = lazy(() => import('./tabs/RegistryTab'));
 const LineageTab = lazy(() => import('./tabs/LineageTab'));
@@ -355,6 +356,7 @@ function DashboardInner() {
           {tab === 'home' && (
             <HomeTab onNavigate={handleTabChange} />
           )}
+          {tab === 'analytics' && <AnalyticsTab />}
           {tab === 'runs' && (
             <RunsTab
               onFlash={flash}

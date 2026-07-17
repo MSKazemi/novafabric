@@ -75,3 +75,56 @@ STRIDE analysis in [`THREAT_MODEL.md`](THREAT_MODEL.md):
 
 If you find a way to make any disabled-by-default surface reachable without
 explicit opt-in, that is a vulnerability — please report it.
+
+## FIPS 140-3 posture (ADR-0195 — accepted 2026-07-17)
+
+**NovaFabric does not claim to be FIPS 140-3 validated or "FIPS compliant."**
+FIPS 140-3 validation applies to cryptographic *modules*, not applications.
+NovaFabric implements no cryptographic primitives of its own: every primitive
+is delegated to the `cryptography` package (which calls OpenSSL) and stdlib
+`hashlib`/`hmac` (which use OpenSSL where available). Whether a deployment
+operates with a validated module is a property of the OpenSSL that deployment
+links, plus the algorithm caveat below.
+
+### Crypto inventory (verified against the tree, 2026-07-16)
+
+| Primitive | Where used | FIPS approvability |
+|---|---|---|
+| Ed25519 | NovaSeal envelopes/ratchet (`trust/novaseal/`), trust keyring, offline tokens (`server/offline_tokens.py`) | Approved as an algorithm (FIPS 186-5); **module coverage caveat below** |
+| ECDSA P-256 (DSSE) | NovaSeal signing backend, RFC 3161 verification | Approved (FIPS 186-4/186-5) |
+| AES-256-GCM | Envelope encryption at rest (ADR-0185), key wrapping | Approved (SP 800-38D) |
+| SHA-256 | Merkle trees, ledger/audit hash chains, CAS addressing, RFC 3161 | Approved (FIPS 180-4) |
+| HMAC-SHA256 | Lifecycle-event/webhook signing (`events/signing.py`) | Approved (FIPS 198-1) |
+| BLAKE3 (optional) | `storage/dual_object_store.py` acceleration, SHA-256 fallback exists | **Not approved** — leave the optional `blake3` package uninstalled in FIPS deployments |
+
+No MD5, SHA-1, ChaCha20, or bespoke primitives are used in security-relevant
+paths.
+
+### Operating with a validated module (documented intent — not a tested claim)
+
+- The PyPI `cryptography` wheels statically link their **own, non-validated**
+  OpenSSL. A FIPS deployment must build `cryptography` from source against the
+  system OpenSSL 3.x with the FIPS provider installed and enabled; non-approved
+  algorithms then fail at call time instead of silently degrading.
+- Stdlib `hashlib`/`hmac` ride the same system OpenSSL in CPython builds linked
+  against it.
+- Do not install the optional `blake3` package (the SHA-256 fallback engages
+  automatically).
+- Verifying that the module actually runs in FIPS mode is a deployment
+  responsibility; NovaFabric documents the recipe and certifies nothing.
+  This recipe is **documented intent** until a FIPS-mode deployment has
+  actually been exercised.
+
+### The Ed25519 caveat, stated plainly
+
+FIPS 186-5 (2023) approves EdDSA including Ed25519, but as of this writing the
+widely deployed **validated** OpenSSL FIPS providers (3.0.x line) do not list
+EdDSA among approved services — check the approved-algorithm list of your
+specific validated module. Where the module lacks approved EdDSA:
+
+- capsule signing has a FIPS-friendly profile — the **ECDSA P-256 DSSE** path;
+- the **ed25519-only surfaces** (offline tokens, trust keyring, NovaSeal
+  envelope/ratchet) have no P-256 alternative today and either operate
+  non-approved or are unavailable in a strict FIPS deployment. This is a
+  known, documented gap; algorithm agility for those surfaces would be its
+  own ADR.

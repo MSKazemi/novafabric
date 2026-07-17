@@ -9,6 +9,155 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.62.0] — 2026-07-17
+
+### Added — enterprise-audit follow-up first slices (ADRs 0191–0195, all experimental)
+- **`nova audit-log export` (ADR-0191).** SIEM egress for the local audit logs:
+  hash-chained (`--source audit`) and dashboard (`--source dashboard`) sources in
+  `jsonl` and `ocsf` formats over a time window; deny-by-default field allowlist +
+  the ADR-0187 redaction ruleset over free-form fields; chain verified during the
+  walk (exit 3 on tamper evidence, export still written); `entry_hash`/`prev_hash`
+  travel with every record; stdlib-only, no-network proven by test. CEF and
+  `tail --follow` are slice 2. Spec: `design/spec/audit-siem-egress-v0.md`.
+- **Operational alerting (`ops.*`, ADR-0192).** Six alert event types with
+  first-class severity layered on the ADR-0137 lifecycle emitter — no second
+  dispatcher: per-rule dedup windows (bounded map), per-endpoint minimum-severity
+  allowlist config (`NOVA_ALERTS_*`, no defaults, OFF by default), HMAC signing via
+  the existing path, one hash-chained audit entry per delivery attempt.
+  First wired source: `ops.quota.breached` from the ADR-0179 hard-quota path,
+  fail-safe and off the request path. Slack/PagerDuty/email adapters are slice 2.
+- **API keys (ADR-0193, Track 1).** `nova server api-key create|list|revoke`:
+  `nvfk_`-prefixed keys, SHA-256 hash-only storage with constant-time verify,
+  shown exactly once, RBAC-role-scoped (reader/writer/admin/auditor) with optional
+  workspace tag and expiry, prefix-dispatched in bearer auth before JWT parsing,
+  every transition hash-chain audited, and a `nvfk_` secret-scanner rule so a
+  leaked key in a capsule is flagged. rotate/last-used/REST + KEK re-wrap (Track 2)
+  are later slices. Spec: `design/spec/api-keys-v0.md`.
+- **TypeScript SDK (ADR-0194).** `packages/nova-sdk-ts` — `@novafabric/sdk` 0.1.0:
+  types generated from `api/openapi.yaml` with a regenerate-and-diff CI gate,
+  handwritten zero-runtime-dependency `fetch` client (required `baseUrl`, token or
+  token-provider auth), typed cursor pagination with async iteration, typed error
+  envelope, RFC 9745/8594 deprecation-header surfacing (warn once per endpoint).
+  ESM + d.ts; npm publish dry-run green; publishes will come from the public repo.
+- **FIPS 140-3 posture (ADR-0195).** `SECURITY.md` gains the posture section —
+  no-product-claim boundary, tree-verified crypto inventory, validated-module
+  deployment recipe (documented intent), and the Ed25519 module-coverage caveat;
+  `THREAT_MODEL.md` cross-references it. Docs-only by design.
+
+### Security — dependency triage (ADR-0186)
+- **pip:** `mcp` 1.27.1 → 1.28.1 (closes CVE-2026-52869/52870/59950, all HIGH);
+  `setuptools` 82.0.1 → 83.0.0 (PYSEC-2026-3447). The pip-audit gate is green; the
+  sole remaining finding is MODERATE `weasyprint` PYSEC-2026-3412 (no fix released).
+- **npm:** `vite` bumped in `packages/nova-dashboard` (GHSA-fx2h-pf6j-xcff, HIGH);
+  both npm trees report 0 vulnerabilities.
+- **go:** collector toolchain 1.25.0 → 1.26.5 — the 26 reported stdlib findings
+  were toolchain-age; `govulncheck` now reports 0 vulnerabilities affecting our
+  code. `collector-ci` pinned to match.
+
+### Fixed
+- **`api/openapi.yaml` dangling `$refs`:** `Unauthorized`/`Forbidden` response
+  components were referenced by `/admin/flush-jwks` but never defined (hard-fails
+  strict OpenAPI tooling; found by the ADR-0194 type generator). Now defined on the
+  standard `ErrorEnvelope`.
+- **Dashboard SSE new-run feed no longer breaks past 10,000 indexed runs.** The
+  stats-refresh loop used to fetch up to 10,000 run rows every 2 s and set-diff the
+  full run_id set — runs created beyond that cap were never broadcast, and the diff
+  cost grew with index size. A watermark-based `NewRunTracker`
+  (`serve/new_run_tracker.py`) now asks the index only for rows at/after the newest
+  seen `created_at`, so per-tick cost is bounded by the number of *new* runs.
+- **Topology WebSocket backpressure is now an explicit drop-oldest policy.** The
+  delta-subscriber callback only guarded the *scheduling* of `queue.put_nowait`; on
+  a slow client the put itself raised `QueueFull` uncaught inside a loop callback.
+  `_ws_put_drop_oldest` evicts the oldest delta so the newest state (including the
+  periodic checkpoint) always gets through; drops are counted and rate-limit logged.
+- **Collector health can no longer be spoofed via `/tmp`.**
+  `/api/infra/collector` used to read world-writable
+  `/tmp/novafabric-collector-health.json` as its *first* candidate, letting any
+  local user plant fake collector health. Trusted order is now: explicit
+  `NOVA_COLLECTOR_HEALTH_FILE` override, then `~/.novafabric/collector-health.json`,
+  then the /tmp fallback **only when the file is owned by the server's user**.
+
+### Added
+- **Fail-open capture loss is now visible (`capture-health.json`).** The
+  `EventRecorder` keeps its never-block-the-workload contract (ADR-0021), but each
+  swallowed append failure is now counted per JSONL stream, the first drop per
+  stream logs one warning, and at run end the orchestrator writes a
+  `capture-health.json` drop report into the capsule — only when events were
+  actually dropped, so clean capsules are byte-identical to before.
+
+### Changed — scalability hardening (2026-07-16 audit, wave 2)
+- **Run-file serving is bounded-memory.** `/api/runs/{id}/file/{path}` never reads
+  more than `NOVA_SERVE_MAX_FILE_BYTES` (default 5 MB) from disk per request; larger
+  artifacts return the head with `truncated: true` and the real `size_bytes` instead
+  of ballooning server RSS. JSON response contract otherwise unchanged.
+- **`/api/runs` gains keyset cursor pagination (additive).** Pass `cursor` (from the
+  response's new `next_cursor`) for O(page) paging on large indexes; `limit`/`offset`
+  behavior is unchanged. Backed by a new `after=(created_at, run_id)` keyset option
+  in `registry.runs_cache.query_runs`.
+- **`nova query` index build batches inserts.** `QueryIndex.build` uses one
+  `executemany` per table instead of one `execute` per scanned row.
+- **New nightly CI tier for the infra-gated scale/concurrency tests**
+  (`.github/workflows/nightly-scale-gates.yml`): Postgres + testcontainers tiers
+  (Postgres Merkle log, metadata-store isolation, 100K scale migration) and a MinIO
+  tier (WORM end-to-end, concurrent chain writers, 1M-replay rebuild bench) run on a
+  03:00 UTC schedule with real services, so the default suite's skips no longer mean
+  those paths are never exercised. pgBouncer-rig and Slurm/HSM/cloud-KMS tests remain
+  gated (Bucket C).
+
+### Added — dashboard Analytics tab (experimental)
+- **New Analytics tab** (Overview group): time-bucketed run analytics computed
+  server-side from the runs index — run-volume + failure stacked bars, duration
+  p50/p95 line chart with crosshair tooltips, stat tiles (runs, failure rate, model
+  calls, worst daily p95), 7/30/90-day ranges, and a chart/table toggle. Backed by
+  the new `GET /api/analytics/summary` endpoint, added as an `APIRouter` module
+  (`serve/routers/analytics.py`) per the ADR-0183 route freeze — no capsule scans,
+  one indexed SQL pass per request. Chart series colors are palette-validated for
+  both themes (colorblind-safe; the table view covers the light-mode contrast
+  reservation). Verified live in-browser: all render checks pass, zero console errors.
+
+### Documentation — 2026-07-16 audit closure (wave 3)
+- **CLI reference completeness:** 26 registered top-level commands had no section in
+  `docs/cli-reference.md` (`backup`, `restore`, `support-bundle`, `trust-radar`,
+  `merkle-tree`, `redaction-xray`, `passport`, `assure-case`, `assure-coverage`,
+  `drift`, `toolschema`, `forensics`, `dsar`, and the 13 sector/transparency
+  `export-*` commands). All are now documented from live `--help` output with
+  maturity labels and governing ADRs, and a **new drift guard**
+  (`tests/docs/test_cli_reference_coverage.py`) fails CI when a top-level command
+  ships without a reference section.
+- **Six new feature docs** for shipped-but-undocumented v0.59–v0.61 surfaces:
+  `docs/ops/monitoring.md` (ADR-0182), `docs/ops/encryption-at-rest.md` (ADR-0185),
+  `docs/ops/quotas-and-rate-limits.md` (ADR-0179), `docs/trust-surfaces.md`
+  (ADRs 0149/0172/0173/0174), `docs/drift-gate.md` (ADR-0147),
+  `docs/assurance-cases.md` (ADR-0166) — every claim verified against code/CLI,
+  honest-limitation sections included.
+- **Four new enterprise ops guides:** `docs/ops/sizing-guide.md` (estimates labeled,
+  measured numbers cited to their source releases), `docs/ops/upgrade-guide.md`
+  (expand-contract N/N+1 rule, Alembic dual-track, downgrade honesty),
+  `docs/ops/incident-runbook.md` (symptom→diagnosis→action, verified commands),
+  `docs/ops/air-gapped-install.md` (offline tokens, TSA/Sigstore offline modes,
+  private-endpoint configuration).
+- `docs/README.md` links the ten new pages; `docs/api-reference.md` honesty notes
+  corrected (NovaSeal, parent/child capsules, and the object store are shipped
+  experimental surfaces, not "planned") and the Analytics endpoint added;
+  `docs/dashboard.md` tab inventory updated to 26.
+
+### Governance — five new proposed ADRs (2026-07-16 audit follow-ups, no code)
+- **ADR-0191** audit-log SIEM egress (`nova audit-log export` — OCSF/CEF/JSONL,
+  shipper-agnostic, stdlib-only); **ADR-0192** ops alerting/notification bus
+  (extends the ADR-0137 webhook sinks with `ops.*` events, severity routing,
+  Slack/PagerDuty/email renderers, default OFF); **ADR-0193** first-class API keys +
+  KEK re-wrap rotation tooling; **ADR-0194** official TypeScript SDK generated from
+  `api/openapi.yaml`; **ADR-0195** FIPS 140-3 posture statement (docs-only stance).
+  All `proposed` — recorded in `design/governance/acceptance-record.md` with
+  unchecked sign-offs; nothing implemented.
+
+### Audit notes (2026-07-16 full-repo review)
+- A claimed defect — "no SQLite `busy_timeout` anywhere → concurrent writers fail
+  immediately" — was **refuted empirically**: Python's `sqlite3.connect` default
+  `timeout=5.0` installs a 5000 ms busy handler on every connection
+  (`PRAGMA busy_timeout` → 5000), and a second concurrent writer waits and succeeds
+  when the lock releases within the window. No change was made.
+
 ## [0.61.0] — 2026-07-16
 
 ### Fixed

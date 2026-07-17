@@ -23,6 +23,7 @@ orchestrator or the hook installation sequence.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +40,8 @@ from novafabric.capture.events import (
     StateTransitionEvent,
     VectorRetrievalEvent,
 )
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Known AI API host fragments — used by _is_ai_api()
@@ -116,10 +119,37 @@ class EventRecorder:
         self._run_id = run_id
         self._capsule_id = capsule_id
         self._lock = threading.Lock()
+        # Fail-open observability: swallowed failures are counted per stream
+        # (bounded: one key per JSONL stream) so capture loss is visible in
+        # logs and, via finalize_health(), in the capsule itself.
+        self._drops: dict[str, int] = {}
+        self._warned: set[str] = set()
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _note_drop(self, stream: str) -> None:
+        """Count one dropped event for *stream*; warn once per stream.
+
+        Must itself never raise — it runs inside fail-open except blocks.
+        """
+        try:
+            with self._lock:
+                self._drops[stream] = self._drops.get(stream, 0) + 1
+                first = stream not in self._warned
+                if first:
+                    self._warned.add(stream)
+            if first:
+                logger.warning(
+                    "capture fail-open: dropping event(s) for %s "
+                    "(run %s); further drops for this stream are counted "
+                    "silently — see capture-health.json",
+                    stream,
+                    self._run_id,
+                )
+        except Exception:  # pragma: no cover — last-resort guard
+            pass
 
     def _append(self, filename: str, data: dict) -> None:  # type: ignore[type-arg]
         """Append a JSON record to a JSONL file. Never raises."""
@@ -130,7 +160,40 @@ class EventRecorder:
                 with path.open("a", encoding="utf-8") as f:
                     f.write(line)
         except Exception:
-            pass  # fail-open: never block the agent workflow
+            # fail-open: never block the agent workflow — but never lose
+            # the fact that an event was lost, either.
+            self._note_drop(filename)
+
+    @property
+    def drop_counts(self) -> dict[str, int]:
+        """Events dropped by fail-open handling, keyed by JSONL stream."""
+        with self._lock:
+            return dict(self._drops)
+
+    def finalize_health(self, capsule_dir: Path | None = None) -> None:
+        """Write ``capture-health.json`` if any events were dropped.
+
+        Clean runs write nothing, so capsules without capture loss are
+        byte-identical to earlier versions. Fail-open like everything else.
+        """
+        try:
+            drops = self.drop_counts
+            if not drops:
+                return
+            target = (capsule_dir or self._capsule_dir) / "capture-health.json"
+            report = {
+                "run_id": self._run_id,
+                "capsule_id": self._capsule_id,
+                "generated_at": self._utc_now(),
+                "dropped_events": drops,
+                "note": (
+                    "Counts of events the fail-open capture layer could not "
+                    "persist; the workload was never blocked (ADR-0021)."
+                ),
+            }
+            target.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        except Exception:
+            pass  # fail-open
 
     def _utc_now(self) -> str:
         return datetime.now(timezone.utc).isoformat()

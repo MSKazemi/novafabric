@@ -1,0 +1,126 @@
+name: Nightly scale & concurrency gates
+
+# The default CI tier deliberately skips the infra-gated tests (NOVA_INTEGRATION=1):
+# concurrent chain writers, Postgres Merkle log, 100K-row scale migration, MinIO
+# WORM end-to-end, the 1M-replay rebuild bench. Those are exactly the highest-risk
+# scalability/concurrency paths (2026-07-16 audit), so this scheduled tier runs
+# them nightly with real services instead of leaving them permanently skipped.
+#
+# Deliberately NOT wired into PR CI: these jobs are slow and service-heavy.
+# Still skipped even here (documented in the backlog plan, Bucket C):
+#   - pgBouncer cross-tenant isolation (needs the docker-compose.eval.yaml rig)
+#   - live Slurm / real HSM / cloud-KMS verification
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # 03:00 UTC nightly
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-scale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: novafabric_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install project + all extras
+        # --all-extras: the gated tiers exercise psycopg/testcontainers/etc.
+        run: uv sync --frozen --all-extras
+
+      - name: Run Postgres schema migrations
+        env:
+          NOVAFABRIC_POSTGRES_DSN: postgresql://postgres:test@localhost:5432/novafabric_test
+        run: uv run alembic -c alembic-postgres.ini upgrade head
+
+      - name: Postgres + testcontainers tiers
+        env:
+          NOVA_INTEGRATION: "1"
+          NOVA_TEST_POSTGRES_DSN: postgresql://postgres:test@localhost:5432/novafabric_test
+          NOVAFABRIC_TEST_POSTGRES_DSN: postgresql://postgres:test@localhost:5432/novafabric_test
+        # metadata_store spins its own ephemeral Postgres via testcontainers
+        # (Docker is available on ubuntu runners); the seal tier uses the
+        # service container's DSN directly.
+        run: >-
+          uv run pytest
+          tests/metadata_store
+          tests/seal/test_postgres_merkle.py
+          tests/integration
+          -q --timeout=600
+
+  object-store-scale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    services:
+      minio:
+        image: bitnami/minio:latest
+        env:
+          MINIO_ROOT_USER: novatest
+          MINIO_ROOT_PASSWORD: novatest-secret
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 9000:9000
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install project + all extras
+        run: uv sync --frozen --all-extras
+
+      - name: Object-store concurrency + WORM + rebuild tiers
+        env:
+          NOVA_INTEGRATION: "1"
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ACCESS_KEY: novatest
+          MINIO_SECRET_KEY: novatest-secret
+          AWS_ACCESS_KEY_ID: novatest
+          AWS_SECRET_ACCESS_KEY: novatest-secret
+        run: uv run pytest tests/object_capsule_store -q --timeout=900

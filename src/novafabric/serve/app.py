@@ -53,6 +53,7 @@ from novafabric.serve.capsule_loader import (
     load_full_capsule,
     load_jsonl,
 )
+from novafabric.serve.routers.analytics import build_analytics_router
 from novafabric.serve.routers.holds import build_holds_router
 
 logger = logging.getLogger(__name__)
@@ -111,6 +112,74 @@ class _RunEventBus:
 
 
 _run_bus = _RunEventBus()
+
+
+# DD-2 collector health-file discovery. The /tmp fallback exists for
+# deployments whose collector cannot write under $HOME; it sits in a
+# world-writable directory, so readers must pair it with
+# _owned_by_current_user() before trusting its contents.
+_DEFAULT_COLLECTOR_HEALTH = "/tmp/novafabric-collector-health.json"  # noqa: S108
+
+
+def _max_file_response_bytes() -> int:
+    """Per-request byte cap for /api/runs/{id}/file responses.
+
+    Bounded-memory contract: the endpoint never reads more than this from
+    disk. Override with NOVA_SERVE_MAX_FILE_BYTES; default 5 MB.
+    """
+    raw = os.environ.get("NOVA_SERVE_MAX_FILE_BYTES", "")
+    try:
+        value = int(raw) if raw else 5_000_000
+    except ValueError:
+        value = 5_000_000
+    return max(1, value)
+
+
+def _collector_health_paths() -> list[Path]:
+    """Candidate collector health files, most-trusted first.
+
+    Order: the operator's explicit ``NOVA_COLLECTOR_HEALTH_FILE`` override,
+    the user-owned ``~/.novafabric`` location, then the /tmp fallback.
+    """
+    paths: list[Path] = []
+    env_override = os.environ.get("NOVA_COLLECTOR_HEALTH_FILE")
+    if env_override:
+        paths.append(Path(env_override))
+    paths.append(Path.home() / ".novafabric" / "collector-health.json")
+    paths.append(Path(_DEFAULT_COLLECTOR_HEALTH))
+    return paths
+
+
+def _owned_by_current_user(path: Path) -> bool:
+    """True when *path* exists and is owned by the effective user."""
+    try:
+        return path.stat().st_uid == os.geteuid()
+    except OSError:
+        return False
+
+
+def _ws_put_drop_oldest(queue: asyncio.Queue[bytes], item: bytes) -> bool:
+    """Enqueue *item* on a bounded per-client WS queue; never raise.
+
+    On overflow the OLDEST entry is evicted so the newest delta (and the
+    periodic checkpoint, which flows through the same queue) always gets
+    through — a slow client loses history, not liveness, and resyncs at the
+    next checkpoint. Returns True when an eviction happened so callers can
+    count drops. Must run on the event-loop thread that owns *queue*.
+    """
+    try:
+        queue.put_nowait(item)
+        return False
+    except asyncio.QueueFull:
+        try:
+            queue.get_nowait()
+        except asyncio.QueueEmpty:  # pragma: no cover — single-threaded loop
+            pass
+        try:
+            queue.put_nowait(item)
+        except asyncio.QueueFull:  # pragma: no cover — single-threaded loop
+            pass
+        return True
 
 
 # ---------- Stats cache (B-4) ----------
@@ -646,28 +715,25 @@ def create_app(
         (no lifespan) never spawns it, which keeps the test suite from
         accumulating one un-joined daemon thread per ``create_app()``.
         """
-        prev_run_ids: set[str] = set()
-        first_run = True
+        from novafabric.serve.new_run_tracker import NewRunTracker  # noqa: PLC0415
+
+        _tracker = NewRunTracker()
         while not stop.is_set():
             try:
                 data = _compute_stats()
                 _stats_cache.set(data)
                 # Scale-S3: incremental index update via CapsuleWatcher.
                 _watcher.poll_once()
-                # Query the index to find new run IDs for SSE broadcast.
+                # Watermark-based new-run detection: per-tick cost is bounded
+                # by rows at/after the newest seen timestamp, not index size.
                 from novafabric.registry.store import get_connection, init_schema  # noqa: PLC0415
                 _conn = get_connection(db_path)
                 init_schema(_conn)
-                _all_rows, _ = _query_runs_cache(_conn, limit=10_000)
-                _conn.close()
-                current_ids: set[str] = {r["run_id"] for r in _all_rows if r.get("run_id")}
-                if not first_run:
-                    new_ids = current_ids - prev_run_ids
-                    for r in _all_rows:
-                        if r.get("run_id") in new_ids:
-                            _run_bus.publish(r)
-                prev_run_ids = current_ids
-                first_run = False
+                try:
+                    for r in _tracker.poll(_conn):
+                        _run_bus.publish(r)
+                finally:
+                    _conn.close()
             except Exception:  # noqa: BLE001
                 pass
             if stop.wait(2.0):  # poll every 2 s for SSE freshness; wake early on stop
@@ -697,8 +763,17 @@ def create_app(
         until: str | None = Query(default=None, description="ISO-8601 upper bound on created_at"),
         status: str | None = Query(default=None, description="Filter by run status"),
         q: str | None = Query(default=None, description="Free-text search on run_id and command"),
+        cursor: str | None = Query(
+            default=None,
+            description=(
+                "Opaque keyset cursor from a previous page's next_cursor; "
+                "O(page) paging that ignores offset"
+            ),
+        ),
     ) -> dict[str, Any]:
         from novafabric.registry.store import get_connection, init_schema  # noqa: PLC0415
+        after = _decode_cursor(cursor)
+        next_cursor: str | None = None
         _conn = get_connection(db_path)
         init_schema(_conn)
         try:
@@ -706,7 +781,12 @@ def create_app(
                 page, total = _query_runs_cache(
                     _conn, limit=limit, offset=offset,
                     since=since, until=until, status=status, q=q,
+                    after=after,
                 )
+                if len(page) == limit and page[-1].get("created_at"):
+                    next_cursor = _encode_cursor(
+                        page[-1]["created_at"], page[-1]["run_id"]
+                    )
             else:
                 summaries = list_run_summaries(capsule_dir)
                 if since:
@@ -730,9 +810,10 @@ def create_app(
             "capsule_dir": str(capsule_dir.resolve()),
             "count": total,
             "total": total,
-            "has_more": offset + limit < total,
+            "has_more": (len(page) == limit) if after else (offset + limit < total),
             "limit": limit,
             "offset": offset,
+            "next_cursor": next_cursor,
             "runs": page,
         }
 
@@ -1059,9 +1140,43 @@ def create_app(
         path = cdir / filepath
         if not path.exists() or not path.is_file():
             raise HTTPException(status_code=404, detail="file not found")
+        # Bounded-memory serving: never read more than the cap from disk,
+        # so one request for a huge artifact cannot balloon server RSS.
+        cap = _max_file_response_bytes()
+        size = path.stat().st_size
         if filepath.endswith(".jsonl"):
-            return {"filename": filepath, "lines": load_jsonl(cdir, filepath)}
-        return {"filename": filepath, "content": path.read_text(errors="replace")}
+            if size <= cap:
+                return {"filename": filepath, "lines": load_jsonl(cdir, filepath)}
+            lines: list[Any] = []
+            consumed = 0
+            with path.open("r", encoding="utf-8", errors="replace") as f:
+                for raw in f:
+                    consumed += len(raw.encode("utf-8", errors="replace"))
+                    if consumed > cap:
+                        break
+                    stripped = raw.strip()
+                    if not stripped:
+                        continue
+                    try:
+                        lines.append(json.loads(stripped))
+                    except ValueError:
+                        continue
+            return {
+                "filename": filepath,
+                "lines": lines,
+                "truncated": True,
+                "size_bytes": size,
+            }
+        if size <= cap:
+            return {"filename": filepath, "content": path.read_text(errors="replace")}
+        with path.open("rb") as fb:
+            head = fb.read(cap)
+        return {
+            "filename": filepath,
+            "content": head.decode("utf-8", errors="replace"),
+            "truncated": True,
+            "size_bytes": size,
+        }
 
     @app.get("/api/runs/{run_id}/energy", dependencies=[Depends(verify_token)])
     async def get_run_energy(run_id: str) -> dict[str, Any]:
@@ -1902,6 +2017,10 @@ def create_app(
     # shared-token dependency, server/ can mount it behind OIDC/RBAC.
 
     app.include_router(build_holds_router(verify_token, capsule_dir=capsule_dir))
+
+    # ---------- analytics summary (dashboard analytics slice) ----------
+    # New route group per the ADR-0183 freeze: lands as a router, not inline.
+    app.include_router(build_analytics_router(verify_token, db_path=db_path))
 
     # ---------- Layer B mutations (per ADR-0027 §1) ----------
     # Safe mutations only: registry writes, eval runs, evidence exports.
@@ -2994,14 +3113,14 @@ def create_app(
         """Return collector health. Returns {detected: false} if not running."""
         import json as _json
 
-        _default_health = "/tmp/novafabric-collector-health.json"  # noqa: S108
-        health_paths = [
-            Path(_default_health),
-            Path.home() / ".novafabric" / "collector-health.json",
-            Path(os.environ.get("NOVA_COLLECTOR_HEALTH_FILE", _default_health)),
-        ]
-
-        for health_path in health_paths:
+        for health_path in _collector_health_paths():
+            # The /tmp fallback lives in a world-writable directory: only
+            # trust it when the file belongs to the user running the server,
+            # so another local user cannot spoof collector health.
+            if health_path == Path(
+                _DEFAULT_COLLECTOR_HEALTH
+            ) and not _owned_by_current_user(health_path):
+                continue
             if health_path.exists():
                 try:
                     data = _json.loads(health_path.read_text())
@@ -7027,15 +7146,30 @@ def create_app(
 
             loop = _asyncio.get_event_loop()
 
+            delta_drops = [0]
+
+            def _enqueue_on_loop(ipc_bytes: bytes) -> None:
+                # Runs on the event-loop thread that owns `queue`.
+                if _ws_put_drop_oldest(queue, ipc_bytes):
+                    delta_drops[0] += 1
+                    if delta_drops[0] in (1, 100) or delta_drops[0] % 1000 == 0:
+                        logger.warning(
+                            "topology WS client too slow: %d delta(s) dropped "
+                            "(drop-oldest; client resyncs at next checkpoint)",
+                            delta_drops[0],
+                        )
+
             def _on_delta_event(event: dict[str, Any]) -> None:
                 """Called synchronously by DeltaBuffer.enqueue() under the buffer lock.
 
                 Must be non-blocking — schedule the IPC encode + queue put on the
                 event loop thread so Arrow encoding happens off the lock path.
+                The loop-side put uses an explicit drop-oldest policy and never
+                raises into the loop callback.
                 """
                 try:
                     ipc_bytes = _encode_delta_arrow(event)
-                    loop.call_soon_threadsafe(queue.put_nowait, ipc_bytes)
+                    loop.call_soon_threadsafe(_enqueue_on_loop, ipc_bytes)
                 except Exception:
                     pass
 

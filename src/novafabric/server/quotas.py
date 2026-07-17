@@ -91,6 +91,7 @@ class QuotaUsage:
 
 UsageProvider = Callable[[], QuotaUsage]
 AuditHook = Callable[[dict[str, Any]], None]
+AlertHook = Callable[["QuotaViolation"], None]
 
 
 def measure_capsule_store(capsule_dir: Path) -> QuotaUsage:
@@ -188,6 +189,7 @@ class QuotaChecker:
         cache_ttl: float = DEFAULT_CACHE_TTL_SECONDS,
         audit_window_seconds: float = 60.0,
         audit_hook: AuditHook | None = None,
+        alert_hook: AlertHook | None = None,
     ) -> None:
         self._quota = quota
         self._usage_provider = usage_provider or _default_usage_provider
@@ -195,6 +197,7 @@ class QuotaChecker:
         self.cache_ttl = float(cache_ttl)
         self._audit_window = float(audit_window_seconds)
         self._audit_hook = audit_hook or emit_quota_audit
+        self._alert_hook = alert_hook or _emit_quota_breach_alert
         self._cached: QuotaUsage | None = None
         self._cached_at: float | None = None
         # (event, kind) -> (window_start_monotonic, window_start_utc)
@@ -292,6 +295,38 @@ class QuotaChecker:
             self._audit_hook(payload)
         except Exception:  # noqa: BLE001 — auditing must never break requests
             logger.warning("quota audit emission failed", exc_info=True)
+        if violation.severity == "hard":
+            # ADR-0192 wired source: ops.quota.breached from the hard rejection
+            # path. Fail-safe and bounded: rides this method's audit window, is
+            # wrapped so it can never raise, and (when alerting is configured)
+            # delivers on a background thread so the 429 is never slowed.
+            try:
+                self._alert_hook(violation)
+            except Exception:  # noqa: BLE001 — alerting must never break requests
+                logger.warning("quota breach alert emission failed", exc_info=True)
+
+
+def _emit_quota_breach_alert(violation: QuotaViolation) -> None:
+    """Emit `ops.quota.breached` (ADR-0192) for one hard storage-quota rejection.
+
+    Byte-identical no-op unless the user configured a ``NOVA_ALERTS_*``
+    endpoint; ``emit_ops_alert`` never raises, and ``background=True`` keeps
+    endpoint latency off the quota decision path.
+    """
+    from novafabric.events.alerts import emit_ops_alert  # noqa: PLC0415
+
+    emit_ops_alert(
+        event_type="ops.quota.breached",
+        severity="critical",
+        subject_ref=f"quota:{violation.kind}",
+        payload={
+            "kind": violation.kind,
+            "usage": violation.usage,
+            "limit": violation.limit,
+        },
+        source="nova server",
+        background=True,
+    )
 
 
 def emit_quota_audit(payload: dict[str, Any]) -> None:

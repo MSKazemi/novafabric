@@ -15,6 +15,7 @@ from novafabric.cli.assure import assure_cmd
 from novafabric.cli.assure_case import assure_case_cmd
 from novafabric.cli.assure_coverage import assure_coverage_cmd
 from novafabric.cli.audit import app as audit_app
+from novafabric.cli.audit_log import app as audit_log_app
 from novafabric.cli.backup import app as backup_app
 from novafabric.cli.backup import restore_cmd
 from novafabric.cli.capsule import app as capsule_app
@@ -400,6 +401,7 @@ app.add_typer(
     name="audit",
     help="Map capsule evidence to regulatory controls and report coverage gaps.",
 )
+app.add_typer(audit_log_app, name="audit-log")
 app.add_typer(
     seal_app,
     name="seal",

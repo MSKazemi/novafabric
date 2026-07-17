@@ -7,6 +7,7 @@ Subcommands:
   nova server assign-role    — Assign a role to a subject (role_assignments table).
   nova server flush-jwks-cache — Flush the JWKS cache on the running server.
   nova server saml-metadata  — Emit this SP's SAML metadata XML (ADR-0138, experimental).
+  nova server api-key create|list|revoke — Manage first-class API keys (ADR-0193, experimental).
 
 Install the [server] extra to use: pip install novafabric[server]
 """
@@ -686,6 +687,191 @@ def saml_metadata_cmd(
         raise typer.Exit(code=1)
 
     typer.echo(render_sp_metadata(cfg.saml), nl=False)
+
+
+# ---------------------------------------------------------------------------
+# nova server api-key create|list|revoke (ADR-0193 Track 1, experimental)
+# ---------------------------------------------------------------------------
+
+api_key_app = typer.Typer(
+    name="api-key",
+    help=(
+        "Manage first-class API keys (experimental, ADR-0193). "
+        "Keys are hashed at rest and shown exactly once at creation."
+    ),
+    no_args_is_help=True,
+)
+server_app.add_typer(api_key_app)
+
+
+@api_key_app.command("create")
+def api_key_create_cmd(
+    owner: Annotated[
+        str,
+        typer.Option("--owner", help="Owning principal (user or svc:<name>)."),
+    ],
+    roles: Annotated[
+        str,
+        typer.Option(
+            "--roles",
+            help="Comma-separated roles: reader, writer, admin, auditor.",
+        ),
+    ] = "reader",
+    workspace: Annotated[
+        Optional[str],  # noqa: UP007
+        typer.Option("--workspace", help="Optional workspace scope (ADR-0178)."),
+    ] = None,
+    expires_in: Annotated[
+        Optional[str],  # noqa: UP007
+        typer.Option(
+            "--expires-in",
+            help="Optional key lifetime (e.g. 90d). Default: no expiry.",
+        ),
+    ] = None,
+    created_by: Annotated[
+        str,
+        typer.Option("--created-by", help="Actor recorded in the audit log."),
+    ] = "cli",
+    db_path: Annotated[
+        Optional[Path],  # noqa: UP007
+        typer.Option("--db-path", help="SQLite DB path. Defaults to registry default."),
+    ] = None,
+) -> None:
+    """Create an API key and print it ONCE (experimental, ADR-0193).
+
+    Only the sha256 of the secret is stored; the full key cannot be
+    recovered later. The creation is appended to the hash-chained audit log.
+
+    Scope: single server.
+
+    \b
+    Examples:
+      nova server api-key create --owner alice@example.com --roles reader
+      nova server api-key create --owner svc:ci-bot --roles reader,writer --expires-in 90d
+    """
+    from novafabric.server.api_keys import InvalidRoleError, create_key
+
+    role_list = [r.strip() for r in roles.split(",") if r.strip()]
+    days = _parse_days(expires_in) if expires_in else None
+
+    try:
+        key, record = create_key(
+            owner,
+            role_list,
+            actor=created_by,
+            workspace=workspace,
+            expires_in_days=days,
+            db_path=db_path,
+        )
+    except InvalidRoleError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1)
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"Failed to create API key: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"API key created (key_id: {record['key_id']}).")
+    typer.echo(
+        "This key is shown once and cannot be recovered — store it now:"
+    )
+    typer.echo(key)
+
+
+@api_key_app.command("list")
+def api_key_list_cmd(
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Emit the keys as a JSON array for tooling."),
+    ] = False,
+    db_path: Annotated[
+        Optional[Path],  # noqa: UP007
+        typer.Option("--db-path", help="SQLite DB path. Defaults to registry default."),
+    ] = None,
+) -> None:
+    """List API keys — metadata only, never secrets or hashes (ADR-0193).
+
+    Scope: single server.
+
+    \b
+    Examples:
+      nova server api-key list
+      nova server api-key list --json
+    """
+    from novafabric.server.api_keys import list_keys
+
+    keys = list_keys(db_path=db_path)
+
+    if as_json:
+        import json
+
+        typer.echo(json.dumps(keys, indent=2, default=str))
+        return
+
+    if not keys:
+        typer.echo("No API keys found.")
+        return
+
+    from rich.console import Console
+    from rich.table import Table
+
+    table = Table(title="API keys (secrets are never stored or shown)")
+    table.add_column("key_id", style="bold", no_wrap=True)
+    table.add_column("owner")
+    table.add_column("roles")
+    table.add_column("workspace")
+    table.add_column("created_at", style="cyan", no_wrap=True)
+    table.add_column("expires_at")
+    table.add_column("status")
+    for row in keys:
+        status = "revoked" if row["revoked_at"] else "active"
+        table.add_row(
+            row["key_id"],
+            row["owner"],
+            ", ".join(row["roles"]),
+            row["workspace"] or "—",
+            row["created_at"],
+            row["expires_at"] or "—",
+            status,
+        )
+    # Wide, non-terminal console so long values are not truncated in pipes.
+    Console(width=200).print(table)
+
+
+@api_key_app.command("revoke")
+def api_key_revoke_cmd(
+    key_id: Annotated[str, typer.Argument(help="Public key_id to revoke.")],
+    revoked_by: Annotated[
+        str,
+        typer.Option("--revoked-by", help="Actor recorded in the audit log."),
+    ] = "cli",
+    db_path: Annotated[
+        Optional[Path],  # noqa: UP007
+        typer.Option("--db-path", help="SQLite DB path. Defaults to registry default."),
+    ] = None,
+) -> None:
+    """Revoke an API key by key_id — effective immediately (ADR-0193).
+
+    Verification is a DB lookup, so the key is rejected on the very next
+    request. The revocation is appended to the hash-chained audit log.
+
+    Scope: single server.
+
+    \b
+    Examples:
+      nova server api-key revoke a1b2c3d4
+    """
+    from novafabric.server.api_keys import UnknownKeyError, revoke_key
+
+    try:
+        revoke_key(key_id, actor=revoked_by, db_path=db_path)
+    except UnknownKeyError as exc:
+        typer.echo(str(exc.args[0]) if exc.args else str(exc), err=True)
+        raise typer.Exit(code=1)
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"Failed to revoke API key: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"API key '{key_id}' revoked.")
 
 
 # ---------------------------------------------------------------------------

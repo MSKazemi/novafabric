@@ -132,11 +132,12 @@ class QueryIndex:
             raise ValueError(f"unknown query index engine: {chosen!r}")
         conn.execute(_CREATE_CALLS)
         conn.execute(_CREATE_SCORES)
+        # Batched inserts: one executemany per table instead of one execute
+        # per row. DuckDB's executemany rejects empty/lazy parameter sets,
+        # so batches are plain lists and empty ones are skipped.
         call_sql = f"INSERT INTO calls VALUES ({', '.join('?' for _ in range(16))})"
-        for call in rows.calls:
-            conn.execute(
-                call_sql,
-                (
+        call_params = [
+            (
                     call.run_id,
                     call.created_at,
                     call.status,
@@ -153,13 +154,14 @@ class QueryIndex:
                     call.completion_tokens,
                     call.total_tokens,
                     call.latency,
-                ),
             )
+            for call in rows.calls
+        ]
+        if call_params:
+            conn.executemany(call_sql, call_params)
         score_sql = f"INSERT INTO scores VALUES ({', '.join('?' for _ in range(13))})"
-        for score in rows.scores:
-            conn.execute(
-                score_sql,
-                (
+        score_params = [
+            (
                     score.run_id,
                     score.created_at,
                     score.status,
@@ -173,8 +175,11 @@ class QueryIndex:
                     score.model_id,
                     score.name,
                     score.value,
-                ),
             )
+            for score in rows.scores
+        ]
+        if score_params:
+            conn.executemany(score_sql, score_params)
         built_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         info = IndexInfo(engine=chosen, built_at=built_at, capsule_count=rows.capsule_count)
         return cls(conn, chosen, info)

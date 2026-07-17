@@ -636,6 +636,10 @@ class CaptureOrchestrator:
             import sys as _sys
             print(f"[novafabric] ⚠ OpenLineage COMPLETE failed: {_ol_exc}", file=_sys.stderr)
 
+        # Surface any fail-open capture loss as evidence before teardown:
+        # writes capture-health.json only when events were actually dropped.
+        _event_recorder.finalize_health()
+
         # Clear the module-level recorder singleton now that the run is done.
         set_current_recorder(None)
 
