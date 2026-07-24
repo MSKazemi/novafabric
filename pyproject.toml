@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "novafabric"
-version = "0.70.0"
+version = "0.71.0"
 description = "Open-source AI Asset Registry and Agent Lifecycle Management"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.12"
@@ -277,6 +277,10 @@ dev = [
     # tests (TestWatchdogBackend) to run in dev/CI rather than being skipped.
     # Runtime optional; installed here for coverage completeness.
     "watchdog>=4.0.0",
+    # moto (Apache-2.0) — Tier A under ADR-0024.  In-process AWS mock; lets the
+    # AWS KMS envelope-wrapping backend (ADR-0185) be tested without live cloud
+    # credentials. Dev/test only — never a runtime dependency.
+    "moto>=5.0",
 ]
 
 # ADR-0135 (experimental): reference masker for the pluggable PII masking

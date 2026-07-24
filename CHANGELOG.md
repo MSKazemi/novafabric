@@ -9,6 +9,20 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.71.0] — 2026-07-24
+
+### Added
+- **AWS KMS envelope-wrapping backend (`AwsKmsWrappingBackend`, ADR-0185,
+  experimental).** The AWS branch of the application-layer envelope-encryption
+  KMS wrap path — previously planned/infra-gated — is now implemented in
+  `trust/novaseal/signing_backend.py`. It satisfies the `KeyWrappingBackend`
+  protocol via KMS `Encrypt`/`Decrypt`, so the plaintext KEK never leaves KMS;
+  `novafabric.trust.envelope_encryption` accepts it directly (per-object DEK
+  wrapping through a real cloud KMS). Verified end-to-end (including
+  `encrypt_blob`/`decrypt_blob`) against an in-process AWS mock — `moto`
+  (Apache-2.0, Tier A, **dev/test-only**) is added to the dev dependency group so
+  no live cloud credentials are needed. The Azure/GCP wrap paths remain planned.
+
 ### Security
 - **`brace-expansion` DoS (GHSA-mh99-v99m-4gvg) — 2 high Dependabot alerts closed.**
   The transitive `brace-expansion` (unbounded-expansion OOM DoS, patched in 5.0.8)

@@ -17,8 +17,9 @@ and point ``cert_path`` at it.
 ADR-0185 (experimental) adds an *additive, optional* KMS capability protocol,
 ``KeyWrappingBackend`` (``wrap_key``/``unwrap_key``/``kek_ref``), used by
 ``novafabric.trust.envelope_encryption`` for per-object DEK wrapping.  It is
-implemented by ``LocalSigningBackend`` (when given a ``kek_path``) and by the
-test-only ``MockKmsBackend``; the cloud wrap paths are planned and infra-gated.
+implemented by ``LocalSigningBackend`` (when given a ``kek_path``), by the
+test-only ``MockKmsBackend``, and by ``AwsKmsWrappingBackend`` (real AWS KMS
+``Encrypt``/``Decrypt``, moto-tested; the Azure/GCP wrap paths remain planned).
 The ``SigningBackend`` Protocol itself is unchanged.
 """
 
@@ -380,3 +381,56 @@ class GcpKmsSigningBackend:
         pem = self._cert_path.read_bytes()
         cert = load_pem_x509_certificate(pem)
         return cert.public_bytes(serialization.Encoding.DER)
+
+
+# ---------------------------------------------------------------------------
+# AWS KMS key-wrapping backend (envelope encryption, ADR-0185)
+# ---------------------------------------------------------------------------
+
+class AwsKmsWrappingBackend:
+    """:class:`KeyWrappingBackend` backed by an AWS KMS symmetric key.
+
+    Wraps a data-encryption key by calling KMS ``Encrypt`` (and ``Decrypt`` to
+    unwrap), so the plaintext KEK never leaves KMS — the process only ever holds
+    the DEK and the opaque KMS ciphertext blob. This implements the AWS branch of
+    ADR-0185 that :class:`LocalSigningBackend` / :class:`MockKmsBackend` stand in
+    for locally; it is exercised in tests against an in-process AWS mock (moto).
+
+    Args:
+        key_id: AWS KMS key id, alias (``alias/...``), or ARN of a **symmetric**
+            encryption key (``KeyUsage=ENCRYPT_DECRYPT``).
+        region: AWS region name (default ``"us-east-1"``).
+
+    Requires: ``pip install novafabric[seal-aws]`` (boto3>=1.38.0).
+    """
+
+    def __init__(self, key_id: str, region: str = "us-east-1") -> None:
+        self._key_id = key_id
+        self._region = region
+        self._client: Any = None  # lazily initialised
+
+    def _get_client(self) -> Any:
+        if self._client is None:
+            try:
+                import boto3
+            except ImportError as exc:
+                raise ImportError(
+                    "AWS KMS wrapping backend requires boto3. "
+                    "Install it with: pip install novafabric[seal-aws]"
+                ) from exc
+            self._client = boto3.client("kms", region_name=self._region)
+        return self._client
+
+    def wrap_key(self, plaintext_key: bytes) -> bytes:
+        """Wrap *plaintext_key* via KMS ``Encrypt``; return the opaque ciphertext blob."""
+        resp = self._get_client().encrypt(KeyId=self._key_id, Plaintext=plaintext_key)
+        return bytes(resp["CiphertextBlob"])
+
+    def unwrap_key(self, wrapped_key: bytes) -> bytes:
+        """Unwrap *wrapped_key* via KMS ``Decrypt``; return the plaintext key."""
+        resp = self._get_client().decrypt(KeyId=self._key_id, CiphertextBlob=wrapped_key)
+        return bytes(resp["Plaintext"])
+
+    def kek_ref(self) -> str:
+        """Return a stable, non-secret identifier for the KMS KEK (region + key id)."""
+        return f"aws-kms:{self._region}:{self._key_id}"
