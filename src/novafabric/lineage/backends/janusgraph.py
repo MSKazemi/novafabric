@@ -60,6 +60,7 @@ class JanusGraphLineageStore(AbstractLineageStore):
         """Open the Gremlin WebSocket connection (idempotent)."""
         if self._g is not None:
             return
+        from gremlin_python.driver import serializer
         from gremlin_python.driver.driver_remote_connection import (
             DriverRemoteConnection,
         )
@@ -67,7 +68,13 @@ class JanusGraphLineageStore(AbstractLineageStore):
             traversal,
         )
 
-        self._conn = DriverRemoteConnection(self._endpoint, "g")
+        # GraphSON v3, not the default GraphBinary: JanusGraph returns a custom
+        # vertex-id type (RelationIdentifier) that the GraphBinary deserializer
+        # cannot decode (`KeyError: DataType.custom`). GraphSON round-trips it.
+        self._conn = DriverRemoteConnection(
+            self._endpoint, "g",
+            message_serializer=serializer.GraphSONSerializersV3d0(),
+        )
         self._g = traversal().withRemote(self._conn)
 
     def close(self) -> None:
@@ -146,10 +153,15 @@ class JanusGraphLineageStore(AbstractLineageStore):
             __ as AnonymousT,
         )
 
+        # `.emit()` is required: without it `repeat(out()).times(depth)` returns
+        # only the vertices at *exactly* depth hops, not every node within depth
+        # (SQLite/Postgres/AGE return all within-depth). emit() after the step
+        # collects each hop 1..depth, excluding the start vertex.
         results: list[Any] = (
             self._g.V()
             .has("run_id", run_id)
             .repeat(AnonymousT.out())
+            .emit()
             .times(depth)
             .dedup()
             .project("node_id", "kind", "ref")
@@ -171,6 +183,7 @@ class JanusGraphLineageStore(AbstractLineageStore):
             self._g.V()
             .has("run_id", run_id)
             .repeat(AnonymousT.in_())
+            .emit()
             .times(max_depth)
             .dedup()
             .project("node_id", "kind", "ref")

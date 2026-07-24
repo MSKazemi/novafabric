@@ -162,7 +162,7 @@ class TestProvenance:
         store._connect = MagicMock()  # type: ignore[method-assign]
 
         fake_row = {"node_id": "run-B", "kind": "run", "ref": "run-B"}
-        mock_g.V.return_value.has.return_value.repeat.return_value.times.return_value.dedup.return_value.project.return_value.by.return_value.by.return_value.by.return_value.toList.return_value = [
+        mock_g.V.return_value.has.return_value.repeat.return_value.emit.return_value.times.return_value.dedup.return_value.project.return_value.by.return_value.by.return_value.by.return_value.toList.return_value = [
             fake_row
         ]
 
@@ -183,7 +183,7 @@ class TestProvenance:
 
         # Chain the entire fluent mock to return [].
         (
-            mock_g.V.return_value.has.return_value.repeat.return_value.times.return_value.dedup.return_value.project.return_value.by.return_value.by.return_value.by.return_value.toList.return_value
+            mock_g.V.return_value.has.return_value.repeat.return_value.emit.return_value.times.return_value.dedup.return_value.project.return_value.by.return_value.by.return_value.by.return_value.toList.return_value
         ) = []
 
         anon_mock = MagicMock()
@@ -218,7 +218,7 @@ class TestBlastRadius:
         store._connect = MagicMock()  # type: ignore[method-assign]
 
         (
-            mock_g.V.return_value.has.return_value.repeat.return_value.times.return_value.dedup.return_value.project.return_value.by.return_value.by.return_value.by.return_value.toList.return_value
+            mock_g.V.return_value.has.return_value.repeat.return_value.emit.return_value.times.return_value.dedup.return_value.project.return_value.by.return_value.by.return_value.by.return_value.toList.return_value
         ) = []
 
         anon_mock = MagicMock()

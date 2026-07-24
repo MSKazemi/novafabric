@@ -9,6 +9,28 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.70.0] — 2026-07-24
+
+### Fixed
+- **`JanusGraphLineageStore` — first live verification, two correctness bugs fixed
+  (ADR-0053, experimental).** The Gremlin backend `lineage/backends/janusgraph.py`
+  was implemented but had never been run against a live server (its tests were
+  `NOVA_INTEGRATION`-gated). A new testcontainers parity suite (against the
+  `janusgraph/janusgraph` image, run-only graph) verifies it against the SQLite
+  reference and pins two fixes it surfaced:
+  - **GraphSON serializer** — the default GraphBinary deserializer crashes on
+    JanusGraph's custom vertex-id type (`KeyError: DataType.custom`); the store now
+    requests `GraphSONSerializersV3d0`.
+  - **`.emit()` in `provenance`/`blast_radius`** — without it,
+    `repeat(out()).times(depth)` returned only the vertices at *exactly* `depth`
+    hops (so a 3-hop chain queried at depth 5 returned nothing) instead of all
+    nodes within depth. Now matches the SQLite/Postgres/AGE backends.
+
+  With this, **all four at-scale lineage backends are implemented and verified** —
+  Kuzu, Postgres, AGE, JanusGraph — and there are zero `NotImplementedError`
+  lineage-backend stubs. (Corrects the v0.69.0 note that called `janusgraph.py`
+  a stub; it was implemented-but-unverified, not a stub.)
+
 ## [0.69.0] — 2026-07-24
 
 ### Added
