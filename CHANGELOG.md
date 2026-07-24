@@ -9,6 +9,14 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Security
+- **`brace-expansion` DoS (GHSA-mh99-v99m-4gvg) — 2 high Dependabot alerts closed.**
+  The transitive `brace-expansion` (unbounded-expansion OOM DoS, patched in 5.0.8)
+  is pinned via a `">=5.0.8"` npm override in both `web/package.json` and
+  `packages/nova-sdk-ts/package.json`. `npm audit` reports 0 vulnerabilities in
+  both workspaces; the SDK's 29 vitest tests + dual build and the web `astro build`
+  (13 pages) stay green.
+
 ## [0.70.0] — 2026-07-24
 
 ### Fixed
