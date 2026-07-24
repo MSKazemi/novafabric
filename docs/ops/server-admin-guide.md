@@ -49,6 +49,7 @@ Postgres backend and migration from SQLite.
 | Offline ed25519 tokens | **experimental** | Air-gapped/CI/SLURM machine identity without an IdP. `nova server issue-token --subject worker-01 --roles reader,writer --expires-in 30d`; revoke with `nova server revoke-token <jti>`. Revocations are recorded in the `token_audit` table. |
 | SCIM 2.0 provisioning | **experimental** | Off by default (endpoints 404). Enable with `NOVAFABRIC_SERVER_SCIM_ENABLED=1` **and** `NOVAFABRIC_SCIM_TOKEN`. `/scim/v2/*` per RFC 7644; all provisioning actions land in the append-only `scim_audit_events` table. [ADR-0139](../../design/adr/0139-scim-provisioning.md) |
 | SAML 2.0 SSO | **experimental, license-gated** | SP metadata via `nova server saml-metadata`. The ACS endpoint deliberately returns **501** until an XML-DSIG verification library clears the dependency-license gate ([ADR-0138](../../design/adr/0138-saml-sso-server-mode.md) §D5) — NovaFabric never skips assertion signature verification. |
+| Device-grant demo flow | **off by default (endpoints 404)** | The RFC 8628 `/v0/auth/device/code\|token\|approve` flow is local/testing scaffolding whose HS256 tokens the real verifier never honours; `/approve` is unauthenticated. It stays unmounted unless you set `NOVAFABRIC_SERVER_DEMO_DEVICE_GRANT=1`. **Never enable it in production** — use OIDC or offline tokens instead. [ADR-0198](../../design/adr/0198-device-grant-demo-flow-hardening.md) |
 
 ## 3. Roles and authorization
 
@@ -121,21 +122,104 @@ is **no** organization/workspace/team hierarchy yet — that is
   is [`api/openapi.yaml`](../../api/openapi.yaml). A formal deprecation/sunset
   policy is proposed in [ADR-0188](../../design/adr/0188-api-deprecation-sunset-policy.md)
   (`future design`).
-- **Pagination:** cursor-based, default 50 / max 500 per page (**works today**).
-- **Rate limiting/quotas:** **none today** — plan capacity accordingly; the
-  design is [ADR-0179](../../design/adr/0179-api-rate-limiting-quotas.md)
-  (`future design`).
+- **Pagination:** cursor-based, default 50 / max 500 per page (**works
+  today**). `GET /v0/capsules` now serves **keyset** cursors — see 6a
+  (**experimental**).
+- **Rate limiting/quotas:** **experimental, default off** — in-process rate
+  limiting + storage quotas ([ADR-0179](../../design/adr/0179-api-rate-limiting-quotas.md)),
+  plus per-workspace usage metering, `GET /v0/usage` reporting, and
+  per-workspace budgets
+  ([ADR-0208](../../design/adr/0208-usage-metering-workspace-quotas.md)).
+  See [Quotas & rate limits](quotas-and-rate-limits.md); with the master
+  switch off (the default), plan capacity accordingly.
 - **Health:** `GET /health` (unauthenticated). There is **no** Prometheus
   `/metrics`, `/livez`/`/readyz` split, or version endpoint yet — proposed in
   [ADR-0182](../../design/adr/0182-self-observability-surface.md)
   (`future design`). For diagnostics today use `nova doctor`
   (add `--check-storage` for schema/migration state).
 
+### 6a. Bulk capsule operations + keyset pagination (experimental, ADR-0206)
+
+**Status: experimental** — shipped by
+[ADR-0206](../../design/adr/0206-bulk-capsule-ops-keyset-pagination.md);
+normative contract in
+[`design/spec/bulk-ops-pagination-v0.md`](../../design/spec/bulk-ops-pagination-v0.md).
+
+**Keyset pagination on `GET /v0/capsules`:**
+
+- List order is pinned to `created_at DESC, run_id DESC`; `next_cursor` is
+  an opaque v1 keyset cursor — pass it back verbatim. Page requests are
+  O(page) against a derived runs-cache index (lazily backfilled from the
+  capsule directory, which stays the source of truth) instead of re-parsing
+  every `capsule.yaml`.
+- `total` appears on first-page (and legacy-cursor) responses only; cursor
+  pages omit it by design.
+- A corrupted/tampered cursor is now a **400 `invalid_cursor`** — it no
+  longer silently restarts from the first page.
+- Legacy `{"offset": N}` cursors still work for one deprecation cycle
+  (ADR-0188); those responses carry `Deprecation: true`. Set
+  `server.pagination.legacy_offset_cursors: false`
+  (`NOVAFABRIC_SERVER_PAGINATION_LEGACY_OFFSET_CURSORS=false`) to refuse
+  them early.
+
+**Governed deletion (`admin` role only — writer/reader/auditor get 403):**
+
+- `DELETE /v0/capsules/{run_id}` — removes the capsule directory plus its
+  derived index rows (runs-cache, content-search) and appends a
+  `capsule_delete` audit entry. Re-deleting is a 404.
+- `POST /v0/capsules/bulk-delete` — body
+  `{"run_ids": [...], "dry_run": false}`; per-item outcomes
+  (`deleted | held | not_found | invalid_id | duplicate | error`) plus
+  summary counts; no rollback — partial progress is reported, not undone.
+  Batch size is capped by `server.bulk.max_items`
+  (`NOVAFABRIC_SERVER_BULK_MAX_ITEMS`, default 100, ceiling 1000);
+  oversized batches are a 422 before any work. `dry_run: true` returns the
+  identical report and deletes nothing.
+- **Legal holds always win:** any unreleased hold in any registry's
+  `holds.jsonl` refuses deletion (409 `legal_hold_active` / per-item
+  `held`) and there is **no force override**. Honest limit: holds are
+  registry-global today — one active hold freezes the whole delete
+  surface. Unexpired WORM locks refuse with 409 `worm_hold`.
+- Audit actions: `capsule_delete` (per deletion, `via: api|bulk`),
+  `capsule_delete_refused` (single-delete 409s), `capsule_bulk_delete`
+  (one summary per bulk request, dry runs included).
+- Bulk **export** is separate and already shipped —
+  [ADR-0141](../../design/adr/0141-batch-capsule-blob-export.md)
+  (`nova export-batch`).
+
 ## 7. Backup and restore
 
 See the dedicated [Backup & Restore Runbook](backup-restore.md) — manual
-procedures that work today, plus the proposed `nova backup` tooling
-([ADR-0181](../../design/adr/0181-backup-restore-dr-tooling.md), `future design`).
+procedures that work today, the `nova backup` tooling
+([ADR-0181](../../design/adr/0181-backup-restore-dr-tooling.md),
+`experimental`), and the automated Postgres restore
+(`nova restore` — pg profile auto-detected, ADR-0217,
+[ADR-0211](../../design/adr/0211-pg-restore-and-schema-skew-guard.md),
+`experimental`).
+
+### 7a. Startup schema-skew guard (experimental, ADR-0211)
+
+Before the server touches its database at startup, the lifespan compares the
+DB's Alembic stamp against the installed build's migration head (registry
+track; both `sqlite` and `postgres` backends):
+
+- schema **behind** the build → the server **refuses to start**
+  (`E-SKEW-BEHIND`), naming both revisions and the fix:
+  `nova db upgrade --track registry --backend <backend>`;
+- stamp **unknown to this build** (migrated by a newer/different NovaFabric)
+  → refuses (`E-SKEW-AHEAD`): upgrade the package, do **not** downgrade the
+  schema;
+- **unstamped** DB (any `init_schema()`-bootstrapped deployment) or an
+  **unknown** state → starts with one structured warning — never a refusal
+  based on ignorance, never a fake `ok`.
+
+Break-glass: `NOVAFABRIC_ALLOW_SCHEMA_SKEW=1` downgrades refusals to a
+structured warning (`event=schema_skew_overridden`) and starts — for
+emergency read-mostly access only; unset after the incident. Refusal happens
+**before** `init_schema()` and the org bootstrap, so a refused server mutates
+nothing. Error/warning text carries backend name and revisions only — never
+DSNs or hostnames. `/readyz`'s `migrations` check uses the same comparator
+and reports real `ok`/`fail` for Postgres too.
 
 ## 8. Enterprise hardening at a glance
 
@@ -146,7 +230,62 @@ First slices shipped `experimental` 2026-07-16; tracked in the
 |---|---|---|
 | Secure-by-default local auth (no anonymous admin) | [0184](../../design/adr/0184-secure-by-default-local-server-auth.md) | experimental |
 | Workspaces, organizations, service accounts (`/v0/orgs`, `/v0/workspaces`, `/v0/service-accounts`) | [0178](../../design/adr/0178-workspace-organization-model.md) | experimental |
-| Rate limiting (default off; quotas parse, enforcement planned) | [0179](../../design/adr/0179-api-rate-limiting-quotas.md) | experimental |
+| Rate limiting + storage quotas (default off; quota enforcement is warn-then-reject) | [0179](../../design/adr/0179-api-rate-limiting-quotas.md) | experimental |
 | `/metrics`, `/livez`, `/readyz`, `/v0/version` | [0182](../../design/adr/0182-self-observability-surface.md) | experimental |
 | Support bundle (`nova support-bundle`) | [0187](../../design/adr/0187-support-bundle-diagnostics.md) | experimental |
+| Backup sets (`nova backup create/verify`, `nova restore` local profile) | [0181](../../design/adr/0181-backup-restore-dr-tooling.md) | experimental |
+| Automated pg restore (`nova restore`, manifest-driven — [0217](../../design/adr/0217-automated-pg-restore.md)) + startup schema-skew guard ([0211](../../design/adr/0211-pg-restore-and-schema-skew-guard.md) Part B) | 0217 / 0211 | experimental |
 | Backup sets (`nova backup create/verify`, local profile; restore planned) | [0181](../../design/adr/0181-backup-restore-dr-tooling.md) | experimental |
+
+## 9. Webhook subscriptions (experimental)
+
+**Status: experimental** ([ADR-0205](../../design/adr/0205-webhook-subscription-registry.md),
+spec [`webhook-registry-v0.md`](../../design/spec/webhook-registry-v0.md)) — API
+shapes may change. Server mode only; the env-configured `NOVA_EVENTS_*` /
+`NOVA_ALERTS_*` sinks are unchanged.
+
+API-managed outbound event subscriptions: `/v0/webhooks` CRUD + test ping, a
+persisted per-attempt delivery log with explicit redelivery, and HMAC-signed
+delivery through the ADR-0137 sink core.
+
+```yaml
+# ~/.config/novafabric/server.yaml
+webhooks:
+  enabled: true                  # default false — off ⇒ no dispatch worker at all
+  queue_max: 1000                # bounded dispatch queue (overflow = drop-with-audit)
+  max_attempts: 5                # POSTs per delivery chain (1–10); backoff 0s/30s/2m/10m/1h
+  timeout_s: 5.0                 # per-POST timeout
+  delivery_retention_days: 30    # delivery-log age cap
+  delivery_retention_rows: 10000 # delivery-log per-webhook row cap
+  allow_insecure_url: false      # permit non-loopback http:// endpoints (audited opt-out)
+```
+
+Env overrides follow `NOVAFABRIC_SERVER_WEBHOOKS_*` (plus the spec's
+`NOVAFABRIC_WEBHOOKS_QUEUE_MAX` alias for the queue bound).
+
+Operating notes:
+
+- **RBAC:** mutations (create/update/delete/ping/redeliver) are `admin`-only;
+  list/get and the delivery log are `admin` or `auditor`; `reader`/`writer`
+  have no access.
+- **Signing secret** (`nvwh_…`) is returned **exactly once** by
+  `POST /v0/webhooks` and is never retrievable afterwards. At rest it is
+  wrapped via the ADR-0185 key-wrapping path when
+  `NOVAFABRIC_WEBHOOKS_KEK_PATH` names a local 256-bit KEK file; otherwise it
+  is stored **as-is** in the 0600 registry DB (a documented fallback —
+  `secret_at_rest: plaintext|wrapped` on every GET shows your posture).
+  Secret rotation is planned (P2); until then, delete + recreate.
+- **Verify deliveries** with the `X-NovaFabric-Signature: t=<unix>,v1=<hex>`
+  header: `v1 = HMAC-SHA256(secret, "{t}." + raw_body)`; reject when
+  `|now − t| > 300 s`. A reference verifier ships as
+  `novafabric.server.webhooks.verify_delivery_signature`.
+- **Delivery contract:** best-effort notification, not evidence transport —
+  5 bounded attempts, then the row is terminal `failed` and visible in
+  `GET /v0/webhooks/{id}/deliveries`; recover with
+  `POST /v0/webhooks/{id}/deliveries/{delivery_id}/redeliver`. A dead endpoint
+  never delays or fails ingest (bounded queue, drop-with-audit on overflow).
+  Scheduled retries are in-memory (P1): rows left `pending`/`retrying` across
+  a restart are not auto-resumed — redeliver them manually.
+- **Audit:** every lifecycle change, delivery attempt, and queue overflow
+  appends to the hash-chained audit log (and flows to SIEM export as
+  `webhook.*` OCSF rows). The secret never appears in any audit entry.

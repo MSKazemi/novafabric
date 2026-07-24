@@ -76,7 +76,7 @@ services:
       dockerfile: deploy/docker/Dockerfile
     container_name: novafabric-serve
     ports:
-      - "4321:4321"
+      - "127.0.0.1:4321:4321"
     environment:
       NOVAFABRIC_HOME: /data/nova
       NOVAFABRIC_EVIDENCE_DIR: /data/capsules/evidence
@@ -141,8 +141,8 @@ services:
       - "--http_port"
       - "8222"
     ports:
-      - "4222:4222"
-      - "8222:8222"
+      - "127.0.0.1:4222:4222"
+      - "127.0.0.1:8222:8222"
     volumes:
       - nats-data:/data/nats
     healthcheck:
@@ -172,7 +172,7 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_LOG_DIRS: /var/lib/kafka/data
     ports:
-      - "9092:9092"
+      - "127.0.0.1:9092:9092"
     volumes:
       - kafka-data:/var/lib/kafka/data
     healthcheck:
@@ -199,7 +199,7 @@ services:
       DEFAULT_POOL_SIZE: "20"
       AUTH_TYPE: trust
     ports:
-      - "6432:6432"
+      - "127.0.0.1:6432:6432"
     depends_on:
       postgres:
         condition: service_healthy
@@ -222,7 +222,7 @@ services:
     environment:
       JAVA_OPTIONS: "-Xms512m -Xmx2g"
     ports:
-      - "8182:8182"
+      - "127.0.0.1:8182:8182"
     volumes:
       - janusgraph-data:/var/lib/janusgraph
     healthcheck:

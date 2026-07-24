@@ -45,9 +45,10 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping
 
 from novafabric.eval.annotation_queue import (
+    AnnotationError,
     AnnotationQueue,
     AssignmentPolicy,
     CriteriaError,
@@ -321,6 +322,150 @@ def enqueue_item(
         return item
     finally:
         conn.close()
+
+
+def _selector_sample_hash(subject: str) -> float:
+    """Stable [0,1) position for *subject* used by ``SubjectSelector.sample``.
+
+    Deliberately hash-derived rather than ``random``: a queue populated twice
+    from the same store must contain the same items. A random sample would
+    make the review set unreproducible, which for an evidence product is a
+    defect — an auditor asking "why was this run reviewed and that one not?"
+    must get a stable answer, not "chance".
+    """
+    import hashlib
+
+    digest = hashlib.sha256(subject.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big") / float(1 << 64)
+
+
+def _capsule_matches_selector(
+    selector: SubjectSelector,
+    *,
+    run_id: str,
+    tags: list[str],
+    tool_names: list[str],
+) -> bool:
+    """All present selector keys are ANDed (spec §Subject selector)."""
+    if selector.run_ids and run_id not in selector.run_ids:
+        return False
+    if selector.tags and not set(selector.tags) & set(tags):
+        return False
+    if selector.tool_names and not set(selector.tool_names) & set(tool_names):
+        return False
+    return True
+
+
+def _capsule_facts(capsule_dir: Path) -> tuple[str, list[str], list[str]]:
+    """Read the selector-relevant facts from a capsule directory."""
+    import json as _json
+
+    import yaml as _yaml
+
+    run_id = capsule_dir.name
+    tags: list[str] = []
+    try:
+        manifest = _yaml.safe_load((capsule_dir / "capsule.yaml").read_text())
+    except (OSError, _yaml.YAMLError):
+        manifest = None
+    if isinstance(manifest, dict):
+        run_id = str(manifest.get("run_id") or capsule_dir.name)
+        meta = manifest.get("metadata")
+        raw_tags = (meta or {}).get("tags") if isinstance(meta, dict) else None
+        if isinstance(raw_tags, list):
+            tags = [str(t) for t in raw_tags]
+        elif isinstance(raw_tags, str):
+            tags = [raw_tags]
+
+    tool_names: list[str] = []
+    tool_path = capsule_dir / "tool-calls.jsonl"
+    if tool_path.is_file():
+        for line in tool_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = _json.loads(line)
+            except ValueError:
+                continue  # a malformed line must not abort population
+            if isinstance(record, dict):
+                name = record.get("tool_name") or record.get("name")
+                if name:
+                    tool_names.append(str(name))
+    return run_id, tags, tool_names
+
+
+def populate_queue(
+    queue_ref: str,
+    capsule_root: Path,
+    *,
+    db_path: Path | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Enqueue every stored capsule matching the queue's selector (ADR-0118 P2).
+
+    Idempotent: a subject already on the queue is skipped, so re-running after
+    new capsules land adds only the new ones. That makes this safe to put on a
+    schedule, which is the point — a review queue nobody refills is a review
+    queue nobody uses.
+
+    ``sample`` is applied **deterministically** (see
+    :func:`_selector_sample_hash`), so repeat runs select the same subjects.
+
+    Returns a summary; with *dry_run* nothing is written.
+    """
+    queue = get_queue(queue_ref, db_path=db_path)
+    selector = queue.subject_selector
+
+    if selector.subject_kind == "span":
+        raise AnnotationError(
+            "cannot auto-populate a span-scoped queue: spans are not enumerable "
+            "from the capsule store without a span selector. Enqueue spans "
+            "explicitly with `nova annotate queue add --subject sha256:...`."
+        )
+
+    existing = {item.subject for item in list_items(queue_ref, db_path=db_path)}
+    scanned = matched = added = 0
+    skipped_existing = skipped_sample = 0
+
+    for child in sorted(Path(capsule_root).iterdir()) if Path(capsule_root).is_dir() else []:
+        if not (child.is_dir() and (child / "capsule.yaml").is_file()):
+            continue
+        scanned += 1
+        run_id, tags, tool_names = _capsule_facts(child)
+        if not _capsule_matches_selector(
+            selector, run_id=run_id, tags=tags, tool_names=tool_names
+        ):
+            continue
+        matched += 1
+
+        subject = annotation_subject_digest(child)
+        if selector.sample is not None and _selector_sample_hash(subject) >= selector.sample:
+            skipped_sample += 1
+            continue
+        if subject in existing:
+            skipped_existing += 1
+            continue
+        if not dry_run:
+            enqueue_item(
+                queue_ref,
+                subject=subject,
+                subject_kind="capsule",
+                capsule_ref=str(child),
+                db_path=db_path,
+            )
+        existing.add(subject)
+        added += 1
+
+    return {
+        "queue": queue.name,
+        "scanned": scanned,
+        "matched": matched,
+        "added": added,
+        "skipped_existing": skipped_existing,
+        "skipped_sample": skipped_sample,
+        "dry_run": dry_run,
+    }
 
 
 def list_items(

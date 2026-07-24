@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { clsx } from 'clsx';
 import { api } from '../../../lib/api';
+import ReportChart, { type ReportChartSpec } from '../ReportChart';
 import '../../../styles/reports-print.css';
 
 interface ReportDef {
@@ -102,6 +103,33 @@ const CATALOG: ReportDef[] = [
       { key: 'version_b', label: 'Version B', type: 'text' },
     ],
   },
+  {
+    id: 'alert-digest', label: 'Alert Digest', audience: 'Ops',
+    description: 'Alert delivery outcomes from the audit log merged with emitted ops.* events.',
+    endpoint: 'alert-digest',
+    filters: DATE_FILTERS,
+  },
+  {
+    id: 'api-key-inventory', label: 'API Key Inventory', audience: 'Compliance',
+    description: 'Secret-free API-key inventory: owner, roles, expiry, last use, derived status.',
+    endpoint: 'api-key-inventory',
+    filters: [],
+  },
+  {
+    id: 'dashboard-audit', label: 'Dashboard Audit', audience: 'Compliance',
+    description: 'Recent dashboard mutations from the append-only audit log.',
+    endpoint: 'dashboard-audit',
+    filters: [{ key: 'action', label: 'Action', type: 'text' }],
+  },
+  {
+    id: 'compliance-posture', label: 'Compliance Posture', audience: 'Management',
+    description: 'EU AI Act Annex IV element completeness for one run capsule.',
+    endpoint: 'compliance-posture',
+    filters: [
+      { key: 'run_id', label: 'Run ID', type: 'text' },
+      { key: 'deployment_id', label: 'Deployment ID', type: 'text' },
+    ],
+  },
 ];
 
 const AUDIENCES = ['Developer', 'Ops', 'Compliance', 'Management'] as const;
@@ -113,6 +141,27 @@ export default function ReportsTab() {
   const [columns, setColumns] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [chartSpecs, setChartSpecs] = useState<Record<string, ReportChartSpec | null>>({});
+
+  // Chart specs come from the server-side report registry — single source of
+  // truth for which reports genuinely have a series (ADR-0200/0201).
+  useEffect(() => {
+    let cancelled = false;
+    void api.reports
+      .catalog()
+      .then(cat => {
+        if (cancelled) return;
+        const specs: Record<string, ReportChartSpec | null> = {};
+        for (const r of cat.reports) specs[r.report_id] = r.chart as ReportChartSpec | null;
+        setChartSpecs(specs);
+      })
+      .catch(() => {
+        /* older server without /catalog — charts simply don't render */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const selectReport = useCallback((def: ReportDef) => {
     setSelected(def);
@@ -172,7 +221,20 @@ export default function ReportsTab() {
     }
   }, [selected, filterValues]);
 
-  const printPdf = useCallback(() => { window.print(); }, []);
+  const printPage = useCallback(() => { window.print(); }, []);
+
+  const downloadArtifact = useCallback(async (format: 'html' | 'pdf') => {
+    try {
+      const blob = await api.reports.export(selected.endpoint, filterValues, format);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `${selected.id}.${format}`; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      // 501 carries the WeasyPrint install hint verbatim — surface it.
+      setError(String(e));
+    }
+  }, [selected, filterValues]);
 
   return (
     <div className="flex h-full gap-0 rounded-lg border border-[var(--color-border)] overflow-hidden bg-[var(--color-bg-raised)]" style={{ minHeight: 520 }}>
@@ -228,9 +290,21 @@ export default function ReportsTab() {
             >JSON</button>
             <button
               type="button"
-              onClick={printPdf}
+              onClick={() => void downloadArtifact('html')}
+              title="Self-contained HTML report with embedded chart"
+              className="px-2.5 py-1 rounded border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] transition-colors"
+            >HTML</button>
+            <button
+              type="button"
+              onClick={() => void downloadArtifact('pdf')}
+              title="PDF report (requires the optional WeasyPrint extra server-side)"
               className="px-2.5 py-1 rounded border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] transition-colors"
             >PDF</button>
+            <button
+              type="button"
+              onClick={printPage}
+              className="px-2.5 py-1 rounded border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] transition-colors"
+            >Print</button>
             <button
               type="button"
               onClick={() => void runReport(selected, filterValues)}
@@ -290,6 +364,13 @@ export default function ReportsTab() {
           )}
           {!loading && rows !== null && rows.length > 0 && (
             <>
+              {chartSpecs[selected.id] && (
+                <ReportChart
+                  spec={chartSpecs[selected.id] as ReportChartSpec}
+                  rows={rows}
+                  filters={filterValues}
+                />
+              )}
               <div className="overflow-x-auto">
                 <table className="w-full text-xs border-collapse">
                   <thead>

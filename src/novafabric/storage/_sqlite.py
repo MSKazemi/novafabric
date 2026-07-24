@@ -32,9 +32,9 @@ class SQLiteBackend:
         try:
             schema_version = _read_schema_version(conn)
             row_counts = _read_row_counts(conn)
-            migration_pending = _check_migration_pending(conn)
         finally:
             conn.close()
+        migration_pending = _check_migration_pending(self._db_path)
 
         return StorageInfo(
             backend="sqlite",
@@ -67,15 +67,18 @@ def _read_row_counts(conn: sqlite3.Connection) -> dict[str, int]:
     return counts
 
 
-def _check_migration_pending(conn: sqlite3.Connection) -> bool | None:
-    try:
-        import alembic  # noqa: F401  # type: ignore[import-untyped]
-    except ImportError:
-        return None  # alembic not installed; skip check
+def _check_migration_pending(db_path: Path) -> bool | None:
+    """Registry-track head comparison via the shared comparator (ADR-0211 D1).
 
-    try:
-        row = conn.execute("SELECT version_num FROM alembic_version LIMIT 1").fetchone()
-        # alembic_version table exists; assume current (head comparison added later)
-        return row is None  # table exists but empty means no migration applied
-    except sqlite3.OperationalError:
-        return True  # alembic_version table absent; migrations not yet applied
+    True = migrations pending (behind head, or never stamped); False = at
+    head; None = not determinable (unreadable DB, unresolvable head, or a
+    foreign/ahead stamp this build cannot reason about).
+    """
+    from novafabric.server import schema_skew  # noqa: PLC0415
+
+    status = schema_skew.compare_revisions("sqlite", db_path).status
+    if status == schema_skew.STATUS_OK:
+        return False
+    if status in (schema_skew.STATUS_BEHIND, schema_skew.STATUS_UNSTAMPED):
+        return True
+    return None  # ahead_or_foreign / unknown — "pending" would misdescribe it

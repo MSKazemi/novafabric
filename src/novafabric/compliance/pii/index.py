@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from novafabric._sqlite_util import connect_sqlite
+
 _DDL = """
 CREATE TABLE IF NOT EXISTS redaction_subject_idx (
     subject_id_hmac   TEXT NOT NULL,
@@ -68,7 +70,7 @@ class RedactionSubjectIndex:
 
     def open(self) -> None:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        self._conn = connect_sqlite(str(self._db_path), check_same_thread=False)
         self._conn.executescript(_DDL)
         self._conn.commit()
 

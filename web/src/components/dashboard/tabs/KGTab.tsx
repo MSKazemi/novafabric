@@ -24,6 +24,8 @@ interface KGTopology {
   edge_counts: Record<string, number>;
   nodes: Array<{ id: string; type: string; name?: string; provider?: string; url?: string }>;
   edges: Array<{ src: string; src_type: string; dst: string; dst_type: string; edge_type: string; call_count: number; confidence: number }>;
+  truncated?: boolean;
+  truncated_reason?: string[];
   note?: string;
   error?: string;
 }
@@ -356,6 +358,13 @@ function TopologyLayerPanel() {
       {error && (
         <div className="text-[10px] font-mono text-[var(--color-status-failure)] bg-[color-mix(in_oklab,var(--color-status-failure)_8%,transparent)] border border-[color-mix(in_oklab,var(--color-status-failure)_25%,transparent)] rounded px-3 py-2">
           {error}
+        </div>
+      )}
+
+      {topo?.ok && topo.truncated && (
+        <div className="text-[10px] font-mono text-[var(--color-status-pending)] bg-[color-mix(in_oklab,var(--color-status-pending)_8%,transparent)] border border-[color-mix(in_oklab,var(--color-status-pending)_25%,transparent)] rounded px-3 py-2">
+          Graph bounded for rendering — {(topo.truncated_reason ?? []).join('; ') || 'result capped'}.
+          Showing {topo.nodes.length.toLocaleString()} of {totalNodes.toLocaleString()} nodes.
         </div>
       )}
 

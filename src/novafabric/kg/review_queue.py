@@ -18,6 +18,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from novafabric._sqlite_util import connect_sqlite
+
 logger = logging.getLogger(__name__)
 
 _CREATE_SQL = """
@@ -91,7 +93,7 @@ class HumanReviewQueueWriter:
         Called under self._lock.
         """
         if self._conn is None:
-            self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+            self._conn = connect_sqlite(str(self._db_path), check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
         return self._conn
 

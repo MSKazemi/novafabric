@@ -42,7 +42,11 @@ def write_token_file(token: str) -> Path:
     """
     path = serve_token_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(token + "\n")
+    # Create with 0600 atomically — a write-then-chmod sequence leaves a window
+    # where the token is readable at the umask default.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
+    with os.fdopen(fd, "w") as f:
+        f.write(token + "\n")
     os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
     return path
 

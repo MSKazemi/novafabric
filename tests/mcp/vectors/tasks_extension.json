@@ -1,0 +1,14 @@
+{
+  "name": "Tasks-as-extension passthrough",
+  "why": "Tasks left core in 2026-07-28. We must record presence + digest without understanding it; dropping it would lose provenance, executing it is out of scope.",
+  "protocol_version": "2026-07-28",
+  "messages": [
+    {"direction": "server_to_client", "message": {"jsonrpc": "2.0", "id": "t1", "method": "elicitation/inputRequired", "params": {"prompt": "go?", "extensions": {"io.modelcontextprotocol.tasks": {"taskId": "task-7", "apiKey": "sk-ant-api03-vectorsecret0123456789abcd"}}}}}
+  ],
+  "expect": {
+    "record_count": 1,
+    "rounds": [1],
+    "tasks_extension_present": true,
+    "no_raw_values": ["sk-ant-api03-vectorsecret0123456789abcd", "task-7"]
+  }
+}

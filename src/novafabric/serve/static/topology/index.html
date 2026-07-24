@@ -2,13 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Without this, browsers fall back to requesting /favicon.ico, which the
+         server does not have — a 404 on every page load. The site ships an SVG
+         icon at the static root; point at it explicitly. -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nova Dashboard — Live Topology</title>
     <style>
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
       body { background: #f8fafc; overflow: hidden; }
     </style>
-    <script type="module" crossorigin src="/topology/assets/index-BdEeAkdy.js"></script>
+    <script type="module" crossorigin src="/topology/assets/index-C4CEUJfP.js"></script>
   </head>
   <body>
     <div id="root"></div>

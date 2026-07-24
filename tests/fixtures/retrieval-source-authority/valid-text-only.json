@@ -1,0 +1,20 @@
+{
+  "_fixture": "ADR-0153 P1 golden fixture — text-only retrieval stays valid. A capsule captured before NF-215/NF-218 existed: retrieved documents carry no pin fields and the capsule carries no fetch-provenance facet. It must still parse and must come back byte-identical from attach_facet.",
+  "capsule_id": "cap-text-only",
+  "run_id": "run-text-only",
+  "schema_version": "0.2.0",
+  "retrieval": {
+    "event_id": "ev-1",
+    "run_id": "run-text-only",
+    "capsule_id": "cap-text-only",
+    "timestamp_utc": "2026-07-20T09:00:00Z",
+    "vector_store": "qdrant",
+    "collection": "news",
+    "top_k": 2,
+    "returned_count": 2,
+    "documents": [
+      {"document_id": "doc-17", "score": 0.91},
+      {"document_id": "doc-41", "score": 0.77}
+    ]
+  }
+}

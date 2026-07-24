@@ -10,6 +10,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import secrets
 import threading
 import time
 import uuid
@@ -20,8 +21,18 @@ import jwt
 from fastapi import APIRouter
 
 from novafabric.server.errors import BadRequestError
+from novafabric.server.rbac import Role
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+# Roles a device-code approval may assign. Client-supplied roles are validated
+# against this allowlist so an approver can never mint an unknown/elevated role.
+_VALID_ROLES = frozenset(r.value for r in Role)
+
+# Hard cap on the in-memory device-code store to bound memory under a flood of
+# unauthenticated /device/code calls (the endpoints are only mounted when the
+# operator opts into the demo flow, but bound them anyway).
+_MAX_DEVICE_CODES = 1024
 
 # In-memory device code store.  Each entry:
 #   {
@@ -73,6 +84,9 @@ async def issue_device_code(body: dict[str, Any]) -> dict[str, Any]:
         "roles": [],
     }
     with _DC_LOCK:
+        _evict_expired_locked()
+        if len(_DEVICE_CODES) >= _MAX_DEVICE_CODES:
+            raise BadRequestError("device-code store is full; retry shortly")
         _DEVICE_CODES[device_code] = entry
 
     return {
@@ -144,10 +158,16 @@ async def approve_device_code(body: dict[str, Any]) -> dict[str, Any]:
     """
     user_code = str(body.get("user_code", ""))
     subject = str(body.get("subject", "device-user"))
-    roles = list(body.get("roles", ["reader"]))
+    roles = [str(r) for r in body.get("roles", ["reader"])]
 
     if not user_code:
         raise BadRequestError("user_code is required")
+
+    # Never trust caller-supplied roles verbatim — validate against the RBAC
+    # allowlist so an approval cannot introduce an unknown or forged role.
+    invalid = sorted(set(roles) - _VALID_ROLES)
+    if invalid:
+        raise BadRequestError(f"unknown role(s): {invalid}")
 
     with _DC_LOCK:
         matched = None
@@ -169,18 +189,29 @@ async def approve_device_code(body: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _evict_expired_locked() -> None:
+    """Drop expired entries. Caller must hold ``_DC_LOCK``."""
+    now = time.monotonic()
+    stale = [dc for dc, e in _DEVICE_CODES.items() if now > e["expires_at"]]
+    for dc in stale:
+        _DEVICE_CODES.pop(dc, None)
+
+
 def _generate_user_code() -> str:
     """Generate a human-readable 8-character user code (4+4 alphanumeric)."""
-    import random
     import string
 
     chars = string.ascii_uppercase + string.digits
-    part1 = "".join(random.choices(chars, k=4))  # noqa: S311
-    part2 = "".join(random.choices(chars, k=4))  # noqa: S311
+    part1 = "".join(secrets.choice(chars) for _ in range(4))
+    part2 = "".join(secrets.choice(chars) for _ in range(4))
     return f"{part1}-{part2}"
 
 
-_DEMO_SECRET = "nova-demo-secret-change-in-production"
+# Per-process random signing secret. The demo device-grant token is never
+# honoured by the real verifier (JWKS/RS256 or the opaque local token), so this
+# secret only needs to be unguessable within the process lifetime — a random
+# value is strictly safer than a shipped constant and needs no configuration.
+_DEMO_SECRET = secrets.token_hex(32)
 
 
 def _build_demo_jwt(subject: str, roles: list[str]) -> str:

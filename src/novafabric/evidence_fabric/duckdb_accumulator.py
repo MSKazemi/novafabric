@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -142,7 +142,7 @@ class DuckDBAccumulator:
 
         import json as _json
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         rows: dict[str, list[Any]] = {
             "from_ref": [],
             "to_ref": [],
@@ -189,7 +189,7 @@ class DuckDBAccumulator:
         if not events:
             return 0
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         rows: dict[str, list[Any]] = {
             "run_id": [],
             "event_type": [],

@@ -106,7 +106,7 @@ def parse_select_item(text: str) -> Aggregate:
 
 def parse_select(value: str | list[str]) -> tuple[Aggregate, ...]:
     """Parse the ``select`` clause — a comma-separated flag string or a list."""
-    items = [s for s in value.split(",")] if isinstance(value, str) else list(value)
+    items = list(value.split(",")) if isinstance(value, str) else list(value)
     items = [s for s in (i.strip() for i in items) if s]
     if not items:
         raise QueryParseError("select requires at least one aggregate expression")

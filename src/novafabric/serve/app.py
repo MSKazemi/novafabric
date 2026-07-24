@@ -12,6 +12,7 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import stat
 import threading
 import time
@@ -53,32 +54,41 @@ from novafabric.serve.capsule_loader import (
     load_full_capsule,
     load_jsonl,
 )
+from novafabric.serve.pagination import clamp_limit, decode_keyset, encode_keyset
 from novafabric.serve.routers.admin_keys import build_admin_keys_router
 from novafabric.serve.routers.alerts import build_alerts_router
 from novafabric.serve.routers.analytics import build_analytics_router
+from novafabric.serve.routers.backup_status import build_backup_status_router
+from novafabric.serve.routers.compliance_exports import build_compliance_exports_router
+from novafabric.serve.routers.cost_trio import build_cost_trio_router
+from novafabric.serve.routers.forensics import build_forensics_router
 from novafabric.serve.routers.holds import build_holds_router
+from novafabric.serve.routers.maintenance import build_maintenance_router
+from novafabric.serve.routers.query_panel import build_query_panel_router
+from novafabric.serve.routers.report_export import build_report_export_router
+from novafabric.serve.routers.trust_surfaces import build_trust_surfaces_router
 
 logger = logging.getLogger(__name__)
 
+# Evidence-bundle identifiers are used to build a filesystem path
+# (evidence_dir / f"{bundle_id}.zip"). Constrain them to a strict allowlist so a
+# crafted id can never escape the evidence directory via traversal or encoded
+# separators, independent of FastAPI's own path-param decoding.
+_BUNDLE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _validate_bundle_id(bundle_id: str) -> None:
+    """Reject any evidence bundle_id that is not a safe path segment."""
+    if not _BUNDLE_ID_RE.match(bundle_id):
+        raise HTTPException(status_code=400, detail="invalid bundle_id")
+
 
 # ---------- Cursor pagination helpers (B-1) ----------
+# Extracted to serve/pagination.py (ADR-0199 shared helper); thin aliases keep
+# the historical private names used throughout this module.
 
-def _encode_cursor(ts: str, run_id: str) -> str:
-    """Encode (timestamp, run_id) into an opaque URL-safe base64 string."""
-    payload = json.dumps({"ts": ts, "id": run_id}, separators=(",", ":"))
-    return base64.urlsafe_b64encode(payload.encode()).decode()
-
-
-def _decode_cursor(cursor: str | None) -> tuple[str, str] | None:
-    """Decode a cursor string. Returns (ts, run_id) or None if invalid/absent."""
-    if not cursor:
-        return None
-    try:
-        raw = base64.urlsafe_b64decode(cursor.encode() + b"==")
-        obj = json.loads(raw)
-        return (obj["ts"], obj["id"])
-    except Exception:  # noqa: BLE001
-        return None
+_encode_cursor = encode_keyset
+_decode_cursor = decode_keyset
 
 
 # ---------- SSE event bus (B-3) ----------
@@ -323,6 +333,17 @@ class AssignRoleRequest(BaseModel):
     role: str
 
 
+class ErasureRequestBody(BaseModel):
+    """ADR-0210: GDPR Art.17 erasure request (safe-mutations gated, extra=forbid)."""
+
+    subject_id: str
+    capsule_ids: list[str] | None = None
+    reason: str = "gdpr_art_17"
+    confirmed: bool = False
+
+    model_config = {"extra": "forbid"}
+
+
 class MCPScanRequest(BaseModel):
     manifest: dict[str, Any]
     threshold: str = "HIGH"
@@ -353,8 +374,22 @@ def _extract_score(raw: object) -> float | None:
     return None
 
 
-def _list_evidence_bundles() -> list[dict[str, Any]]:
-    """Scan evidence dir and return EvidenceSummary dicts, newest-first."""
+#: S3 scale-slice caps: the most evidence bundles / incidents a single list
+#: response will materialise, so response cost stays bounded regardless of how
+#: much is on disk. Callers see ``truncated=True`` + a ``total`` when exceeded.
+_EVIDENCE_LIST_MAX = 500
+_INCIDENT_LIST_MAX = 500
+
+
+def _list_evidence_bundles(limit: int | None = None) -> tuple[list[dict[str, Any]], int]:
+    """Scan evidence dir and return ``(EvidenceSummary dicts newest-first, total)``.
+
+    Only the newest *limit* bundles are opened and hash-checked — the per-zip
+    manifest read is the expensive part, so bounding it keeps the response cost
+    independent of how many bundles are on disk. ``total`` is the full count of
+    ``*.zip`` files (a cheap glob), so the caller can report truncation. When
+    *limit* is ``None`` every bundle is opened (legacy unbounded behaviour).
+    """
     import hashlib
     import json
     import zipfile
@@ -362,12 +397,16 @@ def _list_evidence_bundles() -> list[dict[str, Any]]:
     override = os.environ.get("NOVAFABRIC_EVIDENCE_DIR")
     evidence_dir = Path(override) if override else Path.home() / ".novafabric" / "evidence"
     if not evidence_dir.is_dir():
-        return []
+        return [], 0
+
+    all_paths = sorted(
+        evidence_dir.glob("*.zip"), key=lambda p: p.stat().st_mtime, reverse=True
+    )
+    total = len(all_paths)
+    paths = all_paths if limit is None else all_paths[:limit]
 
     results = []
-    for zip_path in sorted(
-        evidence_dir.glob("*.zip"), key=lambda p: p.stat().st_mtime, reverse=True
-    ):
+    for zip_path in paths:
         bundle_id = zip_path.stem  # run_id = filename without .zip
         size_bytes = zip_path.stat().st_size
         verified = False
@@ -399,7 +438,7 @@ def _list_evidence_bundles() -> list[dict[str, Any]]:
             "verified": verified,
         })
 
-    return results
+    return results, total
 
 
 def create_app(
@@ -408,10 +447,21 @@ def create_app(
     capsule_dir: Path,
     db_path: Path | None = None,
     static_dir: Path | None = None,
+    static_mounted_by_caller: bool = False,
     topology_enabled: bool = False,
     topology_louvain_resolution: float | None = None,
 ) -> FastAPI:
-    """Build the FastAPI app. Pure factory; no side effects beyond app creation."""
+    """Build the FastAPI app. Pure factory; no side effects beyond app creation.
+
+    ``static_mounted_by_caller`` exists because ``nova serve`` deliberately
+    mounts the static site **after** ``create_app`` returns, so that routers
+    added in between (TV-5) are registered before the ``/`` catch-all. Without
+    this flag the factory sees ``static_dir=None``, registers a "dashboard
+    static missing" route on ``/``, and — since Starlette matches routes in
+    registration order — that route permanently shadows the real landing page
+    the caller is about to mount. Callers that mount static themselves must
+    pass ``True`` so the placeholder is never registered.
+    """
 
     _db_path = db_path  # capture for lifespan closure
 
@@ -450,11 +500,11 @@ def create_app(
 
         # Scale-S3: delegate startup indexing to CapsuleWatcher.
         try:
-            _indexed = _watcher.ingest_all()
+            _indexed = _get_watcher().ingest_all()
             if _indexed:
                 logger.info(
                     "runs index: indexed %d capsule(s) on startup [%s backend].",
-                    _indexed, _watcher.backend_name(),
+                    _indexed, _get_watcher().backend_name(),
                 )
         except Exception as _exc:  # noqa: BLE001
             logger.debug("runs index: startup build failed (non-fatal): %s", _exc)
@@ -505,7 +555,7 @@ def create_app(
             _stats_stop.set()
             _refresh_thread.join(timeout=5.0)
             try:
-                _watcher.close()  # stop the CapsuleWatcher / watchdog Observer
+                _close_watcher_if_created()  # stop the watchdog Observer, if any
             except Exception:  # noqa: BLE001
                 pass
             # Release the TV-5 layout ProcessPoolExecutor if topology was enabled.
@@ -701,9 +751,45 @@ def create_app(
             "production_asset_count": production_count,
         }
 
-    # Scale-S3: one CapsuleWatcher instance for the full app lifetime.
-    from novafabric.serve.capsule_watcher import CapsuleWatcher as _CapsuleWatcher  # noqa: PLC0415
-    _watcher = _CapsuleWatcher(capsule_dir, db_path=_db_path)
+    # Scale-S3: one CapsuleWatcher instance for the full app lifetime —
+    # constructed on FIRST USE, not here.
+    #
+    # WatchdogBackend opens an OS-level inotify watch and starts an observer
+    # thread in its constructor (deliberately: poll_once only drains the event
+    # queue, so a watch that starts late misses everything created before it).
+    # That construction cannot move, but it must not happen at create_app()
+    # time: _watcher is only ever touched inside _lifespan and
+    # _stats_refresh_loop, and _lifespan closes it — so a TestClient used
+    # WITHOUT its context manager never ran the lifespan and therefore never
+    # closed a watcher it had nonetheless created.
+    #
+    # The suite creates thousands of apps that way. Each leaked one inotify
+    # instance and one observer thread. Two consequences, one cause: the box's
+    # 512 inotify instances ran out (OSError EMFILE across the serve tier),
+    # and the accumulated threads eventually starved an xdist worker of C
+    # stack during pydantic-core's deeply-recursive schema generation,
+    # SEGFAULTING the worker. pytest then blamed whichever test was running,
+    # so this presented for weeks as an unreproducible flake in unrelated
+    # tests.
+    #
+    # _stats_refresh_loop already carries this exact rule for its own thread.
+    # This applies it to the watcher.
+    _watcher_holder: list[Any] = []
+
+    def _get_watcher() -> Any:
+        """Construct the CapsuleWatcher on first use, once per app."""
+        if not _watcher_holder:
+            from novafabric.serve.capsule_watcher import (  # noqa: PLC0415
+                CapsuleWatcher as _CapsuleWatcher,
+            )
+
+            _watcher_holder.append(_CapsuleWatcher(capsule_dir, db_path=_db_path))
+        return _watcher_holder[0]
+
+    def _close_watcher_if_created() -> None:
+        """Close only a watcher that was actually built — never build one to close it."""
+        if _watcher_holder:
+            _watcher_holder[0].close()
 
     def _stats_refresh_loop(stop: threading.Event) -> None:  # runs in a daemon thread
         """Refresh stats cache every 30 s and publish new runs to the SSE bus.
@@ -725,7 +811,7 @@ def create_app(
                 data = _compute_stats()
                 _stats_cache.set(data)
                 # Scale-S3: incremental index update via CapsuleWatcher.
-                _watcher.poll_once()
+                _get_watcher().poll_once()
                 # Watermark-based new-run detection: per-tick cost is bounded
                 # by rows at/after the newest seen timestamp, not index size.
                 from novafabric.registry.store import get_connection, init_schema  # noqa: PLC0415
@@ -929,6 +1015,90 @@ def create_app(
 
     # ---------- B-1: cursor-based search endpoint ----------
 
+    def _content_scope_search(
+        *,
+        scope: str,
+        q: str | None,
+        limit: int,
+        since: str | None,
+        until: str | None,
+        status: str | None,
+    ) -> Any:
+        """`scope=content|all` handler for /api/runs/search (ADR-0204 P1).
+
+        Additive: `scope=meta` (or absent) never reaches this function.
+        FTS5-unavailable environments degrade to a 501 error envelope for
+        content scopes only — metadata search is unaffected.
+        """
+        from novafabric.query.content_index import (  # noqa: PLC0415
+            SNIPPET_MARKERS,
+            ContentIndexUnavailableError,
+            ContentSearchError,
+            search_content,
+        )
+        from novafabric.registry.store import get_connection, init_schema  # noqa: PLC0415
+
+        if not q or not q.strip():
+            raise HTTPException(
+                status_code=400,
+                detail=f"scope={scope} requires a non-empty q parameter",
+            )
+        conn = get_connection(db_path)
+        try:
+            init_schema(conn)
+            try:
+                hits = search_content(
+                    conn, q, limit=limit,
+                    since=since, until=until, status=status,
+                )
+            except ContentIndexUnavailableError as exc:
+                return JSONResponse(
+                    status_code=501,
+                    content={"error": {
+                        "code": "fts5_unavailable", "message": str(exc),
+                    }},
+                )
+            except ContentSearchError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+            items: list[dict[str, Any]] = [
+                {
+                    "run_id": h.run_id,
+                    "created_at": h.created_at,
+                    "status": h.status,
+                    "matches": [
+                        {
+                            "stream": m.stream,
+                            "ref": m.ref,
+                            "line_no": m.line_no,
+                            "snippet": m.snippet,
+                        }
+                        for m in h.matches
+                    ],
+                    "matches_truncated": h.matches_truncated,
+                }
+                for h in hits
+            ]
+            if scope == "all":
+                # Metadata hits follow content hits, deduplicated by run_id,
+                # in the existing newest-first order (no `matches` array).
+                seen = {item["run_id"] for item in items}
+                meta_page, _ = _query_runs_cache(
+                    conn, limit=limit, offset=0,
+                    since=since, until=until, status=status, q=q,
+                )
+                items.extend(
+                    r for r in meta_page if r.get("run_id") not in seen
+                )
+        finally:
+            conn.close()
+        return {
+            "items": items,
+            "next_cursor": None,
+            "total_approx": len(items),
+            "snippet_markers": list(SNIPPET_MARKERS),
+        }
+
     @app.get("/api/runs/search", dependencies=[Depends(verify_token)])
     async def search_runs_cursor(
         cursor: str | None = Query(default=None, description="Opaque cursor from previous response"),  # noqa: E501
@@ -937,14 +1107,32 @@ def create_app(
         status: str | None = Query(default=None, description="Filter by run status"),
         since: str | None = Query(default=None),
         until: str | None = Query(default=None),
-    ) -> dict[str, Any]:
+        scope: str = Query(
+            default="meta",
+            pattern="^(meta|content|all)$",
+            description="meta = run_id/command matching (default, unchanged); "
+            "content = FTS5 search over redacted capsule text (ADR-0204, "
+            "experimental); all = merged, content-ranked first",
+        ),
+    ) -> Any:
         """Cursor-based run listing.
 
         The cursor encodes (created_at, run_id) from the last item of the
         previous page. Items are ordered newest-first. Pass the returned
         ``next_cursor`` value as ``cursor`` to fetch the next page.
+
+        ``scope=content`` / ``scope=all`` (ADR-0204, experimental) search the
+        redacted capsule text via the registry's FTS5 content index; content
+        results are rank-ordered and not cursor-paginated (``next_cursor`` is
+        always null for those scopes in v0).
         """
         from novafabric.registry.store import get_connection, init_schema  # noqa: PLC0415
+
+        if scope != "meta":
+            return _content_scope_search(
+                scope=scope, q=q, limit=limit,
+                since=since, until=until, status=status,
+            )
         _conn = get_connection(db_path)
         init_schema(_conn)
         try:
@@ -1547,14 +1735,25 @@ def create_app(
     # ---------- Evidence list / detail (GET — read-only) ----------
 
     @app.get("/api/evidence", dependencies=[Depends(verify_token)])
-    async def list_evidence_endpoint() -> dict[str, Any]:
-        bundles = _list_evidence_bundles()
-        return {"bundles": bundles, "count": len(bundles)}
+    async def list_evidence_endpoint(
+        limit: int = Query(_EVIDENCE_LIST_MAX, ge=1, le=_EVIDENCE_LIST_MAX),
+    ) -> dict[str, Any]:
+        # S3 scale slice: bound the per-zip manifest reads so a huge evidence
+        # directory can't make this endpoint open every archive on every call.
+        capped = clamp_limit(limit, _EVIDENCE_LIST_MAX)
+        bundles, total = _list_evidence_bundles(limit=capped)
+        return {
+            "bundles": bundles,
+            "count": len(bundles),
+            "total": total,
+            "truncated": total > len(bundles),
+        }
 
     @app.get("/api/evidence/{bundle_id}/download", dependencies=[Depends(verify_token)])
     async def download_evidence_endpoint(bundle_id: str) -> Any:
         from fastapi.responses import FileResponse
 
+        _validate_bundle_id(bundle_id)
         override = os.environ.get("NOVAFABRIC_EVIDENCE_DIR")
         evidence_dir = Path(override) if override else Path.home() / ".novafabric" / "evidence"
         zip_path = evidence_dir / f"{bundle_id}.zip"
@@ -1568,11 +1767,11 @@ def create_app(
 
     @app.get("/api/evidence/{bundle_id}", dependencies=[Depends(verify_token)])
     async def get_evidence_detail_endpoint(bundle_id: str) -> dict[str, Any]:
-        import base64
         import hashlib
         import json as _json
         import zipfile
 
+        _validate_bundle_id(bundle_id)
         override = os.environ.get("NOVAFABRIC_EVIDENCE_DIR")
         evidence_dir = Path(override) if override else Path.home() / ".novafabric" / "evidence"
         zip_path = evidence_dir / f"{bundle_id}.zip"
@@ -1651,8 +1850,7 @@ def create_app(
         import json as _json
         import zipfile
 
-        if "/" in bundle_id or ".." in bundle_id:
-            raise HTTPException(status_code=400, detail="invalid bundle_id")
+        _validate_bundle_id(bundle_id)
 
         override = os.environ.get("NOVAFABRIC_EVIDENCE_DIR")
         evidence_dir = Path(override) if override else Path.home() / ".novafabric" / "evidence"
@@ -2009,9 +2207,21 @@ def create_app(
     # ---------- audit log ----------
 
     @app.get("/api/audit", dependencies=[Depends(verify_token)])
-    async def list_audit(limit: int = Query(default=200, ge=1, le=2000)) -> dict[str, Any]:
-        entries = audit.read_recent(limit)
-        return {"count": len(entries), "entries": entries}
+    async def list_audit(
+        limit: int = Query(default=200, ge=1, le=2000),
+        cursor: int | None = Query(
+            default=None,
+            ge=0,
+            description="Byte-offset cursor from a previous response's next_cursor",
+        ),
+        action: str | None = Query(
+            default=None, description="Exact-match filter on the audit action field"
+        ),
+    ) -> dict[str, Any]:
+        entries, next_cursor = audit.read_recent_tail(
+            limit, before_offset=cursor, action=action
+        )
+        return {"count": len(entries), "entries": entries, "next_cursor": next_cursor}
 
     # ---------- legal holds (ADR-0031) ----------
     # Migrated to serve/routers/holds.py in the first ADR-0183 strangler wave.
@@ -2031,6 +2241,54 @@ def create_app(
     # Read-only, secret-free projection for the dashboard admin console.
     # Mutations (create/revoke/rotate) live behind server /v0/api-keys.
     app.include_router(build_admin_keys_router(verify_token, db_path=db_path))
+
+    # ---------- dashboard query panel (P4, CLI-parity program Phase C) ----------
+    # Wraps the ADR-0129 query DSL's own execution path; no new grammar.
+    app.include_router(build_query_panel_router(verify_token, capsule_dir=capsule_dir))
+
+    # ---------- forensics timeline (P5, CLI-parity program Phase C) ----------
+    # Wraps forensics/timeline.py::merge_timeline over the run's own sealed
+    # capsule; resolve_capsule injected so this module has no serve.app import.
+    app.include_router(
+        build_forensics_router(
+            verify_token, capsule_dir=capsule_dir, resolve_capsule=_resolve_capsule
+        )
+    )
+
+    # ---------- cost-analytics trio (P6, CLI-parity program Phase C) ----------
+    # Three pure POST compute endpoints wrapping the nova cost attribute /
+    # fairness / usage-breakdown cores; descriptive analytics, no capsule IO.
+    app.include_router(build_cost_trio_router(verify_token))
+
+    # ---------- backup-set status listing (P7, CLI-parity program Phase C) ----
+    # Read-only listing of NOVA_BACKUP_DIR archives (manifest-claimed, not
+    # verified); returns {detected: false} when unconfigured, like collector.
+    app.include_router(build_backup_status_router(verify_token))
+
+    # ---------- maintenance safe mutations (P8, Phase D) ----------
+    # Idempotent, confirm-gated recompute (runs reindex); APIRouter module per
+    # the ADR-0183 route freeze rather than an inline serve/app route.
+    app.include_router(
+        build_maintenance_router(verify_token, capsule_dir=capsule_dir, db_path=db_path)
+    )
+
+    # ---------- report catalog + HTML/PDF export (ADR-0200/0201) ----------
+    # Registry-driven artifact export with inline-SVG charts; PDF degrades to
+    # 501 + install hint when the optional WeasyPrint extra is absent.
+    app.include_router(
+        build_report_export_router(
+            verify_token, capsule_dir=capsule_dir, db_path=db_path
+        )
+    )
+
+    # ---------- trust surfaces (ADR-0173 / ADR-0174 read views) ----------
+    # Radar + redaction X-Ray per capsule. A router, not inline routes, per
+    # the ADR-0183 freeze — the inline-count guard enforces it.
+    app.include_router(
+        build_trust_surfaces_router(
+            verify_token, capsule_dir=capsule_dir, resolve_capsule=_resolve_capsule
+        )
+    )
 
     # ---------- Layer B mutations (per ADR-0027 §1) ----------
     # Safe mutations only: registry writes, eval runs, evidence exports.
@@ -3820,7 +4078,6 @@ def create_app(
         render a clean "no policy yet" empty state without logging a browser
         console error on every load. ``nova policy sign`` creates one.
         """
-        import base64
         import json as _json
         import sqlite3
 
@@ -4537,47 +4794,134 @@ def create_app(
             ),
         }
 
-    # ---------- DB-ERA-1: GDPR erasure routes (v0.18.0) ----------
+    # ---------- DB-ERA-1: GDPR erasure routes (real execution per ADR-0210) ----------
+    # v0.18.0 shipped these as silent no-op stubs (always-PENDING / always-[]).
+    # ADR-0210 P1 wires them to the real ADR-0069 crypto-shred machinery via a
+    # persisted queue in $NOVAFABRIC_HOME/erasure.db. Experimental.
 
     def _cap003_enabled() -> bool:
         # Default true — OQ-01 resolved by ADR-0069 (AES-256-GCM DEK lifecycle).
         return os.environ.get("NOVA_CAP003_ENABLED", "true").lower() == "true"
 
-    @app.post("/api/compliance/erasure/request", dependencies=[Depends(verify_token)])
-    async def erasure_request_endpoint(body: dict[str, Any]) -> dict[str, Any]:
-        """Queue a GDPR erasure request (DB-ERA-1, cap-003). Active — OQ-01 resolved by ADR-0069."""
-        subject_id = body.get("subject_id") or body.get("run_id")
-        if not isinstance(subject_id, str) or not subject_id.strip():
+    @app.post("/api/compliance/erasure/request")
+    async def erasure_request_endpoint(
+        body: ErasureRequestBody = Body(...),
+        actor_fp: str = Depends(verify_token),
+    ) -> Any:
+        """Execute a GDPR Art.17 erasure request via DEK crypto-shredding (ADR-0210).
+
+        Persists a PENDING row in $NOVAFABRIC_HOME/erasure.db *before* execution,
+        then executes synchronously through the same code path as `nova pii erase`
+        (DEKStore.erase_subject) and returns the terminal state with a receipt +
+        receipt_sha256. Safe-mutations gated: requires `confirmed: true`.
+        A duplicate POST while a request is PENDING re-attaches to it (idempotency
+        + crash recovery, ADR-0210 D4). Experimental.
+        """
+        from novafabric._paths import nova_home
+        from novafabric.audit import AuditEventType, AuditLog
+        from novafabric.pii import erasure_queue as eq
+
+        if not body.confirmed:
+            raise HTTPException(
+                status_code=400,
+                detail="confirmation required (set confirmed=true)",
+            )
+        if not _cap003_enabled():
+            # Fail-closed (ADR-0210 D6): a disabled compliance surface is a
+            # structured 409, never a success envelope.
+            return JSONResponse(
+                status_code=409,
+                content={"error": "cap003_disabled", "cap003_enabled": False},
+            )
+        if not body.subject_id.strip():
             raise HTTPException(
                 status_code=422,
-                detail="body must include subject_id or run_id (string)",
+                detail="subject_id must be a non-empty string",
             )
-        reason = body.get("reason", "gdpr_art_17")
+
+        home = nova_home()
+        queue = eq.open_erasure_queue(home)
+        try:
+            record = queue.find_pending(body.subject_id)
+            reattached = record is not None
+            if record is None:
+                capsule_ids = body.capsule_ids
+                if capsule_ids is None:
+                    # Coarse manifest scan — CLI parity; clients SHOULD pass
+                    # explicit capsule_ids (see spec rest-erasure-v0).
+                    from novafabric.cli.pii_erase import (
+                        _find_capsule_ids_for_subject,
+                    )
+
+                    capsule_ids = _find_capsule_ids_for_subject(
+                        body.subject_id, capsule_dir
+                    )
+                record = queue.create_request(
+                    subject_id=body.subject_id,
+                    capsule_ids=capsule_ids,
+                    reason=body.reason,
+                    requested_by=actor_fp,
+                )
+            record = eq.execute_request(queue, record, home=home)
+        finally:
+            queue.close()
+
+        subject_hash = record.subject_sha256
+        audit.append(
+            action="erasure_request",
+            args={
+                "subject_sha256": subject_hash,
+                "request_id": record.request_id,
+                "state": record.state,
+            },
+            cli_equivalent=f"nova pii erase sha256:{subject_hash[:12]}",
+            actor_token_fp=actor_fp,
+            result="ok" if record.state != eq.STATE_FAILED else "error",
+            error=record.error_class,
+        )
+        try:
+            AuditLog(eq.erasure_audit_log_path()).append(
+                event_type=AuditEventType.ERASURE_REQUEST,
+                actor=f"dashboard:{actor_fp}",
+                resource_id=record.request_id,
+                details={
+                    "request_id": record.request_id,
+                    "subject_sha256": subject_hash,
+                    "state": record.state,
+                    "receipt_sha256": record.receipt_sha256,
+                    "error_class": record.error_class,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 — the erasure already happened;
+            # the queue row is the durable record. Never 500 after a real erase.
+            logger.warning("erasure audit-log append failed (non-fatal): %s", exc)
         return {
             "ok": True,
-            "subject_id": subject_id,
-            "reason": reason,
-            "state": "PENDING" if _cap003_enabled() else "FEATURE_FLAG_OFF",
-            "cap003_enabled": _cap003_enabled(),
-            "note": (
-                "OQ-01 resolved by ADR-0069. Use `nova pii erase <subject_id>` "
-                "for full DEK-destruction erasure. REST endpoint is informational stub."
-            ),
+            "cap003_enabled": True,
+            "reattached": reattached,
+            "request": record.api_view(),
         }
 
     @app.get("/api/compliance/erasure/status", dependencies=[Depends(verify_token)])
     async def erasure_status_endpoint(
         subject_id: str | None = Query(default=None),
+        limit: int = Query(default=200, ge=1, le=1000),
     ) -> dict[str, Any]:
-        """List GDPR erasure request status (DB-ERA-1). Stub."""
+        """List persisted GDPR erasure requests from erasure.db (ADR-0210, read-only)."""
+        from novafabric.pii import erasure_queue as eq
+
+        db_path = eq.erasure_db_path()
+        if not db_path.exists():
+            # Honest empty: the queue has never been created. Never a 500.
+            return {"cap003_enabled": _cap003_enabled(), "requests": []}
+        queue = eq.ErasureQueue(db_path)
+        try:
+            rows = queue.list_requests(subject_id=subject_id, limit=limit)
+        finally:
+            queue.close()
         return {
-            "subject_id": subject_id,
             "cap003_enabled": _cap003_enabled(),
-            "requests": [],
-            "note": (
-                "Erasure tracking requires ClickHouse + S3 GOVERNANCE mode (cap-003). "
-                "Returns empty list until that infrastructure is wired in."
-            ),
+            "requests": [r.api_view() for r in rows],
         }
 
     # ---------- DB-STG-1: Storage operations routes (v0.18.0) ----------
@@ -4705,7 +5049,7 @@ def create_app(
                     str(Path.home() / ".novafabric" / "evidence.duckdb"),
                 )
             )
-            _end = _dt.datetime.utcnow()
+            _end = _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None)
             _start = _end - _dt.timedelta(days=days)
 
             def _duckdb_query() -> dict[str, Any]:
@@ -5202,11 +5546,17 @@ def create_app(
             return {"ok": False, "agent_id": agent_id, "error": str(exc)}
 
     @app.get("/api/kg/topology", dependencies=[Depends(verify_token)])
-    async def kg_topology_endpoint(max_nodes: int = 500) -> dict[str, Any]:
+    async def kg_topology_endpoint(
+        max_nodes: int = Query(default=500, ge=1, le=5000),
+        max_edges: int = Query(default=8000, ge=1, le=50000),
+    ) -> dict[str, Any]:
         """Return all KG nodes and edges for multi-layer topology visualization.
 
         Returns node/edge lists with type annotations and count breakdowns per layer.
-        Caps at *max_nodes* total nodes (default 500) to protect dashboard rendering.
+        Caps at *max_nodes* nodes and *max_edges* edges (S5 graph guard, ADR-0199):
+        the caps are bounded server-side so a caller cannot request an unbounded
+        graph, and edges to capped-out nodes are dropped rather than dangling. The
+        response's ``truncated``/``truncated_reason`` say when a guard fired.
         Response is cached for 30 seconds (TOPOLOGY_CACHE_TTL) to reduce KuzuDB load.
         """
         nonlocal _topology_cache_data, _topology_cache_at
@@ -5233,7 +5583,7 @@ def create_app(
             }
         try:
             store = KGStore(db_path=path)
-            graph = store.get_topology_graph(max_nodes=max_nodes)
+            graph = store.get_topology_graph(max_nodes=max_nodes, max_edges=max_edges)
             result: dict[str, Any] = {"ok": True, **graph}
             _topology_cache_data = result
             _topology_cache_at = time.monotonic()
@@ -5802,7 +6152,6 @@ def create_app(
     @app.post("/api/compliance/audit/bundle", dependencies=[Depends(verify_token)])
     async def compliance_audit_bundle_endpoint(body: dict[str, Any]) -> dict[str, Any]:
         """Export a compliance evidence bundle as base64-encoded ZIP (nova audit bundle)."""
-        import base64
         import io
         import json as _json
         import zipfile
@@ -6112,7 +6461,6 @@ def create_app(
         body: dict[str, Any] = Body(...),
     ) -> dict[str, Any]:
         """Export a capsule as W3C RO-Crate v1.1 ZIP (base64-encoded)."""
-        import base64  # noqa: PLC0415
         import tempfile  # noqa: PLC0415
 
         run_id: str = body.get("run_id", "")
@@ -7470,14 +7818,24 @@ def create_app(
         return view
 
     @app.get("/api/incidents", dependencies=[Depends(verify_token)])
-    async def api_incidents_list() -> dict[str, Any]:
-        """List all incidents with their nearest Art. 73 deadline."""
+    async def api_incidents_list(
+        limit: int = Query(_INCIDENT_LIST_MAX, ge=1, le=_INCIDENT_LIST_MAX),
+    ) -> dict[str, Any]:
+        """List the newest incidents with their nearest Art. 73 deadline.
+
+        S3 scale slice: the fetch + JSON parse is bounded in SQL via
+        ``list_recent``; ``total`` is a cheap COUNT so the caller can tell
+        when older incidents were not returned.
+        """
         try:
             from novafabric.compliance.incident.store import IncidentStore
 
+            capped = clamp_limit(limit, _INCIDENT_LIST_MAX)
             with IncidentStore() as store:
-                incidents = store.list_all()
-            return {"ok": True, "count": len(incidents),
+                incidents = store.list_recent(capped)
+                total = store.count()
+            return {"ok": True, "count": len(incidents), "total": total,
+                    "truncated": total > len(incidents),
                     "incidents": [_incident_view(i) for i in incidents]}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "incidents": [], "error": str(exc)}
@@ -7773,7 +8131,10 @@ def create_app(
             StaticFiles(directory=str(static_dir), html=True, check_dir=False),
             name="site",
         )
-    else:
+    elif not static_mounted_by_caller:
+        # Only claim the site is missing when nobody is going to mount it.
+        # Registering this unconditionally shadows a caller-mounted landing
+        # page forever, because Starlette matches routes in registration order.
         @app.get("/")
         async def serve_no_dashboard() -> dict[str, Any]:
             return {
@@ -7802,13 +8163,41 @@ def create_app(
         status: str | None = Query(default=None),
         agent: str | None = Query(default=None),
         format: str = Query(default="json"),
+        limit: int = Query(default=1000, ge=1, le=_reports.MAX_REPORT_ROWS),
+        cursor: str | None = Query(default=None),
     ) -> Any:
-        cols, rows = _reports.report_run_history(
-            capsule_dir, from_ts, to_ts, status, agent, db_path=db_path
-        )
         if format == "csv":
-            return _csv_response(cols, rows, "run-history.csv")
-        return {"columns": cols, "rows": rows, "count": len(rows)}
+            # Streamed in keyset pages — bounded memory at any store size
+            # (ADR-0199 rule 1).
+            return StreamingResponse(
+                _reports.iter_run_history_csv(
+                    capsule_dir, from_ts, to_ts, status, agent, db_path=db_path
+                ),
+                media_type="text/csv",
+                headers={
+                    "Content-Disposition": 'attachment; filename="run-history.csv"'
+                },
+            )
+        after = _decode_cursor(cursor) if cursor else None
+        cols, rows, next_after, total = _reports.report_run_history_page(
+            capsule_dir,
+            from_ts,
+            to_ts,
+            status,
+            agent,
+            db_path=db_path,
+            limit=limit,
+            after=after,
+        )
+        return {
+            "columns": cols,
+            "rows": rows,
+            "count": len(rows),
+            "total": total,
+            "next_cursor": (
+                _encode_cursor(next_after[0], next_after[1]) if next_after else None
+            ),
+        }
 
     @app.get("/api/reports/cost-burn", dependencies=[Depends(verify_token)])
     async def report_cost_burn(
@@ -7828,7 +8217,9 @@ def create_app(
         resolution: str = Query(default="1d"),
         format: str = Query(default="json"),
     ) -> Any:
-        cols, rows = _reports.report_throughput(capsule_dir, from_ts, to_ts, resolution)
+        cols, rows = _reports.report_throughput(
+            capsule_dir, from_ts, to_ts, resolution, db_path=db_path
+        )
         if format == "csv":
             return _csv_response(cols, rows, "throughput.csv")
         return {"columns": cols, "rows": rows, "count": len(rows)}
@@ -7839,7 +8230,9 @@ def create_app(
         to_ts: str | None = Query(default=None, alias="to"),
         format: str = Query(default="json"),
     ) -> Any:
-        cols, rows = _reports.report_executive_summary(capsule_dir, from_ts, to_ts)
+        cols, rows = _reports.report_executive_summary(
+            capsule_dir, from_ts, to_ts, db_path=db_path
+        )
         if format == "csv":
             return _csv_response(cols, rows, "executive-summary.csv")
         return {"columns": cols, "rows": rows, "count": len(rows)}
@@ -7912,6 +8305,19 @@ def create_app(
         if format == "csv":
             return _csv_response(cols, rows, "release-comparison.csv")
         return {"columns": cols, "rows": rows, "count": len(rows)}
+
+    # ---------- generic compliance-export registry (ADR-0200 §2) ----------
+    # One router + one dynamic panel for the Wave-A CLI-only exporters; every
+    # export is audit-logged with its cli_equivalent (disclosure artifacts
+    # leave the trust boundary). Audit sink injected, not imported.
+    # Registered LAST: its POST /api/compliance/export/{kind} path parameter
+    # must not shadow the bespoke literal routes (rocrate, c2pa, hipaa-proof,
+    # ...) — Starlette matches routes in registration order.
+    app.include_router(
+        build_compliance_exports_router(
+            verify_token, capsule_dir=capsule_dir, audit_log=audit.append
+        )
+    )
 
     return app
 

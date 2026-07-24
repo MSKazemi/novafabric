@@ -6,7 +6,11 @@ procedures that **work today** with standard tools; the second half covers the
 ([ADR-0181](../../design/adr/0181-backup-restore-dr-tooling.md), accepted
 2026-07-16 — `nova backup create`/`verify`, `nova restore` for the **local
 profile and the `--profile pg` create path work today (experimental)**;
-**restore of a pg-dump set remains the `pg_restore` runbook, §1.2**).
+[ADR-0217](../../design/adr/0217-automated-pg-restore.md) automates the
+pg_restore path — **`nova restore <set> --dsn …`**, profile auto-detected from
+the verified manifest (experimental), §1.2;
+[ADR-0211 Part B](../../design/adr/0211-pg-restore-and-schema-skew-guard.md)
+adds the startup schema-skew guard and `nova db upgrade --track`).
 
 What a NovaFabric deployment consists of, and who owns its durability:
 
@@ -41,22 +45,53 @@ the writer, use SQLite's online backup (`sqlite3 ~/.novafabric/registry.db
 
 ### 1.2 Server mode (Postgres)
 
-**Status: works today** (standard Postgres operations — NovaFabric adds nothing
-and requires nothing special).
+**Backup: works today** (standard Postgres operations). **Automated restore:
+experimental** (ADR-0211).
 
 ```bash
+# Backup — either the standard tool directly:
 pg_dump --format=custom --dbname="$NOVA_DSN" \
         --file=novafabric-$(date +%F).dump
+# …or the verified backup set (adds manifest + hashes + optional DSSE,
+# plus the pg_dump version and per-table row counts used by restore
+# verification — ADR-0211 D6):
+nova backup create --profile pg --dsn "$NOVA_DSN" -o pg-nightly.tar.gz
 ```
 
-- Use `pg_restore --clean --if-exists` into a freshly created database.
+**Restore — the automated command (experimental, ADR-0217):**
+
+```bash
+nova restore pg-nightly.tar.gz --dsn "$TARGET_DSN"
+```
+
+One command runs the whole drill with per-step receipts — the profile is
+auto-detected from the verified manifest: verify the set (no skip flag) →
+pre-flight (target reachable; **non-empty target refused** without `--force`,
+which first takes a `db.pre-restore.pgdump` safety dump) →
+`pg_restore --clean --if-exists --single-transaction` (failure rolls back —
+target unchanged) → `alembic upgrade head` → verification (row counts vs the
+manifest, RLS re-applied and proven, schema-skew
+comparator `ok`, storage check). Exit codes: `0` success · `1` a step failed
+· `2` usage error · `3` set invalid/wrong profile · `4` tooling
+missing/incompatible · `5` target-state refusal. The DSN is treated as a
+secret throughout — never logged, scrubbed from any surfaced stderr.
+
+Home members in the set (registry snapshot, capsules) are restored only when
+you pass `--home PATH` — a pg restore never writes the local
+`~/.novafabric` implicitly.
+
+**Manual fallback (works today, standard Postgres):**
+
+- `pg_restore --clean --if-exists` into a freshly created database.
 - **PITR** is delegated to Postgres: enable WAL archiving /
   `restore_command`, or use your managed provider's point-in-time recovery.
   NovaFabric deliberately does not reimplement this
   ([ADR-0181](../../design/adr/0181-backup-restore-dr-tooling.md)).
-- After restore, run migrations to the current head if the binary is newer
-  than the dump: `nova db upgrade` (check state first with
-  `nova doctor --check-storage`).
+- After a manual restore, migrate the **registry track** to head:
+  `nova db upgrade --track registry --backend postgres` (ADR-0211 D5 — a bare
+  `nova db upgrade` migrates the separate MetadataStore tier, **not** the
+  database you just restored). Check state before and after with
+  `nova doctor --check-storage`.
 
 ### 1.3 WORM object stores
 
@@ -109,6 +144,37 @@ Treat any verification failure as a failed restore, not a warning.
 | Team server (Postgres) | `pg_dump` nightly + WAL archiving (PITR) | restore-drill quarterly, §1.5 after every drill |
 | Regulated | provider PITR + replicated WORM bucket + off-site `pg_dump` | scheduled restore drills with evidence retained |
 
+### 1.7 Instance transfer — verified capsule-level export/import
+
+**Status: experimental** (ADR-0141 export + ADR-0207 import, P1).
+
+For moving *capsules* between instances (DR restore of the capsule store,
+air-gapped transfer, laptop → team-server migration) NovaFabric has a signed,
+verified interchange path that is stronger than tarring directories:
+
+```bash
+# On the source instance: signed batch export (+ public key for the receiver)
+nova export-blob --dest ./exports/dr-2026-07 --since 2026-07-01 \
+    --public-key-out export.pub.pem
+
+# On the target instance: verify + classify first, with zero writes
+nova import ./exports/dr-2026-07 --public-key export.pub.pem --dry-run
+
+# Then the real, receipted import (idempotent — safe to re-run)
+nova import ./exports/dr-2026-07 --public-key export.pub.pem
+```
+
+The import is fail-closed (a tampered or incomplete batch refuses whole),
+idempotent by content address (interrupted imports resume on re-run), never
+overwrites a diverged local capsule (collisions are reported, exit 5), and
+reindexes lineage + the dashboard runs cache automatically. Every run — dry
+runs and refusals included — leaves a receipt under
+`$NOVAFABRIC_HOME/import-receipts/` plus an audit entry, so a scheduled
+`--dry-run` doubles as a restore drill with retained evidence. See the
+[CLI reference](../cli-reference.md#nova-import-source) for exit codes and
+flags. This transfers **capsules only** — the asset registry, holds, and
+policies still travel via the database backup paths above.
+
 ---
 
 ## Part 2 — `nova backup` tooling
@@ -134,7 +200,7 @@ Governed by [ADR-0181](../../design/adr/0181-backup-restore-dr-tooling.md)
 - `nova backup verify <set.tar.gz>` — offline integrity check: every member's
   SHA-256 against the manifest plus the DSSE signature when present. Exit 1 on
   any mismatch. No live deployment, network, or private keys required.
-- `nova restore <set.tar.gz> [--home PATH] [--force]` — **local profile only**:
+- `nova restore <set.tar.gz> [--home PATH] [--force]` — **local profile**:
   runs the spec's normative order — verify the set (no flag to skip it) →
   prepare the home (a non-empty home is refused without `--force`; with it,
   existing data is moved aside into a timestamped `.pre-restore-…/` directory,
@@ -144,18 +210,67 @@ Governed by [ADR-0181](../../design/adr/0181-backup-restore-dr-tooling.md)
   cannot be resurrected from an older backup) → the §1.5 verification chain
   (doctor storage check + `seal log verify` when a Merkle log exists). The
   restore reports ok **only when verification passes**; exit 1 otherwise.
+- `nova restore <set.tar.gz> --dsn <target> [--force] [--home PATH]` —
+  **pg-dump profile (experimental, ADR-0217)**: the automated §1.2 restore,
+  auto-detected from the manifest — verified set, pre-flight + safety dump,
+  single-transaction `pg_restore`, alembic-to-head, row-count + RLS + storage
+  verification, per-step receipts. Home members in the set restore alongside
+  (with crypto-shred replay, same as the local path).
 
-**Honest limits (this slice):**
+**Coverage (ADR-0216 — works today):** the `local` profile now backs up
+**every persistent local store**: `registry.db`, `capsules/`, `runs/`,
+`incidents.db`, `metadata.db`, `dek.db` (sensitive; restored 0600),
+`tsa_nonces.db`, `novaseal-merkle.db` (when local — a Postgres-backed seal
+log is skipped with a signed coverage row and covered by the server backup),
+`seal/ratchet/` (sensitive; epoch regression is burned on restore),
+`dashboard.duckdb` (DuckDB-native snapshot; skipped honestly when a live
+`nova serve` holds the writer lock), `dashboard-audit.jsonl`, `spool/`, the
+hash-chained audit log, and a secret-redacted config. The signed manifest
+carries a **coverage table** — absences and skips are recorded evidence,
+never silence.
 
-- **Restore of a `pg-dump` set is not automated** — `nova restore` refuses it
-  and points here: restore a Postgres deployment with
-  `pg_restore --clean --if-exists` per §1.2, then run `nova db upgrade` and
-  the §1.5 verification chain.
-- The pg create path is verified with a contract test (fake `pg_dump`);
-  **verification against a live Postgres remains infra-gated** — run a restore
-  drill against a real DSN before relying on it.
-- `--profile manifest-only|full` for **WORM** deployments (object-store hash
-  listing + manifest-driven rebuild) remains **future design**.
+> **Custody note:** because `dek.db` (raw per-subject DEKs) travels in the
+> default set, a backup set is a **sensitive artifact** — store it encrypted
+> at rest with restricted access. Crypto-shred replay on restore guarantees
+> shredded subjects stay shredded regardless (the replay also reads a
+> moved-aside live audit log, so shreds applied *after* the backup survive a
+> `--force` restore of an older set).
 
-Keys remain excluded by design in every profile, shipped or planned. For
-Postgres deployments, Part 1 remains the supported restore procedure.
+**Key policy (ADR-0216 D4):** signing keys (`keyring`, `novaseal.yaml` +
+PEMs) stay excluded by default. A full-DR set needs the **dual opt-in**:
+`nova backup create --include-keys` AND `nova restore --restore-keys`. Both
+commands print custody warnings; see `docs/novaseal-key-management.md`.
+
+**Automated pg restore (ADR-0217 — works today):** `nova restore` now
+restores `pg-dump` sets: a non-empty target DB is refused without `--force`
+(which first writes `db.pre-restore.pgdump` into the `.pre-restore-…/`
+directory), then `pg_restore --clean --if-exists --single-transaction
+--no-owner --no-privileges` (failure rolls back — target unchanged), `alembic
+upgrade head`, manifest-anchored row-count verification, and RLS
+re-application + proof. The manual §1.2 procedure remains the fallback for
+very large dumps (`--jobs` parallel restore is incompatible with
+`--single-transaction`).
+
+**Manifest-only profile (ADR-0216 D6 — works today):** `nova backup create
+--profile manifest --backend s3` records, per (tenant, run), the chain head
+version + head-commit hash (hash linkage pins the whole chain — the
+countermeasure for chain logs not being WORM-locked), the newest checkpoint,
+and a secret-free backend fingerprint. Create **refuses while the local WAL
+has pending un-chained uploads** (`--allow-pending-wal` overrides and records
+the gap). Restore verifies every pinned head as an *ancestor* of the live
+chain, rebuilds the metadata DB from the chain (ADR-0175 path), and exits
+**2** when the bucket is unreachable. Note there is no global point-in-time
+cut across runs — each chain is individually consistent (append-only makes
+this safe).
+
+**Honest limits:**
+
+- Live-Postgres verification of the automated pg restore is exercised by a
+  testcontainers integration test; on hosts without Docker + the Postgres
+  client tools it skips — **run a restore drill against a real DSN before
+  relying on it**.
+- `--single-transaction` holds the whole dump in one transaction — for very
+  large DBs use the manual §1.2 procedure with `--jobs`.
+- Ratchet epoch-regression detection depends on the restored epoch registry;
+  if the registry itself was lost, regression is undetectable — operators
+  SHOULD rotate once after any restore.

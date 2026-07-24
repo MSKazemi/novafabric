@@ -126,9 +126,10 @@ ingest only (the capsule write routes):
 Usage is **derived from the existing capsule store** (directories holding a
 `capsule.yaml`, plus every file's size) — no new ledger to reconcile — and
 cached with a short monotonic TTL (5 s) so hot ingest paths don't re-count
-the store per request. Quota audit events carry no key hash: scope is
-**per-deployment** in this slice; per-workspace scoping is deferred to an
-ADR-0178 follow-on.
+the store per request. Quota audit events carry no key hash: this global
+track is **per-deployment**; per-workspace budgets are a separate additive
+track (ADR-0208, §3 below, **experimental**) that reads metered counters
+instead of the store walk.
 
 ### Enabling
 
@@ -148,14 +149,90 @@ rate_limits:
 
 Hard limits must be ≥ their soft counterpart (validated at config load).
 
-## 3. What this feature is not
+## 3. Per-workspace budgets & usage metering
+
+**Status: experimental** ([ADR-0208](../../design/adr/0208-usage-metering-workspace-quotas.md);
+normative contract in `design/spec/usage-metering-v0.md`). Behind the same
+master switch (`rate_limits.enabled`); with the switch off there is no
+accounting, no middleware, and no new tables — zero behavior change.
+
+### Usage metering
+
+Every accepted capsule upload is attributed to a workspace at ingest and
+recorded in an append-only `usage_ledger` + transactional `usage_counters`
+in the registry DB (metrics: `capsules_created`, `bytes_stored` = unpacked
+size, `api_requests` via a bounded accumulator flushed at most once per
+`usage.flush_interval_s`). Attribution order: API-key workspace binding →
+the principal's single workspace membership → the `default` workspace —
+recorded on each row (`attribution = key|membership|default`), so
+unattributed usage is visible, not laundered. Counting is idempotent by
+construction: a retried upload hits the 409-duplicate path, and a replayed
+ledger insert is a no-op under the `(metric, ref)` unique index. Deleting a
+capsule (single or bulk, ADR-0206) appends **negative** ledger rows so
+budgets reflect reclaimed storage; capsules uploaded before metering shipped
+appear only in the derived `global`/`drift` figures.
+
+Monthly rollups freeze each finished period lazily at the first write of the
+next one (no cron) and are retention-bounded
+(`usage.rollup_retention_months`, default 24; raw ledger rows
+`usage.ledger_retention_months`, default 3).
+
+**Reporting — `GET /v0/usage`** (`?period=YYYY-MM`, default current):
+per-workspace metric totals, org rollups, and — for admin/auditor only — the
+`global` store-derived figures plus a `drift` block (derived minus metered).
+Other principals get a **filtered** response (their membership workspaces
+only) — filtering, not 403. Accounting is best-effort relative to the
+upload: a metering failure is logged + audited and never fails the write.
+
+### Per-workspace budgets
+
+An additive `workspaces` map inside the existing quota block; the global
+limits keep their exact meaning and both checks run (strictest wins).
+Enforcement reads the **metered** counters, not the store walk:
+
+```yaml
+rate_limits:
+  enabled: true
+  quota:
+    workspaces:              # ADR-0208; absent => byte-identical behavior
+      ml-platform:
+        max_capsules_soft: 1000
+        max_capsules_hard: 2000
+        max_bytes_soft: 0    # 0 = unlimited, per existing convention
+        max_bytes_hard: 0
+```
+
+Same ladder and contract: soft ⇒ write succeeds +
+`X-NovaFabric-Quota-Warning: <workspace>/<kind> <usage>/<limit>` (comma-
+joined after any global warning) + one audit event per (workspace, kind)
+per window; hard ⇒ `429 quota_exceeded` with an additive `workspace` field
+in `details`, no `Retry-After`. A config that names a workspace slug that
+does not exist is refused at startup. Alerting (ADR-0192): a hard rejection
+fires `ops.quota.breached` (critical, subject `quota:<workspace>:<kind>` —
+per-workspace dedup); the first soft crossing per window fires the same
+event at `warning` severity (subject suffixed `:soft`). Both are no-ops
+unless `NOVA_ALERTS_*` is configured.
+
+Env overrides: `NOVAFABRIC_SERVER_USAGE_{METERING_ENABLED,FLUSH_INTERVAL_S,`
+`ACCUMULATOR_MAX_ENTRIES,ROLLUP_RETENTION_MONTHS,LEDGER_RETENTION_MONTHS}`.
+`usage.metering_enabled: false` keeps rate limits on while switching
+accounting off.
+
+**Honest limits:** attribution consumes the ADR-0193 API-key workspace
+binding, which is *stored but not enforced* at request time — metering
+inherits that gap; this feature meters and scopes, it does **not** isolate
+the capsule store (ADR-0178 gap unchanged); `api_requests` counts are
+deliberately coarse (bounded accumulator, crash loses at most one interval).
+
+## 4. What this feature is not
 
 - **Not distributed.** Buckets and quota caches are in-process. If you run
   multiple server replicas (not the supported single-writer topology),
   limits apply per replica.
 - **Not applied to `nova serve`.** The dashboard app has no limiter.
-- **Not per-workspace.** Both tracks are deployment-scoped today; workspace
-  scoping arrives with the ADR-0178 model (**future design**).
+- **Not tenant isolation.** Per-workspace budgets and metering (§3) are
+  scoping and accounting on top of the shared capsule store — the ADR-0178
+  isolation gap is unchanged and Security-Architect gated.
 
 ---
 

@@ -127,6 +127,9 @@ class WatchdogBackend:
             except (FileNotFoundError, yaml.YAMLError):
                 continue
             upsert_run(conn, _manifest_to_summary(p, m))
+            # ADR-0204 (experimental): fail-open content indexing on ingest.
+            from novafabric.query.content_index import maybe_index_capsule  # noqa: PLC0415
+            maybe_index_capsule(conn, p, str(m.get("run_id", p.name)))
             inserted += 1
         return inserted
 
@@ -218,6 +221,9 @@ class CapsuleWatcher:
                 ).fetchone()
             )
             upsert_run(conn, _manifest_to_summary(p, m))
+            # ADR-0204 (experimental): fail-open content indexing on ingest.
+            from novafabric.query.content_index import maybe_index_capsule  # noqa: PLC0415
+            maybe_index_capsule(conn, p, str(run_id))
             conn.commit()
         finally:
             conn.close()

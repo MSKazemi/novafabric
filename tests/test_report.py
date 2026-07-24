@@ -210,3 +210,62 @@ def test_langfuse_adapter_returns_uri_with_env(
     uri = "langfuse://my-prompt"
     result = resolve_prompt_uri(uri)
     assert result == uri
+
+
+# ---------------------------------------------------------------------------
+# Report generator — HTML + PDF (ADR-0201)
+# ---------------------------------------------------------------------------
+
+
+def test_html_report_self_contained_with_chart(
+    tmp_db: Path, fixtures_dir: Path
+) -> None:
+    for fname in ("valid_model.yaml", "valid_agent.yaml"):
+        spec = validate_spec(fixtures_dir / fname)
+        register_asset(spec, fixtures_dir / fname, db_path=tmp_db)
+
+    html = generate_report("html", db_path=tmp_db)
+    assert html.startswith("<!DOCTYPE html>")
+    assert "NovaFabric Asset Inventory" in html
+    assert "<svg" in html  # assets-by-type bar chart
+    assert "report-data" in html  # embedded canonical JSON
+    for scheme in ("http://", "https://"):
+        assert scheme not in html  # self-contained, no external requests
+    assert "fraud-model" in html
+
+
+def test_html_report_empty_registry_no_chart(tmp_db: Path) -> None:
+    html = generate_report("html", db_path=tmp_db)
+    assert "<svg" not in html
+    assert "no rows matched" in html
+
+
+def test_pdf_report_hint_without_weasyprint(
+    tmp_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import builtins
+
+    from novafabric.report.generator import generate_report_pdf
+
+    real_import = builtins.__import__
+
+    def _no_weasyprint(name, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if name == "weasyprint":
+            raise ImportError("absent")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _no_weasyprint)
+    with pytest.raises(RuntimeError, match=r"novafabric\[compliance\]"):
+        generate_report_pdf(db_path=tmp_db)
+
+
+def test_pdf_report_bytes_when_weasyprint_present(
+    tmp_db: Path, fixtures_dir: Path
+) -> None:
+    pytest.importorskip("weasyprint")
+    from novafabric.report.generator import generate_report_pdf
+
+    spec = validate_spec(fixtures_dir / "valid_model.yaml")
+    register_asset(spec, fixtures_dir / "valid_model.yaml", db_path=tmp_db)
+    pdf = generate_report_pdf(db_path=tmp_db)
+    assert pdf.startswith(b"%PDF")

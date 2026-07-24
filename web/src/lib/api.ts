@@ -36,6 +36,20 @@ export interface AnalyticsSummary {
   until: string | null;
 }
 
+// P4 dashboard query panel — POST /api/query (ADR-0129 read surface).
+export interface QueryPanelResult {
+  schema_version: string;
+  generated_at: string;
+  query: Record<string, unknown>;
+  time_window: { since: string; until: string };
+  columns: string[];
+  rows: Array<Record<string, unknown>>;
+  row_count: number;
+  truncated: boolean;
+  index: { engine: string; built_at: string; capsule_count: number };
+  cli_equivalent: string;
+}
+
 // ADR-0192 operational alerts (read model for the dashboard).
 export type AlertOutcome =
   | 'emitted'
@@ -777,6 +791,50 @@ export interface LedgerResponse {
   stream_verdicts: Record<string, string>;
 }
 
+// P5 — forensics timeline (GET /api/runs/{run_id}/forensics-timeline).
+// Deterministic reconstruction from the run's own sealed capsule via the same
+// forensics.timeline.merge_timeline core `nova forensics timeline` uses.
+export interface ForensicsTimelineEvent {
+  ts: string; // sealed ISO-8601 timestamp (verbatim, never the system clock)
+  source_capsule: string;
+  seq: number;
+  kind: string; // "run" | "model-call" | "tool-call" | ...
+  detail: string | null;
+}
+export interface ForensicsTimeline {
+  incident_id: string;
+  events: ForensicsTimelineEvent[];
+  gaps: string[]; // evidence that could not be reconstructed (deduped, sorted)
+  honesty_line: string;
+}
+
+// P6 — cost-analytics trio (POST compute endpoints wrapping the nova cost cores).
+export interface SpendAttribution {
+  total_spend: number;
+  productive_spend: number;
+  wasted_spend: number;
+  wasted_fraction: number;
+  productive_statuses: string[];
+  by_status: Record<string, number>;
+}
+export interface FairnessMetric {
+  dimension: string;
+  shares: Record<string, number>;
+  gini: number;
+  max_mean_ratio: number;
+}
+export interface FairnessReport {
+  metrics: FairnessMetric[];
+}
+export interface UsageBreakdown {
+  counted_tokens: number;
+  composition: Record<string, number>;
+  cached_read_ratio: number | null;
+  has_reasoning_tokens: boolean;
+  is_multimodal: boolean;
+  extra_total: number;
+}
+
 export type SafetyBackingState = 'SUPPORTED' | 'UNSUPPORTED' | 'CONTESTED' | 'UNKNOWN';
 
 export interface SafetyCaseNode {
@@ -820,6 +878,11 @@ export const api = {
     if (q.until) params.until = q.until;
     return request<AnalyticsSummary>('/api/analytics/summary', params);
   },
+  // P4 — custom query panel: POST /api/query, {q, engine?} where q is a
+  // Capsule Query DSL JSON/YAML document (same shape as `nova query --query-file`).
+  runQuery: (q: string, engine?: string) =>
+    postJson<QueryPanelResult>('/api/query', engine ? { q, engine } : { q }),
+
   getRunFile: (run_id: string, filepath: string) =>
     request<{ filename: string; content: string }>(`/api/runs/${encodeURIComponent(run_id)}/file/${filepath}`),
 
@@ -828,6 +891,15 @@ export const api = {
     request<EnergyResponse>(`/api/runs/${encodeURIComponent(run_id)}/energy`),
   getRunLedger: (run_id: string) =>
     request<LedgerResponse>(`/api/runs/${encodeURIComponent(run_id)}/ledger`),
+  getRunForensicsTimeline: (run_id: string) =>
+    request<ForensicsTimeline>(`/api/runs/${encodeURIComponent(run_id)}/forensics-timeline`),
+  // P6 cost trio — pure POST compute endpoints (nova cost attribute/fairness/usage-breakdown).
+  costAttribute: (body: { runs: unknown[]; productive_statuses?: string[] }) =>
+    postJson<SpendAttribution>('/api/cost/attribute', body),
+  costFairness: (body: { totals: Record<string, Record<string, number>> }) =>
+    postJson<FairnessReport>('/api/cost/fairness', body),
+  costUsageBreakdown: (body: { usage_totals: Record<string, unknown> }) =>
+    postJson<UsageBreakdown>('/api/cost/usage-breakdown', body),
   getRunSafetyCase: (run_id: string, template = 'clymer-generic-v0') =>
     request<SafetyCaseResponse>(
       `/api/runs/${encodeURIComponent(run_id)}/safety-case?template=${encodeURIComponent(template)}`,
@@ -914,12 +986,18 @@ export const api = {
     }),
 
   // ---------- audit log ----------
-  audit: (limit = 200) =>
-    request<{ count: number; entries: Array<Record<string, unknown>> }>('/api/audit', { limit }),
+  audit: (limit = 200, opts?: { cursor?: number; action?: string }) =>
+    request<{ count: number; entries: Array<Record<string, unknown>>; next_cursor: number | null }>('/api/audit', {
+      limit,
+      ...(opts?.cursor != null ? { cursor: opts.cursor } : {}),
+      ...(opts?.action ? { action: opts.action } : {}),
+    }),
 
   // ---------- evidence bundles (GET — read-only) ----------
   listEvidence: () =>
-    request<{ bundles: EvidenceSummary[]; count: number }>('/api/evidence'),
+    request<{ bundles: EvidenceSummary[]; count: number; total?: number; truncated?: boolean }>(
+      '/api/evidence',
+    ),
   getEvidenceDetail: (bundle_id: string) =>
     request<EvidenceDetail>(`/api/evidence/${encodeURIComponent(bundle_id)}`),
   verifyEvidence: (bundle_id: string) =>
@@ -989,6 +1067,28 @@ export const api = {
       collector_version?: string;
       source?: string;
     }>('/api/infra/collector'),
+  // ---------- P7: backup-set status listing (NOVA_BACKUP_DIR) ----------
+  backupStatus: () =>
+    request<{
+      detected: boolean;
+      reason?: string;
+      directory?: string;
+      count?: number;
+      truncated?: boolean;
+      backups?: Array<{
+        filename: string;
+        ok: boolean;
+        set_id: string | null;
+        created_at: string | null;
+        profile: string | null;
+        nova_version: string | null;
+        member_count: number | null;
+        member_bytes: number | null;
+        archive_bytes: number | null;
+        signing_status: string | null;
+        error: string | null;
+      }>;
+    }>('/api/infra/backups'),
 
   // ---------- rollback (DD-3) ----------
   rollbackAsset: (name: string, reason = '', confirmed = true) =>
@@ -1098,6 +1198,8 @@ export const api = {
       edges: Array<{ src: string; src_type: string; dst: string; dst_type: string; edge_type: string; call_count: number; confidence: number }>;
       node_counts: Record<string, number>;
       edge_counts: Record<string, number>;
+      truncated?: boolean;
+      truncated_reason?: string[];
       note?: string;
       error?: string;
     }>('/api/kg/topology', { max_nodes }),
@@ -1119,13 +1221,13 @@ export const api = {
       '/api/policy/capture-level', { level }
     ),
 
-  // ---------- DB-ERA-1: GDPR erasure (v0.18.0 — cap-003) ----------
-  erasureRequest: (subject_id: string, reason: string = 'gdpr_art_17') =>
-    postJson<{ ok: boolean; subject_id: string; state: string; cap003_enabled: boolean; note: string }>(
-      '/api/compliance/erasure/request', { subject_id, reason }
+  // ---------- DB-ERA-1: GDPR erasure (real execution per ADR-0210 — experimental) ----------
+  erasureRequest: (subject_id: string, reason: string = 'gdpr_art_17', confirmed = true) =>
+    postJson<{ ok: boolean; cap003_enabled: boolean; reattached: boolean; request: { request_id: string; subject_sha256: string; state: string; reason: string; requested_at: string; executed_at: string | null; capsule_ids: string[]; receipt: Record<string, unknown> | null; receipt_sha256: string | null; error_class: string | null; error_detail: string | null } }>(
+      '/api/compliance/erasure/request', { subject_id, reason, confirmed }
     ),
   erasureStatus: (subject_id?: string) =>
-    request<{ subject_id: string | null; cap003_enabled: boolean; requests: unknown[]; note: string }>(
+    request<{ cap003_enabled: boolean; requests: Array<Record<string, unknown>> }>(
       '/api/compliance/erasure/status', subject_id ? { subject_id } : {}
     ),
 
@@ -1645,6 +1747,17 @@ export const api = {
       '/api/admin/rebuild-metadata-db', { ...args, confirmed: true },
     ),
 
+  // P8 safe mutation — rebuild the runs_cache index from capsules (idempotent, lossless).
+  reindexRuns: () =>
+    postJson<{ ok: boolean; reindexed?: number; total?: number; error?: string }>(
+      '/api/admin/reindex-runs', { confirmed: true },
+    ),
+  // P10 safe mutation — re-seed the live topology store from capsules (idempotent merge).
+  topologySeed: () =>
+    postJson<{ agents_added?: number; edges_added?: number; errors?: string[] }>(
+      '/api/topology/seed', {},
+    ),
+
   reports: {
     async fetch(
       type: string,
@@ -1664,6 +1777,53 @@ export const api = {
       }
       if (format === 'csv') return res.blob();
       return res.json() as Promise<{ columns: string[]; rows: Record<string, unknown>[]; count: number }>;
+    },
+
+    /** Report registry catalog: filters + chart specs (ADR-0200/0201). */
+    catalog: () =>
+      request<{
+        reports: {
+          report_id: string;
+          title: string;
+          audience: string;
+          filter_keys: string[];
+          required_filters: string[];
+          chart: {
+            kind: 'line' | 'bar' | 'stacked-bar' | 'multi-line';
+            x: string;
+            y: string[];
+            colors: string[];
+            title: string;
+            requires_filters: string[];
+          } | null;
+        }[];
+      }>('/api/reports/catalog'),
+
+    /** Self-contained HTML/PDF report artifact. 501 = WeasyPrint absent. */
+    async export(
+      type: string,
+      params: Record<string, string | undefined>,
+      format: 'html' | 'pdf',
+    ): Promise<Blob> {
+      const { token, base } = getCfg();
+      if (!token) throw new ServeApiError(401, 'no token configured — connect first');
+      const sp = new URLSearchParams({ token, format });
+      for (const [k, v] of Object.entries(params)) {
+        if (v !== undefined && v !== '') sp.set(k, v);
+      }
+      const res = await fetch(
+        `${base}/api/reports/${encodeURIComponent(type)}/export?${sp.toString()}`,
+      );
+      if (!res.ok) {
+        if (res.status === 401) { clearConnection(); emitAuthChange(); }
+        let detail = `report export failed: ${res.status}`;
+        try {
+          const body = (await res.json()) as { detail?: string };
+          if (body.detail) detail = body.detail;
+        } catch { /* non-JSON error body */ }
+        throw new ServeApiError(res.status, detail);
+      }
+      return res.blob();
     },
   },
 };

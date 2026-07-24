@@ -124,3 +124,34 @@ jobs:
           AWS_ACCESS_KEY_ID: novatest
           AWS_SECRET_ACCESS_KEY: novatest-secret
         run: uv run pytest tests/object_capsule_store -q --timeout=900
+
+  # Dashboard endpoint latency at a 100K-row runs_cache (ADR-0199 §6).
+  # SQLite-only — no service containers; thresholds live in the test file and
+  # docs/ops/dashboard-scale.md.
+  dashboard-scale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install project + all extras
+        run: uv sync --frozen --all-extras
+
+      - name: Dashboard scale gate (100K rows, p95 thresholds)
+        env:
+          NOVA_DASHBOARD_SCALE: "1"
+        run: uv run pytest tests/bench/test_dashboard_scale_gate.py -v --timeout=900

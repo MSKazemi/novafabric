@@ -40,8 +40,25 @@ class PostgresBackend:
             db_path=None,
             schema_version=schema_version,
             row_counts=row_counts,
-            migration_pending=None,
+            migration_pending=_check_migration_pending(self._dsn),
         )
+
+
+def _check_migration_pending(dsn: str) -> bool | None:
+    """Registry postgres-track head comparison via the shared comparator (ADR-0211).
+
+    Previously hardcoded ``None`` ("not determinable"); the comparator makes
+    the answer real. Same mapping as the SQLite backend: True = behind head or
+    never stamped; False = at head; None = unknown / foreign stamp.
+    """
+    from novafabric.server import schema_skew  # noqa: PLC0415
+
+    status = schema_skew.compare_revisions("postgres", dsn).status
+    if status == schema_skew.STATUS_OK:
+        return False
+    if status in (schema_skew.STATUS_BEHIND, schema_skew.STATUS_UNSTAMPED):
+        return True
+    return None
 
 
 def _read_schema_version(conn: Any) -> int | None:

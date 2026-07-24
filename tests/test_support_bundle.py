@@ -252,6 +252,84 @@ def test_logs_line_redaction_covers_deny_classes(tmp_path: Path) -> None:
     assert redact_line(plain) == plain
 
 
+def test_bare_credentials_in_free_text_are_redacted(tmp_path: Path) -> None:
+    """Ruleset v3: a token nothing *names* as a secret must still not leak.
+
+    This is the ADR-0191 D4 side channel — the capsule pipeline strips these
+    shapes, so a log or audit line must not carry them out instead.
+    """
+    from novafabric.support_bundle._redact import redact_line
+
+    # Fixture tokens are assembled at runtime so the SOURCE never contains a
+    # contiguous provider-shaped token: GitHub push protection scans the public
+    # mirror's source bytes and (correctly) refuses pushes that look like real
+    # credentials — the redactor still receives the exact same strings.
+    bare = [
+        "sk-ant-api03-" + "verysecretvalue0123456789",
+        "ghp_" + "seededtokenvalueABCDEFGH",
+        "hf_" + "abcdefghijklmnopqrstuvwxyz0123456789",
+        "AKIA" + "IOSFODNN7EXAMPLE",
+        "xoxb-" + "123456789012-abcdefghijklmnop",
+        "nvfk_" + "abcd1234_efghijklmnopqrstuvwxyz0123456789",
+    ]
+    for secret in bare:
+        line = f"2026-07-18 10:00:00 ERROR provider rejected {secret} for run r-1"
+        redacted = redact_line(line)
+        assert secret not in redacted, f"leak: {line!r} -> {redacted!r}"
+        assert "[REDACTED]" in redacted
+        # The rest of the line must survive — redaction, not destruction.
+        assert "provider rejected" in redacted
+        assert "run r-1" in redacted
+
+
+def test_value_redaction_never_eats_integrity_values(tmp_path: Path) -> None:
+    """Over-redaction would break ADR-0191 D5 as surely as under-redaction.
+
+    Entropy-only patterns (bare 64-hex, bare 32/40-char alnum, bare UUID)
+    are deliberately excluded from ruleset v3 because they match chain
+    hashes, content addresses and run ids that MUST travel intact.
+    """
+    from novafabric.support_bundle._redact import redact_line
+
+    must_survive = [
+        "entry_hash 9f" + "a" * 62,  # 64-hex chain value
+        "sha256:" + "b" * 64,  # content address
+        "run_id 550e8400-e29b-41d4-a716-446655440000",  # UUID
+        "capsule 01JQ8Z9M4KX7VN2P3R5T6Y8W0A",  # ULID
+        "duration_ms 1234567890",
+    ]
+    for line in must_survive:
+        assert redact_line(line) == line, f"over-redacted: {line!r}"
+
+
+def test_value_redaction_covers_every_prefixed_capsule_secret_rule() -> None:
+    """Parity guard: what the capsule pack detects, redaction must strip.
+
+    A new prefixed rule in the capsule scanner without a redaction
+    counterpart would silently reopen the D4 side channel, so a new rule id
+    must be either covered here or explicitly listed as entropy-only.
+    """
+    from novafabric.capture.secrets import _RULES
+    from novafabric.support_bundle._redact import _VALUE_SECRET_PATTERNS
+
+    covered = {rule_id for rule_id, _pattern in _VALUE_SECRET_PATTERNS}
+    # Excluded by design — see the _VALUE_SECRET_PATTERNS docstring. These
+    # match legitimate hashes/ids, so redacting on them would break D5.
+    entropy_only = {
+        "cohere-api-key",
+        "together-api-key",
+        "mistral-api-key",
+        "pinecone-api-key",
+    }
+    for rule in _RULES:
+        rule_id = str(rule["id"])
+        assert rule_id in covered or rule_id in entropy_only, (
+            f"capsule secret rule {rule_id!r} has no redaction counterpart. "
+            "Add it to _VALUE_SECRET_PATTERNS in support_bundle/_redact.py, "
+            "or to the entropy_only set here with a reason (ADR-0191 D4)."
+        )
+
+
 def test_cli_smoke(tmp_path: Path) -> None:
     out = tmp_path / "cli-bundle.tar.gz"
     result = runner.invoke(app, ["support-bundle", "-o", str(out)])

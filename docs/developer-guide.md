@@ -102,6 +102,29 @@ nova init --home /data/nova  # custom NOVAFABRIC_HOME
 This is not needed for docker-compose deployments — `make dev-up` handles
 all first-boot setup inside the container.
 
+### Docker-compose deployment targets
+
+**Works today.** The self-hosted stack is driven by a small set of `make`
+targets (all use `deploy/docker/docker-compose.yml`; the container name
+`novafabric-serve` is fixed, so every target manages the same stack and Postgres
+volume). After a healthy start each target prints the dashboard URL with a live
+token.
+
+| Target | What it does |
+|--------|--------------|
+| `make dev-up` | Build + start Postgres and `novafabric-serve` only (fast). |
+| `make prod-up` | Full stack: + ClickHouse, NATS, Kafka, PgBouncer, JanusGraph. |
+| `make update` | `git pull` → rebuild the `nova` image → rolling restart (databases untouched). Use for a normal release deploy from the tracked branch. |
+| `make deploy-local` | Build + run `novafabric-serve` straight from the **current working tree** — no `git pull`, no remote round-trip. Stamps the deployed commit (`+ -dirty` when the tree has uncommitted changes) so "what's running" stays answerable. The fast dev-iteration path. |
+
+A repo-root `.dockerignore` keeps the build context lean (it excludes `.git`,
+`.venv`, `design/`, and `node_modules`), so source-tree rebuilds stay fast.
+
+> **Deploy checkout tip:** point the deploy checkout's `origin` at the
+> authoritative repo you actually commit to, so `make update` fast-forwards
+> cleanly. A mirror whose history is force-regenerated will diverge and force a
+> manual reset each time.
+
 ---
 
 ## Quality gates

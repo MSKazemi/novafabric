@@ -61,13 +61,13 @@ _ITEM_FIXTURES = sorted(_FIXTURES.glob("item-*.json"))
 
 
 def _queue(**over: object) -> AnnotationQueue:
-    base: dict[str, object] = dict(name="q1", criteria=["factuality"])
+    base: dict[str, object] = {"name": "q1", "criteria": ["factuality"]}
     base.update(over)
     return AnnotationQueue.model_validate(base)
 
 
 def _item(**over: object) -> QueueItem:
-    base: dict[str, object] = dict(queue_id=_QUEUE_ID, subject=_SUBJECT)
+    base: dict[str, object] = {"queue_id": _QUEUE_ID, "subject": _SUBJECT}
     base.update(over)
     return QueueItem.model_validate(base)
 

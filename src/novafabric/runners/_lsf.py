@@ -41,6 +41,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from novafabric.runners._poll import jittered_sleep
 from novafabric.runners._sitecustomize import HOOK_LOADER as _HOOK_LOADER
 from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
 
@@ -266,7 +267,7 @@ class LSFRunner:
                 last_state = state
             if last_state in _LSF_TERMINAL_STATES:
                 break
-            time.sleep(poll_interval)
+            jittered_sleep(poll_interval)
 
         # 5. Read stdout/stderr from the log files LSF wrote.
         # LSF appends %J (job ID) to the log filenames.

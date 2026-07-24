@@ -21,12 +21,12 @@ T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
 def _node(**kw) -> NodeCurrency:
-    base = dict(
-        node_id="Sn1",
-        last_refreshed=T0,
-        evidence_window=timedelta(days=30),
-        due_lead=timedelta(days=5),
-    )
+    base = {
+        "node_id": "Sn1",
+        "last_refreshed": T0,
+        "evidence_window": timedelta(days=30),
+        "due_lead": timedelta(days=5),
+    }
     base.update(kw)
     return NodeCurrency(**base)
 

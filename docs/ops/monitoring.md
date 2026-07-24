@@ -232,11 +232,12 @@ family, carrying a first-class `severity` (`info | warning | critical`), and
 rides the exact same emitter stack (hygiene scan, optional HMAC signing,
 bounded-retry webhook delivery) — there is no second dispatcher.
 
-Wired source today: **`ops.quota.breached`** — emitted (severity `critical`)
-when a capsule write is rejected by an ADR-0179 hard storage quota. The other
-five `ops.*` types (`ops.rate_limit.sustained`, `ops.policy.violation`,
-`ops.drift.detected`, `ops.seal.verify_failed`, `ops.backup.failed`) are
-reserved in the taxonomy; their source wiring is planned.
+Wired sources today: **`ops.quota.breached`** — emitted (severity `critical`)
+when a capsule write is rejected by an ADR-0179 hard storage quota — plus the
+other five `ops.*` types, all now wired: `ops.rate_limit.sustained`
+(`server/rate_limit.py`), `ops.policy.violation` (`registry/service.py`),
+`ops.drift.detected` (`cli/drift.py`), `ops.seal.verify_failed` (`cli/verify.py`),
+and `ops.backup.failed` (`cli/backup.py`).
 
 Default **OFF**: with no `NOVA_ALERTS_*` configuration nothing is emitted or
 sent — byte-identical to previous releases. Minimal opt-in:

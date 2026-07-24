@@ -1,0 +1,17 @@
+{
+  "name": "SEP-2322 two-round elicitation",
+  "why": "AC2. If rounds collapse or the exchange id splits, a multi-turn elicitation stops being replayable in sequence.",
+  "protocol_version": "2026-07-28",
+  "messages": [
+    {"direction": "server_to_client", "message": {"jsonrpc": "2.0", "id": "e1", "method": "elicitation/inputRequired", "params": {"prompt": "name?"}}},
+    {"direction": "client_to_server", "message": {"jsonrpc": "2.0", "id": "e1", "method": "elicitation/inputResponses", "params": {"value": "ada"}}},
+    {"direction": "server_to_client", "message": {"jsonrpc": "2.0", "id": "e1", "method": "elicitation/inputRequired", "params": {"prompt": "confirm?"}}},
+    {"direction": "client_to_server", "message": {"jsonrpc": "2.0", "id": "e1", "method": "elicitation/inputResponses", "params": {"value": "yes"}}}
+  ],
+  "expect": {
+    "record_count": 4,
+    "rounds": [1, 1, 2, 2],
+    "directions": ["server_to_client", "client_to_server", "server_to_client", "client_to_server"],
+    "shared_exchange_id": true
+  }
+}

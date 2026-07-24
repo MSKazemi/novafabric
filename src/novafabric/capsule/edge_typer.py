@@ -97,9 +97,21 @@ def coerce_legacy_edge_type(raw: str | None) -> EdgeType:
 
     Per FR-07: pre-0.2.0 rows without edge_type are interpreted as 'contains'.
     Returns EdgeType.contains for None or unknown values.
+
+    Canonical values pass through **by construction** (the EdgeType lookup
+    below), not by being listed in ``_LEGACY_EDGE_TYPE_MAP``. Relying on that
+    map to also carry the canonical names is a trap: every edge type added
+    after it was written — ``member_of_session`` (ADR-0122 D3), then
+    ``wrote_memory``/``read_memory`` (ADR-0143 P1) — was absent from it and
+    would silently coerce to ``contains``. For a grouping or memory edge that
+    is not a lossy fallback but a false causal claim.
     """
     if raw is None:
         return EdgeType.contains
+    try:
+        return EdgeType(raw)
+    except ValueError:
+        pass
     mapped = _LEGACY_EDGE_TYPE_MAP.get(raw)
     if mapped is not None:
         return mapped

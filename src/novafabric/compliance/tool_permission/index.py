@@ -19,6 +19,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from novafabric._sqlite_util import connect_sqlite
+
 from .models import ToolPermissionEvent
 
 _DDL = """
@@ -64,7 +66,7 @@ class PermissionEventIndex:
     def open(self) -> None:
         """Open the database and create the schema if needed."""
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        self._conn = connect_sqlite(str(self._db_path), check_same_thread=False)
         self._conn.executescript(_DDL)
         self._conn.commit()
 

@@ -138,8 +138,10 @@ def test_round_trip_restore_into_empty_home(backup_set: Path, tmp_path: Path) ->
         "extract",
         "migrations",
         "crypto-shred-replay",
+        "ratchet-advance",
         "verify-storage",
         "verify-seal-log",
+        "verify-state-dbs",
     ]
     assert all(s.ok for s in result.steps)
 
@@ -259,7 +261,11 @@ def test_absolute_and_denied_member_paths_rejected(evil_path: str) -> None:
         _reject_unsafe_member(evil_path)
 
 
-def test_pg_dump_set_restore_honestly_refused(tmp_path: Path) -> None:
+def test_pg_dump_set_without_dsn_refused_before_touching_anything(
+    tmp_path: Path,
+) -> None:
+    """ADR-0217: pg restore is automated, but with no DSN the pre-flight
+    refuses legibly — naming the flag and env vars — before any mutation."""
     raw_set = _make_raw_set(
         tmp_path / "pg.tar.gz",
         tmp_path / "pg-stage",
@@ -269,7 +275,7 @@ def test_pg_dump_set_restore_honestly_refused(tmp_path: Path) -> None:
         db_target="db.example.internal/nova",
     )
     target = tmp_path / "pg-home"
-    with pytest.raises(RestoreError, match="pg_restore runbook"):
+    with pytest.raises(RestoreError, match="--dsn or set NOVA_DSN"):
         restore_backup(raw_set, home=target)
     assert not target.exists()
 

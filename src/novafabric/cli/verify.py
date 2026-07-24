@@ -221,6 +221,17 @@ def verify_cmd(
     console.print(str(result))
 
     if not result.valid:
+        # ADR-0192 wired source: the evidence guarantee itself failed, so
+        # this is `critical` — the run can no longer be proven.
+        from novafabric.events.sources import (  # noqa: PLC0415
+            emit_seal_verify_failed_alert,
+        )
+
+        emit_seal_verify_failed_alert(
+            capsule_id=capsule_id,
+            errors=list(result.errors),
+            signature_ok=result.signature_ok,
+        )
         raise typer.Exit(code=1)
 
 

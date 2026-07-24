@@ -84,7 +84,7 @@ def test_proof_pack_has_correct_name(tmp_path: Path) -> None:
     proof = SecretScannerV0(capsule_dir=tmp_path, run_id=RUN_ID).scan_and_redact()
     assert proof["packs"][0]["name"] == PACK_NAME
     assert proof["packs"][0]["version"] == PACK_VERSION
-    assert proof["packs"][0]["rules_count"] == 13
+    assert proof["packs"][0]["rules_count"] == 14  # +novafabric-webhook-secret (ADR-0205)
 
 
 def test_findings_dont_store_secret(tmp_path: Path) -> None:
@@ -93,3 +93,39 @@ def test_findings_dont_store_secret(tmp_path: Path) -> None:
     proof = SecretScannerV0(capsule_dir=tmp_path, run_id=RUN_ID).scan_and_redact()
     for finding in proof["findings"]:
         assert secret not in json.dumps(finding)
+
+
+# ── ADR-0209 D5.1: scan-target list is pinned (deliberate-update guard) ──────
+
+
+def test_scan_targets_pinned_list() -> None:
+    """The scan-target list is public redaction surface. Adding or removing a
+    stream must be a deliberate act: update this pin together with
+    design/spec/extended-event-wiring-v0.md (ADR-0209) and the ScanTarget
+    ``kind`` enum in schemas/secret-redaction.schema.json."""
+    from novafabric.capture.secrets import SCAN_TARGETS
+
+    assert SCAN_TARGETS == [
+        ("model-calls.jsonl", "model-call-messages"),
+        ("tool-calls.jsonl", "tool-call-arguments"),
+        ("trace.jsonl", "trace"),
+        ("capsule.yaml", "capsule-yaml"),
+        ("file_events.jsonl", "file-events"),
+        ("network_events.jsonl", "network-events"),
+        ("human_approvals.jsonl", "human-approvals"),
+        ("state_transitions.jsonl", "state-transitions"),
+        ("memory_operations.jsonl", "memory-operations"),
+        ("guardrail_events.jsonl", "guardrail-events"),
+        ("evaluator_events.jsonl", "evaluator-events"),
+        ("reranker_events.jsonl", "reranker-events"),
+        ("vector_retrievals.jsonl", "vector-retrievals"),
+    ]
+
+
+def test_scan_target_kinds_covered_by_schema_enum() -> None:
+    """Every scan-target kind must be a valid ScanTarget.kind, or proofs that
+    scanned that stream fail schema validation at nova validate time."""
+    from novafabric.capture.secrets import SCAN_TARGETS
+
+    allowed = set(SCHEMA["$defs"]["ScanTarget"]["properties"]["kind"]["enum"])
+    assert {kind for _, kind in SCAN_TARGETS} <= allowed

@@ -46,26 +46,26 @@ def db_path(tmp_path: Path) -> Path:
 
 
 def _signed_judge(**over: object) -> EvalCard:
-    base: dict[str, object] = dict(
-        card_id="faithfulness-judge",
-        name="Answer Faithfulness Judge",
-        version="1.2.0",
-        source=ScoreSource.JUDGE,
-        judge_model=JudgeModel(name="self-hosted/llama-3.3-70b", endpoint_ref="env:NOVA_JUDGE_ENDPOINT"),
-        prompt_version="sha256:aa11",
-        rubric="grounded?",
-        dataset_version="golden@3.1.0",
-        calibration=Calibration(human_agreement=0.86, n=120, metric="cohen_kappa"),
-    )
+    base: dict[str, object] = {
+        "card_id": "faithfulness-judge",
+        "name": "Answer Faithfulness Judge",
+        "version": "1.2.0",
+        "source": ScoreSource.JUDGE,
+        "judge_model": JudgeModel(name="self-hosted/llama-3.3-70b", endpoint_ref="env:NOVA_JUDGE_ENDPOINT"),
+        "prompt_version": "sha256:aa11",
+        "rubric": "grounded?",
+        "dataset_version": "golden@3.1.0",
+        "calibration": Calibration(human_agreement=0.86, n=120, metric="cohen_kappa"),
+    }
     base.update(over)
     card = EvalCard(**base)  # type: ignore[arg-type]
     return sign_card(card, Ed25519PrivateKey.generate(), key_id="nf-signer-1")
 
 
 def _signed_code(**over: object) -> EvalCard:
-    base: dict[str, object] = dict(
-        card_id="exact-match", name="Exact Match", version="0.1.0", source=ScoreSource.CODE
-    )
+    base: dict[str, object] = {
+        "card_id": "exact-match", "name": "Exact Match", "version": "0.1.0", "source": ScoreSource.CODE
+    }
     base.update(over)
     return sign_card(EvalCard(**base), Ed25519PrivateKey.generate(), "k")  # type: ignore[arg-type]
 

@@ -333,8 +333,16 @@ class EventRecorder:
         freshness_seconds: float | None = None,
         agent_id: str | None = None,
         value: object | None = None,
+        origin_run_id: str | None = None,
+        origin_memory_key: str | None = None,
+        origin_timestamp_utc: str | None = None,
     ) -> None:
-        """Append a MemoryOperation to ``memory_operations.jsonl``. Fail-open."""
+        """Append a MemoryOperation to ``memory_operations.jsonl``. Fail-open.
+
+        The ``origin_*`` arguments (ADR-0143 P1) record what the caller
+        believed it was reading. They are recorded as a claim, not as fact —
+        see ``novafabric.lineage.memory``.
+        """
         try:
             event = MemoryOperationEvent(
                 run_id=self._run_id,
@@ -346,6 +354,9 @@ class EventRecorder:
                 freshness_seconds=freshness_seconds,
                 agent_id=agent_id,
                 value=value,
+                origin_run_id=origin_run_id,
+                origin_memory_key=origin_memory_key,
+                origin_timestamp_utc=origin_timestamp_utc,
             )
             self._append_typed("memory_operations.jsonl", "MemoryOperation", event.model_dump())
         except Exception:

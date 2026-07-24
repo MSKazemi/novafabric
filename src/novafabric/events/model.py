@@ -40,6 +40,10 @@ class EventType(str, Enum):
     OPS_DRIFT_DETECTED = "ops.drift.detected"
     OPS_SEAL_VERIFY_FAILED = "ops.seal.verify_failed"
     OPS_BACKUP_FAILED = "ops.backup.failed"
+    # ADR-0205 (additive): synthetic test event for the webhook subscription
+    # registry's `POST /v0/webhooks/{id}/ping` route. Receivers that ignore
+    # unknown types (ADR-0137 D2) keep working unchanged.
+    WEBHOOK_PING = "webhook.ping"
 
 
 class EventSeverity(str, Enum):

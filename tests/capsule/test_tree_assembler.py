@@ -149,3 +149,31 @@ def test_cyclic_parent_reference_raises_cyclic_lineage_error(tmp_path: Path) -> 
     import pytest
     with pytest.raises(CyclicLineageError, match=r"[Cc]ycl"):
         assembler.assemble_tree(id_a)
+
+
+def test_deep_acyclic_tree_raises_depth_exceeded(tmp_path: Path) -> None:
+    """A deep but acyclic chain must raise TreeDepthExceededError, not RecursionError."""
+    import json
+
+    from novafabric.capsule.tree_assembler import MAX_TREE_DEPTH, TreeDepthExceededError
+
+    spool = tmp_path / "spool"
+    # Linear chain root -> c1 -> c2 -> ... longer than MAX_TREE_DEPTH.
+    ids = [new_ulid() for _ in range(MAX_TREE_DEPTH + 5)]
+    for i, rid in enumerate(ids):
+        manifest = {
+            "schema_version": "0.2.0",
+            "run_id": rid,
+            "global_run_id": ids[0],
+            "parent_run_id": ids[i - 1] if i > 0 else None,
+            "capsule_role": "PARENT" if i == 0 else "CHILD",
+            "status": "COMPLETE",
+        }
+        run_dir = spool / rid
+        run_dir.mkdir(parents=True)
+        (run_dir / "capsule.json").write_text(json.dumps(manifest))
+
+    assembler = CapsuleTreeAssembler(spool)
+    import pytest
+    with pytest.raises(TreeDepthExceededError, match=str(MAX_TREE_DEPTH)):
+        assembler.assemble_tree(ids[0])

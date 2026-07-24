@@ -40,6 +40,7 @@ const KGTab = lazy(() => import('./tabs/KGTab'));
 const CostTab = lazy(() => import('./tabs/CostTab'));
 const SchemaTab = lazy(() => import('./tabs/SchemaTab'));
 const ReportsTab = lazy(() => import('./tabs/ReportsTab'));
+const ExportCenter = lazy(() => import('./ExportCenter'));
 const EvalTab = lazy(() => import('./tabs/EvalTab'));
 const RiskTab = lazy(() => import('./tabs/RiskTab'));
 const StorageTab = lazy(() => import('./tabs/StorageTab'));
@@ -402,6 +403,7 @@ function DashboardInner() {
           {tab === 'commands' && <CommandsTab />}
           {tab === 'admin' && <AdminTab />}
           {tab === 'reports' && <ReportsTab />}
+          {tab === 'export' && <ExportCenter onNavigate={handleTabChange} />}
           {tab === 'eval' && <EvalTab />}
           {tab === 'risk' && <RiskTab onNavigate={handleTabChange} />}
           {tab === 'storage' && <StorageTab />}

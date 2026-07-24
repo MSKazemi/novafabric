@@ -166,6 +166,52 @@ def test_drain_wal_produces_chain_commit(mock_novaseal_client: NovaSealClient):
     wal.close()
 
 
+class _PoisonNovaSealClient:
+    """A NovaSeal client whose sign() always raises a NON-transient error."""
+
+    def sign(self, capsule_sha256: str):  # noqa: ANN201
+        raise ValueError("permanently broken signing input")
+
+
+def test_wal_row_dead_lettered_after_max_attempts():
+    """Enterprise-hardening 3.4: a row that keeps failing to drain for a
+    non-transient reason is dead-lettered instead of retried forever."""
+    adapter = InMemoryWormAdapter()
+    wal = LocalWal(":memory:")
+    content = make_capsule(seed=7, size=256)
+
+    # Enqueue a pending entry (NovaSeal unavailable at upload time).
+    store_no_seal = ObjectCapsuleStore(
+        adapter=adapter,
+        novaseal_client=NovaSealDisabledClient(),  # type: ignore[arg-type]
+        wal=wal,
+        retention_days=365,
+    )
+    store_no_seal.put_capsule(tenant="acme", run_id="poison", content_bytes=content)
+    assert wal.pending_count() == 1
+
+    # Drain with a client that fails non-transiently; cap attempts at 2.
+    store_broken = ObjectCapsuleStore(
+        adapter=adapter,
+        novaseal_client=_PoisonNovaSealClient(),  # type: ignore[arg-type]
+        wal=wal,
+        retention_days=365,
+        max_wal_attempts=2,
+    )
+    # Attempt 1: still pending (attempts=1 < 2).
+    assert store_broken.drain_wal() == 0
+    assert wal.pending_count() == 1
+    assert wal.poisoned_count() == 0
+    # Attempt 2: reaches the cap → dead-lettered, no longer pending.
+    assert store_broken.drain_wal() == 0
+    assert wal.pending_count() == 0
+    assert wal.poisoned_count() == 1
+    # Subsequent drains do not resurrect the poisoned row.
+    assert store_broken.drain_wal() == 0
+    assert wal.poisoned_count() == 1
+    wal.close()
+
+
 def test_no_capsule_loss_after_wal_drain(mock_novaseal_client: NovaSealClient):
     """AC-3: capsule bytes are retrievable after WAL drain — no capsule loss (BQ-013).
 

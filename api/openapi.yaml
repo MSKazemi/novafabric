@@ -1,1523 +1,2457 @@
-openapi: "3.1.0"
-
+components:
+  schemas:
+    AssignRoleRequest:
+      properties:
+        role:
+          $ref: '#/components/schemas/Role'
+        subject:
+          maxLength: 256
+          minLength: 1
+          title: Subject
+          type: string
+      required:
+      - subject
+      - role
+      title: AssignRoleRequest
+      type: object
+    Body_upload_capsule_v0_capsules_post:
+      properties:
+        capsule:
+          contentMediaType: application/octet-stream
+          title: Capsule
+          type: string
+      required:
+      - capsule
+      title: Body_upload_capsule_v0_capsules_post
+      type: object
+    BulkDeleteRequest:
+      description: Body of ``POST /v0/capsules/bulk-delete`` (spec bulk-ops-pagination-v0).
+      properties:
+        dry_run:
+          default: false
+          title: Dry Run
+          type: boolean
+        run_ids:
+          items:
+            type: string
+          title: Run Ids
+          type: array
+      title: BulkDeleteRequest
+      type: object
+    CreateApiKeyRequest:
+      properties:
+        expires_in_days:
+          anyOf:
+          - maximum: 3650.0
+            minimum: 1.0
+            type: integer
+          - type: 'null'
+          title: Expires In Days
+        owner:
+          maxLength: 256
+          minLength: 1
+          title: Owner
+          type: string
+        roles:
+          items:
+            type: string
+          minItems: 1
+          title: Roles
+          type: array
+        workspace:
+          anyOf:
+          - maxLength: 256
+            type: string
+          - type: 'null'
+          title: Workspace
+      required:
+      - owner
+      title: CreateApiKeyRequest
+      type: object
+    CreateOrgRequest:
+      properties:
+        name:
+          maxLength: 256
+          minLength: 1
+          title: Name
+          type: string
+        slug:
+          maxLength: 64
+          minLength: 1
+          pattern: ^[a-z0-9][a-z0-9_-]*$
+          title: Slug
+          type: string
+      required:
+      - slug
+      - name
+      title: CreateOrgRequest
+      type: object
+    CreateServiceAccountRequest:
+      properties:
+        description:
+          default: ''
+          maxLength: 1024
+          title: Description
+          type: string
+        expires_in_days:
+          default: 90
+          maximum: 3650.0
+          minimum: 1.0
+          title: Expires In Days
+          type: integer
+        name:
+          maxLength: 64
+          minLength: 1
+          pattern: ^[a-z0-9][a-z0-9_-]*$
+          title: Name
+          type: string
+      required:
+      - name
+      title: CreateServiceAccountRequest
+      type: object
+    CreateWebhookRequest:
+      properties:
+        description:
+          default: ''
+          maxLength: 1024
+          title: Description
+          type: string
+        disabled:
+          default: false
+          title: Disabled
+          type: boolean
+        event_types:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Event Types
+        url:
+          maxLength: 2048
+          minLength: 1
+          title: Url
+          type: string
+        workspace:
+          anyOf:
+          - maxLength: 256
+            type: string
+          - type: 'null'
+          title: Workspace
+      required:
+      - url
+      title: CreateWebhookRequest
+      type: object
+    CreateWorkspaceRequest:
+      properties:
+        name:
+          maxLength: 256
+          minLength: 1
+          title: Name
+          type: string
+        org_id:
+          maxLength: 64
+          minLength: 1
+          title: Org Id
+          type: string
+        slug:
+          maxLength: 64
+          minLength: 1
+          pattern: ^[a-z0-9][a-z0-9_-]*$
+          title: Slug
+          type: string
+      required:
+      - org_id
+      - slug
+      - name
+      title: CreateWorkspaceRequest
+      type: object
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          title: Detail
+          type: array
+      title: HTTPValidationError
+      type: object
+    MembershipRequest:
+      properties:
+        principal:
+          maxLength: 256
+          minLength: 1
+          title: Principal
+          type: string
+        role:
+          maxLength: 32
+          minLength: 1
+          title: Role
+          type: string
+      required:
+      - principal
+      - role
+      title: MembershipRequest
+      type: object
+    PolicyResponse:
+      properties:
+        created_at:
+          title: Created At
+          type: string
+        predicate:
+          additionalProperties: true
+          title: Predicate
+          type: object
+        version:
+          title: Version
+          type: integer
+      required:
+      - version
+      - predicate
+      - created_at
+      title: PolicyResponse
+      type: object
+    ProposalSummary:
+      properties:
+        approval_timestamp:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Approval Timestamp
+        approver_subject:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Approver Subject
+        capsule_id:
+          title: Capsule Id
+          type: string
+        has_approval:
+          title: Has Approval
+          type: boolean
+        justification:
+          title: Justification
+          type: string
+        policy_version:
+          title: Policy Version
+          type: string
+        proposer_subject:
+          title: Proposer Subject
+          type: string
+        timestamp:
+          title: Timestamp
+          type: string
+        uuid:
+          title: Uuid
+          type: string
+      required:
+      - uuid
+      - capsule_id
+      - proposer_subject
+      - justification
+      - timestamp
+      - policy_version
+      - has_approval
+      title: ProposalSummary
+      type: object
+    Role:
+      enum:
+      - reader
+      - writer
+      - admin
+      - auditor
+      title: Role
+      type: string
+    UpdateWebhookRequest:
+      properties:
+        description:
+          anyOf:
+          - maxLength: 1024
+            type: string
+          - type: 'null'
+          title: Description
+        disabled:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Disabled
+        event_types:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Event Types
+        secret:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Secret
+        url:
+          anyOf:
+          - maxLength: 2048
+            minLength: 1
+            type: string
+          - type: 'null'
+          title: Url
+        workspace:
+          anyOf:
+          - maxLength: 256
+            type: string
+          - type: 'null'
+          title: Workspace
+      title: UpdateWebhookRequest
+      type: object
+    ValidationError:
+      properties:
+        ctx:
+          title: Context
+          type: object
+        input:
+          title: Input
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          title: Location
+          type: array
+        msg:
+          title: Message
+          type: string
+        type:
+          title: Error Type
+          type: string
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+      type: object
+    VerifyResponse:
+      properties:
+        capsule_id:
+          title: Capsule Id
+          type: string
+        check_results:
+          items:
+            additionalProperties: true
+            type: object
+          title: Check Results
+          type: array
+        exit_code:
+          title: Exit Code
+          type: integer
+        message:
+          title: Message
+          type: string
+        passed:
+          title: Passed
+          type: boolean
+      required:
+      - capsule_id
+      - passed
+      - exit_code
+      - message
+      - check_results
+      title: VerifyResponse
+      type: object
 info:
-  title: NovaFabric Multi-User REST API
-  version: "0.7.0"
-  description: |
-    Multi-user REST API for the NovaFabric AI Asset Registry.
-    URL prefix: /v0/
-    Authentication: Bearer token via Authorization header (OIDC) or open when OIDC disabled.
+  description: 'Multi-user REST API for the NovaFabric AI Asset Registry (ADR-0017
+    / ADR-0029).
+
+    URL prefix: /v0/ (the API major version; distinct from info.version below).
+
+    Authentication: Bearer token via the Authorization header (OIDC or the
+
+    auto-generated local token), or open when auth is disabled with the explicit,
+
+    audited --insecure-no-auth flag (ADR-0184). /livez and /readyz are always open;
+
+    /metrics is token-gated.
+
     All list endpoints use cursor-based pagination (limit + next_cursor).
+
     All error responses use the standard error envelope.
+
+
+    This file is GENERATED from the server app by scripts/gen_openapi.py — do not
+
+    edit it by hand. Regenerate after changing any server route.'
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
-
-servers:
-  - url: /v0
-    description: NovaFabric server (versioned)
-
-# API deprecation & sunset policy (ADR-0188). Deprecated endpoints emit
-# Deprecation (RFC 9745), Sunset (RFC 8594), and Link rel="deprecation"
-# headers, stay working for at least two minor releases, and are listed in
-# the deprecation register; removals land only in a minor bump pre-1.0
-# (major post-1.0). No endpoint is currently deprecated.
-x-deprecation-policy:
-  adr: design/adr/0188-api-deprecation-sunset-policy.md
-  register: docs/api-reference.md#deprecation-register-adr-0188
-  headers: [Deprecation, Sunset, Link]
-  minimum-window: two minor releases
-  currently-deprecated: []
-
-# --------------------------------------------------------------------------- #
-# Reusable components
-# --------------------------------------------------------------------------- #
-components:
-  schemas:
-    # -------- error envelope --------
-    ErrorDetail:
-      type: object
-      required: [code, message]
-      properties:
-        code:
-          type: string
-          example: not_found
-        message:
-          type: string
-          example: Asset 'my-agent@v1.0' not found.
-        details:
-          type: object
-          additionalProperties: true
-
-    ErrorEnvelope:
-      type: object
-      required: [error]
-      properties:
-        error:
-          $ref: "#/components/schemas/ErrorDetail"
-
-    # -------- API keys (ADR-0193) --------
-    ApiKeyMetadata:
-      type: object
-      description: >
-        Secret-free API-key metadata. Never contains the secret or its hash.
-      required: [key_id, owner, roles, created_at]
-      properties:
-        key_id:
-          type: string
-          description: Public 8-char identifier, safe in logs and listings.
-        owner:
-          type: string
-        roles:
-          type: array
-          items:
-            type: string
-            enum: [reader, writer, admin, auditor]
-        workspace:
-          type: string
-          nullable: true
-        created_at:
-          type: string
-          format: date-time
-        expires_at:
-          type: string
-          format: date-time
-          nullable: true
-        last_used_at:
-          type: string
-          format: date-time
-          nullable: true
-          description: Coarse last-used timestamp (at most one write per interval).
-        revoked_at:
-          type: string
-          format: date-time
-          nullable: true
-        status:
-          type: string
-          enum: [active, revoked, expired]
-          description: Derived on read; present on list responses.
-
-    # -------- pagination --------
-    PaginationMeta:
-      type: object
-      required: [total]
-      properties:
-        next_cursor:
-          type: string
-          nullable: true
-          description: Opaque cursor for the next page; null when no more pages.
-        total:
-          type: integer
-          description: Total count of matching items (without pagination applied).
-
-    # -------- assets --------
-    AssetStatus:
-      type: string
-      enum: [development, staging, production, archived]
-
-    AssetType:
-      type: string
-      enum: [model, agent, prompt, tool, dataset, evaluation, deployment]
-
-    AssetSummary:
-      type: object
-      required: [id, name, version, asset_type, status, created_at]
-      properties:
-        id:
-          type: string
-          format: uuid
-        name:
-          type: string
-        version:
-          type: string
-          description: SemVer string.
-        asset_type:
-          $ref: "#/components/schemas/AssetType"
-        status:
-          $ref: "#/components/schemas/AssetStatus"
-        created_at:
-          type: string
-          format: date-time
-        promoted_at:
-          type: string
-          format: date-time
-          nullable: true
-        git_commit_sha:
-          type: string
-          nullable: true
-
-    AssetDetail:
-      allOf:
-        - $ref: "#/components/schemas/AssetSummary"
-        - type: object
-          properties:
-            spec_json:
-              type: string
-              description: Raw JSON-serialized asset spec.
-            promoted_by:
-              type: string
-              nullable: true
-            forced_promotion:
-              type: boolean
-
-    AssetCreateRequest:
-      type: object
-      required: [spec_yaml]
-      properties:
-        spec_yaml:
-          type: string
-          description: Full YAML-formatted asset spec (novafabric_spec_version required).
-
-    PromoteRequest:
-      type: object
-      required: [to_status]
-      properties:
-        to_status:
-          $ref: "#/components/schemas/AssetStatus"
-        actor:
-          type: string
-          default: api
-        force:
-          type: boolean
-          default: false
-          description: Skip the evaluation gate for agents (recorded as forced_promotion).
-
-    AssetListResponse:
-      allOf:
-        - $ref: "#/components/schemas/PaginationMeta"
-        - type: object
-          required: [items]
-          properties:
-            items:
-              type: array
-              items:
-                $ref: "#/components/schemas/AssetSummary"
-
-    # -------- capsules --------
-    CapsuleSummary:
-      type: object
-      required: [run_id, status, created_at]
-      properties:
-        run_id:
-          type: string
-        status:
-          type: string
-          enum: [success, failure, unknown]
-        created_at:
-          type: string
-          format: date-time
-        finished_at:
-          type: string
-          format: date-time
-          nullable: true
-        duration_ms:
-          type: integer
-          nullable: true
-        command:
-          type: array
-          items:
-            type: string
-          nullable: true
-        exit_code:
-          type: integer
-          nullable: true
-
-    CapsuleDetail:
-      allOf:
-        - $ref: "#/components/schemas/CapsuleSummary"
-        - type: object
-          properties:
-            schema_version:
-              type: string
-            novafabric_version:
-              type: string
-            model_call_count:
-              type: integer
-            tool_call_count:
-              type: integer
-            mutating_tool_count:
-              type: integer
-            capture_mode:
-              type: string
-
-    CapsuleListResponse:
-      allOf:
-        - $ref: "#/components/schemas/PaginationMeta"
-        - type: object
-          required: [items]
-          properties:
-            items:
-              type: array
-              items:
-                $ref: "#/components/schemas/CapsuleSummary"
-
-    # -------- lineage --------
-    LineageNode:
-      type: object
-      required: [node_id, kind, ref]
-      properties:
-        node_id:
-          type: string
-        kind:
-          type: string
-          enum: [run, asset, artifact, model, tool]
-        ref:
-          type: string
-        payload:
-          type: object
-          additionalProperties: true
-
-    LineageNodeListResponse:
-      allOf:
-        - $ref: "#/components/schemas/PaginationMeta"
-        - type: object
-          required: [items]
-          properties:
-            items:
-              type: array
-              items:
-                $ref: "#/components/schemas/LineageNode"
-
-    LineageQueryResponse:
-      type: object
-      required: [ref, depth, nodes]
-      properties:
-        ref:
-          type: string
-        kind:
-          type: string
-          nullable: true
-        depth:
-          type: integer
-        nodes:
-          type: array
-          items:
-            $ref: "#/components/schemas/LineageNode"
-
-    ReplayChainResponse:
-      type: object
-      required: [run_id, chain]
-      properties:
-        run_id:
-          type: string
-        chain:
-          type: array
-          items:
-            $ref: "#/components/schemas/LineageNode"
-
-    # -------- replays --------
-    ReplayMode:
-      type: string
-      enum: [forensic, mocked, shadow, dry_run]
-
-    ReplayScheduleRequest:
-      type: object
-      required: [run_id, mode]
-      properties:
-        run_id:
-          type: string
-          description: The capsule run_id to replay.
-        mode:
-          $ref: "#/components/schemas/ReplayMode"
-
-    ReplayStatus:
-      type: string
-      enum: [pending, running, completed, failed, cancelled]
-
-    ReplaySummary:
-      type: object
-      required: [replay_id, run_id, mode, status, created_at]
-      properties:
-        replay_id:
-          type: string
-        run_id:
-          type: string
-        mode:
-          $ref: "#/components/schemas/ReplayMode"
-        status:
-          $ref: "#/components/schemas/ReplayStatus"
-        created_at:
-          type: string
-          format: date-time
-        finished_at:
-          type: string
-          format: date-time
-          nullable: true
-        error:
-          type: string
-          nullable: true
-
-    # -------- evidence --------
-    EvidenceExportRequest:
-      type: object
-      required: [run_id]
-      properties:
-        run_id:
-          type: string
-          description: The capsule run_id to export as evidence.
-        output_path:
-          type: string
-          nullable: true
-          description: Optional override for the output ZIP path (server-side path).
-        allow_unsafe_skips:
-          type: boolean
-          default: false
-
-    BundleSummary:
-      type: object
-      required: [bundle_id, run_id, created_at, size_bytes]
-      properties:
-        bundle_id:
-          type: string
-        run_id:
-          type: string
-        created_at:
-          type: string
-          format: date-time
-        size_bytes:
-          type: integer
-        bundle_path:
-          type: string
-          nullable: true
-
-  parameters:
-    LimitParam:
-      name: limit
-      in: query
-      schema:
-        type: integer
-        default: 50
-        minimum: 1
-        maximum: 500
-      description: Maximum number of items to return (default 50, max 500).
-
-    CursorParam:
-      name: cursor
-      in: query
-      schema:
-        type: string
-      required: false
-      description: Opaque pagination cursor returned from a previous list call.
-
-  responses:
-    BadRequest:
-      description: Invalid request parameters or body.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorEnvelope"
-    Unauthorized:
-      description: Missing or invalid bearer credentials.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorEnvelope"
-    Forbidden:
-      description: Authenticated but not permitted (RBAC role insufficient).
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorEnvelope"
-    NotFound:
-      description: The requested resource was not found.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorEnvelope"
-    Conflict:
-      description: Resource conflict (e.g. duplicate asset or invalid lifecycle transition).
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorEnvelope"
-    UnprocessableEntity:
-      description: Spec validation error.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorEnvelope"
-    PreconditionFailed:
-      description: Promotion gate blocked (agent missing passing eval).
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorEnvelope"
-    InternalError:
-      description: Unexpected server error.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorEnvelope"
-
-# --------------------------------------------------------------------------- #
-# Paths
-# --------------------------------------------------------------------------- #
+  title: NovaFabric Multi-User REST API
+  version: 0.63.0
+openapi: 3.1.0
 paths:
-
-  # ======================== ASSETS ========================
-
-  /assets:
+  /.well-known/mcp.json:
     get:
-      operationId: listAssets
-      summary: List registered assets
-      tags: [assets]
-      parameters:
-        - $ref: "#/components/parameters/LimitParam"
-        - $ref: "#/components/parameters/CursorParam"
-        - name: asset_type
-          in: query
-          schema:
-            $ref: "#/components/schemas/AssetType"
-          required: false
-        - name: status
-          in: query
-          schema:
-            $ref: "#/components/schemas/AssetStatus"
-          required: false
+      operationId: mcp_server_card__well_known_mcp_json_get
       responses:
-        "200":
-          description: Paginated list of assets.
+        '200':
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AssetListResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
+                additionalProperties: true
+                title: Response Mcp Server Card  Well Known Mcp Json Get
+                type: object
+          description: Successful Response
+      summary: Mcp Server Card
+  /health:
+    get:
+      operationId: health_health_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Health Health Get
+                type: object
+          description: Successful Response
+      summary: Health
+  /scim/v2/Groups:
+    get:
+      operationId: list_groups_scim_v2_Groups_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+      summary: List Groups
+      tags:
+      - scim
     post:
-      operationId: createAsset
-      summary: Register a new asset from a YAML spec
-      tags: [assets]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/AssetCreateRequest"
+      operationId: create_group_scim_v2_Groups_post
       responses:
-        "201":
-          description: Asset registered successfully.
+        '200':
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/AssetDetail"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "409":
-          $ref: "#/components/responses/Conflict"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  /assets/{id}:
-    get:
-      operationId: getAsset
-      summary: Get a single asset by ID
-      tags: [assets]
+              schema: {}
+          description: Successful Response
+      summary: Create Group
+      tags:
+      - scim
+  /scim/v2/Groups/{group_id}:
+    delete:
+      operationId: delete_group_scim_v2_Groups__group_id__delete
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Asset UUID (from registration).
+      - in: path
+        name: group_id
+        required: true
+        schema:
+          title: Group Id
+          type: string
       responses:
-        "200":
-          description: Asset detail.
+        '204':
+          description: Successful Response
+        '422':
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AssetDetail"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  /assets/{id}/promote:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Delete Group
+      tags:
+      - scim
+    get:
+      operationId: get_group_scim_v2_Groups__group_id__get
+      parameters:
+      - in: path
+        name: group_id
+        required: true
+        schema:
+          title: Group Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get Group
+      tags:
+      - scim
+    patch:
+      operationId: patch_group_scim_v2_Groups__group_id__patch
+      parameters:
+      - in: path
+        name: group_id
+        required: true
+        schema:
+          title: Group Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Patch Group
+      tags:
+      - scim
     put:
-      operationId: promoteAsset
-      summary: Promote an asset to a new lifecycle status
-      tags: [assets]
+      description: 'RFC 7644 §3.5.1 full replace of a Group.
+
+
+        ``displayName`` and ``members`` are replaced atomically (one transaction);
+
+        role reconciliation then runs for every member added, removed, or kept —
+
+        exactly as PATCH does: new members of a mapped group gain the role, removed
+
+        members lose only SCIM-owned grants (ADR-0190), and a revoke that would
+
+        remove the last admin surfaces as a SCIM 409 (ADR-0060).'
+      operationId: put_group_scim_v2_Groups__group_id__put
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
+      - in: path
+        name: group_id
         required: true
+        schema:
+          title: Group Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Put Group
+      tags:
+      - scim
+  /scim/v2/ResourceTypes:
+    get:
+      operationId: resource_types_scim_v2_ResourceTypes_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+      summary: Resource Types
+      tags:
+      - scim
+  /scim/v2/Schemas:
+    get:
+      operationId: schemas_scim_v2_Schemas_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+      summary: Schemas
+      tags:
+      - scim
+  /scim/v2/ServiceProviderConfig:
+    get:
+      operationId: service_provider_config_scim_v2_ServiceProviderConfig_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+      summary: Service Provider Config
+      tags:
+      - scim
+  /scim/v2/Users:
+    get:
+      operationId: list_users_scim_v2_Users_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+      summary: List Users
+      tags:
+      - scim
+    post:
+      operationId: create_user_scim_v2_Users_post
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+      summary: Create User
+      tags:
+      - scim
+  /scim/v2/Users/{user_id}:
+    delete:
+      operationId: delete_user_scim_v2_Users__user_id__delete
+      parameters:
+      - in: path
+        name: user_id
+        required: true
+        schema:
+          title: User Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Delete User
+      tags:
+      - scim
+    get:
+      operationId: get_user_scim_v2_Users__user_id__get
+      parameters:
+      - in: path
+        name: user_id
+        required: true
+        schema:
+          title: User Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get User
+      tags:
+      - scim
+    patch:
+      operationId: patch_user_scim_v2_Users__user_id__patch
+      parameters:
+      - in: path
+        name: user_id
+        required: true
+        schema:
+          title: User Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Patch User
+      tags:
+      - scim
+  /v0/admin/flush-jwks:
+    post:
+      description: 'Flush the JWKS cache so the next request re-fetches from the issuer.
+
+
+        Requires admin role.'
+      operationId: flush_jwks_v0_admin_flush_jwks_post
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+      summary: Flush Jwks
+      tags:
+      - admin
+  /v0/admin/roles:
+    get:
+      description: List all role assignments (admin only).
+      operationId: list_roles_v0_admin_roles_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response List Roles V0 Admin Roles Get
+                type: object
+          description: Successful Response
+      summary: List Roles
+      tags:
+      - admin
+    post:
+      description: Assign a role to a subject (idempotent). Admin only.
+      operationId: assign_role_v0_admin_roles_post
+      requestBody:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/PromoteRequest"
-      responses:
-        "200":
-          description: Asset promoted successfully.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AssetDetail"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
-        "412":
-          $ref: "#/components/responses/PreconditionFailed"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  # ======================== CAPSULES ========================
-
-  /capsules:
-    get:
-      operationId: listCapsules
-      summary: List run capsules
-      tags: [capsules]
-      parameters:
-        - $ref: "#/components/parameters/LimitParam"
-        - $ref: "#/components/parameters/CursorParam"
-      responses:
-        "200":
-          description: Paginated list of capsule summaries.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CapsuleListResponse"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-    post:
-      operationId: uploadCapsule
-      summary: Upload a capsule (multipart/form-data ZIP)
-      tags: [capsules]
-      requestBody:
+              $ref: '#/components/schemas/AssignRoleRequest'
         required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Assign Role V0 Admin Roles Post
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Assign Role
+      tags:
+      - admin
+  /v0/admin/roles/{subject}/{role}:
+    delete:
+      description: 'Revoke a role from a subject.
+
+
+        Returns 404 if the assignment did not exist.
+
+        Returns 409 if revoking would leave the system with no admin path (lockout
+        guard).'
+      operationId: revoke_role_v0_admin_roles__subject___role__delete
+      parameters:
+      - in: path
+        name: subject
+        required: true
+        schema:
+          title: Subject
+          type: string
+      - in: path
+        name: role
+        required: true
+        schema:
+          title: Role
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Revoke Role V0 Admin Roles  Subject   Role  Delete
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Revoke Role
+      tags:
+      - admin
+  /v0/api-keys:
+    get:
+      description: List API keys (admin only) — metadata only, never secrets or hashes.
+      operationId: list_api_keys_v0_api_keys_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response List Api Keys V0 Api Keys Get
+                type: object
+          description: Successful Response
+      summary: List Api Keys
+      tags:
+      - api-keys
+    post:
+      description: Create an API key (admin only). The key is returned ONCE and never
+        stored.
+      operationId: create_api_key_v0_api_keys_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateApiKeyRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Create Api Key V0 Api Keys Post
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Create Api Key
+      tags:
+      - api-keys
+  /v0/api-keys/{key_id}:
+    delete:
+      description: Revoke an API key by key_id (admin only) — effective on the next
+        request.
+      operationId: revoke_api_key_v0_api_keys__key_id__delete
+      parameters:
+      - in: path
+        name: key_id
+        required: true
+        schema:
+          title: Key Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Revoke Api Key V0 Api Keys  Key Id  Delete
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Revoke Api Key
+      tags:
+      - api-keys
+  /v0/api-keys/{key_id}/rotate:
+    post:
+      description: 'Rotate an API key (admin only). The successor is returned ONCE.
+
+
+        Both keys stay valid for the bounded overlap window; the predecessor
+
+        auto-revokes at verify time once the window elapses (ADR-0193 D3).'
+      operationId: rotate_api_key_v0_api_keys__key_id__rotate_post
+      parameters:
+      - in: path
+        name: key_id
+        required: true
+        schema:
+          title: Key Id
+          type: string
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Rotate Api Key V0 Api Keys  Key Id  Rotate Post
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Rotate Api Key
+      tags:
+      - api-keys
+  /v0/assets:
+    get:
+      operationId: list_assets_v0_assets_get
+      parameters:
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 50
+          maximum: 500
+          minimum: 1
+          title: Limit
+          type: integer
+      - in: query
+        name: cursor
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cursor
+      - in: query
+        name: asset_type
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Asset Type
+      - in: query
+        name: status
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: List Assets
+      tags:
+      - assets
+    post:
+      operationId: create_asset_v0_assets_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: true
+              title: Body
+              type: object
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Create Asset
+      tags:
+      - assets
+  /v0/assets/{asset_id}:
+    get:
+      operationId: get_asset_v0_assets__asset_id__get
+      parameters:
+      - in: path
+        name: asset_id
+        required: true
+        schema:
+          title: Asset Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get Asset
+      tags:
+      - assets
+  /v0/assets/{asset_id}/promote:
+    put:
+      operationId: promote_asset_v0_assets__asset_id__promote_put
+      parameters:
+      - in: path
+        name: asset_id
+        required: true
+        schema:
+          title: Asset Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: true
+              title: Body
+              type: object
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Promote Asset
+      tags:
+      - assets
+  /v0/auth/saml/acs:
+    post:
+      description: 'Assertion Consumer Service (HTTP-POST binding).
+
+
+        Refuses (501) every assertion while the D5 gate is open. The posted body
+
+        is never parsed: without an XXE-hardened parser and XML-DSIG verification
+
+        (rules V1/V2/V10) NovaFabric does not touch untrusted assertion XML.'
+      operationId: assertion_consumer_service_v0_auth_saml_acs_post
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+      summary: Assertion Consumer Service
+      tags:
+      - auth
+  /v0/auth/saml/login:
+    get:
+      description: 'SP-initiated SSO entry point.
+
+
+        Refuses (501) while the ADR-0138 D5 library gate is open: starting a flow
+
+        whose assertion could never be verified at the ACS would strand the user
+
+        at the IdP.'
+      operationId: sp_initiated_login_v0_auth_saml_login_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+      summary: Sp Initiated Login
+      tags:
+      - auth
+  /v0/auth/saml/metadata:
+    get:
+      description: 'Emit this SP''s SAML metadata XML (entity ID, ACS URL, SP cert).
+
+
+        Read-only, unauthenticated (metadata is public by design), no side effects.'
+      operationId: sp_metadata_v0_auth_saml_metadata_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+      summary: Sp Metadata
+      tags:
+      - auth
+  /v0/capsules:
+    get:
+      description: 'List capsules — keyset (seek) pagination, ADR-0206 P1 (experimental).
+
+
+        Sort order is pinned to ``created_at DESC, run_id DESC``; ``next_cursor``
+
+        is an opaque v1 keyset cursor. Legacy ``{"offset": N}`` cursors are still
+
+        served by the old materialized path for one deprecation cycle (ADR-0188)
+
+        and carry a ``Deprecation: true`` response header. A non-empty cursor
+
+        that fails strict decoding is a 400 ``invalid_cursor``.'
+      operationId: list_capsules_v0_capsules_get
+      parameters:
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 50
+          maximum: 500
+          minimum: 1
+          title: Limit
+          type: integer
+      - in: query
+        name: cursor
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cursor
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: List Capsules
+      tags:
+      - capsules
+    post:
+      description: 'Accept a capsule ZIP, spool it to disk, unpack it under the capsule_dir.
+
+
+        ADR-0203 P1 (experimental): the body is size-capped (413
+
+        ``payload_too_large``), streamed to a disk spool in bounded chunks,
+
+        guarded against zip bombs and ``..``-traversal members (422
+
+        ``zip_guard_violation``), extracted member-by-member into a temp
+
+        directory, and published atomically via rename — a failed request never
+
+        leaves a partial ``capsule_dir/<run_id>``.'
+      operationId: upload_capsule_v0_capsules_post
+      requestBody:
         content:
           multipart/form-data:
             schema:
-              type: object
-              required: [capsule]
-              properties:
-                capsule:
-                  type: string
-                  format: binary
-                  description: The capsule ZIP archive.
-      responses:
-        "201":
-          description: Capsule uploaded and unpacked.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CapsuleSummary"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "409":
-          $ref: "#/components/responses/Conflict"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  /capsules/{run_id}:
-    get:
-      operationId: getCapsule
-      summary: Get capsule detail by run ID
-      tags: [capsules]
-      parameters:
-        - name: run_id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Capsule detail.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CapsuleDetail"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  /capsules/{run_id}/scores:
-    post:
-      operationId: submitCapsuleScore
-      summary: Submit an externally-computed score into the capsule's append-only scores.jsonl (ADR-0119, experimental)
-      description: >
-        Writer-role required (the scores:write capability). Fail-closed: a rejection
-        writes nothing. Append-only: a correction is a new record whose `supersedes`
-        names a prior score_id; no line is ever mutated. Idempotent by score_id
-        (identical replay returns 200 and appends no second line).
-      tags: [capsules]
-      parameters:
-        - name: run_id
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
+              $ref: '#/components/schemas/Body_upload_capsule_v0_capsules_post'
         required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Upload Capsule
+      tags:
+      - capsules
+  /v0/capsules/bulk-delete:
+    post:
+      description: 'Bounded bulk delete with per-item outcomes (ADR-0206 D3, experimental).
+
+
+        Batch size is capped by ``server.bulk.max_items`` (default 100, ceiling
+
+        1000) — an oversized batch is a 422 before any work. Each id runs the
+
+        full single-delete pipeline; outcomes are reported per item
+
+        (``deleted | held | not_found | invalid_id | duplicate | error``), with
+
+        no transactional rollback — partial progress is visible, not undone.
+
+        ``dry_run`` returns the identical report while deleting nothing.'
+      operationId: bulk_delete_capsules_v0_capsules_bulk_delete_post
+      requestBody:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              required: [name, value, value_type, source, evaluator_id, subject, eval_card_digest]
-              properties:
-                name: {type: string, minLength: 1}
-                value: {}
-                value_type: {type: string, enum: [boolean, categorical, numeric]}
-                source: {type: string, enum: [human, heuristic, code, judge]}
-                evaluator_id: {type: string, minLength: 1}
-                subject: {type: string, pattern: "^sha256:[0-9a-f]{64}$"}
-                subject_kind: {type: string, enum: [span, capsule]}
-                eval_card_digest: {type: string, pattern: "^sha256:[0-9a-f]{64}$"}
-                score_id: {type: string, nullable: true}
-                supersedes: {type: string, nullable: true}
-                run_id: {type: string, nullable: true}
-                significance: {type: object, nullable: true}
-                created_at: {type: string, format: date-time}
-      responses:
-        "201":
-          description: Score appended (see schemas/score-submission-response.schema.json).
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [score, idempotent_replay, config_bound]
-                properties:
-                  score: {type: object}
-                  idempotent_replay: {type: boolean}
-                  config_bound: {type: boolean}
-                  submission:
-                    type: object
-                    properties:
-                      principal: {type: string}
-                      scope: {type: string}
-                      received_at: {type: string, format: date-time}
-        "200":
-          description: Idempotent replay — score_id already present with an identical body; no second line appended.
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  # ======================== LINEAGE ========================
-
-  /lineage/nodes:
-    get:
-      operationId: listLineageNodes
-      summary: List lineage nodes
-      tags: [lineage]
-      parameters:
-        - $ref: "#/components/parameters/LimitParam"
-        - $ref: "#/components/parameters/CursorParam"
-        - name: kind
-          in: query
-          required: false
-          schema:
-            type: string
-            enum: [run, asset, artifact, model, tool]
-      responses:
-        "200":
-          description: Paginated list of lineage nodes.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/LineageNodeListResponse"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  /lineage/blast-radius:
-    get:
-      operationId: lineageBlastRadius
-      summary: Compute blast radius (downstream dependents) from a node reference
-      tags: [lineage]
-      parameters:
-        - name: ref
-          in: query
-          required: true
-          schema:
-            type: string
-          description: Node reference string (run_id, asset ref, artifact ref).
-        - name: kind
-          in: query
-          required: false
-          schema:
-            type: string
-          description: Node kind filter (e.g. run, asset).
-        - name: depth
-          in: query
-          required: false
-          schema:
-            type: integer
-            default: 5
-            minimum: 1
-            maximum: 20
-      responses:
-        "200":
-          description: Blast-radius nodes.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/LineageQueryResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  /lineage/provenance:
-    get:
-      operationId: lineageProvenance
-      summary: Compute provenance (upstream ancestors) from a node reference
-      tags: [lineage]
-      parameters:
-        - name: ref
-          in: query
-          required: true
-          schema:
-            type: string
-        - name: kind
-          in: query
-          required: false
-          schema:
-            type: string
-        - name: depth
-          in: query
-          required: false
-          schema:
-            type: integer
-            default: 5
-            minimum: 1
-            maximum: 20
-      responses:
-        "200":
-          description: Provenance nodes.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/LineageQueryResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  /lineage/replay-chain:
-    get:
-      operationId: lineageReplayChain
-      summary: Get the replay chain for a run
-      tags: [lineage]
-      parameters:
-        - name: run_id
-          in: query
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Replay chain nodes.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ReplayChainResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  # ======================== REPLAYS ========================
-
-  /replays:
-    post:
-      operationId: scheduleReplay
-      summary: Schedule a replay job
-      tags: [replays]
-      requestBody:
+              $ref: '#/components/schemas/BulkDeleteRequest'
         required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ReplayScheduleRequest"
       responses:
-        "202":
-          description: Replay job accepted; check status via GET /replays/{replay_id}.
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ReplaySummary"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  /replays/{replay_id}:
-    get:
-      operationId: getReplay
-      summary: Get replay job status
-      tags: [replays]
-      parameters:
-        - name: replay_id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Replay status.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ReplaySummary"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Bulk Delete Capsules
+      tags:
+      - capsules
+  /v0/capsules/{run_id}:
     delete:
-      operationId: cancelReplay
-      summary: Cancel a pending or running replay job
-      tags: [replays]
+      description: 'Delete one capsule — admin-only, hold-refusing, audited (ADR-0206
+        D2).
+
+
+        Legal holds always win: any unreleased hold in any registry refuses with
+
+        409 ``legal_hold_active`` (holds are registry-global today — documented
+
+        limit), and there is no force override. An unexpired WORM lock refuses
+
+        with 409 ``worm_hold``. Deleting an already-deleted id is a 404 (delete
+
+        is evidenced, not idempotent-silent).'
+      operationId: delete_capsule_v0_capsules__run_id__delete
       parameters:
-        - name: replay_id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Replay cancelled.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ReplaySummary"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          description: Replay already completed or cancelled.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  /replays/{replay_id}/events:
-    get:
-      operationId: replayEvents
-      summary: Stream replay progress as Server-Sent Events
-      tags: [replays]
-      parameters:
-        - name: replay_id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: |
-            SSE stream. Each event is a JSON object:
-            `{"event": "progress|completed|error", "data": {...}}`.
-          content:
-            text/event-stream:
-              schema:
-                type: string
-        "404":
-          $ref: "#/components/responses/NotFound"
-
-  # ======================== EVIDENCE ========================
-
-  /evidence:
-    post:
-      operationId: exportEvidence
-      summary: Build an evidence bundle ZIP from a capsule
-      tags: [evidence]
-      requestBody:
+      - in: path
+        name: run_id
         required: true
+        schema:
+          title: Run Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Delete Capsule
+      tags:
+      - capsules
+    get:
+      operationId: get_capsule_v0_capsules__run_id__get
+      parameters:
+      - in: path
+        name: run_id
+        required: true
+        schema:
+          title: Run Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get Capsule
+      tags:
+      - capsules
+  /v0/capsules/{run_id}/scores:
+    post:
+      description: 'Append one externally-computed score to the capsule''s ``scores.jsonl``.
+
+
+        ADR-0119 D2: the same validation core as the local SDK/CLI, exposed over the
+
+        v0.7 REST API. Append-only and fail-closed (a rejection writes nothing);
+
+        idempotent by ``score_id`` (identical replay → 200, no second line). The
+
+        ``scores:write`` capability maps to the ``writer`` role in the shipped RBAC
+
+        model; the authenticated principal is recorded in the ``submission`` block
+        so
+
+        *who submitted* stays distinguishable from *what evaluator produced the value*.'
+      operationId: submit_score_v0_capsules__run_id__scores_post
+      parameters:
+      - in: path
+        name: run_id
+        required: true
+        schema:
+          title: Run Id
+          type: string
+      requestBody:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/EvidenceExportRequest"
+              additionalProperties: true
+              title: Body
+              type: object
+        required: true
       responses:
-        "202":
-          description: Evidence export accepted; poll GET /evidence/{bundle_id}.
+        '201':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BundleSummary"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  /evidence/{bundle_id}:
-    get:
-      operationId: getEvidenceBundle
-      summary: Get evidence bundle metadata
-      tags: [evidence]
-      parameters:
-        - name: bundle_id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Bundle metadata.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/BundleSummary"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  /evidence/{bundle_id}/download:
-    get:
-      operationId: downloadEvidenceBundle
-      summary: Download an evidence bundle ZIP
-      tags: [evidence]
-      parameters:
-        - name: bundle_id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: ZIP file binary download.
-          content:
-            application/zip:
-              schema:
-                type: string
-                format: binary
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  # --------------------------------------------------------------------------- #
-  # Auth — Device Authorization Grant (RFC 8628)
-  # --------------------------------------------------------------------------- #
-
-  /auth/device/code:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Submit Score
+      tags:
+      - capsules
+  /v0/evidence:
     post:
-      operationId: issueDeviceCode
-      summary: Issue a device code (Device Authorization Grant)
-      tags: [auth]
-      description: |
-        Initiates the Device Authorization Grant flow (RFC 8628).
-        Returns a device_code and user_code; the client polls /auth/token
-        until the user approves at the verification_uri.
+      operationId: export_evidence_v0_evidence_post
       requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: true
+              title: Body
+              type: object
+        required: true
+      responses:
+        '202':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Export Evidence
+      tags:
+      - evidence
+  /v0/evidence/{bundle_id}:
+    get:
+      operationId: get_evidence_bundle_v0_evidence__bundle_id__get
+      parameters:
+      - in: path
+        name: bundle_id
+        required: true
+        schema:
+          title: Bundle Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get Evidence Bundle
+      tags:
+      - evidence
+  /v0/evidence/{bundle_id}/download:
+    get:
+      operationId: download_evidence_bundle_v0_evidence__bundle_id__download_get
+      parameters:
+      - in: path
+        name: bundle_id
+        required: true
+        schema:
+          title: Bundle Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Download Evidence Bundle
+      tags:
+      - evidence
+  /v0/lineage/blast-radius:
+    get:
+      operationId: blast_radius_v0_lineage_blast_radius_get
+      parameters:
+      - in: query
+        name: ref
+        required: true
+        schema:
+          title: Ref
+          type: string
+      - in: query
+        name: kind
         required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                server_url:
-                  type: string
-                  example: "http://localhost:7433"
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Kind
+      - in: query
+        name: depth
+        required: false
+        schema:
+          default: 5
+          maximum: 20
+          minimum: 1
+          title: Depth
+          type: integer
       responses:
-        "200":
-          description: Device code issued.
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
           content:
             application/json:
               schema:
-                type: object
-                required: [device_code, user_code, verification_uri, expires_in, interval]
-                properties:
-                  device_code:
-                    type: string
-                  user_code:
-                    type: string
-                    example: "ABCD-1234"
-                  verification_uri:
-                    type: string
-                  expires_in:
-                    type: integer
-                    description: Seconds until the device code expires.
-                  interval:
-                    type: integer
-                    description: Minimum polling interval in seconds.
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  /auth/token:
-    post:
-      operationId: pollDeviceToken
-      summary: Poll for a token after device code approval
-      tags: [auth]
-      description: |
-        Client polls this endpoint until the user approves the device code.
-        Returns the access token on approval, or a pending/expired error.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [device_code]
-              properties:
-                device_code:
-                  type: string
-      responses:
-        "200":
-          description: Access token issued.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [access_token, token_type]
-                properties:
-                  access_token:
-                    type: string
-                  token_type:
-                    type: string
-                    example: "bearer"
-        "400":
-          description: Pending approval or expired device code.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  /auth/approve:
-    post:
-      operationId: approveDeviceCode
-      summary: Approve a pending device code (admin / testing)
-      tags: [auth]
-      description: |
-        Admin endpoint that approves a pending device code, associating a
-        subject and roles with it. Used for testing or headless admin flows.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [user_code, subject]
-              properties:
-                user_code:
-                  type: string
-                subject:
-                  type: string
-                  example: "user@example.com"
-                roles:
-                  type: array
-                  items:
-                    type: string
-                  example: ["reader"]
-      responses:
-        "200":
-          description: Device code approved.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  # --------------------------------------------------------------------------- #
-  # Admin
-  # --------------------------------------------------------------------------- #
-
-  /admin/flush-jwks:
-    post:
-      operationId: flushJwksCache
-      summary: Flush the in-memory JWKS cache
-      tags: [admin]
-      description: |
-        Invalidates the cached JWKS so the next request re-fetches from the
-        OIDC issuer. Requires admin role. Use after rotating signing keys at
-        the identity provider.
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Cache flushed.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  # --------------------------------------------------------------------------- #
-  # Lineage (Phase 6)
-  # --------------------------------------------------------------------------- #
-
-  /lineage/shard-local-query:
-    post:
-      operationId: shardLocalQuery
-      summary: Execute a shard-local lineage query
-      description: >
-        Accepts an authenticated query from the federation coordinator.
-        Returns per-site result rows only — never raw edge tuples (FR-10 sovereignty).
-      tags: [lineage]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [query_type, root_run_id]
-              properties:
-                query_type:
-                  type: string
-                  enum: [provenance, blast_radius, replay_chain]
-                root_run_id:
-                  type: string
-                  description: ULID run identifier
-                max_depth:
-                  type: integer
-                  default: 5
-                site_id:
-                  type: string
-                  description: Requesting coordinator site_id (audit only)
-      responses:
-        "200":
-          description: Shard-local query result
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [site_id, rows, partial]
-                properties:
-                  site_id:
-                    type: string
-                  rows:
-                    type: array
-                    items:
-                      type: object
-                      required: [node_id, kind, ref]
-                      properties:
-                        node_id: {type: string}
-                        kind: {type: string}
-                        ref: {type: string}
-                  partial:
-                    type: boolean
-        "401": {description: Unauthorized}
-        "422": {description: Validation error}
-
-  # --------------------------------------------------------------------------- #
-  # Federation (Phase 6 C-1..C-6)
-  # --------------------------------------------------------------------------- #
-
-  /federation/query:
-    post:
-      operationId: federationQuery
-      summary: Fan-out cross-site lineage query
-      description: >
-        Stateless federation coordinator: fans out to all participating sites,
-        deduplicates on node_id (ULID), returns merged result set.
-        Marks partial=true if any site is offline.
-      tags: [federation]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [query_type, root_run_id, sites]
-              properties:
-                query_type:
-                  type: string
-                  enum: [provenance, blast_radius, replay_chain]
-                root_run_id:
-                  type: string
-                max_depth:
-                  type: integer
-                  default: 5
-                sites:
-                  type: array
-                  items:
-                    type: string
-                    format: uri
-                  description: Shard-local-query base URLs
-      responses:
-        "200":
-          description: Federated query result
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [rows, partial, site_count, dedup_count]
-                properties:
-                  rows:
-                    type: array
-                    items:
-                      type: object
-                      required: [node_id, kind, ref]
-                      properties:
-                        node_id: {type: string}
-                        kind: {type: string}
-                        ref: {type: string}
-                  partial:
-                    type: boolean
-                  site_count:
-                    type: integer
-                  dedup_count:
-                    type: integer
-        "401": {description: Unauthorized}
-
-  /federation/summary:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Blast Radius
+      tags:
+      - lineage
+  /v0/lineage/nodes:
     get:
-      operationId: getFederationSummary
-      summary: Cross-site reference summary
-      description: >
-        Returns rolled-up per-site cross-site reference counts by
-        (edge_type, target_site), tagged with source=summary and refresh timestamp.
-      tags: [federation]
+      operationId: list_lineage_nodes_v0_lineage_nodes_get
+      parameters:
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 50
+          maximum: 500
+          minimum: 1
+          title: Limit
+          type: integer
+      - in: query
+        name: cursor
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cursor
+      - in: query
+        name: kind
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Kind
       responses:
-        "200":
-          description: Federation summary
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
           content:
             application/json:
               schema:
-                type: object
-                required: [entries, source, refreshed_at]
-                properties:
-                  entries:
-                    type: array
-                    items:
-                      type: object
-                      required: [source_site_id, target_site_id, edge_type, count]
-                      properties:
-                        source_site_id: {type: string}
-                        target_site_id: {type: string}
-                        edge_type: {type: string}
-                        count: {type: integer}
-                  source:
-                    type: string
-                    enum: [summary]
-                  refreshed_at:
-                    type: string
-                    format: date-time
-        "401": {description: Unauthorized}
-
-  # --------------------------------------------------------------------------- #
-  # API keys (ADR-0193, experimental) — admin-gated first-class credentials.
-  # Hash-only storage, shown once at create/rotate, RBAC-scoped, audited.
-  # --------------------------------------------------------------------------- #
-
-  /api-keys:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: List Lineage Nodes
+      tags:
+      - lineage
+  /v0/lineage/provenance:
     get:
-      operationId: listApiKeys
-      summary: List API keys (metadata only)
-      description: >
-        Returns key metadata only — never secrets or hashes. Requires admin
-        role. Each row carries a derived status (active/revoked/expired).
-      tags: [api-keys]
-      security:
-        - bearerAuth: []
+      operationId: provenance_v0_lineage_provenance_get
+      parameters:
+      - in: query
+        name: ref
+        required: true
+        schema:
+          title: Ref
+          type: string
+      - in: query
+        name: kind
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Kind
+      - in: query
+        name: depth
+        required: false
+        schema:
+          default: 5
+          maximum: 20
+          minimum: 1
+          title: Depth
+          type: integer
       responses:
-        "200":
-          description: API keys with derived status.
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
           content:
             application/json:
               schema:
-                type: object
-                required: [api_keys, total]
-                properties:
-                  api_keys:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/ApiKeyMetadata"
-                  total:
-                    type: integer
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-    post:
-      operationId: createApiKey
-      summary: Create an API key
-      description: >
-        Creates a first-class API key bound to an owning principal, a role set
-        (drawn from the existing RBAC vocabulary), an optional workspace scope,
-        and an optional expiry. The full key string is returned exactly ONCE in
-        the response and is unrecoverable thereafter — only its sha256 is
-        stored. Requires admin role.
-      tags: [api-keys]
-      security:
-        - bearerAuth: []
-      requestBody:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Provenance
+      tags:
+      - lineage
+  /v0/lineage/replay-chain:
+    get:
+      operationId: replay_chain_v0_lineage_replay_chain_get
+      parameters:
+      - in: query
+        name: run_id
         required: true
+        schema:
+          title: Run Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Replay Chain
+      tags:
+      - lineage
+  /v0/orgs:
+    get:
+      description: List all organizations (admin only).
+      operationId: list_orgs_v0_orgs_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response List Orgs V0 Orgs Get
+                type: object
+          description: Successful Response
+      summary: List Orgs
+      tags:
+      - orgs
+    post:
+      description: Create an organization (admin only).
+      operationId: create_org_v0_orgs_post
+      requestBody:
         content:
           application/json:
             schema:
-              type: object
-              required: [owner]
-              properties:
-                owner:
-                  type: string
-                  description: Owning principal (user or svc:<name>).
-                roles:
-                  type: array
-                  items:
-                    type: string
-                    enum: [reader, writer, admin, auditor]
-                  default: [reader]
-                workspace:
-                  type: string
-                  nullable: true
-                  description: Optional workspace scope (ADR-0178).
-                expires_in_days:
-                  type: integer
-                  nullable: true
-                  minimum: 1
-                  maximum: 3650
+              $ref: '#/components/schemas/CreateOrgRequest'
+        required: true
       responses:
-        "201":
-          description: Key created; the full key is shown once.
+        '201':
           content:
             application/json:
               schema:
+                additionalProperties: true
+                title: Response Create Org V0 Orgs Post
                 type: object
-                required: [key, api_key, note]
-                properties:
-                  key:
-                    type: string
-                    description: The full nvfk_ key — shown once, store it now.
-                  api_key:
-                    $ref: "#/components/schemas/ApiKeyMetadata"
-                  note:
-                    type: string
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-
-  /api-keys/{key_id}:
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Create Org
+      tags:
+      - orgs
+  /v0/orgs/{org_id}:
     delete:
-      operationId: revokeApiKey
-      summary: Revoke an API key
-      description: >
-        Revokes the key immediately — verification is a DB lookup, so the key
-        is rejected on the very next request. Requires admin role.
-      tags: [api-keys]
-      security:
-        - bearerAuth: []
+      description: 'Delete an empty organization (admin only).
+
+
+        404 if unknown; 409 if it still contains workspaces or memberships.'
+      operationId: delete_org_v0_orgs__org_id__delete
       parameters:
-        - name: key_id
-          in: path
-          required: true
-          schema:
-            type: string
+      - in: path
+        name: org_id
+        required: true
+        schema:
+          title: Org Id
+          type: string
       responses:
-        "200":
-          description: Key revoked.
+        '200':
           content:
             application/json:
               schema:
+                additionalProperties: true
+                title: Response Delete Org V0 Orgs  Org Id  Delete
                 type: object
-                required: [ok, key_id, revoked]
-                properties:
-                  ok:
-                    type: boolean
-                  key_id:
-                    type: string
-                  revoked:
-                    type: boolean
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-
-  /api-keys/{key_id}/rotate:
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Delete Org
+      tags:
+      - orgs
+    get:
+      description: Fetch one organization (admin only).
+      operationId: get_org_v0_orgs__org_id__get
+      parameters:
+      - in: path
+        name: org_id
+        required: true
+        schema:
+          title: Org Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Get Org V0 Orgs  Org Id  Get
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get Org
+      tags:
+      - orgs
+  /v0/replays:
     post:
-      operationId: rotateApiKey
-      summary: Rotate an API key
-      description: >
-        Mints a successor key with identical bindings (owner, roles, workspace,
-        expiry). Both keys stay valid for a bounded overlap window; after it
-        elapses the predecessor auto-revokes at verify time (no background
-        job). The successor's full key is returned exactly ONCE. Requires admin
-        role.
-      tags: [api-keys]
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: key_id
-          in: path
-          required: true
-          schema:
-            type: string
+      operationId: schedule_replay_v0_replays_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: true
+              title: Body
+              type: object
+        required: true
       responses:
-        "201":
-          description: Successor minted; the successor key is shown once.
+        '202':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
           content:
             application/json:
               schema:
-                type: object
-                required: [key, api_key, overlap_seconds, rotate_expires_at, note]
-                properties:
-                  key:
-                    type: string
-                    description: The successor nvfk_ key — shown once.
-                  api_key:
-                    $ref: "#/components/schemas/ApiKeyMetadata"
-                  overlap_seconds:
-                    type: integer
-                  rotate_expires_at:
-                    type: string
-                    format: date-time
-                  note:
-                    type: string
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Schedule Replay
+      tags:
+      - replays
+  /v0/replays/{replay_id}:
+    delete:
+      operationId: cancel_replay_v0_replays__replay_id__delete
+      parameters:
+      - in: path
+        name: replay_id
+        required: true
+        schema:
+          title: Replay Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Cancel Replay
+      tags:
+      - replays
+    get:
+      operationId: get_replay_v0_replays__replay_id__get
+      parameters:
+      - in: path
+        name: replay_id
+        required: true
+        schema:
+          title: Replay Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get Replay
+      tags:
+      - replays
+  /v0/replays/{replay_id}/events:
+    get:
+      operationId: replay_events_v0_replays__replay_id__events_get
+      parameters:
+      - in: path
+        name: replay_id
+        required: true
+        schema:
+          title: Replay Id
+          type: string
+      - in: query
+        name: Last-Event-ID
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Last-Event-Id
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Replay Events
+      tags:
+      - replays
+  /v0/runs/suggest-register:
+    get:
+      description: 'Aggregate asset registration suggestions across the most recent
+        capsules.
 
-tags:
-  - name: federation
-    description: Cross-site lineage federation endpoints (Phase 6 C-1..C-6)
-  - name: api-keys
-    description: First-class API keys — admin-gated, hash-only, shown once (ADR-0193)
+
+        Skips assets already present in the registry.'
+      operationId: get_registration_suggestions_v0_runs_suggest_register_get
+      parameters:
+      - in: query
+        name: capsule_limit
+        required: false
+        schema:
+          default: 10
+          maximum: 50
+          minimum: 1
+          title: Capsule Limit
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get Registration Suggestions
+      tags:
+      - suggestions
+  /v0/seal/policy:
+    get:
+      description: Return the latest promotion policy predicate, or 404 if none exists.
+      operationId: get_seal_policy_v0_seal_policy_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyResponse'
+          description: Successful Response
+      summary: Get Seal Policy
+      tags:
+      - seal
+  /v0/seal/{capsule_id}/proposals:
+    get:
+      description: List all proposals for a capsule with their approval status.
+      operationId: list_seal_proposals_v0_seal__capsule_id__proposals_get
+      parameters:
+      - in: path
+        name: capsule_id
+        required: true
+        schema:
+          title: Capsule Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/ProposalSummary'
+                title: Response List Seal Proposals V0 Seal  Capsule Id  Proposals
+                  Get
+                type: array
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: List Seal Proposals
+      tags:
+      - seal
+  /v0/seal/{capsule_id}/verify:
+    post:
+      description: Run the five-check SoD verifier for a capsule's promote bundles.
+      operationId: verify_seal_chain_v0_seal__capsule_id__verify_post
+      parameters:
+      - in: path
+        name: capsule_id
+        required: true
+        schema:
+          title: Capsule Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifyResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Verify Seal Chain
+      tags:
+      - seal
+  /v0/service-accounts:
+    get:
+      description: List service accounts (admin only). Tokens are never included.
+      operationId: list_service_accounts_v0_service_accounts_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response List Service Accounts V0 Service Accounts Get
+                type: object
+          description: Successful Response
+      summary: List Service Accounts
+      tags:
+      - service-accounts
+    post:
+      description: 'Create a service account and mint its offline token (admin only).
+
+
+        The token is returned ONCE in this response and is not retrievable later.
+
+        It carries no roles of its own — effective roles come from the account''s
+
+        workspace/org memberships or global role assignments (ADR-0178 I3).'
+      operationId: create_service_account_v0_service_accounts_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateServiceAccountRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Create Service Account V0 Service Accounts Post
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Create Service Account
+      tags:
+      - service-accounts
+  /v0/service-accounts/{account_id}/disable:
+    post:
+      description: 'Disable a service account and revoke its outstanding token (admin
+        only).
+
+
+        Revocation reuses the existing ``token_audit`` path; independently, the
+
+        disabled flag is checked at token verification time (spec I4).'
+      operationId: disable_service_account_v0_service_accounts__account_id__disable_post
+      parameters:
+      - in: path
+        name: account_id
+        required: true
+        schema:
+          title: Account Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Disable Service Account V0 Service Accounts  Account
+                  Id  Disable Post
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Disable Service Account
+      tags:
+      - service-accounts
+  /v0/usage:
+    get:
+      description: 'Per-workspace usage for one period (default: current UTC period).'
+      operationId: get_usage_v0_usage_get
+      parameters:
+      - in: query
+        name: period
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Period
+      - in: query
+        name: workspace
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Workspace
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 50
+          maximum: 500
+          minimum: 1
+          title: Limit
+          type: integer
+      - in: query
+        name: cursor
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cursor
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get Usage
+      tags:
+      - usage
+  /v0/version:
+    get:
+      operationId: version_v0_version_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Version V0 Version Get
+                type: object
+          description: Successful Response
+      summary: Version
+  /v0/webhooks:
+    get:
+      description: List subscriptions (admin, auditor) — metadata only, never secrets.
+      operationId: list_webhooks_v0_webhooks_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response List Webhooks V0 Webhooks Get
+                type: object
+          description: Successful Response
+      summary: List Webhooks
+      tags:
+      - webhooks
+    post:
+      description: Create a subscription (admin only). The signing secret is returned
+        ONCE.
+      operationId: create_webhook_v0_webhooks_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWebhookRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Create Webhook V0 Webhooks Post
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Create Webhook
+      tags:
+      - webhooks
+  /v0/webhooks/{hook_id}:
+    delete:
+      description: Delete a subscription (admin only); delivery rows remain until
+        pruned.
+      operationId: delete_webhook_v0_webhooks__hook_id__delete
+      parameters:
+      - in: path
+        name: hook_id
+        required: true
+        schema:
+          title: Hook Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Delete Webhook V0 Webhooks  Hook Id  Delete
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Delete Webhook
+      tags:
+      - webhooks
+    get:
+      description: Get one subscription (admin, auditor); unknown → 404.
+      operationId: get_webhook_v0_webhooks__hook_id__get
+      parameters:
+      - in: path
+        name: hook_id
+        required: true
+        schema:
+          title: Hook Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Get Webhook V0 Webhooks  Hook Id  Get
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get Webhook
+      tags:
+      - webhooks
+    patch:
+      description: 'Update url/description/event_types/workspace/disabled (admin only).
+
+
+        The signing secret is NOT updatable (400) — rotate is P2 (ADR-0205 D2).'
+      operationId: update_webhook_v0_webhooks__hook_id__patch
+      parameters:
+      - in: path
+        name: hook_id
+        required: true
+        schema:
+          title: Hook Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWebhookRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Update Webhook V0 Webhooks  Hook Id  Patch
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Update Webhook
+      tags:
+      - webhooks
+  /v0/webhooks/{hook_id}/deliveries:
+    get:
+      description: Cursor-paginated delivery-attempt log, newest first (admin, auditor).
+      operationId: list_deliveries_v0_webhooks__hook_id__deliveries_get
+      parameters:
+      - in: path
+        name: hook_id
+        required: true
+        schema:
+          title: Hook Id
+          type: string
+      - in: query
+        name: status
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - in: query
+        name: cursor
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cursor
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 50
+          title: Limit
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response List Deliveries V0 Webhooks  Hook Id  Deliveries Get
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: List Deliveries
+      tags:
+      - webhooks
+  /v0/webhooks/{hook_id}/deliveries/{delivery_id}/redeliver:
+    post:
+      description: Re-enqueue a terminal-failed delivery (admin). Non-terminal → 409.
+      operationId: redeliver_v0_webhooks__hook_id__deliveries__delivery_id__redeliver_post
+      parameters:
+      - in: path
+        name: hook_id
+        required: true
+        schema:
+          title: Hook Id
+          type: string
+      - in: path
+        name: delivery_id
+        required: true
+        schema:
+          title: Delivery Id
+          type: string
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Redeliver V0 Webhooks  Hook Id  Deliveries  Delivery
+                  Id  Redeliver Post
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Redeliver
+      tags:
+      - webhooks
+  /v0/webhooks/{hook_id}/ping:
+    post:
+      description: Send a synthetic ``webhook.ping`` through the full delivery path
+        (admin).
+      operationId: ping_webhook_v0_webhooks__hook_id__ping_post
+      parameters:
+      - in: path
+        name: hook_id
+        required: true
+        schema:
+          title: Hook Id
+          type: string
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Ping Webhook V0 Webhooks  Hook Id  Ping Post
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Ping Webhook
+      tags:
+      - webhooks
+  /v0/workspaces:
+    get:
+      description: List workspaces, optionally filtered by org (admin only).
+      operationId: list_workspaces_v0_workspaces_get
+      parameters:
+      - in: query
+        name: org_id
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Org Id
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response List Workspaces V0 Workspaces Get
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: List Workspaces
+      tags:
+      - workspaces
+    post:
+      description: Create a workspace in an organization (admin only).
+      operationId: create_workspace_v0_workspaces_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkspaceRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Create Workspace V0 Workspaces Post
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Create Workspace
+      tags:
+      - workspaces
+  /v0/workspaces/{ws_id}:
+    delete:
+      description: Delete an empty workspace (admin only). 409 if it has memberships.
+      operationId: delete_workspace_v0_workspaces__ws_id__delete
+      parameters:
+      - in: path
+        name: ws_id
+        required: true
+        schema:
+          title: Ws Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Delete Workspace V0 Workspaces  Ws Id  Delete
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Delete Workspace
+      tags:
+      - workspaces
+    get:
+      description: Fetch one workspace with its memberships (admin only).
+      operationId: get_workspace_v0_workspaces__ws_id__get
+      parameters:
+      - in: path
+        name: ws_id
+        required: true
+        schema:
+          title: Ws Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Get Workspace V0 Workspaces  Ws Id  Get
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get Workspace
+      tags:
+      - workspaces
+  /v0/workspaces/{ws_id}/memberships:
+    post:
+      description: Grant a workspace-scoped role binding (admin only). Idempotent.
+      operationId: grant_membership_v0_workspaces__ws_id__memberships_post
+      parameters:
+      - in: path
+        name: ws_id
+        required: true
+        schema:
+          title: Ws Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MembershipRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Grant Membership V0 Workspaces  Ws Id  Memberships
+                  Post
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Grant Membership
+      tags:
+      - workspaces
+  /v0/workspaces/{ws_id}/memberships/{principal}/{role}:
+    delete:
+      description: Revoke a workspace-scoped role binding (admin only). 404 if absent.
+      operationId: revoke_membership_v0_workspaces__ws_id__memberships__principal___role__delete
+      parameters:
+      - in: path
+        name: ws_id
+        required: true
+        schema:
+          title: Ws Id
+          type: string
+      - in: path
+        name: principal
+        required: true
+        schema:
+          title: Principal
+          type: string
+      - in: path
+        name: role
+        required: true
+        schema:
+          title: Role
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                title: Response Revoke Membership V0 Workspaces  Ws Id  Memberships  Principal   Role  Delete
+                type: object
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Revoke Membership
+      tags:
+      - workspaces
+x-deprecation-policy:
+  adr: design/adr/0188-api-deprecation-sunset-policy.md
+  currently-deprecated: []
+  headers:
+  - Deprecation
+  - Sunset
+  - Link
+  minimum-window: two minor releases
+  register: docs/api-reference.md#deprecation-register-adr-0188

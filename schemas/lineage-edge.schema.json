@@ -32,9 +32,12 @@
         "contains",
         "spawned",
         "delegated_to",
-        "replayed_from"
+        "replayed_from",
+        "member_of_session",
+        "wrote_memory",
+        "read_memory"
       ],
-      "description": "Phase 3 four-type edge vocabulary (ADR-0044). Legacy strings (consumed, produced_by, derived_from, evaluated_by, attested_by, depends_on) are coerced by coerce_legacy_edge_type() and must not appear in new records.",
+      "description": "Phase 3 four-type causal/compositional vocabulary (ADR-0044), the grouping edge member_of_session (ADR-0122 D3), and the memory-provenance pair wrote_memory/read_memory (ADR-0143 P1). The memory pair is split by direction on purpose: a poisoned-read back-trace must distinguish who WROTE a bad item from who READ it. member_of_session is deliberately NOT part of the parent/child schema: a session groups N independent runs, which is orthogonal to one execution's internal structure. Legacy strings (consumed, produced_by, derived_from, evaluated_by, attested_by, depends_on) are coerced by coerce_legacy_edge_type() and must not appear in new records.",
       "x-deprecated-values": [
         "consumed",
         "produced_by",

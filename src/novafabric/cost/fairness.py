@@ -52,7 +52,7 @@ def compute_fairness(totals: Mapping[str, float], *, dimension: str) -> Fairness
     if n == 0 or total <= 0:
         return FairnessMetric(
             dimension=dimension,
-            shares={k: 0.0 for k in keys},
+            shares=dict.fromkeys(keys, 0.0),
             gini=0.0,
             max_mean_ratio=0.0,
         )

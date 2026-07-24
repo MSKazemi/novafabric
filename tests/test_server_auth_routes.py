@@ -17,9 +17,32 @@ from novafabric.server.config import ServerConfig  # noqa: E402
 
 @pytest.fixture
 def client(tmp_path: Path) -> TestClient:
-    cfg = ServerConfig(db_path=str(tmp_path / "test.db"))
+    # The device-grant demo flow is opt-in (default off); enable it here since
+    # these tests exercise it directly.
+    cfg = ServerConfig(db_path=str(tmp_path / "test.db"), demo_device_grant=True)
     app = create_app(cfg)
     return TestClient(app, raise_server_exceptions=False)
+
+
+def test_demo_device_grant_disabled_by_default(tmp_path: Path) -> None:
+    """With the default config the device-grant endpoints are not mounted."""
+    cfg = ServerConfig(db_path=str(tmp_path / "test.db"))
+    app = create_app(cfg)
+    disabled = TestClient(app, raise_server_exceptions=False)
+    assert disabled.post("/v0/auth/device/code", json={}).status_code == 404
+    assert disabled.post("/v0/auth/approve", json={"user_code": "X"}).status_code == 404
+
+
+def test_approve_rejects_unknown_role(client: TestClient) -> None:
+    """Caller-supplied roles are validated against the RBAC allowlist."""
+    code_resp = client.post("/v0/auth/device/code", json={})
+    client.post("/v0/auth/token", json={"device_code": code_resp.json()["device_code"]})
+    resp = client.post(
+        "/v0/auth/approve",
+        json={"user_code": code_resp.json()["user_code"], "roles": ["superuser"]},
+    )
+    assert resp.status_code == 400
+    assert "unknown role" in resp.json()["error"]["message"].lower()
 
 
 class TestDeviceCodeEndpoint:

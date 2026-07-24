@@ -42,7 +42,10 @@ def _make_config(spool: Path, parent_run_id: str | None = None) -> CapsuleEnvCon
 
 
 def _build_graph_with_four_edge_types(spool: Path) -> dict[str, str]:
-    """Build a graph with exactly one edge of each type.
+    """Build a graph with exactly one edge of each type in ``EdgeType``.
+
+    Named "four" historically; it builds one per vocabulary member, so the
+    count follows the enum rather than a literal.
 
     Returns dict mapping edge_type → run_id of the source capsule.
     """
@@ -121,7 +124,11 @@ def test_blast_radius_false_positive_rate(tmp_path: Path) -> None:
                 except json.JSONDecodeError:
                     pass
 
-    assert len(all_edges) == 4, f"Expected 4 edges total, got {len(all_edges)}"
+    # Derived from the enum, not hardcoded: the helper builds one edge per
+    # EdgeType, so a new vocabulary member must not silently break this.
+    assert len(all_edges) == len(EdgeType), (
+        f"Expected {len(EdgeType)} edges total, got {len(all_edges)}"
+    )
 
     # For each type, verify typed filter returns exactly 1 result (zero FP)
     for et in EdgeType:
@@ -157,7 +164,7 @@ def test_blast_radius_untyped_returns_all(tmp_path: Path) -> None:
                 except json.JSONDecodeError:
                     pass
 
-    assert len(all_edges) == 4
+    assert len(all_edges) == len(EdgeType)
 
     # If you wanted only "delegated_to" edges but got all 4:
     # FP rate = 3/4 = 75% — well above 10% threshold

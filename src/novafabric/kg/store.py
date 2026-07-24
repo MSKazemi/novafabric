@@ -551,14 +551,23 @@ class KGStore:
                 "db_path": str(self.db_path),
             }
 
-    def get_topology_graph(self, max_nodes: int = 500) -> dict[str, Any]:
+    def get_topology_graph(
+        self, max_nodes: int = 500, max_edges: int = 8000
+    ) -> dict[str, Any]:
         """Return all nodes and edges as a topology graph dict for visualization.
 
-        Caps at *max_nodes* total nodes to protect dashboard rendering.
-        Returns {"nodes": [...], "edges": [...], "node_counts": {...}, "edge_counts": {...}}.
+        Caps at *max_nodes* total nodes and *max_edges* total edges to protect
+        dashboard rendering (S5 graph guard, ADR-0199). Edges whose endpoints
+        fell outside the node cap are dropped rather than returned dangling, so
+        the client never has to reconcile an edge against a missing node. When
+        either cap or the node-set filter drops data, ``truncated`` is True and
+        ``truncated_reason`` lists which guard fired. Returns
+        ``{"nodes", "edges", "node_counts", "edge_counts", "truncated",
+        "truncated_reason"}``.
         """
         nodes: list[dict[str, Any]] = []
         edges: list[dict[str, Any]] = []
+        truncated_reason: list[str] = []
 
         # Collect nodes per type (stop early if max_nodes reached)
         node_queries: list[tuple[str, list[str]]] = [
@@ -593,18 +602,33 @@ class KGStore:
             ("ROUTES_TO", "Agent",  "InferenceEndpoint"),
             ("SERVED_BY", "Tool",   "MCPServer"),
         ]
+        # Only edges whose endpoints survived the node cap are emitted — an edge
+        # to a node the client never received would render as a dangling stub.
+        node_ids = {n.get("id", "") for n in nodes}
+        dropped_dangling = False
+        edge_cap_hit = False
         for rel, src_label, dst_label in edge_queries:
+            if len(edges) >= max_edges:
+                edge_cap_hit = True
+                break
             try:
                 res = self._conn.execute(
                     f"MATCH (s:{src_label})-[e:{rel}]->(d:{dst_label}) "
                     f"RETURN s.id, d.id, e.call_count, e.confidence LIMIT 2000"
                 )
                 while res.has_next():
+                    if len(edges) >= max_edges:
+                        edge_cap_hit = True
+                        break
                     row = res.get_next()
+                    src, dst = row[0], row[1]
+                    if src not in node_ids or dst not in node_ids:
+                        dropped_dangling = True
+                        continue
                     edges.append({
-                        "src": row[0],
+                        "src": src,
                         "src_type": src_label,
-                        "dst": row[1],
+                        "dst": dst,
                         "dst_type": dst_label,
                         "edge_type": rel,
                         "call_count": int(row[2]) if row[2] is not None else 0,
@@ -614,6 +638,13 @@ class KGStore:
                 pass
 
         node_counts = self.get_node_counts()
+        if sum(node_counts.values()) > len(nodes):
+            truncated_reason.append(f"node cap ({max_nodes}) reached")
+        if edge_cap_hit:
+            truncated_reason.append(f"edge cap ({max_edges}) reached")
+        if dropped_dangling:
+            truncated_reason.append("edges to capped-out nodes dropped")
+
         edge_counts: dict[str, int] = {}
         for rel, _, _ in edge_queries:
             edge_counts[rel] = sum(1 for e in edges if e["edge_type"] == rel)
@@ -623,6 +654,8 @@ class KGStore:
             "edges": edges,
             "node_counts": node_counts,
             "edge_counts": edge_counts,
+            "truncated": bool(truncated_reason),
+            "truncated_reason": truncated_reason,
         }
 
     def get_audit(self) -> dict[str, Any]:

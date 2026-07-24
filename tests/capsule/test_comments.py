@@ -50,12 +50,12 @@ _VALIDATOR = jsonschema.Draft202012Validator(
 
 
 def _comment(**over: object) -> Comment:
-    base: dict[str, object] = dict(
-        subject=_DIGEST,
-        subject_kind=SubjectKind.CAPSULE,
-        author="m.ardebili",
-        body="output looks suspect — flagging for review",
-    )
+    base: dict[str, object] = {
+        "subject": _DIGEST,
+        "subject_kind": SubjectKind.CAPSULE,
+        "author": "m.ardebili",
+        "body": "output looks suspect — flagging for review",
+    }
     base.update(over)
     return Comment(**base)  # type: ignore[arg-type]
 

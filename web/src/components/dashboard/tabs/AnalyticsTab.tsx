@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, type AnalyticsBucket, type AnalyticsSummary } from '../../../lib/api';
+import { api, type AnalyticsBucket, type AnalyticsSummary, type QueryPanelResult } from '../../../lib/api';
 import TabShell from './TabShell';
+import ChartCard from '../../ui/ChartCard';
+import DataTable, { type Column } from '../../ui/DataTable';
 
 // Analytics tab — time-bucketed run metrics from /api/analytics/summary.
 // Charts are plain SVG on the dashboard tokens; series colors are
@@ -268,6 +270,118 @@ function BucketsTable({ buckets }: { buckets: AnalyticsBucket[] }) {
   );
 }
 
+const DEFAULT_QUERY_TEXT = JSON.stringify(
+  { select: ['count()', 'avg(cost) AS avg_cost'], group_by: ['status'], since: '7d' },
+  null,
+  2,
+);
+
+/** Custom query panel (P4): a JSON/YAML Capsule Query DSL document, executed
+ * via `POST /api/query` (the same closed allow-list `nova query` uses — no
+ * raw SQL, no new grammar). Results render in the shared DataTable; a
+ * "copy as CLI" chip lets an operator paste the equivalent `nova query …`
+ * invocation into a terminal. */
+function CustomQueryPanel() {
+  const [text, setText] = useState(DEFAULT_QUERY_TEXT);
+  const [engine, setEngine] = useState('');
+  const [result, setResult] = useState<QueryPanelResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const run = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setResult(await api.runQuery(text, engine.trim() || undefined));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setResult(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [text, engine]);
+
+  const columns: Column<Record<string, unknown>>[] = useMemo(
+    () =>
+      (result?.columns ?? []).map((c) => ({
+        key: c,
+        header: c,
+        render: (row) => {
+          const v = row[c];
+          if (v == null) return '—';
+          return typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(4)) : String(v);
+        },
+      })),
+    [result],
+  );
+
+  const copyCli = useCallback(() => {
+    if (!result) return;
+    navigator.clipboard
+      .writeText(result.cli_equivalent)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => {});
+  }, [result]);
+
+  return (
+    <div className="space-y-3 rounded border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-3">
+      <div className="flex items-center justify-between">
+        <span className={labelClass}>Custom query (ADR-0129 DSL — JSON or YAML)</span>
+        <input
+          value={engine}
+          onChange={(e) => setEngine(e.target.value)}
+          placeholder="engine (auto)"
+          className="w-32 rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2 py-1 text-[10px] font-mono text-[var(--color-text)] focus:border-[var(--color-accent)] focus:outline-none"
+        />
+      </div>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={6}
+        spellCheck={false}
+        className="w-full rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2 py-1.5 font-mono text-[11px] text-[var(--color-text)] focus:border-[var(--color-accent)] focus:outline-none"
+      />
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => void run()}
+          disabled={loading}
+          className="rounded border border-[var(--color-accent)] px-3 py-1 text-[11px] font-mono text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {loading ? 'running…' : 'Run query'}
+        </button>
+        {result && (
+          <button
+            onClick={copyCli}
+            className="rounded border border-[var(--color-border)] px-2 py-1 text-[10px] font-mono text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"
+            title={result.cli_equivalent}
+          >
+            {copied ? 'copied ✓' : `copy as CLI`}
+          </button>
+        )}
+      </div>
+      {error && <p className="text-[11px] font-mono text-[var(--color-status-failure)]">{error}</p>}
+      {result && (
+        <>
+          <p className="text-[10px] font-mono text-[var(--color-text-faint)]">
+            {result.row_count} row(s){result.truncated ? ' (truncated)' : ''} —{' '}
+            {result.index.capsule_count} capsule(s) scanned, engine {result.index.engine}
+          </p>
+          <DataTable
+            columns={columns}
+            rows={result.rows}
+            rowKey={(_row, i) => String(i)}
+            maxHeight={320}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function AnalyticsTab() {
   const [days, setDays] = useState<RangeDays>(30);
   const [data, setData] = useState<AnalyticsSummary | null>(null);
@@ -347,30 +461,35 @@ export default function AnalyticsTab() {
             <BucketsTable buckets={data.buckets} />
           ) : (
             <>
-              <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-3">
-                <div className="mb-2 flex items-center justify-between">
-                  <span className={labelClass}>runs per day</span>
+              <ChartCard
+                title="runs per day"
+                filename="analytics-runs-per-day"
+                legend={
                   <span className="flex gap-3">
                     <LegendChip color={C_PRIMARY} label="completed" />
                     <LegendChip color={C_FAILED} label="failed" />
                   </span>
-                </div>
+                }
+              >
                 <RunVolumeBars buckets={data.buckets} />
-              </div>
-              <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-3">
-                <div className="mb-2 flex items-center justify-between">
-                  <span className={labelClass}>run duration percentiles</span>
+              </ChartCard>
+              <ChartCard
+                title="run duration percentiles"
+                filename="analytics-duration-percentiles"
+                legend={
                   <span className="flex gap-3">
                     <LegendChip color={C_PRIMARY} label="p50" />
                     <LegendChip color={C_P95} label="p95" />
                   </span>
-                </div>
+                }
+              >
                 <DurationLines buckets={data.buckets} />
-              </div>
+              </ChartCard>
             </>
           )}
         </div>
       )}
+      <CustomQueryPanel />
     </TabShell>
   );
 }

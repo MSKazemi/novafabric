@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { clsx } from 'clsx';
 import { api } from '../../../lib/api';
 import { SuggestInput } from '../../ui/SuggestInput';
+import ReportChart from '../ReportChart';
+import CostToolsPanel from '../CostToolsPanel';
 
 // DB-COST-1 — Cost report tab (v0.19.0, cap-002 / ADR-0066)
 // Stub-aware: degrades gracefully when NOVA_CLICKHOUSE_URL is unset.
@@ -98,6 +100,31 @@ function ReportPanel({ report }: { report: CostReport }) {
           <p className="text-lg font-mono font-bold text-[var(--color-text)]">${report.totals.cost_usd.toFixed(4)}</p>
         </div>
       </div>
+
+      {report.by_model.length > 0 && (() => {
+        // Chart only when the backend really returned per-model rows — key
+        // names differ per backend, so detect them instead of assuming.
+        const sample = report.by_model[0];
+        const x = ['model', 'model_name', 'name'].find(k => k in sample);
+        const y = ['cost_usd', 'total_cost_usd', 'cost', 'input_tokens'].find(
+          k => k in sample,
+        );
+        if (!x || !y) return null;
+        return (
+          <ReportChart
+            spec={{
+              kind: 'bar',
+              x,
+              y: [y],
+              colors: ['#3987e5'],
+              title: `cost by model (${y})`,
+              requires_filters: [],
+            }}
+            rows={report.by_model}
+            filters={{}}
+          />
+        );
+      })()}
 
       <p className="text-[10px] text-[var(--color-text-faint)]">{report.note}</p>
     </div>
@@ -219,6 +246,16 @@ export default function CostTab() {
           <p className="text-[11px] font-mono text-[var(--color-status-failure)]">{pricingErr}</p>
         )}
         <PricingPanel rows={pricing} />
+      </section>
+
+      <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4 space-y-3">
+        <div>
+          <h3 className="text-xs font-semibold text-[var(--color-text)]">Cost analytics tools</h3>
+          <p className="text-[10px] text-[var(--color-text-faint)] mt-0.5">
+            Spend attribution · agent fairness · token usage breakdown (ADR-0146 / ADR-0132)
+          </p>
+        </div>
+        <CostToolsPanel />
       </section>
     </div>
   );

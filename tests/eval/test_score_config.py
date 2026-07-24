@@ -52,51 +52,51 @@ _CARD = "sha256:" + "60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c1
 
 
 def _score(**over: object) -> Score:
-    base: dict[str, object] = dict(
-        subject=_SUBJECT,
-        name="toxicity",
-        value=0.5,
-        value_type=ScoreValueType.NUMERIC,
-        source=ScoreSource.CODE,
-        evaluator_id="tox-scan",
-        eval_card_digest=_CARD,
-    )
+    base: dict[str, object] = {
+        "subject": _SUBJECT,
+        "name": "toxicity",
+        "value": 0.5,
+        "value_type": ScoreValueType.NUMERIC,
+        "source": ScoreSource.CODE,
+        "evaluator_id": "tox-scan",
+        "eval_card_digest": _CARD,
+    }
     base.update(over)
     return Score(**base)  # type: ignore[arg-type]
 
 
 def _numeric_config(**over: object) -> ScoreConfig:
-    base: dict[str, object] = dict(
-        name="toxicity",
-        value_type=ScoreValueType.NUMERIC,
-        description="Probability toxic; lower better.",
-        range=ScoreRange(min=0.0, max=1.0, direction=ScoreDirection.LOWER_BETTER),
-    )
+    base: dict[str, object] = {
+        "name": "toxicity",
+        "value_type": ScoreValueType.NUMERIC,
+        "description": "Probability toxic; lower better.",
+        "range": ScoreRange(min=0.0, max=1.0, direction=ScoreDirection.LOWER_BETTER),
+    }
     base.update(over)
     return ScoreConfig(**base)  # type: ignore[arg-type]
 
 
 def _categorical_config(**over: object) -> ScoreConfig:
-    base: dict[str, object] = dict(
-        name="helpfulness",
-        value_type=ScoreValueType.CATEGORICAL,
-        description="How helpful the turn was.",
-        categories=[
+    base: dict[str, object] = {
+        "name": "helpfulness",
+        "value_type": ScoreValueType.CATEGORICAL,
+        "description": "How helpful the turn was.",
+        "categories": [
             ScoreCategory(value="bad", ordinal=0),
             ScoreCategory(value="ok", ordinal=1),
             ScoreCategory(value="good", ordinal=2),
         ],
-    )
+    }
     base.update(over)
     return ScoreConfig(**base)  # type: ignore[arg-type]
 
 
 def _boolean_config(**over: object) -> ScoreConfig:
-    base: dict[str, object] = dict(
-        name="grounded",
-        value_type=ScoreValueType.BOOLEAN,
-        description="True iff every claim is supported.",
-    )
+    base: dict[str, object] = {
+        "name": "grounded",
+        "value_type": ScoreValueType.BOOLEAN,
+        "description": "True iff every claim is supported.",
+    }
     base.update(over)
     return ScoreConfig(**base)  # type: ignore[arg-type]
 

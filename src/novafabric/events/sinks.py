@@ -36,11 +36,14 @@ class DeliveryResult:
     """Outcome of one webhook delivery (used by the ADR-0192 alert audit trail).
 
     ``attempts`` counts every HTTP POST made, including bounded retries.
+    ``status_code`` is the last HTTP status received, or None on a connect
+    error (additive, ADR-0205 delivery-log support).
     """
 
     ok: bool
     attempts: int
     error: str | None = None
+    status_code: int | None = None
 
 
 class NullSink:
@@ -92,26 +95,48 @@ class WebhookSink:
     def send(self, record: dict[str, Any]) -> None:
         self.deliver(record)
 
-    def deliver(self, record: dict[str, Any]) -> DeliveryResult:
+    def deliver(
+        self,
+        record: dict[str, Any],
+        *,
+        headers: dict[str, str] | None = None,
+        body: bytes | None = None,
+    ) -> DeliveryResult:
         """Same bounded-retry POST loop as :meth:`send`, reporting the outcome.
 
         Used by the ADR-0192 alert router so every delivery attempt can be
         audited; still fail-safe — no exception ever propagates.
+
+        Additive ADR-0205 parameters (defaults keep behavior byte-identical):
+        *body* sends exactly those bytes instead of serializing *record* (so a
+        detached signature can cover the exact bytes sent), and *headers* are
+        merged over the defaults (e.g. the ``t=...,v1=...`` delivery
+        signature and the ``X-NovaFabric-*`` delivery headers).
         """
-        body = json.dumps(record, ensure_ascii=False).encode("utf-8")
-        headers = {"Content-Type": "application/json"}
+        payload = (
+            body
+            if body is not None
+            else json.dumps(record, ensure_ascii=False).encode("utf-8")
+        )
+        merged = {"Content-Type": "application/json"}
         signature = record.get("signature")
         if isinstance(signature, dict) and signature.get("value"):
-            headers[SIGNATURE_HEADER] = str(signature["value"])
+            merged[SIGNATURE_HEADER] = str(signature["value"])
+        if headers:
+            merged.update(headers)
 
         last_error: Exception | None = None
+        last_status: int | None = None
         for attempt in range(self._max_retries + 1):
             try:
                 response = httpx.post(
-                    self._url, content=body, headers=headers, timeout=self._timeout
+                    self._url, content=payload, headers=merged, timeout=self._timeout
                 )
+                last_status = response.status_code
                 response.raise_for_status()
-                return DeliveryResult(ok=True, attempts=attempt + 1)
+                return DeliveryResult(
+                    ok=True, attempts=attempt + 1, status_code=response.status_code
+                )
             except Exception as exc:  # noqa: BLE001 — fail-safe, never blocks
                 last_error = exc
                 if attempt < self._max_retries and self._backoff > 0:
@@ -123,7 +148,10 @@ class WebhookSink:
             last_error,
         )
         return DeliveryResult(
-            ok=False, attempts=self._max_retries + 1, error=str(last_error)
+            ok=False,
+            attempts=self._max_retries + 1,
+            error=str(last_error),
+            status_code=last_status,
         )
 
 

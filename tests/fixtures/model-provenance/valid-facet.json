@@ -1,0 +1,22 @@
+{
+  "schema_version": "0.1.0",
+  "model_id": "acme/planner-8b-instruct@2026-06",
+  "model_signing_ref": "sha256:65d75c9c5f7528ef0816f2a8965535aaeb88dcf0f0f0405259b946fc4fb513a6",
+  "slsa_provenance_ref": "sha256:c8a64a3d85c716fdca566e0d3081aa04f7213420b005ea2967a3be6667a7cb39",
+  "data_card_refs": [
+    {
+      "card_digest": "sha256:bfd28bddd47ea0097a95485657531a16d3aa90cf1393a59c81e0572c71c21ee2",
+      "dataset_version": "2026-04",
+      "unbound": false
+    },
+    {
+      "card_digest": "sha256:eed07a5d0173f89077e7df5de1d41a655ca14e7f67f1f0207b03c58b74f57153",
+      "dataset_version": "v3",
+      "unbound": true
+    }
+  ],
+  "bound_root": "sha256:8d0fc485abb2f9c96ae137f4d8fcfa7b98693a8b78b9871dea2e2ac5651aa667",
+  "verified": {
+    "refs_resolvable": true
+  }
+}

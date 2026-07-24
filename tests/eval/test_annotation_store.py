@@ -100,7 +100,7 @@ def capsule(tmp_path: Path) -> Path:
 
 
 def _mk_queue(db: Path, **over: object):
-    kwargs: dict[str, object] = dict(name="q1", criteria=["factuality", "toxicity"])
+    kwargs: dict[str, object] = {"name": "q1", "criteria": ["factuality", "toxicity"]}
     kwargs.update(over)
     return create_queue(db_path=db, **kwargs)  # type: ignore[arg-type]
 

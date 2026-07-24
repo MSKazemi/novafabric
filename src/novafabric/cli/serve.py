@@ -193,6 +193,7 @@ def serve_cmd(
         capsule_dir=resolved_capsule_dir,
         db_path=db_path,
         static_dir=None,          # mounted last — see below
+        static_mounted_by_caller=static_arg is not None,
         topology_enabled=topology,
         topology_louvain_resolution=topology_louvain_resolution,
     )
@@ -223,19 +224,26 @@ def serve_cmd(
             name="site",
         )
 
+    # Every URL printed here must be openable in a browser. `/topology/clusters`
+    # and `/api/tv5/live` are DATA endpoints (Arrow stream / JSON) — printing
+    # them as "Topology" made a working feature look broken, because following
+    # the link renders binary. Point at the pages; keep the data URLs out.
+    home_url = f"http://{host}:{port}/?token={token}"
     url = f"http://{host}:{port}/dashboard?token={token}"
     api_docs = f"http://{host}:{port}/api/docs?token={token}"
-    topo_url = f"http://{host}:{port}/topology/clusters?token={token}"
+    topo_url = f"http://{host}:{port}/topology/?token={token}"
 
-    topo_line = f"\n[bold]Topology:[/bold]  {topo_url}\n" if topology else ""
-    tv5_url = f"http://{host}:{port}/api/tv5/live"
+    topo_line = f"[bold]Topology:[/bold]  {topo_url}\n" if topology else ""
+    tv5_url = f"http://{host}:{port}/topology/?token={token}#tv5"
     tv5_line = f"[bold]TV-5 3D:[/bold]   {tv5_url}\n" if tv5 else ""
+    home_line = f"[bold]Home:[/bold]      {home_url}\n" if static_arg is not None else ""
     console.print(Panel(
         _EXPERIMENTAL_BANNER + "\n"
         f"[bold]Listening:[/bold] http://{host}:{port}\n"
         f"[bold]Capsules:[/bold]  {resolved_capsule_dir}\n"
-        f"[bold]Registry:[/bold]  {db_path or '~/.novafabric/registry.db'}\n"
-        f"\n[bold]Dashboard:[/bold] {url}\n"
+        f"[bold]Registry:[/bold]  {db_path or '~/.novafabric/registry.db'}\n\n"
+        + home_line
+        + f"[bold]Dashboard:[/bold] {url}\n"
         f"[bold]API docs:[/bold]  {api_docs}\n"
         + topo_line
         + tv5_line

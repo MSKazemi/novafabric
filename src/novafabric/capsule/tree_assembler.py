@@ -40,6 +40,19 @@ class CyclicLineageError(Exception):
     """Raised when a circular parent reference is detected during tree assembly."""
 
 
+class TreeDepthExceededError(Exception):
+    """Raised when a capsule tree is deeper than ``MAX_TREE_DEPTH``.
+
+    Bounds the recursive assembler so a pathologically deep (but acyclic) tree
+    fails with a clear, named error instead of a bare ``RecursionError``.
+    """
+
+
+# Maximum parent→child nesting depth. Kept well below Python's default recursion
+# limit (~1000) so assembly fails cleanly before the interpreter stack does.
+MAX_TREE_DEPTH = 500
+
+
 @dataclass
 class CapsuleNode:
     """A node in the assembled capsule tree."""
@@ -144,6 +157,12 @@ class CapsuleTreeAssembler:
             if rid in _visiting:
                 raise CyclicLineageError(
                     f"Cyclic lineage detected: run_id '{rid}' forms a cycle"
+                )
+            # len(_visiting) is the current path depth (ancestors on the stack).
+            if len(_visiting) >= MAX_TREE_DEPTH:
+                raise TreeDepthExceededError(
+                    f"Capsule tree exceeds MAX_TREE_DEPTH={MAX_TREE_DEPTH} at "
+                    f"run_id '{rid}'"
                 )
             _visiting.add(rid)
             node = CapsuleNode(

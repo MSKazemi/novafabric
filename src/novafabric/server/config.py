@@ -101,18 +101,60 @@ class RateLimitClassConfig(BaseModel):
     burst: int = Field(ge=1)
 
 
-class QuotaConfig(BaseModel):
-    """Storage quotas (ADR-0179 second slice, experimental).
+class WorkspaceQuotaConfig(BaseModel):
+    """One workspace's budget inside ``quota.workspaces`` (ADR-0208 D3).
 
-    ``0`` means unlimited. Warn-then-reject enforcement at the capsule-ingest
-    routes lives in ``novafabric.server.quotas``; it activates only when
-    ``rate_limits.enabled`` is true and at least one limit is non-zero.
+    Same four keys and semantics as the global :class:`QuotaConfig`
+    (``0`` = unlimited); validation mirrors ``_hard_at_least_soft``.
     """
 
     max_capsules_soft: int = Field(default=0, ge=0)
     max_capsules_hard: int = Field(default=0, ge=0)
     max_bytes_soft: int = Field(default=0, ge=0)
     max_bytes_hard: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _hard_at_least_soft(self) -> "WorkspaceQuotaConfig":
+        for kind in ("capsules", "bytes"):
+            soft = getattr(self, f"max_{kind}_soft")
+            hard = getattr(self, f"max_{kind}_hard")
+            if soft and hard and hard < soft:
+                raise ValueError(
+                    f"quota.workspaces.<slug>.max_{kind}_hard ({hard}) must be"
+                    f" >= max_{kind}_soft ({soft})"
+                )
+        return self
+
+    @property
+    def any_limit(self) -> bool:
+        """True when at least one of the four limits is non-zero."""
+        return any(
+            (
+                self.max_capsules_soft,
+                self.max_capsules_hard,
+                self.max_bytes_soft,
+                self.max_bytes_hard,
+            )
+        )
+
+
+class QuotaConfig(BaseModel):
+    """Storage quotas (ADR-0179 second slice, experimental).
+
+    ``0`` means unlimited. Warn-then-reject enforcement at the capsule-ingest
+    routes lives in ``novafabric.server.quotas``; it activates only when
+    ``rate_limits.enabled`` is true and at least one limit is non-zero.
+
+    ``workspaces`` (ADR-0208 D3, experimental) — additive per-workspace-slug
+    budgets checked against **metered** counters alongside the unchanged
+    global check. An absent/empty map keeps behavior byte-identical.
+    """
+
+    max_capsules_soft: int = Field(default=0, ge=0)
+    max_capsules_hard: int = Field(default=0, ge=0)
+    max_bytes_soft: int = Field(default=0, ge=0)
+    max_bytes_hard: int = Field(default=0, ge=0)
+    workspaces: dict[str, WorkspaceQuotaConfig] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _hard_at_least_soft(self) -> "QuotaConfig":
@@ -125,6 +167,70 @@ class QuotaConfig(BaseModel):
                     f"quota.max_{kind}_soft ({soft})"
                 )
         return self
+
+
+class UsageConfig(BaseModel):
+    """``server.usage`` block (ADR-0208 P1, experimental).
+
+    All of it inert unless ``server.rate_limits.enabled`` (the existing
+    experimental master switch); ``metering_enabled`` is the accounting
+    kill-switch that keeps rate limits on while metering is off. Defaults are
+    the normative numbers from ``design/spec/usage-metering-v0.md``.
+    """
+
+    metering_enabled: bool = True
+    #: ``api_requests`` accumulator flush interval (never a per-request write).
+    flush_interval_s: float = Field(default=60.0, gt=0)
+    #: LRU bound on the accumulator map (ADR-0179 bucket-map discipline).
+    accumulator_max_entries: int = Field(default=10_000, ge=1)
+    #: Monthly rollup retention (chargeback rows).
+    rollup_retention_months: int = Field(default=24, ge=1)
+    #: Raw ledger retention after a period is finalized.
+    ledger_retention_months: int = Field(default=3, ge=1)
+
+
+class IngestConfig(BaseModel):
+    """``server.ingest`` block (ADR-0203 P1, experimental).
+
+    Bounds the capsule-ingest surface (``POST /v0/capsules``): request-size
+    cap, disk-spool chunk size, and zip-bomb guards. All byte/entry keys and
+    ``zip_max_ratio`` accept ``0`` = disabled (escape hatch, discouraged).
+    Defaults are the normative numbers from
+    ``design/spec/ingest-hardening-v0.md``.
+    """
+
+    #: Cap on the request body of POST /v0/capsules. 0 = unlimited.
+    max_upload_bytes: int = Field(default=268_435_456, ge=0)  # 256 MiB
+    #: Read/decompress chunk size; peak per-request memory is O(this).
+    spool_chunk_bytes: int = Field(default=1_048_576, ge=65_536)  # 1 MiB
+    #: Max members in the archive (central directory AND streamed count).
+    zip_max_entries: int = Field(default=10_000, ge=0)
+    #: Cap on total decompressed bytes across all members. 0 = disabled.
+    zip_max_uncompressed_bytes: int = Field(default=2_147_483_648, ge=0)  # 2 GiB
+    #: Max compression ratio (uncompressed/compressed), per member (past the
+    #: 1 MiB floor) and for the archive total. 0 = disabled.
+    zip_max_ratio: float = Field(default=100.0, ge=0)
+
+
+class BulkConfig(BaseModel):
+    """``server.bulk`` block (ADR-0206 P1, experimental).
+
+    ``max_items`` bounds one ``POST /v0/capsules/bulk-delete`` request
+    (default 100, hard ceiling 1000 — spec ``bulk-ops-pagination-v0``).
+    """
+
+    max_items: int = Field(default=100, ge=1, le=1000)
+
+
+class PaginationConfig(BaseModel):
+    """``server.pagination`` block (ADR-0206 P1, experimental).
+
+    ``legacy_offset_cursors`` — accept v0 ``{"offset": N}`` cursors on the
+    capsules list route for one deprecation cycle (ADR-0188). Flipped to
+    ``False`` at sunset; a legacy cursor then decodes as ``invalid_cursor``.
+    """
+
+    legacy_offset_cursors: bool = True
 
 
 class RateLimitsConfig(BaseModel):
@@ -154,6 +260,25 @@ class RateLimitsConfig(BaseModel):
     audit_window_seconds: int = Field(default=60, ge=1)
 
 
+class WebhooksConfig(BaseModel):
+    """``server.webhooks`` block (ADR-0205, experimental).
+
+    Additive and **disabled by default** — an absent block or
+    ``enabled: false`` means no dispatch worker thread starts and server
+    behavior is byte-identical to a build without the feature. The CRUD
+    routes remain mounted (registry rows only); ping/redeliver require the
+    dispatcher and answer 409 while it is disabled.
+    """
+
+    enabled: bool = False
+    queue_max: int = Field(default=1000, ge=1)
+    max_attempts: int = Field(default=5, ge=1, le=10)
+    timeout_s: float = Field(default=5.0, gt=0)
+    delivery_retention_days: int = Field(default=30, ge=1)
+    delivery_retention_rows: int = Field(default=10_000, ge=1)
+    allow_insecure_url: bool = False
+
+
 class ObservabilityConfig(BaseModel):
     """Self-observability surface controls (ADR-0182, experimental).
 
@@ -178,6 +303,51 @@ class ObservabilityConfig(BaseModel):
     self_tracing_endpoint: str | None = None
 
 
+class UnpartitionedStoreError(ValueError):
+    """More than one organization exists while the capsule store is shared.
+
+    Raised unless the operator confirms with ``i_accept_shared_capsule_store``.
+    Subclasses ``ValueError`` so pydantic surfaces it as a validation error,
+    matching :class:`InsecureBindError`.
+    """
+
+
+def check_multi_org_shared_store(
+    config: "ServerConfig", org_count: int
+) -> None:
+    """Refuse to serve multiple organizations from one shared capsule store.
+
+    ADR-0178 layered organizations/workspaces over the ``tenant_id`` RLS key,
+    which protects **metadata rows** — not **capsule bytes**. The capsule
+    directory is resolved without reference to the auth context, so
+    ``GET /capsules`` enumerates every organization's capsules to any
+    authenticated reader, and ``GET /capsules/{run_id}`` serves any of them by
+    id. The tenant-scoped metadata write is best-effort and, on the shipped
+    auth path, does not fire at all.
+
+    Rather than let that gap be discovered in production, a deployment that
+    has actually created more than one organization must acknowledge it. This
+    narrows a *claim* — it does not fix the isolation gap; the remediation
+    options are in ``design/security-reviews/2026-07-18-capsule-store-tenant-
+    isolation.md`` and are gated on Security-Architect review.
+
+    Single-organization deployments — the default, and the only shape the
+    bootstrap creates — are unaffected.
+    """
+    if org_count > 1 and not config.i_accept_shared_capsule_store:
+        raise UnpartitionedStoreError(
+            f"Refusing to start: {org_count} organizations exist, but the "
+            f"capsule store is NOT tenant-partitioned — any authenticated "
+            f"reader can list and fetch every organization's capsules "
+            f"(ADR-0178, see design/security-reviews/"
+            f"2026-07-18-capsule-store-tenant-isolation.md). Server mode is "
+            f"single-tenant-safe only today. Pass "
+            f"--i-accept-shared-capsule-store (or set "
+            f"NOVAFABRIC_SERVER_I_ACCEPT_SHARED_CAPSULE_STORE=1) to run "
+            f"anyway, or keep a single organization."
+        )
+
+
 class ServerConfig(BaseModel):
     host: str = Field(default="127.0.0.1")
     port: int = Field(default=7433, ge=1, le=65535)
@@ -196,6 +366,20 @@ class ServerConfig(BaseModel):
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     # API rate limiting (ADR-0179, experimental) — disabled by default.
     rate_limits: RateLimitsConfig = Field(default_factory=RateLimitsConfig)
+    # Ingest hardening (ADR-0203, experimental) — safe defaults apply when
+    # the block is absent.
+    ingest: IngestConfig = Field(default_factory=IngestConfig)
+    # Bulk capsule operations (ADR-0206, experimental) — batch-size bound.
+    bulk: BulkConfig = Field(default_factory=BulkConfig)
+    # Usage metering (ADR-0208, experimental) — inert unless
+    # rate_limits.enabled; metering_enabled is the accounting kill-switch.
+    usage: UsageConfig = Field(default_factory=UsageConfig)
+    # Keyset-pagination cursor policy (ADR-0206, experimental).
+    pagination: PaginationConfig = Field(default_factory=PaginationConfig)
+
+    # Webhook subscription registry (ADR-0205, experimental) — disabled by
+    # default; off ⇒ no dispatch worker thread, byte-identical behavior.
+    webhooks: WebhooksConfig = Field(default_factory=WebhooksConfig)
 
     # ADR-0184 (experimental): explicit opt-out from local-token auth.
     # True restores the pre-0184 anonymous-admin behaviour when OIDC is off.
@@ -203,6 +387,23 @@ class ServerConfig(BaseModel):
     # ADR-0184: second confirmation required to combine insecure_no_auth with
     # a non-loopback bind host (see check_insecure_bind).
     i_know_this_is_public: bool = False
+
+    # Enterprise-hardening (2026-07-24): the RFC 8628 device-grant demo flow
+    # (/v0/auth/device/code, /token, /approve) mints short-lived HS256 tokens
+    # that the real verifier (JWKS/RS256 or the opaque local token) never
+    # honours — it is local/testing scaffolding only, and /approve is
+    # unauthenticated. It is therefore OFF by default and must be explicitly
+    # enabled (env NOVAFABRIC_SERVER_DEMO_DEVICE_GRANT) so no production
+    # deployment exposes an unauthenticated role-approval surface.
+    demo_device_grant: bool = False
+
+    # ADR-0178 (2026-07-18): the capsule store is NOT tenant-partitioned — it
+    # is one directory shared by every org, and `GET /capsules` lists all of
+    # it to any authenticated reader. Isolation exists only in the metadata
+    # store (RLS), and that write is best-effort. Server mode is therefore
+    # single-tenant-safe only. Set this to acknowledge the limitation and run
+    # more than one organization anyway (see check_multi_org_shared_store).
+    i_accept_shared_capsule_store: bool = False
 
     # Secrets — only from env vars, never from YAML
     postgres_dsn: str | None = Field(default=None, exclude=True)
@@ -250,14 +451,70 @@ class ServerConfig(BaseModel):
             self.rate_limits.audit_threshold_rejections = int(val)
         if val := os.environ.get("NOVAFABRIC_SERVER_RATE_LIMITS_AUDIT_WINDOW_SECONDS"):
             self.rate_limits.audit_window_seconds = int(val)
+        # ADR-0203 ingest-hardening overrides (NOVAFABRIC_SERVER_INGEST_*)
+        if val := os.environ.get("NOVAFABRIC_SERVER_INGEST_MAX_UPLOAD_BYTES"):
+            self.ingest.max_upload_bytes = int(val)
+        if val := os.environ.get("NOVAFABRIC_SERVER_INGEST_SPOOL_CHUNK_BYTES"):
+            self.ingest.spool_chunk_bytes = int(val)
+        if val := os.environ.get("NOVAFABRIC_SERVER_INGEST_ZIP_MAX_ENTRIES"):
+            self.ingest.zip_max_entries = int(val)
+        if val := os.environ.get("NOVAFABRIC_SERVER_INGEST_ZIP_MAX_UNCOMPRESSED_BYTES"):
+            self.ingest.zip_max_uncompressed_bytes = int(val)
+        if val := os.environ.get("NOVAFABRIC_SERVER_INGEST_ZIP_MAX_RATIO"):
+            self.ingest.zip_max_ratio = float(val)
+        # ADR-0208 usage-metering overrides (NOVAFABRIC_SERVER_USAGE_*)
+        if val := os.environ.get("NOVAFABRIC_SERVER_USAGE_METERING_ENABLED"):
+            self.usage.metering_enabled = val.lower() in ("1", "true", "yes", "on")
+        if val := os.environ.get("NOVAFABRIC_SERVER_USAGE_FLUSH_INTERVAL_S"):
+            self.usage.flush_interval_s = float(val)
+        if val := os.environ.get("NOVAFABRIC_SERVER_USAGE_ACCUMULATOR_MAX_ENTRIES"):
+            self.usage.accumulator_max_entries = int(val)
+        if val := os.environ.get("NOVAFABRIC_SERVER_USAGE_ROLLUP_RETENTION_MONTHS"):
+            self.usage.rollup_retention_months = int(val)
+        if val := os.environ.get("NOVAFABRIC_SERVER_USAGE_LEDGER_RETENTION_MONTHS"):
+            self.usage.ledger_retention_months = int(val)
+        # ADR-0206 bulk-ops / pagination overrides
+        if val := os.environ.get("NOVAFABRIC_SERVER_BULK_MAX_ITEMS"):
+            # Route through the model so the 1–1000 bound holds for env too.
+            self.bulk = BulkConfig(max_items=int(val))
+        if val := os.environ.get(
+            "NOVAFABRIC_SERVER_PAGINATION_LEGACY_OFFSET_CURSORS"
+        ):
+            self.pagination.legacy_offset_cursors = val.lower() in (
+                "1", "true", "yes", "on",
+            )
+
+        # ADR-0205 webhook overrides (NOVAFABRIC_SERVER_WEBHOOKS_*; the spec
+        # additionally names NOVAFABRIC_WEBHOOKS_QUEUE_MAX for the queue bound).
+        if val := os.environ.get("NOVAFABRIC_SERVER_WEBHOOKS_ENABLED"):
+            self.webhooks.enabled = val.lower() in ("1", "true", "yes", "on")
+        if val := (
+            os.environ.get("NOVAFABRIC_WEBHOOKS_QUEUE_MAX")
+            or os.environ.get("NOVAFABRIC_SERVER_WEBHOOKS_QUEUE_MAX")
+        ):
+            self.webhooks.queue_max = int(val)
+        if val := os.environ.get("NOVAFABRIC_SERVER_WEBHOOKS_MAX_ATTEMPTS"):
+            self.webhooks.max_attempts = int(val)
+        if val := os.environ.get("NOVAFABRIC_SERVER_WEBHOOKS_TIMEOUT_S"):
+            self.webhooks.timeout_s = float(val)
+        if val := os.environ.get("NOVAFABRIC_SERVER_WEBHOOKS_DELIVERY_RETENTION_DAYS"):
+            self.webhooks.delivery_retention_days = int(val)
+        if val := os.environ.get("NOVAFABRIC_SERVER_WEBHOOKS_DELIVERY_RETENTION_ROWS"):
+            self.webhooks.delivery_retention_rows = int(val)
+        if val := os.environ.get("NOVAFABRIC_SERVER_WEBHOOKS_ALLOW_INSECURE_URL"):
+            self.webhooks.allow_insecure_url = val.lower() in ("1", "true", "yes", "on")
         if val := os.environ.get("NOVAFABRIC_SCIM_TOKEN"):
             self.scim_token = val
         if val := os.environ.get("NOVAFABRIC_SERVER_INSECURE_NO_AUTH"):
             self.insecure_no_auth = val.lower() in ("1", "true", "yes", "on")
         if val := os.environ.get("NOVAFABRIC_SERVER_I_KNOW_THIS_IS_PUBLIC"):
             self.i_know_this_is_public = val.lower() in ("1", "true", "yes", "on")
+        if val := os.environ.get("NOVAFABRIC_SERVER_I_ACCEPT_SHARED_CAPSULE_STORE"):
+            self.i_accept_shared_capsule_store = val.lower() in ("1", "true", "yes", "on")
         if val := os.environ.get("NOVAFABRIC_SERVER_TOKEN"):
             self.local_token = val
+        if val := os.environ.get("NOVAFABRIC_SERVER_DEMO_DEVICE_GRANT"):
+            self.demo_device_grant = val.lower() in ("1", "true", "yes", "on")
         return self
 
     @model_validator(mode="after")

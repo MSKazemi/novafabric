@@ -55,6 +55,7 @@ contents to jump to what you need.
 2. [Inspect and validate](#inspect-and-validate)
    - [nova validate](#nova-validate)
    - [nova scan-secrets](#nova-scan-secrets)
+   - [Searching run content (experimental)](#searching-run-content-experimental)
 3. [Replay and diff](#replay-and-diff)
    - [nova replay](#nova-replay)
    - [nova diff](#nova-diff)
@@ -419,6 +420,34 @@ Exit codes: `0` (clean or below threshold), `1` (missing proof / bad input),
 Use `--json` to emit the full `redaction-proof.json` as parseable JSON to
 stdout — useful for piping into `jq` or a CI reporting tool.
 
+### Searching run content (experimental)
+
+**Status: experimental** (ADR-0204, first slice). `nova search` finds runs by
+what the agent actually said or did — not just by run id or command:
+
+```bash
+nova search "invoice INV-2291"        # which run mentioned this invoice?
+nova search "rm -rf"                  # where did an agent run this? (literal)
+nova search "429" --status failure    # failed runs that saw a rate limit
+nova search --reindex                 # one-time backfill of older capsules
+```
+
+The index lives in the local registry DB (SQLite FTS5, zero new
+dependencies) and only ever contains **post-redaction** capsule text — the
+same four files the secret scanner redacts before a capsule is complete.
+New capsules are indexed automatically at ingest (`nova serve` /
+`nova ingest-capsule`); run `nova search --reindex` once to backfill
+capsules captured before this feature. Capsules captured at `minimal`
+capture level simply contribute fewer (or no) content rows. All query terms
+must match (AND); a trailing `*` does prefix search; FTS5 operators like
+`OR`/`NEAR`/`-` are matched literally. The same search is available in the
+dashboard API via `GET /api/runs/search?scope=content`. Set
+`NOVA_CONTENT_INDEX=off` to disable indexing. Postgres server-mode parity
+is **planned**; indexing the extended event streams is **planned** (ADR-0204
+P2 — the ADR-0209 scanner-coverage prerequisite has shipped; the corpus
+stays pinned to the four v0 streams until the P2 slice bumps it). See the
+[CLI reference](cli-reference.md#nova-search-experimental-adr-0204).
+
 ---
 
 ## Replay and diff
@@ -709,7 +738,40 @@ core OpenLineage events:
 nova lineage emit-openlineage .novafabric/capsules/01HX.../ --with-facets --otel-correlation
 ```
 
+> **Note:** these OpenLineage run facets are a different thing from the capsule
+> `facets` container (ADR-0196, experimental) — the additive `facets.<domain>`
+> evidence objects that record-only modules such as `settlement`, `embodied`, and
+> `science` attach to a capsule. Same word, two unrelated places; see
+> [Evidence facets](concepts.md#evidence-facets-experimental) in Concepts.
+
 ---
+
+### Graph analytics (experimental — ADRs 0212–0215)
+
+Beyond traversal, NovaFabric can turn the whole lineage graph into insight —
+all read-only, local-first, and deterministic:
+
+```bash
+# Structurally critical nodes: hubs + single points of failure
+nova lineage metrics --top 10
+
+# Rank the upstream root-cause suspects for a failed run
+nova lineage root-cause 01HX...
+
+# Export the graph for Gephi / yEd / Neo4j
+nova lineage export-graph --format cypher -o lineage.cypher
+
+# One synthesized report (hubs, communities, orphans, health, cost)
+nova insights --output markdown -o insights.md
+```
+
+`metrics` ranks by degree / PageRank / betweenness and flags articulation
+points; `root-cause` combines error signals, recency, edge confidence, and
+cross-run failure correlation and never fabricates a culprit when there is no
+signal; `export-graph` emits byte-stable GraphML/GEXF/Cypher; `insights`
+composes all of it plus seeded Louvain communities and best-effort cost, and
+reports any unavailable data source as unavailable rather than inventing it.
+See the [CLI reference](cli-reference.md#nova-lineage-metrics) for full flags.
 
 ## Trust layer
 
@@ -1377,6 +1439,35 @@ may change between minor versions.
 | `NOVAFABRIC_DASHBOARD_AUDIT_FILE` | `$NOVAFABRIC_HOME/dashboard-audit.jsonl` | Audit log destination for dashboard mutations. Overrides `NOVAFABRIC_HOME` for this path only. |
 | `NOVA_WATCHER_BACKEND` | `polling` | `nova serve` capsule-index watcher backend (`polling` or `watchdog`) |
 | `NOVA_WATCHER_INTERVAL` | — | Poll interval in seconds for the capsule-index watcher |
+| `NOVA_CONTENT_INDEX` | on | Set to `off` to disable content indexing at ingest (experimental, ADR-0204) |
+| `NOVA_CONTENT_INDEX_MAX_DOC_KB` | `64` | Per-doc text cap for the content index (operator tuning) |
+| `NOVA_CONTENT_INDEX_MAX_DOCS` | `10000` | Per-capsule doc cap for the content index (operator tuning) |
+
+---
+
+## Cost analytics (experimental)
+
+Beyond the offline `nova cost estimate` and the ClickHouse-backed `nova cost
+report` (both covered in the [CLI reference](cli-reference.md#nova-cost-report)),
+three additional `nova cost` subcommands report **descriptive** cost evidence over
+records you already hold. Each is **experimental**, read-only, and never a verdict —
+none applies a threshold, quota, or pass/fail; whether a figure is acceptable is
+the operator's call. Each also takes `--json`.
+
+- **`nova cost attribute <runs.json>`** (ADR-0146, NF-148) — splits recorded spend
+  into productive vs wasted outcomes with a per-status breakdown, from a
+  `{runs: [{run_id, status, cost}], productive_statuses?}` document.
+- **`nova cost fairness <totals.json>`** (ADR-0146, NF-150) — per-agent fairness
+  ledger (each agent's share, Gini coefficient, max/mean ratio) over per-dimension
+  resource totals (`cost` / `energy` / `calls`) in a `{totals: {dimension: {agent:
+  total}}}` document.
+- **`nova cost usage-breakdown <manifest.json>`** (ADR-0132) — token usage-type
+  composition of a capsule (each usage type's share, cached-read ratio, reasoning /
+  multimodal flags). Composition only — no cost, no verdict; honours "absent !=
+  zero".
+
+See the [CLI reference](cli-reference.md#nova-cost-attribute-experimental-adr-0146)
+for flags, input shapes, and exit codes.
 
 ---
 

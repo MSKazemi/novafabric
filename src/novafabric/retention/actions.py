@@ -118,6 +118,23 @@ class SweepExecutor:
         reason: str | None = None,
         erasure_receipt_ref: str | None = None,
     ) -> RetentionActionRecord:
+        # ADR-0137 lifecycle event. Only the APPLIED outcome counts as
+        # "retention applied": emitting for SKIPPED/HELD/DRY_RUN/ERROR would
+        # make a consumer counting deletions over-count, which is the number a
+        # retention consumer is most likely to trust.
+        if outcome is SweepOutcome.APPLIED:
+            from novafabric.events.lifecycle_sources import (  # noqa: PLC0415
+                emit_retention_applied,
+            )
+
+            emit_retention_applied(
+                item_id=decision.item.item_id,
+                item_kind=str(decision.item.item_kind),
+                action=str(decision.action),
+                binding_id=decision.binding_id,
+                reason=reason if reason is not None else decision.reason,
+            )
+
         return RetentionActionRecord(
             swept_at=datetime.now(tz=timezone.utc),
             principal=self._principal,

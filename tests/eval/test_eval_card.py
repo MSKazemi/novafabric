@@ -41,29 +41,29 @@ _SCHEMA = json.loads(
 
 
 def _judge_card(**over: object) -> EvalCard:
-    base: dict[str, object] = dict(
-        card_id="faithfulness-judge",
-        name="Answer Faithfulness Judge",
-        version="1.2.0",
-        source=ScoreSource.JUDGE,
-        judge_model=JudgeModel(name="self-hosted/llama-3.3-70b", endpoint_ref="env:NOVA_JUDGE_ENDPOINT"),
-        prompt_version="sha256:aa11",
-        rubric="Score 0-1: is every claim grounded in retrieved context?",
-        dataset_version="golden-faithfulness@3.1.0+sha256:bb22",
-        calibration=Calibration(human_agreement=0.86, n=120, metric="cohen_kappa"),
-        bias_flags=BiasFlags(position=0.03, verbosity=0.11, self_enhancement=0.05),
-    )
+    base: dict[str, object] = {
+        "card_id": "faithfulness-judge",
+        "name": "Answer Faithfulness Judge",
+        "version": "1.2.0",
+        "source": ScoreSource.JUDGE,
+        "judge_model": JudgeModel(name="self-hosted/llama-3.3-70b", endpoint_ref="env:NOVA_JUDGE_ENDPOINT"),
+        "prompt_version": "sha256:aa11",
+        "rubric": "Score 0-1: is every claim grounded in retrieved context?",
+        "dataset_version": "golden-faithfulness@3.1.0+sha256:bb22",
+        "calibration": Calibration(human_agreement=0.86, n=120, metric="cohen_kappa"),
+        "bias_flags": BiasFlags(position=0.03, verbosity=0.11, self_enhancement=0.05),
+    }
     base.update(over)
     return EvalCard(**base)  # type: ignore[arg-type]
 
 
 def _code_card(**over: object) -> EvalCard:
-    base: dict[str, object] = dict(
-        card_id="exact-match",
-        name="Exact Match",
-        version="0.1.0",
-        source=ScoreSource.CODE,
-    )
+    base: dict[str, object] = {
+        "card_id": "exact-match",
+        "name": "Exact Match",
+        "version": "0.1.0",
+        "source": ScoreSource.CODE,
+    }
     base.update(over)
     return EvalCard(**base)  # type: ignore[arg-type]
 

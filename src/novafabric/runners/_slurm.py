@@ -28,6 +28,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from novafabric.runners._poll import jittered_sleep
 from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
 
 logger = logging.getLogger(__name__)
@@ -397,7 +398,7 @@ class SlurmRunner:
                     exit_code_str = exit_code_str_candidate
             if last_state in _SACCT_TERMINAL_STATES:
                 break
-            time.sleep(poll_interval)
+            jittered_sleep(poll_interval)
 
         # 3. Read stdout/stderr files.
         stdout_path = output_dir / f"slurm-{jobid}.out"

@@ -132,6 +132,22 @@ def test_download_evidence_not_found(client: TestClient) -> None:
     assert r.status_code == 404
 
 
+@pytest.mark.parametrize(
+    "bad_id",
+    ["..%2f..%2fetc%2fpasswd", "with.dot", "with space", "with;semicolon", "a/b"],
+)
+def test_download_evidence_rejects_unsafe_bundle_id(client: TestClient, bad_id: str) -> None:
+    """A crafted bundle_id must be rejected with 400 before any path join."""
+    r = client.get(
+        f"/api/evidence/{bad_id}/download",
+        params={"token": TOKEN},
+        headers=LOCALHOST_HEADERS,
+    )
+    # 400 = validator rejected; 404 = FastAPI decoded a slash into a non-route.
+    # Either way the traversal never resolves to a file outside evidence_dir.
+    assert r.status_code in (400, 404)
+
+
 def test_list_evidence_requires_token(client: TestClient) -> None:
     """Evidence list endpoint rejects requests without a valid token."""
     r = client.get("/api/evidence", headers=LOCALHOST_HEADERS)
@@ -172,7 +188,8 @@ def test_list_evidence_nonexistent_dir(tmp_path: Path, monkeypatch: pytest.Monke
     c = TestClient(app)
     r = c.get("/api/evidence", params={"token": TOKEN}, headers=LOCALHOST_HEADERS)
     assert r.status_code == 200
-    assert r.json() == {"bundles": [], "count": 0}
+    # S3 added additive total/truncated fields to the bounded list response.
+    assert r.json() == {"bundles": [], "count": 0, "total": 0, "truncated": False}
 
 
 def test_list_evidence_corrupt_zip_handled_gracefully(

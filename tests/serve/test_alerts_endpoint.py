@@ -250,6 +250,57 @@ def test_limit_bounds_are_enforced(client: TestClient) -> None:
     ).status_code == 422
 
 
+def test_malformed_lines_skipped_not_fatal(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A corrupt line in either log skips that line, not the whole result
+    (ADR-0199 bounded tail reads parse line-by-line)."""
+    audit_path = tmp_path / "audit.jsonl"
+    _seed_delivery(audit_path, event_id="GOOD")
+    with audit_path.open("a", encoding="utf-8") as fh:
+        fh.write("{corrupt audit line\n")
+    events_path = tmp_path / "events.jsonl"
+    _write_events(
+        events_path,
+        [_ops_event(event_id="E-OK", occurred_at="2026-07-17T11:00:00.000000Z")],
+    )
+    with events_path.open("a", encoding="utf-8") as fh:
+        fh.write("not json either\n")
+    monkeypatch.setenv("NOVA_EVENTS_LOG", str(events_path))
+    r = client.get("/api/alerts/recent", params={"token": TOKEN}, headers=H)
+    data = r.json()
+    assert data["total"] == 2
+    assert {a["id"] for a in data["alerts"]} == {"E-OK"} | {
+        a["id"] for a in data["alerts"] if a["outcome"] == "delivered"
+    }
+
+
+def test_large_events_log_stays_bounded_and_returns_newest(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With many more events than 2×limit, the newest ones still surface."""
+    events_path = tmp_path / "events.jsonl"
+    _write_events(
+        events_path,
+        [
+            _ops_event(
+                event_id=f"E{i:04d}",
+                occurred_at=f"2026-07-17T10:{i // 60:02d}:{i % 60:02d}.000000Z",
+            )
+            for i in range(500)
+        ],
+    )
+    monkeypatch.setenv("NOVA_EVENTS_LOG", str(events_path))
+    r = client.get(
+        "/api/alerts/recent", params={"token": TOKEN, "limit": 5}, headers=H
+    )
+    data = r.json()
+    assert [a["id"] for a in data["alerts"]] == [
+        "E0499", "E0498", "E0497", "E0496", "E0495"
+    ]
+    assert data["total"] == 10  # bounded scan window (2×limit), not the full file
+
+
 def test_missing_files_never_500(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

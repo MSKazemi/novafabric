@@ -1,9 +1,12 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { clsx } from 'clsx';
 import { api } from '../../../lib/api';
-import { ErrorBox, Loading } from '../helpers';
+import DataTable, { type Column } from '../../ui/DataTable';
 import EmptyState from '../../ui/EmptyState';
 
+const PAGE_SIZE = 200;
+
+type AuditEntry = Record<string, unknown>;
 type KVData = Record<string, unknown>;
 
 function isKVObject(v: unknown): v is KVData {
@@ -41,66 +44,145 @@ export default function AuditTab({
   refreshTick: number;
   onCountChange?: (n: number) => void;
 }) {
-  const [entries, setEntries] = useState<Array<Record<string, unknown>> | null>(null);
+  const [entries, setEntries] = useState<AuditEntry[] | null>(null);
+  const [nextCursor, setNextCursor] = useState<number | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [resultFilter, setResultFilter] = useState<'all' | 'ok' | 'error' | 'orphaned'>('all');
   const [actionFilter, setActionFilter] = useState('all');
+  // Server-side filtering narrows `entries` to one action, so the dropdown
+  // options are accumulated across fetches instead of derived per page.
+  const [knownActions, setKnownActions] = useState<string[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const onCountChangeRef = useRef(onCountChange);
   useEffect(() => { onCountChangeRef.current = onCountChange; }, [onCountChange]);
 
+  const mergeKnownActions = useCallback((page: AuditEntry[]) => {
+    setKnownActions(prev => {
+      const next = new Set(prev);
+      for (const e of page) {
+        const a = String(e.action ?? '');
+        if (a) next.add(a);
+      }
+      return next.size === prev.length ? prev : Array.from(next).sort();
+    });
+  }, []);
+
   const refresh = useCallback(() => {
     setError(null);
-    setActionFilter('all');
-    api.audit(200)
+    setNextCursor(null);
+    setSelectedId(null);
+    api.audit(PAGE_SIZE, { action: actionFilter !== 'all' ? actionFilter : undefined })
       .then((r) => {
         setEntries(r.entries);
+        setNextCursor(r.next_cursor);
+        mergeKnownActions(r.entries);
         onCountChangeRef.current?.(r.count);
       })
       .catch((e) => setError((e as Error).message));
-  }, []); // onCountChange intentionally excluded — accessed via ref
+  }, [actionFilter, mergeKnownActions]); // onCountChange intentionally excluded — accessed via ref
 
   useEffect(() => { refresh(); }, [refresh, refreshTick]);
 
+  const loadMore = useCallback(() => {
+    if (nextCursor == null || loadingMore) return;
+    setLoadingMore(true);
+    api.audit(PAGE_SIZE, { cursor: nextCursor, action: actionFilter !== 'all' ? actionFilter : undefined })
+      .then((r) => {
+        setEntries(prev => [...(prev ?? []), ...r.entries]);
+        setNextCursor(r.next_cursor);
+        mergeKnownActions(r.entries);
+      })
+      .catch((e) => setError((e as Error).message))
+      .finally(() => setLoadingMore(false));
+  }, [nextCursor, loadingMore, actionFilter, mergeKnownActions]);
+
   const availableActions = useMemo(
-    () => ['all', ...Array.from(new Set((entries ?? []).map(e => String(e.action ?? '')).filter(Boolean)))],
-    [entries],
+    () => ['all', ...knownActions],
+    [knownActions],
   );
 
-  if (error && !entries) return <ErrorBox message={error} onRetry={refresh} />;
-  if (!entries) return <Loading />;
-
-  // Collect run_ids that have a matching done or interrupted event (over all entries, not just visible)
-  const completedRunIds = new Set<string>();
-  for (const e of entries) {
-    const action = String(e.action ?? '');
-    if (action.endsWith('_mission_done') || action.endsWith('_mission_interrupted')) {
-      const args = isKVObject(e.args) ? e.args : null;
-      if (typeof args?.run_id === 'string') completedRunIds.add(args.run_id);
+  // Collect run_ids that have a matching done or interrupted event (over all loaded entries)
+  const completedRunIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const e of entries ?? []) {
+      const action = String(e.action ?? '');
+      if (action.endsWith('_mission_done') || action.endsWith('_mission_interrupted')) {
+        const args = isKVObject(e.args) ? e.args : null;
+        if (typeof args?.run_id === 'string') ids.add(args.run_id);
+      }
     }
-  }
+    return ids;
+  }, [entries]);
 
-  const visibleEntries = entries.filter(e => {
-    const result = String(e.result ?? '?');
+  const isOrphaned = useCallback((e: AuditEntry): boolean => {
     const action = String(e.action ?? '');
-    const eArgs = isKVObject(e.args) ? e.args : null;
-    const runId = typeof eArgs?.run_id === 'string' ? eArgs.run_id : null;
-    const isOrphaned = action.endsWith('_mission_start') && runId !== null && !completedRunIds.has(runId);
-    if (actionFilter !== 'all' && action !== actionFilter) return false;
+    const args = isKVObject(e.args) ? e.args : null;
+    const runId = typeof args?.run_id === 'string' ? args.run_id : null;
+    return action.endsWith('_mission_start') && runId !== null && !completedRunIds.has(runId);
+  }, [completedRunIds]);
+
+  const visibleEntries = useMemo(() => (entries ?? []).filter(e => {
+    const result = String(e.result ?? '?');
     if (resultFilter === 'ok' && result !== 'ok') return false;
     if (resultFilter === 'error' && result === 'ok') return false;
-    if (resultFilter === 'orphaned' && !isOrphaned) return false;
+    if (resultFilter === 'orphaned' && !isOrphaned(e)) return false;
     const q = search.trim().toLowerCase();
     if (!q) return true;
-    return action.toLowerCase().includes(q) || String(e.cli_equivalent ?? '').toLowerCase().includes(q);
-  });
+    return String(e.action ?? '').toLowerCase().includes(q)
+      || String(e.cli_equivalent ?? '').toLowerCase().includes(q);
+  }), [entries, resultFilter, search, isOrphaned]);
+
+  const selected = useMemo(
+    () => visibleEntries.find(e => String(e.audit_id ?? '') === selectedId) ?? null,
+    [visibleEntries, selectedId],
+  );
+
+  const columns = useMemo<Column<AuditEntry>[]>(() => [
+    { key: 'action', header: 'Action', className: 'flex-1', sortValue: (e) => String(e.action ?? ''),
+      render: (e) => {
+        const result = String(e.result ?? '?');
+        const okay = result === 'ok';
+        const orphaned = isOrphaned(e);
+        const dotColor = orphaned
+          ? 'bg-amber-400'
+          : okay
+          ? 'bg-[var(--color-status-success)]'
+          : 'bg-[var(--color-status-failure)]';
+        return (
+          <span className="flex items-center gap-2 min-w-0">
+            <span className={clsx('w-2 h-2 rounded-full shrink-0', dotColor)} aria-hidden="true" />
+            <code className="font-mono truncate text-[var(--color-text)]">{String(e.action ?? '?')}</code>
+            {!okay && (
+              <span className="border border-[var(--color-status-failure)] text-[var(--color-status-failure)] px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider shrink-0">
+                {result}
+              </span>
+            )}
+            {orphaned && (
+              <span className="border border-amber-500 text-amber-500 px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider shrink-0">
+                never completed
+              </span>
+            )}
+          </span>
+        );
+      } },
+    { key: 'cli_equivalent', header: 'CLI equivalent', className: 'flex-1', sortValue: (e) => String(e.cli_equivalent ?? ''),
+      render: (e) => (
+        <span className="font-mono text-[var(--color-text-muted)] truncate">$ {String(e.cli_equivalent ?? '')}</span>
+      ) },
+    { key: 'ts', header: 'Timestamp', className: 'w-48', sortValue: (e) => String(e.ts ?? ''),
+      render: (e) => <span className="text-[10px] font-mono text-[var(--color-text-faint)] truncate">{String(e.ts ?? '')}</span> },
+    { key: 'actor_token_fp', header: 'Actor', className: 'w-24',
+      render: (e) => <code className="text-[10px] font-mono text-[var(--color-text-faint)]">fp:{String(e.actor_token_fp ?? '')}</code> },
+  ], [isOrphaned]);
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between text-xs">
         <p className="text-[var(--color-text-muted)]">
-          {visibleEntries.length}{visibleEntries.length !== entries.length ? ` / ${entries.length}` : ''} audit entr{visibleEntries.length === 1 ? 'y' : 'ies'} · newest first ·
+          {visibleEntries.length}{entries && visibleEntries.length !== entries.length ? ` / ${entries.length}` : ''} audit entr{visibleEntries.length === 1 ? 'y' : 'ies'} · newest first ·
           <span className="font-mono ml-2 text-[10px] text-[var(--color-text-faint)]">
             file: ~/.novafabric/dashboard-audit.jsonl
           </span>
@@ -138,70 +220,65 @@ export default function AuditTab({
         </select>
       </div>
 
-      {entries.length === 0 ? (
-        <EmptyState
-          icon="◎"
-          message="No audit entries yet."
-          hint="Mutations from the dashboard (register, eval, evidence export) will appear here."
-        />
-      ) : (
-        <ul className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] divide-y divide-[var(--color-border)] overflow-hidden">
-          {visibleEntries.length === 0 ? (
-            <li><EmptyState message="No entries match the current filter." variant="inline" /></li>
-          ) : visibleEntries.map((e, i) => {
-            const result = String(e.result ?? '?');
-            const okay = result === 'ok';
-            const isMissionStart = String(e.action ?? '').endsWith('_mission_start');
-            const eArgs = isKVObject(e.args) ? e.args : null;
-            const eExtra = isKVObject(e.extra) ? e.extra : null;
-            const runId = typeof eArgs?.run_id === 'string' ? eArgs.run_id : null;
-            const isOrphaned = isMissionStart && runId !== null && !completedRunIds.has(runId);
+      <DataTable<AuditEntry>
+        columns={columns}
+        rows={visibleEntries}
+        rowKey={(e, i) => String(e.audit_id ?? i)}
+        loading={!entries && !error}
+        error={entries ? null : error}
+        onRetry={refresh}
+        onRowClick={(e) => {
+          const id = String(e.audit_id ?? '');
+          setSelectedId(prev => (prev === id ? null : id));
+        }}
+        empty={
+          entries && entries.length === 0 ? (
+            <EmptyState
+              icon="◎"
+              message="No audit entries yet."
+              hint="Mutations from the dashboard (register, eval, evidence export) will appear here."
+            />
+          ) : (
+            <EmptyState message="No entries match the current filter." variant="inline" />
+          )
+        }
+      />
 
-            const dotColor = isOrphaned
-              ? 'bg-amber-400'
-              : okay
-              ? 'bg-[var(--color-status-success)]'
-              : 'bg-[var(--color-status-failure)]';
+      {selected && (
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-4 py-3">
+          <div className="flex items-baseline gap-2 flex-wrap">
+            <code className="font-mono text-sm text-[var(--color-text)]">{String(selected.action ?? '?')}</code>
+            <span className="text-[10px] text-[var(--color-text-faint)] font-mono">{String(selected.ts ?? '')}</span>
+            <code className="text-[10px] text-[var(--color-text-faint)] font-mono ml-auto">
+              fp:{String(selected.actor_token_fp ?? '')}
+            </code>
+          </div>
+          <p className="text-xs text-[var(--color-text-muted)] mt-0.5 font-mono break-all">
+            $ {String(selected.cli_equivalent ?? '')}
+          </p>
+          {!!selected.error && (
+            <p className="text-xs text-[var(--color-status-failure)] mt-1 font-mono break-all">
+              {String(selected.error)}
+            </p>
+          )}
+          {isKVObject(selected.args) && <KVList data={selected.args} label="args" />}
+          {isKVObject(selected.extra) && <KVList data={selected.extra} label="extra" />}
+        </div>
+      )}
 
-            return (
-              <li key={(e.audit_id as string) ?? i} className="px-4 py-3 flex items-start gap-3">
-                <span
-                  className={clsx('mt-1.5 w-2 h-2 rounded-full shrink-0', dotColor)}
-                  aria-hidden="true"
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-baseline gap-2 flex-wrap">
-                    <code className="font-mono text-sm text-[var(--color-text)]">{String(e.action ?? '?')}</code>
-                    {!okay && (
-                      <span className="border border-[var(--color-status-failure)] text-[var(--color-status-failure)] px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider">
-                        {result}
-                      </span>
-                    )}
-                    {isOrphaned && (
-                      <span className="border border-amber-500 text-amber-500 px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider">
-                        never completed
-                      </span>
-                    )}
-                    <span className="text-[10px] text-[var(--color-text-faint)] font-mono">{String(e.ts ?? '')}</span>
-                  </div>
-                  <p className="text-xs text-[var(--color-text-muted)] mt-0.5 font-mono break-all">
-                    $ {String(e.cli_equivalent ?? '')}
-                  </p>
-                  {!!e.error && (
-                    <p className="text-xs text-[var(--color-status-failure)] mt-1 font-mono break-all">
-                      {String(e.error)}
-                    </p>
-                  )}
-                  {eArgs && <KVList data={eArgs} label="args" />}
-                  {eExtra && <KVList data={eExtra} label="extra" />}
-                </div>
-                <code className="text-[10px] text-[var(--color-text-faint)] font-mono shrink-0">
-                  fp:{String(e.actor_token_fp ?? '')}
-                </code>
-              </li>
-            );
-          })}
-        </ul>
+      {error && entries && (
+        <p className="text-xs text-[var(--color-status-failure)] font-mono">{error}</p>
+      )}
+
+      {/* Load more (byte-offset cursor pagination — ADR-0199) */}
+      {nextCursor != null && (
+        <button
+          onClick={loadMore}
+          disabled={loadingMore}
+          className="w-full px-2 py-1.5 text-[10px] rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-accent)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          {loadingMore ? 'Loading…' : 'Load more'}
+        </button>
       )}
     </div>
   );

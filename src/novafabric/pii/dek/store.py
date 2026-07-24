@@ -29,6 +29,7 @@ Security:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import sqlite3
@@ -39,6 +40,15 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+
+def _subject_hash_prefix(subject_id: str) -> str:
+    """First 12 hex chars of SHA-256(subject_id) — the only form allowed in logs.
+
+    Normative privacy rule (ADR-0210 D1, same posture as ``nova pii status``):
+    structured logs never carry the raw subject id.
+    """
+    return hashlib.sha256(subject_id.encode("utf-8")).hexdigest()[:12]
 
 # ---------------------------------------------------------------------------
 # Pydantic models
@@ -222,7 +232,7 @@ class DEKStore:
                 "dek_created",
                 extra={
                     "event": "dek_created",
-                    "subject_id": subject_id,
+                    "subject_sha256_prefix": _subject_hash_prefix(subject_id),
                     "tenant_id": tenant_id,
                 },
             )
@@ -338,7 +348,7 @@ class DEKStore:
                     "dek_erasure_deferred",
                     extra={
                         "event": "dek_erasure_deferred",
-                        "subject_id": subject_id,
+                        "subject_sha256_prefix": _subject_hash_prefix(subject_id),
                         "earliest_erasure_at": retention_cutoff.isoformat(),
                         "retention_months": retention_months,
                     },
@@ -366,7 +376,7 @@ class DEKStore:
             "dek_erased",
             extra={
                 "event": "dek_erased",
-                "subject_id": subject_id,
+                "subject_sha256_prefix": _subject_hash_prefix(subject_id),
                 "capsule_count": len(capsule_ids),
                 "method": "aes-256-gcm-dek-destruction",
             },

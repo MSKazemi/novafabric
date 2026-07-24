@@ -177,7 +177,7 @@ class TopologyExtractor:
         try:
             pos = nx.spring_layout(ug, seed=42, k=1.5)
         except Exception:
-            pos = {n: (0.0, 0.0) for n in ug.nodes()}
+            pos = dict.fromkeys(ug.nodes(), (0.0, 0.0))
 
         # Build cluster metadata
         from collections import defaultdict

@@ -85,6 +85,17 @@ def start_cmd(
             ),
         ),
     ] = False,
+    i_accept_shared_capsule_store: Annotated[
+        bool,
+        typer.Option(
+            "--i-accept-shared-capsule-store",
+            help=(
+                "Acknowledge that the capsule store is NOT tenant-partitioned "
+                "and run more than one organization anyway (ADR-0178). "
+                "Env: NOVAFABRIC_SERVER_I_ACCEPT_SHARED_CAPSULE_STORE."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Start the multi-user REST API server.
 
@@ -143,6 +154,8 @@ def start_cmd(
         cfg.insecure_no_auth = True
     if i_know_this_is_public:
         cfg.i_know_this_is_public = True
+    if i_accept_shared_capsule_store:
+        cfg.i_accept_shared_capsule_store = True
 
     # ADR-0184: re-check after CLI overrides (assignment skips model validation).
     try:

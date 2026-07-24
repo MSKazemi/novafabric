@@ -45,9 +45,25 @@ design and asserted by test.
 - **No default base URL** — private deployments are the norm; the constructor
   requires `baseUrl` and omitting it is a compile-time and runtime error
 
-Planned for a later slice (not in this package yet): evidence helpers and CJS
-output (the package is currently **ESM-only** with bundled `.d.ts`; CJS
-compatibility is an honest follow-up, not silently claimed).
+Planned for a later slice (not in this package yet): evidence helpers.
+
+## Module formats
+
+The package ships **dual ESM + CommonJS** builds from one TypeScript source,
+with per-condition type declarations so both resolution modes get
+correctly-flavoured `.d.ts`:
+
+| Consumer | Entry | Types |
+|---|---|---|
+| `import` (ESM) | `dist/index.js` | `dist/index.d.ts` |
+| `require` (CJS) | `dist/cjs/index.js` | `dist/cjs/index.d.ts` |
+
+Still zero runtime dependencies and no bundler: the CJS half is a second
+`tsc` pass plus a nested `dist/cjs/package.json` declaring
+`{"type":"commonjs"}`, which scopes the override away from the root
+`"type": "module"`. A real `require()` of the built output is exercised by
+`npm run test:cjs` and in CI — not merely asserted about the `exports` map,
+since a test runner's own resolver can mask a genuine `require()` failure.
 
 ## Usage
 
@@ -58,6 +74,12 @@ const client = new NovaFabricClient({
   baseUrl: "https://nova.example.com/v0", // required — include the /v0 prefix
   token: async () => myIdp.getAccessToken(), // or a static string
 });
+```
+
+Or from CommonJS:
+
+```js
+const { NovaFabricClient } = require("@novafabric/sdk");
 
 const { data: capsule, meta } = await client.getCapsule("run-01H...");
 if (meta.deprecation) {

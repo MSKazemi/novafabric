@@ -26,7 +26,7 @@ Related documents:
    - 3.1 [Path resolution order](#31-path-resolution-order)
    - 3.2 [Docker and container deployments](#32-docker-and-container-deployments)
    - 3.3 [SLURM and shared-filesystem deployments](#33-slurm-and-shared-filesystem-deployments)
-   - 3.4 [Future: Postgres backend](#34-future-postgres-backend)
+   - 3.4 [Postgres backend (experimental, Scale-S4)](#34-postgres-backend-experimental-scale-s4)
 4. [Environment variables — complete reference](#4-environment-variables--complete-reference)
 5. [Discovery order for `novaseal.yaml`](#5-discovery-order-for-novasealyaml)
 6. [Troubleshooting](#6-troubleshooting)
@@ -139,7 +139,7 @@ the Merkle DB path through a single canonical function:
 
 | Priority | Source | When to use |
 |---|---|---|
-| 1 | `NOVAFABRIC_SEAL_DB_PATH` env var | Explicit override; CI/test environments; future Postgres URL (`postgres://...`) |
+| 1 | `NOVAFABRIC_SEAL_DB_PATH` env var | Explicit override; CI/test environments; Postgres URL (`postgres://...`, experimental — see §3.4) |
 | 2 | `merkle_db:` field in `novaseal.yaml` | **Production config** — set this for non-default paths |
 | 3 | `~/.novafabric/novaseal-merkle.db` | Default for local laptop use |
 
@@ -189,20 +189,23 @@ merkle_db: /lustre/project/novafabric/novaseal-merkle.db
 ```
 
 SQLite's WAL mode handles concurrent appends from multiple workers within a
-single job. For large-scale parallelism (>100 concurrent writers), the future
+single job. For large-scale parallelism (>100 concurrent writers), the
 Postgres backend (§3.4) is the appropriate path.
 
-### 3.4 Future: Postgres backend
+### 3.4 Postgres backend (experimental, Scale-S4)
 
-**Planned** — not yet implemented (ROADMAP Scale-S4).
+**Experimental** — implemented (ROADMAP Scale-S4). SQLite remains the default;
+the Postgres backend is opt-in via a Postgres DSN. The merkle-log factory
+(`open_merkle_log`) routes `postgresql://` / `postgres://` URIs to the
+`PostgresMerkleLog` backend.
 
-The `merkle_db` field will accept a Postgres connection URL:
+The `merkle_db` field accepts a Postgres connection URL:
 
 ```yaml
 merkle_db: postgres://user:pass@pghost/novafabric_seal
 ```
 
-The `NOVAFABRIC_SEAL_DB_PATH` env var will also accept this format for
+The `NOVAFABRIC_SEAL_DB_PATH` env var also accepts this format for
 programmatic override without editing `novaseal.yaml`.
 
 ---
@@ -212,7 +215,7 @@ programmatic override without editing `novaseal.yaml`.
 | Variable | Default | Description |
 |---|---|---|
 | `NOVAFABRIC_SEAL_CONFIG` | `~/.novafabric/novaseal.yaml` | Path to `novaseal.yaml`. Takes precedence over the default location. Set this in Docker/K8s to point to the config on the mounted volume. |
-| `NOVAFABRIC_SEAL_DB_PATH` | — | Explicit Merkle DB path. Overrides `merkle_db` in `novaseal.yaml`. Intended for CI/test environments and the future Postgres backend. |
+| `NOVAFABRIC_SEAL_DB_PATH` | — | Explicit Merkle DB path (or a `postgresql://` DSN for the experimental Postgres backend, §3.4). Overrides `merkle_db` in `novaseal.yaml`. Intended for CI/test environments. |
 | `NOVA_BYPASS_NOTIFY_URL` | — | Webhook URL for bypass-event notifications (see ADR-0059). |
 | `NOVASEAL_KMS_ENDPOINT` | — | NovaSeal KMS endpoint for collector batch signing (cluster-scale, experimental). |
 

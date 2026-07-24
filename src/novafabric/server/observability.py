@@ -644,71 +644,50 @@ def check_postgres_db(dsn: str | None) -> str:
         return CHECK_FAIL
 
 
+def _skew_status_to_check(status: str) -> str:
+    """Map a schema-skew comparator status onto the readiness vocabulary.
+
+    ``behind`` and ``ahead_or_foreign`` are real, named failures;
+    ``unstamped``/``unknown`` stay the honest ``"unknown"`` — never a fake
+    ``"ok"`` and never a refusal based on ignorance (ADR-0211 D1).
+    """
+    from novafabric.server import schema_skew  # noqa: PLC0415
+
+    if status == schema_skew.STATUS_OK:
+        return CHECK_OK
+    if status in (schema_skew.STATUS_BEHIND, schema_skew.STATUS_AHEAD):
+        return CHECK_FAIL
+    return CHECK_UNKNOWN
+
+
 def check_migrations_sqlite(db_path: Path | None) -> str:
     """Compare the SQLite ``alembic_version`` stamp against the script head.
 
-    Honest degradation (task/spec): when the DB is not alembic-managed, or the
-    migration scripts / alembic itself are not available (installed package,
-    lean extra), the answer is ``"unknown"`` — never a fake ``"ok"``.
+    ADR-0211 D1: delegates to the shared ``schema_skew`` comparator (packaged
+    migration trees, source-checkout fallback). Honest degradation: an
+    unstamped or unreadable DB reports ``"unknown"`` — never a fake ``"ok"``.
     """
+    from novafabric.server.schema_skew import compare_revisions  # noqa: PLC0415
+
     try:
         path = db_path or _default_db_path()
-        if not Path(path).exists():
-            return CHECK_UNKNOWN
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2)
-        try:
-            row = conn.execute(
-                "SELECT version_num FROM alembic_version LIMIT 1"
-            ).fetchone()
-        finally:
-            conn.close()
-    except Exception:  # noqa: BLE001 — no alembic_version table / unreadable db
+    except Exception:  # noqa: BLE001 — home resolution failure
         return CHECK_UNKNOWN
-    if row is None or not row[0]:
-        return CHECK_UNKNOWN  # table exists but never stamped — indeterminate
-    head = _alembic_script_head("sqlite")
-    if head is None:
-        return CHECK_UNKNOWN
-    return CHECK_OK if str(row[0]) == head else CHECK_FAIL
+    return _skew_status_to_check(compare_revisions("sqlite", path).status)
 
 
-_ALEMBIC_HEAD_CACHE: dict[str, str | None] = {}
+def check_migrations_postgres(dsn: str | None) -> str:
+    """Compare the Postgres ``alembic_version`` stamp against the script head.
 
-
-def _alembic_script_head(track: str) -> str | None:
-    """Best-effort head revision of the in-repo alembic *track* (sqlite|postgres).
-
-    Only determinable from a source checkout (the migration trees are not
-    packaged); returns None otherwise.
+    ADR-0211 D1: this replaces the previous hardcoded ``"unknown"`` — the
+    comparator opens one short-timeout connection (DSN never logged) and
+    resolves the packaged registry postgres track head.
     """
-    if track in _ALEMBIC_HEAD_CACHE:
-        return _ALEMBIC_HEAD_CACHE[track]
-    head: str | None = None
-    try:
-        from alembic.config import Config as _AlembicConfig  # noqa: PLC0415
-        from alembic.script import ScriptDirectory  # noqa: PLC0415
+    from novafabric.server.schema_skew import compare_revisions  # noqa: PLC0415
 
-        repo_root = _find_repo_root()
-        if repo_root is not None:
-            cfg = _AlembicConfig()
-            cfg.set_main_option("script_location", str(repo_root / "alembic"))
-            cfg.set_main_option(
-                "version_locations", str(repo_root / "alembic" / track / "versions")
-            )
-            head = ScriptDirectory.from_config(cfg).get_current_head()
-    except Exception:  # noqa: BLE001 — alembic absent or scripts unavailable
-        head = None
-    _ALEMBIC_HEAD_CACHE[track] = head
-    return head
-
-
-def _find_repo_root() -> Path | None:
-    """Walk up from this file looking for the repo's ``alembic.ini``."""
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        if (parent / "alembic.ini").exists() and (parent / "alembic").is_dir():
-            return parent
-    return None
+    if not dsn:
+        return CHECK_UNKNOWN
+    return _skew_status_to_check(compare_revisions("postgres", dsn).status)
 
 
 def _default_db_path() -> Path:
@@ -912,9 +891,9 @@ def install_server_observability(app: FastAPI, config: ServerConfig) -> None:
 
     def _migrations_check() -> str:
         if config.backend == "postgres":
-            # Head comparison needs a live connection + the postgres migration
-            # tree; not determinable cheaply here — honest "unknown".
-            return CHECK_UNKNOWN
+            # ADR-0211 D1: real head comparison via the shared comparator
+            # (bounded connect_timeout; DSN never logged).
+            return check_migrations_postgres(config.postgres_dsn)
         return check_migrations_sqlite(db_path)
 
     checks: dict[str, ReadinessCheck] = {

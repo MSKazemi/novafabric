@@ -46,6 +46,32 @@ _ROW_FIELDS = (
 )
 
 
+def api_key_rows(db_path: Path | None) -> list[dict[str, Any]]:
+    """Secret-free projection of the API-key store (shared read helper).
+
+    Each row carries only the metadata fields in ``_ROW_FIELDS`` plus a
+    derived ``status`` (``active``/``revoked``/``expired`` via
+    :func:`novafabric.server.api_keys.key_status`). Never hashes, never
+    secrets. Missing/unreadable store → ``[]``, never an exception.
+    """
+    if db_path is None or not Path(db_path).exists():
+        return []
+
+    from novafabric.server.api_keys import key_status, list_keys  # noqa: PLC0415
+
+    try:
+        rows = list_keys(db_path=Path(db_path))
+    except Exception:  # noqa: BLE001 — a read view must never 500 the dashboard
+        return []
+
+    keys: list[dict[str, Any]] = []
+    for row in rows:
+        projected = {field: row.get(field) for field in _ROW_FIELDS}
+        projected["status"] = key_status(row)
+        keys.append(projected)
+    return keys
+
+
 def build_admin_keys_router(
     verify_token: Callable[..., Any],
     *,
@@ -55,22 +81,7 @@ def build_admin_keys_router(
 
     @router.get("/api/admin/api-keys")
     async def admin_api_keys() -> dict[str, Any]:
-        empty: dict[str, Any] = {"keys": [], "total": 0}
-        if db_path is None or not Path(db_path).exists():
-            return empty
-
-        from novafabric.server.api_keys import key_status, list_keys  # noqa: PLC0415
-
-        try:
-            rows = list_keys(db_path=Path(db_path))
-        except Exception:  # noqa: BLE001 — a read view must never 500 the dashboard
-            return empty
-
-        keys: list[dict[str, Any]] = []
-        for row in rows:
-            projected = {field: row.get(field) for field in _ROW_FIELDS}
-            projected["status"] = key_status(row)
-            keys.append(projected)
+        keys = api_key_rows(db_path)
         return {"keys": keys, "total": len(keys)}
 
     return router

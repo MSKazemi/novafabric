@@ -152,16 +152,16 @@ def test_classify_best_effort_lock_precludes_bit_exact() -> None:
 
 def _attestation(determinism_class: str = "BIT_EXACT", **extra) -> ReplayAttestation:
     pinned = _underpinned() if determinism_class == "NON_DETERMINISTIC" else _fully_pinned()
-    kwargs = dict(
-        run_id=new_ulid(),
-        capsule_hash="sha256:" + "9d" * 32,
-        replayed_at="2026-06-19T11:00:00Z",
-        replay_mode="exact",
-        outcome_digest="f1d2d2f924e986ac86fdf7b36c94bcdf32beec15",
-        match="exact",
-        determinism_class=determinism_class,
-        pinned=pinned,
-    )
+    kwargs = {
+        "run_id": new_ulid(),
+        "capsule_hash": "sha256:" + "9d" * 32,
+        "replayed_at": "2026-06-19T11:00:00Z",
+        "replay_mode": "exact",
+        "outcome_digest": "f1d2d2f924e986ac86fdf7b36c94bcdf32beec15",
+        "match": "exact",
+        "determinism_class": determinism_class,
+        "pinned": pinned,
+    }
     kwargs.update(extra)
     return ReplayAttestation(**kwargs)
 

@@ -487,6 +487,34 @@ def promote_asset(
                 "action": "promote",
             },
         )
+        if not decision.allow:
+            # ADR-0192 wired source. Emitted on the deny itself, not on the
+            # raise, so a --force override is still alerted: an operator
+            # bypassing a gate is precisely what someone should learn about.
+            from novafabric.events.sources import (  # noqa: PLC0415
+                emit_policy_violation_alert,
+            )
+
+            emit_policy_violation_alert(
+                asset_id=f"{name}@{version}",
+                decision_reason=decision.reason,
+                stage="promote" if not force else "promote (forced)",
+                source="nova promote",
+            )
+
+            # ADR-0137 lifecycle event, same placement rationale as the alert
+            # above: emitted on the DENY, so a --force override is still
+            # visible to downstream consumers. `forced` distinguishes them.
+            from novafabric.events.lifecycle_sources import (  # noqa: PLC0415
+                emit_policy_failed,
+            )
+
+            emit_policy_failed(
+                asset_id=f"{name}@{version}",
+                reason=decision.reason,
+                decision_id=decision.decision_id,
+                forced=bool(force),
+            )
         if not decision.allow and not force:
             raise PromotionBlockedError(
                 f"Policy denied promotion of '{name}@{version}': "

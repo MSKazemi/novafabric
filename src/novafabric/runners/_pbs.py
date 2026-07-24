@@ -39,6 +39,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from novafabric.runners._poll import jittered_sleep
 from novafabric.runners._sitecustomize import HOOK_LOADER as _HOOK_LOADER
 from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
 
@@ -267,7 +268,7 @@ class PBSRunner:
                     exit_status_str = exit_status_candidate
             if last_state in _PBS_TERMINAL_STATES:
                 break
-            time.sleep(poll_interval)
+            jittered_sleep(poll_interval)
 
         # 5. Read stdout/stderr from the log files PBS wrote.
         stdout_path = output_dir / "stdout.log"

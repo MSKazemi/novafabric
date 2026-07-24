@@ -72,7 +72,10 @@ nova doctor --check-storage
 SQLite schema migrations for the registry/metadata tables run on the SQLite
 Alembic track (§4). `nova doctor --check-storage` reports the backend name,
 Alembic schema version, migration status, and per-table row counts — if it
-reports pending migrations, run `nova db upgrade` (see §4).
+reports pending migrations, run
+`nova db upgrade --track registry --backend sqlite` (see §4 for why the
+`--track` matters). The server also refuses to start on a skewed schema —
+see §4a.
 
 ---
 
@@ -93,8 +96,10 @@ pip install -U 'novafabric[server]'
 # 3. Apply migrations (expand-contract-safe per §1) while the OLD writer
 #    is still running — N code against N+1 schema is within the contract:
 alembic -c alembic-postgres.ini upgrade head
-# or, using the CLI wrapper against the configured backend:
-nova db upgrade
+# or, using the CLI wrapper (note --track registry: this migrates the
+# registry/server DB the server opens — a bare `nova db upgrade` migrates
+# the separate MetadataStore tier instead; ADR-0211 D5):
+nova db upgrade --track registry --backend postgres    # experimental
 
 # 4. Roll the writer: stop the old process, start the new one.
 #    Never run two writers at once (ADR-0180 fencing invariant).
@@ -112,18 +117,54 @@ Kubernetes/Helm installs apply migrations via an init container on rollout
 
 ## 4. Alembic dual-track migrations
 
-**Status: works today.**
+**Status: works today** (`--track` selector: **experimental**, ADR-0211).
 
-NovaFabric maintains **two parallel Alembic tracks**, one per backend:
+NovaFabric maintains **two separate Alembic universes** — and they migrate
+**different databases** (ADR-0211 fixed a doc trap here):
 
-| Track | Config file | Version scripts | Invocation |
+| Track (`nova db upgrade --track …`) | Database | Env vars | Version scripts |
 |---|---|---|---|
-| SQLite (default) | `alembic.ini` | `alembic/sqlite/versions/` | `alembic upgrade head` |
-| Postgres | `alembic-postgres.ini` | `alembic/postgres/versions/` | `alembic -c alembic-postgres.ini upgrade head` (needs `NOVAFABRIC_POSTGRES_DSN` or a `db_url` override) |
+| `registry` | registry/server DB (`~/.novafabric/registry.db` / `NOVAFABRIC_POSTGRES_DSN`) — the DB the server lifespan opens and `nova backup create --profile pg` dumps | `NOVAFABRIC_HOME`, `NOVAFABRIC_POSTGRES_DSN` | `alembic/{sqlite,postgres}/versions/` (packaged into wheels as `novafabric/migrations/registry/`) |
+| `metadata` (default) | MetadataStore tier (`metadata.db` / `NOVAFABRIC_METADATA_DSN`) | `NOVAFABRIC_DB_PATH`, `NOVAFABRIC_METADATA_DSN` | `novafabric/metadata_store/migrations/` |
 
-The CLI wrapper `nova db upgrade` runs `alembic upgrade <revision>` against
-the **configured MetadataStore backend**, so you rarely need raw `alembic`.
-Check state before and after with `nova doctor --check-storage`.
+Each registry backend also keeps its raw invocation:
+`alembic upgrade head` (SQLite, `alembic.ini`) or
+`alembic -c alembic-postgres.ini upgrade head` (Postgres) from a source
+checkout. From an installed package, use
+`nova db upgrade --track registry --backend sqlite|postgres` — the migration
+trees ship inside the wheel since ADR-0211 D2.
+
+**After a Postgres restore or a server-mode upgrade, the command you want is
+`nova db upgrade --track registry --backend postgres`.** A bare
+`nova db upgrade` migrates the MetadataStore tier — a different database than
+the one the server serves. Check state before and after with
+`nova doctor --check-storage`.
+
+---
+
+## 4a. Startup schema-skew guard (experimental, ADR-0211)
+
+The `nova server` lifespan compares the database's Alembic stamp against the
+installed build's migration head **before** touching the database, for both
+backends:
+
+- **behind** (new code, old schema) → the server **refuses to start** with
+  `E-SKEW-BEHIND`, naming both revisions and the fix:
+  `nova db upgrade --track registry --backend <backend>`.
+- **ahead/foreign** (old code, newer schema) → refuses with `E-SKEW-AHEAD`:
+  upgrade the `novafabric` package; do **not** downgrade the schema.
+- **unstamped** (bootstrapped by `init_schema()`, no Alembic stamp — every
+  pre-ADR-0211 deployment) → starts with a structured warning.
+- **unknown** (head unresolvable / DB unreadable) → starts with a warning —
+  never a fake `ok`, never a refusal based on ignorance.
+
+**Escape hatch:** `NOVAFABRIC_ALLOW_SCHEMA_SKEW=1` (also `true`/`yes`)
+downgrades both refusals to a single structured warning and starts anyway —
+the documented break-glass for emergency read-mostly access and support.
+Unsupported for normal operation; unset it after the incident.
+
+`/readyz`'s `migrations` check uses the same comparator and now returns real
+`ok`/`fail` for Postgres as well (previously hardcoded `unknown`).
 
 ---
 

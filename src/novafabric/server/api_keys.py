@@ -395,8 +395,8 @@ def verify_key(
     conn = _get_conn(db_path)
     try:
         row = conn.execute(
-            "SELECT secret_sha256, owner, roles, expires_at, revoked_at, "
-            "last_used_at, rotate_expires_at "
+            "SELECT secret_sha256, owner, roles, workspace, expires_at, "
+            "revoked_at, last_used_at, rotate_expires_at "
             "FROM api_keys WHERE key_id = ?",
             (key_id,),
         ).fetchone()
@@ -429,7 +429,11 @@ def verify_key(
             _lastused_interval_seconds(lastused_interval_seconds),
         )
         roles = json.loads(row["roles"])
-        return AuthContext(subject=row["owner"], roles=list(roles))
+        # ADR-0208: surface the key's workspace binding as attribution
+        # context (metering consumes it; it is still not enforced).
+        return AuthContext(
+            subject=row["owner"], roles=list(roles), workspace=row["workspace"]
+        )
     finally:
         conn.close()
 

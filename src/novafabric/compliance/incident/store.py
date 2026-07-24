@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from novafabric._paths import nova_home
+from novafabric._sqlite_util import connect_sqlite
 from novafabric.compliance.incident.models import (
     Incident,
     IncidentNotFoundError,
@@ -72,7 +73,7 @@ class IncidentStore:
     def open(self) -> None:
         """Open the database and create the schema if needed."""
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        self._conn = connect_sqlite(str(self._db_path), check_same_thread=False)
         self._conn.executescript(_DDL)
         self._conn.commit()
 
@@ -162,6 +163,21 @@ class IncidentStore:
         """All incidents, newest occurrence first."""
         rows = self._require_conn().execute(
             "SELECT raw_json FROM incidents ORDER BY occurred_at DESC"
+        ).fetchall()
+        return [Incident.model_validate_json(r[0]) for r in rows]
+
+    def count(self) -> int:
+        """Total number of incidents (cheap COUNT, no JSON parsing)."""
+        row = self._require_conn().execute("SELECT COUNT(*) FROM incidents").fetchone()
+        return int(row[0]) if row else 0
+
+    def list_recent(self, limit: int) -> list[Incident]:
+        """The *limit* newest incidents — bounds both the SQL fetch and the
+        per-row JSON parsing so a large table cannot produce an unbounded read.
+        """
+        rows = self._require_conn().execute(
+            "SELECT raw_json FROM incidents ORDER BY occurred_at DESC LIMIT ?",
+            (max(0, limit),),
         ).fetchall()
         return [Incident.model_validate_json(r[0]) for r in rows]
 

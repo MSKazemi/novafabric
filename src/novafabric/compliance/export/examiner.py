@@ -25,7 +25,6 @@ database connection.  They operate on the local capsule data directory.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import stat
 import zipfile
@@ -35,19 +34,20 @@ from typing import Any
 
 import yaml
 
+from novafabric._hashutil import sha256_file_hex, sha256_hex
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
 def _sha256_file(path: Path) -> str:
-    """Return the lowercase hex SHA-256 of a file."""
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    return digest
+    """Return the lowercase hex SHA-256 of a file (streamed, memory-bounded)."""
+    return sha256_file_hex(path)
 
 
 def _sha256_bytes(data: bytes) -> str:
     """Return the lowercase hex SHA-256 of *data*."""
-    return hashlib.sha256(data).hexdigest()
+    return sha256_hex(data)
 
 
 def _now_iso() -> str:

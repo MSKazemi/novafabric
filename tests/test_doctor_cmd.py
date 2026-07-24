@@ -5,7 +5,6 @@ import sqlite3
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -112,12 +111,9 @@ def test_doctor_check_storage_shows_row_counts(tmp_path: Path) -> None:
     assert "2" in result.output  # 2 asset rows
 
 
-def test_doctor_check_storage_migration_pending(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import sys
-    from unittest.mock import MagicMock
-
+def test_doctor_check_storage_migration_pending(tmp_path: Path) -> None:
+    # ADR-0211: an unstamped (init_schema-bootstrapped) DB is "pending" —
+    # the comparator, not a table-existence heuristic, decides now.
     db = tmp_path / "registry.db"
     conn = sqlite3.connect(str(db))
     conn.executescript(
@@ -127,22 +123,46 @@ def test_doctor_check_storage_migration_pending(
     conn.commit()
     conn.close()
 
-    fake_alembic = MagicMock()
-    monkeypatch.setitem(sys.modules, "alembic", fake_alembic)
-
     result = runner.invoke(
         app, ["doctor", "--check-storage", "--db-path", str(db)]
     )
     assert result.exit_code == 0
     assert "pending" in result.output
+    # ADR-0211 D5: the hint must name the track that fixes THIS database.
+    assert "--track registry" in result.output.replace("\n", "")
 
 
-def test_doctor_check_storage_migration_up_to_date(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_doctor_check_storage_migration_up_to_date(tmp_path: Path) -> None:
+    # ADR-0211: "up to date" now means stamped AT the script head — a stale
+    # stamp (e.g. s0001 with a newer head) correctly reports pending instead.
+    from novafabric.migrations.registry_track import script_head
+
+    head = script_head("sqlite")
+    assert head is not None, "source checkout must resolve the sqlite head"
+
+    db = tmp_path / "registry.db"
+    conn = sqlite3.connect(str(db))
+    conn.executescript(
+        "CREATE TABLE schema_version (version INTEGER PRIMARY KEY); "
+        "INSERT INTO schema_version VALUES (1); "
+        "CREATE TABLE alembic_version (version_num TEXT PRIMARY KEY); "
+        f"INSERT INTO alembic_version VALUES ('{head}');"
+    )
+    conn.commit()
+    conn.close()
+
+    result = runner.invoke(
+        app, ["doctor", "--check-storage", "--db-path", str(db)]
+    )
+    assert result.exit_code == 0
+    assert "up to date" in result.output
+
+
+def test_doctor_check_storage_migration_stale_stamp_is_pending(
+    tmp_path: Path,
 ) -> None:
-    import sys
-    from unittest.mock import MagicMock
-
+    # A DB stamped behind head must report pending (the pre-ADR-0211 code
+    # reported "up to date" for ANY stamp — the bug this slice fixes).
     db = tmp_path / "registry.db"
     conn = sqlite3.connect(str(db))
     conn.executescript(
@@ -154,14 +174,11 @@ def test_doctor_check_storage_migration_up_to_date(
     conn.commit()
     conn.close()
 
-    fake_alembic = MagicMock()
-    monkeypatch.setitem(sys.modules, "alembic", fake_alembic)
-
     result = runner.invoke(
         app, ["doctor", "--check-storage", "--db-path", str(db)]
     )
     assert result.exit_code == 0
-    assert "up to date" in result.output
+    assert "pending" in result.output
 
 
 def test_doctor_check_storage_sqlite_uninitialised_schema(tmp_path: Path) -> None:

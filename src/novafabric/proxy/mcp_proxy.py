@@ -41,6 +41,11 @@ from datetime import datetime, timezone
 from typing import IO, TYPE_CHECKING, Any
 
 from novafabric.capture._ulid import new_ulid
+from novafabric.mcp.exchanges import ExchangeTracker
+
+
+def _new_tracker() -> ExchangeTracker:
+    return ExchangeTracker()
 
 if TYPE_CHECKING:
     from novafabric.capture.capsule import CapsuleWriter
@@ -72,6 +77,10 @@ class _ProxyState:
     pending: dict[str, _PendingCall] = field(default_factory=dict)
     server: _ServerIdentity = field(default_factory=_ServerIdentity)
     lock: threading.Lock = field(default_factory=threading.Lock)
+    #: SEP-2322 round-trip grouping (NF-038 R3/R4). Guarded by ``lock`` above
+    #: rather than locking internally — a second lock would be a second place
+    #: for the locking to be wrong.
+    exchanges: "ExchangeTracker" = field(default_factory=lambda: _new_tracker())
 
 
 class MCPProxy:
@@ -180,6 +189,9 @@ class MCPProxy:
         msg = _safe_parse(raw)
         if not isinstance(msg, dict):
             return
+        # SEP-2322 (NF-038 R3/R4): capture the client's inputResponses leg
+        # before the tools/call filter below, which would otherwise drop it.
+        self._capture_elicitation(msg, direction="client_to_server")
         method = msg.get("method")
         rpc_id = msg.get("id")
         if rpc_id is None or method != "tools/call":
@@ -205,6 +217,9 @@ class MCPProxy:
         msg = _safe_parse(raw)
         if not isinstance(msg, dict):
             return
+        # SEP-2322 (NF-038 R3/R4): the server-initiated inputRequired leg is
+        # a request, so it never matches the pending-response path below.
+        self._capture_elicitation(msg, direction="server_to_client")
         rpc_id = msg.get("id")
         if rpc_id is None:
             return
@@ -224,6 +239,25 @@ class MCPProxy:
         )
         self._writer.append_tool_call(record)
 
+    def _capture_elicitation(self, msg: dict[str, Any], *, direction: str) -> None:
+        """Record one SEP-2322 leg, if this message is one (NF-038 R3–R5).
+
+        Fail-open like the rest of the proxy: a capture fault must never
+        interrupt the proxied exchange, because the user's MCP session
+        matters more than our evidence of it.
+        """
+        try:
+            with self._state.lock:
+                record = self._state.exchanges.observe(
+                    msg,
+                    direction=direction,
+                    protocol_version=self._state.server.protocol_version,
+                )
+            if record is not None:
+                self._writer.append_tool_call(record)
+        except Exception:  # noqa: BLE001 — capture must not break the proxy
+            pass
+
     def _maybe_capture_initialize(self, result: dict[str, Any]) -> None:
         server_info = result.get("serverInfo")
         if isinstance(server_info, dict):
@@ -238,6 +272,15 @@ class MCPProxy:
         if isinstance(proto, str) and proto:
             with self._state.lock:
                 self._state.server.protocol_version = proto
+            # R10: note an unfamiliar version but keep forwarding — refusing
+            # would break a working client to protect a secondary guarantee.
+            from novafabric.mcp.exchanges import protocol_version_note
+
+            note = protocol_version_note(proto)
+            if note:
+                import logging
+
+                logging.getLogger(__name__).warning("%s", note)
 
     # ------------------------------------------------------------ recording
 

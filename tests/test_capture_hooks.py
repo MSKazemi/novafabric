@@ -1561,3 +1561,148 @@ def test_safe_response_size_handles_unread_and_none() -> None:
     assert safe_response_size(None) is None
     assert safe_response_size(_Unread()) is None
     assert safe_response_size(MagicMock(content=b"abc")) == 3
+
+
+# ── ADR-0209 D2.4: aiohttp / urllib3 NetworkEvent parity ─────────────────────
+
+
+def _network_events(tmp_path: Path) -> list[dict]:  # type: ignore[type-arg]
+    path = tmp_path / RUN_ID / "network_events.jsonl"
+    assert path.exists(), "network_events.jsonl must be written"
+    return [json.loads(line) for line in path.read_text().splitlines() if line]
+
+
+def test_aiohttp_hook_writes_network_event_via_recorder(tmp_path: Path) -> None:
+    """Parity with test_httpx_hook_writes_network_event_via_recorder: once a
+    recorder is active, an aiohttp call produces a NetworkEvent record."""
+    from novafabric.capture.event_recorder import EventRecorder, set_current_recorder
+    from novafabric.capture.hooks._aiohttp import AiohttpHook
+
+    writer = make_writer(tmp_path)
+    set_current_recorder(EventRecorder(
+        capsule_dir=writer.capsule_dir, run_id=RUN_ID, capsule_id=RUN_ID,
+    ))
+    hook = AiohttpHook(writer=writer, parent_span_id="0" * 16)
+
+    fake_resp = MagicMock(status=200)
+
+    async def original(method, url, **kwargs):  # type: ignore[no-untyped-def]
+        return fake_resp
+
+    _run_async(hook._wrapped_request(
+        "POST", "https://api.openai.com/v1/chat/completions",
+        original=original, json={"model": "gpt-4o", "messages": []},
+    ))
+
+    (event,) = _network_events(tmp_path)
+    assert event["library"] == "aiohttp"
+    assert event["method"] == "POST"
+    assert event["host"] == "api.openai.com"
+    assert event["url"] == "https://api.openai.com/v1/chat/completions"
+    assert event["status_code"] == 200
+    assert event["is_ai_api"] is True
+
+
+def test_aiohttp_hook_no_network_event_without_recorder(tmp_path: Path) -> None:
+    """No recorder installed (pre-ADR-0209 behavior) — no stream, no error."""
+    from novafabric.capture.hooks._aiohttp import AiohttpHook
+
+    writer = make_writer(tmp_path)
+    hook = AiohttpHook(writer=writer, parent_span_id="0" * 16)
+
+    async def original(method, url, **kwargs):  # type: ignore[no-untyped-def]
+        return MagicMock(status=200)
+
+    _run_async(hook._wrapped_request(
+        "POST", "https://api.openai.com/v1/chat/completions",
+        original=original, json={"model": "gpt-4o", "messages": []},
+    ))
+    assert not (tmp_path / RUN_ID / "network_events.jsonl").exists()
+
+
+def test_aiohttp_hook_network_event_on_error(tmp_path: Path) -> None:
+    from novafabric.capture.event_recorder import EventRecorder, set_current_recorder
+    from novafabric.capture.hooks._aiohttp import AiohttpHook
+
+    writer = make_writer(tmp_path)
+    set_current_recorder(EventRecorder(
+        capsule_dir=writer.capsule_dir, run_id=RUN_ID, capsule_id=RUN_ID,
+    ))
+    hook = AiohttpHook(writer=writer, parent_span_id="0" * 16)
+
+    async def original(method, url, **kwargs):  # type: ignore[no-untyped-def]
+        raise ConnectionError("boom")
+
+    with pytest.raises(ConnectionError):
+        _run_async(hook._wrapped_request(
+            "POST", "https://api.anthropic.com/v1/messages",
+            original=original, json={"model": "claude-sonnet-4-6", "messages": []},
+        ))
+
+    (event,) = _network_events(tmp_path)
+    assert event["library"] == "aiohttp"
+    assert event["status_code"] == 599
+
+
+def test_urllib3_hook_writes_network_event_via_recorder(tmp_path: Path) -> None:
+    from novafabric.capture.event_recorder import EventRecorder, set_current_recorder
+    from novafabric.capture.hooks._urllib3 import Urllib3Hook
+
+    writer = make_writer(tmp_path)
+    set_current_recorder(EventRecorder(
+        capsule_dir=writer.capsule_dir, run_id=RUN_ID, capsule_id=RUN_ID,
+    ))
+    hook = Urllib3Hook(writer=writer, parent_span_id="0" * 16)
+
+    pool = _fake_pool(host="api.openai.com")
+    hook._wrapped_urlopen(
+        pool, "POST", "/v1/chat/completions",
+        original=lambda m, u, **k: MagicMock(status=200),
+        body=b'{"model":"gpt-4o","messages":[]}',
+    )
+
+    (event,) = _network_events(tmp_path)
+    assert event["library"] == "urllib3"
+    assert event["method"] == "POST"
+    assert event["host"] == "api.openai.com"
+    assert event["url"] == "https://api.openai.com/v1/chat/completions"
+    assert event["is_ai_api"] is True
+
+
+def test_layered_requests_urllib3_single_network_event(tmp_path: Path) -> None:
+    """ADR-0209 layering regression: a requests-initiated urllib3 call
+    produces exactly ONE NetworkEvent — from the requests layer."""
+    from novafabric.capture.event_recorder import EventRecorder, set_current_recorder
+    from novafabric.capture.hooks._requests import RequestsHook
+    from novafabric.capture.hooks._urllib3 import Urllib3Hook
+
+    writer = make_writer(tmp_path)
+    set_current_recorder(EventRecorder(
+        capsule_dir=writer.capsule_dir, run_id=RUN_ID, capsule_id=RUN_ID,
+    ))
+    requests_hook = RequestsHook(writer=writer, parent_span_id="0" * 16)
+    urllib3_hook = Urllib3Hook(writer=writer, parent_span_id="0" * 16)
+
+    pool = _fake_pool(host="api.openai.com")
+
+    def fake_session_send(prepared_request, **kwargs):  # type: ignore[no-untyped-def]
+        urllib3_hook._wrapped_urlopen(
+            pool, "POST", "/v1/chat/completions",
+            original=lambda m, u, **k: MagicMock(status=200),
+            body=b'{"model":"gpt-4o","messages":[]}',
+        )
+        return MagicMock(status_code=200, content=b"{}")
+
+    req = MagicMock()
+    req.url = "https://api.openai.com/v1/chat/completions"
+    req.body = b'{"model":"gpt-4o","messages":[]}'
+    req.method = "POST"
+
+    requests_hook._wrapped_send(req, original=fake_session_send)
+
+    events = _network_events(tmp_path)
+    assert len(events) == 1, (
+        f"expected exactly 1 NetworkEvent, got {len(events)}: "
+        f"{[e['library'] for e in events]}"
+    )
+    assert events[0]["library"] == "requests"

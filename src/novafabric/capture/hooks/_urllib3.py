@@ -22,10 +22,12 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from novafabric.capture._ulid import new_ulid
+from novafabric.capture.event_recorder import _is_ai_api, get_current_recorder
 from novafabric.capture.hooks._layering import is_inside_higher_layer
 from novafabric.capture.hooks._otel_genai import (
     build_record_envelope,
     extract_request_attributes,
+    safe_response_size,
 )
 from novafabric.capture.hooks._url_registry import (
     UrlRegistry,
@@ -176,4 +178,28 @@ class Urllib3Hook:
                 self._writer.append_model_call(record)
             except Exception:
                 pass
+
+            # Record a NetworkEvent in the active capsule (fail-open) —
+            # ADR-0209 D2.4 parity with the httpx/requests hooks. Reached only
+            # when no higher-layer hook owns the call (see the layering guard
+            # early-return above), so a requests-initiated urllib3 call is
+            # never double-recorded.
+            try:
+                _recorder = get_current_recorder()
+                if _recorder is not None:
+                    from urllib.parse import urlparse
+                    _parsed = urlparse(full_url)
+                    _recorder.record_network_event(
+                        method=str(method or "UNKNOWN"),
+                        url=full_url,
+                        host=_parsed.hostname or "",
+                        port=_parsed.port,
+                        status_code=status_code if status_code != 0 else None,
+                        response_size_bytes=safe_response_size(response),
+                        duration_ms=float(duration_ms),
+                        library="urllib3",
+                        is_ai_api=_is_ai_api(full_url),
+                    )
+            except Exception:
+                pass  # fail-open
         return response

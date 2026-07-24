@@ -199,6 +199,64 @@ def migrate_to_postgres_cmd(
 # ---------------------------------------------------------------------------
 
 
+def _alembic_ini_path(backend: str) -> Path | None:
+    """Locate the packaged alembic.ini for *backend*, or None."""
+    from importlib.resources import files  # noqa: PLC0415
+
+    migrations_pkg = f"novafabric.metadata_store.migrations.{backend}"
+    try:
+        ini_path = Path(str(files(migrations_pkg).joinpath("alembic.ini")))
+    except Exception:  # noqa: BLE001
+        ini_path = Path(__file__).parent / "migrations" / backend / "alembic.ini"
+    return ini_path if ini_path.exists() else None
+
+
+def run_alembic_upgrade(
+    backend: str, *, dsn: str | None = None, revision: str = "head"
+) -> tuple[bool, str]:
+    """Programmatic ``alembic upgrade`` (ADR-0217 restore step shares this).
+
+    Unlike the Typer command, output is captured and returned; the DSN is
+    passed to the child via env only and scrubbed from any surfaced text.
+    """
+    import subprocess  # noqa: PLC0415
+
+    backend = backend.lower()
+    if backend not in ("sqlite", "postgres"):
+        return False, f"unknown backend {backend!r} — choose 'sqlite' or 'postgres'"
+    ini_path = _alembic_ini_path(backend)
+    if ini_path is None:
+        return False, f"alembic.ini not found for backend {backend!r}"
+
+    env = os.environ.copy()
+    if backend == "postgres":
+        resolved = dsn or env.get("NOVAFABRIC_METADATA_DSN", "")
+        if not resolved:
+            return False, (
+                "no Postgres DSN — pass one or set NOVAFABRIC_METADATA_DSN"
+            )
+        env["NOVAFABRIC_METADATA_DSN"] = resolved
+        scrub = resolved
+    else:
+        env.setdefault(
+            "NOVAFABRIC_DB_PATH", str(Path.home() / ".novafabric" / "metadata.db")
+        )
+        scrub = None
+
+    proc = subprocess.run(  # noqa: S603 — fixed binary, no shell
+        ["alembic", "-c", str(ini_path), "upgrade", revision],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "no output").strip()
+        if scrub:
+            detail = detail.replace(scrub, "<dsn redacted>")
+        return False, f"alembic exited {proc.returncode}: {detail[:500]}"
+    return True, f"alembic upgrade {revision} complete (backend={backend})"
+
+
 @metadata_db_app.command("upgrade")
 def db_upgrade_cmd(
     backend: Annotated[
@@ -216,11 +274,26 @@ def db_upgrade_cmd(
                  "Use a specific revision ID (e.g. 'v001') to stop before gated migrations.",
         ),
     ] = "head",
+    track: Annotated[
+        str,
+        typer.Option(
+            "--track",
+            help="Migration track: 'metadata' (MetadataStore tier, default — "
+            "unchanged behavior) or 'registry' (the registry/server DB the "
+            "server lifespan opens and `nova backup --profile pg` dumps; "
+            "ADR-0211 D5).",
+        ),
+    ] = "metadata",
 ) -> None:
-    """Run ``alembic upgrade <revision>`` against the configured MetadataStore backend.
+    """Run ``alembic upgrade <revision>`` for the selected migration track.
 
-    For sqlite: reads NOVAFABRIC_DB_PATH (defaults to ~/.novafabric/metadata.db).
-    For postgres: reads NOVAFABRIC_METADATA_DSN.
+    Two parallel alembic tracks exist (ADR-0211): ``--track metadata``
+    (default) migrates the MetadataStore tier — sqlite reads
+    NOVAFABRIC_DB_PATH (default ~/.novafabric/metadata.db), postgres reads
+    NOVAFABRIC_METADATA_DSN. ``--track registry`` (experimental) migrates the
+    registry/server database — sqlite uses the registry DB path
+    (~/.novafabric/registry.db), postgres reads NOVAFABRIC_POSTGRES_DSN. The
+    server's schema-skew guard names the registry track.
     """
     import subprocess  # noqa: PLC0415
     from importlib.resources import files  # noqa: PLC0415
@@ -232,6 +305,17 @@ def db_upgrade_cmd(
             "Choose 'sqlite' or 'postgres'."
         )
         raise typer.Exit(code=2)
+
+    track = track.lower()
+    if track not in ("metadata", "registry"):
+        console.print(
+            f"[red]Error:[/red] unknown track '{track}'. "
+            "Choose 'metadata' or 'registry'."
+        )
+        raise typer.Exit(code=2)
+    if track == "registry":
+        _upgrade_registry_track(backend, revision)
+        return
 
     # Locate the alembic.ini for the chosen backend
     migrations_pkg = (
@@ -288,6 +372,60 @@ def db_upgrade_cmd(
         raise typer.Exit(code=proc.returncode)
 
     console.print(f"[bold green]upgrade {revision} complete.[/bold green]")
+
+
+def _upgrade_registry_track(backend: str, revision: str) -> None:
+    """``nova db upgrade --track registry`` (ADR-0211 D5, experimental).
+
+    Programmatic alembic against the registry-track trees (packaged in wheels,
+    source checkout in dev) — works from a non-checkout install. The DSN is
+    never printed.
+    """
+    from novafabric.migrations.registry_track import (  # noqa: PLC0415
+        RegistryMigrationsUnavailableError,
+        registry_alembic_config,
+    )
+
+    if backend == "postgres":
+        dsn = os.environ.get("NOVAFABRIC_POSTGRES_DSN", "")
+        if not dsn:
+            console.print(
+                "[red]Error:[/red] NOVAFABRIC_POSTGRES_DSN is not set. "
+                "Export it before running --track registry against postgres."
+            )
+            raise typer.Exit(code=2)
+        url = dsn
+        target_desc = "postgres (NOVAFABRIC_POSTGRES_DSN)"
+    else:
+        from novafabric.registry.store import get_db_path  # noqa: PLC0415
+
+        db_path = get_db_path()
+        url = f"sqlite:///{db_path}"
+        target_desc = str(db_path)
+
+    console.print(
+        f"[bold]Running alembic upgrade {revision}[/bold] "
+        f"(track=[cyan]registry[/cyan], backend=[cyan]{backend}[/cyan])"
+    )
+    console.print(f"  target: [dim]{target_desc}[/dim]")
+
+    try:
+        from alembic import command  # noqa: PLC0415
+
+        cfg = registry_alembic_config(backend, url=url)
+        command.upgrade(cfg, revision)
+    except RegistryMigrationsUnavailableError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
+    except Exception as exc:  # noqa: BLE001 — alembic/db failure; no DSN echo
+        console.print(
+            f"[red]Error:[/red] alembic upgrade failed ({type(exc).__name__})"
+        )
+        raise typer.Exit(code=1) from exc
+
+    console.print(
+        f"[bold green]upgrade {revision} complete (registry track).[/bold green]"
+    )
 
 
 # ---------------------------------------------------------------------------

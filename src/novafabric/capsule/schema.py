@@ -93,16 +93,35 @@ class EdgeType(str, Enum):
     """Typed lineage edge vocabulary (cap-002, FR-07).
 
     W3C PROV-DM mapping (ADR-0044):
-      spawned       → wasGeneratedBy
-      contains      → wasInformedBy
-      delegated_to  → actedOnBehalfOf
-      replayed_from → NovaFabric-specific (no direct PROV-DM counterpart)
+      spawned            → wasGeneratedBy
+      contains           → wasInformedBy
+      delegated_to       → actedOnBehalfOf
+      replayed_from      → NovaFabric-specific (no direct PROV-DM counterpart)
+      member_of_session  → hadMember (ADR-0122 D3)
+      wrote_memory       → wasGeneratedBy (ADR-0143 P1)
+      read_memory        → used (ADR-0143 P1)
+
+    ``member_of_session`` is a **grouping** edge and is deliberately kept
+    distinct from the four causal/compositional types above (ADR-0122 D3):
+    a session groups N *otherwise-independent* runs performed in sequence,
+    whereas contains/spawned/delegated_to describe one execution's internal
+    structure. Conflating them would let a session look like a distributed
+    job — the exact confusion ADR-0122 §Context exists to prevent.
     """
 
     contains = "contains"
     spawned = "spawned"
     delegated_to = "delegated_to"
     replayed_from = "replayed_from"
+    member_of_session = "member_of_session"
+    # ADR-0143 P1: memory provenance. `wrote_memory` is run→item (the run
+    # produced this memory item); `read_memory` is item→run (the run consumed
+    # it). Two edges rather than one bidirectional type because a poisoned-read
+    # back-trace has to distinguish *who wrote* a bad item from *who read* it —
+    # collapsing them would make the two indistinguishable in the graph, which
+    # is the one query this facet exists to answer.
+    wrote_memory = "wrote_memory"
+    read_memory = "read_memory"
 
 
 # ── Validators ───────────────────────────────────────────────────────────

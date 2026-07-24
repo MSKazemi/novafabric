@@ -753,7 +753,7 @@ def test_mcp_server_extracted_from_tool_name_prefix() -> None:
 
     # Two edges: USES_TOOL (agent→tool) + SERVED_BY (tool→mcpserver)
     assert written == 2
-    call_args = [c for c in mock_store.method_calls]
+    call_args = list(mock_store.method_calls)
     assert any("upsert_uses_tool_edge" in str(c) for c in call_args)
     assert any("upsert_served_by_edge" in str(c) for c in call_args)
 

@@ -1,0 +1,16 @@
+{
+  "name": "Concurrent exchanges interleaved on the wire",
+  "why": "Grouping must key off JSON-RPC id. If it ever keys off arrival order, two conversations get spliced together — worse than not capturing them.",
+  "protocol_version": "2026-07-28",
+  "messages": [
+    {"direction": "server_to_client", "message": {"jsonrpc": "2.0", "id": "A", "method": "elicitation/inputRequired", "params": {"prompt": "a?"}}},
+    {"direction": "server_to_client", "message": {"jsonrpc": "2.0", "id": "B", "method": "elicitation/inputRequired", "params": {"prompt": "b?"}}},
+    {"direction": "client_to_server", "message": {"jsonrpc": "2.0", "id": "A", "method": "elicitation/inputResponses", "params": {"value": "1"}}},
+    {"direction": "client_to_server", "message": {"jsonrpc": "2.0", "id": "B", "method": "elicitation/inputResponses", "params": {"value": "2"}}}
+  ],
+  "expect": {
+    "record_count": 4,
+    "rounds": [1, 1, 1, 1],
+    "distinct_exchange_ids": 2
+  }
+}

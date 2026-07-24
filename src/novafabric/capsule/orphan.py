@@ -33,10 +33,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import time
 from pathlib import Path
 from typing import Any
+
+from novafabric.capsule._atomic import atomic_replace, write_text_fsync
 
 logger = logging.getLogger(__name__)
 
@@ -117,8 +118,8 @@ class OrphanManager:
         run_dir.mkdir(parents=True, exist_ok=True)
         dest = run_dir / "capsule.json"
         tmp = dest.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        os.rename(str(tmp), str(dest))
+        write_text_fsync(tmp, json.dumps(data, indent=2))
+        atomic_replace(tmp, dest)
         return dest
 
     def ensure_placeholder(self, parent_run_id: str) -> dict[str, Any]:

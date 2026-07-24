@@ -104,15 +104,30 @@ def detect(
         err_console.print(f"[red]Invalid drift input:[/red] {exc}")
         raise typer.Exit(2) from exc
 
+    if isinstance(record, OutputDriftRecord):
+        label, stat = record.metric, record.statistic
+    else:
+        label, stat = record.dimension, record.distance
+
+    if record.drifted:
+        # ADR-0192 wired source. Placed before the --json branch so the alert
+        # does not depend on which output format the caller happened to pick.
+        from novafabric.events.sources import (  # noqa: PLC0415
+            emit_drift_detected_alert,
+        )
+
+        emit_drift_detected_alert(
+            kind=record.kind,
+            label=label,
+            value=record.value,
+            threshold=record.threshold,
+        )
+
     if json_out:
         print(json.dumps(record.model_dump(mode="json"), indent=2))
         raise typer.Exit(0)
 
     flag = "[red]DRIFTED[/red]" if record.drifted else "[green]stable[/green]"
-    if isinstance(record, OutputDriftRecord):
-        label, stat = record.metric, record.statistic
-    else:
-        label, stat = record.dimension, record.distance
     console.print(
         f"Drift ({record.kind}) — {label}: {flag}\n"
         f"  {stat} = {record.value:.4f}   threshold = {record.threshold}"

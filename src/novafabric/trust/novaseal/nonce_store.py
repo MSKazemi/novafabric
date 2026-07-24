@@ -30,6 +30,8 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from novafabric._sqlite_util import connect_sqlite
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_NONCES_DB_NAME = "tsa_nonces.db"
@@ -99,7 +101,7 @@ class NonceStore:
 
     def _connect(self) -> sqlite3.Connection:
         assert self._db_path is not None
-        conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        conn = connect_sqlite(str(self._db_path), check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         return conn

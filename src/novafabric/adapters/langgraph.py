@@ -11,6 +11,7 @@ raise :class:`ImportError` at call time if the framework is missing.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import platform
 import time
@@ -24,12 +25,32 @@ import yaml
 
 # These are imported at module level so tests can patch them via
 # ``novafabric.adapters.langgraph.<name>``.
+from novafabric.capture import record as _record
 from novafabric.capture.env import capture_environment
+from novafabric.capture.record import _payloads_enabled
 from novafabric.capture.secrets import SecretScannerV0
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _state_digest(obj: Any) -> str:
+    """``sha256:`` digest of the canonical JSON of *obj* (ADR-0209 D2.2).
+
+    Undigestable objects (non-JSON-serializable) fall back to a digest of
+    their ``repr()`` bytes — recorded, never raised.
+    """
+    try:
+        payload = json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()
+    except (TypeError, ValueError):
+        payload = repr(obj).encode("utf-8", errors="replace")
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _state_payload(obj: Any, payloads_on: bool) -> dict[str, Any] | None:
+    """Return *obj* as a state payload only at forensic/air_gapped level."""
+    return obj if payloads_on and isinstance(obj, dict) else None
 
 
 def _run_capture(
@@ -169,8 +190,24 @@ class _WrappedGraph:
         exit_code = 0
         error: dict[str, Any] | None = None
         result: Any = None
+        # ADR-0209 D2.2 (experimental): invoke() emits a start→end
+        # StateTransition pair — a start marker at entry (input digest on both
+        # sides: no transition observed yet) and the whole-invocation
+        # transition on success. Digests always; payloads only at
+        # forensic/air_gapped capture level (D5.2). Fail-open via the façade.
+        payloads_on = _payloads_enabled()
+        input_digest = _state_digest(input)
+        _record.state_transition(
+            0, input_digest, input_digest,
+            state_before=_state_payload(input, payloads_on),
+        )
         try:
             result = self._inner.invoke(input, config, **kwargs)
+            _record.state_transition(
+                1, input_digest, _state_digest(result),
+                state_before=_state_payload(input, payloads_on),
+                state_after=_state_payload(result, payloads_on),
+            )
         except Exception as exc:
             exit_code = 1
             error = {"type": type(exc).__name__, "message": str(exc), "traceback_ref": None}
@@ -204,8 +241,33 @@ class _WrappedGraph:
         t0 = time.monotonic()
         exit_code = 0
         error: dict[str, Any] | None = None
+        # ADR-0209 D2.2 (experimental): one StateTransition per yielded
+        # node-update chunk. Digest-chaining invariant:
+        # state_digest_after[i] == state_digest_before[i+1], seeded with the
+        # digest of the invocation input. Digests always; raw state payloads
+        # only at forensic/air_gapped capture level (D5.2).
+        payloads_on = _payloads_enabled()
+        prev_digest = _state_digest(input)
+        prev_payload = _state_payload(input, payloads_on)
+        step_index = 0
         try:
-            yield from self._inner.stream(input, config, **kwargs)
+            for chunk in self._inner.stream(input, config, **kwargs):
+                cur_digest = _state_digest(chunk)
+                agent_id: str | None = None
+                if isinstance(chunk, dict) and len(chunk) == 1:
+                    only_key = next(iter(chunk))
+                    if isinstance(only_key, str):
+                        agent_id = only_key
+                _record.state_transition(
+                    step_index, prev_digest, cur_digest,
+                    agent_id=agent_id,
+                    state_before=prev_payload,
+                    state_after=_state_payload(chunk, payloads_on),
+                )
+                prev_digest = cur_digest
+                prev_payload = _state_payload(chunk, payloads_on)
+                step_index += 1
+                yield chunk
         except Exception as exc:
             exit_code = 1
             error = {"type": type(exc).__name__, "message": str(exc), "traceback_ref": None}

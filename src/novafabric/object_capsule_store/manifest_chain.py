@@ -167,9 +167,19 @@ class ManifestChainWriter:
                     prev_commit_hash = hashlib.sha256(
                         prev_commit_obj.model_dump_json().encode("utf-8")
                     ).hexdigest()
-                except Exception:
-                    # Previous commit not readable — skip hash-chain (write still proceeds)
-                    pass
+                except Exception as exc:
+                    # Fail closed: a version > 1 whose predecessor cannot be read
+                    # must not be written with prev_commit_hash=None — that would
+                    # silently forge a genesis-looking commit and break the
+                    # tamper-evident hash chain. (Enterprise-hardening 3.3.)
+                    raise ChainIntegrityError(
+                        tenant=tenant,
+                        run_id=run_id,
+                        reason=(
+                            f"cannot read predecessor {prev_key!r} for "
+                            f"version={next_version}: {exc}"
+                        ),
+                    ) from exc
 
             commit = ManifestCommit(
                 version=next_version,
@@ -188,13 +198,14 @@ class ManifestChainWriter:
             data = commit.model_dump_json().encode("utf-8")
             key = _version_key(tenant, run_id, next_version)
             try:
-                if next_version == 1:
-                    # First-ever commit — use conditional-PUT (If-None-Match: *)
-                    self._adapter.put_log_object_if_absent(key, data)
-                else:
-                    # Each version key is unique — plain put is safe and avoids
-                    # needless If-None-Match round-trips.
-                    self._adapter.put_log_object(key, data)
+                # Conditional-PUT (If-None-Match: *) for EVERY version, not just
+                # the genesis commit. The in-process version cache is not shared
+                # across writer processes, so two writers can compute the same
+                # next_version; a plain PUT would let the second silently
+                # overwrite the first and break the hash chain. If-None-Match
+                # makes the loser raise ConditionalPutConflict and retry.
+                # (Enterprise-hardening 3.2.)
+                self._adapter.put_log_object_if_absent(key, data)
                 self._commit_version(tenant, run_id, next_version)
                 log.debug(
                     "Chain commit written: tenant=%s run_id=%s version=%d",

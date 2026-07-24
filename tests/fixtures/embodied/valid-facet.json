@@ -1,0 +1,40 @@
+{
+  "schema_version": "0.1.0",
+  "sensors": [
+    {
+      "sensor_id": "front-cam-0",
+      "modality": "camera",
+      "frame_count": 18240,
+      "stream_digest": "sha256:aa11bd2b4d3f9a5e6c7081924f5b0a3c8d6e2f4b7a90c1d3e5f7a9b1c3d5e7f9",
+      "clock_domain": "ptp-0",
+      "c2pa_manifest_ref": "sha256:bb2260a1c4e8f0b2d4a6c8e0f2b4d6a8c0e2f4b6d8a0c2e4f6b8d0a2c4e6f8b0"
+    },
+    {
+      "sensor_id": "lidar-top",
+      "modality": "lidar",
+      "frame_count": 3612,
+      "stream_digest": "sha256:cc3371b2d5f9a1c3e5b7d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1",
+      "clock_domain": "ptp-0"
+    }
+  ],
+  "actuation": [
+    {
+      "command_class": "motion",
+      "target_ref": "sha256:dd4482c3e6a0b2d4f6a8c0e2b4d6f8a0c2e4b6d8f0a2c4e6b8d0f2a4c6e8b0d2",
+      "count": 941,
+      "issued_by": "run:01HXAY7M5JZ8R7K4P9DPBYK2WX",
+      "action_receipt_ref": "sha256:ee5593d4f7b1c3e5a7b9d1f3c5e7a9b1d3f5c7e9a1b3d5f7c9e1a3b5d7f9c1e3",
+      "unbound": false
+    },
+    {
+      "command_class": "payload_release",
+      "target_ref": "sha256:ff66a4e5b8c2d4f6a8b0c2e4d6f8b0a2c4e6d8f0b2a4c6e8d0f2b4a6c8e0d2f4",
+      "count": 1,
+      "issued_by": "run:01HXAY7M5JZ8R7K4P9DPBYK2WX",
+      "unbound": true
+    }
+  ],
+  "verified": {
+    "no_raw_payload": true
+  }
+}

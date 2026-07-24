@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sys
+import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -20,6 +20,8 @@ from novafabric.promote.predicates import (
     EnvelopeError,
     verify_promote_envelope,
 )
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -76,7 +78,7 @@ def verify_sod(
     proposal_uuids = bundle_store.list_proposals(capsule_id)
     if not proposal_uuids:
         msg = f"No proposal found for capsule {capsule_id!r}"
-        print(msg, file=sys.stderr)
+        log.warning(msg)
         return VerifyResult(passed=False, exit_code=9, message=msg)
 
     proposal_uuid = proposal_uuids[0]
@@ -85,7 +87,7 @@ def verify_sod(
         proposal_envelope_bytes = bundle_store.get_proposal(capsule_id, proposal_uuid)
     except BundleNotFoundError as exc:  # pragma: no cover — TOCTOU: list succeeded but get failed
         msg = str(exc)
-        print(msg, file=sys.stderr)
+        log.warning(msg)
         return VerifyResult(passed=False, exit_code=9, message=msg)
 
     # ------------------------------------------------------------------
@@ -97,7 +99,7 @@ def verify_sod(
         )
     except EnvelopeError as exc:
         msg = f"proposal signature invalid: {exc}"
-        print(msg, file=sys.stderr)
+        log.warning(msg)
         return VerifyResult(passed=False, exit_code=3, message=msg)
 
     proposal_predicate = json.loads(proposal_payload)
@@ -108,7 +110,7 @@ def verify_sod(
         policy_json = policy_store.get_by_version(policy_version)
     except (ValueError, PolicyNotFoundError) as exc:
         msg = f"policy not found (version={policy_version_str!r}): {exc}"
-        print(msg, file=sys.stderr)
+        log.warning(msg)
         return VerifyResult(passed=False, exit_code=3, message=msg)
 
     policy = json.loads(policy_json)
@@ -125,7 +127,7 @@ def verify_sod(
     proposer_key_ids: list[str] = policy.get("proposer_key_ids", [])
     if proposer_subject not in proposer_key_ids:
         msg = f"proposer key {proposer_subject!r} not in policy proposer_key_ids"
-        print(msg, file=sys.stderr)
+        log.warning(msg)
         return VerifyResult(passed=False, exit_code=3, message=msg)
 
     # ------------------------------------------------------------------
@@ -135,7 +137,7 @@ def verify_sod(
         approval_envelope_bytes = bundle_store.get_approval(capsule_id, proposal_uuid)
     except BundleNotFoundError as exc:
         msg = str(exc)
-        print(msg, file=sys.stderr)
+        log.warning(msg)
         return VerifyResult(passed=False, exit_code=8, message=msg)
 
     # ------------------------------------------------------------------
@@ -147,7 +149,7 @@ def verify_sod(
         )
     except EnvelopeError as exc:
         msg = f"approval signature invalid: {exc}"
-        print(msg, file=sys.stderr)
+        log.warning(msg)
         return VerifyResult(passed=False, exit_code=4, message=msg)
 
     approval_predicate = json.loads(approval_payload)
@@ -155,7 +157,7 @@ def verify_sod(
     approver_key_ids: list[str] = policy.get("approver_key_ids", [])
     if approver_subject not in approver_key_ids:
         msg = f"approver key {approver_subject!r} not in policy approver_key_ids"
-        print(msg, file=sys.stderr)
+        log.warning(msg)
         return VerifyResult(passed=False, exit_code=4, message=msg)
 
     # ------------------------------------------------------------------
@@ -167,7 +169,7 @@ def verify_sod(
 
     if actual_digest != expected_digest:
         msg = "proposal_digest mismatch"
-        print(msg, file=sys.stderr)
+        log.warning(msg)
         return VerifyResult(passed=False, exit_code=5, message=msg)
 
     # ------------------------------------------------------------------
@@ -175,7 +177,7 @@ def verify_sod(
     # ------------------------------------------------------------------
     if approver_subject == proposer_subject:
         msg = "self-approval prohibited"
-        print(msg, file=sys.stderr)
+        log.warning(msg)
         return VerifyResult(passed=False, exit_code=6, message=msg)
 
     # ------------------------------------------------------------------
@@ -186,7 +188,7 @@ def verify_sod(
 
     if approval_ts <= proposal_ts:
         msg = "timestamp ordering violation"
-        print(msg, file=sys.stderr)
+        log.warning(msg)
         return VerifyResult(passed=False, exit_code=7, message=msg)
 
     return VerifyResult(

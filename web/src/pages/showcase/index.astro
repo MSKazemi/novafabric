@@ -1,0 +1,73 @@
+---
+import Layout from '../../components/layout/Layout.astro';
+import ShowcaseBadge from '../../components/layout/ShowcaseBadge.astro';
+import PrimitiveCard from '../../components/primitives/PrimitiveCard.astro';
+
+// Same five entries as the home-page PrimitiveStrip, kept deliberately in the
+// same order so the two surfaces tell one story. `/showcase` previously 404'd:
+// the directory held five pages and no index, so every link into the section
+// worked while the section root did not.
+const demos = [
+  {
+    href: '/showcase/registry',
+    title: 'Asset Registry',
+    blurb: 'Identity layer for every model, agent, prompt, tool, dataset. Eval-gated promotion from development → production.',
+  },
+  {
+    href: '/showcase/capsule',
+    title: 'Run Capsule',
+    blurb: 'A self-contained record of one AI run. Inputs, outputs, model calls, tools, environment — schema-validated.',
+  },
+  {
+    href: '/showcase/replay',
+    title: 'Replay',
+    blurb: 'Reconstruct yesterday\'s run today. Four modes — exact, mocked, semantic, forensic — with honest guarantees.',
+  },
+  {
+    href: '/showcase/lineage',
+    title: 'Lineage',
+    blurb: 'Causation graph linking runs, assets, and artifacts. Provenance, blast radius, replay chain — three queries.',
+  },
+  {
+    href: '/showcase/evidence',
+    title: 'Evidence Bundle',
+    blurb: 'Signed, portable proof of what happened. in-toto DSSE, ed25519 — verifiable in your browser, right now.',
+  },
+];
+---
+
+<Layout
+  title="Showcase — NovaFabric"
+  description="Five interactive demos of the NovaFabric primitives: asset registry, run capsule, replay, lineage, and signed evidence bundles. Real fixtures, validated in your browser."
+>
+  <article class="container-content py-12">
+    <header class="mb-10 max-w-3xl">
+      <ShowcaseBadge variant="page" />
+      <p class="mt-4 text-xs uppercase tracking-wider text-[var(--color-text-faint)]">Interactive demos</p>
+      <h1 class="mt-1 text-4xl font-medium tracking-tight text-balance">
+        See the primitives work.
+      </h1>
+      <p class="mt-3 text-[var(--color-text-muted)] max-w-2xl">
+        Each demo runs on a real fixture — the same schema-validated artifacts
+        <code class="text-[var(--color-text)] font-mono text-sm">nova capture</code> writes.
+        Nothing is mocked for the browser: the evidence bundle really verifies,
+        and the capsule really validates against the shipped schema.
+      </p>
+    </header>
+
+    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {demos.map((d, i) => (
+        <PrimitiveCard href={d.href} title={d.title} blurb={d.blurb} index={i + 1} />
+      ))}
+    </div>
+
+    <aside class="mt-10 max-w-3xl rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-5 text-sm text-[var(--color-text-muted)] leading-relaxed">
+      <p class="text-[var(--color-text)] font-medium mb-2">These are demos, not the product</p>
+      <p>
+        The canonical interface is the CLI. These pages exist to show what the
+        artifacts look like before you install anything — they read fixtures,
+        they do not talk to a running server.
+      </p>
+    </aside>
+  </article>
+</Layout>

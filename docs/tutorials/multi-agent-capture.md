@@ -27,7 +27,7 @@ LLM call from every agent — orchestrator, analyst, writer, reviewer — goes t
 the same hook. All of them land in one capsule, in chronological order:
 
 ```
-events.jsonl:
+model-calls.jsonl:
   09:00:01  system: "you are the coordinator..."   → "assign analysis to analyst"
   09:00:03  system: "you are the data analyst..."  → "here are the findings"
   09:00:05  system: "you are the report writer..."  → "here is the draft"
@@ -92,12 +92,20 @@ two capsules, fully traced.
 
 ---
 
-## Linking capsules: parent/child (planned — ADR-0032)
+## Linking capsules: parent/child (primitive shipped — ADR-0039)
 
 The missing piece for multi-process agents is **linking** — knowing that capsule B
 was created because capsule A triggered it.
 
-The design (not shipped yet) uses an environment variable:
+The parent/child primitive itself **is implemented** (ADR-0039): capsules carry
+`parent_run_id` and `capsule_role`, and the env-var contract
+(`capture/env_contract.py`) reads `NOVAFABRIC_PARENT_RUN_ID`. It is wired today for
+**distributed-job WORKER capsules** (the DRIVER/WORKER model of `cluster-scale.md`).
+What is **not yet wired** is auto-population from the plain `nova capture` path: the
+capture orchestrator does not read `NOVAFABRIC_PARENT_RUN_ID`, so the subprocess
+pattern below sets the linkage intent but the emitted capsule does not yet record it.
+
+The intended shape uses an environment variable:
 
 ```python
 # Inside the orchestrator (Agent A), when spawning Agent B:
@@ -124,9 +132,9 @@ orchestrator run (A)
 And you can query: "show me everything that ran as part of orchestrator run A" —
 across all processes, all machines, all timing.
 
-This is documented in ADR-0032 and `design/spec/parent-child-capsule.md` as design
-intent. The implementation is pending empirical validation on real multi-agent
-workloads.
+The schema fields and env-var contract are shipped (ADR-0039); wiring them into the
+plain `nova capture` orchestrator is the remaining step, pending empirical validation
+on real multi-agent workloads.
 
 ---
 
@@ -156,17 +164,20 @@ the orchestrator's capsule, alongside the orchestrator's own LLM calls.
 | Multiple agents, separate processes | `nova capture` on each separately | Separate capsules, unlinked |
 | Shared LLM, separate processes | `nova api-proxy` + `nova capture` on each | Separate capsules, both fully traced, unlinked |
 | MCP sub-agents | `nova mcp-proxy` + `nova capture` | Tool calls captured inside orchestrator capsule |
-| Linked parent/child (cross-process) | ADR-0032 — planned | Full provenance tree across processes |
+| Linked parent/child (cross-process) | ADR-0039 — primitive shipped; `nova capture` auto-linking not yet wired | Full provenance tree across processes |
 
 ---
 
 ## The honest limitation
 
 The hard multi-agent problem — agents running on different machines, different
-clusters, spawned dynamically at runtime — is where the current design has a seam.
-You get per-agent capsules but no automatic stitching into a single provenance tree.
+clusters, spawned dynamically at runtime — is where the plain `nova capture` path
+still has a seam. You get per-agent capsules, and the parent/child primitive exists
+(ADR-0039), but the `nova capture` orchestrator does not yet auto-stitch them into a
+single provenance tree.
 
-That stitching is the core of ADR-0032. The `nova-testbench` was built to generate
-real multi-step, multi-agent workloads so the parent/child design can be validated
-against actual traffic before it ships. See `docs/tutorials/cluster-scale.md` for
+Wiring that stitching into `nova capture` is the remaining step (ADR-0039). The
+`nova-testbench` was built to generate real multi-step, multi-agent workloads so the
+parent/child path can be validated against actual traffic before it is enabled by
+default. See `docs/tutorials/cluster-scale.md` for
 the architecture at large scale.

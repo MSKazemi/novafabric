@@ -32,6 +32,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from novafabric.spec.models import AssetStatus
 from novafabric.spec.prompt_asset import PromptTemplate, variable_mismatch_warnings
 
 console = Console()
@@ -703,3 +704,81 @@ def _flatten(d: dict[str, Any], prefix: str = "") -> dict[str, Any]:
         else:
             result[key] = v
     return result
+
+
+@prompt_app.command("promote")
+def prompt_promote(
+    prompt_ref: str = typer.Argument(..., help="prompt_id@version"),
+    to: AssetStatus = typer.Option(
+        ..., "--to", help="Target status: development | staging | production."
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Bypass the eval gate (requires typed confirmation)."
+    ),
+) -> None:
+    """Promote a prompt version — a thin alias for `nova promote direct` (ADR-0112 P4).
+
+    Deliberately an alias, not a second promotion path: prompts are ordinary
+    registry assets, so they go through the same eval gate, the same policy
+    gate, the same audit entry and the same lifecycle transitions as every
+    other asset type. A separate implementation would be a second place for
+    those gates to drift out of step.
+
+    The one thing it adds is a type check: promoting a non-prompt asset
+    through the prompt surface is refused, so the command means what its name
+    says.
+
+    \b
+    Examples:
+      nova prompt promote triage@1.2.0 --to staging
+      nova prompt promote triage@1.2.0 --to production
+    """
+    from novafabric.registry.service import (
+        AssetNotFoundError,
+        InvalidLifecycleTransitionError,
+        PromotionBlockedError,
+        get_asset,
+        promote_asset,
+    )
+
+    if "@" not in prompt_ref:
+        typer.echo("Error: expected prompt_id@version (e.g. triage@1.2.0)", err=True)
+        raise typer.Exit(code=2)
+    name, version = prompt_ref.split("@", 1)
+
+    # Refuse a non-prompt asset rather than silently promoting it: the command
+    # is named for prompts and must not become a general back door.
+    try:
+        asset = get_asset(name, version)
+    except AssetNotFoundError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    asset_type = str(asset.get("asset_type", "")) if isinstance(asset, dict) else ""
+    if asset_type and asset_type != "prompt":
+        typer.echo(
+            f"Error: {name}@{version} is an asset of type {asset_type!r}, not 'prompt'. "
+            f"Use `nova promote direct` for other asset types.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    if force:
+        confirmed = typer.prompt(
+            f"Type the prompt name '{name}' to confirm forced promotion"
+        )
+        if confirmed != name:
+            typer.echo("Confirmation failed. Aborting.", err=True)
+            raise typer.Exit(code=1)
+
+    try:
+        result = promote_asset(name, version, to, actor="cli-user", force=force)
+    except (
+        AssetNotFoundError,
+        InvalidLifecycleTransitionError,
+        PromotionBlockedError,
+    ) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    tag = " (forced)" if result.get("forced_promotion") else ""
+    typer.echo(f"Promoted {name}@{version} → {result['status']}{tag}")

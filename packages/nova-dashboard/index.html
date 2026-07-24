@@ -2,6 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Without this, browsers fall back to requesting /favicon.ico, which the
+         server does not have — a 404 on every page load. The site ships an SVG
+         icon at the static root; point at it explicitly. -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nova Dashboard — Live Topology</title>
     <style>

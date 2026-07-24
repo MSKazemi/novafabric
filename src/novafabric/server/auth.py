@@ -35,12 +35,18 @@ logger = logging.getLogger(__name__)
 class AuthContext:
     """Resolved identity extracted from a validated JWT.
 
-    subject: token subject (email / sub claim)
-    roles:   list of role strings from the token (e.g. ["reader", "writer"])
+    subject:   token subject (email / sub claim)
+    roles:     list of role strings from the token (e.g. ["reader", "writer"])
+    workspace: optional ADR-0178 workspace binding carried by the credential
+               (today: only ADR-0193 API keys set it). Additive (ADR-0208):
+               consumed as usage-metering *attribution* — it is NOT
+               enforcement; the binding remains unenforced at request time
+               per design/spec/api-keys-v0.md "Deferred".
     """
 
     subject: str
     roles: list[str] = field(default_factory=list)
+    workspace: str | None = None
 
     def has_role(self, role: str) -> bool:
         return role in self.roles
@@ -49,6 +55,13 @@ class AuthContext:
 # Anonymous admin — ADR-0184: only reachable via the explicit
 # ``insecure_no_auth`` opt-out (pre-0184 this was the no-OIDC default).
 LOCAL_AUTH = AuthContext(subject="local", roles=["admin"])
+
+# Asymmetric JWT algorithms accepted for JWKS/OIDC verification. Symmetric
+# families (HS256/384/512) are deliberately excluded — accepting them here is
+# the precondition for the RSA-public-key-as-HMAC-secret confusion attack.
+_ALLOWED_JWT_ALGS = frozenset(
+    {"RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512", "EdDSA"}
+)
 
 # ---------------------------------------------------------------------------
 # JWKS cache
@@ -292,6 +305,13 @@ async def verify_token(request: Request) -> AuthContext:
 
     kid: str | None = unverified_header.get("kid")
     alg: str = unverified_header.get("alg", "RS256")
+
+    # Pin verification to asymmetric algorithms. The `alg` still comes from the
+    # (untrusted) token header, but constraining it to the JWKS-appropriate set
+    # forecloses the classic alg-confusion attack where an attacker submits an
+    # HS256 token signed with the RSA public key as the HMAC secret.
+    if alg not in _ALLOWED_JWT_ALGS:
+        raise _unauthenticated(f"Unsupported JWT algorithm: {alg!r}")
 
     cache = _get_jwks_cache(config)
     if cache is None:

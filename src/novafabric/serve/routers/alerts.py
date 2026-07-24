@@ -32,7 +32,7 @@ _OUTCOME_MAP = {"error": "failed"}
 _EPOCH = datetime.min.replace(tzinfo=timezone.utc)
 
 
-def _parse_dt(value: str) -> datetime:
+def parse_alert_ts(value: str) -> datetime:
     """Best-effort ISO8601 → aware datetime for sorting; epoch on failure."""
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -40,15 +40,28 @@ def _parse_dt(value: str) -> datetime:
         return _EPOCH
 
 
-def _delivery_rows(audit_path: Path) -> tuple[list[dict[str, Any]], set[str]]:
-    """One row per `alert.delivery` audit entry; also the set of covered event ids."""
-    from novafabric.audit import AuditEventType, AuditLog  # noqa: PLC0415
+def delivery_rows(
+    audit_path: Path, limit: int
+) -> tuple[list[dict[str, Any]], set[str]]:
+    """Up to *limit* newest `alert.delivery` audit rows + covered event ids.
+
+    Bounded tail read (ADR-0199 shared helper): scans backwards from EOF in
+    64 KiB blocks and stops once *limit* delivery rows are collected, so IO
+    stays O(limit-ish blocks) instead of re-reading the whole hash-chained
+    log on every request.
+    """
+    from pydantic import ValidationError  # noqa: PLC0415
+
+    from novafabric.audit import AuditEntry, AuditEventType  # noqa: PLC0415
+    from novafabric.serve.audit import tail_lines  # noqa: PLC0415
 
     rows: list[dict[str, Any]] = []
     covered: set[str] = set()
-    if not audit_path.exists():
-        return rows, covered
-    for entry in AuditLog(audit_path).query():
+    for _off, raw in tail_lines(audit_path):
+        try:
+            entry = AuditEntry.model_validate_json(raw)
+        except ValidationError:
+            continue
         if entry.event_type != AuditEventType.ALERT_DELIVERY:
             continue
         details = entry.details or {}
@@ -65,40 +78,48 @@ def _delivery_rows(audit_path: Path) -> tuple[list[dict[str, Any]], set[str]]:
             "endpoint_id": details.get("endpoint_id"),
             "attempts": int(details.get("attempts", 0) or 0),
         })
+        if len(rows) >= limit:
+            break
     return rows, covered
 
 
-def _emitted_rows(events_path: Path, covered: set[str]) -> list[dict[str, Any]]:
-    """One `emitted` row per `ops.*` event in the log without a delivery entry."""
+def emitted_rows(
+    events_path: Path, covered: set[str], limit: int
+) -> list[dict[str, Any]]:
+    """Up to *limit* newest `emitted` rows for `ops.*` events lacking delivery.
+
+    Same bounded tail read as :func:`delivery_rows` — newest-first from EOF,
+    stopping at *limit* rows rather than scanning the whole events log.
+    """
+    from novafabric.serve.audit import tail_lines  # noqa: PLC0415
+
     rows: list[dict[str, Any]] = []
-    if not events_path.exists():
-        return rows
-    with events_path.open("r", encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            event_type = str(rec.get("type", ""))
-            if not event_type.startswith("ops."):
-                continue
-            event_id = str(rec.get("event_id", ""))
-            if event_id in covered:
-                continue  # already surfaced as a delivery row
-            subject = rec.get("subject") or {}
-            rows.append({
-                "id": event_id,
-                "timestamp": str(rec.get("occurred_at", "")),
-                "event_type": event_type,
-                "severity": rec.get("severity"),
-                "subject": str(subject.get("ref", "")) if isinstance(subject, dict) else "",
-                "outcome": "emitted",
-                "endpoint_id": None,
-                "attempts": 0,
-            })
+    for _off, raw in tail_lines(events_path):
+        try:
+            rec = json.loads(raw.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if not isinstance(rec, dict):
+            continue
+        event_type = str(rec.get("type", ""))
+        if not event_type.startswith("ops."):
+            continue
+        event_id = str(rec.get("event_id", ""))
+        if event_id in covered:
+            continue  # already surfaced as a delivery row
+        subject = rec.get("subject") or {}
+        rows.append({
+            "id": event_id,
+            "timestamp": str(rec.get("occurred_at", "")),
+            "event_type": event_type,
+            "severity": rec.get("severity"),
+            "subject": str(subject.get("ref", "")) if isinstance(subject, dict) else "",
+            "outcome": "emitted",
+            "endpoint_id": None,
+            "attempts": 0,
+        })
+        if len(rows) >= limit:
+            break
     return rows
 
 
@@ -121,19 +142,23 @@ def build_alerts_router(
         events_cfg = load_config_from_env()
         audit_path = alerts_cfg.audit_log_path or AUDIT_LOG_PATH
 
+        # Scan cap per source: 2×limit keeps IO bounded while leaving headroom
+        # so `total` stays exact for any log within the tail window (and the
+        # merged sort still has more than `limit` candidates to pick from).
+        scan_cap = 2 * limit
         rows: list[dict[str, Any]] = []
         covered: set[str] = set()
         try:
-            rows, covered = _delivery_rows(audit_path)
+            rows, covered = delivery_rows(audit_path, scan_cap)
         except Exception as exc:  # noqa: BLE001 — a read must never 500
             logger.warning("reading alert audit log failed: %s", exc)
         if events_cfg.log_path is not None:
             try:
-                rows.extend(_emitted_rows(events_cfg.log_path, covered))
+                rows.extend(emitted_rows(events_cfg.log_path, covered, scan_cap))
             except Exception as exc:  # noqa: BLE001 — a read must never 500
                 logger.warning("reading events log failed: %s", exc)
 
-        rows.sort(key=lambda r: _parse_dt(r["timestamp"]), reverse=True)
+        rows.sort(key=lambda r: parse_alert_ts(r["timestamp"]), reverse=True)
         return {
             "alerts": rows[:limit],
             "total": len(rows),

@@ -38,6 +38,13 @@ def _hermetic_novafabric_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
         if key.startswith("NOVAFABRIC_"):
             monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("NOVAFABRIC_HOME", str(tmp_path / ".nova-home-hermetic"))
+    # The audit log lives OUTSIDE the home (~/.local/share/novafabric/) with a
+    # hard-coded default; without this override, backup tests would slurp the
+    # developer's real hash-chained audit log into test backup sets (ADR-0216).
+    monkeypatch.setenv(
+        "NOVAFABRIC_AUDIT_LOG_PATH",
+        str(tmp_path / ".nova-home-hermetic" / "audit-hermetic.jsonl"),
+    )
 
 
 @pytest.fixture(autouse=True)

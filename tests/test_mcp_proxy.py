@@ -256,3 +256,113 @@ def test_empty_upstream_cmd_rejected(tmp_path: Path) -> None:
             client_in=io.BytesIO(),
             client_out=io.BytesIO(),
         )
+
+
+# ---------------------------------------------------------------------------
+# NF-038 R3–R5 — SEP-2322 multi-round-trip capture through the real proxy
+# ---------------------------------------------------------------------------
+
+
+def test_client_elicitation_response_is_captured(tmp_path: Path) -> None:
+    """The client's inputResponses leg used to be dropped.
+
+    It is not a tools/call, so the shipped filter ignored it; the capture now
+    runs before that filter.
+    """
+    _out, records = _drive(
+        tmp_path,
+        {"jsonrpc": "2.0", "id": "1", "method": "initialize", "params": {}},
+        {
+            "jsonrpc": "2.0",
+            "id": "9",
+            "method": "elicitation/inputResponses",
+            "params": {"value": "ada"},
+        },
+    )
+    mcp_records = [r for r in records if r.get("kind") == "mcp"]
+    assert len(mcp_records) == 1
+    rec = mcp_records[0]
+    assert rec["mcp_method"] == "elicitation/inputResponses"
+    assert rec["direction"] == "client_to_server"
+    assert rec["round"] == 1
+    assert rec["mutates"] is False
+    assert rec["payload_digest"].startswith("sha256:")
+
+
+def test_elicitation_capture_never_breaks_the_proxied_stream(tmp_path: Path) -> None:
+    """Fail-open: the user's MCP session matters more than our evidence of it."""
+    out, _records = _drive(
+        tmp_path,
+        {"jsonrpc": "2.0", "id": "1", "method": "initialize", "params": {}},
+        {
+            "jsonrpc": "2.0",
+            "id": "9",
+            "method": "elicitation/inputResponses",
+            "params": {"value": "x"},
+        },
+    )
+    # The upstream's replies still reached the client unchanged.
+    assert out, "proxy must keep forwarding after an elicitation leg"
+
+
+def test_tasks_extension_is_captured_without_being_executed(tmp_path: Path) -> None:
+    _out, records = _drive(
+        tmp_path,
+        {"jsonrpc": "2.0", "id": "1", "method": "initialize", "params": {}},
+        {
+            "jsonrpc": "2.0",
+            "id": "9",
+            "method": "elicitation/inputResponses",
+            "params": {
+                "value": "x",
+                "extensions": {"io.modelcontextprotocol.tasks": {"taskId": "t-1"}},
+            },
+        },
+    )
+    mcp_records = [r for r in records if r.get("kind") == "mcp"]
+    ext = mcp_records[0]["extensions"]["io.modelcontextprotocol.tasks"]
+    assert ext["present"] is True and ext["digest"].startswith("sha256:")
+
+
+def test_tools_call_capture_is_unchanged_by_the_new_path(tmp_path: Path) -> None:
+    """Regression guard: the shipped tools/call record must be untouched."""
+    _out, records = _drive(
+        tmp_path,
+        {"jsonrpc": "2.0", "id": "1", "method": "initialize", "params": {}},
+        {
+            "jsonrpc": "2.0", "id": "2",
+            "method": "tools/call",
+            "params": {"name": "echo", "arguments": {"text": "hi"}},
+        },
+    )
+    tool_records = [r for r in records if r.get("kind") != "mcp"]
+    assert len(tool_records) == 1
+    assert tool_records[0].get("tool_name") or tool_records[0].get("name")
+
+
+def test_elicited_secret_never_reaches_the_capsule(tmp_path: Path) -> None:
+    """NF-038 R6, proven end-to-end rather than at the unit boundary.
+
+    Elicitation carries user-typed content, so it is a prime channel for a
+    secret to enter evidence. The capture records a digest and never the
+    payload — stronger than scanning, since a scanner can miss a novel secret
+    shape but an absent value cannot leak one. This asserts against the bytes
+    actually written to the capsule.
+    """
+    secret = "sk-ant-api03-averyrealsecretvalue0123456789"
+    _out, _records = _drive(
+        tmp_path,
+        {"jsonrpc": "2.0", "id": "1", "method": "initialize", "params": {}},
+        {
+            "jsonrpc": "2.0",
+            "id": "9",
+            "method": "elicitation/inputResponses",
+            "params": {"value": secret, "note": f"token={secret}"},
+        },
+    )
+    # Scan every byte the capsule holds, not just the parsed records.
+    leaked = [
+        p for p in tmp_path.rglob("*")
+        if p.is_file() and secret in p.read_text(errors="ignore")
+    ]
+    assert not leaked, f"elicited secret leaked into: {[str(p) for p in leaked]}"

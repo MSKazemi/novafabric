@@ -40,12 +40,12 @@ def classifier() -> RiskTierClassifier:
 
 
 def _record(**kwargs) -> AISystemRecord:  # type: ignore[no-untyped-def]
-    defaults = dict(
-        name="test-system",
-        description="A test AI system",
-        use_case_domain="general",
-        deployment_context="testing",
-    )
+    defaults = {
+        "name": "test-system",
+        "description": "A test AI system",
+        "use_case_domain": "general",
+        "deployment_context": "testing",
+    }
     defaults.update(kwargs)
     return AISystemRecord(**defaults)  # type: ignore[arg-type]
 

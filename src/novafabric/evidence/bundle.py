@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import shutil
 import tempfile
@@ -13,6 +12,7 @@ from typing import Any
 import yaml
 
 from novafabric import __version__ as NF_VERSION
+from novafabric._hashutil import sha256_file_prefixed, sha256_prefixed
 from novafabric.audit import AUDIT_LOG_PATH, AuditEventType, AuditLog
 from novafabric.capture._ulid import new_ulid
 from novafabric.evidence.admissibility import Custodian, admissibility_block
@@ -69,15 +69,11 @@ def _now_iso() -> str:
 
 
 def _sha256_bytes(data: bytes) -> str:
-    return "sha256:" + hashlib.sha256(data).hexdigest()
+    return sha256_prefixed(data)
 
 
 def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(65536), b""):
-            h.update(chunk)
-    return "sha256:" + h.hexdigest()
+    return sha256_file_prefixed(path)
 
 
 def _media_type_for(name: str) -> str:

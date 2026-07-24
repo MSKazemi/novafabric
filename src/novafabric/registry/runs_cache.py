@@ -35,7 +35,13 @@ CREATE INDEX IF NOT EXISTS idx_runs_cache_status
     ON runs_cache(status);
 CREATE INDEX IF NOT EXISTS idx_runs_cache_status_created_at
     ON runs_cache(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_cache_created_day
+    ON runs_cache(substr(created_at, 1, 10));
 """
+
+# Success semantics used by the report builders since v0.30: a run counts as a
+# success when the process exited 0 or the capsule recorded status "ok".
+_SUCCESS_SQL = "(exit_code = 0 OR status = 'ok')"
 
 
 def ensure_runs_cache(conn: sqlite3.Connection) -> None:
@@ -99,6 +105,12 @@ def build_runs_index(
 
     inserted = 0
     for d in discover_capsule_dirs(capsule_dir):
+        # O(new) invariant (ADR-0206): an already-indexed capsule dir is
+        # skipped *before* its manifest is parsed. Dir name == run_id for
+        # every in-tree writer; the post-parse check below still covers the
+        # exotic mismatch case.
+        if incremental and d.name in existing:
+            continue
         try:
             m = load_capsule_manifest(d)
         except (FileNotFoundError, yaml.YAMLError):
@@ -131,6 +143,11 @@ def build_runs_index(
             ),
         )
         inserted += 1
+        # ADR-0204 (experimental): content-index the redacted capsule text.
+        # Fail-open — never blocks runs_cache population.
+        from novafabric.query.content_index import maybe_index_capsule  # noqa: PLC0415
+
+        maybe_index_capsule(conn, d, str(run_id))
     conn.commit()
     return inserted
 
@@ -144,7 +161,8 @@ def query_runs(
     until: str | None = None,
     status: str | None = None,
     q: str | None = None,
-    after: tuple[str, str] | None = None,
+    after: tuple[str | None, str] | None = None,
+    agent: str | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """Return (page, total_count) from the index.
 
@@ -154,13 +172,25 @@ def query_runs(
     ``after`` enables keyset (cursor) pagination: only rows strictly after
     the ``(created_at, run_id)`` position in the DESC sort order are
     returned, and ``offset`` is ignored. O(page) instead of O(offset).
+    Rows with NULL ``created_at`` sort last under ``created_at DESC``
+    (SQLite NULLS-first-ASC ⇒ NULLS-last-DESC); an ``after`` whose
+    ``created_at`` element is None seeks within that tail by ``run_id``
+    alone (ADR-0206 D1 / spec "NULL ordering").
     """
     where_parts = ["1=1"]
     params: list[Any] = []
     if after is not None:
-        # DESC keyset: strictly older than the cursor position.
-        where_parts.append("(created_at, run_id) < (?, ?)")
-        params.extend([after[0], after[1]])
+        if after[0] is None:
+            # Cursor already in the NULL created_at tail: page by run_id.
+            where_parts.append("(created_at IS NULL AND run_id < ?)")
+            params.append(after[1])
+        else:
+            # DESC keyset: strictly older than the cursor position — plus the
+            # NULL tail, which sorts after every non-NULL created_at.
+            where_parts.append(
+                "((created_at, run_id) < (?, ?) OR created_at IS NULL)"
+            )
+            params.extend([after[0], after[1]])
     if since:
         where_parts.append("created_at >= ?")
         params.append(since)
@@ -176,6 +206,11 @@ def query_runs(
         )
         pattern = f"%{q.lower()}%"
         params.extend([pattern, pattern])
+    if agent:
+        # Substring match on the stored command tokens (run-history report
+        # filter). SQL-side so keyset pages stay full-sized.
+        where_parts.append("LOWER(command_json) LIKE ?")
+        params.append(f"%{agent.lower()}%")
 
     where = " AND ".join(where_parts)
     total = conn.execute(
@@ -193,6 +228,173 @@ def query_runs(
         d["command"] = json.loads(cmd) if cmd else []
         out.append(d)
     return out, total
+
+
+def _window_where(
+    since: str | None, until: str | None
+) -> tuple[str, list[Any]]:
+    """Build the shared created_at window predicate.
+
+    ``until`` compares on the date prefix so a bare date covers its whole day
+    (same convention as the analytics summary endpoint).
+    """
+    where = ["created_at IS NOT NULL"]
+    params: list[Any] = []
+    if since:
+        where.append("created_at >= ?")
+        params.append(since)
+    if until:
+        where.append("substr(created_at, 1, 10) <= ?")
+        params.append(until[:10])
+    return " AND ".join(where), params
+
+
+def aggregate_runs_daily(
+    conn: sqlite3.Connection,
+    *,
+    since: str | None = None,
+    until: str | None = None,
+    failed_predicate: str = "status IS NOT NULL AND status != 'success'",
+) -> list[dict[str, Any]]:
+    """Day-bucketed run aggregates straight from SQL (ADR-0199 rule 1).
+
+    One indexed GROUP BY over the ``substr(created_at, 1, 10)`` expression
+    index; never materializes row lists.
+    """
+    where_sql, params = _window_where(since, until)
+    rows = conn.execute(
+        f"""
+        SELECT substr(created_at, 1, 10) AS bucket,
+               COUNT(*) AS run_count,
+               SUM(CASE WHEN {failed_predicate} THEN 1 ELSE 0 END) AS failed_count,
+               SUM(COALESCE(model_call_count, 0)) AS model_call_count,
+               SUM(COALESCE(tool_call_count, 0)) AS tool_call_count,
+               MAX(duration_ms) AS duration_ms_max
+        FROM runs_cache
+        WHERE {where_sql}
+        GROUP BY bucket
+        ORDER BY bucket
+        """,
+        params,
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def durations_by_bucket(
+    conn: sqlite3.Connection,
+    *,
+    prefix_len: int = 10,
+    since: str | None = None,
+    until: str | None = None,
+) -> list[tuple[str, float]]:
+    """(bucket, duration_ms) pairs ordered by bucket then duration.
+
+    Feeds percentile computation; bounded by the requested window.
+    """
+    where_sql, params = _window_where(since, until)
+    rows = conn.execute(
+        f"""
+        SELECT substr(created_at, 1, ?) AS bucket, duration_ms
+        FROM runs_cache
+        WHERE {where_sql} AND duration_ms IS NOT NULL
+        ORDER BY bucket, duration_ms
+        """,
+        [prefix_len, *params],
+    ).fetchall()
+    return [(r[0], float(r[1])) for r in rows]
+
+
+def aggregate_runs_windowed(
+    conn: sqlite3.Connection,
+    *,
+    prefix_len: int = 10,
+    since: str | None = None,
+    until: str | None = None,
+) -> list[dict[str, Any]]:
+    """Window-bucketed success/failure counts for the throughput report.
+
+    ``prefix_len`` selects the window: 13 = hour, 10 = day, 7 = week-ish
+    (year-month), matching the report builder's historical prefixes.
+    """
+    where_sql, params = _window_where(since, until)
+    rows = conn.execute(
+        f"""
+        SELECT substr(created_at, 1, ?) AS window,
+               COUNT(*) AS runs,
+               SUM(CASE WHEN {_SUCCESS_SQL} THEN 1 ELSE 0 END) AS successes
+        FROM runs_cache
+        WHERE {where_sql}
+        GROUP BY window
+        ORDER BY window
+        """,
+        [prefix_len, *params],
+    ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["failures"] = d["runs"] - (d["successes"] or 0)
+        d["successes"] = d["successes"] or 0
+        out.append(d)
+    return out
+
+
+def aggregate_runs_by_agent(
+    conn: sqlite3.Connection,
+    *,
+    since: str | None = None,
+    until: str | None = None,
+) -> list[dict[str, Any]]:
+    """Per-agent (first command token) totals for the cost-burn report.
+
+    Uses the built-in JSON1 ``json_extract`` to read the first element of the
+    stored ``command_json`` array in SQL; NULL/empty commands group under
+    ``(unknown)``.
+    """
+    where_sql, params = _window_where(since, until)
+    rows = conn.execute(
+        f"""
+        SELECT COALESCE(json_extract(command_json, '$[0]'), '(unknown)') AS agent,
+               COUNT(*) AS runs,
+               SUM(COALESCE(model_call_count, 0)) AS model_calls,
+               SUM(COALESCE(tool_call_count, 0)) AS tool_calls
+        FROM runs_cache
+        WHERE {where_sql}
+        GROUP BY agent
+        ORDER BY runs DESC
+        """,
+        params,
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def runs_totals(
+    conn: sqlite3.Connection,
+    *,
+    since: str | None = None,
+    until: str | None = None,
+) -> dict[str, int]:
+    """One-row whole-window totals for the executive-summary report."""
+    where_sql, params = _window_where(since, until)
+    row = conn.execute(
+        f"""
+        SELECT COUNT(*) AS total_runs,
+               SUM(CASE WHEN {_SUCCESS_SQL} THEN 1 ELSE 0 END) AS successes,
+               SUM(COALESCE(model_call_count, 0)) AS model_calls,
+               SUM(COALESCE(tool_call_count, 0)) AS tool_calls
+        FROM runs_cache
+        WHERE {where_sql}
+        """,
+        params,
+    ).fetchone()
+    total = int(row[0] or 0)
+    successes = int(row[1] or 0)
+    return {
+        "total_runs": total,
+        "successes": successes,
+        "failures": total - successes,
+        "model_calls": int(row[2] or 0),
+        "tool_calls": int(row[3] or 0),
+    }
 
 
 def get_run_summary(

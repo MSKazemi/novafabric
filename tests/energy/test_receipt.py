@@ -122,23 +122,23 @@ def test_consistency_errors_flag_measured_without_counters():
 
 
 def _measured(**overrides) -> EnergyReceipt:
-    base = dict(
-        receipt_id=new_ulid(),
-        action_ref=_action_ref(),
-        run_id=new_ulid(),
-        capsule_id="sha256:" + "1" * 64,
-        measured_joules=5.0,
-        measurement_source=MeasurementSource.RAPL_PKG,
-        measurement_scope="per_package",
-        confidence=Confidence.APPORTIONED,
-        attribution_method="time_share",
-        carbon_g_co2e=None,
-        grid_intensity_g_per_kwh=None,
-        carbon_accounting_mode="unknown",
-        hardware={"node_id": "n1", "counters_available": ["rapl_pkg"]},
-        payload_hash="sha256:" + "0" * 64,
-        generated_at="2026-06-19T00:00:00+00:00",
-    )
+    base = {
+        "receipt_id": new_ulid(),
+        "action_ref": _action_ref(),
+        "run_id": new_ulid(),
+        "capsule_id": "sha256:" + "1" * 64,
+        "measured_joules": 5.0,
+        "measurement_source": MeasurementSource.RAPL_PKG,
+        "measurement_scope": "per_package",
+        "confidence": Confidence.APPORTIONED,
+        "attribution_method": "time_share",
+        "carbon_g_co2e": None,
+        "grid_intensity_g_per_kwh": None,
+        "carbon_accounting_mode": "unknown",
+        "hardware": {"node_id": "n1", "counters_available": ["rapl_pkg"]},
+        "payload_hash": "sha256:" + "0" * 64,
+        "generated_at": "2026-06-19T00:00:00+00:00",
+    }
     base.update(overrides)
     return EnergyReceipt(**base)
 

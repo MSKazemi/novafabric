@@ -107,9 +107,12 @@ def _print_storage_report(info: StorageInfo) -> None:
         summary.add_row("Schema version", "[dim]not initialised[/dim]")
 
     if info.migration_pending is True:
+        # ADR-0211 D5: name the registry track explicitly — a bare
+        # `nova db upgrade` migrates the MetadataStore tier, not this DB.
         summary.add_row(
             "Migrations",
-            "[yellow]pending[/yellow] — run [bold]alembic upgrade head[/bold]",
+            "[yellow]pending[/yellow] — run [bold]nova db upgrade "
+            f"--track registry --backend {info.backend}[/bold]",
         )
     elif info.migration_pending is False:
         summary.add_row("Migrations", "[green]up to date[/green]")

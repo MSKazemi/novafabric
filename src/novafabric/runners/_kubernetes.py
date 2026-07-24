@@ -29,6 +29,7 @@ import subprocess
 import time
 from typing import Any
 
+from novafabric.runners._poll import jittered_sleep
 from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
 
 _DEFAULT_IN_POD_CAPSULE = "/novafabric/capsule"
@@ -266,7 +267,7 @@ class KubernetesRunner:
             if jstatus.get("failed", 0) >= 1:
                 failed = True
                 break
-            time.sleep(poll_interval)
+            jittered_sleep(poll_interval)
 
         # 3. Find the pod (for log retrieval and kubectl cp).
         try:

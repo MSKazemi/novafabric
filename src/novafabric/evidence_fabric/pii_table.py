@@ -12,7 +12,7 @@ import json
 import logging
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +52,7 @@ class PIIEvent(BaseModel):
     pii_type: str
     redacted: bool
     pepper_hash: str
-    detected_at: datetime = Field(default_factory=datetime.utcnow)
+    detected_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     model_config = {"frozen": True}
 
@@ -166,7 +166,7 @@ class LocalPIITable:
             }
             for i, field in enumerate(_ARROW_SCHEMA)
         ]
-        snapshot_id = int(datetime.utcnow().timestamp() * 1000)
+        snapshot_id = int(datetime.now(timezone.utc).timestamp() * 1000)
         meta: dict[str, Any] = {
             "format-version": 1,
             "table-uuid": str(uuid.uuid5(uuid.NAMESPACE_DNS, str(self._parquet_path))),

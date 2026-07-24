@@ -1,0 +1,60 @@
+name: MCP conformance
+
+# Wire-compatibility gate for MCP 2026-07-28 (NF-038/NF-039, spec
+# design/spec/features/NF-038-039-mcp-2026-conformance.md).
+#
+# Why this lane exists (spec R9): MCP capture is evidence. A spec drift that
+# silently changes what we record does not fail any normal test — the code
+# still runs, the capsule still writes, and the damage only appears when
+# someone tries to replay an exchange months later and the turn structure is
+# gone. The vectors turn that into a PR failure.
+#
+# Path-scoped to the surfaces that can break it: the proxy, the MCP capture
+# hook, the mcp/ package, the vectors themselves, and this file.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/novafabric/proxy/**"
+      - "src/novafabric/capture/hooks/_mcp.py"
+      - "src/novafabric/mcp/**"
+      - "tests/mcp/**"
+      - ".github/workflows/mcp-conformance.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/novafabric/proxy/**"
+      - "src/novafabric/capture/hooks/_mcp.py"
+      - "src/novafabric/mcp/**"
+      - "tests/mcp/**"
+      - ".github/workflows/mcp-conformance.yml"
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Sync dependencies
+        run: uv sync --all-extras
+
+      - name: Replay conformance vectors (R9)
+        run: uv run nova mcp conformance tests/mcp/vectors/
+
+      - name: Validate the generated Server Card against SEP-1649 (R8)
+        # Generation and validation must agree; if the card we publish fails
+        # our own validator, one of the two is wrong.
+        run: |
+          uv run nova mcp card show --json > /tmp/mcp-card.json
+          uv run nova mcp card validate /tmp/mcp-card.json
+
+      - name: MCP test suites
+        run: uv run pytest tests/mcp tests/test_mcp_proxy.py tests/test_mcp_proxy_http.py -q

@@ -14,10 +14,11 @@ Schema (single table, no migrations required):
 from __future__ import annotations
 
 import logging
-import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+
+from novafabric._sqlite_util import connect_sqlite
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ class IngestTracker:
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        self._conn = connect_sqlite(str(self._db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL;")
         self._conn.execute(_CREATE_SQL)
         self._conn.commit()

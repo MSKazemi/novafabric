@@ -1,0 +1,15 @@
+{
+  "_comment": "INVALID by design (ADR-0162 I-2). A caller who read a camera frame and put it in the facet instead of hashing it. `frames` is a payload-named field and its value is a base64-shaped blob; either one alone must be refused. Loading this must raise RawPayloadRejectedError, never be silently digested or truncated.",
+  "schema_version": "0.1.0",
+  "sensors": [
+    {
+      "sensor_id": "front-cam-0",
+      "modality": "camera",
+      "frame_count": 2,
+      "stream_digest": "sha256:aa11bd2b4d3f9a5e6c7081924f5b0a3c8d6e2f4b7a90c1d3e5f7a9b1c3d5e7f9",
+      "clock_domain": "ptp-0",
+      "frames": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggkiVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggkiVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
+    }
+  ],
+  "actuation": []
+}

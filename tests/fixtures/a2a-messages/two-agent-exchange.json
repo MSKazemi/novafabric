@@ -1,0 +1,127 @@
+{
+  "_comment": "ADR-0142 P1 golden fixture \u2014 a two-agent signed A2A exchange. `cards` and `wire[].parts` are the capture-time inputs; `expected_facet` is what NovaFabric records. Note that no part text appears anywhere in expected_facet (I-2).",
+  "cards": {
+    "planner": {
+      "protocolVersion": "1.0",
+      "name": "planner",
+      "description": "decomposes a goal into research tasks",
+      "url": "https://agents.example/planner",
+      "skills": [
+        {
+          "id": "plan",
+          "name": "plan"
+        }
+      ],
+      "signatures": [
+        {
+          "protected": "eyJhbGciOiJFZERTQSJ9",
+          "signature": "c2lnLXBsYW5uZXI"
+        }
+      ]
+    },
+    "researcher": {
+      "protocolVersion": "1.0",
+      "name": "researcher",
+      "description": "answers a research task from public sources",
+      "url": "https://agents.example/researcher",
+      "skills": [
+        {
+          "id": "search",
+          "name": "search"
+        }
+      ],
+      "signatures": [
+        {
+          "protected": "eyJhbGciOiJFZERTQSJ9",
+          "signature": "c2lnLXJlc2VhcmNoZXI"
+        }
+      ]
+    }
+  },
+  "wire": [
+    {
+      "msg_id": "m-01",
+      "from_agent": "planner",
+      "to_agent": "researcher",
+      "a2a_role": "ROLE_AGENT",
+      "task_id": "t-42",
+      "sent_at": "2026-07-12T10:00:01.000000Z",
+      "vclock": {
+        "planner": 1
+      },
+      "sig": "c2lnLW0tMDE",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Summarise the 2026 A2A v1.0 card-signing change."
+        }
+      ]
+    },
+    {
+      "msg_id": "m-02",
+      "from_agent": "researcher",
+      "to_agent": "planner",
+      "a2a_role": "ROLE_AGENT",
+      "task_id": "t-42",
+      "sent_at": "2026-07-12T10:00:04.000000Z",
+      "vclock": {
+        "planner": 1,
+        "researcher": 2
+      },
+      "sig": "c2lnLW0tMDI",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "A2A v1.0 added signed Agent Cards (JWS over the card claims)."
+        },
+        {
+          "kind": "data",
+          "data": {
+            "sources": 3
+          }
+        }
+      ]
+    }
+  ],
+  "expected_facet": {
+    "schema_version": "0.1.0",
+    "a2a_version": "1.0",
+    "messages": [
+      {
+        "schema_version": "0.1.0",
+        "msg_id": "m-01",
+        "from_agent": "planner",
+        "to_agent": "researcher",
+        "a2a_role": "ROLE_AGENT",
+        "task_id": "t-42",
+        "content_hash": "sha256:fde64c97e021137b35193bb5539be2c7bd6f6de7c2ad9aad9e4d6f7628e90365",
+        "card_fingerprint": "sha256:0a3012419b2b1966698cbbb6eb35a4e79b308c28f25c26f6308267561c5685ee",
+        "card_verified": true,
+        "vclock": {
+          "planner": 1
+        },
+        "sig": "c2lnLW0tMDE",
+        "sent_at": "2026-07-12T10:00:01.000000Z",
+        "blob_ref": null
+      },
+      {
+        "schema_version": "0.1.0",
+        "msg_id": "m-02",
+        "from_agent": "researcher",
+        "to_agent": "planner",
+        "a2a_role": "ROLE_AGENT",
+        "task_id": "t-42",
+        "content_hash": "sha256:a7db6be4b2caa181fac9b73b6dbdb117ed74c0168fed9afcfb7c4f0cd0103984",
+        "card_fingerprint": "sha256:95d20d88404d27282be8d40f308697d807355fd14d1e8a0cee26790261fa1a05",
+        "card_verified": true,
+        "vclock": {
+          "planner": 1,
+          "researcher": 2
+        },
+        "sig": "c2lnLW0tMDI",
+        "sent_at": "2026-07-12T10:00:04.000000Z",
+        "blob_ref": null
+      }
+    ]
+  }
+}

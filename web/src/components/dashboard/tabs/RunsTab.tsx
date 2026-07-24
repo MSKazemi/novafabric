@@ -2,9 +2,11 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { clsx } from 'clsx';
 import { api, getConnection, openManagedRunStream, type RunStreamHandle } from '../../../lib/api';
-import type { RunSummary, FullCapsule, RedactionProof, CapsuleTreeNode } from '../../../lib/api';
+import type { RunSummary, FullCapsule, RedactionProof, CapsuleTreeNode, ForensicsTimeline } from '../../../lib/api';
 import CapsuleInspector from '../../capsule/CapsuleInspector';
 import TraceView from '../../capsule/TraceView';
+import ForensicsTimelinePanel from '../../capsule/ForensicsTimelinePanel';
+import SavedViewsBar from '../SavedViewsBar';
 import ConfirmDialog from '../ConfirmDialog';
 import { StatusDot, ErrorBox, Loading } from '../helpers';
 import EmptyState from '../../ui/EmptyState';
@@ -12,7 +14,7 @@ import { SuggestInput } from '../../ui/SuggestInput';
 import type { Tab } from '../Sidebar';
 import { writeResumeItem } from './HomeTab';
 
-type DetailView = 'inspect' | 'trace' | 'replay' | 'secrets' | 'children';
+type DetailView = 'inspect' | 'trace' | 'replay' | 'secrets' | 'children' | 'forensics';
 
 interface RunCostEntry {
   input_tokens: number;
@@ -120,6 +122,12 @@ export default function RunsTab({
     runId: string;
     loading: boolean;
     data: { child_count: number; children: Array<{ run_id: string; status: string | null; edge_type: string | null; exit_code: number | null }> } | null;
+    error: string | null;
+  } | null>(null);
+  const [forensicsState, setForensicsState] = useState<{
+    runId: string;
+    loading: boolean;
+    data: ForensicsTimeline | null;
     error: string | null;
   } | null>(null);
   const [validationStates, setValidationStates] = useState<Record<string, ValidationState>>({});
@@ -278,6 +286,17 @@ export default function RunsTab({
     api.getRunChildren(runId)
       .then(r => setChildrenState({ runId, loading: false, data: r, error: null }))
       .catch(e => setChildrenState({ runId, loading: false, data: null, error: (e as Error).message }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailView, selected?.run_id]);
+
+  useEffect(() => {
+    if (detailView !== 'forensics' || !selected) return;
+    const runId = selected.run_id;
+    if (forensicsState?.runId === runId && !forensicsState.loading) return;
+    setForensicsState({ runId, loading: true, data: null, error: null });
+    api.getRunForensicsTimeline(runId)
+      .then(data => setForensicsState({ runId, loading: false, data, error: null }))
+      .catch(e => setForensicsState({ runId, loading: false, data: null, error: (e as Error).message }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detailView, selected?.run_id]);
 
@@ -524,6 +543,18 @@ export default function RunsTab({
               </button>
             )}
           </div>
+          {/* E2 — saved views: persist the current filter set as a named preset */}
+          <SavedViewsBar
+            namespace="runs"
+            current={{ search, statusFilter, sort, since, until }}
+            onApply={(v) => {
+              setSearch(v.search);
+              setStatusFilter(v.statusFilter);
+              setSort(v.sort);
+              setSince(v.since);
+              setUntil(v.until);
+            }}
+          />
         </header>
 
         {/* Compare selected banner — shown when 2–5 checkboxes are checked */}
@@ -928,6 +959,17 @@ export default function RunsTab({
                 >
                   Secrets
                 </button>
+                <button
+                  onClick={() => setDetailView('forensics')}
+                  className={[
+                    'px-3 py-1 font-medium transition-colors border-l border-[var(--color-border)]',
+                    detailView === 'forensics'
+                      ? 'bg-[var(--color-accent)] text-[var(--color-accent-fg)]'
+                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-sunken)]',
+                  ].join(' ')}
+                >
+                  Forensics
+                </button>
                 {isDistributed && (
                   <button
                     onClick={() => setDetailView('children')}
@@ -988,6 +1030,18 @@ export default function RunsTab({
                   error={secretsState?.runId === sel.run_id ? secretsState.error : null}
                   onRunRedact={() => setActionTarget({ run: sel, action: 'redact' })}
                 />
+              );
+            })()}
+            {detailView === 'forensics' && (() => {
+              const fs = forensicsState?.runId === selected.run_id ? forensicsState : null;
+              return (
+                <div className="p-4">
+                  <ForensicsTimelinePanel
+                    data={fs?.data ?? null}
+                    loading={fs ? fs.loading : true}
+                    error={fs?.error ?? null}
+                  />
+                </div>
               );
             })()}
             {detailView === 'children' && (() => {

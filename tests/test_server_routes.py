@@ -397,6 +397,47 @@ class TestAssets:
 # --------------------------------------------------------------------------- #
 
 
+class TestKeysetPagination:
+    """S4 — keyset cursor helpers + stable capsule paging (ADR-0199)."""
+
+    def test_keyset_roundtrip_and_bad_cursor(self) -> None:
+        from novafabric.server.pagination import decode_keyset, encode_keyset
+
+        assert decode_keyset(encode_keyset("run-042")) == "run-042"
+        assert decode_keyset(None) is None
+        assert decode_keyset("") is None
+        assert decode_keyset("!!not-base64!!") is None  # degrades to start-of-list
+
+    def test_keyset_page_descending(self) -> None:
+        from novafabric.server.pagination import keyset_page
+
+        items = [{"k": f"{i:03d}"} for i in range(9, -1, -1)]  # 009..000 desc
+        page1, c1 = keyset_page(items, 3, None, key_fn=lambda d: d["k"])
+        assert [d["k"] for d in page1] == ["009", "008", "007"]
+        assert c1 is not None
+        page2, c2 = keyset_page(items, 3, c1, key_fn=lambda d: d["k"])
+        assert [d["k"] for d in page2] == ["006", "005", "004"]
+        assert c2 is not None
+
+    def test_capsule_paging_stable_across_deletion(
+        self, client: TestClient, capsule_dir: Path
+    ) -> None:
+        # Five capsules run-00..run-04; page by 2, then delete an already-seen
+        # capsule before fetching page 2 — keyset must not skip an unseen row.
+        for i in range(5):
+            _write_capsule(capsule_dir, f"run-{i:02d}")
+        p1 = client.get("/v0/capsules?limit=2").json()
+        seen = [it["run_id"] for it in p1["items"]]
+        assert seen == ["run-04", "run-03"]  # run_id-descending
+        # Delete a capsule from the page we already consumed.
+        import shutil
+        shutil.rmtree(capsule_dir / "run-04")
+        p2 = client.get(f"/v0/capsules?limit=2&cursor={p1['next_cursor']}").json()
+        got = [it["run_id"] for it in p2["items"]]
+        # Offset paging would have skipped run-02 here; keyset returns it.
+        assert got == ["run-02", "run-01"]
+
+
 class TestCapsules:
     def test_list_empty(self, client: TestClient) -> None:
         resp = client.get("/v0/capsules")

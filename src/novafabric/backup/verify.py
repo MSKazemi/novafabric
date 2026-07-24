@@ -47,7 +47,16 @@ def verify_backup(path: Path) -> VerifyResult:
             checks = [_check_member(tar, m.path, m.sha256) for m in manifest.members]
 
             for member in manifest.members:
-                if is_denied(member.path):
+                # ADR-0216 D4: a key member is acceptable ONLY when the signed
+                # manifest says includes_keys, the member is marked
+                # key_material, and it sits under the reserved external/
+                # prefixes. Anything else remains an invalid set.
+                allow = (
+                    manifest.includes_keys
+                    and member.kind == "key_material"
+                    and member.path.startswith("external/")
+                )
+                if is_denied(member.path, allow_keys=allow):
                     errors.append(
                         f"Set contains excluded path {member.path!r} — key material or "
                         "secrets must never appear in a backup set (invalid set)"
@@ -70,7 +79,21 @@ def verify_backup(path: Path) -> VerifyResult:
         signing_status=manifest.signing_status,
         signature_verified=signature_verified,
         errors=errors,
+        includes_keys=manifest.includes_keys,
     )
+
+
+def read_manifest(path: Path) -> BackupManifest:
+    """Read and validate just the manifest of the set at *path* (no hashing).
+
+    Restore uses this after :func:`verify_backup` to learn member roles,
+    origins, and sensitivity — fields VerifyResult does not carry.
+    """
+    try:
+        with tarfile.open(path, "r:gz") as tar:
+            return _read_manifest(tar, path)
+    except tarfile.TarError as exc:
+        raise BackupVerifyError(f"Cannot read backup archive {path}: {exc}") from exc
 
 
 def _read_manifest(tar: tarfile.TarFile, path: Path) -> BackupManifest:

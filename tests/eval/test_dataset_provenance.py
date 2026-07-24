@@ -47,7 +47,7 @@ def _capsule(tmp_path: Path) -> Path:
 
 
 def _facet(**kw: object) -> DatasetProvenanceFacet:
-    base = dict(name="swe-bench", version="2024-06", dataset_hash="sha256:aa11", status="current")
+    base = {"name": "swe-bench", "version": "2024-06", "dataset_hash": "sha256:aa11", "status": "current"}
     base.update(kw)
     return DatasetProvenanceFacet(**base)  # type: ignore[arg-type]
 

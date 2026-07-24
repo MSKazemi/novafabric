@@ -129,27 +129,82 @@ class CapsuleSelection:
     query_resolved_at: str
 
 
+def _run_ids_matching_query(query_text: str, root: Path) -> tuple[set[str], str]:
+    """Run an ADR-0129 query as a **filter** and return the matching run ids.
+
+    Deliberately uses the query's ``where`` clause rather than its grouping:
+    ``run_id`` is not one of the DSL's allow-listed ``DIMENSIONS``, so
+    "group by run_id" is not expressible — and adding it would both widen a
+    documented public surface and invite exactly the high-cardinality grouping
+    the DSL's cardinality cap exists to prevent. Filtering needs neither.
+
+    Returns the run ids and the canonical query object as recorded provenance,
+    so the manifest states what was asked, not merely what came back.
+    """
+    from novafabric.query.engine import QueryIndex  # noqa: PLC0415
+    from novafabric.query.errors import QueryError  # noqa: PLC0415
+    from novafabric.query.executor import resolve_time_window  # noqa: PLC0415
+    from novafabric.query.indexer import scan_capsule_dir  # noqa: PLC0415
+    from novafabric.query.parser import parse_where  # noqa: PLC0415
+
+    # parse_where, not plan_from_query_object: a full plan requires a `select`
+    # clause, and fabricating one here would put an aggregate the user never
+    # asked for into the manifest's recorded provenance. Selection needs only
+    # the predicates.
+    try:
+        predicates = parse_where(query_text)
+    except QueryError as exc:
+        raise ExportSelectionError(f"invalid --query: {exc}") from exc
+
+    # Unbounded window: --since/--until are applied separately by the caller,
+    # so the query must not silently impose a second, different one.
+    since_epoch, until_epoch, _s, _u = resolve_time_window(
+        None, None, datetime.now(timezone.utc)
+    )
+    index = QueryIndex.build(scan_capsule_dir(root), engine=None)
+    try:
+        rows = index.fetch_calls(predicates, since_epoch, until_epoch)
+    except QueryError as exc:
+        raise ExportSelectionError(f"--query failed: {exc}") from exc
+    finally:
+        index.close()
+
+    run_ids = {str(row["run_id"]) for row in rows if row.get("run_id")}
+    # Predicate.normalized() is the spec's own canonical rendering — use it
+    # rather than hand-formatting, so the manifest and `nova query` agree on
+    # how a predicate is written.
+    recorded = json.dumps(
+        {"where": [p.normalized() for p in predicates]}, sort_keys=True
+    )
+    return run_ids, recorded
+
+
 def select_capsules(
     capsule_refs: list[str] | None = None,
     *,
     root: Path | None = None,
     since: str | None = None,
     until: str | None = None,
+    query: str | None = None,
 ) -> CapsuleSelection:
     """Freeze the batch member set (a batch is a snapshot; spec §Export 1).
 
     Explicit *capsule_refs* (ids under *root* or paths) win and record
     ``query: null``. Otherwise *root* is scanned for capsule directories
     (containing ``capsule.yaml``), optionally filtered by ``created_at`` within
-    ``[since, until]`` (inclusive). Selection is read-only.
+    ``[since, until]`` (inclusive) and/or by an ADR-0129 ``query`` filter.
+    Selection is read-only.
+
+    A ``query`` is applied **on top of** the time window, not instead of it:
+    the two compose, and the recorded provenance names both.
     """
     resolved_root = root if root is not None else _default_capsule_root()
     resolved_at = _now_rfc3339()
 
     if capsule_refs:
-        if since or until:
+        if since or until or query:
             raise ExportSelectionError(
-                "--capsule is mutually exclusive with --since/--until"
+                "--capsule is mutually exclusive with --since/--until/--query"
             )
         dirs: list[Path] = []
         for ref in capsule_refs:
@@ -170,10 +225,17 @@ def select_capsules(
     if until and until_ts is None:
         raise ExportSelectionError(f"invalid --until timestamp: {until!r}")
 
+    matching_run_ids: set[str] | None = None
+    query_object: str | None = None
+    if query:
+        matching_run_ids, query_object = _run_ids_matching_query(query, resolved_root)
+
     dirs = []
     if resolved_root.is_dir():
         for child in sorted(resolved_root.iterdir()):
             if not (child.is_dir() and (child / "capsule.yaml").is_file()):
+                continue
+            if matching_run_ids is not None and child.name not in matching_run_ids:
                 continue
             if since_ts or until_ts:
                 created = _capsule_created_at(child)
@@ -195,8 +257,13 @@ def select_capsules(
         parts.append(f"created_at >= '{since}'")
     if until:
         parts.append(f"created_at <= '{until}'")
-    query = " AND ".join(parts) if parts else "*"
-    return CapsuleSelection(dirs, query=query, query_resolved_at=resolved_at)
+    if query_object is not None:
+        # The canonical query object, not the raw string: provenance should
+        # record what the DSL actually parsed, so a manifest reader is not
+        # left re-deriving it from free text.
+        parts.append(f"query={query_object}")
+    provenance = " AND ".join(parts) if parts else "*"
+    return CapsuleSelection(dirs, query=provenance, query_resolved_at=resolved_at)
 
 
 def _default_capsule_root() -> Path:

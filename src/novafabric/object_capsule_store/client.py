@@ -58,7 +58,7 @@ from novafabric.object_capsule_store.exceptions import (
     CompressionDictNotFound,
     NovaSealUnavailable,
 )
-from novafabric.object_capsule_store.local_wal import LocalWal
+from novafabric.object_capsule_store.local_wal import DEFAULT_MAX_WAL_ATTEMPTS, LocalWal
 from novafabric.object_capsule_store.manifest_chain import ManifestChainWriter
 from novafabric.object_capsule_store.models import CapsuleReceipt, ReceiptStatus
 from novafabric.object_capsule_store.novaseal_client import NovaSealClient
@@ -94,11 +94,13 @@ class ObjectCapsuleStore:
         retention_days: int = _DEFAULT_RETENTION_DAYS,
         checkpoint_every: int = _DEFAULT_CHECKPOINT_EVERY,
         zstd_registry: ZstdDictRegistry | None = None,
+        max_wal_attempts: int = DEFAULT_MAX_WAL_ATTEMPTS,
     ) -> None:
         self._adapter = adapter
         self._novaseal = novaseal_client
         self._wal = wal
         self._retention_days = retention_days
+        self._max_wal_attempts = max_wal_attempts
         self._chain = ManifestChainWriter(adapter)
         self._compactor = CheckpointCompactor(adapter, checkpoint_every=checkpoint_every)
         self._zstd = zstd_registry
@@ -462,9 +464,24 @@ class ObjectCapsuleStore:
                 self._wal.mark_drained(row_id)
                 drained += 1
             except NovaSealUnavailable:
+                # Transient: leave the row pending, retry on the next drain.
                 log.debug("WAL drain: NovaSeal still unavailable for row_id=%d", row_id)
             except Exception as exc:
-                log.error("WAL drain: unexpected error for row_id=%d: %s", row_id, exc)
+                # Non-transient failure. Count the attempt and dead-letter the row
+                # once it exceeds the bound, so a poison entry can't be retried
+                # forever on every drain cycle. (Enterprise-hardening 3.4.)
+                attempts = self._wal.record_failure(row_id)
+                if attempts >= self._max_wal_attempts:
+                    self._wal.mark_poisoned(row_id)
+                    log.error(
+                        "WAL drain: row_id=%d dead-lettered after %d attempts: %s",
+                        row_id, attempts, exc,
+                    )
+                else:
+                    log.error(
+                        "WAL drain: error for row_id=%d (attempt %d/%d): %s",
+                        row_id, attempts, self._max_wal_attempts, exc,
+                    )
         return drained
 
 

@@ -113,6 +113,42 @@ to a session carries two additive optional back-reference fields (`session_id`,
 
 ---
 
+## Evidence facets (experimental)
+
+A capsule can carry optional, additive **evidence facets** — a `facets` map
+(ADR-0196) whose keys are per-domain evidence objects, each owned by its own ADR.
+A capsule without the `facets` key is valid and byte-identical to before, so
+facets never change the base schema. `facets` holds *first-party,
+NovaFabric-recorded evidence*; it is deliberately distinct from `extensions`,
+which carries *third-party vendor data* — an auditor must be able to tell
+NovaFabric-recorded evidence from a vendor annotation. The registry is **closed
+on purpose** (ADR-0196 D2): only the registered names below are accepted, so a
+typo cannot silently produce a capsule missing the evidence its author believed
+it carried.
+
+> **Not the same as OpenLineage facets.** The word "facet" is also used,
+> unrelatedly, for the [OpenLineage run/dataset facets](#openlineage-integration)
+> that `nova lineage emit-openlineage --with-facets` attaches to emitted lineage
+> events. Those live in OpenLineage payloads, not on the capsule. This section is
+> about the capsule `facets` container.
+
+Each facet is populated by a **record-only** evidence module: it records what
+another system did and never orchestrates, enforces, adjudicates, moves funds,
+controls a device, or sits in a hot path. All are **experimental** Python APIs
+today; none of them registers a `nova` CLI command.
+
+| Module | Capsule facet | Records | ADR |
+|---|---|---|---|
+| `novafabric.a2a` | `a2a_messages` | Multi-agent A2A messages & handoffs — the wire between agents. Distinct from the `novafabric.adapters.a2a` capture-time SDK adapter, which is a separate subsystem. | ADR-0142 |
+| `novafabric.settlement` | `settlement` | Agentic-commerce settlement provenance — mandate reconciliation, finality, and non-repudiation binding. Never processes payments or holds/moves funds. | ADR-0163 |
+| `novafabric.embodied` | `embodied` | Embodied / cyber-physical agent evidence — declared sensor streams and actuation records. Stores references, digests, and counts only (never frames, point clouds, audio, or control credentials); never in a control path. | ADR-0162 |
+| `novafabric.science` | `science_provenance` | Scientific-reproducibility / research-integrity provenance as a verifiable DAG of research steps. Never runs experiments or adjudicates validity. | ADR-0164 |
+| `novafabric.memstore` | `memstore_mutation` | Persistent-knowledge / organisational-memory governance — an append-only ledger of who changed which shared-KB entry and when (store-external). Distinct from the [`nova memory`](cli-reference.md) capture feature. | ADR-0171 |
+| `novafabric.retrieval` | `fetch_provenance` (+ source pinning) | Retrieval-source authority & knowledge provenance — what an external retriever or the agent fetched, and whether a pinned source still matches. Never fetches, crawls, or ranks. | ADR-0153 |
+| `novafabric.context` | *(standalone artifacts)* | Context provenance — an ordered manifest of what entered the model's context window (`ContextManifest`) and the span→chunk support map a producer claimed (`GroundingMap`). Records `sha256:` digests only; never scores groundedness. Ships as standalone artifacts, not a registered capsule facet (ADR-0196 D2). | ADR-0143 (NF-112/113) |
+
+---
+
 ## Capture Hook Mechanism
 
 `nova capture <cmd>` works without modifying application code. It injects a
@@ -423,6 +459,17 @@ AGE backends remain **FUTURE DESIGN**, not implemented.)
 
 ---
 
+### Graph analytics (experimental)
+
+Traversal answers "what connects to this node?". A read-only **analytics layer**
+(ADRs 0212–0215) answers "what does the whole graph mean?": centrality
+(`nova lineage metrics` — hubs and single points of failure), node-level
+root-cause ranking (`nova lineage root-cause`), interop export to
+GraphML/GEXF/Cypher (`nova lineage export-graph`), and a synthesized
+intelligence report (`nova insights`). All are descriptive rankings for
+attention, not calibrated importance, and degrade honestly when a data source
+(such as cost) is absent.
+
 ## OpenLineage Integration
 
 NovaFabric emits [OpenLineage](https://openlineage.io) 2.0.2 events from
@@ -445,6 +492,11 @@ spans. Facets are additive and schema-validated before emission, so a catalog th
 ignores them still receives valid core OpenLineage events. Run facets, dataset provenance
 cards, and benchmark-contamination checks are shown hands-on in the
 [feature tour §17](tutorials/feature-tour.md#17-prove-supply-chain-provenance--eval-integrity).
+
+> **Note:** these OpenLineage facets are unrelated to the capsule
+> [`facets` container](#evidence-facets-experimental) (ADR-0196). Same word, two
+> different places: OpenLineage facets live in emitted lineage events; evidence
+> facets live on the capsule.
 
 ---
 

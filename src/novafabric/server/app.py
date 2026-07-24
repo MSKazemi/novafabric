@@ -46,6 +46,8 @@ from novafabric.server.routes.scim import (
 from novafabric.server.routes.seal import router as seal_router
 from novafabric.server.routes.service_accounts import router as service_accounts_router
 from novafabric.server.routes.suggestions import router as suggestions_router
+from novafabric.server.routes.usage import router as usage_router
+from novafabric.server.routes.webhooks import router as webhooks_router
 from novafabric.server.routes.workspaces import router as workspaces_router
 
 logger = logging.getLogger(__name__)
@@ -56,6 +58,78 @@ def _get_version() -> str:
         return importlib_metadata.version("novafabric")
     except importlib_metadata.PackageNotFoundError:
         return "unknown"
+
+
+def _install_usage_metering(app: FastAPI, config: ServerConfig) -> None:
+    """Install the ADR-0208 ``api_requests`` accumulator middleware.
+
+    Inert (no middleware object exists at all) unless
+    ``server.rate_limits.enabled`` AND ``server.usage.metering_enabled`` —
+    with the feature off, upgrading changes zero behavior (ADR-0179
+    discipline). The hot path never writes the database: requests bump a
+    bounded in-process map; a flush writes at most one ledger row per
+    workspace per ``usage.flush_interval_s`` (spec §api_requests). Workspace
+    attribution per request rides a small bounded TTL cache so the map feed
+    is O(1) between membership changes (deliberate coarseness, documented).
+    """
+    import time
+    from collections import OrderedDict
+    from pathlib import Path
+
+    from fastapi import Request
+
+    from novafabric.server.usage import (
+        ApiRequestAccumulator,
+        metering_active,
+        resolve_attribution,
+    )
+
+    if not metering_active(config):
+        return
+
+    db_path = Path(config.db_path) if config.db_path else None
+    accumulator = ApiRequestAccumulator(
+        max_entries=config.usage.accumulator_max_entries,
+        flush_interval_s=config.usage.flush_interval_s,
+        rollup_retention_months=config.usage.rollup_retention_months,
+        ledger_retention_months=config.usage.ledger_retention_months,
+    )
+    app.state.usage_accumulator = accumulator
+
+    attribution_cache: OrderedDict[tuple[str, str | None], tuple[float, str]] = (
+        OrderedDict()
+    )
+    cache_ttl = 30.0
+    cache_max = 10_000
+
+    def _workspace_for(auth: object) -> str:
+        key = (
+            str(getattr(auth, "subject", "")),
+            getattr(auth, "workspace", None),
+        )
+        now = time.monotonic()
+        hit = attribution_cache.get(key)
+        if hit is not None and now < hit[0]:
+            return hit[1]
+        workspace = resolve_attribution(auth, db_path).workspace  # type: ignore[arg-type]
+        attribution_cache[key] = (now + cache_ttl, workspace)
+        attribution_cache.move_to_end(key)
+        while len(attribution_cache) > cache_max:
+            attribution_cache.popitem(last=False)
+        return workspace
+
+    @app.middleware("http")
+    async def _usage_accounting_middleware(request: Request, call_next: Any) -> Any:
+        response = await call_next(request)
+        try:
+            auth = getattr(request.state, "auth", None)
+            if auth is not None:
+                accumulator.add(_workspace_for(auth))
+                if accumulator.due():
+                    accumulator.flush(db_path)
+        except Exception:  # noqa: BLE001 — metering never breaks a request
+            logger.warning("usage api_requests accounting failed", exc_info=True)
+        return response
 
 
 def create_app(config: ServerConfig) -> FastAPI:
@@ -74,6 +148,20 @@ def create_app(config: ServerConfig) -> FastAPI:
         from novafabric.registry.store import get_connection, get_db_path, init_schema
 
         db_path = Path(config.db_path) if config.db_path else get_db_path()
+
+        # ADR-0211 D3 (experimental): fail-closed schema-skew guard — BEFORE
+        # init_schema() and the org bootstrap, so a refused server mutates
+        # nothing. `behind`/`ahead_or_foreign` raise SchemaSkewError unless
+        # NOVAFABRIC_ALLOW_SCHEMA_SKEW=1 downgrades to a structured warning;
+        # `unstamped`/`unknown` warn and start (honesty rule, never refuse
+        # on ignorance).
+        from novafabric.server.schema_skew import enforce_schema_skew_guard
+
+        enforce_schema_skew_guard(
+            backend=config.backend,
+            target=config.postgres_dsn if config.backend == "postgres" else db_path,
+        )
+
         conn = get_connection(db_path)
         try:
             init_schema(conn)
@@ -85,8 +173,72 @@ def create_app(config: ServerConfig) -> FastAPI:
         from novafabric.server import workspace_store
 
         workspace_store.ensure_default(db_path=db_path)
+
+        # ADR-0208 (experimental): a quota.workspaces block naming a
+        # workspace that does not exist is refused at startup with a clear
+        # error (spec §Quota enforcement) — only checked when the feature is
+        # active, so disabled deployments see zero behavior change. Runs
+        # AFTER ensure_default so budgets on the default workspace validate.
+        rl = config.rate_limits
+        if rl.enabled and rl.quota is not None and rl.quota.workspaces:
+            known = {
+                w["slug"] for w in workspace_store.list_workspaces(db_path=db_path)
+            }
+            unknown = sorted(set(rl.quota.workspaces) - known)
+            if unknown:
+                raise ValueError(
+                    f"quota.workspaces names unknown workspace(s) {unknown}; "
+                    f"create them first (POST /v0/workspaces) or fix the "
+                    f"config (ADR-0208)."
+                )
+
+        # ADR-0178 (2026-07-18): the capsule store is shared across orgs, so
+        # a genuinely multi-org deployment has no capsule isolation. Refuse
+        # unless the operator has acknowledged it. Checked AFTER the default
+        # bootstrap so a fresh single-org install is never blocked.
+        from novafabric.server.config import check_multi_org_shared_store
+
+        check_multi_org_shared_store(
+            config, len(workspace_store.list_orgs(db_path=db_path))
+        )
+
+        # ADR-0205 (experimental): webhook delivery dispatcher — started ONLY
+        # when server.webhooks.enabled; otherwise no worker thread exists and
+        # behavior is byte-identical (spec: master switch off ⇒ inert).
+        dispatcher = None
+        if config.webhooks.enabled:
+            from novafabric.server.webhook_dispatch import (
+                DispatchConfig,
+                WebhookDispatcher,
+            )
+            from novafabric.server.webhooks import resolve_wrapping_backend
+
+            dispatcher = WebhookDispatcher(
+                db_path=db_path,
+                config=DispatchConfig(
+                    queue_max=config.webhooks.queue_max,
+                    max_attempts=config.webhooks.max_attempts,
+                    timeout_s=config.webhooks.timeout_s,
+                    retention_days=config.webhooks.delivery_retention_days,
+                    retention_rows=config.webhooks.delivery_retention_rows,
+                ),
+                wrapping_backend=resolve_wrapping_backend(),
+            )
+            dispatcher.start()
+            app.state.webhook_dispatcher = dispatcher
         yield
-        # Shutdown: nothing to tear down for SQLite.
+        # Shutdown: stop the webhook dispatcher (if any); nothing for SQLite.
+        if dispatcher is not None:
+            dispatcher.stop()
+        # ADR-0208: drain the api_requests accumulator at graceful shutdown
+        # (spec: flushed on interval AND at shutdown; crash loss is bounded
+        # by one interval).
+        accumulator = getattr(app.state, "usage_accumulator", None)
+        if accumulator is not None:
+            accumulator.flush(db_path, force=True)
+            from novafabric.server.usage import close_anchors
+
+            close_anchors()
 
     app = FastAPI(
         title="NovaFabric REST API",
@@ -133,6 +285,18 @@ def create_app(config: ServerConfig) -> FastAPI:
             "backend": config.backend,
         }
 
+    # SEP-1649 MCP Server Card (NF-039 R7) — UNAUTHENTICATED by design: a
+    # discovery document exists so a registry or client can learn an
+    # endpoint's protocol version, capabilities and auth *before* connecting.
+    # Gating it behind the auth it describes would make it undiscoverable.
+    # It advertises only non-secret facts, and reports the auth actually in
+    # force rather than implying there is none.
+    @app.get("/.well-known/mcp.json")
+    async def mcp_server_card() -> dict[str, Any]:
+        from novafabric.mcp.servercard import build_server_card
+
+        return build_server_card(config).model_dump(mode="json", exclude_none=True)
+
     # API rate limiting (ADR-0179, experimental) — inert unless
     # server.rate_limits.enabled. Registered BEFORE the observability install:
     # Starlette wraps the last-added middleware outermost, so adding the
@@ -144,6 +308,11 @@ def create_app(config: ServerConfig) -> FastAPI:
     # at the capsule-ingest routes. Inert unless rate_limits.enabled AND a
     # quota block with a non-zero limit is configured.
     install_quota_enforcement(app, config)
+
+    # Usage metering (ADR-0208, experimental) — api_requests accumulator
+    # middleware. Inert (no middleware installed at all) unless
+    # rate_limits.enabled AND usage.metering_enabled — zero behavior change.
+    _install_usage_metering(app, config)
 
     # Self-observability surface (ADR-0182, experimental):
     # /livez, /readyz, /v0/version, /metrics + HTTP request metrics middleware.
@@ -157,7 +326,12 @@ def create_app(config: ServerConfig) -> FastAPI:
     app.include_router(evidence_router, prefix="/v0")
     app.include_router(admin_router, prefix="/v0")
     app.include_router(roles_router, prefix="/v0")
-    app.include_router(auth_router, prefix="/v0")
+    # The RFC 8628 device-grant demo flow is unauthenticated scaffolding whose
+    # HS256 tokens the real verifier never honours; only mount it when the
+    # operator explicitly opts in (config.demo_device_grant, default False) so
+    # production never exposes /v0/auth/approve. See ServerConfig.demo_device_grant.
+    if config.demo_device_grant:
+        app.include_router(auth_router, prefix="/v0")
     app.include_router(saml_router, prefix="/v0")
     app.include_router(suggestions_router, prefix="/v0")
     app.include_router(seal_router, prefix="/v0")
@@ -169,6 +343,12 @@ def create_app(config: ServerConfig) -> FastAPI:
     # ADR-0193 (experimental): first-class API keys REST resource — admin-gated
     # create/list/revoke/rotate over the hash-only key store.
     app.include_router(api_keys_router, prefix="/v0")
+    # ADR-0205 (experimental): webhook subscription registry — CRUD + ping +
+    # delivery log + redeliver. Dispatch is gated on server.webhooks.enabled.
+    app.include_router(webhooks_router, prefix="/v0")
+    # ADR-0208 (experimental): usage reporting — always mounted (registry
+    # reads, ADR-0205 precedent); accounting itself is master-switch gated.
+    app.include_router(usage_router, prefix="/v0")
 
     # SCIM provisioning (ADR-0139, experimental) — own /scim/v2 prefix per
     # RFC 7644, NOT under /v0. Inert (404) unless server.scim.enabled AND

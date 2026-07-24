@@ -50,12 +50,17 @@ _EdgeTypeArg = Annotated[
         "--edge-type",
         help=(
             "Comma-separated edge types to filter: "
-            "contains,spawned,delegated_to,replayed_from"
+            "contains,spawned,delegated_to,replayed_from,member_of_session,wrote_memory,read_memory"
         ),
     ),
 ]
 
-_VALID_EDGE_TYPES = frozenset({"contains", "spawned", "delegated_to", "replayed_from"})
+_VALID_EDGE_TYPES = frozenset(
+    {
+        "contains", "spawned", "delegated_to", "replayed_from",
+        "member_of_session", "wrote_memory", "read_memory",
+    }
+)
 
 _WithFacetsArg = Annotated[
     bool,
@@ -497,3 +502,14 @@ def emit_openlineage_cmd(
             console.print(
                 f"[green]✓[/green] {capsule_dir.name} ({len(events)} events → {target})"
             )
+
+
+# Graph-intelligence cohort commands (ADR-0212/0213/0214) live in their own
+# modules; registration is one line each to keep this shared file merge-safe.
+from novafabric.cli.lineage_export_graph import export_graph_cmd  # noqa: E402
+from novafabric.cli.lineage_metrics import metrics_cmd  # noqa: E402
+from novafabric.cli.lineage_root_cause import root_cause_cmd  # noqa: E402
+
+lineage_app.command("metrics")(metrics_cmd)
+lineage_app.command("root-cause")(root_cause_cmd)
+lineage_app.command("export-graph")(export_graph_cmd)

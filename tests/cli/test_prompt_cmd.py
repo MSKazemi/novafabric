@@ -352,3 +352,78 @@ def test_tree_shows_children_and_label_flag() -> None:
 
 def test_tree_missing_prompt_exits_1() -> None:
     assert runner.invoke(app, ["prompt", "tree", "ghost"]).exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# promote — thin alias into the eval-gated path (ADR-0112 P4)
+# ---------------------------------------------------------------------------
+
+
+def test_promote_help_describes_it_as_an_alias() -> None:
+    result = runner.invoke(app, ["prompt", "promote", "--help"])
+    assert result.exit_code == 0
+    assert "alias" in result.output.lower()
+
+
+def test_promote_requires_an_at_version_ref() -> None:
+    result = runner.invoke(app, ["prompt", "promote", "triage", "--to", "staging"])
+    assert result.exit_code == 2
+    assert "prompt_id@version" in result.output
+
+
+def test_promote_unknown_prompt_exits_1() -> None:
+    result = runner.invoke(
+        app, ["prompt", "promote", "nope@1.0.0", "--to", "staging"]
+    )
+    assert result.exit_code == 1
+
+
+def test_promote_refuses_a_non_prompt_asset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The command is named for prompts; it must not become a back door.
+
+    A general promotion path already exists (`nova promote direct`). This
+    surface exists to promote prompts, and silently accepting another asset
+    type would make its name a lie. Stubbed at the lookup rather than by
+    registering a real agent, so the guard is always exercised instead of
+    skipped when another asset type's registration shape changes.
+    """
+    monkeypatch.setattr(
+        "novafabric.registry.service.get_asset",
+        lambda name, version: {"asset_type": "agent", "name": name},
+    )
+    promoted: list[object] = []
+    monkeypatch.setattr(
+        "novafabric.registry.service.promote_asset",
+        lambda *a, **k: promoted.append(a) or {"status": "staging"},
+    )
+
+    result = runner.invoke(
+        app, ["prompt", "promote", "some-agent@1.0.0", "--to", "staging"]
+    )
+    assert result.exit_code == 2
+    assert "not 'prompt'" in result.output
+    assert promoted == [], "a non-prompt asset must never reach promote_asset"
+
+
+def test_promote_delegates_for_a_real_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The happy path must reach the shared eval-gated promotion service."""
+    monkeypatch.setattr(
+        "novafabric.registry.service.get_asset",
+        lambda name, version: {"asset_type": "prompt", "name": name},
+    )
+    calls: list[tuple] = []
+
+    def _promote(name, version, to, **kwargs):
+        calls.append((name, version, str(to)))
+        return {"status": "staging", "forced_promotion": False}
+
+    monkeypatch.setattr("novafabric.registry.service.promote_asset", _promote)
+
+    result = runner.invoke(
+        app, ["prompt", "promote", "triage@1.2.0", "--to", "staging"]
+    )
+    assert result.exit_code == 0, result.output
+    assert calls and calls[0][0] == "triage" and calls[0][1] == "1.2.0"
+    assert "Promoted" in result.output

@@ -29,10 +29,24 @@ class TimelineEvent(BaseModel):
     detail: str | None = None  # a reference/summary — never a raw value or PII
 
 
+#: The compliance-honesty line the NF-231-240 spec makes normative: "every
+#: exported artifact MUST carry the compliance-honesty line". Carried as a
+#: model FIELD rather than printed only by the CLI, so it survives
+#: `--json` and any downstream consumer — the same shape `export_part11.py`
+#: already uses. A banner the CLI prints but the payload omits is absent
+#: exactly where the artifact travels furthest from the person who ran it.
+HONESTY_LINE: str = (
+    "NovaFabric reconstructs this timeline from sealed evidence and records gaps it "
+    "could not reconstruct. It does not establish causation, attribute fault, or "
+    "certify the timeline complete."
+)
+
+
 class ForensicsTimeline(BaseModel):
     incident_id: str
     events: list[TimelineEvent]
     gaps: list[str]  # references to evidence that could not be reconstructed (deduped, sorted)
+    honesty_line: str = HONESTY_LINE
 
 
 def _sort_key(event: TimelineEvent) -> tuple[str, str, int]:

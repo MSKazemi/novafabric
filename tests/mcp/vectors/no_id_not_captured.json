@@ -1,0 +1,9 @@
+{
+  "name": "Elicitation leg without a JSON-RPC id",
+  "why": "An uncorrelatable leg must not be captured under a fabricated id — that would invent a grouping that does not exist.",
+  "protocol_version": "2026-07-28",
+  "messages": [
+    {"direction": "server_to_client", "message": {"jsonrpc": "2.0", "method": "elicitation/inputRequired", "params": {"prompt": "orphan"}}}
+  ],
+  "expect": {"record_count": 0}
+}

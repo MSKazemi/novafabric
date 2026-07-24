@@ -54,6 +54,19 @@ def export_blob_cmd(
             help="Capsule root to select from (default: $NOVAFABRIC_HOME/capsules).",
         ),
     ] = None,
+    query: Annotated[
+        Optional[str],
+        typer.Option(
+            "--query",
+            help=(
+                "Select capsules by an ADR-0129 query filter, e.g. "
+                "\"model = 'gpt-4o'\" or \"status = 'error'\". Composes with "
+                "--since/--until; mutually exclusive with --capsule. The "
+                "parsed query is recorded in the export manifest."
+            ),
+            show_default=False,
+        ),
+    ] = None,
     since: Annotated[
         Optional[str],
         typer.Option(
@@ -166,7 +179,7 @@ def export_blob_cmd(
 
     try:
         selection = select_capsules(
-            capsule, root=capsule_dir, since=since, until=until
+            capsule, root=capsule_dir, since=since, until=until, query=query
         )
     except ExportSelectionError as exc:
         err_console.print(f"[red]Error:[/red] {exc}")

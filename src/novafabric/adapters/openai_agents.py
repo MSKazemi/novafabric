@@ -137,7 +137,25 @@ class NovaCapsuleTracingProcessor(_TracingProcessor):
         pass  # wire hooks capture HTTP bytes; spans provide supplementary metadata
 
     def on_span_end(self, span: Any) -> None:
-        pass
+        # ADR-0209 D2.1 (experimental): the SDK emits typed guardrail span
+        # data natively — map it onto the capsule's guardrail_events.jsonl
+        # stream via the record façade. Duck-typed and fail-open: any
+        # attribute error means no event, never an exception into the SDK.
+        # No other span types are consumed in v0.
+        try:
+            span_data = getattr(span, "span_data", None)
+            if span_data is None or getattr(span_data, "type", None) != "guardrail":
+                return
+            from novafabric.capture import record
+
+            name = getattr(span_data, "name", None)
+            triggered = bool(getattr(span_data, "triggered", False))
+            record.guardrail(
+                guardrail_name=name if isinstance(name, str) and name else "guardrail",
+                outcome="blocked" if triggered else "passed",
+            )
+        except Exception:
+            pass  # fail-open (ADR-0021: never block the workload)
 
     def shutdown(self) -> None:
         pass

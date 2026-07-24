@@ -46,10 +46,11 @@ from __future__ import annotations
 import hashlib
 import json
 import random
-import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Union
+
+from novafabric._sqlite_util import connect_sqlite
 
 
 class MerkleError(Exception):
@@ -347,7 +348,7 @@ class MerkleLog:
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        self._conn = connect_sqlite(str(db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA)
         self._conn.commit()

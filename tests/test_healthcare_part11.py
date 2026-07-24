@@ -55,7 +55,7 @@ def test_no_conformity_or_verdict_field():
 
 def test_elements_follow_the_fixed_order():
     rec = build_part11_record(
-        capsule_root="r" * 64, elements={k: "x" for k in PART11_ELEMENTS}
+        capsule_root="r" * 64, elements=dict.fromkeys(PART11_ELEMENTS, "x")
     )
     assert [f.element for f in rec.fields] == list(PART11_ELEMENTS)
 

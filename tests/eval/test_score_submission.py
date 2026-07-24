@@ -67,16 +67,16 @@ def capsule(tmp_path: Path) -> Path:
 
 
 def _submit(capsule: Path, db_path: Path, **over: object):
-    kwargs: dict[str, object] = dict(
-        name="answer_correct",
-        value=0.87,
-        value_type="numeric",
-        evaluator_id="ci://acme/repo#judge@v3",
-        subject=_SPAN,
-        source="code",
-        eval_card_digest=_CARD,
-        db_path=db_path,
-    )
+    kwargs: dict[str, object] = {
+        "name": "answer_correct",
+        "value": 0.87,
+        "value_type": "numeric",
+        "evaluator_id": "ci://acme/repo#judge@v3",
+        "subject": _SPAN,
+        "source": "code",
+        "eval_card_digest": _CARD,
+        "db_path": db_path,
+    }
     kwargs.update(over)
     return submit(capsule, **kwargs)  # type: ignore[arg-type]
 

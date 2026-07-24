@@ -1,0 +1,96 @@
+{
+  "ledger": [
+    {
+      "schema_version": "0.1.0",
+      "store_id": "org-kb/support-playbooks",
+      "namespace": "playbooks",
+      "entry_id": "pb-4471",
+      "op": "create",
+      "value_digest": "sha256:7b2d4b0807e2b05c8f6f0cdec41a6f936e01eae1f3eae4f5c2bbbb287cbbd73a",
+      "by": {
+        "agent": "ingest-agent",
+        "run": "run_2a91c0f4"
+      },
+      "at": "2026-07-13T09:00:00Z"
+    },
+    {
+      "schema_version": "0.1.0",
+      "store_id": "org-kb/support-playbooks",
+      "namespace": "playbooks",
+      "entry_id": "pb-4471",
+      "op": "update",
+      "value_digest": "sha256:2356c75e5d0e55ba92b2fdf0e0cfc102cf7d1eba8a374793f7860f4f2c12275e",
+      "prev_value_digest": "sha256:7b2d4b0807e2b05c8f6f0cdec41a6f936e01eae1f3eae4f5c2bbbb287cbbd73a",
+      "by": {
+        "agent": "triage-agent",
+        "run": "run_8f3bd21e"
+      },
+      "at": "2026-07-13T09:14:02Z",
+      "prev_record_hash": "sha256:36539f11380ff2f4f0d94564968a21fd0eaa08d6eb0d8077842fbaf7b1d0216b"
+    },
+    {
+      "schema_version": "0.1.0",
+      "store_id": "org-kb/support-playbooks",
+      "namespace": "playbooks",
+      "entry_id": "pb-4470",
+      "op": "delete",
+      "prev_value_digest": "sha256:3f115428f839824c7e8d2d078360d2783cf8f9a03608882aad1fad4e96cb9ef2",
+      "by": {
+        "agent": "retention-compactor"
+      },
+      "at": "2026-07-13T10:00:00Z",
+      "prev_record_hash": "sha256:e2c0ac76d1d4c94a1038a6091d4349263833a2c16ef5d7adb2b4686aa121c81c"
+    }
+  ],
+  "facet": {
+    "schema_version": "0.1.0",
+    "store_id": "org-kb/support-playbooks",
+    "ledger_ref": "sha256:65680bf427e8f403991827c7ac65d48e896a0d85db6bce7b281ca7341faace19",
+    "records_in_this_run": [
+      {
+        "schema_version": "0.1.0",
+        "store_id": "org-kb/support-playbooks",
+        "namespace": "playbooks",
+        "entry_id": "pb-4471",
+        "op": "create",
+        "value_digest": "sha256:7b2d4b0807e2b05c8f6f0cdec41a6f936e01eae1f3eae4f5c2bbbb287cbbd73a",
+        "by": {
+          "agent": "ingest-agent",
+          "run": "run_2a91c0f4"
+        },
+        "at": "2026-07-13T09:00:00Z"
+      },
+      {
+        "schema_version": "0.1.0",
+        "store_id": "org-kb/support-playbooks",
+        "namespace": "playbooks",
+        "entry_id": "pb-4471",
+        "op": "update",
+        "value_digest": "sha256:2356c75e5d0e55ba92b2fdf0e0cfc102cf7d1eba8a374793f7860f4f2c12275e",
+        "prev_value_digest": "sha256:7b2d4b0807e2b05c8f6f0cdec41a6f936e01eae1f3eae4f5c2bbbb287cbbd73a",
+        "by": {
+          "agent": "triage-agent",
+          "run": "run_8f3bd21e"
+        },
+        "at": "2026-07-13T09:14:02Z",
+        "prev_record_hash": "sha256:36539f11380ff2f4f0d94564968a21fd0eaa08d6eb0d8077842fbaf7b1d0216b"
+      },
+      {
+        "schema_version": "0.1.0",
+        "store_id": "org-kb/support-playbooks",
+        "namespace": "playbooks",
+        "entry_id": "pb-4470",
+        "op": "delete",
+        "prev_value_digest": "sha256:3f115428f839824c7e8d2d078360d2783cf8f9a03608882aad1fad4e96cb9ef2",
+        "by": {
+          "agent": "retention-compactor"
+        },
+        "at": "2026-07-13T10:00:00Z",
+        "prev_record_hash": "sha256:e2c0ac76d1d4c94a1038a6091d4349263833a2c16ef5d7adb2b4686aa121c81c"
+      }
+    ],
+    "verified": {
+      "ok": true
+    }
+  }
+}

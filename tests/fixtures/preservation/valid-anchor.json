@@ -1,0 +1,31 @@
+{
+  "schema_version": "0.1.0",
+  "preservation_id": "presv-2026-07-13-7f",
+  "original_root": "sha256:fbc02a3e8333408578602145ed9be1aec00e1d44006367d2dbc207ee66b93598",
+  "fixity": {
+    "alg": "sha256",
+    "digest": "sha256:fbc02a3e8333408578602145ed9be1aec00e1d44006367d2dbc207ee66b93598"
+  },
+  "provenance_events": [
+    {
+      "event": "sealed",
+      "at": "2026-07-13T09:00:00Z",
+      "agent_ref": "sha256:c346d3879a2150f06e5c7422521183b38ac21816186df92836f8dd14d3aea9a9"
+    },
+    {
+      "event": "ingested-to-worm",
+      "at": "2026-07-13T09:05:00Z",
+      "agent_ref": "https://archive.example.org/agents/ingest-1"
+    }
+  ],
+  "fixity_log": [
+    {
+      "checked_at": "2027-01-01T00:00:00Z",
+      "alg": "sha256",
+      "digest": "sha256:fbc02a3e8333408578602145ed9be1aec00e1d44006367d2dbc207ee66b93598",
+      "matches_original": true,
+      "agent_ref": "https://archive.example.org/agents/fixity-scanner"
+    }
+  ],
+  "bound_root": "sha256:fbc02a3e8333408578602145ed9be1aec00e1d44006367d2dbc207ee66b93598"
+}

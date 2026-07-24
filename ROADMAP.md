@@ -8,8 +8,22 @@
 
 ## Shipped
 
+> **Unreleased work sits ahead of the newest row below.** v0.63.0 is the latest
+> *tag*, not the latest state of `main`. Since then, ADRs 0098, 0112 (P4), 0118
+> (P2), 0121 (P3), 0122 (P4), 0137, 0141, 0173 and 0174 have gained slices, plus
+> the ADR-0178 multi-org startup guard. See **CHANGELOG `[Unreleased]`** for the
+> authoritative list — this table is only updated when a version is tagged, so
+> that a released row always means "released".
+
+> **Unreleased (2026-07-24): graph-intelligence cohort (ADRs 0212–0215)** — lineage
+> graph-analytics layer (`nova lineage metrics`), upstream root-cause ranking
+> (`nova lineage root-cause`), GraphML/GEXF/Cypher export (`nova lineage export-graph`),
+> and the synthesized `nova insights` report. All experimental, additive, local-first,
+> zero new dependencies.
+
 | Version | Feature | Status |
 |---|---|---|
+| v0.64.0 | **Four-cohort integration (ADRs 0198–0217, first slices)** — backup full coverage + signed coverage table + key dual opt-in + automated pg restore + manifest-only WORM profile (0216/0217); top-10 must-haves: Python client SDK, ingest hardening, FTS5 `nova search`, webhooks, keyset pagination + delete, `nova import`, usage metering/quotas, `capture.record` wiring, real REST erasure, schema-skew guard + `db upgrade --track` (0202–0211); graph intelligence: `nova lineage metrics/root-cause/export-graph` + `nova insights` (0212–0215); dashboard program phases A+B: SVG chart engine, report HTML/PDF, chart export, scale slices, parity guard, export registry (0199–0201); device-grant hardening + pinned JWT algs (0198). All experimental, additive. | **experimental** |
 | v0.63.0 | **Enterprise-audit second slices (ADRs 0192–0194)** — notification adapters (Slack/PagerDuty/email renderers over the alert webhook core) + dashboard **Alerts tab** (`/api/alerts/recent`, severity-coded feed); API-key **rotation** with bounded overlap + coarse `last_used_at` + the `/v0/api-keys` REST resource + a read-only Admin console **API-keys panel** (`/api/admin/api-keys`); TypeScript SDK `submitScore()` + `otlpTraceEndpoint()` helpers + a path-scoped `sdk-ts` CI lane. All experimental, additive, off/opt-in by default. | **experimental** |
 | v0.62.0 | **Audit-closure release — enterprise-audit fixes + ADRs 0191–0195 first slices** — SIEM egress (`nova audit-log export`, OCSF/JSONL, chain-verified, deny-by-default redaction; ADR-0191); operational alerting (`ops.*` family with severity/dedup/allowlist over the ADR-0137 emitter, quota source wired, default OFF; ADR-0192); API keys (`nova server api-key`, `nvfk_` hashed shown-once RBAC-scoped + scanner rule; ADR-0193 Track 1); TypeScript SDK (`@novafabric/sdk`, generated types + drift gate, zero-runtime-dep client; ADR-0194); FIPS 140-3 posture in SECURITY.md (ADR-0195, docs-only). Audit defect fixes: SSE 10k watermark tracker, WS drop-oldest backpressure, /tmp health ownership check, visible capture loss (`capture-health.json`), bounded file serving, `/api/runs` keyset cursors, nightly Postgres/MinIO scale-test CI tier, dashboard Analytics tab (`/api/analytics/summary`). Docs: 26 CLI-reference sections + drift guard + 10 new guides. Supply chain: mcp 1.28.1 (3 HIGH), vite fix, Go 1.26.5, openapi dangling-$ref fix. | **experimental** |
 | v0.61.0 | **Enterprise-readiness cohort (ADRs 0178–0189, first + second slices)** — secure-by-default local server auth (auto-generated bearer token; `--insecure-no-auth` explicit + audited; ADR-0184); organizations / workspaces / service accounts over the unchanged `tenant_id` RLS key (ADR-0178); SCIM Groups→role mapping with provenance-safe reconciliation + Group `PUT` + `nova server scim-map-group` (ADR-0139/0190); self-observability — Prometheus `/metrics`, `/livez`/`/readyz`, `/v0/version`, opt-in self-tracing (ADR-0182); `nova backup create/verify` + `nova restore` with DSSE-signed manifests, pg profile, crypto-shred replay (ADR-0181); `nova support-bundle` allowlist-only diagnostics (ADR-0187); in-process rate limiting + storage quotas, default off (ADR-0179); opt-in envelope encryption at rest, KMS-wrapped per-object DEKs, encrypt-before-WORM (ADR-0185); blocking pip-audit gate + Dependabot + trivy + CVE SLAs (ADR-0186); RFC 9745/8594 deprecation/sunset mechanism + register + drift gate (ADR-0188); HA single-writer active-passive posture + expand-contract N/N+1 migration release gate (ADR-0180); serve→server consolidation begun with ratcheting route guard (ADR-0183); trust surfaces `nova merkle-tree`/`trust-radar`/`redaction-xray`/`passport` (ADRs 0172/0173/0174/0149); WORM-report signing honesty (backlog A5). Security-Architect review remains a pre-production blocking condition for 0178/0184/0185/0186. | **experimental** |
@@ -108,6 +122,30 @@
 
 ---
 
+## Shipped — Top-10 must-have campaign (2026-07-24, ADRs 0202–0211, all experimental first slices)
+
+Selected by a three-agent evidence sweep (documented backlog · code-level stubs ·
+operational must-haves) as the ten most important missing-or-weak capabilities.
+Each = proposed ADR + v0 spec + tested vertical slice (P1); later phases stay
+planned/future design per each ADR.
+
+| # | ADR | Capability | P1 shipped |
+|---|-----|-----------|------------|
+| F1 | 0202 | Python client SDK (`novafabric.client`) | sync httpx client: auth, upload, pagination, scores, retries |
+| F2 | 0203 | Server ingest hardening | size cap 413, streaming spool, zip guards, zip-slip + wedge fixes |
+| F3 | 0204 | Capsule content search | FTS5 post-redaction index, `nova search`, `scope=content` |
+| F4 | 0205 | Webhook subscription registry | `/v0/webhooks` CRUD + signed deliveries + delivery log |
+| F5 | 0206 | Keyset pagination + capsule deletion | v1 seek cursors, DELETE + bulk-delete, hold/WORM refusal |
+| F6 | 0207 | Verified batch import (`nova import`) | fail-closed manifest/hash verification, staged unpack, receipts |
+| F7 | 0208 | Usage metering + workspace quotas | usage ledger, `GET /v0/usage`, per-workspace budgets |
+| F8 | 0209 | Extended-event capture wiring | `capture.record` façade, adapter wirings, redaction-hole closure |
+| F9 | 0210 | Real REST erasure execution | persisted queue → real DEK shred, receipts, fail-closed states |
+| F10 | 0211 | pg restore + schema-skew guard | automated pg_restore path, fail-closed startup guard, `db upgrade --track` |
+
+Deliberately excluded (gated): lineage at-scale backends (live AGE + benchmark),
+HA multi-replica (needs its own ADR + infra), SAML ACS / OAS-freeze / SCIM-live
+(license/partner), `pending_parent_timeout` REC-2 (needs BDFL value decision).
+
 ## Planned — v0.27.x (Compliance Implementation Sprint)
 
 Goal: implement the compliance ADRs written in v0.25.0. All items depend on their corresponding ADR being accepted.
@@ -157,11 +195,27 @@ Dates represent mandatory or significant regulatory milestones relevant to NovaF
 
 ---
 
-## Cluster-scale phases — all shipped
+## Cluster-scale phases — shipped, except the lineage at-scale graph tier
 
-All cluster-scale phases (Phase 0–6) are shipped; per-phase maturity labels are in
-the Shipped table above. Research documentation lives in this repo under the private
+Cluster-scale Phases 0–5 (NovaSeal, Event Envelope, Collector, Parent/Child, Object
+Capsule Store, Metadata Store + RLS) are shipped; per-phase maturity labels are in the
+Shipped table above. Research documentation lives in this repo under the private
 `design/` directory.
+
+**Phase 6 (Lineage at scale) is partially shipped.** The default `SqliteLineageStore`
+works today and the DuckDB multi-hop summary tier ships (v0.60). The **at-scale graph
+backends remain planned**, not shipped:
+
+| Backend | File | Status |
+|---|---|---|
+| `SqliteLineageStore` | `lineage/store.py` | ✅ works today (default) |
+| KuzuDB | `lineage/backends/kuzu.py` | **planned** — production-candidate, pending the 10M-edge p99 < 500 ms benchmark |
+| Postgres | `lineage/backends/postgres.py` | **planned** — `NotImplementedError` stub, gated on a live Postgres deployment |
+| Apache AGE | `lineage/backends/age.py` | **planned** — `NotImplementedError` stub, gated on a live Postgres + AGE deployment |
+| JanusGraph | (design only) | **future design** — the v3 tier |
+
+(Note: Scale-S4's shipped `PostgresMerkleLog` is the NovaSeal *transparency-log* backend,
+a different subsystem from these lineage *graph* backends.)
 
 ---
 
@@ -471,6 +525,23 @@ See [Storage Architecture](design/architecture/cluster-scale.md#production-stora
 (ADR-0172, client-side verify-on-click), the trust radar SVG (ADR-0173), the redaction heat-overlay
 (ADR-0174).
 
+## Documentation & spec reconciliation (2026-07 as-built audit)
+
+A repo-wide code-vs-docs drift audit (2026-07-23) corrected the documentation to match the
+shipped code. Three items are genuine **code/spec gaps** (not just stale prose) and are tracked
+here for reconciliation:
+
+| ID | Item | Nature | Action |
+|---|---|---|---|
+| **REC-1** | `parent-child-capsule-v1.md` prose describes an earlier field model (`capsule_role ∈ {STANDALONE,PARENT,WORKER,COORDINATOR}`, `lifecycle_state`/`ACTIVE`) that diverged from its own frozen JSON schema (`{PARENT,CHILD,STANDALONE}` + `distribution_role`, `status`/`RUNNING`). | Doc-vs-own-schema drift; an as-built reconciliation callout was added, but the §2–§4 prose still needs a full pass or a `0.2.1` spec revision. | Reconcile prose to the schema, or cut a `0.2.1` normative revision. |
+| **REC-2** | `pending_parent_timeout`: the accepted spec decision (OQ-02) is **300 s**, but the shipped code (`capsule/orphan.py:98`, `FR-14`) defaults to **86 400 s / 24 h**. | Genuine spec-vs-code **conflict** — the accepted decision and the implementation disagree. | Decide which is correct; amend the ADR/spec **or** the code default so they match. Do not treat either value as settled until then. |
+| **REC-3** | `api/openapi.yaml` is a hand-maintained partial spec documenting ~30 of the ~64 shipped server-mode operations (missing orgs/workspaces/service-accounts/SCIM/SAML/seal/admin-roles/suggest-register groups). | Under-coverage of a shipped surface; `api-reference.md` and the spec's own `info.description` now flag it. | Add an OpenAPI generator (dump `app.openapi()`) or a curated authoring pass so the spec covers all shipped `/v0` routes. |
+
+The at-scale lineage graph backends (KuzuDB/Postgres/AGE/JanusGraph) surfaced by the same audit
+are tracked under **Cluster-scale phases** above.
+
+---
+
 ## Future design — v1.x and beyond
 
 These are design intent only. No implementation scheduled.
@@ -508,7 +579,7 @@ These are design intent only. No implementation scheduled.
 | Workspace/organization model + service accounts (tenant_id stays the sole RLS key) | ADR-0178 |
 | API rate limiting & quotas (in-process token bucket, 429/`Retry-After`) | ADR-0179 |
 | HA & upgrade posture (single-writer active-passive contract, expand-contract migrations) | ADR-0180 |
-| Backup/restore & DR tooling (`nova backup` / `nova restore`, keys excluded, shred-preserving) | ADR-0181 |
+| Backup/restore & DR tooling (`nova backup` / `nova restore`, keys excluded by default, shred-preserving; full local coverage + automated pg restore + manifest-only profile) | ADR-0181, ADR-0216, ADR-0217 |
 | Self-observability (`/metrics`, `/livez`, `/readyz`, `/v0/version`, opt-in self-tracing) | ADR-0182 |
 | HTTP server consolidation (`server/` strategic, `serve/` frozen, strangler migration) | ADR-0183 |
 | Secure-by-default local server auth (no anonymous admin) | ADR-0184 |

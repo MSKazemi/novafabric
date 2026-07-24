@@ -77,3 +77,86 @@ def test_malformed_json_exits_two(tmp_path):
     p.write_text("{nope")
     result = runner.invoke(app, ["redaction-xray", str(p)])
     assert result.exit_code == 2
+
+
+# ---------------------------------------------------------------------------
+# --capsule: read a capsule's redaction-proof.json directly
+#
+# Before this, all three trust surfaces took a hand-assembled JSON document and
+# `--capsule-id` was only a LABEL stamped into the output — it selected nothing,
+# which reads as though it picks a capsule. This closes that for the X-Ray.
+# ---------------------------------------------------------------------------
+
+def _capsule_with_proof(tmp_path: Path, proof: dict) -> Path:
+    cap = tmp_path / "01HXAY7M5JZ8R7K4P9DPBYK2WX"
+    cap.mkdir(parents=True)
+    (cap / "capsule.yaml").write_text("run_id: 01HXAY7M5JZ8R7K4P9DPBYK2WX\n")
+    (cap / "redaction-proof.json").write_text(json.dumps(proof))
+    return cap
+
+
+def test_capsule_flag_reads_the_proof(tmp_path: Path) -> None:
+    cap = _capsule_with_proof(
+        tmp_path,
+        {
+            "capsule_run_id": "01HXAY7M5JZ8R7K4P9DPBYK2WX",
+            "findings": [
+                {"target_ref": "inputs.prompt", "redaction_strategy": "mask"},
+                {"target_ref": "env.API_KEY", "action_taken": "scrub"},
+            ],
+        },
+    )
+    result = runner.invoke(app, ["redaction-xray", "--capsule", str(cap), "--json"])
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert {f["path"] for f in report["fields"]} == {"inputs.prompt", "env.API_KEY"}
+
+
+def test_capsule_id_comes_from_the_proof_not_the_directory(tmp_path: Path) -> None:
+    """The proof is authoritative; the directory name is only a fallback.
+
+    Regression: the id was read AFTER the document was narrowed to its
+    findings, so it always fell back to the directory name. Invisible
+    whenever the two agree — which they usually do.
+    """
+    cap = tmp_path / "renamed-on-copy"
+    cap.mkdir()
+    (cap / "redaction-proof.json").write_text(
+        json.dumps({"capsule_run_id": "01HXTRUEIDK4P9DPBYK2WX000", "findings": []})
+    )
+    result = runner.invoke(app, ["redaction-xray", "--capsule", str(cap), "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["capsule_id"] == "01HXTRUEIDK4P9DPBYK2WX000"
+
+
+def test_zero_findings_is_a_result_not_an_error(tmp_path: Path) -> None:
+    """A clean capsule genuinely has nothing to redact — report it as such."""
+    cap = _capsule_with_proof(tmp_path, {"findings": []})
+    result = runner.invoke(app, ["redaction-xray", "--capsule", str(cap), "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["fields"] == []
+
+
+def test_capsule_without_a_proof_explains_why(tmp_path: Path) -> None:
+    cap = tmp_path / "no-proof"
+    cap.mkdir()
+    result = runner.invoke(app, ["redaction-xray", "--capsule", str(cap)])
+    assert result.exit_code == 2
+    assert "masking pipeline" in result.output
+
+
+def test_document_and_capsule_are_mutually_exclusive(tmp_path: Path) -> None:
+    cap = _capsule_with_proof(tmp_path, {"findings": []})
+    doc = tmp_path / "d.json"
+    doc.write_text(json.dumps({"fields": []}))
+    result = runner.invoke(
+        app, ["redaction-xray", str(doc), "--capsule", str(cap)]
+    )
+    assert result.exit_code == 2
+    assert "not both" in result.output
+
+
+def test_neither_document_nor_capsule_is_a_clear_error() -> None:
+    result = runner.invoke(app, ["redaction-xray"])
+    assert result.exit_code == 2
+    assert "--capsule" in result.output

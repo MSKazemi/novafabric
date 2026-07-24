@@ -9,6 +9,873 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.64.0] — 2026-07-24
+
+### Added
+- **Backup everything, restore, open and read (ADR-0216 + ADR-0217).** The `local`
+  backup profile now covers **every persistent local store** — incidents, metadata,
+  the PII DEK store (sensitive-flagged, restored 0600; crypto-shred replay still
+  guarantees shredded stays shredded, including shreds applied *after* the backup
+  via the moved-aside live audit log), seal transparency log, TSA nonces, ratchet
+  state (epoch regression burned on restore), dashboard DuckDB (native consistent
+  copy, skip-when-locked), spool, and the hash-chained audit log — with a signed
+  **coverage table** in the manifest so absences are evidence, never silence.
+  Signing keys stay excluded by default behind a dual opt-in
+  (`--include-keys`/`--restore-keys`). `nova restore` now **automates pg-dump
+  sets** (refuse-non-empty without `--force` + safety dump, single-transaction
+  `pg_restore`, alembic-to-head, manifest-anchored row counts, RLS
+  re-application + proof) and the ADR-0181 **manifest-only profile is wired**
+  (chain-head pinning against WORM buckets, WAL-drain guard, ancestor
+  verification + metadata rebuild on restore, exit 2 on unreachable bucket).
+  Manifest schema 0.2.0 (additive; 0.1.x sets still verify and restore).
+  End-to-end round-trip proven: backup → offline verify → restore into a fresh
+  home → registry/lineage/capsule/incident/metadata/seal/PII-decrypt all read
+  back through the real APIs.
+- **Graph-intelligence cohort (ADRs 0212–0215, experimental).** Four read-only
+  surfaces that turn the captured lineage graph into synthesized insight, with zero
+  new dependencies:
+  - `nova lineage metrics` — degree / PageRank (bounded power iteration; networkx 3.x
+    pagerank needs scipy, so it is hand-rolled) / seeded-sampled betweenness /
+    articulation points ("single points of failure"). Whole-graph reads are bounded:
+    new `all_nodes`/`all_edges` accessors raise `LineageGraphTooLargeError` instead of
+    silently truncating.
+  - `nova lineage root-cause <run-id>` — ranks upstream suspects with error cues shared
+    with ADR-0084, recency decay, an edge-confidence multiplier, and cross-run failure
+    correlation; refuses to fabricate a culprit when no error signal exists.
+  - `nova lineage export-graph` — byte-stable GraphML/GEXF/Cypher (idempotent `MERGE`)
+    export of the whole graph or a `--ref` neighbourhood, golden-fixture-tested.
+  - `nova insights` — one synthesized report (hubs, seeded Louvain communities,
+    orphans, health ratios, best-effort cost hotspots with honest degradation) as rich
+    table, deterministic JSON, or a shareable markdown artifact.
+
+
+### Security
+- **Enterprise-hardening security pass (ADR-0198).** Closes the one
+  exploitable-as-shipped finding from the 2026-07-24 audit: the RFC 8628
+  device-grant demo flow (`/v0/auth/device/code|token|approve`) is now opt-in via
+  `ServerConfig.demo_device_grant` (default off, env
+  `NOVAFABRIC_SERVER_DEMO_DEVICE_GRANT`), so the unauthenticated `/approve`
+  role-approval surface — which trusted a caller-supplied `roles` array and minted
+  an HS256 token signed with a hardcoded constant — is no longer mounted in
+  production. When enabled it validates roles against the RBAC allowlist and signs
+  with a per-process random secret. JWT verification is pinned to asymmetric
+  algorithms (RS/ES/PS/EdDSA), rejecting `HS*` before key selection to foreclose
+  the alg-confusion attack. Evidence-download endpoints validate `bundle_id`
+  against `^[A-Za-z0-9_-]+$` before any path join (3 sites). Defence-in-depth:
+  CSPRNG device user codes, a bounded+evicting device-code store, and
+  secret/key files created `0600` atomically (`os.open`) instead of write-then-chmod.
+- **Dependency triage round 2 — the satellite lockfiles.** The v0.62 triage covered the
+  root `uv.lock`; 23 of 24 open advisories were in lockfiles it never looked at
+  (`bench/lineage/uv.lock`, `examples/plugin-hook-reference/uv.lock`). Upgraded
+  cryptography → 49.0.0, pyjwt → 2.13.0, python-multipart → 0.0.32, aiohttp → 3.14.1,
+  and weasyprint → 69.0 in the root lock. Also bumped `aquasecurity/trivy-action`
+  0.28.0 → 0.35.0 in `publish-image.yml`, which sat inside the range of the briefly
+  compromised Trivy supply chain — the one critical advisory, and a CI-side one, which
+  is why a lockfile-only sweep missed it.
+- **`bench/lineage` was unresolvable.** Its `tool.uv.sources` pointed at
+  `../novafabric`, which resolves to `bench/novafabric` and does not exist, so the
+  project could not lock or build at all — and its lockfile therefore sat frozen at
+  whatever versions it was last written with. Repointed at the repo root.
+
+### Fixed
+- **Enterprise-hardening durability & reliability pass (2026-07-24 audit).** Backs
+  the product's crash-safety and concurrency claims with code:
+  - *fsync-before-rename* for capsule commit (`capsule/writer.py`, `orphan.py` via
+    new `capsule/_atomic.py`): a crash can no longer leave a visible-but-empty
+    capsule, matching the node spool's proven pattern.
+  - *All-version conditional PUT* in the object-store manifest chain
+    (`manifest_chain.py`): the in-process version cache is not shared across
+    writers, so a plain PUT let a second writer silently overwrite a version and
+    break the hash chain; every version now uses If-None-Match and retries on
+    conflict. A version > 1 whose predecessor can't be read now fails closed
+    (`ChainIntegrityError`) instead of forging a genesis-looking commit.
+  - *WAL dead-lettering* (`object_capsule_store/local_wal.py`, `client.py`): a WAL
+    row that fails to drain for a non-transient reason is dead-lettered after
+    `max_wal_attempts` (default 5) instead of being retried forever every cycle.
+  - *SQLite `busy_timeout`* on 9 shared-connection stores via new
+    `_sqlite_util.connect_sqlite` — they returned an immediate `database is locked`
+    under concurrent access instead of waiting.
+  - *Jittered scheduler-runner poll loops* (`runners/_poll.py`, ±15%) —
+    decorrelates the thundering herd on the Slurm/K8s/LSF/PBS control planes.
+  - *Bounded tree-assembly recursion* (`capsule/tree_assembler.py`,
+    `MAX_TREE_DEPTH=500`) — a deep acyclic chain fails with a named
+    `TreeDepthExceededError` instead of a bare `RecursionError`.
+- **Central hashing + Merkle delineation (ADR-0218).** New `_hashutil.py` is the
+  single source of truth for SHA-256 (bare + `sha256:`-prefixed, streaming file);
+  deduped two same-named helpers whose output and IO had silently drifted (one read
+  whole files into memory). A guard test + ADR-0218 formally delineate the two
+  Merkle constructions (they agree at power-of-two leaf counts and diverge at
+  3/5/6/7).
+- **Quality:** library `print()` → logging in the SoD verifier (it runs in server
+  routes where stderr is wrong; the message is already returned in the result); all
+  naive `datetime.utcnow()` removed (one was a latent local-time epoch bug); ruff
+  `C4` (comprehensions) enabled.
+- **The `make lint` gate could report a false green from a stale ruff cache.** For several hours it
+  printed "All checks passed!" while two real `I001` errors existed — errors introduced by this
+  session's own test-package fix, which changed how ruff's isort classified `from trend.conftest
+  import …` once `tests/trend/` became a package. Three separate agents reported the failures from
+  fresh checkouts and were told, wrongly, that main was clean. `make lint` now runs `--no-cache`: a
+  gate that can report a false green is worse than no gate, because it is trusted.
+- **Two normative "MUST carry the honesty line" requirements were unimplemented and unguarded.**
+  NF-221-230 and NF-231-240 both require every CLI output to carry a record-only honesty line.
+  `nova forensics timeline` printed none; `nova eval cost` had one only in its module docstring;
+  **no test anywhere asserted the property**, which is why it went unnoticed. The line now lives on
+  the record *model*, so `--json` carries it too — a banner the terminal shows but the payload omits
+  is absent exactly where the artifact travels furthest from the person who ran it. Guarded by
+  `tests/cli/test_honesty_lines.py`, which also checks the line actually *disclaims* something,
+  since "NovaFabric provides forensic timelines" would satisfy a naive presence check while
+  asserting the opposite of the invariant.
+- **`nova eval cost` was missing from `docs/cli-reference.md`** despite shipping.
+- **ADR-0148 and ADR-0149 asserted that shipped features were unbuilt.** 0148's Context calls
+  ADR-0125 and ADR-0128 "not yet built" while its own NF-165 code imports ADR-0128; 0149 says
+  ADR-0096 and ADR-0142/NF-101 are unshipped, and both ship. Same failure as ADR-0153's
+  `content_hash`, inverted: a cross-reference to another ADR's *implemented* surface read from
+  that ADR's prose rather than from the code.
+- **Test collection broke outright on same-named test modules.** `tests/embodied/test_facet.py` and
+  `tests/federation/test_facet.py`, written in parallel, collided at import: pytest resolves a test
+  module by bare basename unless its directory is a package, and **21 test directories were missing
+  `__init__.py`** against the repo's own convention. Markers restored, the three `test_facet.py`
+  files given descriptive names, and `tests/docs/test_test_layout.py` now asserts both properties —
+  a collision is invisible until two names coincide, so it is worth asserting rather than
+  remembering.
+- **`build_exchange` coerced `bytes` before the no-payloads validator saw it.** `list(import_refs)`
+  turned an inlined foreign bundle into a list of ints, downgrading "a payload crossed a reference
+  boundary" to "reference must be a string" — the error named the symptom instead of the problem.
+- **Unbounded recursion in the assurance-case cycle check.** `assure/case.py` used a recursive DFS
+  colouring to detect cycles, run by offline verifiers over graphs read from capsules they did not
+  produce — so graph depth is untrusted input and a deep chain overflowed the stack. CLAUDE.md's own
+  style rules require bounded recursion. Replaced with Kahn's algorithm plus an iterative cycle-path
+  extractor and a node cap checked before any traversal, with a regression test at depth 5,000.
+- **`create_app()` leaked a watchdog observer thread and an inotify instance per call.** The
+  watcher is only used inside the app lifespan and only the lifespan closes it, but it was
+  *constructed* eagerly — so a `TestClient` used without its context manager created one that
+  nothing closed. Two symptoms had one cause: the box's 512 inotify instances ran out
+  (`OSError: [Errno 24]` across the serve tier), and the accumulated threads eventually starved
+  an xdist worker of C stack inside pydantic-core's deeply-recursive schema generation,
+  **segfaulting the worker** — after which pytest blamed whichever test was running. That is
+  why this presented for weeks as an unreproducible "flake" naming a different test each time,
+  and why three earlier fixes for it were all aimed at the wrong place. Construction now
+  happens on first use inside the lifespan; shutdown closes only a watcher that was actually
+  built. Verified: inotify holds flat across the full serve tier, and five consecutive full
+  suite runs pass clean.
+- **ADR status lines claimed "future design, no implementation yet" for ten ADRs whose P1 now
+  ships.** Corrected to "partially implemented", each naming the shipped phase and pointing at
+  `implementation-status.md` as authoritative. Understating what shipped is the same
+  docs-honesty failure as overstating it.
+- **ADR-0153 claimed `RetrievedDocument.content_hash` was already shipped.** It stated so in
+  five places, including the phrase "the shipped `content_hash`". The field never existed —
+  the model carried `document_id`, `score` and opt-in `content` only, so the source-integrity
+  pin the ADR specifies had nothing to bind to. Corrected in place with a dated note rather
+  than silently edited: an ADR that assumes a dependency is already shipped sizes its own
+  first slice wrongly, and the mistake stays invisible until someone builds against the field.
+- **Two full-suite-only flakes in `tests/test_server_api_keys.py`.** Both tests took the
+  API key from `output.splitlines()[-1]`, which assumes the key is the last line printed.
+  Any trailing output breaks that, and under xdist a test does not control what else
+  writes to stdout. Both sites now match the `nvfk_` token by its own format and assert
+  it appears exactly once — which also turns the "shown once" guarantee into something
+  the test checks rather than trusts. The trigger for the extra output remains unproven;
+  the tests no longer depend on its absence. Earlier hypotheses (mid-token Rich wrapping,
+  global `COLUMNS` mutation) were both tested and ruled out, and the flake history is
+  recorded in the test.
+- **`coerce_legacy_edge_type()` silently downgraded newer edge types to `contains`.** It
+  resolved canonical values through `_LEGACY_EDGE_TYPE_MAP`, which only ever listed the
+  types that existed when it was written — so `member_of_session` (shipped in the v0.59
+  cohort) coerced to `contains`, turning a grouping edge into a false causal claim.
+  Canonical values now pass through by construction, and the regression test parametrises
+  over `EdgeType` so the next added type fails loudly instead of downgrading in silence.
+
+### Added
+- **Enterprise dashboard program — phase A+B (ADRs 0199/0200/0201, accepted 2026-07-24; all
+  experimental, additive, zero new runtime deps).**
+  - *Chart image export (client-side).* Shared `ChartCard` with a ⬇ SVG / PNG affordance —
+    the on-screen SVG is serialized with computed styles inlined (theme-correct colors) and
+    rasterized at 2× via canvas. Applied to the Analytics charts, the new Reports chart
+    preview, and a new Cost-tab cost-by-model chart. Playwright-covered in both themes.
+  - *Reports: registry + HTML/PDF artifacts with charts (ADR-0201).* The stdlib SVG chart
+    engine moved from `trend/html.py` into a shared `novafabric/viz` package (line/bar +
+    new stacked-bar/multi-line) with byte-identical trend output; a typed server-side
+    report registry (`GET /api/reports/catalog`) declares filters + honest chart specs;
+    `GET /api/reports/{id}/export?format=html|pdf` emits one self-contained file (no JS,
+    no external requests, canonical JSON embedded, explicit row-cap line). PDF renders
+    through the optional WeasyPrint extra and degrades to `501` + install hint. The CLI
+    gains `nova report --format html|pdf` on the same engine.
+  - *Scale slices S1/S2/S8 (ADR-0199).* Shared keyset cursor codec + page envelope
+    (`serve/pagination.py`); reverse-block audit-log tail reads with byte-offset cursors
+    (`/api/audit` cursor+action params; alerts feed bounded; AuditTab virtualized with
+    load-more); report/analytics aggregation pushed into indexed SQL on `runs_cache`
+    (new `substr(created_at,1,10)` expression index; the `limit=1_000_000` fetch-all
+    deleted; run-history keyset-paged with streaming CSV); a nightly `dashboard-scale`
+    CI gate seeding 100K rows with p95 thresholds recorded in `docs/ops/dashboard-scale.md`.
+  - *Parity classification guard (ADR-0200).* `commandParity.json` classifies every CLI
+    command (real-panel — machine-verified against api.ts + serve routes / builder-only /
+    cli-only + mandatory reason); a CI test fails when a new command lands unclassified.
+  - *Generic compliance-export registry (ADR-0200).* The 13 previously CLI-only
+    `export-*` commands (foia, whistleblower, election-disclosure, transparency-register,
+    accessibility-claim, citizen-explanation, public-incident, public-annex-viii,
+    public-disclosure, control-attestation, rai-scorecard, part11, model-risk) are wired
+    through one parameterized router (`GET /api/compliance/export/kinds` +
+    `POST /api/compliance/export/{kind}`) and one server-driven ComplianceTab panel —
+    audit-logged with `cli_equivalent`, field-keys-only in audit args (ADR-0009).
+  - *Phase C — CLI-parity panels P4 (query panel).* `POST /api/query` wraps the ADR-0129
+    query DSL's own `run_query` — `q` is the same JSON/YAML query-object document
+    `nova query --query-file` accepts (there is no unified query *string* grammar in
+    ADR-0129, so a literal `{q, engine}` free-text string was not buildable without adding
+    a second parsing surface; reusing `validate_query_object` keeps the panel exactly as
+    closed-allow-list as the CLI). Results render in a new "Custom query" section on the
+    Analytics tab (`DataTable` + a copy-as-CLI chip that reconstructs the equivalent
+    `nova query --select … --where … --group-by …` invocation from the parsed plan).
+    Router-level 5000-row cap independent of the plan's own (up to 10 000) `limit`.
+    `nova trend` / `nova view` were evaluated for the same treatment and left
+    `builder-only`: `trend` buckets and computes point statistics beyond a bare query
+    plan, and `view` is saved-query CRUD — neither reduces to one `run_query` call.
+  - *Phase C — P5 forensics timeline.* `GET /api/runs/{run_id}/forensics-timeline`
+    reconstructs a deterministic `ForensicsTimeline` from the run's own sealed capsule via
+    the pure `forensics.timeline.merge_timeline` (the same core `nova forensics timeline`
+    uses). Honest scope: only run-lifecycle / model-call / tool-call events the capsule
+    carries; missing timestamps and the absent lineage collector are reported as *gaps*,
+    never fabricated. Surfaced as a per-run "Forensics" view in RunsTab.
+  - *Phase C — P6 cost-analytics trio.* Three pure POST endpoints wrapping the `nova cost`
+    cores given a document instead of a file path: `/api/cost/attribute` (productive-vs-wasted
+    spend), `/api/cost/fairness` (per-agent share/Gini), `/api/cost/usage-breakdown` (token
+    composition). Descriptive only — no cost verdict. CostTab gains a document-driven tools panel.
+  - *Phase C — P7 backup-set status.* `GET /api/infra/backups` lists `NOVA_BACKUP_DIR`
+    archives via a read-only `backup.inventory.list_backup_sets` (manifest-claimed, **not**
+    verified — that stays `nova backup verify`); degrades to `{detected:false}` when
+    unconfigured like the collector card; corrupt archives are reported, never skipped.
+    New Backups card in InfraTab.
+  - *Phase C — S3 evidence/incident bounding (ADR-0199).* `GET /api/evidence` and
+    `GET /api/incidents` were fetch-all; both now bound the expensive work (evidence opens
+    at most `limit` archives; incidents push the bound into SQL via `list_recent`/`count`)
+    and report `total` + `truncated`. HomeTab's evidence KPI uses the true server total.
+  - *Phase C — S5 KG topology graph guards (ADR-0199).* `/api/kg/topology` `max_nodes`/
+    `max_edges` are bounded server-side (out-of-range → 422); `get_topology_graph` drops
+    edges to capped-out nodes instead of returning them dangling and reports `truncated` +
+    `truncated_reason`. KGTab shows a truncation banner.
+  - *Phase D — S4 keyset cursor (ADR-0199).* Keyset pagination helpers
+    (`encode_keyset`/`decode_keyset`/`keyset_page`) added alongside the offset ones;
+    `GET /v0/capsules` now pages by `run_id` keyset — stable across concurrent
+    uploads/deletes where offset paging could skip or repeat a row.
+  - *Phase D — S6 conditional-GET + Cache-Control (ADR-0199).* `serve/http_cache.conditional_json`
+    returns `304` when the client's `If-None-Match` matches the payload's content hash, else
+    a `200` with a strong content ETag + private `Cache-Control` max-age. Applied to the
+    analytics summary, forensics timeline, and backup-status read surfaces.
+  - *Phase D — E1 Export Center.* A new "Export" tab consolidating every export into one
+    destination — reusing the server-catalog-driven `GenericExportPanel` (no export logic
+    duplicated) plus a jump-link directory to the evidence/lineage/reports/compliance export
+    surfaces that own their subject tab.
+  - *Phase D — E2 saved views.* Client-only named filter presets (localStorage) for the Runs
+    list — save the current search/status/sort/date window and re-apply or delete it. No
+    endpoint, no auth surface; all storage access is defensive.
+  - *Phase D — P8-P10 safe mutations.* A confirm-gated Maintenance card (InfraTab) with three
+    idempotent, lossless recompute actions: reindex runs cache (new
+    `POST /api/admin/reindex-runs`, an APIRouter module per the ADR-0183 route freeze),
+    re-seed topology (`/api/topology/seed`), and rebuild the knowledge graph
+    (`/api/kg/ingest-all`). None deletes user data.
+- **Top-10 must-have campaign — ten first slices, all experimental (ADRs 0202–0211,
+  2026-07-24).** A three-agent evidence sweep (documented backlog / code-level stubs /
+  operational must-haves) selected the ten most important missing-or-weak capabilities;
+  each shipped as an ADR + v0 spec + tested vertical slice:
+  - **Python client SDK** (`novafabric.client`, ADR-0202) — sync httpx REST client for
+    `/v0`: nvfk_/token auth, capsule upload, cursor-paginated listing, scores, typed
+    error taxonomy, bounded retries. The TS SDK now has a Python peer (and superset:
+    upload).
+  - **Server ingest hardening** (ADR-0203) — 256 MiB size cap (413), chunked
+    spool-to-disk (no more whole-ZIP-in-memory), zip-bomb guards (422), and two real
+    defect fixes: a **zip-slip traversal** (member paths escaped the capsule store) and
+    a crash-wedged run_id that 409'd forever (atomic temp-dir + rename).
+  - **Capsule content search** (ADR-0204) — SQLite FTS5 index over post-redaction
+    capsule text (prompts/completions/tool calls), `nova search` CLI + `scope=content`
+    on `/api/runs/search`; the corpus is provably a subset of the secret scanner's
+    targets.
+  - **Webhook subscription registry** (ADR-0205) — `/v0/webhooks` CRUD + ping +
+    delivery log + redeliver; `nvwh_` shown-once secrets (KEK-wrapped at rest),
+    Stripe-style `t=…,v1=…` HMAC signatures, bounded queue + 5-attempt backoff,
+    never blocks ingest.
+  - **Keyset pagination + capsule deletion** (ADR-0206) — opaque v1 seek cursors on
+    `GET /v0/capsules` (legacy offset cursors deprecated per ADR-0188),
+    `DELETE /v0/capsules/{run_id}` + bounded `bulk-delete` with legal-hold/WORM
+    refusal, audit trail, and derived-index cleanup.
+  - **Verified batch import** (`nova import`, ADR-0207) — the inverse of the ADR-0141
+    export: manifest-signature + content-hash verification (fail-closed), hardened
+    staged unpack, content-addressed idempotency, collision refusal, receipts; enables
+    air-gap transfer and DR drills.
+  - **Usage metering + per-workspace quotas** (ADR-0208) — ingest-time usage ledger,
+    `GET /v0/usage`, warn-then-reject workspace budgets on the existing quota ladder.
+  - **Extended-event capture wiring** (ADR-0209) — public `novafabric.capture.record`
+    façade for the seven previously-unwired recorder events, real wirings (OpenAI
+    Agents guardrail spans, LangGraph state transitions, `wrap_retriever`),
+    aiohttp/urllib3 network-capture parity, and closure of a latent redaction hole
+    (extended streams are now secret-scanner targets).
+  - **Real REST erasure** (ADR-0210) — the erasure endpoints were silent no-op stubs
+    (always "PENDING", erased nothing); now a persisted request queue executes the real
+    DEK crypto-shred behind the safe-mutations gate, with receipts, fail-closed states,
+    and hash-only subject logging.
+  - **schema-skew guard + migration-track disambiguation** (ADR-0211 Part B) — a
+    fail-closed startup schema-skew guard (`NOVAFABRIC_ALLOW_SCHEMA_SKEW=1` escape
+    hatch) and `nova db upgrade --track` closing the dual-alembic wrong-database
+    trap. *Part A of ADR-0211 (a parallel `--profile pg` restore path) was
+    superseded at merge by ADR-0217's manifest-driven `nova restore` (above) —
+    one restore path ships.*
+- **Additive `facets` container on the Run Capsule schema (ADR-0196).** Five accepted ADRs
+  place their evidence under `facets.<name>`, and their P1 slices shipped writing that key
+  — but `facets` was never declared on `run-capsule.schema.json`, which sets
+  `additionalProperties: false`. **Every facet-bearing capsule failed schema validation.**
+  The gap survived review because all five slices' tests operate on plain dicts, so nothing
+  validated a facet-bearing capsule against the real schema; that missing boundary test is
+  the actual root cause and now exists. `facets` is deliberately separate from `extensions`
+  (an auditor must be able to tell NovaFabric-recorded evidence from a third-party vendor
+  annotation) and its registry is deliberately closed (an unregistered name is either a typo
+  that silently drops evidence, or an unreviewed evidence surface — the same permissive
+  failure that let `member_of_session` degrade silently for two releases). Cost accepted:
+  each new facet ADR adds one line here.
+- **A2A message-envelope facet (ADR-0142 P1, NF-101, experimental).** `MessagePart`
+  content-hash + agent-card fingerprint binding, reference-only. `blob_ref` is typed `None`
+  so "no byte capture in P1" is enforced by mypy and pydantic rather than by docstring.
+  Zero-part hashing raises rather than returning the digest of an empty list, which would
+  verify against any other empty message; a duplicate `msg_id` raises rather than being
+  silently de-duplicated. Facet ordering is serialisation order, explicitly not a
+  happens-before claim (D3).
+- **Model-provenance facet (ADR-0152 P1, NF-201/NF-203, experimental).** Binds NF-055/057/058
+  producer artifacts by digest. `model_id` alone does not constitute provenance material, so
+  no facet is written for it. `verified` flags are tri-state and omitted entirely from a
+  P1-built facet rather than reporting `signature_ok: true` for a check this phase does not
+  perform.
+- **Retrieval source-integrity pin + fetch provenance (ADR-0153 P1, NF-215/NF-218,
+  experimental).** Additive pin fields on `RetrievedDocument` and a `fetch_provenance` facet.
+  URL userinfo credentials are refused while query strings are preserved verbatim —
+  asymmetric on purpose, since the exact URL fetched is the evidence.
+- **Settlement facet (ADR-0163 P1, NF-311, experimental).** Binds mandate and settlement
+  confirmation by digest, with payment-secret rejection. Money is integer minor units plus an
+  ISO-4217 code, never a float. Fail-open governs *missing* material; rejection governs
+  *poisoned* material — a caller who passed a card number needs to know they did.
+- **Conversation-thread provenance (ADR-0150 P1, NF-181, experimental).** `facets.conversation`
+  with digest-only turns — the facet records that a human said something and when, never what.
+  `content_digest` is required, not optional: an unbound turn is an attribution claim with
+  nothing to verify. `role` must match the author ref's scheme, since a `human` turn authored
+  by `agent:…` corrupts the one fact the facet exists to establish.
+- **Science-provenance DAG (ADR-0164 P1, NF-321, experimental).** `facets.science_provenance`
+  with acyclicity and parent resolution enforced, not assumed. `parent` accepts a list as well
+  as the ADR's scalar, because converging science (two observations → one result) is ordinary
+  and a scalar parent makes "DAG" and "acyclicity" near-vacuous. Kahn's algorithm, fully
+  iterative with a node cap — this runs inside offline verifiers on untrusted capsules.
+  Fail-open covers *absent* material, not *incoherent* material: sealing a DAG nobody can walk
+  is worse evidence than sealing none.
+- **Preservation anchor + fixity log (ADR-0165 P1, NF-331/NF-335, experimental).**
+  `facets.preservation` (OAIS Fixity + PREMIS provenance) with an append-only fixity log.
+  Bit-rot status is **sticky** — healed rot is still evidence that it happened — and the log is
+  deliberately unsorted, unlike sibling facets, because append-only order *is* the record and
+  sorting would silently repair an out-of-order log. Uses neither Merkle construction, with a
+  test asserting it imports neither, since mixing the two silently yields a wrong root.
+- **Frontier-safety facet (ADR-0167 P1, NF-351/NF-353, experimental).** `facets.frontier_safety`
+  binding a threshold-eval ref and a published-commitment digest. The load-bearing invariant:
+  `verdict` is either null or carries **both** `verdict_ref` and `verdict_source`. NovaFabric
+  never authors a frontier-safety verdict, and an unattributed one raises — including a bare
+  `False`, which a truthiness check would have let through as NovaFabric declaring a model
+  unsafe on its own authority.
+- **Assurance-case facet + argument graph (ADR-0166 P1, NF-341/NF-342, experimental).** The
+  standalone-document half of D1 had shipped; the *facet* half — the thing ADR-0196 registered in
+  the schema — had no writer anywhere. Adds it to the existing `assure/case.py` rather than a new
+  package. `CaseVerification` carries no soundness score, and a test asserts none can leak in: a
+  numeric verdict would read as certification, which NovaFabric does not issue.
+- **Per-agent cost attribution + conservation invariant (ADR-0146 P1, NF-141, experimental).**
+  `facets.cost_attribution` with integer minor units and integer millijoules — never float. The
+  spec's `conservation.epsilon` is dropped rather than recorded as zero: it exists only because of
+  the float, and any epsilon large enough to absorb float noise is large enough to hide a real
+  mis-split. Largest-remainder apportionment with a deterministic tiebreak, so a non-dividing total
+  still sums exactly. An all-zero apportionment key raises rather than falling back to an even
+  split, because an all-zero key is not a stated key and splitting evenly over it fabricates a basis.
+- **Memstore mutation ledger (ADR-0171 P1, NF-391, experimental).** A hash *chain*, not a tree —
+  sha256 over canonical JSON with `prev_hash`, matching `audit/_log.py` rather than inventing a
+  third scheme, and importing neither Merkle module. A mutation history is ordered, so the head
+  digest commits to the whole prefix by induction. Load-bearing subtlety, tested explicitly: a bare
+  chain **cannot** detect tail truncation — every remaining link still verifies — so the separately
+  sealed head digest is the detector, and nobody should read a green chain walk as proof nothing
+  was dropped.
+- **Risk-transfer actuarial facet (ADR-0170 P1, NF-381/NF-382, experimental).** Loss features as
+  counts and digests, DFIR bundle bound by digest. `unbound` distinguishes four cases, and the one
+  that matters is *no resolver supplied* → `unbound: False`, because no check was performed and
+  inventing a finding would be a lie in the direction of alarm. `failure_mode` digests the exception
+  class only; `error.message` is never read, since it carries the incident narrative.
+- **Embodied sensors + actuation facet (ADR-0162 P1, NF-301/NF-302, experimental).**
+  `facets.embodied` with per-stream provenance as digests, counts and C2PA refs — raw sensor bytes
+  are **refused** with a named exception, not silently digested. The property that matters: a
+  receipt-less command cannot be marked bound on *any* construction path, because `unbound` is
+  forced by a model validator rather than only inside the builder. `action_receipt_ref: null,
+  unbound: false` would read, to anyone reconstructing a physical incident, as a *confirmed*
+  motion. A resolver returning the wrong bytes is also `unbound` — calling that bound because the
+  lookup succeeded is the more dangerous of the two failures.
+- **Federation exchange + trust-anchor pin (ADR-0168 P1, NF-361/NF-362, experimental).**
+  `facets.federation` binding a foreign capsule by digest with `no_shared_backend`, plus a foreign
+  trust-bundle pin. Distinct from the pre-existing `lineage/federation/`, which despite the name is
+  an *intra-org* query transport that assumes a shared operator and backend — the opposite side of
+  the trust boundary. P1 has no path walk, and that is enforced structurally rather than documented:
+  no `trust_path` or `hops` field exists, `AnchorState` has no `trusted` member, and a test asserts
+  the package exports nothing matching walk/transitive/path/chain/delegat. Anchor matching is exact
+  equality, tested against both suffix (`evil-orgB.example`) and prefix
+  (`orgB.example.attacker.tld`) attacks.
+- **Injection/jailbreak attempt provenance (ADR-0145 P2, NF-132/NF-133, experimental).** Attempts
+  are recorded by payload digest and source span, never by text. The design decision that makes the
+  boundary hold is a *subtraction*: attempt objects carry **no free-prose field at all**, because
+  prose about an attack quotes the attack. With no prose field, every legitimate string is an id,
+  label or digest, which is what makes the length cap non-invasive. `attach_facet` now prunes empty
+  lists, so a decisions-only capsule does not newly emit `"injection": []` — which would read as
+  "checked, found nothing".
+- **Context receipt + grounding map (ADR-0143 P2, NF-113/NF-112, experimental).** Ordered context
+  manifest with `receipt_digest`, and a span→chunk support map that is **recorded, never scored**.
+  `RetrievedDocument.score` is deliberately excluded from a chunk reference: a similarity score
+  inside a field named `supported_by` reads as support *strength* downstream, which is the illusion
+  of groundedness the ADR exists to prevent. Ships as a standalone artifact, not a capsule facet,
+  because the facet registry is closed and neither name is registered.
+- **Model checkpoint chain + fingerprint pin (ADR-0152 P2, NF-202/NF-206, experimental).** A hash
+  *chain* folded with a running head — neither Merkle module touched. Tail truncation is tested from
+  both sides: `verify_chain` returns all-green on a truncated chain, and the separately-sealed
+  `checkpoint_chain_head` is what catches it. `parent` accepts a list because the ADR's own stage
+  vocabulary includes `merged`, which a scalar cannot express.
+- **Settlement reconciliation, finality and non-repudiation (ADR-0163 P2, NF-312/313/314,
+  experimental).** Authorized↔observed discrepancies are recorded, never resolved. A currency
+  mismatch suppresses the amount comparison rather than converting, since cross-currency amounts are
+  incomparable without an FX rate and choosing one would be NovaFabric adjudicating. **Departure from
+  the ADR worth review:** `captured` was added to the six normative finality states — card rails
+  treat authorize/capture/settle as three positions of the money, and folding capture into `settled`
+  commits exactly the "not-yet-final renders as final" error NF-313 exists to prevent.
+- **Trajectory canonicalization + equivalence (ADR-0144 D2/P1, NF-128/NF-122,
+  experimental).** `novafabric.replay.equivalence` compares two tool-call trajectories
+  under a declared match mode (`set`/`ordered`/`edit`) and tolerance, reporting the
+  divergent steps. The case it exists for: **a dropped or added tool call is a divergence
+  even when the token stream matched** — the model can narrate the same answer while
+  having skipped the call that made it true, which a transcript byte-diff misses.
+  Canonicalization runs first and is auditable: every rule is named, individually
+  switchable, versioned, and the result records which rules actually *changed* something
+  rather than which were enabled. Two deliberate refusals to be clever — nothing is
+  assumed commutable (reordering applies only to tool names the caller declares
+  independent, since inferred commutativity would normalize away genuine ordering bugs),
+  and argument *values* are never coerced (so a replay passing `"1"` where the baseline
+  passed `1` still fails). Default tolerance is exact, so slack must be asked for and is
+  therefore recorded. Goal-completion equivalence (D1) and the composite drift score (D3)
+  remain planned.
+- **Guardrail-decision objects (ADR-0145 D1/P1, NF-131, experimental).** A runtime
+  `GuardrailEvent` can now be promoted to sealed evidence: `novafabric.safety` adds the
+  digest binding, rule/reason provenance and detector attribution the raw event lacks,
+  in an optional `facets.safety` block. **Record-only** — NovaFabric records that a
+  guardrail fired; it never made the decision and never enforced it, and a test asserts
+  the package exposes no enforcement entry point. The judged content is present only as
+  `decision_inputs_digest`; opt-in detector `details` are deliberately *not* copied into
+  `reason`, which would launder opt-in content into an always-exported field. A detector
+  whose outcome is `error` raises rather than mapping to `allow`: it expressed no
+  verdict, and a missing decision is itself evidence (D5). A capsule with no guardrail
+  material is unchanged. No CLI yet — P1 is the object and the mapping.
+- **Memory provenance edges + `nova memory` (ADR-0143 P1, NF-111/NF-114).** A poisoned
+  memory item can now be back-traced to the run that wrote it, and its blast radius
+  enumerated: `wrote_memory` (run → item) and `read_memory` (item → run) join the typed
+  edge vocabulary, and `nova memory lineage|trace` query them from a capsule. The pair is
+  split by direction on purpose — a back-trace has to distinguish who **wrote** a bad item
+  from who **read** it, which one bidirectional edge could not express. No content
+  capture: provenance is by key, so the graph never becomes a second copy of the values
+  (ADR-0021 §4). Trace scope is one capsule; cross-capsule memory provenance is planned.
+- **Trust-surface endpoints on `nova serve` (ADR-0173/0174, experimental).**
+  `GET /api/runs/{run_id}/trust-radar` and `GET /api/runs/{run_id}/redaction-xray` expose
+  the projections that were CLI-only, so nothing could consume them programmatically and
+  the capsule-detail glyphs had no data source. They use the **same projection** the CLI
+  renders — a test asserts byte-identical output — because two code paths reporting a
+  capsule's trust posture could disagree, and in this subsystem a disagreement is worse
+  than exposing nothing.
+
+  The X-Ray returns **paths and states only**; a field value can never leave (ADR-0009,
+  pinned by a test that plants a secret in a finding's `value`). A capsule captured
+  without the masking pipeline returns an empty report rather than 404 — "nothing was
+  scanned" is a real answer, not a missing resource. They land as an `APIRouter`
+  (`serve/routers/trust_surfaces.py`) rather than inline `serve` routes, per the ADR-0183
+  strangler discipline — so `server/` can mount the same routes behind OIDC/RBAC — and
+  the frozen inline-route count enforces that rather than trusting it.
+
+  `docs/api-reference.md` regenerated; that pass also picked up `/livez`, `/readyz` and
+  `/metrics`, which the committed file had been missing.
+- **MCP conformance vectors + CI lane (NF-038 R9, experimental).** `nova mcp conformance
+  <dir>` replays recorded 2026-07-28 exchanges and asserts the capture shape each must
+  produce; a `mcp-conformance` CI lane runs it plus `nova mcp card validate` on every PR
+  touching `proxy/`, `capture/hooks/_mcp.py`, `mcp/`, or `tests/mcp/`.
+
+  These exist because **MCP capture is evidence**: a spec drift that silently changes
+  what gets recorded fails no ordinary test — the code runs, the capsule writes, and the
+  damage only appears when someone tries to replay an exchange months later and the turn
+  structure is gone. Shipped vectors cover a two-round elicitation, concurrent
+  interleaved exchanges, Tasks passthrough, and an uncorrelatable leg that must *not* be
+  captured. Each carries a `why` printed on failure, so the person deciding whether the
+  behaviour or the vector is wrong knows what it was protecting — and a test enforces
+  that every vector has one.
+- **Elicited inputs cannot reach the capsule as raw values (NF-038 R6).** Elicitation
+  carries user-typed content, so it is a prime channel for a secret to enter evidence.
+  The capture records a **digest and never the payload** — stronger than scanning, since
+  a scanner can miss a novel secret shape but an absent value cannot leak one. Proven
+  end-to-end by scanning every byte written to a capsule after driving a secret through
+  the real proxy, not just asserted at the unit boundary.
+- **SEP-2322 multi-round-trip capture (NF-038 R3–R5/R10, experimental).** MCP 2026-07-28
+  replaced server-initiated sampling/elicitation with payload-carried
+  `inputRequired`/`inputResponses` round-trips. The proxy captured neither: an
+  elicitation leg is not a `tools/call`, so the shipped filter dropped it. Both legs are
+  now captured as first-class, round-indexed records — a two-round exchange yields four
+  records sharing one `mcp_exchange_id` with rounds 1,1,2,2 and alternating `direction`,
+  so the turn structure survives into replay rather than flattening to a message list.
+
+  **Grouped by JSON-RPC id, not arrival order** — concurrent exchanges interleave on the
+  wire, and keying off order would splice two conversations together, which is worse than
+  not capturing them. A leg with no id is *not* captured, since correlating it under a
+  fabricated id would invent a grouping that does not exist.
+
+  A Tasks extension is recorded by **presence and digest** without being understood
+  (R5) — Tasks left core in 2026-07-28, and NovaFabric detects rather than executes it,
+  but a capsule that silently dropped it would lose provenance. Elicitation is never
+  marked `mutates`, since it asks a human for input rather than acting on the world, and
+  marking it so would inflate the mutating-tool count the replay-safety gate reads. An
+  unfamiliar negotiated protocol version logs a warning but is still forwarded (R10):
+  refusing would break a working client to protect a secondary guarantee. Capture is
+  fail-open throughout — the user's MCP session matters more than our evidence of it.
+- **MCP Server Card (NF-039 / SEP-1649, experimental) — BQ-W1-09 first slice.**
+  `nova serve` now publishes an SEP-1649 discovery document at
+  `GET /.well-known/mcp.json`, and `nova mcp card show|validate` prints and checks it.
+  It advertises MCP `2026-07-28` (the "stateless" release), with `tasks` marked
+  `{"extension": true}` — that release moved Tasks out of core, and NovaFabric detects
+  and captures Tasks-bearing messages without executing them, so the card says exactly
+  that rather than implying execution support.
+
+  **Generated from live config, never hand-written** — the spec rejects a static card
+  because it drifts, and a discovery document that has drifted is worse than none: a
+  client trusts it precisely for being authoritative. The `auth` block reports what is
+  actually in force (`oidc`/`bearer`/`none`), stating `none` explicitly rather than
+  omitting it, since silence would invite a client to assume there is some. The route is
+  **unauthenticated by design** — gating a discovery document behind the auth it
+  describes would make it undiscoverable — and carries only non-secret facts.
+
+  Validation is strict about structure, permissive about unknown keys: SEP-1649 is
+  evolving, so an unrecognised field is forward-compatibility, while a missing required
+  field means a client cannot rely on the document.
+
+  NF-038 (proxy 2026-07-28 conformance, SEP-2322 round-trip capture) is the next slice
+  and is not in this one.
+- **`nova audit-log export --format cef` (ADR-0191 slice 2, experimental).** ArcSight
+  CEF:0 rendering for legacy SIEM collectors. The OCSF class selection is reused
+  verbatim — the two formats can never disagree about what an event is (enforced by
+  test for every mapped event type) — while the CEF signature id keeps the *native*
+  `event_type`/`action`, so mapping to a standard format never flattens away the
+  product taxonomy. No silent loss (ADR-0191 D5): `entry_hash`/`prev_hash` become
+  labelled custom strings (`cs1`/`cs2`) and every remaining redacted field is packed
+  into `cs6` as compact JSON. The manifest line is itself emitted as a CEF event, so a
+  `cef` stream is pure CEF with no JSON line 1 to special-case. Escaping is tested
+  against a payload containing `|`, `=`, `\` and a newline. Redaction, chain
+  verification, window filtering and the no-socket guarantee are unchanged. Still zero
+  new dependencies. Spec: `design/spec/audit-siem-egress-v0.md` §2b.
+  `tail --follow` and the `server` source remain deferred.
+
+- **`nova audit-log tail` (ADR-0191 slice 3, experimental).** Streams audit entries to
+  stdout as they are written, in all three formats, through the same redaction and
+  chain-verification code paths as `export` (extracted into `render_record` /
+  `_ChainVerifier` so the two surfaces cannot drift). A foreground process you run —
+  not a managed daemon, no network sink, no default endpoint: pipe stdout into your own
+  shipper. Starts at EOF by default (`tail` semantics), `--from-start` replays first,
+  and without `--follow` it is a bounded single pass that is safe in a script.
+  Rename-based rotation drains the old handle *before* reopening, so entries written
+  just before the rename are not lost; in-place truncation reopens from 0; a
+  not-yet-existing log is waited for; torn lines are buffered rather than parsed as
+  corrupt. Chain continuity across a rotation is reported as unverifiable rather than
+  silently restarted. Retained chain errors are bounded with an exact count preserved.
+  The RFC 5424 local-syslog sink of D3 remains deferred.
+- **`nova audit-log tail --out` rotating-file sink (ADR-0191 slice 4, experimental).**
+  Writes to a size-bounded, generation-bounded file for a file shipper to pick up
+  (`--max-bytes`, `--backup-count`). Rotation happens *before* a write that would cross
+  the threshold, so a rendered record is never split across two files — a half-record is
+  unparseable to the collector reading it. An oversized single record is written whole
+  rather than truncated, for the same reason. `--backup-count 0` truncates instead of
+  keeping generations, bounding total disk use; reopening appends, so a restarted tailer
+  does not destroy what it already shipped; a `--max-bytes` below 1 KiB is rejected
+  rather than producing a file per line. Sinks are structural (`LineSink`), so stdout
+  stays the zero-configuration default. Still no network sink.
+- **`nova audit-log tail --syslog` RFC 5424 sink (ADR-0191 slice 5 — D3 complete,
+  experimental).** Sends RFC 5424 messages to a **local** syslog endpoint: a unix
+  socket (`SOCK_DGRAM`, falling back to `SOCK_STREAM` since `/dev/log` differs by
+  platform) or a loopback UDP/TCP address, with RFC 6587 octet counting on TCP so a
+  stream receiver can find message boundaries. The MSG body is byte-identical to what
+  the other sinks emit. UDP messages are bounded (default 2048, the RFC 5424 recommended
+  receiver minimum) and any shortening is **marked** with `…[NOVAFABRIC-TRUNCATED]`,
+  never silent — a silently truncated audit record reads as a complete one, which is a
+  false negative in an investigation.
+
+  **Socket-posture note.** This is the first part of the audit-log surface that opens a
+  socket at all. Nothing opens one unless an operator names an endpoint, and the
+  endpoint is constrained *in code* to a unix socket or loopback address — a
+  non-loopback host is **refused**, not warned about, because ADR-0191 D3 scopes this
+  to a local endpoint and D6 rejects built-in network senders. The no-socket test still
+  pins `export` and stdout/file `tail`, and now documents that the guarantee is
+  conditional rather than absolute.
+
+- **`@novafabric/sdk` dual ESM/CommonJS build (ADR-0194 D5, experimental).** The package
+  was ESM-only; D5 promised "ESM-first with CJS compatibility" and the README honestly
+  flagged the gap. Now both: a second `tsc` pass into `dist/cjs` plus a nested
+  `dist/cjs/package.json` declaring `{"type":"commonjs"}`, which scopes the override
+  away from the root `"type": "module"`. The `exports` map carries per-condition
+  `types`, so a `node16`/`nodenext` CJS consumer resolves CJS-flavoured declarations
+  rather than ESM ones; `main`/`module` cover resolvers that ignore `exports`. No
+  bundler and no new dependency. CI builds both and runs a real `require()` of the
+  output with plain Node — deliberately not a vitest assertion about the `exports` map,
+  since a test runner's own resolver can mask a genuine `require()` failure at the
+  ESM/CJS boundary. npm-publish automation remains out of scope by design (manual, from
+  the public repo only).
+
+- **Five more wired `ops.*` alert sources (ADR-0192, experimental).** Until now only
+  `ops.quota.breached` was actually emitted; the other five types were declared but
+  never fired. Now wired: `ops.rate_limit.sustained` (server rate-limit middleware),
+  `ops.policy.violation` (promotion policy gate — emitted on the *deny*, so a `--force`
+  override still alerts, since an operator bypassing a gate is exactly what someone
+  should learn about), `ops.drift.detected` (`nova drift detect`, emitted before the
+  `--json` branch so the alert doesn't depend on output format), `ops.seal.verify_failed`
+  (`nova verify`), and `ops.backup.failed` (`nova backup create`/`verify`, both failure
+  paths). Emitters live in one module (`novafabric/events/sources.py`) so payload shapes
+  and severities are defined once. Severity is conservative and documented:
+  `critical` only where a guarantee is *already broken* (seal verification, backup),
+  `warning` where a guardrail fired as designed (rate limit, policy deny, drift). All
+  remain no-ops unless a `NOVA_ALERTS_*` endpoint is configured, all are fail-safe, and
+  request-path emissions are backgrounded. A completeness test now fails CI if a new
+  `ops.*` type is declared without a wired source.
+
+### Investigated, not shipped
+- **`nova merkle-tree --capsule` was built and then reverted.** Attempting it surfaced
+  that this repo has **two different Merkle constructions**: `evidence/merkle.py` is
+  RFC 6962 (`0x00`/`0x01` prefixes, power-of-2 split, used by `capsule_merkle_root`),
+  while `trust/novaseal/merkle.py` pairs with odd-duplicate padding and is what
+  `build_proof_tree` consumes. An adapter feeding RFC 6962 leaves into NovaSeal's pairing
+  produces a root matching *neither* — verified on a real capsule. Two honest-looking
+  answers that disagree, in the subsystem whose only job is establishing what a capsule
+  *is*, would be worse than having no proof tree, so it was reverted rather than shipped.
+  A correct adapter must use NovaSeal leaves and is only meaningful for a **sealed**
+  capsule. Recorded in ADR-0172.
+
+### Added
+- **`nova trust-radar --capsule <dir>` (ADR-0173, experimental).** Derives the radar's
+  guarantees from a capsule instead of a hand-assembled JSON document
+  (`trust/capsule_flags.py`). The rule it is built around: **absent is not false.** An
+  unsealed capsule is *unverified*, not *failed*, so its seal axes render `n/a`; a
+  missing NovaSeal profile means verification could not run, not that it failed. That
+  distinction matters most here, on the surface whose whole job is reporting what is
+  proven — a fabricated verdict in either direction is its worst possible defect.
+
+  `policy_pass`/`eval_gate_pass` are deliberately never derived from a capsule: those are
+  registry/promotion facts, and inferring them would attach a promotion verdict to the
+  wrong artifact. A clean capsule reports `redaction_coverage: 1.0` (nothing sensitive to
+  cover) rather than `0.0`, which would paint it red — precisely backwards.
+- **`nova redaction-xray --capsule <dir>` (ADR-0174, experimental).** The trust surfaces
+  all required a hand-assembled JSON document, and `--capsule-id` was only a *label*
+  stamped into the output — it selected nothing, despite reading as though it picks a
+  capsule. The X-Ray can now read a capsule's own `redaction-proof.json` directly. A
+  capsule with zero findings is reported as a genuine result (nothing sensitive found),
+  not an error; a capsule captured without the masking pipeline says so explicitly rather
+  than failing opaquely. `--capsule-id`'s help now states plainly that it is a label.
+
+  Honest scope: `nova merkle-tree` and `nova trust-radar` still require a pre-built
+  document and cannot point at a capsule. That — not the missing SVG work — is the real
+  prerequisite for the ADR-0172/0173 capsule-detail glyphs, and it is recorded in
+  ADR-0174.
+- **`nova prompt promote` (ADR-0112 P4, experimental).** A thin alias into the existing
+  eval-gated `nova promote direct` — deliberately an alias, not a second promotion path,
+  so prompts go through the same eval gate, policy gate, audit entry and lifecycle
+  transitions as every other asset type. A separate implementation would be a second
+  place for those gates to drift. It adds one thing: a type check, so promoting a
+  non-prompt asset through the prompt surface is refused rather than silently working —
+  the command should mean what its name says.
+- **`member_of_session` lineage edge (ADR-0122 D3 / P4, experimental).** Sessions could be
+  created and listed, but the grouping relationship had no edge type — so a session was
+  invisible to lineage queries. Added to the ADR-0044 vocabulary as an explicitly
+  **grouping** edge and mapped to `prov:hadMember`, *not* to any causal PROV term:
+  session members are independent runs performed in sequence, and mapping one to
+  `wasInformedBy`/`wasGeneratedBy` would assert a causal relationship ADR-0122
+  explicitly denies.
+
+  Deliberately added to `lineage-edge.schema.json` **only** — it stays out of
+  `parent_child_capsule_v1.schema.json`, because that schema describes one execution's
+  internal hierarchy while a session groups independent runs. A test fails if it ever
+  leaks in, so the separation is enforced rather than merely documented. `nova lineage
+  --edge-type` accepts it, and a test keeps that filter in step with the enum.
+- **`nova annotate queue populate` (ADR-0118 P2 complete, experimental).** A queue's
+  `subject_selector` modelled `run_ids`/`tags`/`tool_names`/`sample` from the first
+  slice but was only ever enforced as an enqueue-time *guard* — nothing enumerated
+  stored capsules against it, so every subject had to be added by hand. This closes it:
+  the command scans the capsule store and enqueues everything matching (all present
+  selector keys ANDed).
+
+  Two properties are load-bearing and tested. **Idempotent** — a subject already on the
+  queue is skipped, so re-running after new capsules land adds only the new ones, which
+  makes it safe to schedule (a review queue nobody refills is a review queue nobody
+  uses). **Deterministic sampling** — `sample` is applied by hashing the subject digest,
+  not at random, so repeat runs select the same subjects; a random sample would make the
+  review set unreproducible, and for an evidence product an auditor asking "why was this
+  run reviewed and that one not?" must get a stable answer. A span-scoped queue refuses
+  auto-population outright rather than guessing, since spans are not enumerable from the
+  capsule store. `--dry-run` reports without writing.
+- **`asset://` comment subjects (ADR-0121 P3 — ADR-0121 now complete, experimental).**
+  `nova comment add|list|thread` now accept `asset://<type>/<name>@<version>` subjects,
+  annotating **registry assets** rather than capsules. Assets have no capsule log, so
+  these live in a new `asset_comments` registry table — but they are the *same* `Comment`
+  records with the *same* append-only invariants: rows are never updated or deleted, an
+  edit is a reply and a delete is a tombstone. The reader-side helpers (`apply_tombstones`,
+  `resolve_thread`) are shared unchanged, and the ADR-0009 secret gate applies identically
+  — pinned by tests, since a new storage backend is exactly where a security gate gets
+  quietly bypassed. `--subject` and `--kind` must agree in both directions.
+- **`nova export-blob --query` (ADR-0141 + ADR-0129, experimental).** Export members can
+  now be selected with a query filter — `--query "model = 'gpt-4o'"`, `--query "status =
+  'error'"` — instead of only explicitly or by time window. The manifest's `query`
+  provenance field already existed but could previously hold only a time expression; it
+  now records the *parsed, canonical* predicates alongside the window, so a manifest
+  reader sees what was asked rather than free text to re-parse.
+
+  Uses the query's `where` clause as a **filter**, not its grouping: `run_id` is not one
+  of the DSL's allow-listed dimensions, so "group by run_id" is not expressible — and
+  adding it would widen a documented public surface *and* invite exactly the
+  high-cardinality grouping the DSL's cardinality cap exists to prevent. Filtering needs
+  neither. `--query` composes with `--since`/`--until` (both must hold) and is mutually
+  exclusive with `--capsule`.
+- **Server mode is single-tenant-safe only, and now says so at startup (ADR-0178).**
+  Capsule storage is **not partitioned per organization** — organizations and
+  workspaces scope the registry tier, not capsule bytes. The server therefore now
+  **refuses to start** when more than one organization exists, unless the operator
+  passes `--i-accept-shared-capsule-store` (env
+  `NOVAFABRIC_SERVER_I_ACCEPT_SHARED_CAPSULE_STORE`). Mirrors the ADR-0184
+  `--i-know-this-is-public` precedent, and runs *after* the default-org bootstrap so a
+  fresh single-org install is never affected — which is every default deployment.
+
+  This narrows a claim rather than changing isolation: ADR-0178's organizations model
+  should not be understood to provide capsule isolation until per-tenant partitioning
+  lands, which is gated on Security-Architect review. The override exists deliberately —
+  an operator who has already built a multi-org deployment must still be able to start
+  their server in order to migrate off it.
+- **Two more wired lifecycle events + a coverage guard (ADR-0137, experimental).**
+  The lifecycle emitter and its sinks shipped complete, but only `capsule.created` and
+  `capsule.validated` had call sites — so the feature looked implemented while emitting
+  almost nothing. Now also wired: `policy.failed` (fires on the policy **deny itself**,
+  so a `--force` override still produces the event, flagged `forced: true` — a gate that
+  was overridden is precisely what a consumer needs to see) and `retention.applied`
+  (fires **only** on the APPLIED outcome; emitting for skipped/held/dry-run/error sweeps
+  would make a consumer counting deletions over-count, which is the number a retention
+  consumer is most likely to trust).
+
+  A coverage guard now fails CI if any `EventType` is neither wired nor listed as an
+  explicit deferral **with a substantive reason** — and a second test guards that guard
+  by rejecting placeholder reasons. The remaining `promotion.*` and `promotion.bypass.*`
+  types are deferred deliberately, not overlooked: the promotion trio must be wired
+  together so they cannot disagree about a transition, and the bypass events' decision
+  point sits above the storage layer where emitting would report a write rather than a
+  decision.
+- **OpenInference span ingest (ADR-0098 complete, experimental).** Traces from the
+  OpenInference-instrumented ecosystem — LangChain, LlamaIndex, CrewAI, DSPy, Arize
+  Phoenix — previously arrived as `unclassified` and were **dropped**, because
+  `genai_ingest` classified purely on `gen_ai.*` while those libraries carry the same
+  facts under `llm.model_name`, `tool.name`, `openinference.span.kind` and friends.
+  They are now translated into the `gen_ai.*` vocabulary *before* classification
+  (`otel/openinference.py`), so they take the identical classification, passthrough and
+  unmapped-key accounting path as natively-emitted spans — one code path, so the two
+  routes cannot drift.
+
+  Deliberate properties: a native `gen_ai.*` attribute **always wins** over a translated
+  one, so a dual-emitting instrumentation stays authoritative; content (`input.value`,
+  `output.value`, `llm.*_messages`) maps onto the existing content keys so it follows
+  the same ADR-0021 policy instead of entering by a second unpoliced route; original
+  keys are retained so nothing is silently discarded; and an unrecognised span kind gets
+  **no** guessed operation rather than a plausible-looking one. `RETRIEVER`/`EMBEDDING`/
+  `RERANKER` map to model calls rather than inventing a retrieval event — the capsule
+  schema has no such primitive, and that is a schema decision, not a translation-table
+  decision. No new dependency: OpenInference is an Apache-2.0 *specification* (Tier A,
+  ADR-0024) and the mapping is a hand-written table.
+- **`nova comment thread` (ADR-0121 P2 complete, experimental).** Resolves the reply chain
+  containing a comment, root first, indented by depth (or `--json`). The bounded,
+  cycle-reporting resolver already existed and was tested in the library; this is the CLI
+  half. Defensive by design, because an append-only log can legitimately hold malformed
+  links: a reply whose parent is missing is an **orphan root**, not an error, and a cycle
+  exits 1 with a plain message rather than a traceback or an infinite walk.
+
+### Fixed
+- **`gen_api_reference.py` silently destroyed the ADR-0188 deprecation register.** The
+  endpoint tables in `docs/api-reference.md` are generated, but the deprecation-policy
+  prose is hand-maintained — and a regeneration overwrote the whole file, deleting a
+  section a CI gate requires. That is almost certainly why the file had drifted (its
+  prose claimed 28 domains while the generator emits 25): regenerating was destructive,
+  so people stopped. The generator now preserves everything from `## Deprecation
+  register` to EOF, and repeat runs are idempotent — a naive tail-preserve would
+  duplicate the section on every run, passing the first time and breaking the second.
+- **Docs-honesty sweep: four surfaces claimed things were unimplemented that ship today.**
+  The usual danger is claiming unbuilt features as done; these were the mirror image, and
+  they cost users working functionality. (1) `nova export-evidence --sigstore` help said
+  "planned for v0.4.x; not implemented" while the code publishes the DSSE envelope to a
+  Rekor transparency log — it now describes what it actually does, including that this is
+  transparency-log publication, *not* Sigstore keyless signing, and that it needs
+  `NOVA_REKOR_URL`. (2) ADR-0098's status block said no `gen_ai.*` emitter, content bridge
+  or OTLP ingestion existed; all ship, and OTLP protobuf landed in v0.60.0 — only the
+  OpenInference attribute mapping is genuinely absent. (3) The matching
+  `implementation-status.md` row still listed OTLP protobuf as planned. (4) Five
+  OPEN_QUESTIONS (OQ-023/024/025/026/027) were answered by shipped code — pluggable
+  signer protocol, checkpoint `fdatasync` before rename, spool DLQ, parent-existence
+  check, and manifest hash-chain verify-on-read-by-default — and are now resolved with
+  evidence pointers. Two are resolved only *partially*, and say so: OQ-025's 100K
+  events/sec behaviour is still unmeasured, and OQ-026's cross-tenant sub-question rests
+  on an implicit invariant that deserves an explicit assertion and test.
+- **Flaky `api-key rotate` CLI test.** It located the new key via
+  `output.splitlines()[-1]`, which depends on Rich's terminal-width wrapping and so
+  varied by xdist worker — it failed once under `-n auto` and passed in isolation. It
+  now finds the token by its `nvfk_` prefix. Test-only; no production change.
+- **`nova backup verify` crashed with a raw traceback on an unreadable set.** Pointing
+  it at a directory (or any unreadable path) raised an unhandled `IsADirectoryError`
+  instead of failing cleanly — `verify_backup` does not wrap OS errors into
+  `BackupVerifyError`. A verification command must fail legibly; it now prints the error
+  and exits 1. Found while testing the ADR-0192 backup alert source, which had missed
+  this path entirely.
+- **Bare credentials in free text were not redacted (ADR-0191 D4 side channel).**
+  Redaction ruleset **v2 → v3**. v1/v2 are key-driven: they fire only when a *key*
+  names a secret (`api_token=…`). A bare credential sitting in prose — `"provider
+  rejected sk-ant-…"` in an audit `details` string or a collected log line — passed
+  straight through, while `capture/secrets.py` strips exactly those shapes from
+  capsules. That made the audit log a side channel for what the capsule pipeline
+  redacts, which ADR-0191 D4 explicitly forbids. `redact_line` now applies credential
+  **value** patterns after the key-driven pass, covering the prefixed rules of the
+  capsule secret pack plus GitHub/AWS/Slack tokens. Affects `nova audit-log
+  export`/`tail` and `nova support-bundle` alike.
+
+  The pack's **entropy-only** rules (bare 64-hex, bare 32/40-char alphanumeric, bare
+  UUID) are deliberately **excluded**: they match `entry_hash`/`prev_hash` chain
+  values, content addresses and run ids, so applying them would have broken the D5
+  integrity guarantee to chase a low-confidence match. Two guard tests pin both
+  directions — bare credentials must not survive, integrity values must. A parity test
+  fails CI if a new prefixed rule is added to the capsule scanner without a redaction
+  counterpart.
+- **SIEM egress redaction could fail open for an unknown source (ADR-0191 D4).**
+  `redact_record` selected its allowlist with a binary `audit`-or-else ternary, so any
+  source other than `audit` silently inherited the *dashboard* allowlist rather than
+  being rejected — a future source added to one table but not the allowlist would have
+  let unreviewed fields leave. The per-source tables are now a registry
+  (`KNOWN_SOURCES`), every entry point fails loudly on an unregistered source, and a
+  completeness test fails CI if a source is missing from any of the three tables. No
+  user-visible behaviour change for the two shipped sources.
+
+### Changed
+- **`--source server` dropped from ADR-0191 (OQ-038 resolved).** Scoping it revealed the
+  ADR's premise was wrong: `src/novafabric/server/` owns no audit log — its route
+  handlers write into the same `dashboard-audit.jsonl` as the dashboard, and no HTTP
+  access log exists on disk — so `--source dashboard` already exports those events. A
+  second writer added purely to justify a documented flag would be backwards, and
+  filtering the dashboard log would key a security surface off a discriminator nothing
+  enforces. The flag is removed from the ADR synopsis and the CLI error now explains the
+  coverage. See `design/DECISION_LOG.md`.
+- **ADR-0193 Track-2 (`rotate-kek`) strategy decided; spec written, not implemented.**
+  D6/D7 conflated two different DEK stores. Track A (ADR-0069 subject DEKs in `dek.db`)
+  is mutable and gets a journaled re-wrap walk — but must be KEK-**wrapped** first,
+  because it currently stores raw AES-256 keys. Track B (ADR-0185 object DEKs) has its
+  wrapped DEK inside the object's content bytes, whose SHA-256 is the WORM/CAS address,
+  so per-object re-wrap is impossible by construction and it gets a **KEK hierarchy**
+  instead. New spec: `design/spec/kek-rotation-v0.md`, build-ready with acceptance
+  criteria. Implementation is deliberately gated on the Security-Architect review —
+  it is new key handling on the GDPR erasure path, where a defect is silent and the
+  result is unrecoverable data. The spec also covers hardening work identified during
+  that review of the existing key stores; details are tracked privately until the
+  remediation ships.
+
+
 
 ## [0.63.0] — 2026-07-17
 

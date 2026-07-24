@@ -17,7 +17,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request, Response
+
+from novafabric.serve.http_cache import conditional_json
 
 _FAILED_STATUSES_SQL = "status IS NOT NULL AND status != 'success'"
 
@@ -42,13 +44,14 @@ def build_analytics_router(
 
     @router.get("/api/analytics/summary")
     async def analytics_summary(
+        request: Request,
         since: str | None = Query(
             default=None, description="ISO date lower bound on created_at"
         ),
         until: str | None = Query(
             default=None, description="ISO date upper bound on created_at"
         ),
-    ) -> dict[str, Any]:
+    ) -> Response:
         from novafabric.registry.runs_cache import ensure_runs_cache  # noqa: PLC0415
         from novafabric.registry.store import get_connection, init_schema  # noqa: PLC0415
 
@@ -64,58 +67,30 @@ def build_analytics_router(
             "until": until,
         }
         if db_path is None or not Path(db_path).exists():
-            return empty
+            return conditional_json(request, empty, max_age=30)
+
+        from novafabric.registry.runs_cache import (  # noqa: PLC0415
+            aggregate_runs_daily,
+            durations_by_bucket,
+        )
 
         conn = get_connection(db_path)
         try:
             init_schema(conn)
             ensure_runs_cache(conn)
-            where = ["created_at IS NOT NULL"]
-            params: list[Any] = []
-            if since:
-                where.append("created_at >= ?")
-                params.append(since)
-            if until:
-                # Inclusive day upper bound: a bare date must cover the
-                # whole day, so compare on the date prefix.
-                where.append("substr(created_at, 1, 10) <= ?")
-                params.append(until[:10])
-            where_sql = " AND ".join(where)
-
-            agg_rows = conn.execute(
-                f"""
-                SELECT substr(created_at, 1, 10) AS bucket,
-                       COUNT(*) AS run_count,
-                       SUM(CASE WHEN {_FAILED_STATUSES_SQL} THEN 1 ELSE 0 END)
-                           AS failed_count,
-                       SUM(COALESCE(model_call_count, 0)) AS model_call_count,
-                       SUM(COALESCE(tool_call_count, 0)) AS tool_call_count,
-                       MAX(duration_ms) AS duration_ms_max
-                FROM runs_cache
-                WHERE {where_sql}
-                GROUP BY bucket
-                ORDER BY bucket
-                """,
-                params,
-            ).fetchall()
-
-            # Durations per bucket for percentiles: one ordered pass, grouped
-            # in Python. Bounded by the requested window.
-            duration_rows = conn.execute(
-                f"""
-                SELECT substr(created_at, 1, 10) AS bucket, duration_ms
-                FROM runs_cache
-                WHERE {where_sql} AND duration_ms IS NOT NULL
-                ORDER BY bucket, duration_ms
-                """,
-                params,
-            ).fetchall()
+            agg_rows = aggregate_runs_daily(
+                conn,
+                since=since,
+                until=until,
+                failed_predicate=_FAILED_STATUSES_SQL,
+            )
+            duration_pairs = durations_by_bucket(conn, since=since, until=until)
         finally:
             conn.close()
 
         durations: dict[str, list[float]] = {}
-        for row in duration_rows:
-            durations.setdefault(row["bucket"], []).append(float(row["duration_ms"]))
+        for bucket, duration_ms in duration_pairs:
+            durations.setdefault(bucket, []).append(duration_ms)
 
         buckets: list[dict[str, Any]] = []
         totals = {
@@ -142,6 +117,7 @@ def build_analytics_router(
             totals["model_call_count"] += entry["model_call_count"]
             totals["tool_call_count"] += entry["tool_call_count"]
 
-        return {"buckets": buckets, "totals": totals, "since": since, "until": until}
+        payload = {"buckets": buckets, "totals": totals, "since": since, "until": until}
+        return conditional_json(request, payload, max_age=30)
 
     return router

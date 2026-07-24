@@ -16,13 +16,13 @@ from novafabric.schemas.event_schema import (
 # ---------------------------------------------------------------------------
 
 _NOW = datetime.now(tz=timezone.utc)
-_BASE_ENVELOPE = dict(
-    run_id="run-001",
-    event_type=CapsuleEventType.RunStarted,
-    tenant_id="tenant-acme",
-    capsule_id="cap-001",
-    timestamp=_NOW,
-)
+_BASE_ENVELOPE = {
+    "run_id": "run-001",
+    "event_type": CapsuleEventType.RunStarted,
+    "tenant_id": "tenant-acme",
+    "capsule_id": "cap-001",
+    "timestamp": _NOW,
+}
 
 
 # ---------------------------------------------------------------------------

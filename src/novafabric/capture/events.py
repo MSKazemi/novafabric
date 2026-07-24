@@ -108,6 +108,14 @@ class MemoryOperationEvent(BaseModel):
     relevance_score: float | None = None
     freshness_seconds: float | None = None
     agent_id: str | None = None
+    # ADR-0143 P1 — memory provenance (additive, all optional: a capsule is
+    # valid without this facet). `origin_run_id` is the run that WROTE the
+    # value being read; it is what makes a poisoned-read back-trace possible.
+    # It is deliberately not derived from `run_id`: on a read they differ, and
+    # defaulting them equal would make every read look self-sourced.
+    origin_run_id: str | None = None
+    origin_memory_key: str | None = None
+    origin_timestamp_utc: str | None = None
     # Opt-in content (ADR-0021).
     value: Any | None = None
 
@@ -170,12 +178,30 @@ class RerankerEvent(BaseModel):
 
 
 class RetrievedDocument(BaseModel):
-    """One document returned by a vector-DB query (bounded; content opt-in)."""
+    """One document returned by a vector-DB query (bounded; content opt-in).
+
+    The pin fields (ADR-0153 D3 / NF-215) identify the *exact retrieved
+    version* of a source so that a later content change — drift or a
+    PoisonedRAG-class injection — is detectable offline. All four are optional
+    with ``None`` defaults: a document captured before ADR-0153 stays valid and
+    unchanged, and an unpinned document means "unknown", never "unmodified"
+    (see ``novafabric.retrieval.source_pin``).
+    """
 
     document_id: str
     score: float | None = None
     # Opt-in content (ADR-0021).
     content: str | None = None
+    # ── NF-215 source-integrity pin (additive, optional) ──
+    #: ``sha256:`` digest of the exact retrieved body. The body itself is never
+    #: stored through this field — that stays behind the ``content`` opt-in.
+    content_hash: str | None = None
+    #: When this version was observed, ISO 8601.
+    retrieved_at: str | None = None
+    #: Retriever/store-declared version identifier, when the store exposes one.
+    source_version: str | None = None
+    #: HTTP entity tag, when the document came from an HTTP-addressable source.
+    etag: str | None = None
 
 
 class VectorRetrievalEvent(BaseModel):

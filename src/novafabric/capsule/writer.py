@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,6 +35,7 @@ from typing import Any
 from opentelemetry import trace
 from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
 
+from novafabric.capsule._atomic import atomic_replace, fsync_dir, write_text_fsync
 from novafabric.capsule.edge_typer import resolve_edge_type
 from novafabric.capsule.env_contract import CapsuleEnvConfig, read_env
 from novafabric.capsule.schema import (
@@ -201,23 +201,25 @@ class CapsuleWriter:
             tempfile.mkdtemp(dir=parent_spool, prefix=f".tmp_{self._run_id}_")
         )
         try:
-            (tmp_dir / "capsule.json").write_text(
-                json.dumps(manifest, indent=2), encoding="utf-8"
-            )
+            write_text_fsync(tmp_dir / "capsule.json", json.dumps(manifest, indent=2))
 
             # Write lineage edges
             lineage_lines = [
                 json.dumps(e.model_dump(mode="json"), ensure_ascii=False)
                 for e in self._lineage
             ]
-            (tmp_dir / "lineage.jsonl").write_text(
+            write_text_fsync(
+                tmp_dir / "lineage.jsonl",
                 "\n".join(lineage_lines) + ("\n" if lineage_lines else ""),
-                encoding="utf-8",
             )
 
-            # Atomic rename
+            # fsync the staging dir so its entries are durable, then atomically
+            # rename it into place and fsync the parent (fsync-before-rename —
+            # matches collector_cffi/spool.py). Guarantees no visible-but-empty
+            # capsule survives a crash.
+            fsync_dir(tmp_dir)
             dest_dir = parent_spool / self._run_id
-            os.rename(str(tmp_dir), str(dest_dir))
+            atomic_replace(tmp_dir, dest_dir)
         except Exception:
             # Best-effort cleanup on failure
             try:
@@ -272,8 +274,8 @@ class ParentCapsuleTracker:
 
     def _write_manifest_atomic(self, manifest: dict[str, Any]) -> None:
         tmp = self._manifest_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-        os.rename(str(tmp), str(self._manifest_path))
+        write_text_fsync(tmp, json.dumps(manifest, indent=2))
+        atomic_replace(tmp, self._manifest_path)
 
     def register_child_arrival(
         self,

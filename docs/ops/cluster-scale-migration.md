@@ -1,6 +1,11 @@
 # Cluster-Scale Migration Guide
 
-> **Status:** works today — all commands are implemented in v0.25.0+.
+> **Status:** mixed — read the per-phase labels. Phase 0/0.5/1 (backup, schema
+> migration, Postgres MetadataStore via `nova migrate-to-postgres`) and
+> `nova storage validate` **work today**. The KuzuDB, JanusGraph, Apache AGE and
+> Postgres graph lineage backends are **planned / pending-benchmark** (Phase 2/4);
+> the OCS bulk-migration step is **future design**. Some CLI invocations shown below
+> for those phases do not exist yet and are labeled inline.
 > Hardware-specific steps (NATS-on-Lustre, dedicated Postgres cluster) are marked
 > **hardware-gated** and require site-specific provisioning.
 
@@ -124,23 +129,26 @@ export NOVAFABRIC_METADATA_DSN="postgresql+asyncpg://novafabric_app:<pw>@pgbounc
 
 ---
 
-## Phase 2 — Migrate lineage to KuzuDB
+## Phase 2 — Migrate lineage to KuzuDB *(planned — pending benchmark)*
+
+> **Not shipped yet.** The KuzuDB lineage backend is a *production-candidate pending
+> benchmark* confirmation (blast_radius p99 < 500ms at 10M edges, ADR-0053); there is no
+> `--to kuzu` migration path today, and no `nova lineage store` command exists (note: the
+> real command group is `nova lineage-store`, hyphenated).
+
+The lineage migration command that exists today is `nova lineage-store migrate`, which
+loads edges into a **SQLite** lineage store (the only target) from a Parquet export or an
+Object Capsule Store:
 
 ```bash
-# Install the lineage-kuzu extra.
-pip install 'novafabric[lineage-kuzu]'
-
-# Migrate from SQLite lineage store to KuzuDB.
-# Source: SQLite lineage_edges table in $NOVA_HOME/novafabric.db
-# Target: KuzuDB graph at $NOVA_HOME/lineage/nova_lineage.kuzu
-nova lineage store migrate \
-  --from sqlite \
-  --to kuzu \
-  --kuzu-path "$NOVA_HOME/lineage/nova_lineage.kuzu" \
-  --verify
+# Dry-run (default) then commit; target is a SQLite store via --db.
+nova lineage-store migrate --from-ocs --ocs-tenant org \
+  --ocs-run-ids run-001,run-002 --db "$NOVA_HOME/novafabric.db"
+nova lineage-store migrate --from-ocs --ocs-tenant org \
+  --ocs-run-ids run-001,run-002 --db "$NOVA_HOME/novafabric.db" --commit
 ```
 
-Expected acceptance:
+Planned acceptance for the future KuzuDB tier:
 - blast_radius p99 < 500ms at 10M edges (ADR-0053 gate — `nova-lineage-bench`)
 - provenance query at depth 5 returns consistent results vs. SQLite baseline
 
@@ -157,15 +165,14 @@ export NOVA_S3_ENDPOINT_URL="http://minio:9000"
 export AWS_ACCESS_KEY_ID="minio-access-key"
 export AWS_SECRET_ACCESS_KEY="minio-secret"
 
-# Validate WORM conformance first (11/11 checks must pass).
+# Validate WORM readiness first. This checks a single property — that the target
+# bucket has Object Lock in COMPLIANCE mode — and raises otherwise.
 nova storage validate
 
 # Migrate capsules from local filesystem to OCS.
-# This copies capsules to S3 and builds the manifest chain.
-nova storage migrate \
-  --source "$NOVA_HOME/capsules" \
-  --target "s3://nova-capsules-bucket" \
-  --verify-chain
+# NOTE (future design): there is no `nova storage migrate` command today — the
+# `storage` group exposes only `inspect` and `validate`. Bulk copy-and-chain-build
+# to S3 is not yet implemented; migrate capsules via the Object Capsule Store API.
 ```
 
 **Rollback:** OCS migration is additive — local capsules remain intact until
@@ -173,22 +180,20 @@ you set `NOVA_OCS_BACKEND=s3` in production.
 
 ---
 
-## Phase 4 — Enable JanusGraph lineage (cluster-scale) *(hardware-gated)*
+## Phase 4 — Enable JanusGraph lineage (cluster-scale) *(planned — hardware-gated)*
 
-> Requires a running JanusGraph instance. Use the Helm chart:
-> ```bash
-> helm install janusgraph deploy/helm/janusgraph/ --namespace nova-system
-> ```
+> **Not shipped yet.** The JanusGraph lineage backend is type-stubs only (not imported
+> at runtime unless `gremlinpython` is present); there is no `--to janusgraph` migration
+> path and no `nova lineage store` command. When implemented it will require a running
+> JanusGraph instance (Helm chart at `deploy/helm/janusgraph/`).
+
+The command shown here is illustrative of the *planned* interface, not a shipped command:
 
 ```bash
-pip install 'novafabric[janusgraph]'
-
+# PLANNED — does not exist today.
 # Migrate lineage edges from KuzuDB to JanusGraph.
-nova lineage store migrate \
-  --from kuzu \
-  --to janusgraph \
-  --janusgraph-url "ws://janusgraph:8182/gremlin" \
-  --verify
+# nova lineage-store migrate --from kuzu --to janusgraph \
+#   --janusgraph-url "ws://janusgraph:8182/gremlin" --verify
 
 # Run the LDBC SNB BI smoke test (hardware-gated, ~4h for full suite).
 # Quick smoke (5 minutes):
@@ -221,7 +226,9 @@ export NOVAFABRIC_CLUSTER_ID="my-cluster-01"
 ```bash
 # Apply the v002 DDL migration (partition tables by tenant + time).
 # Requires ADR-0051 Postgres partition DDL — run after Phase 1.
-nova server start --experimental --migrate-postgres-v002
+# NOTE (planned): the `--migrate-postgres-v002` flag does not exist yet; RLS/partition
+# DDL is applied through the metadata-store migrations, not a `nova server start` flag.
+nova server start --experimental
 
 # Verify RLS is active.
 uv run pytest tests/metadata_store/ -v -k "rls"

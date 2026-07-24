@@ -44,15 +44,15 @@ _SCHEMA = json.loads(
 
 
 def _score(**over: object) -> Score:
-    base: dict[str, object] = dict(
-        subject=_DIGEST,
-        name="answer_faithfulness",
-        value=0.82,
-        value_type=ScoreValueType.NUMERIC,
-        source=ScoreSource.JUDGE,
-        evaluator_id="faithfulness-judge",
-        eval_card_digest=_CARD,
-    )
+    base: dict[str, object] = {
+        "subject": _DIGEST,
+        "name": "answer_faithfulness",
+        "value": 0.82,
+        "value_type": ScoreValueType.NUMERIC,
+        "source": ScoreSource.JUDGE,
+        "evaluator_id": "faithfulness-judge",
+        "eval_card_digest": _CARD,
+    }
     base.update(over)
     return Score(**base)  # type: ignore[arg-type]
 

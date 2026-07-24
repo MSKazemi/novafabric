@@ -53,6 +53,7 @@ from pathlib import Path
 from typing import Any
 
 from novafabric.otel.genai_emitter import MAPPING_VERSION
+from novafabric.otel.openinference import translate_attributes as translate_openinference
 
 #: capture-level label recorded on every ingested capsule (ADR-0021 §4).
 CAPTURE_LEVEL = "ingested-otlp"
@@ -344,6 +345,12 @@ def ingest_otlp_json(payload: Any) -> GenAIIngestResult:
     for span in parse_otlp_json(payload):
         result.spans_seen += 1
         attrs = span["attributes"]
+        # ADR-0098: translate the OpenInference vocabulary (LangChain,
+        # LlamaIndex, CrewAI, Phoenix) into gen_ai.* BEFORE the filter below,
+        # so those spans take the identical classification and passthrough
+        # path as natively-emitted ones. Non-OpenInference spans pass through
+        # untouched.
+        attrs = translate_openinference(attrs)
         if not any(k.startswith("gen_ai.") for k in attrs):
             result.skipped_spans += 1
             continue

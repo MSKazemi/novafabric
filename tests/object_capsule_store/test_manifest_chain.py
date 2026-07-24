@@ -18,6 +18,7 @@ from __future__ import annotations
 import concurrent.futures
 import threading
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -206,6 +207,59 @@ def test_concurrent_writers_no_duplicate_versions():
     assert len(versions_seen) == total
     assert len(set(versions_seen)) == total, "Duplicate versions detected"
     assert set(versions_seen) == set(range(1, total + 1))
+
+
+def test_append_fails_closed_when_predecessor_unreadable():
+    """Enterprise-hardening 3.3: a version > 1 whose predecessor cannot be read
+    must raise ChainIntegrityError rather than silently writing
+    prev_commit_hash=None (which would forge a genesis-looking commit)."""
+    from novafabric.object_capsule_store.exceptions import ChainIntegrityError
+    from novafabric.object_capsule_store.manifest_chain import _version_key
+
+    adapter = InMemoryWormAdapter()
+    writer = ManifestChainWriter(adapter)
+    writer.append(
+        tenant="t", run_id="r",
+        capsule_uri=f"capsules/t/abcd/{'a'*64}/data.zst", capsule_sha256="a" * 64,
+    )
+    # Remove v1 from the store but keep the writer's version cache, so the next
+    # append computes next_version=2 and then cannot read its predecessor.
+    adapter.delete_object(_version_key("t", "r", 1))
+
+    with pytest.raises(ChainIntegrityError):
+        writer.append(
+            tenant="t", run_id="r",
+            capsule_uri=f"capsules/t/abcd/{'b'*64}/data.zst", capsule_sha256="b" * 64,
+        )
+
+
+def test_stale_writer_does_not_overwrite_existing_version():
+    """Enterprise-hardening 3.2: a second writer with a stale (empty) version
+    cache must not overwrite an existing version — conditional-PUT forces it to
+    retry onto a fresh version, preserving every commit."""
+    adapter = InMemoryWormAdapter()
+    writer_a = ManifestChainWriter(adapter)
+    writer_a.append(
+        tenant="t", run_id="r",
+        capsule_uri=f"capsules/t/abcd/{'a'*64}/data.zst", capsule_sha256="a" * 64,
+    )
+    writer_a.append(
+        tenant="t", run_id="r",
+        capsule_uri=f"capsules/t/abcd/{'b'*64}/data.zst", capsule_sha256="b" * 64,
+    )
+    # Fresh writer over the same store — its cache is empty, so it initially
+    # believes the next version is 1 (already taken). It must land on v3.
+    writer_b = ManifestChainWriter(adapter)
+    commit = writer_b.append(
+        tenant="t", run_id="r",
+        capsule_uri=f"capsules/t/abcd/{'c'*64}/data.zst", capsule_sha256="c" * 64,
+    )
+    chain = writer_b.read_chain("t", "r")
+    assert commit.version == 3
+    assert [c.version for c in chain] == [1, 2, 3]
+    # v1 and v2 payloads survived (no overwrite).
+    assert chain[0].capsule_sha256 == "a" * 64
+    assert chain[1].capsule_sha256 == "b" * 64
 
 
 # ---------------------------------------------------------------------------

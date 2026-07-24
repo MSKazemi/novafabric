@@ -10,14 +10,18 @@ from typing import Any
 from novafabric.capture._ulid import new_ulid
 
 PACK_NAME = "gitleaks-core-v0"
-PACK_VERSION = "0.3.0"
+PACK_VERSION = "0.4.0"  # 0.4.0: + novafabric-webhook-secret (nvwh_, ADR-0205)
 
-# 13 key patterns — ordered from most to least specific to avoid false positives
+# 14 key patterns — ordered from most to least specific to avoid false positives
 _RULES: list[dict[str, Any]] = [
     # ADR-0193: our own credential format (`nvfk_<key_id>_<secret>`) — detect a
     # leaked NovaFabric API key in a capsule before anyone else does.
     {"id": "novafabric-api-key", "severity": "critical",
      "pattern": re.compile(r"nvfk_[A-Za-z0-9\-_]{8}_[A-Za-z0-9\-_]{30,60}")},
+    # ADR-0205: webhook signing secret (`nvwh_<hook_id>_<secret>`) — same
+    # posture as nvfk_ for our second first-party credential format.
+    {"id": "novafabric-webhook-secret", "severity": "critical",
+     "pattern": re.compile(r"nvwh_[A-Za-z0-9\-_]{8}_[A-Za-z0-9\-_]{30,60}")},
     {"id": "anthropic-api-key", "severity": "critical",
      "pattern": re.compile(r"sk-ant-[A-Za-z0-9\-_]{20,80}")},
     {"id": "openai-api-key", "severity": "critical",
@@ -61,6 +65,20 @@ _SCAN_TARGETS = [
     ("tool-calls.jsonl", "tool-call-arguments"),
     ("trace.jsonl", "trace"),
     ("capsule.yaml", "capsule-yaml"),
+    # ADR-0209 D5.1: every extended event stream the `novafabric.capture.record`
+    # façade (or a default-path wiring) can populate with free text is scanned
+    # at finalize like everything else — plus network_events / human_approvals,
+    # which carry URLs and rationale text and were equally uncovered before.
+    # Absent streams cost one stat() each; clean capsules are unchanged.
+    ("file_events.jsonl", "file-events"),
+    ("network_events.jsonl", "network-events"),
+    ("human_approvals.jsonl", "human-approvals"),
+    ("state_transitions.jsonl", "state-transitions"),
+    ("memory_operations.jsonl", "memory-operations"),
+    ("guardrail_events.jsonl", "guardrail-events"),
+    ("evaluator_events.jsonl", "evaluator-events"),
+    ("reranker_events.jsonl", "reranker-events"),
+    ("vector_retrievals.jsonl", "vector-retrievals"),
 ]
 
 # Public alias: the ADR-0135 masking pipeline walks exactly the same targets

@@ -62,6 +62,31 @@ def db(tmp_path: Path) -> Path:
     return tmp_path / "registry.db"
 
 
+def extract_keys(output: str) -> list[str]:
+    """Return every ``nvfk_`` token in CLI output.
+
+    Positional extraction (``output.splitlines()[-1]``) was the shape of two
+    full-suite-only flakes in this file. It assumes the key is the final line,
+    which any trailing output breaks — and under xdist that is not fully in
+    this test's control: a logging handler installed globally by another test
+    file is enough. Matching the token by its own format is correct regardless
+    of what else the command printed, and lets callers assert the key appears
+    exactly once rather than merely somewhere.
+    """
+    return [
+        token for line in output.splitlines() for token in line.split() if token.startswith("nvfk_")
+    ]
+
+
+def extract_one_key(output: str) -> str:
+    """Return the single ``nvfk_`` token in CLI output, asserting uniqueness."""
+    keys = extract_keys(output)
+    assert len(keys) == 1, (
+        f"expected exactly one nvfk_ token, found {len(keys)}.\nOutput:\n{output}"
+    )
+    return keys[0]
+
+
 def _audit_path(tmp_path: Path) -> Path:
     return tmp_path / "audit.jsonl"
 
@@ -113,14 +138,10 @@ class TestSecretNeverPersisted:
         assert key.encode() not in raw
         # ... but the sha256 of the secret IS stored (hash-only storage).
         digest = hashlib.sha256(secret.encode()).hexdigest()
-        rows = sqlite3.connect(str(db)).execute(
-            "SELECT secret_sha256 FROM api_keys"
-        ).fetchall()
+        rows = sqlite3.connect(str(db)).execute("SELECT secret_sha256 FROM api_keys").fetchall()
         assert [(digest,)] == rows
 
-    def test_secret_absent_from_logs(
-        self, db: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_secret_absent_from_logs(self, db: Path, caplog: pytest.LogCaptureFixture) -> None:
         import logging
 
         with caplog.at_level(logging.DEBUG):
@@ -147,9 +168,7 @@ class TestSecretNeverPersisted:
 
 class TestVerifyKey:
     def test_valid_key_returns_principal_and_roles(self, db: Path) -> None:
-        key, _ = create_key(
-            "svc:ci-bot", ["reader", "writer"], actor="test", db_path=db
-        )
+        key, _ = create_key("svc:ci-bot", ["reader", "writer"], actor="test", db_path=db)
         ctx = verify_key(key, db_path=db)
         assert ctx is not None
         assert ctx.subject == "svc:ci-bot"
@@ -185,7 +204,10 @@ class TestVerifyKey:
 
     def test_expired_key_rejected(self, db: Path) -> None:
         key, record = create_key(
-            "alice@example.com", ["reader"], actor="test", db_path=db,
+            "alice@example.com",
+            ["reader"],
+            actor="test",
+            db_path=db,
             expires_in_days=30,
         )
         # Backdate the expiry directly in the store.
@@ -259,9 +281,7 @@ class TestAudit:
 
 
 class TestRotate:
-    def test_rotate_creates_valid_successor_with_identical_bindings(
-        self, db: Path
-    ) -> None:
+    def test_rotate_creates_valid_successor_with_identical_bindings(self, db: Path) -> None:
         _, record = create_key(
             "svc:ci-bot",
             ["reader", "writer"],
@@ -270,9 +290,7 @@ class TestRotate:
             workspace="ml-team",
             expires_in_days=30,
         )
-        successor, succ_record = rotate_key(
-            record["key_id"], actor="test", db_path=db
-        )
+        successor, succ_record = rotate_key(record["key_id"], actor="test", db_path=db)
         # successor is a brand-new, distinct, immediately-valid key
         assert succ_record["key_id"] != record["key_id"]
         ctx = verify_key(successor, db_path=db)
@@ -312,25 +330,17 @@ class TestRotate:
         assert verify_key(key, db_path=db) is None
 
     def test_rotate_is_audited_on_both_keys(self, db: Path, tmp_path: Path) -> None:
-        _, record = create_key(
-            "alice@x", ["reader"], actor="admin@x", db_path=db
-        )
+        _, record = create_key("alice@x", ["reader"], actor="admin@x", db_path=db)
         _, succ = rotate_key(record["key_id"], actor="admin@x", db_path=db)
 
         log = AuditLog(_audit_path(tmp_path))
         assert log.verify() == []
-        pred_types = [
-            e.event_type.value for e in log.query(resource_id=record["key_id"])
-        ]
+        pred_types = [e.event_type.value for e in log.query(resource_id=record["key_id"])]
         assert "api_key.rotate" in pred_types
-        succ_types = [
-            e.event_type.value for e in log.query(resource_id=succ["key_id"])
-        ]
+        succ_types = [e.event_type.value for e in log.query(resource_id=succ["key_id"])]
         assert "api_key.create" in succ_types
 
-    def test_rotate_records_never_leak_secret(
-        self, db: Path, tmp_path: Path
-    ) -> None:
+    def test_rotate_records_never_leak_secret(self, db: Path, tmp_path: Path) -> None:
         _, record = create_key("alice@x", ["reader"], actor="test", db_path=db)
         successor, _ = rotate_key(record["key_id"], actor="test", db_path=db)
         _, secret = parse_key(successor)  # type: ignore[misc]
@@ -348,9 +358,7 @@ class TestRotate:
         with pytest.raises(RevokedKeyError):
             rotate_key(record["key_id"], actor="test", db_path=db)
 
-    def test_rotated_predecessor_status_is_revoked_after_window(
-        self, db: Path
-    ) -> None:
+    def test_rotated_predecessor_status_is_revoked_after_window(self, db: Path) -> None:
         _, record = create_key("alice@x", ["reader"], actor="test", db_path=db)
         rotate_key(record["key_id"], actor="test", db_path=db, overlap_seconds=0)
         rows = {r["key_id"]: r for r in list_keys(db_path=db)}
@@ -408,8 +416,41 @@ class TestLastUsed:
 
 
 class TestCliRotate:
-    def test_rotate_cli_prints_successor_once_with_window(self, db: Path) -> None:
+    def test_rotate_cli_prints_successor_once_with_window(
+        self, db: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from novafabric.cli.main import app
+
+        # FLAKE HISTORY — read before "simplifying" this.
+        #
+        # This test has failed twice in full-suite (~9k, xdist) runs and has
+        # never reproduced in isolation, in its own file under -n auto, or in
+        # a targeted subset. The root cause is NOT established.
+        #
+        # Ruled out: mid-token Rich wrapping. At COLUMNS=30 the nvfk_ token
+        # still emerges intact, so a narrow terminal is not the mechanism.
+        # Ruled out: global COLUMNS mutation by another test — no test sets it
+        # outside monkeypatch.
+        #
+        # 2026-07-20 — RESOLVED, and not here. The cause was never in this
+        # file. create_app() leaked a watchdog observer thread per call; the
+        # accumulated threads eventually starved an xdist worker of C stack
+        # inside pydantic-core's schema generation and SEGFAULTED it, and
+        # pytest then blamed whichever test was running. Fixed in
+        # serve/app.py; see tests/serve/test_capsule_watcher_no_eager_observer.py.
+        #
+        # Three hypotheses were wrong before that: mid-token Rich wrapping
+        # (disproved at COLUMNS=30), global COLUMNS mutation (no test does
+        # it), and the splitlines()[-1] idiom. The extract_one_key() change
+        # was a real robustness improvement but did NOT fix this, and was
+        # briefly reported as though it had.
+        #
+        # Kept as a record because the diagnostic lesson generalises: a
+        # failure that only appears in the full suite, never in isolation, and
+        # names a DIFFERENT test each time is evidence of process-level
+        # resource exhaustion, not a bug in the named test. Pinning COLUMNS
+        # below is now merely defensive.
+        monkeypatch.setenv("COLUMNS", "200")
 
         _, record = create_key("alice@x", ["reader"], actor="test", db_path=db)
         result = runner.invoke(
@@ -419,8 +460,7 @@ class TestCliRotate:
         assert result.exit_code == 0, result.output
         assert "shown once" in result.output.lower()
         assert "overlap" in result.output.lower()
-        successor = result.output.strip().splitlines()[-1].strip()
-        assert verify_key(successor, db_path=db) is not None
+        assert verify_key(extract_one_key(result.output), db_path=db) is not None
 
     def test_rotate_cli_unknown_key_fails(self, db: Path) -> None:
         from novafabric.cli.main import app
@@ -499,9 +539,7 @@ class TestAuthIntegration:
 
 
 class TestScannerRule:
-    def test_nvfk_rule_fires_on_seeded_key_in_capsule_text(
-        self, tmp_path: Path, db: Path
-    ) -> None:
+    def test_nvfk_rule_fires_on_seeded_key_in_capsule_text(self, tmp_path: Path, db: Path) -> None:
         from novafabric.capture.secrets import SecretScannerV0
 
         key, _ = create_key("alice@example.com", ["reader"], actor="test", db_path=db)
@@ -542,15 +580,20 @@ class TestCli:
         result = runner.invoke(
             app,
             [
-                "server", "api-key", "create",
-                "--owner", "alice@example.com",
-                "--roles", "reader",
-                "--db-path", str(db),
+                "server",
+                "api-key",
+                "create",
+                "--owner",
+                "alice@example.com",
+                "--roles",
+                "reader",
+                "--db-path",
+                str(db),
                 *extra,
             ],
         )
         assert result.exit_code == 0, result.output
-        key = result.output.strip().splitlines()[-1].strip()
+        key = extract_one_key(result.output)
         key_id, _ = parse_key(key)  # type: ignore[misc]
         return key, key_id
 
@@ -560,15 +603,21 @@ class TestCli:
         result = runner.invoke(
             app,
             [
-                "server", "api-key", "create",
-                "--owner", "alice@example.com",
-                "--roles", "reader,auditor",
-                "--db-path", str(db),
+                "server",
+                "api-key",
+                "create",
+                "--owner",
+                "alice@example.com",
+                "--roles",
+                "reader,auditor",
+                "--db-path",
+                str(db),
             ],
         )
         assert result.exit_code == 0, result.output
         assert "shown once" in result.output.lower()
-        key = result.output.strip().splitlines()[-1].strip()
+        # Exactly one — "shown once" is a claim the test should check, not trust.
+        key = extract_one_key(result.output)
         assert verify_key(key, db_path=db) is not None
 
     def test_create_rejects_bad_role(self, db: Path) -> None:
@@ -577,10 +626,15 @@ class TestCli:
         result = runner.invoke(
             app,
             [
-                "server", "api-key", "create",
-                "--owner", "alice@example.com",
-                "--roles", "superuser",
-                "--db-path", str(db),
+                "server",
+                "api-key",
+                "create",
+                "--owner",
+                "alice@example.com",
+                "--roles",
+                "superuser",
+                "--db-path",
+                str(db),
             ],
         )
         assert result.exit_code != 0
@@ -599,9 +653,7 @@ class TestCli:
         from novafabric.cli.main import app
 
         key, key_id = self._create(db)
-        result = runner.invoke(
-            app, ["server", "api-key", "revoke", key_id, "--db-path", str(db)]
-        )
+        result = runner.invoke(app, ["server", "api-key", "revoke", key_id, "--db-path", str(db)])
         assert result.exit_code == 0, result.output
         assert verify_key(key, db_path=db) is None
 

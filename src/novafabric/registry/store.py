@@ -78,6 +78,27 @@ def init_schema(conn: sqlite3.Connection) -> None:
             approved_at      TEXT
         );
 
+        -- ADR-0121 P3: comments on registry assets. Capsule comments live in
+        -- the capsule's append-only comments.jsonl; assets have no capsule, so
+        -- they get a table here. APPEND-ONLY BY CONVENTION, exactly like the
+        -- JSONL side: rows are never UPDATEd or DELETEd — an edit is a reply
+        -- (`in_reply_to`) and a delete is a tombstone row. That keeps the two
+        -- storage backends semantically identical, so `Comment` records round
+        -- trip through either without special-casing.
+        CREATE TABLE IF NOT EXISTS asset_comments (
+            comment_id        TEXT PRIMARY KEY,
+            subject           TEXT NOT NULL,   -- asset://<type>/<name>@<version>
+            subject_kind      TEXT NOT NULL DEFAULT 'asset',
+            author            TEXT NOT NULL,
+            created_at        TEXT NOT NULL,
+            body              TEXT NOT NULL,
+            in_reply_to       TEXT,
+            tombstone         INTEGER NOT NULL DEFAULT 0,
+            redaction_applied INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_asset_comments_subject
+            ON asset_comments(subject, created_at);
+
         CREATE INDEX IF NOT EXISTS idx_assets_created_at ON assets(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_assets_status ON assets(status);
         CREATE INDEX IF NOT EXISTS idx_assets_asset_type ON assets(asset_type);

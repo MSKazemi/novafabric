@@ -216,6 +216,28 @@
       "$ref": "#/$defs/ErrorInfo",
       "description": "Error detail when status is 'failure' or 'partial'. Sanitized for secrets."
     },
+    "facets": {
+      "type": "object",
+      "description": "First-party NovaFabric evidence facets (ADR-0196). Additive and optional: a capsule without this key is valid and unchanged. Distinct from `extensions`, which carries THIRD-PARTY vendor data \u2014 an auditor must be able to tell NovaFabric-recorded evidence from a vendor annotation. The registry below is closed on purpose (ADR-0196 D2): an unregistered name is either a typo, which would silently produce a capsule missing the evidence its author believed it carried, or an unreviewed evidence surface. Each facet's internal shape is owned by its own ADR, not redefined here.",
+      "additionalProperties": false,
+      "properties": {
+          "a2a_messages": {"type": "object", "description": "See ADR-0142."},
+          "assurance_case": {"type": "object", "description": "See ADR-0166."},
+          "conversation": {"type": "object", "description": "See ADR-0150."},
+          "cost_attribution": {"type": "object", "description": "See ADR-0146."},
+          "embodied": {"type": "object", "description": "See ADR-0162."},
+          "federation": {"type": "object", "description": "See ADR-0168."},
+          "fetch_provenance": {"type": "object", "description": "See ADR-0153."},
+          "frontier_safety": {"type": "object", "description": "See ADR-0167."},
+          "memstore_mutation": {"type": "object", "description": "See ADR-0171."},
+          "model_provenance": {"type": "object", "description": "See ADR-0152."},
+          "preservation": {"type": "object", "description": "See ADR-0165."},
+          "risk_transfer": {"type": "object", "description": "See ADR-0170."},
+          "safety": {"type": "object", "description": "See ADR-0145."},
+          "science_provenance": {"type": "object", "description": "See ADR-0164."},
+          "settlement": {"type": "object", "description": "See ADR-0163."}
+      }
+    },
     "extensions": {
       "type": "object",
       "description": "Vendor extensions. Keys must be reverse-DNS-prefixed (e.g. 'io.langgraph.thread')."

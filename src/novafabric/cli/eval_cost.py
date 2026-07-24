@@ -79,6 +79,8 @@ def eval_cost_cmd(
         print(json.dumps(record.model_dump(mode="json"), indent=2))
         raise typer.Exit(0)
 
+    # Normative per NF-221-230: every output carries the honesty line.
+    console.print(f"[dim]{record.honesty_line}[/dim]")
     console.print("Eval-cost disclosure (self-reported — not a NovaFabric measurement)")
     console.print(f"  wall_seconds: {record.wall_seconds}")
     console.print(f"  tokens:       in={record.token_in} out={record.token_out}")

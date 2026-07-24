@@ -117,13 +117,19 @@ def test_secret_body_redacted_with_flag(tmp_path: Path) -> None:
     assert "[REDACTED:anthropic-api-key]" in record.body
 
 
-def test_asset_subject_is_planned_not_implemented(tmp_path: Path) -> None:
+def test_asset_subject_without_kind_asset_is_rejected(tmp_path: Path) -> None:
+    """An asset:// subject must be paired with --kind asset.
+
+    Was "planned, not implemented" until ADR-0121 P3 shipped; the remaining
+    exit-2 is the model enforcing that subject and subject_kind agree, which
+    is a real invariant rather than a placeholder.
+    """
     result = runner.invoke(
         app,
         ["comment", "add", "--subject", "asset://prompt/triage@1.0.0", "--body", "n"],
     )
     assert result.exit_code == 2
-    assert "planned" in result.output
+    assert "subject_kind" in result.output or "asset" in result.output
 
 
 def test_tombstone_requires_reply_to(tmp_path: Path) -> None:
@@ -180,14 +186,20 @@ def test_bad_subject_ref_exits_2(tmp_path: Path) -> None:
     assert result.exit_code == 2
 
 
-def test_kind_asset_is_planned_not_implemented(tmp_path: Path) -> None:
+def test_kind_asset_with_a_capsule_subject_is_rejected(tmp_path: Path) -> None:
+    """The pairing is enforced in both directions.
+
+    --kind asset over a capsule path is a mismatch: asset comments are
+    registry-backed and addressed by an asset:// ref, never by a capsule
+    digest. (Was "planned" until ADR-0121 P3 shipped.)
+    """
     cap = _make_capsule(tmp_path)
     result = runner.invoke(
         app,
         ["comment", "add", "--subject", str(cap), "--kind", "asset", "--body", "n"],
     )
     assert result.exit_code == 2
-    assert "planned" in result.output
+    assert "asset://" in result.output
 
 
 def test_bad_reply_to_ulid_exits_2(tmp_path: Path) -> None:
@@ -246,3 +258,208 @@ def test_list_human_output_marks_replies(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "root" in result.output
     assert "confirmed" in result.output
+
+
+# ---------------------------------------------------------------------------
+# nova comment thread (ADR-0121 P2 CLI half)
+# ---------------------------------------------------------------------------
+
+
+def _add(cap: Path, body: str, reply_to: str | None = None) -> str:
+    """Add a comment via the CLI and return its id."""
+    args = ["comment", "add", "--subject", str(cap), "--body", body]
+    if reply_to is not None:
+        args += ["--reply-to", reply_to]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.output
+    return read_comments(cap / COMMENTS_FILENAME)[-1].comment_id
+
+
+def test_thread_returns_chain_root_first(tmp_path: Path) -> None:
+    cap = _make_capsule(tmp_path)
+    root = _add(cap, "root question")
+    mid = _add(cap, "first reply", reply_to=root)
+    leaf = _add(cap, "second reply", reply_to=mid)
+
+    result = runner.invoke(
+        app, ["comment", "thread", leaf, "--subject", str(cap), "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    chain = json.loads(result.output)
+    assert [c["comment_id"] for c in chain] == [root, mid, leaf]
+
+
+def test_thread_indents_by_depth_in_table_output(tmp_path: Path) -> None:
+    cap = _make_capsule(tmp_path)
+    root = _add(cap, "root question")
+    leaf = _add(cap, "a reply", reply_to=root)
+
+    result = runner.invoke(app, ["comment", "thread", leaf, "--subject", str(cap)])
+    assert result.exit_code == 0, result.output
+    lines = [ln for ln in result.output.splitlines() if ln.strip()]
+    assert lines[0].startswith(root)  # root is not indented
+    assert lines[1].startswith("  ")  # the reply is
+
+
+def test_thread_on_a_root_comment_is_just_itself(tmp_path: Path) -> None:
+    cap = _make_capsule(tmp_path)
+    root = _add(cap, "standalone")
+    result = runner.invoke(
+        app, ["comment", "thread", root, "--subject", str(cap), "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    assert [c["comment_id"] for c in json.loads(result.output)] == [root]
+
+
+def test_thread_unknown_comment_exits_1(tmp_path: Path) -> None:
+    cap = _make_capsule(tmp_path)
+    _add(cap, "something")
+    result = runner.invoke(
+        app, ["comment", "thread", "01HXAY7M5JZ8R7K4P9DPBYK2WY", "--subject", str(cap)]
+    )
+    assert result.exit_code == 1
+    assert "not found" in result.output
+
+
+def test_thread_orphan_parent_is_tolerated_not_an_error(tmp_path: Path) -> None:
+    """A reply whose parent is absent is an orphan root, not a failure.
+
+    The append-only log can legitimately contain this (parent redacted away,
+    or written by a tool that dropped it), so the CLI must still resolve.
+    """
+    cap = _make_capsule(tmp_path)
+    orphan = _add(cap, "reply to a ghost", reply_to="01HXAY7M5JZ8R7K4P9DPBYK2WZ")
+    result = runner.invoke(
+        app, ["comment", "thread", orphan, "--subject", str(cap), "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    assert [c["comment_id"] for c in json.loads(result.output)] == [orphan]
+
+
+def test_thread_cycle_exits_1_without_a_traceback(tmp_path: Path) -> None:
+    """A malformed cycle is corrupt data — report it, never loop forever."""
+    cap = _make_capsule(tmp_path)
+    a = _add(cap, "first")
+    b = _add(cap, "second", reply_to=a)
+
+    # Forge a cycle by rewriting the log: a -> b -> a.
+    path = cap / COMMENTS_FILENAME
+    records = [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
+    for rec in records:
+        if rec.get("comment_id") == a:
+            rec["in_reply_to"] = b
+    path.write_text("".join(json.dumps(r) + "\n" for r in records))
+
+    result = runner.invoke(app, ["comment", "thread", b, "--subject", str(cap)])
+    assert result.exit_code == 1
+    assert "cycle" in result.output.lower()
+    assert "Traceback" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# asset:// subjects — registry-backed (ADR-0121 P3)
+# ---------------------------------------------------------------------------
+
+_ASSET = "asset://model/summarizer@1.2.0"
+
+
+def _registry(tmp_path: Path, monkeypatch) -> Path:
+    """Point the registry at a temp DB and initialise its schema."""
+    db = tmp_path / "registry.db"
+    monkeypatch.setenv("NOVAFABRIC_DB_PATH", str(db))
+    from novafabric.registry.store import get_connection, init_schema
+
+    conn = get_connection(db)
+    init_schema(conn)
+    conn.close()
+    return db
+
+
+def test_asset_comment_add_and_list(tmp_path: Path, monkeypatch) -> None:
+    """asset:// used to exit 2 as 'planned'; it now round-trips."""
+    _registry(tmp_path, monkeypatch)
+    result = runner.invoke(
+        app,
+        ["comment", "add", "--subject", _ASSET, "--kind", "asset", "--body", "needs eval"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "registry" in result.output  # reports the backend it wrote to
+
+    listed = runner.invoke(app, ["comment", "list", "--subject", _ASSET, "--json"])
+    assert listed.exit_code == 0, listed.output
+    rows = json.loads(listed.output)
+    assert len(rows) == 1
+    assert rows[0]["subject"] == _ASSET
+    assert rows[0]["body"] == "needs eval"
+    assert rows[0]["subject_kind"] == "asset"
+
+
+def test_asset_comments_are_isolated_per_subject(tmp_path: Path, monkeypatch) -> None:
+    _registry(tmp_path, monkeypatch)
+    other = "asset://model/other@2.0.0"
+    runner.invoke(app, ["comment", "add", "--subject", _ASSET, "--kind", "asset", "--body", "a"])
+    runner.invoke(app, ["comment", "add", "--subject", other, "--kind", "asset", "--body", "b"])
+
+    rows = json.loads(
+        runner.invoke(app, ["comment", "list", "--subject", _ASSET, "--json"]).output
+    )
+    assert [r["body"] for r in rows] == ["a"]
+
+
+def test_asset_comment_threading_works_like_capsules(tmp_path: Path, monkeypatch) -> None:
+    """Reader-side semantics are shared, so threads must resolve identically."""
+    _registry(tmp_path, monkeypatch)
+    runner.invoke(app, ["comment", "add", "--subject", _ASSET, "--kind", "asset", "--body", "root"])
+    from novafabric.registry import asset_comments
+    from novafabric.registry.store import get_connection
+
+    conn = get_connection(tmp_path / "registry.db")
+    root_id = asset_comments.read_comments(conn, _ASSET)[0].comment_id
+    conn.close()
+
+    runner.invoke(
+        app,
+        ["comment", "add", "--subject", _ASSET, "--kind", "asset", "--body", "reply",
+         "--reply-to", root_id],
+    )
+    conn = get_connection(tmp_path / "registry.db")
+    leaf_id = asset_comments.read_comments(conn, _ASSET)[-1].comment_id
+    conn.close()
+
+    threaded = runner.invoke(
+        app, ["comment", "thread", leaf_id, "--subject", _ASSET, "--json"]
+    )
+    assert threaded.exit_code == 0, threaded.output
+    assert [c["comment_id"] for c in json.loads(threaded.output)] == [root_id, leaf_id]
+
+
+def test_asset_comment_tombstone_hidden_by_default(tmp_path: Path, monkeypatch) -> None:
+    """Append-only delete must behave the same in SQLite as in JSONL."""
+    _registry(tmp_path, monkeypatch)
+    runner.invoke(app, ["comment", "add", "--subject", _ASSET, "--kind", "asset", "--body", "oops"])
+    from novafabric.registry import asset_comments
+    from novafabric.registry.store import get_connection
+
+    conn = get_connection(tmp_path / "registry.db")
+    target = asset_comments.read_comments(conn, _ASSET)[0].comment_id
+    conn.close()
+
+    runner.invoke(
+        app,
+        ["comment", "add", "--subject", _ASSET, "--kind", "asset", "--body", "retract",
+         "--tombstone", "--reply-to", target],
+    )
+    rows = json.loads(
+        runner.invoke(app, ["comment", "list", "--subject", _ASSET, "--json"]).output
+    )
+    assert rows == []  # both the original and the tombstone are hidden
+
+
+def test_asset_comment_secret_gate_still_applies(tmp_path: Path, monkeypatch) -> None:
+    """The ADR-0009 gate must not be bypassed by the new backend."""
+    _registry(tmp_path, monkeypatch)
+    result = runner.invoke(
+        app,
+        ["comment", "add", "--subject", _ASSET, "--kind", "asset", "--body", f"key {_SECRET}"],
+    )
+    assert result.exit_code == 3

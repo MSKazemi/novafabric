@@ -63,3 +63,15 @@ jobs:
       - name: OpenAPI type-drift gate
         working-directory: packages/nova-sdk-ts
         run: npm run check:drift
+
+      # Builds both entry points, then `require()`s the CommonJS output with
+      # plain Node. Deliberately not a vitest assertion: vitest resolves
+      # through its own bundler and would pass even if a real `require()`
+      # broke on the "type": "module" boundary (ADR-0194 D5).
+      - name: Dual ESM/CJS build + CommonJS consumption smoke test
+        working-directory: packages/nova-sdk-ts
+        run: npm run test:cjs
+
+      - name: ESM consumption smoke test
+        working-directory: packages/nova-sdk-ts
+        run: node --input-type=module -e "import('./dist/index.js').then(m => { if (typeof m.NovaFabricClient !== 'function') { throw new Error('ESM entry missing NovaFabricClient'); } })"

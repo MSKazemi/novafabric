@@ -175,3 +175,48 @@ describe("GraphologyModel integration with SigmaRenderer", () => {
     expect(model.graph.hasEdge("a", "b")).toBe(true);
   });
 });
+
+// -----------------------------------------------------------------------
+// fit() camera framing — pure math, testable without WebGL.
+//
+// Regression: fit() used animatedReset(), which returns the camera to
+// ratio 1. That frames the normalised [0,1] coordinate space but NOT the
+// nodes drawn in it, because Sigma draws `size` in screen pixels — so a
+// large cluster near the edge rendered half outside the viewport.
+// -----------------------------------------------------------------------
+
+describe("computeFitRatio", () => {
+  it("zooms out enough to fit the largest node's diameter", async () => {
+    const { computeFitRatio } = await import("../renderer/fit.js");
+    // A 82px-radius node (≈106 agents) in a 1000px-tall viewport needs the
+    // camera to cover its full diameter on both sides of the extent.
+    const ratio = computeFitRatio(82, 1600, 1000);
+    expect(ratio).toBeGreaterThan(1 + (2 * 82) / 1000);
+  });
+
+  it("never returns less than 1 (never zooms IN past the full extent)", async () => {
+    const { computeFitRatio } = await import("../renderer/fit.js");
+    expect(computeFitRatio(0, 1600, 1000)).toBeGreaterThanOrEqual(1);
+    expect(computeFitRatio(-50, 1600, 1000)).toBeGreaterThanOrEqual(1);
+  });
+
+  it("uses the SHORTER viewport dimension, so wide windows still fit", async () => {
+    const { computeFitRatio } = await import("../renderer/fit.js");
+    // Same node, very wide window: height is the binding constraint.
+    const wide = computeFitRatio(80, 3000, 400);
+    const square = computeFitRatio(80, 400, 400);
+    expect(wide).toBeCloseTo(square, 10);
+  });
+
+  it("larger nodes require more zoom-out", async () => {
+    const { computeFitRatio } = await import("../renderer/fit.js");
+    expect(computeFitRatio(120, 1000, 1000)).toBeGreaterThan(
+      computeFitRatio(20, 1000, 1000),
+    );
+  });
+
+  it("survives a degenerate zero-size viewport", async () => {
+    const { computeFitRatio } = await import("../renderer/fit.js");
+    expect(Number.isFinite(computeFitRatio(80, 0, 0))).toBe(true);
+  });
+});

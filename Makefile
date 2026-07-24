@@ -133,7 +133,12 @@ benchmark-capture:
 		--benchmark-json=.benchmark-results/capture_overhead.json
 
 lint:
-	uv run ruff check src tests
+	# --no-cache: a stale ruff cache reported "All checks passed!" for hours on
+	# 2026-07-20 while two real I001 errors existed. Three separate agents saw the
+	# errors in fresh checkouts and were told, wrongly, that main was clean. A lint
+	# gate that can report a false green is worse than no gate, because it is
+	# trusted. The cache saves a few seconds and costs correctness.
+	uv run ruff check src tests --no-cache
 
 typecheck:
 	uv run mypy src

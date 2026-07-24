@@ -73,9 +73,11 @@ from novafabric.cli.export_whistleblower import export_whistleblower_cmd
 from novafabric.cli.forensics import forensics_app
 from novafabric.cli.graph import graph_app
 from novafabric.cli.hold import app as hold_app
+from novafabric.cli.import_blob import import_cmd
 from novafabric.cli.incident import incident_app
 from novafabric.cli.ingest_capsule import ingest_capsule_cmd
 from novafabric.cli.init_ import init_cmd
+from novafabric.cli.insights import insights_cmd
 from novafabric.cli.inspect_ import inspect_cmd
 from novafabric.cli.kg import kg_app
 from novafabric.cli.label import label_app
@@ -87,6 +89,7 @@ from novafabric.cli.login import login_cmd, logout_cmd
 from novafabric.cli.mcp_ import app as mcp_app
 from novafabric.cli.mcp_proxy import mcp_proxy_cmd
 from novafabric.cli.media import media_app
+from novafabric.cli.memory import memory_app
 from novafabric.cli.merkle_tree import merkle_tree_cmd
 from novafabric.cli.migrate import migrate_to_postgres_cmd
 from novafabric.cli.migrate_capsule import migrate_capsule_cmd
@@ -111,6 +114,7 @@ from novafabric.cli.scan_secrets import scan_secrets_cmd
 from novafabric.cli.schema import app as schema_app
 from novafabric.cli.score import score_app
 from novafabric.cli.seal_propose import seal_app
+from novafabric.cli.search import search_cmd
 from novafabric.cli.serve import serve_cmd
 from novafabric.cli.server import server_app
 from novafabric.cli.session import session_app
@@ -172,6 +176,7 @@ app.command("suggest-register")(suggest_register_cmd)
 app.command("list")(list_cmd)
 app.command("inspect")(inspect_cmd)
 app.command("ingest-capsule")(ingest_capsule_cmd)
+app.command("import")(import_cmd)
 app.command(
     "mcp-proxy",
     context_settings={"allow_extra_args": True, "allow_interspersed_args": False},
@@ -343,6 +348,7 @@ app.add_typer(
 )
 app.command("diff")(diff_cmd)
 app.command("diagnose")(diagnose_cmd)
+app.command("insights")(insights_cmd)
 app.command("redact")(redact_cmd)
 app.command("subject-proof")(subject_proof_cmd)
 app.command("replay")(replay_cmd)
@@ -355,6 +361,7 @@ app.add_typer(
 )
 app.command("trend")(trend_cmd)
 app.command("scan-secrets")(scan_secrets_cmd)
+app.command("search")(search_cmd)
 app.command("assure")(assure_cmd)
 app.command("assure-case")(assure_case_cmd)
 app.command("assure-coverage")(assure_coverage_cmd)
@@ -364,6 +371,7 @@ app.command("validate")(validate_cmd)
 app.command("verify")(verify_cmd)
 app.command("serve")(serve_cmd)
 app.add_typer(lineage_app, name="lineage")
+app.add_typer(memory_app, name="memory")
 app.add_typer(
     graph_app,
     name="graph",

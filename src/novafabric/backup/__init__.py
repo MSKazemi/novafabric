@@ -1,11 +1,17 @@
-"""Evidence-grade backup sets and restore (ADR-0181, experimental).
+"""Evidence-grade backup sets and restore (ADR-0181/0216/0217, experimental).
 
-First slice: ``nova backup create`` / ``nova backup verify`` for the local
-``~/.novafabric`` layout. Second slice: ``nova restore`` (local profile, with
-normative crypto-shred replay and a closing verification chain) plus the
-``pg`` create profile (``pg_dump --format=custom`` member). Restore of a
-pg-dump set remains the ``pg_restore`` runbook
-(``docs/ops/backup-restore.md`` §1.2); see ``design/spec/backup-restore-v0.md``.
+``nova backup create`` / ``nova backup verify`` / ``nova restore``. The
+``local-full`` profile covers every persistent local store with a signed
+coverage table (ADR-0216); key material travels only under the
+``--include-keys``/``--restore-keys`` dual opt-in. ``nova restore`` dispatches
+on the verified manifest's profile: ``pg-dump`` sets restore automatically
+(safety dump, single-transaction ``pg_restore``, alembic-to-head,
+manifest-anchored row counts, RLS proof — ADR-0217; the schema-skew guard and
+``nova db upgrade --track`` disambiguation are ADR-0211 Part B), and
+``manifest-only`` sets verify chain heads against the live WORM bucket and
+rebuild the metadata DB (ADR-0216 D6). Specs:
+``design/spec/backup-restore-v0.md``,
+``design/spec/pg-restore-skew-guard-v0.md``.
 """
 
 from novafabric.backup.create import (
@@ -17,13 +23,19 @@ from novafabric.backup.create import (
 from novafabric.backup.models import (
     BackupManifest,
     BackupMember,
+    CoverageEntry,
     ManifestSignature,
     MemberCheck,
     RestoreResult,
     RestoreStepResult,
     VerifyResult,
 )
-from novafabric.backup.restore import RestoreError, restore_backup
+from novafabric.backup.restore import (
+    PgRestoreNotFoundError,
+    RestoreError,
+    restore_backup,
+)
+from novafabric.backup.restore_manifest import BucketUnreachableError
 from novafabric.backup.verify import BackupVerifyError, verify_backup
 
 __all__ = [
@@ -32,9 +44,12 @@ __all__ = [
     "BackupManifest",
     "BackupMember",
     "BackupVerifyError",
+    "BucketUnreachableError",
+    "CoverageEntry",
     "ManifestSignature",
     "MemberCheck",
     "PgDumpNotFoundError",
+    "PgRestoreNotFoundError",
     "RestoreError",
     "RestoreResult",
     "RestoreStepResult",

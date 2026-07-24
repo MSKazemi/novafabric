@@ -14,11 +14,11 @@ from pathlib import Path
 
 import pytest
 from jsonschema import Draft202012Validator, FormatChecker
-from trend.conftest import CapsuleFactory, RecordFactory
 
 from novafabric.trend import TrendError, TrendUsageError, build_trend_report
 from novafabric.views.model import SavedView
 from novafabric.views.store import save_view
+from trend.conftest import CapsuleFactory, RecordFactory
 
 _SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schemas" / "trend-report.schema.json"
 _VALIDATOR = Draft202012Validator(

@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import json
 import socket
-from collections.abc import Iterator
+from collections.abc import Callable, Iterable, Iterator
+from dataclasses import dataclass
 from datetime import datetime
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 import yaml
@@ -138,7 +140,7 @@ def _integrate_node_joules(capsule_dir: Path) -> tuple[float, CounterName] | Non
     start_uj, end_uj = readings[0], readings[-1]
     # max range unknown from samples alone; pass a large default so a single
     # wrap is absorbed (RAPL pkg counters are ~262 GJ-range, far above a run).
-    max_range = {dom: 2**63 for dom in start_uj}
+    max_range = dict.fromkeys(start_uj, 2 ** 63)
     joules = rapl_delta_joules(start_uj, end_uj, max_range)
     counter = (
         CounterName.RAPL_DRAM
@@ -314,10 +316,105 @@ def load_receipts(capsule_dir: Path) -> list[EnergyReceipt]:
     return [EnergyReceipt.model_validate(record) for record in _iter_jsonl(path)]
 
 
+# ── Per-agent joule split (ADR-0146 D1/P1, NF-141 energy side) ────────────
+#
+# Additive extension: everything above attributes energy to an *action*; this
+# regroups those same receipts by the *agent* that performed the action. It
+# introduces no new capture and re-reads nothing — the receipts are the
+# ADR-0093 record (ADR-0146 D1, "attribute, never re-capture").
+
+
+@dataclass(frozen=True)
+class AgentEnergySplit:
+    """Per-agent joules, in integer millijoules, plus what did not attribute.
+
+    Millijoules rather than float joules because the cost-attribution facet
+    checks Σ agents == run total *exactly*, and floats do not sum exactly.
+    Deliberately a plain dataclass of ints rather than a
+    ``novafabric.cost`` model: the energy layer must not depend on the cost
+    layer to hand it a number, and the caller wires the two together.
+    """
+
+    #: agent_id → attributed millijoules. Agents that measured nothing are
+    #: absent from the mapping, never present with 0 (absent ≠ zero).
+    by_agent: dict[str, int]
+    #: Millijoules from receipts that named no agent, in the same total.
+    unattributed_millijoules: int
+    #: Sum over every receipt carrying a figure, i.e. the whole to conserve.
+    total_millijoules: int
+    #: ``measured`` only when every contributing receipt was itself measured;
+    #: one apportioned receipt in the sum makes the whole agent figure an
+    #: estimate, and grading it ``measured`` would launder that (I-4).
+    basis: str
+
+
+def joules_to_millijoules(joules: float) -> int:
+    """Convert a receipt's float joules to integer millijoules.
+
+    The one deliberate rounding boundary in the energy→cost path. Goes via
+    ``Decimal(str(...))`` rather than ``round(joules * 1000)`` because the
+    latter multiplies the float's binary error by a thousand first — 0.0295 J
+    becomes 29.499999999999996 mJ and rounds *down*, off by one against the
+    decimal value a reader sees in the receipt. ROUND_HALF_UP is chosen over
+    Python's default banker's rounding for the same reason: an auditor
+    re-deriving the figure by hand will round half up.
+    """
+    milli = Decimal(str(joules)) * 1000
+    return int(milli.quantize(Decimal(1), rounding=ROUND_HALF_UP))
+
+
+def split_receipts_by_agent(
+    receipts: Iterable[EnergyReceipt],
+    *,
+    agent_of: Callable[[EnergyReceipt], str | None],
+) -> AgentEnergySplit:
+    """Group ADR-0093 receipts into per-agent millijoules (NF-141).
+
+    ``agent_of`` maps a receipt to the agent that performed its action; the
+    mapping lives with the caller because receipts carry an ``action_ref``,
+    not an ``agent_id``, and only the team graph knows which agent ran which
+    action. Returning ``None`` from it is the fail-open answer for an action
+    nobody can attribute — those joules land in
+    ``unattributed_millijoules`` rather than being dropped from the total or
+    charged to an arbitrary agent (I-3).
+
+    Receipts with no figure at all (``measured_joules is None``: the honest
+    ``unavailable`` case) contribute to nothing, not to zero — an agent whose
+    node had no counter must not read as an agent that burned no energy.
+    """
+    by_agent: dict[str, int] = {}
+    unattributed = 0
+    total = 0
+    all_measured = True
+    for receipt in receipts:
+        if receipt.measured_joules is None:
+            continue
+        milli = joules_to_millijoules(receipt.measured_joules)
+        total += milli
+        if receipt.confidence is not Confidence.MEASURED:
+            all_measured = False
+        agent_id = agent_of(receipt)
+        if agent_id is None:
+            unattributed += milli
+        else:
+            by_agent[agent_id] = by_agent.get(agent_id, 0) + milli
+    return AgentEnergySplit(
+        by_agent=dict(sorted(by_agent.items())),
+        unattributed_millijoules=unattributed,
+        total_millijoules=total,
+        # An empty split has measured nothing; calling that "measured" would
+        # assert a measurement that never happened.
+        basis="measured" if all_measured and by_agent else "apportioned",
+    )
+
+
 __all__ = [
     "RECEIPTS_FILE",
+    "AgentEnergySplit",
     "attest_capsule",
     "attest_capsule_with_samples",
+    "joules_to_millijoules",
     "load_receipts",
+    "split_receipts_by_agent",
     "write_receipts",
 ]

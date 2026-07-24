@@ -102,7 +102,7 @@ def _make_experiment(
 def test_regression_detected_exit_3(tmp_path: Path) -> None:
     items = {f"i{k}": True for k in range(5)}
     baseline = _make_experiment(tmp_path, "base", items)
-    candidate = _make_experiment(tmp_path, "cand", {k: False for k in items})
+    candidate = _make_experiment(tmp_path, "cand", dict.fromkeys(items, False))
     comparison = compare_experiments(baseline, candidate, metric="exact_match")
     assert comparison.significance["sprt"]["verdict"] == "accept_h1"
     assert comparison.exit_code == 3
@@ -123,7 +123,7 @@ def test_no_change_exit_0(tmp_path: Path) -> None:
 def test_improvement_exit_0(tmp_path: Path) -> None:
     items = {f"i{k}": False for k in range(12)}
     baseline = _make_experiment(tmp_path, "base", items)
-    candidate = _make_experiment(tmp_path, "cand", {k: True for k in items})
+    candidate = _make_experiment(tmp_path, "cand", dict.fromkeys(items, True))
     comparison = compare_experiments(baseline, candidate, metric="exact_match")
     assert comparison.exit_code == 0
     assert not comparison.is_regression()
@@ -213,7 +213,7 @@ def test_gate_input_shape_feeds_policy_resource(tmp_path: Path) -> None:
     """D4: the comparison drops into PolicyResource.regression_report unchanged."""
     items = {f"i{k}": True for k in range(5)}
     baseline = _make_experiment(tmp_path, "base", items)
-    candidate = _make_experiment(tmp_path, "cand", {k: False for k in items})
+    candidate = _make_experiment(tmp_path, "cand", dict.fromkeys(items, False))
     comparison = compare_experiments(baseline, candidate, metric="exact_match")
 
     report = comparison.to_policy_regression_report()

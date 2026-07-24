@@ -4,6 +4,7 @@ import { api } from '../../../lib/api';
 import type { ToolPermissionEventRecord } from '../../../lib/api';
 import { SuggestInput } from '../../ui/SuggestInput';
 import CopyButton from '../../ui/CopyButton';
+import GenericExportPanel from '../compliance/GenericExportPanel';
 
 function useLocalMru(key: string, max = 12): [string[], (v: string) => void] {
   const [mru, setMru] = useState<string[]>(() => {
@@ -799,7 +800,7 @@ function GdprErasurePanel({ runIds }: { runIds: string[] }) {
 
   const [statusSubjectId, setStatusSubjectId] = useState('');
   const [statusLoading, setStatusLoading] = useState(false);
-  const [statusResult, setStatusResult] = useState<{ subject_id: string | null; cap003_enabled: boolean; requests: unknown[]; note: string } | null>(null);
+  const [statusResult, setStatusResult] = useState<{ cap003_enabled: boolean; requests: Array<Record<string, unknown>> } | null>(null);
 
   const checkStatus = useCallback(async () => {
     setStatusLoading(true);
@@ -813,8 +814,15 @@ function GdprErasurePanel({ runIds }: { runIds: string[] }) {
     setSubmitting(true);
     setErr(null);
     try {
+      // ADR-0210: real execution — confirmed:true, terminal state + receipt hash.
       const r = await api.erasureRequest(id, reason);
-      setResult({ state: r.state, cap003_enabled: r.cap003_enabled, note: r.note });
+      setResult({
+        state: r.request.state,
+        cap003_enabled: r.cap003_enabled,
+        note: r.request.receipt_sha256
+          ? `receipt_sha256: ${r.request.receipt_sha256}`
+          : (r.request.error_detail ?? ''),
+      });
       pushErasureSubject(id);
     } catch (e) {
       setErr((e as Error).message);
@@ -825,8 +833,8 @@ function GdprErasurePanel({ runIds }: { runIds: string[] }) {
 
   const stateColor: Record<string, string> = {
     PENDING: 'text-[var(--color-status-pending)]',
-    FEATURE_FLAG_OFF: 'text-[var(--color-text-muted)]',
-    TOMBSTONED: 'text-[var(--color-status-success)]',
+    COMPLETED: 'text-[var(--color-status-success)]',
+    DEFERRED: 'text-[var(--color-status-pending)]',
     FAILED: 'text-[var(--color-status-failure)]',
   };
 
@@ -929,7 +937,7 @@ function GdprErasurePanel({ runIds }: { runIds: string[] }) {
         </div>
         {statusResult && (
           <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-3 py-2 text-xs font-mono space-y-1">
-            <div>Subject: {statusResult.subject_id ?? '(all)'} | cap003: {statusResult.cap003_enabled ? 'enabled' : 'disabled'}</div>
+            <div>cap003: {statusResult.cap003_enabled ? 'enabled' : 'disabled'}</div>
             <div>Requests: {statusResult.requests.length}</div>
             {statusResult.requests.length > 0 && (
               <div className="space-y-0.5 mt-1">
@@ -940,7 +948,6 @@ function GdprErasurePanel({ runIds }: { runIds: string[] }) {
                 ))}
               </div>
             )}
-            <div className="text-[10px] text-[var(--color-text-faint)]">{statusResult.note}</div>
           </div>
         )}
       </div>
@@ -997,6 +1004,7 @@ export default function ComplianceTab({ runIds: initialRunIds }: { runIds?: stri
       <AibomGeneratePanel runIds={ids} />
       <PiiErasePanel runIds={ids} />
       <HIPAAProofPanel runIds={ids} />
+      <GenericExportPanel runIds={ids} />
     </div>
   );
 }

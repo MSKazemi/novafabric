@@ -216,7 +216,12 @@ def export_evidence_cmd(
     sigstore: bool = typer.Option(
         False,
         "--sigstore",
-        help="Use Sigstore keyless signing (planned for v0.4.x; not implemented).",
+        help=(
+            "Publish the bundle's DSSE envelope to a Rekor transparency log. "
+            "Requires NOVA_REKOR_URL; skipped with a warning if unset. Note: "
+            "this is transparency-log publication, not Sigstore keyless "
+            "signing — the bundle is still signed by the configured key."
+        ),
     ),
     allow_unsafe_skips: bool = typer.Option(
         False,

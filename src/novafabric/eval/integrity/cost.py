@@ -14,6 +14,13 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+#: The evaluation-integrity honesty line the NF-221-230 spec makes normative.
+#: A model field, not a CLI-only print, so `--json` carries it too.
+HONESTY_LINE: str = (
+    "NovaFabric discloses the cost/compute figures the harness self-reported. It does "
+    "not measure, verify, or certify them, and it does not run the eval."
+)
+
 
 class EvalCost(BaseModel):
     wall_seconds: float
@@ -23,6 +30,7 @@ class EvalCost(BaseModel):
     energy_wh: float | None = None  # optional, for carbon-aware reporting
     hardware_ref: str | None = None  # optional reference to the compute used
     self_reported: bool = True  # NF-229: self-reported values, never a NovaFabric measurement
+    honesty_line: str = HONESTY_LINE
 
 
 def build_eval_cost(

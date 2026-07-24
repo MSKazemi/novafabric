@@ -66,15 +66,15 @@ def _register_toxicity(db_path: Path, description: str = "Lower is better.") -> 
 
 
 def _score(**over: object) -> Score:
-    base: dict[str, object] = dict(
-        subject=_SUBJECT,
-        name="toxicity",
-        value=0.5,
-        value_type=ScoreValueType.NUMERIC,
-        source=ScoreSource.CODE,
-        evaluator_id="tox-scan",
-        eval_card_digest=_CARD,
-    )
+    base: dict[str, object] = {
+        "subject": _SUBJECT,
+        "name": "toxicity",
+        "value": 0.5,
+        "value_type": ScoreValueType.NUMERIC,
+        "source": ScoreSource.CODE,
+        "evaluator_id": "tox-scan",
+        "eval_card_digest": _CARD,
+    }
     base.update(over)
     return Score(**base)  # type: ignore[arg-type]
 

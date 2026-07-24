@@ -524,3 +524,59 @@ def annotate_skip(
     except AnnotationError as exc:
         _fail(exc)
     console.print(f"[yellow]Skipped[/yellow] item {item.item_id} (no score written).")
+
+
+@queue_app.command("populate")
+def queue_populate(
+    queue_ref: Annotated[str, typer.Argument(help="Queue id (ULID) or name.")],
+    capsule_dir: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--capsule-dir",
+            help="Capsule root to scan (default: $NOVAFABRIC_CAPSULE_DIR, "
+            "then $NOVAFABRIC_HOME/capsules).",
+            exists=True,
+            file_okay=False,
+        ),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Report what would be enqueued; write nothing."),
+    ] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Print the summary as JSON.")
+    ] = False,
+) -> None:
+    """Enqueue every stored capsule matching the queue's subject selector.
+
+    Idempotent — a subject already on the queue is skipped, so re-running
+    after new capsules land adds only the new ones. Safe to schedule.
+
+    A `sample` fraction in the selector is applied **deterministically**, so
+    repeat runs choose the same subjects: an auditor asking "why was this run
+    reviewed and that one not?" gets a stable answer rather than "chance".
+
+    \b
+    Examples:
+      nova annotate queue populate triage-q
+      nova annotate queue populate triage-q --dry-run --json
+    """
+    from novafabric._paths import default_capsule_dir
+    from novafabric.eval.annotation_store import populate_queue
+
+    root = capsule_dir or default_capsule_dir()
+    try:
+        summary = populate_queue(queue_ref, root, dry_run=dry_run)
+    except (AnnotationError, ValueError) as exc:
+        _fail(exc)
+
+    if json_output:
+        typer.echo(json.dumps(summary, indent=2))
+        return
+    prefix = "[yellow]Would enqueue[/yellow]" if dry_run else "[green]Enqueued[/green]"
+    console.print(
+        f"{prefix} {summary['added']} item(s) on queue {summary['queue']}\n"
+        f"  scanned={summary['scanned']} matched={summary['matched']} "
+        f"already-present={summary['skipped_existing']} "
+        f"sampled-out={summary['skipped_sample']}"
+    )

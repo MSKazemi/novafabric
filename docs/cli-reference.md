@@ -82,9 +82,13 @@ Commands grouped by primitive and task. Each entry links to its full section.
 | [`nova diff`](#nova-diff-capsule-a-capsule-b) | Structurally compare two capsules; CI regression gate |
 | [`nova diagnose`](#nova-diagnose-run-id) | Attribute a failed run to its responsible step |
 | [`nova query`](#nova-query-experimental-adr-0129) | Aggregate metrics across local capsules, offline (experimental) |
+| [`nova search`](#nova-search-experimental-adr-0204) | Full-text search over redacted capsule content (experimental) |
 | [`nova view`](#nova-view-experimental-adr-0130) | Saved views: save, list, show, run, delete named query definitions (experimental) |
 | [`nova trend`](#nova-trend-experimental-adr-0131) | Score/cost/latency trend report over local capsules: JSON + optional static HTML (experimental) |
 | [`nova cost estimate`](#nova-cost-estimate-experimental-adr-0133) | Offline per-capsule cost: recorded vs catalog-estimated (experimental) |
+| [`nova cost attribute`](#nova-cost-attribute-experimental-adr-0146) | Attribute recorded spend to productive vs wasted outcomes — descriptive (experimental) |
+| [`nova cost fairness`](#nova-cost-fairness-experimental-adr-0146) | Per-agent cost/energy/calls fairness ledger: share, Gini, max/mean — descriptive (experimental) |
+| [`nova cost usage-breakdown`](#nova-cost-usage-breakdown-experimental-adr-0132) | Token usage-type composition of a capsule — descriptive (experimental) |
 | [`nova pricing`](#nova-pricing-listshowadd-experimental-adr-0133) | Local model-pricing catalog: list, show, add (experimental) |
 | [`nova drift`](#offline-drift-and-tool-schema-analysis-experimental-adr-01470148) | Offline drift, silent-failure, and root-cause detectors over sealed capsules (experimental) |
 | [`nova toolschema impact`](#nova-toolschema-impact-experimental-adr-0148) | Which historical runs break under a new tool schema (experimental) |
@@ -98,6 +102,10 @@ Commands grouped by primitive and task. Each entry links to its full section.
 | [`nova lineage replay-chain`](#nova-lineage-replay-chain) | Trace a run back to its original capture |
 | [`nova lineage time-travel`](#nova-lineage-time-travel) | Lineage state as of a timestamp |
 | [`nova lineage emit-openlineage`](#nova-lineage-emit-openlineage) | Emit OpenLineage 2.0.2 events |
+| [`nova lineage metrics`](#nova-lineage-metrics) | Hubs + single points of failure (experimental, ADR-0212) |
+| [`nova lineage root-cause`](#nova-lineage-root-cause) | Rank upstream root-cause suspects (experimental, ADR-0213) |
+| [`nova lineage export-graph`](#nova-lineage-export-graph) | GraphML/GEXF/Cypher export (experimental, ADR-0214) |
+| [`nova insights`](#nova-insights) | Synthesized graph-intelligence report (experimental, ADR-0215) |
 | [`nova graph agent`](#nova-graph-agent-experimental-adr-0124) | Reconstruct one run's execution DAG from its capsule (experimental) |
 
 ### Trust layer and evidence
@@ -112,6 +120,7 @@ Commands grouped by primitive and task. Each entry links to its full section.
 | [`nova assure`](#nova-assure-capsule-path-v025-e-10) | OWASP LLM Top 10 evidence checks |
 | [`nova verify`](#nova-verify-capsule) | Verify a capsule's NovaSeal seal (experimental) |
 | [`nova export-blob`](#nova-export-blob---dest-uri) | Batch capsule export with a signed completeness manifest (experimental) |
+| [`nova import`](#nova-import-source) | Verified batch import of a blob export — DR restore, air-gap transfer, migration (experimental) |
 | [`nova comment`](#nova-comment-add--list-experimental-adr-0121) | Append-only human annotations on capsule evidence |
 | [`nova annotate`](#nova-annotate-experimental-adr-0118) | Human annotation queues — route subjects to reviewers, emit HUMAN scores |
 | [`nova score submit`](#nova-score-submit-experimental-adr-0119) | Submit an externally-computed score into a capsule's append-only scores.jsonl |
@@ -172,9 +181,9 @@ Commands grouped by primitive and task. Each entry links to its full section.
 | [`nova login`](#nova-login) / [`nova logout`](#nova-logout) | Authenticate with a NovaFabric server |
 | [`nova doctor`](#nova-doctor---check-storage) | Installation and storage diagnostics |
 | [`nova migrate-to-postgres`](#nova-migrate-to-postgres) | Migrate the local SQLite registry to Postgres |
-| [`nova backup`](#nova-backup-create-experimental-adr-0181) / [`nova restore`](#nova-restore-set-path-experimental-adr-0181) | Evidence-grade local backup sets: create, verify offline, restore (experimental) |
+| [`nova backup`](#nova-backup-create-experimental-adr-0181) / [`nova restore`](#nova-restore-set-path-experimental-adr-0181--adr-0211) | Evidence-grade backup sets: create, verify offline, restore (local + automated pg restore, experimental) |
 | [`nova support-bundle`](#nova-support-bundle-experimental-adr-0187) | Secret-safe diagnostics tarball for support (experimental) |
-| [`nova audit-log`](#nova-audit-log-export-experimental-adr-0191) | Export local audit logs for SIEM ingestion (OCSF / native JSONL, experimental) |
+| [`nova audit-log`](#nova-audit-log-export-experimental-adr-0191) | Export local audit logs for SIEM ingestion (OCSF / CEF / native JSONL, experimental) |
 
 For everything else — the knowledge graph, energy receipts, the accountability
 ledger, HPC collector binaries, and the full environment-variable table — use
@@ -680,6 +689,75 @@ nova mcp risk-report mcp-server.json --format json
 JSON output includes per-tool risk scores and per-finding evidence strings.
 Exits 2 if the manifest file is not found.
 
+### nova mcp card (experimental, NF-039 / SEP-1649)
+
+Publish and validate the **MCP Server Card** — the SEP-1649 discovery document
+an MCP registry or client fetches from `/.well-known/mcp.json` to learn an
+endpoint's protocol version, capabilities and auth **without connecting**.
+
+```bash
+nova mcp card show                                   # what nova serve publishes
+nova mcp card show --json --base-url https://nova.example
+nova mcp card validate card.json
+nova mcp card validate https://nova.example/.well-known/mcp.json
+```
+
+**Generated, never hand-written.** The card is built from the live server
+configuration, so it cannot drift from what the server actually does — a
+discovery document that has drifted is worse than none, because a client trusts
+it precisely for being authoritative.
+
+What it reports:
+- `protocolVersion` — MCP `2026-07-28` (the "stateless" release).
+- `capabilities` — `tools`, `elicitation`, and `tasks` marked
+  `{"extension": true}`. Tasks moved out of core in 2026-07-28; NovaFabric
+  *detects and captures* Tasks-bearing messages but does not execute them, and
+  the card says so rather than implying execution support.
+- `auth` — the auth **actually in force**: `oidc` (with issuer) when OIDC is
+  configured, `bearer` for the ADR-0184 local-token default, or `none` when
+  `--insecure-no-auth` is set. It reports `none` explicitly rather than omitting
+  the block, since silence would invite a client to assume there is some.
+
+`nova serve` publishes the card at `GET /.well-known/mcp.json`, **unauthenticated
+by design** — gating a discovery document behind the auth it describes would make
+it undiscoverable. It carries only non-secret facts.
+
+Validation is strict about structure and permissive about unknown keys: SEP-1649
+is an evolving format, so an unrecognised field is forward-compatibility, but a
+missing required field means a client cannot rely on the document.
+
+Exit codes: `0` (valid), `1` (invalid card), `2` (unreadable file/URL).
+
+### nova mcp conformance (experimental, NF-038)
+
+Replay MCP conformance vectors and assert wire compatibility with the
+2026-07-28 release.
+
+```bash
+nova mcp conformance tests/mcp/vectors/
+nova mcp conformance tests/mcp/vectors/ --json
+```
+
+Each vector pins a wire behaviour against the capture shape it must produce.
+They exist because **MCP capture is evidence**: a spec drift that silently
+changes what gets recorded fails no ordinary test — the code runs, the capsule
+writes, and the damage only appears when someone tries to replay an exchange
+months later and the turn structure is gone. On failure the vector's `why`
+field is printed, so a reader learns what breaks in the product rather than
+just which assertion tripped.
+
+Shipped vectors cover: a two-round SEP-2322 elicitation (rounds 1,1,2,2 under
+one exchange id), concurrent interleaved exchanges (grouping must key off
+JSON-RPC id, never arrival order), Tasks-as-extension passthrough, and a leg
+with no id (which must *not* be captured, since correlating it under a
+fabricated id would invent a grouping).
+
+Exit codes: `0` (all passed), `1` (a vector failed), `2` (no vectors found —
+a suite with no vectors proves nothing).
+
+The `mcp-conformance` CI lane runs this plus `nova mcp card validate` on every
+PR touching `proxy/`, `capture/hooks/_mcp.py`, `mcp/`, or `tests/mcp/`.
+
 ---
 
 ## Phase 3 — Distributed run commands (v0.15.0, ADR-0044/0045/0046)
@@ -736,8 +814,59 @@ nova run lineage 01HXPARENT --spool-dir .novafabric/spool/
 
 Options:
 - `--spool-dir PATH` — capsule spool directory (default: `.`)
-- `--edge-types TEXT` — comma-separated filter: `contains,spawned,delegated_to,replayed_from`
+- `--edge-types TEXT` — comma-separated filter: `contains,spawned,delegated_to,replayed_from,member_of_session,wrote_memory,read_memory`
 - `--output, -o text|json` — output format (default: `text`)
+
+---
+
+## Memory commands (Unreleased)
+
+Memory provenance (ADR-0143 P1). Answers the poisoned-read question: an agent
+gave a bad answer from something it remembered — where did that value come
+from, and who else read it?
+
+These commands read `memory_operations.jsonl` from a capsule. A capsule
+without that file is valid; the commands report no operations rather than
+failing. **No memory values are shown** — provenance is by key only, so the
+graph never becomes a second copy of the content (ADR-0021 §4).
+
+### nova memory lineage \<capsule\>
+
+List the memory provenance edges implied by a capsule: `wrote_memory`
+(run → item) on each write or update, `read_memory` (item → run) on each
+read. Deletes emit no edge.
+
+```bash
+nova memory lineage .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/
+nova memory lineage .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --output json
+```
+
+Options:
+- `--output, -o text|json` — output format (default: `text`)
+
+### nova memory trace \<capsule\> --key \<memory-key\>
+
+Back-trace one memory key: which runs wrote it (oldest first), and which
+runs read it (the blast radius).
+
+```bash
+nova memory trace .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --key user_prefs
+nova memory trace .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ -k user_prefs -o json
+```
+
+Options:
+- `--key, -k TEXT` — memory key to trace (required)
+- `--output, -o text|json` — output format (default: `text`)
+
+**Scope, honestly:** the trace covers operations recorded *in the capsule you
+point at*. A value written by run A and read by run B shows both sides only if
+both runs' operations are in that capsule. Cross-capsule memory provenance
+needs the merged lineage store and is **planned**, not implemented.
+
+A read may carry `origin_run_id` — what the reading agent believed it was
+reading. That is recorded as a *claim* on the edge, not as the edge's source:
+the answer to "who really wrote this" comes from the `wrote_memory` edges, not
+from the reader's own assertion.
 
 ---
 
@@ -1058,6 +1187,49 @@ capsule directory, unresolvable saved view) exit 1; an empty result exits 0.
 
 ---
 
+## Capsule content search (experimental, ADR-0204)
+
+### nova search (experimental, ADR-0204)
+
+Full-text search over the **redacted** text of local run capsules — "which run
+mentioned invoice INV-2291?", "where did the agent call `rm -rf`?". Local-first:
+reads the registry DB (SQLite FTS5) and capsule directory directly, no server
+needed. The index is populated automatically when capsules are ingested by
+`nova serve` / `nova ingest-capsule`; pre-existing capsules need one backfill.
+
+```bash
+nova search "invoice INV-2291"                 # all terms must match (AND)
+nova search "rm -rf"                           # operators match literally
+nova search "inv*"                             # trailing * = prefix search
+nova search "429" --status failure --json      # filter + machine output
+nova search "timeout" --stream trace           # restrict to one stream
+nova search --reindex                          # backfill/repair the index
+nova search --reindex --all                    # force full re-extraction
+```
+
+Options:
+- `--limit N` (default 20, max 200) — max runs returned.
+- `--json` — emit results as JSON (same item shape as the API `matches`).
+- `--since` / `--until` / `--status` — filter on the run metadata index.
+- `--stream {model-call-messages|tool-call-arguments|trace|capsule-yaml}` —
+  restrict to one source stream.
+- `--reindex [--all]` — idempotent backfill/repair from the capsule directory;
+  also garbage-collects rows for deleted capsules. `--all` forces
+  re-extraction of already-indexed capsules.
+- `--capsule-dir` / `--db-path` — override the standard locations.
+
+Guarantees (ADR-0204): only **post-redaction** capsule bytes are indexed, and
+the corpus is a strict subset of the secret scanner's targets
+(`model-calls.jsonl`, `tool-calls.jsonl`, `trace.jsonl`, `capsule.yaml`);
+query input is quoted before it reaches the FTS5 MATCH grammar, so `OR`,
+`NEAR`, `-`, `:` match literally. `NOVA_CONTENT_INDEX=off` disables indexing
+at ingest.
+
+Exit codes: `0` (success, even with no matches), `1` (FTS5 unavailable in
+this Python's SQLite, or runtime error), `2` (usage error / empty query).
+
+---
+
 ## Offline drift and tool-schema analysis (experimental, ADR-0147/0148)
 
 Read-only, offline detectors over sealed capsule evidence. Each command loads a
@@ -1203,6 +1375,63 @@ nova lineage import <path>
 ```
 
 (Re-)index lineage from a capsule directory or a parent runs/ directory.
+
+### nova lineage metrics
+
+**Experimental (ADR-0212).**
+
+```bash
+nova lineage metrics [--top N] [--output text|json]
+```
+
+Rank structurally critical nodes over the whole local lineage graph: degree, PageRank
+(bounded power iteration), betweenness (seeded sampling above 2 000 nodes — the output
+says when it sampled), and articulation points ("single points of failure"). Scores are
+descriptive rankings for attention, not calibrated importance. Oversize graphs fail
+loudly at the whole-graph read bound instead of silently truncating.
+
+### nova lineage root-cause
+
+**Experimental (ADR-0213).**
+
+```bash
+nova lineage root-cause <run-id> [--depth N] [--capsule-dir DIR] [--output text|json]
+```
+
+Walk the failed run's upstream provenance and rank suspect nodes with bounded additive
+signals: error evidence (cues shared with ADR-0084), recency decay, an edge-confidence
+multiplier, and failure correlation across sibling failed runs. With `--capsule-dir`,
+the responsible run is additionally step-attributed via the `nova diagnose` engine. No
+error signal upstream → `responsible: null`; the command never fabricates a culprit.
+
+### nova lineage export-graph
+
+**Experimental (ADR-0214).**
+
+```bash
+nova lineage export-graph [--format graphml|gexf|cypher] [-o FILE] [--ref R [--kind K] [--depth N]]
+```
+
+Byte-stable export of the lineage graph (whole graph, or one node's provenance +
+blast-radius neighbourhood via `--ref`) for enterprise graph tooling: GraphML/GEXF for
+Gephi/yEd, idempotent Cypher `MERGE` statements for Neo4j. Topology and attributes
+only — seal/signature material never travels with this export; nested edge facets are
+carried as a `facets_json` string attribute.
+
+### nova insights
+
+**Experimental (ADR-0215).**
+
+```bash
+nova insights [--top N] [--output table|json|markdown] [-o FILE] [--cost-db PATH]
+```
+
+One synthesized report over the captured lineage graph: top hubs and articulation
+points (ADR-0212), seeded Louvain communities, orphan nodes, health ratios
+(largest-component fraction, orphan ratio), and best-effort cost hotspots (lineage
+node payloads, or a `--cost-db` evidence-fabric DuckDB aggregate). Unavailable data
+sources are reported as unavailable, never fabricated. `--output markdown -o FILE`
+produces a shareable weekly artifact.
 
 ### nova lineage emit-openlineage
 
@@ -1509,9 +1738,32 @@ nova comment list --subject <capsule-dir> --json
 `--subject` accepts a capsule directory (resolved to a stable content-addressed root
 digest that excludes the annotation stream itself, so every comment on a capsule shares
 one subject) or a `sha256:<hex>` digest (then `--capsule <dir>` locates `comments.jsonl`).
-`asset://` subjects (comments on registry assets) are **planned** (ADR-0121 P3) and
-refused with exit 2, as is `nova comment thread` (reply-chain rendering — the bounded,
-cycle-reporting resolver already exists in the library).
+`asset://<type>/<name>@<version>` subjects annotate **registry assets** rather than
+capsules. They are stored in the registry's `asset_comments` table (assets have no
+capsule log), but are the same records with the same append-only semantics — threads,
+tombstones and the secret gate behave identically:
+
+```bash
+nova comment add --subject asset://model/summarizer@1.2.0 --kind asset \
+  --body "eval regression on the finance set — do not promote"
+nova comment list --subject asset://model/summarizer@1.2.0
+```
+
+`--subject` and `--kind` must agree: an `asset://` ref requires `--kind asset`, and
+`--kind asset` requires an `asset://` ref (exit 2 otherwise).
+
+`nova comment thread <comment-id> --subject <capsule-dir>` resolves the reply chain
+containing a comment, root first, indenting each level (or `--json` for the raw array):
+
+```bash
+nova comment thread 01HX... --subject <capsule-dir>
+nova comment thread 01HX... --subject <capsule-dir> --json
+```
+
+Resolution is bounded and defensive, because an append-only log can legitimately hold
+malformed links: a reply whose parent is missing is treated as an **orphan root**, not an
+error, and a reply **cycle** is reported (exit 1) rather than looped over. An unknown
+comment id exits 1.
 
 **Secret hygiene is mandatory (ADR-0009):** the body passes the same secret-scan rules as
 every other capsule text before storage. A body that trips a secret pattern is **refused**
@@ -1555,6 +1807,7 @@ nova eval score config add --name factuality --value-type boolean --description 
 nova annotate queue create --name hallu-review --criteria factuality [--require-checker] [--policy manual]
 nova annotate queue add hallu-review --capsule <capsule-dir>          # enqueue the capsule
 nova annotate queue add hallu-review --capsule <dir> --subject sha256:<hex> --kind span
+nova annotate queue populate hallu-review [--dry-run] [--json]        # enqueue everything matching the selector
 nova annotate queue list [--json]                                     # queues + per-state progress
 nova annotate queue show hallu-review [--json]
 nova annotate next --queue hallu-review --as reviewer:a               # claim (round-robin)
@@ -1563,6 +1816,14 @@ nova annotate submit <item_id> --score factuality=true [--as reviewer:a] [--skip
 nova annotate confirm <item_id> --as reviewer:b                       # checker step (SoD)
 nova annotate skip <item_id> --note "out of scope"                    # terminal, writes no score
 ```
+
+`queue populate` enqueues every stored capsule matching the queue's `subject_selector`
+(all present keys ANDed). It is **idempotent** — a subject already queued is skipped, so
+re-running after new capsules land adds only the new ones, which makes it safe to
+schedule. A `sample` fraction is applied **deterministically** (hash of the subject
+digest), so repeat runs choose the same subjects: an auditor asking "why was this run
+reviewed and that one not?" gets a stable answer rather than "chance". A span-scoped
+queue refuses auto-population, since spans are not enumerable from the capsule store.
 
 `submit` validates every queue criterion against its score config **before any write**
 (all-or-nothing: a bad value, missing criterion, or missing capsule appends nothing and
@@ -1933,6 +2194,16 @@ canonical layer enumerator, so the recomputed root matches the sealed root
 byte-for-byte. Full leaf hashes are never printed — only short prefixes
 (ADR-0009); leaf labels are field paths, never values.
 
+> **Why there is no `--capsule` here**, when `nova trust-radar` and
+> `nova redaction-xray` both have one. The proof tree visualises **NovaSeal's**
+> Merkle tree, which uses a different construction from the RFC 6962 tree behind
+> `capsule_merkle_root` (pairwise with odd-duplicate padding, vs. `0x00`/`0x01`
+> prefixes and a power-of-2 split). An adapter that computed leaves with one and
+> combined them with the other produced a root matching *neither* — verified on a
+> real capsule and reverted rather than shipped, because two honest-looking roots
+> that disagree are worse than no proof tree. A correct adapter must use NovaSeal
+> leaves and is only meaningful for a **sealed** capsule. See ADR-0172.
+
 ```bash
 nova merkle-tree tree.json
 nova merkle-tree tree.json --json --capsule-id run-42
@@ -1940,14 +2211,14 @@ nova merkle-tree tree.json --json --capsule-id run-42
 
 Options:
 - `<document>` (positional, required) — JSON with `leaf_hashes` (+ optional `labels` / `sealed_root` / `tsr_hash`)
-- `--capsule-id TEXT` — capsule id to label the tree with
+- `--capsule-id TEXT` — capsule id to label the tree with. **A label only** — it selects nothing
 - `--json` — emit the proof tree as JSON
 
 Exit codes: `0` (rendered — sealed+verified, or unsealed), `1` (seal-root mismatch — tamper evidence), `2` (missing or malformed input).
 
 ---
 
-### nova trust-radar \<verification\> (experimental, ADR-0173)
+### nova trust-radar \<verification\> | --capsule \<dir\> (experimental, ADR-0173)
 
 Render a Trust Attestation Radar from a capsule's verification output. The
 input is a JSON object of the seven Trust-Layer guarantees (`signature_ok`,
@@ -1956,21 +2227,38 @@ input is a JSON object of the seven Trust-Layer guarantees (`signature_ok`,
 `nova verify` plus the evidence-bundle scan flags. Any absent/null guarantee
 becomes an `n/a` axis (e.g. an unsealed capsule has no `signature_ok`).
 
+With `--capsule` the guarantees are derived from the capsule itself instead of
+being supplied by hand (`trust/capsule_flags.py`).
+
+**Absent is not false.** A guarantee the capsule cannot evidence renders `n/a`,
+never `fail`:
+
+| Guarantee | Source | When unavailable |
+|---|---|---|
+| `signature_ok` / `timestamp_ok` / `log_integrity_ok` | NovaSeal verification over `.seal/` | Unsealed capsule, or no NovaSeal profile configured → `n/a`. **Unverified is not failed**, and "could not verify" is not "verification failed". |
+| `redaction_coverage` / `secret_scan_clean` | the capsule's `redaction-proof.json` | Captured without the masking pipeline → `n/a` |
+| `policy_pass` / `eval_gate_pass` | **never derived from a capsule** | Always `n/a`. These are registry/promotion facts; a capsule records that a run happened, not whether an asset later cleared a gate. Inferring them would attach a promotion verdict to the wrong artifact. |
+
+A capsule with no findings reports `redaction_coverage: 1.0` — nothing sensitive
+to cover — rather than `0.0`, which would paint a clean capsule red.
+
 ```bash
+nova trust-radar --capsule .novafabric/runs/01HX.../
 nova trust-radar verify.json
 nova trust-radar verify.json --json --capsule-id run-42
 ```
 
 Options:
-- `<verification>` (positional, required) — path to a JSON object of the 7 verification guarantees
-- `--capsule-id TEXT` — capsule id to label the radar with
+- `<verification>` (positional) — path to a JSON object of the 7 verification guarantees. Omit when using `--capsule`
+- `--capsule PATH` — capsule directory to derive the guarantees from
+- `--capsule-id TEXT` — label the radar with this capsule id. **A label only** — it selects nothing; use `--capsule` to read from a capsule
 - `--json` — emit the radar model as JSON
 
 Exit codes: `0` (attested / partial / unsealed — informational), `1` (critical: a seal-integrity anchor — signature or log-integrity — failed), `2` (missing or malformed input).
 
 ---
 
-### nova redaction-xray \<document\> (experimental, ADR-0174)
+### nova redaction-xray \<document\> | --capsule \<dir\> (experimental, ADR-0174)
 
 Render a Redaction / Secret-scan X-Ray from a capsule's protection metadata: a
 per-field state overlay, a coverage meter, and per-state counts. **No field
@@ -1978,17 +2266,25 @@ value is ever printed** — the command surfaces field paths and states only
 (ADR-0174 §1); any value handed in alongside a record is dropped by the
 projection.
 
+With `--capsule` the report is built from the capsule's own
+`redaction-proof.json` instead of a hand-assembled document. A capsule with
+**zero findings is a genuine result** (nothing sensitive was detected), not an
+error; a capsule captured without the masking pipeline says so explicitly
+rather than failing opaquely.
+
 ```bash
+nova redaction-xray --capsule .novafabric/runs/01HX.../
 nova redaction-xray xray.json
 nova redaction-xray xray.json --json --capsule-id run-42
 ```
 
 Options:
-- `<document>` (positional, required) — JSON with either `fields` (`[{path, state}]`, state one of `clear|redacted|secret_scrubbed|never_captured|unknown`) or raw `findings` (MaskingPipeline finding records)
-- `--capsule-id TEXT` — capsule id to label the report with
+- `<document>` (positional) — JSON with either `fields` (`[{path, state}]`, state one of `clear|redacted|secret_scrubbed|never_captured|unknown`) or raw `findings` (MaskingPipeline finding records). Omit when using `--capsule`
+- `--capsule PATH` — capsule directory to read `redaction-proof.json` from
+- `--capsule-id TEXT` — label the report with this capsule id. **A label only** — it selects nothing; use `--capsule` to read from a capsule. When `--capsule` is used, the id comes from the proof's own `capsule_run_id`
 - `--json` — emit the X-Ray report as JSON
 
-Exit codes: `0` (report rendered), `2` (missing or malformed input).
+Exit codes: `0` (report rendered), `2` (missing or malformed input, both a document and `--capsule`, or neither).
 
 ---
 
@@ -2818,6 +3114,11 @@ nova export-blob --dest ./exports/audit-q3 -c 01HX... -c 01HY...
 # Time-range scan of the capsule store
 nova export-blob --dest ./exports/w27 --since 2026-06-29 --until 2026-07-05
 
+# Query filter (ADR-0129 DSL) — composes with the time window
+nova export-blob --dest ./exports/gpt4o --query "model = 'gpt-4o'"
+nova export-blob --dest ./exports/failures \
+  --query "status = 'error'" --since 2026-07-01
+
 # Any S3-compatible endpoint (existing optional boto3 adapter; private endpoints OK)
 NOVA_S3_ENDPOINT_URL=https://s3.internal nova export-blob \
   --dest s3://audit-bucket/exports/2026-07/ --worm --worm-retention-days 2555
@@ -2831,6 +3132,14 @@ Options:
 - `--capsule-dir PATH` — scan root (default `$NOVAFABRIC_HOME/capsules`).
 - `--since / --until RFC3339` — inclusive `created_at` window for the scan;
   recorded as the manifest `query` for reproducibility.
+- `--query EXPR` — select members with an [ADR-0129](../design/adr/0129-capsule-query-dsl.md)
+  `where` filter, e.g. `"model = 'gpt-4o'"` or `"status = 'error'"`. **Composes
+  with** `--since`/`--until` (both must hold), and is mutually exclusive with
+  `--capsule`. The *parsed, canonical* predicates are recorded in the manifest
+  `query` field alongside the time window — so a manifest reader sees what was
+  asked, not free text they must re-parse. Filters on the query's `where`
+  clause only: `run_id` is not a DSL dimension, and grouping by it would invite
+  the high-cardinality blow-up the DSL's cardinality cap exists to prevent.
 - `--key PATH` — PEM ed25519 signing key (default: the NovaFabric keyring key,
   created if absent).
 - `--worm` / `--worm-retention-days N` — write members **and** manifest under WORM
@@ -2850,6 +3159,71 @@ Verdicts: `VALID` (signature + batch digest + every member's bytes at the
 destination check out), `INCOMPLETE` (a member missing, or size/hash mismatch —
 e.g. a deleted or tampered blob), `INVALID` (bad signature, count, or batch
 digest — e.g. a member quietly dropped from the manifest). Exit 0 only on `VALID`.
+
+#### nova import \<source\>
+
+Import a **batch export** ([`nova export-blob`](#nova-export-blob---dest-uri))
+into the local capsule store — the verified inverse of the export
+([ADR-0207](../design/adr/0207-batch-import-interchange.md), spec
+[batch-import-v0](../design/spec/batch-import-v0.md)). `<source>` is either a
+directory containing `export-manifest.json` + `objects/`, or a single
+`.tar`/`.tar.gz` archive of that layout (the air-gap courier format).
+
+**Verification-first, fail-closed:** before any byte enters the store the
+manifest must verify (`VALID` — DSSE signature via the supplied public key,
+`count`/`batch_digest` consistency, and every member's bytes re-hashed).
+`INVALID` or `INCOMPLETE` refuses the **whole** import. Unpacking is hardened
+against hostile archives (absolute paths, `..`, links, devices — refused) and
+staged: members extract to a scratch directory and are atomically renamed into
+place, so a crash never leaves a half-written capsule. After unpack, lineage
+(`lineage.jsonl` → lineage store) and the dashboard `runs_cache` are reindexed
+(the offline query index self-scans and needs no rebuild). Every run —
+including refusals and dry runs — writes an **import receipt** JSON under
+`$NOVAFABRIC_HOME/import-receipts/<import_id>.json` and one hash-chained audit
+entry (`capsule.import`).
+
+**Idempotent by content address:** a member whose `run_id` already exists
+locally with byte-identical content (same deterministic re-pack hash) is
+skipped, so re-running an import is a no-op and an interrupted import resumes.
+**Collisions are never overwritten:** same `run_id` with different local
+content is reported per-member with both hashes (exit 5); delete the local
+capsule with existing retention tooling and re-import to replace it — there is
+deliberately no `--force`.
+
+**experimental** — implemented (ADR-0207 P1); API may change.
+
+```bash
+# Verified import (the normal path; key from `nova export-blob --public-key-out`)
+nova import ./exports/audit-q3 --public-key export.pub.pem
+
+# DR drill: verify + classify with zero writes, same exit codes
+nova import ./exports/audit-q3 --public-key export.pub.pem --dry-run
+
+# Air-gap courier archive
+nova import batch.tar.gz --public-key export.pub.pem
+
+# Machine-readable report
+nova import ./exports/audit-q3 --public-key export.pub.pem --json
+```
+
+Options:
+- `--public-key PATH` — PEM ed25519 public key of the export signer. Required
+  unless `--allow-unsigned`.
+- `--allow-unsigned` — skip the DSSE **signature** check only (loud warning;
+  recorded permanently as `verification.mode: "unsigned"` in the receipt and
+  audit log). All content-hash/size/consistency checks still run — tamper
+  still refuses.
+- `--capsule-dir PATH` — target store root (default `$NOVAFABRIC_HOME/capsules`).
+- `--dry-run` — verify + classify (would-import / would-skip / collision),
+  write nothing to the store or indexes; the receipt is still written.
+- `--no-reindex` — unpack only; skip lineage + runs-cache updates.
+- `--json` — print the import receipt JSON to stdout.
+
+Exit codes: `0` success (imported / already present), `2` usage error, `3`
+verification `INVALID` (structure, signature, digest), `4` verification
+`INCOMPLETE` (member missing / hash or size mismatch), `5` collision(s), `6`
+member(s) failed during unpack. Nothing is imported on 3/4; non-colliding
+members still import on 5.
 
 #### nova euaiact export
 
@@ -3268,6 +3642,29 @@ Options:
 - `<name@version>` (required) — asset reference
 - `--suite SUITE_NAME` — suite to run: `smoke-v1`, `gaia`, `swe-bench`, `agentbench`, `mmlu`, `truthfulqa`
 - `--db-path PATH` — registry DB path
+
+### nova eval cost \<document\>
+
+Render a self-reported eval-cost / compute disclosure (ADR-0154 D2, NF-229,
+**experimental**).
+
+```bash
+nova eval cost cost.json
+nova eval cost cost.json --json
+```
+
+Options:
+- `<document>` (required) — JSON file with `wall_seconds`, `token_in`, `token_out`,
+  `usd_cost`, and optionally `energy_wh` / `hardware_ref`
+- `--json` — emit the record as JSON instead of text
+
+**Scope, honestly:** every figure is **self-reported by the harness**. NovaFabric
+discloses what it was given — it does not measure, verify, or certify these values,
+and it does not run the eval. Both output modes carry that honesty line, `--json`
+included, as an `honesty_line` field.
+
+This slice reads the figures from the document you pass. Reading `facets.eval_cost`
+from a sealed capsule (`--capsule <run_id>`) is **planned**, not implemented.
 
 ### nova eval compare
 
@@ -3877,10 +4274,23 @@ nova label status prompt:triage
 nova label status prompt:triage --label production --json
 ```
 
-### nova report [--format {markdown,json}] [--output FILE]
+### nova report [--format {markdown,json,html,pdf}] [--output FILE]
 
 Generate an asset inventory report. Defaults to Markdown on stdout.
-Use `--output` to write to a file. Valid `--format` values: `markdown` (default), `json`. Tab-completion available via `nova --install-completion`.
+Use `--output` to write to a file. Valid `--format` values: `markdown` (default), `json`, `html`, `pdf`. Tab-completion available via `nova --install-completion`.
+
+**`html`** ([ADR-0201](../design/adr/0201-server-side-chart-rendering.md); **works today**) — one
+self-contained page (no JS, no external requests) with an assets-by-type inline-SVG chart, the
+inventory table, and the canonical JSON embedded for machine consumption.
+
+**`pdf`** (**works today**, optional dependency) — the same page rendered through WeasyPrint.
+Requires the optional extra (`pip install 'novafabric[compliance]'`) and `--output`; without the
+extra the command exits with the install hint instead of failing cryptically.
+
+```bash
+nova report --format html --output inventory.html
+nova report --format pdf  --output inventory.pdf   # needs novafabric[compliance]
+```
 
 ### nova validate \<path\>
 
@@ -4176,25 +4586,48 @@ Requires `pip install novafabric[server]` (psycopg3).
 
 #### nova db upgrade
 
-Run `alembic upgrade head` against the configured MetadataStore backend.
+Run `alembic upgrade <revision>` for the selected migration track. Two
+parallel Alembic tracks exist (ADR-0211 D5): the **MetadataStore** tier
+(default — unchanged behavior) and the **registry/server** database (the DB
+the server lifespan opens and `nova backup create --profile pg` dumps; the
+startup schema-skew guard names this track). `--track registry` is
+**experimental**.
 
 ```bash
-# SQLite (reads NOVAFABRIC_DB_PATH, defaults to ~/.novafabric/metadata.db)
+# MetadataStore tier (default; reads NOVAFABRIC_DB_PATH,
+# defaults to ~/.novafabric/metadata.db)
 nova db upgrade
 
-# Postgres (reads NOVAFABRIC_METADATA_DSN)
+# MetadataStore tier on Postgres (reads NOVAFABRIC_METADATA_DSN)
 export NOVAFABRIC_METADATA_DSN="postgresql://nova:pass@host:5432/novafabric"
 nova db upgrade --backend postgres
+
+# Registry/server DB (experimental, ADR-0211): SQLite registry
+nova db upgrade --track registry --backend sqlite
+
+# Registry/server DB on Postgres (reads NOVAFABRIC_POSTGRES_DSN) — the
+# command the schema-skew guard and the pg restore runbook name
+export NOVAFABRIC_POSTGRES_DSN="postgresql://nova:pass@host:5432/nova"
+nova db upgrade --track registry --backend postgres
 ```
 
 Options:
 - `--backend TEXT` — `sqlite` (default) or `postgres`
+- `--track TEXT` — `metadata` (default) or `registry` (experimental)
+- `--revision TEXT` — alembic revision target (default `head`)
 
 Environment variables consumed:
-- `NOVAFABRIC_DB_PATH` — SQLite database path (sqlite backend)
-- `NOVAFABRIC_METADATA_DSN` — Postgres DSN (postgres backend)
+- `NOVAFABRIC_DB_PATH` — SQLite database path (metadata track)
+- `NOVAFABRIC_METADATA_DSN` — Postgres DSN (metadata track)
+- `NOVAFABRIC_HOME` — registry DB location (registry track, sqlite)
+- `NOVAFABRIC_POSTGRES_DSN` — Postgres DSN (registry track; never printed)
 
-Exit codes: `0` = success, `2` = config/connection error or alembic failure.
+The registry-track migration trees are packaged into the wheel
+(`novafabric/migrations/registry/`), so `--track registry` works from an
+installed package, not only a source checkout.
+
+Exit codes: `0` = success, `1` = alembic/database failure (registry track),
+`2` = config/connection error.
 
 ---
 
@@ -4213,11 +4646,23 @@ The server reads `~/.config/novafabric/nova-server.yaml` by default. CLI flags
 override the config file. See [`docs/ops/server-deployment.md`](ops/server-deployment.md)
 for config examples.
 
+**Single-tenant scope (ADR-0178).** Capsule storage is **not partitioned per
+organization** — organizations and workspaces scope the *registry* tier, not
+capsule bytes. The server therefore refuses to start when more than one
+organization exists, unless you acknowledge this with
+`--i-accept-shared-capsule-store`. Single-organization deployments (the default,
+and what the bootstrap creates) are unaffected. Per-tenant capsule partitioning
+is pending a security review; until it lands, do not rely on organizations for
+capsule isolation.
+
 Options:
 - `--config, -c FILE` — path to server YAML config (default: `~/.config/novafabric/nova-server.yaml`)
 - `--backend TEXT` — `sqlite` (default) or `postgres`
 - `--host TEXT` — bind address (default from config or `127.0.0.1`)
 - `--port, -p INTEGER` — bind port (default from config or `7433`)
+- `--insecure-no-auth` — disable local-token auth; anonymous admin (ADR-0184). Loopback only unless also passing `--i-know-this-is-public`
+- `--i-know-this-is-public` — second confirmation required to combine `--insecure-no-auth` with a non-loopback `--host`
+- `--i-accept-shared-capsule-store` — acknowledge the unpartitioned capsule store and run multiple organizations anyway. Env: `NOVAFABRIC_SERVER_I_ACCEPT_SHARED_CAPSULE_STORE`
 
 ---
 
@@ -4516,27 +4961,45 @@ Evidence-grade operational tooling: signed local backup sets with offline
 verification (ADR-0181), a verification-gated restore path, and a secret-safe
 diagnostics tarball for support (ADR-0187).
 
-### nova backup create (experimental, ADR-0181)
+### nova backup create (experimental, ADR-0181 / ADR-0216)
 
-Create a backup set (registry, capsules, redacted config; the `pg` profile
-adds a `pg_dump` member). The registry is snapshotted with the SQLite
-online-backup API, so a live writer is safe. Signing keys, tokens, and env
-values are excluded by a normative deny-filter — key material never travels in
-a backup set. Connection strings are treated as secrets: the DSN never appears
-in the set, the manifest, or any output.
+Create a backup set covering **every persistent local store** (ADR-0216):
+registry, capsules, incidents, metadata, the PII DEK store, seal transparency
+log, TSA nonces, ratchet state, dashboard state, spool, the audit log, and a
+secret-redacted config. SQLite stores are snapshotted with the online-backup
+API, so live writers are safe; `dashboard.duckdb` is snapshotted via DuckDB's
+own consistent-copy mechanism (skipped honestly when a live `nova serve`
+holds the writer lock — it is a rebuildable derived cache). The signed
+manifest carries a **coverage table**: what was NOT captured is recorded,
+never silent. The `pg` profile adds a `pg_dump` member; the `manifest`
+profile (WORM object-store deployments) records chain heads + checkpoints
+instead of blobs. Signing keys are excluded unless `--include-keys`.
+Connection strings are treated as secrets: the DSN never appears in the set,
+the manifest, or any output.
+
+> **Custody note:** the default set includes the PII DEK store (`dek.db`) so
+> restored PII stays readable — treat backup sets as sensitive artifacts and
+> store them encrypted at rest. Crypto-shred replay on restore guarantees
+> shredded subjects stay shredded regardless.
 
 ```bash
 nova backup create
 nova backup create -o /mnt/backups/
-nova backup create -o nightly.tar.gz
+nova backup create -o nightly.tar.gz --include-keys
 nova backup create --profile pg --dsn postgresql://…  -o pg-nightly.tar.gz
+nova backup create --profile manifest --backend s3 -o manifest-set.tar.gz
 ```
 
 Options:
 - `--output, -o PATH` — target `.tar.gz` file (or existing directory). Default: `./nova-backup-<set_id>.tar.gz`
 - `--home PATH` — NovaFabric home to back up (default: `NOVAFABRIC_HOME` or `~/.novafabric`)
-- `--profile TEXT` — backup profile: `local` (SQLite deployment) or `pg` (adds a `pg_dump --format=custom` member). Default: `local`
+- `--profile TEXT` — backup profile: `local` (SQLite deployment), `pg` (adds a `pg_dump --format=custom` member), or `manifest` (chain heads + checkpoints against a WORM object store, no blobs). Default: `local`
 - `--dsn TEXT` — Postgres DSN for `--profile pg` (default: `NOVA_DSN` or `NOVAFABRIC_POSTGRES_DSN`). Never logged; the manifest stores only the redacted host/dbname
+- `--include-keys` — ALSO pack the signing keyring and `novaseal.yaml` + its key/cert PEMs (ADR-0216 D4). Default off; a set created with this flag requires key-custody care
+- `--backend TEXT` — object-store backend for `--profile manifest`: `local | s3 | minio | ceph_rgw | azure_blob` (env: `NOVA_OCS_BACKEND`)
+- `--tenant TEXT` — scope the manifest listing to these tenant(s) (repeatable)
+- `--allow-pending-wal` — proceed with `--profile manifest` even when the local WAL has pending un-chained uploads (the gap is recorded in the listing); default: refuse
+- `--deep` — `--profile manifest`: fully verify every chain at create time, not just pin the heads
 
 Exit codes: `0` (set created), `1` (backup error).
 
@@ -4559,28 +5022,44 @@ Exit codes: `0` (all members and signature verify), `1` (any mismatch).
 
 ---
 
-### nova restore \<set-path\> (experimental, ADR-0181)
+### nova restore \<set-path\> (experimental, ADR-0181 / ADR-0211)
 
-Restore a local-profile backup set, then run the verification chain. Normative
-order (ADR-0181 / backup-restore-v0 spec): verify the set → prepare the home →
-extract → migrate to head → replay crypto-shreds (shredded data stays
-shredded) → doctor storage check + seal log verify. The restore is complete
-ONLY when verification passes — there is no flag to skip it.
+Restore a backup set, then run the verification chain. The verified
+manifest's profile drives dispatch — there is no restore-side `--profile`
+flag. Normative order (ADR-0181/0216/0217): verify the set → prepare the home
+→ extract (sensitive members restored 0600; external-origin members such as
+the audit log restored to their real roots, never silently overwritten) →
+migrate to head → replay crypto-shreds (shredded data stays shredded — a
+moved-aside live audit log is also replayed, so shreds applied after the
+backup survive) → advance regressed ratchet epochs → storage, seal-log, and
+per-store integrity checks. The restore is complete ONLY when verification
+passes — there is no flag to skip it.
 
-Restoring a `pg`-dump set is not automated in this slice: use the `pg_restore`
-runbook (`docs/ops/backup-restore.md` §1.2).
+`pg`-dump sets restore automatically (ADR-0217): a non-empty target DB is
+refused without `--force` (which first takes a safety dump into the
+`.pre-restore-…/` directory), `pg_restore` runs in a single transaction
+(failure leaves the DB unchanged), then alembic migrations, manifest-anchored
+row counts, and RLS enforcement are verified. `manifest`-only sets verify
+every pinned chain head against the live bucket and rebuild the metadata DB
+from the chain.
 
 ```bash
 nova restore nova-backup-01J….tar.gz
 nova restore set.tar.gz --home /srv/novafabric --force
+nova restore pg-nightly.tar.gz --dsn postgresql://…
+nova restore manifest-set.tar.gz --backend s3 --sample 10
 ```
 
 Options:
-- `<set-path>` (positional, required) — backup-set archive (`.tar.gz`) to restore from (local profile)
+- `<set-path>` (positional, required) — backup-set archive (`.tar.gz`) to restore from
 - `--home PATH` — target NovaFabric home (default: `NOVAFABRIC_HOME` or `~/.novafabric`)
 - `--force` — restore into a non-empty home: existing data is moved aside into a timestamped `.pre-restore-…/` directory (never deleted)
+- `--restore-keys` — restore `key_material` members from a set created with `--include-keys` (ADR-0216 D4); default off — the opt-in is required on both sides
+- `--dsn TEXT` — target Postgres DSN when restoring a pg-dump set (default: `NOVA_DSN` or `NOVAFABRIC_POSTGRES_DSN`). Never logged
+- `--backend TEXT` — object-store backend when restoring a manifest-only set (env: `NOVA_OCS_BACKEND`)
+- `--sample INT` — manifest-only sets: spot-check this many capsule payload hashes against the live bucket (default: `0`)
 
-Exit codes: `0` (restore + verification chain passed), `1` (any failed step).
+Exit codes: `0` (restore + verification chain passed), `1` (any failed step), `2` (manifest-only set: the listed bucket is unreachable).
 
 ---
 
@@ -4617,9 +5096,9 @@ sender, no default endpoint, no background egress.
 
 ### nova audit-log export (experimental, ADR-0191)
 
-One-shot export of an audit source over a time window, one JSON line per
-entry, to stdout or a file. The first output line is a header entry recording
-the redaction-ruleset versions in force. Every line passes the deny-by-default
+One-shot export of an audit source over a time window, one entry per line, to
+stdout or a file. The first output line is a manifest recording the
+redaction-ruleset versions in force. Every line passes the deny-by-default
 redaction pipeline (strict field allowlist plus the ADR-0187 support-bundle
 secret ruleset) — non-allowlisted fields never leave.
 
@@ -4631,19 +5110,31 @@ OCSF classes (API Activity 6003, Application Lifecycle 6002, Authentication
 3002) per the mapping table in `design/spec/audit-siem-egress-v0.md`; fields
 OCSF has no slot for are preserved verbatim under `unmapped` — no silent loss.
 
-`cef` format, `tail --follow` mode, and the `server` source are deferred to a
-later slice (ADR-0191 D3).
+In `cef` format (for legacy ArcSight-style collectors) each entry becomes one
+`CEF:0` event. The OCSF class selection above is reused, so the two formats
+never disagree about what an event is; the CEF signature id keeps the **native**
+`event_type`/`action` and the numeric OCSF class rides in `cs5`. The chain
+hashes map to labelled custom strings (`cs1`=`entryHash`, `cs2`=`prevHash`) and
+every remaining redacted field is packed into `cs6` as compact JSON — again, no
+silent loss. The manifest line is itself a CEF event, so a `cef` stream is pure
+CEF with no JSON line to special-case. Full mapping and escaping tables:
+`design/spec/audit-siem-egress-v0.md` §2b.
+
+There is no `server` source and none is planned: the server app writes its
+route events into the same log as the dashboard, so `--source dashboard`
+already covers them (OQ-038, resolved).
 
 ```bash
 nova audit-log export
 nova audit-log export --source audit --format ocsf --out audit.ocsf.jsonl
+nova audit-log export --source audit --format cef --out audit.cef
 nova audit-log export --source dashboard --since 2026-07-01T00:00:00Z
 nova audit-log export --since 2026-07-01T00:00:00Z --until 2026-07-08T00:00:00Z
 ```
 
 Options:
 - `--source TEXT` — audit source: `audit` (hash-chained log) or `dashboard` (`nova serve` mutation log). Default: `audit`
-- `--format TEXT` — output format: `jsonl` (native, zero-mapping-loss) or `ocsf`. Default: `jsonl`
+- `--format TEXT` — output format: `jsonl` (native, zero-mapping-loss), `ocsf`, or `cef` (ArcSight CEF:0 for legacy collectors). Default: `jsonl`
 - `--since TEXT` — inclusive ISO-8601 lower bound (naive timestamps are treated as UTC)
 - `--until TEXT` — exclusive ISO-8601 upper bound (naive timestamps are treated as UTC)
 - `--out PATH` — output file (default: stdout)
@@ -4651,6 +5142,81 @@ Options:
 Exit codes: `0` (exported OK), `2` (bad parameters), `3` (chain verification
 failed — the export is still written, so pipelines can alert on the tamper
 evidence itself).
+
+### nova audit-log tail (experimental, ADR-0191)
+
+Streams audit entries to stdout as they are written, in the same three
+formats and through the same redaction pipeline as `export`. This is a
+foreground process **you** run — a systemd unit or a sidecar — not a
+NovaFabric-managed daemon. There is no network sink and no default endpoint:
+pipe stdout into your own shipper.
+
+By default it starts at the end of the log (`tail` semantics); `--from-start`
+replays the existing log first. Without `--follow` it makes one bounded pass
+and exits, so it is safe in a script.
+
+Log **rotation** (rename-based, as `logrotate` does by default) and in-place
+**truncation** (`copytruncate`) are detected and followed; entries written
+just before a rename are drained from the old file rather than lost. Chain
+continuity *across* a rotation cannot be verified — the predecessor entry's
+hash goes with the old file — so a restart is reported as a chain event
+rather than passed off as an unbroken chain. Honest limit: a truncation that
+is refilled past the old offset within a single poll interval is
+indistinguishable from an append by size alone, and those entries are missed.
+
+```bash
+nova audit-log tail --follow | your-shipper
+nova audit-log tail --follow --format cef --source dashboard
+nova audit-log tail --from-start --format ocsf
+```
+
+With `--out` the sink is a **size-bounded rotating file** instead of stdout,
+for a file shipper (Filebeat, Vector, Fluent Bit) to pick up. Rotation uses
+the conventional numbered-suffix scheme (`audit.cef` → `audit.cef.1` → …),
+happens *before* a write that would cross the threshold so a rendered record
+is never split across two files, and deletes the generation beyond
+`--backup-count`. With `--backup-count 0` the file is truncated instead of
+kept, bounding disk use to `--max-bytes` total. Reopening appends rather than
+truncating, so a restarted tailer does not destroy what it already shipped.
+
+```bash
+nova audit-log tail --follow | your-shipper
+nova audit-log tail --follow --format cef --source dashboard
+nova audit-log tail --from-start --format ocsf
+nova audit-log tail --follow --format cef --out /var/log/nova/audit.cef
+```
+
+Options:
+- `--source TEXT` — audit source: `audit` or `dashboard`. Default: `audit`
+- `--format TEXT` — output format: `jsonl`, `ocsf`, or `cef`. Default: `jsonl`
+- `--follow / --no-follow`, `-f` — keep running and render new entries as they arrive. Default: off (single bounded pass)
+- `--from-start` — replay the existing log first, then follow
+- `--poll-interval FLOAT` — seconds between polls when the log is idle. Default: `1.0`
+- `--out PATH` — write to a rotating file instead of stdout
+- `--max-bytes INT` — rotate `--out` at this size. Default: `10485760` (10 MiB)
+- `--backup-count INT` — rotated generations to keep. Default: `5`
+
+- `--syslog ADDRESS` — send RFC 5424 messages to a **local** syslog endpoint: a unix socket path (`/dev/log`) or a loopback `host:port`. No default.
+- `--syslog-transport TEXT` — `auto` (unix for a path, else udp), `unix`, `udp`, or `tcp`. Default: `auto`
+
+`--out` and `--syslog` are alternative sinks; passing both is an error.
+
+**Syslog sink.** Messages are RFC 5424 (`<134>1 <ts> <host> novafabric <pid>
+audit-<format> - <line>`); the MSG body is byte-identical to what the other
+sinks emit. TCP uses RFC 6587 octet counting so a stream receiver can find
+boundaries. UDP messages are bounded and, if shortened, **marked** with
+`…[NOVAFABRIC-TRUNCATED]` — a silently shortened audit record would read as
+a complete one. Ship large CEF records over TCP or a unix stream socket.
+
+**The endpoint must be local.** A non-loopback host is refused, not
+warned about: ADR-0191 D3 scopes this to a local endpoint, and getting audit
+data off the box remains your syslog daemon's job — it already owns the TLS,
+retry and buffering that NovaFabric deliberately does not implement. There
+are still no built-in senders to Splunk/Elastic/Sentinel (ADR-0191 D6).
+
+Exit codes: `0` (streamed OK), `2` (bad parameters — absurd rotation config,
+non-loopback syslog host, unreachable endpoint), `3` (chain verification
+failed).
 
 ---
 
@@ -5033,7 +5599,7 @@ Start the experimental local dashboard. Read-only browsing of capsules, registry
 | `POST /api/kg/entity-queue/{item_id}/approve` | Approve a review item. Body: `{canonical, resolved_by}`. Returns `{ok, item_id, canonical}`. |
 | `POST /api/kg/entity-queue/{item_id}/reject` | Reject a review item. Body: `{resolved_by?}`. Returns `{ok, item_id, status}`. |
 | `GET /api/compliance/audit/map` | Return compliance coverage matrix for all audit profiles (`nist-ai-rmf`, `eu-ai-act-high-risk`, `gdpr`, `soc2-type2`, `iso42001`, `scientific-reproducibility`). Mirrors `nova audit map --profile`. |
-| `GET /api/compliance/erasure/status` | Return status of a GDPR erasure request by `?request_id=`. Returns `{ok, request_id, status, subject_id, requested_at, completed_at?, pending_paths[]}`. Mirrors `nova erasure status`. |
+| `GET /api/compliance/erasure/status` | List persisted GDPR erasure requests from `$NOVAFABRIC_HOME/erasure.db` (ADR-0210, **experimental**). Params: `?subject_id=` (exact filter), `?limit=`. Returns `{cap003_enabled, requests[{request_id, subject_sha256, state, reason, requested_at, executed_at, capsule_ids[], receipt, receipt_sha256, error_class}]}`, newest first. |
 | `GET /api/runs/{run_id}/children` | Return parent capsule metadata and list of child capsule summaries for a distributed/parent-child run. Returns `{ok, run_id, parent_status, child_count, children[{run_id, status, edge_type, exit_code}]}`. |
 
 **v0.34.0 additions** — regulatory compliance export endpoints:
@@ -5599,6 +6165,60 @@ The output carries the merged catalog's `sha256:` digest so the estimated
 figures are reproducible against the exact pricing that produced them.
 Estimated amounts are derived from user-asserted catalog prices — estimates,
 never billing records (ADR-0066 wording stands).
+
+### nova cost attribute (experimental, ADR-0146)
+
+Read-only. Splits recorded spend into **productive** vs **wasted** outcomes with a
+per-status breakdown. Reads a JSON document
+`{runs: [{run_id, status, cost}], productive_statuses?}` (a run's `status` is
+productive when it is in `productive_statuses`, default `["success"]`; everything
+else is wasted). This is **descriptive evidence, never a verdict** — there is no
+threshold, quota, or over-budget field; whether the wasted spend was acceptable is
+the operator's call.
+
+```bash
+nova cost attribute runs.json
+nova cost attribute runs.json --json
+```
+
+Exit codes: `0` rendered; `2` the input is missing or malformed. This is the CLI
+half of NF-148; a collector that derives per-run cost + status from the records a
+capsule already holds is a documented follow-on.
+
+### nova cost fairness (experimental, ADR-0146)
+
+Read-only. Loads per-agent resource totals per dimension (`cost` / `energy` /
+`calls`) from a JSON document `{totals: {dimension: {agent: total}}}` and prints a
+fairness statistic per dimension — each agent's share, the Gini coefficient, and
+the max/mean ratio. **Descriptive evidence, never a verdict**: no threshold, quota,
+or pass/fail.
+
+```bash
+nova cost fairness totals.json
+nova cost fairness totals.json --json
+```
+
+Exit codes: `0` rendered; `2` the input is missing or malformed. This is the CLI
+half of NF-150; a collector that derives the per-agent totals from a capsule is a
+documented follow-on.
+
+### nova cost usage-breakdown (experimental, ADR-0132)
+
+Read-only. Reports the **composition** of a capsule's token volume — each usage
+type's share of the counted tokens — plus the cached-read ratio and the factual
+`has_reasoning_tokens` / `is_multimodal` flags. It accepts a capsule
+`manifest.json` (reading its `usage_totals`) or a bare `usage_totals` object. It
+reports **token composition only**: no cost/dollars (pricing is ADR-0133) and no
+efficient/within-budget verdict. It honours the ADR-0132 "absent != zero" rule — a
+usage type that was never reported is absent from the composition, never
+zero-filled.
+
+```bash
+nova cost usage-breakdown my-capsule/manifest.json
+nova cost usage-breakdown usage.json --json
+```
+
+Exit codes: `0` rendered; `2` the input is missing or malformed.
 
 ### nova pricing list|show|add (experimental, ADR-0133)
 

@@ -134,12 +134,17 @@ def _default_usage_provider() -> QuotaUsage:
 
 @dataclass(frozen=True)
 class QuotaViolation:
-    """One limit at/over capacity: which kind, the usage, and the limit hit."""
+    """One limit at/over capacity: which kind, the usage, and the limit hit.
+
+    ``workspace`` (ADR-0208, additive) is set only for per-workspace budget
+    violations; global violations keep it None and are byte-identical.
+    """
 
     kind: str  # "capsules" | "bytes"
     usage: int
     limit: int
     severity: Severity
+    workspace: str | None = None
 
 
 @dataclass(frozen=True)
@@ -151,9 +156,13 @@ class QuotaDecision:
 
     @property
     def warning_header(self) -> str:
-        """``X-NovaFabric-Quota-Warning`` value: ``<kind> <usage>/<limit>``."""
+        """``X-NovaFabric-Quota-Warning`` value: ``<kind> <usage>/<limit>``.
+
+        Workspace violations render ``<workspace>/<kind> <usage>/<limit>``
+        (ADR-0208 D3); mixed decisions comma-join, global parts first.
+        """
         return ", ".join(
-            f"{v.kind} {v.usage}/{v.limit}"
+            (f"{v.workspace}/" if v.workspace else "") + f"{v.kind} {v.usage}/{v.limit}"
             for v in self.violations
             if v.severity == "soft"
         )
@@ -306,6 +315,178 @@ class QuotaChecker:
                 logger.warning("quota breach alert emission failed", exc_info=True)
 
 
+class WorkspaceQuotaChecker:
+    """Per-workspace warn-then-reject checks over metered counters (ADR-0208 D3).
+
+    The same ladder and contract as :class:`QuotaChecker`, one budget per
+    workspace slug. Usage for enforcement is the **all-time metered**
+    ``capsules_created`` / ``bytes_stored`` sums for the workspace (negative
+    delete adjustments included) — not the FS walk, which cannot attribute —
+    read through the short-TTL :class:`~novafabric.server.usage.
+    WorkspaceUsageReader` cache. A workspace without a configured budget (or
+    with all-zero limits) is unlimited and never queries usage.
+
+    Audit + alert bounding: one audit event per (severity, workspace, kind)
+    per audit window; the soft threshold additionally emits one
+    ``warning``-severity ``ops.quota.breached`` per window, and the hard path
+    a ``critical`` one with ``subject_ref = "quota:{workspace}:{kind}"`` —
+    per-workspace subjects, so one team's breach never suppresses another's
+    page in the ADR-0192 dedup window.
+    """
+
+    def __init__(
+        self,
+        budgets: dict[str, Any],
+        usage_reader: Callable[[str], tuple[int, int]],
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        audit_window_seconds: float = 60.0,
+        audit_hook: AuditHook | None = None,
+        alert_hook: AlertHook | None = None,
+        soft_alert_hook: AlertHook | None = None,
+        invalidate_hook: Callable[[str | None], None] | None = None,
+    ) -> None:
+        # budgets: slug -> WorkspaceQuotaConfig (typed Any to avoid a config
+        # import cycle; only the four max_* attributes are read).
+        self._budgets = {
+            slug: b for slug, b in budgets.items() if getattr(b, "any_limit", False)
+        }
+        self._usage_reader = usage_reader
+        self._clock = clock
+        self._audit_window = float(audit_window_seconds)
+        self._audit_hook = audit_hook or emit_quota_audit
+        self._alert_hook = alert_hook or _emit_workspace_breach_alert
+        self._soft_alert_hook = soft_alert_hook or _emit_workspace_soft_alert
+        self._invalidate_hook = invalidate_hook
+        # (event, workspace, kind) -> (window_start_monotonic, window_start_utc)
+        self._audit_windows: dict[tuple[str, str, str], tuple[float, str]] = {}
+        self._lock = threading.Lock()
+
+    @property
+    def enabled(self) -> bool:
+        """True when at least one workspace budget has a non-zero limit."""
+        return bool(self._budgets)
+
+    def invalidate(self, workspace: str | None = None) -> None:
+        """Drop the cached usage for *workspace* (or all) — post-write hook."""
+        if self._invalidate_hook is not None:
+            self._invalidate_hook(workspace)
+
+    def check(self, workspace: str) -> QuotaDecision:
+        """Warn-then-reject decision for one workspace (``0`` = unlimited)."""
+        budget = self._budgets.get(workspace)
+        if budget is None:
+            return QuotaDecision(outcome="ok")
+        capsules, total_bytes = self._usage_reader(workspace)
+        violations: list[QuotaViolation] = []
+        for kind, used, soft, hard in (
+            (KIND_CAPSULES, capsules, budget.max_capsules_soft, budget.max_capsules_hard),
+            (KIND_BYTES, total_bytes, budget.max_bytes_soft, budget.max_bytes_hard),
+        ):
+            if hard and used >= hard:
+                violations.append(
+                    QuotaViolation(
+                        kind=kind, usage=used, limit=hard,
+                        severity="hard", workspace=workspace,
+                    )
+                )
+            elif soft and used >= soft:
+                violations.append(
+                    QuotaViolation(
+                        kind=kind, usage=used, limit=soft,
+                        severity="soft", workspace=workspace,
+                    )
+                )
+        if not violations:
+            return QuotaDecision(outcome="ok")
+        outcome: Outcome = (
+            "reject" if any(v.severity == "hard" for v in violations) else "warn"
+        )
+        for violation in violations:
+            self._maybe_audit(violation)
+        return QuotaDecision(outcome=outcome, violations=tuple(violations))
+
+    def _maybe_audit(self, violation: QuotaViolation) -> None:
+        """One audit event (+ one alert) per (severity, workspace, kind) window."""
+        event = EVENT_HARD if violation.severity == "hard" else EVENT_SOFT
+        key = (event, violation.workspace or "", violation.kind)
+        now = self._clock()
+        with self._lock:
+            window = self._audit_windows.get(key)
+            if window is not None and (now - window[0]) <= self._audit_window:
+                return
+            window_start_utc = datetime.now(timezone.utc).isoformat()
+            self._audit_windows[key] = (now, window_start_utc)
+        payload: dict[str, Any] = {
+            "event": event,
+            "kind": violation.kind,
+            "usage": violation.usage,
+            "limit": violation.limit,
+            # Additive field (spec §Audit): quota audit gains workspace scope.
+            "workspace": violation.workspace,
+            "window_start": window_start_utc,
+            "emitted_at": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            self._audit_hook(payload)
+        except Exception:  # noqa: BLE001 — auditing must never break requests
+            logger.warning("workspace quota audit emission failed", exc_info=True)
+        hook = self._alert_hook if violation.severity == "hard" else self._soft_alert_hook
+        try:
+            hook(violation)
+        except Exception:  # noqa: BLE001 — alerting must never break requests
+            logger.warning("workspace quota alert emission failed", exc_info=True)
+
+
+def _emit_workspace_breach_alert(violation: QuotaViolation) -> None:
+    """`ops.quota.breached` (critical) for one workspace hard rejection.
+
+    ADR-0208/ADR-0192: ``subject_ref = "quota:{workspace}:{kind}"`` keys the
+    alert-layer dedup per workspace. Refs and counts only (ADR-0137 hygiene);
+    no-op unless ``NOVA_ALERTS_*`` is configured; never raises;
+    ``background=True`` keeps delivery off the 429 path.
+    """
+    from novafabric.events.alerts import emit_ops_alert  # noqa: PLC0415
+
+    emit_ops_alert(
+        event_type="ops.quota.breached",
+        severity="critical",
+        subject_ref=f"quota:{violation.workspace}:{violation.kind}",
+        payload={
+            "workspace": violation.workspace,
+            "kind": violation.kind,
+            "usage": violation.usage,
+            "limit": violation.limit,
+        },
+        source="nova server",
+        background=True,
+    )
+
+
+def _emit_workspace_soft_alert(violation: QuotaViolation) -> None:
+    """`ops.quota.breached` (warning) when a workspace soft threshold crosses.
+
+    Bounded by the checker's audit window (at most one per (workspace, kind)
+    per window — spec §Alert thresholds); subject carries a ``:soft`` suffix
+    so warning and critical dedup independently.
+    """
+    from novafabric.events.alerts import emit_ops_alert  # noqa: PLC0415
+
+    emit_ops_alert(
+        event_type="ops.quota.breached",
+        severity="warning",
+        subject_ref=f"quota:{violation.workspace}:{violation.kind}:soft",
+        payload={
+            "workspace": violation.workspace,
+            "kind": violation.kind,
+            "usage": violation.usage,
+            "limit": violation.limit,
+        },
+        source="nova server",
+        background=True,
+    )
+
+
 def _emit_quota_breach_alert(violation: QuotaViolation) -> None:
     """Emit `ops.quota.breached` (ADR-0192) for one hard storage-quota rejection.
 
@@ -382,54 +563,96 @@ async def quota_exceeded_handler(
     from novafabric.server.errors import error_response  # noqa: PLC0415
 
     v = exc.violation
-    return error_response(
-        429,
-        "quota_exceeded",
-        str(exc),
-        {"kind": v.kind, "usage": v.usage, "limit": v.limit},
-    )
+    details: dict[str, Any] = {"kind": v.kind, "usage": v.usage, "limit": v.limit}
+    if v.workspace is not None:
+        # Additive field (ADR-0208 D3): workspace budget rejections name the
+        # workspace; global rejections keep the exact pre-0208 details shape.
+        details["workspace"] = v.workspace
+    return error_response(429, "quota_exceeded", str(exc), details)
 
 
 async def enforce_storage_quota(request: Request, response: Response) -> None:
     """FastAPI dependency guarding the capsule-ingest write routes.
 
     Inert when no checker is installed (feature disabled / all limits zero).
-    Soft-limit breach sets the warning header on the (successful) response;
-    hard-limit breach raises :class:`QuotaExceededError` → 429.
+    Global (ADR-0179) and workspace (ADR-0208) checks both run; the
+    strictest outcome wins. Soft-limit breach sets the warning header on the
+    (successful) response — global parts first, comma-joined; hard-limit
+    breach raises :class:`QuotaExceededError` → 429.
     """
     checker: QuotaChecker | None = getattr(request.app.state, "quota_checker", None)
-    if checker is None:
+    ws_checker: WorkspaceQuotaChecker | None = getattr(
+        request.app.state, "workspace_quota_checker", None
+    )
+    decisions: list[QuotaDecision] = []
+    if checker is not None:
+        decisions.append(checker.check())
+    if ws_checker is not None:
+        # Attribution rides the auth context resolved earlier in the
+        # dependency chain (require_role precedes this dependency).
+        from novafabric.server import usage as usage_mod  # noqa: PLC0415
+
+        config = request.app.state.config
+        attribution = usage_mod.resolve_attribution(
+            getattr(request.state, "auth", None),
+            Path(config.db_path) if config.db_path else None,
+        )
+        decisions.append(ws_checker.check(attribution.workspace))
+    if not decisions:
         return
-    decision = checker.check()
-    if decision.outcome == "reject":
-        hard = decision.hard
-        if hard is not None:
-            raise QuotaExceededError(hard)
-    elif decision.outcome == "warn":
-        response.headers[QUOTA_WARNING_HEADER] = decision.warning_header
+    for decision in decisions:
+        if decision.outcome == "reject":
+            hard = decision.hard
+            if hard is not None:
+                raise QuotaExceededError(hard)
+    warning = ", ".join(
+        d.warning_header for d in decisions if d.outcome == "warn"
+    )
+    if warning:
+        response.headers[QUOTA_WARNING_HEADER] = warning
 
 
 def install_quota_enforcement(app: FastAPI, config: ServerConfig) -> None:
-    """Install the quota checker when the ADR-0179 quota track is active.
+    """Install the quota checkers when the ADR-0179 quota track is active.
 
     Requires ``server.rate_limits.enabled`` (the spec's master switch gates
-    quotas too) AND a ``quota`` block with at least one non-zero limit;
-    otherwise nothing is installed and the ingest routes' dependency is a
-    no-op — zero behavior change.
+    quotas too) AND a ``quota`` block; the global checker installs when a
+    global limit is non-zero (unchanged ADR-0179 path), the workspace checker
+    (ADR-0208) when the additive ``quota.workspaces`` map holds at least one
+    non-zero budget. Otherwise nothing is installed and the ingest routes'
+    dependency is a no-op — zero behavior change.
     """
     app.add_exception_handler(QuotaExceededError, quota_exceeded_handler)  # type: ignore[arg-type]
     rl = config.rate_limits
     if not rl.enabled or rl.quota is None:
         return
     checker = QuotaChecker(rl.quota, audit_window_seconds=rl.audit_window_seconds)
-    if not checker.enabled:
-        return  # all limits zero ⇒ unlimited ⇒ stay inert
-    app.state.quota_checker = checker
-    logger.info(
-        "storage quotas enabled (ADR-0179): capsules soft=%s hard=%s, "
-        "bytes soft=%s hard=%s",
-        rl.quota.max_capsules_soft,
-        rl.quota.max_capsules_hard,
-        rl.quota.max_bytes_soft,
-        rl.quota.max_bytes_hard,
-    )
+    if checker.enabled:
+        app.state.quota_checker = checker
+        logger.info(
+            "storage quotas enabled (ADR-0179): capsules soft=%s hard=%s, "
+            "bytes soft=%s hard=%s",
+            rl.quota.max_capsules_soft,
+            rl.quota.max_capsules_hard,
+            rl.quota.max_bytes_soft,
+            rl.quota.max_bytes_hard,
+        )
+    if rl.quota.workspaces:
+        from novafabric.server.usage import WorkspaceUsageReader  # noqa: PLC0415
+
+        reader = WorkspaceUsageReader(
+            Path(config.db_path) if config.db_path else None
+        )
+        ws_checker = WorkspaceQuotaChecker(
+            dict(rl.quota.workspaces),
+            reader.get,
+            audit_window_seconds=rl.audit_window_seconds,
+            invalidate_hook=reader.invalidate,
+        )
+        if ws_checker.enabled:
+            app.state.workspace_quota_checker = ws_checker
+            logger.info(
+                "per-workspace quota budgets enabled (ADR-0208, experimental):"
+                " %d workspace(s)",
+                len(rl.quota.workspaces),
+            )

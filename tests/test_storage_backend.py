@@ -147,9 +147,10 @@ def test_storage_info_defaults() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_sqlite_migration_pending_alembic_not_installed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_sqlite_migration_pending_unstamped_db(tmp_path: Path) -> None:
+    # ADR-0211: an init_schema-bootstrapped DB (no alembic_version stamp) is
+    # honestly "pending" — the comparator reads the stamp with sqlite3 and
+    # does not need alembic importable for this answer.
     db = tmp_path / "registry.db"
     conn = sqlite3.connect(str(db))
     conn.executescript(
@@ -159,58 +160,58 @@ def test_sqlite_migration_pending_alembic_not_installed(
     conn.commit()
     conn.close()
 
-    # Remove alembic from sys.modules so the import check fails
-    monkeypatch.setitem(sys.modules, "alembic", None)  # type: ignore[misc]
-
     backend = SQLiteBackend(db)
     info = backend.info()
-    # alembic not installed → migration_pending is None
-    assert info.migration_pending is None
-
-
-def test_sqlite_migration_pending_alembic_installed_no_version_table(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    db = tmp_path / "registry.db"
-    conn = sqlite3.connect(str(db))
-    conn.executescript(
-        "CREATE TABLE schema_version (version INTEGER PRIMARY KEY); "
-        "INSERT INTO schema_version VALUES (1);"
-    )
-    conn.commit()
-    conn.close()
-
-    # Inject a fake alembic module so the import check passes
-    fake_alembic = MagicMock()
-    monkeypatch.setitem(sys.modules, "alembic", fake_alembic)
-
-    backend = SQLiteBackend(db)
-    info = backend.info()
-    # alembic installed but alembic_version table absent → pending = True
     assert info.migration_pending is True
 
 
-def test_sqlite_migration_pending_alembic_version_table_exists(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_sqlite_migration_pending_foreign_stamp_is_none(tmp_path: Path) -> None:
+    # ADR-0211: a stamp this build does not know (ahead_or_foreign) is not
+    # describable as "pending" — the honest answer is None (not checkable).
     db = tmp_path / "registry.db"
     conn = sqlite3.connect(str(db))
     conn.executescript(
         "CREATE TABLE schema_version (version INTEGER PRIMARY KEY); "
         "INSERT INTO schema_version VALUES (1); "
         "CREATE TABLE alembic_version (version_num TEXT PRIMARY KEY); "
-        "INSERT INTO alembic_version VALUES ('s0001');"
+        "INSERT INTO alembic_version VALUES ('zzz9999');"
     )
     conn.commit()
     conn.close()
 
-    fake_alembic = MagicMock()
-    monkeypatch.setitem(sys.modules, "alembic", fake_alembic)
-
     backend = SQLiteBackend(db)
     info = backend.info()
-    # alembic installed and version_num row present → pending = False
-    assert info.migration_pending is False
+    assert info.migration_pending is None
+
+
+def test_sqlite_migration_pending_stamp_vs_head(tmp_path: Path) -> None:
+    # ADR-0211: "not pending" now means stamped AT the script head; a stale
+    # stamp (s0001 with a newer head) is pending. Pre-0211 code reported
+    # False for ANY stamp — the bug this slice fixes.
+    from novafabric.migrations.registry_track import script_head
+
+    head = script_head("sqlite")
+    assert head is not None
+
+    db = tmp_path / "registry.db"
+    conn = sqlite3.connect(str(db))
+    conn.executescript(
+        "CREATE TABLE schema_version (version INTEGER PRIMARY KEY); "
+        "INSERT INTO schema_version VALUES (1); "
+        "CREATE TABLE alembic_version (version_num TEXT PRIMARY KEY); "
+        f"INSERT INTO alembic_version VALUES ('{head}');"
+    )
+    conn.commit()
+    conn.close()
+
+    assert SQLiteBackend(db).info().migration_pending is False
+
+    conn = sqlite3.connect(str(db))
+    conn.execute("UPDATE alembic_version SET version_num = 's0001'")
+    conn.commit()
+    conn.close()
+
+    assert SQLiteBackend(db).info().migration_pending is True
 
 
 # ---------------------------------------------------------------------------

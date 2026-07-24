@@ -92,7 +92,7 @@ jobs:
         # Vulnerability scan of the image we just published (ADR-0186).
         # This pass reports ALL severities for the release record and never
         # blocks by itself; the gate is the next step.
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}
           format: table
@@ -112,7 +112,7 @@ jobs:
         # available fix. Unfixable criticals (ignore-unfixed) report in the
         # full scan above but do not wedge the release behind upstream
         # base-image lag; if they persist they enter the waiver discipline.
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}
           severity: CRITICAL

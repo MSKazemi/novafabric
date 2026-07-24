@@ -39,7 +39,8 @@
         "ops.policy.violation",
         "ops.drift.detected",
         "ops.seal.verify_failed",
-        "ops.backup.failed"
+        "ops.backup.failed",
+        "webhook.ping"
       ]
     },
     "subject": {

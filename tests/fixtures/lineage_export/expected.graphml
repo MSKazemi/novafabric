@@ -1,0 +1,166 @@
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd">
+  <key id="d6" for="edge" attr.name="facets_json" attr.type="string" />
+  <key id="d5" for="edge" attr.name="confidence" attr.type="string" />
+  <key id="d4" for="edge" attr.name="created_at" attr.type="string" />
+  <key id="d3" for="edge" attr.name="capsule_run_id" attr.type="string" />
+  <key id="d2" for="edge" attr.name="edge_type" attr.type="string" />
+  <key id="d1" for="node" attr.name="ref" attr.type="string" />
+  <key id="d0" for="node" attr.name="kind" attr.type="string" />
+  <graph edgedefault="directed">
+    <node id="0e4e3054c7f973640b15b67738">
+      <data key="d0">run</data>
+      <data key="d1">run-victim</data>
+    </node>
+    <node id="1150df86e28248a91249b04d07">
+      <data key="d0">run</data>
+      <data key="d1">run-victim2</data>
+    </node>
+    <node id="11cbb9aba3b2e1f455ed267ede">
+      <data key="d0">run</data>
+      <data key="d1">run-c1</data>
+    </node>
+    <node id="15b6541dac2d5c00b8fc1b0645">
+      <data key="d0">external</data>
+      <data key="d1">orphan-dataset</data>
+    </node>
+    <node id="1bc34bbdd2cd77000299fb28aa">
+      <data key="d0">run</data>
+      <data key="d1">run-bridge</data>
+    </node>
+    <node id="324d2eed709cb8e8bc71ac73fb">
+      <data key="d0">run</data>
+      <data key="d1">run-bad</data>
+    </node>
+    <node id="37483998a3a69ab8872a52cb5d">
+      <data key="d0">asset</data>
+      <data key="d1">local:hub-model@v1</data>
+    </node>
+    <node id="4baf80c7aaeb5b71517bc82ca2">
+      <data key="d0">run</data>
+      <data key="d1">run-c3</data>
+    </node>
+    <node id="5a1cd80956d7139dc2a8d571c7">
+      <data key="d0">asset</data>
+      <data key="d1">local:stale-data@v3</data>
+    </node>
+    <node id="5ad34ec827147bcf16e9424a64">
+      <data key="d0">run</data>
+      <data key="d1">run-cy1</data>
+    </node>
+    <node id="5feed9e0da7b6e671bffc85338">
+      <data key="d0">run</data>
+      <data key="d1">run-cy2</data>
+    </node>
+    <node id="6d86dd57d818e761498a092fd2">
+      <data key="d0">run</data>
+      <data key="d1">run-2</data>
+    </node>
+    <node id="74336abbd439d36252c9fb024e">
+      <data key="d0">run</data>
+      <data key="d1">run-4</data>
+    </node>
+    <node id="7d8bbefa1ba12ba3d49fd38e94">
+      <data key="d0">run</data>
+      <data key="d1">run-c2</data>
+    </node>
+    <node id="a97dd92955806aa1863566ebd0">
+      <data key="d0">run</data>
+      <data key="d1">run-3</data>
+    </node>
+    <node id="cef38b0fc7db416194938237d5">
+      <data key="d0">run</data>
+      <data key="d1">run-1</data>
+    </node>
+    <edge source="0e4e3054c7f973640b15b67738" target="37483998a3a69ab8872a52cb5d" id="e015">
+      <data key="d2">consumed</data>
+      <data key="d3">seed-cap</data>
+      <data key="d4">2026-07-01T00:00:15.000000Z</data>
+      <data key="d5">observed</data>
+    </edge>
+    <edge source="0e4e3054c7f973640b15b67738" target="5a1cd80956d7139dc2a8d571c7" id="e012">
+      <data key="d2">consumed</data>
+      <data key="d3">seed-cap</data>
+      <data key="d4">2026-07-01T00:00:12.000000Z</data>
+      <data key="d5">inferred</data>
+      <data key="d6">{"demo": {"note": "seeded facet"}}</data>
+    </edge>
+    <edge source="1150df86e28248a91249b04d07" target="5a1cd80956d7139dc2a8d571c7" id="e014">
+      <data key="d2">consumed</data>
+      <data key="d3">seed-cap</data>
+      <data key="d4">2026-07-01T00:00:14.000000Z</data>
+      <data key="d5">observed</data>
+    </edge>
+    <edge source="11cbb9aba3b2e1f455ed267ede" target="7d8bbefa1ba12ba3d49fd38e94" id="e007">
+      <data key="d2">contains</data>
+      <data key="d3">seed-cap</data>
+      <data key="d4">2026-07-01T00:00:07.000000Z</data>
+      <data key="d5">observed</data>
+    </edge>
+    <edge source="1bc34bbdd2cd77000299fb28aa" target="11cbb9aba3b2e1f455ed267ede" id="e006">
+      <data key="d2">spawned</data>
+      <data key="d3">seed-cap</data>
+      <data key="d4">2026-07-01T00:00:06.000000Z</data>
+      <data key="d5">observed</data>
+    </edge>
+    <edge source="4baf80c7aaeb5b71517bc82ca2" target="5ad34ec827147bcf16e9424a64" id="e009">
+      <data key="d2">spawned</data>
+      <data key="d3">seed-cap</data>
+      <data key="d4">2026-07-01T00:00:09.000000Z</data>
+      <data key="d5">observed</data>
+    </edge>
+    <edge source="5a1cd80956d7139dc2a8d571c7" target="324d2eed709cb8e8bc71ac73fb" id="e013">
+      <data key="d2">produced_by</data>
+      <data key="d3">seed-cap</data>
+      <data key="d4">2026-07-01T00:00:13.000000Z</data>
+      <data key="d5">observed</data>
+    </edge>
+    <edge source="5ad34ec827147bcf16e9424a64" target="5feed9e0da7b6e671bffc85338" id="e010">
+      <data key="d2">delegated_to</data>
+      <data key="d3">seed-cap</data>
+      <data key="d4">2026-07-01T00:00:10.000000Z</data>
+      <data key="d5">observed</data>
+    </edge>
+    <edge source="5feed9e0da7b6e671bffc85338" target="5ad34ec827147bcf16e9424a64" id="e011">
+      <data key="d2">delegated_to</data>
+      <data key="d3">seed-cap</data>
+      <data key="d4">2026-07-01T00:00:11.000000Z</data>
+      <data key="d5">observed</data>
+    </edge>
+    <edge source="6d86dd57d818e761498a092fd2" target="37483998a3a69ab8872a52cb5d" id="e002">
+      <data key="d2">consumed</data>
+      <data key="d3">seed-cap</data>
+      <data key="d4">2026-07-01T00:00:02.000000Z</data>
+      <data key="d5">observed</data>
+    </edge>
+    <edge source="74336abbd439d36252c9fb024e" target="37483998a3a69ab8872a52cb5d" id="e004">
+      <data key="d2">consumed</data>
+      <data key="d3">seed-cap</data>
+      <data key="d4">2026-07-01T00:00:04.000000Z</data>
+      <data key="d5">observed</data>
+    </edge>
+    <edge source="7d8bbefa1ba12ba3d49fd38e94" target="4baf80c7aaeb5b71517bc82ca2" id="e008">
+      <data key="d2">contains</data>
+      <data key="d3">seed-cap</data>
+      <data key="d4">2026-07-01T00:00:08.000000Z</data>
+      <data key="d5">observed</data>
+    </edge>
+    <edge source="a97dd92955806aa1863566ebd0" target="37483998a3a69ab8872a52cb5d" id="e003">
+      <data key="d2">consumed</data>
+      <data key="d3">seed-cap</data>
+      <data key="d4">2026-07-01T00:00:03.000000Z</data>
+      <data key="d5">observed</data>
+    </edge>
+    <edge source="cef38b0fc7db416194938237d5" target="1bc34bbdd2cd77000299fb28aa" id="e005">
+      <data key="d2">delegated_to</data>
+      <data key="d3">seed-cap</data>
+      <data key="d4">2026-07-01T00:00:05.000000Z</data>
+      <data key="d5">observed</data>
+    </edge>
+    <edge source="cef38b0fc7db416194938237d5" target="37483998a3a69ab8872a52cb5d" id="e001">
+      <data key="d2">consumed</data>
+      <data key="d3">seed-cap</data>
+      <data key="d4">2026-07-01T00:00:01.000000Z</data>
+      <data key="d5">observed</data>
+    </edge>
+  </graph>
+</graphml>

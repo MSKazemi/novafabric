@@ -9,11 +9,15 @@ deployment, rotation, compromise recovery, and multi-region availability.
 
 ## 1. Key Types and Algorithms
 
-NovaSeal uses **Ed25519** (RFC 8032) for capsule signing.  Ed25519 was chosen
-because:
-- It provides 128-bit security with compact 32-byte public keys and 64-byte signatures.
-- Key generation and signing are constant-time (no side-channel timing oracles).
-- It is supported by all major HSM vendors and cloud KMS providers.
+NovaSeal's default `local` signing profile signs capsules with **ECDSA P-256 /
+SHA-256** (DSSE); the cloud-KMS profiles (`aws_kms`, `azure_kv`, `gcp_kms`) use
+the same P-256 curve.  Ed25519 (RFC 8032) is used only on the alternate
+evidence-bundle / collector signer path, not for the default capsule seal.
+ECDSA P-256 was chosen for the seal core because:
+- It provides 128-bit security and is a NIST/FIPS-approved signature scheme.
+- Key generation and signing are well-supported across HSMs and cloud KMS.
+- It is supported natively by all major HSM vendors and cloud KMS providers
+  (AWS KMS, Azure Key Vault, and GCP Cloud KMS all sign with ECDSA over P-256).
 
 Each signing profile has:
 - One **private signing key** (never leaves the HSM or encrypted key store).
@@ -65,12 +69,18 @@ generate-asymmetric-pair` command.
 For development or air-gapped environments where an HSM is not available:
 
 ```bash
-# Generate a new Ed25519 keypair using novafabric's built-in tool
-uv run python -m novafabric.evidence.signing --out-dir ~/.novafabric/keys/
+# Generate an ECDSA P-256 private key (PKCS#8 PEM) and a self-signed certificate
+# (this is the same procedure as the local profile in the Configuration Reference §2.1)
+openssl ecparam -name prime256v1 -genkey -noout | \
+  openssl pkcs8 -topk8 -nocrypt -out ~/.novafabric/keys/seal.key
+
+openssl req -new -x509 -key ~/.novafabric/keys/seal.key \
+  -out ~/.novafabric/keys/seal.crt \
+  -days 3650 -subj "/CN=NovaSeal-Local"
 
 # This produces:
-#   ~/.novafabric/keys/signing-key.pem   (private key — PROTECT THIS FILE)
-#   ~/.novafabric/keys/signing-key.pub   (public key — distribute freely)
+#   ~/.novafabric/keys/seal.key   (ECDSA P-256 private key — PROTECT THIS FILE)
+#   ~/.novafabric/keys/seal.crt   (X.509 certificate — reference from cert_path)
 ```
 
 **Security requirements for software key storage:**
@@ -214,3 +224,16 @@ Verifiers must pin the specific public key they trust — do not use a global
 - ADR-0041: NovaSeal cryptographic core adoption
 - ADR-0058: Maker-checker dual-approval with NovaSeal
 - ADR-0059: Linked-envelope chain maker-checker
+
+## Backups and key material (ADR-0216 D4)
+
+`nova backup create` excludes signing keys **by default** — data backups may
+spread widely; key backups must not. A full disaster-recovery set can opt in
+with `nova backup create --include-keys` (packs the signing keyring and
+`novaseal.yaml` + its key/cert PEMs under `external/…`, flagged
+`key_material`), and restoring them requires the second opt-in
+`nova restore --restore-keys`. A set created with `--include-keys` must be
+handled under the custody rules in this document — encrypted cold storage,
+restricted access — never alongside ordinary data backups. The default
+posture is unchanged: keys are backed up separately per this procedure, and a
+restore without keys can verify everything but sign nothing.

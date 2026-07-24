@@ -13,6 +13,7 @@ import os
 import stat
 import threading
 import uuid
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Final
@@ -20,6 +21,10 @@ from typing import Any, Final
 from novafabric._paths import dashboard_audit_path
 
 AUDIT_ENV: Final[str] = "NOVAFABRIC_DASHBOARD_AUDIT_FILE"
+
+#: Block size for reverse (tail-first) reads. 64 KiB covers hundreds of
+#: typical few-hundred-byte audit records per seek.
+TAIL_BLOCK_SIZE: Final[int] = 64 * 1024
 
 _lock = threading.Lock()
 
@@ -71,22 +76,87 @@ def append(
     return record
 
 
+def tail_lines(
+    path: Path,
+    *,
+    before_offset: int | None = None,
+    block_size: int = TAIL_BLOCK_SIZE,
+) -> Iterator[tuple[int, bytes]]:
+    """Yield ``(byte_offset, line)`` newest-first from an append-only JSONL file.
+
+    Reads backwards from EOF (or from ``before_offset``) in ``block_size``
+    chunks, so IO is proportional to how far the caller iterates — never the
+    whole file. Because the file is append-only, a line's byte offset is a
+    stable resume cursor: pass it back as ``before_offset`` to continue with
+    strictly older lines. Empty lines are skipped; a missing file yields
+    nothing.
+    """
+    if not path.exists():
+        return
+    with path.open("rb") as f:
+        size = f.seek(0, os.SEEK_END)
+        pos = size if before_offset is None else max(0, min(before_offset, size))
+        buf = b""
+        while pos > 0:
+            read_size = min(block_size, pos)
+            pos -= read_size
+            f.seek(pos)
+            buf = f.read(read_size) + buf
+            parts = buf.split(b"\n")
+            if pos > 0:
+                # First part may be the tail of a line straddling the block
+                # boundary — keep it in the buffer for the next iteration.
+                buf = parts[0]
+                complete = parts[1:]
+                base = pos + len(parts[0]) + 1
+            else:
+                buf = b""
+                complete = parts
+                base = 0
+            offsets: list[int] = []
+            off = base
+            for line in complete:
+                offsets.append(off)
+                off += len(line) + 1
+            for line_off, line in zip(reversed(offsets), reversed(complete)):
+                if line.strip():
+                    yield line_off, line
+
+
+def read_recent_tail(
+    limit: int = 200,
+    before_offset: int | None = None,
+    action: str | None = None,
+) -> tuple[list[dict[str, Any]], int | None]:
+    """Return up to *limit* recent audit entries, newest first, with a cursor.
+
+    ``before_offset`` (a byte offset from a previous call's cursor) restricts
+    the read to entries strictly before that file position; ``action`` keeps
+    only entries whose ``action`` field matches exactly. Malformed lines are
+    skipped. Returns ``(entries, next_before_offset)`` where the cursor is
+    ``None`` once the file is exhausted.
+    """
+    p = _path()
+    entries: list[dict[str, Any]] = []
+    next_cursor: int | None = None
+    with _lock:
+        for off, raw in tail_lines(p, before_offset=before_offset):
+            try:
+                rec = json.loads(raw.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if not isinstance(rec, dict):
+                continue
+            if action is not None and rec.get("action") != action:
+                continue
+            entries.append(rec)
+            if len(entries) >= limit:
+                if off > 0:
+                    next_cursor = off
+                break
+    return entries, next_cursor
+
+
 def read_recent(limit: int = 200) -> list[dict[str, Any]]:
     """Return the most recent audit entries, newest first."""
-    p = _path()
-    if not p.exists():
-        return []
-    with _lock, p.open("r", encoding="utf-8") as f:
-        lines = f.readlines()
-    out: list[dict[str, Any]] = []
-    for line in reversed(lines):
-        s = line.strip()
-        if not s:
-            continue
-        try:
-            out.append(json.loads(s))
-        except json.JSONDecodeError:
-            continue
-        if len(out) >= limit:
-            break
-    return out
+    return read_recent_tail(limit)[0]

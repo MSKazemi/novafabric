@@ -209,7 +209,15 @@ class TestCaptureLevelRoutes:
 
 
 class TestErasureRoutes:
-    def test_request_pending_when_cap003_enabled(
+    """ADR-0210 replaced the v0.18.0 informational stubs with real execution.
+
+    The always-PENDING contract is gone: POST is now safe-mutations gated
+    (``confirmed: true``) and executes through DEKStore.erase_subject.
+    Full execution behavior is pinned in ``test_erasure_execution.py``;
+    these tests cover the gates that fire before any mutation.
+    """
+
+    def test_request_without_confirmed_is_400(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("NOVA_CAP003_ENABLED", "true")
@@ -218,36 +226,42 @@ class TestErasureRoutes:
             json={"subject_id": "subject-001", "reason": "gdpr_art_17"},
             headers=AUTH,
         )
-        assert res.status_code == 200
-        body = res.json()
-        assert body["ok"] is True
-        assert body["state"] == "PENDING"
-        assert body["cap003_enabled"] is True
+        assert res.status_code == 400
+        assert "confirmation required" in res.json()["detail"]
 
-    def test_request_flagged_off_when_cap003_disabled(
+    def test_request_flagged_off_is_409_fail_closed(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # ADR-0210 D6: previously 200 + FEATURE_FLAG_OFF (a success envelope
+        # on a disabled compliance surface); now a structured 409.
         monkeypatch.setenv("NOVA_CAP003_ENABLED", "false")
         res = client.post(
             f"/api/compliance/erasure/request?{TOKEN_Q}",
-            json={"subject_id": "subject-001"},
+            json={"subject_id": "subject-001", "confirmed": True},
             headers=AUTH,
         )
-        assert res.status_code == 200
-        assert res.json()["state"] == "FEATURE_FLAG_OFF"
+        assert res.status_code == 409
+        assert res.json()["error"] == "cap003_disabled"
 
     def test_request_missing_subject_returns_422(self, client: TestClient) -> None:
         res = client.post(
-            f"/api/compliance/erasure/request?{TOKEN_Q}", json={}, headers=AUTH
+            f"/api/compliance/erasure/request?{TOKEN_Q}",
+            json={"confirmed": True},
+            headers=AUTH,
         )
         assert res.status_code == 422
 
-    def test_status_returns_empty_list(self, client: TestClient) -> None:
+    def test_status_returns_empty_list_when_queue_never_created(
+        self, client: TestClient
+    ) -> None:
         res = client.get(
             f"/api/compliance/erasure/status?subject_id=sub-1&{TOKEN_Q}", headers=AUTH
         )
         assert res.status_code == 200
-        assert res.json()["requests"] == []
+        body = res.json()
+        assert body["requests"] == []
+        # The stale "requires ClickHouse + S3" stub note is gone (ADR-0210 D5).
+        assert "note" not in body
 
 
 # ---------- DB-STG-1: storage routes ----------

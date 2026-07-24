@@ -1,134 +1,126 @@
 # LineageStore Migration Guide
 
-> **Honesty labels:** items marked **experimental** are implemented and tested.
+> **Honesty labels:** items marked **works today** are implemented and tested.
+> Items marked **experimental** are implemented but the surface may change.
 > Items marked **planned** are on the roadmap but not yet implemented.
 
 ---
 
 ## Overview
 
-The migration kit (`nova lineage-store migrate`) reads `lineage.jsonl` files from capsule
-directories and bulk-loads them into a target backend. It is designed for operators who
-need to move from the default SQLite store to KuzuDB or Postgres as their lineage graph
-grows beyond ~1M edges.
+The migration kit (`nova lineage-store migrate`) rebuilds a lineage graph in a target
+**SQLite** lineage store. Two sources are supported:
+
+- `--from-ocs` — the **canonical** path (ADR-0022): derives edges from the
+  ObjectCapsuleStore manifest chain, reading each capsule's `lineage.jsonl`.
+- a positional Parquet file — a **deprecated** legacy path, kept for backward
+  compatibility.
+
+The command targets **SQLite only** today. KuzuDB and Postgres/Apache AGE are **planned**
+graph backends and are not yet migration targets — see the tiered-backend table in
+[`design/architecture/lineage.md`](../../design/architecture/lineage.md#lineage-at-scale--tiered-backends).
 
 **When to migrate:**
 
-- Your `nova-bench run` output shows p99 depth-5 traversal latency > 500 ms on your
-  current backend at 10M edges.
-- You are deploying NovaFabric in server mode (`nova serve`) and want a graph backend
-  that co-locates with your Postgres instance (Apache AGE — **planned**).
-- You need in-process embedded graph performance without a Postgres server (KuzuDB —
-  **works today** — v2a gate cleared 2026-05-16; p99 blast_radius=45.5ms @ 10M edges).
+- Rebuild or repair a local SQLite lineage store from the durable OCS capsules (the
+  lineage graph is a derived, rebuildable index).
+- Consolidate lineage from a set of runs into a single queryable SQLite store.
+
+For deployments whose graph grows beyond ~1M edges, the embedded KuzuDB tier (v2a,
+**experimental** — production-candidate pending benchmark confirmation) and the
+Postgres/AGE tiers (**planned**) are described in the architecture doc; the CLI does not
+yet migrate into them.
 
 ---
 
 ## Prerequisites
 
-1. **Target backend installed:**
-   - KuzuDB: `uv pip install kuzu` — **works today**
-   - Apache AGE: Postgres extension; see AGE install docs — **planned**
-   - JanusGraph: Docker image `janusgraph/janusgraph:latest` — **future design**
-2. **Parquet export of current lineage edges** — produced by `nova lineage-store export`.
-   The Parquet file is the migration contract; the `lineage.jsonl` files in each capsule
-   are the authoritative source, but Parquet is faster to bulk-load.
-3. **Disk space:** KuzuDB requires approximately 2× the size of your `lineage.jsonl`
-   total for its on-disk column store during bulk load.
+1. **A source of lineage edges** — one of:
+   - an ObjectCapsuleStore reachable locally, plus the tenant and the run IDs to migrate
+     (`--from-ocs`); or
+   - a Parquet file of edges from the legacy export tooling (**deprecated**).
+2. **A target SQLite database path** (`--db`, default `lineage.db`). The command creates
+   the store if it does not exist.
+3. **Disk space** for the SQLite store (roughly proportional to the edge count).
 
 ---
 
-## Step 1: Export edges to Parquet
+## Step 1: Dry run (canonical OCS source)
 
 ```bash
-nova lineage-store export --output edges.parquet
+nova lineage-store migrate --from-ocs \
+  --ocs-tenant org \
+  --ocs-run-ids run-001,run-002 \
+  --db lineage.db
 ```
 
-This reads all `lineage.jsonl` files reachable from `~/.novafabric/capsules/` and writes
-a single Parquet file with columns: `edge_id`, `edge_type`, `source_id`, `target_id`,
-`created_at`, `payload`.
+The dry run (the default, i.e. without `--commit`):
 
-**experimental** — `nova lineage-store export` is implemented.
+- Enumerates the named capsules in the OCS and reconstructs their `lineage.jsonl` edges.
+- Runs a post-load divergence check (unless `--no-validate` is passed).
+- Reports `loaded`, `diverged`, and `capsules_scanned` counts.
+- Does **not** write to the target SQLite store.
 
----
-
-## Step 2: Dry run (validate only)
-
-```bash
-nova lineage-store migrate \
-  --source-parquet edges.parquet \
-  --target kuzudb \
-  --validate
-```
-
-The dry run:
-- Validates every row against the `lineage-edge.schema.json` schema.
-- Checks that all `source_id` / `target_id` references resolve to known nodes.
-- Prints a validation report with row counts and any schema violations.
-- Does **not** write to the target backend.
-
-Exit code 0 = all rows valid. Exit code 1 = validation errors (details in stderr).
-
-**experimental** — `--validate` without `--commit` is a no-op on the target backend.
+**works today** — `--from-ocs` requires `--ocs-tenant` and `--ocs-run-ids`; there is no
+global run enumeration (by design, FR-05).
 
 ---
 
-## Step 3: Commit the migration
+## Step 2: Commit the migration
 
 ```bash
-nova lineage-store migrate \
-  --source-parquet edges.parquet \
-  --target kuzudb \
-  --validate \
+nova lineage-store migrate --from-ocs \
+  --ocs-tenant org \
+  --ocs-run-ids run-001,run-002 \
+  --db lineage.db \
   --commit
 ```
 
 Adding `--commit`:
-- Runs the same validation as Step 2.
-- If validation passes, bulk-loads all edges into the KuzuDB store at
-  `~/.novafabric/lineage.kuzu/`.
-- Prints a summary: rows loaded, time elapsed, p99 insert latency.
-- Updates `~/.novafabric/config.yaml` to set `lineage_backend: kuzudb`.
 
-**works today** — KuzuDB bulk load is implemented via `KuzuLineageStore.bulk_load()`.
+- Runs the same reconstruction and divergence check as Step 1.
+- Writes the reconstructed edges into the SQLite store at `--db`.
+- Exits non-zero if a `MigrationDivergenceError` is detected (skip with `--no-validate`).
+
+**works today** — the target is the `SqliteLineageStore`; edge IDs are content-addressed,
+so re-running the migration is idempotent.
+
+### Legacy Parquet source (deprecated)
+
+```bash
+nova lineage-store migrate edges.parquet --db lineage.db --commit
+```
+
+The positional Parquet argument routes through the deprecated `migrate()` path
+(`lineage/migration/kit.py`, emits a `DeprecationWarning`). Prefer `--from-ocs`.
 
 ---
 
 ## Rollback
 
 Without `--commit`, no changes are persisted. If you have already committed and need to
-roll back:
-
-1. Delete or rename `~/.novafabric/lineage.kuzu/`.
-2. Restore `lineage_backend: sqlite` in `~/.novafabric/config.yaml`.
-3. The SQLite store (`~/.novafabric/registry.db`) is never modified by the migration.
-
-The `lineage.jsonl` files inside capsule directories are **never modified** by the
-migration kit — they remain the authoritative source.
+roll back, delete or restore the `--db` SQLite file — the migration only writes to that
+target. The source `lineage.jsonl` inside each capsule (and the OCS capsules themselves)
+are **never modified** by the migration kit; they remain the authoritative source.
 
 ---
 
-## Checking gate conditions
+## Deployment profiles for planned backends
 
-Before promoting KuzuDB to production, run the benchmark harness at 10M edges:
+`nova lineage-store profile` prints a ready-to-use docker-compose deployment profile for a
+future graph backend. It emits configuration only — it does **not** migrate data.
 
 ```bash
-nova-bench run --backend kuzudb --edge-count 10_000_000 --depth 5
+# KuzuDB vertical single-node (default)
+nova lineage-store profile --target kuzudb-vertical --node-size 16g-ram-500g-nvme
+
+# JanusGraph + Cassandra minimal cluster
+nova lineage-store profile --target janusgraph-minimal --rf 3
 ```
 
-The output includes:
-
-```
-backend: kuzudb
-edge_count: 10000000
-query: blast_radius depth=5
-p50_ms: ...
-p95_ms: ...
-p99_ms: ...   ← must be < 500 ms to clear the ADR-0053 gate
-```
-
-If `p99_ms >= 500`, do not promote. File an issue with the benchmark output attached.
-
-**works today** — `nova-bench run` is implemented (Phase 6 Track B). BQ-015 gate cleared 2026-05-16: KuzuDB p99=45.5ms @ 10M edges.
+**works today** — profile generation (stdout only). The KuzuDB and JanusGraph backends
+these profiles target are **experimental** / **planned** respectively, and are not yet
+`migrate` destinations.
 
 ---
 
@@ -136,8 +128,10 @@ If `p99_ms >= 500`, do not promote. File an issue with the benchmark output atta
 
 | Limitation | Status |
 |------------|--------|
-| KuzuDB 10M-edge benchmark (BQ-015) | **Gate cleared 2026-05-16** — blast_radius p99=45.5ms @ 10M edges (10.98× margin); see ADR-0053 |
-| Apache AGE backend not yet implemented | **planned** (ADR-0053 v2b) |
+| `migrate` target is SQLite only | **works today** — KuzuDB / Postgres / AGE targets are **planned** |
+| KuzuDB 10M-edge benchmark (ADR-0053 v2a gate, depth-5 p99 < 500 ms) | **pending benchmark confirmation** — `lineage/backends/kuzu.py` ships as a production-candidate; the gate is not confirmed in-tree |
+| Apache AGE backend | **planned** — `lineage/backends/age.py` is a `NotImplementedError` stub (ADR-0053 v2b) |
+| Postgres backend | **planned** — `lineage/backends/postgres.py` is a `NotImplementedError` stub |
 | JanusGraph backend requires Docker; not suitable for local-only deployments | **future design** |
-| `nova lineage-store export` reads capsule directories on the local host only; remote capsules must be fetched first | **experimental** (local only) |
+| `--from-ocs` reads a locally reachable ObjectCapsuleStore; remote stores must be fetched first | **works today** (local OCS only) |
 | Federation (`/federation/query`) requires OQ-04 legal sign-off for regulated-industry deployments | Open — do not use in regulated multi-site deployments until resolved |

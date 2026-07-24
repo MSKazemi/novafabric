@@ -286,7 +286,9 @@ export default function HomeTab({ onNavigate }: { onNavigate: (tab: Tab) => void
     api.listEvidence()
       .then((data) => {
         setEvidenceCount({
-          total: data.count,
+          // Use the server's true total (accurate even when the bounded page
+          // returned fewer bundles than exist on disk — S3 scale slice).
+          total: data.total ?? data.count,
           verified: data.bundles.filter((b) => b.verified).length,
         });
       })

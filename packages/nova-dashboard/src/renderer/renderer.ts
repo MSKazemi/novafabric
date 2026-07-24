@@ -14,12 +14,14 @@ import Sigma from "sigma";
 import { NodeCircleProgram } from "sigma/rendering";
 import type { GraphologyModel } from "../graph/model.js";
 import { computeLayeredLayout } from "../graph/layoutDagre.js";
+import { computeFitRatio } from "./fit.js";
 
 export type NodeClickHandler = (clusterId: number | null, nodeId: string) => void;
 
 // Below this on-screen size, labels are hidden unless the node is hovered or
 // selected. Higher than the old default (8) so the full-graph view is legible.
 const LABEL_SIZE_THRESHOLD = 14;
+
 
 export class SigmaRenderer {
   private _sigma: Sigma;
@@ -87,8 +89,35 @@ export class SigmaRenderer {
     this._sigma.getCamera().animatedUnzoom({ duration: 200 });
   }
 
+  /** Frame the whole graph, including node radii.
+   *
+   * `animatedReset()` alone returns the camera to ratio 1, which frames the
+   * normalised [0,1] coordinate space — but NOT the nodes drawn in it. Node
+   * `size` is in screen pixels, so a large cluster sitting near the edge of
+   * that space is drawn half outside the viewport and looks clipped (a
+   * 106-agent cluster renders at ~82px radius). Zoom out by the largest node
+   * radius, expressed as a fraction of the smaller viewport dimension, plus a
+   * small margin so labels are not flush against the edge.
+   */
   fit(): void {
-    this._sigma.getCamera().animatedReset({ duration: 300 });
+    const camera = this._sigma.getCamera();
+    const graph = this._model.graph;
+    if (graph.order === 0) {
+      camera.animatedReset({ duration: 300 });
+      return;
+    }
+
+    let maxSize = 0;
+    graph.forEachNode((_id, attrs) => {
+      const size = (attrs.size as number) ?? 0;
+      if (size > maxSize) maxSize = size;
+    });
+
+    const { width, height } = this._sigma.getDimensions();
+    camera.animate(
+      { x: 0.5, y: 0.5, ratio: computeFitRatio(maxSize, width, height), angle: 0 },
+      { duration: 300 },
+    );
   }
 
   // ---- Layered (call-graph) layout swap ----

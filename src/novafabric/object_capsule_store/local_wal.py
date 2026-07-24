@@ -43,11 +43,21 @@ CREATE TABLE IF NOT EXISTS wal_entries (
     tenant        TEXT    NOT NULL,
     run_id        TEXT    NOT NULL,
     uploaded_at   TEXT    NOT NULL,
-    drained       INTEGER NOT NULL DEFAULT 0,  -- 1 = drain complete
+    -- 0 = pending, 1 = drain complete, 2 = poisoned (dead-lettered)
+    drained       INTEGER NOT NULL DEFAULT 0,
+    attempts      INTEGER NOT NULL DEFAULT 0,  -- failed drain attempts
     created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_wal_undrained ON wal_entries (drained) WHERE drained = 0;
 """
+
+# A WAL row that fails to drain this many times (for reasons other than a
+# transient NovaSealUnavailable) is dead-lettered so it stops being retried
+# forever on every drain cycle.
+DEFAULT_MAX_WAL_ATTEMPTS = 5
+
+# Terminal ``drained`` state for a poisoned/dead-lettered row.
+_DRAINED_POISONED = 2
 
 
 class LocalWal:
@@ -65,8 +75,18 @@ class LocalWal:
         self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")  # fsync on every commit
+        self._conn.execute("PRAGMA busy_timeout=5000")  # wait, don't fail, on lock
         self._conn.executescript(_DDL)
+        self._migrate_add_attempts()
         self._conn.commit()
+
+    def _migrate_add_attempts(self) -> None:
+        """Additive migration: add the ``attempts`` column to a pre-existing DB."""
+        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(wal_entries)")}
+        if "attempts" not in cols:
+            self._conn.execute(
+                "ALTER TABLE wal_entries ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"
+            )
 
     # -----------------------------------------------------------------------
     # Write
@@ -136,6 +156,35 @@ class LocalWal:
         )
         self._conn.commit()
         log.debug("WAL drained: row_id=%d", row_id)
+
+    def record_failure(self, row_id: int) -> int:
+        """Increment the drain-attempt counter for a row; return the new count."""
+        self._conn.execute(
+            "UPDATE wal_entries SET attempts = attempts + 1 WHERE id = ?",
+            (row_id,),
+        )
+        self._conn.commit()
+        cur = self._conn.execute(
+            "SELECT attempts FROM wal_entries WHERE id = ?", (row_id,)
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
+
+    def mark_poisoned(self, row_id: int) -> None:
+        """Dead-letter a row: exclude it from ``pending_entries`` permanently."""
+        self._conn.execute(
+            "UPDATE wal_entries SET drained = ? WHERE id = ?",
+            (_DRAINED_POISONED, row_id),
+        )
+        self._conn.commit()
+        log.warning("WAL poisoned (dead-lettered): row_id=%d", row_id)
+
+    def poisoned_count(self) -> int:
+        """Number of dead-lettered rows (for observability/alerting)."""
+        cur = self._conn.execute(
+            "SELECT COUNT(*) FROM wal_entries WHERE drained = ?", (_DRAINED_POISONED,)
+        )
+        return int(cur.fetchone()[0])
 
     def pending_count(self) -> int:
         """Return the number of undrained entries."""

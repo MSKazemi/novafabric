@@ -1,0 +1,1150 @@
+{
+  "nova aibom generate": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/aibom/generate"
+  },
+  "nova aibom status": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/aibom/status"
+  },
+  "nova aibom validate": {
+    "status": "builder-only"
+  },
+  "nova annotate confirm": {
+    "status": "builder-only"
+  },
+  "nova annotate next": {
+    "status": "builder-only"
+  },
+  "nova annotate queue add": {
+    "status": "builder-only"
+  },
+  "nova annotate queue create": {
+    "status": "builder-only"
+  },
+  "nova annotate queue list": {
+    "status": "builder-only"
+  },
+  "nova annotate queue populate": {
+    "status": "builder-only"
+  },
+  "nova annotate queue show": {
+    "status": "builder-only"
+  },
+  "nova annotate skip": {
+    "status": "builder-only"
+  },
+  "nova annotate submit": {
+    "status": "builder-only"
+  },
+  "nova api-proxy": {
+    "status": "cli-only",
+    "reason": "Long-running local proxy process; dashboard is copy-only for process lifecycle (ADR-0027 Layer C)."
+  },
+  "nova approve": {
+    "status": "real-panel",
+    "tab": "registry",
+    "api": "/approve"
+  },
+  "nova asset diff": {
+    "status": "real-panel",
+    "tab": "registry",
+    "api": "/diff"
+  },
+  "nova assure": {
+    "status": "real-panel",
+    "tab": "risk",
+    "api": "/api/assure/"
+  },
+  "nova assure-case": {
+    "status": "builder-only"
+  },
+  "nova assure-coverage": {
+    "status": "builder-only"
+  },
+  "nova audit bundle": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/audit/bundle"
+  },
+  "nova audit coverage": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/audit/coverage"
+  },
+  "nova audit map": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/audit/map"
+  },
+  "nova audit report": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/audit/report"
+  },
+  "nova audit verify": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/audit/verify"
+  },
+  "nova audit-log export": {
+    "status": "cli-only",
+    "reason": "SIEM egress export runs on the server host and writes local files (cron/CI-oriented)."
+  },
+  "nova audit-log tail": {
+    "status": "real-panel",
+    "tab": "audit",
+    "api": "/api/audit"
+  },
+  "nova backup create": {
+    "status": "cli-only",
+    "reason": "Writes a backup archive to the local filesystem."
+  },
+  "nova backup verify": {
+    "status": "cli-only",
+    "reason": "Verifies a backup archive on the local filesystem."
+  },
+  "nova capsule delete": {
+    "status": "real-panel",
+    "tab": "runs",
+    "api": "/api/runs/"
+  },
+  "nova capture": {
+    "status": "cli-only",
+    "reason": "Wraps and runs the user workload as a local process (ADR-0027 Layer C)."
+  },
+  "nova classify from-capsule": {
+    "status": "real-panel",
+    "tab": "governance",
+    "api": "/api/governance/classify"
+  },
+  "nova classify list-vocabularies": {
+    "status": "real-panel",
+    "tab": "governance",
+    "api": "/api/governance/vocabularies"
+  },
+  "nova classify run": {
+    "status": "real-panel",
+    "tab": "governance",
+    "api": "/api/governance/classify-manual"
+  },
+  "nova collector rebuild": {
+    "status": "builder-only"
+  },
+  "nova comment add": {
+    "status": "builder-only"
+  },
+  "nova comment list": {
+    "status": "builder-only"
+  },
+  "nova comment thread": {
+    "status": "builder-only"
+  },
+  "nova cost attribute": {
+    "status": "real-panel",
+    "tab": "cost",
+    "api": "/api/cost/attribute"
+  },
+  "nova cost estimate": {
+    "status": "builder-only"
+  },
+  "nova cost fairness": {
+    "status": "real-panel",
+    "tab": "cost",
+    "api": "/api/cost/fairness"
+  },
+  "nova cost report": {
+    "status": "real-panel",
+    "tab": "cost",
+    "api": "/api/cost/report"
+  },
+  "nova cost usage-breakdown": {
+    "status": "real-panel",
+    "tab": "cost",
+    "api": "/api/cost/usage-breakdown"
+  },
+  "nova daemon start": {
+    "status": "cli-only",
+    "reason": "Starts a local warm-capture daemon process on the developer machine."
+  },
+  "nova daemon status": {
+    "status": "real-panel",
+    "tab": "ops",
+    "api": "/api/ops/daemon-status"
+  },
+  "nova daemon stop": {
+    "status": "cli-only",
+    "reason": "Stops a local daemon process on the developer machine."
+  },
+  "nova dataset provenance-card": {
+    "status": "builder-only"
+  },
+  "nova db migrate-to-postgres": {
+    "status": "cli-only",
+    "reason": "One-shot local SQLite-to-Postgres migration run by an operator."
+  },
+  "nova db upgrade": {
+    "status": "real-panel",
+    "tab": "admin",
+    "api": "/api/db/upgrade"
+  },
+  "nova diagnose": {
+    "status": "real-panel",
+    "tab": "risk",
+    "api": "/diagnose"
+  },
+  "nova diff": {
+    "status": "real-panel",
+    "tab": "diff",
+    "api": "/api/diff"
+  },
+  "nova doctor": {
+    "status": "real-panel",
+    "tab": "ops",
+    "api": "/api/doctor"
+  },
+  "nova drift detect": {
+    "status": "builder-only"
+  },
+  "nova drift root-cause": {
+    "status": "builder-only"
+  },
+  "nova drift silent-failure": {
+    "status": "builder-only"
+  },
+  "nova dsar assemble": {
+    "status": "builder-only"
+  },
+  "nova dsar sla": {
+    "status": "builder-only"
+  },
+  "nova energy attest": {
+    "status": "builder-only"
+  },
+  "nova energy probe": {
+    "status": "builder-only"
+  },
+  "nova energy report": {
+    "status": "real-panel",
+    "tab": "spine",
+    "api": "/energy"
+  },
+  "nova energy verify": {
+    "status": "builder-only"
+  },
+  "nova erasure request": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/erasure/request"
+  },
+  "nova erasure status": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/erasure/status"
+  },
+  "nova euaiact export": {
+    "status": "real-panel",
+    "tab": "governance",
+    "api": "/api/compliance/euaiact/export"
+  },
+  "nova euaiact status": {
+    "status": "real-panel",
+    "tab": "governance",
+    "api": "/api/compliance/euaiact/status"
+  },
+  "nova eval agent": {
+    "status": "builder-only"
+  },
+  "nova eval card new": {
+    "status": "builder-only"
+  },
+  "nova eval card register": {
+    "status": "builder-only"
+  },
+  "nova eval card show": {
+    "status": "builder-only"
+  },
+  "nova eval card sign": {
+    "status": "builder-only"
+  },
+  "nova eval card verify": {
+    "status": "builder-only"
+  },
+  "nova eval compare": {
+    "status": "real-panel",
+    "tab": "eval",
+    "api": "/api/eval/compare"
+  },
+  "nova eval contamination-check": {
+    "status": "builder-only"
+  },
+  "nova eval cost": {
+    "status": "builder-only"
+  },
+  "nova eval export-inspect": {
+    "status": "builder-only"
+  },
+  "nova eval import-inspect": {
+    "status": "builder-only"
+  },
+  "nova eval list": {
+    "status": "real-panel",
+    "tab": "eval",
+    "api": "/api/eval/suites"
+  },
+  "nova eval offline": {
+    "status": "builder-only"
+  },
+  "nova eval run": {
+    "status": "real-panel",
+    "tab": "eval",
+    "api": "/api/eval/run"
+  },
+  "nova eval score add": {
+    "status": "builder-only"
+  },
+  "nova eval score config add": {
+    "status": "builder-only"
+  },
+  "nova eval score config get": {
+    "status": "builder-only"
+  },
+  "nova eval score config list": {
+    "status": "builder-only"
+  },
+  "nova eval score config show": {
+    "status": "builder-only"
+  },
+  "nova eval score list": {
+    "status": "builder-only"
+  },
+  "nova events emit": {
+    "status": "cli-only",
+    "reason": "Writes through locally configured lifecycle-event sinks on this host."
+  },
+  "nova events tail": {
+    "status": "cli-only",
+    "reason": "Tails the local append-only events.jsonl file on this host."
+  },
+  "nova evidence attest-replay": {
+    "status": "builder-only"
+  },
+  "nova evidence bind": {
+    "status": "real-panel",
+    "tab": "evidence",
+    "api": "/bind"
+  },
+  "nova evidence bind-custody": {
+    "status": "builder-only"
+  },
+  "nova evidence check-admissibility": {
+    "status": "builder-only"
+  },
+  "nova evidence completeness": {
+    "status": "real-panel",
+    "tab": "evidence",
+    "api": "/api/evidence/completeness/"
+  },
+  "nova experiment compare": {
+    "status": "builder-only"
+  },
+  "nova experiment list": {
+    "status": "builder-only"
+  },
+  "nova experiment run": {
+    "status": "builder-only"
+  },
+  "nova experiment show": {
+    "status": "builder-only"
+  },
+  "nova export": {
+    "status": "builder-only"
+  },
+  "nova export-accessibility-claim": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/export/"
+  },
+  "nova export-aibom": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/export/aibom"
+  },
+  "nova export-annex-iv": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/annex-iv"
+  },
+  "nova export-blob": {
+    "status": "builder-only"
+  },
+  "nova export-c2pa": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/export/c2pa"
+  },
+  "nova export-citizen-explanation": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/export/"
+  },
+  "nova export-control-attestation": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/export/"
+  },
+  "nova export-election-disclosure": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/export/"
+  },
+  "nova export-evidence": {
+    "status": "real-panel",
+    "tab": "runs",
+    "api": "/api/evidence/"
+  },
+  "nova export-examiner bagit": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/examiner/"
+  },
+  "nova export-examiner iso42001": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/examiner/"
+  },
+  "nova export-examiner pccp": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/examiner/"
+  },
+  "nova export-foia": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/export/"
+  },
+  "nova export-hipaa-proof": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/export/hipaa-proof"
+  },
+  "nova export-model-risk": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/export/"
+  },
+  "nova export-nis2": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/nis2"
+  },
+  "nova export-nist-rmf": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/export/nist-rmf"
+  },
+  "nova export-part11": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/export/"
+  },
+  "nova export-public-annex-viii": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/export/"
+  },
+  "nova export-public-disclosure": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/export/"
+  },
+  "nova export-public-incident": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/export/"
+  },
+  "nova export-rai-scorecard": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/export/"
+  },
+  "nova export-rocrate": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/export/rocrate"
+  },
+  "nova export-ropa": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/export/ropa"
+  },
+  "nova export-system-card": {
+    "status": "real-panel",
+    "tab": "storage",
+    "api": "/export-system-card"
+  },
+  "nova export-transparency-register": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/export/"
+  },
+  "nova export-whistleblower": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/export/"
+  },
+  "nova forensics timeline": {
+    "status": "real-panel",
+    "tab": "runs",
+    "api": "/forensics-timeline"
+  },
+  "nova graph agent": {
+    "status": "builder-only"
+  },
+  "nova hold create": {
+    "status": "real-panel",
+    "tab": "holds",
+    "api": "/api/holds"
+  },
+  "nova hold list": {
+    "status": "real-panel",
+    "tab": "holds",
+    "api": "/api/holds"
+  },
+  "nova hold release": {
+    "status": "real-panel",
+    "tab": "holds",
+    "api": "/release"
+  },
+  "nova import": {
+    "status": "builder-only"
+  },
+  "nova incident export": {
+    "status": "real-panel",
+    "tab": "incidents",
+    "api": "/export"
+  },
+  "nova incident list": {
+    "status": "real-panel",
+    "tab": "incidents",
+    "api": "/api/incidents"
+  },
+  "nova incident open": {
+    "status": "real-panel",
+    "tab": "incidents",
+    "api": "/api/incidents"
+  },
+  "nova incident status": {
+    "status": "real-panel",
+    "tab": "incidents",
+    "api": "/api/incidents"
+  },
+  "nova ingest-capsule": {
+    "status": "real-panel",
+    "tab": "admin",
+    "api": "/api/ingest-capsule"
+  },
+  "nova init": {
+    "status": "cli-only",
+    "reason": "Initializes local project/registry files on the developer filesystem."
+  },
+  "nova insights": {
+    "status": "builder-only"
+  },
+  "nova inspect": {
+    "status": "real-panel",
+    "tab": "runs",
+    "api": "/api/runs/"
+  },
+  "nova kg alias list": {
+    "status": "real-panel",
+    "tab": "kg",
+    "api": "/api/kg/aliases"
+  },
+  "nova kg alias register": {
+    "status": "real-panel",
+    "tab": "kg",
+    "api": "/api/kg/aliases"
+  },
+  "nova kg attack-path": {
+    "status": "builder-only"
+  },
+  "nova kg audit": {
+    "status": "builder-only"
+  },
+  "nova kg blast-radius": {
+    "status": "builder-only"
+  },
+  "nova kg build": {
+    "status": "builder-only"
+  },
+  "nova kg build-provenance": {
+    "status": "builder-only"
+  },
+  "nova kg detect": {
+    "status": "builder-only"
+  },
+  "nova kg entity-queue approve": {
+    "status": "real-panel",
+    "tab": "kg",
+    "api": "/api/kg/entity-queue"
+  },
+  "nova kg entity-queue list": {
+    "status": "real-panel",
+    "tab": "kg",
+    "api": "/api/kg/entity-queue"
+  },
+  "nova kg entity-queue reject": {
+    "status": "real-panel",
+    "tab": "kg",
+    "api": "/api/kg/entity-queue"
+  },
+  "nova kg entity-queue stats": {
+    "status": "real-panel",
+    "tab": "kg",
+    "api": "/api/kg/entity-queue/stats"
+  },
+  "nova kg ingest": {
+    "status": "real-panel",
+    "tab": "kg",
+    "api": "/api/kg/ingest"
+  },
+  "nova kg init": {
+    "status": "real-panel",
+    "tab": "kg",
+    "api": "/api/kg/init"
+  },
+  "nova kg query": {
+    "status": "builder-only"
+  },
+  "nova kg status": {
+    "status": "real-panel",
+    "tab": "kg",
+    "api": "/api/kg/status"
+  },
+  "nova label approve-move": {
+    "status": "builder-only"
+  },
+  "nova label get": {
+    "status": "builder-only"
+  },
+  "nova label history": {
+    "status": "builder-only"
+  },
+  "nova label list": {
+    "status": "builder-only"
+  },
+  "nova label propose-move": {
+    "status": "builder-only"
+  },
+  "nova label protect": {
+    "status": "builder-only"
+  },
+  "nova label set": {
+    "status": "builder-only"
+  },
+  "nova label status": {
+    "status": "builder-only"
+  },
+  "nova ledger anchor": {
+    "status": "builder-only"
+  },
+  "nova ledger status": {
+    "status": "builder-only"
+  },
+  "nova ledger verify": {
+    "status": "builder-only"
+  },
+  "nova lineage blast-radius": {
+    "status": "real-panel",
+    "tab": "lineage",
+    "api": "/api/lineage/blast-radius/"
+  },
+  "nova lineage emit-openlineage": {
+    "status": "real-panel",
+    "tab": "lineage",
+    "api": "/emit-openlineage"
+  },
+  "nova lineage export-graph": {
+    "status": "builder-only"
+  },
+  "nova lineage export-prov": {
+    "status": "real-panel",
+    "tab": "lineage",
+    "api": "/api/lineage/export-prov"
+  },
+  "nova lineage import": {
+    "status": "real-panel",
+    "tab": "lineage",
+    "api": "/api/lineage/import"
+  },
+  "nova lineage metrics": {
+    "status": "builder-only"
+  },
+  "nova lineage provenance": {
+    "status": "real-panel",
+    "tab": "lineage",
+    "api": "/api/lineage/provenance/"
+  },
+  "nova lineage replay-chain": {
+    "status": "real-panel",
+    "tab": "lineage",
+    "api": "/api/lineage/replay-chain/"
+  },
+  "nova lineage root-cause": {
+    "status": "builder-only"
+  },
+  "nova lineage time-travel": {
+    "status": "real-panel",
+    "tab": "lineage",
+    "api": "/api/lineage/time-travel/"
+  },
+  "nova lineage-store migrate": {
+    "status": "builder-only"
+  },
+  "nova lineage-store profile": {
+    "status": "real-panel",
+    "tab": "infra",
+    "api": "/api/lineage-store/profile"
+  },
+  "nova list": {
+    "status": "real-panel",
+    "tab": "registry",
+    "api": "/api/assets"
+  },
+  "nova login": {
+    "status": "cli-only",
+    "reason": "Stores credentials in the local keyring/config on the developer machine."
+  },
+  "nova logout": {
+    "status": "cli-only",
+    "reason": "Removes locally stored credentials on the developer machine."
+  },
+  "nova mcp card show": {
+    "status": "builder-only"
+  },
+  "nova mcp card validate": {
+    "status": "builder-only"
+  },
+  "nova mcp conformance": {
+    "status": "builder-only"
+  },
+  "nova mcp risk-report": {
+    "status": "real-panel",
+    "tab": "infra",
+    "api": "/api/mcp/risk-report"
+  },
+  "nova mcp scan": {
+    "status": "real-panel",
+    "tab": "infra",
+    "api": "/api/mcp/scan"
+  },
+  "nova mcp-proxy": {
+    "status": "cli-only",
+    "reason": "Long-running local proxy process; dashboard is copy-only for process lifecycle (ADR-0027 Layer C)."
+  },
+  "nova media list": {
+    "status": "builder-only"
+  },
+  "nova memory lineage": {
+    "status": "builder-only"
+  },
+  "nova memory trace": {
+    "status": "builder-only"
+  },
+  "nova merkle-tree": {
+    "status": "builder-only"
+  },
+  "nova migrate": {
+    "status": "real-panel",
+    "tab": "admin",
+    "api": "/api/capsule-migrate"
+  },
+  "nova migrate-schema": {
+    "status": "cli-only",
+    "reason": "Batch migration over local capsule directories on the filesystem."
+  },
+  "nova migrate-to-postgres": {
+    "status": "cli-only",
+    "reason": "One-shot local SQLite-to-Postgres migration run by an operator."
+  },
+  "nova new-run-id": {
+    "status": "real-panel",
+    "tab": "admin",
+    "api": "/api/admin/new-run-id"
+  },
+  "nova passport issue": {
+    "status": "builder-only"
+  },
+  "nova passport verify": {
+    "status": "builder-only"
+  },
+  "nova pii erase": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/pii/erase"
+  },
+  "nova pii status": {
+    "status": "builder-only"
+  },
+  "nova policy capture-level get": {
+    "status": "real-panel",
+    "tab": "policy",
+    "api": "/api/policy/capture-level"
+  },
+  "nova policy capture-level set": {
+    "status": "real-panel",
+    "tab": "policy",
+    "api": "/api/policy/capture-level"
+  },
+  "nova policy explain": {
+    "status": "real-panel",
+    "tab": "policy",
+    "api": "/api/policy/explain"
+  },
+  "nova policy list": {
+    "status": "real-panel",
+    "tab": "policy",
+    "api": "/api/policy/list"
+  },
+  "nova policy sign": {
+    "status": "real-panel",
+    "tab": "policy",
+    "api": "/api/policy/sign"
+  },
+  "nova policy test": {
+    "status": "real-panel",
+    "tab": "policy",
+    "api": "/api/policy/test"
+  },
+  "nova pricing add": {
+    "status": "builder-only"
+  },
+  "nova pricing list": {
+    "status": "real-panel",
+    "tab": "cost",
+    "api": "/api/cost/pricing"
+  },
+  "nova pricing show": {
+    "status": "builder-only"
+  },
+  "nova promote approve": {
+    "status": "real-panel",
+    "tab": "registry",
+    "api": "/approve"
+  },
+  "nova promote direct": {
+    "status": "real-panel",
+    "tab": "registry",
+    "api": "/promote"
+  },
+  "nova promote propose": {
+    "status": "real-panel",
+    "tab": "registry",
+    "api": "/promote"
+  },
+  "nova prompt compose": {
+    "status": "builder-only"
+  },
+  "nova prompt diff": {
+    "status": "builder-only"
+  },
+  "nova prompt get": {
+    "status": "builder-only"
+  },
+  "nova prompt history": {
+    "status": "builder-only"
+  },
+  "nova prompt list": {
+    "status": "builder-only"
+  },
+  "nova prompt promote": {
+    "status": "builder-only"
+  },
+  "nova prompt register": {
+    "status": "builder-only"
+  },
+  "nova prompt tree": {
+    "status": "builder-only"
+  },
+  "nova query": {
+    "status": "real-panel",
+    "tab": "analytics",
+    "api": "/api/query"
+  },
+  "nova redact": {
+    "status": "real-panel",
+    "tab": "runs",
+    "api": "/redact"
+  },
+  "nova redaction-xray": {
+    "status": "builder-only"
+  },
+  "nova register": {
+    "status": "real-panel",
+    "tab": "registry",
+    "api": "/api/assets"
+  },
+  "nova replay": {
+    "status": "real-panel",
+    "tab": "runs",
+    "api": "/replay/forensic"
+  },
+  "nova report": {
+    "status": "real-panel",
+    "tab": "registry",
+    "api": "/api/report"
+  },
+  "nova restore": {
+    "status": "cli-only",
+    "reason": "Destructive restore over the local store from a filesystem archive."
+  },
+  "nova retention apply": {
+    "status": "builder-only"
+  },
+  "nova retention explain": {
+    "status": "builder-only"
+  },
+  "nova retention plan": {
+    "status": "builder-only"
+  },
+  "nova retention status": {
+    "status": "builder-only"
+  },
+  "nova rollback": {
+    "status": "real-panel",
+    "tab": "registry",
+    "api": "/rollback"
+  },
+  "nova run lineage": {
+    "status": "real-panel",
+    "tab": "runs",
+    "api": "/run-lineage"
+  },
+  "nova run new-run-id": {
+    "status": "real-panel",
+    "tab": "admin",
+    "api": "/api/admin/new-run-id"
+  },
+  "nova run show": {
+    "status": "real-panel",
+    "tab": "runs",
+    "api": "/api/runs/"
+  },
+  "nova run validate-distributed": {
+    "status": "real-panel",
+    "tab": "runs",
+    "api": "/validate-distributed"
+  },
+  "nova safety-case build": {
+    "status": "real-panel",
+    "tab": "spine",
+    "api": "/safety-case"
+  },
+  "nova safety-case export": {
+    "status": "builder-only"
+  },
+  "nova safety-case verify": {
+    "status": "builder-only"
+  },
+  "nova scan-secrets": {
+    "status": "real-panel",
+    "tab": "runs",
+    "api": "/scan-secrets"
+  },
+  "nova schema list": {
+    "status": "real-panel",
+    "tab": "schema",
+    "api": "/api/schema/list"
+  },
+  "nova score submit": {
+    "status": "builder-only"
+  },
+  "nova seal approve": {
+    "status": "builder-only"
+  },
+  "nova seal bypass": {
+    "status": "real-panel",
+    "tab": "seal",
+    "api": "/bypass"
+  },
+  "nova seal log verify": {
+    "status": "real-panel",
+    "tab": "seal",
+    "api": "/api/seal/log/verify"
+  },
+  "nova seal propose": {
+    "status": "builder-only"
+  },
+  "nova seal ratchet init": {
+    "status": "real-panel",
+    "tab": "seal",
+    "api": "/api/seal/ratchet/init"
+  },
+  "nova seal ratchet rotate": {
+    "status": "real-panel",
+    "tab": "seal",
+    "api": "/api/seal/ratchet/rotate"
+  },
+  "nova seal ratchet status": {
+    "status": "real-panel",
+    "tab": "seal",
+    "api": "/api/seal/ratchet/status"
+  },
+  "nova seal sign": {
+    "status": "builder-only"
+  },
+  "nova seal verify": {
+    "status": "real-panel",
+    "tab": "seal",
+    "api": "/api/seal/"
+  },
+  "nova search": {
+    "status": "builder-only"
+  },
+  "nova serve": {
+    "status": "cli-only",
+    "reason": "Starts the dashboard server process itself."
+  },
+  "nova server api-key create": {
+    "status": "real-panel",
+    "tab": "admin",
+    "api": "/api/admin/api-keys"
+  },
+  "nova server api-key list": {
+    "status": "real-panel",
+    "tab": "admin",
+    "api": "/api/admin/api-keys"
+  },
+  "nova server api-key revoke": {
+    "status": "real-panel",
+    "tab": "admin",
+    "api": "/api/admin/api-keys"
+  },
+  "nova server api-key rotate": {
+    "status": "real-panel",
+    "tab": "admin",
+    "api": "/api/admin/api-keys"
+  },
+  "nova server assign-role": {
+    "status": "real-panel",
+    "tab": "admin",
+    "api": "/api/admin/roles"
+  },
+  "nova server flush-jwks-cache": {
+    "status": "real-panel",
+    "tab": "admin",
+    "api": "/api/admin/flush-jwks-cache"
+  },
+  "nova server issue-token": {
+    "status": "real-panel",
+    "tab": "admin",
+    "api": "/api/admin/tokens"
+  },
+  "nova server list-scim-events": {
+    "status": "builder-only"
+  },
+  "nova server revoke-role": {
+    "status": "real-panel",
+    "tab": "admin",
+    "api": "/api/admin/roles/"
+  },
+  "nova server revoke-token": {
+    "status": "real-panel",
+    "tab": "admin",
+    "api": "/api/admin/tokens/"
+  },
+  "nova server saml-metadata": {
+    "status": "builder-only"
+  },
+  "nova server scim-map-group": {
+    "status": "builder-only"
+  },
+  "nova server start": {
+    "status": "cli-only",
+    "reason": "Starts the server process; cannot be launched from the dashboard it serves."
+  },
+  "nova session add": {
+    "status": "builder-only"
+  },
+  "nova session list": {
+    "status": "builder-only"
+  },
+  "nova session new": {
+    "status": "builder-only"
+  },
+  "nova session replay": {
+    "status": "builder-only"
+  },
+  "nova session show": {
+    "status": "builder-only"
+  },
+  "nova storage inspect": {
+    "status": "real-panel",
+    "tab": "storage",
+    "api": "/api/storage/inspect/"
+  },
+  "nova storage validate": {
+    "status": "real-panel",
+    "tab": "storage",
+    "api": "/api/storage/validate"
+  },
+  "nova subject-proof": {
+    "status": "real-panel",
+    "tab": "compliance",
+    "api": "/api/compliance/subject-proof"
+  },
+  "nova suggest-register": {
+    "status": "real-panel",
+    "tab": "registry",
+    "api": "/api/runs/suggest-register"
+  },
+  "nova support-bundle": {
+    "status": "cli-only",
+    "reason": "Collects local diagnostics into a filesystem archive for support."
+  },
+  "nova toolschema impact": {
+    "status": "builder-only"
+  },
+  "nova trend": {
+    "status": "builder-only"
+  },
+  "nova trust-radar": {
+    "status": "builder-only"
+  },
+  "nova unregister": {
+    "status": "real-panel",
+    "tab": "registry",
+    "api": "/api/assets/"
+  },
+  "nova validate": {
+    "status": "real-panel",
+    "tab": "runs",
+    "api": "/validate"
+  },
+  "nova verify": {
+    "status": "real-panel",
+    "tab": "seal",
+    "api": "/verify"
+  },
+  "nova verify-envelope": {
+    "status": "builder-only"
+  },
+  "nova view list": {
+    "status": "builder-only"
+  },
+  "nova view rm": {
+    "status": "builder-only"
+  },
+  "nova view run": {
+    "status": "builder-only"
+  },
+  "nova view save": {
+    "status": "builder-only"
+  },
+  "nova view show": {
+    "status": "builder-only"
+  }
+}

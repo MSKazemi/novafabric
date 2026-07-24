@@ -1,0 +1,42 @@
+{
+  "schema_version": "0.1.0",
+  "hypothesis_experiment_result": [
+    {
+      "kind": "hypothesis",
+      "node_id": "H1",
+      "node_digest": "sha256:c960f1a50f9e3d6c72b8264d085f72b10f4c07e1faa82c7363ad077be87c0a67"
+    },
+    {
+      "kind": "experiment_design",
+      "node_id": "D1",
+      "node_digest": "sha256:0cd5b3896dbcd360f0706ae85d83b8889e491e48dc904429e9d98cc6f4c569e3",
+      "parent": "sha256:c960f1a50f9e3d6c72b8264d085f72b10f4c07e1faa82c7363ad077be87c0a67",
+      "agent_run_ref": "run_017"
+    },
+    {
+      "kind": "experiment_run",
+      "node_id": "R1",
+      "node_digest": "sha256:833e50563c0cb5c241f1fb5358deba0d79c3f01577bec872f2d96c8aa30f0acb",
+      "parent": "sha256:0cd5b3896dbcd360f0706ae85d83b8889e491e48dc904429e9d98cc6f4c569e3"
+    },
+    {
+      "kind": "observation",
+      "node_id": "O1",
+      "node_digest": "sha256:90d29a2026a2d5ae604d50f416662d50e55c0542072ee584857c427ceaad3a48",
+      "parent": "sha256:833e50563c0cb5c241f1fb5358deba0d79c3f01577bec872f2d96c8aa30f0acb"
+    },
+    {
+      "kind": "result",
+      "node_id": "S1",
+      "node_digest": "sha256:9447a484c33f5d2c3af91438dc048d7889904dcf6ddf11b28c0e895b5a0ba3e9",
+      "parent": "sha256:90d29a2026a2d5ae604d50f416662d50e55c0542072ee584857c427ceaad3a48"
+    },
+    {
+      "kind": "claim",
+      "node_id": "C1",
+      "node_digest": "sha256:88362bb9d16f9f38eb44226f7d1996d6002cd136743c6dd69fc84721268b272a",
+      "parent": "sha256:9447a484c33f5d2c3af91438dc048d7889904dcf6ddf11b28c0e895b5a0ba3e9"
+    }
+  ],
+  "bound_root": "sha256:19c5046bdb29bc7c99b5abf6467db508f80e80f815fd518a0d92e677fd8bb68b"
+}

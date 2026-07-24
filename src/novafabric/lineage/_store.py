@@ -64,6 +64,14 @@ CREATE INDEX IF NOT EXISTS lineage_nodes_kind_ref ON lineage_nodes(kind, ref);
 """
 
 
+class LineageGraphTooLargeError(RuntimeError):
+    """Raised when a whole-graph read would exceed its explicit bound (ADR-0212).
+
+    Silent truncation would make every downstream metric quietly wrong, so an
+    oversize graph fails loudly instead.
+    """
+
+
 class LineageStore:
     def __init__(self, db_path: Path | None = None) -> None:
         self._conn = get_connection(db_path)
@@ -177,6 +185,63 @@ class LineageStore:
             (*node_ids, *node_ids),
         ).fetchall()
         return [json.loads(dict(r)["payload"]) for r in rows]
+
+    def all_nodes(self, *, limit: int = 250_000) -> list[dict[str, Any]]:
+        """Every lineage node as a dict, ordered by ``node_id`` (ADR-0212).
+
+        Whole-graph read surface for the analytics layer. Unlike the rooted
+        traversals, ``payload`` is returned parsed (a dict, not JSON text).
+        Raises :class:`LineageGraphTooLargeError` above *limit*.
+        """
+        (count,) = self._conn.execute(
+            "SELECT COUNT(*) FROM lineage_nodes"
+        ).fetchone()
+        if count > limit:
+            raise LineageGraphTooLargeError(
+                f"lineage graph has {count} nodes, exceeding the {limit}-node bound"
+            )
+        rows = self._conn.execute(
+            """
+            SELECT node_id, kind, ref, first_seen_capsule_run_id, payload
+            FROM lineage_nodes ORDER BY node_id
+            """
+        ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["payload"] = json.loads(d["payload"])
+            out.append(d)
+        return out
+
+    def all_edges(self, *, limit: int = 1_000_000) -> list[dict[str, Any]]:
+        """Every lineage edge with endpoint ids, canonically ordered (ADR-0212).
+
+        Ordered by ``(source_id, target_id, edge_type, edge_id)`` so downstream
+        exports are byte-stable. ``payload`` is the parsed full edge dict and
+        round-trips ``facets`` (ADR-0090), like :meth:`edges_for_nodes`.
+        Raises :class:`LineageGraphTooLargeError` above *limit*.
+        """
+        (count,) = self._conn.execute(
+            "SELECT COUNT(*) FROM lineage_edges"
+        ).fetchone()
+        if count > limit:
+            raise LineageGraphTooLargeError(
+                f"lineage graph has {count} edges, exceeding the {limit}-edge bound"
+            )
+        rows = self._conn.execute(
+            """
+            SELECT edge_id, edge_type, source_id, target_id, capsule_run_id,
+                   confidence, created_at, payload
+            FROM lineage_edges
+            ORDER BY source_id, target_id, edge_type, edge_id
+            """
+        ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["payload"] = json.loads(d["payload"])
+            out.append(d)
+        return out
 
     def blast_radius(
         self, ref: str, kind: str | None = None, depth: int = 5,

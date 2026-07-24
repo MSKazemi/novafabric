@@ -291,6 +291,14 @@ def emit_sustained_limiting_audit(payload: dict[str, Any]) -> None:
         payload.get("rejected_count"),
         payload.get("window_start"),
     )
+    # ADR-0192 wired source. After the warning + before the audit append, so
+    # an alerting fault can never cost us the audit record.
+    from novafabric.events.sources import (  # noqa: PLC0415
+        emit_rate_limit_sustained_alert,
+    )
+
+    emit_rate_limit_sustained_alert(payload)
+
     from novafabric.serve import audit  # noqa: PLC0415
 
     digest = str(payload.get("key_hash", ""))

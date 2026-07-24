@@ -66,7 +66,7 @@ def test_unmapped_required_fields_are_listed_never_fabricated():
 def test_fields_follow_the_fixed_required_order():
     entry = build_annex_viii_entry(
         capsule_root="r" * 64,
-        operator_declared={k: "x" for k in ANNEX_VIII_REQUIRED},
+        operator_declared=dict.fromkeys(ANNEX_VIII_REQUIRED, "x"),
     )
     assert [f.name for f in entry.fields] == list(ANNEX_VIII_REQUIRED)
 

@@ -45,17 +45,43 @@ class NotFoundError(Exception):
 class ConflictError(Exception):
     """Resource conflict (duplicate, invalid lifecycle transition)."""
 
-    def __init__(self, message: str, code: str = "conflict") -> None:
+    def __init__(
+        self,
+        message: str,
+        code: str = "conflict",
+        details: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
+        self.details = details
 
 
 class ValidationError(Exception):
     """Spec or request body validation failure."""
 
-    def __init__(self, message: str, code: str = "validation_error") -> None:
+    def __init__(
+        self,
+        message: str,
+        code: str = "validation_error",
+        details: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
+        self.details = details
+
+
+class PayloadTooLargeError(Exception):
+    """Upload exceeds ``server.ingest.max_upload_bytes`` (ADR-0203, 413)."""
+
+    def __init__(
+        self,
+        message: str,
+        code: str = "payload_too_large",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.details = details
 
 
 class PreconditionFailedError(Exception):
@@ -82,11 +108,18 @@ async def not_found_handler(request: Request, exc: NotFoundError) -> JSONRespons
 
 
 async def conflict_handler(request: Request, exc: ConflictError) -> JSONResponse:
-    return error_response(409, exc.code, str(exc))
+    return error_response(409, exc.code, str(exc), exc.details)
 
 
 async def validation_error_handler(request: Request, exc: ValidationError) -> JSONResponse:
-    return error_response(422, exc.code, str(exc))
+    return error_response(422, exc.code, str(exc), exc.details)
+
+
+async def payload_too_large_handler(
+    request: Request, exc: PayloadTooLargeError
+) -> JSONResponse:
+    # No Retry-After header — size does not decay on a clock (spec).
+    return error_response(413, exc.code, str(exc), exc.details)
 
 
 async def precondition_failed_handler(
@@ -104,5 +137,6 @@ def register_handlers(app: Any) -> None:
     app.add_exception_handler(NotFoundError, not_found_handler)
     app.add_exception_handler(ConflictError, conflict_handler)
     app.add_exception_handler(ValidationError, validation_error_handler)
+    app.add_exception_handler(PayloadTooLargeError, payload_too_large_handler)
     app.add_exception_handler(PreconditionFailedError, precondition_failed_handler)
     app.add_exception_handler(BadRequestError, bad_request_handler)

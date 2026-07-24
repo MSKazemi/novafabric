@@ -1,6 +1,6 @@
 # Server Deployment Guide
 
-This guide covers four deployment scenarios for NovaFabric v0.7. Each scenario
+This guide covers five deployment scenarios for NovaFabric v0.7. Each scenario
 is labelled with its current implementation status per the [docs honesty
 rule](../../CLAUDE.md): **works today**, **experimental**, **planned**, or
 **future design**.
@@ -393,6 +393,12 @@ to the `/v0/` API, capsules, assets, lineage, or evidence.
 | `GET` | `/scim/v2/Users?filter=…` | List; `eq` filter on `userName`/`externalId`/`active`; `startIndex`/`count` pagination. |
 | `PATCH` | `/scim/v2/Users/{id}` | Partial update — `active: false` **de-provisions** (Okta and Entra ID PATCH dialects accepted). |
 | `DELETE` | `/scim/v2/Users/{id}` | Hard delete (discouraged; prefer deactivate — it preserves the trail). |
+| `POST` | `/scim/v2/Groups` | Provision a group (group→role mapping applied via `nova server scim-map-group`). |
+| `GET` | `/scim/v2/Groups/{id}` | Read one group. |
+| `GET` | `/scim/v2/Groups?filter=…` | List groups. |
+| `PATCH` | `/scim/v2/Groups/{id}` | Partial update (membership add/remove). |
+| `PUT` | `/scim/v2/Groups/{id}` | Full-replace update. |
+| `DELETE` | `/scim/v2/Groups/{id}` | Delete a group. |
 | `GET` | `/scim/v2/ServiceProviderConfig`, `/ResourceTypes`, `/Schemas` | SCIM capability discovery. |
 
 Responses use `application/scim+json` and the RFC 7644 error envelope, not
@@ -414,13 +420,18 @@ the NovaFabric `/v0/` error model.
   and `emails` are stored. Other wire attributes (enterprise extension,
   addresses, phone numbers, …) are accepted but dropped, never persisted.
 
-### Not implemented yet (planned)
+### Group → role mapping (shipped, experimental)
 
-Groups → role mapping (`/scim/v2/Groups`, ADR-0139 P3), the
-`nova server issue-scim-token` / `scim-map-group` / `list-scim-events` CLI
-commands, and PUT full-replace. Until group mapping lands, roles are still
-assigned via `nova server assign-role` or OIDC claims; SCIM manages the user
-lifecycle and *revokes* roles on deprovision.
+Groups → role mapping (`/scim/v2/Groups`, ADR-0139 P3 / ADR-0190) is
+implemented: the `Groups` resource supports POST/GET/list/PATCH/PUT
+(full-replace)/DELETE, and group membership maps to RBAC roles via
+`nova server scim-map-group <group> <role>` (`--list` / `--remove` supported).
+Provisioning events are inspectable with `nova server list-scim-events`. Roles
+may still also be assigned via `nova server assign-role` or OIDC claims; SCIM
+manages the user lifecycle and *revokes* roles on deprovision.
+
+**Not implemented yet (planned):** the `nova server issue-scim-token` CLI
+command — provision the SCIM bearer token via `$NOVAFABRIC_SCIM_TOKEN` for now.
 
 ---
 
@@ -451,6 +462,24 @@ scim:
   enabled: false         # SCIM 2.0 provisioning (ADR-0139, experimental).
                          # Also requires $NOVAFABRIC_SCIM_TOKEN (env only).
 
+rate_limits:             # API rate limiting + storage quotas (ADR-0179, experimental)
+  enabled: false         # disabled by default — limiter is fully inert when false
+  ingest: { rate: 100, burst: 200 }   # tokens/sec + burst capacity per class
+  read:   { rate: 50,  burst: 100 }
+  admin:  { rate: 10,  burst: 20 }
+  audit_threshold_rejections: 100     # rejections/window that raise an audit event
+  audit_window_seconds: 60
+  quota:                 # storage quotas (warn-then-reject); absent block ⇒ no checks
+    max_capsules_soft: 0 # 0 = unlimited
+    max_capsules_hard: 0
+    max_bytes_soft: 0
+    max_bytes_hard: 0
+
+observability:           # self-observability surface (ADR-0182, experimental)
+  metrics_exempt: false  # true serves /metrics without auth (loopback/isolated only)
+  self_tracing: false    # opt-in; one OTel span per request, never leaves the deployment
+  self_tracing_endpoint: ""  # OTLP/HTTP traces URL; empty = local serve OTLP ingest
+
 offline_key_path: ""     # Path to ed25519 private key PEM
 
 tls:
@@ -476,6 +505,61 @@ complete env-var table.
 directly into the YAML file. Use env vars or key files with restricted
 permissions. The server logs a warning if `dsn` is read from the file when
 `backend=postgres`.
+
+---
+
+## Ingest limits (experimental)
+
+> **Status: experimental** — ADR-0203 P1
+> ([spec](../../design/spec/ingest-hardening-v0.md)). Applies to
+> `POST /v0/capsules` only; local-first commands are untouched.
+
+The capsule-upload route is bounded: the request body is size-capped, spooled
+to disk in 1 MiB chunks (peak memory per upload is O(chunk), not O(archive)),
+extracted atomically via a temp directory + rename, and guarded against zip
+bombs and `..`-traversal member names.
+
+Config block (`server.ingest.*`, ADR-0029 conventions; all keys additive —
+an absent block means the defaults below):
+
+```yaml
+ingest:
+  max_upload_bytes: 268435456          # 256 MiB body cap → 413 payload_too_large
+  spool_chunk_bytes: 1048576           # 1 MiB read/decompress chunk (min 65536)
+  zip_max_entries: 10000               # archive member cap → 422 zip_guard_violation
+  zip_max_uncompressed_bytes: 2147483648  # 2 GiB decompressed-total cap
+  zip_max_ratio: 100.0                 # compression-ratio cap (per member + total)
+```
+
+Env overrides: `NOVAFABRIC_SERVER_INGEST_MAX_UPLOAD_BYTES`,
+`NOVAFABRIC_SERVER_INGEST_SPOOL_CHUNK_BYTES`,
+`NOVAFABRIC_SERVER_INGEST_ZIP_MAX_ENTRIES`,
+`NOVAFABRIC_SERVER_INGEST_ZIP_MAX_UNCOMPRESSED_BYTES`,
+`NOVAFABRIC_SERVER_INGEST_ZIP_MAX_RATIO`.
+
+- Rejections use the standard error envelope: HTTP **413**
+  `payload_too_large` (body over the cap; `details` carries
+  `limit_bytes`/`received_bytes`) and HTTP **422** `zip_guard_violation`
+  (`details.reason` is one of `entry_count`, `total_uncompressed`,
+  `compression_ratio`, `unsafe_member_name`).
+- Uploads larger than 256 MiB now require explicit operator config — raise
+  `max_upload_bytes`, or set any key to `0` to disable that limit
+  (escape hatch, discouraged).
+- Transient disk: up to `max_upload_bytes` (spool) plus the decompressed size
+  (temp extract dir) per in-flight upload, under
+  `<capsule_dir>/.ingest-tmp/`; both are removed on every exit path.
+
+**Recommended (normative, ADR-0203 D4):** for any non-loopback deployment,
+also enable the [ADR-0179](../../design/adr/0179-api-rate-limiting-quotas.md)
+request-rate limiter — it stays opt-in and off by default:
+
+```yaml
+rate_limits:
+  enabled: true    # shipped ingest budget: 100 req/s, burst 200
+```
+
+A reverse-proxy body cap (e.g. nginx `client_max_body_size`) is a sensible
+*additional* layer, but NovaFabric is safe as shipped without one.
 
 ---
 

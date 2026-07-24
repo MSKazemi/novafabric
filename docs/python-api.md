@@ -38,6 +38,7 @@ equivalent exists it is noted so you can cross-check behaviour with
 |---|---|---|
 | [SDK decorator](#sdk-decorator) | `novafabric.sdk.agent` | — (in-process) |
 | [Capture](#capture) | `novafabric.capture.orchestrator` | `nova capture` |
+| [Extended event recording](#extended-event-recording-experimental) | `novafabric.capture.record` | — (in-process) |
 | [Replay](#replay) | `novafabric.replay` | `nova replay` |
 | [Diff](#diff) | `novafabric.diff` | `nova diff` |
 | [Lineage](#lineage) | `novafabric.lineage` | `nova lineage` |
@@ -46,6 +47,7 @@ equivalent exists it is noted so you can cross-check behaviour with
 | [Report generation](#report-generation) | `novafabric.report.generator` | `nova report` |
 | [NovaSeal signing](#novaseal-signing) | `novafabric.trust.novaseal` | `nova seal` / `nova verify` |
 | [Score submission](#score-submission) | `novafabric.scores` | `nova score submit` |
+| [REST client](#rest-client) | `novafabric.client` | — (server mode) |
 | [Utility](#utility) | `novafabric.capture` | — |
 
 ---
@@ -163,6 +165,85 @@ class CaptureResult:
     capsule_dir: Path
     exit_code: int
 ```
+
+---
+
+## Extended event recording (experimental)
+
+```python
+from novafabric.capture import record
+```
+
+**Status: experimental** (ADR-0209 P1; the API surface may change until it
+has survived one release unchanged). The stable public façade for emitting
+the extended capture events of ADR-0082 — guardrails, evaluators, state
+transitions, memory operations, rerankers, vector retrievals, file events —
+into whatever run is currently being captured (any capture mode: `nova
+capture`, adapters, `@agent`, in-process hooks).
+
+Contract:
+
+- **Outside a capture run every call is a silent no-op** returning `None` —
+  you can instrument library code unconditionally and it stays inert until
+  a capture is active. `record.active()` tells you which case you are in.
+- Inside a run, each call appends one event to the run's dedicated JSONL
+  stream (fail-open, thread-safe; `run_id`/`capsule_id` are injected by the
+  run). All of these streams are covered by the capsule secret scanner, so
+  free-text payloads are redacted at finalize like everything else.
+- The façade passes your payload fields through at every capture level (you
+  own your data). NovaFabric's own default-path wirings only attach payloads
+  (state dicts, document text) at `forensic`/`air_gapped` capture level.
+
+```python
+record.active() -> bool
+
+record.file_event(operation, path, *, size_bytes=None, success=True,
+                  error=None, agent_id=None)
+record.state_transition(step_index, state_digest_before, state_digest_after, *,
+                        agent_id=None, state_before=None, state_after=None)
+record.memory_operation(operation, memory_key, *, relevance_score=None,
+                        freshness_seconds=None, agent_id=None, value=None,
+                        origin_run_id=None, origin_memory_key=None,
+                        origin_timestamp_utc=None)
+record.guardrail(guardrail_name, outcome, *, category=None, score=None,
+                 agent_id=None, details=None)
+record.evaluator(evaluator_name, *, score=None, label=None, passed=None,
+                 dataset_id=None, agent_id=None, rationale=None)
+record.reranker(reranker_model, *, input_count=None, output_count=None,
+                documents=None, agent_id=None)
+record.vector_retrieval(vector_store, *, phase="completed", operation="query",
+                        collection=None, top_k=None, returned_count=None,
+                        duration_ms=None, error=None, documents=None,
+                        agent_id=None)
+```
+
+`network_event` and `human_approval` are deliberately **not** exposed: the
+wire-level hooks and `nova seal-propose` own those streams, and a second
+producer would invite double-recording.
+
+### `record.wrap_retriever(fn, *, vector_store, collection=None, operation="query")`
+
+Wraps any sync callable retriever; emits `VectorRetrievalStarted` before the
+call, `…Completed` (with `returned_count`, `duration_ms`) on return,
+`…Failed` (with `error`) on exception — then re-raises. Document payloads
+are recorded only at `forensic`/`air_gapped` capture level.
+
+```python
+# LangChain retriever
+search = record.wrap_retriever(retriever.invoke,
+                               vector_store="qdrant", collection="docs")
+docs = search("what changed in v0.63?")
+
+# DSPy
+retrieve = dspy.Retrieve(k=8)
+retrieve.forward = record.wrap_retriever(retrieve.forward,
+                                         vector_store="chroma")
+```
+
+An async variant is future design. Default-path wirings that call this API
+automatically (OpenAI Agents guardrail spans, LangGraph state transitions)
+are documented in the capture tutorial; file/memory/evaluator/reranker
+events have **no auto-capture** — they record only when you call the façade.
 
 ---
 
@@ -454,6 +535,27 @@ class ImportResult:
 > to a configured backend (Marquez, Atlan, OpenMetadata). See the CLI reference
 > for `nova lineage` emission configuration.
 
+### Graph analytics (experimental — ADR-0212..0215)
+
+```python
+from novafabric.lineage._store import LineageStore
+from novafabric.lineage.analytics import (
+    build_insights_report,            # ADR-0215 synthesized report
+    compute_graph_metrics,            # ADR-0212 hubs / articulation points
+    rank_root_causes,                 # ADR-0213 upstream suspect ranking
+    to_cypher, to_gexf, to_graphml,   # ADR-0214 exports
+)
+
+store = LineageStore()
+metrics = compute_graph_metrics(store, top_n=10)
+report = build_insights_report(store)
+graphml = to_graphml(store.all_nodes(), store.all_edges())
+```
+
+Read-only and deterministic; oversize graphs raise `LineageGraphTooLargeError`
+instead of truncating. See the CLI reference for the command equivalents
+(`nova lineage metrics|root-cause|export-graph`, `nova insights`).
+
 ---
 
 ## Asset Registry
@@ -741,6 +843,90 @@ edit a prior record: submit a *new* score whose `supersedes` names the prior
 
 ---
 
+## REST client
+
+**Maturity: experimental (ADR-0202 P1, shipped 2026-07-24).** A typed, sync
+httpx client for the multi-tenant `nova server` REST API (`/v0`,
+`api/openapi.yaml`). This is **server-mode tooling**: every local-first
+feature above works without it, and importing it performs no I/O — the client
+sends no request other than the ones you invoke (no telemetry, no update
+checks). It mirrors the TypeScript SDK's contract (ADR-0194) and adds one
+operation TS does not have yet: **capsule upload**.
+
+### `novafabric.client.NovaFabricClient(base_url, *, api_key=None, token=None, timeout=None, retries=None, transport=None)`
+
+```python
+from pathlib import Path
+
+from novafabric.capture import new_ulid
+from novafabric.client import NovaFabricClient
+
+with NovaFabricClient(
+    "https://nova.example.com/v0",     # no default URL — include the /v0 prefix
+    api_key="nvfk_...",                # or token="..." / token=lambda: fresh_jwt()
+) as nc:
+    print(nc.health().data.version)    # server version (skew diagnostics)
+
+    # Capsules: upload a directory (packed to a deterministic ZIP), a .zip
+    # path, or raw ZIP bytes; then read back.
+    nc.upload_capsule(Path("./capsules/run-01HX..."))
+    detail = nc.get_capsule("run-01HX...").data
+
+    # Cursor pagination: one page, or a lazy iterator over all pages.
+    page = nc.list_capsules(limit=100).data          # .items / .next_cursor / .total
+    for capsule in nc.iter_capsules():               # one HTTP call per page
+        print(capsule.run_id, capsule.status)
+
+    # Assets mirror the same surface: get_asset / list_assets / iter_assets.
+
+    # External scores (ADR-0119): 201 → stored record; a 200 idempotent
+    # replay carries no body, so .data is None — inspect .meta.status.
+    result = nc.submit_score("run-01HX...", {
+        "name": "answer_correct", "value": True, "value_type": "boolean",
+        "source": "judge", "evaluator_id": "ci://acme/repo#judge@v3",
+        "subject": "sha256:...", "eval_card_digest": "sha256:...",
+        "score_id": new_ulid(),        # client-minted ULID → safe to re-send
+    })
+```
+
+Contract points (normative spec: `design/spec/python-client-v0.md`):
+
+- **Config resolution** — constructor argument → environment variable
+  (`NOVAFABRIC_SERVER_URL`, `NOVAFABRIC_API_KEY`, `NOVAFABRIC_TOKEN`) → error.
+  A missing base URL raises `NovaFabricConfigError` at construction; so does
+  passing both `api_key` and `token`. If both credential env vars are set,
+  `NOVAFABRIC_API_KEY` wins with a `UserWarning`.
+- **Auth** — exactly one bearer header. `api_key` takes an `nvfk_` key
+  (ADR-0193); `token` takes an OIDC/offline/local token, as a string or a
+  zero-arg callable your application refreshes. No OIDC flow is performed.
+- **Results** — every call returns `ApiResult(data, meta)`; `meta` carries
+  `status`, RFC 9745 `Deprecation` / RFC 8594 `Sunset` (also emitted once per
+  endpoint as a `DeprecationWarning`; reset with
+  `novafabric.client.reset_deprecation_warnings()`), the
+  `X-NovaFabric-Quota-Warning` value, and a request id when the server sends
+  one. Models are Pydantic v2 with `extra="allow"` — additive server fields
+  never break an older client.
+- **Errors** — every non-2xx raises a typed subclass of `NovaFabricAPIError`
+  (`AuthenticationError` 401, `AuthorizationError` 403, `NotFoundError` 404,
+  `ConflictError` 409, `PreconditionFailedError` 412, `ValidationFailedError`
+  422, `RateLimitedError` 429 with `.retry_after`, `ServerError` 5xx) carrying
+  the envelope `code` verbatim, with an `unknown_error` fallback for
+  non-envelope bodies. Transport failures raise `NovaFabricTransportError`
+  (`NovaFabricTimeout` for timeouts) — never an API error.
+- **Retries** — bounded, **GET-only** (no POST is ever auto-retried), on
+  connect errors and 429/502/503/504, honoring `Retry-After` (capped 30 s);
+  tune or disable via `RetryConfig` (`max_attempts=1` disables). Default
+  timeouts: connect 5 s, read/write 30 s, pool 5 s.
+- **Pagination** — cursors are opaque strings; `iter_*` fetches lazily, one
+  page ahead at most, and terminates on `next_cursor: null`.
+- **Testing seam** — pass any `httpx.BaseTransport` as `transport=` (e.g.
+  `httpx.MockTransport`) for hermetic tests.
+
+An async twin (`AsyncNovaFabricClient`) and artifact streaming are **planned**
+(ADR-0202 P2); SSE and an OTLP endpoint helper are **future design** (P3).
+
+---
+
 ## Utility
 
 ```python
@@ -764,6 +950,7 @@ span_id = new_span_id()  # str — 16-char hex
 | Register / promote assets | `registry.service` | `nova register` / `nova promote` |
 | Validate a spec | `validate_spec` | `nova validate-spec` |
 | Sign / verify a capsule | `NovaSeal` | `nova seal` / `nova verify` |
+| Talk to a NovaFabric server from Python | `NovaFabricClient` (experimental) | — |
 
 **Where to go next**
 

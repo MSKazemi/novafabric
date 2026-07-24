@@ -13,6 +13,10 @@ static-HTML contract of ``design/spec/trend-report-v0.md``:
   ``<script type="application/json" id="trend-report-data">``;
 - renders fully from ``file://`` with no server and no build toolchain.
 
+The chart engine itself lives in :mod:`novafabric.viz.svg` (extracted so
+other HTML surfaces can share it); this module keeps byte-identical output
+via that shared engine and its inlined :data:`~novafabric.viz.svg.CHART_CSS`.
+
 The file is an artifact, never a served page. Uses Jinja2 (existing Tier-A
 runtime dependency; ADR-0024). Status: **experimental**.
 """
@@ -22,18 +26,19 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
-from xml.sax.saxutils import escape
 
 from jinja2 import Environment
 from markupsafe import Markup
 
-_WIDTH = 720
-_HEIGHT = 260
-_ML, _MR, _MT, _MB = 64, 16, 16, 44  # margins: left, right, top, bottom
-_MAX_X_LABELS = 10
-_MAX_LABEL_CHARS = 18
+from novafabric.viz.svg import CHART_CSS, svg_bar_chart, svg_line_chart
 
-_TEMPLATE = """\
+# Backwards-compatible private aliases — the chart internals moved to
+# novafabric.viz.svg; behavior and rendered HTML are byte-identical.
+_svg_time_chart = svg_line_chart
+_svg_bar_chart = svg_bar_chart
+
+_TEMPLATE = (
+    """\
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -53,11 +58,9 @@ code { font-family: ui-monospace, monospace; font-size: .85em; }
 .none { opacity: .65; font-style: italic; }
 .notice { border: 1px solid rgba(128,128,128,.5); background: rgba(128,128,128,.1);
           padding: .6rem .8rem; margin: 1rem 0; font-size: .9rem; }
-svg { max-width: 100%; height: auto; }
-.mark { fill: rgba(30,110,190,.85); }
-.stroke { stroke: rgba(30,110,190,.85); stroke-width: 2; fill: none; }
-.axis { stroke: rgba(128,128,128,.7); stroke-width: 1; }
-.tick { font-size: 10px; fill: currentColor; }
+"""
+    + CHART_CSS
+    + """
 footer { margin-top: 2.5rem; font-size: .8rem; opacity: .75; }
 </style>
 </head>
@@ -114,126 +117,7 @@ page (ADR-0131) &#8212; the embedded canonical JSON is in the
 </body>
 </html>
 """
-
-
-def _fmt(value: float) -> str:
-    return f"{value:.6g}"
-
-
-def _scale(values: list[float]) -> tuple[float, float]:
-    """Y-axis domain: zero-based unless the data dips below zero."""
-    low = min(0.0, min(values))
-    high = max(values)
-    if high == low:
-        high = low + 1.0
-    return low, high
-
-
-def _svg_time_chart(series: list[dict[str, Any]]) -> str | None:
-    """Pre-rendered line chart; gap points break the line (never zero)."""
-    values = [p["value"] for p in series if p["value"] is not None]
-    if not values:
-        return None
-    low, high = _scale([float(v) for v in values])
-    plot_w = _WIDTH - _ML - _MR
-    plot_h = _HEIGHT - _MT - _MB
-    n = len(series)
-
-    def x_of(i: int) -> float:
-        return _ML + (i + 0.5) * plot_w / n
-
-    def y_of(v: float) -> float:
-        return _MT + plot_h * (1.0 - (v - low) / (high - low))
-
-    parts: list[str] = [_axes(low, high)]
-    # Contiguous non-null runs become one <path> each; a gap is a visible break.
-    segment: list[tuple[float, float]] = []
-
-    def flush() -> None:
-        if len(segment) >= 2:
-            d = "M" + " L".join(f"{x:.1f},{y:.1f}" for x, y in segment)
-            parts.append(f'<path class="stroke" d="{d}"/>')
-        segment.clear()
-
-    for i, point in enumerate(series):
-        if point["value"] is None:
-            flush()
-            continue
-        xy = (x_of(i), y_of(float(point["value"])))
-        segment.append(xy)
-        parts.append(f'<circle class="mark" cx="{xy[0]:.1f}" cy="{xy[1]:.1f}" r="3"/>')
-    flush()
-    parts.append(_x_labels(series, x_of))
-    return _svg(parts)
-
-
-def _svg_bar_chart(series: list[dict[str, Any]]) -> str | None:
-    """Pre-rendered bar chart for the categorical ``asset`` grouping."""
-    values = [float(p["value"]) for p in series if p["value"] is not None]
-    if not values:
-        return None
-    low, high = _scale(values)
-    plot_w = _WIDTH - _ML - _MR
-    plot_h = _HEIGHT - _MT - _MB
-    n = len(series)
-    slot = plot_w / n
-    bar_w = slot * 0.6
-
-    def x_of(i: int) -> float:
-        return _ML + (i + 0.5) * slot
-
-    def y_of(v: float) -> float:
-        return _MT + plot_h * (1.0 - (v - low) / (high - low))
-
-    parts: list[str] = [_axes(low, high)]
-    zero_y = y_of(max(low, 0.0))
-    for i, point in enumerate(series):
-        if point["value"] is None:
-            continue
-        top = y_of(float(point["value"]))
-        y0, y1 = min(top, zero_y), max(top, zero_y)
-        parts.append(
-            f'<rect class="mark" x="{x_of(i) - bar_w / 2:.1f}" y="{y0:.1f}" '
-            f'width="{bar_w:.1f}" height="{max(y1 - y0, 1.0):.1f}"/>'
-        )
-    parts.append(_x_labels(series, x_of))
-    return _svg(parts)
-
-
-def _axes(low: float, high: float) -> str:
-    plot_bottom = _HEIGHT - _MB
-    return (
-        f'<line class="axis" x1="{_ML}" y1="{_MT}" x2="{_ML}" y2="{plot_bottom}"/>'
-        f'<line class="axis" x1="{_ML}" y1="{plot_bottom}" '
-        f'x2="{_WIDTH - _MR}" y2="{plot_bottom}"/>'
-        f'<text class="tick" x="{_ML - 6}" y="{_MT + 4}" '
-        f'text-anchor="end">{escape(_fmt(high))}</text>'
-        f'<text class="tick" x="{_ML - 6}" y="{plot_bottom + 4}" '
-        f'text-anchor="end">{escape(_fmt(low))}</text>'
-    )
-
-
-def _x_labels(series: list[dict[str, Any]], x_of: Any) -> str:
-    step = max(1, -(-len(series) // _MAX_X_LABELS))  # ceil division
-    labels: list[str] = []
-    for i in range(0, len(series), step):
-        raw = str(series[i]["bucket"])
-        if len(raw) > _MAX_LABEL_CHARS:
-            raw = raw[: _MAX_LABEL_CHARS - 1] + "…"
-        labels.append(
-            f'<text class="tick" x="{x_of(i):.1f}" y="{_HEIGHT - _MB + 16}" '
-            f'text-anchor="middle">{escape(raw)}</text>'
-        )
-    return "".join(labels)
-
-
-def _svg(parts: list[str]) -> str:
-    body = "".join(parts)
-    return (
-        f'<svg viewBox="0 0 {_WIDTH} {_HEIGHT}" width="{_WIDTH}" '
-        f'height="{_HEIGHT}" role="img" '
-        f'aria-label="trend chart">{body}</svg>'
-    )
+)
 
 
 def render_trend_html(report: dict[str, Any]) -> str:

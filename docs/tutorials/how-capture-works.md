@@ -166,17 +166,19 @@ classify HTTP calls by provider:
 
 ```yaml
 # url_registry.yaml
-- pattern: "localhost:11434"        # Ollama
-  provider: ollama
-  capture: full
+schema_version: "0.1.0"
+patterns:
+  - match: "localhost:11434"        # Ollama
+    gen_ai_system: ollama
+    transport: http
 
-- pattern: "api.openai.com"         # OpenAI
-  provider: openai
-  capture: full
+  - match: "api.openai.com"         # OpenAI
+    gen_ai_system: openai
+    transport: http
 
-- pattern: "bedrock.amazonaws.com"  # AWS Bedrock
-  provider: bedrock
-  capture: full
+  - match: "bedrock-runtime."       # AWS Bedrock (all regions)
+    gen_ai_system: aws.bedrock
+    transport: http
 ```
 
 Only URLs that match a known LLM provider pattern are recorded into
@@ -185,7 +187,8 @@ registry ships classifiers for providers including OpenAI, Anthropic, Cohere,
 Together, Mistral, Replicate, Bedrock, and Ollama.
 
 You can add your own entries by dropping a `~/.novafabric/url_registry.yaml` file,
-which the loader prefers over the vendored default — useful for private LLM
+which the loader prefers over the vendored default (or point `$NOVAFABRIC_URL_REGISTRY`
+at an absolute path, which takes precedence over both) — useful for private LLM
 endpoints, mirrors, or internal gateways. Nothing calls out to a hardcoded external
 service; every endpoint is configurable to a private one.
 
@@ -267,6 +270,42 @@ rather than producing nothing.
 
 ---
 
+## Extended event streams
+
+Beyond model and tool calls, a capsule can carry the extended event streams of
+the ADR-0082 taxonomy: `network_events.jsonl`, `human_approvals.jsonl`,
+`file_events.jsonl`, `state_transitions.jsonl`, `memory_operations.jsonl`,
+`guardrail_events.jsonl`, `evaluator_events.jsonl`, `reranker_events.jsonl`,
+and `vector_retrievals.jsonl`. Until v0.63 only network events and human
+approvals had default-path producers — the other seven were recorder-side
+APIs with no public entry point. ADR-0209 changed that. What fills each
+stream today, honestly labeled:
+
+| Stream | Filled by | Status |
+|---|---|---|
+| `network_events.jsonl` | wire-level hooks — `requests`, `httpx`, and (since ADR-0209) `aiohttp` + `urllib3`, layering-guarded against double-recording | works today |
+| `human_approvals.jsonl` | `nova seal-propose` maker-checker flow | works today |
+| `guardrail_events.jsonl` | OpenAI Agents adapter: SDK guardrail spans map to events automatically; or your own `record.guardrail(...)` calls | experimental |
+| `state_transitions.jsonl` | LangGraph adapter: one digest-chained event per `stream()` node update, a start→end pair per `invoke()`; or `record.state_transition(...)` | experimental |
+| `vector_retrievals.jsonl` | `record.wrap_retriever(...)` around any retriever callable (explicit opt-in, no auto-detection); or `record.vector_retrieval(...)` | experimental |
+| `file_events.jsonl` | your `record.file_event(...)` calls only — **no file-I/O auto-capture exists** | façade only; auto-capture is future design |
+| `memory_operations.jsonl` | your `record.memory_operation(...)` calls (feeds the ADR-0143 memory-provenance lineage) | façade only |
+| `evaluator_events.jsonl` / `reranker_events.jsonl` | your `record.evaluator(...)` / `record.reranker(...)` calls | façade only; adapter wirings are future design |
+
+The façade is `novafabric.capture.record` (see the
+[Python API reference](../python-api.md#extended-event-recording-experimental)):
+outside a capture run every call is a silent no-op, so instrumented code runs
+unchanged in production. Two policies apply on the default path: NovaFabric's
+own wirings record **digests, counts, names, scores, and timings** at the
+default capture level and attach raw payloads (state dicts, document text)
+only at `forensic`/`air_gapped` (`NOVA_CAPTURE_LEVEL`); and all nine streams
+are covered by the finalize-time secret scanner, so free text in guardrail
+details or evaluator rationales is redacted with proof like everything else.
+There is **no heuristic auto-detection** — an event stream NovaFabric cannot
+honestly observe stays façade-only rather than being guessed at.
+
+---
+
 ## The four capture modes
 
 All four modes below produce the same capsule format and share the same URL
@@ -277,10 +316,11 @@ registry. Pick by how you launch and control the agent:
 | `nova capture python agent.py` | Subprocess wrap + `sitecustomize.py` hook injection | You control process startup |
 | `nova api-proxy --port 9900` | Transparent HTTP proxy in front of the LLM | Agent is a service, or a non-Python client |
 | `nova mcp-proxy -- python mcp_server.py` | Transparent stdio proxy in front of the MCP server | Agent uses MCP tools |
-| `install_hooks()` in-process | Direct hook installation from inside your process | Notebooks, embedded agents |
+| `@novafabric.agent` decorator | Direct hook installation from inside your process | Notebooks, embedded agents |
 
-For an in-process capture alternative that doesn't wrap a subprocess, the
-`@novafabric.agent` decorator installs the same hooks around a function.
+The `@novafabric.agent` decorator wraps a function in-process without spawning a
+subprocess; under the hood it calls `install_all(writer, parent_span_id)`
+(`capture/hooks/__init__.py`), the same installer the subprocess path uses.
 
 ---
 

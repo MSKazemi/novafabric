@@ -65,6 +65,8 @@ def timeline_cmd(
         print(json.dumps(timeline.model_dump(mode="json"), indent=2))
         raise typer.Exit(0)
 
+    # Normative per NF-231-240: every exported artifact carries the line.
+    console.print(f"[dim]{timeline.honesty_line}[/dim]")
     console.print(
         f"Forensic timeline: incident {timeline.incident_id}  "
         f"({len(timeline.events)} event(s), {len(timeline.gaps)} gap(s))"

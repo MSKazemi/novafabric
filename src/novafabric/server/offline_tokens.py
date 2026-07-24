@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -70,8 +71,12 @@ def generate_keypair(path: Path) -> tuple[Path, Path]:
         encoding=Encoding.PEM,
         format=PublicFormat.SubjectPublicKeyInfo,
     )
-    path.write_bytes(priv_pem)
-    path.chmod(0o600)
+    # Create the private key with 0600 from the outset — a write-then-chmod
+    # sequence leaves a window where the key is readable at the umask default.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(priv_pem)
+    path.chmod(0o600)  # idempotent: also normalises a pre-existing file
     pub_path = path.with_suffix(".pub")
     pub_path.write_bytes(pub_pem)
     logger.info("Generated ed25519 keypair at %s", path)

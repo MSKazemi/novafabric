@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "novafabric"
-version = "0.63.0"
+version = "0.64.0"
 description = "Open-source AI Asset Registry and Agent Lifecycle Management"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.12"
@@ -308,6 +308,14 @@ include = [
     "src/novafabric/policies/**/*.rego",
 ]
 
+# ADR-0211 D2: ship the registry-track alembic trees (repo-root alembic/) as
+# package data so installed deployments can resolve the migration head — the
+# schema-skew guard and `nova db upgrade --track registry` depend on it. The
+# root checkout stays the dev entry point; this is a build-time mapping, not a
+# second copy in the source tree.
+[tool.hatch.build.targets.wheel.force-include]
+"alembic" = "novafabric/migrations/registry"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "packages/nova_worm_conformance/src", "tests"]
@@ -332,7 +340,15 @@ src = ["src"]
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
+# Enterprise-hardening (2026-07-24): expanding the ruleset in reviewable,
+# per-family steps rather than one mass-autofix commit.
+#   Enabled: E/F/I (baseline) + C4 (flake8-comprehensions).
+#   Deferred (each needs a dedicated per-site pass, tracked in the
+#   enterprise-hardening plan): B (bugbear — 178 B904 exception-chaining +
+#   B905 zip-strict need judgment), S (bandit — 239, per-site security
+#   review), UP/RUF (~1300 cosmetic autofixes; land as isolated mechanical
+#   commits so review stays tractable).
+select = ["E", "F", "I", "C4"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["E501"]

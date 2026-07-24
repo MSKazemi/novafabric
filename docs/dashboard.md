@@ -10,7 +10,7 @@ The dashboard is an **opt-in local-only HTTP server** (`nova serve --experimenta
 
 ## Dashboard tabs (complete inventory)
 
-The dashboard ships **27 tabs**, grouped by workflow. (Source of truth:
+The dashboard ships **28 tabs**, grouped by workflow. (Source of truth:
 `web/src/components/dashboard/Sidebar.tsx`.)
 
 | Tab | Group | Since | What it does |
@@ -33,6 +33,7 @@ The dashboard ships **27 tabs**, grouped by workflow. (Source of truth:
 | Holds | Audit & verify | v0.11 | Place/release legal holds, sidebar badge count |
 | Policy | Audit & verify | v0.11 | Interactive OPA/Rego check, ALLOW/DENY badge, explain trace |
 | Seal | Audit & verify | v0.13.0 | NovaSeal verify, Sigstore sign/verify, linked-envelope proposals, bypass |
+| Spine | Audit & verify | Unreleased | Accountability Spine: per-run energy receipts + conservation check (ADR-0093), append-only ledger verify (ADR-0094), structured safety case (ADR-0095) — read-only (`/api/runs/{id}/{energy,ledger,safety-case}`) |
 | Compliance | Audit & verify | v0.15.2 | GDPR RoPA, AI-SBOM, NIST RMF, CRA coverage, erasure, audit bundle/verify (8+ panels) |
 | Incidents | Audit & verify | Unreleased | EU AI Act Art. 73 incident records with a live reporting-deadline clock; open/list/transition/export (AIM, NIS2) |
 | Capture | Audit & verify | v0.7 | Capture matrix (4 runners + distributed + MCP/API proxies), adapters, recent capsules |
@@ -40,15 +41,16 @@ The dashboard ships **27 tabs**, grouped by workflow. (Source of truth:
 | Storage | Infrastructure | Unreleased | WORM object-store stats/validate/inspect, manifest chain, collector status, gated DB upgrade + rebuild-metadata-db, system-card export |
 | Ops | Infrastructure | Unreleased | Installation diagnostics (`doctor`), warm-daemon liveness (read-only), JWKS flush |
 | Admin | Admin | v0.7 | Token management, role management (API v0.14.3; UI partial), JWKS flush, new-run-id, DB ops |
-| Commands | CLI | v0.8 | Full-CLI command builders (every `nova` command, 227 today) with live preview, filter box, and copy |
+| Commands | CLI | v0.8 | Full-CLI command builders (every `nova` command, 278 today) with live preview, filter box, and copy |
 | Reports | Reports | v0.17.0+ | 9 report templates (see below) |
 
 **Reports tab — 9 templates:** run-history, eval-regression, capsule-compare, cost-burn,
 throughput, evidence-inventory, policy-audit, seal-verification, release-comparison.
 
 **Compliance tab panels:** GDPR Art.30 RoPA, AI-SBOM (CycloneDX ML-BOM), NIST AI RMF, AI-SBOM
-coverage/CRA deadline, GDPR erasure status, audit coverage/bundle/verify, C2PA, RO-Crate, EU AI
-Act Art.12.
+coverage/CRA deadline, GDPR erasure request/status (real DEK crypto-shred execution since
+ADR-0210, **experimental**, `confirmed: true` required), audit coverage/bundle/verify, C2PA,
+RO-Crate, EU AI Act Art.12.
 
 **Governance tab panels:** risk classification, audit-profile coverage, examiner export, policy
 signing, regulatory vocabularies + manual classification + eval suites/run (v0.46.0).
@@ -67,7 +69,7 @@ read-only over HTTP ("safe mutations only"). New cross-cutting UX: app-wide toas
 unified action/confirm pattern, a virtualized data table, per-tab help, deep-linkable tabs
 (`?tab=`), and global entity search (runs/assets/incidents) in the ⌘K palette.
 
-> The dashboard server exposes **170+ REST endpoints** — the full machine list is in
+> The dashboard server exposes **192 REST endpoints** — the full machine list is in
 > [`api-reference.md`](api-reference.md) (and `GET /openapi.json` at runtime).
 
 ---
@@ -137,13 +139,13 @@ The dashboard exposes the **majority** of the read-side and many of the write-si
 | Get a single asset | `nova inspect <name@version>` | ✅ Registry tab → click row | Eval results for the selected asset are lazy-fetched. |
 | Lineage queries | `nova lineage provenance / blast-radius / replay-chain` | ✅ Lineage tab | Full DAG render via React Flow + dagre. Click (or double-click) a node to see incoming/outgoing edges. **v0.12.6:** interactive QueryPanel — type a ref, pick mode (provenance / blast-radius / replay-chain), hit Run; results appear as a sortable table; CLI equivalent preview updates live. **v0.12.7:** ref input autocompletes `name@version` (provenance/blast-radius) or `run_id` (replay-chain) from loaded data. **v0.12.9 (DU-3):** when a node is selected, a breadcrumb row above the graph shows the full ancestry chain (root → … → parent → **selected**); each ancestor is clickable. **v0.13.4:** `zoomOnDoubleClick` disabled; double-clicking a node selects it (identical to single-click) instead of triggering zoom-to-fit. |
 | Cluster-scale infrastructure status | *(no single command — consult each Phase 0–6 component separately)* | ✅ Infra tab (v0.12.6) | 10 component cards: NovaSeal, Collector, Object Store, Metadata DB, Lineage at Scale, Parent/Child Capsule, Server Mode, Eval Suites, Policy Gates, Run Capsule — each with a `shipped / partial / placeholder / planned` status badge plus the relevant CLI commands. Lets operators confirm which Phase 0–6 components are active without leaving the dashboard. |
-| CLI command reference with live preview | *(all `nova` sub-commands)* | ✅ Commands tab | **v0.8:** 13 command builders for core capture, registry, and replay. **v0.12.6:** expanded to 35 hand-curated builders across 4 journey tracks. **Unreleased:** now mirrors the **complete** CLI — every `nova` command (227 today) has a fillable form. Hand-curated builders still provide richer copy for the most-used commands; the rest are auto-generated from the live Typer app (`web/scripts/gen-command-registry.py` → `generatedCommands.ts`), so the tab stays in sync as commands are added/removed (guarded by `tests/serve/test_command_registry_coverage.py`). Fields, choices, defaults and flags come from the CLI's own parameter metadata. Each builder renders a live command preview with a copy button; a filter box and per-group counts navigate the full surface. Copy-only (Layer C, ADR-0027) — the dashboard never executes commands. |
+| CLI command reference with live preview | *(all `nova` sub-commands)* | ✅ Commands tab | **v0.8:** 13 command builders for core capture, registry, and replay. **v0.12.6:** expanded to 35 hand-curated builders across 4 journey tracks. **Unreleased:** now mirrors the **complete** CLI — every `nova` command (278 today) has a fillable form. Hand-curated builders still provide richer copy for the most-used commands; the rest are auto-generated from the live Typer app (`web/scripts/gen-command-registry.py` → `generatedCommands.ts`), so the tab stays in sync as commands are added/removed (guarded by `tests/serve/test_command_registry_coverage.py`). Fields, choices, defaults and flags come from the CLI's own parameter metadata. Each builder renders a live command preview with a copy button; a filter box and per-group counts navigate the full surface. Copy-only (Layer C, ADR-0027) — the dashboard never executes commands. |
 | Structural diff | `nova diff <run-a> <run-b>` | ✅ Diff tab | Aligned with `diff-report.schema.json`; renders environment / model_calls / tool_calls / outputs sections. **v0.9 additions:** 'Compare against…' in CapsuleInspector, word-level diff for model responses, mutation badge on tool call pairs. **v0.12 addition (C-4):** Multi-select checkboxes in RunsTab — check any 2 rows, click "Compare selected ⊕", jumps directly to Diff tab with both IDs pre-filled and diff auto-triggered; no copy-paste. See [ADR-0036](../design/adr/0036-cross-run-comparison-ux.md). **v0.12.7:** both run A and run B inputs autocomplete from the loaded runs list. **v0.12.9 (DU-4):** last comparison (from/to/result) persisted in `sessionStorage` — navigating away and back restores the previous comparison without re-fetching. **v0.13.3 (C-5):** Checkbox cap lifted 2→5; selecting 3–5 runs triggers N-run mode — first run is the baseline, N-1 parallel diffs fire via `runMultiDiff`, results shown as stacked collapsible `MultiDiffCard` panels with change-count badges. URL format migrated from `?run_a=&run_b=` to `?run_ids=a,b,c` (old params still parsed for backward compat). |
 | Read evidence bundle | *(no read-only command — open the ZIP)* | ✅ Evidence tab (v0.9) | Lists all bundles from `~/.novafabric/evidence/`, shows DSSE statement, in-browser ed25519 verify via SubtleCrypto, ZIP download. See [ADR-0037](../design/adr/0037-evidence-tab-native-dashboard.md). |
 | Verify evidence bundle cryptographic integrity | `nova verify <capsule>` (NovaSeal) | ✅ Evidence tab → Verify button (v0.11) | `POST /api/evidence/{id}/verify` — Ed25519 DSSE signature + RFC 3161 TSR + NovaSeal Merkle log inclusion. Inline `sig ✓`, `tsr ✓`, `log –` badges. `log –` shown when NovaSeal is not configured locally. |
 | Validate a capsule's schema and file structure | `nova validate <capsule>` | ✅ Runs tab → Validate button (v0.11) | `POST /api/runs/{id}/validate` — checks required files, YAML parse, JSONL presence. Green `✓ valid` or red expandable error list. |
 | View secret scan results | `nova scan-secrets <capsule>` | ✅ Runs tab → **Secrets** button on card (quick-access, v0.11) or → Secrets tab in detail panel | `GET /api/runs/{id}/redaction-proof` — shows scanner+packs, targets (hash before/after), per-finding severity badges. Includes re-scan trigger. |
-| Report generation | `nova report [--format markdown\|json]` | ❌ — | Markdown / JSON report generation is CLI-only. Use `nova report` and pipe to your tooling. |
+| Report generation | `nova report [--format markdown\|json\|html\|pdf]` | ◐ Reports tab | The Reports tab has its own registry-driven builders with CSV/JSON download plus **self-contained HTML and PDF artifacts with embedded charts** (`GET /api/reports/{id}/export`, ADR-0201; PDF needs the optional WeasyPrint extra — the UI surfaces the 501 install hint). The CLI's *asset-inventory* report (`nova report`) additionally supports `--format html|pdf` with the same chart engine. |
 | Lineage time-travel queries | `nova lineage time-travel <ref> --asof <ts>` | ❌ — | Not yet wired into the dashboard; CLI-only in v0.7. |
 | Lineage OpenLineage emission | `nova lineage emit-openlineage` | ❌ — | Integration target; CLI-only. |
 
@@ -168,6 +170,7 @@ The dashboard exposes the **majority** of the read-side and many of the write-si
 | Export AI-SBOM (CycloneDX 1.7) | `nova export-aibom <capsule> [--output aibom.json]` | ✅ Compliance tab → **AI-SBOM Export** (v0.37.0) | `POST /api/compliance/export/aibom` — component list (type/name/version/description), `serial_number`, `bom_format`. CycloneDX ML-BOM 1.7 (ECMA-424 2nd Edition) since v0.39.0. |
 | Export NIST AI RMF report | `nova export-nist-rmf <capsule> --output report.json` | ✅ Compliance tab → **NIST AI RMF Report** (v0.37.0) | `POST /api/compliance/export/nist-rmf` — GOVERN/MAP/MEASURE/MANAGE score bars, risk-level badge, missing-evidence list. |
 | Check AIBOM coverage (CRA) | `nova aibom status [--capsules-dir <dir>]` | ✅ Compliance tab → **AI-SBOM Coverage Status** (v0.37.0) | `GET /api/aibom/status` — auto-loads on mount; total/covered/missing capsule counts, coverage progress bar, CRA deadline 2026-09-11. |
+| Execute GDPR Art.17 erasure | `nova pii erase <subject_id>` | ✅ Compliance tab → **GDPR Erasure Request** (**experimental**, ADR-0210) | `POST /api/compliance/erasure/request` — **real crypto-shred execution** (replaced the v0.18.0 no-op stub): persists the request in `$NOVAFABRIC_HOME/erasure.db`, then destroys the subject's AES-256-GCM DEK through the same `DEKStore.erase_subject` code path as the CLI. Safe-mutations gated — body must carry `confirmed: true` (400 otherwise, nothing mutated). Terminal states `COMPLETED` (receipt + `receipt_sha256`), `DEFERRED` (Art.17(3)(b) retention window, `earliest_erasure_at`), `FAILED` (error receipt; unknown subject → `subject_not_found`). Duplicate request while one is PENDING re-attaches to it (idempotency + crash recovery). Both audit surfaces record the action hash-only (`subject_sha256`, never the raw subject). `GET /api/compliance/erasure/status` lists the persisted queue. The `/v0` server-mode mirror is **planned** (ADR-0210 D7), not implemented. |
 | Mocked replay (re-execute agent code, cache hits) | `nova replay <capsule> --mode mocked` | ❌ — | Mocked replay spawns the agent subprocess. That straddles Layer B/C; in v0.7 it is **CLI-only** until the sandbox model lands per ADR-0027. |
 | Scan secrets | `nova scan-secrets <capsule>` | ❌ — | Use `redact` from the dashboard, or `nova scan-secrets` from the terminal. |
 
@@ -440,6 +443,44 @@ The dashboard is judged on whether it earns its keep. If at any point it becomes
 
 ---
 
+## Downloading chart images (ADR-0201; works today, unreleased)
+
+Every chart wrapped in the shared `ChartCard` (Analytics run-volume + duration
+charts, the Reports-tab chart preview, the Cost tab's cost-by-model chart) has a
+compact **⬇ SVG / PNG** affordance. Export happens entirely client-side: the
+on-screen SVG is serialized with its *computed* styles inlined — so theme
+tokens resolve to the concrete colors of your active light/dark theme — and PNG
+is rasterized through a canvas at 2× for crisp retina output. No server round
+trip, no new dependencies.
+
+## Report artifacts: HTML + PDF with charts (ADR-0200/0201; works today, unreleased)
+
+The Reports tab is backed by a server-side **report registry**
+(`GET /api/reports/catalog`) that declares, per report, its filters and — only
+where a genuine series exists — a chart spec (throughput stacked-bar, cost-burn
+bar, single-suite eval-regression line, release-comparison delta bar; nothing
+is fabricated for tabular-by-nature reports). Besides CSV/JSON, every report
+exports as:
+
+- **HTML** — one self-contained file (no JS, no external requests) with the
+  inline-SVG chart, the data table (row-capped with an explicit "showing first
+  N of M" line — never silent truncation), and the canonical JSON embedded.
+- **PDF** — the same page through WeasyPrint. Requires the optional extra
+  (`pip install 'novafabric[compliance]'`); without it the endpoint returns
+  `501` with that exact hint, which the UI surfaces verbatim.
+
+## Parity classification (ADR-0200; works today, unreleased)
+
+`web/src/components/dashboard/commands/commandParity.json` classifies **every**
+`nova` CLI command as `real-panel` (a wired dashboard panel exists — claim is
+machine-verified against the API client and serve routes), `builder-only`
+(copy-only Commands-tab builder), or `cli-only` with a mandatory reason
+(process lifecycle, destructive filesystem operation, CI-oriented).
+`tests/serve/test_command_parity_classification.py` fails CI when a new CLI
+command lands unclassified — parity can no longer regress silently. Destructive
+operations staying `cli-only` *with a recorded reason* is the intended honest
+end-state, not a gap.
+
 ## Scale characteristics and known limits
 
 Understanding these limits prevents surprises when you grow beyond a small local
@@ -454,6 +495,10 @@ setup. The limits are documented here so they are visible before they bite.
 | TanStack Virtual in RunsTab and RegistryTab | `web/src/components/dashboard/tabs/` | Renders only the rows visible on screen — the DOM stays small even with thousands of rows loaded in memory. |
 | SSE live feed for new capsules | `/api/runs/stream` | New capsule directories appear in the RunsTab without a full page reload. |
 | 5 SQL indexes on registry DB | `serve/app.py` (v0.14.6) | Keeps `WHERE status = ?` and `ORDER BY created_at` fast at tens of thousands of assets. |
+| Shared keyset cursor codec + page envelope (ADR-0199, unreleased) | `serve/pagination.py` | One `(created_at, id)` row-value cursor implementation reused by runs, run-history reports, and the audit log. |
+| Reverse-block audit-log tail reads (ADR-0199, unreleased) | `serve/audit.py::read_recent_tail` | `/api/audit` (and the alerts feed) read O(limit) 64 KiB blocks from EOF with byte-offset cursors instead of `readlines()` on the whole append-only file; AuditTab is virtualized with server-side action filter + load-more. |
+| SQL aggregation pushdown for reports + analytics (ADR-0199, unreleased) | `registry/runs_cache.py` aggregate functions + `substr(created_at,1,10)` expression index | Throughput, executive-summary, cost-burn, and the Analytics day buckets are computed in indexed GROUP BYs — the former `limit=1_000_000` fetch-all is gone. Run-history is keyset-paged and its CSV export streams in pages (bounded memory at any store size). |
+| Nightly 100K-row scale gate (ADR-0199, unreleased) | `tests/bench/test_dashboard_scale_gate.py` + the `dashboard-scale` CI job | p95 latency thresholds per endpoint, recorded in [`docs/ops/dashboard-scale.md`](ops/dashboard-scale.md); regressions block release. |
 
 ### Known hard limits (action items for future versions)
 

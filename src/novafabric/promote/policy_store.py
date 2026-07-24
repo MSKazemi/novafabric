@@ -5,10 +5,10 @@ Uses the same SQLite database as MerkleLog (promote_policy table).
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
+from novafabric._sqlite_util import connect_sqlite
 from novafabric.promote.exceptions import PolicyNotFoundError
 
 _SCHEMA = """
@@ -27,7 +27,7 @@ class PolicyStore:
 
     def __init__(self, db_path: Path) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        self._conn = connect_sqlite(str(db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA)
         self._conn.commit()

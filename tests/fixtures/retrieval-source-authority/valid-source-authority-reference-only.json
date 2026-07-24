@@ -1,0 +1,52 @@
+{
+  "_fixture": "ADR-0153 P1 golden fixture — source authority by reference only. Every source-derived value is a digest, a URL, a timestamp or a fingerprint: no document body, no response body, no cookie, no token, no key (I-2). Pinned documents (NF-215) plus a fetch-provenance facet (NF-218).",
+  "capsule_id": "cap-reference-only",
+  "run_id": "run-reference-only",
+  "schema_version": "0.2.0",
+  "retrieval": {
+    "event_id": "ev-2",
+    "run_id": "run-reference-only",
+    "capsule_id": "cap-reference-only",
+    "timestamp_utc": "2026-07-20T09:00:00Z",
+    "vector_store": "qdrant",
+    "collection": "news",
+    "top_k": 2,
+    "returned_count": 2,
+    "documents": [
+      {
+        "document_id": "doc-17",
+        "score": 0.91,
+        "content_hash": "sha256:4bd2a1a0a3a08d54b7a3d7cf6e2a1c6a0e5a2f9d4c7b1e8a3f6d9c2b5e8a1d4c",
+        "retrieved_at": "2026-07-20T08:59:58Z",
+        "source_version": "v7",
+        "etag": "W/\"9f3c\""
+      },
+      {
+        "document_id": "doc-41",
+        "score": 0.77,
+        "content_hash": "sha256:1c9f0e7a2b5d8c3f6a9e2b5d8c1f4a7e0b3d6c9f2a5e8b1d4c7f0a3e6b9d2c5f",
+        "retrieved_at": "2026-07-20T08:59:58Z"
+      }
+    ]
+  },
+  "facets": {
+    "fetch_provenance": {
+      "schema_version": "0.1.0",
+      "fetches": [
+        {
+          "schema_version": "0.1.0",
+          "final_url": "https://news.example/2026/07/report",
+          "redirect_chain": [
+            {"url": "http://news.example/report", "status": 301},
+            {"url": "https://news.example/report", "status": 302}
+          ],
+          "http_status": 200,
+          "fetched_at": "2026-07-20T08:59:57Z",
+          "tls_cert_fingerprint": "sha256:aa11bb22cc33dd44ee55ff66007711882299aabbccddeeff00112233445566ff",
+          "body_content_hash": "sha256:4bd2a1a0a3a08d54b7a3d7cf6e2a1c6a0e5a2f9d4c7b1e8a3f6d9c2b5e8a1d4c",
+          "archival_ref": "urn:wacz:sha256:dd44ee55ff66007711882299aabbccddeeff001122334455667788990011aabb"
+        }
+      ]
+    }
+  }
+}

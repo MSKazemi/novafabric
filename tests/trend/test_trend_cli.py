@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from trend.conftest import CapsuleFactory, RecordFactory
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
 from novafabric.views.model import SavedView
 from novafabric.views.store import save_view
+from trend.conftest import CapsuleFactory, RecordFactory
 
 runner = CliRunner()
 
