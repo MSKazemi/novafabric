@@ -9,6 +9,23 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.68.0] — 2026-07-24
+
+### Added
+- **`PostgresLineageStore` — the Phase 6 at-scale lineage backend, implemented
+  (ADR-0053, experimental).** `lineage/backends/postgres.py` was a
+  `NotImplementedError` stub; it is now a real psycopg3 backend that traverses the
+  lineage graph with `WITH RECURSIVE` CTEs and an array-based visited set for cycle
+  safety — on **plain PostgreSQL, no Apache AGE extension required**. It is a
+  behavioural peer of `SqliteLineageStore`: a testcontainers **parity suite** proves
+  `provenance` / `blast_radius` / `replay_chain` give identical answers on the same
+  graph. Zero new dependencies (psycopg is the existing `[server]` extra).
+  - The 10M-edge depth-5 p99<500ms benchmark (Phase 6 B-7) remains a separate
+    *promotion* gate — the backend exists and works at moderate scale today; only
+    production-scale promotion is benchmark-gated. `lineage/backends/age.py` (Apache
+    AGE) remains a stub (needs the AGE extension). `SqliteLineageStore` stays the
+    local-mode default.
+
 ### Changed
 - **Governance: campaign ADRs 0202–0211 formally accepted** (2026-07-24). The
   nine still-`proposed` top-10-must-have ADRs (Python SDK, ingest hardening,

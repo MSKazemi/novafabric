@@ -1,35 +1,31 @@
-"""Tests for the PostgresLineageStore stub — verifies NotImplementedError is raised."""
+"""Unit-level checks for PostgresLineageStore that need no live database.
+
+The behavioural parity suite (against a real Postgres via testcontainers) lives
+in ``test_postgres_backend.py``. These checks cover the parts that do not require
+a connection: the class contract and the constructor's argument requirement.
+"""
 
 from __future__ import annotations
 
-import pytest
+import inspect
 
 from novafabric.lineage.backends.postgres import PostgresLineageStore
 from novafabric.lineage.store import AbstractLineageStore
 
 
-class TestPostgresLineageStoreStub:
-    """Verify the stub raises NotImplementedError for all methods."""
+class TestPostgresLineageStoreContract:
+    def test_is_abstract_lineage_store_subclass(self) -> None:
+        assert issubclass(PostgresLineageStore, AbstractLineageStore)
 
-    @pytest.fixture()
-    def store(self) -> PostgresLineageStore:
-        return PostgresLineageStore()
+    def test_constructor_requires_a_dsn(self) -> None:
+        # The store is no longer a stub — it needs a Postgres DSN to connect.
+        sig = inspect.signature(PostgresLineageStore.__init__)
+        params = list(sig.parameters)
+        assert "dsn" in params
+        assert sig.parameters["dsn"].default is inspect.Parameter.empty
 
-    def test_is_abstract_lineage_store(self, store: PostgresLineageStore) -> None:
-        assert isinstance(store, AbstractLineageStore)
-
-    def test_insert_raises(self, store: PostgresLineageStore, sample_edges: object) -> None:
-        with pytest.raises(NotImplementedError, match="Postgres"):
-            store.insert(object())  # type: ignore[arg-type]
-
-    def test_provenance_raises(self, store: PostgresLineageStore) -> None:
-        with pytest.raises(NotImplementedError, match="Postgres"):
-            store.provenance(run_id="x", depth=1)
-
-    def test_blast_radius_raises(self, store: PostgresLineageStore) -> None:
-        with pytest.raises(NotImplementedError, match="Postgres"):
-            store.blast_radius(run_id="x", max_depth=1)
-
-    def test_replay_chain_raises(self, store: PostgresLineageStore) -> None:
-        with pytest.raises(NotImplementedError, match="Postgres"):
-            store.replay_chain(run_id="x")
+    def test_implements_all_abstract_methods(self) -> None:
+        for name in ("insert", "provenance", "blast_radius", "replay_chain"):
+            method = getattr(PostgresLineageStore, name)
+            # Overridden concretely (not the abstract base method).
+            assert method is not getattr(AbstractLineageStore, name)
