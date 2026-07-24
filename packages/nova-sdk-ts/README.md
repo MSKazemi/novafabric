@@ -21,6 +21,11 @@ design and asserted by test.
   the capsule's append-only `scores.jsonl` (`POST /capsules/{run_id}/scores`,
   ADR-0119). Typed request/response; a `200` idempotent replay returns
   `data: null` (inspect `meta.status` to distinguish it from a `201`)
+- `exportEvidence(request)` / `getEvidenceBundle(bundleId)` /
+  `downloadEvidenceBundle(bundleId)` — build a signed Evidence Bundle ZIP
+  (`POST /evidence`, `202`), poll its metadata (`GET /evidence/{bundle_id}`),
+  and fetch the ZIP as a `Uint8Array` (`GET /evidence/{bundle_id}/download`).
+  Typed against `EvidenceExportRequest` / `BundleSummary`
 - `otlpTraceEndpoint()` — configuration helper (ADR-0177): returns
   `{ url, headers }` for pointing an existing OTel JS exporter at the
   deployment's OTLP ingest (`/api/otlp/v1/traces`, on the serve surface — NOT
@@ -45,7 +50,8 @@ design and asserted by test.
 - **No default base URL** — private deployments are the norm; the constructor
   requires `baseUrl` and omitting it is a compile-time and runtime error
 
-Planned for a later slice (not in this package yet): evidence helpers.
+The `/v0` surface the client covers is capsules, assets, scores, and evidence
+bundles; further server surfaces are added as they stabilize.
 
 ## Module formats
 
@@ -112,6 +118,14 @@ const { data, meta } = await client.submitScore("run-01H...", {
 if (meta.status === 200) {
   // idempotent replay — identical body already present; data is null
 }
+
+// Build a signed Evidence Bundle, wait for it, then download the ZIP bytes.
+const { data: bundle } = await client.exportEvidence({
+  run_id: "run-01H...",
+  allow_unsafe_skips: false,
+});
+const { data: zipBytes } = await client.downloadEvidenceBundle(bundle.bundle_id);
+// zipBytes is a Uint8Array — write it to disk, or wrap it in a Blob in the browser.
 
 // Point YOUR OWN OTel exporter at the deployment's OTLP ingest (ADR-0177).
 // The SDK returns the URL + auth headers; it does not encode/send OTLP.

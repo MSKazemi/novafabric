@@ -22,6 +22,10 @@ export type AssetListResponse = components["schemas"]["AssetListResponse"];
 export type CapsuleSummary = components["schemas"]["CapsuleSummary"];
 export type CapsuleDetail = components["schemas"]["CapsuleDetail"];
 export type CapsuleListResponse = components["schemas"]["CapsuleListResponse"];
+/** Request body for `exportEvidence` — the capsule to seal into an Evidence Bundle. */
+export type EvidenceExportRequest = components["schemas"]["EvidenceExportRequest"];
+/** Evidence-bundle metadata returned by `exportEvidence` / `getEvidenceBundle`. */
+export type BundleSummary = components["schemas"]["BundleSummary"];
 
 /**
  * Request body for `submitScore` — an externally-computed evaluation record
@@ -281,6 +285,55 @@ export class NovaFabricClient {
     // 200 = idempotent replay, no body; 201 = the appended score record.
     if (response.status === 200) return { data: null, meta };
     const data = (await response.json()) as ScoreSubmissionResponse;
+    return { data, meta };
+  }
+
+  // ------------------------------ evidence -------------------------------
+
+  /**
+   * POST /evidence — build a signed Evidence Bundle ZIP from a capsule
+   * (ADR-0004; requires the `writer` role). Returns `202 Accepted` with the
+   * {@link BundleSummary}; poll {@link getEvidenceBundle} until the bundle is
+   * ready, then {@link downloadEvidenceBundle} to fetch the ZIP.
+   */
+  async exportEvidence(
+    request: EvidenceExportRequest,
+  ): Promise<ApiResult<BundleSummary>> {
+    const { response, meta } = await this.send("POST", "/evidence", "POST /evidence", {
+      body: request,
+    });
+    const data = (await response.json()) as BundleSummary;
+    return { data, meta };
+  }
+
+  /**
+   * GET /evidence/{bundle_id} — evidence-bundle metadata by id (requires the
+   * `auditor` role). Poll this after {@link exportEvidence} to learn when the
+   * bundle is on disk (`bundle_path` set, `size_bytes` > 0).
+   */
+  async getEvidenceBundle(bundleId: string): Promise<ApiResult<BundleSummary>> {
+    return this.request<BundleSummary>(
+      "GET",
+      `/evidence/${encodeURIComponent(bundleId)}`,
+      "GET /evidence/{bundle_id}",
+    );
+  }
+
+  /**
+   * GET /evidence/{bundle_id}/download — fetch the Evidence Bundle ZIP as raw
+   * bytes (requires the `auditor` role). The body is binary
+   * (`application/zip`), so this returns a `Uint8Array` rather than JSON — write
+   * it to a file, or re-wrap it in a `Blob` in the browser.
+   */
+  async downloadEvidenceBundle(
+    bundleId: string,
+  ): Promise<ApiResult<Uint8Array>> {
+    const { response, meta } = await this.send(
+      "GET",
+      `/evidence/${encodeURIComponent(bundleId)}/download`,
+      "GET /evidence/{bundle_id}/download",
+    );
+    const data = new Uint8Array(await response.arrayBuffer());
     return { data, meta };
   }
 

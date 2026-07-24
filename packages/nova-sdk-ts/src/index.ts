@@ -28,5 +28,7 @@ export type {
   CapsuleSummary,
   CapsuleDetail,
   CapsuleListResponse,
+  EvidenceExportRequest,
+  BundleSummary,
 } from "./client.js";
 export type { paths, components, operations } from "./types.gen.js";

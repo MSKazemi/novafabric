@@ -9,6 +9,21 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.67.0] — 2026-07-24
+
+### Added
+- **`@novafabric/sdk` evidence-bundle helpers (ADR-0194, experimental)** — the
+  one open lane the SDK README flagged as planned is now shipped. The TypeScript
+  client (`packages/nova-sdk-ts`) gains three typed methods over the `/v0`
+  evidence surface:
+  - `exportEvidence(request)` — `POST /evidence`, returns the `202` `BundleSummary`;
+  - `getEvidenceBundle(bundleId)` — `GET /evidence/{bundle_id}` metadata poll;
+  - `downloadEvidenceBundle(bundleId)` — `GET /evidence/{bundle_id}/download`,
+    returning the ZIP as a `Uint8Array` (binary, not JSON).
+  New exported types `EvidenceExportRequest` and `BundleSummary` (generated from
+  `api/openapi.yaml`). Zero new runtime dependencies; dual ESM+CJS build and the
+  CJS smoke test stay green; 29 vitest tests pass (5 new).
+
 ## [0.66.0] — 2026-07-24
 
 ### Added
