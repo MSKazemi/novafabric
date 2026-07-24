@@ -26,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
 
 from novafabric.compliance.export.models import CompletenessSummaryEntry
+from novafabric.compliance.export.provenance import EvidenceSource
 from novafabric.compliance.incident.models import Incident
 
 _MISSING_REASON = "not_recorded_in_incident_store"
@@ -90,10 +91,15 @@ def build_dora_report(incident: Incident, *, now: datetime) -> DoraIncidentRepor
         for stage, due, basis in stages
     ]
 
+    # ADR-0197 I-1: this projection reads only the operator-authored incident
+    # store; it verifies no capsule, so every field-group is operator_asserted.
     completeness = [
         CompletenessSummaryEntry(
-            field_name=name, status="missing", reason=_MISSING_REASON,
-        ).model_dump()
+            field_name=name,
+            status="missing",
+            reason=_MISSING_REASON,
+            evidence_source=EvidenceSource.operator_asserted,
+        ).model_dump(mode="json", exclude_none=True)
         for name in ("classified_at", "financial_impact", "affected_clients")
     ]
 

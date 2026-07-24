@@ -38,6 +38,7 @@ from .models import (
     CompletenessSummaryEntry,
     NIS2IncidentReport,
 )
+from .provenance import EvidenceSource, EvidenceSourceRef, build_capsule_ref, mark
 
 # Fields that cannot be populated until cap-006 is available.
 _CAP006_BLOCKED_FIELDS = {"initial_root_cause_path", "final_root_cause"}
@@ -78,12 +79,46 @@ def _denied_actions(events: list[dict[str, Any]]) -> list[str]:
     return actions
 
 
+def _entry(
+    *,
+    field_name: str,
+    status: str,
+    reason: str,
+    capsule_derived: set[str],
+    capsule_ref: EvidenceSourceRef | None,
+    unverifiable: bool = False,
+) -> CompletenessSummaryEntry:
+    """Build a provenance-marked completeness entry (ADR-0197).
+
+    * cap-006-blocked (``unverifiable=True``) → ``unverifiable`` (I-2: attempted
+      and could not complete, never downgraded to an assertion);
+    * genuinely capsule-derived and present → ``capsule_verified`` with a
+      re-performable ref (I-3);
+    * everything else → ``operator_asserted`` (I-1).
+    """
+    if unverifiable:
+        source, ref = mark(EvidenceSource.unverifiable)
+    elif field_name in capsule_derived and capsule_ref is not None:
+        source, ref = mark(EvidenceSource.capsule_verified, ref=capsule_ref)
+    else:
+        source, ref = mark(EvidenceSource.operator_asserted)
+    return CompletenessSummaryEntry(
+        field_name=field_name,
+        status=status,
+        reason=reason,
+        evidence_source=source,
+        evidence_ref=ref,
+    )
+
+
 def _build_completeness(
     phase: int,
     report: dict[str, Any],
     cap006_available: bool,
+    capsule_derived: set[str],
+    capsule_ref: EvidenceSourceRef | None,
 ) -> list[CompletenessSummaryEntry]:
-    """Build the completeness summary for the generated report."""
+    """Build the provenance-marked completeness summary for the report."""
     entries: list[CompletenessSummaryEntry] = []
 
     # Phase 1 fields (always required)
@@ -98,38 +133,47 @@ def _build_completeness(
         val = report.get(f)
         status = COMPLETENESS_COMPLETE if val is not None else COMPLETENESS_MISSING
         present_str = "present" if status == COMPLETENESS_COMPLETE else "missing"
-        entries.append(CompletenessSummaryEntry(
+        entries.append(_entry(
             field_name=f,
             status=status,
             reason=f"Phase 1 required field — {present_str}",
+            capsule_derived=capsule_derived,
+            capsule_ref=capsule_ref,
         ))
 
     if phase >= 2:
-        p2_fields = {
-            "initial_root_cause_path": _CAP006_BLOCKED_FIELDS,
-            "initial_scope_estimate": set(),
-            "affected_systems_list": set(),
-            "actions_taken": set(),
-        }
-        for f, blocked_set in p2_fields.items():
+        p2_fields = [
+            "initial_root_cause_path",
+            "initial_scope_estimate",
+            "affected_systems_list",
+            "actions_taken",
+        ]
+        for f in p2_fields:
             val = report.get(f)
             if f in _CAP006_BLOCKED_FIELDS and not cap006_available:
-                entries.append(CompletenessSummaryEntry(
+                entries.append(_entry(
                     field_name=f,
                     status=COMPLETENESS_MISSING,
                     reason=_CAP006_REASON,
+                    capsule_derived=capsule_derived,
+                    capsule_ref=capsule_ref,
+                    unverifiable=True,
                 ))
             elif val is not None:
-                entries.append(CompletenessSummaryEntry(
+                entries.append(_entry(
                     field_name=f,
                     status=COMPLETENESS_COMPLETE,
                     reason="Phase 2 field present",
+                    capsule_derived=capsule_derived,
+                    capsule_ref=capsule_ref,
                 ))
             else:
-                entries.append(CompletenessSummaryEntry(
+                entries.append(_entry(
                     field_name=f,
                     status=COMPLETENESS_PARTIAL,
                     reason="Phase 2 optional field not populated",
+                    capsule_derived=capsule_derived,
+                    capsule_ref=capsule_ref,
                 ))
 
     if phase >= 3:
@@ -140,19 +184,24 @@ def _build_completeness(
         ]
         for f in p3_fields:
             if f in _CAP006_BLOCKED_FIELDS and not cap006_available:
-                entries.append(CompletenessSummaryEntry(
+                entries.append(_entry(
                     field_name=f,
                     status=COMPLETENESS_MISSING,
                     reason=_CAP006_REASON,
+                    capsule_derived=capsule_derived,
+                    capsule_ref=capsule_ref,
+                    unverifiable=True,
                 ))
             else:
                 val = report.get(f)
                 status = COMPLETENESS_COMPLETE if val else COMPLETENESS_PARTIAL
                 present_str = "present" if status == COMPLETENESS_COMPLETE else "missing"
-                entries.append(CompletenessSummaryEntry(
+                entries.append(_entry(
                     field_name=f,
                     status=status,
                     reason=f"Phase 3 field — {present_str}",
+                    capsule_derived=capsule_derived,
+                    capsule_ref=capsule_ref,
                 ))
 
     return entries
@@ -203,10 +252,18 @@ class NIS2Exporter:
         events = _read_tool_permission_events(capsule_dir)
         op = operator_inputs or {}
 
+        generated_at = _now()
+        capsule_ref = build_capsule_ref(capsule_dir, generated_at)
+        # Track which field values genuinely originate from the capsule so only
+        # those are marked capsule_verified (ADR-0197 I-1/I-4).
+        capsule_derived: set[str] = set()
+
         # Phase 1 fields
+        if "first_detection_timestamp" not in op and manifest.get("created_at"):
+            capsule_derived.add("first_detection_timestamp")
         first_detection = op.get(
             "first_detection_timestamp",
-            manifest.get("created_at", _now()),
+            manifest.get("created_at", generated_at),
         )
         classification = op.get(
             "preliminary_classification",
@@ -227,6 +284,7 @@ class NIS2Exporter:
             denied = _denied_actions(events)
             if denied:
                 actions_taken = denied
+                capsule_derived.add("actions_taken")  # from capsule events
             elif op.get("actions_taken"):
                 actions_taken = op["actions_taken"]
 
@@ -255,7 +313,13 @@ class NIS2Exporter:
             "lessons_learned": lessons_learned,
         }
 
-        completeness = _build_completeness(phase, report_dict, self._cap006_available)
+        completeness = _build_completeness(
+            phase,
+            report_dict,
+            self._cap006_available,
+            capsule_derived,
+            capsule_ref,
+        )
 
         return NIS2IncidentReport(
             incident_id=incident_id,
@@ -271,7 +335,7 @@ class NIS2Exporter:
             cross_border_impact_assessment=cross_border_impact,
             lessons_learned=lessons_learned,
             completeness_summary=completeness,
-            generated_at=_now(),
+            generated_at=generated_at,
             report_phase=phase,
         )
 

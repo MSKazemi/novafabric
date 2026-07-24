@@ -42,6 +42,16 @@ class TestRenderHtml:
         assert "test-deploy-001" in html
         assert "Element 1" in html
 
+    def test_evidence_source_marker_rendered(self) -> None:
+        # ADR-0197: the provenance marker must be visible in the rendered doc.
+        from novafabric.compliance.export.provenance import EvidenceSource
+
+        doc = _minimal_document()
+        doc.elements[0].evidence_source = EvidenceSource.capsule_verified
+        html = _render_html(doc)
+        assert "capsule_verified" in html
+        assert "Provenance" in html
+
     def test_evidence_refs_included(self) -> None:
         doc = _minimal_document()
         html = _render_html(doc)

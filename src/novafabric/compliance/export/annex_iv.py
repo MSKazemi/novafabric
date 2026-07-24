@@ -34,8 +34,45 @@ from .models import (
     AnnexIVDocument,
     AnnexIVElement,
 )
+from .provenance import EvidenceSource, EvidenceSourceRef, build_capsule_ref, mark
 
 _MAPPING_PATH = Path(__file__).parent / "annex_iv_mapping.yaml"
+
+# Annex IV re-performable references anchor on the manifest (the exporter reads
+# no event streams), so a third party re-hashing capsule.yaml reproduces it.
+_ANNEX_REF_FILES = ("capsule.yaml",)
+
+
+def _capsule_ref(capsule_dir: Path, verified_at: str) -> EvidenceSourceRef | None:
+    return build_capsule_ref(capsule_dir, verified_at, files=_ANNEX_REF_FILES)
+
+
+def _mark_element(
+    *,
+    method: str,
+    completeness: str,
+    operator_overridden: bool,
+    capsule_ref: EvidenceSourceRef | None,
+) -> tuple[EvidenceSource, EvidenceSourceRef | None]:
+    """Map an Annex IV element's origin to an ADR-0197 provenance marker.
+
+    * operator override or ``operator_declared`` → ``operator_asserted`` — the
+      operator supplied the text; NovaFabric did not derive it;
+    * ``capsule_derived`` and present, with a re-performable ref → the value was
+      resolved and re-templated from the capsule manifest (``capsule_verified``,
+      I-3). Note: Annex IV re-derives from the manifest but does not itself verify
+      a NovaSeal envelope — the ref lets a third party re-perform the derivation;
+    * ``capsule_derived`` but ``missing`` → ``unverifiable`` (I-2: the value was
+      expected from the capsule and could not be resolved);
+    * anything else (e.g. ``not_applicable``) → ``operator_asserted``.
+    """
+    if operator_overridden or method == POPULATION_OPERATOR:
+        return mark(EvidenceSource.operator_asserted)
+    if method == POPULATION_CAPSULE:
+        if completeness == COMPLETENESS_MISSING or capsule_ref is None:
+            return mark(EvidenceSource.unverifiable)
+        return mark(EvidenceSource.capsule_verified, ref=capsule_ref)
+    return mark(EvidenceSource.operator_asserted)
 
 
 def _load_mapping() -> list[dict[str, Any]]:
@@ -134,6 +171,8 @@ class AnnexIVExporter:
         manifest = self._load_manifest(capsule_dir)
         overrides = operator_overrides or {}
         elements: list[AnnexIVElement] = []
+        generated_at = datetime.now(timezone.utc).isoformat()
+        capsule_ref = _capsule_ref(capsule_dir, generated_at)
 
         for spec in self._mapping:
             elem_id = spec["element_id"]
@@ -143,8 +182,9 @@ class AnnexIVExporter:
             template = spec.get("description_template", "")
 
             completeness = _assess_completeness(manifest, required, optional, method)
+            operator_overridden = elem_id in overrides
 
-            if elem_id in overrides:
+            if operator_overridden:
                 content = overrides[elem_id]
                 completeness = COMPLETENESS_COMPLETE
             elif method == POPULATION_OPERATOR:
@@ -158,6 +198,13 @@ class AnnexIVExporter:
             # Gather evidence refs (capsule IDs, eval refs etc.)
             evidence_refs = self._gather_evidence_refs(manifest, spec)
 
+            source, ref = _mark_element(
+                method=method,
+                completeness=completeness,
+                operator_overridden=operator_overridden,
+                capsule_ref=capsule_ref,
+            )
+
             elements.append(
                 AnnexIVElement(
                     element_id=elem_id,
@@ -166,12 +213,14 @@ class AnnexIVExporter:
                     evidence_refs=evidence_refs,
                     population_method=method,
                     completeness_flag=completeness,
+                    evidence_source=source,
+                    evidence_ref=ref,
                 )
             )
 
         return AnnexIVDocument(
             deployment_id=deployment_id,
-            generated_at=datetime.now(timezone.utc).isoformat(),
+            generated_at=generated_at,
             elements=elements,
         )
 

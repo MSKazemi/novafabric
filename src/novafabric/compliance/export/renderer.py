@@ -23,7 +23,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .models import AnnexIVDocument
+from .models import AnnexIVDocument, AnnexIVElement
 
 if TYPE_CHECKING:
     pass
@@ -100,11 +100,25 @@ _ELEMENT_BLOCK_TEMPLATE = """<div class="element">
     <span class="badge badge-{status}">{status}</span>
   </div>
   <div class="method">Population method: {method}</div>
+  {provenance_html}
   <div class="content">{content}</div>
   {evidence_html}
 </div>"""
 
 _EVIDENCE_HTML = """<div class="evidence-refs">Evidence refs: {refs}</div>"""
+_PROVENANCE_HTML = (
+    """<div class="method">Provenance (ADR-0197): {source}{ref}</div>"""
+)
+
+
+def _provenance_html(element: "AnnexIVElement") -> str:
+    """Render the ADR-0197 evidence_source marker, if present."""
+    if element.evidence_source is None:
+        return ""
+    ref = ""
+    if element.evidence_ref is not None:
+        ref = f" — {element.evidence_ref.content_digest}"
+    return _PROVENANCE_HTML.format(source=element.evidence_source.value, ref=ref)
 
 
 def _render_html(document: AnnexIVDocument) -> str:
@@ -125,6 +139,7 @@ def _render_html(document: AnnexIVDocument) -> str:
             title=e.element_title,
             status=e.completeness_flag,
             method=e.population_method,
+            provenance_html=_provenance_html(e),
             content=e.content or "(not available)",
             evidence_html=(
                 _EVIDENCE_HTML.format(refs=", ".join(e.evidence_refs))

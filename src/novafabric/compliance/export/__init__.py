@@ -26,6 +26,15 @@ from .models import (
 )
 from .nis2 import NIS2Exporter
 from .nist_rmf import NISTAIRMFReporter, NISTRMFReport, RMFMetric
+from .provenance import (
+    EvidenceSource,
+    EvidenceSourceRef,
+    MissingReperformableRefError,
+    ProvenanceError,
+    UnmarkedFieldGroupError,
+    mark,
+    validate_marked,
+)
 from .renderer import DocumentRenderer
 
 __all__ = [
@@ -37,7 +46,14 @@ __all__ = [
     "CompletenessStatus",
     "CompletenessSummaryEntry",
     "DocumentRenderer",
+    "EvidenceSource",
+    "EvidenceSourceRef",
     "GDPRRoPAExporter",
+    "MissingReperformableRefError",
+    "ProvenanceError",
+    "UnmarkedFieldGroupError",
+    "mark",
+    "validate_marked",
     "NISTAIRMFReporter",
     "NISTRMFReport",
     "NIS2Exporter",

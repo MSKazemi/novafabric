@@ -38,6 +38,28 @@ OCCURRED = datetime(2026, 6, 10, 8, 0, tzinfo=timezone.utc)
 AWARE = datetime(2026, 6, 11, 9, 30, tzinfo=timezone.utc)
 
 
+def test_aim_completeness_marked_operator_asserted() -> None:
+    # ADR-0197 I-1: AIM report projects operator-authored incident data.
+    report = build_aim_report(_incident(id="inc-aim"))
+    entries = report["completeness_summary"]
+    assert entries
+    for entry in entries:
+        assert entry["evidence_source"] == "operator_asserted"
+
+
+def test_nis2_from_incident_marked() -> None:
+    from novafabric.compliance.export.provenance import (
+        EvidenceSource,
+        validate_marked,
+    )
+
+    report = build_nis2_report_from_incident(_incident(id="inc-nis2"))
+    assert report.completeness_summary
+    for entry in report.completeness_summary:
+        assert entry.evidence_source is EvidenceSource.operator_asserted
+    validate_marked(report.completeness_summary)
+
+
 def _incident(**overrides: object) -> Incident:
     base: dict[str, object] = {
         "title": "Tool misuse",

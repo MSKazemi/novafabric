@@ -23,6 +23,16 @@ def _incident(aware_at: datetime | None = None) -> Incident:
     )
 
 
+def test_completeness_entries_marked_operator_asserted() -> None:
+    # ADR-0197 I-1: the DORA projection is a pure projection over the
+    # operator-authored incident store; every field-group must say so.
+    now = datetime(2026, 7, 10, 9, 0, tzinfo=timezone.utc)
+    report = build_dora_report(_incident(), now=now)
+    assert report.completeness_summary
+    for entry in report.completeness_summary:
+        assert entry["evidence_source"] == "operator_asserted"
+
+
 def test_builds_three_dora_stages() -> None:
     now = datetime(2026, 7, 10, 9, 0, tzinfo=timezone.utc)
     report = build_dora_report(_incident(), now=now)

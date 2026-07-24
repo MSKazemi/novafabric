@@ -163,6 +163,25 @@ Commands grouped by primitive and task. Each entry links to its full section.
 > workflows. They do not certify or guarantee compliance with any regulation.
 > See the disclaimers on each command.
 
+#### Provenance marking — `evidence_source` (ADR-0197, experimental)
+
+Field-group–structured exporters (`export-annex-iv`, `export-nis2`, and the
+incident-store AIM/DORA projections) tag every field-group with an
+**`evidence_source`** marker so a regulated consumer can tell how NovaFabric
+established each value — never blurring an operator assertion into a
+capsule-verified fact:
+
+| Value | Meaning |
+|---|---|
+| `operator_asserted` | The value came from operator-authored input; NovaFabric did not check it. |
+| `capsule_verified` | NovaFabric resolved this from a capsule and re-performed the binding. Carries an `evidence_ref` (`capsule_id` + `content_digest` [+ optional `seal_envelope_path`]) a third party can re-check offline. |
+| `unverifiable` | NovaFabric attempted verification and could not complete it (missing capsule, unresolvable digest, absent seal) — reported, never downgraded to an assertion. |
+
+The marker is **additive and optional** on the wire (a pre-ADR-0197 document
+deserializes with `evidence_source: null`); every shipped field-group exporter
+now populates it. The pure-projection sector/transparency renderers adopt the
+marker in a later slice. Status: **experimental** (first slice, v0.65.0).
+
 ### Lifecycle events (experimental)
 
 | Command | Purpose |
@@ -2492,7 +2511,7 @@ Options:
 - `--deployment-id TEXT` (required) — operator-assigned deployment identifier
 - `--pdf / --no-pdf` — also render a PDF (requires `weasyprint`, included in `novafabric[compliance]`)
 
-Output fields include: system description, intended purpose, training data characteristics, human oversight measures, robustness metrics, and post-market monitoring plan. Fields are marked `complete`, `partial`, or `missing` based on capsule content.
+Output fields include: system description, intended purpose, training data characteristics, human oversight measures, robustness metrics, and post-market monitoring plan. Fields are marked `complete`, `partial`, or `missing` based on capsule content, and each element carries an [`evidence_source`](#provenance-marking--evidence_source-adr-0197-experimental) provenance marker (ADR-0197).
 
 Exit codes: `0` (success), `1` (missing compliance extra or export error).
 

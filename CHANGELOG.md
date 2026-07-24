@@ -9,7 +9,50 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
-_Nothing yet._
+## [0.65.0] — 2026-07-24
+
+### Added
+- **`evidence_source` provenance marker for compliance exports (ADR-0197, experimental).**
+  Field-group–structured compliance exporters now tag every field-group with an
+  `evidence_source` marker — `operator_asserted` | `capsule_verified` | `unverifiable` —
+  so a regulated consumer can tell an operator assertion apart from a capsule-verified
+  fact, the failure mode the 2026-07-20 export audit surfaced.
+  - New shared primitive `novafabric.compliance.export.provenance`: `EvidenceSource`
+    enum, `EvidenceSourceRef` (re-performable `capsule_id` + `content_digest`
+    [+ optional `seal_envelope_path`], ADR-0197 I-3), `mark()` (enforces that
+    `capsule_verified` carries a ref and the others do not), `build_capsule_ref()`,
+    and `validate_marked()` (export-time enforcement of I-1/I-3).
+  - Marker wired into `export-annex-iv`, `export-nis2`, and the incident-store
+    AIM/DORA projections; the Annex IV renderer surfaces it. `capsule_verified`
+    entries carry a `sha256:` digest over the capsule files a third party can re-hash.
+  - **Additive and optional on the wire** (backward-compatible: a pre-ADR-0197
+    document deserializes with `evidence_source: null`); the fully-required
+    envelope-v2 flip and the pure-projection sector/transparency families are a
+    documented next slice. See `design/spec/evidence-source-provenance-marker.md`.
+- **OpenAPI robustness:** the two dashboard file-download routes
+  (`/api/runs/{run_id}/file/{filepath}`, `/api/evidence/{bundle_id}/download`) now
+  declare `response_model=None`, matching the codebase's guard convention for
+  `Response`-returning routes.
+
+### Security
+- **Dependabot triage 2026-07-24 — all 13 open alerts closed** (9 high, 2 moderate, 2 low)
+  across four manifests; no NovaFabric code changes required, all fixes are dependency
+  version bumps verified by each ecosystem's gates:
+  - `uv.lock`: `pyasn1` 0.6.3 → 0.6.4 (CVE-2026-59885/59886, REAL/OID decode DoS).
+  - `collector/go.mod`: `google.golang.org/grpc` 1.80.0 → 1.82.1 (GHSA-hrxh-6v49-42gf,
+    xDS RBAC + HTTP/2); opportunistic `x/text` 0.39.0, `x/net` 0.56.0, `x/crypto` 0.53.0,
+    `otel` 1.44.0 per govulncheck (remaining GO-2026-5932 in `x/crypto` has **no fix
+    released**; govulncheck confirms our code never calls the affected symbols).
+  - `packages/nova-sdk-ts`: dev-only transitive `js-yaml` 4.2.0 → 4.3.0
+    (CVE-2026-59869, merge-key quadratic CPU) via a scoped npm override —
+    `@redocly/openapi-core` 1.x pins 4.2.0 exactly.
+  - `web/`: **Astro 6.4.8 → 7.1.3** (three XSS advisories incl. CVE-2026-59729/59727)
+    with `@astrojs/react` 5 → 6; `sharp` 0.34.5 → 0.35.3 (libvips CVEs),
+    `fast-uri` 3.1.4, `svgo` 4.0.2, `brace-expansion` 1.1.16, `body-parser` 1.20.6.
+  - Verified: collector `go build` + 7 test packages green + govulncheck; SDK tsc +
+    24 vitest tests green; web `astro build` (13 pages) + `tsc --noEmit` green;
+    `uv sync --all-extras` + `nova --help` smoke; `npm audit` reports 0
+    vulnerabilities in all three npm workspaces.
 
 ## [0.64.0] — 2026-07-24
 

@@ -13,6 +13,49 @@ from novafabric.compliance.export.models import (
     NIS2IncidentReport,
 )
 from novafabric.compliance.export.nis2 import NIS2Exporter
+from novafabric.compliance.export.provenance import EvidenceSource, validate_marked
+
+
+class TestNIS2EvidenceSource:
+    """ADR-0197: every NIS2 field-group must be honestly provenance-marked."""
+
+    def test_every_entry_is_marked(self, minimal_capsule_dir: Path) -> None:
+        # I-1: no silent provenance.
+        exporter = NIS2Exporter(cap006_available=False)
+        report = exporter.build_nis2_report("INC-001", minimal_capsule_dir, phase=3)
+        assert report.completeness_summary
+        for entry in report.completeness_summary:
+            assert entry.evidence_source is not None, entry.field_name
+
+    def test_document_validates(self, minimal_capsule_dir: Path) -> None:
+        exporter = NIS2Exporter(cap006_available=False)
+        report = exporter.build_nis2_report("INC-001", minimal_capsule_dir, phase=3)
+        validate_marked(report.completeness_summary)  # must not raise
+
+    def test_cap006_blocked_is_unverifiable_not_asserted(
+        self, minimal_capsule_dir: Path
+    ) -> None:
+        # I-2: an attempted-and-failed verification is 'unverifiable', never
+        # downgraded to 'operator_asserted'.
+        exporter = NIS2Exporter(cap006_available=False)
+        report = exporter.build_nis2_report("INC-001", minimal_capsule_dir, phase=3)
+        cap006 = [
+            e for e in report.completeness_summary if "cap_006" in e.reason
+        ]
+        assert cap006
+        for entry in cap006:
+            assert entry.evidence_source is EvidenceSource.unverifiable
+
+    def test_capsule_verified_entries_carry_ref(
+        self, minimal_capsule_dir: Path
+    ) -> None:
+        # I-3: capsule_verified must be re-performable.
+        exporter = NIS2Exporter(cap006_available=False)
+        report = exporter.build_nis2_report("INC-001", minimal_capsule_dir, phase=2)
+        for entry in report.completeness_summary:
+            if entry.evidence_source is EvidenceSource.capsule_verified:
+                assert entry.evidence_ref is not None
+                assert entry.evidence_ref.content_digest.startswith("sha256:")
 
 
 class TestNIS2Exporter:

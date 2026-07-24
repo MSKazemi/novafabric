@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from .provenance import EvidenceSource, EvidenceSourceRef
+
 
 class CompletenessStatus(str):
     """Status of an Annex IV element or NIS2 field population."""
@@ -80,6 +82,14 @@ class AnnexIVElement(BaseModel):
         ...,
         description="complete|partial|missing",
     )
+    evidence_source: EvidenceSource | None = Field(
+        default=None,
+        description="ADR-0197 provenance marker for this element (I-1).",
+    )
+    evidence_ref: EvidenceSourceRef | None = Field(
+        default=None,
+        description="Re-performable reference; required when capsule_verified (I-3).",
+    )
 
 
 class AnnexIVDocument(BaseModel):
@@ -128,17 +138,37 @@ class AnnexIVDocument(BaseModel):
                 reason=(
                     f"Element {e.element_id}: {e.element_title} — {e.population_method}"
                 ),
+                evidence_source=e.evidence_source,
+                evidence_ref=e.evidence_ref,
             )
             for e in self.elements
         ]
 
 
 class CompletenessSummaryEntry(BaseModel):
-    """A single entry in a completeness summary."""
+    """A single entry in a completeness summary.
+
+    Carries the ADR-0197 ``evidence_source`` provenance marker. The marker is
+    additive and optional on the wire (a pre-ADR-0197 envelope deserializes with
+    ``evidence_source is None``); every shipped exporter populates it, and the
+    export path enforces presence via
+    :func:`novafabric.compliance.export.provenance.validate_marked`.
+    """
 
     field_name: str
     status: str
     reason: str
+    evidence_source: EvidenceSource | None = Field(
+        default=None,
+        description=(
+            "ADR-0197 provenance marker: operator_asserted | capsule_verified | "
+            "unverifiable. None only for legacy (pre-ADR-0197) envelopes."
+        ),
+    )
+    evidence_ref: EvidenceSourceRef | None = Field(
+        default=None,
+        description="Re-performable reference; required when capsule_verified (I-3).",
+    )
 
 
 class NIS2IncidentReport(BaseModel):

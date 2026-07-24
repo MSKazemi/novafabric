@@ -1310,7 +1310,11 @@ def create_app(
             raise
         return load_full_capsule(cdir)
 
-    @app.get("/api/runs/{run_id}/file/{filepath:path}", dependencies=[Depends(verify_token)])
+    @app.get(
+        "/api/runs/{run_id}/file/{filepath:path}",
+        dependencies=[Depends(verify_token)],
+        response_model=None,
+    )
     async def get_run_file(run_id: str, filepath: str) -> Any:
         parts = filepath.split("/")
         if len(parts) == 1:
@@ -1749,7 +1753,11 @@ def create_app(
             "truncated": total > len(bundles),
         }
 
-    @app.get("/api/evidence/{bundle_id}/download", dependencies=[Depends(verify_token)])
+    @app.get(
+        "/api/evidence/{bundle_id}/download",
+        dependencies=[Depends(verify_token)],
+        response_model=None,
+    )
     async def download_evidence_endpoint(bundle_id: str) -> Any:
         from fastapi.responses import FileResponse
 

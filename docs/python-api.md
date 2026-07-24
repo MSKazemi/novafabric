@@ -927,6 +927,38 @@ An async twin (`AsyncNovaFabricClient`) and artifact streaming are **planned**
 
 ---
 
+## Compliance-export provenance (experimental — ADR-0197)
+
+Field-group compliance exporters tag each field-group with an `evidence_source`
+marker so a consumer can tell how NovaFabric established each value. The shared
+primitive lives in `novafabric.compliance.export.provenance`:
+
+```python
+from novafabric.compliance.export.provenance import (
+    EvidenceSource,      # operator_asserted | capsule_verified | unverifiable
+    EvidenceSourceRef,   # re-performable ref: capsule_id + content_digest (+ seal path)
+    build_capsule_ref,   # hash a capsule dir into an EvidenceSourceRef
+    mark,                # validate a (source, ref) pairing
+    validate_marked,     # assert a set of field-groups is honestly marked
+)
+
+# capsule_verified MUST carry a re-performable reference (ADR-0197 I-3):
+ref = build_capsule_ref(capsule_dir, verified_at="2026-07-24T00:00:00Z")
+source, ref = mark(EvidenceSource.capsule_verified, ref=ref)
+
+# Enforce on an export path — raises UnmarkedFieldGroupError / MissingReperformableRefError:
+from novafabric.compliance.export import AnnexIVExporter
+doc = AnnexIVExporter().build_annex_iv_document("dep-1", capsule_dir)
+validate_marked(doc.completeness_summary())
+```
+
+`operator_asserted` and `unverifiable` must **not** carry a ref (a reference
+would misrepresent them as a re-performed verification). The marker is additive
+and optional on the wire — a pre-ADR-0197 document deserializes with
+`evidence_source is None`. See `design/spec/evidence-source-provenance-marker.md`.
+
+---
+
 ## Utility
 
 ```python

@@ -18,7 +18,7 @@ The dashboard ships **28 tabs**, grouped by workflow. (Source of truth:
 | Home | Overview | v0.8 | Journey cards, status bar, resume session |
 | Analytics | Overview | Unreleased | Time-bucketed run analytics from the runs index: volume + failure stacked bars, duration p50/p95 lines, stat tiles, 7/30/90-day ranges, chart/table toggle (`/api/analytics/summary`) |
 | Alerts | Infrastructure | Unreleased | Operational alerts feed (quota/rate-limit/policy/drift/seal/backup) + delivery outcomes from the audit log; severity badges, stat tiles, live refresh (`/api/alerts/recent`, ADR-0192) |
-| Runs | Debug & investigate | v0.7 | Run list, search/filter, inspect capsule, validate, replay, verify; capsule tree, run lineage edges, secret scan (v0.46.0) |
+| Runs | Debug & investigate | v0.7 | Run list, search/filter, inspect capsule, validate, replay, verify; capsule tree, run lineage edges, secret scan (v0.46.0); **Unreleased:** per-run **Forensics** timeline view (`/api/runs/{id}/forensics-timeline`, P5) + saved filter presets (E2) |
 | Diff | Debug & investigate | v0.7 | N-run comparison (2–5), word-level diff, mutation badges |
 | Registry | Govern & promote | v0.7 | Asset lifecycle: eval, promote, rollback, register, suggest-register, unregister |
 | Governance | Govern & promote | v0.16.0 | Classify (EU AI Act/NIST/OMB), audit (6 profiles), export-examiner, policy sign |
@@ -26,7 +26,7 @@ The dashboard ships **28 tabs**, grouped by workflow. (Source of truth:
 | Risk | Govern & promote | Unreleased | OWASP LLM assurance (`assure`), secret scan, failure attribution (`diagnose`), risk-tier classify, MCP scan |
 | Lineage | Audit & verify | v0.7 | Provenance / blast-radius / replay-chain DAG, interactive query, OpenLineage/PROV export |
 | KG | Audit & verify | v0.17.0 | Capsule knowledge graph: query, audit, entity queue, alias mgmt, ingest |
-| Cost | Audit & verify | v0.17.0 | Cost report, pricing, burn analysis (ClickHouse-backed) |
+| Cost | Audit & verify | v0.17.0 | Cost report, pricing, burn analysis (ClickHouse-backed); **Unreleased:** cost-analytics tools trio — attribution / fairness / usage-breakdown (`/api/cost/{attribute,fairness,usage-breakdown}`, P6) |
 | Schema | Audit & verify | v0.17.0 | Schema registry (JSON Schema + proto3) |
 | Evidence | Audit & verify | v0.9 | Bundle list, DSSE/TSR/Merkle verification, download, in-browser ed25519 verify |
 | Audit | Audit & verify | v0.7 | Dashboard mutation audit log, action-type filter |
@@ -37,12 +37,13 @@ The dashboard ships **28 tabs**, grouped by workflow. (Source of truth:
 | Compliance | Audit & verify | v0.15.2 | GDPR RoPA, AI-SBOM, NIST RMF, CRA coverage, erasure, audit bundle/verify (8+ panels) |
 | Incidents | Audit & verify | Unreleased | EU AI Act Art. 73 incident records with a live reporting-deadline clock; open/list/transition/export (AIM, NIS2) |
 | Capture | Audit & verify | v0.7 | Capture matrix (4 runners + distributed + MCP/API proxies), adapters, recent capsules |
-| Infra | Infrastructure | v0.12.6 | Phase 0–6 component status cards (NovaSeal, Collector, OCS, MetaDB, Lineage, …) |
+| Infra | Infrastructure | v0.12.6 | Phase 0–6 component status cards (NovaSeal, Collector, OCS, MetaDB, Lineage, …); **Unreleased:** **Backups** card (`/api/infra/backups`, P7 — read-only manifest listing) + **Maintenance** card of idempotent confirm-gated safe mutations (reindex-runs / topology re-seed / KG rebuild, P8-P10) |
 | Storage | Infrastructure | Unreleased | WORM object-store stats/validate/inspect, manifest chain, collector status, gated DB upgrade + rebuild-metadata-db, system-card export |
 | Ops | Infrastructure | Unreleased | Installation diagnostics (`doctor`), warm-daemon liveness (read-only), JWKS flush |
 | Admin | Admin | v0.7 | Token management, role management (API v0.14.3; UI partial), JWKS flush, new-run-id, DB ops |
 | Commands | CLI | v0.8 | Full-CLI command builders (every `nova` command, 278 today) with live preview, filter box, and copy |
 | Reports | Reports | v0.17.0+ | 9 report templates (see below) |
+| Export | Reports | Unreleased | Export Center hub (E1) — the server-catalog-driven registry export panel (`/api/compliance/export/kinds`) plus a jump-link directory to the evidence / lineage / reports / compliance export surfaces |
 
 **Reports tab — 9 templates:** run-history, eval-regression, capsule-compare, cost-burn,
 throughput, evidence-inventory, policy-audit, seal-verification, release-comparison.
@@ -146,6 +147,9 @@ The dashboard exposes the **majority** of the read-side and many of the write-si
 | Validate a capsule's schema and file structure | `nova validate <capsule>` | ✅ Runs tab → Validate button (v0.11) | `POST /api/runs/{id}/validate` — checks required files, YAML parse, JSONL presence. Green `✓ valid` or red expandable error list. |
 | View secret scan results | `nova scan-secrets <capsule>` | ✅ Runs tab → **Secrets** button on card (quick-access, v0.11) or → Secrets tab in detail panel | `GET /api/runs/{id}/redaction-proof` — shows scanner+packs, targets (hash before/after), per-finding severity badges. Includes re-scan trigger. |
 | Report generation | `nova report [--format markdown\|json\|html\|pdf]` | ◐ Reports tab | The Reports tab has its own registry-driven builders with CSV/JSON download plus **self-contained HTML and PDF artifacts with embedded charts** (`GET /api/reports/{id}/export`, ADR-0201; PDF needs the optional WeasyPrint extra — the UI surfaces the 501 install hint). The CLI's *asset-inventory* report (`nova report`) additionally supports `--format html|pdf` with the same chart engine. |
+| Forensics timeline | `nova forensics timeline <capsule>` | ✅ Runs tab → **Forensics** view (Unreleased, P5) | `GET /api/runs/{id}/forensics-timeline` reconstructs a deterministic timeline from the run's own sealed capsule via the same `merge_timeline` core. Honest scope: run-lifecycle + model/tool-call events only; missing timestamps and the absent lineage collector are shown as *gaps*, never fabricated. |
+| Cost attribution / fairness / usage-breakdown | `nova cost attribute` / `fairness` / `usage-breakdown` | ✅ Cost tab → tools panel (Unreleased, P6) | Three pure POST endpoints (`/api/cost/{attribute,fairness,usage-breakdown}`) wrapping the same cores the CLI calls, given a document instead of a file path. Descriptive only — no cost verdict. |
+| Backup-set status | `nova backup verify` *(listing has no direct command)* | ✅ Infra tab → **Backups** card (Unreleased, P7) | `GET /api/infra/backups` lists `NOVA_BACKUP_DIR` archives from their `manifest.json` (manifest-claimed, **not** hash-verified — that stays `nova backup verify`). Degrades to `{detected:false}` when unconfigured. |
 | Lineage time-travel queries | `nova lineage time-travel <ref> --asof <ts>` | ❌ — | Not yet wired into the dashboard; CLI-only in v0.7. |
 | Lineage OpenLineage emission | `nova lineage emit-openlineage` | ❌ — | Integration target; CLI-only. |
 
@@ -161,6 +165,7 @@ The dashboard exposes the **majority** of the read-side and many of the write-si
 | Semantic replay analysis | `nova replay <capsule> --mode semantic` | ✅ Runs tab → row "SEMANTIC" button (v0.11) | Compute pairwise text similarity across model call responses. Returns `similarity_score` (0–100%) and a gauge. Read-only, no subprocess. |
 | Exact replay eligibility | `nova replay <capsule> --mode exact` | ✅ Runs tab → row "EXACT" button (v0.11) | Check whether the capsule satisfies exact replay requirements: `env.lock.lock_mode=deterministic` and `seed` present on every model call. Returns `exact_eligible` (bool) + blocker list. |
 | Re-scan & redact | `nova redact <capsule>` | ✅ Runs tab → row "REDACT" button | Re-runs `SecretScannerV0` and overwrites `redaction-proof.json`. **Limitation:** strategy overrides and unsafe-skip marking (`--strategy-override`, `--mark-unsafe-skip`, `--rationale`) are CLI-only. |
+| Maintenance recompute (safe) | *(reindex has no direct command; KG/topology mirror `nova kg ingest --all`)* | ✅ Infra tab → **Maintenance** card (Unreleased, P8-P10) | Three idempotent, lossless, confirm-gated actions: reindex runs cache (`POST /api/admin/reindex-runs` — full INSERT-OR-REPLACE rebuild, an APIRouter module per the ADR-0183 route freeze), re-seed topology (`/api/topology/seed`), rebuild KG (`/api/kg/ingest-all`). None deletes user data. |
 | Compare two asset spec versions | `nova diff <name@v1> <name@v2>` | ✅ Registry tab → "Compare…" (v0.11) | `GET /api/assets/{name}/diff?from_version=&to_version=` — flattened field diff; green `+`, red `−`, yellow `~` table rows. Available on assets with ≥ 2 registered versions. |
 | Export signed evidence | `nova export-evidence <capsule> --output <zip> --key <pem>` | ✅ Runs tab → row "EXPORT ↗" button | Signing key auto-generated at `~/.novafabric/keys/local-key.pem` if missing (audit-logged). Output defaults to `~/.novafabric/evidence/<run_id>.zip`. **Limitation:** custom output paths and `--allow-unsafe-skips` are wired in the API but not surfaced as form controls in the UI yet. |
 | Place / release a legal hold | `nova hold create <registry> --reason … [--duration-days N]` / `nova hold release <hold-id>` | ✅ Holds tab (v0.11) | `POST /api/holds` + `POST /api/holds/{id}/release`. Active holds grouped by registry; inline release button; place-hold form with optional duration. **v0.12.7:** registry name input autocompletes from the list of registries shown on-screen. |

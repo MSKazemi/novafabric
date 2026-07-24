@@ -73,6 +73,23 @@
           "type": "string",
           "enum": ["complete", "partial", "missing"],
           "description": "Completeness status of this element"
+        },
+        "evidence_source": {
+          "type": ["string", "null"],
+          "enum": ["operator_asserted", "capsule_verified", "unverifiable", null],
+          "description": "ADR-0197 provenance marker; null only for legacy (pre-ADR-0197) documents"
+        },
+        "evidence_ref": {
+          "type": ["object", "null"],
+          "description": "Re-performable reference; required when evidence_source is capsule_verified (ADR-0197 I-3)",
+          "properties": {
+            "capsule_id": { "type": "string" },
+            "content_digest": { "type": "string" },
+            "seal_envelope_path": { "type": ["string", "null"] },
+            "verified_at": { "type": "string" }
+          },
+          "required": ["capsule_id", "content_digest", "verified_at"],
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

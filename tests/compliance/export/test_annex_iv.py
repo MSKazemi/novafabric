@@ -19,6 +19,40 @@ from novafabric.compliance.export.models import (
     COMPLETENESS_MISSING,
     COMPLETENESS_PARTIAL,
 )
+from novafabric.compliance.export.provenance import EvidenceSource, validate_marked
+
+
+class TestAnnexIVEvidenceSource:
+    """ADR-0197: every Annex IV element must be honestly provenance-marked."""
+
+    def test_every_element_marked(self, minimal_capsule_dir: Path) -> None:
+        doc = AnnexIVExporter().build_annex_iv_document("DEP-1", minimal_capsule_dir)
+        for elem in doc.elements:
+            assert elem.evidence_source is not None, elem.element_id
+
+    def test_completeness_summary_marked_and_valid(
+        self, minimal_capsule_dir: Path
+    ) -> None:
+        doc = AnnexIVExporter().build_annex_iv_document("DEP-1", minimal_capsule_dir)
+        summary = doc.completeness_summary()
+        for entry in summary:
+            assert entry.evidence_source is not None
+        validate_marked(summary)  # must not raise
+
+    def test_operator_declared_is_asserted(self, minimal_capsule_dir: Path) -> None:
+        doc = AnnexIVExporter().build_annex_iv_document(
+            "DEP-1", minimal_capsule_dir, operator_overrides={1: "operator text"}
+        )
+        overridden = next(e for e in doc.elements if e.element_id == 1)
+        assert overridden.evidence_source is EvidenceSource.operator_asserted
+
+    def test_capsule_verified_carries_ref(self, minimal_capsule_dir: Path) -> None:
+        doc = AnnexIVExporter().build_annex_iv_document("DEP-1", minimal_capsule_dir)
+        for elem in doc.elements:
+            if elem.evidence_source is EvidenceSource.capsule_verified:
+                assert elem.evidence_ref is not None
+                assert elem.evidence_ref.content_digest.startswith("sha256:")
+                break
 
 _SCHEMA_PATH = (
     Path(__file__).parents[3]

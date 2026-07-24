@@ -33,6 +33,7 @@ from novafabric.compliance.export.models import (
     CompletenessSummaryEntry,
     NIS2IncidentReport,
 )
+from novafabric.compliance.export.provenance import EvidenceSource
 from novafabric.compliance.incident.clock import DeadlineClock
 from novafabric.compliance.incident.models import Incident
 
@@ -49,10 +50,15 @@ def build_aim_report(
     omitted.
     """
     stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    # ADR-0197 I-1: AIM report is a projection over operator-authored incident
+    # data; NovaFabric verifies no capsule here, so mark operator_asserted.
     completeness = [
         CompletenessSummaryEntry(
-            field_name=name, status="missing", reason=_AIM_MISSING_REASON
-        ).model_dump()
+            field_name=name,
+            status="missing",
+            reason=_AIM_MISSING_REASON,
+            evidence_source=EvidenceSource.operator_asserted,
+        ).model_dump(mode="json", exclude_none=True)
         for name in ("harmed_parties", "economic_sector", "media_references")
     ]
     deadlines = DeadlineClock.compute(incident, now=stamp)
@@ -94,6 +100,7 @@ def build_nis2_report_from_incident(
             field_name=name,
             status="missing",
             reason="authored_at_report_time_not_stored_on_incident_record",
+            evidence_source=EvidenceSource.operator_asserted,
         )
         for name in (
             "initial_root_cause_path",
