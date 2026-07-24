@@ -9,6 +9,21 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.69.0] — 2026-07-24
+
+### Added
+- **`AGELineageStore` — Apache AGE openCypher lineage backend, implemented
+  (ADR-0053, experimental).** `lineage/backends/age.py` was a
+  `NotImplementedError` stub; it is now a real backend that stores the lineage
+  graph as an AGE property graph (`LNode` vertices, `LEDGE` relationships) and
+  answers `provenance` / `blast_radius` / `replay_chain` with openCypher
+  variable-length paths. A testcontainers **parity suite** (against the
+  `apache/age` image) proves it returns identical answers to the SQLite reference.
+  With this, **three at-scale lineage backends now exist** — Kuzu (embedded,
+  benchmark-cleared), Postgres (recursive-CTE, v0.68.0), and AGE (openCypher).
+  `janusgraph.py` remains a stub (needs a gremlin server; redundant given the
+  other three). Zero new dependencies (psycopg is the existing `[server]` extra).
+
 ## [0.68.0] — 2026-07-24
 
 ### Added

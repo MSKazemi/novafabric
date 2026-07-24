@@ -1,27 +1,30 @@
-"""Tests for the Apache AGE lineage backend stub."""
+"""Unit-level checks for AGELineageStore that need no live database.
+
+The behavioural parity suite (against a real Apache AGE via testcontainers) lives
+in ``test_age_backend.py``. These checks cover the class contract only — the
+constructor now connects to a live AGE-enabled Postgres and is exercised there.
+"""
 
 from __future__ import annotations
 
-import pytest
+import inspect
 
 from novafabric.lineage.backends.age import AGELineageStore
 from novafabric.lineage.store import AbstractLineageStore
 
 
-def test_age_init_raises_not_implemented() -> None:
-    """Instantiating AGELineageStore must raise NotImplementedError."""
-    with pytest.raises(NotImplementedError, match="AGELineageStore requires"):
-        AGELineageStore("postgresql://localhost/test")
-
-
-def test_age_methods_exist() -> None:
-    """AGELineageStore must define the four ABC methods."""
-    assert hasattr(AGELineageStore, "insert")
-    assert hasattr(AGELineageStore, "provenance")
-    assert hasattr(AGELineageStore, "blast_radius")
-    assert hasattr(AGELineageStore, "replay_chain")
-
-
 def test_age_is_subclass_of_abstract() -> None:
-    """AGELineageStore must be a subclass of AbstractLineageStore."""
     assert issubclass(AGELineageStore, AbstractLineageStore)
+
+
+def test_age_constructor_requires_a_dsn() -> None:
+    # No longer a stub — it needs a DSN to an AGE-enabled Postgres to connect.
+    sig = inspect.signature(AGELineageStore.__init__)
+    assert "dsn" in sig.parameters
+    assert sig.parameters["dsn"].default is inspect.Parameter.empty
+
+
+def test_age_implements_all_abstract_methods() -> None:
+    for name in ("insert", "provenance", "blast_radius", "replay_chain"):
+        method = getattr(AGELineageStore, name)
+        assert method is not getattr(AbstractLineageStore, name)

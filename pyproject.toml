@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "novafabric"
-version = "0.68.0"
+version = "0.69.0"
 description = "Open-source AI Asset Registry and Agent Lifecycle Management"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.12"
