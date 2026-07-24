@@ -100,6 +100,25 @@ class MissingReperformableRefError(ProvenanceError):
     """A ``capsule_verified`` marker lacks its re-performable reference (I-3)."""
 
 
+def source_for_status(
+    status: str,
+    *,
+    gap_states: frozenset[str] | set[str] = frozenset(),
+) -> EvidenceSource:
+    """Provenance for a pure-projection field-group, keyed on its status string.
+
+    A ``status`` naming a *checked gap* — evidence expected for the field-group and
+    found absent (e.g. ``missing``, ``not_evidenced``, ``unsupported``) — maps to
+    ``unverifiable`` (ADR-0197 I-2: an attempted-and-failed resolution, never
+    downgraded to an assertion). Every other status maps to ``operator_asserted``:
+    a first-slice pure-projection exporter re-performs no binding, so even a
+    value carrying a supplied ref is an operator assertion, not a verification.
+    """
+    if status in gap_states:
+        return EvidenceSource.unverifiable
+    return EvidenceSource.operator_asserted
+
+
 def build_capsule_ref(
     capsule_dir: Path,
     verified_at: str,
@@ -209,5 +228,6 @@ __all__ = [
     "UnmarkedFieldGroupError",
     "build_capsule_ref",
     "mark",
+    "source_for_status",
     "validate_marked",
 ]

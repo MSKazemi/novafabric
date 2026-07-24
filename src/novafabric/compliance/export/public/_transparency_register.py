@@ -21,6 +21,8 @@ from enum import Enum
 
 from pydantic import BaseModel
 
+from ..provenance import EvidenceSource
+
 
 class RegisterStandard(str, Enum):
     atrs = "atrs"  # UK Algorithmic Transparency Recording Standard
@@ -79,6 +81,9 @@ class TransparencyRegisterField(BaseModel):
     source: FieldSource
     value: str | None = None  # operator-declared public value (never set for capsule_evidence)
     evidence_ref: str | None = None  # digest/ref into the sealed capsule (capsule_evidence only)
+    # ADR-0197: pure crosswalk, re-performs no binding → both branches operator_asserted
+    # (a supplied capsule ref is not a re-performed verification). Distinct from ``source``.
+    evidence_source: EvidenceSource = EvidenceSource.operator_asserted
 
 
 class TransparencyRegisterRecord(BaseModel):
@@ -88,6 +93,9 @@ class TransparencyRegisterRecord(BaseModel):
     capsule_root: str
     fields: list[TransparencyRegisterField]
     manual_completion_required: list[str]  # required fields with no evidence/declaration
+    #: ADR-0197 provenance of every entry in ``manual_completion_required``: a required
+    #: field with neither evidence nor declaration is a checked gap → ``unverifiable`` (I-2).
+    manual_evidence_source: EvidenceSource = EvidenceSource.unverifiable
 
 
 def build_transparency_register(

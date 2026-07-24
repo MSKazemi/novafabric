@@ -21,6 +21,8 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel
 
+from ..provenance import EvidenceSource
+
 #: Required fields for a public-sector disclosure record (per NF-373).
 PUBLIC_SECTOR_REQUIRED: tuple[str, ...] = (
     "authority_ref",
@@ -40,6 +42,10 @@ class PublicSectorDisclosure(BaseModel):
     capsule_refs: list[str] = []  # digests of the sealed runs summarized
     system_card_ref: str | None = None  # references an E7 system card by digest — never re-authored
     manual_completion_required: list[str] = []  # required fields with no value (never invented)
+    # ADR-0197: pure crosswalk, re-performs no binding → document is operator_asserted (I-1);
+    # every manual_completion_required entry is a checked gap → unverifiable (I-2).
+    evidence_source: EvidenceSource = EvidenceSource.operator_asserted
+    manual_evidence_source: EvidenceSource = EvidenceSource.unverifiable
 
 
 def build_public_sector_disclosure(

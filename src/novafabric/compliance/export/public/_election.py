@@ -21,6 +21,8 @@ from enum import Enum
 
 from pydantic import BaseModel
 
+from ..provenance import EvidenceSource
+
 
 class DisclosureLabel(str, Enum):
     ai_generated = "ai_generated"
@@ -33,6 +35,7 @@ class ElectionDisclosure(BaseModel):
     provenance_receipt_ref: str  # binds an NF-094 / C2PA / SynthID receipt by digest
     disclosure_label: str  # a DisclosureLabel value — provenance, never a lawfulness verdict
     capsule_refs: list[str] = []  # sealed runs that produced/handled the content (order preserved)
+    evidence_source: EvidenceSource = EvidenceSource.operator_asserted  # ADR-0197 (I-1)
     # Intentionally NO lawful / deceptive / election_regulated / verdict field — decides nothing.
 
 

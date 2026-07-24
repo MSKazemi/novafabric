@@ -9,6 +9,34 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.66.0] — 2026-07-24
+
+### Added
+- **ADR-0197 phase 2 — `evidence_source` marking extended to all thirteen
+  pure-projection compliance families (experimental).** The provenance marker now
+  covers the whole compliance-export layer, not just the field-group exporters:
+  - **Entry-list families** — `export-part11` (`Part11Field`), `export-model-risk`
+    (`PillarEvidence`), `export-rai-scorecard` (`ScorecardCell`),
+    `export-control-attestation` (`ControlAttestationEntry`): per-entry
+    `evidence_source`, with checked-gap statuses (`missing` / `not_evidenced` /
+    `unsupported`) → `unverifiable` (I-2), everything else → `operator_asserted`.
+  - **Crosswalk families** — `export-public-annex-viii`,
+    `export-transparency-register`, `dsar assemble`, `export-public-disclosure`:
+    per-field/record `operator_asserted`, with the gap list
+    (`unmapped_required` / `manual_completion_required` / DSAR `gaps`) marked
+    `unverifiable` via a document-level `*_evidence_source` field.
+  - **Flat families** — `export-foia`, `export-election-disclosure`,
+    `export-public-incident`, `export-citizen-explanation`,
+    `export-accessibility-claim`: one document-level `evidence_source`.
+  - **`export-whistleblower`**: marker carried as the module constant
+    `WHISTLEBLOWER_EVIDENCE_SOURCE` rather than a model field, because a field name
+    containing `source` would violate that model's anti-identification invariant;
+    the build validator still rejects any operator-supplied `source`-like field.
+  - New shared helper `provenance.source_for_status(status, *, gap_states)`.
+  - **No capsule ref is ever upgraded to `capsule_verified`** in these first-slice
+    projections — a supplied ref is not a re-performed binding (never overclaim).
+    Additive/optional on the wire. 99% coverage on the fourteen touched modules.
+
 ## [0.65.0] — 2026-07-24
 
 ### Added

@@ -13,6 +13,23 @@ from novafabric.compliance.export.control_attestation import (
     ControlStatus,
     build_control_attestation,
 )
+from novafabric.compliance.export.provenance import EvidenceSource
+
+
+def test_evidence_source_marks_every_control():
+    # ADR-0197 phase 2, I-1: this exporter is a pure projection over supplied
+    # governance-evidence refs — it re-performs no binding — so an evidenced
+    # control is operator_asserted, not capsule_verified (never overclaim).
+    pack = build_control_attestation(
+        capsule_root="r" * 64, catalog=_CATALOG, present_evidence=_PRESENT, declared=["GOV-4"]
+    )
+    by_id = {e.control_id: e for e in pack.entries}
+    assert by_id["GOV-1"].evidence_source is EvidenceSource.operator_asserted  # evidenced
+    assert by_id["GOV-4"].evidence_source is EvidenceSource.operator_asserted  # declared
+    # not_evidenced = a checked gap (evidence expected, absent) → unverifiable (I-2)
+    assert by_id["GOV-3"].evidence_source is EvidenceSource.unverifiable
+    for e in pack.entries:
+        assert e.evidence_source is not None
 
 _CATALOG = [
     {"control_id": "GOV-1", "evidence_kind": "sealing"},

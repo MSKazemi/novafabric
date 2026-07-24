@@ -32,7 +32,9 @@ from .provenance import (
     MissingReperformableRefError,
     ProvenanceError,
     UnmarkedFieldGroupError,
+    build_capsule_ref,
     mark,
+    source_for_status,
     validate_marked,
 )
 from .renderer import DocumentRenderer
@@ -52,7 +54,9 @@ __all__ = [
     "MissingReperformableRefError",
     "ProvenanceError",
     "UnmarkedFieldGroupError",
+    "build_capsule_ref",
     "mark",
+    "source_for_status",
     "validate_marked",
     "NISTAIRMFReporter",
     "NISTRMFReport",

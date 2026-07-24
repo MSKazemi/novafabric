@@ -178,9 +178,15 @@ capsule-verified fact:
 | `unverifiable` | NovaFabric attempted verification and could not complete it (missing capsule, unresolvable digest, absent seal) — reported, never downgraded to an assertion. |
 
 The marker is **additive and optional** on the wire (a pre-ADR-0197 document
-deserializes with `evidence_source: null`); every shipped field-group exporter
-now populates it. The pure-projection sector/transparency renderers adopt the
-marker in a later slice. Status: **experimental** (first slice, v0.65.0).
+deserializes with `evidence_source: null`). As of **v0.66.0 it is applied across
+the whole compliance-export layer** — the field-group exporters (v0.65.0) plus
+all thirteen pure-projection families (Part 11, SR 11-7 model risk, DSAR, FOIA,
+whistleblower, transparency register, Annex VIII, public-sector disclosure, RAI
+scorecard, control attestation, citizen explanation, accessibility claim,
+election/public-incident disclosure). Each pure projection is `operator_asserted`
+with checked gaps marked `unverifiable`; a supplied capsule ref is never reported
+as `capsule_verified` until a collector actually re-performs the sealed binding.
+Status: **experimental**.
 
 ### Lifecycle events (experimental)
 

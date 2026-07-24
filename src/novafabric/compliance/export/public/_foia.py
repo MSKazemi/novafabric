@@ -26,6 +26,8 @@ from collections.abc import Mapping, Sequence
 
 from pydantic import BaseModel
 
+from ..provenance import EvidenceSource
+
 
 class FOIARedaction(BaseModel):
     digest: str  # salted digest of the withheld content — the bytes themselves are absent (I-5)
@@ -38,6 +40,9 @@ class FOIAExport(BaseModel):
     record_index: list[str]  # ordered digests of included capsule/artifact records
     redactions: list[FOIARedaction]
     custody_digest: str  # deterministic content digest chaining the export to the decision
+    # ADR-0197: a pure projection over supplied records — re-performs no binding — so the
+    # disclosure is operator_asserted at the document level (I-1).
+    evidence_source: EvidenceSource = EvidenceSource.operator_asserted
 
 
 def _custody_digest(

@@ -22,6 +22,14 @@ from collections.abc import Mapping
 
 from pydantic import BaseModel
 
+from ..provenance import EvidenceSource
+
+#: ADR-0197 provenance of a whistleblower attestation: it binds an existing signature
+#: by reference and re-performs no verification, so the whole artifact is
+#: ``operator_asserted`` (I-1). Carried as a module constant, not a model field, because
+#: any field name containing "source" would violate the anti-identification invariant.
+WHISTLEBLOWER_EVIDENCE_SOURCE = EvidenceSource.operator_asserted
+
 #: Substrings that mark a field as source-identifying / contact / routing (lowercased match).
 #: Curated so the three legitimate fields never match; anything matching here is rejected outright.
 SOURCE_IDENTIFYING_PATTERNS: tuple[str, ...] = (
@@ -64,6 +72,10 @@ class WhistleblowerAttestation(BaseModel):
     # ref to the bundle's existing Ed25519 signature — this slice binds it, never re-signs.
     authenticity_attestation: str
     anonymity_set_ref: str | None = None  # optional anonymity-set/group ref — proves without naming
+    # NOTE (ADR-0197): the provenance marker is intentionally NOT a model field here —
+    # a field name containing "source" would violate this model's anti-identification
+    # invariant (no field name may match SOURCE_IDENTIFYING_PATTERNS). The attestation's
+    # provenance is a module-level constant instead; see WHISTLEBLOWER_EVIDENCE_SOURCE.
 
 
 def source_identifying_fields(fields: Mapping[str, object]) -> list[str]:

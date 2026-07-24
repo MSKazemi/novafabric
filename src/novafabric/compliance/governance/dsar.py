@@ -21,6 +21,13 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from novafabric.compliance.export.provenance import EvidenceSource
+
+#: ADR-0197 provenance of a DSAR gap: a capsule known to process the subject but
+#: not reconstructable is an attempted-and-failed resolution → ``unverifiable``
+#: (I-2: a checked absence, never downgraded to an operator assertion).
+DSAR_GAP_EVIDENCE_SOURCE = EvidenceSource.unverifiable
+
 
 class DSARCapsuleRecord(BaseModel):
     capsule_id: str
@@ -30,12 +37,18 @@ class DSARCapsuleRecord(BaseModel):
     transfer_basis: str | None = None
     residency: str | None = None
     lineage_neighbours: list[str] = []
+    # ADR-0197: the first-slice assembler projects supplied records without
+    # re-performing any seal, so a record is operator_asserted (never
+    # capsule_verified). A caller that verifies redaction_proof_ref may upgrade it.
+    evidence_source: EvidenceSource = EvidenceSource.operator_asserted
 
 
 class DSARPackage(BaseModel):
     subject_hmac: str  # HMAC pseudonym — the raw subject id NEVER enters this artifact
     capsules: list[DSARCapsuleRecord]
     gaps: list[str]  # capsule ids known to process the subject but not reconstructable
+    #: Provenance of every entry in ``gaps`` (ADR-0197). See DSAR_GAP_EVIDENCE_SOURCE.
+    gap_evidence_source: EvidenceSource = DSAR_GAP_EVIDENCE_SOURCE
     # Intentionally NO raw subject-id / direct-identifier field (ADR-0161 D1 invariant).
 
 

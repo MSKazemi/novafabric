@@ -22,6 +22,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from ..provenance import EvidenceSource
+
 #: Compound tokens marking per-subject raw identifiers (lowercased match); aggregate text never has
 #: these. Curated to avoid false positives on plain-language aggregate summaries.
 _PER_SUBJECT_IDENTIFIER_PATTERNS: tuple[str, ...] = (
@@ -43,6 +45,7 @@ class PublicIncidentDisclosure(BaseModel):
     affected_scope: str | None = None  # aggregate impact — never per-subject data
     remediation_ref: str | None = None
     draft: bool = True  # always DRAFT — NovaFabric never publishes/notifies (I-3)
+    evidence_source: EvidenceSource = EvidenceSource.operator_asserted  # ADR-0197 (I-1)
     # Intentionally NO compliance_guaranteed / verdict / published field — adjudicates nothing.
 
 

@@ -26,6 +26,8 @@ from enum import Enum
 
 from pydantic import BaseModel
 
+from ..provenance import EvidenceSource
+
 
 class HumanInvolvement(str, Enum):
     solely_automated = "solely_automated"
@@ -64,6 +66,7 @@ class CitizenExplanation(BaseModel):
     human_involvement: str  # a HumanInvolvement value
     contest_channel_ref: str | None = None
     logic_summary_ref: str | None = None  # ref to a recorded non-proprietary logic summary
+    evidence_source: EvidenceSource = EvidenceSource.operator_asserted  # ADR-0197 (I-1)
     # Intentionally NO legal-sufficiency / verdict field — never claims the explanation suffices.
 
 

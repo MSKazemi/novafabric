@@ -20,6 +20,8 @@ from enum import Enum
 
 from pydantic import BaseModel
 
+from ..provenance import EvidenceSource
+
 
 class AccessibilityStandard(str, Enum):
     wcag_2_2_aa = "wcag_2_2_aa"
@@ -30,6 +32,7 @@ class AccessibilityClaim(BaseModel):
     declared_standard: str  # an AccessibilityStandard value — a declared claim, never a guarantee
     audit_digest: str | None = None  # ref to a declared audit (record-only) — never the contents
     export_format_check: bool = False  # exporter emitted an accessible shape (export-format only)
+    evidence_source: EvidenceSource = EvidenceSource.operator_asserted  # ADR-0197 (I-1)
     # Intentionally NO compliance_guaranteed / audit_performed / verdict field — declared claim.
 
 

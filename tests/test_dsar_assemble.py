@@ -8,10 +8,24 @@ package: capsules ordered by id (byte-identical on re-run), missing capsules rec
 from __future__ import annotations
 
 from novafabric.compliance.governance.dsar import (
+    DSAR_GAP_EVIDENCE_SOURCE,
     DSARCapsuleRecord,
     DSARPackage,
     assemble_dsar,
 )
+from novafabric.compliance.export.provenance import EvidenceSource
+
+
+def test_records_are_operator_asserted_and_gaps_unverifiable():
+    # ADR-0197 phase 2: the first-slice assembler is a pure projection over
+    # supplied records (it re-performs no seal), so each record is
+    # operator_asserted; a gap is a capsule known to process the subject but
+    # not reconstructable — an attempted-and-failed resolution → unverifiable.
+    pkg = assemble_dsar("hmac-abc", _RECS, gaps=["run-x"])
+    for rec in pkg.capsules:
+        assert rec.evidence_source is EvidenceSource.operator_asserted
+    assert DSAR_GAP_EVIDENCE_SOURCE is EvidenceSource.unverifiable
+    assert pkg.gaps == ["run-x"]
 
 _RECS = [
     {"capsule_id": "run-c", "categories": ["email"], "purpose": "support"},

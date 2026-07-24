@@ -18,6 +18,8 @@ from enum import Enum
 
 from pydantic import BaseModel
 
+from ..provenance import EvidenceSource
+
 #: Version-pinned standard tag.
 ANNEX_VIII_STANDARD = "EU AI Act Annex VIII / Art. 71 (Regulation (EU) 2024/1689)"
 
@@ -44,6 +46,10 @@ class AnnexVIIIField(BaseModel):
     source: FieldSource
     value: str | None = None  # operator-declared public value (never set for capsule_evidence)
     evidence_ref: str | None = None  # digest/ref into the sealed capsule (capsule_evidence only)
+    # ADR-0197: this crosswalk re-performs no binding, so BOTH the operator_declared
+    # and the capsule_evidence branch are operator_asserted — a supplied capsule ref
+    # is not a re-performed verification. (Distinct from the ``source`` enum above.)
+    evidence_source: EvidenceSource = EvidenceSource.operator_asserted
 
 
 class AnnexVIIIEntry(BaseModel):
@@ -52,6 +58,9 @@ class AnnexVIIIEntry(BaseModel):
     capsule_root: str
     fields: list[AnnexVIIIField]
     unmapped_required: list[str]  # required fields with no evidence/declaration (never invented)
+    #: ADR-0197 provenance of every entry in ``unmapped_required``: a required field
+    #: with neither evidence nor declaration is a checked gap → ``unverifiable`` (I-2).
+    unmapped_evidence_source: EvidenceSource = EvidenceSource.unverifiable
 
 
 def build_annex_viii_entry(

@@ -20,6 +20,11 @@ from collections.abc import Iterable
 
 from pydantic import BaseModel
 
+from ..provenance import EvidenceSource, source_for_status
+
+#: Pillar statuses denoting a checked gap (evidence expected, absent) → unverifiable.
+_MODEL_RISK_GAP_STATES = frozenset({"missing"})
+
 #: Version-pinned regime tag (carries the SR 11-7 pillars forward).
 SR_REGIME = "SR 26-2 (2026-04-17)"
 
@@ -40,6 +45,7 @@ class PillarEvidence(BaseModel):
     status: str  # "complete" | "partial" | "missing"
     source_refs: list[str] = []  # capsule-fact refs (empty when missing — never fabricated)
     reason: str | None = None  # machine-readable reason for partial/missing
+    evidence_source: EvidenceSource | None = None  # ADR-0197 provenance marker (I-1)
     # Intentionally NO verdict/score field — this records presence, never an assessment.
 
 
@@ -54,12 +60,18 @@ class ModelRiskFile(BaseModel):
 def _pillar(name: str, refs: Iterable[str], *, is_partial: bool) -> PillarEvidence:
     ref_list = list(refs)
     if not ref_list:
-        return PillarEvidence(pillar=name, status="missing", source_refs=[],
-                              reason=_MISSING_REASON.format(pillar=name))
-    if is_partial:
-        return PillarEvidence(pillar=name, status="partial", source_refs=ref_list,
-                              reason=_PARTIAL_REASON.format(pillar=name))
-    return PillarEvidence(pillar=name, status="complete", source_refs=ref_list)
+        status, reason = "missing", _MISSING_REASON.format(pillar=name)
+    elif is_partial:
+        status, reason = "partial", _PARTIAL_REASON.format(pillar=name)
+    else:
+        status, reason = "complete", None
+    return PillarEvidence(
+        pillar=name,
+        status=status,
+        source_refs=ref_list,
+        reason=reason,
+        evidence_source=source_for_status(status, gap_states=_MODEL_RISK_GAP_STATES),
+    )
 
 
 def build_model_risk_file(

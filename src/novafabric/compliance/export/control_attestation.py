@@ -23,6 +23,8 @@ from enum import Enum
 
 from pydantic import BaseModel
 
+from .provenance import EvidenceSource
+
 #: The shipped NovaFabric governance-evidence surfaces a control can map to.
 GOVERNANCE_EVIDENCE_KINDS: tuple[str, ...] = (
     "sealing",
@@ -38,11 +40,24 @@ class ControlStatus(str, Enum):
     declared = "declared"
 
 
+#: ADR-0197 provenance for each control status. This exporter is a pure projection
+#: over supplied governance-evidence refs — it re-performs no binding — so an
+#: ``evidenced`` control is ``operator_asserted`` (its ref is carried, not
+#: re-performed), never ``capsule_verified``. A ``not_evidenced`` control is a
+#: checked gap (evidence expected for its mapped kind, absent) → ``unverifiable``.
+_STATUS_PROVENANCE: dict[ControlStatus, EvidenceSource] = {
+    ControlStatus.evidenced: EvidenceSource.operator_asserted,
+    ControlStatus.declared: EvidenceSource.operator_asserted,
+    ControlStatus.not_evidenced: EvidenceSource.unverifiable,
+}
+
+
 class ControlAttestationEntry(BaseModel):
     control_id: str
     evidence_kind: str | None = None  # the governance surface this control maps to, if any
     status: ControlStatus
     evidence_ref: str | None = None  # ref to the present evidence (evidenced only) — never a value
+    evidence_source: EvidenceSource | None = None  # ADR-0197 provenance marker (I-1)
 
 
 class ControlAttestationPack(BaseModel):
@@ -84,6 +99,7 @@ def build_control_attestation(
             status = ControlStatus.not_evidenced
         entries.append(ControlAttestationEntry(
             control_id=cid, evidence_kind=ekind, status=status, evidence_ref=ref,
+            evidence_source=_STATUS_PROVENANCE[status],
         ))
         summary[status.value] += 1
 

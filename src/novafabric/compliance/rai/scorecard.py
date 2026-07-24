@@ -16,6 +16,11 @@ from enum import Enum
 
 from pydantic import BaseModel
 
+from novafabric.compliance.export.provenance import EvidenceSource, source_for_status
+
+#: Coverage states denoting a checked gap (dimension applicable, no evidence) → unverifiable.
+_RAI_GAP_STATES = frozenset({"unsupported"})
+
 #: The Responsible-AI dimensions, in fixed order.
 RAI_DIMENSIONS: tuple[str, ...] = (
     "fairness",
@@ -40,6 +45,7 @@ class ScorecardCell(BaseModel):
     dimension: str
     coverage: CellCoverage
     evidence_refs: list[str] = []
+    evidence_source: EvidenceSource | None = None  # ADR-0197 provenance marker (I-1)
     # Intentionally NO score/rating/grade field — coverage, never a responsibility score.
 
 
@@ -74,7 +80,10 @@ def build_rai_scorecard(
             coverage = CellCoverage.partial if dim in partial_set else CellCoverage.supported
         else:
             coverage = CellCoverage.unsupported
-        cells.append(ScorecardCell(dimension=dim, coverage=coverage, evidence_refs=refs))
+        cells.append(ScorecardCell(
+            dimension=dim, coverage=coverage, evidence_refs=refs,
+            evidence_source=source_for_status(coverage.value, gap_states=_RAI_GAP_STATES),
+        ))
 
     summary = {state.value: 0 for state in CellCoverage}
     for cell in cells:

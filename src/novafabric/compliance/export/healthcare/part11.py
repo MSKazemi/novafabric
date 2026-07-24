@@ -18,6 +18,11 @@ from collections.abc import Mapping
 
 from pydantic import BaseModel
 
+from ..provenance import EvidenceSource, source_for_status
+
+#: Part 11 statuses that denote a checked gap (evidence expected, absent) → unverifiable.
+_PART11_GAP_STATES = frozenset({"missing"})
+
 #: Binding compliance & medical-honesty banner (ADR-0160 — "in every artifact and CLI output").
 MEDICAL_HONESTY_BANNER = (
     "This artifact SUPPORTS a qualified human's regulated determination; it does not guarantee "
@@ -50,6 +55,7 @@ class Part11Field(BaseModel):
     status: str  # "complete" | "partial" | "missing"
     source_ref: str | None = None  # capsule-fact ref (absent when missing — never fabricated)
     reason: str | None = None
+    evidence_source: EvidenceSource | None = None  # ADR-0197 provenance marker (I-1)
 
 
 class Part11Record(BaseModel):
@@ -80,12 +86,17 @@ def build_part11_record(
             fields.append(Part11Field(
                 element=name, status="partial",
                 source_ref=elements.get(name), reason=partial_map[name],
+                evidence_source=source_for_status("partial", gap_states=_PART11_GAP_STATES),
             ))
         elif name in elements:
-            fields.append(Part11Field(element=name, status="complete", source_ref=elements[name]))
+            fields.append(Part11Field(
+                element=name, status="complete", source_ref=elements[name],
+                evidence_source=source_for_status("complete", gap_states=_PART11_GAP_STATES),
+            ))
         else:
             fields.append(Part11Field(
                 element=name, status="missing", reason=_MISSING_REASON.format(element=name),
+                evidence_source=source_for_status("missing", gap_states=_PART11_GAP_STATES),
             ))
 
     summary = {"complete": 0, "partial": 0, "missing": 0}
