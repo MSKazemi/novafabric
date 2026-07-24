@@ -9,6 +9,15 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Changed
+- **Governance: campaign ADRs 0202–0211 formally accepted** (2026-07-24). The
+  nine still-`proposed` top-10-must-have ADRs (Python SDK, ingest hardening,
+  content search, webhook registry, batch import, usage metering, extended-event
+  wiring, REST erasure, pg-restore + schema-skew guard) were flipped
+  `proposed → accepted` after a delegated-authority review verified each against
+  its shipped code and passing tests (their P1 slices shipped experimental and
+  released in v0.64.0). Per-ADR P2 items remain future work. Docs-only.
+
 ## [0.67.0] — 2026-07-24
 
 ### Added
