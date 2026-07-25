@@ -9,6 +9,29 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.75.0] — 2026-07-25
+
+### Added
+- **Verifiable transparency log — checkpoint + witness cosigning (ADR-0097
+  §NF-042/043, experimental).** The structural core of the witness-cosigned
+  transparency log ships in `trust/novaseal/witness.py`, building on the existing
+  `MerkleLog` consistency proofs (no new tree machinery):
+  - **Checkpoint note (§NF-042):** a C2SP-style `tlog-checkpoint` — the canonical
+    body `<origin>\n<tree_size>\n<base64(root)>\n` that witnesses cosign.
+  - **Witness cosigning (§NF-043):** a `Witness` holds the last checkpoint it
+    cosigned per log origin and cosigns a new one **only** when it is a verifiable
+    append-only extension (a valid consistency proof from the last size to the new
+    size). A same-size checkpoint with a different root — a split view — is
+    **refused** (`WitnessRefusedError`); so is a size regression or a
+    missing/invalid proof. This is the anti-split-view / non-equivocation core.
+  - **K-of-M quorum:** `verify_quorum(note, witness_pubkeys, k)` counts only valid
+    Ed25519 cosignatures from known witnesses (duplicates and unknown signers never
+    inflate the quorum), so a head is trusted only with a configurable quorum.
+  - Verified with a real `MerkleLog` extension end-to-end. This ADR was
+    `proposed`; accepted (first slice) under delegated authority — §NF-041 tiles,
+    §NF-044 `nova monitor`, §NF-045 COSE receipts, §NF-047 bundle are later slices.
+    Zero new dependencies (Ed25519 via the existing `cryptography`).
+
 ## [0.74.0] — 2026-07-25
 
 ### Fixed
