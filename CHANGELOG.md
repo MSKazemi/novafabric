@@ -9,6 +9,27 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.87.0] — 2026-07-25
+
+### Added
+- **GPAI Art. 53 Model Documentation Form exporter (ADR-0107 §NF-093, experimental).**
+  `compliance/export/gpai53.py` keeps the Art. 53(1) technical documentation as a
+  **sealed, hash-chained revision history**:
+  - `build_gpai53_form(model_name, initial_fields, created_at)` seals the first revision;
+    `append_revision(form, fields, created_at)` seals each material change, chained onto
+    the previous revision's digest. Each revision is canonically hashed via the shared
+    `novafabric._hashutil` and carries its predecessor's digest in `prev_digest`.
+  - `verify_history(form)` recomputes the chain and returns `False` on a silent edit to a
+    sealed revision or a broken `prev_digest` link — a tamper-evident material-change
+    record.
+  - Each revision carries a **10-year `retention_until`** (`GPAI_ART53_RETENTION_YEARS`),
+    Art. 53's documentation-retention semantics.
+  - `diff_revisions(older, newer)` produces a field-level diff (`added`/`removed`/
+    `modified`); unchanged fields are not reported.
+  - **This completes ADR-0107's pure-code exporter set** (NF-090/091/093/094/095; NF-092
+    served by the shipped `AnnexIVExporter`); only NF-097 (NIST GenAI/CSA mapper) remains
+    future design. Zero new dependencies.
+
 ## [0.86.0] — 2026-07-25
 
 ### Added
