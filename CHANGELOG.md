@@ -9,6 +9,26 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.78.0] — 2026-07-25
+
+### Added
+- **Reproducible-build eval provenance manifest (ADR-0100 §NF-023, experimental).**
+  `eval/provenance_manifest.py` pins an eval suite's full reproducibility closure
+  — container image digest, kernel/determinism flags, seeds, and dataset+split
+  hashes — and **content-addresses that closure** (excluding the timestamp, so two
+  identical closures share a `manifest_digest`). It is an Evidence Bundle payload
+  that composes with the ADR-0099 eval card.
+  - `verify_eval_closure(observed, manifest)` is a **pure hashing/comparison**
+    check (no GPU, no execution) that reports **exactly which closure element
+    diverged** — `seed:torch`, `dataset:mmlu`, `flag:tf32`, or `container_digest`
+    — rather than a bare pass/fail; robust to a partial observed closure and never
+    raises.
+  This is the verifiable half — the "reproducible build as copyleft" carrier. The
+  GPU-gated bitwise-attestation parts of ADR-0100 (NF-012/013/014) and the
+  empirical rebuild-and-reproduce validation (SPK-DET-5) remain future design.
+  ADR-0100 was `proposed`; accepted (NF-023 slice) under delegated authority. Zero
+  new dependencies.
+
 ## [0.77.0] — 2026-07-25
 
 ### Added
