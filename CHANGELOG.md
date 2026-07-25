@@ -9,6 +9,26 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.80.0] — 2026-07-25
+
+### Added
+- **EU AI Act Art. 12 automatic-logging conformance exporter (ADR-0107 NF-090,
+  experimental).** `compliance/export/euaiact_art12.py` adds a render-from-
+  sealed-facts exporter (`build_art12_report`) that maps a run capsule's captured
+  evidence to the six Art. 12 record-keeping requirements — automatic event
+  recording, period of use, traceability, input/output records, tamper-evidence,
+  and retention — and marks each `complete` / `missing` with an ADR-0197
+  `evidence_source`:
+  - capsule-derived facts (event streams, start/end timestamps, trace, I/O
+    records, seal) are `capsule_verified` with a re-performable reference when
+    present, `unverifiable` when absent (never silently downgraded);
+  - operator-declared log retention is `operator_asserted`.
+  It renders evidence that *supports* an Art. 12 assessment — no verdict field, it
+  never certifies conformity — and runs offline against a local capsule (ADR-0107
+  R-5). A `nova export-*` CLI wrapper is a documented follow-on. ADR-0107 was
+  `proposed`; accepted (NF-090 slice) under delegated authority; its other six
+  exporters remain future design. Zero new dependencies.
+
 ## [0.79.0] — 2026-07-25
 
 ### Added
