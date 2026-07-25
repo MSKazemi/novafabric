@@ -9,6 +9,30 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.84.0] — 2026-07-25
+
+### Added
+- **ISO/IEC 42001 + 42005 evidence exporters (ADR-0107 §NF-095, experimental).**
+  `compliance/export/iso42001.py` — a pure projection over evidence NovaFabric already
+  holds (an assembler, not a content generator):
+  - `build_iso42001_mapping(catalog, present_evidence, *, capsule_ref, declared_controls)`
+    binds a *declared* ISO/IEC 42001 control catalog to the governance evidence *present*
+    for a capsule, marking each control `evidenced` / `not_evidenced` / `declared` and
+    carrying a re-performable `EvidenceSourceRef` (ADR-0197) for evidenced controls. It
+    reuses the ADR-0087/ADR-0170 criterion→evidence pattern (`control_attestation.py`): a
+    control's evidence is *bound*, never fabricated; an absent mapping is an honest
+    `not_evidenced` gap; `evidenced` without a supplied ref degrades to `not_evidenced`
+    (`unverifiable`). It certifies presence of evidence, never that a control is adequate.
+  - `build_iso42005_impact_assessment(system_name, *, sourced_sections, operator_sections)`
+    emits a structured ISO/IEC 42005 AI-system impact-assessment skeleton — six canonical
+    sections (intended purpose, affected stakeholders, potential harms, likelihood/severity,
+    mitigations, residual risk) always present so a gap is visible — each recording
+    capsule-sourced (`capsule_verified` + ref) vs operator-declared provenance;
+    non-canonical section names are ignored, never fabricated.
+  - NF-092 (Annex IV) is already served by the shipped `AnnexIVExporter`; NF-091/093/094/097
+    remain future design. ADR-0107 §NF-095 marked shipped under delegated authority. Zero
+    new dependencies.
+
 ## [0.83.0] — 2026-07-25
 
 ### Added
