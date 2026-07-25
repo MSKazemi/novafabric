@@ -9,6 +9,30 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.81.0] — 2026-07-25
+
+### Added
+- **W3C `did:key` + Verifiable Credentials for agent identity (ADR-0075,
+  experimental).** `trust/did.py` implements the self-certifying `did:key` method
+  and offline credential verification:
+  - `did_key_from_public_key` / `public_key_from_did_key` — encode/resolve an
+    Ed25519 `did:key` (multibase base58btc + multicodec). Resolution is pure
+    decoding — **no network, no registry** — and produces the standard
+    `did:key:z6Mk…` form.
+  - `VerifiableCredential` + `issue_credential` / `verify_credential` — an
+    authorization credential (issuer DID attests a subject DID holds a scope of
+    capability URIs until an expiry) with an Ed25519 proof over the canonical VC.
+    Verification resolves the issuer DID to its key, checks the proof, and checks
+    expiry; it rejects a tampered authorization, a credential signed by a key other
+    than the one the issuer DID encodes, and an expired credential — and never
+    raises. `issue_credential` refuses to sign in a DID's name with a mismatched key.
+  - **base58btc is implemented in-module (stdlib only)** and signatures reuse the
+    existing `cryptography` Ed25519 — **no new runtime dependency** (ADR-0075).
+  This composes with the ADR-0106 delegation chain: a grant's `grant_ref` can point
+  at a VC issued here. `did:web` anchoring and full W3C VC 2.0 JSON-LD serialization
+  remain future design. ADR-0075 was `Future Design`; accepted (first slice) under
+  delegated authority.
+
 ## [0.80.0] — 2026-07-25
 
 ### Added
