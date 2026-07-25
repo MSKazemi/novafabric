@@ -56,6 +56,39 @@ def backend() -> MockKmsBackend:
     return MockKmsBackend()
 
 
+class _CloudKmsError(RuntimeError):
+    """Stand-in for a cloud-SDK unwrap failure (botocore ClientError / Azure / GCP)."""
+
+
+class _FlakyCloudBackend:
+    """A wrap-capable backend whose unwrap raises a non-InvalidTag SDK-style error.
+
+    Mirrors the real AWS/Azure/GCP wrapping backends, which raise their own SDK
+    exceptions (not cryptography.InvalidTag) when a KMS Decrypt fails.
+    """
+
+    def __init__(self) -> None:
+        self._inner = MockKmsBackend()
+
+    def wrap_key(self, plaintext_key: bytes) -> bytes:
+        return self._inner.wrap_key(plaintext_key)
+
+    def unwrap_key(self, wrapped_key: bytes) -> bytes:
+        raise _CloudKmsError("KMS Decrypt failed: InvalidCiphertextException")
+
+    def kek_ref(self) -> str:
+        return "flaky-cloud-kms:test"
+
+
+def test_cloud_backend_unwrap_failure_becomes_dek_unwrap_error() -> None:
+    # Security-review regression (v0.74.0): a cloud KMS backend raises its own SDK
+    # exception on unwrap failure, not cryptography.InvalidTag. decrypt_blob must
+    # still surface a clean DekUnwrapError and never leak the raw SDK exception.
+    blob = encrypt_blob(PLAINTEXT, backend=_FlakyCloudBackend())
+    with pytest.raises(DekUnwrapError):
+        decrypt_blob(blob, backend=_FlakyCloudBackend())
+
+
 # ---------------------------------------------------------------------------
 # Round-trip
 # ---------------------------------------------------------------------------

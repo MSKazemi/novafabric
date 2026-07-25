@@ -227,10 +227,20 @@ def decrypt_blob(blob: EncryptedBlob, *, backend: KeyWrappingBackend) -> bytes:
         )
     try:
         dek = kms.unwrap_key(wrapped_dek)
-    except InvalidTag as exc:
+    except EnvelopeEncryptionError:
+        # Already a typed envelope error from the backend — propagate as-is.
+        raise
+    except Exception as exc:
+        # Any unwrap failure is a DEK-unwrap failure — regardless of which backend
+        # raised it. The local/mock backends raise cryptography.InvalidTag; the
+        # AWS/Azure/GCP backends raise their own SDK exceptions (botocore
+        # ClientError, Azure/GCP errors, transport failures). All of them mean
+        # "the DEK could not be unwrapped", and none must leak a raw SDK exception
+        # (or its message, which can carry backend internals) to the caller.
         raise DekUnwrapError(
             f"Backend {type(backend).__name__} failed to unwrap the DEK "
-            f"(kek_ref={blob.kek_ref!r}): wrapped key tampered or wrong KEK."
+            f"(kek_ref={blob.kek_ref!r}): wrapped key tampered, wrong KEK, or the "
+            "KMS backend rejected/could not complete the unwrap."
         ) from exc
     try:
         return AESGCM(dek).decrypt(blob.nonce, ciphertext, None)

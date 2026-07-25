@@ -9,6 +9,27 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.74.0] — 2026-07-25
+
+### Fixed
+- **Security review (ADR-0185 envelope encryption + cloud KMS): cloud-KMS unwrap
+  failures now surface a clean `DekUnwrapError`.** A delegated-authority security
+  audit of the envelope-encryption + AWS/Azure/GCP wrap surface found a real
+  robustness gap introduced by the v0.71–v0.72 cloud-KMS backends: `decrypt_blob`
+  only caught `cryptography.InvalidTag` around `kms.unwrap_key()`, but the cloud
+  backends raise their own SDK exceptions (botocore `ClientError`, Azure/GCP
+  errors, transport failures) on a failed KMS Decrypt. A tampered or failed cloud
+  unwrap would therefore leak a raw SDK exception — and its message, which can
+  carry backend internals — instead of the typed `DekUnwrapError`. `decrypt_blob`
+  now treats **any** unwrap failure from **any** backend as `DekUnwrapError`
+  (typed envelope errors still propagate as-is), with the original exception
+  chained for diagnostics but never exposed in the returned error message.
+  - The rest of the envelope-encryption module was reviewed and is sound:
+    fresh 256-bit DEK + 96-bit random nonce per object (no GCM nonce reuse),
+    AES-256-GCM AEAD, ciphertext-hash integrity check before any KMS call, and
+    correct single-key crypto-shred. Human Security-Architect ratification remains
+    recommended before production.
+
 ## [0.73.0] — 2026-07-25
 
 ### Added
