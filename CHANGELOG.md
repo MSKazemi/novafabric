@@ -9,6 +9,29 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.83.0] — 2026-07-25
+
+### Added
+- **Multi-region log sovereignty — jurisdiction site-seals + residency policy
+  (ADR-0077, first slice, experimental).** `compliance/sovereignty.py` ships the
+  pure-code, infrastructure-free core of jurisdictional data residency:
+  - **Cryptographic proof of residency.** `issue_site_seal(...)` mints a
+    jurisdiction-scoped Ed25519 countersignature over a domain-separated
+    `(jurisdiction, content_digest)` tuple; `verify_site_seal(...)` verifies it
+    against the public key *registered for the jurisdiction the seal claims*. A
+    capsule that claims `jurisdiction=EU` but was sealed by any other key — or has a
+    tampered digest, or an unknown jurisdiction — is rejected. The residency claim
+    cannot be forged, and verification is offline with no infrastructure.
+  - **Residency-respecting reads.** `ResidencyPolicy` + `check_cross_jurisdiction_read(...)`
+    allow same-jurisdiction reads always and deny a cross-border read unless the policy
+    explicitly grants that (directional) border — the storage-abstraction gate of
+    ADR-0077 §2 as a pure decision function.
+  - **Deferred (infra-gated, honestly unshipped):** the `jurisdiction` capture-time
+    metadata field, per-jurisdiction storage-backend routing (needs live per-region
+    Postgres/S3), and the jurisdiction-scoped lineage traversal filter. All consume
+    the shipped format/policy with **no format change**. ADR-0077 moved
+    `Future Design → Accepted` for this slice under delegated authority.
+
 ## [0.82.0] — 2026-07-25
 
 ### Added
