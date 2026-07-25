@@ -9,6 +9,28 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.77.0] — 2026-07-25
+
+### Added
+- **Fine-grained lineage v2 — row + transformation facets (ADR-0109 NF-061/062,
+  experimental).** Two additive lineage facets in `lineage/_facets_v2.py` that ride
+  the existing `LineageEdge.facets` field (no `LineageStore` signature change):
+  - **`transform` facet (NF-062):** a content-addressed (`sha256:`) reference to
+    the operation behind a lineage edge, plus a coarse `op_kind` — the sealed
+    capsule keeps the operation, the facet stores only its digest.
+  - **`rows` facet (NF-061):** which rows influenced an output, by **hash of the
+    row key** (bounded at 256, truncation downgrades to `heuristic`).
+  - **Privacy invariant I-2 (load-bearing): names/keys/hashes, never values.**
+    Neither facet ever stores a raw row key, cell value, literal, or the
+    operation's contents — tested against secret-bearing inputs. Builders are
+    **fail-open (I-3):** they return a facet or `None` and never raise, so facet
+    extraction can never break a lineage write; facets round-trip through the
+    existing field (I-4).
+  This ships the *verifiable half*; auto-inferring these facets from a live run
+  (the capture half), the NF-063 hot index, and the NF-064 KuzuDB tier remain later
+  waves. ADR-0109 was `proposed`; accepted (first slice) under delegated authority.
+  Zero new dependencies.
+
 ## [0.76.0] — 2026-07-25
 
 ### Added
