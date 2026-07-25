@@ -9,6 +9,28 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.86.0] — 2026-07-25
+
+### Added
+- **EU AI Act Art. 50 marking log + dual-layer C2PA/SynthID receipt (ADR-0107 §NF-094,
+  experimental).** `compliance/export/art50_marking.py` logs each AI-disclosure/marking
+  event and builds a *dual-layer* provenance receipt:
+  - `build_marking_log(events)` records each Art. 50 marking event (`content_id`,
+    `methods`, `marked_as`, `marked_at`, `run_id`) as sealed-ready evidence; a marking
+    with no `MarkingMethod` raises (a disclosure with no method is not a disclosure).
+  - `attach_synthid_presence(manifest, present=…, detector=…, verified_at=…)` injects a
+    **SynthID-presence assertion inside the shipped ADR-0074 C2PA manifest**
+    (non-mutating — returns a copy), and `verify_synthid_assertion(manifest)` reads it
+    back. That read-back *is* NovaFabric's verification of the C2PA assertion. Per
+    ADR-0107 §NF-094, NovaFabric **records and verifies** the presence claim but **never
+    generates or embeds a SynthID watermark** (proprietary — verify-only); the assertion
+    carries that note explicitly.
+  - `build_dual_layer_receipt(...)` bundles layer 1 (the C2PA manifest with the SynthID
+    assertion) and layer 2 (the Art. 50 marking log) into a `DualLayerReceipt`.
+  - Fourth ADR-0107 exporter shipped (after NF-090/NF-095/NF-091; NF-092 served by
+    `AnnexIVExporter`). NF-093/097 remain future design. Zero new dependencies; integrates
+    with the shipped `C2PAManifestExporter`.
+
 ## [0.85.0] — 2026-07-25
 
 ### Added
