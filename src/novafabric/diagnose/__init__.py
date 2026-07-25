@@ -25,6 +25,12 @@ from novafabric.diagnose.causal_graph import (
     CausalRootCandidate,
     causal_root_candidates,
 )
+from novafabric.diagnose.claim_audit import (
+    ClaimAudit,
+    ClaimFinding,
+    ClaimGrounding,
+    audit_claims,
+)
 from novafabric.diagnose.verify import (
     HypothesisVerification,
     UnmappableHypothesisError,
@@ -37,12 +43,16 @@ __all__ = [
     "CapsuleNotFoundError",
     "CausalAttribution",
     "CausalRootCandidate",
+    "ClaimAudit",
+    "ClaimFinding",
+    "ClaimGrounding",
     "HypothesisVerification",
     "RunAttribution",
     "StepAttribution",
     "UnmappableHypothesisError",
     "Verdict",
     "attribute_failure",
+    "audit_claims",
     "causal_root_candidates",
     "verify_hypothesis",
 ]

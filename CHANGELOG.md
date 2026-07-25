@@ -9,6 +9,21 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.92.0] — 2026-07-25
+
+### Added
+- **Span-level claim grounding audit (ADR-0101 §NF-021, structural slice, experimental).**
+  `diagnose/claim_audit.py` adds `audit_claims(capsule_dir)`: over a capsule's recorded
+  span tree, a model/generation span is a **claim** and a tool/retrieval span is
+  **evidence**; a claim with no evidence span before it on the answer path is marked
+  **`ungrounded`** — a hallucination-*risk* finding (structural, deterministic, no NLP; not
+  a semantic truth judgment). Grounded claims carry their supporting evidence ids. It
+  reuses the diagnose step loader and composes with the causal-graph attribution
+  (v0.90.0); an ungrounded claim is the kind of scored finding the ADR-0099 eval layer
+  consumes. Exposed via `novafabric.diagnose` (`audit_claims`, `ClaimAudit`,
+  `ClaimFinding`, `ClaimGrounding`). The *conflicting*-claim (semantic) half of NF-021
+  stays future design. Zero new dependencies.
+
 ## [0.91.0] — 2026-07-25
 
 ### Added
