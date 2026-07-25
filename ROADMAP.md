@@ -23,6 +23,7 @@
 
 | Version | Feature | Status |
 |---|---|---|
+| v0.72.0 | **Azure Key Vault + GCP Cloud KMS envelope-wrapping backends (ADR-0185)** — completes the cloud-KMS trio (`AzureKvWrappingBackend`, `GcpKmsWrappingBackend`) alongside v0.71.0's AWS backend; wired into `envelope_encryption`, verified via injectable in-memory SDK-contract fakes (live runs need cloud credentials). No new runtime deps. | **experimental** |
 | v0.71.0 | **AWS KMS envelope-wrapping backend (`AwsKmsWrappingBackend`, ADR-0185)** — the AWS branch of the KMS DEK-wrap path (previously planned/infra-gated) implemented via KMS Encrypt/Decrypt, wired into `envelope_encryption`, verified end-to-end against an in-process AWS mock (moto, Tier-A dev dep). Azure/GCP wrap paths remain planned. | **experimental** |
 | v0.70.0 | **`JanusGraphLineageStore` verified + 2 bugs fixed (ADR-0053)** — first live verification of the Gremlin backend via testcontainers surfaced and fixed the GraphSON-serializer crash and the missing `.emit()` in provenance/blast_radius. **All four at-scale lineage backends (Kuzu, Postgres, AGE, JanusGraph) now implemented + verified; zero lineage-backend stubs remain.** | **experimental** |
 | v0.69.0 | **`AGELineageStore` — Apache AGE openCypher lineage backend (ADR-0053)** — the `age.py` stub is now a real backend (AGE property graph, openCypher variable-length paths), testcontainers-parity-tested vs SQLite against the `apache/age` image. Three at-scale backends now exist (Kuzu, Postgres, AGE); only the JanusGraph stub remains (redundant). Zero new deps. | **experimental** |

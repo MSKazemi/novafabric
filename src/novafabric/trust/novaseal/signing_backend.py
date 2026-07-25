@@ -18,8 +18,11 @@ ADR-0185 (experimental) adds an *additive, optional* KMS capability protocol,
 ``KeyWrappingBackend`` (``wrap_key``/``unwrap_key``/``kek_ref``), used by
 ``novafabric.trust.envelope_encryption`` for per-object DEK wrapping.  It is
 implemented by ``LocalSigningBackend`` (when given a ``kek_path``), by the
-test-only ``MockKmsBackend``, and by ``AwsKmsWrappingBackend`` (real AWS KMS
-``Encrypt``/``Decrypt``, moto-tested; the Azure/GCP wrap paths remain planned).
+test-only ``MockKmsBackend``, and by the three cloud backends
+``AwsKmsWrappingBackend`` (KMS Encrypt/Decrypt, moto-tested),
+``AzureKvWrappingBackend`` (Key Vault wrap/unwrap) and ``GcpKmsWrappingBackend``
+(Cloud KMS encrypt/decrypt) — the cloud backends are verified against in-memory
+fakes of each SDK contract; end-to-end runs need live cloud credentials.
 The ``SigningBackend`` Protocol itself is unchanged.
 """
 
@@ -56,11 +59,13 @@ class KeyWrappingBackend(Protocol):
     envelope encryption (``novafabric.trust.envelope_encryption`` raises
     ``NotImplementedError`` with a clear message for such backends).
 
-    Implemented today by :class:`LocalSigningBackend` (KEK from a local key
-    file, for dev/test parity) and :class:`MockKmsBackend` (in-memory KEK, for
-    tests).  The AWS/Azure/GCP wrap paths (KMS Encrypt/Decrypt, Key Vault
-    wrapKey/unwrapKey, Cloud KMS encrypt/decrypt) are **planned** and
-    infra-gated on live cloud credentials (ADR-0185 Bucket C).
+    Implemented by :class:`LocalSigningBackend` (KEK from a local key file, for
+    dev/test parity), :class:`MockKmsBackend` (in-memory KEK, for tests), and the
+    three cloud backends :class:`AwsKmsWrappingBackend` (KMS Encrypt/Decrypt),
+    :class:`AzureKvWrappingBackend` (Key Vault wrapKey/unwrapKey) and
+    :class:`GcpKmsWrappingBackend` (Cloud KMS encrypt/decrypt). The cloud backends
+    are verified against in-memory SDK-contract fakes; live end-to-end runs need
+    real cloud credentials (ADR-0185 Bucket C).
     """
 
     def wrap_key(self, plaintext_key: bytes) -> bytes:
@@ -434,3 +439,132 @@ class AwsKmsWrappingBackend:
     def kek_ref(self) -> str:
         """Return a stable, non-secret identifier for the KMS KEK (region + key id)."""
         return f"aws-kms:{self._region}:{self._key_id}"
+
+
+# ---------------------------------------------------------------------------
+# Azure Key Vault key-wrapping backend (envelope encryption, ADR-0185)
+# ---------------------------------------------------------------------------
+
+class AzureKvWrappingBackend:
+    """:class:`KeyWrappingBackend` backed by an Azure Key Vault key.
+
+    Wraps a data-encryption key via the Key Vault ``wrap_key``/``unwrap_key``
+    crypto operations (RSA-OAEP-256 by default), so the KEK never leaves the
+    vault. The Azure branch of ADR-0185.
+
+    Args:
+        key_id: Full Key Vault key identifier
+            (``https://<vault>.vault.azure.net/keys/<name>/<version>``).
+        credential: An ``azure.identity`` credential (e.g. ``DefaultAzureCredential``);
+            required unless *client* is injected.
+        algorithm: Key-wrap algorithm name (default ``"RSA-OAEP-256"``).
+        client: Optional pre-built ``CryptographyClient`` — injected in tests; in
+            production it is lazily constructed from *key_id* + *credential*.
+
+    Requires: ``pip install novafabric[seal-azure]``.
+    """
+
+    def __init__(
+        self,
+        key_id: str,
+        credential: Any = None,
+        algorithm: str = "RSA-OAEP-256",
+        client: Any = None,
+    ) -> None:
+        self._key_id = key_id
+        self._credential = credential
+        self._algorithm = algorithm
+        self._client = client
+
+    def _get_client(self) -> Any:
+        if self._client is None:
+            try:
+                from azure.keyvault.keys.crypto import CryptographyClient
+            except ImportError as exc:
+                raise ImportError(
+                    "Azure Key Vault backend requires azure-keyvault-keys + azure-identity. "
+                    "Install with: pip install novafabric[seal-azure]"
+                ) from exc
+            if self._credential is None:
+                raise ValueError(
+                    "AzureKvWrappingBackend needs a credential (or an injected client)"
+                )
+            self._client = CryptographyClient(self._key_id, self._credential)
+        return self._client
+
+    def _algo(self) -> Any:
+        # Resolve the SDK algorithm enum member lazily; fall back to the raw name
+        # (fakes accept a plain string).
+        try:
+            from azure.keyvault.keys.crypto import KeyWrapAlgorithm
+
+            member = self._algorithm.replace("-", "_").lower()
+            return getattr(KeyWrapAlgorithm, member, self._algorithm)
+        except ImportError:
+            return self._algorithm
+
+    def wrap_key(self, plaintext_key: bytes) -> bytes:
+        """Wrap *plaintext_key* via Key Vault ``wrap_key``; return the encrypted key bytes."""
+        return bytes(self._get_client().wrap_key(self._algo(), plaintext_key).encrypted_key)
+
+    def unwrap_key(self, wrapped_key: bytes) -> bytes:
+        """Unwrap *wrapped_key* via Key Vault ``unwrap_key``; return the plaintext key."""
+        return bytes(self._get_client().unwrap_key(self._algo(), wrapped_key).key)
+
+    def kek_ref(self) -> str:
+        """Return a stable, non-secret identifier for the Key Vault KEK."""
+        return f"azure-kv:{self._key_id}"
+
+
+# ---------------------------------------------------------------------------
+# GCP Cloud KMS key-wrapping backend (envelope encryption, ADR-0185)
+# ---------------------------------------------------------------------------
+
+class GcpKmsWrappingBackend:
+    """:class:`KeyWrappingBackend` backed by a GCP Cloud KMS symmetric key.
+
+    Wraps a data-encryption key via Cloud KMS ``encrypt``/``decrypt``, so the KEK
+    never leaves Cloud KMS. The GCP branch of ADR-0185.
+
+    Args:
+        key_name: Full Cloud KMS crypto-key resource name
+            (``projects/*/locations/*/keyRings/*/cryptoKeys/*``).
+        client: Optional pre-built ``KeyManagementServiceClient`` — injected in
+            tests; in production it is lazily constructed.
+
+    Requires: ``pip install novafabric[seal-gcp]``.
+    """
+
+    def __init__(self, key_name: str, client: Any = None) -> None:
+        self._key_name = key_name
+        self._client = client
+
+    def _get_client(self) -> Any:
+        if self._client is None:
+            try:
+                from google.cloud import kms
+            except ImportError as exc:
+                raise ImportError(
+                    "GCP Cloud KMS backend requires google-cloud-kms. "
+                    "Install with: pip install novafabric[seal-gcp]"
+                ) from exc
+            self._client = kms.KeyManagementServiceClient()
+        return self._client
+
+    def wrap_key(self, plaintext_key: bytes) -> bytes:
+        """Wrap *plaintext_key* via Cloud KMS ``encrypt``; return the ciphertext bytes."""
+        resp = self._get_client().encrypt(
+            request={"name": self._key_name, "plaintext": plaintext_key}
+        )
+        return bytes(resp.ciphertext)
+
+    def unwrap_key(self, wrapped_key: bytes) -> bytes:
+        """Unwrap *wrapped_key* via Cloud KMS ``decrypt``; return the plaintext key."""
+        resp = self._get_client().decrypt(
+            request={"name": self._key_name, "ciphertext": wrapped_key}
+        )
+        return bytes(resp.plaintext)
+
+    def kek_ref(self) -> str:
+        """Return a stable, non-secret identifier for the Cloud KMS KEK."""
+        return f"gcp-kms:{self._key_name}"

@@ -9,6 +9,25 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.72.0] — 2026-07-25
+
+### Added
+- **Azure Key Vault + GCP Cloud KMS envelope-wrapping backends (ADR-0185,
+  experimental) — completing the cloud-KMS trio.** After v0.71.0's
+  `AwsKmsWrappingBackend`, `trust/novaseal/signing_backend.py` now also ships
+  `AzureKvWrappingBackend` (Key Vault `wrap_key`/`unwrap_key`, RSA-OAEP-256) and
+  `GcpKmsWrappingBackend` (Cloud KMS `encrypt`/`decrypt`). Both satisfy the
+  `KeyWrappingBackend` protocol and are accepted by
+  `novafabric.trust.envelope_encryption`, so per-object DEK wrapping now works
+  against all three major clouds. `kek_ref()` returns a stable non-secret
+  `azure-kv:<key-id>` / `gcp-kms:<resource-name>` identifier.
+  - Each backend takes an **injectable client**, so it is verified locally against
+    an in-memory fake implementing the SDK's method contract with a real AES-GCM
+    round-trip (wrap/unwrap symmetry + full `encrypt_blob`/`decrypt_blob`). This
+    exercises the integration code path honestly; **end-to-end against a live Azure
+    Key Vault / GCP Cloud KMS still requires real credentials.** No new runtime
+    dependency (the SDKs are the existing `[seal-azure]`/`[seal-gcp]` extras).
+
 ## [0.71.0] — 2026-07-24
 
 ### Added
