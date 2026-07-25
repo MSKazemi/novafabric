@@ -9,6 +9,28 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.90.0] — 2026-07-25
+
+### Added
+- **No-LLM causal-graph back-trace attribution (ADR-0101 §NF-019/§NF-022, experimental).**
+  `diagnose/causal_graph.py` adds `causal_root_candidates(capsule_dir)`, a deterministic,
+  LLM-free root-cause layer that **complements** (does not replace) the ordinal ADR-0084
+  `attribute_failure`:
+  - **NF-019** — reconstructs the span parent/child causal graph from the recorded trace
+    (`parent_span_id` → `span_id`) and back-traces the **root failure nodes**: a failing
+    node whose entire ancestor chain is error-free is a causal root; a failing node
+    downstream of another failure is not (its failure is explained by the earlier one).
+    Candidates are ranked shallower-depth-first then earliest-ordinal, and reuse the
+    existing step loader, error detector, and `AgentErrorTaxonomy` classifier. Orphan and
+    cyclic parent chains are handled with a bounded walk.
+  - **NF-022** — the verification gate holds structurally: every candidate is marked
+    `verification = "unverified"` (no replay run) and described as a ranked candidate,
+    never a proven root cause. `CONFIRMED`/`REFUTED` remain the sole output of the
+    replay-backed `verify_hypothesis` (NF-017/018, deferred on the ADR-0086 engine).
+  - Exposed via `novafabric.diagnose` (`causal_root_candidates`, `CausalAttribution`,
+    `CausalRootCandidate`). ADR-0101 moved `proposed → accepted` for this static slice.
+    Zero new dependencies.
+
 ## [0.89.0] — 2026-07-25
 
 ### Added
