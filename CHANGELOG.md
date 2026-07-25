@@ -9,6 +9,29 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.76.0] — 2026-07-25
+
+### Added
+- **Provable delegated authority — the "acted-as" delegation chain (ADR-0106
+  §NF-084, experimental).** `trust/delegation.py` implements the
+  category-defining evidence object: a signed authority chain
+  `user → agent → sub-agent` (`DelegationChain` of `Grant` hops) plus a verifier
+  that a third party can re-check offline. `verify_delegation_chain` enforces the
+  four properties that make a chain trustworthy:
+  - **Authenticity** — every hop's Ed25519 signature verifies under its granter's
+    public key;
+  - **Linkage** — the key/identity a hop delegates *to* is exactly the one that
+    signs the next hop (no key substitution under a reused name);
+  - **Attenuation** — each hop's scope is a subset of its granter's scope, so
+    authority only ever narrows and **no hop can grant a capability its granter
+    did not hold** (the anti-privilege-escalation core);
+  - **Freshness** — no grant is expired and a child never outlives its parent.
+  Returns the effective acting principal + effective scope. Secrets are never part
+  of a grant (ADR-0106 I-2: only public keys, identities, scopes, expiries, and
+  signatures). This ADR was `proposed` (design intent); accepted (first slice)
+  under delegated authority — NF-083/085/086/087/088/089 remain later slices. Zero
+  new dependencies (Ed25519 via the existing `cryptography`).
+
 ## [0.75.0] — 2026-07-25
 
 ### Added
