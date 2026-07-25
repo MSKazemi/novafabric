@@ -9,6 +9,29 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.91.0] — 2026-07-25
+
+### Added
+- **x509 certificate-pinned offline signing identity (ADR-0055 `x509` profile,
+  experimental).** `trust/novaseal/x509_identity.py` implements the offline core of the
+  `x509` signing profile:
+  - `X509SigningIdentity.from_pem(key_pem, cert_pem)` loads a PKCS#8 PEM key and PEM
+    certificate; `.sign(payload)` produces an `X509Signature` (algorithm + signature +
+    embedded certificate) for **ECDSA P-256** (`ecdsa-p256-sha256`) or **RSA** (`rsa-pss-sha256`).
+    No external service at signing time. `.certificate_fingerprint` is the `sha256:`-prefixed
+    certificate fingerprint.
+  - `verify_x509_signature(payload, sig, pinned_fingerprints=…)` verifies offline by
+    (1) checking the embedded certificate is in the operator's **pinned trust set** by
+    SHA-256 fingerprint (the trust anchor) and (2) verifying the signature under the
+    certificate's public key. It uses only the `cryptography` library's standard
+    verification primitives — no hand-rolled crypto — and never raises (a failure is a
+    `valid=False` result with a reason).
+  - **Deferred (unchanged design intent):** full CA-bundle chain/path validation,
+    PKCS#11/PKCS#12 key sources, DSSE-envelope embedding, the Rekor option, and the whole
+    `sigstore` (OIDC/Fulcio/Rekor) profile — all layer on top without changing the
+    signature format. ADR-0055 moved `proposed → accepted` for this cert-pinned slice.
+    Zero new dependencies (`cryptography`, already present).
+
 ## [0.90.0] — 2026-07-25
 
 ### Added
