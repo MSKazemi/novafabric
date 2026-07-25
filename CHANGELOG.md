@@ -9,6 +9,29 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.73.0] — 2026-07-25
+
+### Added
+- **SAML SSO assertion consumption — the ADR-0138 §D5 gate is resolved
+  (experimental, opt-in).** The signature/XXE layer that §D5 deliberately withheld
+  now ships in `server/saml_verify.py`, plugging into the already-shipped policy
+  layer (rules V3–V9, V11) so the SP-initiated login and Assertion Consumer
+  Service (`/v0/auth/saml/login`, `/v0/auth/saml/acs`) become functional.
+  - **The §D5 license gate is cleared by `signxml` (Apache-2.0)** — a candidate
+    not in the original ADR table whose entire runtime tree is Tier-A (lxml
+    BSD-3-Clause + cryptography [core] + certifi [already present]) and which needs
+    **no native `libxmlsec1`**. Shipped as the optional `novafabric[saml]` extra.
+  - **Security (V1/V2/V10):** XXE-hardened parse (DOCTYPE/ENTITY rejected, no
+    entity/DTD/network resolution), signxml XML-DSIG verification, and XSW defense
+    (identity is read **only** from the signxml-verified element). Tested against
+    valid / tampered / unsigned / wrong-key / DOCTYPE inputs with a real signed
+    fixture; XML-DSIG is never hand-rolled.
+  - **Off by default:** the ACS still refuses with 501 and never parses the posted
+    XML unless the operator sets `server.saml.experimental_acs_enabled: true`. Even
+    then, **a Security-Architect review remains a pre-production blocking condition**
+    (CLAUDE.md). When enabled, a verified assertion flows through the policy → role
+    map → subject resolution → bearer token.
+
 ## [0.72.0] — 2026-07-25
 
 ### Added

@@ -179,6 +179,11 @@ class SamlConfig(BaseModel):
     allow_idp_initiated: bool = False
     clock_skew_seconds: int = Field(default=120, ge=0, le=MAX_CLOCK_SKEW_SECONDS)
     slo: SamlSloConfig | None = None
+    #: Explicit opt-in to the experimental signxml-backed ACS (ADR-0138). Default
+    #: False keeps the safe D5 refusal — the ACS never consumes an assertion. Even
+    #: when True, a Security-Architect review remains a pre-production blocking
+    #: condition (CLAUDE.md); enabling it acknowledges the pre-review status.
+    experimental_acs_enabled: bool = False
 
     @field_validator("acs_url")
     @classmethod
@@ -547,13 +552,24 @@ def render_sp_metadata(config: SamlConfig) -> str:
 # ---------------------------------------------------------------------------
 
 
-def require_signature_verifier() -> None:
-    """Refuse assertion consumption while the D5 library gate is open.
+def require_signature_verifier(config: "SamlConfig | None" = None) -> None:
+    """Refuse assertion consumption unless the experimental ACS is opted into.
 
     NovaFabric never consumes a SAML assertion without verified XML-DSIG
-    signatures (rules V1/V2) and an XXE-hardened parser (V10). Since no
-    Tier-A library has cleared the ADR-0024 transitive-license gate, this
-    always raises :class:`SamlVerifierUnavailableError` today.
+    signatures (rules V1/V2) and an XXE-hardened parser (V10). The signxml-backed
+    verifier that provides them (``server.saml_verify``) cleared the ADR-0024
+    license gate in v0.73.0, but consumption stays **off by default**: it is
+    enabled only when the operator sets ``server.saml.experimental_acs_enabled``,
+    and even then a Security-Architect review is a pre-production blocking
+    condition. Without the opt-in (or without the library installed) this raises
+    :class:`SamlVerifierUnavailableError`.
     """
-    if not SIGNATURE_VERIFIER_AVAILABLE:
+    if config is None or not getattr(config, "experimental_acs_enabled", False):
         raise SamlVerifierUnavailableError()
+    from novafabric.server import saml_verify
+
+    if not saml_verify.signature_verifier_available():
+        raise SamlVerifierUnavailableError(
+            "server.saml.experimental_acs_enabled is set but the SAML signature "
+            "library is missing; install novafabric[saml] (signxml + lxml)."
+        )
