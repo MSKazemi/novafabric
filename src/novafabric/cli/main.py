@@ -45,6 +45,7 @@ from novafabric.cli.experiment import experiment_app
 from novafabric.cli.export_accessibility import export_accessibility_claim_cmd
 from novafabric.cli.export_blob import export_blob_cmd
 from novafabric.cli.export_c2pa import export_c2pa_cmd
+from novafabric.cli.export_compliance import export_compliance_app
 from novafabric.cli.export_citizen import export_citizen_explanation_cmd
 from novafabric.cli.export_control_attestation import export_control_attestation_cmd
 from novafabric.cli.export_election import export_election_disclosure_cmd
@@ -304,6 +305,14 @@ app.command("export-control-attestation")(export_control_attestation_cmd)
 app.command("export-rai-scorecard")(export_rai_scorecard_cmd)
 app.command("export-part11")(export_part11_cmd)
 app.command("export-system-card")(export_system_card_cmd)
+app.add_typer(
+    export_compliance_app,
+    name="export-compliance",
+    help=(
+        "Export EU AI Act / ISO / NIST compliance evidence (ADR-0107): "
+        "genai-profile, iso42001, gpai53, pmm."
+    ),
+)
 app.add_typer(
     euaiact_app,
     name="euaiact",

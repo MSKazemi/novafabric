@@ -390,6 +390,18 @@
     "tab": "compliance",
     "api": "/api/compliance/export/"
   },
+  "nova export-compliance genai-profile": {
+    "status": "builder-only"
+  },
+  "nova export-compliance gpai53": {
+    "status": "builder-only"
+  },
+  "nova export-compliance iso42001": {
+    "status": "builder-only"
+  },
+  "nova export-compliance pmm": {
+    "status": "builder-only"
+  },
   "nova export-control-attestation": {
     "status": "real-panel",
     "tab": "compliance",

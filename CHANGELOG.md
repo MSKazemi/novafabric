@@ -9,6 +9,29 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.89.0] — 2026-07-25
+
+### Added
+- **`nova export-compliance` CLI cohort for the ADR-0107 exporters (experimental).**
+  `cli/export_compliance.py` surfaces four shipped compliance exporters as a coherent
+  Typer command group, each reading a capsule or a JSON input and writing report JSON
+  (to `--out` or stdout):
+  - `nova export-compliance genai-profile <capsule> [--evidence a,b]` — builds the
+    capsule's NIST-RMF report via `NISTAIRMFReporter` and overlays the NIST GenAI + CSA
+    Agentic profile (NF-097).
+  - `nova export-compliance iso42001 --catalog c.json [--evidence a,b] [--capsule-id id]`
+    — ISO/IEC 42001 control-evidence mapping (NF-095); without a `--capsule-id` ref,
+    evidenced controls honestly degrade to `not_evidenced`.
+  - `nova export-compliance gpai53 --model X --fields f.json` — the first sealed revision
+    of a GPAI Art. 53 form (NF-093).
+  - `nova export-compliance pmm --system X --findings f.json --occurred-at ISO` — an
+    Art. 72 PMM report; serious findings refer Art. 73 incidents (NF-091).
+  - The dashboard command registry (`generatedCommands.ts`, now 288 commands) and the
+    ADR-0200 parity classification (`commandParity.json`) were regenerated so the
+    dashboard mirrors the new commands and both coverage guards stay green. The exporter
+    logic stays in `compliance.export`; the CLI only parses and serialises. Zero new
+    dependencies.
+
 ## [0.88.0] — 2026-07-25
 
 ### Added

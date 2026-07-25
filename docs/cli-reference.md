@@ -2638,6 +2638,7 @@ conventions:
 
 | Command | Framework / audience | ADR |
 |---|---|---|
+| [`nova export-compliance`](#nova-export-compliance-subcommand) | EU AI Act / ISO 42001 / NIST GenAI + CSA exporters | ADR-0107 |
 | [`nova export-model-risk`](#nova-export-model-risk-evidence) | SR 26-2 / SR 11-7 model-risk evidence | ADR-0159 |
 | [`nova export-part11`](#nova-export-part11-document) | 21 CFR Part 11 electronic records | ADR-0160 |
 | [`nova export-rai-scorecard`](#nova-export-rai-scorecard-document) | Responsible-AI coverage scorecard | ADR-0158 |
@@ -3087,6 +3088,42 @@ Options:
 Note: the manifest is structurally valid for TSP signing. Hard-binding C2PA verification
 requires operator enrollment with a C2PA-certified Trust Service Provider (TSP signing
 path deferred to a future release).
+
+#### nova export-compliance \<subcommand\>
+
+Export EU AI Act / ISO / NIST compliance evidence from the ADR-0107 exporters. Each
+subcommand reads a capsule or a JSON input and writes a report as JSON (to `--out`, else
+stdout). The CLI only parses and serialises — the exporter logic lives in
+`novafabric.compliance.export`.
+
+**works today** — implemented in v0.89.0 (`experimental`).
+
+```bash
+# NIST GenAI + CSA Agentic profile, built from a capsule's NIST-RMF report (NF-097)
+nova export-compliance genai-profile .novafabric/runs/01HX.../ --evidence tool_permissions,eval_gate --out profile.json
+
+# ISO/IEC 42001 control-evidence mapping from a declared catalog (NF-095)
+nova export-compliance iso42001 --catalog controls.json --evidence eval_gate --capsule-id run-123 --out iso.json
+
+# First sealed revision of a GPAI Art. 53 documentation form (NF-093)
+nova export-compliance gpai53 --model my-gpai --fields art53.json --out form.json
+
+# Art. 72 post-market-monitoring report; serious findings refer Art. 73 incidents (NF-091)
+nova export-compliance pmm --system triage --findings findings.json --occurred-at 2026-07-01 --out pmm.json
+```
+
+Subcommands and key options:
+- `genai-profile <capsule>` — `--evidence a,b` (governance-evidence kinds present), `--out`.
+- `iso42001 --catalog c.json` — `--evidence a,b`, `--capsule-id ID` (supplies the
+  re-performable reference evidenced controls require; without it, evidenced controls
+  honestly degrade to `not_evidenced`), `--out`.
+- `gpai53 --model NAME --fields f.json` — `--out`. `fields.json` is a `{field: value}` object.
+- `pmm --system NAME --findings f.json --occurred-at ISO` — `--period-start`, `--period-end`,
+  `--out`. A serious finding (severity `critical`/`high`) must carry an
+  `incident_classification`, or the command fails closed.
+
+Note: NF-090 (Art. 12) is served by `nova euaiact`; NF-092 (Annex IV) by the AIBOM/Annex-IV
+exporters; NF-094 (Art. 50 dual-layer receipt) composes with `nova export-c2pa`.
 
 #### nova export-system-card \<capsule_dir\>
 
