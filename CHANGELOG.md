@@ -9,6 +9,27 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.85.0] — 2026-07-25
+
+### Added
+- **EU AI Act Art. 72 post-market-monitoring generator (ADR-0107 §NF-091, experimental).**
+  `compliance/export/pmm.py` compiles a PMM report from monitoring findings (metric,
+  trend, severity, description) observed over a capsule stream. Its load-bearing design
+  rule: a finding crossing the **serious-incident threshold** (`CRITICAL`/`HIGH`) does not
+  spin up a parallel deadline mechanism — it produces a *referred* `Incident` built from
+  the **shipped ADR-0088 model**, so the existing `DeadlineClock` governs its Art. 73
+  obligations. The generator **reuses** the incident/clock machinery rather than
+  duplicating it; the caller persists each referred incident via the existing
+  `IncidentStore`.
+  - `build_pmm_report(system_name, *, period_start, period_end, findings, occurred_at)`
+    carries every finding and refers the serious ones. A serious finding **must** carry an
+    `incident_classification` (cap-005 taxonomy) — you cannot open an Art. 73 incident
+    without classifying it, so one without it raises (fail closed) rather than silently
+    dropping the escalation.
+  - `is_serious(severity)` / `PMM_SERIOUS_SEVERITIES` expose the Art. 72→Art. 73 threshold.
+  - Third ADR-0107 exporter shipped (after NF-090, NF-095); NF-092 served by the existing
+    `AnnexIVExporter`. NF-093/094/097 remain future design. Zero new dependencies.
+
 ## [0.84.0] — 2026-07-25
 
 ### Added
