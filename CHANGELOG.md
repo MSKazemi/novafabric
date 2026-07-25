@@ -9,6 +9,30 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.82.0] — 2026-07-25
+
+### Added
+- **Crypto-agility hybrid-signature envelope (ADR-0072 Phase 1, experimental).**
+  `trust/novaseal/hybrid_signature.py` implements the post-quantum-transition
+  primitive: a payload signed under multiple algorithms in one envelope, so it
+  survives a break in any signature family.
+  - **Pluggable algorithm registry** — `register_algorithm(name, sign, verify)`;
+    **Ed25519 is registered by default**, and ML-DSA-65/87 register into the *same*
+    registry once a Tier-A PQC library exists — **no format change** (ADR-0072
+    gates the algorithm, not this layer).
+  - `sign_hybrid(payload, signers)` produces a `HybridSignatureEnvelope` with a
+    signature per signer; `verify_hybrid(payload, envelope, policy=...)` verifies
+    each under its registered algorithm with a policy — **`any_recognized`** (the
+    Phase 1 "either alone is sufficient" rule) or **`all_recognized`** — and an
+    optional `required_algorithms` set.
+  - **Forward-compatible:** a signature whose algorithm the verifier does not
+    recognize is *reported, not fatal*, so an old verifier keeps working when a new
+    algorithm is added.
+  The ML-DSA signer itself is not shipped (Phase 1 gates it on `cryptography`
+  ML-DSA support, ~2027); shipping the agility layer now is what makes that a
+  drop-in later. ADR-0072 was `Future Design`; accepted (agility-layer slice) under
+  delegated authority. Zero new dependencies (Ed25519 via existing `cryptography`).
+
 ## [0.81.0] — 2026-07-25
 
 ### Added
