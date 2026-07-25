@@ -9,6 +9,26 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.88.0] — 2026-07-25
+
+### Added
+- **NIST GenAI Profile + CSA Agentic Profile mapper (ADR-0107 §NF-097, experimental) —
+  completing ADR-0107.** `compliance/export/genai_csa_profile.py` **extends** the shipped
+  `NISTRMFReport` (it does not restate it) to two overlay profiles:
+  - the **NIST GenAI Profile** four focus areas (Governance, Content Provenance,
+    Pre-deployment Testing, Incident Disclosure), each anchored to a base RMF function —
+    a focus area is *auto-evidenced* when the base report carries a score for its RMF
+    function, extending the shipped evidence rather than duplicating it; and
+  - the **CSA Agentic Profile** subcategory actions (agent identity, tool authorization,
+    action governance, memory integrity, human oversight, incident response), mapped to
+    the governance evidence present.
+  - `build_genai_csa_profile(rmf_report, present_evidence=…, declared=…)` marks each
+    mapping `evidenced` / `not_evidenced` / `declared` with an ADR-0197 `evidence_source`
+    (reusing the `control_attestation` pattern) — a pure projection, never a fabrication.
+  - **With NF-097, every exporter in ADR-0107 is now implemented** (NF-090/091/093/094/095/097
+    as pure-code modules; NF-092 Annex IV served by the shipped `AnnexIVExporter`). Zero
+    new dependencies.
+
 ## [0.87.0] — 2026-07-25
 
 ### Added

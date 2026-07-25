@@ -2824,7 +2824,7 @@ wheels = [
 
 [[package]]
 name = "novafabric"
-version = "0.87.0"
+version = "0.88.0"
 source = { editable = "." }
 dependencies = [
     { name = "clickhouse-connect" },
