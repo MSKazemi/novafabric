@@ -9,6 +9,30 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.79.0] — 2026-07-25
+
+### Added
+- **Merkle Mountain Range append-only log (ADR-0110 §NF-051 D14, experimental).**
+  `trust/novaseal/mmr.py` implements the append-optimized accumulator ADR-0110
+  names as the proof structure for cross-node ordering:
+  - `MerkleMountainRange.append(leaf_hex)` with O(log n) persistent state (the
+    peaks), a deterministic **bag-of-peaks** `root()`, and O(log n)
+    `inclusion_proof(i)`.
+  - `verify_mmr_proof(leaf, proof, root)` — a pure verifier that recomputes the
+    leaf's subtree peak from its path, re-bags it with the sibling peaks, and
+    compares to the root; returns False on any mismatch/malformed proof, never
+    raises.
+  - **Append-only:** appends never rewrite an existing node, so an old leaf's proof
+    still verifies against every later root — proven by test across leaf counts
+    1–21 (every leaf's proof verifies) plus tampered-leaf/path/root rejections.
+  - Domain-separated hashing (leaf `0x00`, node `0x01`), matching the
+    transparency-log convention.
+  This is the verifiable-half foundation of NF-051 (a node's signed ordering
+  commitment is a signature over an MMR root). The forward-secure-key signing,
+  cross-node happened-before consolidation, and the NF-082 Slurm-native profile
+  remain future design. ADR-0110 was `proposed`; accepted (D14 slice) under
+  delegated authority. Zero new dependencies (stdlib hashing).
+
 ## [0.78.0] — 2026-07-25
 
 ### Added
