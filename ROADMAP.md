@@ -216,24 +216,29 @@ Dates represent mandatory or significant regulatory milestones relevant to NovaF
 
 ---
 
-## Cluster-scale phases — shipped, except the lineage at-scale graph tier
+## Cluster-scale phases — all shipped
 
 Cluster-scale Phases 0–5 (NovaSeal, Event Envelope, Collector, Parent/Child, Object
 Capsule Store, Metadata Store + RLS) are shipped; per-phase maturity labels are in the
 Shipped table above. Research documentation lives in this repo under the private
 `design/` directory.
 
-**Phase 6 (Lineage at scale) is partially shipped.** The default `SqliteLineageStore`
-works today and the DuckDB multi-hop summary tier ships (v0.60). The **at-scale graph
-backends remain planned**, not shipped:
+**Phase 6 (Lineage at scale) is shipped.** The default `SqliteLineageStore` works
+today, the DuckDB multi-hop summary tier ships (v0.60), and — corrected 2026-07-29;
+this section previously read "at-scale graph backends remain planned," which was
+stale — **all four at-scale graph backends are implemented and
+testcontainers-verified** (v0.68.0–v0.70.0):
 
 | Backend | File | Status |
 |---|---|---|
 | `SqliteLineageStore` | `lineage/store.py` | ✅ works today (default) |
-| KuzuDB | `lineage/backends/kuzu.py` | **planned** — production-candidate, pending the 10M-edge p99 < 500 ms benchmark |
-| Postgres | `lineage/backends/postgres.py` | **planned** — `NotImplementedError` stub, gated on a live Postgres deployment |
-| Apache AGE | `lineage/backends/age.py` | **planned** — `NotImplementedError` stub, gated on a live Postgres + AGE deployment |
-| JanusGraph | (design only) | **future design** — the v3 tier |
+| KuzuDB | `lineage/backends/kuzu.py` | ✅ works today — 10M-edge p99 benchmark cleared (ADR-0053, 45.5ms blast_radius, 10.98× under the 500ms gate) |
+| Postgres | `lineage/backends/postgres.py` | ✅ works today — recursive-CTE, testcontainers-parity-tested vs SQLite (v0.68.0), no AGE extension required |
+| Apache AGE | `lineage/backends/age.py` | ✅ works today — openCypher, testcontainers-verified (v0.69.0) |
+| JanusGraph | `lineage/backends/janusgraph.py` | ✅ works today — Gremlin/GraphSON, live-verified (v0.70.0) |
+
+Zero `NotImplementedError` stubs remain across the four backends. Broad federation
+and a v1.0 schema freeze remain forward-looking design intent.
 
 (Note: Scale-S4's shipped `PostgresMerkleLog` is the NovaSeal *transparency-log* backend,
 a different subsystem from these lineage *graph* backends.)
