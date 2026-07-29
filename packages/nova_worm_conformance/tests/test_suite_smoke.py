@@ -28,27 +28,29 @@ from nova_worm_conformance.frameworks import (
 from nova_worm_conformance.report import TestRecord, build_report
 
 # ---------------------------------------------------------------------------
-# FR-11: Exactly 10 test cases defined
+# FR-11: At least 10 test cases defined (OBJ-ADR-003: "10 cases minimum")
 # ---------------------------------------------------------------------------
 
-def test_exactly_10_test_cases():
-    """FR-11: Exactly 10 mandated test cases — no subset."""
-    assert len(ALL_TEST_CASES) == 10
+def test_at_least_10_test_cases():
+    """FR-11: At least 10 mandated test cases — the catalogue may grow (e.g. BQ-013
+    AC-4 added an 11th, test_sha256_checksum_enforced_by_backend), never shrink below
+    the OBJ-ADR-003 minimum."""
+    assert len(ALL_TEST_CASES) >= 10
 
 
 def test_all_test_case_modules_importable():
-    """FR-11: All 10 test case modules can be imported."""
+    """FR-11: Every catalogued test case module can be imported."""
     for test_name in ALL_TEST_CASES:
         module_name = f"nova_worm_conformance.tests.{test_name}"
         module = importlib.import_module(module_name)
         assert hasattr(module, "run"), f"{module_name} missing run() function"
 
 
-def test_all_frameworks_return_10_tests():
-    """FR-11: All frameworks require all 10 tests."""
+def test_all_frameworks_return_at_least_10_tests():
+    """FR-11: Every framework requires the full catalogue (>= 10 tests)."""
     for framework in VALID_FRAMEWORKS:
         tests = get_test_cases(framework)
-        assert len(tests) == 10, f"Framework {framework} has {len(tests)} tests, expected 10"
+        assert len(tests) >= 10, f"Framework {framework} has {len(tests)} tests, expected >= 10"
         assert set(tests) == set(ALL_TEST_CASES)
 
 
