@@ -90,6 +90,27 @@ class TestEdgeExtraction:
         assert edges == []
 
 
+class TestDuplicateWindowConfig:
+    def test_default_duplicate_window_is_120s(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("NOVA_NATS_DUPLICATE_WINDOW_S", raising=False)
+        c = LineageConsumer(nats_url="nats://test:4222")
+        assert c.duplicate_window_s == 120.0
+
+    def test_duplicate_window_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NOVA_NATS_DUPLICATE_WINDOW_S", "300")
+        c = LineageConsumer(nats_url="nats://test:4222")
+        assert c.duplicate_window_s == 300.0
+
+    def test_duplicate_window_constructor_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("NOVA_NATS_DUPLICATE_WINDOW_S", "300")
+        c = LineageConsumer(nats_url="nats://test:4222", duplicate_window_s=60.0)
+        assert c.duplicate_window_s == 60.0
+
+
 class TestDeduplication:
     def test_duplicate_event_id_ignored(self, consumer: LineageConsumer) -> None:
         event = {
@@ -115,3 +136,58 @@ class TestDeduplication:
         edges = _run(consumer.run_once([event, event]))
         # Both processed since no deduplication key
         assert len(edges) == 2
+
+    def test_redelivery_across_separate_batches_is_deduplicated(
+        self, consumer: LineageConsumer
+    ) -> None:
+        """SCALE-ADR-001: at-least-once NATS delivery can redeliver a message
+        in a *later* fetch() batch, not just within one — dedup must persist
+        across separate run_once() calls on the same consumer instance."""
+        event = {
+            "event_id": "redelivered-id",
+            "event_type": "ArtifactProduced",
+            "run_id": "run-3",
+            "artifact_id": "art-3",
+        }
+        first_batch = _run(consumer.run_once([event]))
+        second_batch = _run(consumer.run_once([event]))  # simulates redelivery
+        assert len(first_batch) == 1
+        assert len(second_batch) == 0
+
+    def test_dedup_cache_is_bounded(self) -> None:
+        """The dedup cache must evict oldest entries rather than grow
+        unboundedly over a long-running consumer's lifetime."""
+        small_consumer = LineageConsumer(
+            nats_url="nats://test:4222",
+            kuzu_path="/tmp/test.kuzu",
+            dedup_cache_size=3,
+        )
+        for i in range(5):
+            event = {
+                "event_id": f"id-{i}",
+                "event_type": "ArtifactProduced",
+                "run_id": f"run-{i}",
+                "artifact_id": f"art-{i}",
+            }
+            _run(small_consumer.run_once([event]))
+
+        assert len(small_consumer._seen_event_ids) == 3
+        # Oldest entries (id-0, id-1) were evicted; newest (id-4) survives.
+        assert "id-0" not in small_consumer._seen_event_ids
+        assert "id-4" in small_consumer._seen_event_ids
+
+        # A re-delivery of the evicted id-0 is (correctly) no longer caught —
+        # documents the bounded-cache tradeoff rather than hiding it.
+        replay_edges = _run(
+            small_consumer.run_once(
+                [
+                    {
+                        "event_id": "id-0",
+                        "event_type": "ArtifactProduced",
+                        "run_id": "run-0",
+                        "artifact_id": "art-0",
+                    }
+                ]
+            )
+        )
+        assert len(replay_edges) == 1

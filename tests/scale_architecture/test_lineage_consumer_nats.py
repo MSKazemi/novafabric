@@ -149,6 +149,30 @@ class TestRunFromNatsInitialization:
         assert call_kwargs.get("name") == "novafabric-lineage"
         assert "novafabric.lineage.>" in call_kwargs.get("subjects", [])
 
+    def test_creates_stream_with_configured_duplicate_window(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """SCALE-ADR-001: the Nats-Msg-Id dedup window must be explicit and
+        operator-configurable, not left to NATS's undocumented-in-our-code
+        default."""
+        import datetime
+
+        fake_js = MagicMock()
+        fake_js.find_stream_name_by_subject = AsyncMock(
+            side_effect=Exception("stream not found")
+        )
+        fake_js.add_stream = AsyncMock()
+
+        fake_nats_mod, fake_errors_mod = _build_fake_nats(fake_js)
+        consumer = LineageConsumer(
+            nats_url="nats://mocked:4222", duplicate_window_s=300.0
+        )
+
+        _run_until_fetch(consumer, fake_js, fake_nats_mod, fake_errors_mod)
+
+        call_kwargs = fake_js.add_stream.call_args.kwargs
+        assert call_kwargs.get("duplicate_window") == datetime.timedelta(seconds=300)
+
     def test_does_not_create_stream_when_already_exists(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
