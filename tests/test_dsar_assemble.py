@@ -7,13 +7,13 @@ package: capsules ordered by id (byte-identical on re-run), missing capsules rec
 """
 from __future__ import annotations
 
+from novafabric.compliance.export.provenance import EvidenceSource
 from novafabric.compliance.governance.dsar import (
     DSAR_GAP_EVIDENCE_SOURCE,
     DSARCapsuleRecord,
     DSARPackage,
     assemble_dsar,
 )
-from novafabric.compliance.export.provenance import EvidenceSource
 
 
 def test_records_are_operator_asserted_and_gaps_unverifiable():
