@@ -17,6 +17,7 @@ Related documents:
 ## Table of contents
 
 1. [Configuration file — `novaseal.yaml`](#1-configuration-file--novasealyaml)
+   - 1.1 [TSA fallback list (`tsa_urls`)](#11-tsa-fallback-list-tsa_urls)
 2. [Profiles](#2-profiles)
    - 2.1 [local — ECDSA P-256 file key](#21-local--ecdsa-p-256-file-key)
    - 2.2 [aws_kms — AWS KMS asymmetric key](#22-aws_kms--aws-kms-asymmetric-key)
@@ -53,6 +54,42 @@ merkle_db: ~/.novafabric/novaseal-merkle.db  # SQLite Merkle log (optional)
 
 All path values are expanded with `~` resolution. All fields except
 `profile`, `key_path`, and `cert_path` are optional.
+
+### 1.1 TSA fallback list (`tsa_urls`)
+
+**Status:** Works today (REG-ADR-007). By default `tsa_url` is the only TSA
+tried. For production and EU-regulated deployments where a single TSA being
+unreachable should not block sealing, configure an ordered fallback list
+instead:
+
+```yaml
+# ~/.novafabric/novaseal.yaml
+profile: local
+key_path: ~/.novafabric/seal.key
+cert_path: ~/.novafabric/seal.crt
+tsa_urls:                                    # tried in order; first success wins
+  - https://tsa.your-qtsp.example/tsr        # primary — e.g. a QTSP for eIDAS Art. 41(2)
+  - https://freetsa.org/tsr                  # fallback — public, non-qualified
+merkle_db: ~/.novafabric/novaseal-merkle.db
+```
+
+If `tsa_urls` is omitted, it defaults to a single-entry list containing
+`tsa_url` — existing configs with only `tsa_url` set need no changes. When
+`tsa_urls` has more than one entry, each is tried in sequence; a TSA that
+returns an error, times out, or is unreachable is skipped and the next one
+is tried. Timestamping is already best-effort in NovaSeal (a capsule seals
+successfully without a timestamp token if the TSA request fails) — the
+fallback list only widens how many TSAs must fail before that happens.
+
+`tsa_urls` applies identically across all four profiles (§2) — it only
+affects the timestamp request, not the signing key/certificate.
+
+**Not yet built:** fallback is sequential with no configurable per-TSA
+timeout or retry count (each URL gets one attempt at the module's fixed
+30-second HTTP timeout before moving to the next) — sufficient for a small
+fallback list, but there is no automated benchmark validating this against
+a specific deployment's real network conditions (e.g. an air-gapped site
+with a local relay TSA); that assessment is left to the operator.
 
 ---
 
@@ -278,4 +315,7 @@ no stale `NOVAFABRIC_SEAL_DB_PATH` env var is set in one shell but not another.
 The default `https://freetsa.org/tsr` is a free public TSA with rate limits.
 For production, use an organizational or commercial TSA. Set `tsa_url:` in
 `novaseal.yaml`. To disable RFC 3161 timestamps entirely, omit the field —
-NovaSeal still signs with ECDSA but without a timestamp token.
+NovaSeal still signs with ECDSA but without a timestamp token. If a single
+TSA being occasionally unreachable is the actual problem, configure a
+fallback list instead of (or as well as) switching providers — see
+[§1.1 TSA fallback list](#11-tsa-fallback-list-tsa_urls).

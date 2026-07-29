@@ -140,6 +140,73 @@ class TestParseProfile:
 
 
 # ---------------------------------------------------------------------------
+# tsa_urls — REG-ADR-007 multi-TSA fallback list
+# ---------------------------------------------------------------------------
+
+
+class TestTsaUrlsFallback:
+    def test_defaults_to_single_element_list_of_tsa_url(self, tmp_path, key_and_cert):
+        key_path, cert_path = key_and_cert
+        cfg = tmp_path / "novaseal.yaml"
+        cfg.write_text(
+            f"profile: local\nkey_path: {key_path}\ncert_path: {cert_path}\n"
+            f"tsa_url: https://only.example.com/tsr\n"
+        )
+        profile = _parse_profile(cfg)
+        assert profile.tsa_urls == ["https://only.example.com/tsr"]
+
+    def test_explicit_tsa_urls_list_is_used(self, tmp_path, key_and_cert):
+        key_path, cert_path = key_and_cert
+        cfg = tmp_path / "novaseal.yaml"
+        cfg.write_text(
+            f"profile: local\nkey_path: {key_path}\ncert_path: {cert_path}\n"
+            "tsa_urls:\n"
+            "  - https://primary.example.com/tsr\n"
+            "  - https://backup.example.com/tsr\n"
+        )
+        profile = _parse_profile(cfg)
+        assert profile.tsa_urls == [
+            "https://primary.example.com/tsr",
+            "https://backup.example.com/tsr",
+        ]
+
+    def test_empty_tsa_urls_list_raises(self, tmp_path, key_and_cert):
+        key_path, cert_path = key_and_cert
+        cfg = tmp_path / "novaseal.yaml"
+        cfg.write_text(
+            f"profile: local\nkey_path: {key_path}\ncert_path: {cert_path}\n"
+            "tsa_urls: []\n"
+        )
+        with pytest.raises(SealConfigError, match="must not be empty"):
+            _parse_profile(cfg)
+
+    def test_non_list_tsa_urls_raises(self, tmp_path, key_and_cert):
+        key_path, cert_path = key_and_cert
+        cfg = tmp_path / "novaseal.yaml"
+        cfg.write_text(
+            f"profile: local\nkey_path: {key_path}\ncert_path: {cert_path}\n"
+            "tsa_urls: not-a-list\n"
+        )
+        with pytest.raises(SealConfigError, match="must be a list of strings"):
+            _parse_profile(cfg)
+
+    def test_signing_profile_post_init_defaults_tsa_urls(self) -> None:
+        profile = SigningProfile(profile="local", tsa_url="https://x.example.com/tsr")
+        assert profile.tsa_urls == ["https://x.example.com/tsr"]
+
+    def test_signing_profile_explicit_tsa_urls_preserved(self) -> None:
+        profile = SigningProfile(
+            profile="local",
+            tsa_url="https://x.example.com/tsr",
+            tsa_urls=["https://a.example.com/tsr", "https://b.example.com/tsr"],
+        )
+        assert profile.tsa_urls == [
+            "https://a.example.com/tsr",
+            "https://b.example.com/tsr",
+        ]
+
+
+# ---------------------------------------------------------------------------
 # load_signing_profile
 # ---------------------------------------------------------------------------
 

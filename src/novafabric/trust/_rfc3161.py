@@ -59,17 +59,20 @@ outermost SEQUENCE > first SEQUENCE (PKIStatusInfo) > first INTEGER (status).
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import ssl
 import struct
 import urllib.request
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Sequence
 
 import httpx
 
 if TYPE_CHECKING:
     from cryptography import x509 as _x509
+
+logger = logging.getLogger(__name__)
 
 # SHA-256 OID: 2.16.840.1.101.3.4.2.1  (id-sha256)
 # DER-encoded OID bytes (tag 0x06 + length + OID content):
@@ -415,6 +418,40 @@ def add_rfc3161_timestamp(dsse_bytes: bytes, tsa_url: str) -> bytes:
         )
 
     return tsr_der
+
+
+def add_rfc3161_timestamp_with_fallback(
+    dsse_bytes: bytes, tsa_urls: Sequence[str]
+) -> tuple[bytes, str]:
+    """Try each TSA in *tsa_urls*, in order, falling through on failure.
+
+    REG-ADR-007: production/EU-regulated and air-gapped deployments configure
+    a fallback list of TSAs so a single unreachable/misconfigured TSA does
+    not block sealing. Returns ``(tsr_der, url_that_succeeded)`` so callers
+    can log/record which TSA actually issued the token.
+
+    Args:
+        dsse_bytes: Raw bytes of the assembled DSSE envelope.
+        tsa_urls:   Ordered list of TSA endpoints; tried in order.
+
+    Raises:
+        TimestampError: if *tsa_urls* is empty, or if every URL fails — the
+            error raised is the one from the *last* URL tried.
+    """
+    if not tsa_urls:
+        raise TimestampError("add_rfc3161_timestamp_with_fallback: no TSA URLs configured")
+
+    last_exc: TimestampError | None = None
+    for url in tsa_urls:
+        try:
+            return add_rfc3161_timestamp(dsse_bytes, url), url
+        except TimestampError as exc:
+            logger.warning("TSA %r failed (%s); trying next fallback TSA", url, exc)
+            last_exc = exc
+            continue
+
+    assert last_exc is not None  # tsa_urls is non-empty, so the loop ran at least once
+    raise last_exc
 
 
 # ---------------------------------------------------------------------------

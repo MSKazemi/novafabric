@@ -728,6 +728,7 @@ def _seal_capsule(capsule_dir: Path, manifest: dict[str, Any]) -> None:
         seal = NovaSeal(
             config=config,
             tsa_url=profile.tsa_url,
+            tsa_urls=profile.tsa_urls,
             db_path=str(profile.merkle_db),
         )
         bundle = seal.seal(manifest)

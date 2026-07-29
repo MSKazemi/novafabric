@@ -164,6 +164,71 @@ class TestRequestTimestamp:
             with pytest.raises(TimestampError):
                 request_timestamp(b"dsse", "https://example.com/tsa")
 
+    def test_single_element_tsa_urls_uses_single_url_path(self):
+        """A one-entry tsa_urls list must not take the fallback code path."""
+        def der_integer(n: int) -> bytes:
+            return bytes([0x02, 0x01, n])
+
+        def der_sequence(content: bytes) -> bytes:
+            return bytes([0x30, len(content)]) + content
+
+        fake_tsr = der_sequence(der_sequence(der_integer(0)))
+
+        with (
+            patch(
+                "novafabric.trust.novaseal.timestamp.add_rfc3161_timestamp",
+                return_value=fake_tsr,
+            ) as mock_single,
+            patch(
+                "novafabric.trust.novaseal.timestamp.add_rfc3161_timestamp_with_fallback"
+            ) as mock_fallback,
+        ):
+            result = request_timestamp(
+                b"dsse", "https://example.com/tsa", tsa_urls=["https://example.com/tsa"]
+            )
+        assert result == fake_tsr
+        mock_single.assert_called_once()
+        mock_fallback.assert_not_called()
+
+    def test_multi_element_tsa_urls_uses_fallback_path(self):
+        """REG-ADR-007: more than one tsa_urls entry must route through the
+        fallback helper, not the single-URL request."""
+        def der_integer(n: int) -> bytes:
+            return bytes([0x02, 0x01, n])
+
+        def der_sequence(content: bytes) -> bytes:
+            return bytes([0x30, len(content)]) + content
+
+        fake_tsr = der_sequence(der_sequence(der_integer(0)))
+        urls = ["https://primary.example.com/tsa", "https://backup.example.com/tsa"]
+
+        with (
+            patch(
+                "novafabric.trust.novaseal.timestamp.add_rfc3161_timestamp"
+            ) as mock_single,
+            patch(
+                "novafabric.trust.novaseal.timestamp.add_rfc3161_timestamp_with_fallback",
+                return_value=(fake_tsr, urls[1]),
+            ) as mock_fallback,
+        ):
+            result = request_timestamp(b"dsse", urls[0], tsa_urls=urls)
+        assert result == fake_tsr
+        mock_fallback.assert_called_once_with(b"dsse", urls)
+        mock_single.assert_not_called()
+
+    def test_fallback_path_propagates_tsa_unavailable(self):
+        """All TSAs failing must still map to TSAUnavailableError, exactly
+        like the single-URL path does today."""
+        from novafabric.trust._rfc3161 import TimestampError
+
+        urls = ["https://a.example.com/tsa", "https://b.example.com/tsa"]
+        with patch(
+            "novafabric.trust.novaseal.timestamp.add_rfc3161_timestamp_with_fallback",
+            side_effect=TimestampError("TSA unreachable at 'https://b.example.com/tsa'"),
+        ):
+            with pytest.raises(TSAUnavailableError):
+                request_timestamp(b"dsse", urls[0], tsa_urls=urls)
+
 
 # ---------------------------------------------------------------------------
 # DER helper unit tests

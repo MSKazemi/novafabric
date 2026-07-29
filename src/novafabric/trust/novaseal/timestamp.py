@@ -44,6 +44,7 @@ from novafabric.trust._rfc3161 import (
     TimestampError,
     _parse_pki_status,
     add_rfc3161_timestamp,
+    add_rfc3161_timestamp_with_fallback,
 )
 from novafabric.trust.novaseal.trust_chain import verify_tsa_cert_chain  # noqa: E402
 
@@ -84,6 +85,7 @@ def request_timestamp(
     dsse_bytes: bytes,
     tsa_url: str,
     *,
+    tsa_urls: Optional[list[str]] = None,
     nonce_store_path: Optional[Path] = None,
     offline_mode: bool = False,
     verify_chain: bool = True,
@@ -103,9 +105,17 @@ def request_timestamp(
         ``tsa_cert_max_depth`` a ``TimestampError`` is raised.  Parsing
         failures degrade gracefully (chain check is skipped with a warning).
 
+    Multi-TSA fallback (REG-ADR-007):
+        When ``tsa_urls`` has more than one entry, each is tried in order
+        (via ``add_rfc3161_timestamp_with_fallback``) and the first success
+        wins. With zero or one entries, behavior is identical to passing
+        only ``tsa_url`` — this is purely additive.
+
     Args:
         dsse_bytes:         DSSE envelope bytes to timestamp.
-        tsa_url:            RFC 3161 TSA endpoint URL.
+        tsa_url:            RFC 3161 TSA endpoint URL (primary/fallback[0]).
+        tsa_urls:           Optional ordered fallback list of TSA endpoints;
+                            when omitted, only ``tsa_url`` is tried.
         nonce_store_path:   Explicit path for the nonce SQLite DB; None
                             auto-derives from ``$NOVAFABRIC_HOME``.
         offline_mode:       When True, skip nonce store and return TSR
@@ -150,7 +160,10 @@ def request_timestamp(
     store.record_nonce(nonce)
 
     try:
-        tsr_bytes = add_rfc3161_timestamp(dsse_bytes, tsa_url)
+        if tsa_urls and len(tsa_urls) > 1:
+            tsr_bytes, _used_url = add_rfc3161_timestamp_with_fallback(dsse_bytes, tsa_urls)
+        else:
+            tsr_bytes = add_rfc3161_timestamp(dsse_bytes, tsa_url)
     except TimestampError as exc:
         msg = str(exc)
         if "unreachable" in msg or "HTTP error" in msg or "HTTP " in msg:

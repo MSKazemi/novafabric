@@ -29,6 +29,7 @@ from novafabric.trust._rfc3161 import (
     _der_sequence,
     _parse_pki_status,
     add_rfc3161_timestamp,
+    add_rfc3161_timestamp_with_fallback,
 )
 
 # ---------------------------------------------------------------------------
@@ -502,3 +503,62 @@ def test_der_integer_strips_redundant_leading_zero() -> None:
         raw = enc[2:2 + length]
         recovered = int.from_bytes(raw.lstrip(b"\x00") or b"\x00", "big")
         assert recovered == val, f"Round-trip failed for {val}"
+
+
+# ---------------------------------------------------------------------------
+# add_rfc3161_timestamp_with_fallback — REG-ADR-007 multi-TSA fallback
+# ---------------------------------------------------------------------------
+
+
+class TestAddRfc3161TimestampWithFallback:
+    def _resp(self, status_code: int, content: bytes) -> MagicMock:
+        mock_resp = MagicMock(spec=httpx.Response)
+        mock_resp.status_code = status_code
+        mock_resp.content = content
+        return mock_resp
+
+    def test_empty_list_raises(self) -> None:
+        with pytest.raises(TimestampError, match="no TSA URLs configured"):
+            add_rfc3161_timestamp_with_fallback(b"data", [])
+
+    def test_first_url_success_never_tries_second(self) -> None:
+        tsr_der = _make_tsr_der(0)
+        with patch(
+            "novafabric.trust._rfc3161.httpx.post", return_value=self._resp(200, tsr_der)
+        ) as mock_post:
+            result, used_url = add_rfc3161_timestamp_with_fallback(
+                b"data", ["https://primary.example/tsr", "https://backup.example/tsr"]
+            )
+        assert result == tsr_der
+        assert used_url == "https://primary.example/tsr"
+        mock_post.assert_called_once()
+
+    def test_first_url_fails_falls_through_to_second(self) -> None:
+        tsr_der = _make_tsr_der(0)
+        responses = [
+            httpx.TransportError("connection refused"),
+            self._resp(200, tsr_der),
+        ]
+
+        def fake_post(*args, **kwargs):
+            resp = responses.pop(0)
+            if isinstance(resp, Exception):
+                raise resp
+            return resp
+
+        with patch("novafabric.trust._rfc3161.httpx.post", side_effect=fake_post):
+            result, used_url = add_rfc3161_timestamp_with_fallback(
+                b"data", ["https://primary.example/tsr", "https://backup.example/tsr"]
+            )
+        assert result == tsr_der
+        assert used_url == "https://backup.example/tsr"
+
+    def test_all_urls_fail_raises_last_error(self) -> None:
+        with patch(
+            "novafabric.trust._rfc3161.httpx.post",
+            side_effect=httpx.TransportError("unreachable"),
+        ):
+            with pytest.raises(TimestampError, match="unreachable"):
+                add_rfc3161_timestamp_with_fallback(
+                    b"data", ["https://primary.example/tsr", "https://backup.example/tsr"]
+                )

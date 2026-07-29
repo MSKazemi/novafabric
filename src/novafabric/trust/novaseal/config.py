@@ -11,6 +11,9 @@ novaseal.yaml schema (local profile):
     key_path: /path/to/ecdsa-p256.pem
     cert_path: /path/to/cert.pem
     tsa_url: https://freetsa.org/tsr   # optional; omit to skip timestamps
+    tsa_urls:                          # optional (REG-ADR-007); ordered TSA
+      - https://tsa.example-primary.com/tsr    # fallback list. Defaults to
+      - https://freetsa.org/tsr                # [tsa_url] when omitted.
     merkle_db: /path/to/merkle.db      # optional; defaults to ~/.novafabric/merkle.db
 
 novaseal.yaml schema (aws_kms profile):
@@ -38,6 +41,10 @@ novaseal.yaml schema (gcp_kms profile):
     cert_path: /path/to/cert.pem
     tsa_url: https://freetsa.org/tsr   # optional
     merkle_db: /path/to/merkle.db      # optional
+
+All four profiles also accept the optional ``tsa_urls`` ordered fallback list
+shown in the local-profile example above (REG-ADR-007); it works identically
+regardless of signing profile since it only affects the timestamp request.
 """
 
 from __future__ import annotations
@@ -92,7 +99,15 @@ class SigningProfile:
 
     # ---- shared fields ----
     tsa_url: str = _DEFAULT_TSA_URL
+    # REG-ADR-007: ordered TSA fallback list. Always populated — defaults to
+    # [tsa_url] when novaseal.yaml doesn't set tsa_urls explicitly, so
+    # callers can always read profile.tsa_urls without a None-check.
+    tsa_urls: list[str] = field(default_factory=list)
     merkle_db: Path = field(default_factory=lambda: _DEFAULT_MERKLE_DB)
+
+    def __post_init__(self) -> None:
+        if not self.tsa_urls:
+            self.tsa_urls = [self.tsa_url]
 
 
 class SealConfigError(Exception):
@@ -185,6 +200,20 @@ def _parse_profile(path: Path) -> SigningProfile:
     merkle_db = Path(raw.get("merkle_db", str(_DEFAULT_MERKLE_DB))).expanduser()
     merkle_db.parent.mkdir(parents=True, exist_ok=True)
 
+    # REG-ADR-007: optional ordered TSA fallback list. tsa_urls[0] need not
+    # equal tsa_url — an operator may want a distinct primary vs. fallback
+    # set — but if tsa_urls is omitted entirely, SigningProfile.__post_init__
+    # defaults it to [tsa_url].
+    raw_tsa_urls = raw.get("tsa_urls")
+    if raw_tsa_urls is not None:
+        if not isinstance(raw_tsa_urls, list) or not all(
+            isinstance(u, str) for u in raw_tsa_urls
+        ):
+            raise SealConfigError("novaseal.yaml tsa_urls must be a list of strings")
+        if not raw_tsa_urls:
+            raise SealConfigError("novaseal.yaml tsa_urls, if given, must not be empty")
+    tsa_urls = list(raw_tsa_urls) if raw_tsa_urls is not None else [tsa_url]
+
     if profile == "local":
         key_path = Path(req("key_path")).expanduser()
         cert_path = Path(req("cert_path")).expanduser()
@@ -199,6 +228,7 @@ def _parse_profile(path: Path) -> SigningProfile:
             key_path=key_path,
             cert_path=cert_path,
             tsa_url=tsa_url,
+            tsa_urls=tsa_urls,
             merkle_db=merkle_db,
         )
 
@@ -214,6 +244,7 @@ def _parse_profile(path: Path) -> SigningProfile:
             kms_key_id=kms_key_id,
             aws_region=aws_region,
             tsa_url=tsa_url,
+            tsa_urls=tsa_urls,
             merkle_db=merkle_db,
         )
 
@@ -229,6 +260,7 @@ def _parse_profile(path: Path) -> SigningProfile:
             vault_url=vault_url,
             key_name=key_name,
             tsa_url=tsa_url,
+            tsa_urls=tsa_urls,
             merkle_db=merkle_db,
         )
 
@@ -242,6 +274,7 @@ def _parse_profile(path: Path) -> SigningProfile:
         cert_path=cert_path,
         key_version_name=key_version_name,
         tsa_url=tsa_url,
+        tsa_urls=tsa_urls,
         merkle_db=merkle_db,
     )
 

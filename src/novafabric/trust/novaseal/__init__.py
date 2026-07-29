@@ -124,16 +124,27 @@ class NovaSeal:
     """Sign, timestamp, and log NovaFabric capsules.
 
     Args:
-        config:   KeyConfig with profile and key/cert paths.
-        tsa_url:  RFC 3161 TSA URL (use "" to disable timestamping).
-        db_path:  Path to the SQLite Merkle log database.
+        config:    KeyConfig with profile and key/cert paths.
+        tsa_url:   RFC 3161 TSA URL (use "" to disable timestamping).
+        db_path:   Path to the SQLite Merkle log database.
+        tsa_urls:  Optional ordered fallback list of TSA URLs (REG-ADR-007).
+                   When it has more than one entry, each is tried in order
+                   until one succeeds. Omit (or pass a single-entry list) for
+                   the original single-TSA behavior.
     """
 
-    def __init__(self, config: KeyConfig, tsa_url: str, db_path: str) -> None:
+    def __init__(
+        self,
+        config: KeyConfig,
+        tsa_url: str,
+        db_path: str,
+        tsa_urls: list[str] | None = None,
+    ) -> None:
         self._config = config
         self._key_path = Path(config.key_path)
         self._cert_path = Path(config.cert_path)
         self._tsa_url = tsa_url
+        self._tsa_urls = tsa_urls
         self._merkle = open_merkle_log(db_path)
 
     def seal(
@@ -172,7 +183,9 @@ class NovaSeal:
         tsr_bytes = b""
         if self._tsa_url:
             try:
-                tsr_bytes = request_timestamp(dsse_bytes, self._tsa_url)
+                tsr_bytes = request_timestamp(
+                    dsse_bytes, self._tsa_url, tsa_urls=self._tsa_urls
+                )
             except TSAUnavailableError as exc:
                 log.warning("TSA unavailable — capsule will be sealed without timestamp: %s", exc)
             except Exception as exc:
