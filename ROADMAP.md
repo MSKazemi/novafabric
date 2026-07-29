@@ -10,8 +10,9 @@
 
 > **This table is only updated when a version is tagged**, so that a released row
 > always means "released" — see **CHANGELOG `[Unreleased]`** for anything not yet
-> tagged. As of v0.93.0 (2026-07-29), `[Unreleased]` is empty — the table below is
-> current with `main`.
+> tagged. As of 2026-07-29, `[Unreleased]` holds three post-v0.93.0 backlog fixes
+> (BL-013/014/015 — see CHANGELOG) not yet cut into a release; the table below is
+> current with the last tag, v0.93.0.
 
 | Version | Feature | Status |
 |---|---|---|

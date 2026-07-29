@@ -9,6 +9,32 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Added
+- **`nova doctor --check-scheduler`** (PAR-ADR-003 OQ-06, BL-013): `diagnose_scheduler_env()`
+  (`capsule/env_contract.py`) detects a scheduler (Slurm, torchrun, OpenMPI, Ray, K8s Job) via
+  its own native env vars, cross-references `NOVAFABRIC_GLOBAL_RUN_ID`, and for Slurm reads
+  `SLURM_EXPORT_ENV` to distinguish a site `--export=NONE` policy from a submission-script gap.
+  Diagnostic-only, on-demand — does not change `read_env()`'s existing fail-open runtime
+  fallback. Dashboard command registry regenerated.
+- **Multi-TSA fallback list for RFC 3161 timestamping** (REG-ADR-007, BL-015):
+  `SigningProfile.tsa_urls` (`trust/novaseal/config.py`) tries each configured TSA in order via
+  `add_rfc3161_timestamp_with_fallback()`, falling through on `TimestampError` and raising the
+  last error if all fail; defaults to `[tsa_url]` so existing single-TSA configs are unaffected.
+  Wired into `capture/orchestrator.py`, the only call site that issues a live TSA request.
+  Documented in `docs/novaseal-configuration.md` §1.1.
+
+### Fixed
+- **Consumer-side ULID dedup now persists across NATS JetStream fetch batches**
+  (SCALE-ADR-001, BL-014): `LineageConsumer.run_once()`'s dedup set previously reset on every
+  call, so a message redelivered in a *later* fetch batch — the exact at-least-once scenario the
+  ADR names — was never caught. Dedup now lives in bounded (`dedup_cache_size`, default 50,000)
+  FIFO-eviction instance state. The stream's server-side `Nats-Msg-Id` `duplicate_window` is now
+  explicit and operator-configurable (`duplicate_window_s` / `NOVA_NATS_DUPLICATE_WINDOW_S`,
+  default 120s) instead of an implicit NATS default.
+- Documented the `nova seal bypass` emergency procedure in the operational incident runbook
+  (REG-ADR-006 cond-1, BL-012) — `docs/ops/incident-runbook.md` §7 (symptom/diagnosis/action
+  table; bypass authorization is by key/cert possession, not an RBAC role check).
+
 ## [0.93.0] — 2026-07-29
 
 ### Added
