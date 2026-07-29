@@ -14,19 +14,25 @@ services:
       retries: 20
 
   pgbouncer:
-    image: bitnami/pgbouncer:1.22.1
+    # bitnami/pgbouncer was pulled from Docker Hub's free tier (manifest unknown for
+    # both :1.22.1 and :latest as of 2026-07) — switched to edoburu/pgbouncer (MIT
+    # licensed, https://github.com/edoburu/docker-pgbouncer), which uses a different
+    # env-var convention (a single DATABASE_URL vs bitnami's POSTGRESQL_*/PGBOUNCER_*).
+    image: edoburu/pgbouncer:latest
     container_name: novafabric-test-pgbouncer
     environment:
-      POSTGRESQL_HOST: postgres
-      POSTGRESQL_PORT: "5432"
-      POSTGRESQL_DATABASE: novafabric_test
-      POSTGRESQL_USERNAME: postgres
-      POSTGRESQL_PASSWORD: testpass
-      PGBOUNCER_DATABASE: novafabric_test
-      PGBOUNCER_POOL_MODE: transaction
-      PGBOUNCER_MAX_CLIENT_CONN: "100"
-      PGBOUNCER_DEFAULT_POOL_SIZE: "1"
-      PGBOUNCER_AUTH_TYPE: trust
+      DATABASE_URL: postgresql://postgres:testpass@postgres:5432/novafabric_test
+      LISTEN_PORT: "6432"
+      # "trust" (the bitnami original's setting) makes pgbouncer skip client auth but
+      # still needs a real credential to hand the backend, which defaults to
+      # scram-sha-256 on postgres:16 — trust's md5-hashed userlist entry then fails
+      # backend auth ("wrong password type"). "plain" keeps the real password in
+      # userlist.txt so pgbouncer can complete SCRAM against the backend; the test DSN
+      # already carries the password, so client-side behavior is unchanged.
+      AUTH_TYPE: plain
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: "100"
+      DEFAULT_POOL_SIZE: "1"
     ports:
       - "16432:6432"
     depends_on:
