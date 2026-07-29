@@ -33,6 +33,12 @@ services:
       POOL_MODE: transaction
       MAX_CLIENT_CONN: "100"
       DEFAULT_POOL_SIZE: "1"
+    volumes:
+      # Overrides the auto-generated pgbouncer.ini — see pgbouncer.ini's own header
+      # comment for why (server_reset_query must be disabled for tc-005b to be able
+      # to observe the vulnerability it exists to catch). DATABASE_URL above is still
+      # used by the entrypoint to populate userlist.txt.
+      - ./pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
     ports:
       - "16432:6432"
     depends_on:

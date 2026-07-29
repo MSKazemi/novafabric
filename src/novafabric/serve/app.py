@@ -6028,6 +6028,35 @@ def create_app(
             "detail": sys.version,
         })
 
+        # cap-003 (dual-object GDPR/WORM split, ADR-0066) compliance-posture
+        # visibility. Informational only (`ok: True` either way — this check
+        # never asserts the current posture is wrong, only makes it visible):
+        # SCALE-ADR-003's hard blocking condition names an EU-GDPR legal-counsel
+        # review before cap-003 may default active; what actually happened is a
+        # CTO/BDFL self-sign (ADR-0069, 2026-05-27), which that ADR's own text
+        # explicitly considered and did not treat as sufficient for this one
+        # decision. Surfacing this in `nova doctor` / the dashboard's System
+        # Diagnostics panel — rather than only in a source-code comment — is the
+        # concrete, non-presumptuous step available here: it does not decide
+        # whether the self-sign is enough, it makes sure the operator/auditor
+        # running this check can see the actual posture and decide for themselves.
+        cap003_enabled = os.getenv("NOVA_CAP003_ENABLED", "true").lower() == "true"
+        checks.append({
+            "name": "cap003_gdpr_legal_review",
+            "ok": True,
+            "detail": (
+                "cap-003 (dual-object GDPR/WORM split) is "
+                f"{'ACTIVE' if cap003_enabled else 'disabled'} on this deployment. "
+                "SCALE-ADR-003 requires an EU-GDPR legal-counsel review before this "
+                "may default active; the recorded resolution is a CTO/BDFL self-sign "
+                "(ADR-0069, 2026-05-27), not that review — see "
+                "design/governance/acceptance-record.md (SCALE-ADR-003)."
+                if cap003_enabled
+                else "cap-003 (dual-object GDPR/WORM split) is disabled "
+                "(NOVA_CAP003_ENABLED=false) on this deployment."
+            ),
+        })
+
         return {"ok": all(c["ok"] for c in checks), "checks": checks}
 
     @app.post("/api/policy/test", dependencies=[Depends(verify_token)])
