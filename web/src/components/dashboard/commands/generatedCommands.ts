@@ -2221,6 +2221,13 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--check-storage"
       },
       {
+        "key": "check-scheduler",
+        "label": "--check-scheduler",
+        "type": "toggle",
+        "hint": "Detect a scheduler-vs-NOVAFABRIC_*-env-var mismatch, e.g. a Slurm site's --export=NONE policy silently dropping capture identity (OQ-06, PAR-ADR-003).",
+        "flag": "--check-scheduler"
+      },
+      {
         "key": "db-path",
         "label": "--db-path",
         "type": "text",

@@ -7,6 +7,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from novafabric.capsule.env_contract import SchedulerEnvDiagnosis, diagnose_scheduler_env
 from novafabric.storage import StorageInfo, get_backend
 
 console = Console()
@@ -20,6 +21,17 @@ def doctor_cmd(
             help=(
                 "Report backend name, schema version, migration status, "
                 "and row counts per table (ADR-0016)."
+            ),
+        ),
+    ] = False,
+    check_scheduler: Annotated[
+        bool,
+        typer.Option(
+            "--check-scheduler",
+            help=(
+                "Detect a scheduler-vs-NOVAFABRIC_*-env-var mismatch, e.g. a "
+                "Slurm site's --export=NONE policy silently dropping capture "
+                "identity (OQ-06, PAR-ADR-003)."
             ),
         ),
     ] = False,
@@ -64,28 +76,44 @@ def doctor_cmd(
       # Include storage backend checks
       nova doctor --check-storage
 
+      # Detect a scheduler/env-var contract mismatch (OQ-06)
+      nova doctor --check-scheduler
+
       # Check a specific database path
       nova doctor --db-path ~/custom/novafabric.db
     """
-    if not check_storage:
+    if not check_storage and not check_scheduler:
         console.print(
             "[yellow]Hint:[/yellow] pass [bold]--check-storage[/bold] to inspect "
-            "the storage backend."
+            "the storage backend, or [bold]--check-scheduler[/bold] to detect a "
+            "scheduler/env-var contract mismatch."
         )
         return
 
-    try:
-        storage = get_backend(
-            backend=backend,
-            db_path=db_path,
-            postgres_dsn=postgres_dsn,
-        )
-        info = storage.info()
-    except Exception as exc:  # noqa: BLE001
-        console.print(f"[red]Error:[/red] {exc}")
-        raise typer.Exit(1) from exc
+    failed = False
 
-    _print_storage_report(info)
+    if check_storage:
+        try:
+            storage = get_backend(
+                backend=backend,
+                db_path=db_path,
+                postgres_dsn=postgres_dsn,
+            )
+            info = storage.info()
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[red]Error:[/red] {exc}")
+            raise typer.Exit(1) from exc
+
+        _print_storage_report(info)
+
+    if check_scheduler:
+        diagnosis = diagnose_scheduler_env()
+        _print_scheduler_report(diagnosis)
+        if not diagnosis.ok:
+            failed = True
+
+    if failed:
+        raise typer.Exit(1)
 
 
 def _print_storage_report(info: StorageInfo) -> None:
@@ -133,5 +161,42 @@ def _print_storage_report(info: StorageInfo) -> None:
     elif info.db_path:
         console.print()
         console.print("[dim]No tables found — database may not be initialised.[/dim]")
+
+
+def _print_scheduler_report(diagnosis: SchedulerEnvDiagnosis) -> None:
+    console.print()
+    console.print("[bold]Scheduler / env-var contract[/bold]")
+
+    summary = Table.grid(padding=(0, 2))
+    summary.add_column(style="dim")
+    summary.add_column()
+
+    summary.add_row(
+        "Scheduler detected",
+        diagnosis.scheduler_detected or "[dim]none[/dim]",
+    )
+    summary.add_row(
+        "NOVAFABRIC_* contract vars",
+        "[green]present[/green]" if diagnosis.contract_vars_present else "[yellow]absent[/yellow]",
+    )
+    if diagnosis.slurm_export_env is not None:
+        summary.add_row("SLURM_EXPORT_ENV", diagnosis.slurm_export_env)
+
+    console.print(summary)
+
+    if diagnosis.ok:
+        console.print()
+        console.print("[green]OK[/green] — no scheduler/env-var contract mismatch detected.")
+        return
+
+    console.print()
+    console.print("[red]Mismatch detected[/red]")
+    for issue in diagnosis.issues:
+        console.print(f"  - {issue}")
+    if diagnosis.remediation:
+        console.print()
+        console.print("[bold]Remediation[/bold]")
+        for hint in diagnosis.remediation:
+            console.print(f"  - {hint}")
 
     console.print()

@@ -5,6 +5,7 @@ import sqlite3
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -239,3 +240,62 @@ def test_print_storage_report_empty_rows_with_path(tmp_path: Path) -> None:
         migration_pending=None,
     )
     _print_storage_report(info)
+
+
+# ---------------------------------------------------------------------------
+# nova doctor --check-scheduler (OQ-06, PAR-ADR-003)
+# ---------------------------------------------------------------------------
+
+_SCHEDULER_ENV_VARS = [
+    "SLURM_JOB_ID",
+    "SLURM_JOBID",
+    "SLURM_EXPORT_ENV",
+    "TORCHELASTIC_RUN_ID",
+    "OMPI_COMM_WORLD_RANK",
+    "RAY_WORLD_SIZE",
+    "KUBERNETES_SERVICE_HOST",
+    "NOVAFABRIC_GLOBAL_RUN_ID",
+]
+
+
+@pytest.fixture(autouse=True)
+def _clean_scheduler_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for var in _SCHEDULER_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+
+
+def test_doctor_check_scheduler_no_scheduler_is_ok() -> None:
+    result = runner.invoke(app, ["doctor", "--check-scheduler"])
+    assert result.exit_code == 0
+    assert "OK" in result.output
+
+
+def test_doctor_check_scheduler_slurm_export_none_fails_loud(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SLURM_JOB_ID", "12345")
+    monkeypatch.setenv("SLURM_EXPORT_ENV", "NONE")
+
+    result = runner.invoke(app, ["doctor", "--check-scheduler"])
+
+    assert result.exit_code == 1
+    assert "Mismatch detected" in result.output
+    assert "SLURM_EXPORT_ENV" in result.output
+
+
+def test_doctor_check_scheduler_with_contract_vars_present_is_ok(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SLURM_JOB_ID", "12345")
+    monkeypatch.setenv("NOVAFABRIC_GLOBAL_RUN_ID", "01ARZ3NDEKTSV4RRFFQ69G5FAV")
+
+    result = runner.invoke(app, ["doctor", "--check-scheduler"])
+
+    assert result.exit_code == 0
+    assert "OK" in result.output
+
+
+def test_doctor_no_flags_mentions_check_scheduler() -> None:
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0
+    assert "--check-scheduler" in result.output

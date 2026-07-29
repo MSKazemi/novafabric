@@ -31,6 +31,13 @@ FR-22: Per-scheduler world_size mapping:
   torchrun       → WORLD_SIZE
   OpenMPI        → OMPI_COMM_WORLD_SIZE
   Ray Train      → RAY_WORLD_SIZE (injected by our Ray Train wrapper)
+
+OQ-06: `diagnose_scheduler_env()` is the `nova doctor --check-scheduler`
+self-check (PAR-ADR-003 condition 2). It distinguishes a genuine
+STANDALONE run from a scheduler-detected-but-contract-vars-missing
+mismatch (e.g. a Slurm site's `--export=NONE` policy silently dropping
+NOVAFABRIC_* vars) — surfaced on demand, fail-loud, without changing
+`read_env()`'s own fail-open default for the actual capture hot path.
 """
 
 from __future__ import annotations
@@ -54,6 +61,119 @@ SCHEDULER_WORLD_SIZE_VARS: list[tuple[str, str]] = [
     ("ray_train", "RAY_WORLD_SIZE"),
     ("k8s_job", "NOVAFABRIC_K8S_JOB_COMPLETIONS"),
 ]
+
+
+# ── Scheduler presence probe (OQ-06) ────────────────────────────────────
+# Each entry: (scheduler_name, env_var whose mere presence proves the
+# scheduler itself injected it — set by the scheduler daemon, independent
+# of whether the submitter's own env-var export policy propagated ours).
+SCHEDULER_PRESENCE_VARS: list[tuple[str, str]] = [
+    ("slurm", "SLURM_JOB_ID"),
+    ("slurm", "SLURM_JOBID"),  # older Slurm releases
+    ("torchrun", "TORCHELASTIC_RUN_ID"),
+    ("openmpi", "OMPI_COMM_WORLD_RANK"),
+    ("ray_train", "RAY_WORLD_SIZE"),
+    ("k8s_job", "KUBERNETES_SERVICE_HOST"),
+]
+
+
+@dataclass
+class SchedulerEnvDiagnosis:
+    """Result of the OQ-06 scheduler env-var self-check.
+
+    Distinguishes "no scheduler detected" (nothing to check) from "a
+    scheduler was detected but the NOVAFABRIC_* contract vars it should
+    have propagated are missing" (`ok=False`) — the fail-loud case OQ-06
+    asks for, surfaced on demand via `nova doctor --check-scheduler`
+    rather than by changing `read_env()`'s fail-open default.
+    """
+
+    scheduler_detected: str | None
+    contract_vars_present: bool
+    slurm_export_env: str | None
+    ok: bool
+    issues: list[str] = field(default_factory=list)
+    remediation: list[str] = field(default_factory=list)
+
+
+def diagnose_scheduler_env() -> SchedulerEnvDiagnosis:
+    """Detect a scheduler-vs-contract mismatch (OQ-06).
+
+    A scheduler daemon sets its own native env vars (e.g. Slurm's
+    ``SLURM_JOB_ID``) independent of any ``--export`` policy — they prove a
+    job is genuinely running under that scheduler. If the NOVAFABRIC_*
+    contract vars a submission wrapper should have injected are absent
+    *despite* that proof, `read_env()`'s FR-20 fallback (STANDALONE +
+    a logger warning) is silently masking a real site-policy or
+    submission-script problem rather than a genuine standalone run.
+    """
+    scheduler_detected: str | None = None
+    for name, var in SCHEDULER_PRESENCE_VARS:
+        if os.environ.get(var):
+            scheduler_detected = name
+            break
+
+    contract_vars_present = bool(os.environ.get("NOVAFABRIC_GLOBAL_RUN_ID"))
+
+    if scheduler_detected is None:
+        return SchedulerEnvDiagnosis(
+            scheduler_detected=None,
+            contract_vars_present=contract_vars_present,
+            slurm_export_env=None,
+            ok=True,
+        )
+
+    if contract_vars_present:
+        return SchedulerEnvDiagnosis(
+            scheduler_detected=scheduler_detected,
+            contract_vars_present=True,
+            slurm_export_env=os.environ.get("SLURM_EXPORT_ENV"),
+            ok=True,
+        )
+
+    issues = [
+        f"Detected a {scheduler_detected} job (scheduler-native env var present), "
+        "but no NOVAFABRIC_* contract vars are set — capture is falling back to "
+        "capsule_role=STANDALONE with a synthesised global_run_id (FR-20), which "
+        "silently loses parent/child linkage for this run."
+    ]
+    remediation: list[str] = []
+    slurm_export_env = os.environ.get("SLURM_EXPORT_ENV")
+
+    if scheduler_detected == "slurm":
+        if slurm_export_env and slurm_export_env.upper() in {"NONE", "NIL"}:
+            issues.append(
+                f"SLURM_EXPORT_ENV={slurm_export_env!r} — this site's Slurm policy "
+                "disables environment export by default, which drops NOVAFABRIC_* "
+                "vars before the job step starts."
+            )
+            remediation.append(
+                "Ask your site admin for an export exception, or explicitly pass "
+                "an allowlist: `sbatch --export=ALL,NOVAFABRIC_GLOBAL_RUN_ID,"
+                "NOVAFABRIC_CAPSULE_DIR,NOVAFABRIC_WORLD_SIZE ...`."
+            )
+        else:
+            remediation.append(
+                "SLURM_EXPORT_ENV is not NONE/NIL, so this is likely a submission-"
+                "script gap rather than a site export policy — confirm the "
+                "submitter SDK actually sets NOVAFABRIC_GLOBAL_RUN_ID before "
+                "calling srun/sbatch."
+            )
+    else:
+        remediation.append(
+            f"Confirm the {scheduler_detected} submission wrapper propagates "
+            "NOVAFABRIC_GLOBAL_RUN_ID (and NOVAFABRIC_CAPSULE_DIR) into the job "
+            "environment before launch."
+        )
+
+    return SchedulerEnvDiagnosis(
+        scheduler_detected=scheduler_detected,
+        contract_vars_present=False,
+        slurm_export_env=slurm_export_env,
+        ok=False,
+        issues=issues,
+        remediation=remediation,
+    )
 
 
 def _probe_world_size() -> int | None:

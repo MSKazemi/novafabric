@@ -204,7 +204,7 @@ Status: **experimental**.
 | [`nova server saml-metadata`](#nova-server-saml-metadata) | Emit the SAML SP metadata XML for IdP registration (experimental) |
 | [`nova server api-key`](#nova-server-api-key-create-experimental-adr-0193) | First-class API keys: create, list, revoke, rotate (experimental) |
 | [`nova login`](#nova-login) / [`nova logout`](#nova-logout) | Authenticate with a NovaFabric server |
-| [`nova doctor`](#nova-doctor---check-storage) | Installation and storage diagnostics |
+| [`nova doctor`](#nova-doctor---check-storage---check-scheduler) | Installation, storage, and scheduler/env-var diagnostics |
 | [`nova migrate-to-postgres`](#nova-migrate-to-postgres) | Migrate the local SQLite registry to Postgres |
 | [`nova backup`](#nova-backup-create-experimental-adr-0181) / [`nova restore`](#nova-restore-set-path-experimental-adr-0181--adr-0211) | Evidence-grade backup sets: create, verify offline, restore (local + automated pg restore, experimental) |
 | [`nova support-bundle`](#nova-support-bundle-experimental-adr-0187) | Secret-safe diagnostics tarball for support (experimental) |
@@ -4498,7 +4498,7 @@ Options:
 
 Requires: `pip install 'novafabric[server]'`
 
-### nova doctor [--check-storage]
+### nova doctor [--check-storage] [--check-scheduler]
 
 Run diagnostic checks on the NovaFabric installation.
 
@@ -4507,17 +4507,31 @@ nova doctor --check-storage
 nova doctor --check-storage --backend postgres
 nova doctor --check-storage --backend postgres --postgres-dsn "postgresql://..."
 nova doctor --check-storage --db-path /path/to/custom.db
+nova doctor --check-scheduler
 ```
 
-Without `--check-storage`, prints a hint and exits. With `--check-storage`:
+Without any flag, prints a hint and exits 0. With `--check-storage`:
 
 - Reports the active backend (`sqlite` or `postgres`).
 - Shows the Alembic schema version and migration status.
 - Prints per-table row counts.
 - Exits 0 on success, 1 on error.
 
+With `--check-scheduler` (**works today**, OQ-06 / PAR-ADR-003 condition 2): detects a
+mismatch between a scheduler's own native env vars (e.g. Slurm's `SLURM_JOB_ID`, set by
+the scheduler daemon itself) and the `NOVAFABRIC_*` env-var contract (FR-18) a submission
+wrapper should have propagated into the job. This surfaces, on demand, the case FR-20's
+runtime fallback otherwise handles silently: capture still defaults to
+`capsule_role=STANDALONE` with a synthesised `global_run_id` so the workload is never
+blocked, but that quietly loses parent/child linkage for the run. For Slurm specifically,
+also reads `SLURM_EXPORT_ENV` to distinguish a site `--export=NONE`/`NIL` policy (env
+export disabled at the cluster level) from a submission-script gap (the wrapper simply
+never set `NOVAFABRIC_GLOBAL_RUN_ID`). Exits 0 if no scheduler is detected or the contract
+vars are present; exits 1 with a diagnosis + remediation hint otherwise.
+
 Options:
 - `--check-storage` — enable storage health report (ADR-0016)
+- `--check-scheduler` — enable the scheduler/env-var contract check (OQ-06)
 - `--backend TEXT` — `sqlite` (default) or `postgres`
 - `--db-path PATH` — override the SQLite path; defaults to `NOVAFABRIC_DB_PATH`
 - `--postgres-dsn TEXT` — Postgres DSN; defaults to `NOVAFABRIC_POSTGRES_DSN`
