@@ -9,7 +9,43 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
-## [0.92.0] — 2026-07-25
+## [0.93.0] — 2026-07-29
+
+### Added
+- **Counterfactual root-cause search (ADR-0101 §NF-018, experimental), completing the
+  NF-017/018 intervention-replay pair.** `diagnose/verify.py` adds
+  `search_root_cause(capsule_dir)`: sweeps the ADR-0101 §NF-019 causal-root candidates
+  in their existing shallowest/earliest-ranked order — the pruning the ADR called for
+  over a naive linear sweep of every step — driving a bounded number (default 8, hard
+  ceiling 50) of zero-token mocked intervention replays until one confirms an outcome
+  flip (failure → success). The first `CONFIRMED` candidate is the decisive root
+  cause; every attempt (confirmed, refuted, or honestly unmappable) is kept on the
+  result, so the search itself is auditable, not just its winner. Exposed as
+  `nova diagnose --search-root-cause [--max-interventions N]`, composing with the
+  existing `--intervene` flag and JSON output. Also ships **NF-020**: both
+  `HypothesisVerification` and the new `RootCauseAttempt` now carry a top-level
+  `taxonomy` field (previously only nested inside `hypothesis`). The replay-driving
+  logic is factored into a shared `_verify_step()` helper used by both
+  `verify_hypothesis` (NF-017) and `search_root_cause` (NF-018) — no duplicated
+  replay-orchestration code. Zero new dependencies; additive-only on the wire (new
+  optional CLI flags, new optional JSON key). ADR-0101 moves to fully `accepted`: only
+  the semantic *conflicting*-claim half of NF-021 remains future design. Dashboard
+  `CommandsTab` regenerated (`web/scripts/gen-command-registry.py`) so the two new
+  flags appear in the full-CLI-parity form; static bundle rebuilt.
+
+### Fixed
+- Two stale `TODO: find source` citation comments in `metadata_store/{rls,postgres}.py`
+  for the pgBouncer + RLS `SET LOCAL` guidance — the real citations were added to
+  ADR-0050/ADR-0052 back on 2026-05-27, but the code comments were never updated to
+  match. Copied the resolved citations into both files. No logic change.
+- Six ADRs (`0097`, `0100`, `0106`, `0107`, `0109`, `0110`) had a body `**Status:**`
+  line (and, for five of them, an entire "Implementation status" section) still
+  reading "Proposed — future design (no implementation exists)" despite their YAML
+  frontmatter already saying `status: accepted` and a real shipped slice existing on
+  disk for each. Rewrote each to accurately describe what shipped vs what remains
+  future design, verified against the actual module docstrings. `CLAUDE.md`'s top
+  version-history paragraph had the same drift (said "latest tag v0.92.0" while
+  describing v0.82.0's feature) — corrected.
 
 ### Added
 - **Span-level claim grounding audit (ADR-0101 §NF-021, structural slice, experimental).**

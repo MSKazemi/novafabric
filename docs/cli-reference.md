@@ -984,8 +984,13 @@ Options:
 - `--output {text,json}` — output format (default: `text`).
 - `--intervene` — **experimental (ADR-0101)**: verify the top hypothesis with a
   counterfactual intervention replay and record an evidence-based verdict (see below).
+- `--search-root-cause` — **experimental (ADR-0101 §NF-018)**: search for the earliest
+  step whose correction flips the outcome (see below).
+- `--max-interventions N` — bound on how many causal-root candidates
+  `--search-root-cause` will test (default: `8`, hard ceiling: `50`). Only with
+  `--search-root-cause`.
 - `--replay-dir PATH` — base directory for the intervention replay output
-  (default: `.novafabric/replays`). Only with `--intervene`.
+  (default: `.novafabric/replays`). Only with `--intervene` or `--search-root-cause`.
 
 Algorithm (ADR-0084): decompose the run into ordered steps (src-411 module
 decomposition); a **coarse pass** scores each erroring step by explicit error signal,
@@ -1025,6 +1030,24 @@ Fidelity bound (ADR-0086): the verdict tests control-flow and downstream handlin
 recorded run, not fresh model behavior. Without `--intervene`, `nova diagnose` remains
 read-only and its output is unchanged (an unverified hypothesis is never presented as a
 proven root cause).
+
+**Counterfactual root-cause search — `--search-root-cause` (experimental, ADR-0101
+§NF-018).** Widens `--intervene` from testing only the top hypothesis into a search: it
+sweeps the §NF-019 causal-root candidates — already ranked shallowest/earliest-first,
+which is exactly the pruning the ADR calls for over a naive linear sweep of every step —
+running a bounded number of zero-token intervention replays (default `--max-interventions
+8`, hard ceiling `50`) until one confirms an outcome flip. The first `CONFIRMED` candidate
+is the decisive root cause; every attempt (confirmed, refuted, or honestly unmappable) is
+recorded, so the search itself is auditable, not just its winner:
+
+```bash
+nova diagnose run-xyz --search-root-cause --max-interventions 5 --output json
+```
+
+Same auto-mappable subset as `--intervene` (model-call hypotheses only). When no
+candidate flips the outcome within the bound, the result says so explicitly
+(`bounded: true`) rather than silently looking exhaustive. Composes with `--intervene` —
+both flags can be passed together.
 
 ---
 

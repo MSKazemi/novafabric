@@ -11,7 +11,12 @@ Security invariant (FR-07, FR-12, gap-006):
   A CI grep gate (FR-07) verifies that no bare session-scoped GUC assignment
   appears in this file.
 
-# TODO: find source — empirical pgBouncer + RLS community guidance recommending SET LOCAL
+  Citation resolved 2026-05-27 (ADR-0050/ADR-0052): SET LOCAL is the documented
+  pgBouncer + RLS pattern per PostgreSQL docs §SET LOCAL
+  (https://www.postgresql.org/docs/current/sql-set.html), the pganalyze RLS guide
+  (https://pganalyze.com/blog/postgres-row-level-security-ruby-rails), and the
+  Supabase Row Level Security docs
+  (https://supabase.com/docs/guides/database/postgres/row-level-security).
 """
 from __future__ import annotations
 

@@ -3,9 +3,17 @@
 All SET LOCAL / current_setting(...) / FORCE ROW LEVEL SECURITY text is confined
 to this package (FR-13). The CI grep gate enforces this constraint.
 
-TODO: find source — empirical pgBouncer + RLS community guidance recommending
-SET LOCAL over session-scoped SET (Crunchy Data / Supabase engineering /
-pgsql-hackers post). Required before ADR-001 / ADR-003 promote to 'accepted'.
+SET LOCAL over session-scoped SET is the canonical pgBouncer + RLS pattern (citation
+resolved 2026-05-27, ADR-0050/ADR-0052): session-scoped SET leaks across pgBouncer
+transaction-mode connections, while SET LOCAL is transaction-scoped and safe under
+connection pooling. Sources: PostgreSQL docs §SET LOCAL
+(https://www.postgresql.org/docs/current/sql-set.html — "The effects of SET LOCAL
+last only till the end of the current transaction"); pganalyze — Using Postgres Row
+Level Security in Ruby on Rails
+(https://pganalyze.com/blog/postgres-row-level-security-ruby-rails — "use SET LOCAL
+and do everything inside a transaction ... to prevent user and role settings from
+leaking across requests"); Crunchy Data — Row Level Security for Tenants in Postgres
+(https://www.crunchydata.com/blog/row-level-security-for-tenants-in-postgres).
 """
 from __future__ import annotations
 

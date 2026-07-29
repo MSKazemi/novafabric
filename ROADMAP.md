@@ -8,21 +8,14 @@
 
 ## Shipped
 
-> **Unreleased work sits ahead of the newest row below.** v0.63.0 is the latest
-> *tag*, not the latest state of `main`. Since then, ADRs 0098, 0112 (P4), 0118
-> (P2), 0121 (P3), 0122 (P4), 0137, 0141, 0173 and 0174 have gained slices, plus
-> the ADR-0178 multi-org startup guard. See **CHANGELOG `[Unreleased]`** for the
-> authoritative list — this table is only updated when a version is tagged, so
-> that a released row always means "released".
-
-> **Unreleased (2026-07-24): graph-intelligence cohort (ADRs 0212–0215)** — lineage
-> graph-analytics layer (`nova lineage metrics`), upstream root-cause ranking
-> (`nova lineage root-cause`), GraphML/GEXF/Cypher export (`nova lineage export-graph`),
-> and the synthesized `nova insights` report. All experimental, additive, local-first,
-> zero new dependencies.
+> **This table is only updated when a version is tagged**, so that a released row
+> always means "released" — see **CHANGELOG `[Unreleased]`** for anything not yet
+> tagged. As of v0.93.0 (2026-07-29), `[Unreleased]` is empty — the table below is
+> current with `main`.
 
 | Version | Feature | Status |
 |---|---|---|
+| v0.93.0 | **Counterfactual root-cause search (ADR-0101 §NF-018, completes the NF-017/018 pair)** — `diagnose/verify.py`: `search_root_cause` sweeps the §NF-019 causal-root candidates in their existing shallowest/earliest-ranked order — the pruning the ADR called for over a naive linear sweep — driving a bounded (default 8, ceiling 50) number of zero-token mocked intervention replays until one confirms an outcome flip; every attempt is recorded so the search is auditable. Also ships §NF-020: a top-level `taxonomy` field on both `HypothesisVerification` and the new `RootCauseAttempt`. Exposed as `nova diagnose --search-root-cause [--max-interventions N]`. Reuses the shared `_verify_step` replay-driving core with `--intervene` (NF-017) — no duplicated orchestration. ADR-0101 moves to fully accepted; only NF-021's semantic conflicting-claim half stays future design. Zero new deps. | **experimental** |
 | v0.92.0 | **Span-level claim grounding audit (ADR-0101 §NF-021, structural)** — `diagnose/claim_audit.py`: `audit_claims` classifies model spans as claims + tool spans as evidence over the span tree and marks a claim `ungrounded` when no evidence precedes it on the answer path — a deterministic, no-NLP hallucination-**risk** finding (not a semantic verdict). Reuses the diagnose step loader; composes with the v0.90.0 causal-graph attribution; feeds the ADR-0099 eval layer. Conflicting-claim (semantic) half deferred. Zero new deps. | **experimental** |
 | v0.91.0 | **x509 certificate-pinned offline signing identity (ADR-0055 `x509` profile)** — `trust/novaseal/x509_identity.py`: `X509SigningIdentity` signs with a long-lived ECDSA-P256/RSA key and embeds the operator X.509 cert; `verify_x509_signature` verifies **offline** by checking the embedded cert is in the operator's **pinned trust set** (SHA-256 fingerprint = the trust anchor) then verifying the signature under the cert's public key — `cryptography` primitives only, no hand-rolled crypto, no CA path-building. Full CA-bundle validation + the sigstore/Fulcio/Rekor profile stay future design. Integrates with NovaSeal. Zero new deps. | **experimental** |
 | v0.90.0 | **No-LLM causal-graph back-trace attribution (ADR-0101 §NF-019/§NF-022)** — `diagnose/causal_graph.py`: `causal_root_candidates` reconstructs the span parent/child causal graph and back-traces **root failure nodes** (a failing node with no failing ancestor is a causal root), deterministic and LLM-free, ranked; every candidate is verification-gated `unverified` (NF-022 — a ranked candidate, never a proven root cause, until the replay half runs). Complements the ordinal ADR-0084 `attribute_failure`; reuses its step loader + taxonomy. NF-017/018 replay confirmation deferred (ADR-0086 engine). Zero new deps. | **experimental** |

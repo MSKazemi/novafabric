@@ -13,7 +13,7 @@ Usage:
 
 Writes: web/src/components/dashboard/commands/generatedCommands.ts
 
-A pytest guard (tests/dashboard/test_command_registry_coverage.py) re-runs this
+A pytest guard (tests/serve/test_command_registry_coverage.py) re-runs this
 introspection and fails if the checked-in file drifts from the CLI.
 """
 from __future__ import annotations

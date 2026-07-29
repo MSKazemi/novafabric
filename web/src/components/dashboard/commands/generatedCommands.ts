@@ -2065,8 +2065,23 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "replay-dir",
         "label": "--replay-dir",
         "type": "text",
-        "hint": "Base directory for the intervention replay output (default: .novafabric/replays). Only with --intervene.",
+        "hint": "Base directory for the intervention replay output (default: .novafabric/replays). Only with --intervene or --search-root-cause.",
         "flag": "--replay-dir"
+      },
+      {
+        "key": "search-root-cause",
+        "label": "--search-root-cause",
+        "type": "toggle",
+        "hint": "Experimental (ADR-0101 NF-018): search for the earliest step whose correction flips the outcome (failure -> success). Sweeps the NF-019 causal-root candidates with bounded, zero-token intervention replays until one confirms; every attempt is recorded, so the search itself is auditable.",
+        "flag": "--search-root-cause"
+      },
+      {
+        "key": "max-interventions",
+        "label": "--max-interventions",
+        "type": "number",
+        "hint": "Bound on how many causal-root candidates --search-root-cause will test (default: 8, hard ceiling: 50). Only with --search-root-cause.",
+        "flag": "--max-interventions",
+        "defaultValue": "8"
       }
     ],
     "docsPath": "/spec",
@@ -4253,7 +4268,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "out",
         "label": "--out",
         "type": "text",
-        "hint": "Write form JSON here (default: stdout)",
+        "hint": "Write report JSON here (default: stdout)",
         "flag": "--out"
       }
     ],
@@ -4303,7 +4318,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "id": "nova-export-compliance-pmm",
     "name": "nova export-compliance pmm",
     "journey": "audit",
-    "description": "Art. 72 post-market-monitoring report; serious findings refer Art. 73 incidents (NF-091).",
+    "description": "Art. 72 post-market-monitoring report; serious findings refer incidents (NF-091).",
     "fields": [
       {
         "key": "system",

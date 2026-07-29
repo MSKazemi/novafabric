@@ -10,6 +10,10 @@ Public surface:
 * :func:`causal_root_candidates`, :class:`CausalAttribution`,
   :class:`CausalRootCandidate` — No-LLM causal-graph back-trace over recorded spans
   (ADR-0101 §NF-019); candidates are verification-gated ``unverified`` (§NF-022).
+* :func:`search_root_cause`, :class:`RootCauseSearch`, :class:`RootCauseAttempt` —
+  counterfactual root-cause search (ADR-0101 §NF-018): sweeps NF-019 causal-root
+  candidates with bounded, zero-token intervention replays for the earliest
+  confirmed outcome-flipping step.
 """
 from __future__ import annotations
 
@@ -33,8 +37,11 @@ from novafabric.diagnose.claim_audit import (
 )
 from novafabric.diagnose.verify import (
     HypothesisVerification,
+    RootCauseAttempt,
+    RootCauseSearch,
     UnmappableHypothesisError,
     Verdict,
+    search_root_cause,
     verify_hypothesis,
 )
 
@@ -47,6 +54,8 @@ __all__ = [
     "ClaimFinding",
     "ClaimGrounding",
     "HypothesisVerification",
+    "RootCauseAttempt",
+    "RootCauseSearch",
     "RunAttribution",
     "StepAttribution",
     "UnmappableHypothesisError",
@@ -54,5 +63,6 @@ __all__ = [
     "attribute_failure",
     "audit_claims",
     "causal_root_candidates",
+    "search_root_cause",
     "verify_hypothesis",
 ]

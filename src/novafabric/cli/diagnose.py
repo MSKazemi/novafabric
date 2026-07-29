@@ -12,7 +12,7 @@ from rich.table import Table
 
 from novafabric._paths import default_capsule_dir
 from novafabric.diagnose import CapsuleNotFoundError, attribute_failure
-from novafabric.diagnose.verify import HypothesisVerification
+from novafabric.diagnose.verify import HypothesisVerification, RootCauseSearch
 
 console = Console()
 
@@ -60,10 +60,35 @@ def diagnose_cmd(
             "--replay-dir",
             help=(
                 "Base directory for the intervention replay output "
-                "(default: .novafabric/replays). Only with --intervene."
+                "(default: .novafabric/replays). Only with --intervene or "
+                "--search-root-cause."
             ),
         ),
     ] = None,
+    search_root_cause_flag: Annotated[
+        bool,
+        typer.Option(
+            "--search-root-cause",
+            help=(
+                "Experimental (ADR-0101 NF-018): search for the earliest step "
+                "whose correction flips the outcome (failure -> success). Sweeps "
+                "the NF-019 causal-root candidates with bounded, zero-token "
+                "intervention replays until one confirms; every attempt is "
+                "recorded, so the search itself is auditable."
+            ),
+        ),
+    ] = False,
+    max_interventions: Annotated[
+        int,
+        typer.Option(
+            "--max-interventions",
+            help=(
+                "Bound on how many causal-root candidates --search-root-cause "
+                "will test (default: 8, hard ceiling: 50). Only with "
+                "--search-root-cause."
+            ),
+        ),
+    ] = 8,
 ) -> None:
     """Attribute a failed run to its most likely responsible step (ADR-0084).
 
@@ -72,11 +97,17 @@ def diagnose_cmd(
     AgentErrorTaxonomy label (MEMORY / REFLECTION / PLANNING / ACTION / SYSTEM /
     UNKNOWN). Scores are relative ranking weights, not probabilities.
 
-    With --intervene (experimental, ADR-0101) the top hypothesis is additionally
-    tested: an InterventionSpec is auto-synthesized, the capsule is replayed
-    counterfactually under mocked semantics (ADR-0086, zero-token), and the
-    verdict records whether the intervention flipped the outcome — evidence-based,
-    never guessed.
+    With --intervene (experimental, ADR-0101 NF-017) the top hypothesis is
+    additionally tested: an InterventionSpec is auto-synthesized, the capsule is
+    replayed counterfactually under mocked semantics (ADR-0086, zero-token), and
+    the verdict records whether the intervention flipped the outcome —
+    evidence-based, never guessed.
+
+    With --search-root-cause (experimental, ADR-0101 NF-018) the search widens:
+    the NF-019 causal-root candidates are swept, earliest/shallowest-ranked
+    first, with a bounded number of zero-token intervention replays, until one
+    confirms an outcome flip — the decisive root cause, replay-proven rather
+    than merely ranked.
 
     Scope: single failed run capsule.
 
@@ -90,9 +121,20 @@ def diagnose_cmd(
 
       # Verify the top hypothesis with a counterfactual replay (experimental)
       nova diagnose run-xyz --intervene
+
+      # Search for the decisive root cause across ranked candidates (experimental)
+      nova diagnose run-xyz --search-root-cause --max-interventions 5
     """
-    if replay_dir is not None and not intervene:
-        console.print("[red]--replay-dir only applies with --intervene[/red]")
+    if replay_dir is not None and not (intervene or search_root_cause_flag):
+        console.print(
+            "[red]--replay-dir only applies with --intervene or "
+            "--search-root-cause[/red]"
+        )
+        raise typer.Exit(code=1)
+    if max_interventions != 8 and not search_root_cause_flag:
+        console.print(
+            "[red]--max-interventions only applies with --search-root-cause[/red]"
+        )
         raise typer.Exit(code=1)
 
     base = (capsule_dir or default_capsule_dir()).resolve()
@@ -121,10 +163,20 @@ def diagnose_cmd(
 
         verification = verify_hypothesis(cap, result, replays_base_dir=replay_dir)
 
+    root_cause: RootCauseSearch | None = None
+    if search_root_cause_flag:
+        from novafabric.diagnose.verify import search_root_cause
+
+        root_cause = search_root_cause(
+            cap, replays_base_dir=replay_dir, max_interventions=max_interventions
+        )
+
     if output is DiagnoseOutputFormat.json:
         payload = result.as_dict()
         if verification is not None:
             payload["verification"] = verification.as_dict()
+        if root_cause is not None:
+            payload["root_cause_search"] = root_cause.as_dict()
         console.print_json(json.dumps(payload))
         return
 
@@ -137,6 +189,8 @@ def diagnose_cmd(
         )
         if verification is not None:
             _print_verification(verification)
+        if root_cause is not None:
+            _print_root_cause_search(root_cause)
         return
 
     console.print(
@@ -166,6 +220,8 @@ def diagnose_cmd(
     console.print(f"[dim]{result.note}[/dim]")
     if verification is not None:
         _print_verification(verification)
+    if root_cause is not None:
+        _print_root_cause_search(root_cause)
 
 
 def _print_verification(v: HypothesisVerification) -> None:
@@ -209,3 +265,37 @@ def _print_verification(v: HypothesisVerification) -> None:
         console.print(f"  Intervened capsule: {v.intervened_capsule}")
     console.print(f"  {v.reason}")
     console.print(f"  [dim]{v.note}[/dim]")
+
+
+def _print_root_cause_search(search: RootCauseSearch) -> None:
+    """Human-readable NF-018 counterfactual root-cause search block (ADR-0101)."""
+    console.print()
+    console.print(
+        "[bold]Counterfactual root-cause search "
+        "(ADR-0101 §NF-018 — experimental)[/bold]"
+    )
+    table = Table(title="Candidates tested (earliest/shallowest-ranked first)")
+    table.add_column("step_id")
+    table.add_column("name")
+    table.add_column("kind")
+    table.add_column("taxonomy")
+    table.add_column("verdict")
+    for attempt in search.attempts:
+        style = _VERDICT_STYLES.get(attempt.verdict.value, "yellow")
+        table.add_row(
+            attempt.step_id,
+            attempt.name,
+            attempt.kind,
+            attempt.taxonomy.value,
+            f"[{style}]{attempt.verdict.value}[/{style}]",
+        )
+    console.print(table)
+    if search.confirmed is not None:
+        console.print(
+            "[green]Decisive root cause confirmed:[/green] "
+            f"{search.confirmed.hypothesis['step_id']} "  # type: ignore[index]
+            f"({search.confirmed.hypothesis['name']})"  # type: ignore[index]
+        )
+    else:
+        console.print("[yellow]No candidate confirmed a decisive root cause.[/yellow]")
+    console.print(f"  [dim]{search.note}[/dim]")
