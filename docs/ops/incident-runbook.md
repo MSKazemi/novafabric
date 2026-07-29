@@ -133,7 +133,35 @@ procedure.
 
 ---
 
-## 7. Restoring from backup
+## 7. Emergency bypass of maker-checker SoD (`nova seal bypass`)
+
+**Status: works today**
+([ADR-0059](../../design/adr/0059-novaseal-linked-envelope-chain-maker-checker.md),
+[ADR-0058](../../design/adr/0058-maker-checker-dual-approval.md)). Use only
+when the two-person Separation-of-Duties (SoD) requirement for a capsule
+promotion genuinely cannot be satisfied in time (e.g. the only other
+authorized approver is unreachable during a production incident) — **every
+bypass creates a permanent, signed audit trail** and is visible in the
+dashboard **SealTab**.
+
+| Symptom | Diagnosis | Action |
+|---|---|---|
+| `nova promote approve` / `nova seal verify-sod` exits 8 or 9 (`Approval bundle not found` / `Proposal bundle not found`) and the missing party is genuinely unavailable | Normal two-step SoD flow cannot complete in the required window | Do **not** work around this by sharing keys or approving as the proposer — that is exactly what SoD prevents. Use the bypass below instead, so the deviation is recorded rather than hidden. |
+| Need to move a capsule to production right now, no second approver reachable | Emergency bypass is the documented escape hatch | `nova seal bypass <capsule-id> --reason "<≥50-char justification>" --duration 24h --key <your-key.pem> --cert <your-cert.pem> --target-env production --notify oncall@example.com`. `--reason` is enforced at ≥50 characters — write what happened and why, not a placeholder. `--duration` caps at `168h` (7 days); prefer the shortest window that covers the incident. |
+| Need to confirm a bypass is actually in effect before proceeding | `nova seal verify-sod <capsule-id>` prints `SoD verification passed (bypass active — SoD checks skipped)` when a live bypass covers it, vs. a normal pass/fail otherwise | Treat "bypass active" the same as any other incident action — note it in the incident log, not just in the tool's own audit trail |
+| Bypass created but `--notify` recipients report never hearing about it | `NOVA_BYPASS_NOTIFY_FILE` / `NOVA_BYPASS_NOTIFY_WEBHOOK` not configured, or the webhook endpoint is unreachable | Check `notification_status` in the bypass record (`sent` / `failed` / `not_configured`); configure the env var for next time, and manually notify the same people now |
+| Post-incident: need to review all bypasses used during an incident window | Every bypass is a signed, stored predicate (`promote_bypass_v1.json` schema) in the NovaSeal bundle store, plus a `human_approval` capture event when a run was active | Dashboard **SealTab** lists active/expired bypasses with approver identity; for a full audit trail export, include the bundle store in a [support bundle](#8-collecting-a-support-bundle) |
+
+**Authorization model, stated honestly:** the bypass is gated by *possession
+of an ECDSA P-256 key + X.509 certificate* (`--key`/`--cert`), not by an RBAC
+`admin` role lookup — the signer's certificate Common Name becomes the
+recorded `bypass_authorized_by` identity. Restrict who holds a signing key
+the same way you would restrict an admin role; the tool cannot enforce an
+org-chart policy it has no way to observe.
+
+---
+
+## 8. Restoring from backup
 
 Follow the [Backup & Restore Runbook](backup-restore.md) — do not improvise:
 
@@ -148,7 +176,7 @@ Follow the [Backup & Restore Runbook](backup-restore.md) — do not improvise:
 
 ---
 
-## 8. Collecting a support bundle
+## 9. Collecting a support bundle
 
 **Status: experimental**
 ([ADR-0187](../../design/adr/0187-support-bundle-diagnostics.md)). Works in
