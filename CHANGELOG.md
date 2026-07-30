@@ -9,6 +9,8 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.94.0] — 2026-07-30
+
 ### Added
 - **`LineageEdge` KuzuDB REL-table bulk-COPY schema** (ADR-0219 Option A, BL-016,
   SCALE-ADR-002 cond-1): `bulk_insert_edges()` now does a two-phase `COPY` into a generic
@@ -49,6 +51,21 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 - Documented the `nova seal bypass` emergency procedure in the operational incident runbook
   (REG-ADR-006 cond-1, BL-012) — `docs/ops/incident-runbook.md` §7 (symptom/diagnosis/action
   table; bypass authorization is by key/cert possession, not an RBAC role check).
+- **Redesigned the pgBouncer cross-tenant-isolation mutant-leak test** (BL-009):
+  `test_mutant_baseline_leaks_pgbouncer` asserted a structurally unreachable condition —
+  `BrokenMetadataStore.begin_tenant_context` always re-`SET`s its own correct tenant as the
+  first statement of every transaction, so neither the row-content leak signal nor the RLS
+  exception signal could ever fire, regardless of pgBouncer pooling config. Fixed the pgBouncer
+  image/config (`bitnami/pgbouncer` no longer resolves; switched to `edoburu/pgbouncer` +
+  `AUTH_TYPE=plain`; disabled the default `server_reset_query = DISCARD ALL` via a static
+  `pgbouncer.ini`, which was silently wiping session-scoped GUC state between clients) and added
+  a third "peek without setting" diagnostic signal (`stale_guc_count`) that reveals a leftover
+  `SET`-based tenant ID left behind on a shared backend connection — the actual, previously
+  undetectable failure mode `SET LOCAL` is supposed to prevent.
+- Added a `cap003_gdpr_legal_review` posture check to `/api/doctor` (SCALE-ADR-003, BL-011):
+  reports whether `NOVA_CAP003_ENABLED` is active and, when it is, surfaces that the recorded
+  resolution was a CTO/BDFL self-sign rather than the EU-GDPR legal-counsel review the ADR's own
+  text requires — informational only (`ok: true` always), does not change the production default.
 
 ### Known limitations (audited, documented — not changed here)
 - **NATS event-type taxonomy mismatch spans the whole pipeline, not just `LineageConsumer`**

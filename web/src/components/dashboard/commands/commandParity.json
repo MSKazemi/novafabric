@@ -674,6 +674,10 @@
     "tab": "lineage",
     "api": "/api/lineage/blast-radius/"
   },
+  "nova lineage consume": {
+    "status": "cli-only",
+    "reason": "Long-running NATS JetStream consumer daemon; cluster-scale process lifecycle (ADR-0027 Layer C)."
+  },
   "nova lineage emit-openlineage": {
     "status": "real-panel",
     "tab": "lineage",
