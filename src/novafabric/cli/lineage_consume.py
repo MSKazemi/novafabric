@@ -63,6 +63,13 @@ def consume_cmd(
     interrupted (Ctrl-C). Requires the scale extra (nats-py) and the
     scale-kg extra (kuzu) — see pyproject.toml.
 
+    KNOWN GAP (2026-07-30, ADR-0061): no producer in this repository publishes
+    events shaped for this consumer. The Go HPC forwarder
+    (novafabric-spool-forwarder) publishes a different event_type taxonomy
+    than this consumer recognizes, so even a fully wired NATS hub + forwarder
+    will silently produce zero edges. Do not deploy this expecting live data
+    without closing that gap first — see the ADR for details.
+
     Scope: cluster-scale deployment (long-running daemon, not local-mode).
 
     \b

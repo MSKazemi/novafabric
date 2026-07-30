@@ -1557,6 +1557,16 @@ a flush fails, the buffered edges for that flush are dropped and logged, not
 redelivered — lineage is derived, non-authoritative data, not the evidence
 chain, so this tradeoff favors simplicity over exact-once delivery guarantees.
 
+**Known gap — no compatible producer exists yet (2026-07-30, [ADR-0061](../design/adr/0061-nats-jetstream-cluster-event-bus.md)):**
+this consumer works and is tested, but nothing in this repository publishes
+events shaped for it. The Go HPC forwarder (`novafabric-spool-forwarder`)
+does publish to NATS, but with a different `event_type` taxonomy
+(`run.start`, `model_call`, `tool_call`, …) than this consumer recognizes
+(`RunStarted`, `ArtifactProduced`, `ArtifactConsumed`). Wiring a NATS hub and
+the forwarder up to this command today would run without errors and produce
+zero lineage edges. Closing this gap needs a translation layer or a taxonomy
+decision — future design, not yet scoped.
+
 ---
 
 ## Agent execution graph (experimental, ADR-0124)
