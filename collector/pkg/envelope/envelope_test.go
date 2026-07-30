@@ -30,7 +30,7 @@ func fullEnvelope() *envelope.EventEnvelope {
 		GlobalRunID:       "01JVXK0000000000000000000G",
 		RunID:             "01JVXK0000000000000000000R",
 		ParentRunID:       &parentRunID,
-		EventType:         string(envelope.EventTypeModelCall),
+		EventType:         string(envelope.EventTypeRunStarted),
 		TraceID:           "4bf92f3577b34da6a3ce929d0e0e4736",
 		SpanID:            "00f067aa0ba902b7",
 		AgentID:           "nova-agent-1",
@@ -48,20 +48,20 @@ func fullEnvelope() *envelope.EventEnvelope {
 // --- New() and NewULID() ---
 
 func TestNew_FillsRequiredFields(t *testing.T) {
-	e := envelope.New("model_call", "agent-1", "run-01", "global-01")
+	e := envelope.New("RunStarted", "agent-1", "run-01", "global-01")
 
 	assert.Equal(t, envelope.EnvelopeVersion, e.EnvelopeVersion)
 	assert.Equal(t, envelope.SchemaVersion, e.SchemaVersion)
 	assert.NotEmpty(t, e.EventID)
 	assert.Equal(t, "global-01", e.GlobalRunID)
 	assert.Equal(t, "run-01", e.RunID)
-	assert.Equal(t, "model_call", e.EventType)
+	assert.Equal(t, "RunStarted", e.EventType)
 	assert.Equal(t, "agent-1", e.AgentID)
 	assert.False(t, e.StartedAt.IsZero())
 }
 
 func TestNew_EventIDIsValidULID(t *testing.T) {
-	e := envelope.New("span", "a", "r", "g")
+	e := envelope.New("RunStarted", "a", "r", "g")
 	assert.Regexp(t, ulidPattern, e.EventID, "EventID must be a valid ULID")
 }
 
@@ -115,7 +115,7 @@ func TestOTLPRoundTrip_AllFieldsPreserved(t *testing.T) {
 }
 
 func TestOTLPRoundTrip_NilPointerFieldsOmitted(t *testing.T) {
-	e := envelope.New("span", "a", "r", "g")
+	e := envelope.New("RunStarted", "a", "r", "g")
 	e.TraceID = "4bf92f3577b34da6a3ce929d0e0e4736"
 	e.SpanID = "00f067aa0ba902b7"
 
@@ -176,7 +176,7 @@ func TestCloudEventsRoundTrip_AllFieldsPreserved(t *testing.T) {
 }
 
 func TestCloudEventsRoundTrip_NilPointerFieldsOmitted(t *testing.T) {
-	e := envelope.New("run.start", "agent-x", "run-x", "global-x")
+	e := envelope.New("RunStarted", "agent-x", "run-x", "global-x")
 	e.TraceID = "4bf92f3577b34da6a3ce929d0e0e4736"
 	e.SpanID = "00f067aa0ba902b7"
 	e.Payload = []byte(`{}`)
@@ -195,7 +195,7 @@ func TestCloudEventsRoundTrip_NilPointerFieldsOmitted(t *testing.T) {
 // TestTraceparentFormat verifies that the traceparent extension in the
 // CloudEvent follows the W3C Trace Context format: "00-<32-hex>-<16-hex>-01"
 func TestTraceparentFormat(t *testing.T) {
-	e := envelope.New("model_call", "agent-1", "run-1", "global-1")
+	e := envelope.New("RunStarted", "agent-1", "run-1", "global-1")
 	e.TraceID = "4bf92f3577b34da6a3ce929d0e0e4736"
 	e.SpanID = "00f067aa0ba902b7"
 	e.Payload = []byte(`{}`)
@@ -217,7 +217,7 @@ func TestTraceparentFormat(t *testing.T) {
 }
 
 func TestToCloudEvent_InvalidPayloadReturnsError(t *testing.T) {
-	e := envelope.New("span", "a", "r", "g")
+	e := envelope.New("RunStarted", "a", "r", "g")
 	e.Payload = []byte(`{not valid json}`)
 
 	_, err := envelope.ToCloudEvent(e)

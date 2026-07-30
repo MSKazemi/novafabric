@@ -1,9 +1,10 @@
 """C0.2 — CaptureOrchestrator → SpoolSink wiring (ADR-0092 slice C).
 
 When spool emission is opted in, the orchestrator writes run-boundary
-EventEnvelope v1 records (``run.start`` + ``capsule.finalize``) to the spool so
-the resident drain can forward them to the collector tier. Off by default —
-local capture is unaffected. Laptop-tested via the pure-Python spool fallback.
+EventEnvelope v1 records (``RunStarted`` + ``RunCompleted``/``RunFailed``,
+ADR-0220) to the spool so the resident drain can forward them to the
+collector tier. Off by default — local capture is unaffected. Laptop-tested
+via the pure-Python spool fallback.
 """
 from __future__ import annotations
 
@@ -54,13 +55,14 @@ def test_emit_spool_writes_run_boundary_envelopes(tmp_path: Path) -> None:
 
     envelopes = _read_envelopes(spool_dir)
     types = [e["event_type"] for e in envelopes]
-    assert "run.start" in types
-    assert "capsule.finalize" in types
+    assert "RunStarted" in types
+    assert "RunCompleted" in types
 
     schema = json.loads(_SCHEMA_PATH.read_text())
     for env in envelopes:
         jsonschema.validate(env, schema)
         assert env["run_id"] == result.run_id
+        assert env["global_run_id"] == result.run_id
 
 
 def test_cli_capture_emit_spool_writes_envelopes(
@@ -80,4 +82,4 @@ def test_cli_capture_emit_spool_writes_envelopes(
     )
     assert result.exit_code == 0, result.output
     types = {e["event_type"] for e in _read_envelopes(spool)}
-    assert {"run.start", "capsule.finalize"} <= types
+    assert {"RunStarted", "RunCompleted"} <= types

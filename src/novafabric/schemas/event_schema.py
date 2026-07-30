@@ -16,9 +16,10 @@ class CapsuleEventType(str, Enum):
     """Canonical capsule event types.
 
     25 baseline types (cap-001, ADR-0066) plus 8 extended span-taxonomy types
-    (gap-011, ADR-0082). Additions are append-only and backward-compatible:
-    no baseline value is renamed or removed, and the schema version stays
-    ``1.0.0`` because widening the enum keeps all prior documents valid.
+    (gap-011, ADR-0082) plus ``EndpointRouted`` (ADR-0220). Additions are
+    append-only and backward-compatible: no baseline value is renamed or
+    removed, and the schema version stays ``1.0.0`` because widening the
+    enum keeps all prior documents valid.
     """
 
     # --- Baseline 25 (ADR-0066) -------------------------------------------
@@ -57,6 +58,9 @@ class CapsuleEventType(str, Enum):
     VectorRetrievalStarted = "VectorRetrievalStarted"  # vector-DB query (src-113)
     VectorRetrievalCompleted = "VectorRetrievalCompleted"
     VectorRetrievalFailed = "VectorRetrievalFailed"
+    # Inference-endpoint routing decision. Was already consumed by
+    # kg/pipeline.py's KGIngestionPipeline before it was added here (ADR-0220).
+    EndpointRouted = "EndpointRouted"
 
 
 class CostFacet(BaseModel):

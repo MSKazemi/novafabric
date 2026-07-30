@@ -26,7 +26,7 @@ All fields listed are top-level properties of the `EventEnvelope` JSON object. R
 | `global_run_id` | ULID or UUID v7 string | Yes | Logical distributed run identifier. Identical across all events in the same distributed run, regardless of how many worker processes are involved. |
 | `run_id` | ULID string | Yes | Per-process capsule identifier. Equals `global_run_id` for PARENT and STANDALONE capsules; differs for WORKER and COORDINATOR capsules. |
 | `parent_run_id` | ULID string or `null` | Yes | `null` for STANDALONE and PARENT capsules. Non-null ULID pointing to the parent's `run_id` for WORKER and COORDINATOR capsules. |
-| `event_type` | `string` enum | Yes | Event kind: one of `run.start`, `run.end`, `model_call`, `tool_call`, `span`, `capsule.finalize`. Indexed by the metadata database. |
+| `event_type` | `string` enum | Yes | Event kind. Real producers emit one of `RunStarted`, `RunCompleted`, `RunFailed`, `RunAborted` (matching `schemas/event_schema.py::CapsuleEventType` 1:1 — ADR-0220). The original `run.start`, `run.end`, `model_call`, `tool_call`, `span`, `capsule.finalize` values remain schema-valid for backward compatibility but were never actually emitted by any producer in this repository. Indexed by the metadata database. |
 | `trace_id` | 32 lowercase hex chars | Yes | W3C Trace Context 16-byte trace ID. Must not be all-zeros. |
 | `span_id` | 16 lowercase hex chars | Yes | W3C Trace Context 8-byte span ID. Must not be all-zeros. |
 | `agent_id` | non-empty string | Yes | Stable identifier for the emitting agent or SDK component. No whitespace or control characters. |

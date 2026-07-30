@@ -9,6 +9,47 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.95.0] — 2026-07-30
+
+### Fixed
+- **`pyproject.toml`/`uv.lock` version was never bumped for v0.94.0** — `nova --version`
+  reported `0.93.0` after the v0.94.0 tag/release. Every prior release bumped this file;
+  v0.94.0's release commit missed the step. Fixed; bumped directly to 0.95.0 alongside
+  this release's own changes.
+- **ADR-0220 — the real Go-vs-Python event-taxonomy gap v0.94.0 documented as a known
+  limitation is now resolved, Option A** (BDFL decision, 2026-07-30): the real producer
+  of cluster-scale NATS events — `capture/orchestrator.py`'s two `SpoolSink.emit_event()`
+  calls — now emits the canonical `RunStarted`/`RunCompleted`/`RunFailed` event types
+  (previously `run.start`/`capsule.finalize`) and threads `NOVAFABRIC_GLOBAL_RUN_ID`/
+  `NOVAFABRIC_PARENT_RUN_ID` through, so `LineageConsumer`/`nova lineage consume` can
+  actually derive `SPAWNED_BY` edges from real captured runs — previously it silently
+  produced zero edges, forever, regardless of how correctly the rest of the pipeline was
+  configured. **Investigating this surfaced that the original framing was itself
+  half-wrong**: there is no real Go event producer in this repository — the Go collector's
+  `EventType` constants were dead code with zero production call sites, and the actual
+  taxonomy mismatch was between two Python components (the orchestrator and its own
+  consumers), not a Go/Python language boundary. The Event Envelope v1 wire schema's
+  `event_type` enum was widened additively (four new canonical values; the six legacy
+  values are retained, unused, for backward compatibility) and its `.sha256` pin
+  regenerated. `EndpointRouted` was added to the canonical `CapsuleEventType` enum
+  (already in real use by the KG ingestion pipeline, just missing from the enum). See
+  [ADR-0220](design/adr/0220-go-envelope-canonical-event-taxonomy-reconciliation.md) and
+  the corrected [ADR-0061](design/adr/0061-nats-jetstream-cluster-event-bus.md).
+  Model-call/tool-call-level event granularity is still not emitted into the NATS
+  pipeline by any producer — a real, separate, larger piece of work, correctly left open.
+- **PAR-ADR-002 resolved** (BDFL decision, 2026-07-30): the `pending_parent_timeout`
+  spec-vs-code disagreement (300s spec text vs. shipped 86400s/24h default) is resolved
+  by keeping the shipped 24h default — it favors legitimately slow-starting HPC/
+  multi-node Slurm jobs. No code change; `design/governance/acceptance-record.md` and
+  `design/architecture/parent-child-capsule-v1.md` updated to record the decision.
+
+### Testing
+- New end-to-end regression test (`tests/scale_architecture/test_lineage_consumer.py::
+  TestRealProducerEndToEnd`): runs two real `CaptureOrchestrator.run()` calls (parent +
+  child), reads the real spool segments they write, and feeds them through
+  `LineageConsumer.run_once()` — asserting a real `SPAWNED_BY` edge results. This is the
+  producer/consumer-boundary-crossing test ADR-0220 called for.
+
 ## [0.94.0] — 2026-07-30
 
 ### Added

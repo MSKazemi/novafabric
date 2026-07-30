@@ -50,8 +50,8 @@ NEW_EVENT_TYPES = [
 
 class TestExtendedEnum:
     def test_total_count(self) -> None:
-        # 25 original (ADR-0066) + 8 new (ADR-0082)
-        assert len(CapsuleEventType) == 33
+        # 25 original (ADR-0066) + 8 new (ADR-0082) + 1 EndpointRouted (ADR-0220)
+        assert len(CapsuleEventType) == 34
 
     @pytest.mark.parametrize("name", NEW_EVENT_TYPES)
     def test_new_type_exists(self, name: str) -> None:

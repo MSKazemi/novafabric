@@ -21,15 +21,23 @@ const SchemaVersion = "event-envelope/1"
 
 // EventType enumerates the allowed values for the event_type field.
 // See the JSON Schema enum at schemas/event-envelope-v1/envelope-v1.json.
+//
+// These four values match schemas/event_schema.py::CapsuleEventType 1:1
+// (ADR-0220). No production code in this repository constructs an
+// EventEnvelope from Go today — the real producer is Python
+// (src/novafabric/capture/spool_sink.py, called from capture/orchestrator.py)
+// — but the schema's event_type enum also retains six legacy lowercase/
+// dotted values (run.start, run.end, model_call, tool_call, span,
+// capsule.finalize) for backward compatibility; do not reintroduce them here,
+// they were never actually emitted by anything and caused a real
+// producer/consumer schema mismatch until ADR-0220 fixed it.
 type EventType string
 
 const (
-	EventTypeRunStart       EventType = "run.start"
-	EventTypeRunEnd         EventType = "run.end"
-	EventTypeModelCall      EventType = "model_call"
-	EventTypeToolCall       EventType = "tool_call"
-	EventTypeSpan           EventType = "span"
-	EventTypeCapsuleFinalize EventType = "capsule.finalize"
+	EventTypeRunStarted   EventType = "RunStarted"
+	EventTypeRunCompleted EventType = "RunCompleted"
+	EventTypeRunFailed    EventType = "RunFailed"
+	EventTypeRunAborted   EventType = "RunAborted"
 )
 
 // EventEnvelope is the top-level container for all NovaFabric evidence events.

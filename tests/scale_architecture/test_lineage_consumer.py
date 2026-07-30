@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from novafabric.capture.orchestrator import CaptureOrchestrator
 from novafabric.lineage.consumer import LineageConsumer
+
+_SPOOL_HEADER_SIZE = 16
 
 
 def _run(coro: Any) -> Any:
@@ -191,3 +197,56 @@ class TestDeduplication:
             )
         )
         assert len(replay_edges) == 1
+
+
+def _read_spool_envelopes(spool_dir: Path) -> list[dict[str, Any]]:
+    envelopes: list[dict[str, Any]] = []
+    for seg in sorted(spool_dir.glob("*.jsonl")):
+        body = seg.read_bytes()[_SPOOL_HEADER_SIZE:]
+        for line in body.splitlines():
+            if line.strip():
+                envelopes.append(json.loads(line))
+    return envelopes
+
+
+class TestRealProducerEndToEnd:
+    """ADR-0220: the real production producer (CaptureOrchestrator ->
+    SpoolSink) must emit events LineageConsumer can actually extract edges
+    from — not just hand-built dict fixtures. Before ADR-0220, the
+    orchestrator emitted 'run.start'/'capsule.finalize' while this consumer
+    only recognized 'RunStarted'/'ArtifactProduced'/'ArtifactConsumed' — a
+    real producer/consumer mismatch that silently produced zero edges.
+    """
+
+    def test_orchestrator_run_boundary_events_produce_spawned_by_edge(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        spool_dir = tmp_path / "spool"
+
+        # Parent capsule: no NOVAFABRIC_PARENT_RUN_ID set.
+        monkeypatch.delenv("NOVAFABRIC_PARENT_RUN_ID", raising=False)
+        monkeypatch.delenv("NOVAFABRIC_GLOBAL_RUN_ID", raising=False)
+        script = tmp_path / "agent.py"
+        script.write_text("pass\n")
+        parent_orch = CaptureOrchestrator(
+            base_dir=tmp_path / "runs", emit_spool=True, spool_dir=spool_dir
+        )
+        parent_result = parent_orch.run(command=[sys.executable, str(script)])
+
+        # Child capsule: NOVAFABRIC_PARENT_RUN_ID points back at the parent.
+        monkeypatch.setenv("NOVAFABRIC_PARENT_RUN_ID", parent_result.run_id)
+        child_orch = CaptureOrchestrator(
+            base_dir=tmp_path / "runs", emit_spool=True, spool_dir=spool_dir
+        )
+        child_result = child_orch.run(command=[sys.executable, str(script)])
+
+        envelopes = _read_spool_envelopes(spool_dir)
+        assert {"RunStarted", "RunCompleted"} <= {e["event_type"] for e in envelopes}
+
+        consumer = LineageConsumer(nats_url="nats://test:4222", kuzu_path="/tmp/test.kuzu")
+        edges = asyncio.run(consumer.run_once(envelopes))
+
+        spawned_by = [e for e in edges if e["edge_type"] == "SPAWNED_BY"]
+        assert len(spawned_by) == 1
+        assert spawned_by[0]["src"] == parent_result.run_id
+        assert spawned_by[0]["dst"] == child_result.run_id

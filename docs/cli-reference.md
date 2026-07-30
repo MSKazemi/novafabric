@@ -1557,15 +1557,18 @@ a flush fails, the buffered edges for that flush are dropped and logged, not
 redelivered — lineage is derived, non-authoritative data, not the evidence
 chain, so this tradeoff favors simplicity over exact-once delivery guarantees.
 
-**Known gap — no compatible producer exists yet (2026-07-30, [ADR-0061](../design/adr/0061-nats-jetstream-cluster-event-bus.md)):**
-this consumer works and is tested, but nothing in this repository publishes
-events shaped for it. The Go HPC forwarder (`novafabric-spool-forwarder`)
-does publish to NATS, but with a different `event_type` taxonomy
-(`run.start`, `model_call`, `tool_call`, …) than this consumer recognizes
-(`RunStarted`, `ArtifactProduced`, `ArtifactConsumed`). Wiring a NATS hub and
-the forwarder up to this command today would run without errors and produce
-zero lineage edges. Closing this gap needs a translation layer or a taxonomy
-decision — future design, not yet scoped.
+**Producer taxonomy gap — resolved 2026-07-30 ([ADR-0220](../design/adr/0220-go-envelope-canonical-event-taxonomy-reconciliation.md)):**
+the real event producer is `capture/orchestrator.py` (forwarded verbatim by
+the Go `novafabric-spool-forwarder`, which never inspects `event_type`
+itself — the earlier framing of this as a Go-vs-Python taxonomy problem was
+itself found to be wrong during the fix). It now emits the canonical
+`RunStarted`/`RunCompleted`/`RunFailed` event types with `parent_run_id`
+populated, so this command correctly derives `SPAWNED_BY` edges from real
+captured runs — verified end-to-end by
+`tests/scale_architecture/test_lineage_consumer.py::TestRealProducerEndToEnd`.
+**Remaining gap:** `ArtifactProduced`/`ArtifactConsumed` edges still require
+a producer that emits those event types, which none currently does — only
+run-boundary lineage is available from the NATS path today.
 
 ---
 
@@ -6560,12 +6563,17 @@ nova kg ingest [CAPSULE_DIR] [--all] [--source local-dir|nats] [--capsule-dir DI
 | `--nats-url URL` | NATS server URL (used with `--source nats`). |
 | `--nats-subject SUBJECT` | NATS JetStream subject to consume (used with `--source nats`). |
 
-**`--source nats` known gap (2026-07-30, [ADR-0061](../design/adr/0061-nats-jetstream-cluster-event-bus.md)):**
-no producer in this repository publishes events in the taxonomy this ingest
-path recognizes (below). The Go HPC forwarder (`novafabric-spool-forwarder`)
-publishes a different `event_type` taxonomy, so a real NATS deployment would
-run cleanly and ingest zero events. `local-dir` and `--all` are unaffected —
-they read known-good capsule files directly.
+**`--source nats` known gap (2026-07-30, [ADR-0220](../design/adr/0220-go-envelope-canonical-event-taxonomy-reconciliation.md) — the producer/consumer taxonomy mismatch itself is fixed; this specific event-type coverage gap is not):**
+no producer in this repository emits `ModelCallStarted`/`ModelCallCompleted`/
+`ToolCallStarted`/`ToolCallCompleted`/`EndpointRouted` events into the NATS
+pipeline — `capture/orchestrator.py`'s real producer only emits run-boundary
+events (`RunStarted`/`RunCompleted`/`RunFailed`); per-call model/tool events
+are captured locally in the capsule's own event stream but never mirrored to
+the spool/NATS path. A real NATS deployment would ingest zero events via
+this specific event-type set until that separate, larger piece of work
+(instrumenting the wire-level hooks to also emit to the spool) is done.
+`local-dir` and `--all` are unaffected — they read known-good capsule files
+directly.
 
 ```bash
 # Single capsule

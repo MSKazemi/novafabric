@@ -341,8 +341,19 @@ class CaptureOrchestrator:
                 from novafabric.capture.spool_sink import SpoolSink
 
                 _spool_sink = SpoolSink(self._spool_dir or _default_spool_dir())
+                # Read the NOVAFABRIC_* contract vars directly (not via
+                # capsule.env_contract.read_env(), which synthesizes its own
+                # random placeholder global_run_id when unset — calling it a
+                # second time here, independently of CapsuleWriter's own
+                # read_env() call, would desync the two). Falling back to
+                # run_id matches the schema's own documented invariant
+                # (global_run_id == run_id for STANDALONE/PARENT capsules).
                 _spool_sink.emit_event(
-                    event_type="run.start", run_id=run_id, agent_id=_spool_agent_id
+                    event_type="RunStarted",
+                    run_id=run_id,
+                    agent_id=_spool_agent_id,
+                    global_run_id=os.environ.get("NOVAFABRIC_GLOBAL_RUN_ID") or run_id,
+                    parent_run_id=os.environ.get("NOVAFABRIC_PARENT_RUN_ID") or None,
                 )
             except Exception:
                 _spool_sink = None  # fail-open: never block the run
@@ -647,9 +658,10 @@ class CaptureOrchestrator:
         if _spool_sink is not None:
             try:
                 _spool_sink.emit_event(
-                    event_type="capsule.finalize",
+                    event_type="RunCompleted" if exit_code == 0 else "RunFailed",
                     run_id=run_id,
                     agent_id=_spool_agent_id,
+                    global_run_id=os.environ.get("NOVAFABRIC_GLOBAL_RUN_ID") or run_id,
                     payload={"exit_code": exit_code},
                 )
             finally:

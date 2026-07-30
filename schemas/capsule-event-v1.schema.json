@@ -12,7 +12,7 @@
     },
     "event_type": {
       "type": "string",
-      "description": "Capsule event type (25 baseline ADR-0066 + 8 extended ADR-0082)",
+      "description": "Capsule event type (25 baseline ADR-0066 + 8 extended ADR-0082 + EndpointRouted ADR-0220)",
       "enum": [
         "RunStarted",
         "RunCompleted",
@@ -46,7 +46,8 @@
         "RerankerApplied",
         "VectorRetrievalStarted",
         "VectorRetrievalCompleted",
-        "VectorRetrievalFailed"
+        "VectorRetrievalFailed",
+        "EndpointRouted"
       ]
     },
     "tenant_id": {

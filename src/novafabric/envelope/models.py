@@ -23,7 +23,13 @@ _ALL_ZEROS_SPAN = "0" * 16
 
 
 class EventType(str, Enum):
-    """Canonical event_type values for EventEnvelope v1."""
+    """Canonical event_type values for EventEnvelope v1.
+
+    The original six lowercase/dotted values were never actually emitted by
+    any real producer (ADR-0220) and are retained only for backward
+    compatibility. Real producers emit the four ``Run*`` values, matching
+    ``schemas/event_schema.py::CapsuleEventType`` 1:1.
+    """
 
     run_start = "run.start"
     run_end = "run.end"
@@ -31,6 +37,10 @@ class EventType(str, Enum):
     tool_call = "tool_call"
     span = "span"
     capsule_finalize = "capsule.finalize"
+    run_started = "RunStarted"
+    run_completed = "RunCompleted"
+    run_failed = "RunFailed"
+    run_aborted = "RunAborted"
 
 
 class EventEnvelope(BaseModel):

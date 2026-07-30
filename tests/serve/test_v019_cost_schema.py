@@ -142,12 +142,13 @@ class TestCostRoutes:
 
 class TestSchemaRoutes:
     def test_list_returns_all_event_types(self, client: TestClient) -> None:
-        # 25 baseline (ADR-0066) + 8 extended span taxonomy (ADR-0082) = 33.
+        # 25 baseline (ADR-0066) + 8 extended span taxonomy (ADR-0082)
+        # + 1 EndpointRouted (ADR-0220) = 34.
         res = client.get(f"/api/schema/list?{TOKEN_Q}", headers=HEADERS)
         assert res.status_code == 200
         body = res.json()
-        assert body["event_type_count"] == 33
-        assert len(body["event_types"]) == 33
+        assert body["event_type_count"] == 34
+        assert len(body["event_types"]) == 34
         assert "RunStarted" in body["event_types"]
         assert "ModelCallCompleted" in body["event_types"]
         assert "PIIDetected" in body["event_types"]
