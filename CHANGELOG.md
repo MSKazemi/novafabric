@@ -10,6 +10,21 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 ## [Unreleased]
 
 ### Added
+- **`LineageEdge` KuzuDB REL-table bulk-COPY schema** (ADR-0219 Option A, BL-016,
+  SCALE-ADR-002 cond-1): `bulk_insert_edges()` now does a two-phase `COPY` into a generic
+  `LineageNode(id, kind)` table plus `LineageEdge`, node `kind` derived from `edge_type`.
+  Verified against real KuzuDB 0.11.3 (not mocked); caught a real latent bug along the way
+  (KuzuDB rejects `header=true` on Parquet `COPY` — CSV-only option). The SCALE-ADR-002
+  10K-edges/second write-throughput gate is measured for the first time against real KuzuDB:
+  **passes at batch sizes ≥ ~2,000 edges/call (13K–28K edges/s), fails below that (4K–7K
+  edges/s)** — published honestly in `bench/lineage/MEASURED_CEILING.md` with the operational
+  recommendation. `run_from_nats()` now owns a `kuzu.Connection` and flushes accumulated edges
+  via `bulk_insert_edges` on a size-or-time trigger (`flush_batch_size`/`flush_interval_s`); a
+  flush failure drops that flush's buffered edges rather than blocking the loop (lineage is
+  derived, non-authoritative data, not the evidence chain itself).
+- **`nova lineage consume`** (experimental, cluster-scale, ADR-0061/0066/0219): CLI entrypoint
+  for the NATS JetStream `LineageConsumer` daemon (`--nats-url`, `--kuzu-path`, `--subject`,
+  `--batch-size`, `--fetch-timeout`, `--flush-batch-size`, `--flush-interval-s`).
 - **`nova doctor --check-scheduler`** (PAR-ADR-003 OQ-06, BL-013): `diagnose_scheduler_env()`
   (`capsule/env_contract.py`) detects a scheduler (Slurm, torchrun, OpenMPI, Ray, K8s Job) via
   its own native env vars, cross-references `NOVAFABRIC_GLOBAL_RUN_ID`, and for Slurm reads
@@ -34,6 +49,21 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 - Documented the `nova seal bypass` emergency procedure in the operational incident runbook
   (REG-ADR-006 cond-1, BL-012) — `docs/ops/incident-runbook.md` §7 (symptom/diagnosis/action
   table; bypass authorization is by key/cert possession, not an RBAC role check).
+
+### Known limitations (audited, documented — not changed here)
+- **NATS event-type taxonomy mismatch spans the whole pipeline, not just `LineageConsumer`**
+  (ADR-0061, [ADR-0220](design/adr/0220-go-envelope-canonical-event-taxonomy-reconciliation.md)
+  proposed): no Python module in `src/novafabric/` publishes to NATS — the only real producer
+  is the Go `collector/internal/forwarder/nats_publisher.go`, whose envelope taxonomy
+  (`run.start`, `model_call`, `tool_call`, …) matches **neither** `LineageConsumer._process_event()`
+  (`RunStarted`/`ArtifactProduced`/`ArtifactConsumed`) **nor** `KGIngestionPipeline.ingest_event()`
+  (`ModelCallCompleted`/`ToolCallStarted`/`EndpointRouted`, …). The two Python consumers mostly
+  *agree* with each other (both draw from the canonical `CapsuleEventType` enum, cap-001/
+  ADR-0066, with one small exception — `EndpointRouted` isn't actually in that enum); the real
+  fault line is Go envelope vs. Python canonical taxonomy, not three independent schemas.
+  Running the Go forwarder, a NATS hub, and either `nova lineage consume` or `nova kg ingest
+  --source nats` together today would connect cleanly and silently produce zero edges/events
+  forever. Not fixed — ADR-0220 proposes three reconciliation options, awaiting a decision.
 
 ## [0.93.0] — 2026-07-29
 
