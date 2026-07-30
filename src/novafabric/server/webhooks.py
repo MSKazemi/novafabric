@@ -215,7 +215,8 @@ class _FileKekBackend:
 
     Same KEK file format as ``LocalSigningBackend`` (32 raw bytes or 64 hex
     chars); dev/test parity only — production deployments should hold the KEK
-    in a KMS (ADR-0185, infra-gated).
+    in a KMS via one of the cloud ``KeyWrappingBackend`` implementations in
+    ``novafabric.trust.novaseal.signing_backend`` (ADR-0185).
     """
 
     def __init__(self, kek_path: Path) -> None:
@@ -247,7 +248,9 @@ def resolve_wrapping_backend() -> KeyWrappingBackend | None:
     """Return the configured secret-wrapping backend, or None (plaintext fallback).
 
     P1 wiring: a local KEK file named by ``NOVAFABRIC_WEBHOOKS_KEK_PATH``.
-    Cloud-KMS backends remain infra-gated (ADR-0185).
+    The cloud-KMS backends (ADR-0185, ``novafabric.trust.novaseal.signing_backend``)
+    are implemented but not yet dispatched to from here — selecting one for
+    webhook secret storage is unwired follow-up work, not an infra gate.
     """
     raw = os.environ.get(KEK_PATH_ENV, "").strip()
     if not raw:

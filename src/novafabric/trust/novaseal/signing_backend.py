@@ -118,7 +118,8 @@ class LocalSigningBackend:
     experimental) when *kek_path* is provided: the KEK is a 256-bit AES key
     read from a local file (32 raw bytes, or 64 hex characters), used to wrap
     per-object DEKs with AES-256-GCM.  For dev/test parity only — production
-    deployments should use a cloud-KMS-held KEK (planned, infra-gated).
+    deployments should use a cloud-KMS-held KEK via ``AwsKmsWrappingBackend``,
+    ``AzureKvWrappingBackend``, or ``GcpKmsWrappingBackend`` below.
 
     Args:
         key_path:  Path to the ECDSA P-256 PEM private key file.

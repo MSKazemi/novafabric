@@ -31,8 +31,10 @@ Per-object envelope scheme:
 This module is the crypto layer only and is **not the default**.  Opt-in
 store wiring exists via
 :class:`novafabric.object_capsule_store.encryption_wrapper.EncryptingAdapter`
-(second slice); the cloud-KMS wrap paths remain planned (infra-gated) per
-ADR-0185.
+(second slice).  The cloud-KMS wrap paths (AWS/Azure/GCP) are implemented in
+:mod:`novafabric.trust.novaseal.signing_backend` and verified against
+in-memory fakes of each SDK; only end-to-end verification against live
+cloud credentials remains deferred.
 """
 
 from __future__ import annotations
@@ -156,9 +158,10 @@ def _require_wrap_capable(backend: object) -> KeyWrappingBackend:
     raise NotImplementedError(
         f"Backend {type(backend).__name__} does not implement the KMS key-wrapping "
         "capability (wrap_key/unwrap_key/kek_ref) required for envelope encryption. "
-        "Use LocalSigningBackend with a kek_path, MockKmsBackend (tests), or a "
-        "KMS-capable backend; the AWS/Azure/GCP wrap paths are planned and "
-        "infra-gated (ADR-0185)."
+        "Use LocalSigningBackend with a kek_path, MockKmsBackend (tests), or one of "
+        "the cloud backends in novafabric.trust.novaseal.signing_backend: "
+        "AwsKmsWrappingBackend, AzureKvWrappingBackend, GcpKmsWrappingBackend "
+        "(ADR-0185)."
     )
 
 
