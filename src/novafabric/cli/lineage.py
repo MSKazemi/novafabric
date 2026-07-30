@@ -513,3 +513,8 @@ from novafabric.cli.lineage_root_cause import root_cause_cmd  # noqa: E402
 lineage_app.command("metrics")(metrics_cmd)
 lineage_app.command("root-cause")(root_cause_cmd)
 lineage_app.command("export-graph")(export_graph_cmd)
+
+# Cluster-scale NATS consumer daemon (cap-006, ADR-0061/0066/0219, experimental).
+from novafabric.cli.lineage_consume import consume_cmd  # noqa: E402
+
+lineage_app.command("consume")(consume_cmd)

@@ -105,6 +105,7 @@ Commands grouped by primitive and task. Each entry links to its full section.
 | [`nova lineage metrics`](#nova-lineage-metrics) | Hubs + single points of failure (experimental, ADR-0212) |
 | [`nova lineage root-cause`](#nova-lineage-root-cause) | Rank upstream root-cause suspects (experimental, ADR-0213) |
 | [`nova lineage export-graph`](#nova-lineage-export-graph) | GraphML/GEXF/Cypher export (experimental, ADR-0214) |
+| [`nova lineage consume`](#nova-lineage-consume-experimental-cluster-scale) | Run the NATS JetStream LineageConsumer daemon (experimental, cluster-scale, ADR-0061/0066/0219) |
 | [`nova insights`](#nova-insights) | Synthesized graph-intelligence report (experimental, ADR-0215) |
 | [`nova graph agent`](#nova-graph-agent-experimental-adr-0124) | Reconstruct one run's execution DAG from its capsule (experimental) |
 
@@ -1511,6 +1512,50 @@ OPENLINEAGE_URL=http://marquez:5000 nova lineage emit-openlineage .novafabric/ru
 ```
 
 **Dashboard equivalent:** Lineage tab → Export OpenLineage Events panel (returns JSON preview + copy button).
+
+---
+
+### nova lineage consume (experimental, cluster-scale)
+
+```
+nova lineage consume [--nats-url URL] [--kuzu-path DIR] [--subject SUBJECT]
+                      [--batch-size N] [--fetch-timeout S]
+                      [--flush-batch-size N] [--flush-interval-s S]
+```
+
+Runs the `LineageConsumer` NATS JetStream pull consumer (cap-006) in the
+foreground: pulls capsule events, derives lineage edges, and bulk-COPYs them
+into KuzuDB on a size-or-time flush trigger. Runs until interrupted (Ctrl-C).
+This is the cluster-scale deployment path — local-mode capture never requires
+this command; lineage is written directly by the local `SqliteLineageStore`.
+
+Requires the `scale` extra (nats-py) and the `scale-kg` extra (kuzu):
+`pip install 'novafabric[scale,scale-kg]'`.
+
+- `--nats-url` — defaults to `$NOVA_NATS_URL`
+- `--kuzu-path` — defaults to `$NOVA_KUZU_PATH` or `.nova/kg/lineage.kuzu`
+- `--subject` — NATS subject pattern (default `novafabric.lineage.>`)
+- `--batch-size` — max messages pulled per NATS fetch (default 500)
+- `--fetch-timeout` — seconds per NATS fetch (default 1.0)
+- `--flush-batch-size` — edges accumulated before a KuzuDB COPY flush (default
+  2,000 — see `bench/lineage/MEASURED_CEILING.md`: the 10K-edges/second
+  write-throughput gate passes at this batch size and above, and falls short
+  below it)
+- `--flush-interval-s` — max seconds between flushes even below
+  `--flush-batch-size` (default 15.0)
+
+```bash
+nova lineage consume
+nova lineage consume --nats-url nats://hub.example.com:4222 \
+  --kuzu-path /var/lib/novafabric/lineage.kuzu
+nova lineage consume --flush-batch-size 5000 --flush-interval-s 30
+```
+
+**Not exactly-once:** a NATS message is acked immediately once its edges are
+extracted, before the size-or-time flush actually persists them to KuzuDB. If
+a flush fails, the buffered edges for that flush are dropped and logged, not
+redelivered — lineage is derived, non-authoritative data, not the evidence
+chain, so this tradeoff favors simplicity over exact-once delivery guarantees.
 
 ---
 
