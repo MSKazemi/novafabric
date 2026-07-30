@@ -8,8 +8,17 @@ Modes:
   Requires NOVA_NATS_URL env var and ``nats-py`` package (``novafabric[scale]``).
 
 Bulk insertion to KuzuDB uses a DuckDB Arrow accumulator → Parquet → KuzuDB
-COPY path for high-throughput edge ingestion.  Requires ``pyarrow`` and a
-``kuzu`` connection to be provided when using ``bulk_insert_edges``.
+COPY path for high-throughput edge ingestion.  Requires ``pyarrow``.
+``run_from_nats()`` owns a ``kuzu.Connection`` (opened from ``self.kuzu_path``)
+and flushes accumulated edges into it via ``bulk_insert_edges`` on a
+size-or-time trigger (``flush_batch_size`` / ``flush_interval_s``) — the
+published benchmark (``bench/lineage/MEASURED_CEILING.md``) found the
+10K-edges/second write-throughput gate needs batches of ≥ ~2,000 edges, well
+above a single small NATS fetch. A flush failure is logged and the buffered
+edges for that flush are dropped (not redelivered — the NATS messages that
+produced them are already acked, matching this module's existing "extraction
+is best-effort" resilience style; lineage is derived, non-authoritative data,
+not the evidence chain itself).
 
 SCALE-ADR-001 dedup: at-least-once JetStream delivery is compensated for on
 two levels — server-side, the stream this consumer creates carries an
@@ -28,6 +37,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 from collections import OrderedDict
 from datetime import timedelta
 from typing import Any, Callable
@@ -163,6 +173,8 @@ class LineageConsumer:
         subject: str = "novafabric.lineage.>",
         batch_size: int = 500,
         fetch_timeout: float = 1.0,
+        flush_batch_size: int = 2000,
+        flush_interval_s: float = 15.0,
     ) -> None:
         """Pull lineage events from NATS JetStream in a continuous loop.
 
@@ -173,10 +185,21 @@ class LineageConsumer:
         already exist and uses a durable ``novafabric-lineage-consumer``
         consumer so restarts do not re-process acknowledged events.
 
+        Extracted edges are buffered in memory and flushed into KuzuDB via
+        ``bulk_insert_edges`` when either ``flush_batch_size`` edges have
+        accumulated or ``flush_interval_s`` seconds have elapsed since the
+        last flush — see the module docstring for why this is a
+        size-or-time trigger rather than one-flush-per-NATS-fetch, and why a
+        flush failure drops that flush's edges rather than blocking or
+        crashing the loop.
+
         Args:
-            subject:       NATS subject pattern to subscribe to.
-            batch_size:    Maximum messages to pull per fetch call.
-            fetch_timeout: Seconds to wait for each fetch before retrying.
+            subject:          NATS subject pattern to subscribe to.
+            batch_size:       Maximum messages to pull per NATS fetch call.
+            fetch_timeout:    Seconds to wait for each fetch before retrying.
+            flush_batch_size: Edges to accumulate before a KuzuDB COPY flush.
+            flush_interval_s: Max seconds between flushes even if
+                              ``flush_batch_size`` hasn't been reached.
         """
         nats_url = self.nats_url
         if not nats_url or nats_url == "nats://localhost:4222":
@@ -196,9 +219,18 @@ class LineageConsumer:
                 "nats-py not installed; install with: pip install novafabric[scale]"
             ) from exc
 
+        try:
+            import kuzu
+        except ImportError as exc:
+            raise RuntimeError(
+                "kuzu not installed; install with: pip install novafabric[scale-kg]"
+            ) from exc
+
         logger.info("Connecting to NATS at %s", nats_url)
         nc = await nats.connect(nats_url)
         js = nc.jetstream()
+
+        kuzu_conn = kuzu.Connection(kuzu.Database(self.kuzu_path))
 
         # Ensure stream exists for the subject.
         stream_name = "novafabric-lineage"
@@ -220,16 +252,41 @@ class LineageConsumer:
 
         sub = await js.pull_subscribe(subject, "novafabric-lineage-consumer")
         logger.info(
-            "NATS JetStream pull consumer started: subject=%s batch=%d",
+            "NATS JetStream pull consumer started: subject=%s batch=%d "
+            "flush_batch_size=%d flush_interval_s=%.0f",
             subject,
             batch_size,
+            flush_batch_size,
+            flush_interval_s,
         )
+
+        pending_edges: list[dict[str, Any]] = []
+        last_flush = time.monotonic()
+
+        def _flush() -> None:
+            nonlocal pending_edges, last_flush
+            if pending_edges:
+                try:
+                    self.bulk_insert_edges(pending_edges, kuzu_conn)
+                except Exception as exc:  # noqa: BLE001 — lineage is derived, non-authoritative
+                    logger.error(
+                        "bulk_insert_edges flush failed; dropping %d buffered edges "
+                        "(source NATS messages already acked): %s",
+                        len(pending_edges),
+                        exc,
+                    )
+            pending_edges = []
+            last_flush = time.monotonic()
 
         while True:
             try:
                 msgs = await sub.fetch(batch=batch_size, timeout=fetch_timeout)
             except NatsTimeoutError:
-                # No messages available — normal idle condition.
+                # No messages available — normal idle condition. Still honor
+                # the time-based flush trigger so edges don't sit unflushed
+                # indefinitely during a quiet period.
+                if time.monotonic() - last_flush >= flush_interval_s:
+                    _flush()
                 continue
             except Exception as exc:
                 logger.warning("NATS fetch error (will retry): %s", exc)
@@ -248,12 +305,22 @@ class LineageConsumer:
 
             if events:
                 edges = await self.run_once(events)
+                pending_edges.extend(edges)
                 logger.debug(
-                    "NATS batch: %d events → %d edges", len(events), len(edges)
+                    "NATS batch: %d events → %d edges (%d pending flush)",
+                    len(events),
+                    len(edges),
+                    len(pending_edges),
                 )
 
             for msg in raw_msgs:
                 await msg.ack()
+
+            if (
+                len(pending_edges) >= flush_batch_size
+                or time.monotonic() - last_flush >= flush_interval_s
+            ):
+                _flush()
 
     def bulk_insert_edges(
         self,

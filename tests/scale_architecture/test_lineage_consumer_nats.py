@@ -55,6 +55,20 @@ class TestRunFromNatsEnvGuard:
             with pytest.raises(RuntimeError, match="nats-py not installed"):
                 _run(consumer.run_from_nats())
 
+    def test_raises_when_kuzu_not_installed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """run_from_nats must raise RuntimeError when kuzu is missing."""
+        monkeypatch.setenv("NOVA_NATS_URL", "nats://localhost:4222")
+        consumer = LineageConsumer(nats_url="nats://localhost:4222")
+        fake_nats_mod, fake_errors_mod = _build_fake_nats(MagicMock())
+        with patch.dict(
+            sys.modules,
+            {"nats": fake_nats_mod, "nats.errors": fake_errors_mod, "kuzu": None},
+        ):
+            with pytest.raises(RuntimeError, match="kuzu not installed"):
+                _run(consumer.run_from_nats())
+
 
 # ---------------------------------------------------------------------------
 # Helpers for mocked NATS
@@ -78,12 +92,23 @@ def _build_fake_nats(fake_js: MagicMock) -> tuple[types.ModuleType, types.Module
     return fake_nats_mod, fake_errors_mod
 
 
+def _build_fake_kuzu() -> tuple[types.ModuleType, MagicMock]:
+    """Build a fake kuzu module so run_from_nats never touches a real
+    on-disk database during tests. Returns (module, mock_connection)."""
+    fake_conn = MagicMock()
+    fake_kuzu_mod = types.ModuleType("kuzu")
+    fake_kuzu_mod.Database = MagicMock(return_value=MagicMock())
+    fake_kuzu_mod.Connection = MagicMock(return_value=fake_conn)
+    return fake_kuzu_mod, fake_conn
+
+
 def _run_until_fetch(
     consumer: LineageConsumer,
     fake_js: MagicMock,
     fake_nats_mod: types.ModuleType,
     fake_errors_mod: types.ModuleType,
     fetch_side_effect=None,
+    fake_kuzu_mod: types.ModuleType | None = None,
 ) -> None:
     """Run run_from_nats until it attempts the first fetch, then break out.
 
@@ -98,9 +123,12 @@ def _run_until_fetch(
 
     fake_js.pull_subscribe = AsyncMock(return_value=fake_sub)
 
+    if fake_kuzu_mod is None:
+        fake_kuzu_mod, _ = _build_fake_kuzu()
+
     with patch.dict(
         sys.modules,
-        {"nats": fake_nats_mod, "nats.errors": fake_errors_mod},
+        {"nats": fake_nats_mod, "nats.errors": fake_errors_mod, "kuzu": fake_kuzu_mod},
     ):
         with pytest.raises(_StopLoop):
             _run(consumer.run_from_nats(fetch_timeout=0.01))
@@ -267,3 +295,110 @@ class TestRunFromNatsInitialization:
 
         # We got past the malformed message without crashing
         assert fetch_calls[0] == 2
+
+
+# ---------------------------------------------------------------------------
+# Tests: edge buffering + flush trigger (ADR-0219 follow-up)
+# ---------------------------------------------------------------------------
+
+
+def _make_event(i: int) -> dict:
+    return {
+        "event_id": f"n{i}",
+        "event_type": "ArtifactProduced",
+        "run_id": f"run-{i}",
+        "artifact_id": f"art-{i}",
+    }
+
+
+class TestRunFromNatsFlush:
+    def test_flush_triggers_bulk_insert_at_batch_size(self) -> None:
+        """Once >= flush_batch_size edges accumulate, bulk_insert_edges fires."""
+        import json as _json
+
+        fetch_calls = [0]
+
+        async def fetch_two_batches_then_stop(*args, **kwargs):
+            call_no = fetch_calls[0]
+            fetch_calls[0] += 1
+            if call_no < 2:
+                msgs = []
+                for i in range(3):
+                    e = _make_event(call_no * 3 + i)
+                    m = MagicMock()
+                    m.data = _json.dumps(e).encode()
+                    m.ack = AsyncMock()
+                    msgs.append(m)
+                return msgs
+            raise _StopLoop("done")
+
+        fake_js = MagicMock()
+        fake_js.find_stream_name_by_subject = AsyncMock(return_value="novafabric-lineage")
+        fake_nats_mod, fake_errors_mod = _build_fake_nats(fake_js)
+        fake_kuzu_mod, _ = _build_fake_kuzu()
+        consumer = LineageConsumer(nats_url="nats://mocked:4222")
+
+        fake_sub = MagicMock()
+        fake_sub.fetch = fetch_two_batches_then_stop
+        fake_js.pull_subscribe = AsyncMock(return_value=fake_sub)
+
+        with patch.object(consumer, "bulk_insert_edges") as mock_bulk:
+            with patch.dict(
+                sys.modules,
+                {"nats": fake_nats_mod, "nats.errors": fake_errors_mod, "kuzu": fake_kuzu_mod},
+            ):
+                # flush_batch_size=5 so the 6 total edges (3/batch x 2
+                # batches) trigger a flush on the second batch.
+                with pytest.raises(_StopLoop):
+                    _run(
+                        consumer.run_from_nats(
+                            fetch_timeout=0.01, flush_batch_size=5, flush_interval_s=999.0
+                        )
+                    )
+
+        mock_bulk.assert_called()
+        flushed_edges = mock_bulk.call_args.args[0]
+        assert len(flushed_edges) >= 5
+
+    def test_flush_failure_logs_and_continues(self) -> None:
+        """A bulk_insert_edges failure must not crash run_from_nats's loop."""
+        import json as _json
+
+        fetch_calls = [0]
+
+        async def fetch_then_stop(*args, **kwargs):
+            call_no = fetch_calls[0]
+            fetch_calls[0] += 1
+            if call_no == 0:
+                e = _make_event(0)
+                m = MagicMock()
+                m.data = _json.dumps(e).encode()
+                m.ack = AsyncMock()
+                return [m]
+            raise _StopLoop("done")
+
+        fake_js = MagicMock()
+        fake_js.find_stream_name_by_subject = AsyncMock(return_value="novafabric-lineage")
+        fake_nats_mod, fake_errors_mod = _build_fake_nats(fake_js)
+        fake_kuzu_mod, _ = _build_fake_kuzu()
+        consumer = LineageConsumer(nats_url="nats://mocked:4222")
+
+        with patch.object(
+            consumer, "bulk_insert_edges", side_effect=RuntimeError("kuzu COPY failed")
+        ):
+            with patch.dict(
+                sys.modules,
+                {"nats": fake_nats_mod, "nats.errors": fake_errors_mod, "kuzu": fake_kuzu_mod},
+            ):
+                fake_sub = MagicMock()
+                fake_sub.fetch = fetch_then_stop
+                fake_js.pull_subscribe = AsyncMock(return_value=fake_sub)
+                # flush_batch_size=1 forces an immediate flush attempt.
+                with pytest.raises(_StopLoop):
+                    _run(
+                        consumer.run_from_nats(
+                            fetch_timeout=0.01, flush_batch_size=1, flush_interval_s=999.0
+                        )
+                    )
+        # Reaching _StopLoop (not RuntimeError) proves the flush failure was
+        # caught and logged rather than propagated.
