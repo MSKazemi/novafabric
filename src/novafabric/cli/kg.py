@@ -241,6 +241,15 @@ def kg_ingest_cmd(
 
     Scope: one or more capsules (or NATS stream).
 
+    KNOWN GAP for --source nats only (2026-07-30, ADR-0061): no producer in
+    this repository publishes events in the ModelCallCompleted/
+    ModelCallStarted/ToolCallCompleted/ToolCallStarted/EndpointRouted
+    taxonomy this ingest path recognizes. The Go HPC forwarder
+    (novafabric-spool-forwarder) publishes a different event_type taxonomy,
+    so a real NATS deployment would silently ingest zero events. --source
+    local-dir and --all are unaffected — they read known-good capsule files
+    directly.
+
     \b
     Examples:
       # Ingest a single capsule

@@ -6544,16 +6544,28 @@ nova kg status
 Ingest events from a capsule directory (or all capsule directories) into the KG.
 
 ```
-nova kg ingest [CAPSULE_DIR] [--all] [--capsule-dir DIR] [--path PATH] [--verified/--no-verified]
+nova kg ingest [CAPSULE_DIR] [--all] [--source local-dir|nats] [--capsule-dir DIR]
+               [--path PATH] [--verified/--no-verified]
+               [--nats-url URL] [--nats-subject SUBJECT]
 ```
 
 | Argument / Flag | Description |
 |---|---|
-| `CAPSULE_DIR` | Path to a single capsule directory (local-dir mode). Omit when using `--all`. |
+| `CAPSULE_DIR` | Path to a single capsule directory (local-dir mode). Omit when using `--all` or `--source nats`. |
 | `--all` | Scan and ingest **all** subdirectories under `--capsule-dir` (or `$NOVAFABRIC_CAPSULE_DIR` / `$NOVAFABRIC_HOME/capsules`). |
+| `--source local-dir\|nats` | Ingest from capsule files (default) or drain a NATS JetStream subject once and exit. |
 | `--capsule-dir DIR` | Base directory to scan when using `--all`. Defaults to `$NOVAFABRIC_CAPSULE_DIR` or `$NOVAFABRIC_HOME/capsules`. |
 | `--path` | KuzuDB path (default: `.nova/kg/nova_kg.kuzu`). |
 | `--verified` | Mark all events as NovaSeal-verified (sets confidence=1.0). |
+| `--nats-url URL` | NATS server URL (used with `--source nats`). |
+| `--nats-subject SUBJECT` | NATS JetStream subject to consume (used with `--source nats`). |
+
+**`--source nats` known gap (2026-07-30, [ADR-0061](../design/adr/0061-nats-jetstream-cluster-event-bus.md)):**
+no producer in this repository publishes events in the taxonomy this ingest
+path recognizes (below). The Go HPC forwarder (`novafabric-spool-forwarder`)
+publishes a different `event_type` taxonomy, so a real NATS deployment would
+run cleanly and ingest zero events. `local-dir` and `--all` are unaffected —
+they read known-good capsule files directly.
 
 ```bash
 # Single capsule
@@ -6566,6 +6578,9 @@ nova kg ingest --all
 # All capsules in a specific directory (e.g. after a nova-testbench run)
 nova kg ingest --all --capsule-dir ~/novafabric-data/capsules
 # Bulk ingest complete: 57 capsule(s) scanned · 1423 events ingested · 38 KG edges written · 0 skipped · 0 failed
+
+# Drain a NATS JetStream subject once and exit (see known gap above)
+nova kg ingest --source nats --nats-url nats://localhost:4222
 ```
 
 Supported event types (read from `model-calls.jsonl`, `tool-calls.jsonl`, or `events.jsonl`):
