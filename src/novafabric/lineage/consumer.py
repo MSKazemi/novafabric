@@ -41,6 +41,18 @@ logger = logging.getLogger(__name__)
 # retries" — a long-running consumer must not leak memory over its lifetime.
 DEFAULT_DEDUP_CACHE_SIZE = 50_000
 
+# ADR-0219 (BL-016): edge endpoints are not homogeneous — PRODUCED/CONSUMED_BY
+# put an artifact on one side and a run on the other. This maps edge_type ->
+# (src_kind, dst_kind) so bulk_insert_edges can populate the generic
+# LineageNode table's `kind` discriminator column. Unknown edge types default
+# to "unknown" for both sides rather than raising, since new edge types may be
+# added to _process_event() without this mapping being updated in lockstep.
+_NODE_KINDS_BY_EDGE_TYPE: dict[str, tuple[str, str]] = {
+    "SPAWNED_BY": ("run", "run"),
+    "PRODUCED": ("run", "artifact"),
+    "CONSUMED_BY": ("artifact", "run"),
+}
+
 
 class LineageConsumer:
     """Pulls capsule events from NATS JetStream and derives lineage edges into KuzuDB.
@@ -250,8 +262,24 @@ class LineageConsumer:
     ) -> int:
         """Bulk-insert lineage edges into KuzuDB via DuckDB Arrow → Parquet → COPY.
 
-        Uses DuckDB as an in-process Arrow accumulator, writes a temp Parquet
-        file, then issues a KuzuDB COPY statement for efficient bulk ingestion.
+        ADR-0219: a KuzuDB ``REL TABLE`` COPY requires its FROM/TO columns to
+        reference *existing* node primary keys, so this is a two-phase COPY —
+        (1) a deduplicated node landing COPY into ``LineageNode`` (a single
+        generic node table covering both run and artifact IDs, discriminated
+        by ``kind``), then (2) the edge COPY into ``LineageEdge``. Both target
+        tables are created idempotently (``IF NOT EXISTS``) on every call,
+        since *this* method — unlike ``KuzuLineageStore`` — does not own the
+        connection's lifecycle to create them once at construction time.
+
+        Idempotency across repeated calls (e.g. once per NATS fetch batch, per
+        ``run_from_nats()``): ``COPY ... (IGNORE_ERRORS=true)`` on a node table
+        silently skips rows whose primary key already exists rather than
+        raising — verified empirically against KuzuDB 0.11.3 — so a run_id or
+        artifact_id recurring across batches is safe without a per-row MERGE.
+
+        Uses DuckDB as an in-process Arrow accumulator, writes temp Parquet
+        files, then issues KuzuDB COPY statements for efficient bulk
+        ingestion.
 
         Args:
             edges:     List of edge dicts with keys: src, dst, edge_type,
@@ -276,7 +304,30 @@ class LineageConsumer:
                 "install with: pip install novafabric[scale]"
             ) from exc
 
-        table = pa.table(
+        kuzu_conn.execute(
+            "CREATE NODE TABLE IF NOT EXISTS LineageNode("
+            "id STRING, kind STRING, PRIMARY KEY(id))"
+        )
+        kuzu_conn.execute(
+            "CREATE REL TABLE IF NOT EXISTS LineageEdge("
+            "FROM LineageNode TO LineageNode, edge_type STRING, event_id STRING)"
+        )
+
+        node_kinds: dict[str, str] = {}
+        for e in edges:
+            src_kind, dst_kind = _NODE_KINDS_BY_EDGE_TYPE.get(
+                e["edge_type"], ("unknown", "unknown")
+            )
+            node_kinds.setdefault(e["src"], src_kind)
+            node_kinds.setdefault(e["dst"], dst_kind)
+
+        node_table = pa.table(
+            {
+                "id": pa.array(list(node_kinds.keys()), type=pa.string()),
+                "kind": pa.array(list(node_kinds.values()), type=pa.string()),
+            }
+        )
+        edge_table = pa.table(
             {
                 "src_run_id": pa.array([e["src"] for e in edges], type=pa.string()),
                 "dst_run_id": pa.array([e["dst"] for e in edges], type=pa.string()),
@@ -287,20 +338,34 @@ class LineageConsumer:
             }
         )
 
-        parquet_path: str | None = None
+        node_parquet_path: str | None = None
+        edge_parquet_path: str | None = None
         try:
             with tempfile.NamedTemporaryFile(
-                suffix=".parquet", delete=False, prefix="nova_lineage_"
+                suffix=".parquet", delete=False, prefix="nova_lineage_nodes_"
             ) as f:
-                parquet_path = f.name
+                node_parquet_path = f.name
+            with tempfile.NamedTemporaryFile(
+                suffix=".parquet", delete=False, prefix="nova_lineage_edges_"
+            ) as f:
+                edge_parquet_path = f.name
 
-            pq.write_table(table, parquet_path)  # type: ignore[no-untyped-call]
+            pq.write_table(node_table, node_parquet_path)  # type: ignore[no-untyped-call]
+            pq.write_table(edge_table, edge_parquet_path)  # type: ignore[no-untyped-call]
             logger.debug(
-                "bulk_insert_edges: wrote %d edges to %s", len(edges), parquet_path
+                "bulk_insert_edges: wrote %d nodes + %d edges to Parquet",
+                len(node_kinds),
+                len(edges),
             )
 
+            # KuzuDB rejects `header=true` for Parquet COPY (CSV-only option;
+            # Parquet already carries its own schema) — verified empirically
+            # against KuzuDB 0.11.3 while writing the ADR-0219 live test.
             kuzu_conn.execute(
-                f"COPY LineageEdge FROM '{parquet_path}' (header=true, IGNORE_ERRORS=true)"
+                f"COPY LineageNode FROM '{node_parquet_path}' (IGNORE_ERRORS=true)"
+            )
+            kuzu_conn.execute(
+                f"COPY LineageEdge FROM '{edge_parquet_path}' (IGNORE_ERRORS=true)"
             )
             logger.info("bulk_insert_edges: copied %d edges into KuzuDB", len(edges))
             return len(edges)
@@ -309,8 +374,9 @@ class LineageConsumer:
             logger.error("bulk_insert_edges failed: %s", exc)
             raise
         finally:
-            if parquet_path is not None:
-                try:
-                    os.unlink(parquet_path)
-                except OSError:
-                    pass
+            for path in (node_parquet_path, edge_parquet_path):
+                if path is not None:
+                    try:
+                        os.unlink(path)
+                    except OSError:
+                        pass
