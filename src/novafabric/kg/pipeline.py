@@ -269,6 +269,14 @@ class KGIngestionPipeline:
         if not event.get("event_type") and event.get("gen_ai.request.model"):
             event = _normalise_otel_semconv(event)
 
+        # ADR-0220 follow-up: a real Event Envelope v1 (from the NATS/spool
+        # path) nests event-type-specific data under "payload" rather than at
+        # the top level the rest of this method reads from — fall back into
+        # it for the two fields this pipeline needs that the envelope schema
+        # has no dedicated slot for. A no-op for local-dir events, which are
+        # already flat and never carry a "payload" sub-dict.
+        payload = event.get("payload") or {}
+
         capsule_id = str(event.get("capsule_id", ""))
         raw_agent = str(event.get("agent_id", ""))
         if not raw_agent:
@@ -280,7 +288,13 @@ class KGIngestionPipeline:
         event_type = str(event.get("event_type", ""))
 
         if event_type in _MODEL_EVENT_TYPES:
-            raw_model = str(event.get("model_id", event.get("model", "")))
+            raw_model = str(
+                event.get("model_id")
+                or event.get("model")
+                or payload.get("model_id")
+                or payload.get("model")
+                or ""
+            )
             if not raw_model:
                 logger.debug("Skipping %s with no model_id/model field", event_type)
                 return
@@ -292,7 +306,13 @@ class KGIngestionPipeline:
             _incr_events(event_type)
 
         elif event_type in _TOOL_EVENT_TYPES:
-            raw_tool = str(event.get("tool_name", event.get("tool_id", "")))
+            raw_tool = str(
+                event.get("tool_name")
+                or event.get("tool_id")
+                or payload.get("tool_name")
+                or payload.get("tool_id")
+                or ""
+            )
             if not raw_tool:
                 logger.debug("Skipping %s with no tool_name/tool_id field", event_type)
                 return
@@ -317,7 +337,13 @@ class KGIngestionPipeline:
             _incr_events(event_type)
 
         elif event_type in _ENDPOINT_EVENT_TYPES:
-            raw_url = str(event.get("url", event.get("endpoint", "")))
+            raw_url = str(
+                event.get("url")
+                or event.get("endpoint")
+                or payload.get("url")
+                or payload.get("endpoint")
+                or ""
+            )
             if not raw_url:
                 logger.debug("Skipping %s with no url/endpoint field", event_type)
                 return

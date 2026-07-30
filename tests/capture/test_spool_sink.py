@@ -13,7 +13,7 @@ from pathlib import Path
 import jsonschema
 
 from novafabric.capture._ulid import new_ulid
-from novafabric.capture.spool_sink import SpoolSink
+from novafabric.capture.spool_sink import SpoolSink, emit_call_events_from_capsule
 
 _HEADER_SIZE = 16  # 16-byte binary spool segment header (matches Go segment.go)
 _SCHEMA_PATH = (
@@ -89,3 +89,105 @@ def test_emit_event_is_fail_open_on_write_error(tmp_path: Path) -> None:
     # Must not raise.
     sink.emit_event(event_type="run.start", run_id=new_ulid(), agent_id="agent-1")
     sink.close()
+
+
+# ---------------------------------------------------------------------------
+# emit_call_events_from_capsule (ADR-0220 follow-up)
+# ---------------------------------------------------------------------------
+
+
+def _write_jsonl(path: Path, *records: dict) -> None:
+    path.write_text("".join(json.dumps(r) + "\n" for r in records))
+
+
+def test_emit_call_events_emits_completed_and_failed_model_calls(tmp_path: Path) -> None:
+    capsule_dir = tmp_path / "capsule"
+    capsule_dir.mkdir()
+    _write_jsonl(
+        capsule_dir / "model-calls.jsonl",
+        {"gen_ai.request.model": "gpt-4", "status": "success", "duration_ms": 120},
+        {"gen_ai.request.model": "claude-3", "status": "error", "duration_ms": 50},
+    )
+    (capsule_dir / "tool-calls.jsonl").write_text("")
+    run_id = new_ulid()
+    sink = SpoolSink(tmp_path / "spool")
+
+    emit_call_events_from_capsule(sink, capsule_dir, run_id=run_id, agent_id="agent-1")
+    sink.close()
+
+    envelopes = _read_envelopes(tmp_path / "spool")
+    schema = json.loads(_SCHEMA_PATH.read_text())
+    for env in envelopes:
+        jsonschema.validate(env, schema)
+    types = [e["event_type"] for e in envelopes]
+    assert types == ["ModelCallCompleted", "ModelCallFailed"]
+    assert envelopes[0]["payload"]["model_id"] == "gpt-4"
+    assert envelopes[1]["payload"]["model_id"] == "claude-3"
+
+
+def test_emit_call_events_emits_completed_tool_calls(tmp_path: Path) -> None:
+    capsule_dir = tmp_path / "capsule"
+    capsule_dir.mkdir()
+    (capsule_dir / "model-calls.jsonl").write_text("")
+    _write_jsonl(
+        capsule_dir / "tool-calls.jsonl",
+        {"tool_name": "search", "status": "success", "duration_ms": 30, "mutates": False},
+    )
+    run_id = new_ulid()
+    sink = SpoolSink(tmp_path / "spool")
+
+    emit_call_events_from_capsule(sink, capsule_dir, run_id=run_id, agent_id="agent-1")
+    sink.close()
+
+    [env] = _read_envelopes(tmp_path / "spool")
+    assert env["event_type"] == "ToolCallCompleted"
+    assert env["payload"]["tool_name"] == "search"
+    assert env["payload"]["mutates"] is False
+
+
+def test_emit_call_events_skips_records_missing_the_keyed_field(tmp_path: Path) -> None:
+    """A record with no model_id/tool_name can't key a KG edge — skip it, don't emit."""
+    capsule_dir = tmp_path / "capsule"
+    capsule_dir.mkdir()
+    _write_jsonl(capsule_dir / "model-calls.jsonl", {"status": "success"})
+    _write_jsonl(capsule_dir / "tool-calls.jsonl", {"status": "success"})
+    sink = SpoolSink(tmp_path / "spool")
+
+    emit_call_events_from_capsule(
+        sink, capsule_dir, run_id=new_ulid(), agent_id="agent-1"
+    )
+    sink.close()
+
+    assert _read_envelopes(tmp_path / "spool") == []
+
+
+def test_emit_call_events_skips_malformed_json_lines(tmp_path: Path) -> None:
+    capsule_dir = tmp_path / "capsule"
+    capsule_dir.mkdir()
+    (capsule_dir / "model-calls.jsonl").write_text(
+        "not valid json\n" + json.dumps({"gen_ai.request.model": "gpt-4", "status": "success"}) + "\n"
+    )
+    (capsule_dir / "tool-calls.jsonl").write_text("")
+    sink = SpoolSink(tmp_path / "spool")
+
+    emit_call_events_from_capsule(
+        sink, capsule_dir, run_id=new_ulid(), agent_id="agent-1"
+    )
+    sink.close()
+
+    [env] = _read_envelopes(tmp_path / "spool")
+    assert env["payload"]["model_id"] == "gpt-4"
+
+
+def test_emit_call_events_is_fail_open_on_missing_files(tmp_path: Path) -> None:
+    """Neither file existing (e.g. a run with zero model/tool calls) must not raise."""
+    capsule_dir = tmp_path / "empty-capsule"
+    capsule_dir.mkdir()
+    sink = SpoolSink(tmp_path / "spool")
+
+    emit_call_events_from_capsule(
+        sink, capsule_dir, run_id=new_ulid(), agent_id="agent-1"
+    )  # must not raise
+    sink.close()
+
+    assert _read_envelopes(tmp_path / "spool") == []

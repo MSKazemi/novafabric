@@ -241,19 +241,16 @@ def kg_ingest_cmd(
 
     Scope: one or more capsules (or NATS stream).
 
-    KNOWN GAP for --source nats only (2026-07-30, ADR-0220 — the taxonomy
-    mismatch itself is fixed, this specific granularity gap is not): no
-    producer in this repository emits ModelCallStarted/ModelCallCompleted/
-    ToolCallStarted/ToolCallCompleted/EndpointRouted events into the NATS
-    pipeline. capture/orchestrator.py's real producer only emits
-    run-boundary events (RunStarted/RunCompleted/RunFailed); per-model-call
-    and per-tool-call events are captured locally in the capsule's own event
-    stream but never mirrored to the spool/NATS path. A real NATS deployment
-    would ingest zero events via this specific event-type set — closing this
-    needs instrumenting the wire-level hooks to also emit to the spool, a
-    separate and materially larger piece of work than the taxonomy fix.
-    --source local-dir and --all are unaffected — they read known-good
-    capsule files directly.
+    Model/tool-call granularity via --source nats (2026-07-30, ADR-0220
+    follow-up): capture/orchestrator.py's real producer now re-emits each
+    locally-captured model/tool call as a ModelCallCompleted/ModelCallFailed/
+    ToolCallCompleted/ToolCallFailed spool event once the run finishes
+    (no *Started variant — the source data has one record per completed/
+    failed call, never a separate start event), so this ingestion path
+    produces real CALLS/USES_TOOL edges from real NATS traffic. EndpointRouted
+    is still never emitted by any producer. --source local-dir and --all read
+    the same underlying model-calls.jsonl/tool-calls.jsonl files directly and
+    were unaffected either way.
 
     \b
     Examples:

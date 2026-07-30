@@ -203,6 +203,8 @@ Status: **experimental**.
 | [`nova serve --experimental`](#nova-serve---experimental) | Read-only local dashboard (loopback, single-user) |
 | [`nova server start`](#nova-server-start) | Multi-user REST API (Postgres/SQLite, OIDC, RBAC) |
 | [`nova server saml-metadata`](#nova-server-saml-metadata) | Emit the SAML SP metadata XML for IdP registration (experimental) |
+| [`nova server scim-map-group`](#nova-server-scim-map-group-group-role-experimental-adr-0139-d3) | Declare IdP-group → RBAC-role mappings for SCIM provisioning (experimental) |
+| [`nova server list-scim-events`](#nova-server-list-scim-events-experimental-adr-0139-d5) | Read-only SCIM provisioning audit trail (experimental) |
 | [`nova server api-key`](#nova-server-api-key-create-experimental-adr-0193) | First-class API keys: create, list, revoke, rotate (experimental) |
 | [`nova login`](#nova-login) / [`nova logout`](#nova-logout) | Authenticate with a NovaFabric server |
 | [`nova doctor`](#nova-doctor---check-storage---check-scheduler) | Installation, storage, and scheduler/env-var diagnostics |
@@ -1943,10 +1945,11 @@ of duties, ADR-0003 pattern). A bare `--capsule` enqueue uses the capsule's
 content-addressed root digest **excluding the annotation streams** (`scores.jsonl`,
 `comments.jsonl`), so successive review rounds share one stable subject.
 
-**Planned (not yet implemented):** automatic queue population by evaluating
-`subject_selector` over stored capsules (the selector is stored and enforced as a
-`subject_kind` guard at `queue add` today); evidence-bundle/NovaSeal sealing of completed
+**Planned (not yet implemented):** evidence-bundle/NovaSeal sealing of completed
 scores (`--seal` is recorded and warns; ADR-0118 P5); server-mode multi-user assignment.
+(Corrected: automatic queue population by evaluating `subject_selector` over stored
+capsules — described above as `nova annotate queue populate` — shipped in ADR-0118 P2;
+an earlier version of this note called it not-yet-implemented, which was stale.)
 
 Exit codes: `0` (ok, including an empty-queue `next`), `1` (validation / state /
 separation-of-duties refusal), `2` (usage).
@@ -2576,7 +2579,7 @@ Exit 1 when no sink is configured; delivery itself is best-effort.
 
 These commands require `pip install 'novafabric[compliance]'` for full functionality.
 
-> **OQ-01 status:** `nova subject-proof` (GDPR Art.17 erasure proof) is in **LEGAL-HOLD DRAFT MODE** — PII is written to a `legal_hold/` staging area, not sealed capsules. The crypto-shredding strategy (DEK-based erasure per ADR-0069) is designed; implementation planned for v0.26.x.
+> **OQ-01 status (corrected):** `nova subject-proof` (below) remains **LEGAL-HOLD DRAFT MODE** — it looks up an existing redaction proof; PII stays in a `legal_hold/` staging area, not sealed capsules. The DEK-based crypto-shredding strategy this note used to describe as "planned for v0.26.x" **has since shipped** (ADR-0069, v0.44.0) as separate commands — see [`nova pii erase`](#nova-pii-erase-subject_id) and [`nova erasure request`](#nova-erasure-request) below — which actually destroy the wrapping DEK for a data subject rather than only staging a proof.
 
 ### nova export-annex-iv \<capsule\> --output-dir \<dir\> --deployment-id \<id\>
 
@@ -4234,8 +4237,16 @@ Options:
 - `--output-format unified|json` — `json` returns `added`/`removed`/`changed` dotted-path field maps and an `identical` boolean (same shape as `nova asset diff`)
 
 **Promotion.** Prompt versions move through the standard lifecycle with the existing eval-gated
-machinery — `nova promote direct triage@2 --to staging` works unchanged (ADR-0112 D3); a
-dedicated `nova prompt promote` alias is planned.
+machinery — `nova promote direct triage@2 --to staging` works unchanged (ADR-0112 D3). A
+dedicated `nova prompt promote <prompt_id>@<version> --to <status> [--force]` alias is also
+available (works today, ADR-0112 P4): a thin, deliberate wrapper around `nova promote direct`
+so prompts go through the exact same eval/policy gates and audit trail as any other asset —
+it adds only a type check that refuses to "promote" a non-prompt asset through this surface.
+
+```bash
+nova prompt promote triage@1.2.0 --to staging
+nova prompt promote triage@1.2.0 --to production
+```
 
 ### Prompt composition (experimental, ADR-0115)
 
@@ -4920,6 +4931,52 @@ REST equivalent:
 curl -X DELETE http://localhost:7433/v0/admin/roles/user@example.com/writer \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
+
+---
+
+### nova server scim-map-group \<group\> \<role\> (experimental, ADR-0139 D3)
+
+Declare, `--remove`, or `--list` IdP-group → RBAC-role mappings in the server's
+YAML config (`scim.group_role_map`, [ADR-0029](../design/adr/0029-server-config-schema.md)),
+per [ADR-0139](../design/adr/0139-scim-provisioning.md) D3. SCIM group membership then
+grants/revokes the mapped role through the `/scim/v2/Groups` routes. `--list` reads the
+effective loaded config; setting or removing a mapping edits the YAML in place — a running
+server picks up the change on restart. Scope: single server.
+
+```bash
+nova server scim-map-group Engineering writer
+nova server scim-map-group SRE-Admins admin
+nova server scim-map-group Engineering --remove
+nova server scim-map-group --list
+nova server scim-map-group --list --config /opt/nova/server.yaml
+```
+
+Arguments:
+- `GROUP` — IdP group `displayName` (omit only with `--list`)
+- `ROLE` — RBAC role: `reader`, `writer`, `admin`, `auditor`, `promoter`, `approver` (omit with `--remove` or `--list`)
+
+Options:
+- `--remove` — remove the mapping for `GROUP` instead of setting it
+- `--list` — print the effective group→role map and exit
+- `--config PATH` — server YAML config path (default: `~/.config/novafabric/server.yaml`)
+
+---
+
+### nova server list-scim-events (experimental, ADR-0139 D5)
+
+Read-only append-only audit trail of SCIM provisioning: who was provisioned or
+deprovisioned, when, and every group→role remap. Scope: single server.
+
+```bash
+nova server list-scim-events
+nova server list-scim-events --subject alice@example.com
+nova server list-scim-events --json
+```
+
+Options:
+- `--subject TEXT` — filter the trail to one subject (`userName`)
+- `--json` — emit the events as a JSON array for tooling
+- `--db-path PATH` — SQLite database path (overrides default)
 
 ---
 
@@ -6563,17 +6620,17 @@ nova kg ingest [CAPSULE_DIR] [--all] [--source local-dir|nats] [--capsule-dir DI
 | `--nats-url URL` | NATS server URL (used with `--source nats`). |
 | `--nats-subject SUBJECT` | NATS JetStream subject to consume (used with `--source nats`). |
 
-**`--source nats` known gap (2026-07-30, [ADR-0220](../design/adr/0220-go-envelope-canonical-event-taxonomy-reconciliation.md) — the producer/consumer taxonomy mismatch itself is fixed; this specific event-type coverage gap is not):**
-no producer in this repository emits `ModelCallStarted`/`ModelCallCompleted`/
-`ToolCallStarted`/`ToolCallCompleted`/`EndpointRouted` events into the NATS
-pipeline — `capture/orchestrator.py`'s real producer only emits run-boundary
-events (`RunStarted`/`RunCompleted`/`RunFailed`); per-call model/tool events
-are captured locally in the capsule's own event stream but never mirrored to
-the spool/NATS path. A real NATS deployment would ingest zero events via
-this specific event-type set until that separate, larger piece of work
-(instrumenting the wire-level hooks to also emit to the spool) is done.
-`local-dir` and `--all` are unaffected — they read known-good capsule files
-directly.
+**`--source nats` model/tool-call coverage (2026-07-30, [ADR-0220](../design/adr/0220-go-envelope-canonical-event-taxonomy-reconciliation.md) follow-up):**
+`capture/orchestrator.py`'s real producer now re-emits each locally-captured
+model/tool call as a `ModelCallCompleted`/`ModelCallFailed`/
+`ToolCallCompleted`/`ToolCallFailed` spool event once the run finishes (no
+`*Started` variant — the source data has one record per completed/failed
+call, never a separate start event), so this ingestion path produces real
+`CALLS`/`USES_TOOL` edges from real NATS traffic — verified end-to-end by
+`tests/kg/test_kg.py::test_real_producer_to_kg_pipeline_end_to_end`.
+`EndpointRouted` is still never emitted by any producer. `local-dir` and
+`--all` read the same underlying `model-calls.jsonl`/`tool-calls.jsonl`
+files directly and were unaffected either way.
 
 ```bash
 # Single capsule

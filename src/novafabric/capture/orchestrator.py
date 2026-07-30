@@ -473,6 +473,21 @@ class CaptureOrchestrator:
             if line.strip()
         )
 
+        # ADR-0092 slice C (C0) + ADR-0220 follow-up: re-emit each locally-
+        # captured model/tool call as a spool event so `nova kg ingest
+        # --source nats` has real per-call data (previously only
+        # RunStarted/RunCompleted/RunFailed were emitted). Fail-open.
+        if _spool_sink is not None:
+            from novafabric.capture.spool_sink import emit_call_events_from_capsule
+
+            emit_call_events_from_capsule(
+                _spool_sink,
+                capsule_dir,
+                run_id=run_id,
+                agent_id=_spool_agent_id,
+                global_run_id=os.environ.get("NOVAFABRIC_GLOBAL_RUN_ID") or run_id,
+            )
+
         # ADR-0125: list every stored media blob as an output Artifact so its
         # content_hash is inside the sealed manifest (NovaSeal signing scope) —
         # post-hoc blob tampering is then detectable. Empty when no media blob

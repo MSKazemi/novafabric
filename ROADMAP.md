@@ -11,10 +11,11 @@
 > **This table is only updated when a version is tagged**, so that a released row
 > always means "released" — see **CHANGELOG `[Unreleased]`** for anything not yet
 > tagged. As of 2026-07-30, `[Unreleased]` is empty — the table below is current
-> with the last tag, v0.95.0.
+> with the last tag, v0.96.0.
 
 | Version | Feature | Status |
 |---|---|---|
+| v0.96.0 | **ADR-0220 follow-up: real per-call NATS events for `nova kg ingest --source nats`** — `capture/orchestrator.py` re-emits each locally-captured model/tool call as a `ModelCallCompleted`/`ModelCallFailed`/`ToolCallCompleted`/`ToolCallFailed` spool event (no `*Started` variant — the source data has one record per completed/failed call). New `spool_sink.emit_call_events_from_capsule()`. Also fixed a second producer/consumer field-shape mismatch: `KGIngestionPipeline.ingest_event()` now reads a real envelope's nested `payload` for `model_id`/`tool_name`/`url`. Verified end-to-end (`tests/kg/test_kg.py::test_real_producer_to_kg_pipeline_end_to_end`) — real producer, real spool envelopes, real pipeline, real KuzuDB store. Event Envelope v1 enum widened additively (4 more values), `.sha256` repinned. See CHANGELOG `[0.96.0]` and [ADR-0220](design/adr/0220-go-envelope-canonical-event-taxonomy-reconciliation.md). Zero new required deps. | **experimental** |
 | v0.95.0 | **ADR-0220 accepted + implemented (Option A)** — resolves the v0.94.0 NATS event-taxonomy gap: `capture/orchestrator.py`'s real event producer now emits canonical `RunStarted`/`RunCompleted`/`RunFailed` (was `run.start`/`capsule.finalize`) and threads `parent_run_id` through, so `nova lineage consume` derives real `SPAWNED_BY` edges from real captured runs — verified by a new producer-to-consumer end-to-end test. The investigation found the original "Go vs. Python taxonomy" framing was itself wrong: the Go collector's `EventType` constants were dead code; the real mismatch was within Python. Event Envelope v1 schema widened additively (4 new enum values, `.sha256` repinned); `EndpointRouted` added to the canonical `CapsuleEventType` enum. Also: PAR-ADR-002 resolved (BDFL kept the shipped 86400s/24h `pending_parent_timeout` default over the spec's 300s — see `design/governance/acceptance-record.md`); a missed `pyproject.toml` version bump from v0.94.0's release commit was caught and fixed. See CHANGELOG `[0.95.0]` and [ADR-0220](design/adr/0220-go-envelope-canonical-event-taxonomy-reconciliation.md). Zero new required deps. | **experimental** |
 | v0.94.0 | **Backlog-audit batch: `nova lineage consume` daemon, ADR-0219 KuzuDB bulk-COPY (write-path bug fix + published throughput benchmark), multi-TSA RFC 3161 fallback (REG-ADR-007), `nova doctor --check-scheduler` (PAR-ADR-003 OQ-06), pgBouncer mutant-leak test fix, cross-batch NATS dedup fix (SCALE-ADR-001)** — see CHANGELOG `[0.94.0]` for full detail. Also documented a real, unresolved gap rather than hiding it: no in-repo NATS producer spoke the event taxonomy either lineage or KG consumer expected (ADR-0061/ADR-0220, proposed at the time) — **resolved in v0.95.0**. Zero new required deps. | **experimental** |
 | v0.93.0 | **Counterfactual root-cause search (ADR-0101 §NF-018, completes the NF-017/018 pair)** — `diagnose/verify.py`: `search_root_cause` sweeps the §NF-019 causal-root candidates in their existing shallowest/earliest-ranked order — the pruning the ADR called for over a naive linear sweep — driving a bounded (default 8, ceiling 50) number of zero-token mocked intervention replays until one confirms an outcome flip; every attempt is recorded so the search is auditable. Also ships §NF-020: a top-level `taxonomy` field on both `HypothesisVerification` and the new `RootCauseAttempt`. Exposed as `nova diagnose --search-root-cause [--max-interventions N]`. Reuses the shared `_verify_step` replay-driving core with `--intervene` (NF-017) — no duplicated orchestration. ADR-0101 moves to fully accepted; only NF-021's semantic conflicting-claim half stays future design. Zero new deps. | **experimental** |
@@ -169,9 +170,9 @@ Deliberately excluded (gated): lineage at-scale backends (live AGE + benchmark),
 HA multi-replica (needs its own ADR + infra), SAML ACS / OAS-freeze / SCIM-live
 (license/partner), `pending_parent_timeout` REC-2 (needs BDFL value decision).
 
-## Planned — v0.27.x (Compliance Implementation Sprint)
+## Shipped — v0.27.x (Compliance Implementation Sprint) — corrected 2026-07-30, this section was mislabeled "Planned" though every row below shipped v0.32.0–v0.45.0
 
-Goal: implement the compliance ADRs written in v0.25.0. All items depend on their corresponding ADR being accepted.
+Goal: implement the compliance ADRs written in v0.25.0. All nine items shipped between v0.32.0 and v0.45.0; only two sub-parts remain deferred (C2PA TSP hard-binding signature, Art.12 capture-time gate), noted inline below.
 
 | Feature | ADR | Deadline driver |
 |---|---|---|
@@ -426,8 +427,8 @@ See `.claude/plans/topology-visualization-investigation.md`.
 ## The Accountability Spine (research-grounded, ADRs 0093–0095)
 
 **Status: ADRs Accepted; all three feature cores shipped (released v0.55.0, experimental).
-Follow-up slices implemented (2026-06-19, experimental, branch `feat/spine-followups`, not yet
-merged).** Three linked features grounded in the 2026 "accountable autonomy" research corpus
+Follow-up slices released v0.56.0, 2026-06-19 (experimental).** Three linked features grounded
+in the 2026 "accountable autonomy" research corpus
 (D3 ex-post evidence is the load-bearing moat). Integrating overview:
 `design/architecture/accountability-spine.md`; research→feature provenance:
 `design/research/accountability-spine-traceability.md`. None is a third top-level format
@@ -436,16 +437,18 @@ The follow-up slices add: the energy sampler + measured time-share attribution +
 capture + the signed `PREDICATE_ENERGY` bundle attestation (Spine-A); the FRE-902(14)
 court-admissibility binding now auto-embedded via `nova export-evidence --with-custody`,
 the EU AI Act Annex IV + NIST RMF safety-case renderers (`nova safety-case export --format
-annex-iv|nist-rmf`), and the three token-gated read-only serve endpoints
-(`/api/runs/{id}/energy|ledger|safety-case`) (Spine-C). The React dashboard panels and the
-live n1 `sacct` round-trip remain the only deferred pieces.
+annex-iv|nist-rmf`), the three token-gated read-only serve endpoints
+(`/api/runs/{id}/energy|ledger|safety-case`), **and the React `SpineTab` dashboard panel**
+(Spine-C) — corrected 2026-07-30, this was previously listed as deferred but shipped in the
+same v0.56.0 release. The live n1 Slurm `sacct` round-trip remains the only deferred piece
+(hardware-gated).
 
 | Track | Feature | Research wedge | ADR | Status |
 |---|---|---|---|---|
-| Spine-A | **Energy-Anchored Action Receipts** — measured-or-declared-unknown per-action joules + provenanced carbon, sealed into Seal/Evidence; honest-degradation default; Slurm `sacct` measured class (`nova energy probe/attest/verify/report`) | D3 × D7 (#1 wedge, no competitor) | ADR-0093 | **experimental** (core + follow-up: `EnergySampler` daemon, measured time-share attribution, Slurm `sacct` capture, signed `PREDICATE_ENERGY` bundle attestation; 80 tests) — *deferred:* live n1 sacct round-trip, React EnergyTab |
+| Spine-A | **Energy-Anchored Action Receipts** — measured-or-declared-unknown per-action joules + provenanced carbon, sealed into Seal/Evidence; honest-degradation default; Slurm `sacct` measured class (`nova energy probe/attest/verify/report`) | D3 × D7 (#1 wedge, no competitor) | ADR-0093 | **experimental** (core + follow-up: `EnergySampler` daemon, measured time-share attribution, Slurm `sacct` capture, signed `PREDICATE_ENERGY` bundle attestation, React EnergyTab panel; 80 tests) — *deferred:* live n1 sacct round-trip (hardware-gated) |
 | Spine-B1 | **Adversary-Anchored Accountability Ledger** — per-stream sidecar hash-chains + signed multi-stream checkpoint; tamper-evident against a compromised agent *and* a malicious operator (`nova ledger anchor/verify/status`) | D3 × D10 × D1 | ADR-0094 (A half) | **experimental** (core; 65 tests) — *deferred:* live-capture wiring, hub anchoring cadence |
 | Spine-B2 | **Deterministic Replay Attestation** — signed `BIT_EXACT`/`BOUNDED_EQUIVALENT`/`NON_DETERMINISTIC` certificate + `replay_attestation.rego` release gate; back-links to the ledger via `ledger_ref` | D3-core (no deterministic agent replay exists) | ADR-0094 (B half) | **experimental** (`replay_attestation.py` + gate + `nova evidence attest-replay --certify/--anchor`; 10 OPA tests) — *deferred:* `--require-deterministic` CLI gate flag |
-| Spine-C | **Safety-Case Compiler + Court-Admissible Evidence Binding** — CAE tree from real sealed artifacts (energy receipts + replay attestations compose in as `evidence_kind` leaves at zero schema cost); in-schema honesty / κ + CI backing states (`nova safety-case build/verify/export`) | D4 × D9 × D3 | ADR-0095 | **experimental** (compiler core + follow-up: FRE-902(14) admissibility binding auto-embedded via `nova export-evidence --with-custody`, Annex IV + NIST RMF renderers via `nova safety-case export --format annex-iv|nist-rmf`, three read-only serve endpoints `/api/runs/{id}/energy|ledger|safety-case`; 99+ tests) — *deferred:* React dashboard panels |
+| Spine-C | **Safety-Case Compiler + Court-Admissible Evidence Binding** — CAE tree from real sealed artifacts (energy receipts + replay attestations compose in as `evidence_kind` leaves at zero schema cost); in-schema honesty / κ + CI backing states (`nova safety-case build/verify/export`) | D4 × D9 × D3 | ADR-0095 | **experimental** (compiler core + follow-up: FRE-902(14) admissibility binding auto-embedded via `nova export-evidence --with-custody`, Annex IV + NIST RMF renderers via `nova safety-case export --format annex-iv|nist-rmf`, three read-only serve endpoints `/api/runs/{id}/energy|ledger|safety-case`, React SafetyCaseTab panel; 99+ tests) |
 
 ---
 
@@ -592,12 +595,20 @@ These are design intent only. No implementation scheduled.
 
 ### Enterprise readiness (2026-07 program)
 
-> **Status update 2026-07-16 (same day):** all twelve ADRs **accepted (BDFL direction)
-> with first slices shipped `experimental`** — see CHANGELOG [Unreleased] for exactly what
-> each slice contains and what honestly remains planned (`nova restore`, Postgres backup
-> profile, quota enforcement, store-wired encryption, cloud-KMS wrap, self-tracing, route
-> migration waves, SAML ACS still license-gated). Security-Architect review remains a
-> pre-production blocking condition for 0178/0184/0185/0186. The assessment, phasing, and
+> **Status update 2026-07-30 (corrected — the 2026-07-16 note below was stale, listing
+> items as "remains planned" that had since shipped):** all twelve ADRs are **accepted
+> (BDFL direction)** and every item this section originally deferred has since shipped,
+> released, and been tagged: `nova restore` + the Postgres backup profile (ADR-0181,
+> released same-day as the first slices, v0.61.0), storage-quota enforcement (ADR-0179,
+> v0.61.0), the store-wired `EncryptingAdapter` (ADR-0185, v0.61.0), opt-in self-tracing
+> (ADR-0182, v0.61.0), the AWS/Azure/GCP cloud-KMS wrap trio (ADR-0185, v0.71.0/v0.72.0),
+> and SAML SSO assertion consumption (ADR-0138 §D5 license gate resolved via `signxml`,
+> v0.73.0, experimental/opt-in, SecArch review still required pre-production). The
+> ADR-0183 serve→router migration is an ongoing incremental process, not a one-shot
+> item — multiple waves have shipped (legal-holds, audit-log, analytics, trust-surfaces
+> routers) behind a ratcheting inline-route-count freeze test; it has no single "done"
+> state by design. Security-Architect review remains a pre-production blocking condition
+> for 0178/0184/0185/0186 (and is recommended for 0193). The assessment, phasing, and
 > rationale live in
 > [`design/enterprise-readiness-plan-2026-07.md`](design/enterprise-readiness-plan-2026-07.md);
 > sign-off record in `design/governance/acceptance-record.md`.
@@ -635,10 +646,10 @@ features (27 category-defining). Sequenced additive-first, structural-later:
 | Wave | Theme | Representative planned features | Status |
 |---|---|---|---|
 | **W1** | Standards & interop envelopes + additive eval wins | **`experimental` (on main):** DSSE/in-toto/SLSA bundle envelopes, signed eval cards, statistical regression gate + zero-token offline eval (incl. metamorphic check-spec CLI), OTel-GenAI canonical span emitter + opt-in content bridge (NF-032/033), OTLP GenAI ingest endpoint `POST /api/otlp/v1/traces` (NF-034 — JSON **and protobuf** via `Content-Type`, ADR-0177; OpenInference mapping still `planned`), OpenLineage custom facets (NF-036), CycloneDX 1.7 AI-BOM citations/TLP/model-card + `aibom validate` (NF-056), dataset-provenance contamination-check (NF-028), Inspect-AI eval-log interop score-level bridge — `nova eval import-inspect`/`export-inspect` (NF-024; span-tree import still `planned`), capture-overhead CI gate (p95 < 2000 ms, `tests/bench/test_capture_overhead_gate.py` + `capture-overhead-gate` CI job). **All three former W1 `planned` items shipped 2026-07-15.** | implemented (`experimental`) |
-| **W2** | Verifiable-evidence core + evaluation depth | **`experimental` (on main):** SLSA-for-ML promotion provenance (NF-057), signed dataset provenance cards (NF-058). **future design:** Witness-cosigned tiled transparency log, COSE receipts, offline-verifiable bundle, batch-invariant replay attestation, intervention-driven auto-debug, Sigstore model signing | partially implemented (`experimental`) |
+| **W2** | Verifiable-evidence core + evaluation depth | **shipped `experimental`** (corrected 2026-07-30 — previously listed as future design): checkpoint + witness-quorum cosigning (NF-042/043, ADR-0097, v0.75.0 — the tiled-log/`nova monitor`/COSE-receipts parts of NF-041/044/045/047/048/050 remain future design); intervention-driven auto-debug/counterfactual root-cause attribution (NF-017–020/022, ADR-0101, v0.90.0–v0.93.0 — only NF-021's semantic conflicting-claim half stays future design). **`experimental` (on main):** SLSA-for-ML promotion provenance (NF-057), signed dataset provenance cards (NF-058). **future design:** offline-verifiable bundle, batch-invariant replay attestation, Sigstore model signing | partially implemented (`experimental`) |
 | **W3** | Cluster-scale collector + storage plane | OTAP-native collector, two-tier agent→gateway topology, JetStream durable spool, eBPF black-box capture, Iceberg-v3 object capsule store | future design |
-| **W4** | Agent identity/authz + compliance exporters | SPIFFE identity binding, delegation-chain "acted-as" evidence, EU AI Act Art.12/72/50 exporters, GPAI Art.53 form, ISO 42001/42006 mapping | future design |
-| **W5** | Fine-grained lineage at scale + planet-scale | Cell-level lineage, sparse-Merkle verifiable map, KuzuDB hot lineage tier, multi-region catalog federation | future design |
+| **W4** | Agent identity/authz + compliance exporters | **shipped `experimental`** (corrected 2026-07-30 — previously listed as all future design): delegation-chain "acted-as" evidence (ADR-0106, v0.76.0), EU AI Act Art.12/72/50 exporters (ADR-0107, v0.80.0/v0.85.0/v0.86.0), GPAI Art.53 form (ADR-0107, v0.87.0), ISO 42001 mapping (ADR-0107, v0.84.0; ISO 42006 not addressed). **future design:** SPIFFE identity binding (ADR-0035) | shipped (`experimental`) |
+| **W5** | Fine-grained lineage at scale + planet-scale | **shipped `experimental`** (corrected 2026-07-30): cell/row-level + transformation-level lineage facets (NF-061/062, ADR-0109, v0.77.0). **future design:** sparse-Merkle verifiable map (NF-049), KuzuDB hot lineage tier (NF-064), planet-scale multi-region catalog federation (NF-100) | partially implemented (`experimental`) |
 
 Design artifacts (private `design/`): register `research/novafabric-100-features-2026/FEATURE_REGISTER.md`,
 roadmap `architecture/100-feature-roadmap.md`, ADRs 0096–0110. **Compliance note:** exporters produce

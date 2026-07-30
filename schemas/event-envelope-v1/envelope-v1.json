@@ -52,8 +52,8 @@
     },
     "event_type": {
       "type": "string",
-      "enum": ["run.start", "run.end", "model_call", "tool_call", "span", "capsule.finalize", "RunStarted", "RunCompleted", "RunFailed", "RunAborted"],
-      "description": "Event kind. Indexed by the metadata database. The original six lowercase/dotted values (run.start, run.end, model_call, tool_call, span, capsule.finalize) were never actually emitted by any real producer in this repository (ADR-0220) and are retained only for schema backward-compatibility. Real run-boundary producers (src/novafabric/capture/orchestrator.py) emit the four RunStarted/RunCompleted/RunFailed/RunAborted values, matching schemas/event_schema.py::CapsuleEventType 1:1, so LineageConsumer/KGIngestionPipeline (which already expect the canonical taxonomy) extract real edges from cluster-scale NATS traffic (ADR-0220 Option A)."
+      "enum": ["run.start", "run.end", "model_call", "tool_call", "span", "capsule.finalize", "RunStarted", "RunCompleted", "RunFailed", "RunAborted", "ModelCallCompleted", "ModelCallFailed", "ToolCallCompleted", "ToolCallFailed"],
+      "description": "Event kind. Indexed by the metadata database. The original six lowercase/dotted values (run.start, run.end, model_call, tool_call, span, capsule.finalize) were never actually emitted by any real producer in this repository (ADR-0220) and are retained only for schema backward-compatibility. Real run-boundary producers (src/novafabric/capture/orchestrator.py) emit RunStarted/RunCompleted/RunFailed/RunAborted plus, per re-emitted local capture, ModelCallCompleted/ModelCallFailed/ToolCallCompleted/ToolCallFailed (no *Started variant — the source JSONL has one record per completed/failed call, never a separate start event) — all matching schemas/event_schema.py::CapsuleEventType, so LineageConsumer/KGIngestionPipeline (which already expect the canonical taxonomy) extract real edges from cluster-scale NATS traffic (ADR-0220 Option A)."
     },
     "trace_id": {
       "type": "string",

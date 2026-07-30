@@ -27,8 +27,11 @@ class EventType(str, Enum):
 
     The original six lowercase/dotted values were never actually emitted by
     any real producer (ADR-0220) and are retained only for backward
-    compatibility. Real producers emit the four ``Run*`` values, matching
-    ``schemas/event_schema.py::CapsuleEventType`` 1:1.
+    compatibility. Real producers emit the ``Run*``/``ModelCall*``/
+    ``ToolCall*`` values below, matching
+    ``schemas/event_schema.py::CapsuleEventType`` (no ``*Started`` variant for
+    calls — the source data has one record per completed/failed call, never
+    a separate start event).
     """
 
     run_start = "run.start"
@@ -41,6 +44,10 @@ class EventType(str, Enum):
     run_completed = "RunCompleted"
     run_failed = "RunFailed"
     run_aborted = "RunAborted"
+    model_call_completed = "ModelCallCompleted"
+    model_call_failed = "ModelCallFailed"
+    tool_call_completed = "ToolCallCompleted"
+    tool_call_failed = "ToolCallFailed"
 
 
 class EventEnvelope(BaseModel):

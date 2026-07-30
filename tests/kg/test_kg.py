@@ -442,6 +442,102 @@ def test_pipeline_ingest_tool_call_started(pipeline: Any, kg_store: Any) -> None
     assert any(t["tool_id"] == "web_search" for t in tools)
 
 
+def test_pipeline_ingest_model_call_from_envelope_payload(pipeline: Any, kg_store: Any) -> None:
+    """ADR-0220 follow-up: a real Event Envelope v1 nests model_id under
+    "payload" (no dedicated top-level slot for it) rather than at the top
+    level test_pipeline_ingest_model_call_completed uses — ingest_event must
+    still extract it and produce a CALLS edge."""
+    pipeline.ingest_event(
+        {
+            "event_type": "ModelCallCompleted",
+            "agent_id": "agent-envelope",
+            "capsule_id": "",
+            "payload": {"model_id": "gpt-4o", "status": "success"},
+        }
+    )
+    written = pipeline.flush_to_store()
+    assert written == 1
+    rows = kg_store.query_agent_models("agent-envelope")
+    assert any(r["model_id"] == "gpt-4o" for r in rows)
+
+
+def test_pipeline_ingest_tool_call_from_envelope_payload(pipeline: Any, kg_store: Any) -> None:
+    """Same fallback, for the ToolCall/tool_name case."""
+    pipeline.ingest_event(
+        {
+            "event_type": "ToolCallCompleted",
+            "agent_id": "agent-envelope-2",
+            "capsule_id": "",
+            "payload": {"tool_name": "search", "status": "success"},
+        }
+    )
+    written = pipeline.flush_to_store()
+    assert written == 1
+    tools = kg_store.query_agent_tools("agent-envelope-2")
+    assert any(t["tool_id"] == "search" for t in tools)
+
+
+def test_pipeline_skips_model_call_with_empty_payload_and_no_top_level_model(
+    pipeline: Any,
+) -> None:
+    """No model_id anywhere (top level or payload) — skip, don't crash."""
+    pipeline.ingest_event(
+        {
+            "event_type": "ModelCallCompleted",
+            "agent_id": "agent-x",
+            "capsule_id": "",
+            "payload": None,
+        }
+    )
+    assert pipeline.flush_to_store() == 0
+
+
+def test_real_producer_to_kg_pipeline_end_to_end(pipeline: Any, kg_store: Any, tmp_path: Path) -> None:
+    """ADR-0220 follow-up, full chain: the real producer
+    (spool_sink.emit_call_events_from_capsule, reading real model-calls.jsonl/
+    tool-calls.jsonl exactly as capture/orchestrator.py does) writes real
+    Event Envelope v1 records to a real spool; those envelopes — nested
+    payload and all — are fed into the real KGIngestionPipeline.ingest_event()
+    and must produce real CALLS/USES_TOOL edges. Not hand-built KG-schema
+    fixtures — the actual wire shape a real NATS deployment would carry."""
+    from novafabric.capture._ulid import new_ulid
+    from novafabric.capture.spool_sink import SpoolSink, emit_call_events_from_capsule
+
+    capsule_dir = tmp_path / "capsule"
+    capsule_dir.mkdir()
+    (capsule_dir / "model-calls.jsonl").write_text(
+        json.dumps({"gen_ai.request.model": "gpt-4o", "status": "success"}) + "\n"
+    )
+    (capsule_dir / "tool-calls.jsonl").write_text(
+        json.dumps({"tool_name": "read_file", "status": "success"}) + "\n"
+    )
+
+    spool_dir = tmp_path / "spool"
+    sink = SpoolSink(spool_dir)
+    emit_call_events_from_capsule(
+        sink, capsule_dir, run_id=new_ulid(), agent_id="agent-e2e"
+    )
+    sink.close()
+
+    envelopes: list[dict] = []
+    for seg in sorted(spool_dir.glob("*.jsonl")):
+        body = seg.read_bytes()[16:]  # 16-byte binary spool segment header
+        for line in body.splitlines():
+            if line.strip():
+                envelopes.append(json.loads(line))
+    assert {e["event_type"] for e in envelopes} == {"ModelCallCompleted", "ToolCallCompleted"}
+
+    for envelope in envelopes:
+        pipeline.ingest_event(envelope)
+    written = pipeline.flush_to_store()
+    assert written == 2
+
+    models = kg_store.query_agent_models("agent-e2e")
+    assert any(r["model_id"] == "gpt-4o" for r in models)
+    tools = kg_store.query_agent_tools("agent-e2e")
+    assert any(t["tool_id"] == "read_file" for t in tools)
+
+
 def test_pipeline_ingest_endpoint_routed(pipeline: Any) -> None:
     """EndpointRouted event creates a ROUTES_TO edge (no assertion on tools/models)."""
     pipeline.ingest_event(

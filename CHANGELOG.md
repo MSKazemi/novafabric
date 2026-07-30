@@ -9,6 +9,31 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.96.0] — 2026-07-30
+
+### Added
+- **ADR-0220 follow-up: real per-call NATS events for `nova kg ingest --source nats`.**
+  `capture/orchestrator.py` now re-emits each locally-captured model/tool call — read
+  straight from the same `model-calls.jsonl`/`tool-calls.jsonl` it already parses for the
+  capsule manifest's call counts — as a `ModelCallCompleted`/`ModelCallFailed`/
+  `ToolCallCompleted`/`ToolCallFailed` spool event (no `*Started` variant: the source data
+  has one record per completed/failed call, never a separate start event). New
+  `spool_sink.emit_call_events_from_capsule()`; gated behind `--emit-spool`, fail-open,
+  skips a record silently if it lacks the field (`model_id`/`tool_name`) the KG pipeline
+  keys an edge on, or if a line is malformed JSON. Deliberately excludes request/response
+  message content and tool arguments/results from the re-emitted payload (summary fields
+  only — this crosses a network boundary, unlike the local file it reads from).
+  Event Envelope v1's `event_type` enum widened additively (4 more values); `.sha256`
+  repinned.
+- **`KGIngestionPipeline.ingest_event()` now reads a real Envelope v1's nested `payload`**
+  for `model_id`/`tool_name`/`url` when absent at the top level — a second instance of the
+  same "designed against a flat schema, real wire format nests extras under `payload`"
+  mismatch ADR-0220 found in `LineageConsumer`. Additive, backward-compatible; local-dir
+  ingestion (already-flat records) is unaffected. Verified end-to-end by
+  `tests/kg/test_kg.py::test_real_producer_to_kg_pipeline_end_to_end` — real producer code
+  writing real spool envelopes, fed into the real pipeline, not hand-built KG-schema
+  fixtures.
+
 ## [0.95.0] — 2026-07-30
 
 ### Fixed

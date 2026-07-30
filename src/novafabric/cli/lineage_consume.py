@@ -68,11 +68,14 @@ def consume_cmd(
     by the Go novafabric-spool-forwarder) now emits the canonical
     RunStarted/RunCompleted/RunFailed event types this consumer recognizes,
     with parent_run_id/global_run_id populated — SPAWNED_BY edges derive
-    correctly from real captured runs. ModelCallStarted/ToolCallStarted-level
-    granularity is still not emitted by any producer (a separate, larger
-    piece of work) — only run-boundary (SPAWNED_BY) edges are available from
-    the NATS path today; ArtifactProduced/Consumed edges require a producer
-    that emits those event types, which none currently does either.
+    correctly from real captured runs. As of the same ADR-0220 follow-up, the
+    producer also re-emits per-call ModelCallCompleted/ModelCallFailed/
+    ToolCallCompleted/ToolCallFailed events (consumed by `nova kg ingest
+    --source nats`, not by this consumer, which only matches on RunStarted/
+    ArtifactProduced/ArtifactConsumed) — only run-boundary (SPAWNED_BY) edges
+    are available from *this* consumer; ArtifactProduced/Consumed edges
+    require a producer that emits those event types, which none currently
+    does.
 
     Scope: cluster-scale deployment (long-running daemon, not local-mode).
 

@@ -84,3 +84,98 @@ class SpoolSink:
     def close(self) -> None:
         """Release the underlying spool."""
         self._spool.close()
+
+
+def emit_call_events_from_capsule(
+    sink: SpoolSink,
+    capsule_dir: Union[str, Path],
+    *,
+    run_id: str,
+    agent_id: str,
+    global_run_id: str | None = None,
+) -> None:
+    """Re-emit each locally-captured model/tool call as a spool event (ADR-0220).
+
+    Reads the already-written ``model-calls.jsonl``/``tool-calls.jsonl`` (OTel
+    GenAI semconv records, one line per completed or failed call — there is no
+    separate "started" event in the source data, so only the Completed/Failed
+    canonical types are emitted, never Started) and re-emits each as a
+    ``ModelCallCompleted``/``ModelCallFailed``/``ToolCallCompleted``/
+    ``ToolCallFailed`` spool event so ``nova kg ingest --source nats`` has real
+    data to build CALLS/USES_TOOL edges from.
+
+    Deliberately excludes request/response message content and tool
+    arguments/results from the payload — this re-emission crosses a network
+    boundary (NATS), unlike the local capsule file it reads from, so it stays
+    to summary fields only (ADR-0021 §4 capture-privacy default). A record
+    missing the field the KG pipeline keys edges on (``model_id``/
+    ``tool_name``) is skipped, as is a malformed JSON line — both silently,
+    matching ``CapsuleEventConsumer``'s own local-dir read tolerance.
+
+    Fail-open throughout: each ``sink.emit_event()`` call already swallows its
+    own errors; a missing/unreadable source file is also swallowed rather than
+    raised, since this is best-effort re-emission of already-captured evidence.
+    """
+    capsule_dir = Path(capsule_dir)
+
+    try:
+        for line in (capsule_dir / "model-calls.jsonl").read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            model_id = record.get("gen_ai.response.model") or record.get("gen_ai.request.model")
+            if not model_id:
+                continue
+            event_type = (
+                "ModelCallCompleted" if record.get("status") == "success" else "ModelCallFailed"
+            )
+            sink.emit_event(
+                event_type=event_type,
+                run_id=run_id,
+                agent_id=agent_id,
+                global_run_id=global_run_id,
+                payload={
+                    "model_id": model_id,
+                    "provider": record.get("gen_ai.system"),
+                    "status": record.get("status"),
+                    "duration_ms": record.get("duration_ms"),
+                    "input_tokens": record.get("gen_ai.usage.input_tokens"),
+                    "output_tokens": record.get("gen_ai.usage.output_tokens"),
+                },
+            )
+    except OSError:
+        pass  # fail-open: model-calls.jsonl missing/unreadable is not fatal
+
+    try:
+        for line in (capsule_dir / "tool-calls.jsonl").read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            tool_name = record.get("tool_name")
+            if not tool_name:
+                continue
+            event_type = (
+                "ToolCallCompleted" if record.get("status") == "success" else "ToolCallFailed"
+            )
+            sink.emit_event(
+                event_type=event_type,
+                run_id=run_id,
+                agent_id=agent_id,
+                global_run_id=global_run_id,
+                payload={
+                    "tool_name": tool_name,
+                    "status": record.get("status"),
+                    "duration_ms": record.get("duration_ms"),
+                    "mutates": record.get("mutates"),
+                },
+            )
+    except OSError:
+        pass  # fail-open: tool-calls.jsonl missing/unreadable is not fatal
