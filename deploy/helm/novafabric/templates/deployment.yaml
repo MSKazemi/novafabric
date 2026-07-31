@@ -25,8 +25,9 @@ spec:
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       initContainers:
-        # Wait for Postgres, then apply schema migrations (stop at v001; later
-        # partition DDL is gated behind a benchmark — matches the Docker entrypoint).
+        # Wait for Postgres, then apply schema migrations. Upgrades to
+        # .Values.dbRevision (default "head"): the server refuses to start when
+        # stamped behind head, so pinning below head breaks a server-mode deploy.
         - name: migrate
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -38,8 +39,8 @@ spec:
             - |
               echo "[nova] waiting for postgres at $PGHOST:$PGPORT ..."
               until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -q; do sleep 2; done
-              echo "[nova] postgres ready; running migrations ..."
-              nova db upgrade --backend postgres --revision v001
+              echo "[nova] postgres ready; running migrations (--revision {{ .Values.dbRevision | default "head" }}) ..."
+              nova db upgrade --backend postgres --revision {{ .Values.dbRevision | default "head" | quote }}
           env:
             {{- include "novafabric.env" . | nindent 12 }}
       containers:
@@ -49,6 +50,22 @@ spec:
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           command: ["nova"]
+          {{- if eq .Values.mode "server" }}
+          # Multi-user REST API (OIDC/RBAC over Postgres). Auth is ON; OIDC via
+          # NOVAFABRIC_SERVER_* env, else a generated local token. workers>1
+          # requires Postgres (enforced by the CLI).
+          args:
+            - server
+            - start
+            - --backend
+            - postgres
+            - --host
+            - 0.0.0.0
+            - --port
+            - {{ .Values.server.port | quote }}
+            - --workers
+            - {{ .Values.server.workers | quote }}
+          {{- else }}
           args:
             - serve
             - --experimental
@@ -73,19 +90,23 @@ spec:
             {{- range .Values.serve.extraArgs }}
             - {{ . | quote }}
             {{- end }}
+          {{- end }}
           env:
             {{- include "novafabric.env" . | nindent 12 }}
           ports:
             - name: http
-              containerPort: {{ .Values.serve.port }}
+              containerPort: {{ if eq .Values.mode "server" }}{{ .Values.server.port }}{{ else }}{{ .Values.serve.port }}{{ end }}
               protocol: TCP
+          # Both modes expose /livez (process up) and /readyz (deps + schema).
           readinessProbe:
-            tcpSocket:
+            httpGet:
+              path: /readyz
               port: http
             initialDelaySeconds: 15
             periodSeconds: 10
           livenessProbe:
-            tcpSocket:
+            httpGet:
+              path: /livez
               port: http
             initialDelaySeconds: 45
             periodSeconds: 20

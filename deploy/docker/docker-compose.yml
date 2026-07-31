@@ -94,6 +94,7 @@ services:
       NOVA_JANUSGRAPH_URL: ws://janusgraph:8182/gremlin
       # pg_isready target (used by entrypoint)
       PGHOST: postgres
+      PGPORT: "5432"
       PGUSER: nova
     volumes:
       - ${NOVA_DATA_DIR:-${HOME}/novafabric-data}/capsules:/data/capsules
@@ -102,6 +103,17 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # Both modes expose /livez; port follows NOVA_PORT (4321 dashboard default).
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import sys,urllib.request;
+          sys.exit(0 if urllib.request.urlopen('http://localhost:${NOVA_PORT:-4321}/livez').status==200 else 1)"
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
 
   # ── ClickHouse — cost attribution store (prod profile) ─────────────────────

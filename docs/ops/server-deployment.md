@@ -301,6 +301,26 @@ NovaFabric ships to three channels from the public repository, each on a `v*` ta
 Images are multi-arch (`linux/amd64`, `linux/arm64`). Docker Hub is an optional
 mirror, populated only when a `DOCKERHUB_TOKEN` secret is configured on the repo.
 
+### Verifying release artifacts (supply chain)
+
+Published images and wheels are signed and carry an SBOM + SLSA build
+provenance — the provenance platform attesting its own supply chain.
+
+```bash
+# Image: keyless cosign signature (Sigstore/Fulcio + Rekor transparency log)
+cosign verify ghcr.io/novafabric/novafabric:<X.Y.Z> \
+  --certificate-identity-regexp '^https://github.com/novafabric/novafabric/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+# Image: SLSA build provenance + SBOM (attached as OCI referrers)
+gh attestation verify oci://ghcr.io/novafabric/novafabric:<X.Y.Z> \
+  --repo novafabric/novafabric
+cosign download sbom ghcr.io/novafabric/novafabric:<X.Y.Z>
+
+# Wheel: SLSA provenance for the PyPI distribution
+gh attestation verify novafabric-<X.Y.Z>-py3-none-any.whl --repo novafabric/novafabric
+```
+
 ### Quick start (bundled Postgres, evaluation only)
 
 ```bash
@@ -325,6 +345,54 @@ The chart runs non-root by default (uid/gid/fsGroup 1000, all capabilities
 dropped) and applies schema migrations via an init container. See
 [`deploy/helm/novafabric/README.md`](../../deploy/helm/novafabric/README.md) for
 the full values reference.
+
+> **Dashboard vs. server mode.** By default both the container and the chart run
+> `nova serve` — the experimental read-only dashboard, which serves over HTTP
+> with a printed token (`--insecure`). For the multi-user REST API with
+> OIDC/RBAC over Postgres, use **server mode** (Scenario 6). The default is
+> unchanged for backward compatibility.
+
+---
+
+## Scenario 6 — Hardened server mode (container / Helm)
+
+Runs the multi-user REST API (`nova server start`, OIDC/RBAC over Postgres)
+instead of the dashboard. Auth is **on** by default: configure OIDC via
+`NOVAFABRIC_SERVER_*` env, or the server generates a local bearer token
+(`--insecure-no-auth` is never used). Migrations always upgrade to the packaged
+schema **head** — the server refuses to start when stamped behind head, so a
+pinned-below revision breaks the deploy.
+
+### Container (Docker / Compose)
+
+Set `NOVA_MODE=server` on the image. It listens on `NOVA_PORT` (default `7433`)
+and, with `NOVA_WORKERS>1`, runs that many uvicorn workers (requires Postgres):
+
+```bash
+docker run -e NOVA_MODE=server \
+  -e NOVAFABRIC_POSTGRES_DSN=postgresql://nova:***@my-pg:5432/nova \
+  -e NOVA_WORKERS=4 \
+  -p 7433:7433 ghcr.io/novafabric/novafabric:<X.Y.Z>
+```
+
+Extra env for OIDC: `NOVAFABRIC_SERVER_OIDC_ISSUER_URL`,
+`NOVAFABRIC_SERVER_OIDC_AUDIENCE` (see Scenario 3).
+
+### Helm
+
+```bash
+helm install nova oci://ghcr.io/novafabric/charts/novafabric --version <X.Y.Z> \
+  --set mode=server \
+  --set server.port=7433 \
+  --set server.workers=4 \
+  --set postgres.enabled=false \
+  --set externalDatabase.host=my-pg.example.com \
+  --set externalDatabase.existingSecret=nova-db
+```
+
+In server mode the chart's readiness/liveness probes hit `/readyz` and `/livez`
+(both modes expose them); `/readyz` gates traffic on database reachability and
+schema-skew. Provide OIDC config through `extraEnv` or a mounted secret.
 
 ---
 

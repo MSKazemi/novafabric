@@ -419,3 +419,31 @@ def get_run_summary(
 def count_cached_runs(conn: sqlite3.Connection) -> int:
     """Return total rows in runs_cache. Zero means the cache is unpopulated."""
     return int(conn.execute("SELECT COUNT(*) FROM runs_cache").fetchone()[0])
+
+
+def prune_orphaned_runs(conn: sqlite3.Connection) -> int:
+    """Delete cache rows whose capsule directory no longer exists.
+
+    The cache is a *derived* index: a row whose capsule is gone is not
+    evidence of anything, it is a dangling pointer — the dashboard lists it
+    and every drill-in (inspect, trust-radar, replay) 404s. Rebuilds are
+    additive by design, so orphans accumulate whenever capsules move or a
+    registry is pointed at a different store.
+
+    Conservative on purpose: a row with **no** ``capsule_path`` is kept (we
+    cannot prove it is orphaned), and only a directory that is genuinely
+    absent counts. Returns the number of rows deleted.
+    """
+    orphans: list[str] = []
+    for run_id, capsule_path in conn.execute(
+        "SELECT run_id, capsule_path FROM runs_cache WHERE capsule_path IS NOT NULL"
+    ).fetchall():
+        if not capsule_path:
+            continue  # unknown location — never assume it is missing
+        if not Path(capsule_path).is_dir():
+            orphans.append(run_id)
+    for run_id in orphans:
+        conn.execute("DELETE FROM runs_cache WHERE run_id = ?", (run_id,))
+    if orphans:
+        conn.commit()
+    return len(orphans)

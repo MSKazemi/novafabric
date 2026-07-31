@@ -32,7 +32,13 @@ export default function LineageNodeRenderer(props: NodeProps<Node<LineageNodeDat
         'relative px-3 py-2 border bg-[var(--color-bg-raised)] transition-opacity',
         KIND_STYLE[data.kind],
         isSelected ? 'border-[var(--color-accent)] ring-2 ring-[var(--color-accent)]/30' : 'border-[var(--color-border)]',
-        dimmed && 'opacity-25',
+        // De-emphasis must stay READABLE. Container opacity blends the label
+        // toward the canvas, so ANY value below 100% degrades text contrast —
+        // opacity-25 measured 1.26:1 where WCAG AA needs 4.5:1 (axe serious).
+        // A node outside the current path is secondary, not decorative, so the
+        // cue is now structural: recede the surface and border, keep the text
+        // at full strength. `dimmed` also drives the label colors below.
+        dimmed && 'bg-[var(--color-bg-sunken)] border-dashed',
       )}
       style={{ width: 220, height: 64 }}
     >
@@ -55,12 +61,26 @@ export default function LineageNodeRenderer(props: NodeProps<Node<LineageNodeDat
             {data.status && (
               <span className={clsx('w-1.5 h-1.5 rounded-full', STATUS_DOT[data.status])} aria-label={data.status} />
             )}
-            <div className="truncate text-sm font-medium text-[var(--color-text)]" title={data.label}>
+            <div
+              className={clsx(
+                'truncate text-sm font-medium',
+                dimmed ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-text)]',
+              )}
+              title={data.label}
+            >
               {data.label}
             </div>
           </div>
           {data.subLabel && (
-            <div className="truncate text-xs text-[var(--color-text-faint)] font-mono" title={data.subLabel}>
+            <div
+              className={clsx(
+                'truncate text-xs font-mono',
+                // Never push the sub-label below AA: faint-on-sunken already
+                // sits near the floor, so a dimmed node keeps the muted tone.
+                dimmed ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-text-faint)]',
+              )}
+              title={data.subLabel}
+            >
               {data.subLabel}
             </div>
           )}

@@ -620,19 +620,34 @@ class TestBulkDelete:
 
 
 class TestDeleteCoreEdges:
-    def test_hold_scan_tolerates_blank_and_malformed_lines(
-        self, capsule_dir: Path
-    ) -> None:
+    def test_hold_scan_ignores_blank_lines(self, capsule_dir: Path) -> None:
         from novafabric.server.capsule_delete import active_hold_ids
 
         f = _hold_file(capsule_dir)
         f.write_text(
-            "\n"  # blank
-            "not json at all\n"
+            "\n"  # blank — ignored, not a hold
             + json.dumps({"hold_id": "H-GOOD", "released_at": None}) + "\n"
             + json.dumps({"hold_id": "H-DONE", "released_at": "2026-01-01"}) + "\n"
         )
         assert active_hold_ids(capsule_dir) == ["H-GOOD"]
+
+    def test_hold_scan_fails_closed_on_malformed_line(
+        self, capsule_dir: Path
+    ) -> None:
+        """A corrupt holds line may encode an active hold, so it must block
+        deletion (fail closed), never be silently dropped."""
+        from novafabric.server.capsule_delete import active_hold_ids
+
+        f = _hold_file(capsule_dir)
+        f.write_text(
+            "not json at all\n"
+            + json.dumps({"hold_id": "H-GOOD", "released_at": None}) + "\n"
+        )
+        result = active_hold_ids(capsule_dir)
+        # The real hold is still reported, and the corrupt line adds a
+        # synthetic blocking hold so the capsule cannot be deleted.
+        assert "H-GOOD" in result
+        assert any(h.startswith("__corrupt__:") for h in result)
 
     def test_worm_lock_ignores_other_capsules(self, capsule_dir: Path) -> None:
         from novafabric.server.capsule_delete import worm_locked_until

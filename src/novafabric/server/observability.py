@@ -840,6 +840,33 @@ def _dist_installed(name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _sample_db_pool_gauge(metrics: "HttpMetrics | None") -> None:
+    """Sample the cached metadata store's pool into nova_db_pool_* (ADR-0221).
+
+    Pull-based: called at /metrics scrape time so the gauge is always fresh
+    without a background sampler. A store with no pool (SQLite, or Postgres
+    without the opt-in pool) exposes no ``pool_stats`` / returns None, so this is
+    a no-op. Never raises into the scrape path.
+    """
+    if metrics is None:
+        return
+    try:
+        from novafabric.server.deps import get_metadata_store_dep
+
+        store = get_metadata_store_dep()
+        stats_fn = getattr(store, "pool_stats", None)
+        if stats_fn is None:
+            return
+        stats = stats_fn()
+        if stats is not None:
+            in_use, size = stats
+            metrics.set_db_pool("metadata", in_use, size)
+    except Exception:  # noqa: BLE001 — scraping metrics must never fail the endpoint
+        logging.getLogger("novafabric.server").debug(
+            "db pool gauge sampling skipped", exc_info=True
+        )
+
+
 def install_server_observability(app: FastAPI, config: ServerConfig) -> None:
     """Register /livez, /readyz, /v0/version, and /metrics on the server app.
 
@@ -856,10 +883,9 @@ def install_server_observability(app: FastAPI, config: ServerConfig) -> None:
         install_http_metrics_middleware(
             app, metrics, ingest_routes=SERVER_INGEST_ROUTES
         )
-        # DB pool gauges: registered (family visible in /metrics) but never
-        # set — neither backend keeps a connection pool today (sqlite: none;
-        # postgres: per-request psycopg.connect). Call metrics.set_db_pool()
-        # from the pool's lifecycle when a pooled backend lands.
+        # DB pool gauges (nova_db_pool_*) are sampled pull-style from the cached
+        # metadata store at /metrics scrape time (ADR-0221) — populated when the
+        # store is a pooled PostgresMetadataStore, otherwise left unset.
 
     # Self-tracing (ADR-0182 D5): opt-in, default OFF. When enabled, one span
     # per HTTP request is exported into the deployment's own OTLP ingest —
@@ -933,4 +959,5 @@ def install_server_observability(app: FastAPI, config: ServerConfig) -> None:
 
     @app.get("/metrics", include_in_schema=False, dependencies=metrics_dependencies)
     async def metrics_endpoint() -> Response:
+        _sample_db_pool_gauge(metrics)
         return metrics_response(metrics)

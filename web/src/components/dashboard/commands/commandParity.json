@@ -896,7 +896,9 @@
     "api": "/redact"
   },
   "nova redaction-xray": {
-    "status": "builder-only"
+    "status": "real-panel",
+    "tab": "seal",
+    "api": "/redaction-xray"
   },
   "nova register": {
     "status": "real-panel",
@@ -1128,7 +1130,9 @@
     "status": "builder-only"
   },
   "nova trust-radar": {
-    "status": "builder-only"
+    "status": "real-panel",
+    "tab": "seal",
+    "api": "/trust-radar"
   },
   "nova unregister": {
     "status": "real-panel",

@@ -268,18 +268,36 @@ class TestStartCli:
         assert result.exit_code == 0, result.output
         assert fake_run.calls == [{"host": "0.0.0.0", "port": 7433}]
 
-    def test_start_logs_token(
+    def test_start_prints_token_to_terminal_never_to_the_logger(
         self,
         tmp_path: Path,
         fake_run: _FakeUvicornRun,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
+        """The bearer token goes to the terminal only.
+
+        Security fix (enterprise audit 2026-07-30): it used to be written to
+        the application logger at INFO, which lands in aggregated logs /
+        journald / log files. The terminal now carries the token and the
+        usage hint (with the secret elided in the hint); the logger records
+        only the non-secret token-file path and the pinning env var.
+        """
         with caplog.at_level(logging.INFO, logger="novafabric.server"):
             result = self._invoke(tmp_path)
         assert result.exit_code == 0, result.output
         token = server_token_path().read_text().strip()
-        assert any(token in rec.getMessage() for rec in caplog.records)
-        assert any("Authorization: Bearer" in rec.getMessage() for rec in caplog.records)
+
+        # The secret must never reach a log record …
+        assert not any(token in rec.getMessage() for rec in caplog.records), (
+            "bearer token leaked into the application logger"
+        )
+        # … and neither should the copy-pasteable Bearer hint carrying it.
+        assert not any("Authorization: Bearer" in rec.getMessage() for rec in caplog.records)
+        # The logger still tells an operator where to find the token.
+        assert any("Local auth token stored at" in rec.getMessage() for rec in caplog.records)
+        # The operator gets the real token, and the hint, on the terminal.
+        assert token in result.output
+        assert "Authorization: Bearer" in result.output
 
     def test_start_insecure_logs_warning(
         self,

@@ -110,8 +110,58 @@ class PostgresMetadataStore(MetadataStore):
     across threads while a tenant context is open.
     """
 
-    def __init__(self, dsn: str) -> None:
+    def __init__(self, dsn: str, *, pool: Any = None) -> None:
         self._dsn = dsn
+        # Optional psycopg_pool.ConnectionPool (ADR-0221). When set,
+        # begin_tenant_context checks out from the pool instead of opening a
+        # fresh connection per request. Default None → unchanged connect/close.
+        self._pool = pool
+
+    @classmethod
+    def with_pool(
+        cls,
+        dsn: str,
+        *,
+        min_size: int = 1,
+        max_size: int = 10,
+    ) -> "PostgresMetadataStore":
+        """Construct a store backed by an opt-in psycopg connection pool (ADR-0221).
+
+        The pool opens connections with ``autocommit=False`` (the FR-12
+        invariant) and the dict row factory. RLS tenant isolation is preserved
+        because ``SET LOCAL`` is transaction-scoped: it is cleared when
+        ``begin_tenant_context``'s transaction ends, before the connection is
+        returned to the pool; the pool's default reset rolls back any residual
+        transaction as defense-in-depth.
+        """
+        from psycopg_pool import ConnectionPool
+
+        pool = ConnectionPool(
+            conninfo=dsn,
+            min_size=min_size,
+            max_size=max_size,
+            kwargs={"autocommit": False, "row_factory": psycopg.rows.dict_row},
+            open=True,
+        )
+        return cls(dsn, pool=pool)
+
+    def pool_stats(self) -> tuple[int, int] | None:
+        """Return ``(in_use, size)`` for the pool, or None when no pool is set.
+
+        Intended for sampling into the ``nova_db_pool_*`` gauges
+        (``server/observability.py::set_db_pool``).
+        """
+        if self._pool is None:
+            return None
+        stats = self._pool.get_stats()
+        size = int(stats.get("pool_size", 0))
+        available = int(stats.get("pool_available", 0))
+        return (max(size - available, 0), size)
+
+    def close(self) -> None:
+        """Close the connection pool, if one is configured."""
+        if self._pool is not None:
+            self._pool.close()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -182,14 +232,25 @@ class PostgresMetadataStore(MetadataStore):
             cannot use SET LOCAL because there is no transaction scope to bind to;
             a session-scoped SET would create the gap-006 cross-tenant GUC leak.
         """
-        conn = self._connect()
+        # Acquire from the pool (ADR-0221) when configured, else open a fresh
+        # connection. The pooled connection is returned to the pool on exit; the
+        # unpooled one is closed. Both go through the identical RLS body below.
+        if self._pool is not None:
+            pool_cm = self._pool.connection()
+            conn = pool_cm.__enter__()
+        else:
+            pool_cm = None
+            conn = self._connect()
 
         # FR-12 guard: autocommit connections are forbidden.
         # psycopg3 starts with autocommit=False by default, but a caller might
         # inject one (e.g. via monkeypatch in tests) or a future refactor could
         # introduce one inadvertently.  Reject early and loudly.
         if conn.autocommit:
-            conn.close()
+            if pool_cm is not None:
+                pool_cm.__exit__(None, None, None)
+            else:
+                conn.close()
             raise RLSContextMissing(
                 "begin_tenant_context requires an open transaction; "
                 "autocommit connections are forbidden (FR-12)."
@@ -199,7 +260,9 @@ class PostgresMetadataStore(MetadataStore):
         try:
             with conn.transaction():
                 # SECURITY: SET LOCAL scopes the GUC to the current transaction.
-                # Never use bare SET here — see module docstring.
+                # Never use bare SET here — see module docstring. Because it is
+                # transaction-scoped, the tenant GUC is cleared here before a
+                # pooled connection is returned to the pool (ADR-0221).
                 #
                 # Postgres SET commands do not accept parameterised values ($1 / %s);
                 # the value must be a literal string.  We sanitise tenant_id by
@@ -210,7 +273,10 @@ class PostgresMetadataStore(MetadataStore):
                 yield self
         finally:
             _active_conn_var.reset(token)
-            conn.close()
+            if pool_cm is not None:
+                pool_cm.__exit__(None, None, None)
+            else:
+                conn.close()
 
     def register_run(self, run_id: UUID, tenant_id: UUID, **fields: Any) -> None:
         """Index a new run.  Idempotent on (run_id, tenant_id) — ON CONFLICT DO NOTHING."""

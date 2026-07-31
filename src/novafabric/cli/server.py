@@ -96,6 +96,32 @@ def start_cmd(
             ),
         ),
     ] = False,
+    workers: Annotated[
+        int,
+        typer.Option(
+            "--workers",
+            "-w",
+            min=1,
+            help=(
+                "Number of uvicorn worker processes for horizontal scaling "
+                "(default 1). >1 requires the postgres backend (multiple "
+                "processes cannot safely share a SQLite file) and launches the "
+                "app via an import-string factory so workers reconstruct config "
+                "from the config file + NOVAFABRIC_SERVER_* env."
+            ),
+        ),
+    ] = 1,
+    log_format: Annotated[
+        str,
+        typer.Option(
+            "--log-format",
+            help=(
+                "Server log format: 'text' (default) or 'json' for structured, "
+                "machine-parseable logs carrying the request id. "
+                "Env: NOVAFABRIC_SERVER_LOG_FORMAT."
+            ),
+        ),
+    ] = "text",
 ) -> None:
     """Start the multi-user REST API server.
 
@@ -165,11 +191,14 @@ def start_cmd(
         raise typer.Exit(code=2)
 
     # Structured startup logging (uvicorn configures its own loggers later).
-    if not logging.getLogger().handlers:
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s %(levelname)s %(name)s %(message)s",
-        )
+    # configure_logging honours --log-format / NOVAFABRIC_SERVER_LOG_FORMAT and
+    # attaches the request-id filter so every record carries the correlation id.
+    import os as _os
+
+    from novafabric.server.request_id import LOG_FORMAT_ENV, configure_logging
+
+    _os.environ[LOG_FORMAT_ENV] = log_format  # inherited by --workers processes
+    configure_logging(log_format)
     log = logging.getLogger("novafabric.server")
 
     # OIDC-enabled deployments authenticate with OIDC JWTs; the local token
@@ -187,30 +216,83 @@ def start_cmd(
 
             token, token_path = ensure_local_token()
             cfg.local_token = token
-            log.info("Local auth token (OIDC disabled, ADR-0184): %s", token)
-            log.info(
-                "Pass it on every request: Authorization: Bearer %s "
-                "(e.g. curl -H 'Authorization: Bearer %s' http://%s:%d/v0/assets)",
-                token,
-                token,
-                cfg.host,
-                cfg.port,
+            # Print the secret to the terminal only (err channel) — never to the
+            # application logger, which may be aggregated to stdout/journald/files.
+            typer.echo(
+                "Local auth token (OIDC disabled, ADR-0184): " + token, err=True
             )
+            typer.echo(
+                "Pass it on every request: Authorization: Bearer <token> "
+                f"(e.g. curl -H 'Authorization: Bearer <token>' "
+                f"http://{cfg.host}:{cfg.port}/v0/assets)",
+                err=True,
+            )
+            # The logger records only the (non-secret) path and pinning hint.
             log.info(
-                "Token stored at %s (mode 0600); pin a stable token via %s.",
+                "Local auth token stored at %s (mode 0600); pin a stable token "
+                "via %s.",
                 token_path,
                 TOKEN_ENV,
             )
 
     typer.echo(
         f"Starting NovaFabric server on {cfg.host}:{cfg.port} "
-        f"[backend={cfg.backend}]"
+        f"[backend={cfg.backend}, workers={workers}]"
     )
     typer.echo("API docs: http://{}:{}/docs".format(cfg.host, cfg.port))
     typer.echo("Press Ctrl+C to stop.")
 
-    app = create_app(cfg)
-    uvicorn.run(app, host=cfg.host, port=cfg.port)
+    if workers > 1:
+        # SQLite cannot be safely shared by multiple writer processes; refuse
+        # rather than corrupt the registry.
+        if cfg.backend != "postgres":
+            typer.echo(
+                f"--workers {workers} requires --backend postgres; the SQLite "
+                f"backend cannot be shared safely across worker processes.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        _launch_workers(uvicorn, cfg, config, workers)
+    else:
+        app = create_app(cfg)
+        uvicorn.run(app, host=cfg.host, port=cfg.port)
+
+
+def _launch_workers(
+    uvicorn: object, cfg: object, config_path: "Optional[Path]", workers: int
+) -> None:
+    """Launch the API under N uvicorn workers via the import-string factory.
+
+    Worker processes cannot inherit the in-memory ``cfg``, so the resolved
+    primitives (and any CLI-flag overrides) are exported as
+    ``NOVAFABRIC_SERVER_*`` env vars; each worker's
+    :func:`novafabric.server.factory.make_app` reloads an identical config.
+    Secrets already travel via env only and are inherited untouched.
+    """
+    import os
+
+    from novafabric.server.factory import CONFIG_ENV, FACTORY_TARGET
+
+    # Export the effective config so workers reconstruct it faithfully.
+    os.environ["NOVAFABRIC_SERVER_HOST"] = str(cfg.host)  # type: ignore[attr-defined]
+    os.environ["NOVAFABRIC_SERVER_PORT"] = str(cfg.port)  # type: ignore[attr-defined]
+    os.environ["NOVAFABRIC_SERVER_BACKEND"] = str(cfg.backend)  # type: ignore[attr-defined]
+    if cfg.insecure_no_auth:  # type: ignore[attr-defined]
+        os.environ["NOVAFABRIC_SERVER_INSECURE_NO_AUTH"] = "1"
+    if cfg.i_know_this_is_public:  # type: ignore[attr-defined]
+        os.environ["NOVAFABRIC_SERVER_I_KNOW_THIS_IS_PUBLIC"] = "1"
+    if cfg.i_accept_shared_capsule_store:  # type: ignore[attr-defined]
+        os.environ["NOVAFABRIC_SERVER_I_ACCEPT_SHARED_CAPSULE_STORE"] = "1"
+    if config_path is not None:
+        os.environ[CONFIG_ENV] = str(config_path)
+
+    uvicorn.run(  # type: ignore[attr-defined]
+        FACTORY_TARGET,
+        factory=True,
+        host=cfg.host,  # type: ignore[attr-defined]
+        port=cfg.port,  # type: ignore[attr-defined]
+        workers=workers,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -334,7 +334,7 @@ caller-supplied numbers isn't a mutating or boundary-crossing action).
 | `POST` | `/api/admin/flush-jwks-cache` | Flush the JWKS cache, forcing a re-fetch from the OIDC provider. |
 | `GET` | `/api/admin/new-run-id` | Generate a fresh ULID for use as NOVAFABRIC_GLOBAL_RUN_ID (cap-007 FR-27). |
 | `POST` | `/api/admin/rebuild-metadata-db` | Disaster-recovery rebuild of the metadata DB from the chain log. |
-| `POST` | `/api/admin/reindex-runs` | Confirm-gated (`{"confirmed": true}`, else 400), idempotent INSERT-OR-REPLACE rebuild of the `runs_cache` index from the capsule filesystem — never deletes a capsule or a row with a still-existing capsule (ADR-0201 P8). |
+| `POST` | `/api/admin/reindex-runs` | Confirm-gated (`{"confirmed": true}`, else 400), idempotent INSERT-OR-REPLACE rebuild of the `runs_cache` index from the capsule filesystem — never deletes a capsule or a row with a still-existing capsule (ADR-0201 P8). Optional `{"prune": true}` (default false) also drops rows whose capsule directory is gone; response gains `pruned`. |
 | `GET` | `/api/admin/roles` | List role assignments (local mode). |
 | `POST` | `/api/admin/roles` | Assign a role to a subject (idempotent). Local-mode admin shortcut. |
 | `DELETE` | `/api/admin/roles/{subject}/{role}` | Revoke a role from a subject. 404 if not found, 409 if lockout would occur. |

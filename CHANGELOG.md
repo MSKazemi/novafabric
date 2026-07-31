@@ -9,6 +9,87 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.98.0] — 2026-07-31
+
+Closes the enterprise-readiness audit's deployment and security findings, and
+builds the visual half of the trust surfaces. The dashboard remains
+**experimental** (ADR-0027).
+
+### Added
+- **Horizontal scaling for server mode**: a real app factory
+  (`server/factory.py`) plus `nova server start --workers N`. The audit's
+  "uvicorn is handed an app *object*, so workers are structurally impossible"
+  finding is closed.
+- **Opt-in Postgres connection pooling (ADR-0221)** in the metadata store,
+  wired through the factory (`NOVAFABRIC_METADATA_DB_POOL=1`) and exposed as
+  live `nova_db_pool_in_use` / `nova_db_pool_size` gauges sampled at scrape
+  time. Default off; SQLite untouched.
+- **Request-ID correlation + structured JSON logging**: an outermost
+  middleware sets a per-request id from a sanitised inbound `X-Request-ID`
+  (or a fresh uuid4), echoes it on the response, and injects it onto every
+  log record; `nova server start --log-format json` emits one JSON object per
+  record. Workers inherit the format.
+- **Supply-chain attestation for published artifacts**: keyless cosign
+  signatures over image digests, SBOMs, and SLSA provenance for both images
+  and wheels, with operator verification recipes in
+  `docs/ops/server-deployment.md`.
+- **Trust-surface visualizations (ADR-0173 / ADR-0174)** in the dashboard's
+  Seal tab — the interactive half that had been documented as *future design*
+  since v0.61. A zero-dependency SVG **radar glyph** and a **redaction heat
+  overlay** with a coverage meter, both reading the already-shipped
+  `/api/runs/{id}/{trust-radar,redaction-xray}` endpoints (no new server
+  routes, no new dependencies). The visuals preserve the CLI's honesty
+  contract: an unverifiable guarantee renders as a hollow dashed tick and is
+  *excluded from the filled claim polygon*, so an unsealed capsule can never
+  be made to look like a failed one; coverage over an empty sensitive surface
+  reads "undefined", never 100%.
+- **Fixture-driven e2e coverage for the authenticated dashboard** — 22 tests
+  driving the real shell via `/api/*` route interception (no server, no token,
+  no capsule store). Previously e2e could only reach the login panel. Covers
+  boot, all 7 nav groups + `?tab=` deep links, `g`-key shortcuts (including
+  the guard that typing them inside an input must not navigate), the
+  Compliance `?sub=` hub, the command palette, ADR-0199 truncation honesty,
+  and error resilience.
+- **Opt-in orphan pruning** for the runs index: `POST
+  /api/admin/reindex-runs` accepts `{"prune": true}` (default false) to drop
+  index rows whose capsule directory no longer exists — dangling entries an
+  additive rebuild cannot clear, which otherwise list in the dashboard and
+  404 on every drill-in. Capsules are never touched; only the derived row.
+
+### Fixed
+- **Six P0 security findings from the enterprise audit**: the local admin
+  bearer token is no longer written to the application logger (it lands only
+  on the terminal, so it cannot reach aggregated logs); the audit-log
+  spot-check now samples with `secrets.SystemRandom` instead of the
+  predictable Mersenne Twister — it is the one defense against an entry
+  edited while its stored leaf hash was left intact; a corrupt line in
+  `holds.jsonl` now fails **closed** (an unparseable line is treated as a
+  blocking hold) instead of being skipped, which could have voided an active
+  legal hold; and webhook targets resolving to private/link-local/reserved
+  addresses are rejected by an SSRF guard (loopback still allowed, opt-out
+  available).
+- **WCAG AA contrast violation on the lineage showcase** (axe *serious*):
+  de-emphasized graph nodes used `opacity-25`, which blends the label toward
+  the canvas and measured 1.26:1 where AA requires 4.5:1. Container opacity
+  cannot express de-emphasis safely — any value degrades text — so the cue is
+  now structural (receded surface + dashed border) with the label kept at full
+  strength. The a11y suite is 10/10 and the full e2e suite 70/70 (was 60/70).
+- **Hardened deploy path**: the container/Helm entrypoint runs `nova server
+  start` (OIDC/RBAC/Postgres) with real health probes, and never
+  `--insecure-no-auth`. The shipped artifacts previously ran the auth-disabled
+  localhost dashboard.
+
+### Changed
+- The three Live-Topology research ADRs (Sigma.js renderer, TDP WebSocket +
+  SSE, DuckDB ClusterStore) are re-statused `proposed` → `accepted` with
+  file:line evidence — **and with their deviations recorded** rather than
+  papered over: server-side layout uses `networkx.spring_layout`, not FA2;
+  `fetchArrow()` is never used, so adr-003's zero-copy property was not
+  realised; only nginx has WebSocket-upgrade evidence. No acceptance checkbox
+  was ticked in the PRD/architecture/production-readiness documents, which
+  stay `in-review` — shipping *experimental* is not the same as clearing a
+  production checklist.
+
 ## [0.97.0] — 2026-07-30
 
 Dashboard modernization program — visuals, information architecture, and

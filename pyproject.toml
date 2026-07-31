@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "novafabric"
-version = "0.97.0"
+version = "0.98.0"
 description = "Open-source AI Asset Registry and Agent Lifecycle Management"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.12"
@@ -141,6 +141,10 @@ server = [
     # distributing as a separate optional extra, not bundled in the default install.
     # See ADR-0016 (storage) for the Postgres backend design decision.
     "psycopg[binary]>=3.2",
+    # psycopg_pool (LGPL-3.0) — Tier B under ADR-0024.  First-party connection
+    # pool for psycopg, same license/justification as psycopg itself; enables the
+    # opt-in metadata-store pool (ADR-0221) that removes the per-request connect.
+    "psycopg_pool>=3.2",
     # alembic (MIT) — Tier A under ADR-0024.  Schema migration for both SQLite
     # and Postgres tracks.
     "alembic>=1.14",

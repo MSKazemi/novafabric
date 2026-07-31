@@ -188,6 +188,33 @@ class TestValidation:
         )
         assert record["url"] == "http://hooks.example.com/x"
 
+    def test_rejects_private_address_ssrf(self, db: Path) -> None:
+        # https so the scheme check passes and the SSRF guard is what fires.
+        for internal in (
+            "https://10.0.0.5/x",  # private
+            "https://192.168.1.1/x",  # private
+            "https://169.254.169.254/latest/meta-data",  # link-local (cloud IMDS)
+        ):
+            with pytest.raises(store.InvalidWebhookUrlError):
+                store.create_webhook(internal, actor="test", db_path=db)
+
+    def test_allow_internal_targets_opt_out(self, db: Path) -> None:
+        _, record = store.create_webhook(
+            "https://10.0.0.5/x",
+            actor="test",
+            db_path=db,
+            allow_internal_targets=True,
+        )
+        assert record["url"] == "https://10.0.0.5/x"
+
+    def test_loopback_still_allowed_under_ssrf_guard(self, db: Path) -> None:
+        # Loopback is a supported first-class target; the SSRF guard must not
+        # block it even though allow_internal_targets defaults to False.
+        _, record = store.create_webhook(
+            "http://127.0.0.1:9999/x", actor="test", db_path=db
+        )
+        assert record["url"].startswith("http://127.0.0.1")
+
     def test_rejects_unknown_event_type_listing_valid(self, db: Path) -> None:
         with pytest.raises(store.InvalidEventTypeError) as exc:
             store.create_webhook(

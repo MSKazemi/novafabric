@@ -11,3 +11,5 @@ export { default as SigstoreSignPanel } from './SigstoreSignPanel';
 export { default as SigstoreVerifyPanel } from './SigstoreVerifyPanel';
 export { default as MerkleLogVerifyPanel } from './MerkleLogVerifyPanel';
 export { default as RatchetPanel } from './RatchetPanel';
+export { default as TrustRadarPanel } from './TrustRadarPanel';
+export { default as RedactionXrayPanel } from './RedactionXrayPanel';

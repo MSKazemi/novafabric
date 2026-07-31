@@ -79,6 +79,15 @@ def active_hold_ids(capsule_dir: Path) -> list[str]:
             try:
                 h = json.loads(line)
             except json.JSONDecodeError:
+                # Fail closed: a corrupt line may encode an *active* hold, so
+                # treat it as a blocking hold rather than silently dropping it
+                # (which would make a held capsule deletable). Surface it too.
+                logger.warning(
+                    "Corrupt line in %s — treating as an active hold to fail "
+                    "closed on deletion.",
+                    holds_path,
+                )
+                holds.append(f"__corrupt__:{reg_dir.name}")
                 continue
             if h.get("released_at") is None:
                 holds.append(str(h["hold_id"]))

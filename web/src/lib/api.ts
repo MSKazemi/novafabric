@@ -808,6 +808,43 @@ export interface ForensicsTimeline {
   honesty_line: string;
 }
 
+// Trust surfaces (ADR-0173 radar / ADR-0174 redaction x-ray), read-only.
+// A guarantee the capsule cannot evidence is reported "na", never "fail" —
+// an unsealed capsule is unverified, not failed.
+export type RadarAxisState = 'ok' | 'warn' | 'fail' | 'na';
+export type RadarVerdict = 'attested' | 'partial' | 'critical' | 'unsealed';
+export interface RadarAxis {
+  key: string;
+  label: string;
+  value: number | null; // 0..1, null when not applicable
+  state: RadarAxisState;
+}
+export interface TrustRadar {
+  capsule_id: string | null;
+  axes: RadarAxis[];
+  verdict: RadarVerdict;
+}
+
+// ADR-0174 §1 invariant: paths and states only — a field VALUE is never returned.
+export type FieldState =
+  | 'clear'
+  | 'redacted'
+  | 'secret_scrubbed'
+  | 'never_captured'
+  | 'unknown';
+export interface FieldXRay {
+  path: string;
+  state: FieldState;
+}
+export interface XRayReport {
+  capsule_id: string | null;
+  fields: FieldXRay[];
+  counts: Record<string, number>;
+  sensitive_total: number;
+  sensitive_protected: number;
+  coverage: number | null;
+}
+
 // P6 — cost-analytics trio (POST compute endpoints wrapping the nova cost cores).
 export interface SpendAttribution {
   total_spend: number;
@@ -893,6 +930,12 @@ export const api = {
     request<LedgerResponse>(`/api/runs/${encodeURIComponent(run_id)}/ledger`),
   getRunForensicsTimeline: (run_id: string) =>
     request<ForensicsTimeline>(`/api/runs/${encodeURIComponent(run_id)}/forensics-timeline`),
+
+  // ---------- Trust surfaces (ADR-0173 / ADR-0174, read-only) ----------
+  getRunTrustRadar: (run_id: string) =>
+    request<TrustRadar>(`/api/runs/${encodeURIComponent(run_id)}/trust-radar`),
+  getRunRedactionXray: (run_id: string) =>
+    request<XRayReport>(`/api/runs/${encodeURIComponent(run_id)}/redaction-xray`),
   // P6 cost trio — pure POST compute endpoints (nova cost attribute/fairness/usage-breakdown).
   costAttribute: (body: { runs: unknown[]; productive_statuses?: string[] }) =>
     postJson<SpendAttribution>('/api/cost/attribute', body),

@@ -6,10 +6,22 @@ radar, the redaction/secret-scan X-Ray, and the portable agent passport. All
 four are **pure projections** — they read verification output NovaFabric
 already produces, mutate nothing, change no schema, and add no dependency.
 
-**Status: experimental** (v0.61, shipped 2026-07-16). Each is the data/CLI
-half of a two-part feature; the interactive `web/` dashboard views the ADRs
-describe (proof-tree explorer, SVG radar glyph, heat-overlay tree) are
-**future design** and not implemented.
+**Status: experimental** (v0.61, shipped 2026-07-16).
+
+**Updated 2026-07-31 (v0.98.0):** two of the three interactive dashboard views
+the ADRs describe now exist — the **SVG radar glyph** (ADR-0173) and the
+**redaction heat-overlay** (ADR-0174), both in the dashboard's **Seal** tab
+(Provenance & Trust group), reading the already-shipped
+`GET /api/runs/{run_id}/trust-radar` and `…/redaction-xray` endpoints. The
+**proof-tree explorer** (ADR-0172, `nova merkle-tree`) remains **future
+design**: it has no serve endpoint yet, so there is nothing for a view to read.
+
+The visual half preserves the same honesty contract as the CLI: a guarantee the
+capsule cannot evidence is drawn as a hollow, dashed tick and is **excluded
+from the filled claim polygon** — an unsealed capsule can never be made to look
+like a failed one, and the shaded area only ever claims what was actually
+verified. The X-Ray renders paths and states only; per ADR-0174 §1 the payload
+type carries no field value to render.
 
 In this first slice, each command takes a small **JSON document you assemble**
 from existing outputs (`nova verify`, seal metadata, masking findings) — the

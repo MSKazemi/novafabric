@@ -6,6 +6,7 @@ lossless (INSERT-OR-REPLACE per capsule; never deletes). Confirm-gated.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Iterator
 
@@ -81,3 +82,75 @@ def test_is_idempotent(ctx: tuple[TestClient, Path]) -> None:
     second = c.post(f"/api/admin/reindex-runs?{TOKEN_Q}", json={"confirmed": True}, headers=HEADERS).json()
     # Re-running does not lose or duplicate rows (INSERT-OR-REPLACE, full rebuild).
     assert first["total"] == second["total"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Orphan pruning (opt-in): a rebuild is additive, so a row whose capsule
+# directory has disappeared survives forever and 404s on every drill-in.
+# ---------------------------------------------------------------------------
+
+
+class TestOrphanPruning:
+    def test_default_run_keeps_orphans(self, ctx: tuple[TestClient, Path]) -> None:
+        """Pruning is opt-in — a plain reindex must not delete index rows."""
+        client, capsule_dir = ctx
+        _write_capsule(capsule_dir, "run-keep")
+        _write_capsule(capsule_dir, "run-vanishes")
+        client.post(
+            f"/api/admin/reindex-runs?{TOKEN_Q}", headers=HEADERS, json={"confirmed": True}
+        )
+
+        # The capsule disappears (moved store / deleted run), index row remains.
+        shutil.rmtree(capsule_dir / "run-vanishes")
+
+        resp = client.post(
+            f"/api/admin/reindex-runs?{TOKEN_Q}", headers=HEADERS, json={"confirmed": True}
+        )
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["pruned"] == 0
+        assert body["total"] == 2  # orphan still listed
+
+    def test_prune_removes_only_the_orphan(self, ctx: tuple[TestClient, Path]) -> None:
+        client, capsule_dir = ctx
+        _write_capsule(capsule_dir, "run-keep")
+        _write_capsule(capsule_dir, "run-vanishes")
+        client.post(
+            f"/api/admin/reindex-runs?{TOKEN_Q}", headers=HEADERS, json={"confirmed": True}
+        )
+        shutil.rmtree(capsule_dir / "run-vanishes")
+
+        resp = client.post(
+            f"/api/admin/reindex-runs?{TOKEN_Q}",
+            headers=HEADERS,
+            json={"confirmed": True, "prune": True},
+        )
+        body = resp.json()
+        assert body["pruned"] == 1
+        assert body["total"] == 1
+
+        listed = client.get(f"/api/runs?{TOKEN_Q}", headers=HEADERS).json()
+        ids = {r["run_id"] for r in listed["runs"]}
+        assert ids == {"run-keep"}, "surviving capsule must stay indexed"
+
+    def test_prune_is_idempotent(self, ctx: tuple[TestClient, Path]) -> None:
+        client, capsule_dir = ctx
+        _write_capsule(capsule_dir, "run-keep")
+        payload = {"confirmed": True, "prune": True}
+        client.post(f"/api/admin/reindex-runs?{TOKEN_Q}", headers=HEADERS, json=payload)
+        second = client.post(
+            f"/api/admin/reindex-runs?{TOKEN_Q}", headers=HEADERS, json=payload
+        ).json()
+        assert second["pruned"] == 0
+        assert second["total"] == 1
+
+    def test_prune_never_deletes_a_capsule(self, ctx: tuple[TestClient, Path]) -> None:
+        """Only the derived index row is removed — capsules are evidence."""
+        client, capsule_dir = ctx
+        _write_capsule(capsule_dir, "run-keep")
+        client.post(
+            f"/api/admin/reindex-runs?{TOKEN_Q}",
+            headers=HEADERS,
+            json={"confirmed": True, "prune": True},
+        )
+        assert (capsule_dir / "run-keep" / "capsule.yaml").is_file()

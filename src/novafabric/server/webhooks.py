@@ -298,12 +298,61 @@ def _is_loopback_host(host: str) -> bool:
         return False
 
 
-def validate_url(url: str, *, allow_insecure_url: bool = False) -> str:
+def _blocked_ssrf_addresses(host: str) -> list[str]:
+    """Return the private/link-local/reserved addresses *host* maps to.
+
+    Loopback is deliberately excluded — local http webhooks are a supported
+    first-class feature. Literal IPs are checked directly; DNS names are
+    resolved best-effort (an unresolvable name is not blocked here — delivery
+    would fail loudly, and blocking on transient DNS failure is brittle).
+    """
+    import ipaddress
+    import socket
+
+    def _classify(ip_str: str) -> str | None:
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            return None
+        if ip.is_loopback:
+            return None
+        if ip.is_private or ip.is_link_local or ip.is_reserved or ip.is_unspecified:
+            return ip_str
+        return None
+
+    name = host.strip().lower()
+    literal = _classify(name)
+    if literal is not None:
+        return [literal]
+    try:
+        infos = socket.getaddrinfo(name, None)
+    except OSError:
+        return []
+    blocked: list[str] = []
+    for info in infos:
+        addr = str(info[4][0])
+        classified = _classify(addr)
+        if classified is not None and classified not in blocked:
+            blocked.append(classified)
+    return blocked
+
+
+def validate_url(
+    url: str,
+    *,
+    allow_insecure_url: bool = False,
+    allow_internal_targets: bool = False,
+) -> str:
     """Validate a webhook endpoint URL per the spec; return it unchanged.
 
     Absolute ``http(s)`` only; ``https`` required for non-loopback hosts
     unless ``allow_insecure_url`` (``server.webhooks.allow_insecure_url``,
     default false — a documented, auditable opt-out).
+
+    SSRF guard: hosts resolving to private, link-local, reserved, or
+    unspecified addresses are rejected unless ``allow_internal_targets``
+    (``server.webhooks.allow_internal_targets``, default false). Loopback
+    remains permitted — local webhooks are a supported feature.
     """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
@@ -319,6 +368,15 @@ def validate_url(url: str, *, allow_insecure_url: bool = False) -> str:
             f"http:// is only allowed for loopback hosts, got {url!r} "
             f"(set server.webhooks.allow_insecure_url to override)"
         )
+    if not allow_internal_targets:
+        blocked = _blocked_ssrf_addresses(parsed.hostname)
+        if blocked:
+            raise InvalidWebhookUrlError(
+                f"webhook host {parsed.hostname!r} resolves to a private/"
+                f"link-local/reserved address ({', '.join(blocked)}); refused "
+                f"to prevent SSRF (set server.webhooks.allow_internal_targets "
+                f"to override)"
+            )
     return url
 
 
@@ -439,6 +497,7 @@ def create_webhook(
     workspace: str | None = None,
     disabled: bool = False,
     allow_insecure_url: bool = False,
+    allow_internal_targets: bool = False,
     db_path: Path | None = None,
     audit_log_path: Path | None = None,
     wrapping_backend: KeyWrappingBackend | None = None,
@@ -449,7 +508,11 @@ def create_webhook(
     ADR-0185-wrapped when *wrapping_backend* is given, else as-is in the 0600
     registry DB (documented fallback — see ``secret_at_rest`` on the record).
     """
-    validate_url(url, allow_insecure_url=allow_insecure_url)
+    validate_url(
+        url,
+        allow_insecure_url=allow_insecure_url,
+        allow_internal_targets=allow_internal_targets,
+    )
     type_list = _validate_event_types(event_types)
     _validate_workspace(workspace, db_path)
 
@@ -552,6 +615,7 @@ def update_webhook(
     workspace: str | None | Any = _UNSET,
     disabled: bool | Any = _UNSET,
     allow_insecure_url: bool = False,
+    allow_internal_targets: bool = False,
     db_path: Path | None = None,
     audit_log_path: Path | None = None,
 ) -> dict[str, Any]:
@@ -563,7 +627,11 @@ def update_webhook(
     updates: dict[str, Any] = {}
     changed: dict[str, Any] = {}
     if url is not _UNSET:
-        validate_url(url, allow_insecure_url=allow_insecure_url)
+        validate_url(
+            url,
+            allow_insecure_url=allow_insecure_url,
+            allow_internal_targets=allow_internal_targets,
+        )
         updates["url"] = url
         changed["url"] = url
     if description is not _UNSET:

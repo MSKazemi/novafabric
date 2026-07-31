@@ -1,0 +1,1 @@
+import{t as e}from"./CapsuleInspector.DhgCTw2x.js";export{e as default};

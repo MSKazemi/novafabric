@@ -277,6 +277,10 @@ class WebhooksConfig(BaseModel):
     delivery_retention_days: int = Field(default=30, ge=1)
     delivery_retention_rows: int = Field(default=10_000, ge=1)
     allow_insecure_url: bool = False
+    # SSRF guard opt-out: permit webhook targets on private/link-local/reserved
+    # networks. Default false (secure); self-hosted deployments that legitimately
+    # post to internal hosts set this. Loopback is always allowed.
+    allow_internal_targets: bool = False
 
 
 class ObservabilityConfig(BaseModel):

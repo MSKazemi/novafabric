@@ -318,6 +318,13 @@ def create_app(config: ServerConfig) -> FastAPI:
     # /livez, /readyz, /v0/version, /metrics + HTTP request metrics middleware.
     install_server_observability(app, config)
 
+    # Request-ID correlation (P1 operability). Added last so it is the OUTERMOST
+    # middleware: the id is set before any inner middleware/handler and echoed on
+    # the response. Every log record then carries it via RequestIdFilter.
+    from novafabric.server.request_id import install_request_id_middleware
+
+    install_request_id_middleware(app)
+
     # Mount resource routers under /v0
     app.include_router(assets_router, prefix="/v0")
     app.include_router(capsules_router, prefix="/v0")

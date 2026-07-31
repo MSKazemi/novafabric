@@ -211,6 +211,13 @@ class TestEndpointPermissions:
         resp = oidc_client.get("/v0/assets")
         assert resp.status_code == 401
 
+    def test_replay_read_routes_require_auth(self, oidc_client: TestClient) -> None:
+        """GET /v0/replays/{id} and its SSE stream must reject unauthenticated
+        callers (they leak the full replay report + engine error text), matching
+        their POST/DELETE siblings."""
+        assert oidc_client.get("/v0/replays/any-id").status_code == 401
+        assert oidc_client.get("/v0/replays/any-id/events").status_code == 401
+
     def test_auditor_can_view_evidence(
         self, oidc_client: TestClient, rsa_key: Any, jwk: dict[str, Any]
     ) -> None:

@@ -45,7 +45,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import random
+import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Union
@@ -784,7 +784,12 @@ class PostgresMerkleLog:
             # Small log: check all entries
             sample_indices: list[int] = list(range(leaf_count))
         else:
-            sample_indices = random.sample(range(leaf_count), sample_size)
+            # Cryptographic RNG: the sampled leaves are the only defense
+            # against an entry whose entry_json was edited while its stored
+            # leaf_hash was left intact, so the choice must be unpredictable.
+            sample_indices = secrets.SystemRandom().sample(
+                range(leaf_count), sample_size
+            )
 
         with self._conn.cursor() as cur:
             placeholders = ",".join(["%s"] * len(sample_indices))

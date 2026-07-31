@@ -38,6 +38,18 @@ securityContext:
       - ALL
   readOnlyRootFilesystem: false
 
+# Deployment mode:
+#   dashboard (default) — `nova serve`, the experimental read-only dashboard
+#                         (HTTP + printed token; front with TLS at the ingress).
+#   server              — `nova server start`, the multi-user REST API with
+#                         OIDC/RBAC over Postgres. Auth is ON by default.
+mode: dashboard
+
+# Alembic revision the migration initContainer upgrades to. Default "head":
+# the server refuses to start when stamped behind head, so pinning below head
+# breaks a server-mode deploy. Override only if you must hold a schema back.
+dbRevision: head
+
 serve:
   port: 4321
   # nova serve is experimental/read-only; --insecure serves over HTTP with a
@@ -47,6 +59,14 @@ serve:
   tv5: true
   # Extra args appended verbatim to the `nova serve` command, e.g. ["--no-browser"].
   extraArgs: []
+
+# server-mode settings (mode: server). OIDC is configured via env
+# (NOVAFABRIC_SERVER_* — see extraEnv / secret); without it the server runs in
+# local-token mode (auth still ON). Do not disable auth here.
+server:
+  port: 7433
+  # uvicorn worker processes for horizontal scaling (requires Postgres).
+  workers: 1
 
 service:
   type: ClusterIP

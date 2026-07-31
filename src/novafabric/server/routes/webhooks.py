@@ -72,6 +72,11 @@ def _allow_insecure(request: Request) -> bool:
     return bool(getattr(webhooks_cfg, "allow_insecure_url", False))
 
 
+def _allow_internal(request: Request) -> bool:
+    webhooks_cfg = getattr(request.app.state.config, "webhooks", None)
+    return bool(getattr(webhooks_cfg, "allow_internal_targets", False))
+
+
 def _dispatcher(request: Request) -> Any:
     dispatcher = getattr(request.app.state, "webhook_dispatcher", None)
     if dispatcher is None:
@@ -99,6 +104,7 @@ async def create_webhook(
             workspace=body.workspace,
             disabled=body.disabled,
             allow_insecure_url=_allow_insecure(request),
+            allow_internal_targets=_allow_internal(request),
             db_path=_db_path(request),
             wrapping_backend=store.resolve_wrapping_backend(),
         )
@@ -168,6 +174,7 @@ async def update_webhook(
             hook_id,
             actor=auth.subject,
             allow_insecure_url=_allow_insecure(request),
+            allow_internal_targets=_allow_internal(request),
             db_path=_db_path(request),
             **kwargs,
         )

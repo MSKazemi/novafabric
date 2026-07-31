@@ -12,8 +12,10 @@ import {
   PolicyPanel,
   ProposalsPanel,
   RatchetPanel,
+  RedactionXrayPanel,
   SigstoreSignPanel,
   SigstoreVerifyPanel,
+  TrustRadarPanel,
 } from './seal';
 
 export default function SealTab() {
@@ -56,6 +58,10 @@ export default function SealTab() {
 
       {/* Capsule integrity verify */}
       <CapsuleVerifyPanel runIds={runIds} />
+
+      {/* Trust surfaces — the visual half of ADR-0173 / ADR-0174 */}
+      <TrustRadarPanel runIds={runIds} />
+      <RedactionXrayPanel runIds={runIds} />
 
       {/* Sigstore keyless signing / verification (v0.44.0) */}
       <SigstoreSignPanel runIds={runIds} />

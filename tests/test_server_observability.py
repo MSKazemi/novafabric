@@ -182,6 +182,33 @@ class TestMetrics:
     def test_metrics_gated_by_default(self, oidc_client: TestClient) -> None:
         assert oidc_client.get("/metrics").status_code == 401
 
+    def test_db_pool_gauge_sampled_from_pooled_store(self, monkeypatch) -> None:
+        """_sample_db_pool_gauge populates nova_db_pool_* from a pooled store,
+        and is a safe no-op when the store has no pool (ADR-0221)."""
+        pytest.importorskip("prometheus_client")
+        from novafabric.server import deps, observability
+
+        metrics = observability.maybe_http_metrics("test")
+        assert metrics is not None
+
+        class _PooledStore:
+            def pool_stats(self):
+                return (2, 5)
+
+        monkeypatch.setattr(deps, "get_metadata_store_dep", lambda: _PooledStore())
+        observability._sample_db_pool_gauge(metrics)
+        body, _ = metrics.render()
+        text = body.decode() if isinstance(body, bytes) else body
+        assert 'nova_db_pool_in_use{app="test",pool="metadata"} 2.0' in text
+        assert 'nova_db_pool_size{app="test",pool="metadata"} 5.0' in text
+
+        # No pool_stats → no-op, no exception.
+        class _PlainStore:
+            pass
+
+        monkeypatch.setattr(deps, "get_metadata_store_dep", lambda: _PlainStore())
+        observability._sample_db_pool_gauge(metrics)  # must not raise
+
     def test_metrics_operator_exemption(self, db_path: Path) -> None:
         pytest.importorskip("prometheus_client")
         cfg = ServerConfig(
