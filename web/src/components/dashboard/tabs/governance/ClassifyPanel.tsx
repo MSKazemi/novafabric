@@ -99,7 +99,7 @@ function ClassifyResultPanel({
             <CopyButton text={cliCmd} label="CLI" />
           </div>
         </div>
-        <p className="text-[var(--text-2xs)] text-[var(--color-text-faint)]">
+        <p className="text-2xs text-[var(--color-text-faint)]">
           Note: dashboard classification uses minimal capsule metadata. Run the CLI with a full system description file for detailed results.
         </p>
       </div>
@@ -144,7 +144,7 @@ export default function ClassifyPanel({ runIds }: { runIds: string[] }) {
             ADR-0056 · EU AI Act 2024/1689 · NIST AI RMF 600-1 · OMB M-24-10
           </p>
         </div>
-        <span className="text-[var(--text-2xs)] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-faint)]">
+        <span className="text-2xs font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-faint)]">
           ADR-0056
         </span>
       </div>

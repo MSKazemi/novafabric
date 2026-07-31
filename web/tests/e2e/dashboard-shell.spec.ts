@@ -14,6 +14,7 @@ import {
   mockApi,
   gotoDashboard,
   nav,
+  revealTab,
   tabButton,
   groupHeader,
   urlParam,
@@ -80,14 +81,19 @@ test.describe('navigation (journey 2)', () => {
     await mockApi(page);
     await gotoDashboard(page);
 
+    // Groups collapse by default — reveal the one holding Registry first.
+    await revealTab(page, 'Registry');
     await tabButton(page, 'Registry').click();
     await expect(tabButton(page, 'Registry')).toHaveAttribute('aria-current', 'page');
-    await expect(tabButton(page, 'Home')).not.toHaveAttribute('aria-current', 'page');
+    // Overview collapses once the active tab moves out of it, so Home's button
+    // leaves the DOM entirely — which is a stronger statement than "not current".
+    await expect(tabButton(page, 'Home')).toHaveCount(0);
     // Breadcrumb in the top bar follows the active tab.
     await expect(page.getByRole('main').getByText('Registry', { exact: true }).first()).toBeVisible();
     await expect.poll(() => urlParam(page, 'tab')).toBe('registry');
 
     // Home is the default view, so it clears ?tab= instead of pinning it.
+    await revealTab(page, 'Home');
     await tabButton(page, 'Home').click();
     await expect(tabButton(page, 'Home')).toHaveAttribute('aria-current', 'page');
     await expect.poll(() => urlParam(page, 'tab')).toBeNull();
@@ -145,7 +151,9 @@ test.describe('g-key shortcuts (journey 3)', () => {
 
     await expect(search).toHaveValue('gc');
     await expect(tabButton(page, 'Runs')).toHaveAttribute('aria-current', 'page');
-    await expect(tabButton(page, 'Compliance')).not.toHaveAttribute('aria-current', 'page');
+    // Compliance lives in a collapsed group after navigating to Runs, so the
+    // button may not be in the DOM at all — either way it must not be current.
+    await expect(tabButton(page, 'Compliance')).toHaveCount(0);
   });
 });
 

@@ -41,7 +41,7 @@ export default function Sparkline({
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
   if (values.length < 2) {
-    return <span className={clsx('text-[var(--text-2xs)] text-[var(--color-text-faint)]', className)}>—</span>;
+    return <span className={clsx('text-2xs text-[var(--color-text-faint)]', className)}>—</span>;
   }
 
   const min = Math.min(...values);

@@ -48,7 +48,7 @@ const ORDER: FieldState[] = [
 function CoverageMeter({ report }: { report: XRayReport }) {
   if (report.coverage === null) {
     return (
-      <p className="text-[var(--text-2xs)] text-[var(--color-text-faint)]">
+      <p className="text-2xs text-[var(--color-text-faint)]">
         No sensitive surface detected — coverage is undefined rather than 100%.
       </p>
     );
@@ -62,7 +62,7 @@ function CoverageMeter({ report }: { report: XRayReport }) {
         : 'var(--color-status-failure)';
   return (
     <div className="space-y-1">
-      <div className="flex items-baseline justify-between text-[var(--text-2xs)] font-mono">
+      <div className="flex items-baseline justify-between text-2xs font-mono">
         <span className="text-[var(--color-text-faint)] uppercase tracking-wider">
           protection coverage
         </span>
@@ -129,7 +129,7 @@ export default function RedactionXrayPanel({ runIds }: { runIds: string[] }) {
             <button
               type="button"
               onClick={() => setFilter('all')}
-              className={`text-[var(--text-2xs)] px-1.5 py-px rounded border transition-colors ${
+              className={`text-2xs px-1.5 py-px rounded border transition-colors ${
                 filter === 'all'
                   ? 'border-[var(--color-accent)] text-[var(--color-accent)]'
                   : 'border-[var(--color-border)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]'
@@ -143,7 +143,7 @@ export default function RedactionXrayPanel({ runIds }: { runIds: string[] }) {
                 type="button"
                 onClick={() => setFilter(filter === state ? 'all' : state)}
                 title={STATE_HINT[state]}
-                className={`flex items-center gap-1 text-[var(--text-2xs)] px-1.5 py-px rounded border transition-colors ${
+                className={`flex items-center gap-1 text-2xs px-1.5 py-px rounded border transition-colors ${
                   filter === state
                     ? 'border-[var(--color-accent)]'
                     : 'border-[var(--color-border)] hover:border-[var(--color-border-strong)]'

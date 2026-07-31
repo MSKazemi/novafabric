@@ -56,7 +56,7 @@ export default function RunFilters({
           {liveConnected && (
             <span
               title="Live stream connected — new runs appear automatically"
-              className="flex items-center gap-1 text-[var(--text-2xs)] font-mono text-[var(--color-status-success)]"
+              className="flex items-center gap-1 text-2xs font-mono text-[var(--color-status-success)]"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-status-success)] animate-pulse inline-block" />
               live

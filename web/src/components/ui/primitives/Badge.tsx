@@ -28,7 +28,7 @@ export default function Badge({ tone = 'neutral', dot = false, className, childr
   return (
     <span
       className={clsx(
-        'inline-flex items-center gap-1 px-1.5 py-px rounded text-[var(--text-2xs)] uppercase tracking-wider font-medium whitespace-nowrap',
+        'inline-flex items-center gap-1 px-1.5 py-px rounded text-2xs uppercase tracking-wider font-medium whitespace-nowrap',
         TONES[tone],
         className,
       )}

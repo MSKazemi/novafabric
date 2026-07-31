@@ -170,7 +170,7 @@ export function TokenRow({
       <td className="px-3 py-2">
         <span
           className={clsx(
-            'text-[var(--text-2xs)] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border',
+            'text-2xs font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border',
             token.revoked
               ? 'border-[var(--color-border)] text-[var(--color-text-faint)] bg-[var(--color-bg-sunken)]'
               : 'border-[color-mix(in_oklab,var(--color-status-success)_30%,transparent)] text-[var(--color-status-success)] bg-[color-mix(in_oklab,var(--color-status-success)_8%,transparent)]',

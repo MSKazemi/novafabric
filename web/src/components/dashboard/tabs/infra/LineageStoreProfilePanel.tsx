@@ -42,7 +42,7 @@ export default function LineageStoreProfilePanel() {
             Generate a docker-compose profile for a lineage backend — <code className="font-mono">nova lineage-store profile</code>
           </p>
         </div>
-        <span className="text-[var(--text-2xs)] font-mono text-[var(--color-text-faint)] uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)]">v0.46</span>
+        <span className="text-2xs font-mono text-[var(--color-text-faint)] uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)]">v0.46</span>
       </div>
       <div className="grid grid-cols-2 gap-2">
         <select

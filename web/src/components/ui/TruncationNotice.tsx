@@ -34,7 +34,7 @@ export default function TruncationNotice({
   const remaining = total != null && total > shown ? (total - shown).toLocaleString() : null;
 
   return (
-    <div className="flex items-center justify-between gap-3 px-3 py-2 text-[var(--text-2xs)] text-[var(--color-text-faint)] border-t border-[var(--color-border)] bg-[var(--color-bg-sunken)]">
+    <div className="flex items-center justify-between gap-3 px-3 py-2 text-2xs text-[var(--color-text-faint)] border-t border-[var(--color-border)] bg-[var(--color-bg-sunken)]">
       <span className="font-mono tabular-nums">
         {total != null ? (
           <>

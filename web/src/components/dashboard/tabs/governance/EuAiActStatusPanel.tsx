@@ -32,7 +32,7 @@ export default function EuAiActStatusPanel() {
             Transparency logging status — mirrors <code className="font-mono">nova euaiact status</code>
           </p>
         </div>
-        <span className="text-[var(--text-2xs)] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-faint)] shrink-0">
+        <span className="text-2xs font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-faint)] shrink-0">
           ADR-0076
         </span>
       </div>

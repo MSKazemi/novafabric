@@ -21,7 +21,7 @@ export default function Tooltip({ label, side = 'top', className, children }: To
         className={clsx(
           'pointer-events-none absolute left-1/2 -translate-x-1/2 z-[70] whitespace-nowrap',
           'rounded border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-1.5 py-0.5',
-          'text-[var(--text-2xs)] text-[var(--color-text)] shadow-[var(--shadow-1)]',
+          'text-2xs text-[var(--color-text)] shadow-[var(--shadow-1)]',
           'opacity-0 group-hover/tip:opacity-100 group-focus-within/tip:opacity-100',
           'transition-opacity duration-[var(--duration-fast)]',
           side === 'top' ? 'bottom-full mb-1' : 'top-full mt-1',

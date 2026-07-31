@@ -54,7 +54,7 @@ export default function StorageOpsCard({ runIds }: { runIds: string[] }) {
             S3 Object-Lock COMPLIANCE validation · dual-object split inspection
           </p>
         </div>
-        <span className="text-[var(--text-2xs)] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-faint)]">
+        <span className="text-2xs font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-faint)]">
           ADR-0066
         </span>
       </div>

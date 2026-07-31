@@ -195,13 +195,13 @@ export function SuggestRegisterPanel({
               <div key={key} className="flex items-center gap-2 rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2.5 py-1.5">
                 <div className="flex-1 min-w-0 space-y-px">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[var(--text-2xs)] uppercase tracking-wider text-[var(--color-text-faint)] font-mono">{s.asset_type}</span>
+                    <span className="text-2xs uppercase tracking-wider text-[var(--color-text-faint)] font-mono">{s.asset_type}</span>
                     <span className="text-xs font-mono text-[var(--color-text)] truncate">{s.detected_name}</span>
                     {s.detected_version && (
                       <span className="text-[10px] text-[var(--color-text-faint)]">{s.detected_version}</span>
                     )}
                   </div>
-                  <div className="text-[var(--text-2xs)] text-[var(--color-text-faint)]">
+                  <div className="text-2xs text-[var(--color-text-faint)]">
                     {s.call_count} calls · {Math.round(s.confidence * 100)}% confidence
                     {s.warnings?.length > 0 && (
                       <span className="text-[var(--color-status-pending)] ml-1">⚠ {s.warnings[0]}</span>

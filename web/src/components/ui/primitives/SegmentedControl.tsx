@@ -64,7 +64,7 @@ export default function SegmentedControl<T extends string = string>({
             onClick={() => onChange(seg.value)}
             onKeyDown={(e) => onKeyDown(e, idx)}
             className={clsx(
-              'px-2.5 h-6 rounded text-[var(--text-2xs)] font-medium whitespace-nowrap transition-colors duration-[var(--duration-fast)]',
+              'px-2.5 h-6 rounded text-2xs font-medium whitespace-nowrap transition-colors duration-[var(--duration-fast)]',
               active
                 ? 'bg-[var(--color-bg-raised)] text-[var(--color-text)] shadow-[var(--shadow-1)]'
                 : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',

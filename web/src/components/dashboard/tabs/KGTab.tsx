@@ -47,7 +47,7 @@ export default function KGTab() {
           {(['ADR-0067', 'v0.27.0'] as const).map((label) => (
             <span
               key={label}
-              className="text-[var(--text-2xs)] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-faint)]"
+              className="text-2xs font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-faint)]"
             >
               {label}
             </span>

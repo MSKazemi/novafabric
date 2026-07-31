@@ -46,7 +46,7 @@ export default function MCPScanPanel() {
             Scan an MCP server manifest for OWASP LLM supply-chain risks — <code className="font-mono">nova mcp scan</code>
           </p>
         </div>
-        <span className="text-[var(--text-2xs)] font-mono text-[var(--color-text-faint)] uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)]">E-9</span>
+        <span className="text-2xs font-mono text-[var(--color-text-faint)] uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)]">E-9</span>
       </div>
       <textarea
         value={manifestJson}
@@ -69,7 +69,7 @@ export default function MCPScanPanel() {
       {result && (
         <div className="space-y-2">
           <div className="flex items-center gap-2">
-            <span className={clsx('text-[var(--text-2xs)] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded', riskCls(result.overall_risk_level))}>
+            <span className={clsx('text-2xs font-mono uppercase tracking-wider px-1.5 py-0.5 rounded', riskCls(result.overall_risk_level))}>
               {result.overall_risk_level}
             </span>
             <span className="text-[10px] font-mono text-[var(--color-text-faint)]">

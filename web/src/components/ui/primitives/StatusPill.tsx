@@ -60,7 +60,7 @@ export default function StatusPill({ status, variant = 'label', className }: Sta
     );
   }
   return (
-    <span className={clsx('inline-flex items-center gap-1.5 text-[var(--text-2xs)] font-mono', TEXT[tone], className)}>
+    <span className={clsx('inline-flex items-center gap-1.5 text-2xs font-mono', TEXT[tone], className)}>
       <span aria-hidden="true" className={clsx('w-1.5 h-1.5 rounded-full shrink-0', DOT[tone])} />
       {status ?? 'unknown'}
     </span>

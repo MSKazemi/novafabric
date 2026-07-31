@@ -15,13 +15,13 @@ function TreeNodeRow({ node, depth }: { node: CapsuleTreeNode; depth: number }) 
   return (
     <>
       <div className="flex items-center gap-2 text-xs font-mono py-0.5 min-w-0" style={{ paddingLeft: depth * 16 }}>
-        <span className="shrink-0 text-[var(--text-2xs)] uppercase text-[var(--color-accent)] px-1.5 py-px rounded bg-[color-mix(in_oklab,var(--color-accent)_10%,transparent)] border border-[color-mix(in_oklab,var(--color-accent)_30%,transparent)]">
+        <span className="shrink-0 text-2xs uppercase text-[var(--color-accent)] px-1.5 py-px rounded bg-[color-mix(in_oklab,var(--color-accent)_10%,transparent)] border border-[color-mix(in_oklab,var(--color-accent)_30%,transparent)]">
           {node.capsule_role}
         </span>
         <code className="text-[var(--color-text)] truncate">{node.run_id}</code>
         <span className="shrink-0 text-[10px] text-[var(--color-text-faint)]">{node.status}</span>
         {node.is_synthetic && (
-          <span className="shrink-0 text-[var(--text-2xs)] text-[var(--color-text-faint)] italic">(synthetic)</span>
+          <span className="shrink-0 text-2xs text-[var(--color-text-faint)] italic">(synthetic)</span>
         )}
       </div>
       {node.children.map(c => <TreeNodeRow key={c.run_id} node={c} depth={depth + 1} />)}
@@ -193,7 +193,7 @@ export function RunSpoolLineagePanel({ runIds }: { runIds: string[] }) {
                     <tr key={i} className="border-b border-[var(--color-border)] last:border-0">
                       <td className="py-1.5 pr-3 break-all">{String(e.source_run_id ?? '—')}</td>
                       <td className="py-1.5 pr-3">
-                        <span className="text-[var(--text-2xs)] px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-faint)]">
+                        <span className="text-2xs px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-faint)]">
                           {String(e.edge_type ?? '—')}
                         </span>
                       </td>
@@ -322,7 +322,7 @@ export function ScanSecretsPanel({ runIds }: { runIds: string[] }) {
                 ? (
                   <span
                     key={s}
-                    className={`inline-block font-mono text-[var(--text-2xs)] uppercase px-1.5 py-px rounded border ${SEVERITY_STYLE[s] ?? SEVERITY_STYLE.info}`}
+                    className={`inline-block font-mono text-2xs uppercase px-1.5 py-px rounded border ${SEVERITY_STYLE[s] ?? SEVERITY_STYLE.info}`}
                   >
                     {s} ×{bySev[s]}
                   </span>

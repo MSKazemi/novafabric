@@ -14,7 +14,7 @@ export const SEVERITY_STYLE: Record<string, string> = {
 export function SeverityBadge({ severity }: { severity: string }) {
   const cls = SEVERITY_STYLE[severity] ?? SEVERITY_STYLE.info;
   return (
-    <span className={`inline-block font-mono text-[var(--text-2xs)] uppercase px-1.5 py-px rounded border ${cls}`}>
+    <span className={`inline-block font-mono text-2xs uppercase px-1.5 py-px rounded border ${cls}`}>
       {severity}
     </span>
   );

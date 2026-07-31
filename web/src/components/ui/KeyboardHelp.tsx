@@ -25,7 +25,7 @@ interface KeyboardHelpProps {
 
 function Kbd({ children }: { children: ReactNode }) {
   return (
-    <kbd className="font-mono text-[var(--text-2xs)] px-1.5 py-0.5 rounded bg-[var(--color-bg-sunken)] border border-[var(--color-border)] text-[var(--color-text)] shrink-0 whitespace-nowrap">
+    <kbd className="font-mono text-2xs px-1.5 py-0.5 rounded bg-[var(--color-bg-sunken)] border border-[var(--color-border)] text-[var(--color-text)] shrink-0 whitespace-nowrap">
       {children}
     </kbd>
   );
@@ -49,7 +49,7 @@ export default function KeyboardHelp({ onClose, tabShortcuts }: KeyboardHelpProp
 
         <div className="px-5 py-4 space-y-4">
           <section>
-            <h3 className="text-[var(--text-2xs)] font-semibold uppercase tracking-widest text-[var(--color-text-faint)] mb-2">
+            <h3 className="text-2xs font-semibold uppercase tracking-widest text-[var(--color-text-faint)] mb-2">
               General
             </h3>
             <ul className="space-y-1.5">
@@ -64,7 +64,7 @@ export default function KeyboardHelp({ onClose, tabShortcuts }: KeyboardHelpProp
 
           {tabShortcuts && tabShortcuts.length > 0 && (
             <section>
-              <h3 className="text-[var(--text-2xs)] font-semibold uppercase tracking-widest text-[var(--color-text-faint)] mb-2">
+              <h3 className="text-2xs font-semibold uppercase tracking-widest text-[var(--color-text-faint)] mb-2">
                 Go to view — press <Kbd>g</Kbd> then the key
               </h3>
               <ul className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1.5">
@@ -80,7 +80,7 @@ export default function KeyboardHelp({ onClose, tabShortcuts }: KeyboardHelpProp
         </div>
 
         <div className="px-5 py-3 border-t border-[var(--color-border)]">
-          <p className="text-[var(--text-2xs)] text-[var(--color-text-faint)]">
+          <p className="text-2xs text-[var(--color-text-faint)]">
             Press <Kbd>?</Kbd> or <Kbd>Esc</Kbd> to close
           </p>
         </div>

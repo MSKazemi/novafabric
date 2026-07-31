@@ -9,7 +9,7 @@ export default function DockerRunnerCard() {
         <div>
           <div className="flex items-center gap-2 flex-wrap">
             <h3 className="text-sm font-semibold text-[var(--color-text)]">Docker Runner</h3>
-            <span className={`text-[var(--text-2xs)] uppercase tracking-wider px-1.5 py-0.5 rounded border font-medium ${BADGE_COLOR['partial']}`}>
+            <span className={`text-2xs uppercase tracking-wider px-1.5 py-0.5 rounded border font-medium ${BADGE_COLOR['partial']}`}>
               {BADGE_LABEL['partial']}
             </span>
           </div>

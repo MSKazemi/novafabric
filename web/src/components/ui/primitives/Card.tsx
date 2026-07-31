@@ -62,7 +62,7 @@ export default function Card({
               <h3 className="text-xs font-semibold text-[var(--color-text)] truncate">{title}</h3>
             )}
             {meta && (
-              <span className="text-[var(--text-2xs)] font-mono text-[var(--color-text-faint)] tabular-nums shrink-0">
+              <span className="text-2xs font-mono text-[var(--color-text-faint)] tabular-nums shrink-0">
                 {meta}
               </span>
             )}
@@ -72,7 +72,7 @@ export default function Card({
       )}
       {!collapsed && <div className={flush ? undefined : 'p-4'}>{children}</div>}
       {!collapsed && footer && (
-        <footer className="px-4 py-2 border-t border-[var(--color-border)] text-[var(--text-2xs)] text-[var(--color-text-faint)]">
+        <footer className="px-4 py-2 border-t border-[var(--color-border)] text-2xs text-[var(--color-text-faint)]">
           {footer}
         </footer>
       )}

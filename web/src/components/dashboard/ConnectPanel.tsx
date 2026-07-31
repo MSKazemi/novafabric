@@ -38,7 +38,7 @@ export default function ConnectPanel({ onConnected, bootError, setBootError }: C
               <polygon points="16,3.5 27.5,10 27.5,22 16,28.5 4.5,22 4.5,10" stroke="var(--color-accent)" strokeWidth="1.5" fill="none" strokeLinejoin="round"/>
               <path d="M10 23 L10 9 L22 23 L22 9" stroke="var(--color-accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
             </svg>
-            <span className="text-[var(--text-2xs)] font-mono uppercase tracking-widest text-[var(--color-text-faint)]">NovaFabric</span>
+            <span className="text-2xs font-mono uppercase tracking-widest text-[var(--color-text-faint)]">NovaFabric</span>
           </span>
           <h1 className="mt-3 text-2xl font-medium text-[var(--color-text)] tracking-tight">Connect to <code className="font-mono text-[var(--color-text-muted)]">nova serve</code></h1>
           <p className="mt-2 text-sm text-[var(--color-text-muted)] leading-relaxed">
@@ -50,7 +50,7 @@ export default function ConnectPanel({ onConnected, bootError, setBootError }: C
 
         <form onSubmit={onSubmit} className="space-y-4">
           <label className="block">
-            <span className="text-[var(--text-2xs)] uppercase tracking-wider text-[var(--color-text-faint)]">Server URL</span>
+            <span className="text-2xs uppercase tracking-wider text-[var(--color-text-faint)]">Server URL</span>
             <input
               type="url"
               value={base}
@@ -62,7 +62,7 @@ export default function ConnectPanel({ onConnected, bootError, setBootError }: C
           </label>
 
           <label className="block">
-            <span className="text-[var(--text-2xs)] uppercase tracking-wider text-[var(--color-text-faint)]">Session token</span>
+            <span className="text-2xs uppercase tracking-wider text-[var(--color-text-faint)]">Session token</span>
             <input
               type="password"
               value={token}
@@ -72,7 +72,7 @@ export default function ConnectPanel({ onConnected, bootError, setBootError }: C
               className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm focus:border-[var(--color-accent)] focus:outline-none"
               required
             />
-            <p className="mt-1 text-[var(--text-2xs)] text-[var(--color-text-faint)]">Also at <code>~/.novafabric/.serve-token</code> (mode 0600)</p>
+            <p className="mt-1 text-2xs text-[var(--color-text-faint)]">Also at <code>~/.novafabric/.serve-token</code> (mode 0600)</p>
           </label>
 
           {bootError && (

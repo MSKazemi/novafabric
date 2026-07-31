@@ -85,7 +85,7 @@ export default function TopologyLayerPanel() {
           <div className="grid grid-cols-5 gap-2">
             {(['Agent', 'Model', 'MCPServer', 'Tool', 'InferenceEndpoint'] as const).map((label) => (
               <div key={label} className="rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2 py-2 text-center">
-                <p className="text-[var(--text-2xs)] font-mono uppercase tracking-wider text-[var(--color-text-faint)] truncate">
+                <p className="text-2xs font-mono uppercase tracking-wider text-[var(--color-text-faint)] truncate">
                   {label === 'InferenceEndpoint' ? 'Endpoint' : label}
                 </p>
                 <p className={`text-base font-mono font-bold ${LAYER_COLORS[label] ?? ''}`}>

@@ -27,7 +27,7 @@ export function StatusBadge({ status }: { status: string }) {
     archived: 'text-[var(--color-text-faint)] bg-[var(--color-bg-sunken)] opacity-60',
   };
   return (
-    <span className={clsx('text-[var(--text-2xs)] uppercase tracking-wider px-1.5 py-px rounded font-medium', colors[status] ?? colors.development)}>
+    <span className={clsx('text-2xs uppercase tracking-wider px-1.5 py-px rounded font-medium', colors[status] ?? colors.development)}>
       {status}
     </span>
   );

@@ -29,13 +29,13 @@ export default function ChartCard({
   const { containerRef, exportSvg, exportPng } = useChartExport(base);
 
   const exportBtnClass =
-    'font-mono text-[var(--text-2xs)] uppercase tracking-wider text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:underline underline-offset-2';
+    'font-mono text-2xs uppercase tracking-wider text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:underline underline-offset-2';
 
   return (
     <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="flex items-center gap-2 min-w-0">
-          <span className="text-[var(--text-2xs)] font-mono uppercase tracking-wider text-[var(--color-text-faint)] truncate">
+          <span className="text-2xs font-mono uppercase tracking-wider text-[var(--color-text-faint)] truncate">
             {title}
           </span>
           {approximate && <Badge tone="pending">approx</Badge>}
@@ -43,7 +43,7 @@ export default function ChartCard({
         <span className="flex items-center gap-3 shrink-0">
           {legend}
           {!loading && (
-            <span className="flex items-center gap-1 text-[var(--text-2xs)] font-mono text-[var(--color-text-faint)]">
+            <span className="flex items-center gap-1 text-2xs font-mono text-[var(--color-text-faint)]">
               <span aria-hidden="true">⬇</span>
               <button type="button" onClick={exportSvg} title={`Download “${title}” as SVG`} className={exportBtnClass}>
                 SVG

@@ -121,7 +121,7 @@ export default function RunInspector({
                   >
                     {parentRunId.slice(0, 16)}… ↑
                   </button>
-                  <span className="text-[var(--text-2xs)] font-mono uppercase text-[var(--color-text-faint)] px-1.5 py-px rounded bg-[var(--color-bg-sunken)] border border-[var(--color-border)]">
+                  <span className="text-2xs font-mono uppercase text-[var(--color-text-faint)] px-1.5 py-px rounded bg-[var(--color-bg-sunken)] border border-[var(--color-border)]">
                     worker
                   </span>
                 </div>
@@ -282,13 +282,13 @@ export default function RunInspector({
                     >
                       <span className="flex-1 text-[var(--color-text)] truncate">{child.run_id}</span>
                       {child.edge_type && (
-                        <span className="text-[var(--text-2xs)] px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-faint)]">
+                        <span className="text-2xs px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-faint)]">
                           {child.edge_type}
                         </span>
                       )}
                       {child.status && (
                         <span className={clsx(
-                          'text-[var(--text-2xs)] px-1.5 py-0.5 rounded',
+                          'text-2xs px-1.5 py-0.5 rounded',
                           child.status === 'COMPLETED' ? 'text-[var(--color-status-success)]'
                             : child.status === 'FAILED' ? 'text-[var(--color-status-failure)]'
                             : 'text-[var(--color-status-pending)]',
@@ -349,7 +349,7 @@ function ValidateDistributedBlock({
     <div className="mb-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-3 space-y-2">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-xs">
-          <span className="text-[var(--text-2xs)] font-mono uppercase text-[var(--color-accent)] px-1.5 py-px rounded bg-[color-mix(in_oklab,var(--color-accent)_10%,transparent)] border border-[color-mix(in_oklab,var(--color-accent)_30%,transparent)]">
+          <span className="text-2xs font-mono uppercase text-[var(--color-accent)] px-1.5 py-px rounded bg-[color-mix(in_oklab,var(--color-accent)_10%,transparent)] border border-[color-mix(in_oklab,var(--color-accent)_30%,transparent)]">
             parent
           </span>
           <span className="text-[var(--color-text-faint)]">{workerCount} worker{workerCount !== 1 ? 's' : ''}</span>
@@ -376,7 +376,7 @@ function ValidateDistributedBlock({
               disabled={!found}
               title={found ? `Jump to worker ${wid}` : 'Worker not in current list'}
               className={clsx(
-                'font-mono text-[var(--text-2xs)] px-2 py-px rounded border transition-colors',
+                'font-mono text-2xs px-2 py-px rounded border transition-colors',
                 found
                   ? 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] cursor-pointer'
                   : 'border-[var(--color-border)] text-[var(--color-text-faint)] cursor-default opacity-50',
@@ -399,12 +399,12 @@ function ValidateDistributedBlock({
           <span className="mr-2">{result.ok ? '✓' : '✗'}</span>
           {result.message}
           {result.status && result.status !== 'unknown' && (
-            <span className="ml-2 text-[var(--text-2xs)] opacity-70">[{result.status}]</span>
+            <span className="ml-2 text-2xs opacity-70">[{result.status}]</span>
           )}
         </div>
       )}
 
-      <p className="text-[var(--text-2xs)] font-mono text-[var(--color-text-faint)]">
+      <p className="text-2xs font-mono text-[var(--color-text-faint)]">
         CLI: <code>nova validate-distributed {runId}</code>
       </p>
     </div>

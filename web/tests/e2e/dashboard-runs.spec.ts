@@ -12,6 +12,7 @@ import {
   gotoDashboard,
   makeRun,
   runSearchPage,
+  revealTab,
   tabButton,
   urlParam,
 } from './fixtures/dashboard';
@@ -92,12 +93,15 @@ test.describe('error resilience (journey 7)', () => {
     await expect(tabButton(page, 'Runs')).toHaveAttribute('aria-current', 'page');
 
     // The per-tab boundary is keyed on `tab`, so switching away remounts clean.
+    // Groups collapse by default — reveal Registry's group before clicking.
+    await revealTab(page, 'Registry');
     await tabButton(page, 'Registry').click();
     await expect(tabButton(page, 'Registry')).toHaveAttribute('aria-current', 'page');
     await expect(page.getByText(/Error: index unavailable/)).toHaveCount(0);
     await expect.poll(() => urlParam(page, 'tab')).toBe('registry');
 
     // …and back again: the broken tab still renders its error, not a blank pane.
+    await revealTab(page, 'Runs');
     await tabButton(page, 'Runs').click();
     await expect(page.getByText(/Error: index unavailable/)).toBeVisible();
   });

@@ -387,13 +387,13 @@ function DashboardInner() {
         {/* Breadcrumb top bar */}
         <div className="flex items-center justify-between px-4 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-bg)] shrink-0 gap-4">
           <div className="flex items-center gap-1.5 min-w-0">
-            <span className="text-[var(--text-2xs)] font-mono text-[var(--color-text-faint)] shrink-0 select-none">NovaFabric</span>
+            <span className="text-2xs font-mono text-[var(--color-text-faint)] shrink-0 select-none">NovaFabric</span>
             <span className="text-[var(--color-border-strong)] shrink-0" aria-hidden="true">/</span>
             <span className="text-xs font-semibold text-[var(--color-text)] truncate">{TAB_LABEL[tab] ?? tab}</span>
           </div>
           <div className="flex items-center gap-3 shrink-0">
             {serverInfo && (
-              <span className="flex items-center gap-1 text-[var(--text-2xs)] font-mono text-[var(--color-text-faint)]">
+              <span className="flex items-center gap-1 text-2xs font-mono text-[var(--color-text-faint)]">
                 <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-status-success)] shrink-0" aria-hidden="true" />
                 connected
               </span>
@@ -401,7 +401,7 @@ function DashboardInner() {
             <button
               onClick={openTopology}
               title="Open Live Topology view in a new tab"
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-[var(--color-border)] text-[var(--text-2xs)] font-mono text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-tint)] transition-colors"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-[var(--color-border)] text-2xs font-mono text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-tint)] transition-colors"
             >
               <Icon name="topology" size={12} />
               <span>Topology</span>

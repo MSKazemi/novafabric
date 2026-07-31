@@ -197,6 +197,26 @@ export function tabButton(page: Page, label: string) {
   return nav(page).getByTitle(new RegExp(`^${label}\\b`));
 }
 
+/**
+ * Sidebar groups collapse by default (only the group holding the active tab is
+ * expanded), so a tab in another group is not in the DOM until its header is
+ * clicked. Use this wherever a test needs to *click* a tab; `?tab=` deep links
+ * and `g`-shortcuts do not need it, because arriving on a tab expands its group.
+ */
+export async function revealTab(page: Page, label: string): Promise<void> {
+  const btn = tabButton(page, label);
+  if (await btn.count()) return;
+  for (const header of await nav(page).getByRole('button').all()) {
+    const text = ((await header.getAttribute('title')) ?? '') + (await header.innerText());
+    // Group headers carry no title attribute; tab buttons do.
+    if (await header.getAttribute('title')) continue;
+    await header.click();
+    if (await btn.count()) return;
+    await header.click(); // wrong group — collapse it again and keep looking
+  }
+  throw new Error(`tab "${label}" not reachable from any sidebar group`);
+}
+
 /** A sidebar group header (they are buttons that collapse the group). */
 export function groupHeader(page: Page, label: string) {
   return nav(page).getByRole('button', { name: label, exact: true });

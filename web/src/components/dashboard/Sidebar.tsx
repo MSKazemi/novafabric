@@ -125,11 +125,16 @@ export default function Sidebar({
   const gearRef = useRef<HTMLButtonElement>(null);
 
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
+    // Default: every group collapsed. 29 tabs expanded at once is a wall of
+    // links; collapsed groups make the seven areas the thing you scan first.
+    // The group holding the active tab always renders expanded (see
+    // `groupCollapsed` below), so the current location is never hidden.
+    const allCollapsed = () => new Set(NAV_GROUPS.map((g) => g.label));
     try {
       const raw = localStorage.getItem('novafabric.sidebar-groups');
-      return raw ? new Set(JSON.parse(raw) as string[]) : new Set<string>();
+      return raw ? new Set(JSON.parse(raw) as string[]) : allCollapsed();
     } catch {
-      return new Set<string>();
+      return allCollapsed();
     }
   });
 
@@ -163,7 +168,7 @@ export default function Sidebar({
             <path d="M10 23 L10 9 L22 23 L22 9" stroke="#c4f0a8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
           </svg>
         ) : (
-          <span className="text-[var(--text-2xs)] font-medium uppercase tracking-widest text-[var(--color-text-faint)] font-mono select-none">
+          <span className="text-2xs font-medium uppercase tracking-widest text-[var(--color-text-faint)] font-mono select-none">
             NovaFabric
           </span>
         )}
@@ -187,9 +192,9 @@ export default function Sidebar({
                 <button
                   type="button"
                   onClick={() => toggleGroup(group.label, groupHasActive)}
-                  className="w-full flex items-center justify-between px-3 pt-3 pb-0.5 text-[var(--text-2xs)] font-semibold uppercase tracking-widest text-[var(--color-text-faint)] select-none hover:text-[var(--color-text-muted)] transition-colors"
+                  className="w-full flex items-center justify-between px-3 pt-2.5 pb-0.5 text-2xs font-medium uppercase tracking-wider text-[var(--color-text-faint)] select-none hover:text-[var(--color-text-muted)] transition-colors"
                 >
-                  <span>{group.label}</span>
+                  <span className="truncate">{group.label}</span>
                   <span aria-hidden="true" className="flex items-center gap-1 font-mono normal-case tracking-normal">
                     {groupCollapsed && group.items.length}
                     <Icon name="chevron-down" size={10} className={clsx('transition-transform duration-[var(--duration-fast)]', groupCollapsed && '-rotate-90')} />
@@ -234,7 +239,7 @@ export default function Sidebar({
                         {item.badge && <Badge className="shrink-0">{item.badge}</Badge>}
                         {count !== undefined && !item.badge && (
                           <span className={clsx(
-                            'text-[var(--text-2xs)] font-mono shrink-0 tabular-nums',
+                            'text-2xs font-mono shrink-0 tabular-nums',
                             active ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-faint)]',
                           )}>
                             {count}
@@ -242,7 +247,7 @@ export default function Sidebar({
                         )}
                         <span
                           aria-hidden="true"
-                          className="absolute right-2 text-[var(--text-2xs)] text-[var(--color-text-faint)] opacity-0 group-hover:opacity-60 font-mono transition-opacity"
+                          className="absolute right-2 text-2xs text-[var(--color-text-faint)] opacity-0 group-hover:opacity-60 font-mono transition-opacity"
                         >
                           {shortcut}
                         </span>
@@ -268,7 +273,7 @@ export default function Sidebar({
               className="accent-[var(--color-accent)] w-3 h-3"
             />
             <span className={clsx(
-              'text-[var(--text-2xs)] font-mono transition-colors',
+              'text-2xs font-mono transition-colors',
               autoRefresh ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-faint)]',
             )}>
               auto {autoRefresh && '·30s'}
@@ -292,12 +297,12 @@ export default function Sidebar({
           <div className="px-1 py-1 space-y-0.5">
             <div className="flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-status-success)] shrink-0" aria-hidden="true" />
-              <code className="text-[var(--text-2xs)] font-mono text-[var(--color-text-faint)] truncate">{serverInfo.base}</code>
+              <code className="text-2xs font-mono text-[var(--color-text-faint)] truncate">{serverInfo.base}</code>
             </div>
             {/* min-w-0 + shrink: the sidebar is 13rem, so a long version string
                 must not push the badge past the edge (it was clipping). */}
             <div className="pl-3 flex items-center gap-2 min-w-0">
-              <span className="text-[var(--text-2xs)] font-mono text-[var(--color-text-faint)] truncate">
+              <span className="text-2xs font-mono text-[var(--color-text-faint)] truncate">
                 v{serverInfo.version}
               </span>
               <Badge tone="info" className="shrink-0">exp</Badge>
@@ -310,7 +315,7 @@ export default function Sidebar({
           onClick={onHelpOpen}
           title="Keyboard shortcuts (?)"
           className={clsx(
-            'w-full flex items-center gap-2 px-1 py-1 rounded text-[var(--text-2xs)] text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors',
+            'w-full flex items-center gap-2 px-1 py-1 rounded text-2xs text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors',
             collapsed ? 'justify-center' : '',
           )}
         >
@@ -324,7 +329,7 @@ export default function Sidebar({
           onClick={() => setShowAppearance(v => !v)}
           title="Appearance"
           className={clsx(
-            'w-full flex items-center gap-2 px-1 py-1 rounded text-[var(--text-2xs)] transition-colors',
+            'w-full flex items-center gap-2 px-1 py-1 rounded text-2xs transition-colors',
             showAppearance
               ? 'text-[var(--color-text)] bg-[var(--color-accent-tint)]'
               : 'text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]',
@@ -348,7 +353,7 @@ export default function Sidebar({
           onClick={onDisconnect}
           title="Disconnect"
           className={clsx(
-            'w-full flex items-center gap-2 px-1 py-1 rounded text-[var(--text-2xs)] text-[var(--color-text-faint)] hover:text-[var(--color-status-failure)] hover:bg-[var(--color-danger-tint)] transition-colors',
+            'w-full flex items-center gap-2 px-1 py-1 rounded text-2xs text-[var(--color-text-faint)] hover:text-[var(--color-status-failure)] hover:bg-[var(--color-danger-tint)] transition-colors',
             collapsed ? 'justify-center' : '',
           )}
         >

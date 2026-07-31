@@ -80,7 +80,7 @@ export default function SecretScanPanel({
                     ? (
                       <span
                         key={s}
-                        className={`inline-block font-mono text-[var(--text-2xs)] uppercase px-1.5 py-px rounded border ${SEVERITY_STYLE[s] ?? SEVERITY_STYLE.info}`}
+                        className={`inline-block font-mono text-2xs uppercase px-1.5 py-px rounded border ${SEVERITY_STYLE[s] ?? SEVERITY_STYLE.info}`}
                       >
                         {s} ×{bySev[s]}
                       </span>
@@ -95,7 +95,7 @@ export default function SecretScanPanel({
             <div>{proof.bytes_redacted.toLocaleString()} B redacted</div>
           </div>
         </div>
-        <div className="mt-2 text-[var(--text-2xs)] font-mono text-[var(--color-text-faint)] space-y-0.5">
+        <div className="mt-2 text-2xs font-mono text-[var(--color-text-faint)] space-y-0.5">
           <div>proof_id: {proof.proof_id}  ·  {proof.created_at.slice(0, 16)}</div>
           <div className="truncate">chain: {proof.chain_hash}</div>
         </div>
@@ -113,7 +113,7 @@ export default function SecretScanPanel({
         {proof.packs.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1.5">
             {proof.packs.map(p => (
-              <span key={p.name} className="text-[var(--text-2xs)] font-mono px-1.5 py-px rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] text-[var(--color-text-faint)]">
+              <span key={p.name} className="text-2xs font-mono px-1.5 py-px rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] text-[var(--color-text-faint)]">
                 {p.name} v{p.version} ({p.rules_count} rules)
               </span>
             ))}

@@ -28,7 +28,7 @@ function ProposalCard({ proposal, onVerify, verifying, verifyResult }: ProposalC
         <CopyButton text={proposal.uuid} label="UUID" />
         <span
           className={clsx(
-            'text-[var(--text-2xs)] font-mono uppercase tracking-wider px-2 py-0.5 rounded border shrink-0',
+            'text-2xs font-mono uppercase tracking-wider px-2 py-0.5 rounded border shrink-0',
             proposal.has_approval
               ? 'border-[color-mix(in_oklab,var(--color-status-success)_35%,transparent)] bg-[color-mix(in_oklab,var(--color-status-success)_10%,transparent)] text-[var(--color-status-success)]'
               : 'border-[color-mix(in_oklab,var(--color-status-pending)_35%,transparent)] bg-[color-mix(in_oklab,var(--color-status-pending)_10%,transparent)] text-[var(--color-status-pending)]',

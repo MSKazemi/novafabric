@@ -51,14 +51,14 @@ export default function ConfirmDialog({
           <p className="leading-relaxed">{description}</p>
           {details && <div className="text-xs">{details}</div>}
           <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] p-3">
-            <p className="text-[var(--text-2xs)] uppercase tracking-wider text-[var(--color-text-faint)] mb-1">
+            <p className="text-2xs uppercase tracking-wider text-[var(--color-text-faint)] mb-1">
               Equivalent CLI command
             </p>
             <code className="block text-xs font-mono text-[var(--color-text)] break-all">
               $ {cliEquivalent}
             </code>
           </div>
-          <p className="text-[var(--text-2xs)] text-[var(--color-text-faint)]">
+          <p className="text-2xs text-[var(--color-text-faint)]">
             This action will be appended to{' '}
             <code className="font-mono">~/.novafabric/dashboard-audit.jsonl</code>.
           </p>

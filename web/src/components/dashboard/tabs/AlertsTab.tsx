@@ -15,7 +15,7 @@ import { usePolling } from '../../../lib/usePolling';
 // (never the categorical chart palette) and always ship with a text label.
 
 const labelClass =
-  'text-[var(--text-2xs)] font-mono uppercase tracking-wider text-[var(--color-text-faint)]';
+  'text-2xs font-mono uppercase tracking-wider text-[var(--color-text-faint)]';
 
 const ALERTS_LIMIT = 100;
 
@@ -41,7 +41,7 @@ function OutcomeBadge({ outcome }: { outcome: string }) {
     : outcome === 'delivered'
       ? 'text-[var(--color-status-success)]'
       : 'text-[var(--color-text-faint)]';
-  return <span className={`font-mono text-[var(--text-2xs)] ${cls}`}>{OUTCOME_LABEL[outcome] ?? outcome}</span>;
+  return <span className={`font-mono text-2xs ${cls}`}>{OUTCOME_LABEL[outcome] ?? outcome}</span>;
 }
 
 function StatTile({ label, value, tone }: { label: string; value: string; tone?: string }) {
@@ -95,7 +95,7 @@ const COLUMNS: Column<AlertRow>[] = [
       <span className="truncate">
         <OutcomeBadge outcome={row.outcome} />
         {row.endpoint_id && (
-          <span className="ml-1 text-[var(--text-2xs)] font-mono text-[var(--color-text-faint)]">
+          <span className="ml-1 text-2xs font-mono text-[var(--color-text-faint)]">
             → {row.endpoint_id}
             {row.attempts > 1 ? ` (${row.attempts}×)` : ''}
           </span>
@@ -108,7 +108,7 @@ const COLUMNS: Column<AlertRow>[] = [
     header: 'when',
     className: 'w-20',
     render: (row) => (
-      <span className="text-[var(--text-2xs)] font-mono text-[var(--color-text-faint)]" title={row.timestamp}>
+      <span className="text-2xs font-mono text-[var(--color-text-faint)]" title={row.timestamp}>
         {relativeTime(row.timestamp)}
       </span>
     ),

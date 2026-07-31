@@ -46,7 +46,7 @@ export default function MCPRiskReportPanel() {
             Generate a structured OWASP LLM risk report for an MCP manifest — <code className="font-mono">nova mcp risk-report</code>
           </p>
         </div>
-        <span className="text-[var(--text-2xs)] font-mono text-[var(--color-text-faint)] uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)]">E-9</span>
+        <span className="text-2xs font-mono text-[var(--color-text-faint)] uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)]">E-9</span>
       </div>
       <textarea
         value={manifestJson}
@@ -74,7 +74,7 @@ export default function MCPRiskReportPanel() {
       {result && result.ok && (
         <div className="space-y-3">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className={clsx('text-[var(--text-2xs)] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded', riskCls(result.overall_risk_level ?? 'LOW'))}>
+            <span className={clsx('text-2xs font-mono uppercase tracking-wider px-1.5 py-0.5 rounded', riskCls(result.overall_risk_level ?? 'LOW'))}>
               {result.overall_risk_level ?? 'LOW'}
             </span>
             <span className="text-[10px] font-mono text-[var(--color-text-faint)]">
@@ -103,7 +103,7 @@ export default function MCPRiskReportPanel() {
                       <td className="py-1 pr-3 text-[var(--color-text)] truncate max-w-[160px]">{tool.tool_name}</td>
                       <td className="py-1 pr-3 text-right text-[var(--color-text-faint)]">{tool.risk_score.toFixed(1)}</td>
                       <td className="py-1 pr-3">
-                        <span className={clsx('px-1 py-0.5 rounded text-[var(--text-2xs)]', riskCls(tool.highest_severity))}>
+                        <span className={clsx('px-1 py-0.5 rounded text-2xs', riskCls(tool.highest_severity))}>
                           {tool.highest_severity}
                         </span>
                       </td>

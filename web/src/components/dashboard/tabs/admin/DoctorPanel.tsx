@@ -55,7 +55,7 @@ export default function DoctorPanel() {
                   <td className="px-3 py-2 font-mono text-[var(--color-text)] text-[10px]">{c.name}</td>
                   <td className="px-3 py-2">
                     <span className={clsx(
-                      'text-[var(--text-2xs)] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded',
+                      'text-2xs font-mono uppercase tracking-wider px-1.5 py-0.5 rounded',
                       c.ok
                         ? 'text-[var(--color-status-success)] bg-[color-mix(in_oklab,var(--color-status-success)_10%,transparent)]'
                         : 'text-[var(--color-status-failure)] bg-[color-mix(in_oklab,var(--color-status-failure)_10%,transparent)]',

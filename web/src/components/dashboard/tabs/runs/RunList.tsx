@@ -49,14 +49,14 @@ function ValidationErrorBadge({ errors }: { errors: string[] }) {
       <button
         type="button"
         onClick={() => setExpanded(e => !e)}
-        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[var(--text-2xs)] font-mono font-medium border border-[color-mix(in_oklab,var(--color-status-failure)_40%,transparent)] bg-[color-mix(in_oklab,var(--color-status-failure)_8%,transparent)] text-[var(--color-status-failure)]"
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-mono font-medium border border-[color-mix(in_oklab,var(--color-status-failure)_40%,transparent)] bg-[color-mix(in_oklab,var(--color-status-failure)_8%,transparent)] text-[var(--color-status-failure)]"
       >
         ✗ {errors.length} error{errors.length !== 1 ? 's' : ''} {expanded ? '▲' : '▼'}
       </button>
       {expanded && (
         <ul className="mt-0.5 ml-0.5 space-y-0.5 max-w-[220px]">
           {errors.map((err, i) => (
-            <li key={i} className="text-[var(--text-2xs)] font-mono text-[var(--color-status-failure)] bg-[color-mix(in_oklab,var(--color-status-failure)_5%,transparent)] border border-[color-mix(in_oklab,var(--color-status-failure)_20%,transparent)] rounded px-1.5 py-0.5 break-all">
+            <li key={i} className="text-2xs font-mono text-[var(--color-status-failure)] bg-[color-mix(in_oklab,var(--color-status-failure)_5%,transparent)] border border-[color-mix(in_oklab,var(--color-status-failure)_20%,transparent)] rounded px-1.5 py-0.5 break-all">
               {err}
             </li>
           ))}
@@ -226,7 +226,7 @@ export default function RunList({
                       className="opacity-0 group-hover:opacity-100 transition-opacity absolute right-0 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] px-0.5"
                     >
                       {copiedId === r.run_id ? (
-                        <span className="text-[var(--text-2xs)] font-mono text-[var(--color-status-success)]">Copied</span>
+                        <span className="text-2xs font-mono text-[var(--color-status-success)]">Copied</span>
                       ) : (
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3">
                           <path d="M5 3a1 1 0 000 2h6a1 1 0 100-2H5z"/>
@@ -244,12 +244,12 @@ export default function RunList({
                   {r.command.join(' ')}
                 </p>
                 {extractScenario(r.command) && (
-                  <span className="text-[var(--text-2xs)] font-mono px-1.5 py-px rounded bg-[var(--color-bg-sunken)] text-[var(--color-text-faint)] truncate max-w-[140px]">
+                  <span className="text-2xs font-mono px-1.5 py-px rounded bg-[var(--color-bg-sunken)] text-[var(--color-text-faint)] truncate max-w-[140px]">
                     {extractScenario(r.command)}
                   </span>
                 )}
                 {/* Meta row */}
-                <div className="flex items-center gap-3 mt-0.5 text-[var(--text-2xs)] text-[var(--color-text-faint)] font-mono">
+                <div className="flex items-center gap-3 mt-0.5 text-2xs text-[var(--color-text-faint)] font-mono">
                   <span>{r.created_at?.slice(0, 16) ?? '—'}</span>
                   <span>{r.model_call_count}m · {r.tool_call_count}t</span>
                   {r.exit_code !== null && r.exit_code !== 0 && (
@@ -258,7 +258,7 @@ export default function RunList({
                 </div>
                 {/* Cost row — only rendered when ClickHouse data is available */}
                 {costMap[r.run_id] && (
-                  <div className="flex items-center gap-3 mt-0.5 text-[var(--text-2xs)] text-[var(--color-text-faint)] font-mono">
+                  <div className="flex items-center gap-3 mt-0.5 text-2xs text-[var(--color-text-faint)] font-mono">
                     <span title="Estimated LLM cost (ClickHouse)">
                       {costMap[r.run_id].cost_usd > 0
                         ? `$${costMap[r.run_id].cost_usd.toFixed(6)}`
@@ -290,22 +290,22 @@ export default function RunList({
                   <button
                     onClick={() => onAction(r, 'replay')}
                     title="Forensic replay (read-only inspection)"
-                    className="px-1.5 py-0.5 text-[var(--text-2xs)] rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] uppercase tracking-wider font-medium"
+                    className="px-1.5 py-0.5 text-2xs rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] uppercase tracking-wider font-medium"
                   >replay</button>
                   <button
                     onClick={() => onAction(r, 'dry-run')}
                     title="Dry-run policy check — which tools would be blocked?"
-                    className="px-1.5 py-0.5 text-[var(--text-2xs)] rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-status-pending)] hover:border-[var(--color-status-pending)] uppercase tracking-wider font-medium"
+                    className="px-1.5 py-0.5 text-2xs rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-status-pending)] hover:border-[var(--color-status-pending)] uppercase tracking-wider font-medium"
                   >dry-run</button>
                   <button
                     onClick={() => onAction(r, 'semantic')}
                     title="Semantic analysis — compute similarity score across model call responses"
-                    className="px-1.5 py-0.5 text-[var(--text-2xs)] rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-status-pending)] hover:border-[var(--color-status-pending)] uppercase tracking-wider font-medium"
+                    className="px-1.5 py-0.5 text-2xs rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-status-pending)] hover:border-[var(--color-status-pending)] uppercase tracking-wider font-medium"
                   >semantic</button>
                   <button
                     onClick={() => onAction(r, 'exact')}
                     title="Exact eligibility — check whether this capsule can be replayed byte-exactly"
-                    className="px-1.5 py-0.5 text-[var(--text-2xs)] rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] uppercase tracking-wider font-medium"
+                    className="px-1.5 py-0.5 text-2xs rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] uppercase tracking-wider font-medium"
                   >exact</button>
                   {(() => {
                     const isCompareA = compareA === r.run_id;
@@ -343,7 +343,7 @@ export default function RunList({
                   <button
                     onClick={() => onAction(r, 'export')}
                     title="Export signed evidence bundle"
-                    className="ml-auto px-1.5 py-0.5 text-[var(--text-2xs)] rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent)] uppercase tracking-wider font-medium"
+                    className="ml-auto px-1.5 py-0.5 text-2xs rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent)] uppercase tracking-wider font-medium"
                   >export ↗</button>
                 </div>
                 {/* Data ops row: validate + redact + secrets */}
@@ -355,13 +355,13 @@ export default function RunList({
                         onClick={() => onValidate(r.run_id)}
                         disabled={vs?.loading === true}
                         title="Validate capsule schema and required files"
-                        className="px-1.5 py-0.5 text-[var(--text-2xs)] rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] uppercase tracking-wider font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="px-1.5 py-0.5 text-2xs rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] uppercase tracking-wider font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {vs?.loading ? 'validating…' : 'validate'}
                       </button>
                       {vs && !vs.loading && vs.result !== null && (
                         vs.result.valid ? (
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[var(--text-2xs)] font-mono font-medium border border-[color-mix(in_oklab,var(--color-status-success)_40%,transparent)] bg-[color-mix(in_oklab,var(--color-status-success)_8%,transparent)] text-[var(--color-status-success)]">
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-mono font-medium border border-[color-mix(in_oklab,var(--color-status-success)_40%,transparent)] bg-[color-mix(in_oklab,var(--color-status-success)_8%,transparent)] text-[var(--color-status-success)]">
                             ✓ valid
                           </span>
                         ) : (
@@ -369,24 +369,24 @@ export default function RunList({
                         )
                       )}
                       {vs && !vs.loading && vs.error !== null && (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[var(--text-2xs)] font-mono font-medium border border-[color-mix(in_oklab,var(--color-status-failure)_40%,transparent)] bg-[color-mix(in_oklab,var(--color-status-failure)_8%,transparent)] text-[var(--color-status-failure)]" title={vs.error}>
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-mono font-medium border border-[color-mix(in_oklab,var(--color-status-failure)_40%,transparent)] bg-[color-mix(in_oklab,var(--color-status-failure)_8%,transparent)] text-[var(--color-status-failure)]" title={vs.error}>
                           ✗ error
                         </span>
                       )}
                       <button
                         onClick={() => onAction(r, 'redact')}
                         title="Re-scan & rewrite redaction-proof.json"
-                        className="px-1.5 py-0.5 text-[var(--text-2xs)] rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] uppercase tracking-wider font-medium"
+                        className="px-1.5 py-0.5 text-2xs rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] uppercase tracking-wider font-medium"
                       >redact</button>
                       <button
                         onClick={() => onShowSecrets(r)}
                         title="View secret scan / redaction proof"
-                        className="px-1.5 py-0.5 text-[var(--text-2xs)] rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] uppercase tracking-wider font-medium"
+                        className="px-1.5 py-0.5 text-2xs rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] uppercase tracking-wider font-medium"
                       >secrets</button>
                       <button
                         onClick={() => onAction(r, 'delete')}
                         title="Permanently delete this capsule"
-                        className="px-1.5 py-0.5 text-[var(--text-2xs)] rounded border border-[color-mix(in_oklab,var(--color-status-failure)_40%,transparent)] text-[var(--color-status-failure)] hover:bg-[color-mix(in_oklab,var(--color-status-failure)_10%,transparent)] uppercase tracking-wider font-medium ml-auto"
+                        className="px-1.5 py-0.5 text-2xs rounded border border-[color-mix(in_oklab,var(--color-status-failure)_40%,transparent)] text-[var(--color-status-failure)] hover:bg-[color-mix(in_oklab,var(--color-status-failure)_10%,transparent)] uppercase tracking-wider font-medium ml-auto"
                       >delete</button>
                     </div>
                   );

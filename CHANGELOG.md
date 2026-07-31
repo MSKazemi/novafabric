@@ -9,6 +9,27 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.98.3] — 2026-07-31
+
+### Fixed
+- **The "10px type floor" introduced in v0.97.0 never actually worked.**
+  `text-[var(--text-2xs)]` compiles to `color: var(--text-2xs)` — Tailwind
+  cannot tell a bare `var()` is a length, so all **116 occurrences** set an
+  invalid color and left the font size inherited. The most visible symptom was
+  sidebar group headers rendering at **16px** — larger than the 12px items they
+  label. Every occurrence now uses the real `text-2xs` utility that Tailwind v4
+  generates from the `--text-*` theme namespace. Headers measure 10px.
+- Sidebar group headers were also heavier than their own items
+  (`font-semibold` + `tracking-widest`); toned to `font-medium` /
+  `tracking-wider` so a label never outweighs its contents.
+
+### Changed
+- **Sidebar groups now start collapsed.** 29 tabs expanded at once was a wall
+  of links; the seven areas are the thing worth scanning first, each showing
+  its item count. The group holding the active tab always renders expanded, so
+  the current location is never hidden, and an explicit expand/collapse is
+  still remembered per browser.
+
 ## [0.98.2] — 2026-07-31
 
 Found by running the dashboard against the live n1 store and deploying the

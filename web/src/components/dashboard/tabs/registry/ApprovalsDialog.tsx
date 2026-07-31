@@ -73,7 +73,7 @@ export default function ApprovalsDialog({
               <tbody className="divide-y divide-[var(--color-border)]">
                 {approvals.map((ap, i) => (
                   <tr key={i} className="hover:bg-[var(--color-bg-sunken)] transition-colors">
-                    <td className="px-3 py-1.5 text-[var(--color-text-muted)] uppercase tracking-wider text-[var(--text-2xs)]">{ap.role}</td>
+                    <td className="px-3 py-1.5 text-[var(--color-text-muted)] uppercase tracking-wider text-2xs">{ap.role}</td>
                     <td className="px-3 py-1.5 text-[var(--color-text)]">{ap.actor}</td>
                     <td className="px-3 py-1.5 text-[var(--color-text-faint)]">{ap.note || '—'}</td>
                     <td className="px-3 py-1.5 text-[var(--color-text-faint)]">{ap.approved_at.slice(0, 19).replace('T', ' ')}</td>

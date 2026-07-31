@@ -37,7 +37,7 @@ export default function TrustRadarGlyph({
   const gradientId = useId();
   if (axes.length < 3) {
     return (
-      <p className="text-[var(--text-2xs)] text-[var(--color-text-faint)]">
+      <p className="text-2xs text-[var(--color-text-faint)]">
         Not enough axes to plot ({axes.length}).
       </p>
     );

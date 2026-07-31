@@ -187,7 +187,7 @@ export function SemanticResultPane({ result }: { result: ReplayResult }) {
             style={{ width: `${pct}%` }}
           />
         </div>
-        <div className="flex justify-between mt-1 text-[var(--text-2xs)] font-mono text-[var(--color-text-faint)]">
+        <div className="flex justify-between mt-1 text-2xs font-mono text-[var(--color-text-faint)]">
           <span>0%</span><span>50%</span><span>100%</span>
         </div>
       </div>

@@ -149,7 +149,7 @@ export function Card({ c }: { c: ComponentCard }) {
         <div>
           <div className="flex items-center gap-2 flex-wrap">
             <h3 className="text-sm font-semibold text-[var(--color-text)]">{c.title}</h3>
-            <span className={`text-[var(--text-2xs)] uppercase tracking-wider px-1.5 py-0.5 rounded border font-medium ${BADGE_COLOR[c.badge]}`}>
+            <span className={`text-2xs uppercase tracking-wider px-1.5 py-0.5 rounded border font-medium ${BADGE_COLOR[c.badge]}`}>
               {BADGE_LABEL[c.badge]}
             </span>
           </div>

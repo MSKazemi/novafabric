@@ -127,7 +127,7 @@ export default function DataTable<T>({
   return (
     <div className={clsx('rounded border border-[var(--color-border)] overflow-hidden', className)}>
       {/* Header */}
-      <div className="flex items-center gap-3 px-3 py-2 bg-[var(--color-bg-sunken)] border-b border-[var(--color-border)] text-[var(--text-2xs)] font-semibold uppercase tracking-wider text-[var(--color-text-faint)]">
+      <div className="flex items-center gap-3 px-3 py-2 bg-[var(--color-bg-sunken)] border-b border-[var(--color-border)] text-2xs font-semibold uppercase tracking-wider text-[var(--color-text-faint)]">
         {columns.map((col) => (
           <div
             key={col.key}
@@ -140,7 +140,7 @@ export default function DataTable<T>({
                 className="inline-flex items-center gap-1 hover:text-[var(--color-text)] transition-colors uppercase"
               >
                 {col.header}
-                <span aria-hidden="true" className="text-[var(--text-2xs)]">
+                <span aria-hidden="true" className="text-2xs">
                   {sort?.key === col.key ? (sort.dir === 'asc' ? '▲' : '▼') : '↕'}
                 </span>
               </button>

@@ -30,19 +30,19 @@ export default function Field({
     <div className={clsx('space-y-1', className)}>
       <label
         htmlFor={id}
-        className="block text-[var(--text-2xs)] font-medium uppercase tracking-wider text-[var(--color-text-faint)]"
+        className="block text-2xs font-medium uppercase tracking-wider text-[var(--color-text-faint)]"
       >
         {label}
         {required && <span className="text-[var(--color-status-failure)] ml-0.5">*</span>}
       </label>
       {children({ id, describedBy: descId })}
       {error ? (
-        <p id={descId} className="text-[var(--text-2xs)] text-[var(--color-status-failure)]">
+        <p id={descId} className="text-2xs text-[var(--color-status-failure)]">
           {error}
         </p>
       ) : (
         description && (
-          <p id={descId} className="text-[var(--text-2xs)] text-[var(--color-text-faint)]">
+          <p id={descId} className="text-2xs text-[var(--color-text-faint)]">
             {description}
           </p>
         )

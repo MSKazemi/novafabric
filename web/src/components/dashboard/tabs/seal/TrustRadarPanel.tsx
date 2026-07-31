@@ -70,7 +70,7 @@ export default function TrustRadarPanel({ runIds }: { runIds: string[] }) {
             <Badge tone={VERDICT_TONE[result.verdict]} dot>
               {result.verdict}
             </Badge>
-            <span className="text-[var(--text-2xs)] text-[var(--color-text-faint)]">
+            <span className="text-2xs text-[var(--color-text-faint)]">
               {VERDICT_HINT[result.verdict]}
             </span>
           </div>
@@ -84,7 +84,7 @@ export default function TrustRadarPanel({ runIds }: { runIds: string[] }) {
 
             <table className="text-[11px] font-mono flex-1 min-w-[18rem]">
               <thead>
-                <tr className="text-[var(--text-2xs)] uppercase tracking-wider text-[var(--color-text-faint)] border-b border-[var(--color-border)]">
+                <tr className="text-2xs uppercase tracking-wider text-[var(--color-text-faint)] border-b border-[var(--color-border)]">
                   <th className="text-left font-medium py-1">guarantee</th>
                   <th className="text-right font-medium py-1">reach</th>
                   <th className="text-right font-medium py-1">state</th>

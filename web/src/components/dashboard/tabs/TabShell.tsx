@@ -56,7 +56,7 @@ export default function TabShell({
                 onClick={() => setShowHelp((v) => !v)}
                 title="What is this?"
                 aria-expanded={showHelp}
-                className="w-4 h-4 flex items-center justify-center rounded-full border border-[var(--color-border)] text-[var(--text-2xs)] text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:border-[var(--color-accent)] transition-colors"
+                className="w-4 h-4 flex items-center justify-center rounded-full border border-[var(--color-border)] text-2xs text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:border-[var(--color-accent)] transition-colors"
               >
                 ?
               </button>

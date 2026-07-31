@@ -91,7 +91,7 @@ export default function BypassSodPanel({ runIds }: { runIds: string[] }) {
       <div className="space-y-1">
         <label className="text-[10px] font-mono uppercase tracking-wider text-[var(--color-text-faint)] flex items-center gap-2">
           Justification / Reason
-          <span className={clsx('text-[var(--text-2xs)]', reasonLen >= 50 ? 'text-[var(--color-status-success)]' : 'text-[var(--color-status-failure)]')}>
+          <span className={clsx('text-2xs', reasonLen >= 50 ? 'text-[var(--color-status-success)]' : 'text-[var(--color-status-failure)]')}>
             {reasonLen}/50 min
           </span>
         </label>

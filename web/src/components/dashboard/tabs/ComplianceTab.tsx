@@ -55,7 +55,7 @@ export default function ComplianceTab({ runIds: initialRunIds }: { runIds?: stri
           {(['ADR-0054', 'ADR-0055', 'ADR-0057', 'ADR-0061', 'ADR-0066'] as const).map(label => (
             <span
               key={label}
-              className="text-[var(--text-2xs)] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-faint)]"
+              className="text-2xs font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-faint)]"
             >
               {label}
             </span>

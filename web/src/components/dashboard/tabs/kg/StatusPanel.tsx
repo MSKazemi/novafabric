@@ -59,7 +59,7 @@ export default function StatusPanel({ status, error }: { status: KGStatus | null
             <div className="grid grid-cols-5 gap-2">
               {(['Agent', 'Model', 'MCPServer', 'Tool', 'InferenceEndpoint'] as const).map((label) => (
                 <div key={label} className="rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2 py-1.5 text-center">
-                  <p className="text-[var(--text-2xs)] font-mono uppercase tracking-wider text-[var(--color-text-faint)] truncate">{label === 'InferenceEndpoint' ? 'Endpoint' : label}</p>
+                  <p className="text-2xs font-mono uppercase tracking-wider text-[var(--color-text-faint)] truncate">{label === 'InferenceEndpoint' ? 'Endpoint' : label}</p>
                   <p className="text-sm font-mono font-bold text-[var(--color-text)]">{(status.node_counts?.[label] ?? 0).toLocaleString()}</p>
                 </div>
               ))}
