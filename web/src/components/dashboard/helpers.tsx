@@ -1,26 +1,18 @@
-import { clsx } from 'clsx';
+import Button from '../ui/primitives/Button';
+import StatusPill from '../ui/primitives/StatusPill';
 
 export function StatusDot({ status }: { status: string | null }) {
-  const ok = status === 'success';
-  return (
-    <span
-      className={clsx(
-        'inline-block w-1.5 h-1.5 rounded-full shrink-0',
-        ok ? 'bg-[var(--color-status-success)]' : 'bg-[var(--color-status-failure)]',
-      )}
-      aria-label={status ?? 'unknown'}
-    />
-  );
+  return <StatusPill status={status} variant="dot" />;
 }
 
 export function ErrorBox({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
-    <div className="rounded border border-[color-mix(in_oklab,var(--color-status-failure)_30%,transparent)] bg-[color-mix(in_oklab,var(--color-status-failure)_8%,transparent)] p-4 text-sm text-[var(--color-status-failure)]">
+    <div className="rounded border border-[color-mix(in_oklab,var(--color-status-failure)_30%,transparent)] bg-[var(--color-danger-tint)] p-4 text-sm text-[var(--color-status-failure)]">
       <p>Error: {message}</p>
       {onRetry && (
-        <button onClick={onRetry} className="mt-2 text-xs underline underline-offset-2">
-          retry
-        </button>
+        <Button variant="danger" size="sm" className="mt-2" onClick={onRetry}>
+          Retry
+        </Button>
       )}
     </div>
   );

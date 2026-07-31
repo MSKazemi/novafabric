@@ -69,8 +69,9 @@ def test_shape_and_no_secrets(tmp_path: Path) -> None:
     r = client.get("/api/admin/api-keys", params={"token": TOKEN}, headers=H)
     assert r.status_code == 200
     body = r.json()
-    assert set(body) == {"keys", "total"}
+    assert set(body) == {"keys", "total", "truncated"}
     assert body["total"] == 1
+    assert body["truncated"] is False
     row = body["keys"][0]
     assert set(row) == _SHAPE_KEYS
     assert row["owner"] == "alice@x"
@@ -120,11 +121,11 @@ def test_empty_no_db_returns_empty(tmp_path: Path) -> None:
     client = _client(tmp_path, tmp_path / "does-not-exist.db")
     r = client.get("/api/admin/api-keys", params={"token": TOKEN}, headers=H)
     assert r.status_code == 200
-    assert r.json() == {"keys": [], "total": 0}
+    assert r.json() == {"keys": [], "total": 0, "truncated": False}
 
 
 def test_empty_none_db_returns_empty(tmp_path: Path) -> None:
     client = _client(tmp_path, None)
     r = client.get("/api/admin/api-keys", params={"token": TOKEN}, headers=H)
     assert r.status_code == 200
-    assert r.json() == {"keys": [], "total": 0}
+    assert r.json() == {"keys": [], "total": 0, "truncated": False}

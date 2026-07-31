@@ -1,7 +1,14 @@
 """Dual-object GDPR/WORM capsule split: compliance-sealed + PII payload.
 
-Active by default (NOVA_CAP003_ENABLED defaults to true).
-OQ-01 resolved by ADR-0069 (AES-256-GCM DEK lifecycle).  cap-003 / ADR-0066.
+Disabled by default (NOVA_CAP003_ENABLED defaults to false). cap-003's own OQ-01
+(does a BLAKE3 hash of erased PII constitute GDPR Art.17 erasure?) has never had a
+EU-GDPR legal-counsel review — ADR-0066 and the CTO acceptance record (SCALE-ADR-003,
+2026-05-17) both make `false` a mandatory safety gate until that review completes.
+ADR-0069's "OQ-01 resolved" citation is for a *different* capability (cap-001's
+AES-256-GCM DEK crypto-shredding) and, if anything, argues against this one: it
+explicitly rejects hash-based tombstones per EDPB Guidelines 01/2025 ("a hash of
+personal data is itself personal data"). Corrected 2026-07-30 — this module previously
+defaulted to `true` on that mis-citation. cap-003 / ADR-0066 / ADR-0062.
 
 S3 backend:
     When NOVA_S3_ENDPOINT_URL or NOVA_S3_BUCKET is set, ``split_and_store``
@@ -43,8 +50,9 @@ class DualObjectResult:
 class DualObjectStore:
     """Splits capsule data into compliance-sealed + PII payload objects.
 
-    Active by default (NOVA_CAP003_ENABLED defaults to true — OQ-01 resolved by ADR-0069).
-    Set NOVA_CAP003_ENABLED=false to disable.
+    Disabled by default (NOVA_CAP003_ENABLED defaults to false — cap-003's own OQ-01,
+    the BLAKE3-hash-as-erasure question, awaits EU-GDPR legal-counsel review; see the
+    module docstring). Set NOVA_CAP003_ENABLED=true only after that review completes.
 
     When NOVA_S3_ENDPOINT_URL or NOVA_S3_BUCKET is set, ``split_and_store``
     writes to S3 via ``NovaObjectStore``; otherwise falls back to the local
@@ -59,10 +67,12 @@ class DualObjectStore:
     )
 
     def __init__(self) -> None:
-        self.enabled = os.getenv("NOVA_CAP003_ENABLED", "true").lower() == "true"
+        self.enabled = os.getenv("NOVA_CAP003_ENABLED", "false").lower() == "true"
         if self.enabled:
-            logging.getLogger(__name__).info(
-                "cap-003 dual-object GDPR/WORM split ENABLED (active — OQ-01 resolved by ADR-0069)"
+            logging.getLogger(__name__).warning(
+                "cap-003 dual-object GDPR/WORM split ENABLED — this bypasses the "
+                "mandatory false-until-legal-review safety gate (SCALE-ADR-003); "
+                "OQ-01 has not had a EU-GDPR legal-counsel review"
             )
 
     @staticmethod

@@ -67,6 +67,31 @@
   --sidebar-w: 13rem;
   --sidebar-w-collapsed: 2.75rem;
   --row-h: 2rem;
+
+  /* ── Tokens v2 (dashboard modernization) ────────────────────────────── */
+
+  /* Type floor: nothing below 10px. Replaces ad-hoc text-[8px]/text-[9px]. */
+  --text-2xs: 0.625rem;
+
+  /* Elevation / surfaces */
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.35), 0 1px 6px rgb(0 0 0 / 0.25);
+  --shadow-2: 0 4px 12px rgb(0 0 0 / 0.45), 0 2px 4px rgb(0 0 0 / 0.3);
+  --color-bg-overlay: rgb(0 0 0 / 0.6);
+  --color-surface-hover: color-mix(in oklab, var(--color-bg-raised) 60%, transparent);
+  --color-surface-active: color-mix(in oklab, var(--color-bg-raised) 85%, transparent);
+
+  /* Semantic tints — the tinted-background pattern used across the tabs */
+  --color-accent-tint: color-mix(in oklab, var(--color-accent) 10%, transparent);
+  --color-accent-tint-strong: color-mix(in oklab, var(--color-accent) 18%, transparent);
+  --color-danger-tint: color-mix(in oklab, var(--color-status-failure) 10%, transparent);
+  --color-success-tint: color-mix(in oklab, var(--color-status-success) 10%, transparent);
+  --color-pending-tint: color-mix(in oklab, var(--color-status-pending) 10%, transparent);
+  --color-faint-tint: color-mix(in oklab, var(--color-text-faint) 12%, transparent);
+
+  /* Motion */
+  --duration-fast: 120ms;
+  --duration: 180ms;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 /*

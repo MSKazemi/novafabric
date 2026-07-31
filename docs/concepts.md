@@ -23,7 +23,7 @@ signed evidence is produced.
   metadata only — it never restarts or redeploys anything.
 - What is **shipped today** versus **planned** (clearly labeled throughout).
 
-> **Maturity note.** NovaFabric is local-first and in beta (v0.59.0). Nearly
+> **Maturity note.** NovaFabric is local-first and in beta (v0.94.0). Nearly
 > all shipped surfaces carry `experimental` maturity: they work today and are
 > tested, but on-disk formats are **not frozen** until the v1.0 schema freeze.
 > Anything labeled **PLANNED** or **FUTURE DESIGN** below is documented design
@@ -313,7 +313,8 @@ audit artifact.
 ## Replay Modes
 
 A replay re-executes or inspects a capsule with all external calls controlled by
-NovaFabric. There are **four honest, falsifiable modes**. A replay is itself a
+NovaFabric. There are **four honest, falsifiable modes**, plus a fifth,
+**experimental** counterfactual mode. A replay is itself a
 new capsule, so you can diff a replay against the original run.
 
 | Mode | Spawns subprocess? | Network? | Best for |
@@ -322,6 +323,7 @@ new capsule, so you can diff a replay against the original run.
 | **`mocked`** | Yes | LLM served from cache; tools gated by safety ladder | CI / regression |
 | **`semantic`** | Yes | Yes (re-executes) | Drifting remote LLMs — judges *meaning*, not tokens |
 | **`exact`** | Yes | Controlled | Local / on-prem / compliance byte-exact re-run |
+| **`intervention`** (experimental, ADR-0086) | Yes, under mocked semantics | No | Counterfactual root-cause: substitute one captured event per an `InterventionSpec`, re-execute downstream, and record whether the outcome flips |
 
 > **Honesty note.** NovaFabric explicitly does **not** claim byte-exact replay of
 > remote LLM calls. `exact` mode requires a deterministic environment and a
@@ -378,6 +380,67 @@ Byte-exact eligibility requiring a deterministic environment and a per-call seed
 This is the compliance-grade mode for local and on-prem models where determinism
 is achievable.
 
+### `intervention` mode (experimental)
+
+Answers a counterfactual question: *if this one recorded event had gone
+differently, would the run's outcome have changed?* An `InterventionSpec`
+names one captured model or tool call and a substitute outcome for it; the
+engine re-executes everything downstream of that point under mocked
+semantics (zero live tokens) and writes a diffable capsule hard-marked
+`replay_mode: intervention`, never mistakable for a real run. This is the
+building block behind the no-LLM causal-graph diagnostic suite below — see
+[Diagnose: causal-graph attribution and counterfactual root-cause
+search](#diagnose-causal-graph-attribution-and-counterfactual-root-cause-search-experimental).
+
+---
+
+## Diagnose: causal-graph attribution and counterfactual root-cause search (experimental)
+
+`nova diagnose <run-id>` (ADR-0084) attributes a failed run to its most likely
+responsible step: it walks the captured trace plus the lineage graph and
+produces a ranked attribution — which agent/step is most likely responsible,
+plus an `AgentErrorTaxonomy` label (`MEMORY` / `REFLECTION` / `PLANNING` /
+`ACTION` / `SYSTEM` / `UNKNOWN`). Scores are relative ranking weights, not
+probabilities, and every candidate is honestly marked `verification:
+unverified` unless tested.
+
+Two further, **experimental** layers (ADR-0101) turn a ranking into evidence:
+
+- **No-LLM causal-graph back-trace (§NF-019/022).** `causal_root_candidates`
+  back-traces the span graph — no LLM involved, purely structural — to find
+  **root failure nodes**: a failing node with no failing ancestor. This is
+  what candidates the search below.
+- **Replay-proven root cause (`--intervene` / `--search-root-cause`, §NF-017/018).**
+  `--intervene` auto-synthesizes an `InterventionSpec` for the top hypothesis
+  and replays it under `intervention` mode (see [Replay Modes](#replay-modes))
+  to check whether the outcome actually flips. `--search-root-cause` widens
+  this into a bounded sweep over the NF-019 candidates, earliest/shallowest
+  first, until one confirms a flip — the decisive root cause, replay-proven
+  rather than merely ranked.
+
+None of this uses an LLM judge: attribution is structural (trace + lineage
+walk) and verification is a real, zero-token replay — a hallucination-risk or
+root-cause finding you can point at evidence for, not a model's opinion.
+
+---
+
+## Accountability Spine (experimental)
+
+Three complementary, append-only evidence surfaces (ADR-0093/0094/0095),
+collectively referred to as the Accountability Spine, sit alongside NovaSeal
+and the Evidence Bundle:
+
+| Surface | CLI | Records | ADR |
+|---|---|---|---|
+| Energy-Anchored Action Receipts | `nova energy probe/attest/verify/report` | Per-action energy receipts + a conservation check, so an energy claim is falsifiable rather than asserted | ADR-0093 |
+| Adversary-anchored accountability ledger | `nova ledger anchor/verify/status` | Sidecar hash chains + signed checkpoints for every capsule `.jsonl` stream, so tampering with a stream after the fact is detectable | ADR-0094 |
+| Structured safety case | `nova safety-case build/verify/export` | A compiled, evidence-grounded Claims-Arguments-Evidence (CAE) safety case over a capsule, exportable as JSON, Markdown, an EU AI Act Annex IV section, or a NIST AI RMF report | ADR-0095 |
+
+The dashboard surfaces all three read-only under the **Spine** tab. Like the
+[evidence facets](#evidence-facets-experimental) above, these are record-only:
+they never enforce, adjudicate, or gate anything themselves — they make an
+accountability claim checkable.
+
 ---
 
 ## Structural Diff
@@ -429,9 +492,14 @@ derived from each capsule's `lineage.jsonl`. It has two table types:
 Because the graph is derived from the capsules, it can always be rebuilt from
 them — the capsules remain the source of truth. The SQLite backend is the
 local-mode default and is crash-safe (WAL); it is well suited below roughly one
-million edges. (A KuzuDB-backed v2 tier for larger graphs is **experimental** —
-`nova lineage-store migrate`; billion-edge federation and the Postgres/Apache
-AGE backends remain **FUTURE DESIGN**, not implemented.)
+million edges. Four **at-scale backends** exist for larger graphs, all
+**experimental** and testcontainers-verified, selected via `nova lineage-store
+migrate` / `profile`: **Kuzu** (embedded, benchmark-cleared at 10M edges, p99
+`blast_radius` 45.5ms), **Postgres** (recursive-CTE, no extension needed),
+**Apache AGE** (openCypher on Postgres), and **JanusGraph** (Gremlin, needs the
+GraphSON serializer). There are currently zero `NotImplementedError` stubs
+among them. Billion-edge cross-cluster **federation** remains **FUTURE
+DESIGN**, not implemented.
 
 ### Edge types
 
@@ -757,6 +825,21 @@ in-toto DSSE attestations, secret scanning with verifiable redaction proofs,
 OPA/Rego policy gates with maker-checker promotion, and WORM storage adapters
 (S3 Object Lock / Azure immutable blob / GCS Bucket Lock, with legal holds).
 
+**Compliance-export cohort (experimental, ADR-0107 + related).** Beyond the
+general-purpose Evidence Bundle, `nova export-compliance` and a long tail of
+dedicated `nova export-*` commands render capsule/lineage evidence into
+regulator-shaped artifacts: EU AI Act (Annex IV, Art.12 record-keeping, Art.50
+marking + C2PA/SynthID assertion, Art.53 GPAI hash-chained form, Art.73
+incidents with a deadline clock chained to Art.72 post-market monitoring),
+ISO 42001/42005, NIST AI RMF, the NIST GenAI/CSA profile, GDPR (Art.30 RoPA,
+Art.17 erasure), CycloneDX AI-SBOM, and more. Every exporter is a **pure
+projection over already-captured evidence** — it renders facts, never
+adjudicates compliance — and each is marked with an `evidence_source`
+provenance tag (`operator_asserted` / `capsule_verified` / `unverifiable`,
+[`design/spec/evidence-source-provenance-marker.md`](../design/spec/evidence-source-provenance-marker.md))
+so a reader can tell what was actually observed from what an operator merely
+declared.
+
 > **Experimental — NovaSeal signing core.** The in-process NovaSeal core
 > shipped in v0.10+ (`experimental`): DSSE signing (ECDSA P-256), best-effort
 > **RFC 3161 trusted timestamps**, and an append-only SQLite Merkle log,
@@ -798,17 +881,25 @@ You now have the vocabulary NovaFabric is built on:
 - **Capture** — zero-code-change instrumentation via a `sitecustomize.py`
   loader, per-SDK hooks, and a wire-level safety net down to `urllib3`.
 - **Replay** — four honest modes (`forensic`, `mocked`, `semantic`, `exact`),
-  each with a clear promise and each producing a diffable capsule.
+  each with a clear promise and each producing a diffable capsule, plus a
+  fifth, experimental `intervention` mode for counterfactual replay.
 - **Diff** — field-by-field structural comparison, wireable as a CI regression
   gate with `--assert-no-regressions`.
-- **Lineage** — a rebuildable SQLite provenance graph answering `provenance`,
-  `blast-radius`, `replay-chain`, and `time-travel`, with OpenLineage emission.
+- **Diagnose** — structural (no-LLM) causal-graph attribution over a failed
+  run, with an experimental counterfactual root-cause search that
+  replay-proves rather than merely ranks a hypothesis.
+- **Lineage** — a rebuildable provenance graph answering `provenance`,
+  `blast-radius`, `replay-chain`, and `time-travel`, with OpenLineage emission;
+  SQLite is the local default, with four experimental at-scale backends
+  (Kuzu, Postgres, AGE, JanusGraph) for larger graphs.
 - **Registry + lifecycle** — versioned assets with a six-state lifecycle where
   promotion is governance metadata only.
 - **Evidence Bundle** — offline-verifiable signed export; the NovaSeal signing
   core (DSSE + RFC 3161 timestamps + Merkle log, `nova verify`) is
-  **experimental**, while the dedicated signing service and seal-layer WORM
-  retention remain **PLANNED**.
+  **experimental**, as is the Accountability Spine (energy receipts, ledger,
+  safety case) and the EU AI Act / ISO / NIST compliance-export cohort, while
+  the dedicated signing service and seal-layer WORM retention remain
+  **PLANNED**.
 
 Where to go next:
 

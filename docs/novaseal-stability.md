@@ -24,6 +24,11 @@ definition, and versioning policy.
 | Cap-002: `AnnexIVDocument` schema | **Stable** | JSON Schema at `schemas/annex-iv-document.schema.json` |
 | Internal modules (`_engine.py`, `merkle.py`) | **Internal** | No stability guarantee |
 | CLI commands (`nova verify`, `nova seal`) | **Stable** | Flag renames require deprecation notice ≥1 minor version |
+| `SigningBackend` Protocol (`sign_digest`/`get_cert_der`) | **Stable** | Implemented by `LocalSigningBackend`/`AwsKmsSigningBackend`/`AzureKvSigningBackend`/`GcpKmsSigningBackend`; new backends may be added additively |
+| `KeyWrappingBackend` Protocol (`wrap_key`/`unwrap_key`/`kek_ref`, ADR-0185) | **Experimental** | Separate, additive capability protocol for envelope-encryption KEKs; live cloud backends verified only against SDK-contract fakes |
+| `X509SigningIdentity` / `verify_x509_signature` (ADR-0055) | **Experimental** | Shipped v0.91.0 as a library API; not yet wired to `novaseal.yaml`/CLI, so its call surface may still change before that integration lands |
+| Sigstore bundle output (`nova seal sign --backend sigstore`, ADR-0071) | **Tracks upstream spec** | The bundle is Sigstore's own v0.3 format, not a NovaFabric wire format — its stability follows the `sigstore` SDK's, independent of `NOVASEAL_MAJOR` |
+| Checkpoint / witness cosigning (`trust/novaseal/witness.py`, ADR-0097) | **Experimental** | Library API only (no CLI); note format is a simplified C2SP `tlog-checkpoint` note, explicitly documented as subject to change (e.g. the deferred 4-byte key-hash disambiguation) |
 
 ---
 
@@ -116,7 +121,11 @@ Currently experimental:
 ## 6. References
 
 - ADR-0041: NovaSeal cryptographic core adoption
+- ADR-0055: Dual-Mode Signing Identity (x509 cert-pinned offline slice)
 - ADR-0058: Maker-checker dual-approval with NovaSeal
 - ADR-0059: Linked-envelope chain maker-checker
+- ADR-0071: Sigstore keyless signing
+- ADR-0097: Verifiable transparency log — checkpoint + witness cosigning
+- ADR-0185: Application-layer encryption at rest (`KeyWrappingBackend`)
 - [Semantic Versioning 2.0](https://semver.org/)
 - [DSSE specification](https://github.com/secure-systems-lab/dsse)

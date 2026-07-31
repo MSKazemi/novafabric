@@ -21,7 +21,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request, Response
+
+from novafabric.serve.http_cache import conditional_json
 
 logger = logging.getLogger(__name__)
 
@@ -132,8 +134,9 @@ def build_alerts_router(
 
     @router.get("/api/alerts/recent")
     async def recent_alerts(
+        request: Request,
         limit: int = Query(default=50, ge=1, le=200),
-    ) -> dict[str, Any]:
+    ) -> Response:
         from novafabric.audit import AUDIT_LOG_PATH  # noqa: PLC0415
         from novafabric.events.alerts import load_alerts_config_from_env  # noqa: PLC0415
         from novafabric.events.emitter import load_config_from_env  # noqa: PLC0415
@@ -159,10 +162,11 @@ def build_alerts_router(
                 logger.warning("reading events log failed: %s", exc)
 
         rows.sort(key=lambda r: parse_alert_ts(r["timestamp"]), reverse=True)
-        return {
+        payload = {
             "alerts": rows[:limit],
             "total": len(rows),
             "alerting_configured": alerts_cfg.enabled,
         }
+        return conditional_json(request, payload, max_age=15)
 
     return router

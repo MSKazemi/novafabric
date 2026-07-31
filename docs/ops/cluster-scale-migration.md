@@ -1,11 +1,22 @@
 # Cluster-Scale Migration Guide
 
-> **Status:** mixed — read the per-phase labels. Phase 0/0.5/1 (backup, schema
-> migration, Postgres MetadataStore via `nova migrate-to-postgres`) and
-> `nova storage validate` **work today**. The KuzuDB, JanusGraph, Apache AGE and
-> Postgres graph lineage backends are **planned / pending-benchmark** (Phase 2/4);
-> the OCS bulk-migration step is **future design**. Some CLI invocations shown below
-> for those phases do not exist yet and are labeled inline.
+> **Status: corrected 2026-07-30 — read the per-phase labels.** Earlier drafts
+> of this guide described the KuzuDB/JanusGraph/AGE/Postgres lineage backends
+> as "planned / pending-benchmark". That is stale: **all four are implemented
+> and testcontainers-verified** (KuzuDB's ADR-0053 10M-edge benchmark cleared
+> 2026-05-16 at p99 45.5ms; Postgres, AGE, and JanusGraph each have a parity
+> suite proving identical answers to the SQLite reference). What is
+> genuinely still missing is a **bulk-migration CLI path** into any of the
+> three non-default backends — `nova lineage-store migrate` only ever
+> targets a SQLite store today (see Phase 2/4 below for the real gap and the
+> real workaround). Phase 0/0.5/1 (backup, schema migration, Postgres
+> MetadataStore via `nova migrate-to-postgres`) and `nova storage validate`
+> **work today**. Phase 5's NATS consumer now has a real CLI entrypoint
+> (`nova lineage consume`, shipped v0.94.0/ADR-0219) that writes live into
+> KuzuDB — the remaining hardware-gated piece is the Slurm-prolog/DaemonSet
+> deployment plumbing around it, not the consumer itself. The OCS
+> bulk-migration step (Phase 3) is still **future design**. Some CLI
+> invocations shown below do not exist yet and are labeled inline.
 > Hardware-specific steps (NATS-on-Lustre, dedicated Postgres cluster) are marked
 > **hardware-gated** and require site-specific provisioning.
 
@@ -129,12 +140,16 @@ export NOVAFABRIC_METADATA_DSN="postgresql+asyncpg://novafabric_app:<pw>@pgbounc
 
 ---
 
-## Phase 2 — Migrate lineage to KuzuDB *(planned — pending benchmark)*
+## Phase 2 — Migrate lineage to KuzuDB *(backend shipped; bulk-migration CLI still SQLite-only)*
 
-> **Not shipped yet.** The KuzuDB lineage backend is a *production-candidate pending
-> benchmark* confirmation (blast_radius p99 < 500ms at 10M edges, ADR-0053); there is no
-> `--to kuzu` migration path today, and no `nova lineage store` command exists (note: the
-> real command group is `nova lineage-store`, hyphenated).
+> **Corrected 2026-07-30.** `KuzuLineageStore` (`src/novafabric/lineage/backends/kuzu.py`)
+> is implemented and **the ADR-0053 benchmark is cleared**: blast_radius p99 =
+> 45.5ms at 10M edges (gate was < 500ms), accepted 2026-05-16. The real
+> remaining gap is narrower than "not shipped": there is still no `--to kuzu`
+> flag on the bulk-migration CLI (`nova lineage-store migrate` only ever
+> constructs a `SqliteLineageStore` target — confirmed in
+> `src/novafabric/cli/lineage_migrate.py`), and no `nova lineage store`
+> command exists (the real command group is `nova lineage-store`, hyphenated).
 
 The lineage migration command that exists today is `nova lineage-store migrate`, which
 loads edges into a **SQLite** lineage store (the only target) from a Parquet export or an
@@ -148,9 +163,38 @@ nova lineage-store migrate --from-ocs --ocs-tenant org \
   --ocs-run-ids run-001,run-002 --db "$NOVA_HOME/novafabric.db" --commit
 ```
 
-Planned acceptance for the future KuzuDB tier:
-- blast_radius p99 < 500ms at 10M edges (ADR-0053 gate — `nova-lineage-bench`)
-- provenance query at depth 5 returns consistent results vs. SQLite baseline
+**The actual production path into KuzuDB today is not this bulk-migrate command —
+it is the live NATS consumer** (Phase 5): `nova lineage consume` writes edges
+directly into a KuzuDB directory via bulk-COPY as they arrive, bypassing this
+SQLite-only batch tool entirely. If you need a one-shot bulk load into KuzuDB
+today (rather than a live stream), the `KuzuLineageStore` class is usable
+directly from Python as the `target` argument to
+`novafabric.lineage.migration.kit.migrate()` / `migrate_from_ocs()` — those
+functions are backend-agnostic (`target: AbstractLineageStore`); only the CLI
+wrapper hardcodes SQLite.
+
+Cleared acceptance for the KuzuDB tier (ADR-0053, both now met):
+- blast_radius p99 < 500ms at 10M edges — **measured 45.5ms**, cleared 2026-05-16
+- provenance query at depth 5 returns consistent results vs. SQLite baseline —
+  proven by the parity suite (`tests/lineage/test_backends_kuzu.py`)
+
+### Postgres and Apache AGE — the other two shipped alternatives
+
+Not a distinct migration phase in this guide (no separate CLI path exists for
+either), but worth knowing both are implemented and testcontainers-verified as
+peers of KuzuDB, in case your site standardizes on plain Postgres or the AGE
+extension instead of an embedded graph engine:
+
+- `PostgresLineageStore` (`lineage/backends/postgres.py`) — recursive-CTE
+  queries against a plain Postgres table, no extension required.
+- `AgeLineageStore` (`lineage/backends/age.py`) — openCypher via the Apache AGE
+  extension, same query surface (`provenance`/`blast_radius`/`replay_chain`).
+
+Both answer identically to the SQLite reference per their parity suites
+(`tests/lineage/test_backends_postgres.py`, `tests/lineage/test_backends_age.py`).
+Like KuzuDB, reaching either from a bulk migration today means using
+`migrate()`/`migrate_from_ocs()` directly in Python with that backend as the
+`target` — the CLI wrapper does not expose them.
 
 ---
 
@@ -180,14 +224,27 @@ you set `NOVA_OCS_BACKEND=s3` in production.
 
 ---
 
-## Phase 4 — Enable JanusGraph lineage (cluster-scale) *(planned — hardware-gated)*
+## Phase 4 — Enable JanusGraph lineage (cluster-scale) *(backend shipped; live verification needs a running instance)*
 
-> **Not shipped yet.** The JanusGraph lineage backend is type-stubs only (not imported
-> at runtime unless `gremlinpython` is present); there is no `--to janusgraph` migration
-> path and no `nova lineage store` command. When implemented it will require a running
-> JanusGraph instance (Helm chart at `deploy/helm/janusgraph/`).
+> **Corrected 2026-07-30.** `JanusGraphLineageStore`
+> (`src/novafabric/lineage/backends/janusgraph.py`) is a real Gremlin
+> implementation, not a type-stub — the earlier "type-stubs only" framing here
+> was wrong (it correctly notes the module isn't *imported* at runtime unless
+> `gremlinpython` is installed, but the implementation behind that guard is
+> real, not a stub). It required two fixes the first time it was run against a
+> live JanusGraph instance: the **GraphSON v3** serializer (JanusGraph's
+> default GraphBinary serializer crashes on JanusGraph's custom vertex IDs),
+> and **`.emit()`** on the traversal (without it, `repeat(out()).times(n)`
+> returns only depth-exact nodes, not the whole reachable set) — both are in
+> the shipped code today and testcontainers-verified
+> (`tests/lineage/test_backends_janusgraph.py`). What is still genuinely
+> missing: there is no `--to janusgraph` flag on the bulk-migration CLI and no
+> `nova lineage store` command (see Phase 2's note on the same CLI gap). Using
+> it today still requires a running JanusGraph instance (Helm chart at
+> `deploy/helm/janusgraph/`) and constructing `JanusGraphLineageStore` directly
+> from Python as the migration `target`.
 
-The command shown here is illustrative of the *planned* interface, not a shipped command:
+The command shown here is illustrative of the *planned CLI* interface, not a shipped command — the backend behind it is real:
 
 ```bash
 # PLANNED — does not exist today.
@@ -202,10 +259,19 @@ uv run pytest tests/lineage/test_janusgraph.py -v -m "not slow"
 
 ---
 
-## Phase 5 — Enable NATS JetStream collector *(hardware-gated)*
+## Phase 5 — Enable NATS JetStream collector *(consumer shipped v0.94.0; deployment plumbing hardware-gated)*
 
 > Requires NATS server ≥ 2.10 with JetStream enabled.
 > On Lustre: requires Lustre 2.15+ with `lustre_flock` kernel module.
+
+**Corrected 2026-07-30 — the `LineageConsumer` now has a real CLI entrypoint.**
+`nova lineage consume` (`src/novafabric/cli/lineage_consume.py`, shipped
+v0.94.0, ADR-0061/ADR-0066/ADR-0219) runs `LineageConsumer.run_from_nats()` as
+a foreground daemon: it pulls from a NATS JetStream subject, extracts lineage
+edges, deduplicates across batches, and bulk-COPYs them into a KuzuDB
+directory. Before this command existed, that consumer logic was fully
+implemented and tested but reachable only from Python or tests, with no
+deployable entrypoint anywhere in the CLI.
 
 ```bash
 # Install the scale extra.
@@ -215,7 +281,16 @@ pip install 'novafabric[scale]'
 export NOVAFABRIC_HUB_ADDRESS="nats://nats-hub:4222"
 export NOVAFABRIC_CLUSTER_ID="my-cluster-01"
 
-# Start the collector (Slurm Prolog / Kubernetes DaemonSet).
+# Run the live lineage consumer (works today, given a reachable NATS server —
+# this part is not itself hardware-gated, only the HPC-specific deployment
+# wrapper around it is):
+export NOVA_NATS_URL="nats://nats-hub:4222"
+export NOVA_KUZU_PATH="/lustre/scratch/myproject/lineage.kuzu"
+nova lineage consume --subject "novafabric.lineage.>" \
+  --flush-batch-size 2000 --flush-interval-s 15
+
+# Start the collector's HPC-side spool/emit half (Slurm Prolog / Kubernetes
+# DaemonSet) — this half is the still hardware-gated piece.
 # See collector/scripts/slurm-prolog.sh and deploy/k8s/collector-daemonset.yaml.
 ```
 

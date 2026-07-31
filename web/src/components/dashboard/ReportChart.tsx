@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import ChartCard from '../ui/ChartCard';
+import { formatSI } from '../../lib/chartFormat';
 
 /** Chart spec served by GET /api/reports/catalog (ADR-0200/0201). */
 export interface ReportChartSpec {
@@ -110,7 +111,7 @@ export default function ReportChart({
     const yTicks = [lo, (lo + hi) / 2, hi]
       .map(
         v =>
-          `<text x="${ML - 6}" y="${(yOf(v) + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="currentColor" opacity="0.6">${Math.round(v * 100) / 100}</text>` +
+          `<text x="${ML - 6}" y="${(yOf(v) + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="currentColor" opacity="0.6">${formatSI(Math.round(v * 100) / 100)}</text>` +
           `<line x1="${ML}" x2="${W - MR}" y1="${yOf(v).toFixed(1)}" y2="${yOf(v).toFixed(1)}" stroke="currentColor" opacity="0.12"/>`,
       )
       .join('');

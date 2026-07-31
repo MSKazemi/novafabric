@@ -13,6 +13,7 @@
     "lint": "tsc --noEmit",
     "check:licenses": "node scripts/check-licenses.mjs",
     "build:fixtures": "python3 scripts/build_showcase_fixture.py && node scripts/sign-evidence.mjs",
+    "test:unit": "vitest run",
     "test:e2e": "playwright test tests/e2e",
     "test:visual": "playwright test tests/visual",
     "test:a11y": "playwright test tests/e2e/a11y.spec.ts",
@@ -34,7 +35,7 @@
     "graphology": "^0.26.0",
     "graphology-layout-forceatlas2": "^0.10.1",
     "js-yaml": "^4.1.1",
-    "motion": "^12.38.0",
+    "lucide-react": "^1.28.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "shiki": "^4.0.2",
@@ -46,11 +47,16 @@
     "@lhci/cli": "^0.15.1",
     "@playwright/test": "^1.60.0",
     "@tailwindcss/vite": "^4.3.0",
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/js-yaml": "^4.0.9",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
+    "jsdom": "^30.0.1",
     "tailwindcss": "^4.3.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
   },
   "engines": {
     "node": ">=20.0.0"

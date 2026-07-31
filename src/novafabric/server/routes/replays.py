@@ -101,7 +101,10 @@ async def schedule_replay(
 
 
 @router.get("/{replay_id}", response_model=None)
-async def get_replay(replay_id: str) -> dict[str, Any]:
+async def get_replay(
+    replay_id: str,
+    _auth: Annotated[AuthContext, Depends(require_role(Role.reader))] = None,  # type: ignore[assignment]
+) -> dict[str, Any]:
     return _job_summary(_get_job(replay_id))
 
 
@@ -132,6 +135,7 @@ async def cancel_replay(
 async def replay_events(  # pragma: no cover — SSE streaming; tested in integration tests
     replay_id: str,
     last_event_id: str | None = Query(default=None, alias="Last-Event-ID"),
+    _auth: Annotated[AuthContext, Depends(require_role(Role.reader))] = None,  # type: ignore[assignment]
 ) -> StreamingResponse:
     _get_job(replay_id)  # validates existence
 

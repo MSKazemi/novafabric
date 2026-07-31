@@ -19,6 +19,7 @@ Built by a factory so the caller injects its auth dependency (ADR-0183 §3).
 """
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +28,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from novafabric.serve.http_cache import conditional_json
 from novafabric.serve.report_registry import REPORTS, ReportSpec
 from novafabric.serve.reports import rows_to_csv
 from novafabric.viz.report_html import render_report_html
@@ -75,8 +77,13 @@ def build_report_export_router(
     router = APIRouter(dependencies=[Depends(verify_token)], tags=["reports"])
 
     @router.get("/api/reports/catalog")
-    async def report_catalog() -> dict[str, Any]:
-        return {"reports": [spec.catalog_entry() for spec in REPORTS.values()]}
+    async def report_catalog(request: Request) -> Response:
+        # Static-ish (changes only on release) — long-ish max_age + 304s.
+        return conditional_json(
+            request,
+            {"reports": [spec.catalog_entry() for spec in REPORTS.values()]},
+            max_age=60,
+        )
 
     def _register_data_route(rid: str) -> None:
         spec = REPORTS[rid]
@@ -87,7 +94,8 @@ def build_report_export_router(
                     status_code=422, detail="format must be 'json' or 'csv'"
                 )
             filters = _whitelisted_filters(spec, request)
-            columns, rows = spec.run(capsule_dir, db_path, filters)
+            # Report builders do sync DB/disk work — worker thread (B4).
+            columns, rows = await asyncio.to_thread(spec.run, capsule_dir, db_path, filters)
             if format == "csv":
                 return Response(
                     content=rows_to_csv(columns, rows),
@@ -122,7 +130,7 @@ def build_report_export_router(
                 status_code=422, detail="format must be 'html' or 'pdf'"
             )
         filters = _whitelisted_filters(spec, request)
-        columns, rows = spec.run(capsule_dir, db_path, filters)
+        columns, rows = await asyncio.to_thread(spec.run, capsule_dir, db_path, filters)
         chart_svg = spec.chart.render(rows, filters) if spec.chart else None
         html = render_report_html(
             title=spec.title,

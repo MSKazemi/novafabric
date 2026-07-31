@@ -44,9 +44,18 @@ when a complete fix needs longer than the window.
 
 ## Supported versions
 
-| Version | Supported |
-|---------|-----------|
-| 0.1.x   | Yes       |
+NovaFabric is pre-1.0 and releases frequently (multiple tagged releases per
+week during active development; latest tag as of this writing is **v0.94.0**).
+Given that cadence, only the latest tagged release is supported — there is no
+maintained LTS line before v1.0.
+
+| Version         | Supported            |
+|------------------|----------------------|
+| 0.94.x (latest)  | Yes                  |
+| < 0.94           | No — upgrade to latest |
+
+This table will be replaced by a real support-window policy at the v1.0
+freeze.
 
 ## Scope
 
@@ -67,9 +76,13 @@ STRIDE analysis in [`THREAT_MODEL.md`](THREAT_MODEL.md):
   secret-scanned before emission, HMAC signing is optional and recommended.
 - **SCIM 2.0 provisioning** (`/scim/v2`) — inbound, active only when both the
   config flag and the dedicated `NOVAFABRIC_SCIM_TOKEN` are set; otherwise 404.
-- **SAML endpoints** (`/v0/auth/saml/*`) — SP metadata only today; assertion
-  consumption is refused (501) until a license-cleared XML-signature verifier
-  ships — signature validation is never skipped.
+- **SAML endpoints** (`/v0/auth/saml/*`) — SP metadata is always available
+  read-only. Assertion consumption (login + ACS) is refused (501) unless the
+  operator explicitly sets `server.saml.experimental_acs_enabled: true` (the
+  ADR-0138 D5 license gate cleared in v0.73.0 via the Tier-A `signxml`
+  library); signature validation is never skipped, even when enabled. This
+  path remains `experimental`, and Security-Architect review is a recorded
+  pre-production blocking condition regardless of the opt-in flag.
 - **OTLP GenAI ingest** (`POST /api/otlp/v1/traces`) — token-authenticated;
   foreign span data is secret-scanned at write time.
 
@@ -86,16 +99,18 @@ is delegated to the `cryptography` package (which calls OpenSSL) and stdlib
 operates with a validated module is a property of the OpenSSL that deployment
 links, plus the algorithm caveat below.
 
-### Crypto inventory (verified against the tree, 2026-07-16)
+### Crypto inventory (verified against the tree, 2026-07-30)
 
 | Primitive | Where used | FIPS approvability |
 |---|---|---|
-| Ed25519 | NovaSeal envelopes/ratchet (`trust/novaseal/`), trust keyring, offline tokens (`server/offline_tokens.py`) | Approved as an algorithm (FIPS 186-5); **module coverage caveat below** |
-| ECDSA P-256 (DSSE) | NovaSeal signing backend, RFC 3161 verification | Approved (FIPS 186-4/186-5) |
-| AES-256-GCM | Envelope encryption at rest (ADR-0185), key wrapping | Approved (SP 800-38D) |
-| SHA-256 | Merkle trees, ledger/audit hash chains, CAS addressing, RFC 3161 | Approved (FIPS 180-4) |
+| Ed25519 | NovaSeal envelopes/ratchet (`trust/novaseal/`), trust keyring, offline tokens (`server/offline_tokens.py`), hybrid-signature envelope default algorithm (`trust/novaseal/hybrid_signature.py`, ADR-0072), did:key + Verifiable Credentials (`trust/did.py`, ADR-0075), delegation-chain grants (`trust/delegation.py`, ADR-0106), transparency-log witness cosigning (`trust/novaseal/witness.py`, ADR-0097), jurisdiction site-seals (`compliance/sovereignty.py`, ADR-0077) | Approved as an algorithm (FIPS 186-5); **module coverage caveat below** |
+| ECDSA P-256 (DSSE) | NovaSeal signing backend, RFC 3161 verification, x509 certificate-pinned signing identity's EC path (`trust/novaseal/x509_identity.py`, ADR-0055) | Approved (FIPS 186-4/186-5) |
+| RSA-PSS-SHA256 (2048+) | x509 certificate-pinned signing identity's RSA path (`trust/novaseal/x509_identity.py`, ADR-0055) — added v0.91.0 | Approved (FIPS 186-4/186-5, SP 800-56B for key sizes ≥2048) |
+| AES-256-GCM | Envelope encryption at rest (ADR-0185), key wrapping, cloud-KMS DEK wrap/unwrap (AWS KMS / Azure Key Vault / GCP KMS backends, `trust/novaseal/signing_backend.py`) | Approved (SP 800-38D) |
+| SHA-256 | Merkle trees (RFC 6962 evidence log + pairwise NovaSeal log — two incompatible constructions, do not mix), Merkle Mountain Range accumulator (`trust/novaseal/mmr.py`, ADR-0110 §NF-051), ledger/audit hash chains, CAS addressing, RFC 3161 | Approved (FIPS 180-4) |
 | HMAC-SHA256 | Lifecycle-event/webhook signing (`events/signing.py`) | Approved (FIPS 198-1) |
 | BLAKE3 (optional) | `storage/dual_object_store.py` acceleration, SHA-256 fallback exists | **Not approved** — leave the optional `blake3` package uninstalled in FIPS deployments |
+| ML-DSA (post-quantum) | Registry slot only in the hybrid-signature envelope (`trust/novaseal/hybrid_signature.py`, ADR-0072 Phase 1) — **not implemented**; no Tier-A ML-DSA library is wired in, so the "hybrid" envelope today signs Ed25519 only | Not yet shipped — no approvability claim |
 
 No MD5, SHA-1, ChaCha20, or bespoke primitives are used in security-relevant
 paths.

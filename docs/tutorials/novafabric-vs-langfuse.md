@@ -162,9 +162,11 @@ Langfuse cannot answer this question.
 **NovaFabric** produces cryptographically signed evidence bundles:
 
 ```bash
-nova export-evidence capsules/01KR9Q2AD…
+nova export-evidence capsules/01KR9Q2AD… --output bundle.zip --key ed25519.pem
 # → signed ZIP with ed25519 signature + full event trace
 ```
+
+(`--output` and `--key` are both required flags — omitting either exits non-zero.)
 
 An auditor can verify the signature and confirm the output hasn't been modified
 since capture. This is a compliance primitive — useful in regulated industries
@@ -175,12 +177,22 @@ and that the record hasn't been altered.
 
 ## Where Langfuse is genuinely better
 
+**Corrected 2026-07-30:** NovaFabric shipped a Langfuse-parity cohort (all
+**experimental**, offline-only, no hosted backend) that closes some of this gap
+— prompt versioning/labels (`nova prompt`, `nova label`, ADR-0112/0113),
+offline cost/token/latency analytics (`nova query`/`nova view`/`nova trend`/
+`nova pricing`, ADR-0129–0133), sessions and execution-graph replay
+(`nova graph agent`, ADR-0123/0124), and a team evaluation workflow
+(`nova eval score config`, `nova annotate`, `nova score submit`,
+`nova experiment`, ADR-0117–0120) — see `docs/tutorials/feature-tour.md`
+§§22–25. Real-time production alerting and a hosted multi-user SaaS remain
+genuinely Langfuse-only.
+
 | Area | Why Langfuse wins |
 |---|---|
-| Real-time cost tracking | Token cost per run, by model, by user, over time |
-| Production alerting | P95 latency monitors, error rate alerts |
-| Prompt A/B testing | Side-by-side prompt experiments at scale |
-| Team collaboration | Multi-user SaaS, comments, annotations, roles |
+| Real-time production alerting | Live P95 latency monitors, error rate alerts against a running service — NovaFabric's analytics are offline/batch over captured capsules, not a live monitor |
+| Prompt A/B testing at scale | Hosted, multi-user prompt experimentation UI; NovaFabric's `nova experiment` (§25) is a local, dataset-pinned A/B comparison, not a hosted testing platform |
+| Team collaboration | Multi-user SaaS, comments, roles, real-time dashboards; NovaFabric's `nova annotate` (§25) queues reviews locally with no hosted multi-user surface |
 | Ecosystem maturity | More framework integrations, larger community |
 | Hosted option | No infrastructure to run yourself |
 
@@ -192,9 +204,9 @@ and that the record hasn't been altered.
 |---|---|---|
 | Capture LLM traces | ✓ (SDK) | ✓ (wire-level, no code change) |
 | Browse runs in a UI | ✓ | ✓ |
-| Cost / token analytics | ✓ | — |
+| Cost / token analytics | ✓ (live) | ✓ (offline/batch, experimental — `nova query`/`view`/`trend`/`pricing`) |
 | Production alerting | ✓ | — |
-| Prompt management | ✓ | — |
+| Prompt management | ✓ (hosted) | ✓ (local, experimental — `nova prompt`/`nova label`) |
 | Portable capsule (no server to read) | — | ✓ |
 | Forensic replay | — | ✓ |
 | Structural diff between runs | — | ✓ |

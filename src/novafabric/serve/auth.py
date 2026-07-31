@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import secrets
 import stat
@@ -11,6 +13,29 @@ from typing import Final
 from novafabric._paths import serve_token_path
 
 TOKEN_ENV: Final[str] = "NOVAFABRIC_SERVE_TOKEN"
+
+
+def token_matches(candidate: str, expected: str) -> bool:
+    """Constant-time token comparison.
+
+    Hash both sides first so the comparison length is fixed — a plain
+    length check before compare_digest leaks the token length.
+    """
+    return hmac.compare_digest(
+        hashlib.sha256(candidate.encode()).digest(),
+        hashlib.sha256(expected.encode()).digest(),
+    )
+
+
+def extract_bearer(authorization: str | None) -> str | None:
+    """Return the token from an ``Authorization: Bearer <token>`` header, else None."""
+    if not authorization:
+        return None
+    scheme, _, credentials = authorization.partition(" ")
+    if scheme.lower() != "bearer":
+        return None
+    credentials = credentials.strip()
+    return credentials or None
 
 
 def generate_token() -> str:

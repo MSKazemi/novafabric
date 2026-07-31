@@ -30,10 +30,17 @@ export default function ConnectPanel({ onConnected, bootError, setBootError }: C
 
   return (
     <div className="flex items-center justify-center h-full min-h-screen bg-[var(--color-bg)]">
-      <div className="w-full max-w-md rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-8 shadow-xl">
+      <div className="w-full max-w-md rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-8 shadow-[var(--shadow-2)]">
         <div className="mb-6">
-          <span className="text-[10px] font-mono uppercase tracking-widest text-[var(--color-text-faint)]">NovaFabric</span>
-          <h1 className="mt-2 text-2xl font-medium text-[var(--color-text)]">Connect to <code className="font-mono text-[var(--color-text-muted)]">nova serve</code></h1>
+          <span className="flex items-center gap-2">
+            <svg viewBox="0 0 32 32" width="24" height="24" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" className="shrink-0">
+              <rect width="32" height="32" rx="7" fill="var(--color-bg-sunken)"/>
+              <polygon points="16,3.5 27.5,10 27.5,22 16,28.5 4.5,22 4.5,10" stroke="var(--color-accent)" strokeWidth="1.5" fill="none" strokeLinejoin="round"/>
+              <path d="M10 23 L10 9 L22 23 L22 9" stroke="var(--color-accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+            </svg>
+            <span className="text-[var(--text-2xs)] font-mono uppercase tracking-widest text-[var(--color-text-faint)]">NovaFabric</span>
+          </span>
+          <h1 className="mt-3 text-2xl font-medium text-[var(--color-text)] tracking-tight">Connect to <code className="font-mono text-[var(--color-text-muted)]">nova serve</code></h1>
           <p className="mt-2 text-sm text-[var(--color-text-muted)] leading-relaxed">
             Run{' '}
             <code className="font-mono text-xs bg-[var(--color-bg-sunken)] px-1.5 py-0.5 rounded">nova serve --experimental</code>{' '}
@@ -43,7 +50,7 @@ export default function ConnectPanel({ onConnected, bootError, setBootError }: C
 
         <form onSubmit={onSubmit} className="space-y-4">
           <label className="block">
-            <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">Server URL</span>
+            <span className="text-[var(--text-2xs)] uppercase tracking-wider text-[var(--color-text-faint)]">Server URL</span>
             <input
               type="url"
               value={base}
@@ -55,7 +62,7 @@ export default function ConnectPanel({ onConnected, bootError, setBootError }: C
           </label>
 
           <label className="block">
-            <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">Session token</span>
+            <span className="text-[var(--text-2xs)] uppercase tracking-wider text-[var(--color-text-faint)]">Session token</span>
             <input
               type="password"
               value={token}
@@ -65,11 +72,11 @@ export default function ConnectPanel({ onConnected, bootError, setBootError }: C
               className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm focus:border-[var(--color-accent)] focus:outline-none"
               required
             />
-            <p className="mt-1 text-[10px] text-[var(--color-text-faint)]">Also at <code>~/.novafabric/.serve-token</code> (mode 0600)</p>
+            <p className="mt-1 text-[var(--text-2xs)] text-[var(--color-text-faint)]">Also at <code>~/.novafabric/.serve-token</code> (mode 0600)</p>
           </label>
 
           {bootError && (
-            <div className="rounded border border-[color-mix(in_oklab,var(--color-status-failure)_30%,transparent)] bg-[color-mix(in_oklab,var(--color-status-failure)_8%,transparent)] p-3 text-xs text-[var(--color-status-failure)]">
+            <div className="rounded border border-[color-mix(in_oklab,var(--color-status-failure)_30%,transparent)] bg-[var(--color-danger-tint)] p-3 text-xs text-[var(--color-status-failure)]">
               {bootError}
             </div>
           )}

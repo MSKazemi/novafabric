@@ -90,16 +90,38 @@ it yet.
 
 ## 4. Honest limits — read before production
 
-- **Cloud-KMS wrap paths are planned, not shipped.** The AWS KMS / Azure Key
-  Vault / GCP KMS wrap paths named in ADR-0185 are **infra-gated and not
-  implemented**. What works today is the local 256-bit KEK file and the
-  test-only `MockKmsBackend`. Handing a non-wrap-capable backend to the
-  crypto layer raises `NotImplementedError` — it never silently downgrades.
-- **Verified against mock/local KMS only.** The test suite proves the scheme
-  (round-trip, tamper detection, shred, WORM-conformance-over-ciphertext,
-  mixed-store reads) against the local-file KEK and the mock backend.
-  End-to-end verification against a real cloud KMS has **not** been done and
-  is pending the infra-gated backlog (Bucket C).
+- **Corrected 2026-07-30 — cloud-KMS wrap paths are implemented, not
+  planned.** Earlier drafts of this doc said the AWS KMS / Azure Key Vault /
+  GCP KMS wrap paths were "infra-gated and not implemented" — that was stale.
+  `AwsKmsWrappingBackend`, `AzureKvWrappingBackend`, and `GcpKmsWrappingBackend`
+  (`src/novafabric/trust/novaseal/signing_backend.py`) all implement the
+  `KeyWrappingBackend` capability this module calls, gated behind the
+  `novafabric[seal-aws]` / `novafabric[seal-azure]` / `novafabric[seal-gcp]`
+  extras. What works today, in order of maturity: the local 256-bit KEK file
+  (production-ready), the test-only `MockKmsBackend`, and the three cloud
+  wrapping backends (unit-tested against in-memory fakes of each SDK — 31
+  passing tests across `tests/seal/test_aws_kms_wrapping.py`,
+  `test_cloud_kms_backends.py`, `test_cloud_kms_wrapping.py`). Handing a
+  non-wrap-capable backend to the crypto layer still raises
+  `NotImplementedError` — it never silently downgrades.
+- **Verified against mock/local KMS and in-memory cloud-SDK fakes.** The test
+  suite proves the scheme (round-trip, tamper detection, shred,
+  WORM-conformance-over-ciphertext, mixed-store reads) against the local-file
+  KEK, the mock backend, and the three cloud wrapping backends' fake
+  transports. **What has not been done**: end-to-end verification against a
+  *live* AWS KMS / Azure Key Vault / GCP KMS endpoint with real credentials —
+  that remains the one outstanding gap before recommending cloud KMS in
+  production.
+- **The §2 env-var wiring is local-KEK-only, by design, today.**
+  `backend_router.make_adapter()` — the function §2's `NOVA_OBJECT_STORE_*`
+  env vars drive — only ever constructs a `LocalSigningBackend` from
+  `NOVA_OBJECT_STORE_KEK_PATH`; there is no env var that selects one of the
+  three cloud wrapping backends for the *object-store* encryption feature.
+  Using a cloud KMS to wrap the object-store DEK today means constructing
+  `EncryptingAdapter(adapter, AwsKmsWrappingBackend(...))` (or the Azure/GCP
+  equivalent) yourself in Python, bypassing `make_adapter`'s env-var
+  convenience path — this is a real gap in the operator-facing surface, not
+  a doc-only omission.
 - **Security-Architect review pending.** Per the ADR's acceptance record,
   this feature requires a Security Architect sign-off before production use
   in regulated deployments. That review has not happened yet.

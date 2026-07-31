@@ -16,9 +16,20 @@ The migration kit (`nova lineage-store migrate`) rebuilds a lineage graph in a t
 - a positional Parquet file — a **deprecated** legacy path, kept for backward
   compatibility.
 
-The command targets **SQLite only** today. KuzuDB and Postgres/Apache AGE are **planned**
-graph backends and are not yet migration targets — see the tiered-backend table in
-[`design/architecture/lineage.md`](../../design/architecture/lineage.md#lineage-at-scale--tiered-backends).
+**Corrected 2026-07-30.** The `nova lineage-store migrate` **CLI command's target flag
+is SQLite only** today — that part of this guide was always accurate. What was *not*
+accurate: this guide previously described KuzuDB, Postgres, and Apache AGE as
+**planned, unimplemented** graph backends. As of v0.70.0 all four at-scale lineage
+backends (KuzuDB, Postgres recursive-CTE, Apache AGE openCypher, and JanusGraph
+Gremlin) are **implemented and testcontainers-verified** — there are zero
+`NotImplementedError` stubs left in `lineage/backends/`. The underlying migration
+function, `migrate_from_ocs()` (`lineage/migration/kit.py`), already takes any
+`AbstractLineageStore` as its `dest_store`, so it works against those backends when
+called from Python; the **CLI wrapper** (`cli/lineage_migrate.py`) simply hardcodes
+`SqliteLineageStore` as the target and has no `--target-backend` flag yet — that CLI
+gap, not backend implementation, is what's genuinely missing. See the tiered-backend
+table in [`design/architecture/lineage.md`](../../design/architecture/lineage.md#lineage-at-scale--tiered-backends)
+for full per-backend status.
 
 **When to migrate:**
 
@@ -26,10 +37,12 @@ graph backends and are not yet migration targets — see the tiered-backend tabl
   lineage graph is a derived, rebuildable index).
 - Consolidate lineage from a set of runs into a single queryable SQLite store.
 
-For deployments whose graph grows beyond ~1M edges, the embedded KuzuDB tier (v2a,
-**experimental** — production-candidate pending benchmark confirmation) and the
-Postgres/AGE tiers (**planned**) are described in the architecture doc; the CLI does not
-yet migrate into them.
+For deployments whose graph grows beyond ~1M edges, the embedded KuzuDB tier
+(**experimental**, benchmark-cleared: blast_radius p99 45.5ms @10M edges) and the
+Postgres/AGE/JanusGraph tiers (**experimental**, all testcontainers-verified) are
+described in the architecture doc; the `nova lineage-store migrate` **CLI** does not
+yet expose a flag to migrate into them (the backends themselves are not the gap —
+see above).
 
 ---
 
@@ -108,7 +121,7 @@ are **never modified** by the migration kit; they remain the authoritative sourc
 ## Deployment profiles for planned backends
 
 `nova lineage-store profile` prints a ready-to-use docker-compose deployment profile for a
-future graph backend. It emits configuration only — it does **not** migrate data.
+graph backend. It emits configuration only — it does **not** migrate data.
 
 ```bash
 # KuzuDB vertical single-node (default)
@@ -118,9 +131,10 @@ nova lineage-store profile --target kuzudb-vertical --node-size 16g-ram-500g-nvm
 nova lineage-store profile --target janusgraph-minimal --rf 3
 ```
 
-**works today** — profile generation (stdout only). The KuzuDB and JanusGraph backends
-these profiles target are **experimental** / **planned** respectively, and are not yet
-`migrate` destinations.
+**works today** — profile generation (stdout only). Both the KuzuDB and JanusGraph
+backends these profiles target are **experimental, testcontainers-verified**
+implementations (not stubs) — see "Corrected 2026-07-30" above — but neither is yet a
+`nova lineage-store migrate` CLI destination (that's a CLI-surface gap, not a backend gap).
 
 ---
 
@@ -128,10 +142,10 @@ these profiles target are **experimental** / **planned** respectively, and are n
 
 | Limitation | Status |
 |------------|--------|
-| `migrate` target is SQLite only | **works today** — KuzuDB / Postgres / AGE targets are **planned** |
-| KuzuDB 10M-edge benchmark (ADR-0053 v2a gate, depth-5 p99 < 500 ms) | **pending benchmark confirmation** — `lineage/backends/kuzu.py` ships as a production-candidate; the gate is not confirmed in-tree |
-| Apache AGE backend | **planned** — `lineage/backends/age.py` is a `NotImplementedError` stub (ADR-0053 v2b) |
-| Postgres backend | **planned** — `lineage/backends/postgres.py` is a `NotImplementedError` stub |
-| JanusGraph backend requires Docker; not suitable for local-only deployments | **future design** |
+| `migrate` CLI target is SQLite only (the CLI hardcodes `SqliteLineageStore`; no `--target-backend` flag) | **works today, as a CLI-surface gap** — the KuzuDB / Postgres / AGE / JanusGraph *backends* are implemented (see below), just not yet wired as `migrate` CLI destinations |
+| KuzuDB 10M-edge benchmark (ADR-0053 v2a gate, depth-5 p99 < 500 ms) | **cleared** — 45.5ms p99 blast-radius @10M edges, measured in the external `nova-lineage-bench` |
+| Apache AGE backend | **experimental, testcontainers-verified** (v0.69.0) — `lineage/backends/age.py` is a real openCypher implementation, not a stub |
+| Postgres backend | **experimental, testcontainers-verified** (v0.68.0) — `lineage/backends/postgres.py` uses recursive CTEs, no AGE extension needed |
+| JanusGraph backend | **experimental, testcontainers-verified** (v0.70.0) — requires Docker/Cassandra + Gremlin (GraphSON serializer, not default GraphBinary); not suitable for local-only deployments |
 | `--from-ocs` reads a locally reachable ObjectCapsuleStore; remote stores must be fetched first | **works today** (local OCS only) |
 | Federation (`/federation/query`) requires OQ-04 legal sign-off for regulated-industry deployments | Open — do not use in regulated multi-site deployments until resolved |

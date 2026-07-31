@@ -5,6 +5,20 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+TEST_TOKEN = "tv5-test-token"
+
+
+class TestClientAuthed(TestClient):
+    """TestClient that sends the tv5 token on every request."""
+
+    def request(self, method, url, **kwargs):  # type: ignore[override]
+        headers = kwargs.pop("headers", None) or {}
+        headers.setdefault("Authorization", f"Bearer {TEST_TOKEN}")
+        return super().request(method, url, headers=headers, **kwargs)
+
+
+TestClient = TestClientAuthed  # every existing test below gets authed requests
+
 
 @pytest.fixture
 def tv5_app(tmp_path):
@@ -15,7 +29,7 @@ def tv5_app(tmp_path):
     app = FastAPI()
     store = SnapshotStore3D(tmp_path / "snapshots")
     pipeline = LayoutPipeline3D(store)
-    router = make_tv5_router(store, pipeline)
+    router = make_tv5_router(store, pipeline, token=TEST_TOKEN)
     app.include_router(router)
     return app, store
 

@@ -1,6 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, type AlertRow, type AlertsRecentResult, type AlertSeverity } from '../../../lib/api';
+import { useMemo, useState } from 'react';
+import { api, type AlertRow, type AlertSeverity } from '../../../lib/api';
 import TabShell from './TabShell';
+import DataTable, { type Column } from '../../ui/DataTable';
+import TruncationNotice from '../../ui/TruncationNotice';
+import Badge from '../../ui/primitives/Badge';
+import Button from '../../ui/primitives/Button';
+import { useQuery } from '../../../lib/useQuery';
+import { usePolling } from '../../../lib/usePolling';
 
 // Operational alerts feed (ADR-0192). Reads /api/alerts/recent — the
 // hash-chained audit log's alert.delivery entries merged with recent ops.*
@@ -9,15 +15,9 @@ import TabShell from './TabShell';
 // (never the categorical chart palette) and always ship with a text label.
 
 const labelClass =
-  'text-[10px] font-mono uppercase tracking-wider text-[var(--color-text-faint)]';
+  'text-[var(--text-2xs)] font-mono uppercase tracking-wider text-[var(--color-text-faint)]';
 
-const SEVERITY_STYLE: Record<AlertSeverity, string> = {
-  critical:
-    'text-[var(--color-status-failure)] border-[color-mix(in_oklab,var(--color-status-failure)_40%,transparent)] bg-[color-mix(in_oklab,var(--color-status-failure)_10%,transparent)]',
-  warning:
-    'text-[var(--color-status-pending)] border-[color-mix(in_oklab,var(--color-status-pending)_40%,transparent)] bg-[color-mix(in_oklab,var(--color-status-pending)_10%,transparent)]',
-  info: 'text-[var(--color-text-muted)] border-[var(--color-border)] bg-[var(--color-bg-sunken)]',
-};
+const ALERTS_LIMIT = 100;
 
 const OUTCOME_LABEL: Record<string, string> = {
   emitted: 'emitted',
@@ -30,15 +30,8 @@ const OUTCOME_LABEL: Record<string, string> = {
 
 function SeverityBadge({ severity }: { severity: AlertSeverity | null }) {
   const sev = severity ?? 'info';
-  const glyph = sev === 'critical' ? '●' : sev === 'warning' ? '▲' : '○';
-  return (
-    <span
-      className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-mono ${SEVERITY_STYLE[sev]}`}
-    >
-      <span aria-hidden>{glyph}</span>
-      {sev}
-    </span>
-  );
+  const tone = sev === 'critical' ? 'danger' : sev === 'warning' ? 'pending' : 'neutral';
+  return <Badge tone={tone} dot>{sev}</Badge>;
 }
 
 function OutcomeBadge({ outcome }: { outcome: string }) {
@@ -48,7 +41,7 @@ function OutcomeBadge({ outcome }: { outcome: string }) {
     : outcome === 'delivered'
       ? 'text-[var(--color-status-success)]'
       : 'text-[var(--color-text-faint)]';
-  return <span className={`font-mono text-[10px] ${cls}`}>{OUTCOME_LABEL[outcome] ?? outcome}</span>;
+  return <span className={`font-mono text-[var(--text-2xs)] ${cls}`}>{OUTCOME_LABEL[outcome] ?? outcome}</span>;
 }
 
 function StatTile({ label, value, tone }: { label: string; value: string; tone?: string }) {
@@ -72,52 +65,64 @@ function relativeTime(iso: string): string {
   return `${Math.floor(secs / 86400)}d ago`;
 }
 
-function AlertRowView({ row }: { row: AlertRow }) {
-  return (
-    <tr className="border-b border-[var(--color-border)] last:border-b-0 align-top">
-      <td className="px-3 py-2 whitespace-nowrap">
-        <SeverityBadge severity={row.severity} />
-      </td>
-      <td className="px-3 py-2 font-mono text-[11px] text-[var(--color-text)]">{row.event_type}</td>
-      <td className="px-3 py-2 font-mono text-[11px] text-[var(--color-text-muted)] break-all">
-        {row.subject}
-      </td>
-      <td className="px-3 py-2 whitespace-nowrap">
+const COLUMNS: Column<AlertRow>[] = [
+  {
+    key: 'severity',
+    header: 'severity',
+    className: 'w-24',
+    render: (row) => <SeverityBadge severity={row.severity} />,
+    sortValue: (row) => row.severity ?? 'info',
+  },
+  {
+    key: 'event_type',
+    header: 'event',
+    className: 'w-44',
+    render: (row) => <span className="font-mono text-[11px]">{row.event_type}</span>,
+    sortValue: (row) => row.event_type,
+  },
+  {
+    key: 'subject',
+    header: 'subject',
+    render: (row) => (
+      <span className="font-mono text-[11px] text-[var(--color-text-muted)] truncate">{row.subject}</span>
+    ),
+  },
+  {
+    key: 'delivery',
+    header: 'delivery',
+    className: 'w-48',
+    render: (row) => (
+      <span className="truncate">
         <OutcomeBadge outcome={row.outcome} />
         {row.endpoint_id && (
-          <span className="ml-1 text-[10px] font-mono text-[var(--color-text-faint)]">
+          <span className="ml-1 text-[var(--text-2xs)] font-mono text-[var(--color-text-faint)]">
             → {row.endpoint_id}
             {row.attempts > 1 ? ` (${row.attempts}×)` : ''}
           </span>
         )}
-      </td>
-      <td className="px-3 py-2 whitespace-nowrap text-[10px] font-mono text-[var(--color-text-faint)]" title={row.timestamp}>
+      </span>
+    ),
+  },
+  {
+    key: 'when',
+    header: 'when',
+    className: 'w-20',
+    render: (row) => (
+      <span className="text-[var(--text-2xs)] font-mono text-[var(--color-text-faint)]" title={row.timestamp}>
         {relativeTime(row.timestamp)}
-      </td>
-    </tr>
-  );
-}
+      </span>
+    ),
+    sortValue: (row) => row.timestamp,
+  },
+];
 
 export default function AlertsTab() {
-  const [data, setData] = useState<AlertsRecentResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [auto, setAuto] = useState(true);
+  const [tick, setTick] = useState(0);
 
-  const load = useCallback(async () => {
-    try {
-      setError(null);
-      setData(await api.alertsRecent(100));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-    if (!auto) return;
-    const id = setInterval(() => void load(), 15_000);
-    return () => clearInterval(id);
-  }, [load, auto]);
+  const query = useQuery(() => api.alertsRecent(ALERTS_LIMIT), [tick]);
+  usePolling(() => setTick((t) => t + 1), 15_000, auto);
+  const data = query.data;
 
   const counts = useMemo(() => {
     const rows = data?.alerts ?? [];
@@ -131,31 +136,24 @@ export default function AlertsTab() {
   return (
     <TabShell
       title="Alerts"
+      icon="alerts"
       subtitle="Operational alerts (quota, rate-limit, policy, drift, seal, backup) and their delivery outcomes"
       cli={['nova audit-log export', 'nova events emit']}
       help="Read-only feed from the hash-chained audit log + ops.* events. Configure outbound delivery server-side with NOVA_ALERTS_* (Slack/PagerDuty/email/webhook). Alerting is OFF by default (ADR-0192)."
       actions={
-        <button
-          onClick={() => setAuto((a) => !a)}
-          className={`rounded border px-2 py-1 text-[10px] font-mono ${
-            auto
-              ? 'border-[var(--color-accent)] text-[var(--color-accent)]'
-              : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]'
-          }`}
-        >
+        <Button size="sm" variant={auto ? 'secondary' : 'ghost'} onClick={() => setAuto((a) => !a)}>
           {auto ? 'live' : 'paused'}
-        </button>
+        </Button>
       }
     >
-      {error && <p className="text-[11px] font-mono text-[var(--color-status-failure)]">{error}</p>}
-      {data && (
-        <div className="space-y-4">
-          {!data.alerting_configured && (
-            <div className="rounded border border-[color-mix(in_oklab,var(--color-status-pending)_35%,transparent)] bg-[color-mix(in_oklab,var(--color-status-pending)_8%,transparent)] px-3 py-2 text-[11px] font-mono text-[var(--color-text-muted)]">
-              Outbound alerting is not configured — events are recorded locally but not delivered.
-              Set a <code>NOVA_ALERTS_*</code> endpoint to route Slack/PagerDuty/email/webhook.
-            </div>
-          )}
+      <div className="space-y-4">
+        {data && !data.alerting_configured && (
+          <div className="rounded border border-[color-mix(in_oklab,var(--color-status-pending)_35%,transparent)] bg-[var(--color-pending-tint)] px-3 py-2 text-[11px] font-mono text-[var(--color-text-muted)]">
+            Outbound alerting is not configured — events are recorded locally but not delivered.
+            Set a <code>NOVA_ALERTS_*</code> endpoint to route Slack/PagerDuty/email/webhook.
+          </div>
+        )}
+        {data && (
           <div className="grid grid-cols-3 gap-3">
             <StatTile label="recent alerts" value={String(counts.total)} />
             <StatTile
@@ -169,34 +167,31 @@ export default function AlertsTab() {
               tone={counts.failed ? 'text-[var(--color-status-failure)]' : undefined}
             />
           </div>
-          {data.alerts.length === 0 ? (
+        )}
+        <DataTable
+          columns={COLUMNS}
+          rows={data?.alerts ?? []}
+          rowKey={(row) => row.id}
+          loading={query.loading && !data}
+          error={query.error}
+          onRetry={query.reload}
+          rowHeight={36}
+          empty={
             <p className="text-[11px] font-mono text-[var(--color-text-faint)] py-4">
               No operational alerts recorded. Alerts appear here when a quota breach, sustained
               rate-limiting, policy violation, drift detection, seal-verify failure, or backup failure
               fires (ADR-0192).
             </p>
-          ) : (
-            <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-raised)] overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] border-b border-[var(--color-border)]">
-                    <th className="px-3 py-2 text-left font-medium">severity</th>
-                    <th className="px-3 py-2 text-left font-medium">event</th>
-                    <th className="px-3 py-2 text-left font-medium">subject</th>
-                    <th className="px-3 py-2 text-left font-medium">delivery</th>
-                    <th className="px-3 py-2 text-left font-medium">when</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.alerts.map((row) => (
-                    <AlertRowView key={row.id} row={row} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
+          }
+          footer={
+            <TruncationNotice
+              shown={data?.alerts.length ?? 0}
+              hasMore={(data?.alerts.length ?? 0) >= ALERTS_LIMIT}
+              hint="showing the most recent — export the audit log for full history"
+            />
+          }
+        />
+      </div>
     </TabShell>
   );
 }

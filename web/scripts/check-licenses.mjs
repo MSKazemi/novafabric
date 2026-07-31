@@ -32,6 +32,7 @@ const TIER_A = new Set([
   'BSD',
   'ISC',
   '0BSD',
+  'MIT-0',
   'OFL-1.1',
   'CC0-1.0',
   'Unlicense',

@@ -45,6 +45,12 @@ def _hermetic_novafabric_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
         "NOVAFABRIC_AUDIT_LOG_PATH",
         str(tmp_path / ".nova-home-hermetic" / "audit-hermetic.jsonl"),
     )
+    # The registry-schema DDL memo (init-once-per-db, B4) must not leak across
+    # tests: a test that deletes/replaces a db file another test path shared
+    # would otherwise skip re-initialisation.
+    from novafabric.registry.store import reset_schema_memo
+
+    reset_schema_memo()
 
 
 @pytest.fixture(autouse=True)

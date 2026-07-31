@@ -51,6 +51,7 @@ If you are *using* the `nova` CLI rather than modifying it, start with
   - [Working with EventEnvelope](#working-with-eventenvelope-envelope)
   - [Standard outer envelopes](#standard-outer-envelopes-envelopes--experimental) *(experimental)*
   - [Working with the SPKG](#working-with-the-spkg-kgspkg--experimental) *(experimental)*
+  - [Standalone trust primitives (Python-API only)](#standalone-trust-primitives-python-api-only) *(experimental)*
 - **Scale-out and topology work** *(engineering toward planned architecture)*
   - [Building the collector tier](#building-the-collector-tier-go-phase-2)
   - [Live Topology Dashboard development](#live-topology-dashboard-development)
@@ -180,6 +181,19 @@ evaluation, deployment). To add an eighth:
 1. Create `src/novafabric/cli/<command>.py` with a `<command>_cmd` function.
 2. Register it in `src/novafabric/cli/main.py` with `app.command(...)`.
 3. Add at least two CLI tests in `tests/test_cli.py`: a success path and an error path.
+4. Regenerate the dashboard command registry so the CommandsTab stays a complete
+   mirror of the CLI:
+   ```bash
+   uv run python web/scripts/gen-command-registry.py
+   ```
+   `tests/serve/test_command_registry_coverage.py` re-runs this introspection in
+   CI and fails if the checked-in `generatedCommands.ts` drifts from the live
+   Typer app — a forgotten regeneration is a test failure, not a silent gap.
+5. If the new command deserves a real dashboard panel (not just a copy-only
+   command builder), add a row for it in
+   `web/src/components/dashboard/commands/commandParity.json`
+   (`"status": "real-panel"` + `tab`/`api`); otherwise it defaults to
+   `"builder-only"` and needs no entry.
 
 **Fixed-value options — use `str` Enum types.** When an option accepts a finite set
 of values, define a `class MyOption(str, Enum)` in the same module and use it as the
@@ -198,12 +212,19 @@ uv run nova <command> --help
 ## Adding a new dashboard tab or input
 
 The dashboard is a static Astro/React app under `web/`. After editing source files,
-rebuild and copy the bundle:
+rebuild and copy the bundle with the single dedicated script — **not** a plain
+`astro build` followed by a manual `cp -r`, which would overwrite sibling
+static directories (e.g. `topology/`) that other build steps own:
 
 ```bash
-cd web && npm run build
-cp -r dist/* ../src/novafabric/serve/static/
+cd web && npm run build:dashboard   # astro build + scripts/copy-dashboard.mjs
+# or, from the repo root:
+make bundle
 ```
+
+`copy-dashboard.mjs` copies only the entries the web build owns (`_astro`,
+`dashboard`, `concepts`, `showcase`, etc. — see the script for the full list)
+into `src/novafabric/serve/static/`, leaving other targets' output untouched.
 
 **Shared UI components** live in `web/src/components/ui/`:
 
@@ -245,9 +266,20 @@ The matching dashboard panel goes in `web/src/components/dashboard/tabs/<Tab>.ts
 
 ## Adding a new report format
 
-1. Add a new `elif format_ == "<name>":` branch in `src/novafabric/report/generator.py`.
-2. Return a `str` in the new format.
-3. Add a test in `tests/test_report.py` asserting the output is valid for the format.
+`generate_report(format_, db_path=None)` in `src/novafabric/report/generator.py`
+dispatches on `format_` with a chain of early-return `if format_ == "<name>":`
+checks (currently `json`, `html`, falling through to markdown as the default).
+Binary formats that need to render the HTML first (e.g. `pdf` via WeasyPrint,
+see `generate_report_pdf`) live as a separate function rather than returning
+from `generate_report` itself.
+
+1. Add a new `if format_ == "<name>": return ...` branch (or a sibling
+   `generate_report_<name>()` function for a binary format) in `generator.py`.
+2. Add the value to the `ReportFormat` enum in `src/novafabric/cli/report.py`
+   and dispatch on it in `report_cmd` (mirror the `pdf` branch if the format is
+   binary and needs `--output`).
+3. Add a test in `tests/test_report.py` asserting the output is valid for the
+   format, and a CLI test for the new `--format` value.
 
 ## Extending failure attribution (diagnose/, ADR-0084)
 
@@ -274,6 +306,26 @@ To extend it:
 Do **not** write attribution results back into the lineage store from this module —
 it is read-only by design (ADR-0084). Scores are relative ranking weights, never
 presented as calibrated probabilities.
+
+**Related, newer modules in `diagnose/` (ADR-0101, experimental):**
+
+- `verify.py::verify_hypothesis` / `search_root_cause` back the CLI's
+  `nova diagnose --intervene` and `--search-root-cause` flags — they replay the
+  capsule counterfactually (ADR-0086, mocked/zero-token) and record an
+  evidence-based `CONFIRMED`/`REFUTED`/`INCONCLUSIVE` verdict rather than a
+  guess.
+- `causal_graph.py::causal_root_candidates` (NF-019/022) back-traces the span
+  graph to root failure nodes (a failing node with no failing ancestor). It has
+  **no CLI verb of its own** — it's consumed internally by
+  `search_root_cause`. Every candidate carries `verification="unverified"`
+  until an intervention replay confirms it.
+- `claim_audit.py::audit_claims` (NF-021) marks a model-span claim `ungrounded`
+  when no tool-span evidence precedes it on the answer path — a structural
+  hallucination-risk signal, no NLP. **This is Python-API only today** — it is
+  not wired into `nova diagnose`'s output or any CLI command. If you add a CLI
+  surface for it, follow the "Adding a new CLI command" pattern above and
+  update `docs/user-guide.md`'s v0.75–v0.94 cohort table to move it from
+  "Python API only" to "CLI".
 
 ## Adding a compliance audit profile
 
@@ -668,6 +720,36 @@ return findings through `to_findings()`, add tests under `tests/kg/` (assert the
 ranks top-k *and* the finding is schema/SHACL-valid), and — if user-facing — add a `nova kg <verb>`
 command mirroring `detect` (import lazily; only guard with the `[spkg]` message if you actually need rdflib
 /kuzu). Update `CHANGELOG.md`, `docs/cli-reference.md`, and the `design/BUILD_QUEUE.md` BQ-SPKG-01 entry.
+
+---
+
+## Standalone trust primitives (Python-API only)
+
+A run of ADR-0101-adjacent ADRs (v0.75.0–v0.94.0) added several small, tested
+trust modules that are each **pure Python API, with no `nova` CLI verb and no
+dashboard panel**. They don't share a package — each lives next to the
+subsystem it extends. Treat each as **experimental**: implemented and tested,
+but no shipped end-user workflow wraps it yet. If you add a CLI or dashboard
+surface for one, follow the "Adding a new CLI command" pattern above, mirror
+the change into `docs/user-guide.md`'s v0.75–v0.94 cohort table, and note it in
+`CHANGELOG.md`.
+
+| Module | ADR | What it does |
+|---|---|---|
+| `trust/novaseal/x509_identity.py` | 0055 | Offline signing identity pinned to an x509 cert's SHA-256 fingerprint (ECDSA-P256/RSA-PSS) — verification checks `fingerprint ∈ pinned` **and** the signature, deliberately skipping CA path-building so it stays a pure local check. |
+| `trust/novaseal/hybrid_signature.py` | 0072 | Crypto-agility envelope over a pluggable algorithm registry — Ed25519 today, a post-quantum algorithm (ML-DSA) can register as a second signer later with no envelope format change ("either alone suffices"). |
+| `trust/did.py` | 0075 | Self-certifying `did:key` (Ed25519, base58btc + multicodec, no network lookup) plus Verifiable Credential issue/verify. |
+| `trust/delegation.py` | 0106 | Signed user → agent → sub-agent "acted-as" delegation chain (`issue_grant`, `verify_delegation_chain`) — scope only ever attenuates down the chain, never escalates. |
+| `trust/novaseal/witness.py` | 0097 | Checkpoint + witness cosigning over the existing NovaSeal Merkle log's consistency proofs — anti-split-view; a second party corroborates the log hasn't forked. |
+| `compliance/sovereignty.py` | 0077 | Jurisdiction site-seals (`issue_site_seal`/`verify_site_seal`) — an Ed25519 countersignature verified under the key registered for the *claimed* jurisdiction, so a forged residency claim fails verification; `check_cross_jurisdiction_read` enforces a `ResidencyPolicy`. |
+
+None of these modules write to a capsule or mutate shipped schemas — they are
+additive, standalone primitives you import directly. Tests live alongside the
+existing subsystem's test tree, not a dedicated directory for this group:
+`tests/seal/` for the three `trust/novaseal/` modules (`test_x509_identity.py`,
+`test_hybrid_signature.py`, `test_witness.py`), `tests/trust/` for `did.py` and
+`delegation.py`, and `tests/compliance/test_sovereignty.py` for the site-seal
+module.
 
 ---
 

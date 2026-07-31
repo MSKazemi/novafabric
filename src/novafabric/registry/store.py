@@ -1,9 +1,24 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from pathlib import Path
 
 from novafabric._paths import registry_db_path
+
+# Databases whose schema this process has already ensured. The DDL below is
+# all idempotent CREATE IF NOT EXISTS, but parsing + executing the script on
+# EVERY request was measurable overhead on the dashboard's hot read paths —
+# once per (process, db file) is enough. Keyed by the resolved main-db path so
+# tests with per-test tmp DBs each still get their DDL.
+_SCHEMA_READY: set[str] = set()
+_SCHEMA_READY_LOCK = threading.Lock()
+
+
+def reset_schema_memo() -> None:
+    """Forget which databases were initialised (tests / DB replacement)."""
+    with _SCHEMA_READY_LOCK:
+        _SCHEMA_READY.clear()
 
 
 def get_db_path() -> Path:
@@ -20,7 +35,29 @@ def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
     return conn
 
 
-def init_schema(conn: sqlite3.Connection) -> None:
+def _main_db_file(conn: sqlite3.Connection) -> str | None:
+    try:
+        for _, name, file in conn.execute("PRAGMA database_list"):
+            if name == "main":
+                return file or None
+    except sqlite3.Error:
+        return None
+    return None
+
+
+def init_schema(conn: sqlite3.Connection, *, force: bool = False) -> None:
+    dbfile = _main_db_file(conn)
+    if dbfile is not None and not force:
+        with _SCHEMA_READY_LOCK:
+            if dbfile in _SCHEMA_READY:
+                return
+    _init_schema(conn)
+    if dbfile is not None:
+        with _SCHEMA_READY_LOCK:
+            _SCHEMA_READY.add(dbfile)
+
+
+def _init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS schema_version (

@@ -19,11 +19,13 @@ Response shape (exact):
           "revoked_at": str|null, "status": "active"|"revoked"|"expired"
         }
       ],
-      "total": int
+      "total": int,       # true COUNT(*) of all keys, not len(keys)
+      "truncated": bool   # true when total > len(keys) (ADR-0199 bound)
     }
 
-Never hashes, never secrets. Empty or missing DB → ``{"keys": [], "total": 0}``
-(never a 500).
+``limit`` (default 500, max 2000) bounds the page at the SQL layer.
+Never hashes, never secrets. Empty or missing DB →
+``{"keys": [], "total": 0, "truncated": false}`` (never a 500).
 """
 
 from __future__ import annotations
@@ -32,7 +34,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 _ROW_FIELDS = (
     "key_id",
@@ -46,12 +48,15 @@ _ROW_FIELDS = (
 )
 
 
-def api_key_rows(db_path: Path | None) -> list[dict[str, Any]]:
+def api_key_rows(
+    db_path: Path | None, limit: int | None = None
+) -> list[dict[str, Any]]:
     """Secret-free projection of the API-key store (shared read helper).
 
     Each row carries only the metadata fields in ``_ROW_FIELDS`` plus a
     derived ``status`` (``active``/``revoked``/``expired`` via
-    :func:`novafabric.server.api_keys.key_status`). Never hashes, never
+    :func:`novafabric.server.api_keys.key_status`). ``limit`` (optional)
+    is pushed into the store's SQL read (ADR-0199). Never hashes, never
     secrets. Missing/unreadable store → ``[]``, never an exception.
     """
     if db_path is None or not Path(db_path).exists():
@@ -60,7 +65,7 @@ def api_key_rows(db_path: Path | None) -> list[dict[str, Any]]:
     from novafabric.server.api_keys import key_status, list_keys  # noqa: PLC0415
 
     try:
-        rows = list_keys(db_path=Path(db_path))
+        rows = list_keys(db_path=Path(db_path), limit=limit)
     except Exception:  # noqa: BLE001 — a read view must never 500 the dashboard
         return []
 
@@ -72,6 +77,19 @@ def api_key_rows(db_path: Path | None) -> list[dict[str, Any]]:
     return keys
 
 
+def _count_keys(db_path: Path | None) -> int:
+    """Total keys in the store; missing/unreadable store → 0, never a 500."""
+    if db_path is None or not Path(db_path).exists():
+        return 0
+
+    from novafabric.server.api_keys import count_keys  # noqa: PLC0415
+
+    try:
+        return count_keys(db_path=Path(db_path))
+    except Exception:  # noqa: BLE001 — a read view must never 500 the dashboard
+        return 0
+
+
 def build_admin_keys_router(
     verify_token: Callable[..., Any],
     *,
@@ -80,8 +98,11 @@ def build_admin_keys_router(
     router = APIRouter(dependencies=[Depends(verify_token)], tags=["admin-keys"])
 
     @router.get("/api/admin/api-keys")
-    async def admin_api_keys() -> dict[str, Any]:
-        keys = api_key_rows(db_path)
-        return {"keys": keys, "total": len(keys)}
+    async def admin_api_keys(
+        limit: int = Query(default=500, ge=1, le=2000),
+    ) -> dict[str, Any]:
+        keys = api_key_rows(db_path, limit=limit)
+        total = _count_keys(db_path)
+        return {"keys": keys, "total": total, "truncated": total > len(keys)}
 
     return router

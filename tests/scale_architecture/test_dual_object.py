@@ -77,11 +77,13 @@ class TestDualObjectSplitDisabled:
         assert result.pii_content_digest is None
         assert result.cap003_enabled is False
 
-    def test_env_flag_defaults_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # Default changed to "true" in v0.44.0 (OQ-01 resolved by ADR-0069)
+    def test_env_flag_defaults_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Changed to "true" in v0.44.0 on a mis-citation (ADR-0069 resolves a
+        # different capability's OQ-01). Restored to "false" 2026-07-30 per
+        # SCALE-ADR-003's mandatory safety gate pending real legal-counsel review.
         monkeypatch.delenv("NOVA_CAP003_ENABLED", raising=False)
         store = DualObjectStore()
-        assert store.enabled is True
+        assert store.enabled is False
 
     def test_env_flag_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("NOVA_CAP003_ENABLED", "true")

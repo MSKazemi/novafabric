@@ -438,13 +438,22 @@ def verify_key(
         conn.close()
 
 
-def list_keys(*, db_path: Path | None = None) -> list[dict[str, Any]]:
-    """Return key metadata rows — never secrets, never hashes."""
+def list_keys(
+    *, db_path: Path | None = None, limit: int | None = None
+) -> list[dict[str, Any]]:
+    """Return key metadata rows — never secrets, never hashes.
+
+    ``limit`` (optional, additive) bounds the read at the SQL layer
+    (ADR-0199); ``None`` keeps the historical return-everything behavior.
+    """
     conn = _get_conn(db_path)
     try:
-        rows = conn.execute(
-            f"SELECT {_LIST_COLUMNS} FROM api_keys ORDER BY created_at"
-        ).fetchall()
+        sql = f"SELECT {_LIST_COLUMNS} FROM api_keys ORDER BY created_at"
+        params: tuple[int, ...] = ()
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (int(limit),)
+        rows = conn.execute(sql, params).fetchall()
     finally:
         conn.close()
     out: list[dict[str, Any]] = []
@@ -453,6 +462,16 @@ def list_keys(*, db_path: Path | None = None) -> list[dict[str, Any]]:
         d["roles"] = json.loads(d["roles"])
         out.append(d)
     return out
+
+
+def count_keys(*, db_path: Path | None = None) -> int:
+    """Return the total number of API keys in the store (any status)."""
+    conn = _get_conn(db_path)
+    try:
+        row = conn.execute("SELECT COUNT(*) FROM api_keys").fetchone()
+        return int(row[0])
+    finally:
+        conn.close()
 
 
 def revoke_key(

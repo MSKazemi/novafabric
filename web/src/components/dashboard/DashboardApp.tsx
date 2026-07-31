@@ -7,11 +7,13 @@ function openTopology() {
   const url = `${origin}/topology/${token ? `?token=${encodeURIComponent(token)}` : ''}`;
   window.open(url, '_blank', 'noopener,noreferrer');
 }
-import Sidebar, { type Tab, ALL_TABS, NAV_GROUPS } from './Sidebar';
+import Sidebar, { type Tab, ALL_TABS, NAV_GROUPS, SHORTCUT_TAB, TAB_SHORTCUT } from './Sidebar';
 import ConnectPanel from './ConnectPanel';
 import KeyboardHelp from '../ui/KeyboardHelp';
 import ErrorBoundary from '../ui/ErrorBoundary';
 import CommandPalette, { type Command } from '../ui/CommandPalette';
+import Icon from '../ui/primitives/Icon';
+import { COMPLIANCE_GROUPS } from './tabs/compliance/groups';
 import { Loading } from './helpers';
 import { usePolling } from '../../lib/usePolling';
 import { ToastProvider, useToast } from '../../lib/ToastContext';
@@ -102,6 +104,19 @@ function DashboardInner() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     try { return localStorage.getItem('novafabric.sidebar-collapsed') === 'true'; } catch { return false; }
   });
+
+  // Narrow viewports: auto-collapse the sidebar to the icon rail (the user's
+  // explicit expand still wins for the session — this only fires on crossing
+  // the breakpoint). First responsive affordance for <1024px windows.
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia('(max-width: 1023px)');
+    const apply = (matches: boolean) => { if (matches) setSidebarCollapsed(true); };
+    apply(mq.matches);
+    const onChange = (e: MediaQueryListEvent) => apply(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
   const [showHelp, setShowHelp] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
 
@@ -159,8 +174,17 @@ function DashboardInner() {
     });
   }, [connected]);
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts. Navigation uses stable mnemonic `g`-sequences
+  // (g h → Home, g r → Runs, …) declared per-item in NAV_GROUPS — reordering
+  // the sidebar no longer silently remaps anything (the old scheme was
+  // positional 1–9).
   useEffect(() => {
+    let gArmed = false;
+    let gTimer: ReturnType<typeof setTimeout> | undefined;
+    const disarm = () => {
+      gArmed = false;
+      if (gTimer) clearTimeout(gTimer);
+    };
     function onKey(e: KeyboardEvent) {
       // Cmd/Ctrl+K opens the command palette from anywhere, even inside inputs.
       if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
@@ -169,14 +193,24 @@ function DashboardInner() {
         return;
       }
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (gArmed) {
+        disarm();
+        const target = SHORTCUT_TAB[e.key.toLowerCase()];
+        if (target) { e.preventDefault(); setTab(target); }
+        return;
+      }
+      if (e.key === 'g') {
+        gArmed = true;
+        gTimer = setTimeout(disarm, 1000);
+        return;
+      }
       if (e.key === '?') { setShowHelp(h => !h); return; }
       if (e.key === 'Escape') { setShowHelp(false); return; }
       if (e.key === 'r') { setRefreshTick(t => t + 1); return; }
-      const n = parseInt(e.key, 10);
-      if (n >= 1 && n <= TABS.length) setTab(TABS[n - 1]);
     }
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => { disarm(); window.removeEventListener('keydown', onKey); };
   }, []);
 
   const handleCompareTo = useCallback((ids: string[]) => {
@@ -251,13 +285,29 @@ function DashboardInner() {
         run: () => setTab(i.id as Tab),
       }))
     );
+    // Compliance sub-groups are deep-linkable — surface them in the palette.
+    const complianceCommands: Command[] = COMPLIANCE_GROUPS.map(g => ({
+      id: `compliance:${g.value}`,
+      label: `Compliance › ${g.label}`,
+      group: 'Compliance',
+      keywords: `compliance ${g.value}`,
+      run: () => {
+        setTab('compliance');
+        try {
+          const p = new URLSearchParams(window.location.search);
+          p.set('tab', 'compliance');
+          p.set('sub', g.value);
+          window.history.replaceState({}, '', `${window.location.pathname}?${p.toString()}${window.location.hash}`);
+        } catch { /* ignore */ }
+      },
+    }));
     const actions: Command[] = [
       { id: 'act:refresh', label: 'Refresh data', group: 'Action', keywords: 'reload', run: () => setRefreshTick(t => t + 1) },
       { id: 'act:help', label: 'Keyboard shortcuts', group: 'Action', keywords: 'help keys', run: () => setShowHelp(true) },
       { id: 'act:topology', label: 'Open Live Topology', group: 'Action', keywords: 'graph network', run: openTopology },
       { id: 'act:disconnect', label: 'Disconnect', group: 'Action', keywords: 'logout sign out', run: handleDisconnect },
     ];
-    return [...navCommands, ...actions];
+    return [...navCommands, ...complianceCommands, ...actions];
   }, [handleDisconnect]);
 
   // Live entity search for the palette: jump to any run / asset / incident by id.
@@ -329,13 +379,13 @@ function DashboardInner() {
         {/* Breadcrumb top bar */}
         <div className="flex items-center justify-between px-4 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-bg)] shrink-0 gap-4">
           <div className="flex items-center gap-1.5 min-w-0">
-            <span className="text-[10px] font-mono text-[var(--color-text-faint)] shrink-0 select-none">NovaFabric</span>
+            <span className="text-[var(--text-2xs)] font-mono text-[var(--color-text-faint)] shrink-0 select-none">NovaFabric</span>
             <span className="text-[var(--color-border-strong)] shrink-0" aria-hidden="true">/</span>
             <span className="text-xs font-semibold text-[var(--color-text)] truncate">{TAB_LABEL[tab] ?? tab}</span>
           </div>
           <div className="flex items-center gap-3 shrink-0">
             {serverInfo && (
-              <span className="flex items-center gap-1 text-[10px] font-mono text-[var(--color-text-faint)]">
+              <span className="flex items-center gap-1 text-[var(--text-2xs)] font-mono text-[var(--color-text-faint)]">
                 <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-status-success)] shrink-0" aria-hidden="true" />
                 connected
               </span>
@@ -343,10 +393,11 @@ function DashboardInner() {
             <button
               onClick={openTopology}
               title="Open Live Topology view in a new tab"
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-[var(--color-border)] text-[10px] font-mono text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-accent)] hover:bg-[color-mix(in_oklab,var(--color-accent)_8%,transparent)] transition-colors"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-[var(--color-border)] text-[var(--text-2xs)] font-mono text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-tint)] transition-colors"
             >
-              <span aria-hidden="true">⬡</span>
-              <span>Topology ↗</span>
+              <Icon name="topology" size={12} />
+              <span>Topology</span>
+              <Icon name="external" size={11} />
             </button>
           </div>
         </div>
@@ -425,7 +476,9 @@ function DashboardInner() {
       {showHelp && (
         <KeyboardHelp
           onClose={() => setShowHelp(false)}
-          tabLabels={NAV_GROUPS.flatMap(g => g.items.map(i => i.label))}
+          tabShortcuts={NAV_GROUPS.flatMap(g =>
+            g.items.map(i => ({ key: TAB_SHORTCUT[i.id] ?? '', label: i.label }))
+          )}
         />
       )}
     </div>

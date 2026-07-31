@@ -3,9 +3,14 @@
 > **Who this is for:** platform architects planning NovaFabric deployments across
 > HPC clusters, AI factories, or large-scale distributed agent systems.
 > 
-> **Status of this document:** the single-cluster design (v0.7) is shipped.
-> Everything beyond one cluster is design intent — documented here so the
-> architecture decisions are made deliberately, not reactively.
+> **Status of this document (corrected 2026-07-30):** the single-cluster design
+> (v0.7) is shipped, and — contrary to an earlier draft of this page — the
+> collector hierarchy, hot/cold storage split, and lineage-at-scale tiers below
+> it are **also shipped, as experimental**, not still "design + build." See
+> `design/architecture/cluster-scale.md` (the authoritative, actively-maintained
+> version of this material) for full per-phase evidence. What genuinely remains
+> design intent only is cross-cluster **federation** (Phase 6) and full
+> cross-org identity — those are called out explicitly below.
 
 ---
 
@@ -56,8 +61,12 @@ Instead:
 ```
 
 The agent never waits for any central system. This is already baked into the
-current design — `nova capture` writes locally. What isn't built yet is the
-collector hierarchy above it.
+current design — `nova capture` writes locally. The collector hierarchy above
+it is **also built now** (experimental, not yet proven at 1M-agent scale): a
+Go node-collector (`collector/`, Lustre-safe spool + NovaSeal batch signing,
+295K events/sec measured) and a lighter Python FastAPI receiver
+(`collector_app/`, `POST /capsule`) both exist and forward into the object
+store and event bus described below.
 
 ---
 
@@ -170,10 +179,15 @@ unusable. At scale, the lineage graph needs:
 - **Sharding by namespace** — HPC facility A's lineage doesn't need to be in the
   same shard as facility B's
 
-Candidate approaches (not decided):
-- Apache AGE (graph extension on top of Postgres — avoids a new database)
-- Pre-computed materialized views updated by the collector
-- Dedicated graph store for the federation layer only, Postgres for per-cluster
+**Corrected 2026-07-30 — this is no longer undecided.** All four tiered
+backends are implemented and testcontainers-verified: SQLite (<1M edges,
+local default), Postgres recursive-CTE (v0.68.0), embedded KuzuDB (v0.17.0,
+benchmark-cleared at 45.5ms p99 blast-radius @10M edges), Apache AGE openCypher
+(v0.69.0), and JanusGraph Gremlin for billion-edge scale (v0.70.0, needs the
+GraphSON serializer and `.emit()` on traversals — see `lineage/backends/`).
+Sharding by namespace and pre-computed materialized subgraphs remain future
+work; picking *which* backend to run at a given scale is now a config choice,
+not an open research question.
 
 ### 3. Agent identity at scale
 
@@ -203,13 +217,13 @@ access to the issuer.
 | `runs_cache` index — O(1) `/api/runs` at 100K capsules (Scale-S1) | ✓ shipped (v0.32.0) |
 | Background capsule watcher + `nova ingest-capsule` (Scale-S3) | ✓ shipped (v0.36.0) |
 | Postgres partition DDL for 10K-tenant MetadataStore (Scale-S2) | ✓ shipped (v0.32.0) |
-| Content-addressable event deduplication | — needs design + build |
-| Hot/cold storage split (Postgres metadata + object storage events) | — needs design + build |
-| Rack-level collector daemon | — needs design + build (Scale-S4 is NovaSeal Postgres; collector = Phase 2) |
-| Graph traversal indexes for lineage at scale | ✓ shipped (v0.17.0 — KuzuDB Phase 6) |
-| Short-lived agent credentials (offline-verifiable) | — needs design + build |
-| Multi-cluster federation | — needs design first |
-| Cross-org lineage and identity | — needs design first |
+| Content-addressed capsule storage (identical content stored once, `cas.py`) | ✓ shipped experimental (Phase 4, v0.14.5) — SHA-256 CAS key `capsules/<tenant>/<sha[0:4]>/<sha>/data.zst`; event-level dedup by `event_id` at the collector forwarder |
+| Hot/cold storage split (Postgres metadata + object storage events) | ✓ shipped experimental (Phase 4, `object_capsule_store/`, v0.14.5) |
+| Rack/node-level collector daemon | ✓ shipped experimental (Phase 2, v0.14.3 — Go `collector/`, 295K events/sec p99 4.7ms; plus a lighter Python `collector_app/` FastAPI receiver, v0.29.0) |
+| Graph traversal indexes for lineage at scale | ✓ shipped experimental — all four at-scale backends (KuzuDB v0.17.0/Phase 6, Postgres recursive-CTE v0.68.0, Apache AGE v0.69.0, JanusGraph v0.70.0), all testcontainers-verified; zero remaining stub backends |
+| Short-lived agent credentials (offline-verifiable, scoped per-agent-namespace) | — needs design + build. (A related but narrower piece exists: `nova server` issues Ed25519 offline service-account tokens for CI, not per-agent scoped compute-node identity at 1M scale.) |
+| Multi-cluster federation | — not yet designed (Phase 6; depends on 2–5 being stable in production, per `design/architecture/cluster-scale.md`) |
+| Cross-org lineage and identity | — not yet designed |
 
 ---
 
@@ -280,10 +294,13 @@ the server already does this in its background stats loop every 2 s.
 
 ---
 
-## Why we build the single-cluster case first
+## Why we built the single-cluster case first
 
-Before designing the collector hierarchy, you need to know what the data actually
-looks like under load:
+The collector hierarchy, storage split, and lineage-at-scale tiers described
+above are now built (experimental) — but they were built in this order
+deliberately, and the reasoning still matters for what's genuinely left
+(federation): you need to know what the data actually looks like under load
+before designing a cross-cluster protocol on top of it.
 
 - How large is a typical capsule?
 - How many events does a typical agent run produce?
@@ -296,12 +313,15 @@ data, not assumptions. 1,000 capsules from the testbench tells you more about
 storage requirements and graph shape than any design document can.
 
 **The sequence:**
-1. Make one cluster solid and measure it (current)
-2. Design the collector layer based on measured data (next)
-3. Design federation based on measured multi-cluster patterns (later)
+1. Make one cluster solid and measure it — **done**
+2. Build the collector, storage-split, and lineage-at-scale layers on measured
+   data — **done** (all shipped experimental; see the status table above)
+3. Design federation based on measured multi-cluster patterns — **still open**
+   (Phase 6; genuinely not yet designed)
 
-Building a federation protocol before you know the single-cluster behavior is
-speculation. Measure first, design second.
+Building a federation protocol before you know the single-cluster behavior was
+speculation. That's why it was measured first and built second — federation is
+the one piece still waiting on real multi-cluster patterns.
 
 ---
 

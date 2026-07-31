@@ -1,14 +1,17 @@
 import { useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import AppearancePanel from './AppearancePanel';
+import Badge from '../ui/primitives/Badge';
+import Icon from '../ui/primitives/Icon';
 
 export type Tab = 'home' | 'analytics' | 'runs' | 'registry' | 'lineage' | 'diff' | 'capture' | 'audit' | 'evidence' | 'holds' | 'policy' | 'seal' | 'infra' | 'commands' | 'admin' | 'compliance' | 'governance' | 'kg' | 'cost' | 'schema' | 'reports' | 'eval' | 'risk' | 'storage' | 'incidents' | 'spine' | 'ops' | 'alerts' | 'export';
 
 interface NavItem {
   id: Tab;
   label: string;
-  icon: string;
   badge?: string;
+  /** Second key of the stable `g`-prefixed navigation shortcut (e.g. 'h' → g h). */
+  shortcut: string;
 }
 
 interface NavGroup {
@@ -16,88 +19,90 @@ interface NavGroup {
   items: NavItem[];
 }
 
+/**
+ * Information architecture: 7 balanced groups (max 6 tabs each).
+ * Tab ids are FROZEN — commandParity.json and ?tab= deep links reference them;
+ * only the grouping/order here may change (the parity guard reads the `Tab`
+ * union above, never this structure).
+ */
 export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Overview',
     items: [
-      { id: 'home', label: 'Home', icon: '⌂' },
-      { id: 'analytics', label: 'Analytics', icon: '∿' },
+      { id: 'home', label: 'Home', shortcut: 'h' },
+      { id: 'analytics', label: 'Analytics', shortcut: 'a' },
+      { id: 'cost', label: 'Cost', badge: 'cost', shortcut: 'x' },
     ],
   },
   {
-    label: 'Debug & Investigate',
+    label: 'Runs & Debug',
     items: [
-      { id: 'runs',  label: 'Runs', icon: '▷' },
-      { id: 'diff',  label: 'Diff', icon: '⊘' },
+      { id: 'runs', label: 'Runs', shortcut: 'r' },
+      { id: 'diff', label: 'Diff', shortcut: 'd' },
+      { id: 'capture', label: 'Capture', badge: 'L·C', shortcut: 't' },
     ],
   },
   {
     label: 'Govern & Promote',
     items: [
-      { id: 'registry',   label: 'Registry',   icon: '◈' },
-      { id: 'governance', label: 'Governance',  icon: '⚖', badge: 'Gov' },
-      { id: 'eval',       label: 'Eval',        icon: '◇', badge: 'eval' },
-      { id: 'risk',       label: 'Risk',        icon: '⚠', badge: 'risk' },
+      { id: 'registry', label: 'Registry', shortcut: 'g' },
+      { id: 'governance', label: 'Governance', badge: 'Gov', shortcut: 'v' },
+      { id: 'eval', label: 'Eval', badge: 'eval', shortcut: 'e' },
+      { id: 'risk', label: 'Risk', badge: 'risk', shortcut: 'k' },
+      { id: 'policy', label: 'Policy', shortcut: 'p' },
+      { id: 'holds', label: 'Holds', shortcut: 'z' },
     ],
   },
   {
-    label: 'Audit & Verify',
+    label: 'Provenance & Trust',
     items: [
-      { id: 'lineage',  label: 'Lineage',  icon: '⬡' },
-      { id: 'kg',       label: 'KG',       icon: '✦', badge: 'KG' },
-      { id: 'cost',     label: 'Cost',     icon: '$',  badge: 'cost' },
-      { id: 'schema',   label: 'Schema',   icon: '⊕',  badge: 'spec' },
-      { id: 'evidence', label: 'Evidence', icon: '⊛' },
-      { id: 'audit',    label: 'Audit',    icon: '◎' },
-      { id: 'holds',    label: 'Holds',    icon: '⊗' },
-      { id: 'policy',   label: 'Policy',   icon: '⊙' },
-      { id: 'seal',       label: 'Seal',       icon: '⊚', badge: 'SoD' },
-      { id: 'spine',      label: 'Spine',      icon: '⚓', badge: 'D3' },
-      { id: 'compliance', label: 'Compliance', icon: '⚖', badge: 'Reg' },
-      { id: 'incidents',  label: 'Incidents',  icon: '⚑', badge: 'Art73' },
-      { id: 'capture',    label: 'Capture',    icon: '⊕', badge: 'L·C' },
+      { id: 'lineage', label: 'Lineage', shortcut: 'l' },
+      { id: 'kg', label: 'KG', badge: 'KG', shortcut: 'n' },
+      { id: 'evidence', label: 'Evidence', shortcut: 'w' },
+      { id: 'seal', label: 'Seal', badge: 'SoD', shortcut: 's' },
+      { id: 'spine', label: 'Spine', badge: 'D3', shortcut: 'y' },
+      { id: 'audit', label: 'Audit', shortcut: 'u' },
     ],
   },
   {
-    label: 'Infrastructure',
+    label: 'Compliance',
     items: [
-      { id: 'infra',    label: 'Infra',    icon: '⬢' },
-      { id: 'storage',  label: 'Storage',  icon: '⛁', badge: 'WORM' },
-      { id: 'ops',      label: 'Ops',      icon: '⚙' },
-      { id: 'alerts',   label: 'Alerts',   icon: '⚡', badge: 'ops' },
+      { id: 'compliance', label: 'Compliance', badge: 'Reg', shortcut: 'c' },
+      { id: 'incidents', label: 'Incidents', badge: 'Art73', shortcut: 'i' },
+      { id: 'schema', label: 'Schema', badge: 'spec', shortcut: 'm' },
     ],
   },
   {
-    label: 'Admin',
+    label: 'Platform',
     items: [
-      { id: 'admin',    label: 'Admin',    icon: '⊞' },
+      { id: 'infra', label: 'Infra', shortcut: 'f' },
+      { id: 'storage', label: 'Storage', badge: 'WORM', shortcut: 'b' },
+      { id: 'ops', label: 'Ops', shortcut: 'o' },
+      { id: 'alerts', label: 'Alerts', badge: 'ops', shortcut: 'j' },
+      { id: 'admin', label: 'Admin', shortcut: 'q' },
+      { id: 'commands', label: 'Commands', badge: 'CLI', shortcut: '1' },
     ],
   },
   {
-    label: 'CLI Commands',
+    label: 'Reports & Export',
     items: [
-      { id: 'commands', label: 'Commands', icon: '$', badge: 'CLI' },
-    ],
-  },
-  {
-    label: 'Reports',
-    items: [
-      { id: 'reports', label: 'Reports', icon: '⊟' },
-      { id: 'export', label: 'Export', icon: '⇪', badge: 'hub' },
+      { id: 'reports', label: 'Reports', shortcut: '2' },
+      { id: 'export', label: 'Export', badge: 'hub', shortcut: '3' },
     ],
   },
 ];
 
 export const ALL_TABS: Tab[] = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.id));
 
-function GearIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true" className="shrink-0">
-      <circle cx="6" cy="6" r="1.5" stroke="currentColor" strokeWidth="1.3" />
-      <path d="M6 1v1M6 10v1M1 6h1M10 6h1M2.6 2.6l.7.7M8.7 8.7l.7.7M2.6 9.4l.7-.7M8.7 3.3l.7-.7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-    </svg>
-  );
-}
+/** `g`-sequence second key → tab. Stable across reorders (unlike the old positional 1–9). */
+export const SHORTCUT_TAB: Record<string, Tab> = Object.fromEntries(
+  NAV_GROUPS.flatMap((g) => g.items.map((i) => [i.shortcut, i.id])),
+) as Record<string, Tab>;
+
+/** Per-tab shortcut display string, e.g. 'g h'. */
+export const TAB_SHORTCUT: Partial<Record<Tab, string>> = Object.fromEntries(
+  NAV_GROUPS.flatMap((g) => g.items.map((i) => [i.id, `g ${i.shortcut}`])),
+);
 
 interface SidebarProps {
   tab: Tab;
@@ -142,7 +147,7 @@ export default function Sidebar({
     <aside
       aria-label="Dashboard navigation"
       className={clsx(
-        'flex flex-col shrink-0 border-r border-[var(--color-border)] bg-[var(--color-bg-sunken)] transition-[width] duration-150 overflow-hidden',
+        'flex flex-col shrink-0 border-r border-[var(--color-border)] bg-[var(--color-bg-sunken)] transition-[width] duration-[var(--duration)] overflow-hidden',
         collapsed ? 'w-11' : 'w-52',
       )}
     >
@@ -158,7 +163,7 @@ export default function Sidebar({
             <path d="M10 23 L10 9 L22 23 L22 9" stroke="#c4f0a8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
           </svg>
         ) : (
-          <span className="text-[10px] font-medium uppercase tracking-widest text-[var(--color-text-faint)] font-mono select-none">
+          <span className="text-[var(--text-2xs)] font-medium uppercase tracking-widest text-[var(--color-text-faint)] font-mono select-none">
             NovaFabric
           </span>
         )}
@@ -167,7 +172,7 @@ export default function Sidebar({
           title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           className="w-6 h-6 flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-raised)] transition-colors shrink-0"
         >
-          <span aria-hidden="true" className="text-xs leading-none">{collapsed ? '›' : '‹'}</span>
+          <Icon name={collapsed ? 'expand' : 'collapse'} size={13} />
         </button>
       </div>
 
@@ -182,29 +187,30 @@ export default function Sidebar({
                 <button
                   type="button"
                   onClick={() => toggleGroup(group.label, groupHasActive)}
-                  className="w-full flex items-center justify-between px-3 pt-3 pb-0.5 text-[9px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)] select-none hover:text-[var(--color-text-muted)] transition-colors"
+                  className="w-full flex items-center justify-between px-3 pt-3 pb-0.5 text-[var(--text-2xs)] font-semibold uppercase tracking-widest text-[var(--color-text-faint)] select-none hover:text-[var(--color-text-muted)] transition-colors"
                 >
                   <span>{group.label}</span>
-                  <span aria-hidden="true" className="text-[8px]">
-                    {groupCollapsed ? `▸ ${group.items.length}` : '▾'}
+                  <span aria-hidden="true" className="flex items-center gap-1 font-mono normal-case tracking-normal">
+                    {groupCollapsed && group.items.length}
+                    <Icon name="chevron-down" size={10} className={clsx('transition-transform duration-[var(--duration-fast)]', groupCollapsed && '-rotate-90')} />
                   </span>
                 </button>
               )}
               {!groupCollapsed && group.items.map((item) => {
                 const active = tab === item.id;
                 const count = counts[item.id];
-                const shortcutIdx = ALL_TABS.indexOf(item.id) + 1;
+                const shortcut = `g ${item.shortcut}`;
                 return (
                   <button
                     key={item.id}
                     onClick={() => onTabChange(item.id)}
-                    title={collapsed ? `${item.label} (${shortcutIdx})` : `${item.label} — press ${shortcutIdx}`}
+                    title={collapsed ? `${item.label} (${shortcut})` : `${item.label} — press ${shortcut}`}
                     aria-current={active ? 'page' : undefined}
                     className={clsx(
                       'relative w-full flex items-center gap-2.5 px-3 py-2 text-xs transition-colors group',
                       active
                         ? 'text-[var(--color-text)] bg-[var(--color-bg-raised)]'
-                        : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[color-mix(in_oklab,var(--color-bg-raised)_60%,transparent)]',
+                        : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]',
                     )}
                   >
                     {active && (
@@ -213,18 +219,22 @@ export default function Sidebar({
                         className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-[var(--color-accent)]"
                       />
                     )}
-                    <span aria-hidden="true" className="w-4 text-center shrink-0 text-[var(--color-text-faint)]">{item.icon}</span>
+                    <span
+                      aria-hidden="true"
+                      className={clsx(
+                        'w-4 flex items-center justify-center shrink-0',
+                        active ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-faint)]',
+                      )}
+                    >
+                      <Icon name={item.id} size={14} />
+                    </span>
                     {!collapsed && (
                       <>
                         <span className="flex-1 text-left font-medium">{item.label}</span>
-                        {item.badge && (
-                          <span className="text-[9px] uppercase tracking-wider px-1 py-px rounded bg-[color-mix(in_oklab,var(--color-text-faint)_12%,transparent)] text-[var(--color-text-faint)] shrink-0">
-                            {item.badge}
-                          </span>
-                        )}
+                        {item.badge && <Badge className="shrink-0">{item.badge}</Badge>}
                         {count !== undefined && !item.badge && (
                           <span className={clsx(
-                            'text-[10px] font-mono shrink-0 tabular-nums',
+                            'text-[var(--text-2xs)] font-mono shrink-0 tabular-nums',
                             active ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-faint)]',
                           )}>
                             {count}
@@ -232,9 +242,9 @@ export default function Sidebar({
                         )}
                         <span
                           aria-hidden="true"
-                          className="absolute right-2 text-[9px] text-[var(--color-text-faint)] opacity-0 group-hover:opacity-60 font-mono transition-opacity"
+                          className="absolute right-2 text-[var(--text-2xs)] text-[var(--color-text-faint)] opacity-0 group-hover:opacity-60 font-mono transition-opacity"
                         >
-                          {shortcutIdx}
+                          {shortcut}
                         </span>
                       </>
                     )}
@@ -258,10 +268,10 @@ export default function Sidebar({
               className="accent-[var(--color-accent)] w-3 h-3"
             />
             <span className={clsx(
-              'text-[10px] font-mono transition-colors',
+              'text-[var(--text-2xs)] font-mono transition-colors',
               autoRefresh ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-faint)]',
             )}>
-              auto {autoRefresh && '·5s'}
+              auto {autoRefresh && '·30s'}
             </span>
           </label>
         )}
@@ -282,13 +292,11 @@ export default function Sidebar({
           <div className="px-1 py-1 space-y-0.5">
             <div className="flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-status-success)] shrink-0" aria-hidden="true" />
-              <code className="text-[9px] font-mono text-[var(--color-text-faint)] truncate">{serverInfo.base}</code>
+              <code className="text-[var(--text-2xs)] font-mono text-[var(--color-text-faint)] truncate">{serverInfo.base}</code>
             </div>
             <div className="pl-3 flex items-center gap-2">
-              <span className="text-[9px] font-mono text-[var(--color-text-faint)]">v{serverInfo.version}</span>
-              <span className="text-[8px] uppercase tracking-wider px-1 py-px rounded bg-[color-mix(in_oklab,var(--color-edge-derived-from)_15%,transparent)] text-[var(--color-edge-derived-from)]">
-                experimental
-              </span>
+              <span className="text-[var(--text-2xs)] font-mono text-[var(--color-text-faint)]">v{serverInfo.version}</span>
+              <Badge tone="info">experimental</Badge>
             </div>
           </div>
         )}
@@ -298,7 +306,7 @@ export default function Sidebar({
           onClick={onHelpOpen}
           title="Keyboard shortcuts (?)"
           className={clsx(
-            'w-full flex items-center gap-2 px-1 py-1 rounded text-[10px] text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors',
+            'w-full flex items-center gap-2 px-1 py-1 rounded text-[var(--text-2xs)] text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors',
             collapsed ? 'justify-center' : '',
           )}
         >
@@ -312,14 +320,14 @@ export default function Sidebar({
           onClick={() => setShowAppearance(v => !v)}
           title="Appearance"
           className={clsx(
-            'w-full flex items-center gap-2 px-1 py-1 rounded text-[10px] transition-colors',
+            'w-full flex items-center gap-2 px-1 py-1 rounded text-[var(--text-2xs)] transition-colors',
             showAppearance
-              ? 'text-[var(--color-text)] bg-[color-mix(in_oklab,var(--color-accent)_10%,transparent)]'
+              ? 'text-[var(--color-text)] bg-[var(--color-accent-tint)]'
               : 'text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]',
             collapsed ? 'justify-center' : '',
           )}
         >
-          <GearIcon />
+          <Icon name="settings" size={12} />
           {!collapsed && <span>Appearance</span>}
         </button>
 
@@ -336,11 +344,11 @@ export default function Sidebar({
           onClick={onDisconnect}
           title="Disconnect"
           className={clsx(
-            'w-full flex items-center gap-2 px-1 py-1 rounded text-[10px] text-[var(--color-text-faint)] hover:text-[var(--color-status-failure)] hover:bg-[color-mix(in_oklab,var(--color-status-failure)_8%,transparent)] transition-colors',
+            'w-full flex items-center gap-2 px-1 py-1 rounded text-[var(--text-2xs)] text-[var(--color-text-faint)] hover:text-[var(--color-status-failure)] hover:bg-[var(--color-danger-tint)] transition-colors',
             collapsed ? 'justify-center' : '',
           )}
         >
-          <span aria-hidden="true" className="shrink-0">⏏</span>
+          <Icon name="disconnect" size={12} />
           {!collapsed && <span>Disconnect</span>}
         </button>
       </div>

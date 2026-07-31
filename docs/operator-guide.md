@@ -960,21 +960,31 @@ interim option.
 
 ## 6. What is not supported yet
 
-The following capabilities are **not implemented** in the current release.
-They are on the roadmap but have no code in `main`.
+**Corrected 2026-07-30 — this table had gone stale.** Several rows below
+had shipped since this section was last updated (some as far back as the
+v0.7x/v0.9x releases) but the table still said "planned" / "future design"
+against a "v0.2" target. Re-verified against the code in this checkout;
+still-genuine gaps are listed below the shipped-items note.
+
+**Shipped since this table was last accurate (do not re-plan these):**
+
+| Capability | Real status | Where |
+|---|---|---|
+| NovaSeal: Sigstore keyless signing | **experimental, works today** | `--backend sigstore` (§5, §6 troubleshooting above); needs `novafabric[sigstore]` extra + network to Fulcio/Rekor — not usable air-gapped ([air-gapped guide](ops/air-gapped-install.md)) |
+| NovaSeal: Cloud KMS (AWS KMS, Azure KV, GCP KMS) | **experimental, works today** | Signing backends `AwsKmsSigningBackend`/`AzureKvSigningBackend`/`GcpKmsSigningBackend` (`novafabric[seal-aws\|seal-azure\|seal-gcp]`); the parallel envelope-encryption *wrapping* backends (`AwsKmsWrappingBackend` etc., ADR-0185) are separately shipped — see [encryption-at-rest.md §4](ops/encryption-at-rest.md). Verified against unit tests and in-memory SDK fakes; end-to-end verification against live cloud credentials is the one piece still outstanding |
+| NovaSeal: Postgres Merkle log | **experimental, works today** | `PostgresMerkleLog` (`trust/novaseal/merkle.py`, `novafabric[seal-postgres]`); pass a `postgresql://` DSN as `merkle_db:`. `verify_consistency()` on this backend is a *sampled* check, not full re-hash |
+| Parent/child capsule relationships | **implemented, tested** | `src/novafabric/capsule/{tree_assembler,env_contract,orphan,edge_typer,writer,schema}.py` + `schemas/parent_child_capsule_v1.schema.json` (257 passing tests in `tests/capsule/`) |
+
+**Genuinely still not implemented:**
 
 | Capability | Status | Target |
 |------------|--------|--------|
-| NovaSeal: Sigstore keyless signing | planned (ADR-0041 ADR-002) | v0.2 |
-| NovaSeal: Cloud KMS (AWS KMS, Azure KV, GCP KMS) | planned | v0.2 |
-| NovaSeal: X.509 HSM / PKCS#11 | planned | v0.2 |
-| NovaSeal: Postgres Merkle log | planned (ADR-0040) | v0.2 |
+| NovaSeal: X.509 HSM / PKCS#11 (hardware-backed key custody) | planned | unscheduled. Note this is distinct from the already-shipped `x509` **profile** (ADR-0055, `trust/novaseal/x509_identity.py`) — that ships a certificate-pinned signing identity with the key as a local PEM file, not hardware-backed custody |
 | SAML SSO: live login (assertion consumption at the ACS) | blocked on the ADR-0138 D5 library license gate — endpoint refuses with 501; config/metadata/policy shipped (see §5c) | unscheduled |
-| Federation across clusters | future design (ADR-0021 §federation-topology) | v0.9+ |
-| Parent/child capsule relationships | future design (ADR-0039) | v1.x |
+| Federation across clusters | future design (ADR-0021 §federation-topology) | unscheduled (the "v0.9+" target in earlier drafts of this table has passed without this shipping) |
 | interLink K8s-to-SLURM integration | proposed (ADR-0028, no code) | unscheduled |
-| Third-party runner plugins (AWS Batch, Modal, etc.) | planned (ADR-0025 §B) | v0.6.x+ |
-| Registry merge semantics (override + vendored combined) | planned | v0.6.x |
+| Third-party runner plugins (AWS Batch, Modal, etc.) | planned (ADR-0025 §B) | unscheduled |
+| Registry merge semantics (override + vendored combined) | planned | unscheduled |
 
 Do not configure production workflows that depend on any of the above. If you
 need one of these capabilities, open an issue or follow the RFC process

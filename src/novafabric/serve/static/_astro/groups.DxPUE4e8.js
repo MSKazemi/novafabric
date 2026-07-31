@@ -1,0 +1,1 @@
+var e=[{value:`frameworks`,label:`Frameworks`},{value:`audits`,label:`Audits`},{value:`privacy`,label:`Privacy`},{value:`exports`,label:`Exports`},{value:`assurance`,label:`Assurance`}];export{e as t};

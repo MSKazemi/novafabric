@@ -67,6 +67,18 @@ def _isolated_audit_log(
     return path
 
 
+@pytest.fixture(autouse=True)
+def _cap003_operator_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests exercise the erasure EXECUTION path, which requires cap-003.
+
+    Since the SCALE-ADR-003 correction (2026-07-30) NOVA_CAP003_ENABLED
+    defaults to false (safe until the EU-GDPR legal-counsel review), so the
+    suite simulates an operator's explicit opt-in.  The fail-closed test
+    overrides this back to false.
+    """
+    monkeypatch.setenv("NOVA_CAP003_ENABLED", "true")
+
+
 @pytest.fixture
 def audit_log_path(_isolated_audit_log: Path) -> Path:
     return _isolated_audit_log

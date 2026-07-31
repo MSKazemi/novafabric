@@ -87,7 +87,8 @@ contents to jump to what you need.
    - [nova serve (experimental)](#nova-serve-experimental)
 9. [Environment variables](#environment-variables)
 10. [What shipped experimental in v0.59](#what-shipped-experimental-in-v059)
-11. [Summary and next steps](#summary-and-next-steps)
+11. [What shipped in v0.75–v0.94](#what-shipped-in-v075v094)
+12. [Summary and next steps](#summary-and-next-steps)
 
 ---
 
@@ -583,6 +584,25 @@ to the asset registry diff (see [nova inspect](#nova-inspect)):
 nova diff my-model@1.0.0 my-model@1.1.0
 ```
 
+**Group by recorded A/B variant (ADR-0116).** `--group-by variant` labels the
+diff as cross-arm or within-arm using each capsule's recorded
+`(experiment_id, variant_id)` — read-only, capsule paths only, text/json output
+only:
+
+```bash
+nova diff --group-by variant runs/arm-a/ runs/arm-b/
+```
+
+**Statistical regression gate (experimental, NF-007).** `--significance` runs a
+Wald SPRT test over stored boolean-outcome scores instead of a structural diff —
+a distinct mode with no positional capsule refs. It reports Wilson confidence
+intervals for both sides and exits non-zero on a statistically significant
+regression:
+
+```bash
+nova diff --significance --baseline base/ --candidate cand/ --metric task_pass
+```
+
 **A common pattern** is capture → replay → diff: capture a baseline, replay it
 in `mocked` mode after a code change, and diff the replay against the baseline
 under `--assert-no-regressions`.
@@ -772,6 +792,29 @@ signal; `export-graph` emits byte-stable GraphML/GEXF/Cypher; `insights`
 composes all of it plus seeded Louvain communities and best-effort cost, and
 reports any unavailable data source as unavailable rather than inventing it.
 See the [CLI reference](cli-reference.md#nova-lineage-metrics) for full flags.
+
+### nova lineage consume (experimental)
+
+Runs the JetStream `LineageConsumer` as a foreground daemon: it pulls
+NovaFabric lineage events off a NATS subject and bulk-COPYs derived edges into
+a KuzuDB graph on a size-or-time flush trigger. This is the cluster-scale
+ingestion path alongside the local `nova lineage import` — local-mode capture
+never requires it; use it only when events already flow through a NATS
+deployment rather than sitting in capsule directories on a shared filesystem.
+Requires `pip install 'novafabric[scale,scale-kg]'` (nats-py + kuzu) and a
+running NATS JetStream server.
+
+```bash
+nova lineage consume --nats-url nats://nats:4222 --kuzu-path .nova/kg/lineage.kuzu
+```
+
+Options include `--subject` (default `novafabric.lineage.>`), `--batch-size`,
+`--fetch-timeout`, `--flush-batch-size`, and `--flush-interval-s` (max seconds
+between flushes even below the batch-size threshold). **Not exactly-once:** a
+NATS message is acked once its edges are extracted, before the flush actually
+persists them — see the
+[CLI reference](cli-reference.md#nova-lineage-consume-experimental-cluster-scale)
+for the full flag list and delivery-semantics detail.
 
 ## Trust layer
 
@@ -1301,7 +1344,12 @@ Generate an asset inventory report. Defaults to Markdown on stdout.
 nova report                        # Markdown to stdout
 nova report --format json          # JSON to stdout
 nova report --output report.md     # write to file
+nova report --format html --output inventory.html   # self-contained HTML + by-type chart (ADR-0201)
+nova report --format pdf --output inventory.pdf      # requires the optional WeasyPrint extra
 ```
+
+`--format pdf` requires `--output` and the optional `pip install 'novafabric[compliance]'`
+extra (WeasyPrint); without it the command exits 1 with an install hint.
 
 Sample Markdown output:
 
@@ -1487,7 +1535,40 @@ not duplicate them; each is fully documented in the
 | Capture completeness | `nova session new/add/list/show/replay`, `nova graph agent`, `nova capture --capture-media` + `nova media list`, `--environment`, variant attribution (`--experiment`/`--variant`), observation log levels, `nova validate --schemas` |
 | Offline analytics | `nova query`, `nova view`, `nova trend`, per-usage-type token accounting, `nova pricing` + `nova cost estimate` |
 | Governance | `nova retention plan/apply/status/explain`, PII masking plugins (`--masker`), the budget promotion gate (Rego), `nova events` webhooks, SCIM 2.0 provisioning, partial SAML SSO (metadata/policy only; login refuses with 501) |
-| Portability & interop | `nova export --html`, `nova export-blob` + manifest `nova verify`, OTLP GenAI-span ingest (`POST /api/otlp/v1/traces`), `nova eval import-inspect/export-inspect`, `nova diagnose --intervene`/`--search-root-cause`, `nova pii status` |
+| Portability & interop | `nova export --html`, `nova export-blob` + manifest `nova verify`, OTLP GenAI-span ingest (`POST /api/otlp/v1/traces`), `nova eval import-inspect/export-inspect`, `nova diagnose --intervene`, `nova pii status` |
+
+---
+
+## What shipped in v0.75–v0.94
+
+A second large cohort landed after v0.59, mostly ADR-0101 (attribution/root-cause)
+and a set of standalone trust primitives. All are **experimental**; some are
+CLI-exposed today, others are **Python-API only** — no `nova` subcommand wraps
+them yet, so build against the module, not a shipped command:
+
+| Capability | Status | Where |
+|---|---|---|
+| Counterfactual root-cause search (ADR-0101 NF-018/020) | **CLI**, experimental | `nova diagnose <run-id> --search-root-cause [--max-interventions N]` — sweeps ranked causal-root candidates with bounded intervention replays until one confirms |
+| Causal-graph back-trace (ADR-0101 NF-019/022) | Python API only | `diagnose.causal_root_candidates()` — used internally by `--search-root-cause`; no direct CLI verb |
+| Span-level claim-grounding audit (ADR-0101 NF-021) | Python API only | `diagnose.audit_claims()` — flags a model-span claim `ungrounded` when no tool-span evidence precedes it; not wired into `nova diagnose` output yet |
+| NATS lineage consumer (cap-006, ADR-0061/0066/0219) | **CLI**, experimental | [`nova lineage consume`](#nova-lineage-consume-experimental) |
+| EU AI Act Art. 12 record-keeping export | **CLI**, experimental | `nova euaiact export` / `nova euaiact status` |
+| Compliance cohort (ISO 42001/42005, Art.72 PMM, GPAI Art.53, NIST GenAI/CSA) | **CLI**, experimental | `nova export-compliance {iso42001,pmm,gpai53,genai-profile}` |
+| Portable agent-passport projection (ADR-0149) | **CLI**, experimental | `nova passport issue` / `nova passport verify` |
+| SAML SSO (ADR-0138) | **CLI**, experimental, partial | `nova server saml-metadata` emits SP metadata only; assertion-consumption is opt-in server config, not a CLI verb |
+| x509 certificate-pinned signing identity (ADR-0055) | Python API only | `trust/novaseal/x509_identity.py` |
+| Crypto-agility hybrid-signature envelope (ADR-0072) | Python API only | `trust/novaseal/hybrid_signature.py` |
+| `did:key` + Verifiable Credentials (ADR-0075) | Python API only | `trust/did.py` |
+| "Acted-as" delegation chains (ADR-0106) | Python API only | `trust/delegation.py` |
+| Transparency-log witness cosigning (ADR-0097) | Python API only | `trust/novaseal/witness.py` |
+| Jurisdiction sovereignty site-seals (ADR-0077) | Python API only | `compliance/sovereignty.py` |
+
+The Python-API-only rows above have no `nova` command and no dashboard panel —
+they are real, tested modules (see the corresponding ADR for design intent),
+but there is no shipped end-user workflow around them yet. Do not follow a
+tutorial that shows a `nova` command for them; none exists. See
+[Python API](python-api.md) and [`docs/developer-guide.md`](developer-guide.md)
+for the module-level detail.
 
 ---
 

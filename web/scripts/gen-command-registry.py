@@ -31,7 +31,9 @@ OUT = (
     / "src/components/dashboard/commands/generatedCommands.ts"
 )
 
-# First token after `nova` -> journey bucket (matches the 4 sidebar groups).
+# First token after `nova` -> journey bucket. NOTE: these 4 journeys group
+# commands INSIDE the Commands tab; they are unrelated to (and need not track)
+# the sidebar's 7 navigation groups.
 FAMILY_JOURNEY: dict[str, str] = {
     # Debug & Investigate
     "capture": "debug", "replay": "debug", "diff": "debug", "verify": "debug",

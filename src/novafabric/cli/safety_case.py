@@ -1,12 +1,11 @@
 """``nova safety-case`` — compile, verify, and export an Evidence-Grounded Safety Case.
 
-Experimental (ADR-0095, slice C0–C1). The compiler core only: ``build`` assembles a
+Experimental (ADR-0095, slices C0-C2). The compiler core: ``build`` assembles a
 Claims-Arguments-Evidence tree from a capsule, ``verify`` re-checks artifact hashes /
-case_hash / invariant I1, and ``export`` renders the case as JSON or Markdown.
-
-NOTE: this ``safety_case_app`` is intentionally **not** registered in
-``cli/main.py`` — the evidence-bundle admissibility binding (slice C2) and CLI
-registration are deferred to the parent. Run it standalone or via the parent's wiring.
+case_hash / invariant I1, and ``export`` renders the case as JSON or Markdown. The
+evidence-bundle admissibility binding (slice C2) lives in
+``novafabric.evidence.admissibility``. This ``safety_case_app`` is registered in
+``cli/main.py``.
 """
 
 from __future__ import annotations

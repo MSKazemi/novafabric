@@ -7,8 +7,19 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.responses import Response
+
+from novafabric.serve.auth import extract_bearer, is_localhost_host, token_matches
 
 if TYPE_CHECKING:
     from novafabric.serve.topology.layout_pipeline_3d import LayoutPipeline3D
@@ -22,9 +33,21 @@ def make_tv5_router(
     snapshot_store: "SnapshotStore3D",
     layout_pipeline: "LayoutPipeline3D",
     *,
+    token: str,
     start_retention_loop: bool = True,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/tv5", tags=["tv5"])
+
+    def verify(
+        t: str | None = Query(default=None, alias="token"),
+        authorization: str | None = Header(default=None),
+    ) -> None:
+        candidate = extract_bearer(authorization) or t
+        if not candidate or not token_matches(candidate, token):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="missing or invalid token",
+            )
 
     # Track connected WebSocket clients
     _ws_clients: list[WebSocket] = []
@@ -52,7 +75,7 @@ def make_tv5_router(
 
     layout_pipeline.add_snapshot_callback(_broadcast_new_snapshot)
 
-    @router.get("/live")
+    @router.get("/live", dependencies=[Depends(verify)])
     async def get_live_info() -> dict[str, Any]:
         """Return current topology info."""
         window_id = layout_pipeline.get_latest_window_id()
@@ -63,7 +86,7 @@ def make_tv5_router(
             "layoutAgeMs": 0,
         }
 
-    @router.get("/windows")
+    @router.get("/windows", dependencies=[Depends(verify)])
     async def list_windows(
         from_ts: int = Query(0, alias="from"),
         to_ts: int = Query(9999999999, alias="to"),
@@ -72,7 +95,7 @@ def make_tv5_router(
         windows = snapshot_store.list_windows()
         return [w for w in windows if from_ts <= w["timestamp"] <= to_ts]
 
-    @router.get("/snapshot/{window_id}", response_model=None)
+    @router.get("/snapshot/{window_id}", response_model=None, dependencies=[Depends(verify)])
     async def get_snapshot(window_id: str) -> Any:
         """Return topology snapshot as JSON or msgpack bytes."""
         if not WINDOW_ID_RE.match(window_id):
@@ -93,6 +116,16 @@ def make_tv5_router(
     @router.websocket("/ws")
     async def tv5_websocket(websocket: WebSocket) -> None:
         """TV-5 WebSocket: server pushes {type: snapshot, windowId} on new layouts."""
+        # WebSocket scope bypasses the app's host_header_guard middleware, so the
+        # DNS-rebinding check must be replicated here; browsers cannot set headers
+        # on WS connects, so the token arrives as a query parameter.
+        if not is_localhost_host(websocket.headers.get("host")):
+            await websocket.close(code=4403)
+            return
+        ws_token = websocket.query_params.get("token")
+        if not ws_token or not token_matches(ws_token, token):
+            await websocket.close(code=4401)
+            return
         await websocket.accept()
         _ws_clients.append(websocket)
         try:

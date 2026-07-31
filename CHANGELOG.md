@@ -9,6 +9,70 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.97.0] — 2026-07-30
+
+Dashboard modernization program — visuals, information architecture, and
+big-data reliability, end to end (experimental surface per ADR-0027 unchanged).
+
+### Added
+- **Design-system layer** (`web/src/components/ui/primitives/`): Button, Input,
+  Select, Textarea, Field, Card, Badge, StatusPill, SegmentedControl, Modal
+  (focus trap), Drawer, Tooltip, Toolbar, and a semantic `Icon` wrapper over
+  lucide-react (ISC, Tier-A per ADR-0024) replacing the unicode glyph set.
+  Tokens v2: elevation shadows, surface/semantic tints, focus ring, motion
+  tokens + `prefers-reduced-motion` kill-switch, and a 10px type floor
+  (`--text-2xs`) retiring the 8–9px micro-type. The unused `motion` dependency
+  was removed.
+- **Balanced 7-group navigation** (all 29 tab ids unchanged — zero parity
+  churn, `?tab=` deep links intact): Overview · Runs & Debug · Govern &
+  Promote · Provenance & Trust · Compliance · Platform · Reports & Export.
+  Stable mnemonic `g`-key navigation sequences (`g h` Home, `g r` Runs, …)
+  replace the positional 1–9 shortcuts; the `?` overlay lists all of them.
+- **Big-data UI layer**: `useQuery`/`usePaginatedQuery` (one hook for both
+  keyset-cursor and offset models), a shared ADR-0199 truncation affordance
+  ("Showing N of ~M — load more"), and DataTable infinite scroll + footer.
+- **Conditional GET everywhere it matters (ADR-0199 S6)**: content-addressed
+  ETags + 304s on `/api/stats`, `/api/runs`, `/api/alerts/recent`,
+  `/api/incidents`, `/api/evidence`, `/api/kg/topology`,
+  `/api/reports/catalog` (joining `/api/analytics/summary`).
+- **`Authorization: Bearer` accepted by `nova serve`** everywhere the
+  `?token=` query form is (query form kept for the SPA and existing links;
+  the header, when present, is authoritative).
+- **vitest unit-test harness for the dashboard** (`web/tests/unit/`) with a
+  JS mirror of the command-parity CI guard; 55+ tests, previously zero.
+
+### Changed
+- **Monolith tabs decomposed into focused modules, behavior frozen**:
+  ComplianceTab 2,531→81-line hub with five deep-linkable `?sub=` groups
+  (Frameworks · Audits · Privacy · Exports · Assurance, also in the ⌘K
+  palette); RunsTab 2,110→327; RegistryTab 1,561→342 — plus a shared
+  `PanelScaffold` owning the repeated load/error/result state machine.
+- **Chart polish, still zero-dependency SVG (ADR-0201)**: Sparkline v2
+  (gradient fill, min/max/last markers, hover readout), ChartCard loading
+  skeleton + "approx" badge, SI-formatted ticks, shared chart-format utils;
+  sidebar auto-collapses to the icon rail below 1024px.
+
+### Fixed
+- **Security — `/api/tv5/*` had no auth at all**: HTTP routes now token-gated;
+  the TV-5 WebSocket enforces the localhost host guard (4403) + token (4401)
+  before accept. `GET /v0/replays/{id}` and its SSE events route (server mode)
+  now require the reader role. The serve token comparison is hash-then-
+  `compare_digest` (the old early-return leaked token length).
+- **The remaining unbounded-read endpoint class (ADR-0199)**:
+  `/api/policy/recent-decisions` + `/api/policy/explain` now page the audit
+  log newest-first via O(page) reverse tail reads (no more whole-file
+  `read_text()`), with byte-offset cursors; `/api/runs/search`'s "keyset"
+  fast path no longer degrades to O(offset); `/api/lineage/edges` gained a
+  real keyset cursor + `total` + `truncated` (silent truncation fixed);
+  `/api/kg/entity-queue`, `/api/admin/tokens`, `/api/admin/api-keys`, and
+  `/api/assets/{id}` eval history are all limit-bounded with additive
+  totals/truncated flags. All envelope changes are additive.
+- **Event-loop stalls**: sync DB/disk work (stats, runs list/search, evidence
+  zip listing, KG topology load, report builders, diff compare, the Louvain
+  reseed scan) moved to worker threads — a slow query no longer freezes
+  SSE/WS heartbeats. Registry schema DDL now runs once per process/db instead
+  of on every request.
+
 ## [0.96.0] — 2026-07-30
 
 ### Added

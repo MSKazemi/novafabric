@@ -95,3 +95,41 @@ class TestAnalyticsConditionalGet:
         )
         assert r2.status_code == 304
         assert r2.content == b""
+
+
+# ---------------------------------------------------------------------------
+# B3: conditional GET extended to the hot polled read endpoints.
+# ---------------------------------------------------------------------------
+
+HOT_POLLED_ENDPOINTS = [
+    "/api/stats",
+    "/api/runs",
+    "/api/alerts/recent",
+    "/api/incidents",
+    "/api/evidence",
+    "/api/kg/topology",
+    "/api/reports/catalog",
+]
+
+
+class TestHotEndpointsConditionalGet:
+    @pytest.mark.parametrize("path", HOT_POLLED_ENDPOINTS)
+    def test_200_with_etag_then_304(self, client: TestClient, path: str) -> None:
+        r1 = client.get(f"{path}?{TOKEN_Q}", headers=HEADERS)
+        assert r1.status_code == 200, f"{path}: {r1.status_code}"
+        etag = r1.headers.get("ETag")
+        assert etag, f"{path} has no ETag"
+        assert "max-age" in r1.headers.get("Cache-Control", ""), path
+
+        r2 = client.get(
+            f"{path}?{TOKEN_Q}", headers={**HEADERS, "If-None-Match": etag}
+        )
+        assert r2.status_code == 304, f"{path}: expected 304, got {r2.status_code}"
+        assert r2.content == b"", path
+
+    @pytest.mark.parametrize("path", HOT_POLLED_ENDPOINTS)
+    def test_stale_etag_still_200(self, client: TestClient, path: str) -> None:
+        r = client.get(
+            f"{path}?{TOKEN_Q}", headers={**HEADERS, "If-None-Match": '"stale"'}
+        )
+        assert r.status_code == 200, path

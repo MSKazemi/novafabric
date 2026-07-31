@@ -95,6 +95,14 @@ with a local relay TSA); that assessment is left to the operator.
 
 ## 2. Profiles
 
+The four profiles below are configured through `novaseal.yaml`'s `profile:`
+field. Two further signing backends exist outside this file, selected
+instead via a CLI flag on `nova seal sign`/`nova verify` — a keyless
+`--backend sigstore` (ADR-0071) and the ADR-0055 `x509` cert-pinned identity
+(currently a library API, not yet a CLI flag); see [NovaSeal Key Management
+§2.3–2.4](novaseal-key-management.md#23-x509-cert-pinned-identity-adr-0055--works-today-library-api-only)
+for both.
+
 ### 2.1 `local` — ECDSA P-256 file key
 
 The default for on-premises and laptop deployments. The private key lives on

@@ -230,13 +230,17 @@ NovaFabric explicitly does **not** claim exact replay of *remote* LLM calls.
 
 ### 4. Lineage (causation layer, v0.4)
 
-A directed provenance graph in SQLite — a rebuildable cache derived from
+A directed provenance graph — SQLite by default, a rebuildable cache derived from
 `lineage.jsonl` — with mechanical edge types (`consumed`, `produced_by`,
 `replayed_from`) and two confidence levels (`observed` at runtime vs `inferred` from
 structure). Queries: `provenance` (ancestors), `blast-radius` (descendants /
 impact), `replay-chain`, and `time-travel`. NovaFabric emits
 [OpenLineage](https://openlineage.io/) events (START / COMPLETE / FAIL) to Marquez,
-Atlan, or OpenMetadata.
+Atlan, or OpenMetadata, plus W3C PROV-N export. `experimental`, opt-in at-scale
+backends exist for cluster-scale graphs beyond SQLite — KuzuDB (embedded,
+benchmark-cleared at 10M edges), Postgres (recursive CTE), Apache AGE (openCypher),
+and JanusGraph (Gremlin) — plus a `nova lineage consume` NATS JetStream ingestion
+daemon; all are additive and never required for local-mode use.
 
 ### 5. Evidence Bundle (signed audit export, v0.4)
 
@@ -455,10 +459,10 @@ v0.19 ✓  Complete dashboard parity — CostTab + SchemaTab; all 7 v0.17 CLI su
 v1.0     OAS v1.0 schema freeze + production-ready governance [planned]
 ```
 
-The most recent releases (v0.45–v0.61) deepen capture fidelity, the accountability
-spine (`nova energy` / `nova ledger` / `nova safety-case`), significance-gated
-promotion, and supply-chain evidence (SLSA-for-ML, AI-BOM, signed dataset provenance
-cards). See [`CHANGELOG.md`](CHANGELOG.md) for release-by-release detail.
+The releases from v0.45 onward deepen capture fidelity, the accountability spine
+(`nova energy` / `nova ledger` / `nova safety-case`), significance-gated promotion,
+and supply-chain evidence (SLSA-for-ML, AI-BOM, signed dataset provenance cards). See
+[`CHANGELOG.md`](CHANGELOG.md) for release-by-release detail.
 
 ### New in v0.59 — all `experimental`
 
@@ -490,7 +494,8 @@ you opt in:
   (`nova retention`), a pluggable PII-masking pipeline, a cost/energy budget
   promotion gate (Rego), opt-in lifecycle webhooks (`nova events`), SCIM 2.0
   provisioning for server mode, and a partial SAML SSO slice (SP metadata + policy;
-  live login deliberately refuses with 501 pending a license gate).
+  live login at the time deliberately refused with 501 pending a license gate — this
+  was resolved in v0.73.0, see [below](#v062v094--all-experimental)).
 - **Portability & interop** — a single-file offline HTML capsule viewer
   (`nova export --html`), batch capsule export with a signed completeness manifest
   (`nova export-blob`), an OTLP/HTTP GenAI-span ingest endpoint, Inspect-AI eval-log
@@ -522,6 +527,47 @@ an RFC 9745/8594 API deprecation mechanism, and the trust surfaces
 See [`docs/releases/v0.60.0.md`](docs/releases/v0.60.0.md) and
 [`docs/releases/v0.61.0.md`](docs/releases/v0.61.0.md).
 
+### v0.62–v0.94 — all `experimental`
+
+The latest tagged release is **v0.94.0**. Since v0.61, each release has shipped one
+verifiable, additive slice at a time (no big-bang rewrites); highlights:
+
+- **Enterprise audit closure (v0.62–v0.63)** — SIEM egress, `ops.*` alerting
+  (Slack/PagerDuty/email), `nvfk_` API keys + rotation + REST, the `@novafabric/sdk`
+  TypeScript client, FIPS 140-3 posture.
+- **Cloud KMS + SAML (v0.71–v0.74)** — the full AWS/Azure/GCP envelope-wrapping
+  trio, and SAML SSO assertion consumption (`server/saml_verify.py`, XSW-safe
+  XML-DSIG via `signxml`) — the v0.59 note above about ACS refusing with 501 is
+  **resolved**: consumption now works, `experimental`/opt-in
+  (`experimental_acs_enabled`), off by default, Security-Architect review still
+  required pre-production.
+- **Verifiable-provenance cohort (v0.75–v0.83, ADRs 0097/0106/0109/0110/0075/0072/0077)**
+  — transparency-log witness cosigning, "acted-as" delegation chains, row/transform
+  lineage facets, a Merkle Mountain Range append-only log, W3C `did:key` +
+  Verifiable Credentials, a crypto-agility hybrid-signature envelope (Ed25519 today,
+  ML-DSA drop-in later), and jurisdiction sovereignty site-seals.
+- **EU AI Act evidence-exporter cohort (v0.80–v0.89, ADR-0107, `nova export-compliance`)**
+  — Art. 12 record-keeping, ISO/IEC 42001+42005, Art. 72 post-market monitoring,
+  Art. 50 marking + C2PA/SynthID-presence assertions, GPAI Art. 53 hash-chained
+  documentation, and a NIST GenAI Profile/CSA Agentic mapper — all pure-code,
+  render-from-evidence, `evidence_source`-marked (never overclaims verification).
+- **At-scale lineage completed (v0.68–v0.70, v0.94)** — all four graph backends
+  (Kuzu, Postgres, AGE, JanusGraph) are implemented and testcontainers-verified; the
+  10M-edge KuzuDB benchmark is cleared; v0.94.0 adds a bulk-COPY write path with a
+  published throughput ceiling and a `nova lineage consume` NATS ingestion daemon.
+- **No-LLM diagnosis (v0.90–v0.93, ADR-0101)** — causal-graph root-cause back-trace,
+  span-level claim-grounding audit, and counterfactual root-cause search via
+  mocked intervention replay (`nova diagnose --search-root-cause`) — all
+  deterministic, structural, `unverified`/`ungrounded`-labeled findings, not LLM
+  judgments.
+- **x509 signing identity (v0.91)** — offline certificate-pinned signing
+  (`trust/novaseal/x509_identity.py`), verified by SHA-256 fingerprint pinning, no
+  CA path-building.
+
+See [`CHANGELOG.md`](CHANGELOG.md) and [`ROADMAP.md`](ROADMAP.md) for the full
+release-by-release detail, and `docs/releases/v0.64.0.md` through
+`docs/releases/v0.94.0.md` for individual release notes.
+
 > **Not yet frozen:** on-disk Run Capsule and Evidence Bundle formats change until the
 > v1.0 schema freeze. Do not treat capsule internals as a stable contract before then.
 
@@ -539,7 +585,9 @@ Sigstore ·
 JSON Schema 2020-12 ·
 OCI ·
 OPA/Rego ·
-[NIST AI RMF](https://www.nist.gov/itl/ai-risk-management-framework)
+[NIST AI RMF](https://www.nist.gov/itl/ai-risk-management-framework) ·
+W3C `did:key` + Verifiable Credentials ·
+C2PA (`experimental`)
 
 NovaFabric produces primitives that *support* regulatory workflows (EU AI Act, NIST
 AI RMF, ISO/IEC 42001, FDA 21 CFR Part 11, SOC 2, GDPR, HIPAA) but takes no
@@ -586,10 +634,12 @@ capsules you own, with run-to-run structural diff and cryptographic provenance. 
 [How NovaFabric compares](#how-novafabric-compares).
 
 **Is NovaFabric production-ready?**
-It is **beta** (v0.63.0). Local capture, replay, diff, lineage, the trust layer,
+It is **beta** (v0.94.0). Local capture, replay, diff, lineage, the trust layer,
 policy gates, eval suites, and the asset registry are usable; server mode, the
-cluster-scale collector, the dashboard, and the v0.59–v0.63 cohorts (observability
-parity + enterprise readiness) are `experimental`. On-disk formats are not frozen
+cluster-scale collector, the dashboard, the at-scale lineage backends, and every
+cohort shipped since v0.59 (observability parity, enterprise readiness, cloud KMS,
+SAML SSO, the EU AI Act evidence-exporter cohort, the verifiable-provenance
+primitives, and no-LLM diagnosis) are `experimental`. On-disk formats are not frozen
 until the v1.0 schema freeze.
 
 **What Python version is required?**
@@ -616,6 +666,7 @@ See [Citation](#citation) below, or the [`CITATION.cff`](CITATION.cff) file.
 - [Strategy: Agentic Research-to-Production OS](design/strategy/agentic-research-to-production-os.md)
 
 ### Release notes
+- [v0.94.0 — Backlog-audit batch: `nova lineage consume` NATS daemon, KuzuDB bulk-COPY schema, multi-TSA fallback, `nova doctor --check-scheduler`](docs/releases/v0.94.0.md) (latest; see [`docs/releases/`](docs/releases/) for every v0.64.0–v0.94.0 release note and [`CHANGELOG.md`](CHANGELOG.md) for the full history)
 - [v0.63.0 — Enterprise-audit second slices: notification adapters, Alerts tab, API-key rotation + REST, SDK helpers](docs/releases/v0.63.0.md)
 - [v0.62.0 — Audit-closure: SIEM egress, ops alerting, API keys, TypeScript SDK, FIPS posture, Analytics tab](docs/releases/v0.62.0.md)
 - [v0.61.0 — Enterprise readiness: secure-by-default auth, orgs/workspaces, backup/restore, encryption at rest, observability](docs/releases/v0.61.0.md)
@@ -657,14 +708,17 @@ Requirements: [uv](https://docs.astral.sh/uv/).
 
 ## Status
 
-**Beta — actively developed (v0.63.0).** Stable and usable today: local capture,
-replay, diff, lineage (SQLite), the trust layer (signing, secret scanning,
+**Beta — actively developed (v0.94.0).** Stable and usable today: local capture,
+replay, diff, lineage (SQLite default), the trust layer (signing, secret scanning,
 redaction), the asset registry, policy/approval gates, and standard eval suites.
 `Experimental`: server mode, the cluster-scale collector, the Object Capsule Store,
-the live dashboard, and the v0.59–v0.63 cohorts (prompt lifecycle, sessions, offline
-analytics, annotation queues, retention, webhooks, and the enterprise-readiness
-surfaces in the [New in v0.60 and v0.61](#new-in-v060-and-v061--all-experimental)
-list; see [ROADMAP.md](ROADMAP.md)
+the live dashboard, the at-scale lineage backends (Kuzu/Postgres/AGE/JanusGraph),
+and every cohort shipped since v0.59 (prompt lifecycle, sessions, offline analytics,
+annotation queues, retention, webhooks, the enterprise-readiness surfaces in the
+[New in v0.60 and v0.61](#new-in-v060-and-v061--all-experimental) list, and the
+[v0.62–v0.94](#v062v094--all-experimental) cohorts — cloud KMS, SAML SSO, the EU AI
+Act evidence-exporter cohort, verifiable-provenance primitives, and no-LLM
+diagnosis; see [ROADMAP.md](ROADMAP.md)
 and [CHANGELOG.md](CHANGELOG.md) for per-feature maturity labels and the
 authoritative release history). Run Capsule
 and Evidence Bundle formats are **not frozen** — expect schema changes until the v1.0
@@ -697,7 +751,7 @@ lives in [`CITATION.cff`](CITATION.cff); a BibTeX entry:
   author  = {Seyedkazemi Ardebili, Mohsen},
   title   = {{NovaFabric}: Replayable AI Infrastructure},
   url      = {https://github.com/novafabric/novafabric},
-  version = {0.59.0},
+  version = {0.94.0},
   license = {Apache-2.0}
 }
 ```

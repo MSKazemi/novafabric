@@ -160,15 +160,34 @@ class HumanReviewQueueWriter:
                 item.confidence,
             )
 
-    def list_pending(self) -> list[ReviewItem]:
-        """Return all items with status='pending', ordered by created_at asc."""
+    def list_pending(self, limit: int | None = None) -> list[ReviewItem]:
+        """Return items with status='pending', ordered by created_at asc.
+
+        ``limit`` (optional, additive) bounds the read at the SQL layer —
+        O(limit) rows materialised instead of the whole queue (ADR-0199).
+        ``None`` keeps the historical return-everything behavior.
+        """
         with self._lock:
             conn = self._get_conn()
-            rows = conn.execute(
+            sql = (
                 "SELECT * FROM entity_review_queue WHERE status = 'pending' "
                 "ORDER BY created_at ASC"
-            ).fetchall()
+            )
+            params: tuple[int, ...] = ()
+            if limit is not None:
+                sql += " LIMIT ?"
+                params = (int(limit),)
+            rows = conn.execute(sql, params).fetchall()
             return [self._row_to_item(r) for r in rows]
+
+    def count_pending(self) -> int:
+        """Return the total number of items with status='pending'."""
+        with self._lock:
+            conn = self._get_conn()
+            row = conn.execute(
+                "SELECT COUNT(*) FROM entity_review_queue WHERE status = 'pending'"
+            ).fetchone()
+            return int(row[0])
 
     def approve(self, item_id: str, canonical: str, resolved_by: str) -> None:
         """Mark *item_id* as approved and record the canonical name.

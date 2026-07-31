@@ -6,7 +6,7 @@
  * loading/empty/error states mean new tabs get a consistent, performant table
  * without re-implementing it each time.
  */
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { clsx } from 'clsx';
 import { SkeletonRows } from './Skeleton';
@@ -40,6 +40,13 @@ interface DataTableProps<T> {
   rowHeight?: number;
   /** Max viewport height for the scroll area. */
   maxHeight?: number;
+  /**
+   * Infinite scroll: called when the user scrolls near the last row.
+   * Pair with usePaginatedQuery — pass its loadMore when hasMore && !loadingMore.
+   */
+  onEndReached?: () => void;
+  /** Footer slot below the scroll area (TruncationNotice, summaries). */
+  footer?: ReactNode;
   className?: string;
 }
 
@@ -61,6 +68,8 @@ export default function DataTable<T>({
   rowActions,
   rowHeight = 40,
   maxHeight = 560,
+  onEndReached,
+  footer,
   className = '',
 }: DataTableProps<T>) {
   const parentRef = useRef<HTMLDivElement>(null);
@@ -96,6 +105,19 @@ export default function DataTable<T>({
     });
   };
 
+  // Infinite scroll: fire onEndReached when the last virtual row comes into
+  // view. The virtualizer's item list is the cheapest reliable signal.
+  const virtualItems = virt.getVirtualItems();
+  const lastVisibleIndex = virtualItems.length > 0 ? virtualItems[virtualItems.length - 1].index : -1;
+  const endReachedRef = useRef(onEndReached);
+  endReachedRef.current = onEndReached;
+  useEffect(() => {
+    if (!endReachedRef.current) return;
+    if (sorted.length > 0 && lastVisibleIndex >= sorted.length - 4) {
+      endReachedRef.current();
+    }
+  }, [lastVisibleIndex, sorted.length]);
+
   if (error) return <ErrorBox message={error} onRetry={onRetry} />;
   if (loading) return <SkeletonRows rows={8} />;
   if (sorted.length === 0) {
@@ -105,7 +127,7 @@ export default function DataTable<T>({
   return (
     <div className={clsx('rounded border border-[var(--color-border)] overflow-hidden', className)}>
       {/* Header */}
-      <div className="flex items-center gap-3 px-3 py-2 bg-[var(--color-bg-sunken)] border-b border-[var(--color-border)] text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-faint)]">
+      <div className="flex items-center gap-3 px-3 py-2 bg-[var(--color-bg-sunken)] border-b border-[var(--color-border)] text-[var(--text-2xs)] font-semibold uppercase tracking-wider text-[var(--color-text-faint)]">
         {columns.map((col) => (
           <div
             key={col.key}
@@ -118,7 +140,7 @@ export default function DataTable<T>({
                 className="inline-flex items-center gap-1 hover:text-[var(--color-text)] transition-colors uppercase"
               >
                 {col.header}
-                <span aria-hidden="true" className="text-[8px]">
+                <span aria-hidden="true" className="text-[var(--text-2xs)]">
                   {sort?.key === col.key ? (sort.dir === 'asc' ? '▲' : '▼') : '↕'}
                 </span>
               </button>
@@ -166,6 +188,8 @@ export default function DataTable<T>({
           })}
         </div>
       </div>
+
+      {footer}
     </div>
   );
 }

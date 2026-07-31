@@ -42,6 +42,14 @@ def build_analytics_router(
 ) -> APIRouter:
     router = APIRouter(dependencies=[Depends(verify_token)], tags=["analytics"])
 
+    # Watermark cache (ADR-0199 rule 3): the aggregate pass reads every row's
+    # (bucket, duration) pair — ~O(rows) per request. The dashboard polls the
+    # same window every 30s against data that rarely changed, so key the
+    # computed payload by a cheap (COUNT(*), MAX(created_at)) watermark and
+    # skip the heavy pass when it matches. Bounded size; per-app closure.
+    _cache: dict[tuple[str | None, str | None], tuple[tuple[int, str | None], dict[str, Any]]] = {}
+    _CACHE_MAX = 32
+
     @router.get("/api/analytics/summary")
     async def analytics_summary(
         request: Request,
@@ -74,50 +82,80 @@ def build_analytics_router(
             durations_by_bucket,
         )
 
-        conn = get_connection(db_path)
-        try:
-            init_schema(conn)
-            ensure_runs_cache(conn)
-            agg_rows = aggregate_runs_daily(
-                conn,
-                since=since,
-                until=until,
-                failed_predicate=_FAILED_STATUSES_SQL,
-            )
-            duration_pairs = durations_by_bucket(conn, since=since, until=until)
-        finally:
-            conn.close()
+        def _compute() -> dict[str, Any]:
+            # Whole sqlite lifecycle inside the worker thread (B4).
+            conn = get_connection(db_path)
+            try:
+                init_schema(conn)
+                ensure_runs_cache(conn)
 
-        durations: dict[str, list[float]] = {}
-        for bucket, duration_ms in duration_pairs:
-            durations.setdefault(bucket, []).append(duration_ms)
+                # Cheap indexed watermark; on a hit, skip the O(rows) pass.
+                where = []
+                params: list[str] = []
+                if since:
+                    where.append("created_at >= ?")
+                    params.append(since)
+                if until:
+                    where.append("created_at <= ?")
+                    params.append(until)
+                where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+                count, max_created = conn.execute(
+                    f"SELECT COUNT(*), MAX(created_at) FROM runs_cache {where_sql}",
+                    params,
+                ).fetchone()
+                watermark = (int(count), max_created)
+                cached = _cache.get((since, until))
+                if cached is not None and cached[0] == watermark:
+                    return cached[1]
 
-        buckets: list[dict[str, Any]] = []
-        totals = {
-            "run_count": 0,
-            "failed_count": 0,
-            "model_call_count": 0,
-            "tool_call_count": 0,
-        }
-        for row in agg_rows:
-            bucket_durations = durations.get(row["bucket"], [])
-            entry = {
-                "bucket": row["bucket"],
-                "run_count": row["run_count"],
-                "failed_count": row["failed_count"] or 0,
-                "model_call_count": row["model_call_count"] or 0,
-                "tool_call_count": row["tool_call_count"] or 0,
-                "duration_ms_p50": _percentile(bucket_durations, 0.50),
-                "duration_ms_p95": _percentile(bucket_durations, 0.95),
-                "duration_ms_max": row["duration_ms_max"],
+                agg_rows = aggregate_runs_daily(
+                    conn,
+                    since=since,
+                    until=until,
+                    failed_predicate=_FAILED_STATUSES_SQL,
+                )
+                duration_pairs = durations_by_bucket(conn, since=since, until=until)
+            finally:
+                conn.close()
+
+            durations: dict[str, list[float]] = {}
+            for bucket, duration_ms in duration_pairs:
+                durations.setdefault(bucket, []).append(duration_ms)
+
+            buckets: list[dict[str, Any]] = []
+            totals = {
+                "run_count": 0,
+                "failed_count": 0,
+                "model_call_count": 0,
+                "tool_call_count": 0,
             }
-            buckets.append(entry)
-            totals["run_count"] += entry["run_count"]
-            totals["failed_count"] += entry["failed_count"]
-            totals["model_call_count"] += entry["model_call_count"]
-            totals["tool_call_count"] += entry["tool_call_count"]
+            for row in agg_rows:
+                bucket_durations = durations.get(row["bucket"], [])
+                entry = {
+                    "bucket": row["bucket"],
+                    "run_count": row["run_count"],
+                    "failed_count": row["failed_count"] or 0,
+                    "model_call_count": row["model_call_count"] or 0,
+                    "tool_call_count": row["tool_call_count"] or 0,
+                    "duration_ms_p50": _percentile(bucket_durations, 0.50),
+                    "duration_ms_p95": _percentile(bucket_durations, 0.95),
+                    "duration_ms_max": row["duration_ms_max"],
+                }
+                buckets.append(entry)
+                totals["run_count"] += entry["run_count"]
+                totals["failed_count"] += entry["failed_count"]
+                totals["model_call_count"] += entry["model_call_count"]
+                totals["tool_call_count"] += entry["tool_call_count"]
 
-        payload = {"buckets": buckets, "totals": totals, "since": since, "until": until}
+            result = {"buckets": buckets, "totals": totals, "since": since, "until": until}
+            if len(_cache) >= _CACHE_MAX:
+                _cache.pop(next(iter(_cache)))
+            _cache[(since, until)] = (watermark, result)
+            return result
+
+        import asyncio  # noqa: PLC0415
+
+        payload = await asyncio.to_thread(_compute)
         return conditional_json(request, payload, max_age=30)
 
     return router

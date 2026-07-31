@@ -63,7 +63,7 @@ Confirm the install:
 
 ```bash
 nova --version
-# novafabric 0.59.0
+# novafabric 0.94.0
 ```
 
 Both `nova` and `novafabric` are the same binary. The examples throughout this
@@ -75,7 +75,7 @@ guide use `nova`.
 > use — but handy if you want the directory tree in place up front. Re-running it
 > is safe; use `nova init --force` to regenerate the keypair.
 
-> **Maturity.** NovaFabric is in beta (v0.59.0). Most surfaces work today but
+> **Maturity.** NovaFabric is in beta (v0.94.0). Most surfaces work today but
 > carry `experimental` maturity: interfaces may change before the v1.0 schema
 > freeze. On-disk formats are **not** frozen until v1.0. See
 > [ROADMAP.md](../ROADMAP.md) for the sequencing.
@@ -260,16 +260,16 @@ artifacts:
 nova scan-secrets $RUN
 ```
 
-A clean run prints something like:
+A clean run prints:
 
 ```
-Capsule: 01HXAY7M5JZ8R7K4P9DPBYK2WX
-  findings: 0
-  files scanned: 4
-  Status: CLEAN
+✓ 01HXAY7M5JZ8R7K4P9DPBYK2WX: no findings
 ```
 
-The `redaction-proof.json` file records that the scan ran, which files were
+If findings were detected, `nova scan-secrets` lists each one (with a severity
+badge); add `--fail-on <severity>` to exit non-zero above a threshold, or
+`--json` to print the full `redaction-proof.json` for scripting. The
+`redaction-proof.json` file itself records that the scan ran, which files were
 checked, and how many findings were found. If a secret is detected, it is
 redacted **in place** as `[REDACTED:rule-id]` before the capsule is finalized.
 This proof is what makes a capsule safe to share, archive, and export — and it is
@@ -279,10 +279,12 @@ generated on every capture, not as an afterthought.
 
 ## Step 6: Replay the capsule (read-only inspection)
 
-Replay re-executes or inspects a capsule with external calls controlled, in four
-honest, falsifiable modes: `forensic`, `mocked`, `semantic`, and `exact`. We'll
-start with the safest — **forensic** — which reads the capsule without
-re-executing anything:
+Replay re-executes or inspects a capsule with external calls controlled. There
+are four honest, falsifiable modes for reproducing or judging a run —
+`forensic`, `mocked`, `semantic`, `exact` — plus a fifth, **experimental**
+`intervention` mode for counterfactual root-cause analysis (see the table
+below). We'll start with the safest — **forensic** — which reads the capsule
+without re-executing anything:
 
 ```bash
 nova replay $RUN --mode forensic
@@ -296,7 +298,7 @@ pulled from a CI artifact store.
 Results are written to `.novafabric/replays/<replay-ulid>/replay_result.yaml`. A
 replay is itself a new capsule, so you can diff a replay against the original.
 
-The other three modes each answer a different question:
+The other modes each answer a different question:
 
 | Mode | Re-executes? | Network? | Use it for |
 |---|---|---|---|
@@ -304,9 +306,12 @@ The other three modes each answer a different question:
 | `mocked` | Yes | LLM calls served from the capsule cache | CI / regression |
 | `semantic` | Yes | Yes | Judging *meaning* (0.0–1.0 score) against drifting remote LLMs |
 | `exact` | Yes | Deterministic env only | Local / on-prem byte-exact compliance |
+| `intervention` (experimental) | Yes, mocked semantics | No | Counterfactual root-cause: substitute one captured event per an `InterventionSpec` and see whether the outcome flips |
 
 NovaFabric deliberately does **not** claim byte-exact replay of remote LLM calls
-— that is why `semantic` mode exists. See
+— that is why `semantic` mode exists. `intervention` mode is what
+`nova diagnose --intervene` / `--search-root-cause` use under the hood to test
+a failure hypothesis rather than just rank it — see
 [User guide: replay](user-guide.md) for the details of each mode.
 
 ---
@@ -414,8 +419,13 @@ When you need portable, tamper-evident proof of what a run did — for a colleag
 an archive, or an auditor — export the capsule as a signed **Evidence Bundle**:
 
 ```bash
-nova export-evidence $RUN --output bundle.zip
+nova export-evidence $RUN --output bundle.zip --key ~/.novafabric/keys/signing_key.pem
 ```
+
+`--key` is required (the CLI errors with a clear message if it's omitted) — it
+points at the Ed25519 private key `nova init` already generated for you in
+Step 1. If you skipped `nova init`, generate one with
+`python -m novafabric.evidence.signing` or any ed25519 tool.
 
 An Evidence Bundle is a signed, self-contained ZIP that embeds the capsule, a
 lineage subgraph, in-toto DSSE attestations, **ed25519** signatures, and the
@@ -468,6 +478,8 @@ A few directions to explore:
 | Group runs into multi-turn sessions and replay them in order (experimental) | [CLI reference: nova session](cli-reference.md#nova-session-experimental-adr-0122) |
 | Version prompts as immutable registry assets + deployment labels (experimental) | [CLI reference: nova prompt](cli-reference.md#prompt-versioning-commands-experimental-adr-0112) |
 | Query cost / tokens / scores offline over your capsules (experimental) | [CLI reference: nova query](cli-reference.md#nova-query-experimental-adr-0129) |
+| Attribute a failed run to its most likely cause, then replay-prove the hypothesis (experimental) | `nova diagnose <run-id> --search-root-cause` |
+| Export EU AI Act / ISO 42001 / NIST / GPAI compliance evidence (experimental) | `nova export-compliance --help`, [docs/concepts.md](concepts.md#evidence-bundle) |
 | Everything that shipped experimental in v0.59, in one list | [User guide: v0.59 summary](user-guide.md#what-shipped-experimental-in-v059) |
 | Why NovaFabric — plain-English value guide | [tutorials/why-novafabric.md](tutorials/why-novafabric.md) |
 | How capture works under the hood | [tutorials/how-capture-works.md](tutorials/how-capture-works.md) |

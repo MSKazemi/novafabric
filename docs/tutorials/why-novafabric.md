@@ -246,8 +246,11 @@ that the output hasn't been tampered with since.
 **With NovaFabric:**
 
 ```bash
-nova export-evidence capsules/01KRB4F7…
+nova export-evidence capsules/01KRB4F7… --output bundle.zip --key ed25519.pem
 ```
+
+> `--output`/`-o` and `--key` (a PEM-encoded ed25519 private key) are both
+> **required** — the command exits non-zero without them.
 
 This produces a signed, self-contained ZIP that embeds the capsule, a lineage
 subgraph, in-toto DSSE attestations, ed25519 signatures, and vendored JSON schemas.
@@ -257,9 +260,13 @@ exact chain of events entirely offline.
 
 > **Scope caveat (honest):** an Evidence Bundle attests that a capsule is *unmodified
 > since signing*. It does not certify regulatory compliance or vouch for the content
-> itself. A dedicated **NovaSeal** signing service (RFC 3161 trusted timestamps +
-> append-only Merkle transparency log) is **PLANNED design intent**, not shipped —
-> today's sealing is ed25519 signatures plus in-toto DSSE attestations.
+> itself. **Corrected 2026-07-30:** RFC 3161 trusted timestamps and an append-only
+> Merkle transparency log are not merely planned — **NovaSeal** (`trust/novaseal/`,
+> ADR-0041/ADR-0070) implements both, plus DSSE signing, and is **experimental**
+> and opt-in on the `nova capture` / `nova verify` path (`tests/seal/` passes,
+> including a p99 latency gate). Ed25519-signed Evidence Bundles plus in-toto DSSE
+> attestations remain the stable default; NovaSeal is the richer, still-evolving
+> layer on top, not a separate unbuilt service.
 
 ---
 
@@ -331,11 +338,20 @@ The same five primitives work from a laptop to a cluster:
   `127.0.0.1`, uses a one-shot token, and shows the equivalent CLI command on every
   page. The CLI + JSON remain the canonical interface through v1.0.
 
-> **PLANNED (not shipped):** the cluster-scale collector, parent/child capsules for
-> distributed runs, an object capsule store, a production metadata store with row-level
-> security, lineage-at-scale (KuzuDB), and a live topology dashboard
-> (`nova serve --topology`) are documented design intent only. Do not treat them as
-> available.
+> **Corrected 2026-07-30 — this used to be accurate, it no longer is.** The
+> cluster-scale collector, parent/child capsules for distributed runs, an object
+> capsule store, a production metadata store with row-level security,
+> lineage-at-scale, and a live topology dashboard are **shipped, as
+> experimental** (not planned-only): Collector (Go + Python, Phase 2, v0.14.3),
+> parent/child capsules (Phase 3, v0.15.0), Object Capsule Store (Phase 4,
+> v0.14.5), Metadata DB with Postgres RLS (Phase 5, v0.14.6), and all four
+> lineage-at-scale backends — KuzuDB, Postgres, Apache AGE, JanusGraph — (Phase
+> 6, complete as of v0.70.0). `nova serve --topology` (the live topology
+> dashboard, ADR-0068) is also shipped experimental. What is genuinely still
+> design intent only: cross-cluster **federation** and full cross-org identity
+> (Phase 6 of `design/architecture/cluster-scale.md`'s federation layer, not to
+> be confused with the lineage-backend Phase 6 above). See
+> `docs/tutorials/cluster-scale.md` for the full, corrected status table.
 
 ---
 

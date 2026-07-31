@@ -1,9 +1,15 @@
 # Writing a NovaFabric capture-hook plugin
 
-> **Status: experimental in v0.5.x and v0.6.x.** The contract may
-> change between minor versions. Stability is queued for v0.7 — see
-> [RFC-0001 §"Adoption / migration plan"](../../design/governance/RFC-0001-multi-vendor-strategy.md)
-> for the criteria.
+> **Status: experimental.** Introduced in v0.5.x with a v0.7 stability
+> checkpoint planned (contingent on a third-party plugin being published and
+> used in real workflows — see
+> [RFC-0001 §"Adoption / migration plan"](../../design/governance/RFC-0001-multi-vendor-strategy.md)).
+> As of this writing (repo at v0.96.0) no ADR or release note records that
+> stability checkpoint having been formally revisited or declared met — the
+> in-tree reference implementation (`examples/plugin-hook-reference/`) is
+> NovaFabric's own example, not independent third-party evidence. Treat the
+> contract as **still experimental** and pin your plugin's `novafabric`
+> dependency accordingly until a stability decision is recorded.
 
 > **Working reference:** `examples/plugin-hook-reference/` is a complete,
 > installable Python package that demonstrates everything below
@@ -149,9 +155,18 @@ A plugin that raises in `__init__` or `install()` is logged at WARNING and skipp
 
 - **v0.5.x — experimental.** The contract may change in minor releases. Plugins targeting v0.5.x should pin `novafabric < 0.6` or be prepared to adjust.
 - **v0.6 — experimental continues.** Breaking changes (if any) announced in release notes.
-- **v0.7 — stability decision.** If at least one third-party plugin has been published and used in real workflows, the contract is declared stable. From that point breaking changes require an RFC and a deprecation cycle.
+- **v0.7 — planned stability checkpoint.** If at least one third-party plugin had been published and used in real workflows by v0.7, the contract would be declared stable, after which breaking changes would require an RFC and a deprecation cycle.
 
-This experimental period is bounded on purpose — silently extending it would push plugin authors away. If the contract has not stabilised by v0.7, that is itself a signal to revisit the design via a successor RFC.
+**Where this stands as of v0.96.0:** the repo is well past v0.7 and no ADR or
+release note in-tree records that checkpoint having been formally revisited —
+this doc's own bounded-experimental-period framing was written assuming the
+checkpoint would be actively re-decided at v0.7, and that re-decision does not
+appear to have happened. Until a stability decision is recorded, continue to
+treat the contract as **experimental** rather than assume it lapsed into
+stable by default. This experimental period was meant to be bounded on
+purpose — silently extending it indefinitely would push plugin authors away —
+so an unresolved checkpoint like this one is itself a signal to revisit the
+design via a successor RFC, not to guess at its status.
 
 ---
 

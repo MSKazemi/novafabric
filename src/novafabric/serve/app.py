@@ -25,6 +25,7 @@ from fastapi import (
     Body,
     Depends,
     FastAPI,
+    Header,
     HTTPException,
     Query,
     Request,
@@ -45,7 +46,7 @@ from novafabric.registry.runs_cache import (
 )
 from novafabric.serve import audit
 from novafabric.serve import reports as _reports
-from novafabric.serve.auth import is_localhost_host
+from novafabric.serve.auth import extract_bearer, is_localhost_host, token_matches
 from novafabric.serve.capsule_loader import (
     discover_capsule_dirs,
     discover_ingestable_dirs,
@@ -54,6 +55,7 @@ from novafabric.serve.capsule_loader import (
     load_full_capsule,
     load_jsonl,
 )
+from novafabric.serve.http_cache import conditional_json
 from novafabric.serve.pagination import clamp_limit, decode_keyset, encode_keyset
 from novafabric.serve.routers.admin_keys import build_admin_keys_router
 from novafabric.serve.routers.alerts import build_alerts_router
@@ -380,6 +382,11 @@ def _extract_score(raw: object) -> float | None:
 _EVIDENCE_LIST_MAX = 500
 _INCIDENT_LIST_MAX = 500
 
+#: Hard cap on audit-log lines scanned per policy-endpoint request (ADR-0199):
+#: keeps /api/policy/{recent-decisions,explain} O(constant) per page regardless
+#: of audit-log size; callers resume with the byte-offset ``cursor``.
+_POLICY_SCAN_CAP = 10_000
+
 
 def _list_evidence_bundles(limit: int | None = None) -> tuple[list[dict[str, Any]], int]:
     """Scan evidence dir and return ``(EvidenceSummary dicts newest-first, total)``.
@@ -616,14 +623,20 @@ def create_app(
 
     # ---------- auth dependency ----------
 
-    def verify_token(t: str | None = Query(default=None, alias="token")) -> str:
-        if not t or not _consteq(t, token):
+    def verify_token(
+        t: str | None = Query(default=None, alias="token"),
+        authorization: str | None = Header(default=None),
+    ) -> str:
+        # Bearer-first: when an Authorization header is present it is authoritative;
+        # the ?token= query form stays supported for the SPA and existing links.
+        candidate = extract_bearer(authorization) or t
+        if not candidate or not _consteq(candidate, token):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="missing or invalid token",
             )
         # Returns a short fingerprint for audit logging.
-        return t[:8]
+        return candidate[:8]
 
     # ---------- routes ----------
 
@@ -827,24 +840,42 @@ def create_app(
             if stop.wait(2.0):  # poll every 2 s for SSE freshness; wake early on stop
                 break
 
+    # ETag stability for /api/stats: the background stats-refresh daemon
+    # recomputes the cache every ~2s, which changes cached_at even when the
+    # DATA is identical — that would churn the ETag and defeat 304s. Reuse the
+    # previous payload (same cached_at) while the data is unchanged.
+    _stats_payload_memo: dict[str, Any] = {}
+
     @app.get("/api/stats", dependencies=[Depends(verify_token)])
-    async def get_stats() -> dict[str, Any]:
+    async def get_stats(request: Request) -> Response:
         """Aggregate counts for the HomeTab.
 
         Returns cached counts (approximate: true) when the 30-second cache
-        is warm, or computes fresh counts on the first request.
+        is warm, or computes fresh counts on the first request. Conditional
+        GET (S6): the ETag changes only when the underlying counts change,
+        so pollers get 304s.
         """
         # Double-checked locking: on a cold/expired cache, concurrent
         # cache-miss requests do not all recompute — only the first does.
-        data = _stats_cache.get_or_compute(_compute_stats)
-        return {
-            **data,
-            "approximate": True,
-            "cached_at": _stats_cache.cached_at_iso(),
-        }
+        # Off the event loop: _compute_stats does sync DB/disk work (B4);
+        # _StatsCache is thread-safe by design.
+        data = await asyncio.to_thread(_stats_cache.get_or_compute, _compute_stats)
+        prev = _stats_payload_memo.get("payload")
+        if prev is not None and _stats_payload_memo.get("data") == data:
+            payload = prev
+        else:
+            payload = {
+                **data,
+                "approximate": True,
+                "cached_at": _stats_cache.cached_at_iso(),
+            }
+            _stats_payload_memo["data"] = data
+            _stats_payload_memo["payload"] = payload
+        return conditional_json(request, payload, max_age=15)
 
     @app.get("/api/runs", dependencies=[Depends(verify_token)])
     async def list_runs(
+        request: Request,
         limit: int = Query(default=100, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
         since: str | None = Query(default=None, description="ISO-8601 lower bound on created_at"),
@@ -858,43 +889,50 @@ def create_app(
                 "O(page) paging that ignores offset"
             ),
         ),
-    ) -> dict[str, Any]:
+    ) -> Response:
         from novafabric.registry.store import get_connection, init_schema  # noqa: PLC0415
         after = _decode_cursor(cursor)
-        next_cursor: str | None = None
-        _conn = get_connection(db_path)
-        init_schema(_conn)
-        try:
-            if count_cached_runs(_conn) > 0:
-                page, total = _query_runs_cache(
-                    _conn, limit=limit, offset=offset,
-                    since=since, until=until, status=status, q=q,
-                    after=after,
-                )
-                if len(page) == limit and page[-1].get("created_at"):
-                    next_cursor = _encode_cursor(
-                        page[-1]["created_at"], page[-1]["run_id"]
+
+        def _read_page() -> tuple[list[dict[str, Any]], int, str | None]:
+            # Whole sqlite lifecycle inside the worker thread — connections
+            # are thread-bound (B4).
+            next_cursor: str | None = None
+            _conn = get_connection(db_path)
+            init_schema(_conn)
+            try:
+                if count_cached_runs(_conn) > 0:
+                    page, total = _query_runs_cache(
+                        _conn, limit=limit, offset=offset,
+                        since=since, until=until, status=status, q=q,
+                        after=after,
                     )
-            else:
-                summaries = list_run_summaries(capsule_dir)
-                if since:
-                    summaries = [s for s in summaries if (s.get("created_at") or "") >= since]
-                if until:
-                    summaries = [s for s in summaries if (s.get("created_at") or "") <= until]
-                if status and status != "all":
-                    summaries = [s for s in summaries if s.get("status") == status]
-                if q:
-                    q_lower = q.lower()
-                    summaries = [
-                        s for s in summaries
-                        if q_lower in " ".join(s.get("command") or []).lower()
-                        or q_lower in (s.get("run_id") or "").lower()
-                    ]
-                total = len(summaries)
-                page = summaries[offset : offset + limit]
-        finally:
-            _conn.close()
-        return {
+                    if len(page) == limit and page[-1].get("created_at"):
+                        next_cursor = _encode_cursor(
+                            page[-1]["created_at"], page[-1]["run_id"]
+                        )
+                else:
+                    summaries = list_run_summaries(capsule_dir)
+                    if since:
+                        summaries = [s for s in summaries if (s.get("created_at") or "") >= since]
+                    if until:
+                        summaries = [s for s in summaries if (s.get("created_at") or "") <= until]
+                    if status and status != "all":
+                        summaries = [s for s in summaries if s.get("status") == status]
+                    if q:
+                        q_lower = q.lower()
+                        summaries = [
+                            s for s in summaries
+                            if q_lower in " ".join(s.get("command") or []).lower()
+                            or q_lower in (s.get("run_id") or "").lower()
+                        ]
+                    total = len(summaries)
+                    page = summaries[offset : offset + limit]
+            finally:
+                _conn.close()
+            return page, total, next_cursor
+
+        page, total, next_cursor = await asyncio.to_thread(_read_page)
+        payload = {
             "capsule_dir": str(capsule_dir.resolve()),
             "count": total,
             "total": total,
@@ -904,6 +942,7 @@ def create_app(
             "next_cursor": next_cursor,
             "runs": page,
         }
+        return conditional_json(request, payload, max_age=10)
 
     # Declared before /api/runs/{run_id} so FastAPI does not swallow it as a wildcard match.
     @app.get("/api/runs/suggest-register", dependencies=[Depends(verify_token)])
@@ -1133,91 +1172,102 @@ def create_app(
                 scope=scope, q=q, limit=limit,
                 since=since, until=until, status=status,
             )
-        _conn = get_connection(db_path)
-        init_schema(_conn)
-        try:
-            if count_cached_runs(_conn) > 0:
-                # Fast path: decode cursor → offset, query the index.
-                decoded = _decode_cursor(cursor)
-                offset = 0
-                if decoded is not None:
-                    cursor_ts, cursor_id = decoded
-                    # Count rows that come before the cursor (newest-first order).
-                    offset = _conn.execute(
-                        "SELECT COUNT(*) FROM runs_cache"
-                        " WHERE created_at > ? OR (created_at = ? AND run_id > ?)",
-                        (cursor_ts, cursor_ts, cursor_id),
-                    ).fetchone()[0]
-                page, total_approx = _query_runs_cache(
-                    _conn, limit=limit, offset=offset,
-                    since=since, until=until, status=status, q=q,
-                )
-                next_cursor: str | None = None
-                if len(page) == limit:
-                    last = page[-1]
-                    next_cursor = _encode_cursor(
-                        last.get("created_at") or "", last.get("run_id") or ""
-                    )
-                return {"items": page, "next_cursor": next_cursor, "total_approx": total_approx}
-        finally:
-            _conn.close()
 
-        # Fallback: full disk scan (pre-index startup).
-        summaries = list_run_summaries(capsule_dir)
-        if since:
-            summaries = [s for s in summaries if (s.get("created_at") or "") >= since]
-        if until:
-            summaries = [s for s in summaries if (s.get("created_at") or "") <= until]
-        if status and status != "all":
-            summaries = [s for s in summaries if s.get("status") == status]
-        if q:
-            q_lower = q.lower()
-            summaries = [
-                s for s in summaries
-                if q_lower in " ".join(s.get("command") or []).lower()
-                or q_lower in (s.get("run_id") or "").lower()
-            ]
-        summaries.sort(
-            key=lambda s: (s.get("created_at") or "", s.get("run_id") or ""),
-            reverse=True,
-        )
-        total_approx = len(summaries)
-        decoded = _decode_cursor(cursor)
-        if decoded is not None:
-            cursor_ts, cursor_id = decoded
-            start = 0
-            for i, s in enumerate(summaries):
-                ts = s.get("created_at") or ""
-                rid = s.get("run_id") or ""
-                if ts == cursor_ts and rid == cursor_id:
-                    start = i + 1
-                    break
-                if ts < cursor_ts or (ts == cursor_ts and rid < cursor_id):
-                    start = i
-                    break
-            summaries = summaries[start:]
-        page = summaries[:limit]
-        remaining = summaries[limit:]
-        next_cursor = None
-        if remaining and page:
-            last = page[-1]
-            next_cursor = _encode_cursor(
-                last.get("created_at") or "", last.get("run_id") or ""
+        def _fast_path() -> dict[str, Any] | None:
+            # Whole sqlite lifecycle inside the worker thread (B4).
+            _conn = get_connection(db_path)
+            init_schema(_conn)
+            try:
+                if count_cached_runs(_conn) > 0:
+                    # Fast path: true keyset — the decoded (created_at, run_id)
+                    # cursor seeks directly in the index (O(page)); no
+                    # cursor→OFFSET COUNT(*) conversion (ADR-0199).
+                    page, total_approx = _query_runs_cache(
+                        _conn, limit=limit, offset=0,
+                        since=since, until=until, status=status, q=q,
+                        after=_decode_cursor(cursor),
+                    )
+                    next_cursor: str | None = None
+                    if len(page) == limit and page[-1].get("created_at"):
+                        # Only rows with a real created_at make a valid keyset
+                        # position (the NULL tail is not cursor-resumable).
+                        next_cursor = _encode_cursor(
+                            page[-1]["created_at"], page[-1]["run_id"]
+                        )
+                    return {
+                        "items": page,
+                        "next_cursor": next_cursor,
+                        "total_approx": total_approx,
+                    }
+                return None
+            finally:
+                _conn.close()
+
+        fast = await asyncio.to_thread(_fast_path)
+        if fast is not None:
+            return fast
+
+        # Fallback: full disk scan (pre-index startup) — worker thread (B4).
+        def _disk_scan() -> dict[str, Any]:
+            summaries = list_run_summaries(capsule_dir)
+            if since:
+                summaries = [s for s in summaries if (s.get("created_at") or "") >= since]
+            if until:
+                summaries = [s for s in summaries if (s.get("created_at") or "") <= until]
+            if status and status != "all":
+                summaries = [s for s in summaries if s.get("status") == status]
+            if q:
+                q_lower = q.lower()
+                summaries = [
+                    s for s in summaries
+                    if q_lower in " ".join(s.get("command") or []).lower()
+                    or q_lower in (s.get("run_id") or "").lower()
+                ]
+            summaries.sort(
+                key=lambda s: (s.get("created_at") or "", s.get("run_id") or ""),
+                reverse=True,
             )
-        return {"items": page, "next_cursor": next_cursor, "total_approx": total_approx}
+            total_approx = len(summaries)
+            decoded = _decode_cursor(cursor)
+            if decoded is not None:
+                cursor_ts, cursor_id = decoded
+                start = 0
+                for i, s in enumerate(summaries):
+                    ts = s.get("created_at") or ""
+                    rid = s.get("run_id") or ""
+                    if ts == cursor_ts and rid == cursor_id:
+                        start = i + 1
+                        break
+                    if ts < cursor_ts or (ts == cursor_ts and rid < cursor_id):
+                        start = i
+                        break
+                summaries = summaries[start:]
+            page = summaries[:limit]
+            remaining = summaries[limit:]
+            next_cursor = None
+            if remaining and page:
+                last = page[-1]
+                next_cursor = _encode_cursor(
+                    last.get("created_at") or "", last.get("run_id") or ""
+                )
+            return {"items": page, "next_cursor": next_cursor, "total_approx": total_approx}
+
+        return await asyncio.to_thread(_disk_scan)
 
     # ---------- B-3: SSE stream endpoint ----------
 
     @app.get("/api/runs/stream")
     async def stream_runs(
         t: str | None = Query(default=None, alias="token"),
+        authorization: str | None = Header(default=None),
     ) -> StreamingResponse:
         """Server-Sent Events stream of new run summaries.
 
         Emits ``data: <run_json>\\n\\n`` whenever a new run capsule is detected.
         The token is validated inline (SSE cannot use streaming + Depends easily).
         """
-        if not t or not _consteq(t, token):
+        candidate = extract_bearer(authorization) or t
+        if not candidate or not _consteq(candidate, token):
             return StreamingResponse(
                 iter([]),
                 status_code=401,
@@ -1517,7 +1567,16 @@ def create_app(
         }
 
     @app.get("/api/assets/{asset_id}", dependencies=[Depends(verify_token)])
-    async def get_asset_by_id_endpoint(asset_id: str) -> dict[str, Any]:
+    async def get_asset_by_id_endpoint(
+        asset_id: str,
+        eval_limit: int = Query(default=50, ge=1, le=500),
+    ) -> dict[str, Any]:
+        """Asset detail with its recent eval history.
+
+        Bounded (ADR-0199): ``eval_results`` carries at most ``eval_limit``
+        newest results, with the additive true ``eval_results_total`` and
+        ``eval_results_truncated`` flag (no silent truncation).
+        """
         from novafabric.registry.store import get_connection, init_schema
 
         conn = get_connection(db_path)
@@ -1527,16 +1586,23 @@ def create_app(
             if not row:
                 raise HTTPException(status_code=404, detail=f"Asset '{asset_id}' not found.")
             asset = dict(row)
+            eval_total = conn.execute(
+                "SELECT COUNT(*) FROM eval_results WHERE asset_id = ?",
+                (asset_id,),
+            ).fetchone()[0]
             evals = conn.execute(
                 "SELECT suite_name, passed, score_json, run_at "
-                "FROM eval_results WHERE asset_id = ? ORDER BY run_at DESC",
-                (asset_id,),
+                "FROM eval_results WHERE asset_id = ? ORDER BY run_at DESC "
+                "LIMIT ?",
+                (asset_id, eval_limit),
             ).fetchall()
             asset["eval_results"] = [
                 {"suite_name": e["suite_name"], "passed": bool(e["passed"]),
                  "score": e["score_json"], "run_at": e["run_at"]}
                 for e in evals
             ]
+            asset["eval_results_total"] = eval_total
+            asset["eval_results_truncated"] = eval_total > len(asset["eval_results"])
         finally:
             conn.close()
         return asset
@@ -1740,18 +1806,21 @@ def create_app(
 
     @app.get("/api/evidence", dependencies=[Depends(verify_token)])
     async def list_evidence_endpoint(
+        request: Request,
         limit: int = Query(_EVIDENCE_LIST_MAX, ge=1, le=_EVIDENCE_LIST_MAX),
-    ) -> dict[str, Any]:
+    ) -> Response:
         # S3 scale slice: bound the per-zip manifest reads so a huge evidence
         # directory can't make this endpoint open every archive on every call.
+        # Off the event loop: opens + hashes up to `capped` zip archives (B4).
         capped = clamp_limit(limit, _EVIDENCE_LIST_MAX)
-        bundles, total = _list_evidence_bundles(limit=capped)
-        return {
+        bundles, total = await asyncio.to_thread(_list_evidence_bundles, limit=capped)
+        payload = {
             "bundles": bundles,
             "count": len(bundles),
             "total": total,
             "truncated": total > len(bundles),
         }
+        return conditional_json(request, payload, max_age=30)
 
     @app.get(
         "/api/evidence/{bundle_id}/download",
@@ -2028,8 +2097,20 @@ def create_app(
     @app.get("/api/lineage/edges", dependencies=[Depends(verify_token)])
     async def lineage_edges(
         limit: int = Query(default=2000, ge=1, le=20000),
+        cursor: str | None = Query(
+            default=None,
+            description=(
+                "Opaque keyset cursor over (created_at, edge_id) from a "
+                "previous response's next_cursor; O(page) paging"
+            ),
+        ),
     ) -> dict[str, Any]:
-        """Return every lineage edge in the SQLite. Powers the dashboard's full-DAG view."""
+        """Return lineage edges (newest-first). Powers the dashboard's full-DAG view.
+
+        Bounded (ADR-0199): at most ``limit`` edges per page, with an additive
+        keyset ``cursor``/``next_cursor`` pair, the true ``total`` edge count,
+        and ``truncated: true`` whenever older edges were not returned.
+        """
         import json
 
         from novafabric.registry.store import get_connection, init_schema
@@ -2042,10 +2123,28 @@ def create_app(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             ).fetchall()}
             if "lineage_edges" not in tables:
-                return {"count": 0, "edges": []}
+                return {
+                    "count": 0,
+                    "edges": [],
+                    "total": 0,
+                    "next_cursor": None,
+                    "truncated": False,
+                }
 
+            total = conn.execute(
+                "SELECT COUNT(*) FROM lineage_edges"
+            ).fetchone()[0]
+            after = _decode_cursor(cursor)
+            where = ""
+            params: list[Any] = []
+            if after is not None:
+                # Keyset seek matching the DESC sort: strictly older than the
+                # (created_at, edge_id) cursor position.
+                where = "WHERE (e.created_at, e.edge_id) < (?, ?)"
+                params = [after[0], after[1]]
+            # limit+1 probe: the extra row only signals that more pages exist.
             rows = conn.execute(
-                """
+                f"""
                 SELECT e.edge_id, e.edge_type, e.capsule_run_id,  -- noqa
                        e.confidence, e.created_at, e.payload,
                        ns.kind AS source_kind, ns.ref AS source_ref,
@@ -2053,11 +2152,14 @@ def create_app(
                 FROM lineage_edges e
                 JOIN lineage_nodes ns ON ns.node_id = e.source_id
                 JOIN lineage_nodes nt ON nt.node_id = e.target_id
-                ORDER BY e.created_at DESC
+                {where}
+                ORDER BY e.created_at DESC, e.edge_id DESC
                 LIMIT ?
                 """,
-                (limit,),
+                (*params, limit + 1),
             ).fetchall()
+            has_more = len(rows) > limit
+            rows = rows[:limit]
 
             edges = []
             for r in rows:
@@ -2080,7 +2182,18 @@ def create_app(
                         "emitter", {"name": "novafabric.lineage", "version": "unknown"}
                     ),
                 })
-            return {"count": len(edges), "edges": edges}
+            next_cursor: str | None = None
+            if has_more and edges and edges[-1].get("created_at"):
+                next_cursor = _encode_cursor(
+                    edges[-1]["created_at"], edges[-1]["edge_id"]
+                )
+            return {
+                "count": len(edges),
+                "edges": edges,
+                "total": total,
+                "next_cursor": next_cursor,
+                "truncated": has_more,
+            }
         finally:
             conn.close()
 
@@ -2206,7 +2319,8 @@ def create_app(
         except (ImportError, ModuleNotFoundError):
             raise HTTPException(status_code=501, detail="diff engine unavailable")
         engine = DiffEngine()
-        report = engine.compare(cdir_a, cdir_b)
+        # Capsule reads + structural diff off the event loop (B4).
+        report = await asyncio.to_thread(engine.compare, cdir_a, cdir_b)
         # DiffEngine returns a Pydantic model in current code; serialize.
         if hasattr(report, "model_dump"):
             return report.model_dump(mode="json")  # type: ignore[no-any-return]
@@ -3439,27 +3553,50 @@ def create_app(
     # ---------- Admin: token + role management (DD-8) ----------
 
     @app.get("/api/admin/tokens", dependencies=[Depends(verify_token)])
-    async def list_tokens_endpoint() -> dict[str, Any]:
-        """List issued local tokens (stored in ~/.novafabric/tokens.jsonl)."""
+    async def list_tokens_endpoint(
+        limit: int = Query(default=200, ge=1, le=2000),
+        cursor: int | None = Query(
+            default=None,
+            ge=0,
+            description="Byte-offset cursor from a previous response's next_cursor",
+        ),
+    ) -> dict[str, Any]:
+        """List issued local tokens (stored in ~/.novafabric/tokens.jsonl).
+
+        Bounded (ADR-0199): reads the append-only JSONL newest-first via
+        ``audit.tail_lines`` (O(page) reverse scan), returning at most
+        ``limit`` tokens plus an additive byte-offset ``next_cursor`` /
+        ``truncated`` pair (same cursor contract as /api/audit). A revoke
+        rewrites the file, which invalidates outstanding cursors — clients
+        should restart from the first page after a mutation.
+        """
         import json as _json
 
         tokens_path = Path.home() / ".novafabric" / "tokens.jsonl"
         tokens: list[dict[str, Any]] = []
-        if tokens_path.exists():
-            for line in tokens_path.read_text().splitlines():
-                if line.strip():
-                    try:
-                        t = _json.loads(line)
-                        # Never return the raw token value — only fingerprint + metadata
-                        tokens.append({
-                            "label": t.get("label", ""),
-                            "fingerprint": t.get("fingerprint", ""),
-                            "created_at": t.get("created_at", ""),
-                            "revoked": t.get("revoked", False),
-                        })
-                    except Exception:  # noqa: BLE001
-                        pass
-        return {"tokens": tokens, "session_token_fingerprint": token[:8]}
+        next_cursor: int | None = None
+        for off, raw in audit.tail_lines(tokens_path, before_offset=cursor):
+            try:
+                t = _json.loads(raw.decode("utf-8"))
+                # Never return the raw token value — only fingerprint + metadata
+                tokens.append({
+                    "label": t.get("label", ""),
+                    "fingerprint": t.get("fingerprint", ""),
+                    "created_at": t.get("created_at", ""),
+                    "revoked": t.get("revoked", False),
+                })
+            except Exception:  # noqa: BLE001
+                pass
+            if len(tokens) >= limit:
+                if off > 0:
+                    next_cursor = off
+                break
+        return {
+            "tokens": tokens,
+            "session_token_fingerprint": token[:8],
+            "next_cursor": next_cursor,
+            "truncated": next_cursor is not None,
+        }
 
     @app.post("/api/admin/tokens")
     async def issue_token_endpoint(
@@ -4808,8 +4945,12 @@ def create_app(
     # persisted queue in $NOVAFABRIC_HOME/erasure.db. Experimental.
 
     def _cap003_enabled() -> bool:
-        # Default true — OQ-01 resolved by ADR-0069 (AES-256-GCM DEK lifecycle).
-        return os.environ.get("NOVA_CAP003_ENABLED", "true").lower() == "true"
+        # Default false — cap-003's own OQ-01 (BLAKE3-hash-as-erasure) awaits EU-GDPR
+        # legal-counsel review (SCALE-ADR-003, mandatory safety gate). ADR-0069's
+        # "OQ-01 resolved" citation is for the unrelated cap-001 DEK-crypto-shredding
+        # capability. Corrected 2026-07-30 — previously defaulted true on that
+        # mis-citation.
+        return os.environ.get("NOVA_CAP003_ENABLED", "false").lower() == "true"
 
     @app.post("/api/compliance/erasure/request")
     async def erasure_request_endpoint(
@@ -5555,9 +5696,10 @@ def create_app(
 
     @app.get("/api/kg/topology", dependencies=[Depends(verify_token)])
     async def kg_topology_endpoint(
+        request: Request,
         max_nodes: int = Query(default=500, ge=1, le=5000),
         max_edges: int = Query(default=8000, ge=1, le=50000),
-    ) -> dict[str, Any]:
+    ) -> Response:
         """Return all KG nodes and edges for multi-layer topology visualization.
 
         Returns node/edge lists with type annotations and count breakdowns per layer.
@@ -5565,7 +5707,8 @@ def create_app(
         the caps are bounded server-side so a caller cannot request an unbounded
         graph, and edges to capped-out nodes are dropped rather than dangling. The
         response's ``truncated``/``truncated_reason`` say when a guard fired.
-        Response is cached for 30 seconds (TOPOLOGY_CACHE_TTL) to reduce KuzuDB load.
+        Response is cached for 30 seconds (TOPOLOGY_CACHE_TTL) to reduce KuzuDB
+        load; conditional GET (S6) elides the transfer while the graph is stable.
         """
         nonlocal _topology_cache_data, _topology_cache_at
         # Serve from TTL cache when fresh (avoids repeated KuzuDB graph serialisation).
@@ -5574,33 +5717,41 @@ def create_app(
             and _topology_cache_at is not None
             and time.monotonic() - _topology_cache_at < _TOPOLOGY_CACHE_TTL
         ):
-            return _topology_cache_data
+            return conditional_json(request, _topology_cache_data, max_age=30)
+        payload: dict[str, Any]
         try:
             from novafabric.kg.store import KGStore  # noqa: PLC0415
+
+            path = _kg_db_path()
+            if not path.exists():
+                payload = {
+                    "ok": False,
+                    "note": f"KG not initialised — run `nova kg init` (expected at {path})",
+                    "nodes": [],
+                    "edges": [],
+                    "node_counts": {},
+                    "edge_counts": {},
+                }
+            else:
+                def _load_graph() -> dict[str, Any]:
+                    # KuzuDB graph serialisation off the event loop (B4).
+                    store = KGStore(db_path=path)
+                    return store.get_topology_graph(
+                        max_nodes=max_nodes, max_edges=max_edges
+                    )
+
+                graph = await asyncio.to_thread(_load_graph)
+                payload = {"ok": True, **graph}
+                _topology_cache_data = payload
+                _topology_cache_at = time.monotonic()
         except ImportError as exc:
-            return {"ok": False, "error": str(exc)}
-        path = _kg_db_path()
-        if not path.exists():
-            return {
-                "ok": False,
-                "note": f"KG not initialised — run `nova kg init` (expected at {path})",
-                "nodes": [],
-                "edges": [],
-                "node_counts": {},
-                "edge_counts": {},
-            }
-        try:
-            store = KGStore(db_path=path)
-            graph = store.get_topology_graph(max_nodes=max_nodes, max_edges=max_edges)
-            result: dict[str, Any] = {"ok": True, **graph}
-            _topology_cache_data = result
-            _topology_cache_at = time.monotonic()
-            return result
+            payload = {"ok": False, "error": str(exc)}
         except Exception as exc:  # noqa: BLE001
-            return {
+            payload = {
                 "ok": False, "error": str(exc),
                 "nodes": [], "edges": [], "node_counts": {}, "edge_counts": {},
             }
+        return conditional_json(request, payload, max_age=30)
 
     @app.get("/v1/kg/audit", dependencies=[Depends(verify_token)])
     async def v1_kg_audit_endpoint() -> dict[str, Any]:
@@ -5706,19 +5857,29 @@ def create_app(
         }
 
     @app.get("/api/kg/entity-queue", dependencies=[Depends(verify_token)])
-    async def kg_entity_queue_list_endpoint() -> dict[str, Any]:
-        """Return all pending ReviewItems from the Tier-3 human review queue."""
+    async def kg_entity_queue_list_endpoint(
+        limit: int = Query(default=200, ge=1, le=1000),
+    ) -> dict[str, Any]:
+        """Return pending ReviewItems from the Tier-3 human review queue.
+
+        Bounded (ADR-0199): at most ``limit`` items (SQL-pushed-down), with the
+        additive true pending ``total`` and ``truncated: true`` when the queue
+        holds more pending items than were returned.
+        """
         from novafabric.kg.review_queue import HumanReviewQueueWriter
 
         q = HumanReviewQueueWriter(db_path=_queue_db_path())
         try:
-            items = q.list_pending()
+            items = q.list_pending(limit=limit)
+            total = q.count_pending()
         finally:
             q.close()
         return {
             "ok": True,
             "count": len(items),
             "items": [i.model_dump(mode="json") for i in items],
+            "total": total,
+            "truncated": total > len(items),
         }
 
     @app.get("/api/kg/entity-queue/stats", dependencies=[Depends(verify_token)])
@@ -6032,28 +6193,34 @@ def create_app(
         # visibility. Informational only (`ok: True` either way — this check
         # never asserts the current posture is wrong, only makes it visible):
         # SCALE-ADR-003's hard blocking condition names an EU-GDPR legal-counsel
-        # review before cap-003 may default active; what actually happened is a
-        # CTO/BDFL self-sign (ADR-0069, 2026-05-27), which that ADR's own text
-        # explicitly considered and did not treat as sufficient for this one
-        # decision. Surfacing this in `nova doctor` / the dashboard's System
-        # Diagnostics panel — rather than only in a source-code comment — is the
-        # concrete, non-presumptuous step available here: it does not decide
-        # whether the self-sign is enough, it makes sure the operator/auditor
-        # running this check can see the actual posture and decide for themselves.
-        cap003_enabled = os.getenv("NOVA_CAP003_ENABLED", "true").lower() == "true"
+        # review before cap-003 may default active. Corrected 2026-07-30: the
+        # default was flipped back to `false` (restoring that condition) after an
+        # audit found it had been shipped `true` on a mis-citation — the previously
+        # recorded "resolution" (ADR-0069, 2026-05-27) is a CTO/BDFL self-sign for a
+        # *different* capability (cap-001's DEK crypto-shredding), whose own
+        # reasoning (rejecting hash-based tombstones per EDPB 01/2025) argues
+        # against, not for, cap-003's BLAKE3-hash approach. If this check reports
+        # ACTIVE, an operator has explicitly set NOVA_CAP003_ENABLED=true — that is
+        # still not backed by a EU-GDPR legal-counsel review of cap-003's own OQ-01.
+        # Surfacing this in `nova doctor` / the dashboard's System Diagnostics panel
+        # makes the actual posture visible to the operator/auditor rather than
+        # buried in a source-code comment.
+        cap003_enabled = os.getenv("NOVA_CAP003_ENABLED", "false").lower() == "true"
         checks.append({
             "name": "cap003_gdpr_legal_review",
             "ok": True,
             "detail": (
                 "cap-003 (dual-object GDPR/WORM split) is "
                 f"{'ACTIVE' if cap003_enabled else 'disabled'} on this deployment. "
-                "SCALE-ADR-003 requires an EU-GDPR legal-counsel review before this "
-                "may default active; the recorded resolution is a CTO/BDFL self-sign "
-                "(ADR-0069, 2026-05-27), not that review — see "
+                "SCALE-ADR-003 requires a EU-GDPR legal-counsel review of cap-003's "
+                "own OQ-01 before this may be active; no such review has occurred. "
+                "An operator has explicitly overridden the safe default "
+                "(NOVA_CAP003_ENABLED=true) — see "
                 "design/governance/acceptance-record.md (SCALE-ADR-003)."
                 if cap003_enabled
                 else "cap-003 (dual-object GDPR/WORM split) is disabled "
-                "(NOVA_CAP003_ENABLED=false) on this deployment."
+                "(NOVA_CAP003_ENABLED default is false — the mandatory safety gate "
+                "until EU-GDPR legal counsel reviews OQ-01, SCALE-ADR-003)."
             ),
         })
 
@@ -6101,16 +6268,33 @@ def create_app(
     @app.get("/api/policy/recent-decisions", dependencies=[Depends(verify_token)])
     async def policy_recent_decisions_endpoint(
         limit: int = Query(default=50, ge=1, le=200),
+        cursor: int | None = Query(
+            default=None,
+            ge=0,
+            description="Byte-offset cursor from a previous response's next_cursor",
+        ),
     ) -> dict[str, Any]:
-        """Return recent decision IDs from the audit log for autocomplete."""
+        """Return recent decision IDs from the audit log for autocomplete.
+
+        Bounded (ADR-0199): reads the audit log newest-first via
+        ``audit.tail_lines`` — IO is O(page), never the whole file — and scans
+        at most ``_POLICY_SCAN_CAP`` lines per request. ``next_cursor`` (a byte
+        offset, same contract as /api/audit) resumes with strictly older lines;
+        ``truncated`` is true when the scan stopped before the log start.
+        """
         import json as _json
-        audit_path = Path.home() / ".novafabric" / "dashboard-audit.jsonl"
+
+        from novafabric._paths import dashboard_audit_path  # noqa: PLC0415
+        audit_path = dashboard_audit_path()
         if not audit_path.exists():
-            return {"decision_ids": []}
+            return {"decision_ids": [], "next_cursor": None, "truncated": False}
         seen: list[str] = []
-        for line in reversed(audit_path.read_text(encoding="utf-8").splitlines()):
+        scanned = 0
+        next_cursor: int | None = None
+        for off, raw in audit.tail_lines(audit_path, before_offset=cursor):
+            scanned += 1
             try:
-                entry = _json.loads(line)
+                entry = _json.loads(raw.decode("utf-8"))
                 args = entry.get("args") or {}
                 extra = entry.get("extra") or {}
                 did = (
@@ -6120,23 +6304,57 @@ def create_app(
                 )
                 if did and did not in seen:
                     seen.append(did)
-                    if len(seen) >= limit:
-                        break
             except Exception:  # noqa: BLE001
-                continue
-        return {"decision_ids": seen}
+                pass
+            if len(seen) >= limit or scanned >= _POLICY_SCAN_CAP:
+                if off > 0:
+                    next_cursor = off
+                break
+        return {
+            "decision_ids": seen,
+            "next_cursor": next_cursor,
+            "truncated": next_cursor is not None,
+        }
 
     @app.get("/api/policy/explain", dependencies=[Depends(verify_token)])
-    async def policy_explain_endpoint(decision_id: str) -> dict[str, Any]:
-        """Look up a past policy decision from the audit log (nova policy explain)."""
+    async def policy_explain_endpoint(
+        decision_id: str,
+        limit: int = Query(default=100, ge=1, le=1000),
+        cursor: int | None = Query(
+            default=None,
+            ge=0,
+            description="Byte-offset cursor from a previous response's next_cursor",
+        ),
+    ) -> dict[str, Any]:
+        """Look up a past policy decision from the audit log (nova policy explain).
+
+        Bounded (ADR-0199): matches are returned **newest-first** (this flipped
+        from oldest-first when the whole-file scan was replaced by the O(page)
+        ``audit.tail_lines`` reverse read). At most ``limit`` matches and at
+        most ``_POLICY_SCAN_CAP`` scanned lines per request; resume older
+        history with the byte-offset ``next_cursor`` (same contract as
+        /api/audit). ``truncated`` is true when the scan stopped early.
+        """
         import json as _json
-        audit_path = Path.home() / ".novafabric" / "dashboard-audit.jsonl"
+
+        from novafabric._paths import dashboard_audit_path  # noqa: PLC0415
+        audit_path = dashboard_audit_path()
         if not audit_path.exists():
-            return {"ok": False, "reason": "audit log not found", "entries": [], "count": 0}
+            return {
+                "ok": False,
+                "reason": "audit log not found",
+                "entries": [],
+                "count": 0,
+                "next_cursor": None,
+                "truncated": False,
+            }
         matches: list[dict[str, Any]] = []
-        for line in audit_path.read_text(encoding="utf-8").splitlines():
+        scanned = 0
+        next_cursor: int | None = None
+        for off, raw in audit.tail_lines(audit_path, before_offset=cursor):
+            scanned += 1
             try:
-                entry = _json.loads(line)
+                entry = _json.loads(raw.decode("utf-8"))
                 args = entry.get("args") or {}
                 extra = entry.get("extra") or {}
                 if (
@@ -6147,8 +6365,19 @@ def create_app(
                 ):
                     matches.append(entry)
             except Exception:  # noqa: BLE001
-                continue
-        return {"ok": True, "decision_id": decision_id, "entries": matches, "count": len(matches)}
+                pass
+            if len(matches) >= limit or scanned >= _POLICY_SCAN_CAP:
+                if off > 0:
+                    next_cursor = off
+                break
+        return {
+            "ok": True,
+            "decision_id": decision_id,
+            "entries": matches,
+            "count": len(matches),
+            "next_cursor": next_cursor,
+            "truncated": next_cursor is not None,
+        }
 
     @app.get("/api/compliance/audit/coverage", dependencies=[Depends(verify_token)])
     async def compliance_audit_coverage_endpoint(
@@ -7456,18 +7685,24 @@ def create_app(
             in ``_topology_seeded_dirs``.  Only newly discovered directories are
             passed to ``_topology_seed_all`` to avoid duplicating edges.
             """
+            def _scan_new_dirs() -> set[str]:
+                # Sync filesystem walk — runs in a worker thread so a large
+                # capsule store never stalls the event loop (B4).
+                found: set[str] = set()
+                for cap_dir in capsule_dir.iterdir():
+                    if not cap_dir.is_dir():
+                        continue
+                    if not (cap_dir / "capsule.yaml").exists():
+                        continue
+                    key = str(cap_dir.resolve())
+                    if key not in _topology_seeded_dirs:
+                        found.add(key)
+                return found
+
             while True:
                 await asyncio.sleep(interval_seconds)
                 try:
-                    new_dirs: set[str] = set()
-                    for cap_dir in capsule_dir.iterdir():
-                        if not cap_dir.is_dir():
-                            continue
-                        if not (cap_dir / "capsule.yaml").exists():
-                            continue
-                        key = str(cap_dir.resolve())
-                        if key not in _topology_seeded_dirs:
-                            new_dirs.add(key)
+                    new_dirs: set[str] = await asyncio.to_thread(_scan_new_dirs)
                     if not new_dirs:
                         continue
                     result = await _topology_seed_all(only_dirs=new_dirs)
@@ -7856,8 +8091,9 @@ def create_app(
 
     @app.get("/api/incidents", dependencies=[Depends(verify_token)])
     async def api_incidents_list(
+        request: Request,
         limit: int = Query(_INCIDENT_LIST_MAX, ge=1, le=_INCIDENT_LIST_MAX),
-    ) -> dict[str, Any]:
+    ) -> Response:
         """List the newest incidents with their nearest Art. 73 deadline.
 
         S3 scale slice: the fetch + JSON parse is bounded in SQL via
@@ -7871,11 +8107,14 @@ def create_app(
             with IncidentStore() as store:
                 incidents = store.list_recent(capped)
                 total = store.count()
-            return {"ok": True, "count": len(incidents), "total": total,
-                    "truncated": total > len(incidents),
-                    "incidents": [_incident_view(i) for i in incidents]}
+            payload: dict[str, Any] = {
+                "ok": True, "count": len(incidents), "total": total,
+                "truncated": total > len(incidents),
+                "incidents": [_incident_view(i) for i in incidents],
+            }
         except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "incidents": [], "error": str(exc)}
+            payload = {"ok": False, "incidents": [], "error": str(exc)}
+        return conditional_json(request, payload, max_age=30)
 
     @app.post("/api/incidents", dependencies=[Depends(verify_token)])
     async def api_incidents_create(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
@@ -8406,11 +8645,5 @@ def _strip_spec(asset_row: dict[str, Any]) -> dict[str, Any]:
         "git_commit_sha": asset_row.get("git_commit_sha"),
     }
 
-def _consteq(a: str, b: str) -> bool:
-    """Constant-time equality; same as hmac.compare_digest but tolerant of types."""
-    if len(a) != len(b):
-        return False
-    result = 0
-    for x, y in zip(a.encode(), b.encode()):
-        result |= x ^ y
-    return result == 0
+# Shared constant-time comparison (hash-then-compare, no length leak).
+_consteq = token_matches

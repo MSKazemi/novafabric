@@ -140,13 +140,12 @@ class TestDoctorAndPolicy:
         data = resp.json()
         assert "checks" in data or "ok" in data
 
-    def test_doctor_reports_cap003_legal_review_posture_when_active(
+    def test_doctor_reports_cap003_disabled_by_default(
         self, stack: tuple[TestClient, Path], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """SCALE-ADR-003: nova doctor must surface that the EU-GDPR legal-counsel
-        review this ADR names has not happened — only a CTO/BDFL self-sign — while
-        cap-003 is active by default. Informational (`ok: True`): the check makes
-        the posture visible, it does not itself assert the posture is wrong."""
+        """SCALE-ADR-003: the safe default is DISABLED — cap-003 may not be
+        active until EU-GDPR legal counsel reviews its OQ-01. nova doctor
+        surfaces that posture. Informational (`ok: True`)."""
         monkeypatch.delenv("NOVA_CAP003_ENABLED", raising=False)
         client, _ = stack
         resp = client.get("/api/doctor", params=AUTH, headers=HOST)
@@ -155,22 +154,26 @@ class TestDoctorAndPolicy:
         assert "cap003_gdpr_legal_review" in checks
         cap003_check = checks["cap003_gdpr_legal_review"]
         assert cap003_check["ok"] is True
-        assert "ACTIVE" in cap003_check["detail"]
-        assert "legal-counsel review" in cap003_check["detail"]
+        assert "disabled" in cap003_check["detail"]
+        assert "ACTIVE" not in cap003_check["detail"]
         assert "SCALE-ADR-003" in cap003_check["detail"]
 
-    def test_doctor_reports_cap003_disabled_when_env_overridden(
+    def test_doctor_reports_cap003_active_when_operator_overrides(
         self, stack: tuple[TestClient, Path], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("NOVA_CAP003_ENABLED", "false")
+        """When an operator explicitly sets NOVA_CAP003_ENABLED=true, doctor
+        must flag that the deployment is ACTIVE without the legal-counsel
+        review SCALE-ADR-003 requires."""
+        monkeypatch.setenv("NOVA_CAP003_ENABLED", "true")
         client, _ = stack
         resp = client.get("/api/doctor", params=AUTH, headers=HOST)
         assert resp.status_code == 200
         checks = {c["name"]: c for c in resp.json()["checks"]}
         cap003_check = checks["cap003_gdpr_legal_review"]
         assert cap003_check["ok"] is True
-        assert "disabled" in cap003_check["detail"]
-        assert "ACTIVE" not in cap003_check["detail"]
+        assert "ACTIVE" in cap003_check["detail"]
+        assert "legal-counsel review" in cap003_check["detail"]
+        assert "SCALE-ADR-003" in cap003_check["detail"]
 
     def test_policy_test_endpoint(self, stack: tuple[TestClient, Path]) -> None:
         client, _ = stack

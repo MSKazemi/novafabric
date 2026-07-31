@@ -208,7 +208,7 @@ def serve_cmd(
 
             snap_store = SnapshotStore3D()
             layout_pipe = LayoutPipeline3D(snap_store)
-            tv5_router = make_tv5_router(snap_store, layout_pipe)
+            tv5_router = make_tv5_router(snap_store, layout_pipe, token=token)
             app.include_router(tv5_router)
             app.state.tv5_layout_pipe = layout_pipe  # exposed to seed endpoint
             _tv5_logger.info("TV-5 3D topology router mounted at /api/tv5/")

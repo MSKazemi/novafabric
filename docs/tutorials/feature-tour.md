@@ -406,9 +406,14 @@ For compliance, audits, or any situation where you need to prove what an agent d
 and prove the record has not been altered:
 
 ```bash
-nova export-evidence capsules/01KR9Q2AD…
-# → ~/.novafabric/evidence/01KR9Q2AD….zip  (ed25519-signed)
+nova export-evidence capsules/01KR9Q2AD… --output bundle.zip --key ed25519.pem
+# → bundle.zip  (ed25519-signed)
 ```
+
+> `--output`/`-o` and `--key` are both **required** — `--key` a PEM-encoded ed25519
+> private key (generate one with `python -m novafabric.evidence.signing`). Running
+> the command without them exits non-zero with "`--key` is required in v0.4
+> (local-key signing)."
 
 The ZIP is self-contained: it embeds the capsule, a lineage subgraph, in-toto DSSE
 attestations, ed25519 signatures, and vendored JSON schemas. An auditor can verify it
@@ -420,8 +425,8 @@ To also publish the DSSE envelope to the Rekor transparency log (requires
 
 ```bash
 export NOVA_REKOR_URL=https://rekor.sigstore.dev
-nova export-evidence capsules/01KR9Q2AD… --sigstore
-# ✓ evidence bundle written: ~/.novafabric/evidence/01KR9Q2AD….zip
+nova export-evidence capsules/01KR9Q2AD… --output bundle.zip --key ed25519.pem --sigstore
+# ✓ evidence bundle written: bundle.zip
 # ✓ Rekor transparency log entry: 24296fb24b3c…
 ```
 
@@ -455,15 +460,20 @@ the [CLI reference](../cli-reference.md) for the full flag set.
 
 ## 9. Cryptographically seal a capsule (NovaSeal)
 
-**Maturity note — read this first.** A dedicated **NovaSeal signing service** (DSSE +
-RFC 3161 timestamps + append-only Merkle log as a standalone service) is **planned
-design intent** (ADR-0041), and the RFC-3161 timestamping *implementation* is planned.
-The `nova capture` / `nova verify` seal flow below is present on `main` behind an
-opt-in `novaseal.yaml`; treat it as **experimental** and do not rely on it as the
-production sealing service described in the roadmap. What is shipped and stable toward
-this space today is the ed25519-signed Evidence Bundle in [§8](#8-build-a-signed-evidence-bundle),
-in-toto DSSE attestations, verifiable redaction proofs, OPA/Rego policy gates with
-maker-checker promotion, and WORM storage adapters.
+**Maturity note — read this first (corrected 2026-07-30).** DSSE signing, RFC 3161
+timestamping, and the append-only Merkle log are **implemented and tested**
+(`src/novafabric/trust/novaseal/` — envelope/merkle/ratchet/timestamp/trust_chain,
+ADR-0041/ADR-0070; `tests/seal/` including a p99 latency gate), not merely design
+intent — an earlier draft of this note (and of `why-novafabric.md`) claimed
+RFC-3161 timestamping itself was still planned; that was stale and is corrected
+here. The `nova capture` / `nova verify` seal flow below is present on `main`
+behind an opt-in `novaseal.yaml`; treat the whole NovaSeal surface as
+**experimental** (interfaces may still change before v1.0), not "planned, not
+built." Also shipped in this space: the ed25519-signed Evidence Bundle in
+[§8](#8-build-a-signed-evidence-bundle), in-toto DSSE attestations, verifiable
+redaction proofs, OPA/Rego policy gates with maker-checker promotion, WORM
+storage adapters, a Merkle Mountain Range append-only accumulator (v0.79.0),
+and checkpoint/witness cosigning (v0.75.0, ADR-0097).
 
 For regulated environments that need DSSE signatures, RFC 3161 timestamps, and an
 append-only Merkle log:
@@ -518,8 +528,8 @@ replay at any time.
 pip install 'novafabric[scale-kg]'   # adds kuzu>=0.11.3
 nova kg init                          # creates .nova/kg/nova_kg.kuzu
 
-# Ingest a captured run
-nova kg ingest --capsule capsules/01KR9Q2AD…/capsule.yaml
+# Ingest a captured run (positional capsule directory, not --capsule/capsule.yaml)
+nova kg ingest capsules/01KR9Q2AD…/
 
 # Inspect what's in the graph
 nova kg status
@@ -712,11 +722,12 @@ curl "http://127.0.0.1:4321/api/reports/evidence-inventory?token=<TOKEN>"
 NovaFabric ships two complementary topology views:
 
 ```bash
-# 2D Sigma.js view
-nova serve --topology
+# 2D Sigma.js view — --experimental is mandatory (ADR-0027 graduation gate);
+# omitting it just prints an "EXPERIMENTAL" notice and exits without starting anything
+nova serve --experimental --topology
 
 # 3D Three.js view (TV-5)
-nova serve --tv5
+nova serve --experimental --tv5
 ```
 
 Both views render the agent / model / tool call graph in real time from the ADS encoder
