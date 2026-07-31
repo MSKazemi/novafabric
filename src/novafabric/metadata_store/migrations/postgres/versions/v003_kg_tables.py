@@ -60,17 +60,29 @@ DROP TABLE IF EXISTS kg_alias_table;
 """
 
 
-def upgrade(conn: object) -> None:
-    """Apply KG tables DDL.  *conn* must support ``conn.execute(sql)``."""
+def upgrade() -> None:
+    """Apply KG tables DDL.
+
+    Alembic invokes ``upgrade()`` with no arguments, so this must not take a
+    connection — it previously declared ``upgrade(conn)`` and every run of
+    ``nova db upgrade --revision head`` against Postgres died with
+    ``TypeError: upgrade() missing 1 required positional argument: 'conn'``.
+    The failure was latent because the deploy entrypoint pinned ``--revision
+    v001`` and never reached v003. Uses ``op.execute`` like v001/v002.
+    """
+    from alembic import op  # noqa: PLC0415 — deferred import, matches v002
+
     for statement in UPGRADE_SQL.strip().split(";"):
         stmt = statement.strip()
         if stmt:
-            conn.execute(stmt)  # type: ignore[attr-defined]
+            op.execute(stmt)
 
 
-def downgrade(conn: object) -> None:
+def downgrade() -> None:
     """Remove KG tables.  Destructive — use with care."""
+    from alembic import op  # noqa: PLC0415
+
     for statement in DOWNGRADE_SQL.strip().split(";"):
         stmt = statement.strip()
         if stmt:
-            conn.execute(stmt)  # type: ignore[attr-defined]
+            op.execute(stmt)

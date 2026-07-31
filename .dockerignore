@@ -39,3 +39,6 @@ htmlcov/
 # Local scratch / benches / logs
 bench/
 *.log
+
+# Compiled Python from the host — never belongs in the image build context.
+**/__pycache__/

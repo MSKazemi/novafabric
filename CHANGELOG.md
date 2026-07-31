@@ -9,6 +9,31 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.98.2] — 2026-07-31
+
+Found by running the dashboard against the live n1 store and deploying the
+image — five defects that only surface when you look at the thing.
+
+### Fixed
+- **The container image could not be built.** `pyproject.toml` force-includes
+  `alembic/` into the wheel, but the Dockerfile's builder stage never copied
+  it, so `uv build` failed with "Forced include not found: /build/alembic".
+- **`nova db upgrade --revision head` crashed on Postgres**, restart-looping
+  the container: the v003 KG-tables migration declared `upgrade(conn)` while
+  alembic calls `upgrade()`. Latent until v0.98.0 unpinned the entrypoint from
+  `--revision v001` — fixing one audit finding exposed the next. `/readyz` now
+  returns 200, closing the "503 forever" schema-skew finding for real.
+- **Keyboard and command-palette navigation did not deep-link.** Both called
+  `setTab()` directly, so the view changed but the URL did not — a `g`-jump was
+  unshareable and lost on reload. All three navigation paths now share one
+  `writeTabParam()` (which also clears a stale `?sub=` when leaving a hub tab).
+- **The Runs list was unscannable**: ten always-visible action buttons per row
+  wrapped onto four lines, so only three runs fit on a 1600px screen. Actions
+  now reveal for the selected row and on hover/focus — eight rows visible, no
+  action more than one interaction away.
+- **Sidebar version badge was clipped** by the 13rem rail, and the trust radar
+  was cramped at 240px with its labels colliding with the web.
+
 ## [0.98.1] — 2026-07-31
 
 Documentation-only release: a full audit of every doc surface against what

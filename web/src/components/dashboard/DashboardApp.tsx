@@ -56,6 +56,19 @@ const TAB_LABEL: Record<Tab, string> = Object.fromEntries(
   NAV_GROUPS.flatMap(g => g.items.map(i => [i.id, i.label]))
 ) as Record<Tab, string>;
 
+/** Deep-link the active tab so it is shareable / survives reload. */
+function writeTabParam(t: Tab): void {
+  try {
+    const p = new URLSearchParams(window.location.search);
+    if (t === 'home') p.delete('tab'); else p.set('tab', t);
+    // Sub-navigation belongs to the tab that opened it — carrying ?sub= across
+    // a tab switch would deep-link a group the new tab does not have.
+    p.delete('sub');
+    const qs = p.toString();
+    window.history.replaceState({}, '', `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash}`);
+  } catch { /* ignore */ }
+}
+
 function consumeTokenFromUrl(): boolean {
   if (typeof window === 'undefined') return false;
   const params = new URLSearchParams(window.location.search);
@@ -197,7 +210,8 @@ function DashboardInner() {
       if (gArmed) {
         disarm();
         const target = SHORTCUT_TAB[e.key.toLowerCase()];
-        if (target) { e.preventDefault(); setTab(target); }
+        // Deep-link like a click does — a keyboard jump must be shareable too.
+        if (target) { e.preventDefault(); setTab(target); writeTabParam(target); }
         return;
       }
       if (e.key === 'g') {
@@ -254,13 +268,7 @@ function DashboardInner() {
 
   const handleTabChange = useCallback((t: Tab) => {
     setTab(t);
-    // Deep-link the active tab so it is shareable / survives reload.
-    try {
-      const p = new URLSearchParams(window.location.search);
-      if (t === 'home') p.delete('tab'); else p.set('tab', t);
-      const qs = p.toString();
-      window.history.replaceState({}, '', `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash}`);
-    } catch { /* ignore */ }
+    writeTabParam(t);
   }, []);
 
   // Stable per-section callbacks — created once, never recreated, so tabs don't
@@ -282,7 +290,7 @@ function DashboardInner() {
         label: i.label,
         group: g.label,
         keywords: i.id,
-        run: () => setTab(i.id as Tab),
+        run: () => { setTab(i.id as Tab); writeTabParam(i.id as Tab); },
       }))
     );
     // Compliance sub-groups are deep-linkable — surface them in the palette.

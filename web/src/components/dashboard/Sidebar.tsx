@@ -294,9 +294,13 @@ export default function Sidebar({
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-status-success)] shrink-0" aria-hidden="true" />
               <code className="text-[var(--text-2xs)] font-mono text-[var(--color-text-faint)] truncate">{serverInfo.base}</code>
             </div>
-            <div className="pl-3 flex items-center gap-2">
-              <span className="text-[var(--text-2xs)] font-mono text-[var(--color-text-faint)]">v{serverInfo.version}</span>
-              <Badge tone="info">experimental</Badge>
+            {/* min-w-0 + shrink: the sidebar is 13rem, so a long version string
+                must not push the badge past the edge (it was clipping). */}
+            <div className="pl-3 flex items-center gap-2 min-w-0">
+              <span className="text-[var(--text-2xs)] font-mono text-[var(--color-text-faint)] truncate">
+                v{serverInfo.version}
+              </span>
+              <Badge tone="info" className="shrink-0">exp</Badge>
             </div>
           </div>
         )}

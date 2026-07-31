@@ -173,7 +173,7 @@ export default function RunList({
               ref={rowVirtualizer.measureElement}
               style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)` }}
               className={clsx(
-                'border-b border-[var(--color-border)]',
+                'group/run border-b border-[var(--color-border)]',
                 selected?.run_id === r.run_id && 'bg-[color-mix(in_oklab,var(--color-accent)_6%,var(--color-bg-sunken))]',
               )}
             >
@@ -270,8 +270,21 @@ export default function RunList({
                   </div>
                 )}
               </button>
-              {/* Action buttons */}
-              <div className="px-3 pb-2 space-y-1">
+              {/*
+                Action buttons. Ten always-visible controls per row wrapped onto
+                four lines and made every list item enormous — at 233 runs the
+                list was unscannable. They now reveal for the selected row and
+                on hover/keyboard-focus, so the default state is a dense,
+                readable list and every action stays one interaction away.
+              */}
+              <div
+                className={clsx(
+                  'px-3 pb-2 space-y-1',
+                  selected?.run_id === r.run_id
+                    ? 'block'
+                    : 'hidden group-hover/run:block group-focus-within/run:block',
+                )}
+              >
                 {/* Replay row: all inspection modes + compare + export */}
                 <div className="flex items-center gap-1 flex-wrap">
                   <button

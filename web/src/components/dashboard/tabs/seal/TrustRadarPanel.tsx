@@ -75,10 +75,14 @@ export default function TrustRadarPanel({ runIds }: { runIds: string[] }) {
             </span>
           </div>
 
-          <div className="flex flex-wrap items-start gap-4">
-            <TrustRadarGlyph axes={result.axes} size={240} />
+          <div className="flex flex-wrap items-start gap-8">
+            {/* Give the glyph real room — its perimeter labels need the margin,
+                and a trust verdict deserves to be readable at a glance. */}
+            <div className="shrink-0 py-2">
+              <TrustRadarGlyph axes={result.axes} size={320} />
+            </div>
 
-            <table className="text-[11px] font-mono flex-1 min-w-[16rem]">
+            <table className="text-[11px] font-mono flex-1 min-w-[18rem]">
               <thead>
                 <tr className="text-[var(--text-2xs)] uppercase tracking-wider text-[var(--color-text-faint)] border-b border-[var(--color-border)]">
                   <th className="text-left font-medium py-1">guarantee</th>

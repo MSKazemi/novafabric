@@ -14,6 +14,11 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /build
 COPY pyproject.toml uv.lock ./
 COPY src/ src/
+# The wheel force-includes alembic/ as novafabric/migrations/registry (see
+# [tool.hatch.build.targets.wheel.force-include]). Without it here the build
+# fails with "Forced include not found: /build/alembic" — and the entrypoint's
+# `nova db upgrade` would have no migrations to run.
+COPY alembic/ alembic/
 
 RUN uv build --wheel --no-sources
 
