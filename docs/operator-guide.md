@@ -56,6 +56,9 @@ full NovaSeal configuration reference, see
    - 5b. [NovaSeal configuration](#5b-novaseal-configuration-cryptographic-signing)
    - 5c. [SAML 2.0 SSO (server mode — experimental, partial)](#5c-saml-20-sso-server-mode--experimental-partial)
 6. [What is not supported yet](#6-what-is-not-supported-yet)
+7. [Docker Compose deployment (`nova serve` + dashboard)](#7-docker-compose-deployment-nova-serve--dashboard)
+   - 7.6 [Deployment mode: dashboard or server (`NOVA_MODE`)](#76-deployment-mode-dashboard-or-server-nova_mode)
+8. [Summary and next steps](#8-summary-and-next-steps)
 
 ---
 
@@ -879,12 +882,13 @@ TSA inside the cluster and point `tsa_url` at it.
 
 ## 5c. SAML 2.0 SSO (server mode — experimental, partial)
 
-**Status: experimental partial slice ([ADR-0138](../design/adr/0138-saml-sso-server-mode.md),
+**Status: experimental ([ADR-0138](../design/adr/0138-saml-sso-server-mode.md),
 [spec](../design/spec/saml-sso-v0.md)). Config, SP metadata, role mapping, and the
-assertion validation policy work today; live SAML login does not — see the honest
-status below.** SAML is a **server-mode-only** concern: local-first mode
-(`nova capture|validate|replay|diff|lineage`) never touches it, and `pip install
-novafabric` installs zero SAML dependencies.
+assertion validation policy work today. Live SAML login (assertion consumption at
+the ACS) shipped in v0.73.0 but is **off by default** and requires an explicit
+opt-in — see the honest status below.** SAML is a **server-mode-only** concern:
+local-first mode (`nova capture|validate|replay|diff|lineage`) never touches it,
+and `pip install novafabric` installs zero SAML dependencies.
 
 ### Enabling the backend
 
@@ -902,6 +906,7 @@ saml:
   subject_attribute: email                         # optional; default: NameID
   allow_idp_initiated: false                       # default false (more replay-exposed)
   clock_skew_seconds: 120                          # hard cap 300
+  experimental_acs_enabled: false                  # default false; see honest status below
   idp:
     entity_id: "http://www.okta.com/exk1abcXYZ"
     sso_url: "https://example.okta.com/app/nova/exk1abcXYZ/sso/saml"
@@ -940,17 +945,28 @@ a readable PEM certificate, the metadata embeds it as the SP signing key.
 | `server.saml` config block (closed schema, role allow-list, skew cap) | works today |
 | `nova server saml-metadata` + `GET /v0/auth/saml/metadata` | works today |
 | Attribute→role mapping and assertion validation policy (issuer, audience, time bounds, recipient, replay store, `InResponseTo`, status — spec rules V3–V9, V11) | implemented and tested against synthetic assertions |
-| `GET /v0/auth/saml/login`, `POST /v0/auth/saml/acs` — live SSO | **refuses with HTTP 501 (`saml_not_available`)** |
+| `GET /v0/auth/saml/login`, `POST /v0/auth/saml/acs` — live SSO | **experimental, opt-in.** Refuses with HTTP 501 (`saml_not_available`) unless `saml.experimental_acs_enabled: true` **and** the `novafabric[saml]` extra is installed |
 | Single Logout (SLO) | future design (ADR-0138 P4) |
 
-**Why the refusal:** XML-DSIG signature verification (spec rules V1/V2) and the
-XXE-hardened parser (V10) require a SAML library, and ADR-0138 §D5 leaves that
-library as an **open pre-adoption gate** — the ADR-0024 license audit must pass
-over the library's full transitive tree (and its bundled native `xmlsec`/
-`libxml2`) before any library is pinned. Hand-rolling XML signature validation
-is explicitly forbidden. Until the gate closes, NovaFabric **refuses to consume
-assertions rather than skip signature validation** — the ACS never parses the
-posted XML. There is no configuration that bypasses this.
+**Why it is off by default:** XML-DSIG signature verification (spec rules V1/V2)
+and the XXE-hardened parser (V10) require a SAML library, and ADR-0138 §D5 held
+that library as a pre-adoption gate. The gate **closed in v0.73.0**: `signxml`
+(Apache-2.0) + `lxml` (BSD) passed the ADR-0024 license audit as Tier A, with no
+native `xmlsec`/`libxml2` bundle to audit. Hand-rolling XML signature validation
+remains forbidden, and NovaFabric still **refuses to consume assertions rather
+than skip signature validation** — without the opt-in (or with the library
+missing) the ACS never parses the posted XML.
+
+Enabling it is a deliberate act:
+
+```bash
+pip install 'novafabric[saml]'    # signxml + lxml
+# then set saml.experimental_acs_enabled: true in the server YAML
+```
+
+> **Security-Architect review is a pre-production blocking condition** for this
+> path. Setting `experimental_acs_enabled: true` acknowledges the pre-review
+> status; do not enable it in production before that review.
 
 If your IdP estate can speak OIDC, use the shipped OIDC backend (ADR-0018)
 today; an OIDC bridge (Keycloak/Dex fronting the SAML IdP) remains a documented
@@ -974,13 +990,14 @@ still-genuine gaps are listed below the shipped-items note.
 | NovaSeal: Cloud KMS (AWS KMS, Azure KV, GCP KMS) | **experimental, works today** | Signing backends `AwsKmsSigningBackend`/`AzureKvSigningBackend`/`GcpKmsSigningBackend` (`novafabric[seal-aws\|seal-azure\|seal-gcp]`); the parallel envelope-encryption *wrapping* backends (`AwsKmsWrappingBackend` etc., ADR-0185) are separately shipped — see [encryption-at-rest.md §4](ops/encryption-at-rest.md). Verified against unit tests and in-memory SDK fakes; end-to-end verification against live cloud credentials is the one piece still outstanding |
 | NovaSeal: Postgres Merkle log | **experimental, works today** | `PostgresMerkleLog` (`trust/novaseal/merkle.py`, `novafabric[seal-postgres]`); pass a `postgresql://` DSN as `merkle_db:`. `verify_consistency()` on this backend is a *sampled* check, not full re-hash |
 | Parent/child capsule relationships | **implemented, tested** | `src/novafabric/capsule/{tree_assembler,env_contract,orphan,edge_typer,writer,schema}.py` + `schemas/parent_child_capsule_v1.schema.json` (257 passing tests in `tests/capsule/`) |
+| SAML SSO: live login (assertion consumption at the ACS) | **experimental, opt-in** | The ADR-0138 §D5 library gate closed in v0.73.0 (`signxml` + `lxml`, Tier A). `POST /v0/auth/saml/acs` consumes assertions when `saml.experimental_acs_enabled: true` and `novafabric[saml]` is installed; otherwise it still refuses with 501. Security-Architect review remains a pre-production blocking condition — see §5c |
 
 **Genuinely still not implemented:**
 
 | Capability | Status | Target |
 |------------|--------|--------|
 | NovaSeal: X.509 HSM / PKCS#11 (hardware-backed key custody) | planned | unscheduled. Note this is distinct from the already-shipped `x509` **profile** (ADR-0055, `trust/novaseal/x509_identity.py`) — that ships a certificate-pinned signing identity with the key as a local PEM file, not hardware-backed custody |
-| SAML SSO: live login (assertion consumption at the ACS) | blocked on the ADR-0138 D5 library license gate — endpoint refuses with 501; config/metadata/policy shipped (see §5c) | unscheduled |
+| SAML SSO: Single Logout (SLO) | future design (ADR-0138 P4) — the `slo:` config block validates, but no SLO endpoint exists | unscheduled |
 | Federation across clusters | future design (ADR-0021 §federation-topology) | unscheduled (the "v0.9+" target in earlier drafts of this table has passed without this shipping) |
 | interLink K8s-to-SLURM integration | proposed (ADR-0028, no code) | unscheduled |
 | Third-party runner plugins (AWS Batch, Modal, etc.) | planned (ADR-0025 §B) | unscheduled |
@@ -1111,6 +1128,30 @@ make nova-dashboard
 
 The target uses `docker compose exec nova` (service name, not container name)
 to read the token — this is robust to container renames across deploys.
+
+### 7.6 Deployment mode: dashboard or server (`NOVA_MODE`)
+
+**Status: works today.** The bundled entrypoint runs one of two processes,
+selected by `NOVA_MODE`:
+
+| `NOVA_MODE` | Runs | Auth |
+|---|---|---|
+| `dashboard` *(default)* | `nova serve --experimental --insecure --topology --tv5` — the experimental dashboard over HTTP with a printed token | Session token only; **put TLS in front of it** and never expose it directly |
+| `server` | `nova server start --backend postgres` — the multi-user REST API | On by default (OIDC via `NOVAFABRIC_SERVER_*`, else a generated local bearer token). The entrypoint never passes `--insecure-no-auth` |
+
+Both modes run the Alembic migration first (`nova db upgrade --backend postgres
+--revision ${NOVA_DB_REVISION:-head}`) and both expose `/livez`, which is what
+the Compose healthcheck probes.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `NOVA_MODE` | `dashboard` | Selects the process above |
+| `NOVA_PORT` | `4321` (dashboard) / `7433` (server) | Listen port. The bundled `docker-compose.yml` publishes only `127.0.0.1:4321`, so with `NOVA_MODE=server` also set `NOVA_PORT=4321` or add your own port mapping |
+| `NOVA_WORKERS` | `1` | `nova server start --workers N` — uvicorn worker processes (server mode only; needs Postgres) |
+| `NOVA_DB_REVISION` | `head` | Alembic revision to upgrade to. The server refuses to start when stamped behind head, so pinning below head breaks a server-mode deploy |
+
+The Helm chart exposes the same switch as `mode: dashboard | server` with
+`server.workers` (see `deploy/helm/novafabric/values.yaml`).
 
 ---
 

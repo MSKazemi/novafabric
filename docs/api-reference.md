@@ -1,6 +1,6 @@
 # NovaFabric REST API Reference
 
-**Status:** works today (v0.94.0). Generated from the live `nova serve` FastAPI route table (`src/novafabric/serve/app.py`).
+**Status:** works today (v0.98.0). Generated from the live `nova serve` FastAPI route table (`src/novafabric/serve/app.py`).
 
 The `nova serve` dashboard server exposes **207 REST endpoints**. All require a valid auth token except the unauthenticated probes `GET /api/health`, `GET /livez`, and `GET /readyz`. The multi-tenant `nova server` API is specified separately in `api/openapi.yaml`.
 

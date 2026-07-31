@@ -226,12 +226,64 @@ make bundle
 `dashboard`, `concepts`, `showcase`, etc. — see the script for the full list)
 into `src/novafabric/serve/static/`, leaving other targets' output untouched.
 
-**Shared UI components** live in `web/src/components/ui/`:
+### Tests (v0.97.0)
+
+The dashboard has its own test tiers — run them before rebuilding the bundle:
+
+```bash
+cd web
+npm run lint        # tsc --noEmit, strict
+npm run test:unit   # vitest + jsdom (primitives, hooks, nav invariants)
+npx playwright test tests/e2e --reporter=line
+```
+
+> **On a machine already running `nova serve` on the Playwright port**, the
+> config's `reuseExistingServer` will silently test *that* server's (possibly
+> stale) bundle instead of your working tree. Pass `PW_PORT=<free port>` to get
+> a clean one. CI sets `reuseExistingServer: false` and is unaffected.
+
+`tests/unit/nav.test.ts` mirrors the Python command-parity guard
+(`tests/serve/test_command_parity_classification.py`) in JS, so a navigation
+change fails locally in vitest before it fails in CI.
+
+### Design-system primitives (v0.97.0)
+
+Build UI from `web/src/components/ui/primitives/` rather than raw Tailwind
+strings — Button, Input, Select, Textarea, Field, Card, Badge, StatusPill,
+SegmentedControl, Modal, Drawer, Tooltip, Toolbar, and `Icon` (a semantic
+wrapper over lucide-react, so the icon set is swappable in one file). Colors,
+elevation, spacing, and motion come from `web/src/styles/tokens.css`; **10px
+(`--text-2xs`) is the minimum type size** — smaller text fails contrast checks.
 
 | Component | Purpose |
 |---|---|
+| `primitives/*` | The design system — prefer these over hand-rolled markup. |
+| `DataTable.tsx` | Virtualized table (TanStack Virtual) with sort, sticky header, `onEndReached` infinite scroll, and a `footer` slot. Use it for any list that can grow. |
+| `TruncationNotice.tsx` | The ADR-0199 honesty affordance — "Showing N of ~M — load more". **A bounded list must never truncate silently.** |
 | `SuggestInput.tsx` | Text input with a live-filtered suggestion dropdown. Accepts `suggestions: string[]`; shows up to 8 on focus, filters as you type. Click-outside and Escape close the dropdown; Enter fires the optional `onEnter` callback and bubbles so parent `<form>` `onSubmit` still triggers. Use this instead of a bare `<input>` whenever the field accepts a database reference (run ID, asset `name@version`, registry name, etc.). |
 | `CopyButton.tsx` | Copy-to-clipboard button with a transient "copied" state. |
+
+**Data fetching**: `lib/useQuery.ts` (reads), `lib/useMutation.ts` (writes), and
+`lib/usePaginatedQuery.ts` — one hook covering both server pagination models
+(ADR-0199 keyset cursors and offset/limit) that also surfaces the
+`total`/`approximate`/`truncated` honesty signals for `TruncationNotice`.
+
+### Tab structure (v0.97.0)
+
+Tabs are decomposed: each large tab is a thin shell over a per-tab directory
+(`tabs/compliance/`, `tabs/runs/`, `tabs/registry/`, `tabs/infra/`, `tabs/seal/`,
+`tabs/admin/`, `tabs/kg/`, `tabs/governance/`). Add a panel as its own file, not
+as another section inside the shell. `dashboard/PanelScaffold.tsx` owns the
+repeated load → pending → error → result chrome; use it instead of re-writing
+that state machine. Compliance additionally has a manifest (`tabs/compliance/index.ts`)
+and a `?sub=` hub — a new panel is one file plus one manifest entry.
+
+**Navigation invariants** (`Sidebar.tsx`): the `export type Tab = …` union is
+parsed *textually* by the Python parity guard — keep it a single-quoted
+string-literal union, and never move it to another file. Regrouping `NAV_GROUPS`
+is free; renaming a tab id requires updating `commandParity.json` in lockstep.
+Each tab declares a stable `g`-sequence shortcut key (`g h`, `g r`, …) —
+shortcuts are per-tab, not positional, so reordering the sidebar is safe.
 
 **Adding a new text input that references database data:**
 
@@ -262,7 +314,7 @@ async def example_endpoint(run_id: str) -> dict[str, Any]:
 
 Add tests in `tests/test_serve_app.py` using the `client` fixture — three tests minimum: auth required (no token → 401), unknown run → 404, happy path → expected shape.
 
-The matching dashboard panel goes in `web/src/components/dashboard/tabs/<Tab>.tsx`. Add a `Dashboard equivalent:` note in `docs/cli-reference.md` under the corresponding CLI command.
+The matching dashboard panel goes in that tab's directory — `web/src/components/dashboard/tabs/<tab>/<Panel>.tsx` — and is rendered by the tab shell (see *Tab structure* above). Add a `Dashboard equivalent:` note in `docs/cli-reference.md` under the corresponding CLI command, and if the command now has a real panel, upgrade its `commandParity.json` entry from `builder-only` to `real-panel` with its `tab` and `api` (the guard checks the `api` string appears in **both** `web/src/lib/api.ts` and `src/novafabric/serve/`).
 
 ## Adding a new report format
 
@@ -382,7 +434,7 @@ class MyExporter:
 3. Register the CLI command in `src/novafabric/cli/main.py`.
 4. Add a `nova serve` endpoint in `src/novafabric/serve/app.py` following the `compliance_export_ropa_endpoint` pattern — import the exporter inside the function to avoid unconditional heavy imports.
 5. Add an `api.ts` method in `web/src/lib/api.ts` (see `exportRopa` as a template).
-6. Add a `<MyFormatExportPanel>` component in `web/src/components/dashboard/tabs/ComplianceTab.tsx` and render it in the `ComplianceTab` default export.
+6. Add a `<MyFormatExportPanel>` component as its **own file** under `web/src/components/dashboard/tabs/compliance/` (built on `PanelScaffold`), then register it in the manifest at `tabs/compliance/index.ts` with its `group` — the hub renders whatever the manifest declares. (Before v0.97.0 these panels lived inline in `ComplianceTab.tsx`; that file is now just the sub-navigation shell.)
 7. Write integration tests in `tests/test_serve_compliance.py` — one happy-path test and one 422 on missing `run_id`.
 
 **Existing exporters for reference:**

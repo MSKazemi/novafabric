@@ -17,7 +17,7 @@ authors:
 repository-code: "https://github.com/novafabric/novafabric"
 url: "https://novafabric.ai"
 license: Apache-2.0
-version: 0.58.0
+version: 0.98.0
 keywords:
   - ai-agents
   - llm

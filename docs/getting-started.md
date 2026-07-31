@@ -63,7 +63,7 @@ Confirm the install:
 
 ```bash
 nova --version
-# novafabric 0.94.0
+# novafabric 0.98.0
 ```
 
 Both `nova` and `novafabric` are the same binary. The examples throughout this
@@ -75,7 +75,7 @@ guide use `nova`.
 > use — but handy if you want the directory tree in place up front. Re-running it
 > is safe; use `nova init --force` to regenerate the keypair.
 
-> **Maturity.** NovaFabric is in beta (v0.94.0). Most surfaces work today but
+> **Maturity.** NovaFabric is in beta (v0.98.0). Most surfaces work today but
 > carry `experimental` maturity: interfaces may change before the v1.0 schema
 > freeze. On-disk formats are **not** frozen until v1.0. See
 > [ROADMAP.md](../ROADMAP.md) for the sequencing.

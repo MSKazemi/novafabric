@@ -4808,6 +4808,12 @@ nova server start
 nova server start --backend postgres
 nova server start --config /etc/novafabric/nova-server.yaml
 nova server start --host 0.0.0.0 --port 7433
+
+# Horizontal scaling (v0.98.0, experimental) — requires the postgres backend
+nova server start --backend postgres --workers 4
+
+# Machine-parseable logs with per-request correlation ids (v0.98.0, experimental)
+nova server start --log-format json
 ```
 
 The server reads `~/.config/novafabric/nova-server.yaml` by default. CLI flags
@@ -4831,6 +4837,18 @@ Options:
 - `--insecure-no-auth` — disable local-token auth; anonymous admin (ADR-0184). Loopback only unless also passing `--i-know-this-is-public`
 - `--i-know-this-is-public` — second confirmation required to combine `--insecure-no-auth` with a non-loopback `--host`
 - `--i-accept-shared-capsule-store` — acknowledge the unpartitioned capsule store and run multiple organizations anyway. Env: `NOVAFABRIC_SERVER_I_ACCEPT_SHARED_CAPSULE_STORE`
+- `--workers, -w INTEGER` — uvicorn worker processes for horizontal scaling (default `1`, **experimental**, v0.98.0). Values `>1` require `--backend postgres` — multiple processes cannot safely share a SQLite file — and launch the app through an import-string factory (`server/factory.py`) so each worker reconstructs its config from the config file and environment
+- `--log-format TEXT` — `text` (default) or `json` (**experimental**, v0.98.0). JSON emits one object per log record including the request-correlation id. Env: `NOVAFABRIC_SERVER_LOG_FORMAT`; the CLI exports it so `--workers` processes inherit the format
+
+**Request correlation (v0.98.0, experimental).** Every request carries an id — taken from an inbound
+`X-Request-ID` header (sanitised: safe characters, max 128, otherwise regenerated to block log
+injection) or freshly generated — echoed on the response and attached to every log record, so a
+request can be traced across access logs, audit events, and SIEM egress.
+
+**Connection pooling (ADR-0221, experimental, opt-in).** Set `NOVAFABRIC_METADATA_DB_POOL=1` to
+back the Postgres metadata store with a psycopg pool (`NOVAFABRIC_METADATA_DB_POOL_MIN` /
+`_MAX`, default `1`/`10`). Off by default; SQLite is unaffected. Pool utilisation is exported as
+the `nova_db_pool_in_use` / `nova_db_pool_size` gauges, sampled at scrape time.
 
 ---
 

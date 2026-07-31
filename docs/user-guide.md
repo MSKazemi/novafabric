@@ -1430,6 +1430,17 @@ Two watcher backends: `PollingBackend` (default, zero extra deps) and
 `WatchdogBackend` (`pip install novafabric[watch]`; uses inotify/FSEvents).
 Override with `NOVA_WATCHER_BACKEND=watchdog` and `NOVA_WATCHER_INTERVAL=<seconds>`.
 
+**Navigating.** The 29 tabs are grouped in the sidebar under seven headings:
+Overview · Runs & Debug · Govern & Promote · Provenance & Trust · Compliance ·
+Platform · Reports & Export. Every tab is deep-linkable as `?tab=<id>`, and the
+Compliance tab is itself a hub whose five panel groups (Frameworks · Audits ·
+Privacy · Exports · Assurance) are deep-linkable as `?sub=<group>`. Navigation
+shortcuts are mnemonic two-key sequences — press `g` then the tab's letter
+(`g h` Home, `g r` Runs, `g c` Compliance); press `?` for the full map, and
+`⌘K` / `Ctrl-K` for the command palette. (v0.97.0 replaced the earlier
+positional `1`–`9` keys with these sequences; tab ids and `?tab=` links are
+unchanged.)
+
 **What the dashboard covers:**
 
 - **Runs tab** — list, search, and filter capsules; status filter pill-bar; hover copy-run-ID; inspect file tree; validate schema; view secret scan results; replay (forensic / dry-run); redact; export evidence. Multi-select up to 5 for N-run diff.
@@ -1459,7 +1470,9 @@ Override with `NOVA_WATCHER_BACKEND=watchdog` and `NOVA_WATCHER_INTERVAL=<second
 
 **Security model:**
 - Localhost only by default (binds `127.0.0.1`)
-- One-shot session token required on every `/api/*` request
+- One-shot session token required on every `/api/*` request — either as
+  `?token=<token>` or as an `Authorization: Bearer <token>` header (when the
+  header is present it is authoritative)
 - DNS-rebinding defence (`Host` header validated)
 - CORS restricted to `localhost` and `127.0.0.1` origins
 - Every write action is confirm-gated and audit-logged
@@ -1534,7 +1547,7 @@ not duplicate them; each is fully documented in the
 | Evaluation & annotation | `nova eval score config`, `nova annotate`, `nova score submit` (+ `novafabric.scores.submit`), `nova comment`, `nova experiment run/compare` |
 | Capture completeness | `nova session new/add/list/show/replay`, `nova graph agent`, `nova capture --capture-media` + `nova media list`, `--environment`, variant attribution (`--experiment`/`--variant`), observation log levels, `nova validate --schemas` |
 | Offline analytics | `nova query`, `nova view`, `nova trend`, per-usage-type token accounting, `nova pricing` + `nova cost estimate` |
-| Governance | `nova retention plan/apply/status/explain`, PII masking plugins (`--masker`), the budget promotion gate (Rego), `nova events` webhooks, SCIM 2.0 provisioning, partial SAML SSO (metadata/policy only; login refuses with 501) |
+| Governance | `nova retention plan/apply/status/explain`, PII masking plugins (`--masker`), the budget promotion gate (Rego), `nova events` webhooks, SCIM 2.0 provisioning, partial SAML SSO (metadata + assertion-validation policy; live assertion consumption shipped opt-in in v0.73.0 and is off by default) |
 | Portability & interop | `nova export --html`, `nova export-blob` + manifest `nova verify`, OTLP GenAI-span ingest (`POST /api/otlp/v1/traces`), `nova eval import-inspect/export-inspect`, `nova diagnose --intervene`, `nova pii status` |
 
 ---

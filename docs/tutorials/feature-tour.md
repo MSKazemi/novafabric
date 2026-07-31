@@ -507,7 +507,11 @@ nova verify "$NOVAFABRIC_HOME/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/"
 > **Dashboard shortcut:** Open the dashboard's **Seal** tab and use the **Capsule
 > Integrity Verify** panel — enter the run ID, click **Verify capsule**, and see
 > per-check pass/fail for signature, timestamp, and Merkle log inclusion without
-> leaving the browser.
+> leaving the browser. Since v0.98.0 the same tab also carries the **Trust Radar**
+> (which trust guarantees this capsule can actually evidence — an axis it cannot
+> evidence is drawn hollow and excluded from the filled claim polygon, so it never
+> reads as a failure) and the **Redaction X-Ray** (field paths and protection
+> states only; the API never returns a field value). Both are `experimental`.
 
 Sealing is completely opt-in. Without `novaseal.yaml`, capture is unchanged.
 
@@ -709,9 +713,12 @@ curl "http://127.0.0.1:4321/api/reports/run-history?token=<TOKEN>&from=2026-05-1
 curl "http://127.0.0.1:4321/api/reports/evidence-inventory?token=<TOKEN>"
 ```
 
-> The dashboard is **local-only and read-only** (Layer A): it binds `127.0.0.1`, uses a
-> one-shot token, and every page shows its CLI equivalent so anything you see can be
-> reproduced in a pipeline. It is not a hosted UI.
+> The dashboard is **local-only**: it binds `127.0.0.1`, uses a one-shot token, and
+> every page shows its CLI equivalent so anything you see can be reproduced in a
+> pipeline. It is not a hosted UI. Reports are read-only (Layer A); the write actions
+> the dashboard does expose (Layer B — register, eval, promote, forensic replay,
+> redact, export evidence) are confirm-gated and audit-logged to
+> `~/.novafabric/dashboard-audit.jsonl`.
 
 ---
 
@@ -749,12 +756,12 @@ Four compliance-export CLI commands have full dashboard equivalents in the **Com
 tab** of `nova serve --experimental`. No command line is needed for compliance officers
 or auditors.
 
-| Panel | CLI equivalent | Endpoint | Regulation |
-|---|---|---|---|
-| GDPR Art.30 RoPA Export | `nova export-ropa` | `POST /api/compliance/export/ropa` | GDPR Art.30 |
-| AI-SBOM Export | `nova export-aibom` | `POST /api/compliance/export/aibom` | EU CRA (2026-09-11) |
-| NIST AI RMF Report | `nova export-nist-rmf` | `POST /api/compliance/export/nist-rmf` | NIST AI 100-1 |
-| AI-SBOM Coverage Status | `nova aibom status` | `GET /api/aibom/status` | EU CRA |
+| Panel | Sub-group | CLI equivalent | Endpoint | Regulation |
+|---|---|---|---|---|
+| GDPR Art.30 RoPA Export | Privacy | `nova export-ropa` | `POST /api/compliance/export/ropa` | GDPR Art.30 |
+| AI-SBOM Export | Exports | `nova export-aibom` | `POST /api/compliance/export/aibom` | EU CRA (2026-09-11) |
+| NIST AI RMF Report | Frameworks | `nova export-nist-rmf` | `POST /api/compliance/export/nist-rmf` | NIST AI 100-1 |
+| AI-SBOM Coverage Status | Exports | `nova aibom status` | `GET /api/aibom/status` | EU CRA |
 
 **Quick start — dashboard or CLI compliance export:**
 
@@ -775,9 +782,13 @@ nova export-nist-rmf capsules/<run_id>/ --output nist-rmf.json
 nova aibom status   # shows coverage across all capsules
 ```
 
-In the dashboard, open the **Compliance** tab and scroll to the relevant panel. Each
-panel shows the equivalent CLI command at the bottom so teams can reproduce the export
-in CI pipelines.
+In the dashboard, open the **Compliance** tab and pick the sub-group from the segmented
+control at the top — since v0.97.0 the tab is a hub over five groups (Frameworks ·
+Audits · Privacy · Exports · Assurance) rather than one long scroll. Each group is
+deep-linkable as `?tab=compliance&sub=<group>` (for example
+`?tab=compliance&sub=privacy` for the RoPA panel), and the groups are also reachable
+from the `⌘K` / `Ctrl-K` command palette. Each panel shows the equivalent CLI command
+at the bottom so teams can reproduce the export in CI pipelines.
 
 > **Honest framing:** these exports produce evidence that *supports* a compliance
 > workflow — they do not certify or guarantee compliance. NovaFabric attests that a

@@ -9,6 +9,61 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.98.1] — 2026-07-31
+
+Documentation-only release: a full audit of every doc surface against what
+v0.97.0 and v0.98.0 actually shipped, plus one **correction to a published
+claim**.
+
+### Fixed
+- **v0.98.0's deploy-path claim was an overclaim.** The notes, changelog and
+  roadmap said the container/Helm path "runs `nova server start` instead of
+  `serve --insecure`". Verified against `deploy/docker/entrypoint.sh` and the
+  Helm `values.yaml`: server mode is **opt-in** (`NOVA_MODE=server` /
+  `mode: server`) and the **default is still the experimental dashboard with
+  `--insecure`** — the posture the enterprise audit flagged. What is
+  unconditionally true is that server mode never passes `--insecure-no-auth`,
+  and that both modes moved from `tcpSocket` to `httpGet /livez` + `/readyz`.
+  The finding is now recorded as *advanced, not closed*; the upgrade note had
+  stated the opposite of the truth.
+- **`operator-guide` §5c described SAML as unimplemented** — "refuses with 501
+  … no configuration bypasses this". The ADR-0138 §D5 library gate closed in
+  v0.73.0; the ACS consumes assertions when the operator opts in
+  (`experimental_acs_enabled`, default false). The same contradiction existed
+  inside `user-guide`, whose own later section already said otherwise.
+- **`feature-tour` §14 called the dashboard "local-only and read-only
+  (Layer A)"** — Layer B confirm-gated writes exist. Narrowed to the reports
+  surface.
+- **`developer-guide` told contributors to add compliance panels inside
+  `ComplianceTab.tsx`** and tab panels in `tabs/<Tab>.tsx` — neither is how the
+  code has worked since the v0.97.0 decomposition.
+- Version drift corrected across README (six places incl. BibTeX and two
+  in-page anchors), `getting-started` sample output, `concepts`,
+  `api-reference`, `design/architecture/README.md` (pinned at v0.63.0), and
+  `CITATION.cff` (40 releases behind at 0.58.0).
+
+### Added
+- **Navigation documentation**, which did not exist: the seven sidebar groups,
+  `?tab=` deep links, the Compliance `?sub=` hub, and the mnemonic `g`-key
+  sequences that replaced the positional 1–9 shortcuts (`user-guide`,
+  `feature-tour`).
+- **`operator-guide` §7.6** documenting the deployment-mode environment
+  variables (`NOVA_MODE`, `NOVA_PORT`, `NOVA_WORKERS`, `NOVA_DB_REVISION`),
+  previously undocumented.
+- **CLI reference** entries for `nova server start --workers` / `--log-format`,
+  the `X-Request-ID` correlation behavior, and the opt-in ADR-0221
+  connection-pool environment variables.
+- **`developer-guide`** sections for the dashboard test tiers (vitest +
+  Playwright, incl. the `PW_PORT` hazard), the design-system primitives and
+  data-fetching hooks, and the decomposed tab structure with its navigation
+  invariants.
+- **Architecture docs** (`overview`, `cluster-scale`, `implementation-status`)
+  now describe the `web/` front end — which they never named at all — the
+  server app factory, request-id middleware, and connection pooling, each
+  cited to `path:line` and labeled opt-in/experimental. `PROJECT_STATE.md`
+  states explicitly that horizontal scaling must not be claimed as proven:
+  there is no soak and no in-tree benchmark.
+
 ## [0.98.0] — 2026-07-31
 
 Closes the enterprise-readiness audit's deployment and security findings, and
@@ -74,10 +129,16 @@ builds the visual half of the trust surfaces. The dashboard remains
   cannot express de-emphasis safely — any value degrades text — so the cue is
   now structural (receded surface + dashed border) with the label kept at full
   strength. The a11y suite is 10/10 and the full e2e suite 70/70 (was 60/70).
-- **Hardened deploy path**: the container/Helm entrypoint runs `nova server
-  start` (OIDC/RBAC/Postgres) with real health probes, and never
-  `--insecure-no-auth`. The shipped artifacts previously ran the auth-disabled
-  localhost dashboard.
+- **Deploy artifacts gained a real server-mode path and real health probes.**
+  The container/Helm entrypoint can now run `nova server start`
+  (OIDC/RBAC/Postgres, never `--insecure-no-auth`), and **both** modes moved
+  from `tcpSocket` probes to `httpGet /livez` + `/readyz`, so a server that
+  cannot reach its dependencies is no longer reported healthy.
+  **Not yet closed:** server mode is *opt-in* (`NOVA_MODE=server`, Helm
+  `mode: server`). The **default is still the experimental dashboard with
+  `--insecure`** — the posture the enterprise audit flagged. Set the mode
+  explicitly for any multi-user deployment; flipping the default is a
+  breaking change deferred to a future release.
 
 ### Changed
 - The three Live-Topology research ADRs (Sigma.js renderer, TDP WebSocket +

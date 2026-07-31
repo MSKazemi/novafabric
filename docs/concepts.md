@@ -23,7 +23,7 @@ signed evidence is produced.
   metadata only — it never restarts or redeploys anything.
 - What is **shipped today** versus **planned** (clearly labeled throughout).
 
-> **Maturity note.** NovaFabric is local-first and in beta (v0.94.0). Nearly
+> **Maturity note.** NovaFabric is local-first and in beta (v0.98.0). Nearly
 > all shipped surfaces carry `experimental` maturity: they work today and are
 > tested, but on-disk formats are **not frozen** until the v1.0 schema freeze.
 > Anything labeled **PLANNED** or **FUTURE DESIGN** below is documented design

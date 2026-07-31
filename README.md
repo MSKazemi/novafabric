@@ -495,7 +495,7 @@ you opt in:
   promotion gate (Rego), opt-in lifecycle webhooks (`nova events`), SCIM 2.0
   provisioning for server mode, and a partial SAML SSO slice (SP metadata + policy;
   live login at the time deliberately refused with 501 pending a license gate — this
-  was resolved in v0.73.0, see [below](#v062v094--all-experimental)).
+  was resolved in v0.73.0, see [below](#v062v098--all-experimental)).
 - **Portability & interop** — a single-file offline HTML capsule viewer
   (`nova export --html`), batch capsule export with a signed completeness manifest
   (`nova export-blob`), an OTLP/HTTP GenAI-span ingest endpoint, Inspect-AI eval-log
@@ -527,9 +527,9 @@ an RFC 9745/8594 API deprecation mechanism, and the trust surfaces
 See [`docs/releases/v0.60.0.md`](docs/releases/v0.60.0.md) and
 [`docs/releases/v0.61.0.md`](docs/releases/v0.61.0.md).
 
-### v0.62–v0.94 — all `experimental`
+### v0.62–v0.98 — all `experimental`
 
-The latest tagged release is **v0.94.0**. Since v0.61, each release has shipped one
+The latest tagged release is **v0.98.0**. Since v0.61, each release has shipped one
 verifiable, additive slice at a time (no big-bang rewrites); highlights:
 
 - **Enterprise audit closure (v0.62–v0.63)** — SIEM egress, `ops.*` alerting
@@ -563,10 +563,28 @@ verifiable, additive slice at a time (no big-bang rewrites); highlights:
 - **x509 signing identity (v0.91)** — offline certificate-pinned signing
   (`trust/novaseal/x509_identity.py`), verified by SHA-256 fingerprint pinning, no
   CA path-building.
+- **Real cluster-scale event taxonomy (v0.95–v0.96, ADR-0220)** — the capture
+  orchestrator now emits the canonical `RunStarted`/`RunCompleted`/`RunFailed` (and
+  per-call model/tool) events its own NATS consumers were designed to read, so
+  `nova lineage consume` and `nova kg ingest --source nats` derive real edges from
+  real captured runs instead of silently producing none.
+- **Dashboard modernization (v0.97)** — a design-system primitive set, the 29 tabs
+  regrouped from 8 lopsided groups into 7 balanced ones (tab ids and `?tab=` deep
+  links unchanged), stable mnemonic `g`-sequence navigation shortcuts replacing the
+  positional 1–9 keys, a deep-linkable `?sub=` Compliance hub, an honest
+  "Showing N of ~M — load more" truncation affordance, and token-gated
+  `/api/tv5/*` (previously mounted with no auth). The dashboard remains
+  `experimental` (ADR-0027).
+- **Enterprise readiness (v0.98)** — `nova server start --workers N` behind a real
+  app factory, opt-in Postgres connection pooling (`NOVAFABRIC_METADATA_DB_POOL=1`,
+  ADR-0221), `--log-format json` with `X-Request-ID` correlation, cosign/SBOM/SLSA
+  attestations over published images and wheels, the ADR-0173 trust radar and
+  ADR-0174 redaction x-ray as interactive views in the dashboard's **Seal** tab,
+  and six security fixes.
 
 See [`CHANGELOG.md`](CHANGELOG.md) and [`ROADMAP.md`](ROADMAP.md) for the full
 release-by-release detail, and `docs/releases/v0.64.0.md` through
-`docs/releases/v0.94.0.md` for individual release notes.
+`docs/releases/v0.98.0.md` for individual release notes.
 
 > **Not yet frozen:** on-disk Run Capsule and Evidence Bundle formats change until the
 > v1.0 schema freeze. Do not treat capsule internals as a stable contract before then.
@@ -634,7 +652,7 @@ capsules you own, with run-to-run structural diff and cryptographic provenance. 
 [How NovaFabric compares](#how-novafabric-compares).
 
 **Is NovaFabric production-ready?**
-It is **beta** (v0.94.0). Local capture, replay, diff, lineage, the trust layer,
+It is **beta** (v0.98.0). Local capture, replay, diff, lineage, the trust layer,
 policy gates, eval suites, and the asset registry are usable; server mode, the
 cluster-scale collector, the dashboard, the at-scale lineage backends, and every
 cohort shipped since v0.59 (observability parity, enterprise readiness, cloud KMS,
@@ -666,7 +684,9 @@ See [Citation](#citation) below, or the [`CITATION.cff`](CITATION.cff) file.
 - [Strategy: Agentic Research-to-Production OS](design/strategy/agentic-research-to-production-os.md)
 
 ### Release notes
-- [v0.94.0 — Backlog-audit batch: `nova lineage consume` NATS daemon, KuzuDB bulk-COPY schema, multi-TSA fallback, `nova doctor --check-scheduler`](docs/releases/v0.94.0.md) (latest; see [`docs/releases/`](docs/releases/) for every v0.64.0–v0.94.0 release note and [`CHANGELOG.md`](CHANGELOG.md) for the full history)
+- [v0.98.0 — Enterprise readiness: `--workers`, opt-in Postgres pooling, JSON logs + `X-Request-ID`, signed artifacts, Seal-tab trust surfaces, six security fixes](docs/releases/v0.98.0.md) (latest; see [`docs/releases/`](docs/releases/) for every v0.64.0–v0.98.0 release note and [`CHANGELOG.md`](CHANGELOG.md) for the full history)
+- [v0.97.0 — Dashboard modernization: design system, 7-group navigation, `g`-sequence shortcuts, `?sub=` Compliance hub, honest truncation, serve security fixes](docs/releases/v0.97.0.md)
+- [v0.94.0 — Backlog-audit batch: `nova lineage consume` NATS daemon, KuzuDB bulk-COPY schema, multi-TSA fallback, `nova doctor --check-scheduler`](docs/releases/v0.94.0.md)
 - [v0.63.0 — Enterprise-audit second slices: notification adapters, Alerts tab, API-key rotation + REST, SDK helpers](docs/releases/v0.63.0.md)
 - [v0.62.0 — Audit-closure: SIEM egress, ops alerting, API keys, TypeScript SDK, FIPS posture, Analytics tab](docs/releases/v0.62.0.md)
 - [v0.61.0 — Enterprise readiness: secure-by-default auth, orgs/workspaces, backup/restore, encryption at rest, observability](docs/releases/v0.61.0.md)
@@ -708,7 +728,7 @@ Requirements: [uv](https://docs.astral.sh/uv/).
 
 ## Status
 
-**Beta — actively developed (v0.94.0).** Stable and usable today: local capture,
+**Beta — actively developed (v0.98.0).** Stable and usable today: local capture,
 replay, diff, lineage (SQLite default), the trust layer (signing, secret scanning,
 redaction), the asset registry, policy/approval gates, and standard eval suites.
 `Experimental`: server mode, the cluster-scale collector, the Object Capsule Store,
@@ -716,9 +736,10 @@ the live dashboard, the at-scale lineage backends (Kuzu/Postgres/AGE/JanusGraph)
 and every cohort shipped since v0.59 (prompt lifecycle, sessions, offline analytics,
 annotation queues, retention, webhooks, the enterprise-readiness surfaces in the
 [New in v0.60 and v0.61](#new-in-v060-and-v061--all-experimental) list, and the
-[v0.62–v0.94](#v062v094--all-experimental) cohorts — cloud KMS, SAML SSO, the EU AI
-Act evidence-exporter cohort, verifiable-provenance primitives, and no-LLM
-diagnosis; see [ROADMAP.md](ROADMAP.md)
+[v0.62–v0.98](#v062v098--all-experimental) cohorts — cloud KMS, SAML SSO, the EU AI
+Act evidence-exporter cohort, verifiable-provenance primitives, no-LLM diagnosis,
+the modernized dashboard, and the enterprise-readiness surfaces; see
+[ROADMAP.md](ROADMAP.md)
 and [CHANGELOG.md](CHANGELOG.md) for per-feature maturity labels and the
 authoritative release history). Run Capsule
 and Evidence Bundle formats are **not frozen** — expect schema changes until the v1.0
@@ -751,7 +772,7 @@ lives in [`CITATION.cff`](CITATION.cff); a BibTeX entry:
   author  = {Seyedkazemi Ardebili, Mohsen},
   title   = {{NovaFabric}: Replayable AI Infrastructure},
   url      = {https://github.com/novafabric/novafabric},
-  version = {0.94.0},
+  version = {0.98.0},
   license = {Apache-2.0}
 }
 ```
