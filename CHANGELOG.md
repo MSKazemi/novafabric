@@ -9,6 +9,18 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Added
+
+- **[RFC-0001](docs/rfcs/RFC-0001-runs-partition-key-vs-tenant-idempotency.md)** —
+  the `runs` partition key vs. tenant idempotency question from issue #23, filed
+  as an RFC rather than patched. It is a security-relevant change to a documented
+  guarantee on an RLS-protected, tenant-scoped table, and the project's own
+  process requires an RFC with a comment window and two approvers for exactly
+  that. Four options, none free; the deciding question is whether idempotency
+  means one row per run per tenant, or per tenant per start time. Also the first
+  public exercise of the RFC process published this week.
+
+
 ### Added (the three launch assets that were missing)
 
 - **An animated terminal demo** on the README's first screen

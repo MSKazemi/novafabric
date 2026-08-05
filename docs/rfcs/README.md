@@ -25,9 +25,10 @@ answer within a week.
 
 ## Index
 
-_No public RFCs yet — this process opened to external contributors with v0.99.0.
-Yours can be RFC-0001._
-
 | RFC | Title | Status | Window |
 |---|---|---|---|
-| — | — | — | — |
+| [0001](RFC-0001-runs-partition-key-vs-tenant-idempotency.md) | `runs` partition key vs. tenant idempotency | **Draft** | not started |
+
+RFC-0001 is open and **wants reviewers**. It is a genuine open question with four
+options and no free one, and it currently blocks the tenant-isolation security
+gate — so it is a real place to have an opinion, not a formality.
