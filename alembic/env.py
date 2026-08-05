@@ -20,6 +20,8 @@ from pathlib import Path
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from novafabric.metadata_store.dsn import to_sqlalchemy_url
+
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -33,7 +35,7 @@ if not _db_url:
             raise ValueError(
                 "Postgres migration selected but NOVAFABRIC_POSTGRES_DSN is not set."
             )
-        _db_url = _dsn
+        _db_url = to_sqlalchemy_url(_dsn)
     else:
         _sqlite_path = os.environ.get(
             "NOVAFABRIC_DB_PATH",
