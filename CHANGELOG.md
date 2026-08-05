@@ -9,6 +9,8 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.100.0] — 2026-08-05
+
 ### Fixed (release pipeline — v0.98.0 through v0.99.0 never reached PyPI)
 
 - **`pip install novafabric` served 0.97.0 while the repository, the tags, and
