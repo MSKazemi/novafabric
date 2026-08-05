@@ -9,6 +9,8 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.100.1] — 2026-08-05
+
 ### Fixed (two release-tag workflows that only fail at release time)
 
 - **The container image has been unbuildable since v0.99.0.** BL-037 added

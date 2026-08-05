@@ -2821,7 +2821,7 @@ wheels = [
 
 [[package]]
 name = "novafabric"
-version = "0.100.0"
+version = "0.100.1"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },

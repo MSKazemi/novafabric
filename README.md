@@ -771,7 +771,7 @@ Full details, including what to do next, are in [CONTRIBUTING.md](CONTRIBUTING.m
 
 ## Status
 
-**Beta — actively developed (v0.100.0).** Stable and usable today: local capture,
+**Beta — actively developed (v0.100.1).** Stable and usable today: local capture,
 replay, diff, lineage (SQLite default), the trust layer (signing, secret scanning,
 redaction), the asset registry, policy/approval gates, and standard eval suites.
 `Experimental`: server mode, the cluster-scale collector, the Object Capsule Store,
