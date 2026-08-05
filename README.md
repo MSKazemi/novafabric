@@ -725,6 +725,7 @@ See [Citation](#citation) below, or the [`CITATION.cff`](CITATION.cff) file.
 - [What NovaFabric is not](docs/architecture.md#what-novafabric-is-not) — the explicit non-goals
 - [How NovaFabric compares](docs/comparison.md) — honest comparisons, including where it loses
 - [Benchmarks](docs/benchmarks.md) — reproducible numbers, with the commands to re-run them
+- [GitHub Action](.github/actions/capture/README.md) — capture a CI step as a capsule in three lines of YAML
 - [Architecture decisions](docs/decisions.md) — 225 recorded decisions
 
 ### Release notes

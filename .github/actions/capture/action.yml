@@ -1,0 +1,161 @@
+name: "NovaFabric Capture"
+description: >-
+  Run a command and capture it as a portable, schema-valid, secret-redacted
+  NovaFabric capsule — then upload it as a build artifact you can replay and
+  diff months later.
+author: "NovaFabric"
+
+branding:
+  icon: "archive"
+  color: "green"
+
+inputs:
+  run:
+    description: "The command to capture. Runs under `nova capture`."
+    required: true
+  environment:
+    description: >-
+      Deployment environment recorded on the capsule (ADR-0126). Defaults to
+      `test`, which is in NovaFabric's conventional set
+      {development, test, staging, production}. A custom value like `ci` is
+      legitimate and recorded verbatim, but `nova validate` prints a warning for
+      anything outside that set — and a warning on every CI run just teaches
+      people to ignore warnings.
+    required: false
+    default: "test"
+  timeout:
+    description: "Wall-clock deadline in seconds. Empty means no NovaFabric-imposed limit."
+    required: false
+    default: ""
+  validate:
+    description: "Run `nova validate` on the capsule and fail the step if it is invalid."
+    required: false
+    default: "true"
+  upload-artifact:
+    description: "Upload the capsule as a workflow artifact."
+    required: false
+    default: "true"
+  artifact-name:
+    description: "Name for the uploaded artifact."
+    required: false
+    default: "novafabric-capsule"
+  retention-days:
+    description: "How long to retain the artifact."
+    required: false
+    default: "90"
+  novafabric-version:
+    description: >-
+      Version specifier passed to pip, e.g. `0.100.1`. Empty installs the
+      latest release. **Pin this** if you want reproducible CI.
+    required: false
+    default: ""
+  python-version:
+    description: "Python version. NovaFabric requires 3.12+."
+    required: false
+    default: "3.12"
+  extras:
+    description: >-
+      Optional extras to install, e.g. `all`. Empty installs the core package —
+      what most CI needs, and ~113 MB rather than ~412 MB.
+    required: false
+    default: ""
+
+outputs:
+  run-id:
+    description: "ULID of the captured run."
+    value: ${{ steps.capture.outputs.run-id }}
+  capsule-path:
+    description: "Filesystem path to the capsule directory."
+    value: ${{ steps.capture.outputs.capsule-path }}
+  status:
+    description: "`success` or `failure` — the captured command's own outcome."
+    value: ${{ steps.capture.outputs.status }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install NovaFabric
+      shell: bash
+      run: |
+        set -euo pipefail
+        spec="novafabric"
+        if [ -n "${{ inputs.extras }}" ]; then
+          spec="novafabric[${{ inputs.extras }}]"
+        fi
+        if [ -n "${{ inputs.novafabric-version }}" ]; then
+          spec="${spec}==${{ inputs.novafabric-version }}"
+        fi
+        python -m pip install --quiet --upgrade pip
+        python -m pip install --quiet "${spec}"
+        nova --version
+
+    - name: Capture
+      id: capture
+      shell: bash
+      run: |
+        # NOT `set -e`: a failing command must still produce a capsule, and this
+        # step has to keep running long enough to find and report it.
+        set -uo pipefail
+        out_dir="${RUNNER_TEMP}/novafabric-capsules"
+        mkdir -p "${out_dir}"
+
+        args=(--environment "${{ inputs.environment }}" --output-dir "${out_dir}")
+        if [ -n "${{ inputs.timeout }}" ]; then
+          args+=(--timeout "${{ inputs.timeout }}")
+        fi
+
+        # `--` separates NovaFabric's own flags from the captured command's.
+        nova capture "${args[@]}" -- ${{ inputs.run }}
+        capture_rc=$?
+
+        # A crashed run is captured evidence, not lost state — NovaFabric writes a
+        # complete capsule with `status: failure`. So locate the capsule regardless
+        # of the exit code, and only then decide whether to fail the step.
+        capsule="$(find "${out_dir}" -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)"
+        if [ -z "${capsule}" ]; then
+          echo "::error title=No capsule::nova capture produced no capsule directory."
+          exit 1
+        fi
+
+        run_id="$(basename "${capsule}")"
+        status="success"
+        [ "${capture_rc}" -eq 0 ] || status="failure"
+
+        {
+          echo "run-id=${run_id}"
+          echo "capsule-path=${capsule}"
+          echo "status=${status}"
+        } >> "${GITHUB_OUTPUT}"
+
+        {
+          echo "### NovaFabric capture"
+          echo ""
+          echo "| | |"
+          echo "|---|---|"
+          echo "| Run ID | \`${run_id}\` |"
+          echo "| Status | \`${status}\` |"
+          echo "| Environment | \`${{ inputs.environment }}\` |"
+        } >> "${GITHUB_STEP_SUMMARY}"
+
+        exit "${capture_rc}"
+
+    - name: Validate the capsule
+      if: ${{ always() && inputs.validate == 'true' && steps.capture.outputs.capsule-path != '' }}
+      shell: bash
+      run: nova validate "${{ steps.capture.outputs.capsule-path }}"
+
+    - name: Upload the capsule
+      # `always()` on purpose. The capsule from a failing run is the one anyone
+      # actually wants, so it must survive the step failure that produced it.
+      if: ${{ always() && inputs.upload-artifact == 'true' && steps.capture.outputs.capsule-path != '' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ steps.capture.outputs.capsule-path }}
+        retention-days: ${{ inputs.retention-days }}
+        if-no-files-found: error

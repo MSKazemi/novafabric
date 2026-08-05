@@ -9,6 +9,27 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Added (a GitHub Action — integration-led growth, the lever that compounds)
+
+- **`.github/actions/capture`** — any repository can now capture a CI step as a
+  NovaFabric capsule in three lines of YAML, with the capsule uploaded as a build
+  artifact it can replay and diff months later. No application code changes.
+- **A failing command still produces an uploaded capsule.** The step fails with
+  the captured command's own exit code, so workflows behave exactly as before,
+  but the artifact survives — the capsule from a failing run is the one anyone
+  actually wants. Verified: a command exiting 3 yields a capsule recording
+  `status: failure`, `exit_code: 3`, which `nova validate` accepts.
+- `.github/workflows/capture-action.yml` dogfoods it on both paths, weekly and on
+  every push, **against the published PyPI package rather than the working tree**
+  — which also makes it the project's own standing smoke test of
+  `pip install novafabric`, the exact path that was silently broken for five
+  releases while every local test passed.
+- The `environment` default is `test`, not `ci`: `ci` is legitimate and recorded
+  verbatim, but it sits outside NovaFabric's conventional set and would print a
+  warning on every run, which only teaches people to ignore warnings. Caught by
+  running the action rather than by reading it.
+
+
 ### Added
 
 - **[RFC-0001](docs/rfcs/RFC-0001-runs-partition-key-vs-tenant-idempotency.md)** —
