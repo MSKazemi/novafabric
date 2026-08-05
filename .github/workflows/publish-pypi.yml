@@ -55,12 +55,34 @@ jobs:
       - name: Generate SBOM (syft)
         # CycloneDX SBOM of the built distribution — the provenance product
         # shipping a bill of materials for its own wheel.
+        #
+        # continue-on-error, deliberately. This step failed on five consecutive
+        # release tags (v0.98.0 through v0.99.0, 2026-07-31 to 2026-08-05) and,
+        # because it was blocking, took the whole `build` job down with it — so
+        # `publish` never ran and **none of those releases reached PyPI**. Users
+        # running `pip install novafabric` kept getting 0.97.0, still carrying
+        # three defects v0.99.0 had already fixed, while the repository, the
+        # tags, and the GitHub Releases all said otherwise.
+        #
+        # A supply-chain nicety must not be able to block the supply chain. The
+        # SBOM is still generated and still uploaded when the action works; when
+        # a third-party action breaks, the release ships and the missing SBOM is
+        # visible as a failed step rather than as a silent non-release.
+        continue-on-error: true
         uses: anchore/sbom-action@v0
         with:
           path: dist/
           format: cyclonedx-json
           output-file: novafabric-sbom.cyclonedx.json
           artifact-name: novafabric-sbom.cyclonedx.json
+
+      - name: Warn when the SBOM step did not produce a file
+        if: always()
+        run: |
+          if [ ! -f novafabric-sbom.cyclonedx.json ]; then
+            echo "::warning title=SBOM missing::syft did not produce an SBOM for this build. \
+          The release still ships. Investigate anchore/sbom-action before the next tag."
+          fi
 
       - name: Attest build provenance (SLSA) for the distributions
         uses: actions/attest-build-provenance@v2

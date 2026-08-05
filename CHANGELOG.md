@@ -9,6 +9,33 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Fixed (release pipeline — v0.98.0 through v0.99.0 never reached PyPI)
+
+- **`pip install novafabric` served 0.97.0 while the repository, the tags, and
+  the GitHub Releases all said v0.99.0.** The `Generate SBOM (syft)` step
+  (`anchore/sbom-action@v0`) failed on five consecutive release tags from
+  2026-07-31, and because it was a blocking step it took the whole `build` job
+  down with it — so the dependent `publish` job never ran. The three defects
+  v0.99.0 fixed *for released installs* (schemas absent from the wheel,
+  unrotatable API keys, cross-filed concurrent captures) therefore never reached
+  a single user. The step is now `continue-on-error` with an explicit warning
+  annotation: a supply-chain nicety must not be able to block the supply chain.
+
+### Fixed (Postgres migrations were impossible to run as documented)
+
+- **`alembic -c alembic-postgres.ini upgrade head` failed with
+  `ModuleNotFoundError: No module named 'psycopg2'`** for any ordinary
+  `postgresql://` DSN. SQLAlchemy resolves the bare scheme to psycopg2;
+  NovaFabric ships `psycopg[binary]` (psycopg 3) and does not ship psycopg2.
+  The same DSN works everywhere else in the codebase because
+  `metadata_store.postgres` passes it straight to `psycopg.connect()` — only the
+  SQLAlchemy path was affected, which is why it survived. It broke CI's
+  `integration` job on **every run from at least 2026-07-30**, and it would break
+  any operator following the migration runbook. New
+  `novafabric.metadata_store.dsn.to_sqlalchemy_url` normalises bare
+  `postgresql://` and `postgres://` to `postgresql+psycopg://` and leaves an
+  explicitly named driver alone.
+
 ### Fixed (documentation — 151 links in the public docs pointed at files no reader could open)
 
 - **Every public doc that linked into the private `design/` tree was a 404 for
