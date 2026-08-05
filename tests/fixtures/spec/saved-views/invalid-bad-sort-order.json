@@ -1,0 +1,51 @@
+{
+  "schema_version": "0.1.0",
+  "view_id": "failed-runs-last-7d",
+  "name": "failed-runs-last-7d",
+  "description": "All failed runs in the last 7 days, most expensive first.",
+  "created_at": "2026-07-12T09:14:22Z",
+  "created_by": "mohsen",
+  "query": {
+    "from": "capsules",
+    "where": [
+      {
+        "field": "status",
+        "op": "eq",
+        "value": "error"
+      }
+    ],
+    "select": [
+      "capsule_id",
+      "model_name",
+      "status",
+      "cost.amount",
+      "started_at"
+    ],
+    "order_by": [
+      {
+        "field": "cost.amount",
+        "order": "desc"
+      }
+    ],
+    "limit": 50
+  },
+  "display": {
+    "columns": [
+      "capsule_id",
+      "model_name",
+      "cost.amount",
+      "started_at"
+    ],
+    "sort": [
+      {
+        "field": "x",
+        "order": "ascending"
+      }
+    ],
+    "format": "table"
+  },
+  "tags": [
+    "triage",
+    "cost"
+  ]
+}

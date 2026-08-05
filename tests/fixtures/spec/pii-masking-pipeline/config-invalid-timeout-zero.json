@@ -1,0 +1,10 @@
+{
+  "masking": {
+    "maskers": [
+      {
+        "id": "x",
+        "timeout_ms": 0
+      }
+    ]
+  }
+}

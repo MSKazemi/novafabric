@@ -22,7 +22,7 @@ from novafabric.views.model import DisplayPrefs, SortKey
 
 _ROOT = Path(__file__).parents[2]
 _SCHEMA = _ROOT / "schemas" / "saved-view.schema.json"
-_FIXTURES = _ROOT / "design" / "spec" / "fixtures" / "saved-views"
+_FIXTURES = _ROOT / "tests" / "fixtures" / "spec" / "saved-views"
 _FIXTURE_FILES = sorted(_FIXTURES.glob("*.json"))
 
 

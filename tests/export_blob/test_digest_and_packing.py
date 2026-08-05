@@ -16,7 +16,7 @@ from novafabric.export_blob.models import ExportMember
 from novafabric.export_blob.packing import CapsulePackError, capsule_identifier, pack_capsule
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-FIXTURES = REPO_ROOT / "design" / "spec" / "fixtures" / "batch-blob-export"
+FIXTURES = REPO_ROOT / "tests" / "fixtures" / "spec" / "batch-blob-export"
 
 
 def _member(cid: str, hexseed: str, size: int) -> ExportMember:

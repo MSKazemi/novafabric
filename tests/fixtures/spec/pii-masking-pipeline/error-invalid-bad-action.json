@@ -1,0 +1,8 @@
+{
+  "masker_id": "acme-case-id",
+  "masker_version": "1",
+  "target_ref": "model-calls.jsonl#L9 messages[1].content",
+  "reason": "timeout",
+  "action_taken": "keep",
+  "detail_hash": "sha256:0000000000000000000000000000000000000000000000000000000000009f86"
+}

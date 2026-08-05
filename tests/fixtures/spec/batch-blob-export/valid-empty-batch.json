@@ -1,0 +1,20 @@
+{
+  "schema_version": "0.1.0",
+  "export_id": "01HXBQ8000M4YZ2K7N9DPBYK2W",
+  "created_at": "2026-07-12T16:00:00.000000Z",
+  "dest": "gcs://compliance/empty/",
+  "query": "agent.type = 'nonexistent'",
+  "query_resolved_at": "2026-07-12T16:00:00.000000Z",
+  "members": [],
+  "count": 0,
+  "batch_digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "signature": {
+    "payloadType": "application/vnd.novafabric.export-manifest+json",
+    "signatures": [
+      {
+        "keyid": "novaseal:root-2026",
+        "sig": "MEUCIQDexampleSig=="
+      }
+    ]
+  }
+}

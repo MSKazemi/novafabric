@@ -1,0 +1,13 @@
+{
+  "schema_version": "0.1.0",
+  "view_id": "all-runs",
+  "name": "all-runs",
+  "query": {
+    "from": "capsules"
+  },
+  "created_at": "2026-07-12T10:00:00Z",
+  "tags": [
+    1,
+    2
+  ]
+}

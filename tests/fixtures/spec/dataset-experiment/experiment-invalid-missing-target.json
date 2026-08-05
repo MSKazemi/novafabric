@@ -1,0 +1,50 @@
+{
+  "schema_version": "0.1.0",
+  "experiment_id": "01HXAY7M7QM4YZ2K7N9DPBYK2W",
+  "dataset_ref": {
+    "name": "gaia-validation",
+    "version": "2024-11",
+    "dataset_hash": "sha256:177d42600f2f1a825e4cad4cfc6c6da0c5564dff04e40d3774a0a427fbc2f6a5",
+    "split_hash": "sha256:d190f7348e84cbfca530482aa669af2e83837202cdb22407b2ec8ac2f531eb9e"
+  },
+  "score_config_ref": "score-config://default-pass",
+  "runs": [
+    {
+      "item_id": "gaia-0001",
+      "capsule_ref": "capsules/01HXAY7M7QM4YZ2K7N9DPBYK2W",
+      "score_ids": [
+        "01HXAY7M8RT2YZ2K7N9DPBYK2W"
+      ],
+      "status": "ok"
+    },
+    {
+      "item_id": "gaia-0002",
+      "capsule_ref": "capsules/01HXBZ8N8RN5ZA3L8P0EQCZL3X",
+      "score_ids": [
+        "01HXAY7MASW4YZ2K7N9DPBYK2W"
+      ],
+      "status": "ok"
+    }
+  ],
+  "aggregate": [
+    {
+      "metric": "task_pass",
+      "value_type": "boolean",
+      "reducer": "pass_rate",
+      "value": 0.5,
+      "n": 2,
+      "wilson": [
+        0.095,
+        0.905
+      ]
+    }
+  ],
+  "status": "finalized",
+  "created_at": "2026-07-12T10:00:00.000000Z",
+  "finalized_at": "2026-07-12T10:04:31.512000Z",
+  "content_hash": "sha256:16bd5184e7549d3b693bdea07d40fd7862be306baffe97bda4c3b94695965ac7",
+  "labels": {
+    "ci": "true",
+    "branch": "main"
+  }
+}

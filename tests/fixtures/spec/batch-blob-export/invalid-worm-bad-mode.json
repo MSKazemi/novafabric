@@ -1,0 +1,34 @@
+{
+  "schema_version": "0.1.0",
+  "export_id": "01HXBQ7M9SM4YZ2K7N9DPBYK2W",
+  "created_at": "2026-07-12T15:20:00.000Z",
+  "dest": "./exports/incident-4471/",
+  "query": null,
+  "query_resolved_at": "2026-07-12T15:19:58.400Z",
+  "members": [
+    {
+      "capsule_id": "run-incident-4471",
+      "content_hash": "sha256:f67fbb9e634362f1f867e84e7aef22d4bd1ffa660171a075f3bcd84e276edcda",
+      "size": 88104
+    }
+  ],
+  "count": 1,
+  "batch_digest": "sha256:6505390f2b4f9fb195b6ef3d7a178b0659fd4021d6c1ed6404131cf497a01331",
+  "worm": {
+    "mode": "forever",
+    "retain_until": "2033-07-12T00:00:00Z"
+  },
+  "producer": {
+    "tool": "novafabric",
+    "version": "0.9.0"
+  },
+  "signature": {
+    "payloadType": "application/vnd.novafabric.export-manifest+json",
+    "signatures": [
+      {
+        "keyid": "novaseal:root-2026",
+        "sig": "MEUCIQDexampleSig=="
+      }
+    ]
+  }
+}

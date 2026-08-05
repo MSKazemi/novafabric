@@ -1,0 +1,39 @@
+{
+  "schema_version": "0.1.0",
+  "experiment_id": "01HXAY7M7QM4YZ2K7N9DPBYK2W",
+  "dataset_ref": {
+    "name": "gaia-validation",
+    "version": "2024-11",
+    "dataset_hash": "sha256:177d42600f2f1a825e4cad4cfc6c6da0c5564dff04e40d3774a0a427fbc2f6a5",
+    "split_hash": "sha256:d190f7348e84cbfca530482aa669af2e83837202cdb22407b2ec8ac2f531eb9e"
+  },
+  "target": {
+    "kind": "agent",
+    "ref": "planner@1.0.0",
+    "label": null
+  },
+  "runs": [
+    {
+      "item_id": "gaia-0001",
+      "capsule_ref": "capsules/01HXAY7M7QM4YZ2K7N9DPBYK2W",
+      "score_ids": [
+        "01HXAY7M8RT2YZ2K7N9DPBYK2W"
+      ],
+      "status": "ok"
+    }
+  ],
+  "aggregate": [
+    {
+      "metric": "latency_ms",
+      "value_type": "numeric",
+      "reducer": "mean",
+      "value": 812.5,
+      "n": 1,
+      "wilson": null
+    }
+  ],
+  "status": "finalized",
+  "created_at": "2026-07-12T10:00:00.000000Z",
+  "finalized_at": "2026-07-12T10:04:00.000000Z",
+  "content_hash": "sha256:43c78c8f871aef998b723253d9d4e5000c98ccb785dcc18812384dac5e4a3c82"
+}

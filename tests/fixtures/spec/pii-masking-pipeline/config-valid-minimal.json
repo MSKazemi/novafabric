@@ -1,0 +1,9 @@
+{
+  "masking": {
+    "maskers": [
+      {
+        "id": "acme-case-id"
+      }
+    ]
+  }
+}
