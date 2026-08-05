@@ -1,0 +1,14 @@
+{
+  "finding_id": "01HXAYZ7MASKERK4P9DPBYK2W1",
+  "masker_id": "acme-case-id",
+  "masker_version": "1",
+  "pattern_id": "acme-case-number",
+  "target_kind": "tool-call-arguments",
+  "target_ref": "tool-calls.jsonl#L4 arguments.case",
+  "byte_offset": 0,
+  "byte_length": 18,
+  "match_hash": "sha256:000000000000000000000000000000000000000000000000000000000000cafe",
+  "redaction_strategy": "mask",
+  "replacement": "[MASKED:acme-case-id]",
+  "chain_position": 0
+}

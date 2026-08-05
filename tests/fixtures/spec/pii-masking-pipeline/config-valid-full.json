@@ -1,0 +1,17 @@
+{
+  "masking": {
+    "enabled": true,
+    "maskers": [
+      {
+        "id": "acme-case-id",
+        "version": "1",
+        "timeout_ms": 50,
+        "max_input_bytes": 65536,
+        "on_error": "redact",
+        "config": {
+          "prefix": "ACME-CASE"
+        }
+      }
+    ]
+  }
+}

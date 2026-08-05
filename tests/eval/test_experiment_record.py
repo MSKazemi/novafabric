@@ -36,7 +36,7 @@ from novafabric.eval.experiment import (
 )
 
 _ROOT = Path(__file__).parents[2]
-_FIXTURES = _ROOT / "design" / "spec" / "fixtures" / "dataset-experiment"
+_FIXTURES = _ROOT / "tests" / "fixtures" / "spec" / "dataset-experiment"
 _FIXTURE_FILES = sorted(_FIXTURES.glob("*.json"))
 
 _HASH_A = "sha256:" + "a" * 64

@@ -1,0 +1,10 @@
+{
+  "masking": {
+    "maskers": [
+      {
+        "id": "x",
+        "on_error": "ignore"
+      }
+    ]
+  }
+}

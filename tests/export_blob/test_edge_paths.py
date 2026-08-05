@@ -27,9 +27,9 @@ runner = CliRunner()
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VALID_FIXTURE = (
     REPO_ROOT
-    / "design"
-    / "spec"
+    / "tests"
     / "fixtures"
+    / "spec"
     / "batch-blob-export"
     / "valid-s3-three-members.json"
 )

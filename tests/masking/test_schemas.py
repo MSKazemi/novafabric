@@ -15,7 +15,7 @@ import pytest
 
 _ROOT = Path(__file__).parents[2]
 _SCHEMAS = _ROOT / "schemas"
-_FIXTURES = _ROOT / "design" / "spec" / "fixtures" / "pii-masking-pipeline"
+_FIXTURES = _ROOT / "tests" / "fixtures" / "spec" / "pii-masking-pipeline"
 
 _SCHEMA_BY_PREFIX = {
     "config": "masking-config.schema.json",

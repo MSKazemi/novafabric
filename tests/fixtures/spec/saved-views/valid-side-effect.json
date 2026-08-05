@@ -1,0 +1,23 @@
+{
+  "schema_version": "0.1.0",
+  "view_id": "side-effect-runs",
+  "name": "side-effect-runs",
+  "description": "Runs containing any external-side-effect tool call.",
+  "created_at": "2026-07-12T09:20:00Z",
+  "created_by": null,
+  "query": {
+    "from": "capsules",
+    "where": [
+      {
+        "field": "tool_calls.mutation_class",
+        "op": "contains",
+        "value": "external-side-effect"
+      }
+    ],
+    "select": [
+      "capsule_id",
+      "started_at",
+      "mutating_tool_count"
+    ]
+  }
+}
