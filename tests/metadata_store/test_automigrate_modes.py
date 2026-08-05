@@ -7,6 +7,7 @@ from __future__ import annotations
 import warnings
 
 import pytest
+from _help_assert import assert_flag_in_help
 
 # ---------------------------------------------------------------------------
 # Test 1: automigrate=false is a no-op (bootstrap still succeeds)
@@ -45,7 +46,7 @@ def test_cli_migrate_to_postgres_help() -> None:
     result = runner.invoke(metadata_db_app, ["migrate-to-postgres", "--help"])
 
     assert result.exit_code == 0, f"--help exited non-zero:\n{result.output}"
-    assert "--source" in result.output, "Missing --source in help output"
+    assert_flag_in_help(result, "--source"), "Missing --source in help output"
     assert "--target" in result.output, "Missing --target in help output"
 
 
