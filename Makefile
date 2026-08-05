@@ -8,7 +8,7 @@ COMPOSE_PROD := docker compose -f deploy/docker/docker-compose.yml --profile pro
 COMPOSE_AGE  := docker compose -f deploy/docker/docker-compose.yml --profile age
 
 .PHONY: whitepaper help test lint typecheck coverage benchmark benchmark-capture \
-        check-links check-decisions \
+        check-links check-decisions site \
         bundle serve-local deploy-local \
         topology-build topology-test serve-topology \
         compliance-smoke classify-smoke audit-smoke migrate-schema-smoke \
@@ -65,6 +65,7 @@ help:
 	@echo "  typecheck         Run mypy on src/"
 	@echo "  check-links       Verify every relative link in public docs resolves"
 	@echo "  check-decisions   Verify docs/decisions.md matches the ADR tree"
+	@echo "  site              Build the public website (web/dist/), docs pages included"
 	@echo "  whitepaper        Build PDF from docs/whitepaper/novafabric-position-paper.md"
 	@echo "  whitepaper-html   Build HTML version of the whitepaper"
 	@echo "  coverage          Run pytest with coverage report"
@@ -167,6 +168,17 @@ coverage:
 
 bundle:
 	cd web && npm run build:dashboard
+
+site:
+	# Builds the public website, including the docs/ tree as static pages.
+	# The deploy itself is manual — see web/README.md "Deploy". Building is not
+	# deploying, which is why novafabric.ai/docs/ can 404 while these pages exist.
+	cd web && npm run build
+	@echo ""
+	@echo "Built $$(find web/dist -name '*.html' | wc -l) pages, of which \
+$$(find web/dist/docs -name index.html 2>/dev/null | wc -l) are docs pages."
+	@echo "Deployable artifact: web/dist/  — copy the WHOLE directory,"
+	@echo "including _astro/ and docs/. See web/README.md for why."
 
 serve-local: bundle
 	uv run nova serve --experimental
