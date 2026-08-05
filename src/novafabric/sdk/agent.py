@@ -122,7 +122,7 @@ def _run_with_capture(
     writer = CapsuleWriter(run_id=run_id, base_dir=cap_dir.parent)
     writer._dir = cap_dir
 
-    install_all(writer=writer, parent_span_id=root_span_id)
+    _hook_token = install_all(writer=writer, parent_span_id=root_span_id)
     exit_code = 0
     error: dict[str, Any] | None = None
     result: Any = None
@@ -133,7 +133,7 @@ def _run_with_capture(
         error = {"type": type(exc).__name__, "message": str(exc), "traceback_ref": None}
         raise
     finally:
-        uninstall_all()
+        uninstall_all(_hook_token)
         finished_at = _now()
         duration_ms = int((time.monotonic() - t0) * 1000)
         status = "success" if exit_code == 0 else "failure"

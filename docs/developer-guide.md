@@ -88,6 +88,39 @@ source .venv/bin/activate
 novafabric --help
 ```
 
+### Dependency tiers (ADR-0222)
+
+`[project.dependencies]` is the **default install** — keep it small, and keep it
+matching what a plain `pip install novafabric` genuinely needs. As of v0.99.0 it
+is 113 MB / 42 packages; `duckdb`, `pyarrow`, `python-louvain` and
+`clickhouse-connect` live in extras because every one of their import sites is
+already behind an extra.
+
+Two rules bind new code:
+
+1. **Do not add a top-level `import duckdb` / `import pyarrow` /
+   `import community` / `import clickhouse_connect` to a core code path.**
+   `tests/packaging_metadata/test_lean_install_surface.py` pins the exact set of modules
+   allowed to need those, and fails on anything new. Prefer a function-level
+   (lazy) import.
+2. **Honour the degradation contract.** Any core-reachable use of an
+   extras-only dependency must either fall back to a stdlib-equivalent path with
+   identical results, or raise an `ImportError` naming the exact extra
+   (`pip install novafabric[<extra>]`). Never a silent wrong answer, never a
+   bare `ModuleNotFoundError`. See
+   `cost/clickhouse_store.py::require_clickhouse_connect` for the house pattern,
+   and `tests/packaging_metadata/test_optional_dependency_degradation.py` for how each
+   clause is tested.
+
+`networkx` stays in core: the CLI imports it eagerly at start-up and `nova
+insights` / `nova lineage` depend on it. Note `nova insights` uses networkx's
+own `nx.community.louvain_communities`, *not* the `python-louvain`
+distribution (`import community`) that moved to `[serve]`.
+
+The dev venv installs everything (`uv sync --all-extras`), so a missing-extra
+bug will not reproduce locally — that is exactly why the two packaging test
+modules simulate a lean install with a `sys.meta_path` blocker.
+
 ### First-run setup (pip install path)
 
 After installing from source or PyPI, run `nova init` once to create the
@@ -1175,6 +1208,56 @@ LDBC SNB BI queries via `LineageSnbQueries`; deploy the included Helm chart at
 > the source-of-truth-derived, rebuildable cache. Alternative backends like this one are
 > strictly additive — local mode never requires them.
 
+### AGE lineage backend — docker-compose profile (experimental)
+
+Use `AGELineageStore` (`src/novafabric/lineage/backends/age.py`) for the Apache AGE
+(openCypher-over-Postgres) lineage backend — a third behavioural peer of
+`SqliteLineageStore`/`PostgresLineageStore`/`KuzuLineageStore`, correctness-parity-tested
+against the SQLite reference via testcontainers (`tests/lineage/test_age_backend.py`):
+
+```python
+from novafabric.lineage.backends.age import AGELineageStore
+
+store = AGELineageStore(dsn="postgresql://nova:nova@localhost:5433/nova_lineage")
+```
+
+**Experimental:** a dedicated `age` docker-compose profile lets you run Apache AGE
+locally without pulling in testcontainers:
+
+```bash
+make age-up      # docker compose --profile age up -d age — starts ONLY novafabric-age on :5433
+make age-down     # docker compose --profile age stop age && rm -f age — removes ONLY that container
+```
+
+Both targets name the `age` service explicitly on every command and never call bare
+`up`/`down` — `docker compose --profile age config --services` resolves to the union
+`{age, postgres, nova}` (the latter two have no `profiles:` key, so they're always
+"active" under any profile filter), and a bare `up`/`down` would start or tear down
+that whole union. Naming `age` explicitly scopes every command to that one container;
+`make age-up`/`make age-down` never touch an already-running dev/prod stack's
+`novafabric-postgres` or `novafabric-serve` (verified live).
+
+DSN: `postgresql://nova:nova@localhost:5433/nova_lineage`. `AGELineageStore.__init__`
+self-initializes the extension (`CREATE EXTENSION IF NOT EXISTS age`) and the graph
+(`create_graph`) on first connect — no manual setup or init-SQL mount step is required.
+Connecting from Python needs the `[server]` extra for `psycopg[binary]`:
+`pip install novafabric[server]`.
+
+> **Note.** This is a genuinely separate Postgres instance from the MetadataStore's
+> `postgres` service (port 5432) — the AGE extension is not present in plain
+> `postgres:16-alpine`, and the lineage graph is a derived/rebuildable artifact that
+> deliberately does not share the metadata database. This docker-compose profile is
+> **experimental** and strictly opt-in — it is absent from both the default dev stack
+> and `prod`.
+
+`make age-down` deliberately does not pass `-v`, so the named `age-data` volume
+(`docker_age-data`, or `<project>_age-data` if you've overridden the compose project
+name) is preserved across restarts — the same convention as `dev-down`/`prod-down`
+preserving `pg-data`/`kuzu-data`. To discard the AGE data volume entirely (e.g. after
+experimenting with the backend), remove it explicitly and intentionally:
+`docker volume rm docker_age-data` (confirm the exact name first with
+`docker volume ls | grep age-data` — the prefix depends on your compose project name).
+
 ### NovaPySpool — Python cffi spool binding
 
 `NovaPySpool` (`src/novafabric/collector_cffi/spool.py`) provides a Python-native spool
@@ -1189,7 +1272,15 @@ spool.write(b'{"event":"capture","ts":1234567890}')
 segments = spool.drain()  # returns list[Path] of committed segment files
 ```
 
-Install with `pip install novafabric[collector-cffi]`.
+There is no `pip install`-able extra for this — `libnovaspool.so` is a Go shared
+library built out-of-band by a separate Go toolchain step (see
+`src/novafabric/collector_cffi/spool.py`'s module docstring for the `go build`
+invocation), not something `pyproject.toml` can express or produce. The `cffi`
+binding layer itself needs no extra either: it comes in transitively via the
+core `cryptography` dependency on CPython, so `NovaPySpool` is importable out
+of the box. When the `.so` isn't present (or fails to load) it automatically
+falls back to the pure-Python atomic-rename backend — no extra install step
+is required either way.
 
 ---
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/environment.schema.json",
-  "$comment": "schema_version 0.1.0; tracks design/spec/environment-lock-v0.md. Discriminates on mode: deterministic|best-effort.",
+  "$comment": "schema_version 0.1.0; tracks design/spec/environment-lock-v0.md. Discriminates on mode: deterministic|best-effort.  STATUS: IN FORCE. This is what an installed CLI validates against and what existing capsules were written against. The OAS v1.0 target lives at the sibling $id ending -v1.schema.json and is not yet in force. See ADR-0223.",
   "title": "EnvironmentLock",
   "description": "Content of env.lock inside a NovaFabric Run Capsule. Records every environmental dimension a replay needs to reconstruct the captured run.",
   "type": "object",
@@ -25,7 +25,10 @@
     },
     "mode": {
       "type": "string",
-      "enum": ["deterministic", "best-effort"],
+      "enum": [
+        "deterministic",
+        "best-effort"
+      ],
       "description": "Lock mode. 'deterministic' requires all pinned fields; required for exact replay."
     },
     "host": {
@@ -67,7 +70,9 @@
     },
     "best_effort_reasons": {
       "type": "array",
-      "items": {"$ref": "#/$defs/BestEffortReason"},
+      "items": {
+        "$ref": "#/$defs/BestEffortReason"
+      },
       "description": "Populated when mode is 'best-effort'. Explains which required-for-exact fields are missing."
     },
     "extensions": {
@@ -77,9 +82,13 @@
   },
   "if": {
     "properties": {
-      "mode": {"const": "best-effort"}
+      "mode": {
+        "const": "best-effort"
+      }
     },
-    "required": ["mode"]
+    "required": [
+      "mode"
+    ]
   },
   "then": {
     "properties": {
@@ -88,17 +97,28 @@
         "minItems": 1
       }
     },
-    "required": ["best_effort_reasons"]
+    "required": [
+      "best_effort_reasons"
+    ]
   },
   "$defs": {
     "HostSection": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["os", "arch", "cpu_count", "memory_bytes"],
+      "required": [
+        "os",
+        "arch",
+        "cpu_count",
+        "memory_bytes"
+      ],
       "properties": {
         "os": {
           "type": "string",
-          "enum": ["linux", "darwin", "windows"],
+          "enum": [
+            "linux",
+            "darwin",
+            "windows"
+          ],
           "description": "Operating system."
         },
         "os_release": {
@@ -111,7 +131,13 @@
         },
         "arch": {
           "type": "string",
-          "enum": ["x86_64", "arm64", "riscv64", "s390x", "ppc64le"],
+          "enum": [
+            "x86_64",
+            "arm64",
+            "riscv64",
+            "s390x",
+            "ppc64le"
+          ],
           "description": "CPU architecture."
         },
         "hostname": {
@@ -137,18 +163,32 @@
             {
               "type": "object",
               "additionalProperties": false,
-              "required": ["cluster", "partition", "job_id"],
+              "required": [
+                "cluster",
+                "partition",
+                "job_id"
+              ],
               "properties": {
-                "cluster": {"type": "string"},
-                "partition": {"type": "string"},
-                "job_id": {"type": "string"},
+                "cluster": {
+                  "type": "string"
+                },
+                "partition": {
+                  "type": "string"
+                },
+                "job_id": {
+                  "type": "string"
+                },
                 "node_list": {
                   "type": "array",
-                  "items": {"type": "string"}
+                  "items": {
+                    "type": "string"
+                  }
                 }
               }
             },
-            {"type": "null"}
+            {
+              "type": "null"
+            }
           ],
           "description": "SLURM context when running under a SLURM scheduler."
         },
@@ -157,15 +197,29 @@
             {
               "type": "object",
               "additionalProperties": false,
-              "required": ["namespace", "pod", "node"],
+              "required": [
+                "namespace",
+                "pod",
+                "node"
+              ],
               "properties": {
-                "namespace": {"type": "string"},
-                "pod": {"type": "string"},
-                "node": {"type": "string"},
-                "image_digest": {"type": "string"}
+                "namespace": {
+                  "type": "string"
+                },
+                "pod": {
+                  "type": "string"
+                },
+                "node": {
+                  "type": "string"
+                },
+                "image_digest": {
+                  "type": "string"
+                }
               }
             },
-            {"type": "null"}
+            {
+              "type": "null"
+            }
           ],
           "description": "Kubernetes context when running in a pod."
         }
@@ -174,7 +228,10 @@
     "RuntimeSection": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["timezone", "wallclock_at_start"],
+      "required": [
+        "timezone",
+        "wallclock_at_start"
+      ],
       "properties": {
         "timezone": {
           "type": "string",
@@ -194,21 +251,39 @@
     "Package": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "version", "source"],
+      "required": [
+        "name",
+        "version",
+        "source"
+      ],
       "properties": {
-        "name": {"type": "string"},
-        "version": {"type": "string"},
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
         "source": {
           "type": "string",
-          "enum": ["pypi", "git", "path", "url"],
+          "enum": [
+            "pypi",
+            "git",
+            "path",
+            "url"
+          ],
           "description": "Package source kind."
         },
-        "source_url": {"type": "string"},
+        "source_url": {
+          "type": "string"
+        },
         "hash": {
           "type": "string",
           "pattern": "^sha256:[0-9a-f]{64}$"
         },
-        "markers": {"type": "string", "description": "PEP 508 environment markers."}
+        "markers": {
+          "type": "string",
+          "description": "PEP 508 environment markers."
+        }
       }
     },
     "PythonSection": {
@@ -226,7 +301,10 @@
       "properties": {
         "interpreter": {
           "type": "string",
-          "enum": ["cpython", "pypy3"],
+          "enum": [
+            "cpython",
+            "pypy3"
+          ],
           "description": "Python interpreter implementation."
         },
         "version": {
@@ -240,31 +318,54 @@
         },
         "package_manager": {
           "type": "string",
-          "enum": ["uv", "poetry", "pdm", "pip", "none"],
+          "enum": [
+            "uv",
+            "poetry",
+            "pdm",
+            "pip",
+            "none"
+          ],
           "description": "Package manager used."
         },
         "lock_file_kind": {
           "type": "string",
-          "enum": ["uv.lock", "poetry.lock", "pdm.lock", "requirements.txt", "none"],
+          "enum": [
+            "uv.lock",
+            "poetry.lock",
+            "pdm.lock",
+            "requirements.txt",
+            "none"
+          ],
           "description": "Kind of lock file embedded in the capsule."
         },
         "lock_file_ref": {
           "oneOf": [
-            {"type": "string"},
-            {"type": "null"}
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ],
           "description": "Relative path under the capsule to the embedded lock file."
         },
         "lock_file_hash": {
           "oneOf": [
-            {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-            {"type": "null"}
+            {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
           ],
           "description": "SHA-256 hash of the lock file. Null when lock_file_kind is 'none'."
         },
         "installed_packages": {
           "type": "array",
-          "items": {"$ref": "#/$defs/Package"},
+          "items": {
+            "$ref": "#/$defs/Package"
+          },
           "description": "Snapshot from pip list. Used for fast equality checks; lock file is authoritative."
         },
         "editable_installs": {
@@ -272,10 +373,18 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["name", "path", "content_hash"],
+            "required": [
+              "name",
+              "path",
+              "content_hash"
+            ],
             "properties": {
-              "name": {"type": "string"},
-              "path": {"type": "string"},
+              "name": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
               "content_hash": {
                 "type": "string",
                 "pattern": "^sha256:[0-9a-f]{64}$"
@@ -286,14 +395,21 @@
         },
         "pyproject_hash": {
           "oneOf": [
-            {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-            {"type": "null"}
+            {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
           ],
           "description": "SHA-256 of pyproject.toml if present."
         },
         "python_path": {
           "type": "array",
-          "items": {"type": "string"},
+          "items": {
+            "type": "string"
+          },
           "description": "sys.path at capture, sanitized of home directories."
         }
       }
@@ -301,11 +417,20 @@
     "ContainerSection": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["runtime"],
+      "required": [
+        "runtime"
+      ],
       "properties": {
         "runtime": {
           "type": "string",
-          "enum": ["docker", "podman", "containerd", "singularity", "apptainer", "none"],
+          "enum": [
+            "docker",
+            "podman",
+            "containerd",
+            "singularity",
+            "apptainer",
+            "none"
+          ],
           "description": "Container runtime used."
         },
         "image_reference": {
@@ -314,15 +439,24 @@
         },
         "image_digest": {
           "oneOf": [
-            {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-            {"type": "null"}
+            {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
           ],
           "description": "Authoritative OCI image manifest digest. Required for exact replay."
         },
         "registry": {
           "oneOf": [
-            {"type": "string"},
-            {"type": "null"}
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ],
           "description": "Container registry, e.g. 'ghcr.io', 'docker.io'."
         },
@@ -333,12 +467,16 @@
         },
         "entrypoint": {
           "type": "array",
-          "items": {"type": "string"},
+          "items": {
+            "type": "string"
+          },
           "description": "Resolved container entrypoint."
         },
         "cmd": {
           "type": "array",
-          "items": {"type": "string"},
+          "items": {
+            "type": "string"
+          },
           "description": "Resolved cmd, sanitized of secrets."
         },
         "mount_summary": {
@@ -346,11 +484,21 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["host_path", "container_path", "read_only"],
+            "required": [
+              "host_path",
+              "container_path",
+              "read_only"
+            ],
             "properties": {
-              "host_path": {"type": "string"},
-              "container_path": {"type": "string"},
-              "read_only": {"type": "boolean"}
+              "host_path": {
+                "type": "string"
+              },
+              "container_path": {
+                "type": "string"
+              },
+              "read_only": {
+                "type": "boolean"
+              }
             }
           },
           "description": "High-level mount information, host paths normalized."
@@ -360,49 +508,87 @@
     "GpuInfo": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["model", "vendor", "count"],
+      "required": [
+        "model",
+        "vendor",
+        "count"
+      ],
       "properties": {
-        "model": {"type": "string"},
-        "vendor": {"type": "string"},
-        "driver_version": {"type": "string"},
-        "vbios": {"type": "string"},
-        "vram_bytes": {"type": "integer", "minimum": 0},
-        "count": {"type": "integer", "minimum": 1}
+        "model": {
+          "type": "string"
+        },
+        "vendor": {
+          "type": "string"
+        },
+        "driver_version": {
+          "type": "string"
+        },
+        "vbios": {
+          "type": "string"
+        },
+        "vram_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "HardwareSection": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["gpus"],
+      "required": [
+        "gpus"
+      ],
       "properties": {
         "gpus": {
           "type": "array",
-          "items": {"$ref": "#/$defs/GpuInfo"},
+          "items": {
+            "$ref": "#/$defs/GpuInfo"
+          },
           "description": "GPU inventory. Empty array if no GPU."
         },
         "cuda_version": {
           "oneOf": [
-            {"type": "string"},
-            {"type": "null"}
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ],
           "description": "CUDA version from nvcc --version, or null."
         },
         "cudnn_version": {
           "oneOf": [
-            {"type": "string"},
-            {"type": "null"}
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "nccl_version": {
           "oneOf": [
-            {"type": "string"},
-            {"type": "null"}
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "rocm_version": {
           "oneOf": [
-            {"type": "string"},
-            {"type": "null"}
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ],
           "description": "ROCm version for AMD GPUs."
         },
@@ -411,13 +597,21 @@
             {
               "type": "object",
               "additionalProperties": false,
-              "required": ["enabled"],
+              "required": [
+                "enabled"
+              ],
               "properties": {
-                "enabled": {"type": "boolean"},
-                "framework_version": {"type": "string"}
+                "enabled": {
+                  "type": "boolean"
+                },
+                "framework_version": {
+                  "type": "string"
+                }
               }
             },
-            {"type": "null"}
+            {
+              "type": "null"
+            }
           ],
           "description": "Apple Silicon MPS context."
         },
@@ -440,9 +634,17 @@
           "type": "string",
           "description": "Serving engine, e.g. vllm, tgi, sglang, llama.cpp, transformers."
         },
-        "engine_version": {"type": "string"},
-        "tensor_parallel_size": {"type": "integer", "minimum": 1},
-        "pipeline_parallel_size": {"type": "integer", "minimum": 1},
+        "engine_version": {
+          "type": "string"
+        },
+        "tensor_parallel_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pipeline_parallel_size": {
+          "type": "integer",
+          "minimum": 1
+        },
         "dtype": {
           "type": "string",
           "description": "Compute/storage dtype, e.g. bfloat16, float16, float32, fp8."
@@ -452,8 +654,12 @@
           "minimum": 1,
           "description": "Max/observed batch size; batch invariance affects determinism (src-403)."
         },
-        "attention_backend": {"type": "string"},
-        "seed": {"type": "integer"},
+        "attention_backend": {
+          "type": "string"
+        },
+        "seed": {
+          "type": "integer"
+        },
         "deterministic": {
           "type": "boolean",
           "description": "Whether the engine ran in a documented deterministic mode."
@@ -463,7 +669,13 @@
     "RuntimeEnvSection": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["policy", "allow_list", "deny_list", "recorded", "dropped_count"],
+      "required": [
+        "policy",
+        "allow_list",
+        "deny_list",
+        "recorded",
+        "dropped_count"
+      ],
       "properties": {
         "policy": {
           "type": "string",
@@ -471,17 +683,23 @@
         },
         "allow_list": {
           "type": "array",
-          "items": {"type": "string"},
+          "items": {
+            "type": "string"
+          },
           "description": "Environment variable names allowed to be recorded."
         },
         "deny_list": {
           "type": "array",
-          "items": {"type": "string"},
+          "items": {
+            "type": "string"
+          },
           "description": "Regex patterns for variable names to exclude from the capsule."
         },
         "recorded": {
           "type": "object",
-          "additionalProperties": {"type": "string"},
+          "additionalProperties": {
+            "type": "string"
+          },
           "description": "Allowed environment variables and their values at capture."
         },
         "dropped_count": {
@@ -502,29 +720,84 @@
     "LocaleSection": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["lang", "tz"],
+      "required": [
+        "lang",
+        "tz"
+      ],
       "properties": {
-        "lang": {"type": "string", "description": "LANG value, e.g. 'en_US.UTF-8'."},
+        "lang": {
+          "type": "string",
+          "description": "LANG value, e.g. 'en_US.UTF-8'."
+        },
         "lc_all": {
-          "oneOf": [{"type": "string"}, {"type": "null"}]
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "lc_collate": {
-          "oneOf": [{"type": "string"}, {"type": "null"}]
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "lc_ctype": {
-          "oneOf": [{"type": "string"}, {"type": "null"}]
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "lc_messages": {
-          "oneOf": [{"type": "string"}, {"type": "null"}]
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "lc_monetary": {
-          "oneOf": [{"type": "string"}, {"type": "null"}]
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "lc_numeric": {
-          "oneOf": [{"type": "string"}, {"type": "null"}]
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "lc_time": {
-          "oneOf": [{"type": "string"}, {"type": "null"}]
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "tz": {
           "type": "string",
@@ -535,7 +808,10 @@
     "BestEffortReason": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "detail"],
+      "required": [
+        "kind",
+        "detail"
+      ],
       "properties": {
         "kind": {
           "type": "string",

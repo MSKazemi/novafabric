@@ -926,7 +926,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
         visibleWhen: { field: 'target', value: 'kuzudb-vertical' } },
       { key: 'rf', label: '--rf', type: 'number', defaultValue: '3', hint: 'Cassandra replication factor for janusgraph-minimal. Use 1 for dev.',
         visibleWhen: { field: 'target', value: 'janusgraph-minimal' } },
-      { key: 'image-tag', label: '--image-tag', type: 'text', defaultValue: 'latest', hint: 'Docker image tag.' },
+      { key: 'image-tag', label: '--image-tag', type: 'text', defaultValue: '', hint: 'Deprecated: overrides all janusgraph-minimal images (janusgraph/cassandra/novafabric) to one tag. Leave blank to use each image\'s own pinned default.' },
     ],
     docsPath: '/spec#lineage-store-profile',
     nativeTabNote: 'Deployment profiles are also available from the Infra tab → "Lineage Store Deployment Profile" panel.',

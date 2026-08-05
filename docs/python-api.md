@@ -43,7 +43,7 @@ equivalent exists it is noted so you can cross-check behaviour with
 | [Diff](#diff) | `novafabric.diff` | `nova diff` |
 | [Lineage](#lineage) | `novafabric.lineage` | `nova lineage` |
 | [Asset Registry](#asset-registry) | `novafabric.registry.service` | `nova register` / `nova list` / `nova promote` |
-| [Spec validation](#spec-validation) | `novafabric.spec` | `nova validate-spec` |
+| [Spec validation](#spec-validation) | `novafabric.spec` | `nova validate` |
 | [Report generation](#report-generation) | `novafabric.report.generator` | `nova report` |
 | [NovaSeal signing](#novaseal-signing) | `novafabric.trust.novaseal` | `nova seal` / `nova verify` |
 | [Score submission](#score-submission) | `novafabric.scores` | `nova score submit` |
@@ -218,7 +218,7 @@ record.vector_retrieval(vector_store, *, phase="completed", operation="query",
 ```
 
 `network_event` and `human_approval` are deliberately **not** exposed: the
-wire-level hooks and `nova seal-propose` own those streams, and a second
+wire-level hooks and `nova seal propose` own those streams, and a second
 producer would invite double-recording.
 
 ### `record.wrap_retriever(fn, *, vector_store, collection=None, operation="query")`
@@ -980,7 +980,7 @@ span_id = new_span_id()  # str — 16-char hex
 | Compare two runs / gate CI | `DiffEngine.compare` | `nova diff --assert-no-regressions` |
 | Trace provenance / blast radius | `LineageStore` | `nova lineage` |
 | Register / promote assets | `registry.service` | `nova register` / `nova promote` |
-| Validate a spec | `validate_spec` | `nova validate-spec` |
+| Validate a spec | `validate_spec` | `nova validate` |
 | Sign / verify a capsule | `NovaSeal` | `nova seal` / `nova verify` |
 | Talk to a NovaFabric server from Python | `NovaFabricClient` (experimental) | — |
 

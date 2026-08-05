@@ -283,8 +283,8 @@ def mcp_conformance(
 
     \b
     Examples:
-      nova mcp conformance tests/mcp/vectors/
-      nova mcp conformance tests/mcp/vectors/ --json
+      nova mcp conformance tests/mcp_conformance/vectors/
+      nova mcp conformance tests/mcp_conformance/vectors/ --json
     """
     import json as _json
 

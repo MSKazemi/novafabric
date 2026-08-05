@@ -142,6 +142,47 @@ class TestJanusGraphMinimalProfile:
         profile = generate_janusgraph_minimal_profile(image_tag="1.0.0")
         assert "1.0.0" in profile
 
+    def test_default_tags_are_independent_per_image(self) -> None:
+        """Bug fix: janusgraph/cassandra/novafabric each get their own default
+        tag — no single value is silently applied to all three unrelated images.
+        """
+        profile = generate_janusgraph_minimal_profile()
+        data = yaml.safe_load(profile)
+        assert data["services"]["janusgraph"]["image"] == "janusgraph/janusgraph:1.1.0"
+        assert data["services"]["cassandra"]["image"] == "cassandra:latest"
+        assert data["services"]["nova-lineage"]["image"] == "novafabric/novafabric:latest"
+
+    def test_independent_tag_params_do_not_cross_contaminate(self) -> None:
+        profile = generate_janusgraph_minimal_profile(
+            janusgraph_tag="9.9.9",
+            cassandra_tag="4.1.11",
+            novafabric_tag="0.93.0",
+        )
+        data = yaml.safe_load(profile)
+        assert data["services"]["janusgraph"]["image"] == "janusgraph/janusgraph:9.9.9"
+        assert data["services"]["cassandra"]["image"] == "cassandra:4.1.11"
+        assert data["services"]["nova-lineage"]["image"] == "novafabric/novafabric:0.93.0"
+
+    def test_image_tag_alias_overrides_all_three_images(self) -> None:
+        """Deprecated backward-compat alias: passing image_tag still forces
+        all three images to the same tag (the legacy, buggy-but-documented
+        behavior existing callers of --image-tag depend on).
+        """
+        profile = generate_janusgraph_minimal_profile(image_tag="7.7.7")
+        data = yaml.safe_load(profile)
+        assert data["services"]["janusgraph"]["image"] == "janusgraph/janusgraph:7.7.7"
+        assert data["services"]["cassandra"]["image"] == "cassandra:7.7.7"
+        assert data["services"]["nova-lineage"]["image"] == "novafabric/novafabric:7.7.7"
+
+    def test_image_tag_alias_none_by_default(self) -> None:
+        """The alias parameter itself defaults to None (no override) — only
+        explicit callers opt into the legacy all-three-same-tag behavior.
+        """
+        import inspect
+
+        sig = inspect.signature(generate_janusgraph_minimal_profile)
+        assert sig.parameters["image_tag"].default is None
+
     def test_cassandra_volume_defined(self) -> None:
         profile = generate_janusgraph_minimal_profile()
         data = yaml.safe_load(profile)

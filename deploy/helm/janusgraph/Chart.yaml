@@ -3,7 +3,7 @@ name: janusgraph
 description: JanusGraph distributed graph database for NovaFabric lineage (v3 tier)
 type: application
 version: 0.1.0
-appVersion: "1.0.0"
+appVersion: "1.1.0"
 keywords:
   - janusgraph
   - graph

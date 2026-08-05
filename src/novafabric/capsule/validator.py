@@ -39,9 +39,26 @@ logger = logging.getLogger(__name__)
 
 # ── Schema loading ────────────────────────────────────────────────────────
 
-_SCHEMA_PATH = (
-    Path(__file__).parents[3] / "schemas" / "parent_child_capsule_v1.schema.json"
-)
+
+def _locate_schema() -> Path:
+    """Find parent_child_capsule_v1.schema.json, preferring the packaged copy.
+
+    Nothing under the repo-root `schemas/` ships in the wheel, so the fallback
+    below resolves outside site-packages on a plain `pip install novafabric`
+    and `validate_capsule_json` raised FileNotFoundError — parent/child capsule
+    validation was unavailable. `pyproject.toml`'s force-include maps the
+    canonical file into the package; the repo-root path stays for source
+    checkouts.
+    """
+    packaged = (
+        Path(__file__).resolve().parents[1] / "schemas" / "parent_child_capsule_v1.schema.json"
+    )
+    if packaged.exists():
+        return packaged
+    return Path(__file__).parents[3] / "schemas" / "parent_child_capsule_v1.schema.json"
+
+
+_SCHEMA_PATH = _locate_schema()
 
 
 def _load_schema() -> dict[str, Any]:
@@ -127,9 +144,7 @@ class DistributedCapsuleValidator:
             message = f"COMPLETE: {children_arrived}/{children_expected} children arrived"
         elif status == ParentStatus.PARTIALLY_COMPLETE.value:
             exit_code = 2
-            message = (
-                f"PARTIALLY_COMPLETE: {children_arrived}/{children_expected} children arrived"
-            )
+            message = f"PARTIALLY_COMPLETE: {children_arrived}/{children_expected} children arrived"
         else:
             exit_code = 1
             message = f"FAILED: {children_arrived}/{children_expected} children arrived"
@@ -165,6 +180,7 @@ class DistributedCapsuleValidator:
 
         # Timeout elapsed — transition
         from novafabric.capsule.writer import ParentCapsuleTracker
+
         tracker = ParentCapsuleTracker(self._dir)
         new_status, _ = tracker.finalize(fail_mode=fail_mode)
         return new_status

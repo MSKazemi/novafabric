@@ -10,9 +10,18 @@ The dashboard is an **opt-in local-only HTTP server** (`nova serve --experimenta
 
 ## Dashboard tabs (complete inventory)
 
-The dashboard ships **29 tabs** in **7 balanced workflow groups** (Overview, Runs & Debug, Govern & Promote, Provenance & Trust, Compliance, Platform, Reports & Export). Every tab has a stable two-key navigation shortcut — press `g` then the tab's key (shown on hover and in the `?` overlay). (Source of truth:
+The dashboard ships **29 tabs** in **7 balanced workflow groups** (Overview, Runs & Debug, Govern & Promote, Provenance & Trust, Compliance, Platform, Reports & Export). Every tab has a stable two-key navigation shortcut — press `g` then the tab's key (shown on hover and in the `?` overlay). **Since v0.98.3 the sidebar groups start collapsed** (each showing its tab count); the group containing the active tab is always expanded, and manual expand/collapse persists per browser in `novafabric.sidebar-groups`. Below **1024px** the sidebar auto-collapses to the icon rail (v0.97.0); expanding it explicitly wins for the rest of the session. (Source of truth:
 `web/src/components/dashboard/Sidebar.tsx`; verified by count against
 `NAV_GROUPS` in that file.)
+
+**Deep links.** Every tab is addressable as `?tab=<id>`, and the Compliance tab is a hub
+whose five panel groups are addressable as `?tab=compliance&sub=<group>`
+(`frameworks` · `audits` · `privacy` · `exports` · `assurance`, v0.97.0) — the same groups
+the ⌘K palette lists. **Since v0.98.2 all three navigation paths write the URL**: clicking a
+sidebar item, a `g`-key sequence, and the command palette all update `?tab=` (and clear a
+stale `?sub=` when you leave the hub), so any view you reach by keyboard is shareable and
+survives a reload. Tab ids have not changed since before the v0.97.0 regrouping, so existing
+links still resolve.
 
 | Tab | Group | Since | What it does |
 |---|---|---|---|
@@ -132,6 +141,13 @@ super-node rather than scattered as visual noise.
 
 The dashboard exposes the **majority** of the read-side and many of the write-side capabilities of the CLI, but a number of operations are intentionally CLI-only. Every dashboard action surfaces its equivalent `nova` command in the confirm dialog.
 
+> **Reading the "Runs tab → row *X* button" entries below.** Since **v0.98.2** the
+> per-row action buttons are **revealed, not always visible**: they render for the
+> **selected** row and on **hover or keyboard focus** of any row. (Ten always-visible
+> buttons per row wrapped onto four lines and left only three runs on screen.) The
+> actions are unchanged and never more than one interaction away — click or tab to the
+> row, then click the action.
+
 ### Read operations (Layer A — fully covered)
 
 | Capability | CLI | Dashboard | Notes |
@@ -173,7 +189,7 @@ The dashboard exposes the **majority** of the read-side and many of the write-si
 | Export signed evidence | `nova export-evidence <capsule> --output <zip> --key <pem>` | ✅ Runs tab → row "EXPORT ↗" button | Signing key auto-generated at `~/.novafabric/keys/local-key.pem` if missing (audit-logged). Output defaults to `~/.novafabric/evidence/<run_id>.zip`. **Limitation:** custom output paths and `--allow-unsafe-skips` are wired in the API but not surfaced as form controls in the UI yet. |
 | Place / release a legal hold | `nova hold create <registry> --reason … [--duration-days N]` / `nova hold release <hold-id>` | ✅ Holds tab (v0.11) | `POST /api/holds` + `POST /api/holds/{id}/release`. Active holds grouped by registry; inline release button; place-hold form with optional duration. **v0.12.7:** registry name input autocompletes from the list of registries shown on-screen. |
 | List active legal holds | `nova hold list <registry>` | ✅ Holds tab (v0.11) | `GET /api/holds` — discovers all registries under `.novafabric/registries/`; sidebar badge shows active count. |
-| Interactive policy check | `nova policy check` | ✅ Policy tab (v0.11) | `POST /api/policy/check` — evaluates a `PolicyInput` (action, subject, resource) via the OPA engine and returns a `PolicyDecision`; large ALLOW/DENY badge + reason + metadata; yellow warning when OPA is not installed. **v0.12.7:** resource ref autocompletes `name@version` when kind = asset, or `run_id` when kind = capsule/replay; loads at mount from `GET /api/assets` and `GET /api/runs`. **v0.12.9 (DU-9):** Rego source textarea with 300 ms debounced client-side syntax check (missing `package`, unbalanced braces); advisory warning banner, does not block submission. **v0.13.2 (DC-5 Explain):** "explain" checkbox triggers `POST /api/policy/check` with `explain: true`; backend runs a second OPA subprocess with `--explain full --format pretty`; `trace_text` returned in `PolicyDecision`; decision result shows "show trace ↓" toggle that reveals a `max-h-64` scrollable monospace trace panel. |
+| Interactive policy check | *(no direct CLI equivalent — there is no `nova policy check`; the CLI surface is `nova policy test` for the Rego suite and `nova policy explain <decision-id>` for a past decision. Corrected 2026-08-01.)* | ✅ Policy tab (v0.11) | `POST /api/policy/check` — evaluates a `PolicyInput` (action, subject, resource) via the OPA engine and returns a `PolicyDecision`; large ALLOW/DENY badge + reason + metadata; yellow warning when OPA is not installed. **v0.12.7:** resource ref autocompletes `name@version` when kind = asset, or `run_id` when kind = capsule/replay; loads at mount from `GET /api/assets` and `GET /api/runs`. **v0.12.9 (DU-9):** Rego source textarea with 300 ms debounced client-side syntax check (missing `package`, unbalanced braces); advisory warning banner, does not block submission. **v0.13.2 (DC-5 Explain):** "explain" checkbox triggers `POST /api/policy/check` with `explain: true`; backend runs a second OPA subprocess with `--explain full --format pretty`; `trace_text` returned in `PolicyDecision`; decision result shows "show trace ↓" toggle that reveals a `max-h-64` scrollable monospace trace panel. |
 | Export GDPR Art.30 RoPA entry | `nova export-ropa <capsule> --output ropa.json` | ✅ Compliance tab → **GDPR Art.30 RoPA Export** (v0.37.0) | `POST /api/compliance/export/ropa` — optional `controller_name` / `controller_contact`; completeness badge + missing-fields list + JSON document display. |
 | Export AI-SBOM (CycloneDX 1.7) | `nova export-aibom <capsule> [--output aibom.json]` | ✅ Compliance tab → **AI-SBOM Export** (v0.37.0) | `POST /api/compliance/export/aibom` — component list (type/name/version/description), `serial_number`, `bom_format`. CycloneDX ML-BOM 1.7 (ECMA-424 2nd Edition) since v0.39.0. |
 | Export NIST AI RMF report | `nova export-nist-rmf <capsule> --output report.json` | ✅ Compliance tab → **NIST AI RMF Report** (v0.37.0) | `POST /api/compliance/export/nist-rmf` — GOVERN/MAP/MEASURE/MANAGE score bars, risk-level badge, missing-evidence list. |
@@ -371,15 +387,26 @@ The **Infra** sidebar entry (under the Infrastructure group) shows the operation
 | Run Capsule (Phase 0 / v0.1) | `shipped` | `nova inspect <run-id>` |
 | NovaSeal v0.1 (Phase 0) | `shipped` | `nova verify <capsule>` |
 | Event Envelope v1 (Phase 1) | `shipped` | `nova validate <capsule>` |
-| Collector tier (Phase 2) | `shipped` | `novafabric-collector --help` |
+| Collector tier (Phase 2) | `shipped` | `nova collector rebuild` (Python side) · `novafabric-collector --config <yaml>` (Go gateway, after `go build`) |
 | Parent/Child Capsule (Phase 3) | `shipped` | `nova run show <id> --with-children` |
-| Object Capsule Store (Phase 4) | `shipped` | `nova store status` |
-| Metadata DB (Phase 5) | `shipped` | `nova db status` |
+| Object Capsule Store (Phase 4) | `shipped` | `nova storage validate` / `nova storage inspect` |
+| Metadata DB (Phase 5) | `shipped` | `nova db upgrade` |
 | Lineage at Scale (Phase 6) | `shipped` | `nova lineage provenance <ref>` |
 | Server Mode (v0.7) | `shipped` | `nova server start` |
-| Eval Suites (v0.9) | `shipped` | `nova eval <name@version>` |
+| Eval Suites (v0.9) | `shipped` | `nova eval run <capsule>` |
 
 Badge colours: **shipped** (green), **partial** (accent), **placeholder** (amber), **planned** (muted). Each card shows the CLI command(s) for that component so operators can investigate from the terminal without navigating away.
+
+> **Corrected 2026-08-01.** This table previously named three commands that do not
+> exist: `nova store status` (the group is `nova storage`, exposing `validate` and
+> `inspect`), `nova db status` (`nova db` exposes `upgrade` and `migrate-to-postgres`
+> only), and `nova eval <name@version>` (`nova eval` is a command group; the runner is
+> `nova eval run`). The Collector row was also ambiguous: `novafabric-collector` is the
+> **Go** gateway binary (source at `collector/cmd/novafabric-collector`, needs
+> `go build` first — it is not a Python console script and is not on `PATH` after a
+> `pip`/`uv` install); the Python-side surface is `nova collector rebuild`. All ten
+> component statuses themselves are unchanged and correct — only the verification
+> commands were wrong.
 
 ---
 
@@ -514,6 +541,7 @@ setup. The limits are documented here so they are visible before they bite.
 | Bounded admin listings (ADR-0199, B2) | `/api/admin/tokens`, `/api/admin/api-keys` | Tokens are read newest-first from `tokens.jsonl` via the reverse tail scan with a byte-offset `cursor` (`limit` default 200, max 2000; a revoke rewrites the file and invalidates outstanding cursors). API keys push `limit` (default 500, max 2000) into SQL; `total` is now a true `COUNT(*)` and `truncated` is additive. |
 | Bounded asset eval history (ADR-0199, B2) | `/api/assets/{asset_id}` | `eval_limit` (default 50, max 500) bounds `eval_results`; additive `eval_results_total` + `eval_results_truncated` — no silent truncation. |
 | Watermark cache on `/api/analytics/summary` (ADR-0199 rule 3) | `serve/routers/analytics.py` | A cheap indexed `(COUNT(*), MAX(created_at))` watermark per window skips the O(rows) duration-percentile pass when nothing changed — the 30 s polling loop recomputes only when new runs actually landed (bounded 32-window cache). |
+| Shared truncation affordance in the UI (ADR-0199, shipped v0.97.0) | `web/src/components/ui/TruncationNotice.tsx` + `lib/{useQuery,usePaginatedQuery}.ts` | The client-side half of "no silent truncation": every bounded list renders a footer reading **`Showing N of M — K more`** with a **Load more** button, and a `~` prefix plus an *approximate* badge whenever the server reported an estimated total (`total_approx`) rather than an exact `COUNT(*)`. `usePaginatedQuery` speaks **both** server models — keyset cursor and `limit`/`offset` — so a list never has to choose between honesty and paging; DataTable additionally loads the next page on scroll. If a list can show you less than exists, it says so. |
 | Conditional GET on all hot polled reads (ADR-0199 S6, B3) | `serve/http_cache.py::conditional_json` on `/api/stats`, `/api/runs`, `/api/alerts/recent`, `/api/incidents`, `/api/evidence`, `/api/kg/topology`, `/api/reports/catalog` (plus the original `/api/analytics/summary`) | Content-addressed strong ETags + `Cache-Control: private, max-age` — the dashboard's 30 s polling loop gets `304 Not Modified` (empty body) whenever the underlying data hasn't changed, cutting transfer and client re-render on every idle poll. |
 
 ### Known hard limits (action items for future versions)

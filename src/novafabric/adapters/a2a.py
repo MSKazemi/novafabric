@@ -14,6 +14,7 @@ against A2A SDK 1.0.x.
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import platform
 import time
@@ -28,6 +29,26 @@ from novafabric.capture.env import capture_environment
 from novafabric.capture.secrets import SecretScannerV0
 
 _CAPTURE_METHODS = frozenset({"send_message", "send_message_streaming"})
+
+#: Correlates :meth:`NovaA2AInterceptor.before` with its matching ``after``.
+#:
+#: The SDK does *not* hand the same object to both hooks: ``BaseClient.
+#: _execute_with_interceptors`` builds a ``BeforeArgs``, and then builds a
+#: **separate** ``AfterArgs`` from the transport result. Anything stashed on
+#: the ``before`` args is therefore invisible to ``after``.
+#:
+#: A ContextVar is the correct carrier because both hooks are awaited inline
+#: within the *same* asyncio task, while two concurrent calls run in two tasks
+#: with independent contexts — so the pairing survives interleaving, which a
+#: single module-level slot would not.
+_CALL_KEY: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "novafabric_a2a_call_key", default=None
+)
+
+#: Hook ownership now lives in `capture.hooks` itself (ADR-0224): install_all()
+#: returns a token, and uninstall_all(token) only tears down for the owner. This
+#: adapter used to carry its own copy of that guard; keeping a second, parallel
+#: ownership lock would mean two answers to one question.
 
 
 def _now() -> str:
@@ -49,8 +70,11 @@ class NovaA2AInterceptor:
 
     def __init__(self, data_dir: Path) -> None:
         self._data_dir = data_dir
-        # method_key -> (writer, run_id, span_id, created_at, t0, agent_name)
-        self._pending: dict[str, tuple[Any, str, str, str, float, str]] = {}
+        # method_key -> (writer, run_id, span_id, created_at, t0, agent_name,
+        #                hook_token)
+        self._pending: dict[
+            str, tuple[Any, str, str, str, float, str, str]
+        ] = {}
 
     async def before(self, args: Any) -> None:
         if args.method not in _CAPTURE_METHODS:
@@ -69,7 +93,11 @@ class NovaA2AInterceptor:
         created_at = _now()
         t0 = time.monotonic()
         agent_name = getattr(args.agent_card, "name", "unknown-agent")
-        install_all(writer=writer, parent_span_id=span_id)
+        # Ownership now lives in capture.hooks itself (ADR-0224), so every
+        # in-process caller gets the same guarantee rather than each adapter
+        # reimplementing it. An empty token means another capture owns the
+        # hooks; it is safe to hand straight back to uninstall_all().
+        hook_token = install_all(writer=writer, parent_span_id=span_id)
 
         # Write A2A task input
         task_log = writer.capsule_dir / "a2a-tasks.jsonl"
@@ -77,31 +105,44 @@ class NovaA2AInterceptor:
             f.write(json.dumps({"direction": "request", "method": args.method,
                                  "agent": agent_name, "input": args.input}) + "\n")
 
-        # Store key on args so after() can match
+        self._pending[key] = (
+            writer, run_id, span_id, created_at, t0, agent_name, hook_token,
+        )
+        # after() receives a *different* args object, so the key travels in the
+        # task-local ContextVar, not on args. Also stamped on args for the
+        # benefit of callers that do reuse one object across both hooks.
+        _CALL_KEY.set(key)
         args._nova_key = key
-        self._pending[key] = (writer, run_id, span_id, created_at, t0, agent_name)
 
     async def after(self, args: Any) -> None:
         if args.method not in _CAPTURE_METHODS:
             return
-        key = getattr(args, "_nova_key", None)
-        # Fallback: find by method (last pending for this method)
+        key = getattr(args, "_nova_key", None) or _CALL_KEY.get()
+        # Last resort: an interceptor invoked without a matching before() in
+        # this task. Pairing is then a guess, so only take it when exactly one
+        # capture for this method is outstanding — guessing between several
+        # would silently attach a response to the wrong capsule.
         if key is None:
-            for k in list(self._pending):
-                if k.startswith(f"{args.method}:"):
-                    key = k
-                    break
-        if key is None:
-            return
+            outstanding = [k for k in self._pending if k.startswith(f"{args.method}:")]
+            if len(outstanding) != 1:
+                return
+            key = outstanding[0]
 
         entry = self._pending.pop(key, None)
         if entry is None:
             return
-        writer, run_id, span_id, created_at, t0, agent_name = entry
+        _CALL_KEY.set(None)
+        writer, run_id, span_id, created_at, t0, agent_name, hook_token = entry
 
-        from novafabric.capture.hooks import uninstall_all
+        # Only the capture that installed the global hooks may remove them;
+        # otherwise the first call to finish would end wire capture for every
+        # other call still in flight. uninstall_all() enforces that from the
+        # token, so this is safe even for the call that lost the race.
+        from novafabric.capture.hooks import uninstall_all, wire_capture_state
         from novafabric.capture.replay import minimal_replay_policy
-        uninstall_all()
+        # Read before teardown: uninstall_all forgets the contention record.
+        _wire_state = wire_capture_state(hook_token)
+        uninstall_all(hook_token)
 
         # Write A2A task output
         task_log = writer.capsule_dir / "a2a-tasks.jsonl"
@@ -139,7 +180,7 @@ class NovaA2AInterceptor:
             "duration_ms": duration_ms,
             "status": "success",
             "command": [f"@a2a:{agent_name}"],
-            "capture_mode": "adapter-a2a",
+            "capture_mode": "sdk-decorator",
             "novafabric_version": _pkg_version("novafabric"),
             "working_directory": str(Path.cwd()).replace(str(Path.home()), "~"),
             "host": {
@@ -159,14 +200,26 @@ class NovaA2AInterceptor:
             "model_calls_ref": "model-calls.jsonl",
             "tool_calls_ref": "tool-calls.jsonl",
             "assets_ref": "assets.jsonl",
-            "a2a_tasks_ref": "a2a-tasks.jsonl",
+            # A bare `a2a_tasks_ref` is not a run-capsule property, and the
+            # schema is additionalProperties:false — it made every capsule this
+            # adapter wrote fail `nova validate`. The A2A task stream is
+            # third-party protocol data, so it belongs under `extensions`,
+            # keyed by reverse DNS.
+            "extensions": {"io.a2aproject": {"tasks_ref": "a2a-tasks.jsonl"}},
             "inputs": [],
             "outputs": [],
             "model_call_count": _count_jsonl(cap_dir / "model-calls.jsonl"),
             "tool_call_count": _count_jsonl(cap_dir / "tool-calls.jsonl"),
             "mutating_tool_count": 0,
             "exit_code": 0,
-            "tags": {"framework": "a2a", "agent": agent_name},
+            "metadata": {
+                "framework": "a2a",
+                "agent": agent_name,
+                # Say so in the capsule when wire-level hooks were not installed
+                # for this call, so a short model-calls/tool-calls stream reads
+                # as "not captured", never as "did not happen".
+                "wire_capture": _wire_state,
+            },
         }
         writer.write_text("capsule.yaml", yaml.dump(manifest, allow_unicode=True))
 
@@ -174,7 +227,8 @@ class NovaA2AInterceptor:
 def make_interceptor(data_dir: Path | None = None) -> NovaA2AInterceptor:
     """Create a NovaFabric interceptor for the A2A SDK client.
 
-    Pass the returned interceptor to ``A2AClient(interceptors=[interceptor])``.
+    Pass the returned interceptor to the ``interceptors=`` argument of
+    ``ClientFactory.create`` / ``create_from_url``.
 
     Args:
         data_dir: Base directory for capsules.
@@ -182,12 +236,16 @@ def make_interceptor(data_dir: Path | None = None) -> NovaA2AInterceptor:
     Raises:
         ImportError: If ``a2a-sdk`` is not installed.
 
-    Usage::
+    Usage (a2a-sdk 1.0.x)::
+
+        from a2a.client import ClientConfig, ClientFactory
 
         from novafabric.adapters.a2a import make_interceptor
-        from a2a.client import A2AClient
-        client = A2AClient(base_url="http://agent:8080",
-                           interceptors=[make_interceptor()])
+
+        factory = ClientFactory(ClientConfig(httpx_client=httpx_client))
+        client = await factory.create_from_url(
+            "http://agent:8080", interceptors=[make_interceptor()]
+        )
     """
     try:
         import a2a.client.interceptors  # noqa: F401

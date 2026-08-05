@@ -70,12 +70,32 @@ Tier-A/B licensing per ADR-0024):
 | Extra | Brings | Air-gap note |
 |---|---|---|
 | `server` | FastAPI, uvicorn, psycopg, alembic, PyJWT | Needed for `nova server`, offline tokens |
-| `serve` | FastAPI, uvicorn | Local dashboard |
+| `serve` | FastAPI, uvicorn, duckdb, pyarrow, python-louvain | Local dashboard (the topology extractor needs the last three) |
 | `worm-s3` / `worm-azure` / `worm-gcs` | boto3 / azure-storage-blob / google-cloud-storage | Only if you run that WORM backend; S3-compatible works against in-network endpoints (§5) |
 | `seal-aws` / `seal-azure` / `seal-gcp` | Cloud KMS SDKs | **Cloud KMS profiles need the cloud** — use the `local` seal profile offline |
 | `seal-postgres` | psycopg | Postgres Merkle log at >1M entries |
 | `sigstore` | sigstore | **Not usable air-gapped** (§5) — omit it |
-| `otlp`, `scale`, `spkg`, `lineage-kuzu`, … | see `pyproject.toml` | As needed |
+| `scale` | duckdb, pyarrow, clickhouse-connect, nats-py, fastavro, pyiceberg, blake3, boto3 | Evidence Fabric scale tier |
+| `query` | duckdb | Optional `nova query` accelerator; stdlib `sqlite3` fallback is always available |
+| `clickhouse` | clickhouse-connect | ClickHouse cost attribution |
+| `lineage-migration` | pyarrow | Lineage migration kit |
+| `all` | every non-cloud-vendor, non-agent-framework extra | Escape hatch that restores pre-v0.99.0 *importability* — but it is a **superset** of the old default (it also pulls `compliance`, `spkg`, `scale`, `sigstore`, `janusgraph`…), so it installs more, not less. **Includes `sigstore`, which is unusable air-gapped** — prefer naming the narrow extras you actually need |
+| `otlp`, `spkg`, `lineage-kuzu`, … | see `pyproject.toml` | As needed |
+
+> **Changed in v0.99.0 — re-check your wheelhouse.** `duckdb`, `pyarrow`,
+> `python-louvain` and `clickhouse-connect` (and, transitively, `numpy`) are no
+> longer part of the default install; they moved to the extras above (ADR-0222).
+> This makes an air-gapped mirror ~299 MB smaller — but if your existing
+> `pip download` line names no extras and your deployment imports any of them,
+> they will now be missing from the wheelhouse. Add the extra you need, or use
+> `pip download 'novafabric[all]' -d ./wheelhouse` to mirror the previous
+> surface. Core commands (`capture`, `validate`, `replay`, `diff`, `lineage`,
+> `insights`, `query`) need none of them.
+>
+> Note that `[all]` also pulls in `sigstore`, which the table above tells you to
+> omit from an air-gapped mirror (§5), and several other extras you may not
+> want. For an enclave, prefer downloading the narrow extras you actually use —
+> e.g. `pip download 'novafabric[server,serve,query]'` — over `[all]`.
 
 Container images and the Helm chart ship from GHCR
 (`ghcr.io/novafabric/novafabric`, `oci://ghcr.io/novafabric/charts/novafabric`

@@ -116,6 +116,56 @@ The optional `serve` extra adds the experimental local dashboard (see section 6)
 pip install "novafabric[serve]"
 ```
 
+A few other narrow extras exist for optional integrations: `clickhouse`
+(ClickHouse sink for cost attribution), `nats` (NATS JetStream lineage
+consumer), `avro` (Avro capsule-event serialization), `query` (DuckDB
+accelerator for `nova query`), and `energy-gpu` (NVML GPU energy readings).
+Install everything at once with `pip install
+"novafabric[all]"` — this excludes cloud-vendor extras (`worm-*`,
+`seal-aws`/`seal-azure`/`seal-gcp`) and agent-framework adapter extras, which
+you should install individually for the one vendor/framework you actually use.
+
+#### Changed in v0.99.0 — a leaner default install
+
+A plain `pip install novafabric` now pulls **113 MB / 42 packages** instead of
+412 MB / 50. Four dependencies moved out of the default install into the extras
+that actually import them (ADR-0222), because every one of their import sites
+was already behind an extra:
+
+| Moved out of core | Now comes from |
+|---|---|
+| `duckdb` | `scale`, `serve`, `query` |
+| `pyarrow` | `scale`, `serve`, `lineage-migration` |
+| `python-louvain` | `serve` |
+| `clickhouse-connect` | `scale`, `clickhouse` |
+
+`numpy` also disappears from a default install — it only ever arrived
+transitively via `python-louvain`.
+
+> **Migration.** If you relied on `duckdb`, `pyarrow`, `clickhouse_connect` or
+> `community` being importable after a plain `pip install novafabric`, use
+> `pip install 'novafabric[all]'` to restore the previous *importability*, or
+> install the narrower extra from the table above. Prefer the narrow extra:
+> `[all]` is a **superset** of the old default install, not an equivalent of it
+> — it also pulls `compliance`, `spkg`, `scale`, `sigstore`, `janusgraph` and
+> the rest, so it ends up considerably larger than the 412 MB you had before.
+> These were never part of NovaFabric's public API, but they did work before.
+
+No CLI flag, capsule schema, evidence-bundle format or REST endpoint changed,
+and `networkx` deliberately stays in core (the CLI imports it at start-up, and
+`nova insights` depends on it). Every default command behaves identically on a
+lean install. Where a moved dependency is still reachable, the behaviour is
+explicit rather than silent: `nova query` falls back to stdlib `sqlite3` with
+identical results and reports `index.engine: "sqlite"`; `nova backup` skips the
+derived DuckDB topology cache with a stated reason and still succeeds; `nova
+restore` fails loudly rather than reporting an unopened `.duckdb` store as
+verified; ClickHouse paths raise an `ImportError` naming
+`pip install novafabric[clickhouse]`.
+
+Container and server deployments are unaffected — `deploy/docker/Dockerfile`
+installs `[server,serve,clickhouse,lineage-kuzu,lineage-migration]`, which
+restores the full surface inside the image.
+
 ### What compute nodes need
 
 For any runner that executes on a remote node (SLURM, Kubernetes):

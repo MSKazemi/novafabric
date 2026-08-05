@@ -88,7 +88,7 @@ def _write_capsule(
         "duration_ms": duration_ms,
         "status": status,
         "command": [f"@crewai:{run_name}"],
-        "capture_mode": "adapter-crewai",
+        "capture_mode": "sdk-decorator",
         "novafabric_version": _pkg_version("novafabric"),
         "working_directory": str(Path.cwd()).replace(str(Path.home()), "~"),
         "host": {
@@ -114,7 +114,7 @@ def _write_capsule(
         "tool_call_count": tool_call_count,
         "mutating_tool_count": 0,
         "exit_code": exit_code,
-        "tags": tags,
+        "metadata": tags,
     }
     if error:
         manifest["error"] = error
@@ -172,7 +172,7 @@ def wrap_crew(
     def wrapped_kickoff(**kwargs: Any) -> Any:
         from novafabric.capture._ulid import new_span_id, new_ulid
         from novafabric.capture.capsule import CapsuleWriter
-        from novafabric.capture.hooks import install_all, uninstall_all
+        from novafabric.capture.hooks import install_all, uninstall_all, wire_capture_state
 
         run_id = new_ulid()
         root_span_id = new_span_id()
@@ -182,7 +182,7 @@ def wrap_crew(
         writer.open()
         cap_dir = writer.capsule_dir
 
-        install_all(writer=writer, parent_span_id=root_span_id)
+        _hook_token = install_all(writer=writer, parent_span_id=root_span_id)
         created_at = _now()
         t0 = time.monotonic()
         exit_code = 0
@@ -195,11 +195,12 @@ def wrap_crew(
             error = {"type": type(exc).__name__, "message": str(exc), "traceback_ref": None}
             raise
         finally:
-            uninstall_all()
+            _wire_state = wire_capture_state(_hook_token)
+            uninstall_all(_hook_token)
             _write_capsule(
                 run_name=resolved_name,
                 data_dir=resolved_data_dir,
-                tags=tags,
+                tags={**tags, "wire_capture": _wire_state},
                 error=error,
                 t0=t0,
                 created_at=created_at,

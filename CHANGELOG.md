@@ -9,6 +9,660 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+## [0.99.0] — 2026-08-05
+
+### Fixed (server — API keys whose id started with a hyphen were unmanageable)
+
+- **~1.5% of issued API keys could not be rotated or revoked from the CLI.**
+  `key_id` came from `secrets.token_urlsafe(6)`, whose alphabet includes `-`,
+  so 1 in 65 ids (1.54%, measured over 200,000 draws) began with a hyphen — and
+  every `nova server api-key` command takes the id as a *positional* argument,
+  so Click parsed it as an option and exited 2:
+
+      $ nova server api-key rotate -Jabc123
+      Error: No such option: -J
+
+  New ids are re-drawn until the first character is alphanumeric (entropy
+  ~47.95 bits, down from 48). Keys issued before this fix keep working: pass
+  the id after a trailing `--` separator, e.g.
+  `nova server api-key rotate --db-path k.db -- -Jabc123`.
+- This had been misdiagnosed for months as a flaky test. It surfaced only when
+  a random id happened to start with a hyphen, so it appeared rarely, never
+  reproduced on demand, and was twice attributed to unrelated causes (Rich
+  wrapping, then a watchdog thread leak). It is a product defect, not a test
+  defect, and is now pinned by `TestKeyIdIsCliSafe`.
+
+### Fixed (capture — concurrent in-process captures corrupted each other, ADR-0224)
+
+- **Two concurrent in-process captures filed one run's events into the other's
+  capsule.** `capture.hooks` keeps one module-level `_installed` list and one
+  `EventRecorder` singleton, and eight of the nine in-process call sites (the
+  SDK wrapper plus seven framework adapters) drove them unguarded. Reproduced,
+  three distinct failures: the second capture inherited the first's recorder so
+  its events were **mis-attributed**; the second stacked a full second patch
+  layer (6 hooks → 12) so events could be recorded twice; and whichever capture
+  finished first tore down *both*, leaving the other running with no hooks and
+  no recorder.
+- `install_all()` now returns an **owner token** and `uninstall_all(token)` only
+  tears down for the owner, with the guard inside `capture.hooks` rather than
+  copied into each adapter. The token for a capture that loses the race is `""`
+  and not `None`, because `uninstall_all(None)` is the legacy unconditional
+  teardown — so handing back whatever `install_all` returned is safe either way
+  by construction. `a2a.py`'s private ownership lock is removed in favour of the
+  shared one.
+- **Stated limitation, not a fixed problem:** concurrent captures still do not
+  get independent wire-level capture. The hooks are process-global patches
+  holding the owner's writer, so the non-owner's traffic is still recorded into
+  the owner's capsule. Full per-task isolation is ADR-0224 phase 2 — specified,
+  deliberately not built.
+- **Every adapter now records whether its wire stream is trustworthy.** All
+  eight stamp `metadata.wire_capture` from the new `hooks.wire_capture_state()`:
+  `installed` (owned the hooks, nothing overlapped), `installed-contended`
+  (owned them, but another capture overlapped — the stream may contain *its*
+  events), or `skipped-concurrent` (another capture owned them; no wire stream
+  here, though the adapter-level record is complete). "The stream is short" had
+  three different causes and a reader had to guess which — `not captured` and
+  `did not happen` looked identical. A guard fails if a ninth adapter installs
+  hooks without stamping the marker.
+- Guard: `tests/capture/test_hook_ownership.py`.
+
+### Fixed (schema identity — nine `$id` collisions, ADR-0223)
+
+- **Nine schema pairs declared the same `$id` while disagreeing about what they
+  accept.** The canonical `schemas/` tree (the OAS v1.0 *target*) and the
+  packaged `src/novafabric/schemas/` tree (what an installed CLI validates
+  against) shared one identity per schema. Measured on a real `nova capture`
+  output, the canonical Run Capsule schema **rejected the capsule** (`'0.1.0'
+  does not match '^1\.'`) while the packaged file with the same `$id` accepted
+  it. Under JSON Schema an `$id` is an identity, so anything caching or
+  `$ref`-resolving by `$id` got an arbitrary one of the two.
+- Canonical target schemas now carry a distinct `$id`
+  (`.../<name>-v1.schema.json`) and say in `$comment` that they are **not yet in
+  force**; the packaged ones keep the original `$id` and say they **are**.
+  Applied to `run-capsule`, `environment`, `evidence-bundle`, `lineage-edge`,
+  `model-call`, `replay-policy`, `secret-redaction`, `tool-call` and
+  `diff-report`. The 6 byte-identical pairs are left alone — one document
+  stored twice still identifies one thing.
+- **No producer or capsule changes.** ADR-0034 §1 freezes a spec only when all
+  four of its conditions hold; conditions 2 (spec doc `Adopted`) and 3 (≥3
+  design-partner sign-offs) are open, so the spec is in *pre-freeze draft*
+  status and `^1\.` is a target rather than an in-force contract. Producers
+  writing `0.1.0` were never wrong — the repo just never said so. Flipping
+  producers to `1.0.0` is gated on the freeze, and `nova migrate-capsule`
+  already implements that migration.
+- Guard: `tests/packaging_metadata/test_schema_ids_are_unique.py`.
+
+### Fixed (packaging — three schema validators were broken on every pip install)
+
+- **Event Envelope v1 validation, batch-import manifest validation, and
+  parent/child capsule validation all raised `FileNotFoundError` (or resolved a
+  path outside `site-packages`) in an installed wheel.** Each loaded its JSON
+  Schema from the repo-root `schemas/` directory, and nothing under `schemas/`
+  ships in the wheel — only `src/novafabric/**` plus explicit `force-include`
+  mappings. The whole test suite missed it because the suite runs from the
+  source tree, where the repo-root path resolves fine.
+- Fixed by mapping the three canonical schemas into the package at build time
+  via `force-include`, and making each loader prefer the packaged path. This is
+  deliberately **not** a copy under `src/`: the packaged-vs-canonical schema
+  split (BL-028) already cost a release, so there stays exactly one copy of
+  each file and the build maps it in.
+- Verified by building the wheel, installing it into a clean virtualenv, and
+  exercising all three code paths — before and after.
+- New guard `tests/packaging_metadata/test_runtime_schema_paths_are_packaged.py`
+  pins both halves of the contract (the loader prefers a packaged path; the
+  build actually ships something there) and **statically detects the class** —
+  any module resolving a `schemas/` path outside `src/novafabric` must be
+  justified in an allow-list. That class check is what found the third
+  instance; the first two were found by hand.
+
+### Fixed (performance — the `nova query` DuckDB index build)
+
+- **DuckDB's index build was ~880× slower than it needed to be.** It bound a
+  prepared `INSERT` row by row (~968 µs/row), which is DuckDB's slow path and
+  the reason the `[query]` extra measured ~20× *slower* than the stdlib SQLite
+  fallback it exists to accelerate. It now uses DuckDB's columnar path —
+  register an Arrow table, then `INSERT .. SELECT` — at **~1.1 µs/row**. The
+  index build at 5,000 capsules went **5.14 s → 0.0125 s (411×)**. An explicit
+  transaction was measured too and buys only 17%, which rules out commit
+  overhead and confirms the cost was per-row binding.
+- **The default engine is still SQLite**, now for a different reason. DuckDB
+  reaches parity (0.86× at 1,000 capsules, 1.00× at 20,000) but never
+  meaningfully wins, because the capsule directory scan is **86-89% of total
+  query time** and the index build is ~3%. Engine choice is now a rounding
+  error; the next real win is not re-scanning the directory on every query.
+- **`pyarrow` is deliberately not added to the `query` extra.** It is ~154 MB —
+  larger than the entire 113 MB default install ADR-0222 achieved — for a 0-3%
+  end-to-end change. The Arrow path is used when pyarrow is already present
+  (`scale` and `serve` both pull it in); otherwise the build falls back to the
+  row path and logs a **one-time** warning naming the fix, because silently
+  being 20× slower is the failure this work removes.
+- Row-for-row parity between the two engines is unchanged and still pinned, so
+  the engine remains a pure performance choice. Numbers, caveats and the
+  isolated build-vs-scan breakdown: `bench/query/MEASURED_CEILING.md`.
+
+### Added (supply chain — ADR-0024's CI enforcement gap, closed)
+
+- **Dependency licenses are now enforced in CI, not just documented.**
+  ADR-0024 has defined an A/B/C license policy since 2026-05 while admitting in
+  its own Consequences that *"the CI enforcement step is not yet implemented;
+  manual review is the gap."* Each dependency's tier reasoning lived only in
+  `pyproject.toml` comments that nothing read. New `scripts/license_gate.py`
+  resolves every installed distribution's license (PEP 639 `License-Expression`
+  → trove classifiers → `License` field → `License-File` text) and maps it to a
+  tier: **Tier A** (Apache-2.0/MIT/BSD/PostgreSQL/PSF/ISC/CC0/Unlicense) passes
+  silently, **Tier B** (LGPL dynamic-linking-only, MPL-2.0) and unresolvable
+  licenses pass only when declared in the new `.license-policy.toml` with a
+  justification, **Tier C** (GPL any linking, AGPL, SSPL, BSL, Elastic,
+  Commons Clause, source-available, proprietary) passes only when declared with
+  a justification *and* a migration path — ADR-0024 admits one only with "the
+  business justification and the migration path away from the dependency" —
+  and **Tier D** (field-of-use / "ethical source" terms) is forbidden outright
+  with no waiver path. Wired up as `.github/workflows/license-policy.yml` on push, PR, and
+  weekly — the weekly run is the point, since an upstream *relicense* changes
+  nothing in `uv.lock` but everything for this policy. Stdlib-only: a
+  supply-chain gate that grows the supply chain to do its job defeats itself.
+  Current tree: 243 distributions — 234 Tier A, 8 Tier B declared, 1
+  metadata-corrected, 0 unresolved. Guard:
+  `tests/packaging_metadata/test_license_policy.py` (45 tests).
+- **`0BSD`, `Zlib` and `CNRI-Python` recorded as Tier A** (ADR-0024 amendment).
+  All three are permissive, OSI-approved and non-copyleft — within the existing
+  Tier A definition; they were missing from the enumeration only because it
+  predates their arrival in the tree (via `chardet`, `numpy`, `regex`).
+
+### Fixed (correctness of the validator and of what adapters write)
+
+- **`nova validate` rejected every capsule written by any of the eight
+  framework adapters.** `langgraph`, `crewai`, `autogen`, `dspy`,
+  `openai_agents`, `google_adk`, `bedrock_agentcore` and `a2a` each wrote a
+  top-level `tags` key, and two of them also wrote a private `*_ref` key.
+  None of those names exists in `run-capsule.schema.json`, which is
+  `additionalProperties: false`, so the adapters' own output failed the
+  project's own validator:
+
+      ✗ capsule.yaml: Additional properties are not allowed
+        ('a2a_tasks_ref', 'tags' were unexpected)
+
+  The schema already had the right homes for both. String labels moved to
+  `metadata` (which is exactly "free-form user labels, values must be
+  strings"), and the two stream pointers moved under `extensions` with
+  reverse-DNS keys (`io.a2aproject.tasks_ref`,
+  `com.amazonaws.bedrock.traces_ref`). No information was dropped.
+
+  Fixing the keys exposed a second half to the same bug: all eight also wrote
+  `capture_mode: "adapter-<framework>"`, and the schema admits only
+  `cli-wrapper`/`sdk-decorator`/`otel-import`/`manual`. They are in-process SDK
+  instrumentation, so they now report the existing, honest `sdk-decorator` —
+  the framework identity they used to encode there is preserved (and still
+  test-pinned) in `metadata.framework`.
+
+  Guarded by `tests/adapters/test_adapter_manifests_match_the_schema.py`. The
+  check is static (AST over the manifest literal) on purpose: a dynamic test
+  would need each adapter's third-party SDK, so seven of eight would skip on
+  most machines — and skipping is how this survived. One dynamic case runs the
+  real validator over a real A2A capsule so the static approximation cannot
+  drift from what `nova validate` does.
+
+- **`nova validate` rejected any capsule using the ADR-0196 `facets`
+  container** — the project's own headline extension point, shipped in
+  v0.64.0. NovaFabric keeps two copies of its JSON Schemas: canonical
+  `schemas/`, and `src/novafabric/schemas/`, which is the only one an
+  *installed* CLI can see (`cli/validate.py` resolves `SCHEMA_DIR` from its own
+  `__file__`). The ADR-0196 commits only ever touched the canonical copy, so
+  the packaged schema never learned about `facets` and rejected it as an
+  unexpected property. `evidence-bundle` had drifted the same way, missing the
+  four RFC 3161 fields (`timestamp_status`, `timestamp_tsa_url`,
+  `timestamp_failure_reason`, `manifest_dsse_tsr_sha256`) that
+  `cli/export_evidence.py` actually writes. Both ported across.
+
+  Only the genuinely-omitted properties were ported, **not** the whole files.
+  The two trees also differ on `schema_version` (canonical pins the frozen v1.0
+  spec, `^1\.`, per ADR-0034 §1; the code writes `0.1.0`) and on the
+  `lineage-edge` `edge_type` vocabulary (canonical carries the ADR-0044 causal
+  vocabulary, the packaged copy the data-flow one `lineage/_writer.py` really
+  emits). Copying either across breaks validation for ordinary capsules —
+  measured, not assumed. `tests/packaging_metadata/test_packaged_schemas_match_canonical.py`
+  therefore asserts *no missing property* and records the deliberate
+  differences explicitly, rather than asserting a false equality.
+
+- **Concurrent A2A calls tore down each other's wire-level capture.**
+  `capture.hooks` keeps one module-level `_installed` list and one
+  `EventRecorder` singleton, and both interceptor hooks drove it
+  unconditionally: two concurrent `send_message` calls stacked two patch
+  layers, and whichever finished first ran `uninstall_all()` and removed
+  *both* — silently ending wire capture for the call still in flight. Hook
+  ownership is now claimed by exactly one capture and released only by that
+  same capture. A concurrent second call still gets its own capsule and its
+  complete A2A request/response record (those come from the interceptor args,
+  not the hooks), and says so: `metadata.wire_capture` is `installed` or
+  `skipped-concurrent`, so a short event stream can never be misread as "no
+  calls happened". Full per-task hook isolation would require the recorder
+  singleton to become task-scoped — a change to every hook's contract and to
+  the orchestrator that owns the recorder — and is left as an ADR-sized item.
+
+  The pre-existing interleaving test patched `install_all`/`uninstall_all` out,
+  which is precisely why it could not see this; the new test counts the real
+  calls.
+
+### Fixed (packaging — ADR-0222's two open questions, both now closed)
+
+- **Installing `novafabric[query]` made `nova query` ~20× *slower*** (ADR-0222
+  OQ-3). The ADR asked at what directory size the `[query]` extra starts paying
+  for itself and recorded the answer as unmeasured. Measuring it
+  (`bench/query/bench_engine_crossover.py`) showed the question's premise was
+  wrong — there is no crossover, because sqlite is not the slower path:
+
+  | capsules | sqlite | duckdb | speed-up |
+  |---:|---:|---:|---:|
+  | 10 | 0.0007 s | 0.0184 s | 0.04× |
+  | 1,000 | 0.0445 s | 1.0238 s | 0.04× |
+  | 20,000 | 0.9465 s | 20.8758 s | 0.05× |
+
+  The *flat* ratio is the informative part: a fixed start-up cost would
+  amortise and the curves would cross, so a constant ratio across three orders
+  of magnitude means a per-row cost in the index build — `executemany` over a
+  prepared `INSERT` is DuckDB's slow path, its bulk appender is the fast one.
+  Since `_detect_engine()` preferred DuckDB whenever it was importable, anyone
+  installing `[query]`, `[scale]` or `[all]` silently got the slow path with no
+  flag to escape it. The default is now sqlite regardless of what is installed;
+  DuckDB stays reachable via `NOVAFABRIC_QUERY_ENGINE=duckdb` or
+  `run_query(..., engine="duckdb")`. Rows are identical either way (that parity
+  is a standing, separately-pinned guarantee), so this is purely a performance
+  default. Full method, caveats and reproduction:
+  `bench/query/MEASURED_CEILING.md`. Porting the index build to DuckDB's
+  appender API — after which the default should be reconsidered — is filed as
+  its own item.
+
+- **`pyjwt` and `python-multipart` left the default install** (ADR-0222 OQ-2).
+  Both were pinned in core *and* in the `server` extra. `import jwt` appears
+  nowhere outside `src/novafabric/server/`, and `python-multipart` is FastAPI's
+  form-parsing runtime requirement that is never imported directly, so they are
+  declared once now, in `server`. `httpx` is genuinely core and keeps its single
+  core pin; the redundant re-declarations in the `server` and `federation`
+  extras were dropped. The rule, now enforced for every future extra rather than
+  for these three names: declare each dependency exactly once, in the lowest
+  tier that genuinely needs it — two pins drift, and the looser one wins
+  silently. `nova server issue-token` on a core-only install now fails with
+  `PyJWT is not installed — offline tokens require it. Install it with: pip
+  install 'novafabric[server]'` rather than a bare `No module named 'jwt'`.
+  Verified in a real lean venv, not inferred: `nova --help` and `nova --version`
+  work, and neither `jwt` nor `multipart` is loaded by importing the CLI.
+
+### Fixed (CI)
+
+- **The `unit` job installed no extras, so 61 tests failed instead of
+  skipping.** Measured against the job's own recipe in a clean venv:
+  `uv sync --frozen` yields **50 failures and 12 errors**, because the
+  extras-dependent suites import their optional dependency at module scope —
+  `alembic` and `uvicorn` (`server`), `nats-py` (`nats`), `a2a-sdk`, `mcp`.
+  This was invisible for eleven days: `tests/coverage/` shadowed the `coverage`
+  distribution, so the job went red at plugin load before reporting any test
+  result, and fixing that shadowing on 2026-07-31 would have exposed a still-red
+  job. The job now runs `uv sync --frozen --all-extras`, matching the invocation
+  CLAUDE.md and CONTRIBUTING.md already document as required.
+
+  Two supporting corrections. The job runs `-n auto --dist=loadgroup`, which
+  keeps the full-extras run at a measured **205 s** against a 15-minute timeout;
+  `loadgroup` is mandatory rather than a tuning knob, because
+  `tests/metadata_store/conftest.py` pins its testcontainers Postgres tier to a
+  single `xdist_group` that plain `--dist=load` scatters across workers (9
+  failures in an otherwise-green run). And the comment claiming the lean install
+  protected "the coverage denominator" was removed as simply wrong: `--cov=novafabric`
+  scopes coverage to the package, so third-party extras can never enter the
+  denominator — installing them only raises the numerator. Verified end state:
+  **11507 passed, 0 failed, coverage 92.75%**.
+  Pinned by `tests/packaging_metadata/test_ci_unit_job_install.py`.
+
+- **`tests/masking/test_pipeline.py` was a wall-clock flake that `-n auto` would
+  have made reachable in CI.** The masking pipeline enforces a 50 ms per-call
+  budget and fails closed on overrun. That is correct in production, but the
+  tests inherited the same 50 ms default, so on a saturated 24-worker run a
+  masker doing almost no work overran it and `assert errors == []` failed —
+  observed once during this change:
+  `masker 'acme-case-id' timeout on model-calls.jsonl#L1 call_id; field redacted (fail-closed)`.
+  The shared test helper now defaults to a generous budget. The one test that
+  *is* about the budget, `test_timeout_is_bounded_and_fails_closed`, passes
+  `timeout_ms=50` explicitly and is unaffected.
+
+### Security
+- **Dashboard endpoints that accept a caller-supplied filesystem path now refuse
+  system-critical directories** (enterprise-audit finding S2). The
+  evidence-export (`output_path`/`key_path`), promote-envelope
+  (`key_path`/`cert_path`/`db_path`), and capsule-migrate (`source`/`output`)
+  endpoints resolved a request-body path and read/wrote it unconfined; in
+  container/Helm dashboard mode the app binds `0.0.0.0` with token-only auth
+  (`nova serve --host 0.0.0.0 --insecure`), so that was arbitrary read/write as
+  the server user. A new `_confine_path` guard resolves the path (following `..`
+  and symlinks) and returns **403** if it lands under `/etc`, `/usr`, `/bin`,
+  `/sbin`, `/lib`, `/lib64`, `/boot`, `/sys`, `/proc`, `/dev`, or `/root`. It is
+  a denylist, not a sandbox — the endpoints are designed for caller-chosen paths
+  (home, project dirs, tmp, mounted volumes), which stay allowed — but the
+  highest-impact attack (clobbering binaries/config for RCE or persistence) is
+  blocked. Opt out with `NOVAFABRIC_SERVE_ALLOW_ANY_PATH=1` (discouraged).
+
+### Fixed
+- **`tests/a2a/` and `tests/mcp/` were shadowing the installed `a2a-sdk` and
+  `mcp` distributions, so two production adapters ran only their "library not
+  installed" fallback in every test run since 2026-07-20.** `pythonpath`
+  includes `tests`, so each `tests/<name>/__init__.py` registers `<name>` as a
+  *top-level* module ahead of site-packages for the whole pytest session:
+  `import mcp.client.session` and `import a2a.client` succeeded from a normal
+  shell but raised `ModuleNotFoundError` under pytest. The guarded imports in
+  `capture/hooks/_mcp.py` and `adapters/a2a.py` therefore took their quiet
+  no-op branch every time. Renamed to `tests/mcp_conformance/` (matching the
+  `mcp-conformance` CI lane) and `tests/a2a_adapter/`; both were the last two
+  entries grandfathered in
+  `tests/docs/test_test_layout.py::test_no_test_package_shadows_an_installed_distribution`,
+  and that allowlist is now empty. Third instance of this bug class after
+  `tests/coverage/` and `tests/packaging/`.
+- **A2A capture filed responses under the wrong capsule.** Un-shadowing made
+  the real SDK contract visible, and it does not match what the adapter
+  assumed: `BaseClient._execute_with_interceptors` builds a `BeforeArgs` and
+  then a *separate* `AfterArgs`, so the correlation key `before()` stashed on
+  its args was never visible to `after()`. Every call silently fell through to
+  the "take the first still-pending capture for this method" fallback, which
+  under interleaved calls writes one agent's response into another agent's
+  capsule — a silent evidence-integrity fault. The key now travels in a
+  task-local `ContextVar` (correct across concurrent calls, since both hooks
+  are awaited inline in one asyncio task), and the guess-based fallback only
+  fires when exactly one capture is outstanding. The old test hand-copied
+  `after_args._nova_key = before_args._nova_key`, a step the SDK never
+  performs; it now uses the real `BeforeArgs`/`AfterArgs` dataclasses, joined
+  by a new interleaving test that reproduces the cross-filing.
+- **The phantom-extra guard failed on untracked build output.**
+  `tests/docs/test_extras_references.py` walked the filesystem, so it also
+  scanned gitignored bundles: a stale local `web/dist/_astro/EvalTab.*.js`
+  still embedded the `novafabric[eval]` hint removed from
+  `web/src/.../EvalTab.tsx`, failing the guard on a file no commit could fix.
+  Scope is now `git ls-files` over the scan roots (filesystem-walk fallback
+  when git is unavailable), with a regression test pinning that build output
+  is never scanned. Verified the guard still fails on a real *tracked*
+  phantom reference — a guard that cries wolf gets deleted.
+
+### Fixed (docs)
+- `make_interceptor`'s docstring told users to call
+  `A2AClient(base_url=..., interceptors=[...])`. `A2AClient` does not exist in
+  a2a-sdk 1.0.x — the entry point is `ClientFactory.create` /
+  `create_from_url`. Shipped CLI help text and `docs/cli-reference.md` also
+  advertised `nova mcp conformance tests/mcp/vectors/`, a path that no longer
+  exists; both now name `tests/mcp_conformance/vectors/`.
+
+### Added (tests)
+- `tests/test_capture_mcp_hook.py::test_install_binds_to_the_real_mcp_sdk_and_restores_it`
+  — every other test in that file injects a stub into `sys.modules`, so none
+  would notice `MCPHook.install()` swallowing an `ImportError` and doing
+  nothing. This one patches, asserts, and restores the *installed* SDK, and
+  fails if the shadow ever returns.
+
+
+### Changed
+- **A plain `pip install novafabric` is now 113 MB / 42 packages instead of
+  412 MB / 50 — a measured 299 MB (−72.6%) reduction** (ADR-0222). `duckdb`,
+  `pyarrow`, `python-louvain` and `clickhouse-connect` moved out of
+  `[project.dependencies]` into the extras that actually import them. Every one
+  of their import sites was already inside extra-gated code
+  (`evidence_fabric/*`, `serve/topology/*`, `lineage/migration/*`,
+  `cost/clickhouse_store.py`), so a default install was paying for four heavy
+  dependencies — plus `numpy`, which reached bare installs only transitively via
+  `python-louvain` — that it could never reach. `clickhouse-connect` was
+  additionally pinned twice, in both core and the `scale` extra.
+
+  > **Migration.** If you relied on `duckdb`, `pyarrow`, `clickhouse_connect` or
+  > `community` (python-louvain) being importable after a plain
+  > `pip install novafabric`, install `pip install 'novafabric[all]'` to restore
+  > the previous surface, or a narrower extra: `[scale]` (duckdb + pyarrow +
+  > clickhouse-connect), `[serve]` (duckdb + pyarrow + python-louvain),
+  > `[query]` (duckdb), `[clickhouse]` (clickhouse-connect),
+  > `[lineage-migration]` (pyarrow). These were never part of NovaFabric's
+  > public API, but they did work before, so this is called out as a break.
+
+  **No capsule schema, evidence-bundle format, CLI flag or REST endpoint
+  changes.** `nova --help` and every default command behave identically on a
+  lean install. `networkx` deliberately stays in core — it is imported eagerly
+  at CLI start-up and backs the default `nova insights` / `nova lineage`
+  commands; note that `nova insights` uses networkx's *own*
+  `nx.community.louvain_communities`, not the separate `python-louvain`
+  distribution that moved.
+
+  Every core-reachable use of a moved dependency now honours an explicit
+  **degradation contract**: fall back to a stdlib-equivalent path with identical
+  results, or raise an `ImportError` naming the exact extra to install — never a
+  silent wrong answer. `nova query` falls back to sqlite; `nova backup` skips
+  the derived DuckDB topology cache with a stated reason and still succeeds;
+  `nova restore` fails loudly rather than reporting a `.duckdb` store as
+  verified when it could not open it; `nova insights` notes an ignored cost
+  source; the ClickHouse accumulator and cost store raise install hints.
+- **`novafabric.evidence_fabric` attribute access is now lazy (PEP 562)** —
+  importing the package no longer pulls in duckdb and pyarrow, and resolving one
+  backend never drags in another's dependency, so
+  `from novafabric.evidence_fabric import EventQueueConsumer` works on a plain
+  install. Its docstring previously claimed `DuckDBAccumulator`/`LocalPIITable`
+  were "self-contained (no optional deps required)", which was never true; the
+  docstring now states the real contract.
+
+### Fixed
+- **The Docker image did not build at all** — two missing `COPY` lines in
+  `deploy/docker/Dockerfile`'s builder stage, both found while verifying
+  ADR-0222's container regression. `alembic/` was never copied although
+  `[tool.hatch.build.targets.wheel.force-include]` requires it (broken since
+  2026-07-24), and `README.md` was never copied although the new `readme` field
+  makes hatchling require it. The Dockerfile also now installs the `clickhouse`
+  extra, without which the shipped image would have silently lost ClickHouse
+  cost attribution — leaving the dashboard CostTab dead even though the compose
+  `prod` profile runs a ClickHouse container and sets `NOVA_CLICKHOUSE_URL`.
+- **`cost/clickhouse_store` now raises an actionable `ImportError`** naming
+  `pip install novafabric[clickhouse]` instead of a bare
+  `ModuleNotFoundError: No module named 'clickhouse_connect'`. The same guard
+  fronts the dashboard's `/api/runs/cost-summary` handler.
+- **Phantom-extra cleanup (S3)** — four install hints named an extra that
+  never existed and never will: `docs/developer-guide.md`'s
+  `NovaPySpool` section told users to `pip install novafabric[collector-cffi]`,
+  but there is no such extra to add — `libnovaspool.so` is a Go shared library
+  built out-of-band by a separate `go build` step, not something
+  `pyproject.toml` can express; the doc now says so and notes the automatic
+  pure-Python fallback when the `.so` is absent. The dashboard's Eval tab
+  showed `pip install novafabric[eval]` on an empty suite list, but the
+  standard eval suites are core (registered via
+  `[project.entry-points."novafabric.eval_suites"]`, never extra-gated) — the
+  false install hint is removed (`web/src/components/dashboard/tabs/EvalTab.tsx`,
+  dashboard bundle rebuilt into `src/novafabric/serve/static/`). The
+  `design/spec/saml-sso-v0.md` SAML SSO spec (plus its fixture README and two
+  JSON Schema `$comment`s) said `novafabric[server-saml]`; the real extra
+  (added when SAML shipped, ADR-0138) is `novafabric[saml]`. And
+  `design/spec/toolcall-schema-validation-v0.md` said the tool-call schema
+  validator "shipped behind an optional extra (`novafabric[schema-validation]`)"
+  — no such extra was ever added, and none was ever needed: `jsonschema` is
+  an unconditional core dependency and `capture/schema_validation.py` imports
+  it directly with no `ImportError` gating, so the doc's whole
+  lean-base-by-default framing for this feature was never true; the doc now
+  says so plainly and separately flags the still-undelivered
+  `stdlib-structural/0` fallback validator as future design, not implemented.
+  `design/adr/` itself is immutable and untouched — ADR-0138 still literally
+  says `server-saml` and ADR-0128 still literally says `schema-validation`,
+  both now known, permanently-allowed discrepancies between the historical
+  decision record and the shipped/actual state. New permanent regression
+  guard: `tests/docs/test_extras_references.py` parses
+  `[project.optional-dependencies]` and fails if any `novafabric[<name>]`
+  reference under `src/`, `docs/` (excluding immutable `docs/releases/`),
+  `web/`, or `design/` (excluding immutable `design/adr/`) names an extra
+  that doesn't exist — the scan reaches `design/spec/` and similar live
+  design docs, not just the three user/operator-facing trees, which is what
+  caught the `schema-validation` phantom above.
+- **Image-pin convergence (S4)** — a packaging audit found five inconsistent
+  `janusgraph/janusgraph` version references (tests ran `:latest`, the
+  `docker-compose.yml` `prod` profile pinned `1.1.0`, the Helm chart pinned
+  `1.0.0`, docstrings disagreed with both) plus unpinned `:latest` on
+  `edoburu/pgbouncer` and `apache/age`. Converged everywhere on
+  `janusgraph/janusgraph:1.1.0` (Helm `values.yaml`/`Chart.yaml`/`README.md`,
+  `janusgraph.py` docstrings, both JanusGraph test files); pinned
+  `edoburu/pgbouncer:v1.25.2-p0` and `apache/age:release_PG16_1.6.0` (verified
+  against Docker Hub; AGE tags follow `release_PG<major>_<version>`, matching
+  this project's Postgres 16 baseline, not semver). New
+  `deploy/IMAGE_PINS.md` documents the pins;
+  `tests/deploy/test_image_pins.py` is the actual drift-prevention mechanism
+  (parses compose/Helm/test files, fails on any drift or new `:latest`
+  pin — confirmed failing against the pre-fix state, now passing). Also fixed
+  a real bug in `janusgraph_minimal.py`'s deployment-profile generator: one
+  `image_tag` parameter was silently applied to three unrelated images
+  (`janusgraph/janusgraph`, `cassandra`, `novafabric/novafabric`), so
+  `nova lineage-store profile --target janusgraph-minimal` emitted
+  `cassandra:latest`/`novafabric/novafabric:latest` regardless of the
+  JanusGraph pin. Split into three independently-defaulted parameters
+  (`janusgraph_tag` now defaults to `1.1.0`); `image_tag` is kept as a
+  deprecated backward-compatible alias (still overrides all three, for
+  existing `--image-tag` callers in the CLI and the `/api/lineage-store/profile`
+  endpoint) — no public break. JanusGraph testcontainers parity suite
+  re-verified against the newly-pinned `1.1.0` image (Docker); AGE parity
+  suite re-verified against `release_PG16_1.6.0`.
+
+### Added
+- **PyPI packaging metadata** — `pyproject.toml`'s `[project]` table now carries
+  `readme`, `authors`, `keywords`, `classifiers` (Beta status, Apache-2.0 license,
+  Python 3.12-only matching the CI matrix, Linux-only, `Typing :: Typed`), and
+  `[project.urls]` (Homepage/Documentation/Repository/Changelog/Issues), so the
+  PyPI project page actually renders the project's real metadata instead of
+  mostly blank. Added `src/novafabric/py.typed` (PEP 561 marker), matching the
+  project's `mypy strict = true` posture, and wired it into the wheel build.
+- **New narrow extras, fixing a phantom-extra bug** — `novafabric[clickhouse]`,
+  `novafabric[nats]`, `novafabric[avro]`, and `novafabric[energy-gpu]` now
+  actually exist and resolve. Runtime `ImportError` hints in
+  `evidence_fabric/clickhouse_accumulator.py`, `evidence_fabric/nats_consumer.py`,
+  and `evidence_fabric/avro_serializer.py`, and the `[energy-gpu]` install
+  instructions already published in `docs/releases/v0.55.0.md`/`v0.56.0.md`, told
+  users to install extras that did not exist until now. `energy-gpu` depends on
+  `nvidia-ml-py` rather than the PyPI distribution literally named `pynvml`,
+  which is upstream-deprecated and no longer ships the `pynvml` module the code
+  imports. Also added `novafabric[all]`, a self-referencing aggregate extra that
+  restores the old "install everything" experience for anyone who wants it,
+  deliberately excluding the cloud-vendor extras (`worm-s3`/`worm-azure`/
+  `worm-gcs`, `seal-aws`/`seal-azure`/`seal-gcp`) and the agent-framework adapter
+  extras (`openai-agents`, `google-adk`, `bedrock-agentcore`, `a2a`) — bundling
+  every cloud vendor or every competing agent framework by default would be dead
+  weight for every installer. This part of the change was purely additive — no
+  existing dependency moved or was removed by it; the core-dependency
+  reclassification that makes `[clickhouse]` and `[all]` load-bearing is the
+  separate `### Changed` entry above, shipping in this same release. New test:
+  `tests/packaging_metadata/test_project_metadata.py`.
+- **New `novafabric[query]` extra** — `duckdb` alone, as a documented, optional
+  accelerator for `nova query`. Installing it is a performance choice, never a
+  correctness one: `nova query` falls back to the stdlib `sqlite3` engine when
+  duckdb is absent, returns identical rows either way, and reports which engine
+  ran in the result's `index.engine` field. See ADR-0222.
+- New tests: `tests/packaging_metadata/test_lean_install_surface.py` (CLI survives a lean
+  install; the set of modules requiring an extra is a fixed, empirically-derived
+  allowlist; pyproject structure) and
+  `tests/packaging_metadata/test_optional_dependency_degradation.py` (one clause of the
+  degradation contract per call site, including a DuckDB-vs-SQLite result-parity
+  check across five query shapes).
+- **Apache AGE docker-compose profile (S5, experimental)** — a dedicated `age`
+  profile in `deploy/docker/docker-compose.yml` (not folded into `prod`) stands up
+  a standalone `apache/age:release_PG16_1.6.0` Postgres instance on `127.0.0.1:5433`
+  so `AGELineageStore` (`src/novafabric/lineage/backends/age.py`) can be exercised
+  locally without testcontainers. Genuinely separate from the MetadataStore's
+  `postgres` service (5432) — the AGE extension isn't in plain `postgres:16-alpine`,
+  and the lineage graph is a derived/rebuildable artifact that deliberately does not
+  share the metadata database. `AGELineageStore.__init__` already self-initializes
+  the extension and graph on connect, so no init-SQL mount was needed. New
+  `make age-up` / `make age-down` targets (mirroring `prod-up`/`prod-down`) and
+  `make help` entries. Docs in `docs/developer-guide.md` and
+  `docs/ops/cluster-scale-migration.md` give the exact DSN
+  (`postgresql://nova:nova@localhost:5433/nova_lineage`) and note the `[server]`
+  extra requirement — every mention is labeled **experimental**. New
+  `tests/deploy/test_compose_profiles.py` (parses the compose YAML: `age` carries
+  `profiles: [age]`, is absent from the default and `prod` active service sets,
+  binds `127.0.0.1` only, has a healthcheck, isn't pinned to `:latest`) and an
+  opt-in integration test that stands up the real compose service and runs the
+  same provenance/blast-radius parity assertions as the testcontainers suite.
+
+### Removed
+- **Duplicated pgBouncer config directory (S6)** — `deploy/pgbouncer/` (an
+  older, generic placeholder template: `pgbouncer.ini`, `README.md`,
+  `userlist.txt.template`) was unreferenced dead duplication. The canonical
+  location, `deploy/docker/{pgbouncer.ini,pgbouncer-userlist.txt,
+  README-pgbouncer.md}`, is the only one `docs/ops/cluster-scale-migration.md`
+  and the compose file actually reference, and already carries
+  compose-matching values (`host=postgres`, port `6432`). Every unique
+  directive from the deleted template was ported forward first: a
+  commented-out read-replica `[databases]` stanza, the `max_client_conn`
+  sizing rule of thumb, `server_lifetime`/`log_pooler_errors`/`stats_period`,
+  a client-side TLS stanza (`client_tls_*`) alongside the existing
+  server-side one, an admin-console access comment, and the
+  novafabric_app/novafabric_migrator role-split safety note (ADR-0040 §3),
+  and the RLS/`SET LOCAL` transaction-pooling-safety rationale — all folded
+  into `deploy/docker/pgbouncer.ini`; the Monitoring section
+  (`pgbouncer_exporter` metrics) was ported into
+  `deploy/docker/README-pgbouncer.md`. The stale Docker-Compose quick-start
+  snippet in the deleted README (referencing the `bitnami/pgbouncer` image)
+  was **not** ported — the compose file switched to `edoburu/pgbouncer` and
+  that snippet no longer matched reality. `README-pgbouncer.md` also gained a
+  clarifying note (verified against the compose file): the `prod`-profile
+  `pgbouncer` service configures itself entirely through `edoburu/pgbouncer`
+  environment variables and mounts no `.ini` file at all, so `pgbouncer.ini`
+  here is reference documentation for non-compose deployments, not live
+  config — wiring it in is unchanged, future work. That verification also
+  caught two pre-existing statements the new note would otherwise have
+  contradicted — `README-pgbouncer.md`'s "Configuration files" section and
+  `pgbouncer-userlist.txt`'s security notes both asserted the compose service
+  mounts these files read-only, which is false — both are corrected to say
+  the mount example applies only to a standalone (non-compose) pgBouncer
+  deployment. Dropped the now-dead `.p2p.toml` `[allow]` secret-scanner entry
+  for the deleted README and the matching stale `.p2p-manifest.json` file-list
+  entries; `.p2p-manifest.json`'s `private_sha` field was deliberately left
+  unrefreshed (it's tool-maintained bookkeeping, not hand-computed here), so
+  the next `p2p sync`/`publish` will show it moving — expected, not drift to
+  chase. No code path referenced the deleted files (confirmed by a repo-wide
+  grep before deletion); nothing public changed.
+- **Two `tests/` packages that shadowed installed distributions** —
+  `tests/coverage/` → `tests/coverage_reports/` and `tests/packaging/` →
+  `tests/packaging_metadata/`. `pythonpath` in `pyproject.toml` includes
+  `tests`, so every `tests/<dir>/__init__.py` registers `<dir>` as a *top-level*
+  module ahead of site-packages for the whole pytest session.
+  `tests/coverage/` therefore shadowed the `coverage` distribution and killed
+  `pytest-cov` outright (`ModuleNotFoundError: No module named
+  'coverage.data'`) — **the documented release gate `uv run pytest
+  --cov=novafabric` could not run at all**, which is why ADR-0222's own sign-off
+  had to measure coverage with `tests` dropped from `pythonpath`. This release's
+  new `tests/packaging/` was a second instance of the same class: it shadowed
+  `packaging`, making `packaging.version` — and therefore
+  `import presidio_analyzer`, which works fine outside pytest — unimportable
+  under it, surviving only because the affected tests mock the module. Both
+  renamed; the documented gate executes as written again. New permanent guard:
+  `tests/docs/test_test_layout.py::test_no_test_package_shadows_an_installed_distribution`
+  fails on any `tests/<dir>/` package whose name collides with a top-level name
+  from `importlib.metadata.distributions()`. `tests/a2a/` and `tests/mcp/` are
+  explicitly grandfathered in that guard with their reasoning: un-shadowing them
+  would flip `capture/hooks/_mcp.py` and `adapters/a2a.py` from their "library
+  not installed" branch to the real library mid-suite, a behavioural change that
+  needs its own verification (and, for `tests/mcp/`, changes to shipped CLI help
+  text and the `mcp-conformance` workflow's path triggers).
+
+### Fixed (docs)
+- `src/novafabric/query/engine.py`'s duckdb probe still said duckdb was "already
+  a runtime dep" / "a default dependency" — the exact fact ADR-0222 reversed —
+  and carried a `pragma: no cover` that excluded the sqlite-fallback branch from
+  coverage measurement. That branch is the most load-bearing path in ADR-0222's
+  degradation contract and is the *common* path on a default install; the pragma
+  is dropped so it is measured, and the comment now matches reality.
+- `deploy/docker/README-pgbouncer.md` and `deploy/docker/pgbouncer.ini` still
+  said "pgBouncer 1.24" after S4 pinned the compose image to
+  `edoburu/pgbouncer:v1.25.2-p0`.
+- `docs/ops/air-gapped-install.md`: the extras table told readers to omit
+  `sigstore` from an air-gapped mirror while the new v0.99.0 note recommended
+  `pip download 'novafabric[all]'`, which pulls it in — now reconciled. The
+  `serve` row also listed only "FastAPI, uvicorn"; it now names the duckdb /
+  pyarrow / python-louvain the topology extractor needs.
+- `docs/getting-started.md`'s `nova --version` sample output said
+  `novafabric 0.59.0`.
+- `docs/operator-guide.md` said `novafabric[all]` "restores the previous
+  surface". True for importability, misleading on size: `[all]` is a *superset*
+  of the old default install, not an equivalent.
+- `docs/releases/v0.99.0.md` documented only slice S2. It now covers all six
+  slices under an "Also in this release" section, including the two behavioural
+  changes S4 buried in a consistency fix — the `deploy/helm/janusgraph/`
+  `appVersion`/`image.tag` bump `1.0.0` → `1.1.0` and the
+  `nova lineage-store profile --image-tag` default moving from `latest` to
+  unset — plus the **experimental** `age` compose profile and `make
+  age-up`/`age-down`.
+
 ## [0.98.3] — 2026-07-31
 
 ### Fixed

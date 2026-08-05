@@ -30,6 +30,7 @@ exactly the kind of thing to assert rather than remember.
 
 from __future__ import annotations
 
+import importlib.metadata
 from collections import defaultdict
 from pathlib import Path
 
@@ -37,6 +38,18 @@ TESTS_ROOT = Path(__file__).resolve().parents[1]
 
 #: Directories that hold data, not importable tests.
 _NON_PACKAGE = ("fixtures", "__pycache__", ".pytest_cache")
+
+#: Test packages that knowingly shadow an installed distribution.
+#:
+#: Empty, and it must stay that way. The last two entries — ``tests/a2a`` and
+#: ``tests/mcp`` — were renamed to ``tests/a2a_adapter`` and
+#: ``tests/mcp_conformance`` once the behavioural flip they were hiding was
+#: verified: while they existed, ``mcp.client.session`` and ``a2a.client`` were
+#: unimportable under pytest, so the guarded imports in
+#: ``capture/hooks/_mcp.py`` and ``adapters/a2a.py`` silently took their
+#: "library not installed" branch for every test run. Grandfathering a shadow
+#: does not make it safe; it only postpones finding out what it hid.
+_GRANDFATHERED_SHADOWS: frozenset[str] = frozenset()
 
 
 def _test_dirs() -> list[Path]:
@@ -82,3 +95,62 @@ def test_no_basename_collision_outside_packages() -> None:
         "same-named test modules in non-package directories collide at "
         f"collection: {collisions}"
     )
+
+
+def _installed_top_level_names() -> set[str]:
+    """Top-level importable names contributed by installed distributions."""
+    names: set[str] = set()
+    for dist in importlib.metadata.distributions():
+        top_level = dist.read_text("top_level.txt")
+        if top_level:
+            names.update(top_level.split())
+        for file in dist.files or ():
+            parts = file.parts
+            first = parts[0]
+            if first.endswith((".dist-info", ".egg-info", ".data", ".pth")):
+                continue
+            if len(parts) > 1:
+                names.add(first)
+            elif first.endswith(".py"):
+                names.add(first[:-3])
+    return names
+
+
+def test_no_test_package_shadows_an_installed_distribution() -> None:
+    """A test package must not steal a top-level name from site-packages.
+
+    ``pythonpath`` in ``pyproject.toml`` includes ``tests``, so every
+    ``tests/<dir>/__init__.py`` registers ``<dir>`` as a *top-level* module for
+    the entire pytest session — ahead of site-packages. Anything importing the
+    real distribution then fails, and only inside pytest.
+
+    Twice now: ``tests/coverage/`` shadowed ``coverage``, which killed
+    ``pytest-cov`` outright and meant the documented release gate
+    (``uv run pytest --cov=novafabric``) could not run at all; then
+    ``tests/packaging/`` shadowed ``packaging``, making ``packaging.version``
+    — and therefore ``import presidio_analyzer`` — unimportable under pytest,
+    surviving only because the affected tests mocked the module.
+
+    Both were renamed (``coverage_reports``, ``packaging_metadata``). The rule
+    is asserted rather than remembered because the breakage is silent until
+    something unrelated happens to import the shadowed name.
+    """
+    installed = _installed_top_level_names()
+    # Only *direct* children of tests/ become top-level names; deeper packages
+    # are namespaced by their parent. Checked independently of _test_dirs() so a
+    # package holding only sub-packages is still caught — it shadows all the same.
+    shadows = sorted(
+        d.name
+        for d in TESTS_ROOT.iterdir()
+        if d.is_dir()
+        and d.name not in _NON_PACKAGE
+        and (d / "__init__.py").is_file()
+        and d.name in installed
+        and d.name not in _GRANDFATHERED_SHADOWS
+    )
+    assert not shadows, (
+        "these tests/ packages shadow an installed top-level distribution name "
+        "and will break imports of the real package for the whole pytest "
+        f"session: {shadows}. Rename them (e.g. tests/foo -> tests/foo_<topic>)."
+    )
+

@@ -63,11 +63,24 @@ Confirm the install:
 
 ```bash
 nova --version
-# novafabric 0.98.0
+# novafabric 0.99.0
 ```
 
 Both `nova` and `novafabric` are the same binary. The examples throughout this
 guide use `nova`.
+
+> **Optional extras.** The base install covers everything in this guide.
+> Narrow extras exist for optional integrations (e.g. `pip install
+> "novafabric[serve]"` for the experimental dashboard, or `"novafabric[all]"`
+> for everything) — see [docs/operator-guide.md](operator-guide.md#package-installation).
+
+> **Changed in v0.99.0 — the default install is much smaller (412 MB → 113 MB).**
+> `duckdb`, `pyarrow`, `python-louvain` and `clickhouse-connect` are no longer
+> installed by default; they moved to the extras that actually use them
+> (ADR-0222). Everything in this guide still works unchanged. If you relied on
+> importing any of them after a plain `pip install novafabric`, use
+> `pip install 'novafabric[all]'` or the narrower extra you need — see
+> [docs/operator-guide.md](operator-guide.md#package-installation).
 
 > **Optional one-time setup.** `nova init` pre-creates the data directories
 > (`capsules/`, `keys/`, `replays/`) under `~/.novafabric` and generates a local
@@ -75,7 +88,7 @@ guide use `nova`.
 > use — but handy if you want the directory tree in place up front. Re-running it
 > is safe; use `nova init --force` to regenerate the keypair.
 
-> **Maturity.** NovaFabric is in beta (v0.98.0). Most surfaces work today but
+> **Maturity.** NovaFabric is in beta (v0.99.0). Most surfaces work today but
 > carry `experimental` maturity: interfaces may change before the v1.0 schema
 > freeze. On-disk formats are **not** frozen until v1.0. See
 > [ROADMAP.md](../ROADMAP.md) for the sequencing.

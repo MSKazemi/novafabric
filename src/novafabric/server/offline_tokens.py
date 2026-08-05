@@ -26,7 +26,19 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import jwt
+try:
+    import jwt
+except ImportError as _exc:  # pragma: no cover - exercised via the degradation test
+    # ADR-0222 OQ-2 moved PyJWT out of the core install and into `server`, the
+    # only tier that uses it. This module is reachable from the CLI
+    # (`nova server issue-token` / `revoke-token`), so the failure has to name
+    # the exact extra that fixes it rather than surfacing a bare
+    # "No module named 'jwt'".
+    raise ImportError(
+        "PyJWT is not installed — offline tokens require it. "
+        "Install it with: pip install 'novafabric[server]'"
+    ) from _exc
+
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
     Ed25519PublicKey,

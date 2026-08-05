@@ -1,0 +1,94 @@
+# Dependency license declarations (ADR-0024 — dependency license policy).
+#
+# CI reads this file (.github/workflows/license-policy.yml →
+# scripts/license_gate.py). It closes ADR-0024's stated gap: the tier policy
+# existed since 2026-05, but "the CI enforcement step is not yet implemented;
+# manual review is the gap."
+#
+#   - Tier A (Apache-2.0, MIT, BSD, PostgreSQL, PSF, ISC, CC0, Unlicense)
+#     passes silently. Do NOT declare Tier A packages — no paperwork for
+#     permissive licenses.
+#   - Tier B (LGPL-2.1/3.0 dynamic-linking-only, MPL-2.0, Apache-2.0 with
+#     patent-retaliation amendments) is allowed ONLY with an entry here.
+#   - A license the gate cannot resolve blocks until declared, with the
+#     resolved license recorded below. Fail closed.
+#   - Tier C (GPL any linking, AGPL, SSPL, BSL, Elastic, Confluent Community,
+#     Commons Clause, source-available, proprietary) is "reject by default;
+#     explicit waiver required" (ADR-0024 §Tier C). A Tier C entry is admitted
+#     only with BOTH a justification and a `migration_path`, because the ADR
+#     demands "the business justification and the migration path away from the
+#     dependency". File the ADR first; the declaration records it.
+#   - Tier D (field-of-use restrictions, "ethical source" terms) is FORBIDDEN
+#     outright. "D" is not a declarable tier, so no entry can reach it.
+#
+# Unlike .pip-audit-waivers.toml these entries do not expire: a license is a
+# standing property of a release, not a temporary risk awaiting an upstream
+# fix. They must be re-checked when a dependency changes its license — which
+# is exactly what the gate does on every CI run.
+#
+# Required fields per entry (no others allowed):
+#   package       — distribution name as published (PEP 503 normalized on read)
+#   license       — the resolved license this declaration covers. The tier is
+#                   RE-DERIVED from this text and must match `tier`, so a
+#                   declaration can never launder a license into a softer tier.
+#   tier          — "A" (only to correct wrong upstream metadata), "B", "C", or
+#                   "unknown" (verified by a human but not named by ADR-0024).
+#   justification — why this is acceptable: how it is used, why the copyleft
+#                   term is not triggered, and the ADR/RFC that recorded it.
+#
+# Optional, and required for tier = "C" only:
+#   migration_path — how we get off this dependency (ADR-0024 §Tier C).
+
+[[declaration]]
+package = "psycopg"
+license = "LGPL-3.0-only"
+tier = "B"
+justification = "Tier B under ADR-0024 (LGPL, dynamic linking only). Imported as a library over a stable public API and never modified or statically linked, so the LGPL relinking obligation is satisfied by ordinary Python imports. It is the only maintained psycopg3 driver and underpins the v0.7+ server-mode Postgres backend (metadata_store/postgres.py, lineage/backends/postgres.py). Tier already recorded inline in pyproject.toml; this entry makes it machine-checked."
+
+[[declaration]]
+package = "psycopg-binary"
+license = "LGPL-3.0-only"
+tier = "B"
+justification = "Tier B under ADR-0024. Prebuilt binary wheel of psycopg above; identical license and identical dynamic-linking justification. Ships the libpq bindings so operators need no local build toolchain."
+
+[[declaration]]
+package = "psycopg-pool"
+license = "LGPL-3.0-only"
+tier = "B"
+justification = "Tier B under ADR-0024. First-party connection pool for psycopg, same license and same dynamic-linking justification; enables server-mode pooling without adding a second vendor to the dependency tree."
+
+[[declaration]]
+package = "pyphen"
+license = "GPL-2.0+ OR LGPL-2.1+ OR MPL-1.1"
+tier = "B"
+justification = "Tier B under ADR-0024 via the LGPL-2.1+ arm. Pyphen is tri-licensed and the consumer chooses, so the GPL arm never binds NovaFabric; taken under LGPL, dynamic linking only. Transitive, dev/docs-only: pulled in by weasyprint (BSD-2-Clause, Tier A) for PDF rendering; it is not a runtime dependency of the library or server."
+
+[[declaration]]
+package = "certifi"
+license = "MPL-2.0"
+tier = "B"
+justification = "Tier B under ADR-0024 (MPL-2.0). Used unmodified as a data-only package: it ships Mozilla's CA root bundle that httpx/requests read for TLS verification. MPL-2.0 is file-level copyleft and we modify none of its files, so no reciprocal obligation attaches to NovaFabric's own sources. Transitive via the HTTP stack; replacing it would mean shipping our own CA bundle, which is strictly worse for security."
+
+[[declaration]]
+package = "hypothesis"
+license = "MPL-2.0"
+tier = "B"
+justification = "Tier B under ADR-0024 (MPL-2.0). Development/test-only dependency (property-based testing); never imported by shipped runtime code and never redistributed in a wheel. Used unmodified, so MPL-2.0's file-level copyleft attaches to nothing we author."
+
+[[declaration]]
+package = "pathspec"
+license = "MPL-2.0"
+tier = "B"
+justification = "Tier B under ADR-0024 (MPL-2.0). Transitive gitignore-style path matching, pulled in by the tooling chain; used unmodified as a library, so MPL-2.0's per-file reciprocity does not reach NovaFabric's sources."
+
+[[declaration]]
+package = "tqdm"
+license = "MPL-2.0 AND MIT"
+tier = "B"
+justification = "Tier B under ADR-0024 via its MPL-2.0 portion (the conjunction binds both terms, so the stricter one governs). Progress-bar rendering only, used unmodified; MPL-2.0 file-level copyleft attaches to no file we author."
+
+[[declaration]]
+package = "owlrl"
+license = "W3C Software and Document Notice and License"
+tier = "unknown"
+justification = "Upstream metadata is WRONG, not the policy: owlrl's trove classifier says 'License :: Other/Proprietary License' while its own License field and bundled LICENSE.txt both state the W3C Software and Document Notice and License — an OSI-approved, FSF-free permissive licence with no copyleft and no field-of-use restriction, i.e. Tier A in substance. It is not named in ADR-0024's Tier A list, so it is recorded here as verified-but-unmapped rather than silently mapped; extending the tier table is a policy change for the BDFL, not for this gate. Transitive RDF/OWL reasoner via rdflib, used unmodified for PROV-JSON / RO-Crate export."

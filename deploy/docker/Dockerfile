@@ -1,5 +1,6 @@
 # NovaFabric — experiment image
-# Extras: server (Postgres + FastAPI), serve (dashboard), lineage-kuzu, lineage-migration
+# Extras: server (Postgres + FastAPI), serve (dashboard), clickhouse (cost
+#         attribution), lineage-kuzu, lineage-migration
 #
 # Build context must be the repo root:
 #   docker build -f deploy/docker/Dockerfile -t novafabric:dev .
@@ -12,12 +13,18 @@ FROM python:3.12-slim AS builder
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /build
-COPY pyproject.toml uv.lock ./
+# README.md is REQUIRED, not cosmetic: pyproject.toml declares
+# `readme = "README.md"`, and hatchling hard-fails the wheel build with
+# "OSError: Readme file does not exist" if it is missing from the build
+# context. Adding the `readme` field without this COPY broke the image build.
+COPY pyproject.toml uv.lock README.md ./
 COPY src/ src/
 # The wheel force-includes alembic/ as novafabric/migrations/registry (see
 # [tool.hatch.build.targets.wheel.force-include]). Without it here the build
 # fails with "Forced include not found: /build/alembic" — and the entrypoint's
-# `nova db upgrade` would have no migrations to run.
+# `nova db upgrade` would have no migrations to run. Pre-existing breakage: the
+# force-include landed on 2026-07-24 without a matching COPY, so this image had
+# been unbuildable since then; found independently while verifying ADR-0222.
 COPY alembic/ alembic/
 
 RUN uv build --wheel --no-sources
@@ -48,8 +55,18 @@ RUN ARCH=$(uname -m) && \
 WORKDIR /app
 
 COPY --from=builder /build/dist/ ./dist/
+# `clickhouse` added by ADR-0222. clickhouse-connect used to arrive
+# unconditionally via [project.dependencies]; now that it is extras-only, the
+# image would silently lose ClickHouse cost attribution without naming it here
+# — even though the compose `prod` profile runs a ClickHouse container and sets
+# NOVA_CLICKHOUSE_URL, which would leave the dashboard CostTab stuck in stub
+# mode. duckdb, pyarrow and python-louvain also left core in ADR-0222 but need
+# no new extra here: `serve` pins all three (it owns the Live Topology
+# Dashboard's cluster store, Arrow ADS encoder and Louvain pass), and
+# `lineage-migration` pins pyarrow as well.
 RUN WHL=$(ls dist/novafabric-*.whl) \
-    && uv pip install --system "${WHL}[server,serve,lineage-kuzu,lineage-migration]" \
+    && uv pip install --system \
+       "${WHL}[server,serve,clickhouse,lineage-kuzu,lineage-migration]" \
     && rm -rf dist/
 
 RUN mkdir -p /data/capsules /data/nova /data/kuzu

@@ -4,6 +4,8 @@
 # ────────
 #   (no profile)  dev/laptop — postgres + nova-serve          (~512 MB RAM, fast startup)
 #   prod          full stack — + clickhouse + nats + kafka + pgbouncer + janusgraph
+#   age           EXPERIMENTAL — + a standalone Apache AGE lineage backend (opt-in,
+#                 not part of prod; see the `age` service below)
 #
 # All container names are prefixed novafabric- for easy identification in docker ps
 # alongside containers from other projects.
@@ -198,7 +200,7 @@ services:
 
   pgbouncer:
     profiles: [prod]
-    image: edoburu/pgbouncer:latest
+    image: edoburu/pgbouncer:v1.25.2-p0
     container_name: novafabric-pgbouncer
     environment:
       DB_HOST: postgres
@@ -245,6 +247,43 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  # ── Apache AGE — EXPERIMENTAL alternative lineage backend (age profile) ─────
+  #
+  # Optional alternative to the KuzuDB/JanusGraph lineage-v2 engines (ADR-0053)
+  # for deployments that standardise on the AGE openCypher-over-Postgres
+  # extension. Dedicated profile (not folded into `prod`) so a user who only
+  # wants AGE doesn't also get Postgres+JanusGraph+Kafka+NATS.
+  #
+  # This is a genuinely separate Postgres instance from the `postgres` service
+  # above — the AGE extension is not present in plain postgres:16-alpine, and
+  # the lineage graph is a derived/rebuildable artifact that deliberately does
+  # not share the metadata database. `AGELineageStore.__init__`
+  # (src/novafabric/lineage/backends/age.py) self-initializes the extension
+  # (`CREATE EXTENSION IF NOT EXISTS age`) and the graph (`create_graph`) on
+  # first connect, so no init-SQL mount or manual setup step is needed here.
+  #
+  # EXPERIMENTAL: opt-in only, not part of the default or prod stacks.
+  # Start standalone: `make age-up` / `docker compose --profile age up -d age`.
+
+  age:
+    profiles: [age]
+    image: apache/age:release_PG16_1.6.0
+    container_name: novafabric-age
+    environment:
+      POSTGRES_USER: nova
+      POSTGRES_PASSWORD: nova
+      POSTGRES_DB: nova_lineage
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - age-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nova"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
 volumes:
   pg-data:
   ch-data:
@@ -252,6 +291,7 @@ volumes:
   nats-data:
   kafka-data:
   janusgraph-data:
+  age-data:
 
 networks:
   default:

@@ -27,6 +27,13 @@ nova export-evidence .novafabric/runs/01HX.../ --key key.pem --output evidence.z
 The local SQLite registry is created automatically at
 `~/.novafabric/registry.db` on first use.
 
+> **Changed in v0.99.0.** The default install is 113 MB / 42 packages instead of
+> 412 MB / 50 — `duckdb`, `pyarrow`, `python-louvain` and `clickhouse-connect`
+> moved to extras (ADR-0222). Every command above is unaffected. Server and
+> container deployments are unaffected too: `[server]`/`[serve]` and the shipped
+> Dockerfile pull in what they need. If you relied on importing those packages
+> after a plain install, use `pip install 'novafabric[all]'`.
+
 ### Optional local dashboard
 
 The experimental read-only dashboard is a separate optional extra:

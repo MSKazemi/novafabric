@@ -5,6 +5,7 @@ installed.  All framework objects are mocked.
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -112,9 +113,9 @@ class TestLangGraphWrap:
         capsule_yaml = capsule_dirs[0] / "capsule.yaml"
         assert capsule_yaml.exists()
         manifest = yaml.safe_load(capsule_yaml.read_text())
-        assert manifest["capture_mode"] == "adapter-langgraph"
+        assert manifest["capture_mode"] == "sdk-decorator"
         assert manifest["status"] == "success"
-        assert manifest["tags"]["framework"] == "langgraph"
+        assert manifest["metadata"]["framework"] == "langgraph"
 
     def test_invoke_records_failure(self, tmp_path: Path) -> None:
         mock_graph = MagicMock()
@@ -279,7 +280,8 @@ class TestAutoGenWrap:
         capsule_dirs = list(tmp_path.iterdir())
         assert len(capsule_dirs) == 1
         manifest = yaml.safe_load((capsule_dirs[0] / "capsule.yaml").read_text())
-        assert manifest["capture_mode"] == "adapter-autogen"
+        assert manifest["capture_mode"] == "sdk-decorator"
+        assert manifest["metadata"]["framework"] == "autogen"
         assert manifest["status"] == "success"
 
 
@@ -334,8 +336,8 @@ class TestCrewAIWrap:
         capsule_dirs = list(tmp_path.iterdir())
         assert len(capsule_dirs) == 1
         manifest = yaml.safe_load((capsule_dirs[0] / "capsule.yaml").read_text())
-        assert manifest["capture_mode"] == "adapter-crewai"
-        assert manifest["tags"]["framework"] == "crewai"
+        assert manifest["capture_mode"] == "sdk-decorator"
+        assert manifest["metadata"]["framework"] == "crewai"
 
     def test_kickoff_records_failure(self, tmp_path: Path) -> None:
         mock_crew: Any = MagicMock()
@@ -413,8 +415,8 @@ class TestDSPyWrap:
         capsule_dirs = list(tmp_path.iterdir())
         assert len(capsule_dirs) == 1
         manifest = yaml.safe_load((capsule_dirs[0] / "capsule.yaml").read_text())
-        assert manifest["capture_mode"] == "adapter-dspy"
-        assert manifest["tags"]["framework"] == "dspy"
+        assert manifest["capture_mode"] == "sdk-decorator"
+        assert manifest["metadata"]["framework"] == "dspy"
 
     def test_forward_records_failure(self, tmp_path: Path) -> None:
         mock_program: Any = MagicMock()
@@ -549,8 +551,8 @@ class TestOpenAIAgentsProcessor:
         capsules = list(tmp_path.rglob("capsule.yaml"))
         assert len(capsules) == 1
         manifest = yaml.safe_load(capsules[0].read_text())
-        assert manifest["capture_mode"] == "adapter-openai-agents"
-        assert manifest["tags"]["framework"] == "openai-agents"
+        assert manifest["capture_mode"] == "sdk-decorator"
+        assert manifest["metadata"]["framework"] == "openai-agents"
 
     def test_span_callbacks_do_not_raise(self, tmp_path: Path) -> None:
         from novafabric.adapters.openai_agents import NovaCapsuleTracingProcessor
@@ -611,7 +613,8 @@ class TestGoogleAdkPlugin:
         capsules = list(tmp_path.rglob("capsule.yaml"))
         assert len(capsules) == 1
         manifest = yaml.safe_load(capsules[0].read_text())
-        assert manifest["capture_mode"] == "adapter-google-adk"
+        assert manifest["capture_mode"] == "sdk-decorator"
+        assert manifest["metadata"]["framework"] == "google-adk"
 
     def test_after_run_without_before_is_safe(self, tmp_path: Path) -> None:
         import asyncio
@@ -669,7 +672,8 @@ class TestBedrockAgentCoreAdapter:
         capsules = list(tmp_path.rglob("capsule.yaml"))
         assert len(capsules) == 1
         manifest = yaml.safe_load(capsules[0].read_text())
-        assert manifest["capture_mode"] == "adapter-bedrock-agentcore"
+        assert manifest["capture_mode"] == "sdk-decorator"
+        assert manifest["metadata"]["framework"] == "bedrock-agentcore"
 
     def test_passthrough_for_non_invoke_methods(self, tmp_path: Path) -> None:
         with patch.dict(sys.modules, {"boto3": MagicMock()}):
@@ -699,8 +703,24 @@ class TestA2AImportError:
 
 class TestA2AInterceptor:
     def test_interceptor_creates_capsule_per_send_message(self, tmp_path: Path) -> None:
-        """before+after send_message calls must produce a capsule."""
+        """before+after send_message calls must produce a capsule.
+
+        Uses the SDK's real ``BeforeArgs``/``AfterArgs`` rather than mocks,
+        because the whole correlation problem lives in the fact that they are
+        two *separate* objects: ``BaseClient._execute_with_interceptors``
+        builds a fresh ``AfterArgs`` from the transport result and never
+        carries anything the interceptor stashed on the ``before`` args.
+
+        An earlier version of this test used ``MagicMock`` and hand-copied
+        ``after_args._nova_key = before_args._nova_key``, which is a step the
+        SDK does not perform — so it asserted a handoff that never happens in
+        production. It went unnoticed because ``tests/a2a/`` shadowed the
+        installed ``a2a`` distribution, making the real dataclasses
+        unimportable under pytest.
+        """
         import asyncio
+
+        from a2a.client.interceptors import AfterArgs, BeforeArgs
 
         from novafabric.adapters.a2a import NovaA2AInterceptor
 
@@ -709,15 +729,21 @@ class TestA2AInterceptor:
         mock_agent_card = MagicMock()
         mock_agent_card.name = "test-agent"
 
-        before_args = MagicMock()
-        before_args.method = "send_message"
-        before_args.agent_card = mock_agent_card
-        before_args.input = {"message": {"parts": [{"text": "hello"}]}}
+        before_args = BeforeArgs(
+            input={"message": {"parts": [{"text": "hello"}]}},
+            method="send_message",
+            agent_card=mock_agent_card,
+        )
+        after_args = AfterArgs(
+            result={"status": {"state": "completed"}},
+            method="send_message",
+            agent_card=mock_agent_card,
+        )
 
-        after_args = MagicMock()
-        after_args.method = "send_message"
-        after_args.agent_card = mock_agent_card
-        after_args.result = {"status": {"state": "completed"}}
+        async def _one_call() -> None:
+            # Both hooks awaited in one task, exactly as the SDK does it.
+            await interceptor.before(before_args)
+            await interceptor.after(after_args)
 
         with (
             patch("novafabric.adapters.a2a.capture_environment", return_value={}),
@@ -726,15 +752,216 @@ class TestA2AInterceptor:
             patch("novafabric.capture.hooks.uninstall_all"),
         ):
             MockScanner.return_value.scan_and_redact.return_value = {}
-            asyncio.run(interceptor.before(before_args))
-            # Link after_args to the key set by before()
-            after_args._nova_key = before_args._nova_key
-            asyncio.run(interceptor.after(after_args))
+            asyncio.run(_one_call())
 
+        assert not hasattr(after_args, "_nova_key"), (
+            "the SDK builds AfterArgs independently; if this ever holds the key "
+            "the test is fabricating the handoff instead of exercising it"
+        )
         capsules = list(tmp_path.rglob("capsule.yaml"))
         assert len(capsules) == 1
         manifest = yaml.safe_load(capsules[0].read_text())
-        assert manifest["capture_mode"] == "adapter-a2a"
+        assert manifest["capture_mode"] == "sdk-decorator"
+        assert manifest["metadata"]["framework"] == "a2a"
+
+    def test_concurrent_calls_do_not_cross_pair(self, tmp_path: Path) -> None:
+        """A response must land in the capsule of *its own* request.
+
+        Two calls are interleaved so that they complete in the reverse of the
+        order they started. The old fallback picked "the first still-pending
+        entry for this method", which under that interleaving writes agent-b's
+        response into agent-a's capsule — a silent evidence-integrity fault,
+        the worst possible kind for a provenance tool.
+
+        Both capsules still get written either way, so the assertion has to be
+        on the request/response *pairing* inside each capsule, not on the count.
+        """
+        import asyncio
+
+        from a2a.client.interceptors import AfterArgs, BeforeArgs
+
+        from novafabric.adapters.a2a import NovaA2AInterceptor
+
+        interceptor = NovaA2AInterceptor(tmp_path)
+
+        def _card(name: str) -> MagicMock:
+            card = MagicMock()
+            card.name = name
+            return card
+
+        b_started = asyncio.Event()
+        b_finished = asyncio.Event()
+
+        async def _call_a() -> None:
+            await interceptor.before(
+                BeforeArgs(
+                    input={"agent": "agent-a"},
+                    method="send_message",
+                    agent_card=_card("agent-a"),
+                )
+            )
+            await b_started.wait()   # both captures now outstanding
+            await b_finished.wait()  # b completes first: start order != finish order
+            await interceptor.after(
+                AfterArgs(
+                    result={"agent": "agent-a"},
+                    method="send_message",
+                    agent_card=_card("agent-a"),
+                )
+            )
+
+        async def _call_b() -> None:
+            await interceptor.before(
+                BeforeArgs(
+                    input={"agent": "agent-b"},
+                    method="send_message",
+                    agent_card=_card("agent-b"),
+                )
+            )
+            b_started.set()
+            await interceptor.after(
+                AfterArgs(
+                    result={"agent": "agent-b"},
+                    method="send_message",
+                    agent_card=_card("agent-b"),
+                )
+            )
+            b_finished.set()
+
+        async def _both() -> None:
+            await asyncio.gather(_call_a(), _call_b())
+
+        with (
+            patch("novafabric.adapters.a2a.capture_environment", return_value={}),
+            patch("novafabric.adapters.a2a.SecretScannerV0") as MockScanner,
+            patch("novafabric.capture.hooks.install_all"),
+            patch("novafabric.capture.hooks.uninstall_all"),
+        ):
+            MockScanner.return_value.scan_and_redact.return_value = {}
+            asyncio.run(_both())
+
+        task_logs = sorted(tmp_path.rglob("a2a-tasks.jsonl"))
+        assert len(task_logs) == 2, "each concurrent call must get its own capsule"
+        for log in task_logs:
+            entries = [json.loads(line) for line in log.read_text().splitlines() if line]
+            request = next(e for e in entries if e["direction"] == "request")
+            response = next(e for e in entries if e["direction"] == "response")
+            assert response["result"]["agent"] == request["input"]["agent"], (
+                "response was filed under a different call's capsule: "
+                f"request={request['input']} response={response['result']}"
+            )
+
+    def test_concurrent_calls_do_not_tear_down_each_others_hooks(
+        self, tmp_path: Path
+    ) -> None:
+        """The first call to finish must not end wire capture for the others.
+
+        ``capture.hooks`` keeps ONE module-level ``_installed`` list and ONE
+        recorder singleton. Both A2A hooks used to drive it unconditionally, so
+        two concurrent calls stacked two patch layers and then the first
+        ``after()`` ran ``uninstall_all()`` and removed both — wire-level
+        capture for the in-flight call stopped silently, mid-run.
+
+        Note what this test does *not* do: patch out ``install_all`` /
+        ``uninstall_all``. The pre-existing interleaving test does, which is
+        exactly why it could never see this. Here they are counted for real.
+        """
+        import asyncio
+
+        from a2a.client.interceptors import AfterArgs, BeforeArgs
+
+        import novafabric.capture.hooks as hooks_mod
+        from novafabric.adapters.a2a import NovaA2AInterceptor
+
+        interceptor = NovaA2AInterceptor(tmp_path)
+
+        installs: list[str] = []
+        uninstalls: list[str] = []
+        # Observe the real call sites without letting them patch live SDKs, but
+        # mimic the REAL ownership contract (ADR-0224): install_all returns a
+        # token, empty when another capture already owns the hooks, and
+        # uninstall_all only tears down for the owner. A mock that ignored that
+        # would prove nothing about the behaviour under test.
+        _owner: list[str] = []
+
+        def _fake_install(**kw: object) -> str:
+            installs.append(str(kw["parent_span_id"]))
+            if _owner:
+                return ""
+            _owner.append(str(kw["parent_span_id"]))
+            return _owner[0]
+
+        def _fake_uninstall(token: str | None = None) -> bool:
+            if token and _owner and token == _owner[0]:
+                _owner.clear()
+                uninstalls.append(token)
+                return True
+            return False
+
+        with (
+            patch.object(hooks_mod, "install_all", side_effect=_fake_install),
+            patch.object(hooks_mod, "uninstall_all", side_effect=_fake_uninstall),
+            patch("novafabric.adapters.a2a.capture_environment", return_value={}),
+            patch("novafabric.adapters.a2a.SecretScannerV0") as MockScanner,
+        ):
+            MockScanner.return_value.scan_and_redact.return_value = {}
+
+            def _card(name: str) -> MagicMock:
+                card = MagicMock()
+                card.name = name
+                return card
+
+            b_done = asyncio.Event()
+
+            async def _call_a() -> None:
+                await interceptor.before(BeforeArgs(
+                    input={"agent": "a"}, method="send_message",
+                    agent_card=_card("agent-a")))
+                await b_done.wait()
+                # B has fully finished. A is still in flight, so the hooks A
+                # installed must still be in place.
+                assert not uninstalls, (
+                    "the concurrent call's after() tore down the hooks that "
+                    "belong to a capture still in flight"
+                )
+                await interceptor.after(AfterArgs(
+                    result={"agent": "a"}, method="send_message",
+                    agent_card=_card("agent-a")))
+
+            async def _call_b() -> None:
+                await interceptor.before(BeforeArgs(
+                    input={"agent": "b"}, method="send_message",
+                    agent_card=_card("agent-b")))
+                await interceptor.after(AfterArgs(
+                    result={"agent": "b"}, method="send_message",
+                    agent_card=_card("agent-b")))
+                b_done.set()
+
+            async def _both() -> None:
+                await asyncio.gather(_call_a(), _call_b())
+
+            asyncio.run(_both())
+
+        # Both calls now REACH install_all — the guard moved into it (ADR-0224),
+        # so safety no longer depends on each adapter remembering to ask first.
+        # What must hold is that only one of them ends up owning the hooks.
+        assert len(installs) == 2, (
+            f"both concurrent calls should reach install_all, got {len(installs)}"
+        )
+        assert len(_owner) == 0, "ownership leaked — the next capture gets no wire capture"
+        assert len(uninstalls) == 1, (
+            f"exactly one capture may tear the hooks down, got {len(uninstalls)} — "
+            "more than one means a call still in flight lost its wire capture"
+        )
+
+        # Both capsules exist, and each says truthfully whether wire-level
+        # capture was active for it.
+        manifests = [
+            yaml.safe_load(p.read_text()) for p in sorted(tmp_path.glob("*/capsule.yaml"))
+        ]
+        assert len(manifests) == 2, manifests
+        states = sorted(m["metadata"]["wire_capture"] for m in manifests)
+        assert states == ["installed", "skipped-concurrent"], states
 
     def test_non_send_message_calls_are_passthrough(self, tmp_path: Path) -> None:
         import asyncio

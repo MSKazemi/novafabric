@@ -1,0 +1,84 @@
+name: license-policy
+
+# Dependency LICENSE gate (ADR-0024). Closes the gap ADR-0024 named in its own
+# Consequences: "The CI enforcement step is not yet implemented; manual review
+# is the gap." The tier policy has existed since 2026-05; until now nothing
+# checked it, and each dependency's tier reasoning lived only in unenforced
+# pyproject.toml comments.
+#
+# scripts/license_gate.py walks every INSTALLED distribution, resolves its
+# license (PEP 639 expression -> trove classifiers -> License field -> the
+# text of License-File), and maps it to an ADR-0024 tier:
+#
+#   - Tier A (Apache-2.0, MIT, BSD, PostgreSQL, PSF, ISC, CC0, Unlicense)
+#     passes silently — no paperwork for permissive licenses.
+#   - Tier B (LGPL dynamic-linking-only, MPL-2.0) passes ONLY when declared in
+#     .license-policy.toml with a justification.
+#   - Tier C (GPL any linking, AGPL, SSPL, BSL, Elastic, Commons Clause,
+#     source-available, proprietary) is "reject by default; explicit waiver
+#     required" — it passes only when declared with BOTH a justification and a
+#     migration_path, per ADR-0024 Tier C.
+#   - Tier D (field-of-use restrictions, "ethical source" terms) is forbidden
+#     outright: "D" is not a declarable tier, so no entry can reach it.
+#   - An unresolvable license blocks until declared (fail closed).
+#
+# This complements the Go collector's own license step in collector-ci.yml,
+# which covers the Go module graph. Together they cover both ecosystems.
+#
+# Note it installs the environment rather than reading uv.lock: license
+# metadata lives in the built distributions, not in the lockfile.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly re-check — an upstream RELICENSE (the MongoDB/Elastic/HashiCorp
+    # class of event) changes nothing in our lockfile but everything for this
+    # policy. Tuesdays 07:00 UTC, just after pip-audit.
+    - cron: "0 7 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: license-policy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  license-policy:
+    name: license policy (ADR-0024)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python (matches requires-python in pyproject.toml)
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Sync the full environment
+        # --all-extras so the gate sees every optional dependency too; a
+        # plain `uv sync` hides the extras' licenses entirely (the same
+        # omission that made the unit job unable to pass — see BL-022).
+        run: uv sync --all-extras
+
+      - name: License policy gate
+        # --ignore novafabric: our own distribution is what we ship, not what
+        # we consume, and its license is set by LICENSE in this repo.
+        run: uv run python scripts/license_gate.py --ignore novafabric
+
+      - name: Full license inventory (always, for the audit trail)
+        if: always()
+        run: uv run python scripts/license_gate.py --ignore novafabric --list

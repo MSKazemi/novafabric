@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://novafabric.io/schemas/lineage-edge.schema.json",
-  "$comment": "schema_version 1.0.0; validates records in lineage.jsonl.",
+  "$id": "https://novafabric.io/schemas/lineage-edge-v1.schema.json",
+  "$comment": "schema_version 1.0.0; validates records in lineage.jsonl.  STATUS: OAS v1.0 TARGET schema, NOT yet in force. ADR-0034 \u00a71 freezes a spec only when all four conditions hold; conditions 2 (spec doc 'Adopted') and 3 (>=3 design-partner sign-offs) are open as of 2026-08-02, so the spec is in pre-freeze draft status. The in-force schema an installed CLI validates against is the packaged copy under src/novafabric/schemas/, which keeps the original $id. See ADR-0223.",
   "title": "LineageEdge",
   "description": "One directed edge in the NovaFabric lineage graph, stored as a JSONL record.",
   "type": "object",
@@ -20,7 +20,7 @@
     "schema_version": {
       "type": "string",
       "pattern": "^1\\.",
-      "description": "OAS v1.0 schema version. Must be 1.x.x (ADR-0034 §1)."
+      "description": "OAS v1.0 schema version. Must be 1.x.x (ADR-0034 \u00a71)."
     },
     "edge_id": {
       "type": "string",
@@ -49,56 +49,108 @@
     },
     "source": {
       "type": "object",
-      "required": ["kind"],
+      "required": [
+        "kind"
+      ],
       "properties": {
         "kind": {
           "type": "string",
-          "enum": ["run", "asset", "artifact", "external", "attestation"]
+          "enum": [
+            "run",
+            "asset",
+            "artifact",
+            "external",
+            "attestation"
+          ]
         },
-        "run_id": {"type": "string"},
-        "asset_ref": {"type": "string"},
-        "registry": {"type": "string"},
-        "artifact_ref": {"type": "object"}
+        "run_id": {
+          "type": "string"
+        },
+        "asset_ref": {
+          "type": "string"
+        },
+        "registry": {
+          "type": "string"
+        },
+        "artifact_ref": {
+          "type": "object"
+        }
       }
     },
     "target": {
       "type": "object",
-      "required": ["kind"],
+      "required": [
+        "kind"
+      ],
       "properties": {
         "kind": {
           "type": "string",
-          "enum": ["run", "asset", "artifact", "external", "attestation"]
+          "enum": [
+            "run",
+            "asset",
+            "artifact",
+            "external",
+            "attestation"
+          ]
         },
-        "run_id": {"type": "string"},
-        "asset_ref": {"type": "string"},
-        "registry": {"type": "string"},
-        "artifact_ref": {"type": "object"}
+        "run_id": {
+          "type": "string"
+        },
+        "asset_ref": {
+          "type": "string"
+        },
+        "registry": {
+          "type": "string"
+        },
+        "artifact_ref": {
+          "type": "object"
+        }
       }
     },
     "direction": {
       "type": "string",
-      "enum": ["source_to_target", "target_to_source"]
+      "enum": [
+        "source_to_target",
+        "target_to_source"
+      ]
     },
-    "created_at": {"type": "string"},
+    "created_at": {
+      "type": "string"
+    },
     "emitter": {
       "type": "object",
-      "required": ["name", "version"],
+      "required": [
+        "name",
+        "version"
+      ],
       "properties": {
-        "name": {"type": "string"},
-        "version": {"type": "string"}
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
       }
     },
     "confidence": {
       "type": "string",
-      "enum": ["observed", "inferred", "declared"]
+      "enum": [
+        "observed",
+        "inferred",
+        "declared"
+      ]
     },
-    "capsule_run_id": {"type": "string"},
+    "capsule_run_id": {
+      "type": "string"
+    },
     "facets": {
       "type": "object"
     },
     "evidence_refs": {
       "type": "array",
-      "items": {"type": "string"}
+      "items": {
+        "type": "string"
+      }
     },
     "attributes": {
       "type": "object"

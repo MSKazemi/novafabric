@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/evidence-bundle.schema.json",
-  "$comment": "schema_version 0.1.0; tracks design/spec/evidence-bundle-v0.md. Validates manifest.json inside an Evidence Bundle zip. The bundle layout itself is enforced by the spec, not by this schema.",
+  "$comment": "schema_version 0.1.0; tracks design/spec/evidence-bundle-v0.md. Validates manifest.json inside an Evidence Bundle zip. The bundle layout itself is enforced by the spec, not by this schema.  STATUS: IN FORCE. This is what an installed CLI validates against and what existing capsules were written against. The OAS v1.0 target lives at the sibling $id ending -v1.schema.json and is not yet in force. See ADR-0223.",
   "title": "EvidenceBundle",
   "description": "manifest.json at the root of a NovaFabric Evidence Bundle. The audit-ready, signed package produced by 'novafabric export-evidence'. Self-contained: all schemas are vendored; verification requires only stock cosign and in-toto tooling.",
   "type": "object",
@@ -38,7 +38,10 @@
     "created_by": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "version"],
+      "required": [
+        "name",
+        "version"
+      ],
       "properties": {
         "name": {
           "type": "string",
@@ -52,10 +55,14 @@
     },
     "subject": {
       "oneOf": [
-        {"$ref": "#/$defs/Subject"},
+        {
+          "$ref": "#/$defs/Subject"
+        },
         {
           "type": "array",
-          "items": {"$ref": "#/$defs/Subject"},
+          "items": {
+            "$ref": "#/$defs/Subject"
+          },
           "minItems": 2,
           "description": "Multiple subjects when --include-runs was used."
         }
@@ -64,27 +71,38 @@
     },
     "bundle_format": {
       "type": "string",
-      "enum": ["zip", "tar.gz"],
+      "enum": [
+        "zip",
+        "tar.gz"
+      ],
       "description": "Archive format of the bundle."
     },
     "artifacts": {
       "type": "array",
-      "items": {"$ref": "#/$defs/ArtifactEntry"},
+      "items": {
+        "$ref": "#/$defs/ArtifactEntry"
+      },
       "description": "Every file in the bundle (excluding manifest.json itself), with hash and attestation coverage."
     },
     "attestations": {
       "type": "array",
-      "items": {"$ref": "#/$defs/AttestationRef"},
+      "items": {
+        "$ref": "#/$defs/AttestationRef"
+      },
       "description": "in-toto envelopes included in the bundle."
     },
     "signatures": {
       "type": "array",
-      "items": {"$ref": "#/$defs/SignatureRef"},
+      "items": {
+        "$ref": "#/$defs/SignatureRef"
+      },
       "description": "Sigstore signatures for each in-toto envelope."
     },
     "schemas": {
       "type": "array",
-      "items": {"$ref": "#/$defs/SchemaRef"},
+      "items": {
+        "$ref": "#/$defs/SchemaRef"
+      },
       "description": "JSON schemas vendored into the bundle under schemas/."
     },
     "verifier_instructions": {
@@ -106,42 +124,127 @@
     },
     "admissibility_status": {
       "type": "string",
-      "enum": ["self-authenticating", "requires-foundation", "incomplete"],
+      "enum": [
+        "self-authenticating",
+        "requires-foundation",
+        "incomplete"
+      ],
       "description": "Rollup of the five-point FRE-902(14) completeness gate (ADR-0095). Additive."
+    },
+    "timestamp_status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "failed"
+      ],
+      "description": "Outcome of the RFC 3161 timestamp request. 'ok' means the TSR is present and valid. 'failed' means --timestamp-optional was set and the TSA was unreachable or rejected the request."
+    },
+    "timestamp_tsa_url": {
+      "type": "string",
+      "description": "URL of the Timestamp Authority that issued the TSR. Present when timestamp_status is 'ok'."
+    },
+    "timestamp_failure_reason": {
+      "type": "string",
+      "description": "Error detail when timestamp_status is 'failed' (--timestamp-optional mode)."
+    },
+    "manifest_dsse_tsr_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "SHA-256 of manifest.dsse.tsr \u2014 the DER-encoded RFC 3161 TimeStampResponse stored in the bundle alongside the primary DSSE envelope (ADR-0030). Present only when --timestamp was used."
     }
   },
   "$defs": {
     "ChainOfCustody": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["custodian", "acquisition", "custody_events", "integrity_continuous"],
+      "required": [
+        "custodian",
+        "acquisition",
+        "custody_events",
+        "integrity_continuous"
+      ],
       "properties": {
         "custodian": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["provenance"],
+          "required": [
+            "provenance"
+          ],
           "properties": {
-            "identity": {"type": ["string", "null"]},
-            "role": {"type": ["string", "null"]},
-            "organization": {"type": ["string", "null"]},
-            "provenance": {"type": "string", "enum": ["novaseal-identity", "oidc", "operator_declared"]}
+            "identity": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "role": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "organization": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "provenance": {
+              "type": "string",
+              "enum": [
+                "novaseal-identity",
+                "oidc",
+                "operator_declared"
+              ]
+            }
           }
         },
         "acquisition": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["method", "acquired_at", "hash_at_acquisition", "acquisition_tool", "provenance"],
+          "required": [
+            "method",
+            "acquired_at",
+            "hash_at_acquisition",
+            "acquisition_tool",
+            "provenance"
+          ],
           "properties": {
-            "method": {"type": "string"},
-            "acquired_at": {"type": ["string", "null"]},
-            "hash_at_acquisition": {"type": "string"},
+            "method": {
+              "type": "string"
+            },
+            "acquired_at": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "hash_at_acquisition": {
+              "type": "string"
+            },
             "acquisition_tool": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["name", "version"],
-              "properties": {"name": {"type": "string"}, "version": {"type": "string"}}
+              "required": [
+                "name",
+                "version"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": "string"
+                }
+              }
             },
-            "provenance": {"type": "string", "enum": ["witnessed", "operator_declared"]}
+            "provenance": {
+              "type": "string",
+              "enum": [
+                "witnessed",
+                "operator_declared"
+              ]
+            }
           }
         },
         "custody_events": {
@@ -149,38 +252,93 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["event", "actor", "at", "audit_entry_id", "prev_hash", "entry_hash"],
+            "required": [
+              "event",
+              "actor",
+              "at",
+              "audit_entry_id",
+              "prev_hash",
+              "entry_hash"
+            ],
             "properties": {
-              "event": {"type": "string"},
-              "actor": {"type": "string"},
-              "at": {"type": "string"},
-              "audit_entry_id": {"type": "string"},
-              "prev_hash": {"type": ["string", "null"]},
-              "entry_hash": {"type": "string"}
+              "event": {
+                "type": "string"
+              },
+              "actor": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string"
+              },
+              "audit_entry_id": {
+                "type": "string"
+              },
+              "prev_hash": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "entry_hash": {
+                "type": "string"
+              }
             }
           }
         },
-        "integrity_continuous": {"type": "boolean"}
+        "integrity_continuous": {
+          "type": "boolean"
+        }
       }
     },
     "SelfAuthentication": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["rule", "certification", "hash_verified_against_acquisition"],
+      "required": [
+        "rule",
+        "certification",
+        "hash_verified_against_acquisition"
+      ],
       "properties": {
-        "rule": {"type": "string", "enum": ["FRE-902(14)", "FRE-902(13)"]},
+        "rule": {
+          "type": "string",
+          "enum": [
+            "FRE-902(14)",
+            "FRE-902(13)"
+          ]
+        },
         "certification": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["process_description", "qualified_person", "digital_signature_alg", "signature_verifies"],
+          "required": [
+            "process_description",
+            "qualified_person",
+            "digital_signature_alg",
+            "signature_verifies"
+          ],
           "properties": {
-            "process_description": {"type": "string"},
-            "qualified_person": {"type": ["string", "null"]},
-            "digital_signature_alg": {"type": ["string", "null"]},
-            "signature_verifies": {"type": "boolean"}
+            "process_description": {
+              "type": "string"
+            },
+            "qualified_person": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "digital_signature_alg": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "signature_verifies": {
+              "type": "boolean"
+            }
           }
         },
-        "hash_verified_against_acquisition": {"type": "boolean"}
+        "hash_verified_against_acquisition": {
+          "type": "boolean"
+        }
       }
     },
     "Ulid": {
@@ -214,8 +372,12 @@
         },
         "alias": {
           "oneOf": [
-            {"type": "string"},
-            {"type": "null"}
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ],
           "description": "Human-friendly name for the run, e.g. 'support-agent-prod-2026-05-07'."
         },
@@ -232,7 +394,12 @@
     "ArtifactEntry": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["path", "size_bytes", "media_type", "sha256"],
+      "required": [
+        "path",
+        "size_bytes",
+        "media_type",
+        "sha256"
+      ],
       "properties": {
         "path": {
           "type": "string",
@@ -252,7 +419,9 @@
         },
         "covered_by": {
           "type": "array",
-          "items": {"type": "string"},
+          "items": {
+            "type": "string"
+          },
           "description": "Paths to attestation envelopes whose subject Merkle root covers this file. Empty for unsigned derived files."
         }
       }
@@ -283,13 +452,17 @@
         },
         "subject_hashes": {
           "type": "array",
-          "items": {"$ref": "#/$defs/ContentHash"},
+          "items": {
+            "$ref": "#/$defs/ContentHash"
+          },
           "minItems": 1,
           "description": "SHA-256 digests of the subjects covered by this envelope."
         },
         "envelope_format": {
           "type": "string",
-          "enum": ["DSSE"],
+          "enum": [
+            "DSSE"
+          ],
           "description": "Envelope format. v0.1 requires DSSE (Dead Simple Signing Envelope)."
         },
         "sha256": {
@@ -298,7 +471,9 @@
         },
         "signature_refs": {
           "type": "array",
-          "items": {"type": "string"},
+          "items": {
+            "type": "string"
+          },
           "description": "Paths to the Sigstore signature files for this envelope."
         }
       }
@@ -361,7 +536,11 @@
     "SchemaRef": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "version", "sha256"],
+      "required": [
+        "name",
+        "version",
+        "sha256"
+      ],
       "properties": {
         "name": {
           "type": "string",

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import threading
+import uuid
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -13,6 +15,116 @@ _installed: list[object] = []
 # orchestrator that manages its own recorder lifecycle). Only when we set it do
 # we clear it in uninstall_all() — so we never clobber an externally-owned one.
 _recorder_set_by_install: bool = False
+
+# ── Single-owner guard for the process-global hooks (ADR-0224) ─────────────
+#
+# `_installed` and the EventRecorder singleton are process-global with no
+# per-task scoping, so two concurrent in-process captures collided three ways
+# (all three reproduced, see ADR-0224 §Evidence):
+#
+#   1. the second install_all() left the FIRST capture's recorder in place, so
+#      capture B's network/file events were filed into capture A's capsule —
+#      an evidence-integrity fault, not merely lost data;
+#   2. the second install_all() stacked a second patch layer (6 hooks -> 12),
+#      so an event could be recorded twice while both were live;
+#   3. whichever capture finished first ran uninstall_all() and tore down
+#      *both*, leaving the still-running capture with no hooks and no recorder.
+#
+# Until the recorder becomes task-scoped (ADR-0224 phase 2), exactly one
+# capture owns the hooks at a time. A concurrent second capture still gets its
+# own capsule and its own adapter-level record — it simply does not install a
+# second, conflicting set of wire hooks, and says so rather than leaving a
+# silently short stream to be misread as "no network activity".
+_HOOK_OWNER_LOCK = threading.Lock()
+_hook_owner: str | None = None
+
+#: Owner tokens that were live while another capture tried to claim the hooks.
+#:
+#: This is the residual risk the single-owner guard does NOT remove. The hooks
+#: are process-global monkeypatches holding the *owner's* writer, so while two
+#: captures overlap, the non-owner's HTTP/file traffic is still intercepted and
+#: recorded into the OWNER's capsule. The guard stops teardown and double-
+#: recording; it cannot stop cross-attribution short of task-scoped hooks
+#: (ADR-0224 phase 2).
+#:
+#: An evidence system must not leave that inferable only from a suspiciously
+#: busy stream, so the owner can ask whether it was contended and mark its own
+#: capsule accordingly.
+_contended_owners: set[str] = set()
+
+
+def _claim_hook_ownership() -> str:
+    """Become owner of the process-global hooks. Returns a token, or ``""``."""
+    global _hook_owner
+    with _HOOK_OWNER_LOCK:
+        if _hook_owner is None:
+            _hook_owner = uuid.uuid4().hex
+            return _hook_owner
+        # Someone already owns them: record that the owner's capsule may now
+        # contain this capture's wire events.
+        _contended_owners.add(_hook_owner)
+        return ""
+
+
+def _release_hook_ownership(token: str) -> bool:
+    """Give up ownership if *token* holds it. True if the caller should tear down.
+
+    An empty token never matches, so the capture that lost the race is a no-op
+    here even though it faithfully passes back what ``install_all`` gave it.
+    """
+    global _hook_owner
+    with _HOOK_OWNER_LOCK:
+        if token and _hook_owner is not None and _hook_owner == token:
+            _hook_owner = None
+            return True
+        return False
+
+
+def _forget_contention(token: str) -> None:
+    with _HOOK_OWNER_LOCK:
+        _contended_owners.discard(token)
+
+
+def current_hook_owner() -> str | None:
+    """The live owner token, or None. Exposed for tests and diagnostics."""
+    with _HOOK_OWNER_LOCK:
+        return _hook_owner
+
+
+def wire_capture_state(token: str) -> str:
+    """The honest ``metadata.wire_capture`` value for a capture holding *token*.
+
+    Three states, because "the stream is short" has three different causes and
+    a reader must not have to guess which:
+
+    - ``"installed"`` — this capture owned the hooks for its whole life and
+      nothing else overlapped. The wire stream is this run's, and complete.
+    - ``"installed-contended"`` — this capture owned the hooks, but another
+      capture overlapped it. The hooks are process-global patches holding this
+      capture's writer, so the stream may contain **the other run's** events.
+      Complete, but not exclusively this run's.
+    - ``"skipped-concurrent"`` — another capture owned the hooks, so no
+      wire-level hooks were installed for this one. Its adapter-level record is
+      still complete; the wire stream is absent, not empty.
+
+    Read this **before** :func:`uninstall_all`, which forgets the contention
+    record so it cannot accumulate across a long-lived process.
+    """
+    if not token:
+        return "skipped-concurrent"
+    return "installed-contended" if owner_was_contended(token) else "installed"
+
+
+def owner_was_contended(token: str) -> bool:
+    """True if another capture overlapped *token*'s ownership.
+
+    When true, the owner's wire-event stream may contain events produced by
+    the concurrent capture, because the hooks patch process-global call sites.
+    Callers should record this in their capsule rather than let a reader
+    assume every event in the stream belongs to that run.
+    """
+    with _HOOK_OWNER_LOCK:
+        return bool(token) and token in _contended_owners
 
 
 # Map of (target SDK module, hook module path, hook class name).
@@ -111,8 +223,21 @@ def _install_plugins(writer: "CapsuleWriter", parent_span_id: str) -> None:
     )
 
 
-def install_all(writer: "CapsuleWriter", parent_span_id: str) -> None:
+def install_all(writer: "CapsuleWriter", parent_span_id: str) -> str:
     """Install every built-in hook whose target SDK is importable.
+
+    Returns an **owner token**: a non-empty string when this call installed the
+    hooks, or ``""`` when another capture already owns them (nothing is
+    installed). Truthiness answers "did I get wire capture?", which callers use
+    to record an honest ``wire_capture`` marker.
+
+    Always hand the returned value straight back to :func:`uninstall_all`.
+    That is safe in both cases *by construction*: the empty token can never own
+    the hooks, so a capture that lost the race cannot tear down the one that
+    won. Returning ``None`` for the loser would have been the obvious API and
+    is a trap — ``uninstall_all(None)`` is the legacy unconditional teardown,
+    so handing back the return value would have caused exactly the bug this
+    guard exists to prevent.
 
     Hooks for absent SDKs are skipped entirely — the hook module is
     not even imported. The performance impact is small (see
@@ -126,6 +251,12 @@ def install_all(writer: "CapsuleWriter", parent_span_id: str) -> None:
     patched. For the import-deferred path that avoids importing unused SDKs at
     startup, see :func:`install_all_deferred` (``--fast-emit``).
     """
+    token = _claim_hook_ownership()
+    if not token:
+        # Another capture owns the hooks. Installing anyway would stack a
+        # second patch layer and file this capture's events into the owner's
+        # capsule (ADR-0224 failure modes 1 and 2).
+        return ""
     _ensure_recorder(writer)
 
     for sdk_module, hook_module_path, hook_class_name in _BUILT_IN_HOOKS:
@@ -144,6 +275,7 @@ def install_all(writer: "CapsuleWriter", parent_span_id: str) -> None:
         _installed.append(hook)
 
     _install_plugins(writer, parent_span_id)
+    return token
 
 
 def install_all_deferred(writer: "CapsuleWriter", parent_span_id: str) -> None:
@@ -193,8 +325,30 @@ def install_all_deferred(writer: "CapsuleWriter", parent_span_id: str) -> None:
     _install_plugins(writer, parent_span_id)
 
 
-def uninstall_all() -> None:
+def uninstall_all(token: str | None = None) -> bool:
+    """Tear down the hooks. Returns True if a teardown actually happened.
+
+    ``token`` is what :func:`install_all` returned. When given, the teardown
+    only happens if that token still owns the hooks — so a capture that lost
+    the race, or one that already released, cannot tear down a capture still
+    in flight.
+
+    ``token=None`` keeps the historical unconditional behaviour, which is
+    correct **only** where exactly one capture exists per process: the
+    subprocess sitecustomize loader and the orchestrator. Every in-process
+    caller (SDK wrapper, framework adapters) must pass its token.
+    """
     global _recorder_set_by_install
+    if token is not None and not _release_hook_ownership(token):
+        return False
+    if token:
+        # Bounded: the contention record exists so the owner can mark its own
+        # capsule, and that read has happened by now (see wire_capture_state).
+        _forget_contention(token)
+    if token is None:
+        # Legacy unconditional path: drop any live ownership so the next
+        # capture in this process can claim the hooks.
+        _release_hook_ownership(current_hook_owner() or "")
     for hook in _installed:
         try:
             hook.uninstall()  # type: ignore[attr-defined]
@@ -211,3 +365,4 @@ def uninstall_all() -> None:
             pass
         finally:
             _recorder_set_by_install = False
+    return True

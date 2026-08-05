@@ -52,7 +52,7 @@ class _WrappedBedrockClient:
     def invoke_agent(self, **kwargs: Any) -> dict[str, Any]:
         from novafabric.capture._ulid import new_span_id, new_ulid
         from novafabric.capture.capsule import CapsuleWriter
-        from novafabric.capture.hooks import install_all, uninstall_all
+        from novafabric.capture.hooks import install_all, uninstall_all, wire_capture_state
         from novafabric.capture.replay import minimal_replay_policy
 
         run_id = new_ulid()
@@ -62,12 +62,12 @@ class _WrappedBedrockClient:
         writer.open()
         created_at = _now()
         t0 = time.monotonic()
-        install_all(writer=writer, parent_span_id=span_id)
+        _hook_token = install_all(writer=writer, parent_span_id=span_id)
 
         try:
             response = self._inner.invoke_agent(**kwargs)
         except Exception:
-            uninstall_all()
+            uninstall_all(_hook_token)
             raise
 
         cap_dir = writer.capsule_dir
@@ -82,8 +82,10 @@ class _WrappedBedrockClient:
                         with trace_log.open("a") as f:
                             f.write(json.dumps({trace_key: event["trace"][trace_key]}) + "\n")
                 yield event
-            # Finalize capsule when stream exhausted
-            uninstall_all()
+            # Finalize capsule when stream exhausted. Read the wire state
+            # BEFORE teardown: uninstall_all forgets the contention record.
+            _wire_state = wire_capture_state(_hook_token)
+            uninstall_all(_hook_token)
             finished_at = _now()
             duration_ms = int((time.monotonic() - t0) * 1000)
 
@@ -117,7 +119,7 @@ class _WrappedBedrockClient:
                 "duration_ms": duration_ms,
                 "status": "success",
                 "command": [f"@bedrock-agentcore:{kwargs.get('agentId', 'agent')}"],
-                "capture_mode": "adapter-bedrock-agentcore",
+                "capture_mode": "sdk-decorator",
                 "novafabric_version": _pkg_version("novafabric"),
                 "working_directory": str(Path.cwd()).replace(str(Path.home()), "~"),
                 "host": {
@@ -143,11 +145,19 @@ class _WrappedBedrockClient:
                 "tool_call_count": _count_jsonl(cap_dir / "tool-calls.jsonl"),
                 "mutating_tool_count": 0,
                 "exit_code": 0,
-                "tags": {
+                "metadata": {
                     "framework": "bedrock-agentcore",
+                    "wire_capture": _wire_state,
                     "agent_id": kwargs.get("agentId", ""),
                 },
-                "bedrock_traces_ref": "bedrock-traces.jsonl",
+                # A bare `bedrock_traces_ref` is not a run-capsule property, and
+                # the schema is additionalProperties:false — it made every
+                # capsule this adapter wrote fail `nova validate`. Vendor-
+                # specific stream pointers belong under `extensions`, keyed by
+                # reverse DNS.
+                "extensions": {
+                    "com.amazonaws.bedrock": {"traces_ref": "bedrock-traces.jsonl"},
+                },
             }
             writer.write_text("capsule.yaml", yaml.dump(manifest, allow_unicode=True))
 

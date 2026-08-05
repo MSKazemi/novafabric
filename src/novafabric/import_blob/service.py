@@ -61,9 +61,24 @@ from novafabric.object_capsule_store.cas import compute_sha256
 
 log = logging.getLogger(__name__)
 
-_EXPORT_MANIFEST_SCHEMA_PATH = (
-    Path(__file__).resolve().parents[3] / "schemas" / "export-manifest.schema.json"
-)
+
+def _locate_export_manifest_schema() -> Path:
+    """Find export-manifest.schema.json, preferring the packaged copy.
+
+    The repo-root path below does not exist in a wheel — nothing under
+    `schemas/` ships by default — so on a plain `pip install novafabric` this
+    resolved to a directory outside site-packages and batch import could not
+    validate a manifest at all. `pyproject.toml`'s force-include now maps the
+    canonical file into the package; the repo-root path stays as the source-
+    checkout fallback.
+    """
+    packaged = Path(__file__).resolve().parents[1] / "schemas" / "export-manifest.schema.json"
+    if packaged.exists():
+        return packaged
+    return Path(__file__).resolve().parents[3] / "schemas" / "export-manifest.schema.json"
+
+
+_EXPORT_MANIFEST_SCHEMA_PATH = _locate_export_manifest_schema()
 
 #: Spec batch-import-v0 §Exit codes.
 EXIT_OK = 0
@@ -92,11 +107,7 @@ class ImportOutcome:
 
 
 def _now_rfc3339() -> str:
-    return (
-        datetime.now(tz=timezone.utc)
-        .isoformat(timespec="microseconds")
-        .replace("+00:00", "Z")
-    )
+    return datetime.now(tz=timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 def _pkg_version() -> str:
@@ -107,9 +118,7 @@ def _pkg_version() -> str:
 
 
 def _write_receipt(receipt: ImportReceipt, receipts_dir: Path | None) -> Path:
-    directory = (
-        receipts_dir if receipts_dir is not None else nova_home() / "import-receipts"
-    )
+    directory = receipts_dir if receipts_dir is not None else nova_home() / "import-receipts"
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{receipt.import_id}.json"
     path.write_text(json.dumps(receipt.to_json_dict(), indent=2) + "\n")
@@ -136,9 +145,7 @@ def _append_audit(receipt: ImportReceipt, audit_log_path: Path | None) -> None:
         log.warning("import %s: audit append failed: %s", receipt.import_id, exc)
 
 
-def _verify_unsigned(
-    manifest: ExportManifest, src_dir: Path
-) -> tuple[_Status, list[str]]:
+def _verify_unsigned(manifest: ExportManifest, src_dir: Path) -> tuple[_Status, list[str]]:
     """Steps 4–5 without the signature: same primitives, same refusals (D2).
 
     Only *authorship* goes unverified — tamper still refuses.
@@ -146,14 +153,12 @@ def _verify_unsigned(
     problems: list[str] = []
     if manifest.count != len(manifest.members):
         problems.append(
-            f"count={manifest.count} does not equal "
-            f"len(members)={len(manifest.members)}"
+            f"count={manifest.count} does not equal len(members)={len(manifest.members)}"
         )
     recomputed = compute_batch_digest(manifest.members)
     if recomputed != manifest.batch_digest:
         problems.append(
-            f"batch_digest mismatch: stored {manifest.batch_digest}, "
-            f"recomputed {recomputed}"
+            f"batch_digest mismatch: stored {manifest.batch_digest}, recomputed {recomputed}"
         )
     if problems:
         return "INVALID", problems
@@ -163,8 +168,7 @@ def _verify_unsigned(
         data = source.get_blob(member.content_hash)
         if data is None:
             problems.append(
-                f"member missing at source: {member.capsule_id} "
-                f"({member.content_hash})"
+                f"member missing at source: {member.capsule_id} ({member.content_hash})"
             )
             continue
         actual = "sha256:" + compute_sha256(data)
@@ -176,8 +180,7 @@ def _verify_unsigned(
             continue
         if len(data) != member.size:
             problems.append(
-                f"member size mismatch: {member.capsule_id} "
-                f"expected {member.size}, got {len(data)}"
+                f"member size mismatch: {member.capsule_id} expected {member.size}, got {len(data)}"
             )
     if problems:
         return "INCOMPLETE", problems
@@ -296,9 +299,7 @@ def _resolve_source(
     if not source.is_file():
         raise ImportUsageError(f"source does not exist: {source}")
     if not source.name.endswith(_ARCHIVE_SUFFIXES):
-        raise ImportUsageError(
-            f"source must be a directory or a .tar/.tar.gz archive: {source}"
-        )
+        raise ImportUsageError(f"source must be a directory or a .tar/.tar.gz archive: {source}")
     tmp = tempfile.TemporaryDirectory(prefix="nova-import-")
     target = Path(tmp.name) / "source"
     try:
@@ -359,16 +360,13 @@ def import_batch(
         )
     if public_key_pem is not None and allow_unsigned:
         raise ImportUsageError(
-            "--public-key and --allow-unsigned are mutually exclusive: "
-            "pass exactly one"
+            "--public-key and --allow-unsigned are mutually exclusive: pass exactly one"
         )
 
     resolved_root = capsule_root if capsule_root is not None else default_capsule_dir()
     started_at = _now_rfc3339()
     import_id = new_ulid()
-    mode: Literal["signed", "unsigned"] = (
-        "signed" if public_key_pem is not None else "unsigned"
-    )
+    mode: Literal["signed", "unsigned"] = "signed" if public_key_pem is not None else "unsigned"
 
     def _finish(
         *,
@@ -422,9 +420,7 @@ def import_batch(
     src_dir, layout_problem, tmp_dir = _resolve_source(source)
     try:
         if src_dir is None:
-            return _refuse(
-                "INVALID", [layout_problem or "unreadable source"], EXIT_INVALID
-            )
+            return _refuse("INVALID", [layout_problem or "unreadable source"], EXIT_INVALID)
         _guard_source_not_in_store(src_dir, resolved_root)
 
         # Step 1 — source layout: manifest present and parses.
@@ -432,9 +428,7 @@ def import_batch(
         try:
             raw = json.loads(manifest_path.read_text())
         except (OSError, ValueError) as exc:
-            return _refuse(
-                "INVALID", [f"manifest unreadable/invalid: {exc}"], EXIT_INVALID
-            )
+            return _refuse("INVALID", [f"manifest unreadable/invalid: {exc}"], EXIT_INVALID)
 
         # Step 2 — manifest structure against the closed ADR-0141 schema.
         import jsonschema  # type: ignore[import-untyped]  # noqa: PLC0415
@@ -443,8 +437,7 @@ def import_batch(
             json.loads(_EXPORT_MANIFEST_SCHEMA_PATH.read_text())
         )
         schema_errors = [
-            "manifest schema violation at "
-            f"/{'/'.join(str(p) for p in error.path)}: {error.message}"
+            f"manifest schema violation at /{'/'.join(str(p) for p in error.path)}: {error.message}"
             for error in validator.iter_errors(raw)
         ]
         if schema_errors:
@@ -491,9 +484,7 @@ def import_batch(
                     )
                     continue
                 if local_hash == member.content_hash:
-                    action: Literal["skipped_existing", "collision"] = (
-                        "skipped_existing"
-                    )
+                    action: Literal["skipped_existing", "collision"] = "skipped_existing"
                     detail: CollisionDetail | None = None
                 else:
                     action = "collision"
@@ -529,9 +520,7 @@ def import_batch(
                     record = records[capsule_id]
                     data = source_dest.get_blob(member.content_hash)
                     # Defense-in-depth TOCTOU re-hash (verified in step 5).
-                    if data is None or (
-                        "sha256:" + compute_sha256(data) != member.content_hash
-                    ):
+                    if data is None or ("sha256:" + compute_sha256(data) != member.content_hash):
                         record.action = "failed"
                         record.detail = "blob changed or vanished after verification"
                         continue
@@ -565,8 +554,7 @@ def import_batch(
                         and not (resolved_root / parent).is_dir()
                     ):
                         record.detail = (
-                            f"orphan parent_run_id: {parent} "
-                            "(in neither the batch nor the store)"
+                            f"orphan parent_run_id: {parent} (in neither the batch nor the store)"
                         )
             finally:
                 shutil.rmtree(staging_root, ignore_errors=True)
@@ -599,9 +587,7 @@ def import_batch(
         members = [records[m.capsule_id] for m in manifest.members]
         counts = ImportCounts(
             imported=sum(1 for r in members if r.action == "imported"),
-            skipped_existing=sum(
-                1 for r in members if r.action == "skipped_existing"
-            ),
+            skipped_existing=sum(1 for r in members if r.action == "skipped_existing"),
             collisions=sum(1 for r in members if r.action == "collision"),
             failed=sum(1 for r in members if r.action == "failed"),
         )

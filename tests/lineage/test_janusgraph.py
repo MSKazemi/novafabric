@@ -431,10 +431,12 @@ class TestHelmChart:
         """templates/configmap.yaml must exist."""
         assert (self._CHART_DIR / "templates" / "configmap.yaml").is_file()
 
-    def test_chart_appversion_is_1_0_0(self) -> None:
-        """Chart.yaml appVersion must be '1.0.0' (matches JanusGraph image tag)."""
+    def test_chart_appversion_is_1_1_0(self) -> None:
+        """Chart.yaml appVersion must be '1.1.0' (matches JanusGraph image tag;
+        see deploy/IMAGE_PINS.md — the drift test in
+        tests/deploy/test_image_pins.py is the enforcement mechanism)."""
         content = (self._CHART_DIR / "Chart.yaml").read_text()
-        assert 'appVersion: "1.0.0"' in content
+        assert 'appVersion: "1.1.0"' in content
 
 
 # ---------------------------------------------------------------------------
@@ -450,7 +452,7 @@ class TestIntegration:
     """Full round-trip tests against a live JanusGraph container.
 
     Start the container before running:
-        docker run -d -p 8182:8182 janusgraph/janusgraph:1.0.0
+        docker run -d -p 8182:8182 janusgraph/janusgraph:1.1.0
 
     Then run:
         NOVA_INTEGRATION=1 pytest tests/lineage/test_janusgraph.py::TestIntegration -v

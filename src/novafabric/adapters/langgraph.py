@@ -114,7 +114,7 @@ def _run_capture(
         "duration_ms": duration_ms,
         "status": status,
         "command": [f"@langgraph:{run_name}"],
-        "capture_mode": "adapter-langgraph",
+        "capture_mode": "sdk-decorator",
         "novafabric_version": _pkg_version("novafabric"),
         "working_directory": str(Path.cwd()).replace(str(Path.home()), "~"),
         "host": {
@@ -140,7 +140,7 @@ def _run_capture(
         "tool_call_count": tool_call_count,
         "mutating_tool_count": 0,
         "exit_code": exit_code,
-        "tags": tags,
+        "metadata": tags,
     }
     if error:
         manifest["error"] = error
@@ -181,10 +181,10 @@ class _WrappedGraph:
         return writer, run_id, root_span_id, cap_dir
 
     def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
-        from novafabric.capture.hooks import install_all, uninstall_all
+        from novafabric.capture.hooks import install_all, uninstall_all, wire_capture_state
 
         writer, run_id, root_span_id, cap_dir = self._make_writer()
-        install_all(writer=writer, parent_span_id=root_span_id)
+        _hook_token = install_all(writer=writer, parent_span_id=root_span_id)
         created_at = _now()
         t0 = time.monotonic()
         exit_code = 0
@@ -213,12 +213,13 @@ class _WrappedGraph:
             error = {"type": type(exc).__name__, "message": str(exc), "traceback_ref": None}
             raise
         finally:
-            uninstall_all()
+            _wire_state = wire_capture_state(_hook_token)
+            uninstall_all(_hook_token)
             _run_capture(
                 result,
                 run_name=self._run_name,
                 data_dir=self._data_dir,
-                tags=self._tags,
+                tags={**self._tags, "wire_capture": _wire_state},
                 error=error,
                 t0=t0,
                 created_at=created_at,
@@ -233,10 +234,10 @@ class _WrappedGraph:
     def stream(
         self, input: Any, config: Any = None, **kwargs: Any
     ) -> Generator[Any, None, None]:
-        from novafabric.capture.hooks import install_all, uninstall_all
+        from novafabric.capture.hooks import install_all, uninstall_all, wire_capture_state
 
         writer, run_id, root_span_id, cap_dir = self._make_writer()
-        install_all(writer=writer, parent_span_id=root_span_id)
+        _hook_token = install_all(writer=writer, parent_span_id=root_span_id)
         created_at = _now()
         t0 = time.monotonic()
         exit_code = 0
@@ -273,12 +274,13 @@ class _WrappedGraph:
             error = {"type": type(exc).__name__, "message": str(exc), "traceback_ref": None}
             raise
         finally:
-            uninstall_all()
+            _wire_state = wire_capture_state(_hook_token)
+            uninstall_all(_hook_token)
             _run_capture(
                 None,
                 run_name=self._run_name,
                 data_dir=self._data_dir,
-                tags=self._tags,
+                tags={**self._tags, "wire_capture": _wire_state},
                 error=error,
                 t0=t0,
                 created_at=created_at,

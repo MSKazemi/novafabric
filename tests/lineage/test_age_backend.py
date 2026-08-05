@@ -36,7 +36,13 @@ def age_dsn():
         pytest.skip("testcontainers not installed — skipping AGE lineage tests")
     try:
         with PostgresContainer(
-            "apache/age:latest", username="postgres", password="postgres", dbname="postgres"
+            # Pinned per deploy/IMAGE_PINS.md — matches the project's Postgres 16
+            # baseline (postgres:16-alpine in docker-compose.yml). AGE tags are
+            # release_PG<major>_<version>, not semver.
+            "apache/age:release_PG16_1.6.0",
+            username="postgres",
+            password="postgres",
+            dbname="postgres",
         ) as container:
             url = container.get_connection_url()
             url = url.replace("postgresql+psycopg2://", "postgresql+psycopg://")

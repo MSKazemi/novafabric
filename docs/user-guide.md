@@ -1432,7 +1432,11 @@ Override with `NOVA_WATCHER_BACKEND=watchdog` and `NOVA_WATCHER_INTERVAL=<second
 
 **Navigating.** The 29 tabs are grouped in the sidebar under seven headings:
 Overview · Runs & Debug · Govern & Promote · Provenance & Trust · Compliance ·
-Platform · Reports & Export. Every tab is deep-linkable as `?tab=<id>`, and the
+Platform · Reports & Export. Since v0.98.3 the groups **start collapsed**, each
+showing its tab count — click a heading to expand it. The group holding the
+tab you are on is always expanded, so your current location is never hidden,
+and whatever you expand or collapse is remembered in that browser. Every tab is
+deep-linkable as `?tab=<id>`, and the
 Compliance tab is itself a hub whose five panel groups (Frameworks · Audits ·
 Privacy · Exports · Assurance) are deep-linkable as `?sub=<group>`. Navigation
 shortcuts are mnemonic two-key sequences — press `g` then the tab's letter

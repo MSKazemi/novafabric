@@ -363,6 +363,12 @@ def issue_token_cmd(
             expires_in_days=days,
             key_path=resolved_key,
         )
+    except ImportError as exc:
+        # PyJWT lives in the `server` extra (ADR-0222 OQ-2). Its message already
+        # names the extra — pass it through instead of burying it under a
+        # generic "Failed to issue token".
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1)
     except Exception as exc:  # noqa: BLE001
         typer.echo(f"Failed to issue token: {exc}", err=True)
         raise typer.Exit(code=1)
@@ -400,7 +406,9 @@ def revoke_token_cmd(
         from novafabric.server.offline_tokens import revoke_token
 
         revoke_token(token_id, resolved_key)
-    except KeyError as exc:
+    except (KeyError, ImportError) as exc:
+        # ImportError: PyJWT lives in the `server` extra (ADR-0222 OQ-2) and its
+        # message already names it. Both cases carry a usable message already.
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1)
     except Exception as exc:  # noqa: BLE001

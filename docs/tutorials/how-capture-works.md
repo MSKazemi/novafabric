@@ -284,7 +284,7 @@ stream today, honestly labeled:
 | Stream | Filled by | Status |
 |---|---|---|
 | `network_events.jsonl` | wire-level hooks — `requests`, `httpx`, and (since ADR-0209) `aiohttp` + `urllib3`, layering-guarded against double-recording | works today |
-| `human_approvals.jsonl` | `nova seal-propose` maker-checker flow | works today |
+| `human_approvals.jsonl` | `nova seal propose` maker-checker flow | works today |
 | `guardrail_events.jsonl` | OpenAI Agents adapter: SDK guardrail spans map to events automatically; or your own `record.guardrail(...)` calls | experimental |
 | `state_transitions.jsonl` | LangGraph adapter: one digest-chained event per `stream()` node update, a start→end pair per `invoke()`; or `record.state_transition(...)` | experimental |
 | `vector_retrievals.jsonl` | `record.wrap_retriever(...)` around any retriever callable (explicit opt-in, no auto-detection); or `record.vector_retrieval(...)` | experimental |

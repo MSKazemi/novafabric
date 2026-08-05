@@ -28,6 +28,25 @@ log = logging.getLogger(__name__)
 _CAPSULE_SUFFIX = "/model-calls.jsonl"
 
 
+def require_clickhouse_connect() -> None:
+    """Fail with an actionable hint when ``clickhouse-connect`` is absent.
+
+    ADR-0222 moved ``clickhouse-connect`` out of ``[project.dependencies]``, so
+    a plain ``pip install novafabric`` no longer ships it.  Without this guard
+    the only signal a user gets is a bare ``ModuleNotFoundError: No module
+    named 'clickhouse_connect'``, which names no remedy.  Mirrors the
+    ``_require_clickhouse()`` hint in
+    ``evidence_fabric/clickhouse_accumulator.py``.
+    """
+    try:
+        import clickhouse_connect  # noqa: F401, PLC0415
+    except ImportError as exc:
+        raise ImportError(
+            "clickhouse-connect is required for ClickHouse cost attribution. "
+            "Install it with: pip install novafabric[clickhouse]"
+        ) from exc
+
+
 def _parse_url(url: str) -> dict[str, Any]:
     """Parse NOVA_CLICKHOUSE_URL into clickhouse_connect kwargs."""
     p = urlparse(url)
@@ -111,6 +130,7 @@ def ensure_schema() -> None:
 
 
 def _get_client() -> Any:
+    require_clickhouse_connect()
     import clickhouse_connect  # no stubs (mypy override in pyproject)
 
     url = os.environ.get("NOVA_CLICKHOUSE_URL", "")

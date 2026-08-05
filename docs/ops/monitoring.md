@@ -115,7 +115,7 @@ what is registered today:
 | `nova_http_request_duration_seconds` | histogram | `app`, `route`, `method` | request latency |
 | `nova_ingest_events_total` | counter | `app`, `encoding`, `outcome` | ingest write routes; `outcome` is `accepted` (2xx/3xx) or `rejected`. On the server app the classified routes are the capsule ZIP upload (`encoding=zip`) and the external score submission (`encoding=json`) |
 | `nova_readyz_check_status` | gauge | `app`, `check` | 1 = passing (`ok`/`skipped`/`unknown`), 0 = failing; updated on each `/readyz` probe |
-| `nova_db_pool_in_use`, `nova_db_pool_size` | gauge | `app`, `pool` | registered so the inventory is discoverable, but **honestly sample-less today**: neither backend keeps a connection pool (SQLite has none; the Postgres path opens per-request connections) |
+| `nova_db_pool_in_use`, `nova_db_pool_size` | gauge | `app`, `pool` | **Sampled since v0.98.0 — but only when a pool exists.** Set `NOVAFABRIC_METADATA_DB_POOL=1` (ADR-0221, experimental, opt-in, Postgres only) and the metadata store's pool is read **at `/metrics` scrape time** (pull-based, no background sampler) into `pool="metadata"`. Without the opt-in — and always on SQLite, which has no pool — the store exposes no stats and the gauges stay unsampled rather than reporting a fabricated zero |
 
 The spec also names a `nova_queue_depth` gauge; it is **planned** and not
 registered yet.

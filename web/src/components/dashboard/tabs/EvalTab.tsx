@@ -79,7 +79,7 @@ export default function EvalTab() {
           error={suitesError}
           onRetry={loadSuites}
           maxHeight={240}
-          empty={<EmptyState message="No eval suites registered." cliCommand="pip install novafabric[eval]" />}
+          empty={<EmptyState message="No eval suites registered." />}
         />
       </section>
 

@@ -42,7 +42,7 @@ jobs:
         run: uv sync
 
       - name: Ruff lint
-        run: uv run ruff check src/ tests/
+        run: uv run ruff check src/ tests/ scripts/
 
       - name: Mypy type check
         run: uv run mypy src/novafabric/metadata_store/ --exclude migrations

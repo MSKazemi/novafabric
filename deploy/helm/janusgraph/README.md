@@ -1,6 +1,6 @@
 # janusgraph Helm Chart
 
-Minimal Helm chart for deploying JanusGraph 1.0.0 as the NovaFabric lineage
+Minimal Helm chart for deploying JanusGraph 1.1.0 as the NovaFabric lineage
 v3 tier (distributed graph DB).
 
 ## Quick start
@@ -26,7 +26,7 @@ store = JanusGraphLineageStore(
 | Parameter | Default | Description |
 |---|---|---|
 | `replicaCount` | `1` | Number of JanusGraph replicas |
-| `image.tag` | `1.0.0` | JanusGraph Docker image tag |
+| `image.tag` | `1.1.0` | JanusGraph Docker image tag |
 | `gremlinPort` | `8182` | Gremlin WebSocket port |
 | `service.type` | `ClusterIP` | Kubernetes service type |
 | `persistence.size` | `10Gi` | PVC size for graph data |
@@ -52,5 +52,5 @@ suitable for development and integration testing only.
 
 - This chart is tagged as **v3 tier** in the lineage backend tiering (ADR-0053).
 - The embedded berkeleyje backend does not support horizontal scaling.
-- JanusGraph image: `janusgraph/janusgraph:1.0.0` (Apache-2.0).
+- JanusGraph image: `janusgraph/janusgraph:1.1.0` (Apache-2.0).
 - gremlinpython extra: `uv add 'novafabric[janusgraph]'`

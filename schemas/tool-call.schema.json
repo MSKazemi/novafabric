@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://novafabric.io/schemas/tool-call.schema.json",
-  "$comment": "schema_version 1.0.0; tracks design/spec/tool-call-v1.md",
+  "$id": "https://novafabric.io/schemas/tool-call-v1.schema.json",
+  "$comment": "schema_version 1.0.0; tracks design/spec/tool-call-v1.md  STATUS: OAS v1.0 TARGET schema, NOT yet in force. ADR-0034 \u00a71 freezes a spec only when all four conditions hold; conditions 2 (spec doc 'Adopted') and 3 (>=3 design-partner sign-offs) are open as of 2026-08-02, so the spec is in pre-freeze draft status. The in-force schema an installed CLI validates against is the packaged copy under src/novafabric/schemas/, which keeps the original $id. See ADR-0223.",
   "title": "ToolCall",
   "description": "One record in tool-calls.jsonl inside a NovaFabric Run Capsule. MCP-aligned; transport-agnostic.",
   "type": "object",
@@ -30,7 +30,7 @@
     "schema_version": {
       "type": "string",
       "pattern": "^1\\.",
-      "description": "OAS v1.0 schema version. Must be 1.x.x (ADR-0034 §1)."
+      "description": "OAS v1.0 schema version. Must be 1.x.x (ADR-0034 \u00a71)."
     },
     "tool_call_id": {
       "$ref": "#/$defs/Ulid",
@@ -72,7 +72,15 @@
     },
     "transport": {
       "type": "string",
-      "enum": ["mcp", "http", "grpc", "shell", "python", "filesystem", "non-mcp"],
+      "enum": [
+        "mcp",
+        "http",
+        "grpc",
+        "shell",
+        "python",
+        "filesystem",
+        "non-mcp"
+      ],
       "description": "Protocol used to invoke the tool."
     },
     "mutates": {
@@ -97,48 +105,84 @@
     },
     "arguments_schema_ref": {
       "oneOf": [
-        {"type": "string", "minLength": 1},
-        {"type": "null"}
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
       ],
       "description": "Path or URI to JSON Schema for arguments. Null if no schema declared."
     },
     "result": {
       "oneOf": [
-        {"type": "object"},
-        {"type": "null"}
+        {
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
       ],
       "description": "Structured result. Null if tool returned no value or errored."
     },
     "result_schema_ref": {
       "oneOf": [
-        {"type": "string", "minLength": 1},
-        {"type": "null"}
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
       ],
       "description": "Path or URI to JSON Schema for result. Null if no schema declared."
     },
     "status": {
       "type": "string",
-      "enum": ["success", "error", "timeout", "denied"],
+      "enum": [
+        "success",
+        "error",
+        "timeout",
+        "denied"
+      ],
       "description": "Outcome of the tool invocation."
     },
     "log_level": {
       "type": "string",
-      "enum": ["debug", "info", "warn", "error"],
-      "description": "ADR-0127: optional severity of this observation — a stored forensic attribute, never a live signal. Absent is read as 'info' by filters; absence is preserved (never back-filled)."
+      "enum": [
+        "debug",
+        "info",
+        "warn",
+        "error"
+      ],
+      "description": "ADR-0127: optional severity of this observation \u2014 a stored forensic attribute, never a live signal. Absent is read as 'info' by filters; absence is preserved (never back-filled)."
     },
     "status_message": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "ADR-0127: optional one-line human-readable reason for the level. Secret-scanned and redacted at capture (ADR-0009); an annotation, not a log stream."
     },
     "log_level_source": {
       "type": "string",
-      "enum": ["framework", "span-status", "adapter", "user"],
+      "enum": [
+        "framework",
+        "span-status",
+        "adapter",
+        "user"
+      ],
       "description": "ADR-0127: provenance of log_level; on disagreement the most severe source wins at capture and is recorded here."
     },
     "agent_call_id": {
       "oneOf": [
-        {"$ref": "#/$defs/Ulid"},
-        {"type": "null"}
+        {
+          "$ref": "#/$defs/Ulid"
+        },
+        {
+          "type": "null"
+        }
       ],
       "description": "model_call_id in model-calls.jsonl that triggered this tool. Null if not model-driven."
     },
@@ -170,12 +214,25 @@
     "cost": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["currency", "amount", "unit_count", "unit_kind"],
+      "required": [
+        "currency",
+        "amount",
+        "unit_count",
+        "unit_kind"
+      ],
       "properties": {
-        "currency": {"type": "string"},
-        "amount": {"type": "number"},
-        "unit_count": {"type": "number"},
-        "unit_kind": {"type": "string"}
+        "currency": {
+          "type": "string"
+        },
+        "amount": {
+          "type": "number"
+        },
+        "unit_count": {
+          "type": "number"
+        },
+        "unit_kind": {
+          "type": "string"
+        }
       },
       "description": "Metered cost of this tool call, if applicable."
     },
@@ -213,25 +270,42 @@
   },
   "if": {
     "properties": {
-      "transport": {"const": "mcp"}
+      "transport": {
+        "const": "mcp"
+      }
     },
-    "required": ["transport"]
+    "required": [
+      "transport"
+    ]
   },
   "then": {
-    "required": ["mcp"]
+    "required": [
+      "mcp"
+    ]
   },
   "$defs": {
     "SchemaValidationVerdict": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["arguments_valid", "result_valid", "validator", "errors"],
+      "required": [
+        "arguments_valid",
+        "result_valid",
+        "validator",
+        "errors"
+      ],
       "properties": {
         "arguments_valid": {
-          "type": ["boolean", "null"],
+          "type": [
+            "boolean",
+            "null"
+          ],
           "description": "True/false if arguments were checked against arguments_schema_ref; null if no arguments schema was declared."
         },
         "result_valid": {
-          "type": ["boolean", "null"],
+          "type": [
+            "boolean",
+            "null"
+          ],
           "description": "True/false if result was checked against result_schema_ref; null if no result schema was declared or the tool errored."
         },
         "validator": {
@@ -241,7 +315,9 @@
         },
         "errors": {
           "type": "array",
-          "items": {"$ref": "#/$defs/SchemaError"},
+          "items": {
+            "$ref": "#/$defs/SchemaError"
+          },
           "description": "Structured failures. Empty when everything checked was valid. Bounded (capped with a synthetic 'truncated' entry)."
         },
         "checked_at": {
@@ -250,23 +326,37 @@
           "description": "When validation ran (capture time, or backfill time for --write)."
         },
         "arguments_schema_ref": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "Echo of the arguments_schema_ref actually resolved."
         },
         "result_schema_ref": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "Echo of the result_schema_ref actually resolved."
         }
       },
-      "description": "ADR-0128 verdict block: records whether the declared *_schema_ref contract was met. null means 'no schema declared' — not a failure."
+      "description": "ADR-0128 verdict block: records whether the declared *_schema_ref contract was met. null means 'no schema declared' \u2014 not a failure."
     },
     "SchemaError": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["target", "path", "message"],
+      "required": [
+        "target",
+        "path",
+        "message"
+      ],
       "properties": {
         "target": {
-          "enum": ["arguments", "result", "output"],
+          "enum": [
+            "arguments",
+            "result",
+            "output"
+          ],
           "description": "Which payload the error applies to."
         },
         "path": {
@@ -327,8 +417,12 @@
         },
         "response_envelope": {
           "oneOf": [
-            {"type": "object"},
-            {"type": "null"}
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
           ],
           "description": "Verbatim JSON-RPC response envelope."
         }
@@ -337,11 +431,18 @@
     "StateSnapshot": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind"],
+      "required": [
+        "kind"
+      ],
       "properties": {
         "kind": {
           "type": "string",
-          "enum": ["argument-only", "result-cache", "state-fingerprint", "full-snapshot"],
+          "enum": [
+            "argument-only",
+            "result-cache",
+            "state-fingerprint",
+            "full-snapshot"
+          ],
           "description": "What was captured in this snapshot."
         },
         "fingerprint": {
@@ -351,7 +452,9 @@
         },
         "declared_scope": {
           "type": "array",
-          "items": {"type": "string"},
+          "items": {
+            "type": "string"
+          },
           "description": "Paths or identifiers describing what state surface was captured."
         },
         "captured_at": {
@@ -364,7 +467,10 @@
     "ErrorInfo": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "message"],
+      "required": [
+        "type",
+        "message"
+      ],
       "properties": {
         "type": {
           "type": "string",
@@ -376,8 +482,12 @@
         },
         "traceback_ref": {
           "oneOf": [
-            {"type": "string"},
-            {"type": "null"}
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ],
           "description": "Relative path under outputs/ where the traceback is stored."
         }
@@ -389,7 +499,12 @@
       "properties": {
         "preferred_mode": {
           "type": "string",
-          "enum": ["exact", "mocked", "semantic", "forensic"],
+          "enum": [
+            "exact",
+            "mocked",
+            "semantic",
+            "forensic"
+          ],
           "description": "Suggested replay mode for this call."
         },
         "rationale": {

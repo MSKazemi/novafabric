@@ -18,7 +18,7 @@ on:
       - "src/novafabric/proxy/**"
       - "src/novafabric/capture/hooks/_mcp.py"
       - "src/novafabric/mcp/**"
-      - "tests/mcp/**"
+      - "tests/mcp_conformance/**"
       - ".github/workflows/mcp-conformance.yml"
   pull_request:
     branches: [main]
@@ -26,7 +26,7 @@ on:
       - "src/novafabric/proxy/**"
       - "src/novafabric/capture/hooks/_mcp.py"
       - "src/novafabric/mcp/**"
-      - "tests/mcp/**"
+      - "tests/mcp_conformance/**"
       - ".github/workflows/mcp-conformance.yml"
 
 jobs:
@@ -47,7 +47,7 @@ jobs:
         run: uv sync --all-extras
 
       - name: Replay conformance vectors (R9)
-        run: uv run nova mcp conformance tests/mcp/vectors/
+        run: uv run nova mcp conformance tests/mcp_conformance/vectors/
 
       - name: Validate the generated Server Card against SEP-1649 (R8)
         # Generation and validation must agree; if the card we publish fails
@@ -57,4 +57,4 @@ jobs:
           uv run nova mcp card validate /tmp/mcp-card.json
 
       - name: MCP test suites
-        run: uv run pytest tests/mcp tests/test_mcp_proxy.py tests/test_mcp_proxy_http.py -q
+        run: uv run pytest tests/mcp_conformance tests/test_mcp_proxy.py tests/test_mcp_proxy_http.py -q

@@ -11,6 +11,12 @@ The `nova serve` dashboard server exposes **207 REST endpoints**. All require a 
 > `GET /api/tv5/live` (Arrow delta stream), `GET /api/tv5/windows`,
 > `GET /api/tv5/snapshot/{window_id}`, and a `WS /api/tv5/ws` websocket. These are conditional
 > and eval-gated, so they are **not** in the generated table above.
+> **Since v0.97.0 they are authenticated** — the HTTP routes are token-gated like every other
+> `/api/*` route, and the WebSocket enforces the localhost `Host` guard (close code **4403**)
+> and the token (close code **4401**) *before* accepting the connection — on the WebSocket
+> the token must arrive as a `?token=` query parameter, since browsers cannot set headers on
+> a WS connect. Previously this router was mounted with no auth at all; a custom TV-5 client
+> that connected without a token must now supply one.
 
 
 ## Health & meta  (9)
@@ -468,9 +474,15 @@ When the server is running, the same route table is browsable interactively:
   when an operator opts in (`config.demo_device_grant`, default `False`; the HS256 tokens
   they issue are never honored by the real verifier) — but flagging it here rather than
   silently dropping it from this note.
-- Requests to `/api/*` require the **session token** as a `?token=` query parameter; the
-  unauthenticated probes `GET /api/health`, `GET /livez`, and `GET /readyz` are open (`/metrics`
-  requires the token). The server binds to `127.0.0.1` and rejects non-localhost `Host` headers.
+- Requests to `/api/*` require the **session token**, in either of two forms (v0.97.0):
+  a `?token=<token>` query parameter, or an `Authorization: Bearer <token>` header —
+  **when the header carries a Bearer credential it is authoritative** and the query
+  parameter is ignored (an absent or non-Bearer header falls back to `?token=`).
+  The query form is kept for the SPA and for printed/bookmarked URLs; prefer the header
+  for scripts and `curl`, so the secret stays out of shell history, proxy logs, and
+  `Referer`. The unauthenticated probes `GET /api/health`, `GET /livez`, and `GET /readyz`
+  are open (`/metrics` requires the token). The server binds to `127.0.0.1` and rejects
+  non-localhost `Host` headers.
 - The endpoint tables are **generated** — after any route change, re-run
   `uv run python design/scripts/gen_api_reference.py` so this file stays truthful.
 - A route existing in the table is not by itself a claim that everything behind it is

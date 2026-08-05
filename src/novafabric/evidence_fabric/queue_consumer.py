@@ -12,9 +12,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from novafabric.evidence_fabric.duckdb_accumulator import DuckDBAccumulator
+if TYPE_CHECKING:  # pragma: no cover - typing-only, never executed at runtime
+    # Annotation-only use (the module has `from __future__ import annotations`,
+    # so this never needs to resolve at runtime). Kept out of the runtime import
+    # graph by ADR-0222 so EventQueueConsumer — which touches duckdb only through
+    # the duck-typed accumulator handed to it — stays importable on a plain
+    # `pip install novafabric`, without the `scale` extra.
+    from novafabric.evidence_fabric.duckdb_accumulator import DuckDBAccumulator
 
 logger = logging.getLogger(__name__)
 

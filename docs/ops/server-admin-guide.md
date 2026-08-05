@@ -180,6 +180,12 @@ normative contract in
   `held`) and there is **no force override**. Honest limit: holds are
   registry-global today — one active hold freezes the whole delete
   surface. Unexpired WORM locks refuse with 409 `worm_hold`.
+  **Since v0.98.0 a corrupt line in `holds.jsonl` fails closed:** an
+  unparseable line is treated as an *active, blocking* hold (and logged as a
+  warning) rather than skipped, because a truncated or damaged line may encode
+  the very hold that must block the delete. Symptom: deletion refuses with
+  `legal_hold_active` and no hold is visible in `nova hold list` — repair or
+  remove the damaged line before retrying.
 - Audit actions: `capsule_delete` (per deletion, `via: api|bulk`),
   `capsule_delete_refused` (single-delete 409s), `capsule_bulk_delete`
   (one summary per bulk request, dry runs included).
@@ -258,6 +264,7 @@ webhooks:
   delivery_retention_days: 30    # delivery-log age cap
   delivery_retention_rows: 10000 # delivery-log per-webhook row cap
   allow_insecure_url: false      # permit non-loopback http:// endpoints (audited opt-out)
+  allow_internal_targets: false  # v0.98.0 SSRF guard opt-out — see below
 ```
 
 Env overrides follow `NOVAFABRIC_SERVER_WEBHOOKS_*` (plus the spec's
@@ -268,6 +275,17 @@ Operating notes:
 - **RBAC:** mutations (create/update/delete/ping/redeliver) are `admin`-only;
   list/get and the delivery log are `admin` or `auditor`; `reader`/`writer`
   have no access.
+- **SSRF guard (v0.98.0, works today).** A webhook URL whose host resolves to a
+  private, link-local, reserved, or unspecified address is **rejected at
+  create/update time** — the server refuses to be used as a probe of your
+  internal network. **Loopback is always allowed**, so local webhooks keep
+  working unchanged. A self-hosted deployment that legitimately posts to an
+  internal receiver (`http://alertmanager.internal/...`) sets
+  `webhooks.allow_internal_targets: true` — a documented, auditable opt-out,
+  exactly like `allow_insecure_url`. The rejection message names the blocked
+  address and the setting that overrides it. **Config-file only:** unlike the
+  other webhook settings there is no `NOVAFABRIC_SERVER_WEBHOOKS_*` env
+  override for this one today, so it must be set in `server.yaml`.
 - **Signing secret** (`nvwh_…`) is returned **exactly once** by
   `POST /v0/webhooks` and is never retrievable afterwards. At rest it is
   wrapped via the ADR-0185 key-wrapping path when

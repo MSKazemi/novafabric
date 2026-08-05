@@ -52,7 +52,7 @@ The two probes mean different things:
 
 | Symptom | Diagnosis | Action |
 |---|---|---|
-| Everything returns 401 after upgrading to ≥ v0.61 (local mode) | Breaking default: with OIDC off, the server now requires the local bearer token | Read the token from `~/.novafabric/.server-token` (`$NOVAFABRIC_HOME/.server-token`, mode 0600) — also printed at startup. Pin a stable one via `NOVAFABRIC_SERVER_TOKEN` for CI/Docker |
+| Everything returns 401 after upgrading to ≥ v0.61 (local mode) | Breaking default: with OIDC off, the server now requires the local bearer token | Read the token from `~/.novafabric/.server-token` (`$NOVAFABRIC_HOME/.server-token`, mode 0600) — also printed at startup, on **stderr only**: since v0.98.0 the secret is deliberately never written to the application logger, so do **not** expect to find it in journald or an aggregated log sink (the logger records only the token-file path). Pin a stable one via `NOVAFABRIC_SERVER_TOKEN` for CI/Docker |
 | Lost the local token | Token file is the credential | It survives restarts in `.server-token`; with shell access to the host you can read it. To force a known value, set `NOVAFABRIC_SERVER_TOKEN` and restart (env var wins over the file) |
 | Role revoke returns **409 Conflict** | The **last-admin guard**: `rbac_store.revoke_role` refuses any revoke that would leave zero `admin` rows in `role_assignments` while no OIDC issuer is configured (`LastAdminError`, ADR-0060) | This is working as designed. Assign a second admin first (`nova server assign-role`), then revoke |
 | SCIM deprovision returns SCIM 409 | Same guard: a deprovision that would remove the last admin is refused and nothing is mutated | Ensure another admin exists before deactivating that user in the IdP |
@@ -103,7 +103,8 @@ rebuildable from the capsule filesystem
 
 | Symptom | Diagnosis | Action |
 |---|---|---|
-| Runs on disk but missing in the dashboard (or vice versa) | `runs_cache` drifted from the capsule dir (e.g. capsules copied in/removed out-of-band) | Restart `nova serve` — it rebuilds the runs index from capsule files on startup and keeps it current via the background stats-refresh thread. Confirm `--capsule-dir`/`--db-path` point where you think they do |
+| Runs on disk but missing in the dashboard | `runs_cache` drifted from the capsule dir (e.g. capsules copied in out-of-band) | Restart `nova serve` — it rebuilds the runs index from capsule files on startup and keeps it current via the background stats-refresh thread. Confirm `--capsule-dir`/`--db-path` point where you think they do |
+| Dashboard **lists runs whose capsule is gone** — every drill-in 404s | The rebuild is **additive** by design (it never deletes a row for a capsule it cannot see), so rows for capsules deleted or moved out-of-band survive restarts forever | **v0.98.0, opt-in:** `POST /api/admin/reindex-runs` with `{"confirmed": true, "prune": true}` drops index rows whose capsule directory no longer exists; the response adds `pruned`. Default is `false` — a rebuild without it stays additive. Capsules are never touched, only the derived row. Reachable from the dashboard's **Infra → Maintenance** card. Rebuild the row later by copying the capsule back and restarting |
 | Lineage queries missing edges for capsules you restored/copied in | Lineage graph is also a derived cache | Re-import: `nova lineage import <capsule-dir>...` (imports lineage edges from capsule directories) |
 | Doubt about DB health itself | — | `nova doctor --check-storage` (schema version, migration state, per-table row counts); server-mode rebuild path: §4 last row |
 

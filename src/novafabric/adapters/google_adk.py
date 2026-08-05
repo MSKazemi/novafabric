@@ -60,15 +60,17 @@ class NovaAdkPlugin:
         self._writer.open()
         self._created_at = _now()
         self._t0 = time.monotonic()
-        install_all(writer=self._writer, parent_span_id=self._span_id)
+        self._hook_token = install_all(writer=self._writer, parent_span_id=self._span_id)
 
     async def after_run_callback(self, ctx: Any, **kwargs: Any) -> None:
-        from novafabric.capture.hooks import uninstall_all
+        from novafabric.capture.hooks import uninstall_all, wire_capture_state
         from novafabric.capture.replay import minimal_replay_policy
 
         if self._writer is None:
             return
-        uninstall_all()
+        _tok = getattr(self, "_hook_token", "")
+        _wire_state = wire_capture_state(_tok)
+        uninstall_all(_tok)
 
         finished_at = _now()
         duration_ms = int((time.monotonic() - self._t0) * 1000)
@@ -105,7 +107,7 @@ class NovaAdkPlugin:
             "duration_ms": duration_ms,
             "status": "success",
             "command": ["@google-adk:run"],
-            "capture_mode": "adapter-google-adk",
+            "capture_mode": "sdk-decorator",
             "novafabric_version": _pkg_version("novafabric"),
             "working_directory": str(Path.cwd()).replace(str(Path.home()), "~"),
             "host": {
@@ -131,7 +133,7 @@ class NovaAdkPlugin:
             "tool_call_count": _count_jsonl(cap_dir / "tool-calls.jsonl"),
             "mutating_tool_count": 0,
             "exit_code": 0,
-            "tags": {"framework": "google-adk"},
+            "metadata": {"framework": "google-adk", "wire_capture": _wire_state},
         }
         self._writer.write_text("capsule.yaml", yaml.dump(manifest, allow_unicode=True))
         self._writer = None

@@ -5,6 +5,7 @@
 
 COMPOSE      := docker compose -f deploy/docker/docker-compose.yml
 COMPOSE_PROD := docker compose -f deploy/docker/docker-compose.yml --profile prod
+COMPOSE_AGE  := docker compose -f deploy/docker/docker-compose.yml --profile age
 
 .PHONY: whitepaper help test lint typecheck coverage benchmark benchmark-capture \
         bundle serve-local deploy-local \
@@ -18,6 +19,7 @@ COMPOSE_PROD := docker compose -f deploy/docker/docker-compose.yml --profile pro
         collector-build collector-test collector-spec-test spec-test \
         dev-up dev-down dev-logs \
         prod-up prod-down prod-logs \
+        age-up age-down \
         docker-up docker-build docker-down docker-logs docker-token update _wait-token
 
 # ── Whitepaper ───────────────────────────────────────────────────────────────
@@ -58,7 +60,7 @@ help:
 	@echo "  test-par          Full suite in parallel with coverage (~5 min; same scope as test)"
 	@echo "  benchmark         Run NovaSeal p99 latency gate (100 rounds, < 200 ms)"
 	@echo "  benchmark-capture Run capture-overhead p95 gate (30 captured runs, < 2000 ms)"
-	@echo "  lint              Run ruff linter on src/ and tests/"
+	@echo "  lint              Run ruff linter on src/, tests/ and scripts/"
 	@echo "  typecheck         Run mypy on src/"
 	@echo "  whitepaper        Build PDF from docs/whitepaper/novafabric-position-paper.md"
 	@echo "  whitepaper-html   Build HTML version of the whitepaper"
@@ -95,6 +97,8 @@ help:
 	@echo "  prod-up           Build and start full prod stack (+ ClickHouse + NATS + Kafka + PgBouncer + JanusGraph)"
 	@echo "  prod-down         Stop prod stack"
 	@echo "  prod-logs         Follow live logs (prod stack)"
+	@echo "  age-up            EXPERIMENTAL: start ONLY the standalone Apache AGE lineage backend on :5433"
+	@echo "  age-down          Stop and remove ONLY the age container (never touches dev/prod services)"
 	@echo "  docker-build      Rebuild nova image only (no pull)"
 	@echo "  docker-token      Print the dashboard URL with the live auth token"
 	@echo "  update            git pull + rebuild nova image + rolling restart"
@@ -138,7 +142,7 @@ lint:
 	# errors in fresh checkouts and were told, wrongly, that main was clean. A lint
 	# gate that can report a false green is worse than no gate, because it is
 	# trusted. The cache saves a few seconds and costs correctness.
-	uv run ruff check src tests --no-cache
+	uv run ruff check src tests scripts --no-cache
 
 typecheck:
 	uv run mypy src
@@ -282,6 +286,31 @@ prod-down:
 
 prod-logs:
 	$(COMPOSE_PROD) logs -f
+
+# age — EXPERIMENTAL: standalone Apache AGE lineage backend (opt-in, not part
+# of prod). See deploy/docker/docker-compose.yml's `age` service.
+#
+# Deliberately scoped to the single `age` service by naming it explicitly on
+# every command — never bare `up`/`down`. `docker compose --profile age
+# config --services` resolves to the UNION {age, postgres, nova} (postgres +
+# nova have no `profiles:` key, so they're always "active" under any profile
+# filter); a bare `up -d` or `down` would start/stop/remove that whole union,
+# which on a host that already has the main dev/prod stack running would
+# restart or destroy it as a side effect. Naming `age` explicitly on `up`,
+# `stop`, and `rm` scopes each command to that one container only — verified
+# live: `up -d age` / `stop age` / `rm -f age` never touch
+# novafabric-postgres or novafabric-serve. `--build` is intentionally omitted
+# — `age` uses a pulled image (`apache/age:...`), not a `build:` key, so
+# there is nothing to build. No `_wait-token`/`docker-token` call either:
+# those read the nova dashboard's token from novafabric-serve's logs, which
+# this target never starts or touches.
+age-up:
+	$(COMPOSE_AGE) up -d age
+	@echo "novafabric-age is up: postgresql://nova:nova@localhost:5433/nova_lineage"
+
+age-down:
+	$(COMPOSE_AGE) stop age
+	$(COMPOSE_AGE) rm -f age
 
 # Aliases for backwards compatibility
 docker-up: dev-up

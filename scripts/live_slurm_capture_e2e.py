@@ -15,9 +15,7 @@ the sitecustomize loader on the compute node, so hooks never install.
 from __future__ import annotations
 
 import json
-import os
 import sys
-import tempfile
 import textwrap
 from pathlib import Path
 
@@ -52,7 +50,7 @@ def main() -> int:
     workload_path.write_text(WORKLOAD)
 
     runs_dir = base / "runs"
-    print(f"== End-to-end capture test on SLURM ==")
+    print("== End-to-end capture test on SLURM ==")
     print(f"  partition  : {partition}")
     print(f"  base dir   : {base}")
     print(f"  workload   : {workload_path}")
@@ -66,7 +64,7 @@ def main() -> int:
         runner_options={"partition": partition, "time": "00:02:00"},
     )
 
-    print(f"== orchestrator returned ==")
+    print("== orchestrator returned ==")
     print(f"  exit_code   : {result.exit_code}")
     print(f"  capsule_dir : {result.capsule_dir}")
     print(f"  run_id      : {result.run_id}")

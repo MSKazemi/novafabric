@@ -4,9 +4,39 @@ build-backend = "hatchling.build"
 
 [project]
 name = "novafabric"
-version = "0.98.3"
+version = "0.99.0"
 description = "Open-source AI Asset Registry and Agent Lifecycle Management"
+readme = "README.md"
 license = {text = "Apache-2.0"}
+authors = [
+    {name = "Mohsen Seyedkazemi Ardebili"},
+]
+# Mirrors CITATION.cff's keyword list — single source of intent, two files.
+keywords = [
+    "ai-agents",
+    "llm",
+    "observability",
+    "reproducibility",
+    "provenance",
+    "lineage",
+    "replay",
+    "ai-governance",
+    "evidence",
+    "opentelemetry",
+]
+# Kept intentionally narrow and CI-verifiable: only claim what the CI matrix
+# (.github/workflows/ci.yml, ubuntu-latest / Python 3.12 only) actually tests.
+# Do not add "Programming Language :: Python :: 3.13" or any non-Linux OS
+# classifier until CI grows a matrix that exercises them.
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Typing :: Typed",
+]
 requires-python = ">=3.12"
 dependencies = [
     "typer>=0.15",
@@ -24,14 +54,32 @@ dependencies = [
     # jcs (MIT) — RFC 8785 JSON Canonicalization Scheme for proposal_digest computation.
     # Tier A under ADR-0024.
     "jcs>=0.2",
-    "duckdb>=1.5.2",
-    "pyarrow>=24.0.0",
+    # networkx (BSD-3-Clause) — Tier A under ADR-0024.  STAYS IN CORE, unlike
+    # duckdb/pyarrow/python-louvain/clickhouse-connect which ADR-0222 moved out
+    # to extras.  Reason (verified, not assumed): networkx is imported EAGERLY
+    # at CLI start-up — cli/main.py -> cli/insights.py ->
+    # lineage/analytics/__init__.py -> centrality.py — and it backs the default,
+    # non-optional `nova insights` and `nova lineage` commands.  It is also the
+    # implementation behind `nx.community.louvain_communities` used by
+    # lineage/analytics/insights.py (networkx's own Louvain, NOT python-louvain).
+    # Moving it to an extra would break `nova --help` on a plain install.
+    # See design/adr/0222-default-install-dependency-tier-reclassification.md.
     "networkx>=3.6.1",
-    "python-louvain>=0.16",
-    "pyjwt>=2.13.0",
-    "python-multipart>=0.0.31",
-    "clickhouse-connect>=0.8.0",
+    # NOTE (ADR-0222 OQ-2): `pyjwt` and `python-multipart` used to be pinned
+    # here *and* in the `server` extra. They are declared once now, in `server`,
+    # because that is the only tier that needs them: `import jwt` appears only
+    # under `src/novafabric/server/`, `python-multipart` is a runtime
+    # requirement of FastAPI's form parsing and is never imported directly, and
+    # neither is loaded at CLI start-up (verified, not assumed — the same check
+    # that kept `networkx` in core above).
 ]
+
+[project.urls]
+Homepage = "https://novafabric.ai"
+Documentation = "https://github.com/novafabric/novafabric/blob/main/docs/getting-started.md"
+Repository = "https://github.com/novafabric/novafabric"
+Changelog = "https://github.com/novafabric/novafabric/blob/main/CHANGELOG.md"
+Issues = "https://github.com/novafabric/novafabric/issues"
 
 [project.optional-dependencies]
 saml = [
@@ -59,6 +107,14 @@ scale = [
     "blake3>=0.4.1",
     # boto3 (Apache-2.0) — S3-API abstraction for NovaObjectStore (cap-009).
     "boto3>=1.35.0",
+    # duckdb (MIT) — in-process store behind evidence_fabric/duckdb_accumulator.py
+    # and evidence_fabric/rebuild.py.  Moved here from [project.dependencies] by
+    # ADR-0222: every duckdb import site is already extra-gated code.
+    "duckdb>=1.5.2",
+    # pyarrow (Apache-2.0) — Parquet/Arrow for evidence_fabric/pii_table.py
+    # (Iceberg-compatible PII event log) and the LineageConsumer Parquet sink.
+    # Moved here from [project.dependencies] by ADR-0222.
+    "pyarrow>=24.0.0",
 ]
 worm-s3 = [
     # boto3 (Apache-2.0) — Tier A under ADR-0024.
@@ -121,12 +177,26 @@ serve = [
     # Both Tier A under ADR-0024 (FastAPI: MIT, uvicorn: BSD-3-Clause).
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
+    # --- Live Topology Dashboard backing stores (moved out of core by ADR-0222) ---
+    # duckdb (MIT) — the in-process ClusterStore behind
+    # serve/topology/cluster_store.py (dashboard ADR-003).
+    "duckdb>=1.5.2",
+    # pyarrow (Apache-2.0) — Arrow IPC encoder for the binary ADS topology
+    # frames in serve/topology/ads_encoder.py.
+    "pyarrow>=24.0.0",
+    # python-louvain (BSD-3-Clause) — `import community`; the Louvain community
+    # detection pass in serve/topology/topology_extractor.py.  This is the ONLY
+    # import site of `community` in the tree; lineage/analytics/insights.py uses
+    # networkx's own nx.community.louvain_communities instead.
+    "python-louvain>=0.16",
 ]
 federation = [
     # Cross-site federation endpoints (Phase 6 Track C).
-    # fastapi (MIT) + httpx (BSD-3-Clause) — Tier A under ADR-0024.
+    # fastapi (MIT) — Tier A under ADR-0024.
+    # httpx is NOT re-listed: it is a core dependency, so it is always present.
+    # (ADR-0222 OQ-2 — declare each dependency once, in the lowest tier that
+    # actually needs it.)
     "fastapi>=0.115",
-    "httpx>=0.28",
 ]
 server = [
     # Multi-user server mode (v0.7). Optional install: `pip install novafabric[server]`.
@@ -237,6 +307,75 @@ otlp = [
     # Decodes binary OTLP ExportTraceServiceRequest for OTLP/protobuf ingest (ADR-0177).
     "opentelemetry-proto>=1.20",
 ]
+query = [
+    # duckdb (MIT) — Tier A under ADR-0024.
+    # OPTIONAL ACCELERATOR ONLY.  `nova query` builds its derived index on
+    # DuckDB when it is importable and transparently falls back to the stdlib
+    # `sqlite3` engine when it is not (query/engine.py::_detect_engine); the
+    # result rows are identical either way and the engine actually used is
+    # reported in the result's `index.engine` field.  Installing this extra is
+    # a performance choice, never a correctness one.  See ADR-0222.
+    "duckdb>=1.5.2",
+]
+clickhouse = [
+    # clickhouse-connect (Apache-2.0) — Tier A under ADR-0024.
+    # Narrow single-package extra so `pip install novafabric[clickhouse]` —
+    # already the install hint raised by
+    # evidence_fabric/clickhouse_accumulator.py's ImportError — actually
+    # resolves (it did not before this extra existed: phantom-extra bug).
+    # As of ADR-0222 clickhouse-connect is no longer also an unconditional
+    # [project.dependencies] entry, so this extra is now load-bearing: it (or
+    # the wider `scale` extra, which pins the same package for the same
+    # purpose) is the only way to get ClickHouse cost attribution.
+    "clickhouse-connect>=0.8.0",
+]
+nats = [
+    # nats-py (Apache-2.0) — Tier A under ADR-0024.
+    # Narrow single-package extra so `pip install novafabric[nats]` — already
+    # the install hint raised by evidence_fabric/nats_consumer.py's
+    # ImportError — actually resolves (phantom-extra bug fix). Version-aligned
+    # with the `scale` extra above, which bundles the same package.
+    "nats-py>=2.9.0",
+]
+avro = [
+    # fastavro (MIT) — Tier A under ADR-0024.
+    # Narrow single-package extra so `pip install novafabric[avro]` — already
+    # the install hint raised by evidence_fabric/avro_serializer.py's
+    # ImportError — actually resolves (phantom-extra bug fix). Version-aligned
+    # with the `scale` extra above, which bundles the same package.
+    "fastavro>=1.9.7",
+]
+energy-gpu = [
+    # nvidia-ml-py (BSD-3-Clause) — Tier A under ADR-0024. Provides the
+    # `pynvml` importable module used by energy/_readers.py's optional NVML
+    # GPU energy reader (ADR-0093 §A1). This is the phantom-extra bug this
+    # slice exists to fix directly: docs/releases/v0.55.0.md and v0.56.0.md
+    # already tell users to `pip install 'novafabric[energy-gpu]'`, but the
+    # extra did not exist until now.
+    # NOTE (verified against PyPI metadata, not assumed): the distribution
+    # literally named `pynvml` is upstream-deprecated (Development Status ::
+    # 7 - Inactive) and no longer ships the `pynvml` module at all — only the
+    # unrelated `pynvml_utils` demo helper. `nvidia-ml-py` is NVIDIA's own,
+    # actively maintained package and is what actually provides `import
+    # pynvml`; depending on the deprecated `pynvml` distribution here would
+    # install a package that cannot satisfy the import it's meant to enable.
+    "nvidia-ml-py>=12.0.0",
+]
+all = [
+    # Aggregate escape hatch: a self-referencing PEP 508 extras list so
+    # `pip install 'novafabric[all]'` restores the old "just install
+    # everything" experience for anyone who relied on it, once a later slice
+    # (S2) narrows the default/core install. Deliberately EXCLUDES:
+    #   - cloud-vendor extras (worm-s3, worm-azure, worm-gcs, seal-aws,
+    #     seal-azure, seal-gcp): each pulls in one specific cloud vendor's SDK
+    #     (boto3 / azure-* / google-cloud-*) and a real deployment only ever
+    #     needs one vendor — bundling all three by default is dead weight
+    #     (and unwanted transitive surface) for every single installer.
+    #   - agent-framework adapter extras (openai-agents, google-adk,
+    #     bedrock-agentcore, a2a): each targets a distinct, mutually exclusive
+    #     third-party agent framework; no installer runs all four at once.
+    "novafabric[saml,scale,sigstore,spkg,seal-postgres,serve,federation,server,lineage-kuzu,janusgraph,lineage-migration,compliance,scale-kg,ocs-compress,watch,otlp,query,clickhouse,nats,avro,energy-gpu]",
+]
 
 [dependency-groups]
 dev = [
@@ -248,6 +387,11 @@ dev = [
     # pytest-timeout (MIT) — Tier A under ADR-0024.  Suite-health: a hung test
     # fails by name instead of stalling the whole run (suite-health backlog item 2).
     "pytest-timeout>=2.3",
+    # trove-classifiers (Apache-2.0) — Tier A under ADR-0024.  PyPI's own
+    # canonical classifier registry; lets tests/packaging_metadata/test_project_metadata.py
+    # validate pyproject.toml's `classifiers` list against real, spelled-correctly
+    # trove strings instead of trusting them by inspection.
+    "trove-classifiers>=2024.1.31",
     # pytest-xdist (MIT) — Tier A under ADR-0024.  Parallel test execution for
     # the 5.5K-test suite (suite-health backlog item 3); dev runs use `-n auto`.
     "pytest-xdist>=3.6",
@@ -282,7 +426,28 @@ dev = [
     # MetadataStore integration tests can import PostgresMetadataStore without
     # installing the full [server] extra.
     "psycopg[binary]>=3.2",
+    # --- Extras-only runtime deps that the TEST SUITE needs unconditionally ---
+    # CI's `unit` job installs with `uv sync --frozen` (no `--all-extras`), so
+    # the dev group is the only thing that puts these in the test environment.
+    # Runtime-optional (ADR-0222 moved them out of [project.dependencies]);
+    # dev/test-required because several test modules import the code they back
+    # at module level, without an importorskip guard — e.g.
+    # tests/test_topology_cluster_store.py and tests/test_topology_extractor.py
+    # import serve/topology/*, and the ADR-0222 packaging tests need a baseline
+    # where nothing is missing so the import-blocking sweep measures only what
+    # the blocker removed. They also keep these modules inside the
+    # `--cov-fail-under=90` gate and keep the DuckDB-vs-SQLite `nova query`
+    # parity test (ADR-0222's central correctness claim) actually running in CI
+    # rather than silently skipping.
+    # pyarrow (Apache-2.0) — predates ADR-0222; same reason.
     "pyarrow>=24.0.0",
+    # duckdb (MIT) — Tier A under ADR-0024. Extras: [scale]/[serve]/[query].
+    "duckdb>=1.5.2",
+    # python-louvain (BSD-3-Clause) — Tier A under ADR-0024. Extra: [serve].
+    "python-louvain>=0.16",
+    # clickhouse-connect (Apache-2.0) — Tier A under ADR-0024.
+    # Extras: [scale]/[clickhouse].
+    "clickhouse-connect>=0.8.0",
     # openai (Apache-2.0) — Tier A under ADR-0024.  Used by the
     # blackbox_demo example (examples/blackbox_demo/) and the OpenAI
     # capture hook tests.
@@ -328,6 +493,11 @@ include = [
     "src/novafabric/safetycase/templates/*.yaml",
     "src/novafabric/serve/static/**/*",
     "src/novafabric/policies/**/*.rego",
+    # PEP 561 marker: this project ships inline type annotations and is
+    # checked under `mypy strict = true`. Without this the marker file would
+    # not ship in the wheel and downstream mypy/pyright runs would silently
+    # treat novafabric as untyped.
+    "src/novafabric/py.typed",
 ]
 
 # ADR-0211 D2: ship the registry-track alembic trees (repo-root alembic/) as
@@ -337,6 +507,19 @@ include = [
 # second copy in the source tree.
 [tool.hatch.build.targets.wheel.force-include]
 "alembic" = "novafabric/migrations/registry"
+# Canonical JSON Schemas that runtime code loads. They live at the repo root
+# because that is the published, spec-owned location, but nothing under
+# `schemas/` ships in the wheel by default — so `novafabric.envelope.validator`
+# raised FileNotFoundError and `novafabric.import_blob` resolved a path outside
+# site-packages on every pip install. Both were invisible to the test suite,
+# which runs from the source tree where the repo-root fallback resolves.
+#
+# force-include (not a copy under src/) is deliberate: the packaged-vs-
+# canonical schema split (BL-028) already cost a release, so there is exactly
+# ONE copy of each file and the build maps it into the package.
+"schemas/event-envelope-v1/envelope-v1.json" = "novafabric/envelope/_schemas/envelope-v1.json"
+"schemas/export-manifest.schema.json" = "novafabric/schemas/export-manifest.schema.json"
+"schemas/parent_child_capsule_v1.schema.json" = "novafabric/schemas/parent_child_capsule_v1.schema.json"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

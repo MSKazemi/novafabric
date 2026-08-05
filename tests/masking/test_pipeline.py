@@ -42,6 +42,17 @@ _PROOF_SCHEMA = json.loads(
 
 
 def _pipeline(*maskers: object, **spec_kwargs: object) -> MaskingPipeline:
+    # The production default is DEFAULT_TIMEOUT_MS = 50 ms of *wall clock*. On a
+    # box running the suite under `-n auto` that budget is regularly missed by a
+    # masker that does almost no work, and the pipeline correctly fails closed —
+    # turning every `assert errors == []` below into a load-dependent flake
+    # (observed on a 24-worker run: "masker 'acme-case-id' timeout on
+    # model-calls.jsonl#L1 call_id; field redacted (fail-closed)").
+    #
+    # None of these tests is about the budget, so they get a generous one.
+    # `test_timeout_is_bounded_and_fails_closed` — the one test that *is* about
+    # the budget — passes `timeout_ms=50` explicitly and overrides this.
+    spec_kwargs.setdefault("timeout_ms", 30_000)
     loaded = [
         LoadedMasker(masker=m, spec=MaskerSpec(id=str(getattr(m, "masker_id")), **spec_kwargs))  # type: ignore[arg-type]
         for m in maskers

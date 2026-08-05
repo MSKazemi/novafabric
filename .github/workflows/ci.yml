@@ -47,10 +47,17 @@ jobs:
           python-version: "3.12"
 
       - name: Install project + dev deps
-        run: uv sync --frozen
+        # --all-extras is REQUIRED, not a convenience.  Without it ~61 tests
+        # ERROR instead of skipping (alembic, uvicorn, nats-py, a2a-sdk, mcp),
+        # because those suites import the optional dependency at module scope.
+        # This was invisible until 2026-07-31: `tests/coverage/` shadowed the
+        # `coverage` distribution, so pytest-cov failed to load and this job
+        # went red before it ever reported a test result.  Matches the
+        # documented dev/release invocation in CLAUDE.md and CONTRIBUTING.md.
+        run: uv sync --frozen --all-extras
 
       - name: Lint (ruff)
-        run: uv run ruff check src tests
+        run: uv run ruff check src tests scripts
 
       - name: Run unit tests with coverage
         # Excludes tests/integration/ which requires optional external services.
@@ -58,7 +65,12 @@ jobs:
         # CI gate so a regression cannot land silently.
         # --benchmark-disable skips the 100-round latency benchmark; that gate
         # runs in the dedicated seal-latency-gate job below.
-        run: uv run pytest tests/ --ignore=tests/integration --benchmark-disable --cov=novafabric --cov-report=term-missing --cov-fail-under=90
+        # -n auto keeps the full-extras run inside the 15-minute timeout
+        # (measured 205 s vs. a serial run that no longer fits).  --dist=loadgroup
+        # is mandatory, not a tuning knob: tests/metadata_store/conftest.py pins
+        # its testcontainers Postgres to a single xdist_group, and plain
+        # --dist=load scatters that group across workers and makes the tier fail.
+        run: uv run pytest tests/ --ignore=tests/integration --benchmark-disable -n auto --dist=loadgroup --cov=novafabric --cov-report=term-missing --cov-fail-under=90
 
       - name: Smoke-test the CLI
         # Confirms the `nova` entry point installs cleanly and reports
@@ -72,8 +84,14 @@ jobs:
   # Type check (mypy strict) against the FULL dependency surface
   # Separate job with --all-extras so optional-extra integrations (sigstore,
   # kuzu, clickhouse, adapters, …) are type-checked against their real APIs
-  # instead of being silenced as missing imports. The unit job stays lean so
-  # its coverage denominator (and the 90% gate) is unaffected.
+  # instead of being silenced as missing imports.
+  #
+  # (This block used to add "the unit job stays lean so its coverage denominator
+  # is unaffected".  That reasoning was wrong and has been removed: `--cov=novafabric`
+  # scopes coverage to the novafabric package, so third-party extras never enter
+  # the denominator — installing them can only raise the numerator.  Measured:
+  # the unit job went from 61 errors to 0 and coverage from unmeasurable to
+  # 92.75% once --all-extras was added.)
   # --------------------------------------------------------------------------
   typecheck:
     runs-on: ubuntu-latest

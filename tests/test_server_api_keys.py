@@ -671,3 +671,63 @@ class TestCli:
         result = runner.invoke(app, ["server", "api-key", "list", "--db-path", str(db)])
         assert result.exit_code == 0, result.output
         assert "no api keys" in result.output.lower()
+
+
+class TestKeyIdIsCliSafe:
+    """A key_id must be usable as a positional CLI argument.
+
+    `secrets.token_urlsafe` draws from `A-Za-z0-9-_`, so 1 in 65 ids began with
+    a hyphen and Click parsed it as an option ("No such option: -J") — making
+    ~1.5% of issued keys impossible to rotate or revoke from the CLI. It also
+    produced a rare, repeatedly-misattributed flake in this file.
+    """
+
+    def test_generated_key_ids_never_start_with_a_hyphen(self) -> None:
+        from novafabric.server.api_keys import _generate_key_id
+
+        # 5,000 draws: at the natural 1.54% rate, seeing zero leading hyphens
+        # by chance would be about (1 - 0.0154) ** 5000, i.e. ~1e-34.
+        ids = [_generate_key_id() for _ in range(5000)]
+        offenders = [k for k in ids if not k[:1].isalnum()]
+        assert not offenders, f"key_ids unusable as CLI arguments: {offenders[:5]}"
+
+    def test_generated_key_ids_keep_their_shape(self) -> None:
+        """Only position 0 is constrained — length and alphabet are unchanged."""
+        import string
+
+        from novafabric.server.api_keys import _KEY_ID_LEN, _generate_key_id
+
+        urlsafe = set(string.ascii_letters + string.digits + "-_")
+        ids = [_generate_key_id() for _ in range(200)]
+        assert {len(k) for k in ids} == {_KEY_ID_LEN}
+        # The rest of the id may still contain - and _ ; that is fine, only
+        # position 0 is what Click cares about.
+        assert all(set(k) <= urlsafe for k in ids)
+
+    def test_a_leading_hyphen_id_is_what_broke_the_cli(self, db: Path) -> None:
+        """Pins the mechanism, so the guard above cannot be 'simplified' away
+        by someone who no longer remembers why it exists."""
+        from novafabric.cli.main import app
+
+        result = runner.invoke(
+            app, ["server", "api-key", "rotate", "-Jabc123", "--db-path", str(db)]
+        )
+        assert result.exit_code == 2
+        assert "No such option" in result.output
+
+    def test_legacy_hyphen_ids_remain_reachable_via_the_separator(self, db: Path) -> None:
+        """Keys issued before the fix must not become unmanageable."""
+        import sqlite3
+
+        from novafabric.cli.main import app
+
+        _, record = create_key("alice@x", ["reader"], actor="test", db_path=db)
+        with sqlite3.connect(db) as conn:
+            conn.execute("UPDATE api_keys SET key_id = ?", ("-Jabc123",))
+        result = runner.invoke(
+            app,
+            ["server", "api-key", "rotate", "--db-path", str(db), "--", "-Jabc123"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "rotated" in result.output
+        assert record["key_id"]  # the fixture key existed before we renamed it

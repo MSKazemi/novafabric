@@ -8,8 +8,17 @@ from typing import Any
 
 import jsonschema  # type: ignore[import-untyped]
 
+#: Where the schema lives in an installed wheel. `pyproject.toml`'s
+#: force-include maps the canonical repo-root file here at build time, so this
+#: is the same bytes as `schemas/event-envelope-v1/envelope-v1.json` — not a
+#: second copy in the source tree.
+_PACKAGED_SCHEMA_PATH = Path(__file__).parent / "_schemas" / "envelope-v1.json"
+
+#: Repo-root fallbacks, used when running from a source checkout (where the
+#: force-include has not happened). Kept because the dev tree is the spec's
+#: home; they are NOT reachable in a wheel.
 _SCHEMA_PATH = (
-    Path(__file__).parent.parent.parent.parent.parent
+    Path(__file__).parent.parent.parent.parent
     / "schemas"
     / "event-envelope-v1"
     / "envelope-v1.json"
@@ -31,10 +40,19 @@ def _load_schema() -> dict[str, Any]:
 
 
 def _locate_schema() -> Path:
-    """Find envelope-v1.json by searching from this file's location upward."""
+    """Find envelope-v1.json, preferring the packaged copy.
+
+    The packaged path must be tried **first**: in a wheel it is the only one
+    that exists, and previously every candidate was a repo-root path, so a
+    plain ``pip install novafabric`` raised ``FileNotFoundError`` here and
+    Event Envelope v1 validation was simply unavailable. The source tree kept
+    the bug invisible because its fallback resolves there.
+    """
     candidates = [
+        _PACKAGED_SCHEMA_PATH,
         _SCHEMA_PATH,
-        Path(__file__).parent.parent.parent.parent
+        # One level further up, for a checkout nested one directory deeper.
+        Path(__file__).parent.parent.parent.parent.parent
         / "schemas"
         / "event-envelope-v1"
         / "envelope-v1.json",
@@ -43,7 +61,9 @@ def _locate_schema() -> Path:
         if candidate.exists():
             return candidate
     raise FileNotFoundError(
-        "envelope-v1.json not found. Expected at schemas/event-envelope-v1/envelope-v1.json"
+        "envelope-v1.json not found. Expected at "
+        f"{_PACKAGED_SCHEMA_PATH} (installed) or "
+        "schemas/event-envelope-v1/envelope-v1.json (source checkout)."
     )
 
 

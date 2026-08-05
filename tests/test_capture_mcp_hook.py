@@ -228,3 +228,43 @@ def test_record_validates_against_schema(tmp_path: Path) -> None:
 
     records = _tool_calls(tmp_path)
     jsonschema.validate(records[0], SCHEMA, format_checker=jsonschema.FormatChecker())
+
+
+def test_install_binds_to_the_real_mcp_sdk_and_restores_it(tmp_path: Path) -> None:
+    """The hook must patch the *installed* ``mcp`` SDK, not just a fake.
+
+    Every other test here injects a stub into ``sys.modules``, so none of them
+    would notice if ``install()`` silently swallowed an ImportError and did
+    nothing against the real library — its ``except (ImportError,
+    AttributeError): pass`` makes that failure completely quiet.
+
+    That was not hypothetical: ``tests/mcp/`` shadowed the installed ``mcp``
+    distribution, so ``import mcp.client.session`` raised ModuleNotFoundError
+    for the entire pytest session and this hook took its no-op branch in every
+    run. The directory is now ``tests/mcp_conformance/``; this test fails if
+    the shadow ever comes back.
+    """
+    import mcp.client.session as real_session
+
+    from novafabric.capture.hooks._mcp import MCPHook
+
+    target = real_session.ClientSession
+    original_call_tool = target.call_tool
+    original_initialize = target.initialize
+
+    writer = _make_writer(tmp_path)
+    hook = MCPHook(writer=writer, parent_span_id="aabbccddeeff0011")
+    try:
+        hook.install()
+        assert target.call_tool is not original_call_tool, (
+            "install() did not patch the real ClientSession.call_tool — the mcp "
+            "SDK is unimportable here, so the hook is a silent no-op"
+        )
+        assert target.initialize is not original_initialize
+        # functools.wraps must keep the wrapper introspectable as the original.
+        assert target.call_tool.__name__ == "call_tool"
+    finally:
+        hook.uninstall()
+
+    assert target.call_tool is original_call_tool
+    assert target.initialize is original_initialize

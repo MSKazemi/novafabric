@@ -14,7 +14,6 @@ Defaults: partition=debug, output_dir=/home/$USER/nova-slurm-smoke
 """
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -28,7 +27,7 @@ def main() -> int:
     )
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"== Live SlurmRunner smoke ==")
+    print("== Live SlurmRunner smoke ==")
     print(f"  partition  : {partition}")
     print(f"  output_dir : {out_dir}")
     print(f"  python     : {sys.executable}")

@@ -1,17 +1,19 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://novafabric.io/schemas/replay-policy.schema.json",
-  "$comment": "schema_version 1.0.0; tracks design/spec/replay-policy-v1.md. Every field is optional; missing sections fall back to spec-documented defaults.",
+  "$id": "https://novafabric.io/schemas/replay-policy-v1.schema.json",
+  "$comment": "schema_version 1.0.0; tracks design/spec/replay-policy-v1.md. Every field is optional; missing sections fall back to spec-documented defaults.  STATUS: OAS v1.0 TARGET schema, NOT yet in force. ADR-0034 \u00a71 freezes a spec only when all four conditions hold; conditions 2 (spec doc 'Adopted') and 3 (>=3 design-partner sign-offs) are open as of 2026-08-02, so the spec is in pre-freeze draft status. The in-force schema an installed CLI validates against is the packaged copy under src/novafabric/schemas/, which keeps the original $id. See ADR-0223.",
   "title": "ReplayPolicy",
   "description": "Content of replay.yaml inside a NovaFabric Run Capsule. Governs what replay does with external resources and mutating tools.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version"],
+  "required": [
+    "schema_version"
+  ],
   "properties": {
     "schema_version": {
       "type": "string",
       "pattern": "^1\\.",
-      "description": "OAS v1.0 schema version. Must be 1.x.x (ADR-0034 §1)."
+      "description": "OAS v1.0 schema version. Must be 1.x.x (ADR-0034 \u00a71)."
     },
     "defaults": {
       "type": "object",
@@ -30,12 +32,16 @@
     },
     "external_resources": {
       "type": "array",
-      "items": {"$ref": "#/$defs/ExternalResourceOverride"},
+      "items": {
+        "$ref": "#/$defs/ExternalResourceOverride"
+      },
       "description": "Per-resource policy overrides. First matching override wins."
     },
     "tool_overrides": {
       "type": "array",
-      "items": {"$ref": "#/$defs/ToolOverride"},
+      "items": {
+        "$ref": "#/$defs/ToolOverride"
+      },
       "description": "Per-tool overrides for mutating-tool handling."
     },
     "cost_caps": {
@@ -77,12 +83,19 @@
   "$defs": {
     "ExternalResourceKind": {
       "type": "string",
-      "enum": ["snapshot", "reference", "hash"],
+      "enum": [
+        "snapshot",
+        "reference",
+        "hash"
+      ],
       "description": "How an external resource is stored and handled at replay. 'snapshot': full bytes in capsule. 'reference': refetch from URI and verify hash. 'hash': user supplies local copy; hash verified."
     },
     "OnHashMismatch": {
       "type": "string",
-      "enum": ["refuse", "warn"],
+      "enum": [
+        "refuse",
+        "warn"
+      ],
       "description": "'refuse' aborts replay; 'warn' records drift and continues."
     },
     "ExternalResourcePolicy": {
@@ -128,7 +141,9 @@
         },
         "redact_argument_keys": {
           "type": "array",
-          "items": {"type": "string"},
+          "items": {
+            "type": "string"
+          },
           "description": "Argument keys whose values are masked in the policy log."
         }
       }
@@ -136,11 +151,22 @@
     "ResourceMatcher": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind"],
+      "required": [
+        "kind"
+      ],
       "properties": {
         "kind": {
           "type": "string",
-          "enum": ["url", "host", "asset_ref", "asset_type", "dataset", "vector-index", "path", "mcp-server"],
+          "enum": [
+            "url",
+            "host",
+            "asset_ref",
+            "asset_type",
+            "dataset",
+            "vector-index",
+            "path",
+            "mcp-server"
+          ],
           "description": "How to match an external resource."
         },
         "pattern": {
@@ -164,16 +190,26 @@
     "ExternalResourceOverride": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["matcher", "policy"],
+      "required": [
+        "matcher",
+        "policy"
+      ],
       "properties": {
-        "matcher": {"$ref": "#/$defs/ResourceMatcher"},
-        "policy": {"$ref": "#/$defs/ExternalResourcePolicy"}
+        "matcher": {
+          "$ref": "#/$defs/ResourceMatcher"
+        },
+        "policy": {
+          "$ref": "#/$defs/ExternalResourcePolicy"
+        }
       }
     },
     "ToolOverride": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["tool_name", "allow"],
+      "required": [
+        "tool_name",
+        "allow"
+      ],
       "properties": {
         "tool_name": {
           "type": "string",
@@ -231,24 +267,36 @@
       "properties": {
         "egress": {
           "type": "string",
-          "enum": ["allow", "deny", "policy"],
+          "enum": [
+            "allow",
+            "deny",
+            "policy"
+          ],
           "description": "Outbound network access mode. 'policy' evaluates each call against external_resources.",
           "default": "policy"
         },
         "allowed_hosts": {
           "type": "array",
-          "items": {"type": "string"},
+          "items": {
+            "type": "string"
+          },
           "description": "Hosts reachable when egress is 'policy'."
         },
         "denied_hosts": {
           "type": "array",
-          "items": {"type": "string"},
+          "items": {
+            "type": "string"
+          },
           "description": "Hosts blocked when egress is 'policy'."
         },
         "proxy": {
           "oneOf": [
-            {"type": "string"},
-            {"type": "null"}
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ],
           "description": "Proxy URL applied to all replay HTTP."
         }
@@ -265,8 +313,13 @@
         },
         "injected_now": {
           "oneOf": [
-            {"type": "string", "format": "date-time"},
-            {"type": "null"}
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
           ],
           "description": "Specific time to inject. If null and freeze_clock is true, captured wallclock_at_start is used."
         }
@@ -276,8 +329,12 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "cost_caps": {"$ref": "#/$defs/CostCaps"},
-        "network": {"$ref": "#/$defs/NetworkPolicy"},
+        "cost_caps": {
+          "$ref": "#/$defs/CostCaps"
+        },
+        "network": {
+          "$ref": "#/$defs/NetworkPolicy"
+        },
         "external_resources": {
           "$ref": "#/$defs/ExternalResourcePolicy"
         }

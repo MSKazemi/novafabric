@@ -2824,13 +2824,11 @@ wheels = [
 
 [[package]]
 name = "novafabric"
-version = "0.98.3"
+version = "0.99.0"
 source = { editable = "." }
 dependencies = [
-    { name = "clickhouse-connect" },
     { name = "cryptography" },
     { name = "deepdiff" },
-    { name = "duckdb" },
     { name = "httpx" },
     { name = "jcs" },
     { name = "jinja2" },
@@ -2838,11 +2836,7 @@ dependencies = [
     { name = "networkx" },
     { name = "opentelemetry-sdk" },
     { name = "opentelemetry-semantic-conventions" },
-    { name = "pyarrow" },
     { name = "pydantic" },
-    { name = "pyjwt" },
-    { name = "python-louvain" },
-    { name = "python-multipart" },
     { name = "python-ulid" },
     { name = "pyyaml" },
     { name = "rich" },
@@ -2853,16 +2847,59 @@ dependencies = [
 a2a = [
     { name = "a2a-sdk" },
 ]
+all = [
+    { name = "alembic" },
+    { name = "asyncpg" },
+    { name = "blake3" },
+    { name = "boto3" },
+    { name = "cachetools" },
+    { name = "clickhouse-connect" },
+    { name = "duckdb" },
+    { name = "fastapi" },
+    { name = "fastavro" },
+    { name = "gremlinpython" },
+    { name = "kuzu" },
+    { name = "lxml" },
+    { name = "nats-py" },
+    { name = "nvidia-ml-py" },
+    { name = "opentelemetry-proto" },
+    { name = "presidio-analyzer" },
+    { name = "prometheus-client" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "psycopg-pool" },
+    { name = "pyarrow" },
+    { name = "pyiceberg" },
+    { name = "pyjwt" },
+    { name = "pyshacl" },
+    { name = "python-louvain" },
+    { name = "python-multipart" },
+    { name = "rdflib" },
+    { name = "signxml" },
+    { name = "sigstore" },
+    { name = "sqlalchemy" },
+    { name = "uvicorn", extra = ["standard"] },
+    { name = "watchdog" },
+    { name = "weasyprint" },
+    { name = "zstandard" },
+]
+avro = [
+    { name = "fastavro" },
+]
 bedrock-agentcore = [
     { name = "boto3" },
+]
+clickhouse = [
+    { name = "clickhouse-connect" },
 ]
 compliance = [
     { name = "presidio-analyzer" },
     { name = "weasyprint" },
 ]
+energy-gpu = [
+    { name = "nvidia-ml-py" },
+]
 federation = [
     { name = "fastapi" },
-    { name = "httpx" },
 ]
 google-adk = [
     { name = "google-adk" },
@@ -2876,6 +2913,9 @@ lineage-kuzu = [
 lineage-migration = [
     { name = "pyarrow" },
 ]
+nats = [
+    { name = "nats-py" },
+]
 ocs-compress = [
     { name = "zstandard" },
 ]
@@ -2885,6 +2925,9 @@ openai-agents = [
 otlp = [
     { name = "opentelemetry-proto" },
 ]
+query = [
+    { name = "duckdb" },
+]
 saml = [
     { name = "lxml" },
     { name = "signxml" },
@@ -2893,8 +2936,10 @@ scale = [
     { name = "blake3" },
     { name = "boto3" },
     { name = "clickhouse-connect" },
+    { name = "duckdb" },
     { name = "fastavro" },
     { name = "nats-py" },
+    { name = "pyarrow" },
     { name = "pyiceberg" },
 ]
 scale-kg = [
@@ -2915,7 +2960,10 @@ seal-postgres = [
     { name = "psycopg", extra = ["binary"] },
 ]
 serve = [
+    { name = "duckdb" },
     { name = "fastapi" },
+    { name = "pyarrow" },
+    { name = "python-louvain" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 server = [
@@ -2954,6 +3002,8 @@ worm-s3 = [
 [package.dev-dependencies]
 dev = [
     { name = "boto3" },
+    { name = "clickhouse-connect" },
+    { name = "duckdb" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "hypothesis" },
@@ -2972,10 +3022,12 @@ dev = [
     { name = "pytest-cov" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+    { name = "python-louvain" },
     { name = "ruff" },
     { name = "signxml" },
     { name = "sqlfluff" },
     { name = "testcontainers" },
+    { name = "trove-classifiers" },
     { name = "types-pyyaml" },
     { name = "watchdog" },
 ]
@@ -2994,21 +3046,23 @@ requires-dist = [
     { name = "boto3", marker = "extra == 'seal-aws'", specifier = ">=1.38.0" },
     { name = "boto3", marker = "extra == 'worm-s3'", specifier = ">=1.38" },
     { name = "cachetools", marker = "extra == 'scale-kg'", specifier = ">=5.5" },
-    { name = "clickhouse-connect", specifier = ">=0.8.0" },
+    { name = "clickhouse-connect", marker = "extra == 'clickhouse'", specifier = ">=0.8.0" },
     { name = "clickhouse-connect", marker = "extra == 'scale'", specifier = ">=0.8.0" },
     { name = "cryptography", specifier = ">=48.0.1" },
     { name = "deepdiff", specifier = ">=8.0" },
-    { name = "duckdb", specifier = ">=1.5.2" },
+    { name = "duckdb", marker = "extra == 'query'", specifier = ">=1.5.2" },
+    { name = "duckdb", marker = "extra == 'scale'", specifier = ">=1.5.2" },
+    { name = "duckdb", marker = "extra == 'serve'", specifier = ">=1.5.2" },
     { name = "fastapi", marker = "extra == 'federation'", specifier = ">=0.115" },
     { name = "fastapi", marker = "extra == 'serve'", specifier = ">=0.115" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.115" },
+    { name = "fastavro", marker = "extra == 'avro'", specifier = ">=1.9.7" },
     { name = "fastavro", marker = "extra == 'scale'", specifier = ">=1.9.7" },
     { name = "google-adk", marker = "extra == 'google-adk'", specifier = ">=1.34.0" },
     { name = "google-cloud-kms", marker = "extra == 'seal-gcp'", specifier = ">=3.3.0" },
     { name = "google-cloud-storage", marker = "extra == 'worm-gcs'", specifier = ">=2.19" },
     { name = "gremlinpython", marker = "extra == 'janusgraph'", specifier = ">=3.7.0" },
     { name = "httpx", specifier = ">=0.28" },
-    { name = "httpx", marker = "extra == 'federation'", specifier = ">=0.28" },
     { name = "jcs", specifier = ">=0.2" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "jsonschema", specifier = ">=4.23.0" },
@@ -3016,8 +3070,11 @@ requires-dist = [
     { name = "kuzu", marker = "extra == 'scale-kg'", specifier = ">=0.11.3" },
     { name = "kuzu", marker = "extra == 'spkg'", specifier = ">=0.11.3" },
     { name = "lxml", marker = "extra == 'saml'", specifier = ">=5.2.1" },
+    { name = "nats-py", marker = "extra == 'nats'", specifier = ">=2.9.0" },
     { name = "nats-py", marker = "extra == 'scale'", specifier = ">=2.9.0" },
     { name = "networkx", specifier = ">=3.6.1" },
+    { name = "novafabric", extras = ["saml", "scale", "sigstore", "spkg", "seal-postgres", "serve", "federation", "server", "lineage-kuzu", "janusgraph", "lineage-migration", "compliance", "scale-kg", "ocs-compress", "watch", "otlp", "query", "clickhouse", "nats", "avro", "energy-gpu"], marker = "extra == 'all'", editable = "." },
+    { name = "nvidia-ml-py", marker = "extra == 'energy-gpu'", specifier = ">=12.0.0" },
     { name = "openai-agents", marker = "extra == 'openai-agents'", specifier = ">=0.17.3" },
     { name = "opentelemetry-proto", marker = "extra == 'otlp'", specifier = ">=1.20" },
     { name = "opentelemetry-sdk", specifier = ">=1.29" },
@@ -3027,15 +3084,14 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], marker = "extra == 'seal-postgres'", specifier = ">=3.2" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'server'", specifier = ">=3.2" },
     { name = "psycopg-pool", marker = "extra == 'server'", specifier = ">=3.2" },
-    { name = "pyarrow", specifier = ">=24.0.0" },
     { name = "pyarrow", marker = "extra == 'lineage-migration'", specifier = ">=24.0.0" },
+    { name = "pyarrow", marker = "extra == 'scale'", specifier = ">=24.0.0" },
+    { name = "pyarrow", marker = "extra == 'serve'", specifier = ">=24.0.0" },
     { name = "pydantic", specifier = ">=2.11" },
     { name = "pyiceberg", marker = "extra == 'scale'", specifier = ">=0.7.0" },
-    { name = "pyjwt", specifier = ">=2.13.0" },
     { name = "pyjwt", marker = "extra == 'server'", specifier = ">=2.13.0" },
     { name = "pyshacl", marker = "extra == 'spkg'", specifier = ">=0.29.0" },
-    { name = "python-louvain", specifier = ">=0.16" },
-    { name = "python-multipart", specifier = ">=0.0.31" },
+    { name = "python-louvain", marker = "extra == 'serve'", specifier = ">=0.16" },
     { name = "python-multipart", marker = "extra == 'server'", specifier = ">=0.0.31" },
     { name = "python-ulid", specifier = ">=2.7.0" },
     { name = "pyyaml", specifier = ">=6.0" },
@@ -3051,11 +3107,13 @@ requires-dist = [
     { name = "weasyprint", marker = "extra == 'compliance'", specifier = ">=60.0" },
     { name = "zstandard", marker = "extra == 'ocs-compress'", specifier = ">=0.23.0" },
 ]
-provides-extras = ["saml", "scale", "worm-s3", "worm-azure", "worm-gcs", "seal-aws", "seal-azure", "seal-gcp", "sigstore", "spkg", "seal-postgres", "serve", "federation", "server", "lineage-kuzu", "janusgraph", "lineage-migration", "compliance", "scale-kg", "ocs-compress", "openai-agents", "google-adk", "bedrock-agentcore", "a2a", "watch", "otlp"]
+provides-extras = ["saml", "scale", "worm-s3", "worm-azure", "worm-gcs", "seal-aws", "seal-azure", "seal-gcp", "sigstore", "spkg", "seal-postgres", "serve", "federation", "server", "lineage-kuzu", "janusgraph", "lineage-migration", "compliance", "scale-kg", "ocs-compress", "openai-agents", "google-adk", "bedrock-agentcore", "a2a", "watch", "otlp", "query", "clickhouse", "nats", "avro", "energy-gpu", "all"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "boto3", specifier = ">=1.38" },
+    { name = "clickhouse-connect", specifier = ">=0.8.0" },
+    { name = "duckdb", specifier = ">=1.5.2" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "hypothesis", specifier = ">=6.115" },
@@ -3074,10 +3132,12 @@ dev = [
     { name = "pytest-cov", specifier = ">=6.0" },
     { name = "pytest-timeout", specifier = ">=2.3" },
     { name = "pytest-xdist", specifier = ">=3.6" },
+    { name = "python-louvain", specifier = ">=0.16" },
     { name = "ruff", specifier = ">=0.9" },
     { name = "signxml", specifier = ">=4.0" },
     { name = "sqlfluff", specifier = ">=3.0" },
     { name = "testcontainers", specifier = ">=4.0" },
+    { name = "trove-classifiers", specifier = ">=2024.1.31" },
     { name = "types-pyyaml", specifier = ">=6.0" },
     { name = "watchdog", specifier = ">=4.0.0" },
 ]
@@ -3141,6 +3201,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/b9/a4/da82196f8cc4bd28ecf17bd57008c84f3d4696caf06753d9bad45e4ad749/numpy-2.4.5-cp314-cp314t-win32.whl", hash = "sha256:27f4a6dc26353a860b348961b9aa9e009835688b435cfa105e873b8dc2c726f5", size = 6156900, upload-time = "2026-05-15T20:24:53.134Z" },
     { url = "https://files.pythonhosted.org/packages/98/31/860959b91a73d9a085006554fa3850da51a7ffab64599bac5097243438ab/numpy-2.4.5-cp314-cp314t-win_amd64.whl", hash = "sha256:76ac6e90f5e226011c88f9b7040a4bcae612518bc7e9adc127e697a13b28ad1a", size = 12638906, upload-time = "2026-05-15T20:24:55.009Z" },
     { url = "https://files.pythonhosted.org/packages/9e/2a/bbd3097913083ad07c0f28fc9629666221fc18923e17ce97ae22a5dccdd6/numpy-2.4.5-cp314-cp314t-win_arm64.whl", hash = "sha256:7c392e2c1bf596701d3c6832be7567eab5d5b0a13865036c33365ee097d37f8b", size = 10565875, upload-time = "2026-05-15T20:24:57.425Z" },
+]
+
+[[package]]
+name = "nvidia-ml-py"
+version = "13.610.43"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f0/b5/a8fbc356f768fa5c9cfd646668fd7d34bf55bdd1c6e20754642a64d930d4/nvidia_ml_py-13.610.43.tar.gz", hash = "sha256:65437eb73d68d0c62c931ca4d45038472faff03bd0b8729abba4b899f70d60f2", size = 52109, upload-time = "2026-06-01T18:54:08.829Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/23/45/caa600acfab94560807a20a64b5830d2cd3c3202b7f1328644d70b7d6bd8/nvidia_ml_py-13.610.43-py3-none-any.whl", hash = "sha256:f13c72698edef492f985cc225f14faafe68ae065a2e407f45bdf6f4b9b43fde8", size = 53163, upload-time = "2026-06-01T18:54:07.704Z" },
 ]
 
 [[package]]
@@ -5128,6 +5197,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/09/a9/6ba95a270c6f1fbcd8dac228323f2777d886cb206987444e4bce66338dd4/tqdm-4.67.3.tar.gz", hash = "sha256:7d825f03f89244ef73f1d4ce193cb1774a8179fd96f31d7e1dcde62092b960bb", size = 169598, upload-time = "2026-02-03T17:35:53.048Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/16/e1/3079a9ff9b8e11b846c6ac5c8b5bfb7ff225eee721825310c91b3b50304f/tqdm-4.67.3-py3-none-any.whl", hash = "sha256:ee1e4c0e59148062281c49d80b25b67771a127c85fc9676d3be5f243206826bf", size = 78374, upload-time = "2026-02-03T17:35:50.982Z" },
+]
+
+[[package]]
+name = "trove-classifiers"
+version = "2026.6.1.19"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c2/e3/7ca82ee24c82d344584abd5b8637b3bd056f2900226e8d82fc22f1184b92/trove_classifiers-2026.6.1.19.tar.gz", hash = "sha256:c5132b4b61a829d11cfbd2d72e97f20a45ed6edb95e45c5efdeb5e00836b2745", size = 17059, upload-time = "2026-06-01T19:41:34.649Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7c/a4/81502f486f01db95bc8320646a8a12511f5e556cb63d5e224d91816605c4/trove_classifiers-2026.6.1.19-py3-none-any.whl", hash = "sha256:ab4c4ec93cc4a4e7815fa759906e05e6bb3f2fbd92ea0f897288c6a43efd15b3", size = 14211, upload-time = "2026-06-01T19:41:33.434Z" },
 ]
 
 [[package]]

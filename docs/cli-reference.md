@@ -762,8 +762,8 @@ Replay MCP conformance vectors and assert wire compatibility with the
 2026-07-28 release.
 
 ```bash
-nova mcp conformance tests/mcp/vectors/
-nova mcp conformance tests/mcp/vectors/ --json
+nova mcp conformance tests/mcp_conformance/vectors/
+nova mcp conformance tests/mcp_conformance/vectors/ --json
 ```
 
 Each vector pins a wire behaviour against the capture shape it must produce.
@@ -784,7 +784,7 @@ Exit codes: `0` (all passed), `1` (a vector failed), `2` (no vectors found —
 a suite with no vectors proves nothing).
 
 The `mcp-conformance` CI lane runs this plus `nova mcp card validate` on every
-PR touching `proxy/`, `capture/hooks/_mcp.py`, `mcp/`, or `tests/mcp/`.
+PR touching `proxy/`, `capture/hooks/_mcp.py`, `mcp/`, or `tests/mcp_conformance/`.
 
 ---
 
@@ -1115,9 +1115,33 @@ Options:
 Semantics: `count()` counts **distinct capsules**; other aggregates run over the
 matched model-call records, skipping capsules where the metric is absent (SQL
 null semantics); a dimension a capsule never recorded matches no filter. Empty
-result is `rows: []`, exit 0 — not an error. Aggregation runs on an in-process
-DuckDB index with a stdlib-SQLite fallback (identical results; the engine used
-is reported in `index.engine`). Parse errors exit 2; execution errors exit 1.
+result is `rows: []`, exit 0 — not an error. Parse errors exit 2; execution
+errors exit 1.
+
+Aggregation runs on an in-process index, built fresh on each query. **The
+default engine is stdlib SQLite**, even when DuckDB is installed. Measured
+(ADR-0222 OQ-3, `bench/query/MEASURED_CEILING.md`), DuckDB reaches only
+*parity* — 0.86× at 1,000 capsules, 1.00× at 20,000 — because the capsule
+directory scan is 86-89% of total query time and the index build is ~3%. SQLite
+needs no extra dependency and ties or wins everywhere measured, so it is the
+default. Results are identical either way, and the engine actually used is
+reported in `index.engine`.
+
+> DuckDB's fast path needs `pyarrow`, which `[query]` deliberately does not
+> install (~154 MB, for no measurable gain here). `[scale]` and `[serve]`
+> include it. With DuckDB selected but pyarrow absent, the index build falls
+> back to a row-by-row insert that is ~20× slower than SQLite, and says so once
+> in the log.
+
+To use DuckDB anyway (it needs `pip install 'novafabric[query]'`):
+
+```bash
+NOVAFABRIC_QUERY_ENGINE=duckdb nova query --select 'count()' --group-by model
+```
+
+If that variable is set but DuckDB is not installed, the query still runs on
+SQLite and logs a warning naming the extra — a read-only query is never failed
+over an engine preference.
 
 ### nova view (experimental, ADR-0130)
 
@@ -1681,7 +1705,7 @@ nova lineage-store profile [--target kuzudb-vertical|janusgraph-minimal]
 | `--target` | `kuzudb-vertical` | Profile target: `kuzudb-vertical` or `janusgraph-minimal` |
 | `--node-size` | `16g-ram-500g-nvme` | Node size tag for `kuzudb-vertical` profiles |
 | `--rf` | `3` | Cassandra replication factor (for `janusgraph-minimal`) |
-| `--image-tag` | `latest` | Docker image tag |
+| `--image-tag` | *(unset)* | **Deprecated.** For `kuzudb-vertical`, sets the single `nova-lineage` image tag (falls back to `latest` if unset). For `janusgraph-minimal`, overrides *all three* images (janusgraph/cassandra/novafabric) to the same tag — prefer leaving it unset so each image uses its own independently-pinned default (JanusGraph `1.1.0`, others `latest`) |
 
 ```bash
 # KuzuDB vertical profile (single-node, NVMe-optimised)
@@ -5879,6 +5903,22 @@ Mandatory flag: `--experimental`. Without it the command prints the gate banner 
 | `--capsule-dir` | `$NOVAFABRIC_HOME/capsules/` | Where to look for capsules. |
 | `--db-path` | `~/.novafabric/registry.db` | Registry/lineage SQLite path. |
 | `--no-browser` | off | Don't auto-open a browser tab. |
+
+**Authentication.** The server binds `127.0.0.1`, validates the `Host` header, and requires a
+one-shot session token on every `/api/*` request (the probes `GET /api/health`, `/livez`, and
+`/readyz` are open). The browser is launched with the token already in the URL; for scripts,
+pass it either way — since **v0.97.0** an `Authorization: Bearer` header is accepted everywhere
+`?token=` is, and when the header carries a Bearer credential it is the authoritative one:
+
+```bash
+curl -H "Authorization: Bearer $(cat ~/.novafabric/.serve-token)" \
+  http://127.0.0.1:4321/api/stats            # preferred — keeps the secret out of shell
+                                             # history, proxy logs, and Referer headers
+curl "http://127.0.0.1:4321/api/stats?token=<token>"   # still supported (SPA, printed links)
+```
+
+Pin a stable token with `NOVAFABRIC_SERVE_TOKEN` for Docker/CI; otherwise it persists in
+`$NOVAFABRIC_HOME/.serve-token` across restarts.
 
 The CLI is the canonical interface. Every dashboard action surfaces the equivalent `nova` command and writes to `~/.novafabric/dashboard-audit.jsonl`.
 

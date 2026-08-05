@@ -1714,8 +1714,25 @@ deployment_environment  avg_tokens  p95_ms  count()
 staging                 375         3737.5  2
 production              350         1565    3
 
-2 row(s) — 5 capsule(s) scanned, engine duckdb, window 1970-01-01T00:00:00Z → …
+2 row(s) — 5 capsule(s) scanned, engine sqlite, window 1970-01-01T00:00:00Z → …
 ```
+
+> **`engine sqlite` vs `engine duckdb`.** Since v0.99.0 (ADR-0222) DuckDB is an
+> optional dependency rather than a default one, and since the ADR-0222 OQ-3
+> benchmark it is not the preferred engine either: `nova query` reports
+> `engine sqlite` whether or not DuckDB is installed. Results are identical
+> either way — the stdlib `sqlite3` path is verified row-for-row against the
+> DuckDB path.
+>
+> Do **not** install `novafabric[query]` expecting `nova query` to get faster.
+> DuckDB used to be ~20× *slower* here; that defect is fixed (the index build
+> now uses DuckDB's columnar path), but measured it only reaches *parity* —
+> the capsule directory scan is 86-89% of the time and the engine is ~3%.
+> Its fast path also needs `pyarrow`, which `[query]` does not install; without
+> it the old row-by-row cost returns and the log says so once. See
+> `bench/query/MEASURED_CEILING.md`. If you want DuckDB anyway, ask for it
+> explicitly with `NOVAFABRIC_QUERY_ENGINE=duckdb` and the line reads
+> `engine duckdb`.
 
 Predicates join with `AND` over an allow-listed dimension set (`asset`,
 `deployment_environment`, `variant`, `log_level`, `model`, `model_id`, `status`,
@@ -1751,7 +1768,7 @@ nova view save staging-latency --select 'p95(latency) AS p95_ms, count()' \
 nova view list
 nova view run staging-latency --capsule-dir runs
 # p95_ms=3737.5  count()=2
-#   — view 'staging-latency' (sha256:62f5699b3270…), 5 capsule(s) scanned, engine duckdb
+#   — view 'staging-latency' (sha256:62f5699b3270…), 5 capsule(s) scanned, engine sqlite
 nova view show staging-latency        # prints the stored query; never executes it
 ```
 

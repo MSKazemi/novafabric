@@ -41,7 +41,8 @@ def janusgraph_endpoint():
         from testcontainers.core.waiting_utils import wait_for_logs
     except ImportError:
         pytest.skip("gremlinpython/testcontainers not installed — skipping JanusGraph tests")
-    container = DockerContainer("janusgraph/janusgraph:latest").with_exposed_ports(8182)
+    # Pinned per deploy/IMAGE_PINS.md — keep in sync with the compose/Helm pin.
+    container = DockerContainer("janusgraph/janusgraph:1.1.0").with_exposed_ports(8182)
     try:
         container.start()
         wait_for_logs(container, "Channel started at port 8182", timeout=150)

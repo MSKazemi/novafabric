@@ -259,6 +259,54 @@ uv run pytest tests/lineage/test_janusgraph.py -v -m "not slow"
 
 ---
 
+## Apache AGE lineage backend — docker-compose profile *(experimental)*
+
+> **Status correction, scoped to this section only:** unlike the JanusGraph section
+> above, the `AGELineageStore` Python backend
+> (`src/novafabric/lineage/backends/age.py`) is already implemented and
+> behavioural-parity-tested against the SQLite reference via testcontainers
+> (`tests/lineage/test_age_backend.py`). What's new here is a docker-compose
+> **profile** that lets you run Apache AGE locally without testcontainers — this
+> profile is **experimental**: opt-in only, not part of the default dev stack or
+> `prod`.
+
+```bash
+# Start ONLY a standalone AGE-enabled Postgres instance on :5433.
+make age-up
+make age-down
+```
+
+Both targets name the `age` service explicitly on every underlying command
+(`up -d age`, `stop age`, `rm -f age`) and never call bare `up`/`down` — the compose
+file's `postgres`/`nova` services have no `profiles:` key, so they are always
+"active" regardless of which profile is selected, and a bare `up`/`down` under
+`--profile age` would start or tear down that entire union, not just `age`. This was
+verified live: `make age-up`/`make age-down` never create, restart, or remove an
+already-running dev/prod stack's `novafabric-postgres` or `novafabric-serve`.
+
+Connect from Python (requires `pip install novafabric[server]` for `psycopg[binary]`):
+
+```python
+from novafabric.lineage.backends.age import AGELineageStore
+
+store = AGELineageStore(dsn="postgresql://nova:nova@localhost:5433/nova_lineage")
+```
+
+`AGELineageStore.__init__` self-initializes the AGE extension and graph
+(`CREATE EXTENSION IF NOT EXISTS age`, `create_graph`) on first connect — no init-SQL
+mount or manual setup step is needed. This is a standalone Postgres instance, separate
+from the MetadataStore's `postgres` service (port 5432); the AGE lineage graph is a
+derived, rebuildable artifact and deliberately does not share the metadata database.
+
+`make age-down` never passes `-v`, so the named `age-data` volume is preserved across
+restarts (matching `dev-down`/`prod-down` preserving `pg-data`/`kuzu-data`). To
+intentionally discard it, remove it explicitly:
+`docker volume rm docker_age-data` (check the exact name with
+`docker volume ls | grep age-data` first — the prefix depends on your compose
+project name).
+
+---
+
 ## Phase 5 — Enable NATS JetStream collector *(consumer shipped v0.94.0; deployment plumbing hardware-gated)*
 
 > Requires NATS server ≥ 2.10 with JetStream enabled.

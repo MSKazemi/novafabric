@@ -1,7 +1,7 @@
 """JanusGraph lineage backend — distributed graph DB (v3 tier).
 
 Requires JanusGraph container:
-    docker run -p 8182:8182 janusgraph/janusgraph:1.0.0
+    docker run -p 8182:8182 janusgraph/janusgraph:1.1.0
 
 Integration tests gated by NOVA_INTEGRATION=1.
 Install the optional extra: uv add "novafabric[janusgraph]"
@@ -31,7 +31,7 @@ class JanusGraphLineageStore(AbstractLineageStore):
     opened until the first operation, so instantiation is always cheap.
 
     Requires JanusGraph container running at *gremlin_endpoint*:
-        docker run -p 8182:8182 janusgraph/janusgraph:1.0.0
+        docker run -p 8182:8182 janusgraph/janusgraph:1.1.0
 
     Integration tests gated by NOVA_INTEGRATION=1.
     """

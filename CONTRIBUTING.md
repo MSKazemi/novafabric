@@ -26,7 +26,7 @@ uv sync --all-extras
 
 ## Running tests
 
-The suite is ~5.6K tests — use the tiered targets instead of a serial full run:
+The suite is ~11.5K tests — use the tiered targets instead of a serial full run:
 
 ```bash
 make test-fast   # dev loop: parallel (-n auto), no coverage, skips integration
@@ -56,7 +56,7 @@ separate `seal-latency-gate` job in CI on every PR.
 ## Linting
 
 ```bash
-uv run ruff check src tests
+uv run ruff check src tests scripts
 ```
 
 ## Type checking
@@ -107,12 +107,27 @@ Use lowercase imperative: `feat: add dataset asset type`, `fix: catch missing fi
 | New optional adapter | PR (with maintainer review) |
 | New CLI command or default flag | RFC |
 | New runtime dependency (Tier A: Apache-2.0/MIT/BSD/PostgreSQL License) | PR with one-line license note |
-| New runtime dependency (Tier B: LGPL/MPL-2.0/EPL-2.0) | RFC + filled [evaluation template](design/templates/database-evaluation-template.md) |
-| New runtime dependency (Tier C: AGPL/SSPL/BSL/GPL/Elastic) | ADR with business justification + migration path |
+| New runtime dependency (Tier B: LGPL/MPL-2.0/EPL-2.0) | RFC + filled [evaluation template](design/templates/database-evaluation-template.md) + a `[[declaration]]` in `.license-policy.toml` |
+| New runtime dependency (Tier C: AGPL/SSPL/BSL/GPL/Elastic) | ADR with business justification + migration path, then a `[[declaration]]` carrying both |
+| New runtime dependency (Tier D: field-of-use / "ethical source" terms) | Not accepted — no waiver exists |
+
 | Schema change (Run Capsule, Asset Spec, Evidence Bundle) | RFC |
 | Storage format change | RFC |
 | Security-relevant change | RFC + threat model update |
 | Governance change | RFC |
+
+**These tiers are enforced, not just documented.** `scripts/license_gate.py`
+runs in CI (`.github/workflows/license-policy.yml`) on every push and PR, plus
+weekly so an upstream *relicense* cannot slip through a lockfile that has not
+changed. It resolves each installed distribution's license and blocks anything
+Tier B or worse that lacks a declaration in
+[`.license-policy.toml`](.license-policy.toml). Run it locally before opening a
+PR that adds a dependency:
+
+```bash
+uv run python scripts/license_gate.py --ignore novafabric          # gate
+uv run python scripts/license_gate.py --ignore novafabric --list   # full inventory
+```
 
 The RFC process is described in
 [`design/governance/RFC-0000-rfc-process.md`](design/governance/RFC-0000-rfc-process.md).

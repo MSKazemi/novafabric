@@ -212,9 +212,19 @@ def profile_cmd(
         typer.Option("--rf", help="Cassandra replication factor for janusgraph-minimal"),
     ] = 3,
     image_tag: Annotated[
-        str,
-        typer.Option("--image-tag", help="Docker image tag"),
-    ] = "latest",
+        str | None,
+        typer.Option(
+            "--image-tag",
+            help=(
+                "Docker image tag. For kuzudb-vertical this sets the single "
+                "nova-lineage image tag. Deprecated for janusgraph-minimal: "
+                "overrides all three of that profile's images "
+                "(janusgraph/cassandra/novafabric) to this one value, rather "
+                "than each image's own independently-pinned default — kept "
+                "for backward compatibility only."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Print a docker-compose deployment profile for the chosen lineage backend.
 
@@ -237,7 +247,10 @@ def profile_cmd(
     if target == "kuzudb-vertical":
         from novafabric.lineage.profiles.kuzudb_vertical import generate_kuzudb_vertical_profile
 
-        typer.echo(generate_kuzudb_vertical_profile(node_size=node_size, image_tag=image_tag))
+        kuzudb_kwargs: dict[str, str] = {"node_size": node_size}
+        if image_tag is not None:
+            kuzudb_kwargs["image_tag"] = image_tag
+        typer.echo(generate_kuzudb_vertical_profile(**kuzudb_kwargs))
     elif target == "janusgraph-minimal":
         from novafabric.lineage.profiles.janusgraph_minimal import (
             generate_janusgraph_minimal_profile,

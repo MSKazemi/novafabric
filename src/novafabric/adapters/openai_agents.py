@@ -45,7 +45,7 @@ class NovaCapsuleTracingProcessor(_TracingProcessor):
     def __init__(self, data_dir: Path) -> None:
         self._data_dir = data_dir
         # trace_id -> (writer, run_id, span_id, created_at, t0)
-        self._active: dict[str, tuple[Any, str, str, str, float]] = {}
+        self._active: dict[str, tuple[Any, str, str, str, float, str]] = {}
 
     def on_trace_start(self, trace: Any) -> None:
         from novafabric.capture._ulid import new_span_id, new_ulid
@@ -59,18 +59,21 @@ class NovaCapsuleTracingProcessor(_TracingProcessor):
         writer.open()
         created_at = _now()
         t0 = time.monotonic()
-        install_all(writer=writer, parent_span_id=span_id)
-        self._active[trace.trace_id] = (writer, run_id, span_id, created_at, t0)
+        hook_token = install_all(writer=writer, parent_span_id=span_id)
+        # Keyed per trace: this processor handles concurrent traces, so the
+        # ownership token must travel with the trace, not with the processor.
+        self._active[trace.trace_id] = (writer, run_id, span_id, created_at, t0, hook_token)
 
     def on_trace_end(self, trace: Any) -> None:
-        from novafabric.capture.hooks import uninstall_all
+        from novafabric.capture.hooks import uninstall_all, wire_capture_state
         from novafabric.capture.replay import minimal_replay_policy
 
         entry = self._active.pop(trace.trace_id, None)
         if entry is None:
             return
-        writer, run_id, span_id, created_at, t0 = entry
-        uninstall_all()
+        writer, run_id, span_id, created_at, t0, hook_token = entry
+        _wire_state = wire_capture_state(hook_token)
+        uninstall_all(hook_token)
 
         finished_at = _now()
         duration_ms = int((time.monotonic() - t0) * 1000)
@@ -103,7 +106,7 @@ class NovaCapsuleTracingProcessor(_TracingProcessor):
             "duration_ms": duration_ms,
             "status": "success",
             "command": [f"@openai-agents:{workflow_name}"],
-            "capture_mode": "adapter-openai-agents",
+            "capture_mode": "sdk-decorator",
             "novafabric_version": _pkg_version("novafabric"),
             "working_directory": str(Path.cwd()).replace(str(Path.home()), "~"),
             "host": {
@@ -129,7 +132,7 @@ class NovaCapsuleTracingProcessor(_TracingProcessor):
             "tool_call_count": _count_jsonl(cap_dir / "tool-calls.jsonl"),
             "mutating_tool_count": 0,
             "exit_code": 0,
-            "tags": {"framework": "openai-agents"},
+            "metadata": {"framework": "openai-agents", "wire_capture": _wire_state},
         }
         writer.write_text("capsule.yaml", yaml.dump(manifest, allow_unicode=True))
 

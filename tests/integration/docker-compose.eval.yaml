@@ -18,7 +18,7 @@ services:
     # both :1.22.1 and :latest as of 2026-07) — switched to edoburu/pgbouncer (MIT
     # licensed, https://github.com/edoburu/docker-pgbouncer), which uses a different
     # env-var convention (a single DATABASE_URL vs bitnami's POSTGRESQL_*/PGBOUNCER_*).
-    image: edoburu/pgbouncer:latest
+    image: edoburu/pgbouncer:v1.25.2-p0
     container_name: novafabric-test-pgbouncer
     environment:
       DATABASE_URL: postgresql://postgres:testpass@postgres:5432/novafabric_test

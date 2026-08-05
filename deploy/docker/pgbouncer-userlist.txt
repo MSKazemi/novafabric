@@ -3,6 +3,12 @@
 ; IMPORTANT: this file is a template.  Replace the placeholder values with
 ; real SCRAM-SHA-256 hashes before deploying.  Never commit real passwords.
 ;
+; NOTE: this repo's compose `prod`-profile pgbouncer service
+; (deploy/docker/docker-compose.yml) does NOT read this file — it sets
+; AUTH_TYPE=trust (no SCRAM userlist check) and mounts no userlist.txt at
+; all. This template documents the SCRAM/userlist workflow for a standalone
+; (non-compose) pgBouncer deployment; see deploy/docker/README-pgbouncer.md.
+;
 ; Generating SCRAM-SHA-256 hashes
 ; --------------------------------
 ; 1. Connect to Postgres as a superuser and create the role:
@@ -27,10 +33,16 @@
 ;
 ; Security notes
 ; --------------
-; - Mount this file read-only inside the pgBouncer container:
+; - The compose `prod`-profile pgbouncer service configures itself from
+;   environment variables and does NOT mount this file (see
+;   deploy/docker/README-pgbouncer.md). If you run pgBouncer standalone
+;   (outside that compose stack), mount this file read-only instead:
 ;     volumes:
 ;       - ./pgbouncer-userlist.txt:/etc/pgbouncer/userlist.txt:ro
-; - Rotate passwords by updating this file and reloading pgBouncer:
+; - Rotate passwords by updating this file and reloading pgBouncer (standalone
+;   deployments only — see the NOTE above; for this repo's compose service,
+;   edit `environment:` in docker-compose.yml and recreate the container
+;   instead: `docker compose --profile prod up -d --force-recreate pgbouncer`):
 ;     docker compose exec pgbouncer pgbouncer -R /etc/pgbouncer/pgbouncer.ini
 ; - Do NOT use md5 or plaintext passwords in production.
 
