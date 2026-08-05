@@ -70,8 +70,34 @@ npm run lhci            # Lighthouse CI
 
 ## Deploy
 
-Static `dist/` deploys to GitHub Pages or Cloudflare Pages. No
-server, no DNS sleight of hand.
+```bash
+make site        # from the repo root: builds web/dist/ and prints what to copy
+```
+
+`npm run build` produces a fully static `web/dist/` — no server, no DNS sleight
+of hand. That directory is the deployable artifact.
+
+**The last step is not automated, and this section used to claim it was.** It
+said the site "deploys to GitHub Pages or Cloudflare Pages"; the live site at
+novafabric.ai is served by nginx, there is no `CNAME`, and no Pages workflow
+exists in this repository. Somebody copies `web/dist/` to the web root by hand.
+
+That gap has a visible cost: `docs/` has been publishable as 48 pages since
+2026-08-05 and `novafabric.ai/docs/` still returns 404, because building is not
+deploying.
+
+**Two rules for whoever does the copy:**
+
+1. **Sync the whole `_astro/` directory, not individual files.** Vite
+   content-hashes every chunk. Copying only the main bundle leaves stale chunk
+   names, the browser 404s on a dynamic import, and the page renders completely
+   blank with no visible error.
+2. **Copy the whole `dist/`, including `docs/`.** The docs routes are generated
+   from the repository's `docs/*.md` at build time, so they only exist in a fresh
+   build.
+
+Automating this — a deploy workflow, or a pull on the host — is worth doing and
+is not blocked by anything in this repository.
 
 ## Boundary discipline
 
