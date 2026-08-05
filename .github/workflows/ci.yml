@@ -288,7 +288,16 @@ jobs:
           python-version: "3.12"
 
       - name: Install project + dev deps
-        run: uv sync --frozen
+        # --all-extras: alembic and psycopg live in an optional extra, so a plain
+        # `uv sync --frozen` installs neither. This job therefore failed at
+        # `Failed to spawn: alembic` on every run from at least 2026-07-30 — the
+        # integration tests below have not executed in over a week.
+        #
+        # Fourth instance of the class BL-022 named for the `unit` job: a CI job
+        # installing without the extras it needs. The two benchmark jobs above
+        # deliberately keep the plain sync — they measure capture overhead, and
+        # installing extras would change what gets imported and skew the numbers.
+        run: uv sync --frozen --all-extras
 
       - name: Run Postgres schema migrations
         env:
