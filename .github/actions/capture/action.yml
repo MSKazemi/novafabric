@@ -68,8 +68,15 @@ outputs:
     description: "Filesystem path to the capsule directory."
     value: ${{ steps.capture.outputs.capsule-path }}
   status:
-    description: "`success` or `failure` — the captured command's own outcome."
+    description: >-
+      `success` or `failure` — the captured command's own outcome. **Empty when
+      the action fails**; GitHub does not propagate a composite action's outputs
+      in that case. Use `$NOVAFABRIC_STATUS`, which is also exported and does
+      survive.
     value: ${{ steps.capture.outputs.status }}
+  exit-code:
+    description: "The captured command's exit code."
+    value: ${{ steps.capture.outputs.exit-code }}
 
 runs:
   using: "composite"
@@ -130,7 +137,18 @@ runs:
           echo "run-id=${run_id}"
           echo "capsule-path=${capsule}"
           echo "status=${status}"
+          echo "exit-code=${capture_rc}"
         } >> "${GITHUB_OUTPUT}"
+
+        # Also as environment variables. A composite action's declared `outputs`
+        # are EMPTY to the calling workflow when the action fails, so a caller
+        # that wants the capsule after a failed capture cannot read them.
+        # GITHUB_ENV survives.
+        {
+          echo "NOVAFABRIC_RUN_ID=${run_id}"
+          echo "NOVAFABRIC_CAPSULE_PATH=${capsule}"
+          echo "NOVAFABRIC_STATUS=${status}"
+        } >> "${GITHUB_ENV}"
 
         {
           echo "### NovaFabric capture"
@@ -142,20 +160,36 @@ runs:
           echo "| Environment | \`${{ inputs.environment }}\` |"
         } >> "${GITHUB_STEP_SUMMARY}"
 
-        exit "${capture_rc}"
+        # Deliberately exits 0 even when the captured command failed. A composite
+        # action ABORTS its remaining steps once one of them fails — `always()`
+        # does not rescue them — so failing here would skip the validate and
+        # upload below and lose the capsule from precisely the run that needed
+        # it. Measured, not assumed: the first version of this action failed that
+        # way and uploaded nothing for a crashing command. The real exit code is
+        # re-raised by the last step instead.
+        exit 0
 
     - name: Validate the capsule
-      if: ${{ always() && inputs.validate == 'true' && steps.capture.outputs.capsule-path != '' }}
+      if: ${{ inputs.validate == 'true' }}
       shell: bash
       run: nova validate "${{ steps.capture.outputs.capsule-path }}"
 
     - name: Upload the capsule
-      # `always()` on purpose. The capsule from a failing run is the one anyone
-      # actually wants, so it must survive the step failure that produced it.
-      if: ${{ always() && inputs.upload-artifact == 'true' && steps.capture.outputs.capsule-path != '' }}
+      if: ${{ inputs.upload-artifact == 'true' }}
       uses: actions/upload-artifact@v7
       with:
         name: ${{ inputs.artifact-name }}
         path: ${{ steps.capture.outputs.capsule-path }}
         retention-days: ${{ inputs.retention-days }}
         if-no-files-found: error
+
+    - name: Propagate the captured command's exit code
+      # Last, so the capsule is validated and uploaded before the step fails.
+      # The calling workflow still sees the command's own exit code.
+      shell: bash
+      run: |
+        rc="${{ steps.capture.outputs.exit-code }}"
+        if [ "${rc}" != "0" ]; then
+          echo "::error title=Captured command failed::exited ${rc}; capsule ${{ steps.capture.outputs.run-id }} was still captured and uploaded"
+          exit "${rc}"
+        fi

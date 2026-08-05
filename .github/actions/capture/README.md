@@ -83,11 +83,17 @@ folder that verifies with no server and no network.
 
 ## Outputs
 
-| Output | Description |
-|---|---|
-| `run-id` | ULID of the captured run |
-| `capsule-path` | Path to the capsule directory |
-| `status` | `success` or `failure` — the captured command's own outcome |
+| Output | Also exported as | Description |
+|---|---|---|
+| `run-id` | `$NOVAFABRIC_RUN_ID` | ULID of the captured run |
+| `capsule-path` | `$NOVAFABRIC_CAPSULE_PATH` | Path to the capsule directory |
+| `status` | `$NOVAFABRIC_STATUS` | `success` or `failure` — the command's own outcome |
+| `exit-code` | — | The captured command's exit code |
+
+> **Use the environment variables if the capture may fail.** GitHub leaves a
+> composite action's declared `outputs` **empty to the caller when the action
+> fails** — which is exactly the case where you want the capsule. The `$NOVAFABRIC_*`
+> variables are written to `GITHUB_ENV` and survive.
 
 ## Behaviour on failure — the part that matters
 
@@ -97,9 +103,16 @@ The step fails with the captured command's own exit code, so your workflow behav
 exactly as it did before. But the artifact survives, because *the capsule from a
 failing run is the one anyone actually wants.*
 
-Verified rather than assumed: a command exiting 3 yields `capture_rc=3` and a
-capsule containing `status: failure`, `exit_code: 3`, which `nova validate`
-accepts as a valid record of a failed run.
+Verified rather than assumed, and the verification changed the design. The first
+version of this action failed the capture step immediately — and **uploaded
+nothing**, because a composite action aborts its remaining steps once one fails
+(`always()` does not rescue them). So the capsule from a crashing run, the one
+this action exists to preserve, was the one case that lost it.
+
+The capture step now always exits 0; validation and upload run; and a final step
+re-raises the captured command's exit code. `.github/workflows/capture-action.yml`
+proves it end to end by downloading the artifact from the failed run and asserting
+it contains `status: failure` and `exit_code: 3`.
 
 ## Getting the capsule back
 

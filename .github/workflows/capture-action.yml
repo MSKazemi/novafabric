@@ -96,8 +96,35 @@ jobs:
           set -euo pipefail
           test "${{ steps.capture.outcome }}" = "failure" || {
             echo "the step should have failed with the command's exit code"; exit 1; }
-          test "${{ steps.capture.outputs.status }}" = "failure" || {
-            echo "expected status=failure, got '${{ steps.capture.outputs.status }}'"; exit 1; }
-          grep -q "status: failure" "${{ steps.capture.outputs.capsule-path }}/capsule.yaml"
-          grep -q "exit_code: 3" "${{ steps.capture.outputs.capsule-path }}/capsule.yaml"
-          echo "crash captured as ${{ steps.capture.outputs.run-id }}"
+
+          # Asserts on the exported env vars, NOT on the action's declared
+          # outputs: GitHub leaves a composite action's outputs EMPTY when the
+          # action fails, which is exactly the case under test here.
+          test "${NOVAFABRIC_STATUS}" = "failure" || {
+            echo "expected NOVAFABRIC_STATUS=failure, got '${NOVAFABRIC_STATUS}'"; exit 1; }
+          grep -q "status: failure" "${NOVAFABRIC_CAPSULE_PATH}/capsule.yaml"
+          grep -q "exit_code: 3" "${NOVAFABRIC_CAPSULE_PATH}/capsule.yaml"
+          echo "crash captured as ${NOVAFABRIC_RUN_ID}"
+
+  artifact-survives-failure:
+    name: the failing run's capsule is downloadable
+    runs-on: ubuntu-latest
+    needs: failure-path
+    if: always()
+    timeout-minutes: 5
+    steps:
+      - name: Download the capsule from the failed capture
+        uses: actions/download-artifact@v8
+        with:
+          name: capsule-failure
+          path: recovered/
+
+      - name: It records the failure
+        # The promise this action makes, verified end to end: a crashing command
+        # still leaves a downloadable capsule that records how it crashed.
+        run: |
+          set -euo pipefail
+          test -f recovered/capsule.yaml || { echo "no capsule.yaml in artifact"; exit 1; }
+          grep -q "status: failure" recovered/capsule.yaml
+          grep -q "exit_code: 3" recovered/capsule.yaml
+          echo "recovered the crashed run's capsule from the artifact"
