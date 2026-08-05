@@ -105,8 +105,14 @@ runs:
       id: capture
       shell: bash
       run: |
-        # NOT `set -e`: a failing command must still produce a capsule, and this
-        # step has to keep running long enough to find and report it.
+        # `set +e` is load-bearing and must come first. GitHub runs composite
+        # `shell: bash` steps as `bash --noprofile --norc -eo pipefail {0}` — so
+        # -e is ALREADY ON, and `set -uo pipefail` does not turn it off. Without
+        # the explicit `+e`, a captured command exiting non-zero aborts this step
+        # before `capture_rc=$?` runs, the composite action abandons its
+        # remaining steps, and the capsule is never uploaded. That is exactly how
+        # the first two versions of this action failed.
+        set +e
         set -uo pipefail
         out_dir="${RUNNER_TEMP}/novafabric-capsules"
         mkdir -p "${out_dir}"
