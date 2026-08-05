@@ -36,6 +36,7 @@ Most questions are answered here:
 - **CLI reference:** [docs/cli-reference.md](docs/cli-reference.md)
 - **Python API:** [docs/python-api.md](docs/python-api.md)
 - **Comparisons** — how NovaFabric relates to other tools: [docs/comparison.md](docs/comparison.md)
+- **Benchmarks** — reproducible performance numbers: [docs/benchmarks.md](docs/benchmarks.md)
 - **FAQ:** [in the README](README.md#faq)
 - **Website:** <https://novafabric.ai>
 

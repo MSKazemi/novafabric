@@ -16,6 +16,12 @@
 
 Tracing tells you *what happened*. NovaFabric tells you whether a past run can be **replayed**, **compared**, and **proven** — entirely inside your own infrastructure, laptop to cluster, online or air-gapped, with no accounts and no telemetry.
 
+<p align="center">
+  <img src="docs/assets/demo.svg" alt="Terminal demo: nova capture records an agent run into a portable capsule, nova validate checks it, nova replay re-runs it offline with no API keys, and nova diff shows what changed between the two runs." width="700">
+</p>
+
+The same sequence as text, if you would rather copy it:
+
 ```console
 $ pip install novafabric
 
@@ -718,6 +724,7 @@ See [Citation](#citation) below, or the [`CITATION.cff`](CITATION.cff) file.
 - [Architecture](docs/architecture.md) — the subsystem map and the design invariants
 - [What NovaFabric is not](docs/architecture.md#what-novafabric-is-not) — the explicit non-goals
 - [How NovaFabric compares](docs/comparison.md) — honest comparisons, including where it loses
+- [Benchmarks](docs/benchmarks.md) — reproducible numbers, with the commands to re-run them
 - [Architecture decisions](docs/decisions.md) — 225 recorded decisions
 
 ### Release notes
