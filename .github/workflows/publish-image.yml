@@ -40,7 +40,7 @@ jobs:
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
@@ -118,7 +118,7 @@ jobs:
         run: cosign sign "ghcr.io/${{ github.repository }}@${DIGEST}"
 
       - name: Attest build provenance (SLSA, GitHub-native)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.build.outputs.digest }}
@@ -128,7 +128,7 @@ jobs:
         # Vulnerability scan of the image we just published (ADR-0186).
         # This pass reports ALL severities for the release record and never
         # blocks by itself; the gate is the next step.
-        uses: aquasecurity/trivy-action@0.35.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}
           format: table
@@ -137,7 +137,7 @@ jobs:
 
       - name: Upload trivy scan report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: trivy-report-${{ github.sha }}
           path: trivy-report.txt
@@ -148,7 +148,7 @@ jobs:
         # available fix. Unfixable criticals (ignore-unfixed) report in the
         # full scan above but do not wedge the release behind upstream
         # base-image lag; if they persist they enter the waiver discipline.
-        uses: aquasecurity/trivy-action@0.35.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}
           severity: CRITICAL
