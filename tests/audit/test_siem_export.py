@@ -1041,7 +1041,7 @@ def test_cli_tail_help() -> None:
     result = runner.invoke(app, ["audit-log", "tail", "--help"])
     assert result.exit_code == 0
     assert_flag_in_help(result, "--follow")
-    assert "--from-start" in result.output
+    assert_flag_in_help(result, "--from-start")
 
 
 def test_cli_tail_without_follow_is_a_bounded_single_pass(

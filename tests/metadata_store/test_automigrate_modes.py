@@ -47,7 +47,7 @@ def test_cli_migrate_to_postgres_help() -> None:
 
     assert result.exit_code == 0, f"--help exited non-zero:\n{result.output}"
     assert_flag_in_help(result, "--source"), "Missing --source in help output"
-    assert "--target" in result.output, "Missing --target in help output"
+    assert_flag_in_help(result, "--target")
 
 
 # ---------------------------------------------------------------------------

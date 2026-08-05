@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.capsule_migration._converter import (
@@ -230,7 +231,7 @@ def test_cli_migrate_help() -> None:
     result = runner.invoke(app, ["migrate", "--help"])
     assert result.exit_code == 0
     assert "0.1.x" in result.output
-    assert "--output" in result.output
+    assert_flag_in_help(result, "--output")
 
 
 def test_cli_migrate_success(src: Path, tmp_path: Path) -> None:

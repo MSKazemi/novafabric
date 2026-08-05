@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -247,13 +248,13 @@ class TestSealSignHelp:
         """nova seal sign --help must include the --backend flag."""
         result = runner.invoke(app, ["seal", "sign", "--help"])
         assert result.exit_code == 0
-        assert "--backend" in result.output
+        assert_flag_in_help(result, "--backend")
 
     def test_nova_verify_help_includes_backend_option(self) -> None:
         """nova verify --help must include the --backend flag."""
         result = runner.invoke(app, ["verify", "--help"])
         assert result.exit_code == 0
-        assert "--backend" in result.output
+        assert_flag_in_help(result, "--backend")
 
     def test_seal_sign_help_mentions_sigstore(self) -> None:
         """nova seal sign --help must mention 'sigstore'."""

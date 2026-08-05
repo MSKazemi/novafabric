@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from _help_assert import assert_flag_in_help
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from typer.testing import CliRunner
@@ -126,4 +127,4 @@ def test_non_ed25519_key_rejected(tmp_path: Path) -> None:
 def test_help_smoke() -> None:
     result = runner.invoke(app, ["verify-envelope", "--help"])
     assert result.exit_code == 0
-    assert "--key" in result.output
+    assert_flag_in_help(result, "--key")

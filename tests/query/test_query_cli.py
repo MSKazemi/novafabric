@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -19,10 +20,10 @@ RecordFactory = Callable[..., dict[str, Any]]
 def test_query_help() -> None:
     result = runner.invoke(app, ["query", "--help"])
     assert result.exit_code == 0
-    assert "--select" in result.output
-    assert "--where" in result.output
-    assert "--group-by" in result.output
-    assert "--json" in result.output
+    assert_flag_in_help(result, "--select")
+    assert_flag_in_help(result, "--where")
+    assert_flag_in_help(result, "--group-by")
+    assert_flag_in_help(result, "--json")
 
 
 def test_query_json_over_capsule_dir(

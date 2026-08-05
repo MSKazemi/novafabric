@@ -10,6 +10,7 @@ pytest.importorskip("rdflib")
 pytest.importorskip("pyshacl")
 pytest.importorskip("kuzu")
 
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner  # noqa: E402
 
 from novafabric.cli.main import app  # noqa: E402
@@ -66,4 +67,4 @@ def test_build_no_validate(tmp_path: Path) -> None:
 def test_build_help() -> None:
     result = runner.invoke(app, ["kg", "build", "--help"])
     assert result.exit_code == 0
-    assert "--validate" in result.output
+    assert_flag_in_help(result, "--validate")

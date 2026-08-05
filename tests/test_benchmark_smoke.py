@@ -10,6 +10,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from _help_assert import assert_flag_in_help
+
 HARNESS = Path(__file__).resolve().parent.parent / "benchmarks" / "capture_overhead.py"
 
 
@@ -24,7 +26,7 @@ def test_harness_help_works() -> None:
         capture_output=True, text=True, timeout=15,
     )
     assert result.returncode == 0
-    assert "--workload" in result.stdout
+    assert_flag_in_help(result, "--workload")
 
 
 def test_harness_runs_with_minimum_samples() -> None:

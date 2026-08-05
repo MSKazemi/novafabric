@@ -11,6 +11,7 @@ import json
 import re
 from pathlib import Path
 
+from _help_assert import assert_flag_in_help
 from jsonschema import Draft202012Validator, FormatChecker
 from typer.testing import CliRunner
 
@@ -154,7 +155,7 @@ def test_cli_help_mentions_html(  # smoke: `nova export --help`
 ) -> None:
     result = runner.invoke(app, ["export", "--help"])
     assert result.exit_code == 0
-    assert "--html" in result.output
+    assert_flag_in_help(result, "--html")
 
 
 def test_cli_export_html_smoke(golden_capsule_dir: Path, tmp_path: Path) -> None:
@@ -175,7 +176,7 @@ def test_cli_default_output_next_to_capsule(golden_capsule_dir: Path) -> None:
 def test_cli_without_html_flag_errors(golden_capsule_dir: Path) -> None:
     result = runner.invoke(app, ["export", str(golden_capsule_dir)])
     assert result.exit_code == 2
-    assert "--html" in result.output
+    assert_flag_in_help(result, "--html")
 
 
 def test_cli_missing_capsule_exits_1(tmp_path: Path) -> None:

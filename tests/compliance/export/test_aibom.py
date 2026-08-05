@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -431,7 +432,7 @@ class TestAIBOMGenerate:
         runner = CliRunner()
         result = runner.invoke(app, ["aibom", "generate"])
         assert result.exit_code == 2
-        assert "--all" in result.output
+        assert_flag_in_help(result, "--all")
 
     def test_generate_invalid_capsule(self, tmp_path: Path) -> None:
         bad = tmp_path / "not-a-capsule"

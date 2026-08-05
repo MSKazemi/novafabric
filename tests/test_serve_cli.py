@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -15,13 +16,13 @@ def test_serve_without_experimental_flag_prints_gate_and_exits_0() -> None:
     result = runner.invoke(app, ["serve"])
     assert result.exit_code == 0
     assert "EXPERIMENTAL" in result.output
-    assert "--experimental" in result.output
+    assert_flag_in_help(result, "--experimental")
 
 
 def test_serve_help_describes_experimental_flag() -> None:
     result = runner.invoke(app, ["serve", "--help"])
     assert result.exit_code == 0
-    assert "--experimental" in result.output
+    assert_flag_in_help(result, "--experimental")
 
 
 def test_serve_refuses_non_localhost_bind_without_insecure() -> None:

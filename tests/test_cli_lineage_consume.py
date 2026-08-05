@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -14,8 +15,8 @@ def test_help_smoke() -> None:
     result = runner.invoke(app, ["lineage", "consume", "--help"])
     assert result.exit_code == 0
     assert "LineageConsumer" in result.output
-    assert "--flush-batch-size" in result.output
-    assert "--flush-interval-s" in result.output
+    assert_flag_in_help(result, "--flush-batch-size")
+    assert_flag_in_help(result, "--flush-interval-s")
 
 
 def test_invokes_run_from_nats_with_cli_args() -> None:

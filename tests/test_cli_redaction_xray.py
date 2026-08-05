@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -159,4 +160,4 @@ def test_document_and_capsule_are_mutually_exclusive(tmp_path: Path) -> None:
 def test_neither_document_nor_capsule_is_a_clear_error() -> None:
     result = runner.invoke(app, ["redaction-xray"])
     assert result.exit_code == 2
-    assert "--capsule" in result.output
+    assert_flag_in_help(result, "--capsule")

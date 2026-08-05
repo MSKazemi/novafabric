@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import yaml
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -128,7 +129,7 @@ def test_session_replay_empty_session_fails(tmp_path: Path) -> None:
 def test_session_replay_help_lists_flags() -> None:
     result = runner.invoke(app, ["session", "replay", "--help"])
     assert result.exit_code == 0
-    assert "--mode" in result.output
-    assert "--on-divergence" in result.output
+    assert_flag_in_help(result, "--mode")
+    assert_flag_in_help(result, "--on-divergence")
     # rich truncates the long flag name with an ellipsis at narrow widths
-    assert "--continue-past-refus" in result.output
+    assert_flag_in_help(result, "--continue-past-refus")

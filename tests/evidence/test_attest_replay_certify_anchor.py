@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from _help_assert import assert_flag_in_help
 from jsonschema import Draft202012Validator
 from typer.testing import CliRunner
 
@@ -378,5 +379,5 @@ def test_anchor_capsule_requires_streams(tmp_path: Path) -> None:
 def test_help_lists_new_flags() -> None:
     res = runner.invoke(evidence_app, ["attest-replay", "--help"])
     assert res.exit_code == 0
-    assert "--certify" in res.output
-    assert "--anchor" in res.output
+    assert_flag_in_help(res, "--certify")
+    assert_flag_in_help(res, "--anchor")

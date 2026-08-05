@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -22,7 +23,7 @@ runner = CliRunner()
 def test_doctor_no_flags_prints_hint() -> None:
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 0
-    assert "--check-storage" in result.output
+    assert_flag_in_help(result, "--check-storage")
 
 
 # ---------------------------------------------------------------------------
@@ -298,4 +299,4 @@ def test_doctor_check_scheduler_with_contract_vars_present_is_ok(
 def test_doctor_no_flags_mentions_check_scheduler() -> None:
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 0
-    assert "--check-scheduler" in result.output
+    assert_flag_in_help(result, "--check-scheduler")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -31,7 +32,7 @@ def test_storage_inspect_mentions_pii() -> None:
 def test_storage_inspect_help() -> None:
     result = runner.invoke(app, ["storage", "inspect", "--help"])
     assert result.exit_code == 0
-    assert "--run-id" in result.output
+    assert_flag_in_help(result, "--run-id")
 
 
 # ---------------------------------------------------------------------------
@@ -73,4 +74,4 @@ def test_storage_validate_generic_error_exits_1() -> None:
 def test_storage_validate_help() -> None:
     result = runner.invoke(app, ["storage", "validate", "--help"])
     assert result.exit_code == 0
-    assert "--endpoint" in result.output or "--bucket" in result.output
+    assert_flag_in_help(result, "--endpoint") or "--bucket" in result.output

@@ -9,6 +9,7 @@ import pytest
 pytest.importorskip("rdflib")
 pytest.importorskip("pyshacl")
 
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner  # noqa: E402
 
 from novafabric.cli.main import app  # noqa: E402
@@ -67,4 +68,4 @@ def test_invalid_provenance_exits_1(tmp_path: Path) -> None:
 def test_help_smoke() -> None:
     result = runner.invoke(app, ["kg", "build-provenance", "--help"])
     assert result.exit_code == 0
-    assert "--validate" in result.output
+    assert_flag_in_help(result, "--validate")

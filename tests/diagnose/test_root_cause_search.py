@@ -28,6 +28,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.diagnose.verify import (
@@ -340,8 +341,8 @@ class TestCli:
 
         result = runner.invoke(app, ["diagnose", "--help"])
         assert result.exit_code == 0
-        assert "--search-root-cause" in result.output
-        assert "--max-interventions" in result.output
+        assert_flag_in_help(result, "--search-root-cause")
+        assert_flag_in_help(result, "--max-interventions")
 
     def test_json_output_includes_root_cause_search_block(self, tmp_path: Path) -> None:
         from novafabric.cli.main import app
@@ -422,7 +423,7 @@ class TestCli:
             ],
         )
         assert result.exit_code == 1
-        assert "--max-interventions" in result.output
+        assert_flag_in_help(result, "--max-interventions")
 
     def test_replay_dir_requires_intervene_or_search(self, tmp_path: Path) -> None:
         from novafabric.cli.main import app
@@ -440,4 +441,4 @@ class TestCli:
             ],
         )
         assert result.exit_code == 1
-        assert "--replay-dir" in result.output
+        assert_flag_in_help(result, "--replay-dir")

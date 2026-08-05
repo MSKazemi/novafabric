@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -132,7 +133,7 @@ def test_eval_compare_missing_file_exits_1(tmp_path: Path) -> None:
 def test_eval_compare_help_shows_options() -> None:
     result = runner.invoke(app, ["eval", "compare", "--help"])
     assert result.exit_code == 0
-    assert "--alpha" in result.output
+    assert_flag_in_help(result, "--alpha")
 
 
 def test_eval_compare_invalid_baseline_json_exits_1(tmp_path: Path) -> None:

@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.diagnose import attribute_failure
@@ -423,7 +424,7 @@ class TestCli:
             ],
         )
         assert result.exit_code == 1
-        assert "--replay-dir" in result.output
+        assert_flag_in_help(result, "--replay-dir")
 
     def test_missing_capsule_exits_nonzero(self, tmp_path: Path) -> None:
         from novafabric.cli.main import app
@@ -446,4 +447,4 @@ class TestCli:
 
         result = runner.invoke(app, ["diagnose", "--help"])
         assert result.exit_code == 0
-        assert "--intervene" in result.output
+        assert_flag_in_help(result, "--intervene")

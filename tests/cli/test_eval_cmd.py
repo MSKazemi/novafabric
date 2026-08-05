@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -80,7 +81,7 @@ def test_eval_run_failing_capsule_exits_1(empty_capsule: Path) -> None:
 def test_eval_run_help_shows_options() -> None:
     result = runner.invoke(app, ["eval", "run", "--help"])
     assert result.exit_code == 0
-    assert "--suite" in result.output
+    assert_flag_in_help(result, "--suite")
 
 
 def test_eval_help_shows_run_subcommand() -> None:
