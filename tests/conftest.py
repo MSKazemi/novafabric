@@ -103,3 +103,46 @@ def valid_model_yaml(fixtures_dir: Path) -> Path:
 @pytest.fixture
 def valid_agent_yaml(fixtures_dir: Path) -> Path:
     return fixtures_dir / "valid_agent.yaml"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _materialise_promote_keys() -> None:
+    """Mint the promote/seal fixture keys when they are absent.
+
+    `.gitignore` carries a blanket `*.pem` — the right default, since it is what
+    stops a real key being committed by accident. It also drops the six fixture
+    keys under `tests/fixtures/promote/keys/`, so every `tests/promote` test
+    failed on a clone of the public repository while passing for anyone with the
+    untracked files already on disk (issue #24).
+
+    `tests/fixtures/promote/generate_keys.py` has always been able to produce
+    them; its docstring says "Run once". Nothing ever ran it, so a public clone
+    got no keys and a confusing `EnvelopeError` instead. This runs it on demand.
+
+    Allow-listing the six paths was the alternative, and it trades the default
+    away: for a project whose premise is verifiable provenance, committing
+    private-key material — even throwaway material — costs more to explain than
+    it is worth. Files already present are left untouched, so a maintainer's
+    working tree does not churn.
+    """
+    keys = Path(__file__).parent / "fixtures" / "promote" / "keys"
+    expected = [
+        f"{role}{suffix}"
+        for role in ("admin", "approver", "proposer")
+        for suffix in (".pem", "_cert.pem")
+    ]
+    if all((keys / name).exists() for name in expected):
+        return
+
+    # Loaded by path rather than imported as `fixtures.promote.generate_keys`:
+    # `pythonpath=tests` lets an `__init__.py` under tests/ shadow an installed
+    # distribution of the same name, and `fixtures` is exactly that kind of name.
+    import importlib.util  # noqa: PLC0415
+
+    script = Path(__file__).parent / "fixtures" / "promote" / "generate_keys.py"
+    spec = importlib.util.spec_from_file_location("_promote_generate_keys", script)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    for role in module.NAMES:
+        module.generate_key_and_cert(role)

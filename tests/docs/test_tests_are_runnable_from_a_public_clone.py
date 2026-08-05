@@ -123,15 +123,28 @@ def test_relocated_fixture_corpora_are_tracked(fixture_dir: str) -> None:
     assert files, f"{fixture_dir} is not tracked by the public git"
 
 
-# NOTE: the `*.pem` gap is deliberately NOT asserted here.
-#
-# `.gitignore` drops `*.pem` wholesale — a correct default for real keys, and it
-# also drops the six deliberately-public fixture keys under
-# `tests/fixtures/promote/keys/`, so every `promote` test fails on a public
-# clone. Closing it means either committing private-key material to a public
-# repository or generating the keys at test time. For a project whose premise is
-# verifiable provenance that is a security-shaped decision, not housekeeping, so
-# it is filed rather than patched: see issue #24.
-#
-# A test that passed while describing a known failure would be worse than no
-# test at all.
+def test_no_private_key_material_is_committed() -> None:
+    """The blanket `*.pem` rule must keep holding.
+
+    Issue #24 was closed by *generating* the promote fixture keys at session
+    start rather than committing them, so this asserts the outcome that made
+    that the right call: no key material in the public repository, and the suite
+    still runnable without it.
+    """
+    tracked = _tracked()
+    pems = sorted(p for p in tracked if p.endswith(".pem"))
+
+    assert not pems, (
+        "private-key material is committed to the public repository: "
+        f"{pems}. Test keys are minted at session start by "
+        "tests/conftest.py::_materialise_promote_keys, which runs the existing\n        tests/fixtures/promote/generate_keys.py — nothing needs committing."
+    )
+
+
+def test_the_promote_key_factory_is_public() -> None:
+    """The *generator* must be tracked, even though its output must not be.
+
+    Committing the factory and not the keys is the whole trick; an untracked
+    factory would put a public clone back where it started.
+    """
+    assert "tests/fixtures/promote/generate_keys.py" in _tracked()
