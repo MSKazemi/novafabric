@@ -1,0 +1,103 @@
+name: capture-action
+
+# Dogfoods .github/actions/capture against the *published* package.
+#
+# Two reasons this exists rather than a unit test. A composite action can only
+# really be exercised by running it, and this is also the project's own smoke
+# test of `pip install novafabric` from PyPI — the exact path a new user takes,
+# and the one that was silently broken for five releases while every local test
+# passed.
+#
+# It deliberately does NOT install from the working tree.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, so a broken PyPI release surfaces without waiting for a push.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: capture-action-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  success-path:
+    name: captures a successful command
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Write a workload
+        run: |
+          cat > workload.py <<'EOF'
+          print("planning: summarise the incident report")
+          print("tool: search(index='incidents') -> 3 hits")
+          EOF
+
+      - name: Capture it
+        id: capture
+        uses: ./.github/actions/capture
+        with:
+          run: python workload.py
+          artifact-name: capsule-success
+
+      - name: The action reported what it should have
+        run: |
+          set -euo pipefail
+          test -n "${{ steps.capture.outputs.run-id }}" || { echo "no run-id"; exit 1; }
+          test "${{ steps.capture.outputs.status }}" = "success" || {
+            echo "expected status=success, got '${{ steps.capture.outputs.status }}'"; exit 1; }
+          test -d "${{ steps.capture.outputs.capsule-path }}" || { echo "no capsule dir"; exit 1; }
+          for f in capsule.yaml env.lock redaction-proof.json; do
+            test -f "${{ steps.capture.outputs.capsule-path }}/$f" || { echo "missing $f"; exit 1; }
+          done
+          echo "run-id=${{ steps.capture.outputs.run-id }}"
+
+  failure-path:
+    name: a failing command still yields a capsule
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Write a workload that exits non-zero
+        run: |
+          cat > crash.py <<'EOF'
+          import sys
+          print("about to fail")
+          sys.exit(3)
+          EOF
+
+      - name: Capture it — expected to fail the step
+        id: capture
+        continue-on-error: true
+        uses: ./.github/actions/capture
+        with:
+          run: python crash.py
+          artifact-name: capsule-failure
+
+      - name: The crash was captured, not lost
+        # The whole promise of this path: the step fails with the command's own
+        # exit code AND the capsule still exists, recording the failure.
+        run: |
+          set -euo pipefail
+          test "${{ steps.capture.outcome }}" = "failure" || {
+            echo "the step should have failed with the command's exit code"; exit 1; }
+          test "${{ steps.capture.outputs.status }}" = "failure" || {
+            echo "expected status=failure, got '${{ steps.capture.outputs.status }}'"; exit 1; }
+          grep -q "status: failure" "${{ steps.capture.outputs.capsule-path }}/capsule.yaml"
+          grep -q "exit_code: 3" "${{ steps.capture.outputs.capsule-path }}/capsule.yaml"
+          echo "crash captured as ${{ steps.capture.outputs.run-id }}"
