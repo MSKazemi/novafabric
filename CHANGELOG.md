@@ -31,6 +31,31 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   the declaration against what Astro actually requires, since agreeing with a
   wrong declaration is exactly how this got through.
 
+### Security (three HIGH-severity vulnerabilities in the locked dependency set)
+
+- **`cryptography` 48.0.1 → 50.0.0** — clears PYSEC-2026-3552 and PYSEC-2026-3553
+  (both HIGH) and PYSEC-2026-3554 (moderate). This library underpins NovaSeal
+  signing, so the major bump was verified rather than assumed: 621 crypto-path
+  tests pass and the p99 seal-latency gate still passes at 6.44 ms mean against
+  its 200 ms ceiling.
+- **`aiohttp` 3.14.1 → 3.14.3** — clears PYSEC-2026-3545 (HIGH) plus two
+  moderates. Pulls `sigstore` 4.3.0 → 4.5.0, `pyopenssl` 26.2.0 → 26.4.0 and
+  `msal` 1.36.0 → 1.37.0 as transitive updates.
+- `pip-audit` now reports **no known vulnerabilities**; that job had been red.
+  For a project whose entire premise is verifiable trust, a red dependency-audit
+  gate is worse than it would be for an ordinary library.
+
+### Changed (documentation of the migration and docs-publishing paths)
+
+- `docs/architecture.md` gains a **Schema migrations** section documenting the two
+  independent Alembic tracks, the wheel-packaged registry copy, and the
+  **one DSN, two consumers** boundary that `metadata_store/dsn.py` now owns.
+- `docs/developer-guide.md` gains **Adding a database migration** (including how
+  to verify against a throwaway Postgres, and why a second run into a populated
+  database legitimately writes 0 rows) and **Publishing docs to the website**
+  (`docs/*.md` is read at build time by the site, so a docs change is a site
+  change). The quality-gates section now lists four gates, not three.
+
 ### Fixed (the unit suite and the coverage gate had never actually run in CI)
 
 - **The `unit` job hit its 15-minute cap on every run from 2026-07-31 onward** —

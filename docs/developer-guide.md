@@ -163,9 +163,23 @@ A repo-root `.dockerignore` keeps the build context lean (it excludes `.git`,
 
 ## Quality gates
 
-Run all three gates before opening a PR. Coverage must stay **≥ 90%**, and both ruff
-and mypy must be clean. These are the same commands enforced in CI (see also
-`CONTRIBUTING.md`).
+Run all four gates before opening a PR. Coverage must stay **≥ 90%**, and ruff, mypy
+and the documentation link check must be clean. These are the same commands enforced
+in CI (see also `CONTRIBUTING.md`).
+
+```bash
+make test-fast     # tests (~90 s)
+make lint          # ruff check src tests scripts
+make typecheck     # mypy src
+make check-links   # every relative link in a public doc resolves
+```
+
+`make check-links` is not a style gate. It rejects a link whose target is **not
+tracked by the public git**, which is a different question from whether the file
+exists — this repository keeps one working tree and two gits, so `design/`,
+`.claude/`, `CLAUDE.md` and `THREAT_MODEL.md` are all present on your disk and
+absent for every reader of the published repository. Checking existence passes
+locally and fails only for the person the docs are written for.
 
 ### Tests
 
@@ -1538,6 +1552,84 @@ section: state the limitation plainly, in the same sentence as the capability.
 
 ---
 
+## Adding a database migration
+
+Two independent Alembic tracks, selected by the config file:
+
+```bash
+alembic revision -m "add foo column"                             # SQLite / registry
+alembic -c alembic-postgres.ini revision -m "add foo column"     # Postgres / server
+```
+
+| Track | Config | Versions |
+|---|---|---|
+| SQLite (registry) | `alembic.ini` | `alembic/sqlite/versions/` |
+| Postgres | `alembic-postgres.ini` | `alembic/postgres/versions/` |
+
+A change that affects both stores needs a revision in **both** trees; they do not
+share a revision graph. The registry track is also shipped inside the wheel
+(`src/novafabric/migrations/registry`) so an installed CLI can migrate without the
+repository present — if you add a registry revision, confirm it is packaged.
+
+**Always pass an ordinary libpq DSN.** `alembic/env.py` routes it through
+`novafabric.metadata_store.dsn.to_sqlalchemy_url`, which rewrites a bare
+`postgresql://` to `postgresql+psycopg://`:
+
+```bash
+NOVAFABRIC_POSTGRES_DSN=postgresql://user:pass@localhost:5432/nova \
+  alembic -c alembic-postgres.ini upgrade head
+```
+
+SQLAlchemy resolves the bare scheme to **psycopg2**, which this project does not
+ship — it depends on `psycopg[binary]` (psycopg 3). Without that normalisation the
+command above dies with `ModuleNotFoundError: No module named 'psycopg2'`, which is
+exactly what it did until 2026-08-05. **If you add another consumer of the Postgres
+DSN, route it through that function** instead of re-deriving the rule; the bug
+survived for weeks because each consumer was individually correct. Design rationale:
+[architecture — one DSN, two consumers](architecture.md#one-dsn-two-consumers).
+
+Verify against a real Postgres, not just by re-reading the revision:
+
+```bash
+docker run --rm -d -p 55432:5432 -e POSTGRES_PASSWORD=test \
+  -e POSTGRES_DB=novafabric_test --name nf-pg postgres:16
+NOVAFABRIC_POSTGRES_DSN=postgresql://postgres:test@localhost:55432/novafabric_test \
+  uv run alembic -c alembic-postgres.ini upgrade head
+NOVAFABRIC_TEST_POSTGRES_DSN=postgresql://postgres:test@localhost:55432/novafabric_test \
+  uv run pytest tests/integration/
+docker stop nf-pg
+```
+
+> Use a **throwaway `docker run --rm`** on a non-standard port as above. Do not use
+> `docker compose down` on a shared host — it is project-wide and takes unrelated
+> volumes with it.
+>
+> Run the integration suite against a **fresh** database. The migration is an
+> idempotent upsert, so a second run into an already-populated database legitimately
+> writes 0 rows — which looks exactly like silent data loss and is not.
+
+---
+
+## Publishing docs to the website
+
+`docs/*.md` is rendered at `novafabric.ai/docs/` by `web/src/lib/docs.ts`, which reads
+this directory **directly at build time** via `import.meta.glob`. Nothing is copied,
+so the site cannot drift from the docs you edit — but it does mean a docs change is a
+site change:
+
+- Adding a file here adds a page and a sitemap entry automatically.
+- The page title comes from the first `# heading`; the meta description from the first
+  real prose paragraph. A file that opens with a badge row or a blockquote gets a
+  worse description — lead with a sentence.
+- Relative `.md` links are rewritten to site URLs; links that escape `docs/` go to
+  GitHub, because no site route exists for them.
+- `docs/releases/` and `docs/whitepaper/` are excluded.
+
+Run `cd web && npm run build` after a structural docs change. It needs **Node ≥ 22.12**
+(Astro 7).
+
+---
+
 ## Where to go next
 
 | If you want to… | Go to |
@@ -1549,7 +1641,9 @@ section: state the limitation plainly, in the same sentence as the capability.
 | Follow the contribution / RFC / commit rules | [`CONTRIBUTING.md`](../CONTRIBUTING.md) |
 | Review a per-decision history | [`docs/decisions.md`](decisions.md) |
 | Run the warm capture daemon as a user | [`docs/warm-capture-daemon.md`](warm-capture-daemon.md) |
+| Add a schema migration | [Adding a database migration](#adding-a-database-migration) |
+| Publish a doc page to the website | [Publishing docs to the website](#publishing-docs-to-the-website) |
 
-Before opening a PR, re-run the three [quality gates](#quality-gates) (pytest ≥ 90%
-coverage, ruff, mypy) and, for any CLI change, smoke-test `uv run nova --help` and the
-affected sub-command.
+Before opening a PR, re-run the four [quality gates](#quality-gates) (pytest ≥ 90%
+coverage, ruff, mypy, link check) and, for any CLI change, smoke-test
+`uv run nova --help` and the affected sub-command.

@@ -96,7 +96,7 @@ weight is, not a quality signal.
 | `server/` | Server mode: REST API, auth, API keys, tenancy. |
 | `serve/` | The dashboard backend that `nova serve` exposes. |
 | `web/` (repo root) | The dashboard frontend — Astro + React, with its own vitest suite. |
-| `metadata_store/` | SQLite and Postgres metadata backends, including row-level security. |
+| `metadata_store/` | SQLite and Postgres metadata backends, including row-level security. `dsn.py` is the one place a Postgres DSN is normalised — see [below](#one-dsn-two-consumers). |
 | `object_capsule_store/` | S3-compatible object storage for capsules at scale. |
 | `collector_app/`, `collector/` (repo root, Go) | The cluster-scale collector and node spool. |
 | `events/`, `envelope/`, `envelopes/` | Event Envelope v1 and the event bus. |
@@ -107,6 +107,48 @@ weight is, not a quality signal.
 ISO 42001, CycloneDX AI-BOM, and others), each mapping capsule facts to a
 standard's required form. `report/`, `export_blob/`, `viewer/`, `viz/` handle
 presentation and portability.
+
+---
+
+## Schema migrations
+
+Two independent Alembic tracks, selected by which config file you pass:
+
+| Track | Config | Versions | Applies to |
+|---|---|---|---|
+| SQLite (registry) | `alembic.ini` | `alembic/sqlite/versions/` | The local-mode registry database |
+| Postgres | `alembic-postgres.ini` | `alembic/postgres/versions/` | The server-mode metadata store |
+
+```bash
+alembic upgrade head                              # SQLite / local
+alembic -c alembic-postgres.ini upgrade head      # Postgres / server
+```
+
+A third copy of the registry track ships inside the wheel
+(`src/novafabric/migrations/registry`, declared in `pyproject.toml`) so an
+installed CLI can migrate its own database without the repository present.
+
+### One DSN, two consumers
+
+`alembic/env.py` imports `novafabric.metadata_store.dsn.to_sqlalchemy_url` —
+migrations depend on the installed package, not the other way round. That
+coupling exists because the same connection string means two different things
+depending on who reads it:
+
+- `metadata_store.postgres` passes it straight to `psycopg.connect()`, which
+  wants a plain libpq URL: `postgresql://user:pass@host:5432/db`.
+- Alembic hands it to SQLAlchemy, which resolves the bare `postgresql://` scheme
+  to the **psycopg2** dialect. NovaFabric ships `psycopg[binary]` (psycopg 3) and
+  does not ship psycopg2.
+
+So the DSN that is correct everywhere else made the documented migration command
+fail with `ModuleNotFoundError: No module named 'psycopg2'`. `to_sqlalchemy_url`
+rewrites a bare scheme to `postgresql+psycopg://` and leaves an explicitly named
+driver (`+asyncpg`, `+psycopg2`) alone — naming a driver is a deliberate choice.
+
+**If you add a third consumer of the Postgres DSN, route it through that
+function** rather than re-deriving the rule. The bug survived precisely because
+each consumer was individually correct.
 
 ---
 
