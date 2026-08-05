@@ -9,6 +9,26 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Fixed (two release-tag workflows that only fail at release time)
+
+- **The container image has been unbuildable since v0.99.0.** BL-037 added
+  `force-include` entries for the canonical JSON Schemas but no matching `COPY`
+  in `deploy/docker/Dockerfile`, so `uv build` inside the image failed with
+  `Forced include not found: /build/schemas/export-manifest.schema.json`.
+  **Second instance** — the same omission broke the image for `alembic/` on
+  2026-07-24, and the Dockerfile's own comment records it. `uv build` on a
+  developer machine cannot see this class, because there the repo root *is* the
+  build context; only Docker's narrower context exposes it. Now guarded by
+  `tests/packaging_metadata/test_dockerfile_force_includes.py`, which asserts
+  every force-include source is both present and copied.
+- **The MetadataStore Security Gate could not pass** — it ran `uv sync` without
+  `--all-extras`, so mypy could not resolve `psycopg_pool` or `alembic.command`
+  and reported two import errors as if they were type errors. **Fifth instance**
+  of the class BL-022 named. The guard now scans **every** workflow that runs
+  mypy or pytest rather than naming one job at a time, so a sixth cannot land
+  silently; the two benchmark jobs stay exempt by design.
+
+
 ## [0.100.0] — 2026-08-05
 
 ### Fixed (release pipeline — v0.98.0 through v0.99.0 never reached PyPI)

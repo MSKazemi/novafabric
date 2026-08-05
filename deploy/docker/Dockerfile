@@ -27,6 +27,15 @@ COPY src/ src/
 # been unbuildable since then; found independently while verifying ADR-0222.
 COPY alembic/ alembic/
 
+# Same story, second time. v0.99.0 added force-includes for the canonical JSON
+# Schemas that runtime validators load (BL-037) and again did not add the COPY,
+# so this image has been unbuildable since that release with:
+#   FileNotFoundError: Forced include not found: /build/schemas/export-manifest.schema.json
+# A guard now exists — tests/packaging_metadata/test_dockerfile_force_includes.py
+# asserts every force-include source is present in the build context, so a third
+# instance fails in the test suite rather than at release time.
+COPY schemas/ schemas/
+
 RUN uv build --wheel --no-sources
 
 # ── stage 2: runtime ─────────────────────────────────────────────────────────
