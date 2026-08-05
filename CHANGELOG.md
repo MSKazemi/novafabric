@@ -31,6 +31,18 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   the declaration against what Astro actually requires, since agreeing with a
   wrong declaration is exactly how this got through.
 
+### Fixed (a migration test that had never actually asserted anything)
+
+- `test_migrate_row_counts_match` asserted `TableMigrationResult.source_rows` —
+  **a field that model has never had** — so it raised `AttributeError` instead of
+  checking row counts. It was invisible because the job that runs it could not
+  reach the file: the `integration` job died at the migration step first (below).
+  Fixing the install exposed it on the first run in over a week. Now asserts both
+  `rows_read` and `rows_written` against the expected count; checking only the
+  write side would let a silently truncated migration pass.
+  **Verified against a real Postgres 16**, not just re-read: 63 integration tests
+  pass on a clean database.
+
 ### Fixed (CI's integration job had not executed a single test in over a week)
 
 - **`Failed to spawn: alembic`.** The `integration` job ran `uv sync --frozen`

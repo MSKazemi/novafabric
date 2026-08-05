@@ -148,12 +148,25 @@ class TestMigrationIntegration:
             f"Migration failed: {summary!r}"
         )
 
-        # Per-table: rows_written should equal source counts
+        # Per-table: everything read out of SQLite must land in Postgres.
+        #
+        # This asserted `table_result.source_rows` until 2026-08-05 — a field
+        # `TableMigrationResult` has never had, so the test raised AttributeError
+        # rather than checking anything. It went unnoticed because the job that
+        # runs it could not reach this file: it installed without `--all-extras`,
+        # so alembic was absent and the migration step died first. Checking both
+        # sides is what the test's own name claims, and is stronger than either
+        # alone — `rows_written == expected` with a short read would pass a
+        # silently truncated migration.
         for table_result in summary.table_results:
             expected = _EXPECTED_COUNTS.get(table_result.table, 0)
-            assert table_result.source_rows == expected, (
-                f"Table {table_result.table}: expected {expected} source rows, "
-                f"got {table_result.source_rows}"
+            assert table_result.rows_read == expected, (
+                f"Table {table_result.table}: expected to read {expected} source "
+                f"rows, read {table_result.rows_read}"
+            )
+            assert table_result.rows_written == expected, (
+                f"Table {table_result.table}: read {table_result.rows_read} rows "
+                f"but wrote {table_result.rows_written} — the migration dropped rows"
             )
 
     def test_migrate_idempotent(self, tmp_path: Path) -> None:
