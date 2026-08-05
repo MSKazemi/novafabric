@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -148,7 +149,7 @@ def test_bad_sprt_params_usage_error(tmp_path: Path) -> None:
 def test_diff_help_smoke() -> None:
     result = runner.invoke(app, ["diff", "--help"])
     assert result.exit_code == 0
-    assert "--significance" in result.output
+    assert_flag_in_help(result, "--significance")
 
 
 def test_diff_no_args_errors() -> None:

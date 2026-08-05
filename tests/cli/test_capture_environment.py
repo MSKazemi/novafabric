@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.capture.deployment_env import ENVIRONMENT_ENV_VAR
@@ -29,7 +30,7 @@ def _single_capsule_dir(runs_dir: Path) -> Path:
 def test_capture_help_shows_environment_flag() -> None:
     result = runner.invoke(app, ["capture", "--help"])
     assert result.exit_code == 0
-    assert "--environment" in result.output
+    assert_flag_in_help(result, "--environment")
 
 
 def test_capture_environment_flag_writes_manifest_fields(tmp_path: Path) -> None:

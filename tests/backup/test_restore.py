@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Callable
 
 import pytest
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.audit import AuditEventType, AuditLog
@@ -427,7 +428,7 @@ def test_no_decision_log_is_an_honest_noop(backup_set: Path, tmp_path: Path) -> 
 def test_cli_restore_help() -> None:
     result = runner.invoke(app, ["restore", "--help"])
     assert result.exit_code == 0
-    assert "--home" in result.output and "--force" in result.output
+    assert_flag_in_help(result, "--home") and "--force" in result.output
 
 
 def test_cli_restore_round_trip(backup_set: Path, tmp_path: Path) -> None:

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.audit import AuditEventType, AuditLog
@@ -952,8 +953,8 @@ def test_follow_opens_no_socket(
 def test_cli_help() -> None:
     result = runner.invoke(app, ["audit-log", "export", "--help"])
     assert result.exit_code == 0
-    assert "--source" in result.output
-    assert "--format" in result.output
+    assert_flag_in_help(result, "--source")
+    assert_flag_in_help(result, "--format")
 
 
 def test_cli_export_audit_to_file(
@@ -1039,7 +1040,7 @@ def test_cli_rejects_unknown_source_and_format(tmp_path: Path) -> None:
 def test_cli_tail_help() -> None:
     result = runner.invoke(app, ["audit-log", "tail", "--help"])
     assert result.exit_code == 0
-    assert "--follow" in result.output
+    assert_flag_in_help(result, "--follow")
     assert "--from-start" in result.output
 
 
