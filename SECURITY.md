@@ -45,14 +45,15 @@ when a complete fix needs longer than the window.
 ## Supported versions
 
 NovaFabric is pre-1.0 and releases frequently (multiple tagged releases per
-week during active development; latest tag as of this writing is **v0.94.0**).
-Given that cadence, only the latest tagged release is supported — there is no
-maintained LTS line before v1.0.
+week during active development). Given that cadence, only the latest tagged
+release is supported — there is no maintained LTS line before v1.0. See the
+[releases page](https://github.com/novafabric/novafabric/releases) for the
+current version.
 
-| Version         | Supported            |
-|------------------|----------------------|
-| 0.94.x (latest)  | Yes                  |
-| < 0.94           | No — upgrade to latest |
+| Version           | Supported              |
+|-------------------|------------------------|
+| Latest tag        | Yes                    |
+| Anything earlier  | No — upgrade to latest |
 
 This table will be replaced by a real support-window policy at the v1.0
 freeze.
@@ -67,7 +68,7 @@ CLI tool with no network surface. The always-present attack surfaces are:
 - CLI argument handling
 
 Several **opt-in** surfaces exist and are disabled by default; each has a
-STRIDE analysis in [`THREAT_MODEL.md`](THREAT_MODEL.md):
+STRIDE analysis in the project's internal threat model:
 
 - **Server mode** (`nova server` / `nova serve`) — network-exposed REST API
   (OIDC/RBAC or token auth).

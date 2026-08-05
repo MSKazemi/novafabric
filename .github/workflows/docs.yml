@@ -1,0 +1,56 @@
+name: docs
+
+# Documentation integrity gate.
+#
+# Closes a defect found on 2026-08-05: 142 markdown links across the public
+# documentation pointed into the private `design/` tree, which is excluded from
+# the public repository. Every one of them 404'd for every visitor — including
+# the RFC-process link that CONTRIBUTING.md tells a new contributor to read
+# first, and the README's own "Architecture" and "Vision" further-reading links.
+#
+# The test suite alone could not catch this class: it runs from a working tree
+# where `design/` IS present, so an existence check passes locally and fails
+# only for the public reader. scripts/check_doc_links.py therefore rejects
+# private-tree prefixes by name as well as checking existence.
+#
+# This job runs without installing the project — it is pure text analysis, so it
+# stays fast and gives contributors a link verdict in well under a minute.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  links:
+    name: documentation links resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python (matches requires-python in pyproject.toml)
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Every relative link in a public doc resolves
+        run: python scripts/check_doc_links.py
+
+      - name: Decisions index is current
+        # A no-op on the public checkout, where the ADR source tree is absent —
+        # the generated index is committed. This step earns its place on the
+        # private mirror, where the source IS present and can drift.
+        run: python scripts/gen_decisions_index.py --check

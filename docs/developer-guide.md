@@ -152,7 +152,7 @@ token.
 | `make deploy-local` | Build + run `novafabric-serve` straight from the **current working tree** — no `git pull`, no remote round-trip. Stamps the deployed commit (`+ -dirty` when the tree has uncommitted changes) so "what's running" stays answerable. The fast dev-iteration path. |
 
 A repo-root `.dockerignore` keeps the build context lean (it excludes `.git`,
-`.venv`, `design/`, and `node_modules`), so source-tree rebuilds stay fast.
+`.venv` and `node_modules`), so source-tree rebuilds stay fast.
 
 > **Deploy checkout tip:** point the deploy checkout's `origin` at the
 > authoritative repo you actually commit to, so `make update` fast-forwards
@@ -653,7 +653,7 @@ Adding an optional field is backwards-compatible (additive). Steps:
 2. Add the field to `envelope-v1.proto` with the next available tag number (alphabetical order).
 3. Add a Pydantic field to `EventEnvelope` in `envelope/models.py` with a default of `None`.
 4. Recompute the sha256 pin (see above).
-5. Update this file and `design/architecture/overview.md`.
+5. Update this file and [`docs/architecture.md`](architecture.md).
 
 **Breaking changes require `envelope_version: "2"`** — removing fields, changing types, or making optional fields required. These are forbidden in the v1.x line. Write an ADR before proceeding.
 
@@ -804,7 +804,7 @@ license audit under [ADR-0024]. Do not add it without that audit and an ADR poin
 return findings through `to_findings()`, add tests under `tests/kg/` (assert the injected malicious edge
 ranks top-k *and* the finding is schema/SHACL-valid), and — if user-facing — add a `nova kg <verb>`
 command mirroring `detect` (import lazily; only guard with the `[spkg]` message if you actually need rdflib
-/kuzu). Update `CHANGELOG.md`, `docs/cli-reference.md`, and the `design/BUILD_QUEUE.md` BQ-SPKG-01 entry.
+/kuzu). Update `CHANGELOG.md` and `docs/cli-reference.md`.
 
 ---
 
@@ -844,7 +844,7 @@ module.
 > the cluster-scale ingestion path documented as design intent in ADR-0020/0039. It is
 > *not* part of the shipped local-first product surface. The shipped capture path needs
 > no collector at all — see the capture data flow in
-> [`design/architecture/overview.md`](../design/architecture/overview.md).
+> [the architecture overview](./architecture.md).
 
 The collector is a separate Go 1.22 module at `collector/`. Install Go:
 
@@ -953,7 +953,7 @@ Rules:
 2. Use `get_current_recorder()` — never instantiate a new recorder.
 3. Restore the original method on `unwrap()` if reversibility matters.
 4. Add an entry to `src/novafabric/adapters/__init__.py`.
-5. Register the adapter in `docs/cli-reference.md` and `design/architecture/capture-runtime.md`.
+5. Register the adapter in `docs/cli-reference.md` and [`docs/architecture.md`](architecture.md).
 
 ### Typed `record_*` methods (extended event taxonomy, ADR-0082)
 
@@ -1418,7 +1418,7 @@ containers and can gate promotion on regression via OPA/Rego — see the eval se
 ## Writing a custom PII masker (ADR-0135) — experimental
 
 Capture-time redaction is extensible: operator-registered **maskers** run at
-capture **after** the built-in [ADR-0009](../design/adr/0009-secret-scanning.md)
+capture **after** the built-in [ADR-0009](./decisions.md)
 secret scanner and **before** the capsule is finalized. Built-ins always run and
 can never be disabled by a plugin. Use a masker for imperative masking logic that
 declarative regex packs cannot express — checksum-validated national IDs, internal
@@ -1485,11 +1485,11 @@ Failure semantics (the contract your masker lives under):
   holding the bytes.
 
 Reference implementation: `novafabric.masking.examples.EmailMasker` (registered as
-`novafabric-email`). Spec: `design/spec/pii-masking-pipeline-v0.md`; schemas:
+`novafabric-email`). See [ADR-0135](decisions.md) for the masking-pipeline decision; schemas:
 `schemas/masking-config.schema.json`, `schemas/masker-finding.schema.json`,
 `schemas/masker-error.schema.json`. ML-based PII detectors (e.g. Presidio) are **not**
 bundled — an external masker package may wrap one, but it must stay offline and clear
-the [ADR-0024](../design/adr/0024-dependency-license-policy.md) license audit.
+the [ADR-0024](./decisions.md) license audit.
 
 ## Querying and extending PolicyStore
 
@@ -1533,8 +1533,8 @@ Two hard rules that apply throughout this guide:
    NIST AI RMF, ISO/IEC 42001, GDPR, HIPAA, FDA 21 CFR Part 11, SOC 2, or any other
    framework.
 
-See the "Docs honesty rule" and "Anti-patterns" sections of the repo `CLAUDE.md`, and
-`design/vision/north-star.md` for the canonical "honest limitations" voice.
+The standard for this voice is the README's [when *not* to use NovaFabric](../README.md#when-to-use-novafabric)
+section: state the limitation plainly, in the same sentence as the capability.
 
 ---
 
@@ -1543,11 +1543,11 @@ See the "Docs honesty rule" and "Anti-patterns" sections of the repo `CLAUDE.md`
 | If you want to… | Go to |
 |---|---|
 | Use the CLI (flags, commands, defaults) | [`docs/cli-reference.md`](cli-reference.md) |
-| Understand the subsystem map and code structure | `design/architecture/overview.md` |
-| Read the capture data-flow internals | `design/architecture/capture-runtime.md` |
+| Understand the subsystem map and code structure | [`docs/architecture.md`](architecture.md) |
+| Read the capture data-flow internals | [Capture hook mechanism](concepts.md#capture-hook-mechanism) |
 | See release sequencing and roadmap | [`ROADMAP.md`](../ROADMAP.md) |
 | Follow the contribution / RFC / commit rules | [`CONTRIBUTING.md`](../CONTRIBUTING.md) |
-| Review a per-decision history | `design/adr/` |
+| Review a per-decision history | [`docs/decisions.md`](decisions.md) |
 | Run the warm capture daemon as a user | [`docs/warm-capture-daemon.md`](warm-capture-daemon.md) |
 
 Before opening a PR, re-run the three [quality gates](#quality-gates) (pytest ≥ 90%

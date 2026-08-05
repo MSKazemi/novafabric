@@ -3,13 +3,13 @@
 How to back up and restore a NovaFabric deployment. The first half documents
 procedures that **work today** with standard tools; the second half covers the
 `nova backup` tooling
-([ADR-0181](../../design/adr/0181-backup-restore-dr-tooling.md), accepted
+([ADR-0181](../decisions.md), accepted
 2026-07-16 — `nova backup create`/`verify`, `nova restore` for the **local
 profile and the `--profile pg` create path work today (experimental)**;
-[ADR-0217](../../design/adr/0217-automated-pg-restore.md) automates the
+[ADR-0217](../decisions.md) automates the
 pg_restore path — **`nova restore <set> --dsn …`**, profile auto-detected from
 the verified manifest (experimental), §1.2;
-[ADR-0211 Part B](../../design/adr/0211-pg-restore-and-schema-skew-guard.md)
+[ADR-0211 Part B](../decisions.md)
 adds the startup schema-skew guard and `nova db upgrade --track`).
 
 What a NovaFabric deployment consists of, and who owns its durability:
@@ -86,7 +86,7 @@ you pass `--home PATH` — a pg restore never writes the local
 - **PITR** is delegated to Postgres: enable WAL archiving /
   `restore_command`, or use your managed provider's point-in-time recovery.
   NovaFabric deliberately does not reimplement this
-  ([ADR-0181](../../design/adr/0181-backup-restore-dr-tooling.md)).
+  ([ADR-0181](../decisions.md)).
 - After a manual restore, migrate the **registry track** to head:
   `nova db upgrade --track registry --backend postgres` (ADR-0211 D5 — a bare
   `nova db upgrade` migrates the separate MetadataStore tier, **not** the
@@ -118,7 +118,7 @@ software keystore). Two rules this runbook enforces:
    without keys can still *verify* everything; it just cannot *sign* until
    keys are re-provisioned.
 2. **Crypto-shredded keys stay deleted.** If retention ran `CRYPTO_SHRED`
-   ([ADR-0134](../../design/adr/0134-data-retention-policy-scheduler.md)),
+   ([ADR-0134](../decisions.md)),
    restoring an older key escrow must not resurrect shredded data — check the
    retention decision log before re-importing any archived key material.
 
@@ -179,9 +179,9 @@ policies still travel via the database backup paths above.
 
 ## Part 2 — `nova backup` tooling
 
-Governed by [ADR-0181](../../design/adr/0181-backup-restore-dr-tooling.md)
+Governed by [ADR-0181](../decisions.md)
 (accepted 2026-07-16) and specified in
-[`design/spec/backup-restore-v0.md`](../../design/spec/backup-restore-v0.md).
+`design/spec/backup-restore-v0.md`.
 
 **Works today (experimental):**
 

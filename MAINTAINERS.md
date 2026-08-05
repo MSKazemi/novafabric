@@ -2,7 +2,7 @@
 
 This file lists the people responsible for NovaFabric. The path to becoming
 a maintainer is documented in
-[`design/governance/MAINTAINER_CRITERIA.md`](design/governance/MAINTAINER_CRITERIA.md).
+[maintainer criteria](docs/governance/maintainer-criteria.md).
 
 The decision-making process is documented in [`GOVERNANCE.md`](GOVERNANCE.md).
 
@@ -17,8 +17,8 @@ current BDFL of NovaFabric.
 Areas of competence: all (founder).
 
 The BDFL phase ends when at least 2 external co-maintainers have demonstrated
-sustained merge-quality work. See
-[`design/strategy/foundation-ready-governance.md`](design/strategy/foundation-ready-governance.md).
+sustained merge-quality work. The growth targets for each phase are in
+[maintainer criteria](docs/governance/maintainer-criteria.md#growth-targets).
 
 ---
 
@@ -93,4 +93,4 @@ For project decisions, open an issue or RFC.
 For Code of Conduct concerns, see [`SECURITY.md`](SECURITY.md) /
 [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) for the relevant contact path.
 
-For Design Partner inquiries, see [`design/governance/DESIGN_PARTNERS.md`](design/governance/DESIGN_PARTNERS.md).
+For Design Partner inquiries, see [the design partner program](docs/governance/design-partners.md).

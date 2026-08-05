@@ -29,10 +29,10 @@ collectors that read these directly from a capsule are documented follow-ons.
 
 | Command | Shows | ADR |
 |---|---|---|
-| `nova merkle-tree` | Which sealed fields roll up to which root — the proof structure | [ADR-0172](../design/adr/0172-evidence-provenance-merkle-tree-visualization.md) |
-| `nova trust-radar` | The seven verification guarantees as one shape + verdict | [ADR-0173](../design/adr/0173-trust-attestation-radar-visualization.md) |
-| `nova redaction-xray` | Per-field protection state + a conservative coverage meter | [ADR-0174](../design/adr/0174-redaction-secret-scan-xray-visualization.md) |
-| `nova passport` | A portable green/amber/red identity summary for an agent | [ADR-0149](../design/adr/0149-agent-standard-interop.md) |
+| `nova merkle-tree` | Which sealed fields roll up to which root — the proof structure | [ADR-0172](./decisions.md) |
+| `nova trust-radar` | The seven verification guarantees as one shape + verdict | [ADR-0173](./decisions.md) |
+| `nova redaction-xray` | Per-field protection state + a conservative coverage meter | [ADR-0174](./decisions.md) |
+| `nova passport` | A portable green/amber/red identity summary for an agent | [ADR-0149](./decisions.md) |
 
 All four honor the redaction invariant (ADR-0009) at the type level: they
 carry field *paths*, hash *prefixes*, and *refs* — never field values,

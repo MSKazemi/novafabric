@@ -274,16 +274,16 @@ Options:
 - `--output-dir, -o PATH` — base directory for capsule storage (default: `$NOVAFABRIC_HOME/capsules/`)
 - `--timeout FLOAT` — wall-clock deadline in seconds for the captured command (default: 600). Increase for long-running agents: `nova capture --timeout 3600 python agent.py`
 - `--runner {local,docker,kubernetes,slurm,lsf,pbs}` — execution backend (default: `local`). Tab-completion available via `nova --install-completion`.
-- `--environment TEXT` — **experimental** ([ADR-0126](../design/adr/0126-capsule-environment-field.md)). Deployment-environment tag recorded verbatim on the capsule as the additive optional `deployment_environment` field (with its provenance in `environment_source`): conventionally `production` | `staging` | `development` | `test`, or any custom string (e.g. `prod-eu`, `canary` — a value outside the conventional four warns but is accepted). Precedence: this flag > the `NOVAFABRIC_ENVIRONMENT` env var > the SDK `deployment_environment=` argument; if none is supplied both fields stay absent (read as `unknown`) and the manifest is byte-compatible with earlier capsules. Never inferred from host/branch/namespace. **Distinct from the `env.lock` technical environment** (ADR-0007) — this is a delivery-lifecycle label, not a reproducibility fingerprint. Example: `nova capture --environment production -- python agent.py`
-- `--experiment TEXT`, `--variant TEXT`, `--variant-source TEXT` (+ optional `--variant-label TEXT`, `--variant-assigned-at RFC3339`) — **experimental** ([ADR-0116](../design/adr/0116-variant-attribution-field.md)). Record which A/B experiment and variant an **external** allocator had active for this run, as the additive optional `variant` block on the capsule manifest (`experiment_id`, `variant_id`, `assignment_source`, plus optional `variant_label`, `assigned_at`). **Record-only:** every field is copied verbatim from what you supply — NovaFabric never assigns, splits, samples, or analyzes variants (that is LaunchDarkly/Statsig/GrowthBook territory, an explicit non-goal), so `--variant-source` (the external assigner, e.g. `launchdarkly`, `statsig`, `upstream-router`) is required with the other two and is never defaulted, and `--variant-assigned-at` is never substituted with the capture time. Precedence: these flags > the `NOVAFABRIC_VARIANT*` env vars > the SDK `variant=` mapping argument, resolved atomically per source (no cross-source mixing). If nothing supplies a block it stays absent and the manifest is byte-compatible with earlier capsules. An incomplete flag set fails before capture starts; incomplete ambient env vars warn and are ignored (never block the workload). Example: `nova capture --experiment exp1 --variant arm-b --variant-source statsig -- python agent.py`
-- `--session-id ULID`, `--session-sequence INT` — **experimental** ([ADR-0122](../design/adr/0122-session-capsule.md)). Tag the run as one ordered turn of a multi-turn *session* (a conversation or workflow of N otherwise-independent runs), recorded as the additive optional `session_id` / `sequence` back-reference fields on the capsule manifest. `--session-id` must be a ULID (create one with `nova session new`); `--session-sequence` is the zero-based turn index and requires `--session-id`. Precedence: these flags > the `NOVAFABRIC_SESSION_ID` / `NOVAFABRIC_SESSION_SEQUENCE` env vars > the SDK `session_id=`/`session_sequence=` arguments, resolved atomically per source. Absent = a standalone run, byte-compatible with earlier capsules. The `session.json` manifest (`nova session`, below) stays the **authoritative** ordered index; the capsule-side fields are advisory. **Not** the parent/child distributed-run hierarchy (ADR-0039) — that groups the workers of *one* job; a session groups *separate* runs over time. Example: `nova capture --session-id 01HZ8S9K3M4YZ2K7N9DPBYK2W0 --session-sequence 2 -- python agent.py`
+- `--environment TEXT` — **experimental** ([ADR-0126](./decisions.md)). Deployment-environment tag recorded verbatim on the capsule as the additive optional `deployment_environment` field (with its provenance in `environment_source`): conventionally `production` | `staging` | `development` | `test`, or any custom string (e.g. `prod-eu`, `canary` — a value outside the conventional four warns but is accepted). Precedence: this flag > the `NOVAFABRIC_ENVIRONMENT` env var > the SDK `deployment_environment=` argument; if none is supplied both fields stay absent (read as `unknown`) and the manifest is byte-compatible with earlier capsules. Never inferred from host/branch/namespace. **Distinct from the `env.lock` technical environment** (ADR-0007) — this is a delivery-lifecycle label, not a reproducibility fingerprint. Example: `nova capture --environment production -- python agent.py`
+- `--experiment TEXT`, `--variant TEXT`, `--variant-source TEXT` (+ optional `--variant-label TEXT`, `--variant-assigned-at RFC3339`) — **experimental** ([ADR-0116](./decisions.md)). Record which A/B experiment and variant an **external** allocator had active for this run, as the additive optional `variant` block on the capsule manifest (`experiment_id`, `variant_id`, `assignment_source`, plus optional `variant_label`, `assigned_at`). **Record-only:** every field is copied verbatim from what you supply — NovaFabric never assigns, splits, samples, or analyzes variants (that is LaunchDarkly/Statsig/GrowthBook territory, an explicit non-goal), so `--variant-source` (the external assigner, e.g. `launchdarkly`, `statsig`, `upstream-router`) is required with the other two and is never defaulted, and `--variant-assigned-at` is never substituted with the capture time. Precedence: these flags > the `NOVAFABRIC_VARIANT*` env vars > the SDK `variant=` mapping argument, resolved atomically per source (no cross-source mixing). If nothing supplies a block it stays absent and the manifest is byte-compatible with earlier capsules. An incomplete flag set fails before capture starts; incomplete ambient env vars warn and are ignored (never block the workload). Example: `nova capture --experiment exp1 --variant arm-b --variant-source statsig -- python agent.py`
+- `--session-id ULID`, `--session-sequence INT` — **experimental** ([ADR-0122](./decisions.md)). Tag the run as one ordered turn of a multi-turn *session* (a conversation or workflow of N otherwise-independent runs), recorded as the additive optional `session_id` / `sequence` back-reference fields on the capsule manifest. `--session-id` must be a ULID (create one with `nova session new`); `--session-sequence` is the zero-based turn index and requires `--session-id`. Precedence: these flags > the `NOVAFABRIC_SESSION_ID` / `NOVAFABRIC_SESSION_SEQUENCE` env vars > the SDK `session_id=`/`session_sequence=` arguments, resolved atomically per source. Absent = a standalone run, byte-compatible with earlier capsules. The `session.json` manifest (`nova session`, below) stays the **authoritative** ordered index; the capsule-side fields are advisory. **Not** the parent/child distributed-run hierarchy (ADR-0039) — that groups the workers of *one* job; a session groups *separate* runs over time. Example: `nova capture --session-id 01HZ8S9K3M4YZ2K7N9DPBYK2W0 --session-sequence 2 -- python agent.py`
 - `--mark-provenance` — write a C2PA synthetic-content provenance marker (`c2pa-manifest.json`, with the `c2pa.ai.generated: true` EU AI Act Art.50 disclosure) into the capsule when the run produces model output. The marker is written before NovaSeal so it is covered by the capsule signature (ADR-0074). Opt-in; non-blocking. Example: `nova capture --mark-provenance python agent.py`
 - `--fast-emit` — install capture hooks **lazily** in the workload subprocess (ADR-0092 slice B). The default path imports every present SDK (`openai`, `mcp`, `requests`, …) at startup purely to patch it — measured at ~717 ms for `openai`, ~340 ms for `mcp`, paid even if the workload never calls them. `--fast-emit` patches each SDK only if/when the workload itself imports it, so unused SDKs are never imported by capture. **Measured (warm-fs, orchestrator):** a compute-only workload **2068 ms → 464 ms (−78 %)**; an `import openai` workload **2223 ms → 1509 ms (−32 %)** — the saving scales inversely with SDK usage. Fidelity is unchanged. Runs in-process (not delegated to the warm daemon). Example: `nova capture --fast-emit python agent.py`
 - `--emit-spool` — **experimental** (ADR-0092 slice C). Also write run-boundary EventEnvelope v1 records (`run.start`, `capsule.finalize`) to the local event spool (`$NOVAFABRIC_SPOOL_DIR`, default `$NOVAFABRIC_HOME/spool`) so the resident `novafabric-spool-forwarder` can drain and forward them to the collector tier over NATS JetStream. Off by default; fail-open; **edge-keyless** — signing happens at the hub, not here (hub-sign default). Runs in-process (not delegated to the warm daemon). Example: `nova capture --emit-spool python agent.py`
-- `--emit-otel-genai` — **experimental** (NF-032, [ADR-0098](../design/adr/0098-otel-genai-canonical-spans.md)). After capture, emit the run outward as OTel GenAI `gen_ai.*` spans (OTLP-shaped JSON) to `<capsule>/otel-genai-spans.json`: a root `invoke_agent` span plus a `chat` client span per model call and an `execute_tool` span per tool call. Every span carries `novafabric.mapping_version` and an honest `novafabric.semconv_maturity` (`stable` on LLM client spans, `development` on agent/tool spans — OTel GenAI agent spans are Development-status). Additive; runs in-process. Example: `nova capture --emit-otel-genai python agent.py`
+- `--emit-otel-genai` — **experimental** (NF-032, [ADR-0098](./decisions.md)). After capture, emit the run outward as OTel GenAI `gen_ai.*` spans (OTLP-shaped JSON) to `<capsule>/otel-genai-spans.json`: a root `invoke_agent` span plus a `chat` client span per model call and an `execute_tool` span per tool call. Every span carries `novafabric.mapping_version` and an honest `novafabric.semconv_maturity` (`stable` on LLM client spans, `development` on agent/tool spans — OTel GenAI agent spans are Development-status). Additive; runs in-process. Example: `nova capture --emit-otel-genai python agent.py`
 - `--capture-content` — **opt-in** (NF-033). With `--emit-otel-genai`, include request messages in the emitted spans, routed through the ADR-0009 secret-redaction gate and size-bounded (ADR-0021 span cap). Off by default — spans carry no message/choice content unless this is set.
-- `--capture-media` — **experimental, opt-in** ([ADR-0125](../design/adr/0125-multimodal-capture.md)). Store the bytes of multimodal message parts on model calls (inline base64 images/audio/documents — Anthropic `source.type: base64` blocks, OpenAI `image_url` data-URLs and `input_audio`) **content-addressed** in the capsule blob store at `outputs/<sha256>.<ext>` (deduplicated; bounded per part, default 10 MiB, `NOVAFABRIC_MEDIA_MAX_BYTES` override) and list each blob as an `Artifact` in the sealed manifest. **Off by default** (ADR-0021 §4 privacy-by-default): the part is always rewritten to a `media` reference block — IANA `media_type`, `sha256:<hex>` `content_hash` over the raw bytes, `byte_size` — and without this flag the bytes are discarded after hashing (`blob_ref: null`, reference-only). Inline base64 never lands in `model-calls.jsonl` either way; URL-referenced media is never fetched. `nova validate` re-hashes every captured blob against its recorded `content_hash` (tamper ⇒ validation fails); read back with `nova media list`. Example: `nova capture --capture-media -- python vision_agent.py`
-- `--masker NAME` — **experimental** ([ADR-0135](../design/adr/0135-pluggable-pii-masking-pipeline.md)). Enable a registered PII masker for this capture, by `novafabric.maskers` entry-point name or dotted import path (repeatable). Custom maskers run **after** the built-in ADR-0009 secret scanner — built-ins always run and can never be disabled by a plugin — and every mask is attributed in `redaction-proof.json` (`masker_findings[]`). Fail-closed: a crashing, hanging, or invalid masker redacts the field (recorded in `masker_errors[]`) and never blocks the workload; an unresolvable masker aborts capture *before* the workload runs. Example: `nova capture --masker novafabric-email python agent.py`
+- `--capture-media` — **experimental, opt-in** ([ADR-0125](./decisions.md)). Store the bytes of multimodal message parts on model calls (inline base64 images/audio/documents — Anthropic `source.type: base64` blocks, OpenAI `image_url` data-URLs and `input_audio`) **content-addressed** in the capsule blob store at `outputs/<sha256>.<ext>` (deduplicated; bounded per part, default 10 MiB, `NOVAFABRIC_MEDIA_MAX_BYTES` override) and list each blob as an `Artifact` in the sealed manifest. **Off by default** (ADR-0021 §4 privacy-by-default): the part is always rewritten to a `media` reference block — IANA `media_type`, `sha256:<hex>` `content_hash` over the raw bytes, `byte_size` — and without this flag the bytes are discarded after hashing (`blob_ref: null`, reference-only). Inline base64 never lands in `model-calls.jsonl` either way; URL-referenced media is never fetched. `nova validate` re-hashes every captured blob against its recorded `content_hash` (tamper ⇒ validation fails); read back with `nova media list`. Example: `nova capture --capture-media -- python vision_agent.py`
+- `--masker NAME` — **experimental** ([ADR-0135](./decisions.md)). Enable a registered PII masker for this capture, by `novafabric.maskers` entry-point name or dotted import path (repeatable). Custom maskers run **after** the built-in ADR-0009 secret scanner — built-ins always run and can never be disabled by a plugin — and every mask is attributed in `redaction-proof.json` (`masker_findings[]`). Fail-closed: a crashing, hanging, or invalid masker redacts the field (recorded in `masker_errors[]`) and never blocks the workload; an unresolvable masker aborts capture *before* the workload runs. Example: `nova capture --masker novafabric-email python agent.py`
 - `--masking-config PATH` — **experimental** (ADR-0135). Path to a `masking.yaml` describing the custom masking pipeline (masker order, per-masker `timeout_ms`, `max_input_bytes`, `on_error: redact|drop`, opaque `config`). Defaults to `.novafabric/masking.yaml` when that file exists. Absent config or `enabled: false` ⇒ capture behaves exactly as ADR-0009 today, byte-for-byte. Schema: `schemas/masking-config.schema.json`. See the [developer guide](developer-guide.md#writing-a-custom-pii-masker-adr-0135--experimental) for writing a masker.
 
 Use `--` to separate `nova capture` options from commands that contain flags:
@@ -346,7 +346,7 @@ only when it is non-empty.
 declares a class under the `novafabric.hooks` entry-point group is auto-discovered
 at capture time. A failing plugin is isolated and logged — it cannot break the
 built-in hooks. See [`docs/integrations/writing-a-hook-plugin.md`](integrations/writing-a-hook-plugin.md)
-for the contract; the strategic context is [RFC-0001](../design/governance/RFC-0001-multi-vendor-strategy.md).
+for the contract; the strategic context is RFC-0001.
 
 **Customizing the URL registry (v0.5.x).** The wire-level hooks (`httpx`, `requests`) classify outbound URLs against a YAML registry vendored at `src/novafabric/capture/hooks/url_registry.yaml`. The registry is extended automatically at call time by `OLLAMA_BASE_URL` (langchain_ollama) and `OLLAMA_HOST` (ollama SDK) — non-default Ollama ports are captured without any manual configuration. For other private endpoints or providers, drop a replacement file at `~/.novafabric/url_registry.yaml`:
 
@@ -447,7 +447,7 @@ Subcommands:
 - `nova session replay <session_id> [--mode forensic|mocked|semantic|exact]
   [--on-divergence stop|continue] [--continue-past-refusal] [--json]
   [--output-dir PATH] [--capsule-dir PATH]` — **experimental,
-  [ADR-0123](../design/adr/0123-session-replay.md) P1.** Replay every member
+  [ADR-0123](./decisions.md) P1.** Replay every member
   capsule in ascending `sequence` order by invoking the **existing**
   single-capsule replay engine (the four ADR-0005 modes; default `mocked`)
   once per turn — no new replay mode, no bypass of the inherited
@@ -477,7 +477,7 @@ All commands are local-first (no server, no network for
 ### nova media (experimental, ADR-0125)
 
 Read surface over the **content-addressed media** recorded on a capsule's
-model calls ([ADR-0125](../design/adr/0125-multimodal-capture.md)). When a
+model calls ([ADR-0125](./decisions.md)). When a
 model call's messages carried inline media (base64 image/audio/document
 blocks), capture rewrites each part to a `media` reference block — IANA
 `media_type`, `sha256:<hex>` `content_hash` over the raw bytes, `byte_size`,
@@ -500,7 +500,7 @@ missing or tampered blob. Local-first, read-only, no server.
 
 Transparent HTTP proxy that sits between a non-Python LLM client and an
 upstream provider, recording every request/response pair as a
-`model-calls.jsonl` entry. Implements [ADR-0026](../design/adr/0026-api-proxy-promotion.md).
+`model-calls.jsonl` entry. Implements [ADR-0026](./decisions.md).
 
 Use when the client cannot import Python hooks — Claude Code, Cursor,
 Continue.dev, or any Node/Go/Rust agent that uses a `*_BASE_URL` env var.
@@ -613,7 +613,7 @@ OTel-Arrow wire profile (31.5 % measured egress reduction).
 
 A long-lived per-node daemon that imports `novafabric` once and serves each run
 from a fork, eliminating the per-run orchestrator cold-start at fleet scale
-(realizes SI-2; extends [ADR-0020](../design/adr/0020-cluster-scale-low-overhead-capture.md)).
+(realizes SI-2; extends [ADR-0020](./decisions.md)).
 Strictly opt-in — with no daemon running, `nova capture` behaves exactly as before.
 
 ### nova daemon start | stop | status
@@ -957,7 +957,7 @@ nova diff --group-by variant runs/arm-a/ runs/arm-b/
 Options:
 - `--output-format {text,json,github-annotation}` — output format (default: `text`). Tab-completion available via `nova --install-completion`.
 - `--assert-no-regressions` — exit 1 if any structural changes detected; useful as CI gate
-- `--group-by variant` — **experimental** ([ADR-0116](../design/adr/0116-variant-attribution-field.md)). Group the two capsules by their **recorded** A/B-variant attribution — the `(experiment_id, variant_id)` of the optional `variant` block — and label the diff as cross-arm (different groups) or within-arm (same group). A capsule without a `variant` block groups under `(no variant)`. Read-only over recorded facts: this never assigns variants and never mutates a capsule. Capsule paths only; `text`/`json` output only (`json` wraps the report in `{variant_groups, cross_arm, diff}`).
+- `--group-by variant` — **experimental** ([ADR-0116](./decisions.md)). Group the two capsules by their **recorded** A/B-variant attribution — the `(experiment_id, variant_id)` of the optional `variant` block — and label the diff as cross-arm (different groups) or within-arm (same group). A capsule without a `variant` block groups under `(no variant)`. Read-only over recorded facts: this never assigns variants and never mutates a capsule. Capsule paths only; `text`/`json` output only (`json` wraps the report in `{variant_groups, cross_arm, diff}`).
 
 Diff sections: environment (Python, OS), model calls (aligned by span_id), tool calls
 (aligned by tool_name + arg hash), output files (by hash).
@@ -1518,7 +1518,7 @@ Emit capsule runs as OpenLineage 2.0.2 events.
 
 - `<path>` — a single capsule directory or a parent `runs/` directory (all capsules inside are emitted)
 - `--output, -o TARGET` — destination: `-` for stdout, an `http://...` URL, or a file path
-- `--with-facets` — **(NF-036, [ADR-0096](../design/adr/0096-standard-outer-envelopes.md))** attach NovaFabric custom run facets to the COMPLETE event: `novafabric_capsule` (capsule id/run id/hash), `novafabric_eval` (verdict `passed`/`failed`/`n/a` + suite + metrics), `novafabric_policy` (promotion gate + decision), and the standard `executionParameters` facet (reproducibility run params). Additive — a consumer that ignores custom facets sees unchanged core OL events. Every facet is schema-validated before emission.
+- `--with-facets` — **(NF-036, [ADR-0096](./decisions.md))** attach NovaFabric custom run facets to the COMPLETE event: `novafabric_capsule` (capsule id/run id/hash), `novafabric_eval` (verdict `passed`/`failed`/`n/a` + suite + metrics), `novafabric_policy` (promotion gate + decision), and the standard `executionParameters` facet (reproducibility run params). Additive — a consumer that ignores custom facets sees unchanged core OL events. Every facet is schema-validated before emission.
 - `--otel-correlation` — also attach the `novafabric_otel_correlation` facet (`trace_id`/`span_id`) when the capsule records them, so a lineage node links to its OTel GenAI spans (NF-037). Implies `--with-facets`.
 
 If `--output` is omitted, the target is resolved from `OPENLINEAGE_URL` → `OPENLINEAGE_FILE` → stdout.
@@ -1583,7 +1583,7 @@ a flush fails, the buffered edges for that flush are dropped and logged, not
 redelivered — lineage is derived, non-authoritative data, not the evidence
 chain, so this tradeoff favors simplicity over exact-once delivery guarantees.
 
-**Producer taxonomy gap — resolved 2026-07-30 ([ADR-0220](../design/adr/0220-go-envelope-canonical-event-taxonomy-reconciliation.md)):**
+**Producer taxonomy gap — resolved 2026-07-30 ([ADR-0220](./decisions.md)):**
 the real event producer is `capture/orchestrator.py` (forwarded verbatim by
 the Go `novafabric-spool-forwarder`, which never inspects `event_type`
 itself — the earlier framing of this as a Go-vs-Python taxonomy problem was
@@ -2026,7 +2026,7 @@ Exit codes: `0` (ok, including an idempotent replay), `1` (rejection), `2` (usag
 
 ### nova export-evidence \<capsule\> --output \<bundle.zip\>
 
-Build a signed Evidence Bundle ZIP per [ADR-0011](../design/adr/0011-evidence-bundle.md). Signs with a
+Build a signed Evidence Bundle ZIP per [ADR-0011](./decisions.md). Signs with a
 local ed25519 key; optionally publishes the DSSE envelope to a Rekor transparency log
 when `--sigstore` and `NOVA_REKOR_URL` are both set.
 
@@ -2052,7 +2052,7 @@ Options:
 - `--custodian-provenance {novaseal-identity|oidc|operator_declared}` — provenance of the
   custodian identity; only `novaseal-identity`/`oidc` can make a bundle
   `self-authenticating` (used with `--with-custody`).
-- `--dsse` (experimental, NF-029/[ADR-0096](../design/adr/0096-standard-outer-envelopes.md)) —
+- `--dsse` (experimental, NF-029/[ADR-0096](./decisions.md)) —
   also emit a **standard DSSE outer envelope** wrapping the final bundle manifest, written to
   `<bundle>.dsse.json` (payloadType `application/vnd.novafabric.bundle+json`, signed with the
   same `--key`). The manifest chains custody over every artifact via their sha256 +
@@ -2184,7 +2184,7 @@ Without `--certify`/`--anchor`, `attest-replay` behavior is unchanged (including
 
 Verify a capsule's cryptographic seal: DSSE envelope signature, RFC 3161 timestamp
 integrity, and Merkle log inclusion proof. Requires NovaSeal configuration
-([ADR-0041](../design/adr/0041-novaseal-cryptographic-core-adoption.md)). **experimental** —
+([ADR-0041](./decisions.md)). **experimental** —
 shipped v0.10; see [v0.10.0 release notes](releases/v0.10.0.md).
 
 ```bash
@@ -2263,7 +2263,7 @@ Verify the Ed25519 signature on a **standard outer envelope** — a DSSE envelop
 by NovaFabric's `envelopes/` emitters (Evidence Bundle wrap, in-toto capsule Statement, or
 SLSA provenance). Gives the same verdict a third party gets from stock
 `cosign verify-blob-attestation`, with no NovaFabric dependency on the verifier side.
-**experimental** — NF-029/030/031, [ADR-0096](../design/adr/0096-standard-outer-envelopes.md).
+**experimental** — NF-029/030/031, [ADR-0096](./decisions.md).
 
 ```bash
 nova verify-envelope bundle.dsse.json --key seal.pub.pem      # public-key PEM
@@ -3147,7 +3147,7 @@ Options (`nova aibom generate`) — **per-deployment automation (CRA)**:
 - `--all` — batch-generate across `--capsules-dir`, skipping capsules that already have an `aibom.json`
 - `--capsules-dir PATH` — capsule store for `--all` (default: `$NOVAFABRIC_CAPSULE_DIR` or `$NOVAFABRIC_HOME/capsules`)
 - `--force` — regenerate even when an `aibom.json` already exists
-- `--citations` — **(NF-056, [ADR-0105](../design/adr/0105-ai-supply-chain-bom.md))** bind each model/dataset component to its source capsule/evidence digest (+ ADR-0097 inclusion proof when the manifest records one). Default off (byte-stable output).
+- `--citations` — **(NF-056, [ADR-0105](./decisions.md))** bind each model/dataset component to its source capsule/evidence digest (+ ADR-0097 inclusion proof when the manifest records one). Default off (byte-stable output).
 - `--tlp TLP:CLEAR|GREEN|AMBER|AMBER+STRICT|RED` — TLP 2.0 distribution marker in `metadata.properties` (`novafabric:tlp`). Default: none.
 - `--model-card auto|<path>` — add a `model-card` externalReference to each model component (`auto` derives a `registry://` URI). Default: none.
 - `--include-datasets / --no-include-datasets` — emit `type:data` dataset components from lineage (default on).
@@ -3156,7 +3156,7 @@ Options (`nova aibom validate <bom.json>`) — **NF-056**: structural CycloneDX 
 
 #### nova dataset provenance-card \<asset\> (experimental)
 
-> **Experimental — NF-058, [ADR-0105](../design/adr/0105-ai-supply-chain-bom.md).** Emit (and optionally
+> **Experimental — NF-058, [ADR-0105](./decisions.md).** Emit (and optionally
 > sign) a dataset provenance card recording a dataset's source, version, content hash, and **transform
 > history**. Feeds the AI-BOM (NF-056) and the SLSA-for-ML attestation (NF-057). Op digests only — never raw
 > values, prompts, or cell contents.
@@ -3262,8 +3262,8 @@ result can be tied back to exactly what was measured.
 #### nova export-blob --dest \<uri\>
 
 Export a **batch** of capsules to blob storage with one **signed, verifiable
-completeness manifest** ([ADR-0141](../design/adr/0141-batch-capsule-blob-export.md),
-spec [batch-blob-export-v0](../design/spec/batch-blob-export-v0.md)). Members are
+completeness manifest** ([ADR-0141](./decisions.md),
+spec batch-blob-export-v0). Members are
 selected explicitly (`--capsule`, repeatable) or by scanning the capsule directory
 with an optional `created_at` time range (`--since`/`--until`, inclusive); the
 selection is frozen at export start (a batch is a snapshot). Each member is packed
@@ -3302,7 +3302,7 @@ Options:
 - `--capsule-dir PATH` — scan root (default `$NOVAFABRIC_HOME/capsules`).
 - `--since / --until RFC3339` — inclusive `created_at` window for the scan;
   recorded as the manifest `query` for reproducibility.
-- `--query EXPR` — select members with an [ADR-0129](../design/adr/0129-capsule-query-dsl.md)
+- `--query EXPR` — select members with an [ADR-0129](./decisions.md)
   `where` filter, e.g. `"model = 'gpt-4o'"` or `"status = 'error'"`. **Composes
   with** `--since`/`--until` (both must hold), and is mutually exclusive with
   `--capsule`. The *parsed, canonical* predicates are recorded in the manifest
@@ -3334,8 +3334,8 @@ digest — e.g. a member quietly dropped from the manifest). Exit 0 only on `VAL
 
 Import a **batch export** ([`nova export-blob`](#nova-export-blob---dest-uri))
 into the local capsule store — the verified inverse of the export
-([ADR-0207](../design/adr/0207-batch-import-interchange.md), spec
-[batch-import-v0](../design/spec/batch-import-v0.md)). `<source>` is either a
+([ADR-0207](./decisions.md), spec
+batch-import-v0). `<source>` is either a
 directory containing `export-manifest.json` + `objects/`, or a single
 `.tar`/`.tar.gz` archive of that layout (the air-gap courier format).
 
@@ -3521,7 +3521,7 @@ instead of the `eval_results` table. Omitting `--scores-file` preserves the exac
 `eval_results` behavior.
 
 **`--slsa-provenance [--slsa-out <path>] [--identity <id>]`** (NF-031, experimental,
-[ADR-0096](../design/adr/0096-standard-outer-envelopes.md)) — on a **successful** promotion,
+[ADR-0096](./decisions.md)) — on a **successful** promotion,
 also emit a DSSE-signed SLSA v1 provenance (`slsa.dev/provenance/v1`) recording the promotion
 decision (and the `significance-gate/v1` gate when `--significance-gate` is set). The subject
 digest is the sha256 of the registered asset spec; the attestation is signed with the keyring
@@ -3529,7 +3529,7 @@ Ed25519 key for `--identity` (default: OS username) and written to `<name>-<vers
 (or `--slsa-out`). Verify it with `nova verify-envelope`. **Opt-in:** without the flag, promotion
 behavior and output are unchanged.
 
-**`--slsa-ml-profile`** (NF-057, experimental, [ADR-0105](../design/adr/0105-ai-supply-chain-bom.md)) — with
+**`--slsa-ml-profile`** (NF-057, experimental, [ADR-0105](./decisions.md)) — with
 `--slsa-provenance`, emit the **SLSA-for-ML profile** instead of the generic one: the build type becomes
 `https://novafabric.dev/promote-ml/v1`, a `gate-rule` byproduct records the gating rule, and an `eval-verdict`
 byproduct carries the sha256 digest of the gating eval verdict — binding the promoted model to the exact eval
@@ -3876,7 +3876,7 @@ Third-party suites register via `[project.entry-points."novafabric.eval_suites"]
 
 ### nova eval card / nova eval score (experimental)
 
-> **Experimental — NF-002 / NF-010, [ADR-0099](../design/adr/0099-evidence-grade-evaluation.md).**
+> **Experimental — NF-002 / NF-010, [ADR-0099](./decisions.md).**
 > Evidence-grade evaluation: a **score is not a number — it is a signed record** binding
 > `(value, evaluator-identity, subject-span-digest, verdict)`. Library + CLI are shipped
 > behind the experimental label; the API may change and there is no dashboard UI yet.
@@ -3914,8 +3914,8 @@ re-seal step is required.
 
 ### nova eval score config (experimental)
 
-> **Experimental — [ADR-0117](../design/adr/0117-score-configuration-catalog.md),
-> spec [`score-config-v0.md`](../design/spec/score-config-v0.md).** The
+> **Experimental — [ADR-0117](./decisions.md),
+> spec `score-config-v0.md`.** The
 > **score-configuration catalog**: named, reusable, **immutable, content-addressed**
 > definitions of what a valid score for a given metric `name` looks like, so scores
 > under one name are coherent and comparable across capsules. Fully additive: the
@@ -3961,7 +3961,7 @@ was computed against, making cross-capsule comparability reproducible evidence.
 
 ### nova eval contamination-check (experimental)
 
-> **Experimental — NF-028, [ADR-0108](../design/adr/0108-eval-harness-interop.md).** Flags a capsule that
+> **Experimental — NF-028, [ADR-0108](./decisions.md).** Flags a capsule that
 > was run against a *contaminated* or *superseded* benchmark version (contamination silently inflates eval
 > scores). Detection/flagging only — no remediation.
 
@@ -3984,7 +3984,7 @@ usage error.
 
 ### nova eval import-inspect / export-inspect (experimental)
 
-> **Experimental — NF-024, [ADR-0108](../design/adr/0108-eval-harness-interop.md).** Score-level bridge
+> **Experimental — NF-024, [ADR-0108](./decisions.md).** Score-level bridge
 > between [Inspect AI](https://inspect.aisi.org.uk) (UK AISI) JSON eval logs and NovaFabric's
 > evidence-grade `scores.jsonl`. Pure stdlib JSON parsing against the documented Inspect log structure —
 > **no `inspect-ai` dependency**. The Solver-steps → span-tree import and byte-equal native round-trip
@@ -4019,7 +4019,7 @@ not a capsule directory).
 
 ### nova eval offline (experimental)
 
-> **Experimental — NF-009, [ADR-0099](../design/adr/0099-evidence-grade-evaluation.md).** Trace-first
+> **Experimental — NF-009, [ADR-0099](./decisions.md).** Trace-first
 > structural checks over an already-stored capsule that run with **zero model calls** and emit a `code`
 > score bound to the capsule Merkle root.
 
@@ -4062,8 +4062,8 @@ Both arguments must contain `@` to trigger asset diff; otherwise capsule diff is
 
 ### nova diff --significance (experimental)
 
-> **Experimental — NF-007, [ADR-0099](../design/adr/0099-evidence-grade-evaluation.md); extends
-> [ADR-0080](../design/adr/0080-statistical-significance-eval-gate.md).** Compares two run sets by
+> **Experimental — NF-007, [ADR-0099](./decisions.md); extends
+> [ADR-0080](./decisions.md).** Compares two run sets by
 > **statistical significance, not raw delta**, so a single-run dip cannot fire a regression gate.
 
 Reads a boolean pass/fail metric from stored `scores.jsonl` files (or capsule directories) and computes a
@@ -4087,8 +4087,8 @@ sequence from a `scores.jsonl`).
 
 ### nova experiment run | list | show | compare (experimental, ADR-0120)
 
-> **Experimental — [ADR-0120](../design/adr/0120-dataset-experiment-harness.md);
-> spec [`dataset-experiment-v0`](../design/spec/dataset-experiment-v0.md).** Run a target command
+> **Experimental — [ADR-0120](./decisions.md);
+> spec `dataset-experiment-v0`.** Run a target command
 > across **every item** of a pinned local JSONL dataset (one Run Capsule per item — the capsule
 > invariant is untouched) and record an **immutable, content-addressed `Experiment`**
 > (`schemas/experiment.schema.json`). Compare two experiments per item and in aggregate; the verdict
@@ -4457,7 +4457,7 @@ nova label status prompt:triage --label production --json
 Generate an asset inventory report. Defaults to Markdown on stdout.
 Use `--output` to write to a file. Valid `--format` values: `markdown` (default), `json`, `html`, `pdf`. Tab-completion available via `nova --install-completion`.
 
-**`html`** ([ADR-0201](../design/adr/0201-server-side-chart-rendering.md); **works today**) — one
+**`html`** ([ADR-0201](./decisions.md); **works today**) — one
 self-contained page (no JS, no external requests) with an assets-by-type inline-SVG chart, the
 inventory table, and the canonical JSON embedded for machine consumption.
 
@@ -4484,7 +4484,7 @@ nova validate .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/
 nova validate my-model.yaml
 ```
 
-Tool-call schema conformance ([ADR-0128](../design/adr/0128-toolcall-schema-validation.md); **experimental**) —
+Tool-call schema conformance ([ADR-0128](./decisions.md); **experimental**) —
 capsule directories only:
 
 | Option | Default | Effect |
@@ -4683,7 +4683,7 @@ nova ingest-capsule --watch --backend watchdog
 
 ### nova migrate-to-postgres
 
-One-time idempotent migration from a local SQLite registry to Postgres. Per [ADR-0016](../design/adr/0016-storage-backend-evolution.md).
+One-time idempotent migration from a local SQLite registry to Postgres. Per [ADR-0016](./decisions.md).
 
 ```bash
 # Dry run — see what would be migrated without writing
@@ -4825,7 +4825,7 @@ Exit codes: `0` = success, `1` = alembic/database failure (registry track),
 
 ### nova server start
 
-Start the multi-user REST API server. Per [ADR-0017](../design/adr/0017-server-api-protocol.md) and [ADR-0029](../design/adr/0029-server-config-schema.md).
+Start the multi-user REST API server. Per [ADR-0017](./decisions.md) and [ADR-0029](./decisions.md).
 
 ```bash
 nova server start
@@ -4878,7 +4878,7 @@ the `nova_db_pool_in_use` / `nova_db_pool_size` gauges, sampled at scrape time.
 
 ### nova server issue-token
 
-Issue a signed offline JWT for airgapped or SLURM deployments. Per [ADR-0018](../design/adr/0018-auth-model.md).
+Issue a signed offline JWT for airgapped or SLURM deployments. Per [ADR-0018](./decisions.md).
 
 ```bash
 nova server issue-token --subject user@example.com --roles writer --expires-in 90d
@@ -4918,7 +4918,7 @@ Options:
 ### nova server assign-role \<user\> \<role\>
 
 Assign a local role to a user. Writes to the `role_assignments` table on the
-active backend. Per [ADR-0018](../design/adr/0018-auth-model.md).
+active backend. Per [ADR-0018](./decisions.md).
 
 ```bash
 nova server assign-role user@example.com writer
@@ -4935,7 +4935,7 @@ Options:
 - `--assigned-by TEXT` — who is making the assignment (default: `cli`)
 - `--db-path PATH` — SQLite database path (overrides default)
 
-REST equivalent (per [ADR-0060](../design/adr/0060-role-management-http-surface.md)):
+REST equivalent (per [ADR-0060](./decisions.md)):
 ```bash
 curl -X POST http://localhost:7433/v0/admin/roles \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
@@ -4946,7 +4946,7 @@ curl -X POST http://localhost:7433/v0/admin/roles \
 
 ### nova server revoke-role \<user\> \<role\>
 
-Revoke a role from a user. Per [ADR-0060](../design/adr/0060-role-management-http-surface.md);
+Revoke a role from a user. Per [ADR-0060](./decisions.md);
 enforces the **last-admin lockout invariant** at the store layer — if revoking
 would leave `role_assignments` with no `admin` row AND no `NOVA_OIDC_ISSUER`
 configured, the command refuses with exit code 2.
@@ -4979,8 +4979,8 @@ curl -X DELETE http://localhost:7433/v0/admin/roles/user@example.com/writer \
 ### nova server scim-map-group \<group\> \<role\> (experimental, ADR-0139 D3)
 
 Declare, `--remove`, or `--list` IdP-group → RBAC-role mappings in the server's
-YAML config (`scim.group_role_map`, [ADR-0029](../design/adr/0029-server-config-schema.md)),
-per [ADR-0139](../design/adr/0139-scim-provisioning.md) D3. SCIM group membership then
+YAML config (`scim.group_role_map`, [ADR-0029](./decisions.md)),
+per [ADR-0139](./decisions.md) D3. SCIM group membership then
 grants/revokes the mapped role through the `/scim/v2/Groups` routes. `--list` reads the
 effective loaded config; setting or removing a mapping edits the YAML in place — a running
 server picks up the change on restart. Scope: single server.
@@ -5044,8 +5044,8 @@ Options:
 Service Provider metadata XML (entity ID, ACS URL, SP signing certificate) so
 an IdP administrator can register NovaFabric as an SP. Read-only, no side
 effects. Requires a `saml:` block with `enabled: true` in the server config
-([ADR-0138](../design/adr/0138-saml-sso-server-mode.md),
-[spec](../design/spec/saml-sso-v0.md)).
+([ADR-0138](./decisions.md),
+spec).
 
 ```bash
 nova server saml-metadata
@@ -5071,7 +5071,7 @@ verified signatures.
 existing RBAC vocabulary (`reader`, `writer`, `admin`, `auditor`). Only the
 sha256 of the secret is stored — the full key is printed **once** and cannot
 be recovered later. Creation is appended to the hash-chained audit log
-([spec](../design/spec/api-keys-v0.md)).
+(spec).
 
 ```bash
 nova server api-key create --owner alice@example.com --roles reader
@@ -5177,7 +5177,7 @@ The same lifecycle is also available over REST at the admin-gated
 ### nova login
 
 Authenticate with a NovaFabric server via Device Authorization Grant (RFC 8628,
-[ADR-0018](../design/adr/0018-auth-model.md)). Credentials are stored in
+[ADR-0018](./decisions.md)). Credentials are stored in
 `~/.config/novafabric/credentials.json` at mode `0600`.
 
 ```bash
@@ -5591,7 +5591,7 @@ Returns exit code 0 if all tests pass, 1 if any test fails or `opa` is not found
 
 The built-in bundle ships reference gates including `promote_gate.rego`,
 `regression_gate.rego` (v0.9), and `budget_gate.rego` — the **cost/energy budget
-gate** ([ADR-0136](../design/adr/0136-cost-energy-budget-gate.md), *experimental*).
+gate** ([ADR-0136](./decisions.md), *experimental*).
 
 **Budget gate (`budget_gate.rego`, experimental).** Denies promotion when the
 capsule's *already-recorded* cost/energy/token rollup exceeds declared ceilings —
@@ -5729,7 +5729,7 @@ On success, a signed `capsule.delete` entry is appended to the audit log.
 
 ## Retention scheduler (ADR-0134)
 
-Applies the [ADR-0031](../design/adr/0031-worm-retention-policy.md) retention
+Applies the [ADR-0031](./decisions.md) retention
 windows *over time*: a WORM-aware, crypto-shred-integrated, audited sweep.
 Bindings live in a new **optional** `bindings:` block inside the existing
 `.novafabric/registries/<registry>/retention-policy.yaml`
@@ -5822,7 +5822,7 @@ nova retention explain cap-01JXXXXX --registry my-registry
 
 ### nova serve --experimental
 
-Start the experimental local dashboard. Read-only browsing of capsules, registry, and lineage; Layer-B compute-only mutations (register, eval, promote, forensic replay, redact, export evidence). Per [ADR-0027](../design/adr/0027-nova-serve-experimental-dashboard.md).
+Start the experimental local dashboard. Read-only browsing of capsules, registry, and lineage; Layer-B compute-only mutations (register, eval, promote, forensic replay, redact, export evidence). Per [ADR-0027](./decisions.md).
 
 **v0.11 additions** — the following dashboard capabilities are now available in `nova serve`:
 
@@ -6678,7 +6678,7 @@ nova kg ingest [CAPSULE_DIR] [--all] [--source local-dir|nats] [--capsule-dir DI
 | `--nats-url URL` | NATS server URL (used with `--source nats`). |
 | `--nats-subject SUBJECT` | NATS JetStream subject to consume (used with `--source nats`). |
 
-**`--source nats` model/tool-call coverage (2026-07-30, [ADR-0220](../design/adr/0220-go-envelope-canonical-event-taxonomy-reconciliation.md) follow-up):**
+**`--source nats` model/tool-call coverage (2026-07-30, [ADR-0220](./decisions.md) follow-up):**
 `capture/orchestrator.py`'s real producer now re-emits each locally-captured
 model/tool call as a `ModelCallCompleted`/`ModelCallFailed`/
 `ToolCallCompleted`/`ToolCallFailed` spool event once the run finishes (no
@@ -6723,7 +6723,7 @@ SQLite sidecar (`ingest_tracker.db`) that persists across server restarts.
 
 ### nova kg build-provenance
 
-**Experimental** (SPKG, [ADR-0111](../design/adr/0111-security-provenance-knowledge-graph.md); requires
+**Experimental** (SPKG, [ADR-0111](./decisions.md); requires
 `pip install novafabric[spkg]`). Map a capsule's `lineage.jsonl` to a W3C **PROV-O** RDF graph — the
 canonical semantic layer of the Security & Provenance Knowledge Graph — and SHACL-validate it on the way
 out (ADR-0111 R11: invalid provenance facts are rejected). This is the provenance-graph *export* step; to
@@ -6758,7 +6758,7 @@ countermeasure — a raw anomaly score alone is rejected by the `nf:FindingShape
 
 ### nova kg build
 
-**Experimental** (SPKG, [ADR-0111](../design/adr/0111-security-provenance-knowledge-graph.md); requires
+**Experimental** (SPKG, [ADR-0111](./decisions.md); requires
 `pip install novafabric[spkg]`). Build **both** SPKG layers for a capsule: the canonical W3C **PROV-O**
 RDF (SHACL-gated) and the operational **KùzuDB labeled-property graph** (LPG) that powers attack-path /
 blast-radius traversal. The canonical layer is validated first (ADR-0111 R11) — on failure nothing is
@@ -6784,7 +6784,7 @@ nova kg build .novafabric/runs/01HXAY7M
 
 ### nova kg detect
 
-**Experimental** (SPKG, [ADR-0111](../design/adr/0111-security-provenance-knowledge-graph.md)). Rank a
+**Experimental** (SPKG, [ADR-0111](./decisions.md)). Rank a
 capsule's most **anomalous lineage edges** with an unsupervised, label-free structural outlier detector:
 it learns the fleet's own edge distribution (from `--baseline` capsules, or the target itself) and flags
 edges with high combined surprisal (rare edge-type / entity / kind-triple). Every reported edge carries a
@@ -6815,7 +6815,7 @@ nova kg detect suspect/ --baseline normal-week-1/ --baseline normal-week-2/ --js
 
 ### nova kg attack-path
 
-**Experimental** (SPKG, [ADR-0111](../design/adr/0111-security-provenance-knowledge-graph.md); requires
+**Experimental** (SPKG, [ADR-0111](./decisions.md); requires
 `pip install novafabric[spkg]`). Build the operational graph from a capsule's lineage, then run a bounded
 **shortest-path** query between two entities (UC2 lateral-movement). Entities are `kind:ref` pairs, e.g.
 `run:attacker`, `dataset:aws_credentials`. Informational — exit `0` whether or not a path exists.
@@ -6843,7 +6843,7 @@ nova kg attack-path .novafabric/runs/01HXAY7M \
 
 ### nova kg blast-radius
 
-**Experimental** (SPKG, [ADR-0111](../design/adr/0111-security-provenance-knowledge-graph.md); requires
+**Experimental** (SPKG, [ADR-0111](./decisions.md); requires
 `pip install novafabric[spkg]`). Build the operational graph from a capsule's lineage, then traverse the
 **impact / blast radius** of an entity (UC3 supply-chain propagation). `--downstream` (default) lists
 everything reachable *from* the entity — e.g. every run and artifact a poisoned model touched;

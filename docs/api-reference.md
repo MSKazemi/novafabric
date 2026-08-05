@@ -410,7 +410,7 @@ caller-supplied numbers isn't a mutating or boundary-crossing action).
 
 **Maturity:** mechanism works today (experimental); the register is empty and the CI
 drift gate is future design. Policy and machinery:
-[ADR-0188](../design/adr/0188-api-deprecation-sunset-policy.md).
+[ADR-0188](./decisions.md).
 
 **Scope.** The lifecycle policy applies to the multi-user `nova server` API only
 (`api/openapi.yaml`, `/v0` and later). The `nova serve` dashboard API documented in the

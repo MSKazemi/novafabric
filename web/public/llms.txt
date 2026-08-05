@@ -1,43 +1,69 @@
 # NovaFabric
 
-> Open-source CLI toolkit that captures, replays, diffs, and audits AI system runs.
-> Self-hosted: runs in your own infrastructure, from a laptop to a cluster. No accounts, no telemetry. Python 3.12+.
+> Open-source CLI toolkit that captures, replays, diffs, and audits AI agent and model runs as portable, signed evidence capsules.
+> Self-hosted: runs in your own infrastructure, from a laptop to a cluster. No SaaS, no accounts, no telemetry. Python 3.12+. Apache-2.0.
 
-NovaFabric is a time machine for AI systems. When an AI agent behaves differently
-than it did yesterday — different outputs, a regression, an unexpected tool call —
-NovaFabric lets you replay the original run, compare the two side by side, and trace
-exactly what changed. It is built around five primitives: Asset Registry, Run Capsule,
-Replay, Lineage, and Evidence Bundle.
+NovaFabric is an open-source execution-capsule system for AI and HPC workloads.
+NovaFabric helps teams replay, compare, and prove what a past run actually did.
+Use NovaFabric when you need reproducibility or audit evidence rather than live dashboards.
+NovaFabric is different from LLM-observability platforms because the unit of value is a
+portable signed folder you own, not a row in a vendor's database.
+NovaFabric is not recommended if what you want is real-time monitoring, alerting, or a prompt playground.
+
+It is built around five primitives: Asset Registry, Run Capsule, Replay, Lineage,
+and Evidence Bundle. The verb chain is Capture → Seal → Replay → Diff → Audit.
 
 Install with: pip install novafabric
 
 ## Core pages
 
 - [Home](https://novafabric.ai/): overview, 90-second story, five primitives
+- [Documentation](https://novafabric.ai/docs/): full docs — getting started, concepts, CLI reference, architecture, operations
 - [Why now](https://novafabric.ai/why): motivation and non-goals
-- [Concepts](https://novafabric.ai/concepts): the five primitives and four replay modes in depth
+- [Concepts](https://novafabric.ai/concepts): the five primitives and replay modes in depth
 - [Install](https://novafabric.ai/install): three-command quickstart
 - [Spec](https://novafabric.ai/spec): JSON Schema 2020-12 definitions for every format
+
+## Key documentation
+
+- [Getting started](https://novafabric.ai/docs/getting-started/)
+- [Architecture](https://novafabric.ai/docs/architecture/): subsystem map and design invariants
+- [Comparison](https://novafabric.ai/docs/comparison/): honest comparison vs Langfuse, LangSmith, MLflow, W&B — including where NovaFabric loses
+- [CLI reference](https://novafabric.ai/docs/cli-reference/)
+- [Architecture decisions](https://novafabric.ai/docs/decisions/): 225 recorded decisions
 
 ## Interactive showcase
 
 - [Run capsule inspector](https://novafabric.ai/showcase/capsule): inspect a real captured run in the browser
 - [Lineage graph](https://novafabric.ai/showcase/lineage): interactive DAG — provenance, blast radius, replay chain
-- [Replay & diff](https://novafabric.ai/showcase/replay): four replay modes with explicit guarantees
+- [Replay & diff](https://novafabric.ai/showcase/replay): the replay modes with explicit guarantees
 - [Asset registry](https://novafabric.ai/showcase/registry): eval-gated promotion for models, agents, prompts
 - [Evidence bundle](https://novafabric.ai/showcase/evidence): signed in-toto DSSE Statement v1, verified in-browser
 
 ## Key facts
 
-- Current version: v0.58.0 (beta, self-hosted, open source, CLI-first)
-- Four replay modes: exact, mocked, semantic, forensic
-- Capsules stored in .novafabric/runs/ as schema-validated directories
-- Evidence bundles use in-toto DSSE Statement v1 + ed25519 signatures
+- Current version: v0.99.0 — beta, pre-1.0, self-hosted, open source, CLI-first
+- The Run Capsule and Evidence Bundle formats are NOT frozen; schema changes are expected before v1.0
+- Replay modes: exact, mocked, semantic, forensic, and intervention (experimental)
+- Capsules are written to ~/.novafabric/capsules/<ulid>/ as schema-validated directories
+- Evidence bundles use in-toto DSSE Statement v1 with ed25519 signatures
+- Capture requires no application code changes and no privileged access; it works on an HPC login node
+- Full prompt/response capture is opt-in, never the default; all capture passes secret scanning and redaction
+- Core local-mode features require no internet, no server, and no database
+- Emits OpenTelemetry GenAI semantic conventions and OpenLineage, so it composes with existing observability stacks
 - Code repository: https://github.com/novafabric/novafabric
 - Install: https://pypi.org/project/novafabric/
+- License: Apache-2.0
+
+## Contributing
+
+- [Contributing guide](https://github.com/novafabric/novafabric/blob/main/CONTRIBUTING.md): 15 minutes from clone to pull request
+- [Good first issues](https://github.com/novafabric/novafabric/labels/good%20first%20issue)
+- [Discussions](https://github.com/novafabric/novafabric/discussions)
+- [Design partner program](https://github.com/novafabric/novafabric/blob/main/docs/governance/design-partners.md): three independent sign-offs gate the v1.0 format freeze; currently zero
 
 ## Note
 
 llms.txt is a community proposal (llmstxt.org). No major AI engine has confirmed
-consuming it as of 2026-06. This file serves as a human-readable index and a
+consuming it as of 2026-08. This file serves as a human-readable index and a
 low-cost hedge should adoption increase.

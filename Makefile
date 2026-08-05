@@ -8,6 +8,7 @@ COMPOSE_PROD := docker compose -f deploy/docker/docker-compose.yml --profile pro
 COMPOSE_AGE  := docker compose -f deploy/docker/docker-compose.yml --profile age
 
 .PHONY: whitepaper help test lint typecheck coverage benchmark benchmark-capture \
+        check-links check-decisions \
         bundle serve-local deploy-local \
         topology-build topology-test serve-topology \
         compliance-smoke classify-smoke audit-smoke migrate-schema-smoke \
@@ -62,6 +63,8 @@ help:
 	@echo "  benchmark-capture Run capture-overhead p95 gate (30 captured runs, < 2000 ms)"
 	@echo "  lint              Run ruff linter on src/, tests/ and scripts/"
 	@echo "  typecheck         Run mypy on src/"
+	@echo "  check-links       Verify every relative link in public docs resolves"
+	@echo "  check-decisions   Verify docs/decisions.md matches the ADR tree"
 	@echo "  whitepaper        Build PDF from docs/whitepaper/novafabric-position-paper.md"
 	@echo "  whitepaper-html   Build HTML version of the whitepaper"
 	@echo "  coverage          Run pytest with coverage report"
@@ -146,6 +149,16 @@ lint:
 
 typecheck:
 	uv run mypy src
+
+check-links:
+	# Every relative link in a public markdown file must resolve for someone who
+	# cloned only the public repository. On 2026-08-05 this was false for 142
+	# links pointing into the private design/ tree — including the RFC-process
+	# link CONTRIBUTING tells a new contributor to read first.
+	uv run python scripts/check_doc_links.py
+
+check-decisions:
+	uv run python scripts/gen_decisions_index.py --check
 
 coverage:
 	uv run pytest --cov=novafabric --cov-report=term-missing --cov-report=html

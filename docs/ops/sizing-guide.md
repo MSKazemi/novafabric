@@ -2,7 +2,7 @@
 
 How to size storage, memory, and CPU for a NovaFabric deployment — from a
 single laptop to a shared Postgres server. Everything below is labelled per
-the [docs honesty rule](../../CLAUDE.md): **works today**, **experimental**,
+the [docs honesty rule](../../CONTRIBUTING.md#documentation-status-labels): **works today**, **experimental**,
 **planned**, or **future design**. All sizing figures that are not cited to a
 benchmark file are **estimates derived from the on-disk formats** — measure
 your own workload before committing hardware.
@@ -10,7 +10,7 @@ your own workload before committing hardware.
 > **The one-line answer:** NovaFabric is local-first. A laptop with SQLite
 > handles thousands of runs comfortably; a single Postgres-backed
 > `nova server` writer is the supported team topology through v1.0
-> ([ADR-0180](../../design/adr/0180-ha-and-zero-downtime-upgrade-posture.md));
+> ([ADR-0180](../decisions.md));
 > beyond that, the cluster tiers (collector, object capsule store, KuzuDB
 > lineage) take over — see
 > [Cluster-scale migration](cluster-scale-migration.md).
@@ -166,13 +166,13 @@ server process.** What *is* contractual:
 - **`nova server` (multi-user API, experimental).** A single-writer
   FastAPI/uvicorn process in front of Postgres; the DB does the heavy
   lifting. Rate limiting and quotas
-  ([ADR-0179](../../design/adr/0179-api-rate-limiting-quotas.md),
+  ([ADR-0179](../decisions.md),
   default **off**) are in-process token buckets with a bounded key map, so
   enabling them adds negligible memory. Quota enforcement derives usage from
   capsule-store counts with a TTL cache, adding a bounded query cost to
   ingest.
 - **Observability of your actual usage** (experimental,
-  [ADR-0182](../../design/adr/0182-self-observability-surface.md)): scrape
+  [ADR-0182](../decisions.md)): scrape
   `/metrics` (Prometheus) on either app for HTTP request rates/durations, DB
   pool gauges, and ingest counters — size from observed load, not from this
   page.
@@ -182,7 +182,7 @@ server process.** What *is* contractual:
 ## 7. Where the single-writer topology limits scale
 
 **Status: contract — accepted
-[ADR-0180](../../design/adr/0180-ha-and-zero-downtime-upgrade-posture.md).**
+[ADR-0180](../decisions.md).**
 
 - **One active `nova server` writer per deployment is the supported topology
   through v1.0.** Multi-writer, clustering, leader election, automatic
@@ -217,5 +217,5 @@ federation remains **future design**.
 5. Millions of runs / inode pressure: move capsule objects to a WORM object
    store (experimental) and lineage to KuzuDB
    ([migration guide](../lineage/migration-guide.md)).
-6. Set retention ([ADR-0134](../../design/adr/0134-data-retention-policy-scheduler.md))
+6. Set retention ([ADR-0134](../decisions.md))
    and quotas (ADR-0179) so growth is a policy, not an accident.

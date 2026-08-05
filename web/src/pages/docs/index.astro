@@ -1,0 +1,83 @@
+---
+import Layout from '../../components/layout/Layout.astro';
+import { docPages, titleFor, descriptionFor } from '../../lib/docs';
+
+const pages = await docPages();
+
+// Grouped by top-level directory so the index reads as a table of contents
+// rather than a flat dump of 27 filenames.
+const GROUP_LABELS: Record<string, string> = {
+  '': 'Start here',
+  ops: 'Operations',
+  tutorials: 'Tutorials',
+  integrations: 'Integrations',
+  governance: 'Governance',
+  lineage: 'Lineage',
+  rfcs: 'RFCs',
+};
+
+const ORDER = ['', 'tutorials', 'integrations', 'ops', 'lineage', 'governance', 'rfcs'];
+
+const grouped = new Map<string, typeof pages>();
+for (const page of pages) {
+  const parts = page.slug.split('/');
+  const group = parts.length > 1 ? parts[0] : '';
+  if (!grouped.has(group)) grouped.set(group, []);
+  grouped.get(group)!.push(page);
+}
+
+const groups = [...grouped.entries()].sort(
+  ([a], [b]) =>
+    (ORDER.indexOf(a) === -1 ? 99 : ORDER.indexOf(a)) -
+    (ORDER.indexOf(b) === -1 ? 99 : ORDER.indexOf(b)),
+);
+---
+
+<Layout
+  title="Documentation — NovaFabric"
+  description="Guides, concepts, CLI reference, architecture, and operations documentation for NovaFabric — the open-source, self-hosted system for capturing, replaying, diffing and auditing AI runs."
+>
+  <article class="container-content py-16 md:py-24">
+    <header class="max-w-2xl">
+      <h1 class="text-4xl md:text-5xl font-medium tracking-tight text-balance">Documentation</h1>
+      <p class="mt-4 text-lg text-[var(--color-text-muted)]">
+        Everything from a first capture to running NovaFabric at cluster scale.
+        New here? Start with
+        <a class="underline" href="/docs/getting-started/">Getting started</a>, then
+        <a class="underline" href="/docs/concepts/">Concepts</a>.
+      </p>
+    </header>
+
+    <div class="mt-16 space-y-12">
+      {
+        groups.map(([group, groupPages]) => (
+          <section>
+            <h2 class="text-2xl font-medium tracking-tight">
+              {GROUP_LABELS[group] ?? group.replace(/-/g, ' ')}
+            </h2>
+            <ul class="mt-4 space-y-3">
+              {groupPages.map((page) => (
+                <li>
+                  <a class="font-medium underline" href={`/docs/${page.slug}/`}>
+                    {titleFor(page)}
+                  </a>
+                  <p class="text-sm text-[var(--color-text-muted)]">{descriptionFor(page)}</p>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))
+      }
+    </div>
+
+    <footer class="mt-16 border-t border-[var(--color-border)] pt-6 text-sm text-[var(--color-text-muted)]">
+      <p>
+        These pages are generated from
+        <a class="underline" href="https://github.com/novafabric/novafabric/tree/main/docs"
+          >the docs/ directory</a
+        > in the repository, so they can never drift from what maintainers actually
+        edit. Corrections are welcome as pull requests.
+      </p>
+    </footer>
+  </article>
+</Layout>

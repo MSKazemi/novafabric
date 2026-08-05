@@ -8,7 +8,7 @@
 > The site consumes **only baked-in fixture data** — it does not read
 > user capsules, does not access the registry, and does not phone home.
 > If it ever does any of those things, it has crossed the
-> [non-goals](../design/strategy/non-goals.md) line and must be removed
+> [non-goals](../docs/architecture.md#what-novafabric-is-not) line and must be removed
 > or moved.
 
 ## What this is
@@ -38,7 +38,7 @@ validation against the real `/schemas/` files) + `@noble/ed25519`
 (in-browser signature verification for the evidence bundle demo).
 
 All dependencies are Tier A licenses (Apache-2.0 / MIT / BSD / ISC /
-OFL fonts) per [ADR 0024](../design/adr/0024-dependency-license-policy.md).
+OFL fonts) per [ADR 0024](../docs/decisions.md).
 A CI gate (`scripts/check-licenses.mjs`) walks the full transitive
 tree and fails the build on any non-Tier-A SPDX id.
 

@@ -1,7 +1,7 @@
 # Local Dashboard (`nova serve`) — User Reference
 
 **Status:** Experimental. Read this entire page before relying on the dashboard for anything that matters.
-**Per:** [ADR-0027](../design/adr/0027-nova-serve-experimental-dashboard.md), [Non-goals](../design/strategy/non-goals.md)
+**Per:** [ADR-0027](./decisions.md), [Non-goals](./architecture.md#what-novafabric-is-not)
 **First shipped:** v0.7
 
 The dashboard is an **opt-in local-only HTTP server** (`nova serve --experimental`) that renders an interactive view over the same registry SQLite, lineage SQLite, and capsule directories the CLI reads. The CLI is the canonical interface; the dashboard is a satellite that surfaces the equivalent CLI command for every action.
@@ -160,8 +160,8 @@ The dashboard exposes the **majority** of the read-side and many of the write-si
 | Lineage queries | `nova lineage provenance / blast-radius / replay-chain` | ✅ Lineage tab | Full DAG render via React Flow + dagre. Click (or double-click) a node to see incoming/outgoing edges. **v0.12.6:** interactive QueryPanel — type a ref, pick mode (provenance / blast-radius / replay-chain), hit Run; results appear as a sortable table; CLI equivalent preview updates live. **v0.12.7:** ref input autocompletes `name@version` (provenance/blast-radius) or `run_id` (replay-chain) from loaded data. **v0.12.9 (DU-3):** when a node is selected, a breadcrumb row above the graph shows the full ancestry chain (root → … → parent → **selected**); each ancestor is clickable. **v0.13.4:** `zoomOnDoubleClick` disabled; double-clicking a node selects it (identical to single-click) instead of triggering zoom-to-fit. |
 | Cluster-scale infrastructure status | *(no single command — consult each Phase 0–6 component separately)* | ✅ Infra tab (v0.12.6) | 10 component cards: NovaSeal, Collector, Object Store, Metadata DB, Lineage at Scale, Parent/Child Capsule, Server Mode, Eval Suites, Policy Gates, Run Capsule — each with a `shipped / partial / placeholder / planned` status badge plus the relevant CLI commands. Lets operators confirm which Phase 0–6 components are active without leaving the dashboard. |
 | CLI command reference with live preview | *(all `nova` sub-commands)* | ✅ Commands tab | **v0.8:** 13 command builders for core capture, registry, and replay. **v0.12.6:** expanded to 35 hand-curated builders across 4 journey tracks. **v0.60.0:** now mirrors the **complete** CLI — every `nova` command (289 today) has a fillable form. Hand-curated builders still provide richer copy for the most-used commands; the rest are auto-generated from the live Typer app (`web/scripts/gen-command-registry.py` → `generatedCommands.ts`), so the tab stays in sync as commands are added/removed (guarded by `tests/serve/test_command_registry_coverage.py`). Fields, choices, defaults and flags come from the CLI's own parameter metadata. Each builder renders a live command preview with a copy button; a filter box and per-group counts navigate the full surface. Copy-only (Layer C, ADR-0027) — the dashboard never executes commands. |
-| Structural diff | `nova diff <run-a> <run-b>` | ✅ Diff tab | Aligned with `diff-report.schema.json`; renders environment / model_calls / tool_calls / outputs sections. **v0.9 additions:** 'Compare against…' in CapsuleInspector, word-level diff for model responses, mutation badge on tool call pairs. **v0.12 addition (C-4):** Multi-select checkboxes in RunsTab — check any 2 rows, click "Compare selected ⊕", jumps directly to Diff tab with both IDs pre-filled and diff auto-triggered; no copy-paste. See [ADR-0036](../design/adr/0036-cross-run-comparison-ux.md). **v0.12.7:** both run A and run B inputs autocomplete from the loaded runs list. **v0.12.9 (DU-4):** last comparison (from/to/result) persisted in `sessionStorage` — navigating away and back restores the previous comparison without re-fetching. **v0.13.3 (C-5):** Checkbox cap lifted 2→5; selecting 3–5 runs triggers N-run mode — first run is the baseline, N-1 parallel diffs fire via `runMultiDiff`, results shown as stacked collapsible `MultiDiffCard` panels with change-count badges. URL format migrated from `?run_a=&run_b=` to `?run_ids=a,b,c` (old params still parsed for backward compat). |
-| Read evidence bundle | *(no read-only command — open the ZIP)* | ✅ Evidence tab (v0.9) | Lists all bundles from `~/.novafabric/evidence/`, shows DSSE statement, in-browser ed25519 verify via SubtleCrypto, ZIP download. See [ADR-0037](../design/adr/0037-evidence-tab-native-dashboard.md). |
+| Structural diff | `nova diff <run-a> <run-b>` | ✅ Diff tab | Aligned with `diff-report.schema.json`; renders environment / model_calls / tool_calls / outputs sections. **v0.9 additions:** 'Compare against…' in CapsuleInspector, word-level diff for model responses, mutation badge on tool call pairs. **v0.12 addition (C-4):** Multi-select checkboxes in RunsTab — check any 2 rows, click "Compare selected ⊕", jumps directly to Diff tab with both IDs pre-filled and diff auto-triggered; no copy-paste. See [ADR-0036](./decisions.md). **v0.12.7:** both run A and run B inputs autocomplete from the loaded runs list. **v0.12.9 (DU-4):** last comparison (from/to/result) persisted in `sessionStorage` — navigating away and back restores the previous comparison without re-fetching. **v0.13.3 (C-5):** Checkbox cap lifted 2→5; selecting 3–5 runs triggers N-run mode — first run is the baseline, N-1 parallel diffs fire via `runMultiDiff`, results shown as stacked collapsible `MultiDiffCard` panels with change-count badges. URL format migrated from `?run_a=&run_b=` to `?run_ids=a,b,c` (old params still parsed for backward compat). |
+| Read evidence bundle | *(no read-only command — open the ZIP)* | ✅ Evidence tab (v0.9) | Lists all bundles from `~/.novafabric/evidence/`, shows DSSE statement, in-browser ed25519 verify via SubtleCrypto, ZIP download. See [ADR-0037](./decisions.md). |
 | Verify evidence bundle cryptographic integrity | `nova verify <capsule>` (NovaSeal) | ✅ Evidence tab → Verify button (v0.11) | `POST /api/evidence/{id}/verify` — Ed25519 DSSE signature + RFC 3161 TSR + NovaSeal Merkle log inclusion. Inline `sig ✓`, `tsr ✓`, `log –` badges. `log –` shown when NovaSeal is not configured locally. |
 | Validate a capsule's schema and file structure | `nova validate <capsule>` | ✅ Runs tab → Validate button (v0.11) | `POST /api/runs/{id}/validate` — checks required files, YAML parse, JSONL presence. Green `✓ valid` or red expandable error list. |
 | View secret scan results | `nova scan-secrets <capsule>` | ✅ Runs tab → **Secrets** button on card (quick-access, v0.11) or → Secrets tab in detail panel | `GET /api/runs/{id}/redaction-proof` — shows scanner+packs, targets (hash before/after), per-finding severity badges. Includes re-scan trigger. |
@@ -177,7 +177,7 @@ The dashboard exposes the **majority** of the read-side and many of the write-si
 | Capability | CLI | Dashboard | Notes |
 |---|---|---|---|
 | Register an asset | `nova register <spec.yaml>` | ✅ Registry tab → "+ Register asset" | Paste YAML into the dialog; spec validated by the same `validate_spec` the CLI uses. |
-| Run eval suites | `nova eval <name@version>` | ✅ Registry tab → row "EVAL" button | Runs the same `run_evals` entry point as the CLI. **v0.9 addition:** Eval history sparkline per asset (last 10 results, green/red bars) and full eval history panel in the eval dialog. See [ADR-0038](../design/adr/0038-eval-trend-dashboard.md). |
+| Run eval suites | `nova eval <name@version>` | ✅ Registry tab → row "EVAL" button | Runs the same `run_evals` entry point as the CLI. **v0.9 addition:** Eval history sparkline per asset (last 10 results, green/red bars) and full eval history panel in the eval dialog. See [ADR-0038](./decisions.md). |
 | Promote an asset | `nova promote direct <name@version> --to <status> [--force]` | ✅ Registry tab → row "PROMOTE →" button | Eval gate enforced for agents (use `--force` only with intent). Force is visually marked as destructive. **v0.12.9:** invalid target buttons disabled client-side (e.g. `archived → production` is dimmed); inline error banner shown on server rejection; eval-gate copy conditional on `asset_type === 'agent'`. **v0.13.0 (D-5):** `nova promote` is now a sub-group (`direct` / `propose` / `approve`). The dashboard Promote button maps to `direct`. For maker-checker SoD flow, use `nova promote propose` + `nova promote approve` from the CLI. |
 | Bulk-promote multiple assets | *(run `nova promote` for each)* | ✅ Registry tab → checkbox column + floating action bar (v0.12.9) | Select one or more assets, click "Promote N" in the floating bar; each is promoted to its next valid status in sequence. Select-all master checkbox in header. Floating bar appears only when ≥ 1 asset is checked. |
 | Forensic replay | `nova replay <capsule> --mode forensic` | ✅ Runs tab → row "REPLAY" button | Read-only inspection, no subprocess, safe. |
@@ -340,7 +340,7 @@ swimlane shows a single root lane.
 
 ## Evidence Tab (v0.9 + v0.11)
 
-See [ADR-0037](../design/adr/0037-evidence-tab-native-dashboard.md).
+See [ADR-0037](./decisions.md).
 
 The Evidence Tab is a fully operational view over real bundles on disk. It requires `nova export-evidence` to have been run at least once (bundles live in `~/.novafabric/evidence/`).
 
@@ -364,7 +364,7 @@ A bundle is `valid` when all non-null checks pass. The `sig` check must pass for
 
 ## Cross-run comparison (v0.9)
 
-**Works today** (shipped v0.9; see [ADR-0036](../design/adr/0036-cross-run-comparison-ux.md)) — the compare-selected flow below is live in the Runs tab.
+**Works today** (shipped v0.9; see [ADR-0036](./decisions.md)) — the compare-selected flow below is live in the Runs tab.
 
 The current diff workflow has six friction steps: find run A in the Runs tab, copy its `run_id`, navigate to the Diff tab, paste it, find run B, copy and paste its `run_id`. The v0.9 additions remove the copy-paste steps entirely.
 
@@ -412,7 +412,7 @@ Badge colours: **shipped** (green), **partial** (accent), **placeholder** (amber
 
 ## Eval trend chart (v0.9)
 
-**Works today** (shipped v0.9; see [ADR-0038](../design/adr/0038-eval-trend-dashboard.md)) — the sparkline + history panel below are live in the Registry tab.
+**Works today** (shipped v0.9; see [ADR-0038](./decisions.md)) — the sparkline + history panel below are live in the Registry tab.
 
 **Per-asset eval sparkline.** Every row in the Registry tab gains an 8×32px inline SVG bar chart showing the last 10 eval results for that asset — green bars for pass, red for fail. The sparkline is lazy-loaded via `IntersectionObserver` so it does not block initial table render.
 
@@ -439,7 +439,7 @@ Badge colours: **shipped** (green), **partial** (accent), **placeholder** (amber
 
 - **v0.7** *(shipped)* — Layer A (read-only) + Layer B partial (register, eval, promote, forensic replay, redact, export evidence). All CLI-equivalent actions are confirm-gated and audit-logged.
 - **v0.8** *(shipped 2026-05-12)* — Home tab (journey cards, status bar, resume session), Commands tab (11 CLI command builders with live preview + copy), sidebar reorganized into 5 journey groups.
-- **v0.9** *(shipped 2026-05-12)* — Evidence Tab native (list + verify real bundles), cross-run comparison UX (2-click compare shortcut, word-level diff, mutation badges), eval trend sparklines in Registry. See [ADR-0037](../design/adr/0037-evidence-tab-native-dashboard.md), [ADR-0036](../design/adr/0036-cross-run-comparison-ux.md), [ADR-0038](../design/adr/0038-eval-trend-dashboard.md).
+- **v0.9** *(shipped 2026-05-12)* — Evidence Tab native (list + verify real bundles), cross-run comparison UX (2-click compare shortcut, word-level diff, mutation badges), eval trend sparklines in Registry. See [ADR-0037](./decisions.md), [ADR-0036](./decisions.md), [ADR-0038](./decisions.md).
 - **v0.11** *(shipped 2026-05-14)* — Dashboard Completeness: all eight gap-closing tracks shipped.
   - **DC-8** — Diff compare URL persistence (`?run_a=&run_b=`).
   - **DC-3** — Secret scan results viewer (Secrets view in RunsTab, `GET /api/runs/{id}/redaction-proof`).
@@ -555,7 +555,7 @@ setup. The limits are documented here so they are visible before they bite.
 ### Storage backends — three separate systems
 
 Each backend is upgraded independently. Flipping one does not affect the others.
-See [Storage Architecture](../design/architecture/cluster-scale.md#production-storage-stack-polyglot-persistence) for the full reference table and env var names.
+See [Storage Architecture](./architecture.md#production-storage-stack-polyglot-persistence) for the full reference table and env var names.
 
 | Store | Default | Scalable tier |
 |---|---|---|
@@ -581,17 +581,17 @@ The dashboard exposes two topology views that are easy to confuse:
 **Re-ingest All** only updates the KG topology. It has no effect on the live Topology view.
 **Restarting `nova serve`** re-seeds the live Topology from disk. It does not change KuzuDB.
 
-Full comparison with update-trigger matrix: [`design/architecture/lineage.md — KG topology vs. Live Topology`](../design/architecture/lineage.md#kg-topology-vs-live-topology).
+Full comparison with update-trigger matrix: [`design/architecture/lineage.md — KG topology vs. Live Topology`](./architecture.md#kg-topology-vs-live-topology).
 
 ---
 
 ## See also
 
-- [ADR-0027](../design/adr/0027-nova-serve-experimental-dashboard.md) — full architectural decision record.
-- [`design/strategy/non-goals.md`](../design/strategy/non-goals.md) — the original "no web UI through v1.0" stance and its narrow exception.
+- [ADR-0027](./decisions.md) — full architectural decision record.
+- [what NovaFabric is not](./architecture.md#what-novafabric-is-not) — the original "no web UI through v1.0" stance and its narrow exception.
 - [`docs/cli-reference.md`](cli-reference.md) — the canonical CLI reference. Every dashboard action maps to a command listed there.
-- [`design/adr/0011-evidence-bundle.md`](../design/adr/0011-evidence-bundle.md) — the signing key model the dashboard reuses.
+- [`design/adr/0011-evidence-bundle.md`](./decisions.md) — the signing key model the dashboard reuses.
 - `web/` (in the repo) — the showcase site that explains what NovaFabric does using baked-in fixture data. Different audience: the showcase is *marketing*; the dashboard is *operational*.
-- [ADR-0036](../design/adr/0036-cross-run-comparison-ux.md) — cross-run comparison UX design (v0.9).
-- [ADR-0037](../design/adr/0037-evidence-tab-native-dashboard.md) — Evidence Tab native implementation (v0.9).
-- [ADR-0038](../design/adr/0038-eval-trend-dashboard.md) — Eval trend chart in Registry (v0.9).
+- [ADR-0036](./decisions.md) — cross-run comparison UX design (v0.9).
+- [ADR-0037](./decisions.md) — Evidence Tab native implementation (v0.9).
+- [ADR-0038](./decisions.md) — Eval trend chart in Registry (v0.9).

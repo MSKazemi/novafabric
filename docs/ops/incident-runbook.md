@@ -2,7 +2,7 @@
 
 Symptom → diagnosis → action, for the operator on call for a NovaFabric
 deployment (`nova server` API, `nova serve` dashboard, or a local install).
-Labels follow the [docs honesty rule](../../CLAUDE.md): **works today**,
+Labels follow the [docs honesty rule](../../CONTRIBUTING.md#documentation-status-labels): **works today**,
 **experimental**, **planned**, or **future design**. Every command below is
 part of the shipped CLI (check `--help` for exact flags on your version —
 most of these surfaces are **experimental**).
@@ -19,7 +19,7 @@ nova support-bundle              # secret-safe diagnostics tarball (§8)
 ## 1. Server won't start / `/readyz` failing
 
 **Status: experimental**
-([ADR-0182](../../design/adr/0182-self-observability-surface.md)).
+([ADR-0182](../decisions.md)).
 
 The two probes mean different things:
 
@@ -35,7 +35,7 @@ The two probes mean different things:
 |---|---|---|
 | Process exits at startup, key-file error | Offline key file is world-readable — the server refuses to start | `chmod 600` the `offline_key_path` file; owner must be the server user |
 | Process exits at startup, config error | Bad `nova-server.yaml` / env override | Check resolution order: `--config` flag → `$NOVA_SERVER_CONFIG` → `~/.config/novafabric/nova-server.yaml` → `/etc/novafabric/nova-server.yaml` ([Server Deployment Guide](server-deployment.md)) |
-| Bind error | Port 7433 (server) / 4321 (serve) already in use | `--port`, or find the stale process. Never start a second writer against the same DB ([ADR-0180](../../design/adr/0180-ha-and-zero-downtime-upgrade-posture.md) fencing invariant) |
+| Bind error | Port 7433 (server) / 4321 (serve) already in use | `--port`, or find the stale process. Never start a second writer against the same DB ([ADR-0180](../decisions.md) fencing invariant) |
 | `/readyz` → `"db": "fail"` | Postgres unreachable / DSN wrong / pool exhausted | Verify `$NOVA_DSN`, DB up, network path; `nova doctor --check-storage --backend postgres --postgres-dsn "$NOVA_DSN"` |
 | `/readyz` → `"migrations": "fail"` | Schema behind the code (upgrade rolled out without migrating) | `nova db upgrade` (or `alembic -c alembic-postgres.ini upgrade head`), then re-probe. See [Upgrade Guide](upgrade-guide.md) §3 |
 | `/readyz` → `"object_store": "fail"` | Configured WORM store unreachable | Check endpoint/credentials; see §4. (`"skipped"` = not configured — that is normal, not a failure) |
@@ -47,8 +47,8 @@ The two probes mean different things:
 ## 2. Auth lockout
 
 **Status: experimental**
-([ADR-0184](../../design/adr/0184-secure-by-default-local-server-auth.md),
-[ADR-0060](../../design/adr/0060-role-management-http-surface.md)).
+([ADR-0184](../decisions.md),
+[ADR-0060](../decisions.md)).
 
 | Symptom | Diagnosis | Action |
 |---|---|---|
@@ -65,14 +65,14 @@ The two probes mean different things:
 ## 3. Clients getting 429s (rate limits / quotas)
 
 **Status: experimental**
-([ADR-0179](../../design/adr/0179-api-rate-limiting-quotas.md)). Both
+([ADR-0179](../decisions.md)). Both
 mechanisms are **off by default** — if you see 429s, someone enabled
 `server.rate_limits` in the config. Two distinct 429s:
 
 | Signal | Meaning | Action |
 |---|---|---|
 | `429`, `error.code = "rate_limited"`, with `Retry-After` + `X-RateLimit-Limit/-Remaining/-Reset` headers | Token-bucket rate limit hit (per principal → tenant → client-IP; separate `ingest`/`read`/`admin` classes) | Client should honor `Retry-After`. Operator: identify the hot key (sustained limiting emits an audit event per window), raise the class budget in `server.rate_limits`, or fix the runaway client |
-| `429`, `error.code = "quota_exceeded"`, **no** `Retry-After` | **Hard storage quota** (capsule count or total bytes) — does not decay on a clock | Free space (retention/[ADR-0134](../../design/adr/0134-data-retention-policy-scheduler.md)), raise the quota, or accept the block. Usage is derived from the capsule store with a short TTL cache — recounts lag by seconds |
+| `429`, `error.code = "quota_exceeded"`, **no** `Retry-After` | **Hard storage quota** (capsule count or total bytes) — does not decay on a clock | Free space (retention/[ADR-0134](../decisions.md)), raise the quota, or accept the block. Usage is derived from the capsule store with a short TTL cache — recounts lag by seconds |
 | Writes succeed but carry `X-NovaFabric-Quota-Warning: <kind> <usage>/<limit>` | **Soft** quota crossed — warn-then-reject phase | Act now, before the hard limit: this is the early warning, and it also emits one audit event per window |
 | Probes failing under load | Should be impossible | `/health`, `/livez`, `/readyz`, `/metrics` are **never** rate limited by contract — if a probe 429s, that is a bug: file it |
 
@@ -87,7 +87,7 @@ Buckets are in process memory: they reset on restart, and a restart is a
 
 | Symptom | Diagnosis | Action |
 |---|---|---|
-| Captures failing, SQLite errors, server 5xx | Disk full under `~/.novafabric` (capsules, `registry.db`, Merkle log) | Free space first. Apply retention policies rather than hand-deleting capsule directories — capsules are the evidence; deletion should itself be recorded ([ADR-0134](../../design/adr/0134-data-retention-policy-scheduler.md)). Then run the §5 drift checks |
+| Captures failing, SQLite errors, server 5xx | Disk full under `~/.novafabric` (capsules, `registry.db`, Merkle log) | Free space first. Apply retention policies rather than hand-deleting capsule directories — capsules are the evidence; deletion should itself be recorded ([ADR-0134](../decisions.md)). Then run the §5 drift checks |
 | WORM writes rejected | Bucket unreachable, credentials expired, or Object Lock/immutability policy blocking a non-compliant write | Check `/readyz`'s `object_store` check, endpoint config and credentials. Remember WORM is *supposed* to reject overwrites/deletes of locked objects — verify you are not trying to mutate immutable evidence |
 | "Cleanup" of the WORM bucket fails | Object Lock / legal hold doing its job | Working as designed. Retention on WORM data is policy-driven, not `rm`-driven |
 | Metadata DB lost or corrupted, WORM bucket intact | Derived state lost; evidence safe | The metadata DB is rebuildable from the object store's manifest chain: `nova rebuild-metadata-db --backend <s3\|minio\|ceph_rgw\|azure_blob\|local> --target-db <path>`; then `nova doctor --check-storage`. Losing the app node loses no evidence (ADR-0180 D2) |
@@ -137,8 +137,8 @@ procedure.
 ## 7. Emergency bypass of maker-checker SoD (`nova seal bypass`)
 
 **Status: works today**
-([ADR-0059](../../design/adr/0059-novaseal-linked-envelope-chain-maker-checker.md),
-[ADR-0058](../../design/adr/0058-maker-checker-dual-approval.md)). Use only
+([ADR-0059](../decisions.md),
+[ADR-0058](../decisions.md)). Use only
 when the two-person Separation-of-Duties (SoD) requirement for a capsule
 promotion genuinely cannot be satisfied in time (e.g. the only other
 authorized approver is unreachable during a production incident) — **every
@@ -180,7 +180,7 @@ Follow the [Backup & Restore Runbook](backup-restore.md) — do not improvise:
 ## 9. Collecting a support bundle
 
 **Status: experimental**
-([ADR-0187](../../design/adr/0187-support-bundle-diagnostics.md)). Works in
+([ADR-0187](../decisions.md)). Works in
 local mode and offline.
 
 ```bash

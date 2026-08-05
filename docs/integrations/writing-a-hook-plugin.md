@@ -3,7 +3,7 @@
 > **Status: experimental.** Introduced in v0.5.x with a v0.7 stability
 > checkpoint planned (contingent on a third-party plugin being published and
 > used in real workflows — see
-> [RFC-0001 §"Adoption / migration plan"](../../design/governance/RFC-0001-multi-vendor-strategy.md)).
+> RFC-0001 §"Adoption / migration plan").
 > As of this writing (repo at v0.96.0) no ADR or release note records that
 > stability checkpoint having been formally revisited or declared met — the
 > in-tree reference implementation (`examples/plugin-hook-reference/`) is
@@ -31,7 +31,7 @@
 
 ## Why plugins exist
 
-NovaFabric's capture surface ships with hooks for a small set of SDKs and protocols (OpenAI, Anthropic, MCP, plus the wire-level layer over `httpx` and `requests`). Per [RFC-0001 Option C](../../design/governance/RFC-0001-multi-vendor-strategy.md), per-SDK hooks are no longer the project's primary growth axis — wire-level capture and OTel-native ingest carry that load. But some SDKs cannot be reached from those layers (framework-specific control flow, in-process state graphs that never hit the wire).
+NovaFabric's capture surface ships with hooks for a small set of SDKs and protocols (OpenAI, Anthropic, MCP, plus the wire-level layer over `httpx` and `requests`). Per RFC-0001 Option C, per-SDK hooks are no longer the project's primary growth axis — wire-level capture and OTel-native ingest carry that load. But some SDKs cannot be reached from those layers (framework-specific control flow, in-process state graphs that never hit the wire).
 
 Plugins are the long tail's path. You publish a Python package that exposes a hook; NovaFabric discovers it at capture time and installs it alongside the built-ins. NovaFabric does not maintain the plugin, ship it, or vouch for it.
 
@@ -127,7 +127,7 @@ self._writer.append_model_call({...})  # for LLM calls
 self._writer.append_tool_call({...})   # for tool / RPC calls
 ```
 
-The record schemas are documented in [`design/spec/tool-call-v0.md`](../../design/spec/tool-call-v0.md) and `design/spec/model-call-v0.md`. The capsule writer is thread-safe; multiple hooks (built-in + plugins) writing concurrently is supported.
+The record schemas are documented in `design/spec/tool-call-v0.md` and `design/spec/model-call-v0.md`. The capsule writer is thread-safe; multiple hooks (built-in + plugins) writing concurrently is supported.
 
 **Public surface, in writing.** The two constructor arguments (`writer`, `parent_span_id`) and the three lifecycle methods are the public surface. Anything starting with `_` on the writer or hook objects is internal and may change without notice. Coupling to internals will break.
 
@@ -180,7 +180,7 @@ For unit-testing the hook itself, follow the in-tree examples (`tests/test_captu
 
 ## What plugins do **not** get
 
-- **No special trust scope.** Plugins run with full process privileges. NovaFabric does not sandbox them. Users install plugins through `pip` and trust them the same way they trust any other Python dependency. (See [`THREAT_MODEL.md`](../../THREAT_MODEL.md) — this maps to the existing E-2 threat: untrusted code at runtime is the user's responsibility.)
+- **No special trust scope.** Plugins run with full process privileges. NovaFabric does not sandbox them. Users install plugins through `pip` and trust them the same way they trust any other Python dependency. (This maps to the E-2 threat in the project's threat model: untrusted code at runtime is the user's responsibility.)
 - **No backwards-compatibility shims at the experimental stage.** A breaking change between v0.5.x and v0.6 won't ship a translation layer. Pin your dependency and read the release notes.
 - **No plugin manager.** There is no `nova plugins list / disable / enable`. Discovery is implicit through `pip install`. If you need to disable a plugin, uninstall its package.
 - **No vetting / curation.** NovaFabric doesn't review plugins. The contract is the only quality gate.
@@ -194,4 +194,4 @@ If any of these become real adoption blockers, the relevant constraint will be r
 - The contract: [`src/novafabric/capture/hooks/_plugin.py`](../../src/novafabric/capture/hooks/_plugin.py)
 - A reference hook (built-in, but the same shape applies): [`src/novafabric/capture/hooks/_openai.py`](../../src/novafabric/capture/hooks/_openai.py)
 - Discovery + lifecycle tests: [`tests/test_capture_plugin_contract.py`](../../tests/test_capture_plugin_contract.py)
-- Strategic context: [RFC-0001 §Detailed design — Option C](../../design/governance/RFC-0001-multi-vendor-strategy.md)
+- Strategic context: RFC-0001 §Detailed design — Option C
