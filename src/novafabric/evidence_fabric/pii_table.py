@@ -97,7 +97,7 @@ class LocalPIITable:
         """Read the existing Parquet file or return an empty table."""
         if self._parquet_path.exists():
             try:
-                return pq.read_table(str(self._parquet_path), schema=_ARROW_SCHEMA)  # type: ignore[no-untyped-call]
+                return pq.read_table(str(self._parquet_path), schema=_ARROW_SCHEMA)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "LocalPIITable: could not read existing file %s: %s",
@@ -146,7 +146,7 @@ class LocalPIITable:
         with self._lock:
             existing = self._read_existing()
             combined = pa.concat_tables([existing, new_rows])
-            pq.write_table(combined, str(self._parquet_path), compression="snappy")  # type: ignore[no-untyped-call]
+            pq.write_table(combined, str(self._parquet_path), compression="snappy")
             self._write_iceberg_sidecar(combined)
         logger.debug("LocalPIITable: appended %d PII events", len(events))
 
@@ -267,7 +267,7 @@ class LocalPIITable:
         """
         with self._lock:
             table = self._read_existing()
-        pq.write_table(table, str(output_path), compression="snappy")  # type: ignore[no-untyped-call]
+        pq.write_table(table, str(output_path), compression="snappy")
         logger.debug(
             "LocalPIITable: exported %d rows to %s", len(table), output_path
         )

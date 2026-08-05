@@ -57,7 +57,7 @@ def edges_from_jsonl(path: Path) -> pa.Table:
 
 def edges_to_parquet(table: pa.Table, output_path: Path) -> Path:
     """Write a PyArrow edges table to a Parquet file. Returns output_path."""
-    pq.write_table(table, str(output_path))  # type: ignore[no-untyped-call]
+    pq.write_table(table, str(output_path))
     return output_path
 
 
