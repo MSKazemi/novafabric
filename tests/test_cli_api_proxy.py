@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.cli.api_proxy import _parse_listen
@@ -47,7 +48,7 @@ class TestRequiredFlags:
             "--listen", "127.0.0.1:18765",
         ])
         assert result.exit_code != 0
-        assert "upstream-url" in result.output.lower()
+        assert_flag_in_help(result, "upstream-url", lower=True)
 
     def test_missing_capsule_dir_auto_allocates(self, tmp_path: Path) -> None:
         """v0.6.5 ergonomic improvement: nova api-proxy without
@@ -55,6 +56,7 @@ class TestRequiredFlags:
         $PWD/.novafabric/runs/. The proxy starts (mocked run()), and
         the auto-allocated dir is announced and created."""
         from unittest.mock import patch
+
 
         saved = os.environ.pop("NOVAFABRIC_CAPSULE_DIR", None)
         try:

@@ -18,6 +18,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -426,7 +427,7 @@ class TestMigrateToPostgresCLI:
         assert result.exit_code == 0
         assert "source" in result.output.lower()
         assert "target" in result.output.lower()
-        assert "dry-run" in result.output.lower()
+        assert_flag_in_help(result, "dry-run", lower=True)
 
     def test_missing_source_exits_2(self, tmp_path: Path) -> None:
         result = runner.invoke(
