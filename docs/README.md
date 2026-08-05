@@ -46,6 +46,7 @@ in [Concepts](concepts.md). The strategic verb chain across them is
 | Document | What it is |
 |---|---|
 | [Getting Started](getting-started.md) | Install → capture → validate → replay → diff → lineage → seal, in about 15 minutes |
+| [Prove a run to an auditor](tutorials/prove-a-run-to-an-auditor.md) | End-to-end: capture, seal, archive, then verify and replay it six months later — including what it does *not* prove |
 | [Why NovaFabric?](tutorials/why-novafabric.md) | Plain-English value guide with five concrete scenarios |
 | [Feature tour](tutorials/feature-tour.md) | Hands-on tour of every capability, with real commands and output |
 | [Black-box recorder demo](../examples/blackbox_demo/README.md) | End-to-end demo (capture → validate → scan-secrets → replay → diff → lineage → verify) — no live API key required |

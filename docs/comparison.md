@@ -142,6 +142,7 @@ evidence.
 
 ## See also
 
+- [Benchmarks](benchmarks.md) — reproducible numbers, with the commands
 - [Concepts](concepts.md) — the five primitives and the replay modes
 - [Architecture](architecture.md) — the subsystem map and design invariants
 - [Roadmap](../ROADMAP.md) — what is shipped, experimental, and planned
