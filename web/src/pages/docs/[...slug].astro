@@ -1,0 +1,78 @@
+---
+// Publishes the repository's docs/ tree at https://novafabric.ai/docs/.
+//
+// Until v0.99.0 these 27+ markdown files existed only inside the repository:
+// novafabric.ai/docs/ returned 404 while llms.txt, robots.txt and sitemap.xml
+// all returned 200. Documentation that only exists in a git repo is invisible
+// to search engines and to AI answer engines, which retrieve *web pages* — so
+// the single most citable surface the project has was not on the web at all.
+//
+// The markdown is read straight from the repo rather than duplicated, so the
+// site can never drift from the docs the maintainers actually edit.
+import Layout from '../../components/layout/Layout.astro';
+import { docPages, titleFor, descriptionFor } from '../../lib/docs';
+
+export async function getStaticPaths() {
+  return (await docPages()).map((page) => ({
+    params: { slug: page.slug },
+    props: { page },
+  }));
+}
+
+const { page } = Astro.props;
+const title = titleFor(page);
+const description = descriptionFor(page);
+---
+
+<Layout title={`${title} — NovaFabric docs`} description={description}>
+  <article class="container-content py-16 md:py-24">
+    <nav class="text-sm text-[var(--color-text-muted)]" aria-label="Breadcrumb">
+      <a class="hover:underline" href="/">Home</a>
+      <span aria-hidden="true"> / </span>
+      <a class="hover:underline" href="/docs/">Docs</a>
+      <span aria-hidden="true"> / </span>
+      <span>{title}</span>
+    </nav>
+
+    <div class="mt-8 container-prose docs-prose text-[var(--color-text-muted)] leading-relaxed">
+      <Fragment set:html={page.html} />
+    </div>
+
+    <footer class="mt-16 border-t border-[var(--color-border)] pt-6 text-sm text-[var(--color-text-muted)]">
+      <p>
+        Found a mistake in this page?
+        <a
+          class="underline"
+          href={`https://github.com/novafabric/novafabric/blob/main/docs/${page.file}`}
+          >Edit it on GitHub</a
+        >
+        or
+        <a
+          class="underline"
+          href="https://github.com/novafabric/novafabric/issues/new?template=documentation.yml"
+          >open a documentation issue</a
+        >. Documentation bugs are real bugs.
+      </p>
+    </footer>
+  </article>
+
+  <script
+    type="application/ld+json"
+    is:inline
+    set:html={JSON.stringify({
+      '@context': 'https://schema.org',
+      '@type': 'TechArticle',
+      headline: title,
+      description,
+      url: `https://novafabric.ai/docs/${page.slug}/`,
+      isPartOf: {
+        '@type': 'SoftwareSourceCode',
+        name: 'NovaFabric',
+        codeRepository: 'https://github.com/novafabric/novafabric',
+        programmingLanguage: 'Python',
+        license: 'https://www.apache.org/licenses/LICENSE-2.0',
+      },
+      publisher: { '@type': 'Organization', name: 'NovaFabric' },
+    })}
+  />
+</Layout>

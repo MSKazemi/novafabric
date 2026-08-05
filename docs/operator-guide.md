@@ -932,8 +932,8 @@ TSA inside the cluster and point `tsa_url` at it.
 
 ## 5c. SAML 2.0 SSO (server mode — experimental, partial)
 
-**Status: experimental ([ADR-0138](../design/adr/0138-saml-sso-server-mode.md),
-[spec](../design/spec/saml-sso-v0.md)). Config, SP metadata, role mapping, and the
+**Status: experimental ([ADR-0138](./decisions.md),
+spec). Config, SP metadata, role mapping, and the
 assertion validation policy work today. Live SAML login (assertion consumption at
 the ACS) shipped in v0.73.0 but is **off by default** and requires an explicit
 opt-in — see the honest status below.** SAML is a **server-mode-only** concern:
@@ -1055,7 +1055,7 @@ still-genuine gaps are listed below the shipped-items note.
 
 Do not configure production workflows that depend on any of the above. If you
 need one of these capabilities, open an issue or follow the RFC process
-described in [design/governance/RFC-0000-rfc-process.md](../design/governance/RFC-0000-rfc-process.md).
+described in [the RFC process](./governance/rfc-process.md).
 
 ---
 
@@ -1241,7 +1241,7 @@ You now have the operational picture for deploying NovaFabric across every runne
 | Configure signing in depth (profiles, KMS, air-gap) | [docs/novaseal-configuration.md](novaseal-configuration.md) |
 | Understand SLURM validation history | [v0.6.12 release notes](releases/v0.6.12.md) |
 | Contribute code or run the test suite | [CONTRIBUTING.md](../CONTRIBUTING.md) |
-| Request an unsupported capability (§6) | [RFC process](../design/governance/RFC-0000-rfc-process.md) |
+| Request an unsupported capability (§6) | [RFC process](./governance/rfc-process.md) |
 
 For anything listed in §6 "What is not supported yet," do not build production
 workflows against it — open an issue or follow the RFC process instead.

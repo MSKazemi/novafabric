@@ -2,8 +2,8 @@
 
 > **Status: experimental.** Linux only. Opt-in — with no daemon running,
 > `nova capture` behaves exactly as it always has. Introduced by
-> [ADR-0092](../design/adr/0092-warm-capture-daemon.md); extends
-> [ADR-0020](../design/adr/0020-cluster-scale-low-overhead-capture.md);
+> [ADR-0092](./decisions.md); extends
+> [ADR-0020](./decisions.md);
 > realizes the "resident emitter" idea (SI-2).
 
 This is a focused guide to one of NovaFabric's more intricate pieces. Read it if
@@ -193,7 +193,7 @@ This is **slice A** of the resident-emitter work. Status:
 - **Deployment artifacts** — a Kubernetes DaemonSet manifest and a Slurm
   Prolog/Epilog rollout.
 
-See [ADR-0092](../design/adr/0092-warm-capture-daemon.md) for the full design and
+See [ADR-0092](./decisions.md) for the full design and
 rationale, and the
-[cluster-scale architecture](../design/architecture/cluster-scale.md) for where
+[cluster-scale architecture](./architecture.md) for where
 the edge emitter sits in the larger picture.

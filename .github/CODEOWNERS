@@ -1,0 +1,34 @@
+# Code owners — auto-requests review so pull requests do not sit unanswered.
+#
+# This file is a promise, not a gate: it is what makes "first review within 5
+# business days" (CONTRIBUTING.md) mechanically possible. As external
+# maintainers join, they are added to the areas they declared in
+# MAINTAINERS.md, and the catch-all below stops applying to those paths.
+#
+# Areas match docs/governance/maintainer-criteria.md#areas-of-competence.
+
+# Catch-all — everything not claimed below.
+*                               @MSKazemi
+
+# Core capture path — changes here need benchmarks.
+/src/novafabric/capture/        @MSKazemi
+/src/novafabric/runners/        @MSKazemi
+/src/novafabric/proxy/          @MSKazemi
+
+# Public surfaces. A change to any of these is an RFC, not a PR.
+/schemas/                       @MSKazemi
+/src/novafabric/schemas/        @MSKazemi
+/src/novafabric/cli/            @MSKazemi
+
+# Trust and security.
+/src/novafabric/trust/          @MSKazemi
+/src/novafabric/evidence/       @MSKazemi
+/SECURITY.md                    @MSKazemi
+/.github/workflows/             @MSKazemi
+
+# Governance and the contributor experience.
+/CONTRIBUTING.md                @MSKazemi
+/GOVERNANCE.md                  @MSKazemi
+/MAINTAINERS.md                 @MSKazemi
+/CODE_OF_CONDUCT.md             @MSKazemi
+/docs/governance/               @MSKazemi

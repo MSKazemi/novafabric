@@ -1257,7 +1257,7 @@ fingerprint must differ from the proposer's. Attempting to self-approve raises
 
 **Opt-in Rego gate.** Load `maker_checker_gate.rego` to block
 `nova promote direct` to `staging`/`production` and require the two-step
-flow. See [ADR-0058](../design/adr/0058-maker-checker-dual-approval.md).
+flow. See [ADR-0058](./decisions.md).
 
 ---
 
@@ -1624,7 +1624,7 @@ runs locally today, offline, with no accounts and no telemetry.
 - [Concepts](concepts.md) — capsule structure, replay modes, lineage edge types
 - [Local Dashboard](dashboard.md) — full capability matrix vs CLI, security model
 - [Python API](python-api.md) — programmatic usage
-- [Architecture](../design/architecture/overview.md) — how the subsystems fit together
+- [Architecture](./architecture.md) — how the subsystems fit together
 - [Writing a hook plugin](integrations/writing-a-hook-plugin.md) — extend capture to new transports
 - [Tutorials](tutorials/README.md) — getting started, why NovaFabric, capture internals, multi-agent, cluster scale, Langfuse comparison
 - [ROADMAP.md](../ROADMAP.md) — what is planned, including the NovaSeal seal layer and cluster-scale tiers

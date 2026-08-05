@@ -1,0 +1,81 @@
+name: Feature request
+description: Propose a capability NovaFabric does not have yet
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: check the [roadmap](https://github.com/novafabric/novafabric/blob/main/ROADMAP.md)
+        and the [decisions index](https://github.com/novafabric/novafabric/blob/main/docs/decisions.md) —
+        the thing you want may already be planned or already decided against, and
+        either answer saves you writing this out.
+
+        Some changes need an [RFC](https://github.com/novafabric/novafabric/blob/main/docs/governance/rfc-process.md)
+        rather than an issue — new CLI commands, schema changes, new runtime
+        dependencies. File the issue anyway; a maintainer will tell you if it
+        needs to become an RFC.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: >
+        Describe the situation, not the solution. The best feature requests
+        describe a real thing that was hard, and let the design follow.
+      placeholder: >
+        I capture runs on a SLURM cluster and want to prove to an auditor that
+        two runs used the same model weights, but comparing them by hand across
+        capsules takes an hour.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like NovaFabric to do?
+      description: Your proposed solution, if you have one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What have you tried or considered?
+      description: >
+        Workarounds, other tools, or approaches you rejected — and why they were
+        not enough.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which area does this touch?
+      options:
+        - Capture
+        - Replay
+        - Diff
+        - Lineage
+        - Evidence / signing
+        - Asset registry
+        - CLI
+        - Dashboard
+        - Server / API
+        - Adapters & integrations
+        - Compliance / exports
+        - Documentation
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Would you be interested in implementing this?
+      description: >
+        Entirely optional and there is no wrong answer — "no" is a perfectly good
+        feature request. This just helps with planning.
+      options:
+        - "Yes, I would like to build it"
+        - "Maybe, with some guidance"
+        - "No, I am requesting it"
+    validations:
+      required: true

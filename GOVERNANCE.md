@@ -3,10 +3,10 @@
 **Status:** Adopted (v0.2)
 **Adopted:** 2026-05-07
 
-This document describes how decisions are made in NovaFabric. The trajectory
-from BDFL → TSC → LF AI & Data Foundation is described in
-[`design/strategy/foundation-ready-governance.md`](design/strategy/foundation-ready-governance.md).
-This document covers the **current** state and the rules that apply today.
+This document describes how decisions are made in NovaFabric — the **current**
+state and the rules that apply today. The intended trajectory is
+BDFL → technical steering committee → a neutral foundation; the milestones for
+each transition are in [maintainer criteria](docs/governance/maintainer-criteria.md#growth-targets).
 
 ---
 
@@ -26,7 +26,7 @@ person to ship.
 
 Hold merge rights on the main repository. Currently founder-only; the path
 for external maintainers is documented in
-[`design/governance/MAINTAINER_CRITERIA.md`](design/governance/MAINTAINER_CRITERIA.md).
+[maintainer criteria](docs/governance/maintainer-criteria.md).
 
 Maintainer responsibilities:
 - Review and merge PRs in their area of competence
@@ -49,7 +49,7 @@ maintainer is documented separately.
 
 Organizations using NovaFabric in production before v1.0 in exchange for
 input on the spec direction. Listed in
-[`design/governance/DESIGN_PARTNERS.md`](design/governance/DESIGN_PARTNERS.md).
+[the design partner program](docs/governance/design-partners.md).
 Their engineers are first-class community members; their organizations have
 no special rights beyond input timing.
 
@@ -80,7 +80,7 @@ Anything that:
 - Changes a data format or storage backend
 - Affects security posture or supply-chain trust
 
-Requires an **RFC** (see `design/governance/RFC-0000-rfc-process.md`). Merge
+Requires an **RFC** (see [the RFC process](docs/governance/rfc-process.md)). Merge
 requires:
 - 2-week comment window
 - 1 maintainer approval + 1 community sponsor (steward or maintainer)
@@ -185,7 +185,7 @@ Funds, when received, go to:
 4. Maintainer time (when financially material)
 
 Hosted SaaS is **not** part of the funding plan (see
-[`design/strategy/non-goals.md`](design/strategy/non-goals.md)).
+[what NovaFabric is not](docs/architecture.md#what-novafabric-is-not)).
 
 ---
 
@@ -214,9 +214,9 @@ are exactly the decisions that require deliberate process.
 ## See also
 
 - [`MAINTAINERS.md`](MAINTAINERS.md) — current maintainers and stewards
-- [`design/governance/RFC-0000-rfc-process.md`](design/governance/RFC-0000-rfc-process.md) — RFC process
-- [`design/governance/MAINTAINER_CRITERIA.md`](design/governance/MAINTAINER_CRITERIA.md) — path to merge rights
-- [`design/governance/DESIGN_PARTNERS.md`](design/governance/DESIGN_PARTNERS.md) — design partner program
-- [`design/strategy/foundation-ready-governance.md`](design/strategy/foundation-ready-governance.md) — long-term trajectory
+- [RFC process](docs/governance/rfc-process.md) — how non-trivial changes get proposed and decided
+- [Maintainer criteria](docs/governance/maintainer-criteria.md) — the path to merge rights
+- [Design partners](docs/governance/design-partners.md) — the pre-v1.0 feedback program
+- [Architecture decisions](docs/decisions.md) — the ADR index
 - [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) — community baseline
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to participate

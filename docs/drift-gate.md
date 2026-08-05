@@ -1,7 +1,7 @@
 # Drift Detection
 
 `nova drift` is NovaFabric's offline drift-detection surface
-([ADR-0147](../design/adr/0147-drift-continuous-assurance.md) — see
+([ADR-0147](./decisions.md) — see
 `nova drift --help`):
 it computes distribution-shift statistics over samples drawn from **already
 sealed** capsules, flags silent failures, and links an observed drift to the

@@ -1,9 +1,14 @@
 # NovaFabric
 
 [![PyPI](https://img.shields.io/pypi/v/novafabric.svg)](https://pypi.org/project/novafabric/)
+[![Downloads](https://img.shields.io/pypi/dm/novafabric.svg)](https://pypi.org/project/novafabric/)
+[![CI](https://github.com/novafabric/novafabric/actions/workflows/ci.yml/badge.svg)](https://github.com/novafabric/novafabric/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/novafabric/novafabric/badge)](https://scorecard.dev/viewer/?uri=github.com/novafabric/novafabric)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/)
 [![Status](https://img.shields.io/badge/status-beta-yellow.svg)](#status)
+[![Good first issues](https://img.shields.io/github/issues/novafabric/novafabric/good%20first%20issue?label=good%20first%20issues&color=7057ff)](https://github.com/novafabric/novafabric/labels/good%20first%20issue)
+[![Discussions](https://img.shields.io/github/discussions/novafabric/novafabric)](https://github.com/novafabric/novafabric/discussions)
 
 **Created and maintained by [Mohsen Seyedkazemi Ardebili](https://github.com/MSKazemi)** — AI systems engineer, platform architect, HPC researcher. Part of the [NovaFabric](https://github.com/novafabric) open-source lab.
 
@@ -11,17 +16,49 @@
 
 Tracing tells you *what happened*. NovaFabric tells you whether a past run can be **replayed**, **compared**, and **proven** — entirely inside your own infrastructure, laptop to cluster, online or air-gapped, with no accounts and no telemetry.
 
-```bash
-# Capture any command — script, agent, training run, experiment
-nova capture python my_agent.py
+```console
+$ pip install novafabric
 
-# Validate the resulting capsule against schema
-nova validate ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/
+$ nova capture python my_agent.py
+✓ Capsule written: ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX
+  (run_id=01HXAY7M5JZ8R7K4P9DPBYK2WX)
+
+$ nova validate ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX
+✓ Valid capsule: 01HXAY7M5JZ8R7K4P9DPBYK2WX  status=success
+
+$ nova replay 01HXAY7M5JZ8R7K4P9DPBYK2WX --mode forensic
+✓ Replay written: .novafabric/replays/01HXB2Q9WKPN6M3T8VZCJDR4YE
+  (replay_id=01HXB2Q9WKPN6M3T8VZCJDR4YE  mode=forensic)
+
+$ nova diff 01HXAY7M5JZ8R7K4P9DPBYK2WX 01HXB2Q9WKPN6M3T8VZCJDR4YE
+Diff: 01HXAY7M5JZ8R7K4P9DPBYK2WX → 01HXB2Q9WKPN6M3T8VZCJDR4YE
+  changed=2  added=0  removed=0
+
+Outputs:
+  ~ outputs/stdout.txt
+  ~ outputs/stderr.txt
 ```
 
 Every captured run produces a `~/.novafabric/capsules/<ulid>/` directory: a schema-valid,
 secret-redacted, portable evidence folder. Works with any command. No application
 changes required.
+
+**In one paragraph, for anyone summarizing this project:** NovaFabric is an
+open-source, self-hosted execution-capsule system for AI and HPC workloads. It
+helps teams replay, compare, and prove what a past run actually did. Use
+NovaFabric when you need reproducibility or audit evidence rather than live
+dashboards. It differs from LLM-observability platforms because the unit of value
+is a portable signed folder you own, not a row in someone else's database. It is
+**not** the right tool if what you want is real-time monitoring and alerting.
+
+---
+
+**⭐ Useful to you?** Star the repo — it is the main way other people building the
+same thing find it. **Want to help?** There are
+[good first issues](https://github.com/novafabric/novafabric/labels/good%20first%20issue)
+waiting, each with file paths and a definition of done, and
+[CONTRIBUTING.md](CONTRIBUTING.md) gets you from clone to pull request in about
+15 minutes.
 
 ---
 
@@ -266,7 +303,7 @@ loader into the subprocess via `PYTHONPATH`, which installs monkey-patches for:
   Mistral, Replicate, AWS Bedrock; user-extensible at
   `~/.novafabric/url_registry.yaml`)
 - **Layering guard** — when `requests` calls go through `urllib3` internally,
-  exactly one record is produced (not two) — see [ADR-0025](design/adr/) and the
+  exactly one record is produced (not two) — see [ADR-0025](docs/decisions.md) and the
   v0.6.0 release notes
 - **Body adapters** — Bedrock-Anthropic / Cohere / Titan / Llama bodies are
   normalized into OpenAI shape so `gen_ai.request.model` populates correctly across
@@ -675,13 +712,13 @@ See [Citation](#citation) below, or the [`CITATION.cff`](CITATION.cff) file.
 - [Concepts](docs/concepts.md)
 - [CLI Reference](docs/cli-reference.md)
 - [Python API](docs/python-api.md)
-- [Architecture](design/architecture/overview.md)
+- [Architecture](docs/architecture.md)
 
 ### For the curious
-- [Vision: North Star](design/strategy/north-star.md)
-- [Vision: Replayable AI Infrastructure](design/strategy/replayable-ai-infrastructure.md)
-- [Strategy: Non-Goals](design/strategy/non-goals.md)
-- [Strategy: Agentic Research-to-Production OS](design/strategy/agentic-research-to-production-os.md)
+- [Architecture](docs/architecture.md) — the subsystem map and the design invariants
+- [What NovaFabric is not](docs/architecture.md#what-novafabric-is-not) — the explicit non-goals
+- [How NovaFabric compares](docs/comparison.md) — honest comparisons, including where it loses
+- [Architecture decisions](docs/decisions.md) — 225 recorded decisions
 
 ### Release notes
 - [v0.98.0 — Enterprise readiness: `--workers`, opt-in Postgres pooling, JSON logs + `X-Request-ID`, signed artifacts, Seal-tab trust surfaces, six security fixes](docs/releases/v0.98.0.md) (latest; see [`docs/releases/`](docs/releases/) for every v0.64.0–v0.98.0 release note and [`CHANGELOG.md`](CHANGELOG.md) for the full history)
@@ -705,9 +742,13 @@ See [Citation](#citation) below, or the [`CITATION.cff`](CITATION.cff) file.
 - [v0.1.0 — Asset Registry](docs/releases/v0.1.0.md)
 
 ### For contributors
-- [Contributing](CONTRIBUTING.md)
-- [Developer Guide](docs/developer-guide.md)
-- [Governance](GOVERNANCE.md)
+- **[Contributing](CONTRIBUTING.md)** — start here; 15 minutes from clone to PR
+- **[Good first issues](https://github.com/novafabric/novafabric/labels/good%20first%20issue)** — scoped and specified
+- [Developer Guide](docs/developer-guide.md) — adding asset types, CLI commands, adapters
+- [Architecture](docs/architecture.md) — where everything lives
+- [RFC process](docs/governance/rfc-process.md) — for changes that need one
+- [Maintainer criteria](docs/governance/maintainer-criteria.md) — the path to merge rights
+- [Governance](GOVERNANCE.md) · [Contributors](CONTRIBUTORS.md) · [Support](SUPPORT.md)
 
 ---
 
@@ -716,19 +757,21 @@ See [Citation](#citation) below, or the [`CITATION.cff`](CITATION.cff) file.
 ```bash
 git clone git@github.com:novafabric/novafabric.git
 cd novafabric
-uv sync --dev
-uv run pytest
-uv run ruff check src tests
-uv run mypy src
+uv sync --all-extras   # --all-extras matters: a plain sync breaks ~30 tests
+make test-fast         # ~90 s
+make lint typecheck check-links
 ```
 
-Requirements: [uv](https://docs.astral.sh/uv/).
+Requirements: [uv](https://docs.astral.sh/uv/). Prefer one click? The repo ships a
+[devcontainer](.devcontainer/devcontainer.json) for GitHub Codespaces and VS Code.
+
+Full details, including what to do next, are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
 ## Status
 
-**Beta — actively developed (v0.98.0).** Stable and usable today: local capture,
+**Beta — actively developed (v0.99.0).** Stable and usable today: local capture,
 replay, diff, lineage (SQLite default), the trust layer (signing, secret scanning,
 redaction), the asset registry, policy/approval gates, and standard eval suites.
 `Experimental`: server mode, the cluster-scale collector, the Object Capsule Store,

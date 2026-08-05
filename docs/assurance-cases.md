@@ -6,7 +6,7 @@ tradition — that a system meets a goal, where every claim ultimately rests on
 argument graph, checks its structure, tracks whether its evidence is still
 current, maps it onto named standards as *receipts*, and records challenges
 (*defeaters*) — all offline
-([ADR-0166](../design/adr/0166-assurance-cases-continuous-certification-evidence.md)).
+([ADR-0166](./decisions.md)).
 
 **Status: experimental** (first slices of ADR-0166 D1–D6, shipped
 2026-07-16). The honest scope note up front: ADR-0166's larger

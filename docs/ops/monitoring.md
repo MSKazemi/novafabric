@@ -5,7 +5,7 @@ REST API and the `nova serve` dashboard backend — with the self-observability
 surface shipped in v0.61: Prometheus `/metrics`, split `/livez` / `/readyz`
 probes, the structured `/v0/version` identity endpoint, and opt-in
 self-tracing into the deployment's own OTLP ingest
-([ADR-0182](../../design/adr/0182-self-observability-surface.md); companion
+([ADR-0182](../decisions.md); companion
 spec: `design/spec/ops-observability-surface-v0.md`).
 
 **Status: experimental** (v0.61, shipped 2026-07-16). Endpoint paths are
@@ -341,6 +341,6 @@ decision record: `design/adr/0192-alerting-notification-bus.md`.
 - [Server admin guide](server-admin-guide.md) — auth, roles, and tokens used
   to gate `/metrics` and `/v0/version`
 - [Server deployment](server-deployment.md) — deployment topologies
-- [ADR-0182](../../design/adr/0182-self-observability-surface.md) — the
+- [ADR-0182](../decisions.md) — the
   decision record; `design/spec/ops-observability-surface-v0.md` — the
   normative endpoint/metric contract

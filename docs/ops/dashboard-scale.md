@@ -1,7 +1,7 @@
 # Dashboard scale gate — thresholds and how to run it
 
 **Status:** works today (gate + thresholds shipped with ADR-0199).
-**Per:** [ADR-0199](../../design/adr/0199-dashboard-scale-posture.md) — the
+**Per:** [ADR-0199](../decisions.md) — the
 dashboard's scale contract (bounded queries, keyset cursors, watermark caching,
 honest truncation).
 

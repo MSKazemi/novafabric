@@ -3,7 +3,7 @@
 How to upgrade a NovaFabric deployment from one version to the next — local
 SQLite installs and Postgres server mode — and what is honestly supported
 when you need to go back. Labels follow the
-[docs honesty rule](../../CLAUDE.md): **works today**, **experimental**,
+[docs honesty rule](../../CONTRIBUTING.md#documentation-status-labels): **works today**, **experimental**,
 **planned**, or **future design**.
 
 > **Before every upgrade: take a backup.** The
@@ -18,7 +18,7 @@ when you need to go back. Labels follow the
 ## 1. The compatibility contract: expand-contract, N/N+1
 
 **Status: contract — accepted
-[ADR-0180](../../design/adr/0180-ha-and-zero-downtime-upgrade-posture.md)
+[ADR-0180](../decisions.md)
 (D4); enforced as release gate §0 in
 [`docs/release-process.md`](../release-process.md).**
 
@@ -212,7 +212,7 @@ rollback of this step. Note the capsule format overall is **experimental**
 ### v0.61 — breaking change to the local `nova server` auth default
 
 **Status: shipped (experimental) —
-[ADR-0184](../../design/adr/0184-secure-by-default-local-server-auth.md);
+[ADR-0184](../decisions.md);
 see [`docs/releases/v0.61.0.md`](../releases/v0.61.0.md).**
 
 With OIDC disabled, `nova server` now **requires a bearer token**:
@@ -255,7 +255,7 @@ Not supported:
   `alembic downgrade` path; do not run one against a production database.
   Roll the code back (one minor) or restore a backup.
 - **Postgres → SQLite migration.** Explicitly not supported per
-  [ADR-0016](../../design/adr/0016-storage-backend-evolution.md). The
+  [ADR-0016](../decisions.md). The
   original SQLite file survives `nova migrate-to-postgres` untouched, but it
   is a snapshot of the moment you migrated — not a downgrade of later data.
 - **Downgrading capsules.** Sealed evidence and Merkle log entries are

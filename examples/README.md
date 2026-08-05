@@ -62,7 +62,7 @@ around.
 
 For the same reason: they all wire-level capture identically because
 they use the same HTTP transports. The
-[multi-vendor strategy RFC](../design/governance/RFC-0001-multi-vendor-strategy.md)
+multi-vendor strategy RFC
 made wire-level the primary growth axis for exactly this reason —
 one hook covers many frameworks.
 
@@ -83,6 +83,6 @@ If yes to (1) and (2), add it with:
 - **Clean skip behavior** when external resources (keys, network, heavy
   optional deps) are unavailable.
 
-See [CLAUDE.md](../CLAUDE.md) anti-patterns and the
+See the [contributing guide](../CONTRIBUTING.md) and the
 [tutorials](../docs/tutorials/README.md) for
 context.

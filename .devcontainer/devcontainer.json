@@ -1,0 +1,38 @@
+{
+  "name": "NovaFabric",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
+
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" }
+  },
+
+  // `--all-extras` is not optional: a plain sync strips the optional extras and
+  // ~30 tests fail with import errors that look like the contributor's fault.
+  // Doing it here is the whole point of shipping a devcontainer — the single
+  // most common first-contribution failure disappears.
+  "postCreateCommand": "curl -LsSf https://astral.sh/uv/install.sh | sh && $HOME/.local/bin/uv sync --all-extras",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "tamasfe.even-better-toml",
+        "astral-sh.uv"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+        "python.testing.pytestEnabled": true,
+        "python.testing.pytestArgs": ["tests"],
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.codeActionsOnSave": { "source.organizeImports": "explicit" }
+        }
+      }
+    }
+  },
+
+  "remoteUser": "vscode"
+}

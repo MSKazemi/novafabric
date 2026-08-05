@@ -1,0 +1,45 @@
+name: Documentation problem
+description: Something in the docs is wrong, missing, unclear, or out of date
+labels: ["documentation", "good first issue"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Documentation bugs are real bugs. A doc that overclaims costs a reader
+        hours; a doc that underclaims means a shipped feature nobody finds.
+
+        **These usually make excellent first contributions** — if you spotted it,
+        you already understand it better than the person who wrote it. A pull
+        request is welcome instead of an issue.
+
+  - type: input
+    id: where
+    attributes:
+      label: Where is it?
+      description: A file path or URL.
+      placeholder: docs/getting-started.md, or https://novafabric.ai/...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of problem?
+      options:
+        - Wrong — it says something untrue
+        - Out of date — it was true once
+        - Missing — the thing is not documented at all
+        - Unclear — accurate but I could not follow it
+        - Broken link or example that does not run
+    validations:
+      required: true
+
+  - type: textarea
+    id: detail
+    attributes:
+      label: What is wrong, and what should it say?
+      description: >
+        Quote the passage if you can. If you know the correct answer, say so —
+        that turns this into a five-minute fix.
+    validations:
+      required: true

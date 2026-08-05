@@ -28,7 +28,7 @@ function, `migrate_from_ocs()` (`lineage/migration/kit.py`), already takes any
 called from Python; the **CLI wrapper** (`cli/lineage_migrate.py`) simply hardcodes
 `SqliteLineageStore` as the target and has no `--target-backend` flag yet — that CLI
 gap, not backend implementation, is what's genuinely missing. See the tiered-backend
-table in [`design/architecture/lineage.md`](../../design/architecture/lineage.md#lineage-at-scale--tiered-backends)
+table in [the architecture overview](../architecture.md#lineage-at-scale--tiered-backends)
 for full per-backend status.
 
 **When to migrate:**

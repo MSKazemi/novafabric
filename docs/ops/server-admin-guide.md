@@ -19,8 +19,8 @@ Everything below is labelled per the docs honesty rule: **works today**,
 ## 1. Enabling server mode
 
 **Status: experimental** (v0.7+,
-[ADR-0017](../../design/adr/0017-server-api-protocol.md),
-[ADR-0029](../../design/adr/0029-server-config-schema.md)).
+[ADR-0017](../decisions.md),
+[ADR-0029](../decisions.md)).
 
 ```bash
 pip install 'novafabric[server]'
@@ -39,23 +39,23 @@ Postgres backend and migration from SQLite.
 > `NOVAFABRIC_SERVER_TOKEN`). The old anonymous-admin behavior needs the
 > explicit `--insecure-no-auth` opt-out and refuses non-loopback binds
 > without `--i-know-this-is-public`
-> ([ADR-0184](../../design/adr/0184-secure-by-default-local-server-auth.md)).
+> ([ADR-0184](../decisions.md)).
 
 ## 2. Identity backends
 
 | Backend | Status | Notes |
 |---|---|---|
-| OIDC (JWT Bearer + JWKS) | **experimental** | The primary team backend. Setup: [Server Deployment Guide — Scenario 3](server-deployment.md). JWKS cache flush: `nova server flush-jwks-cache`. [ADR-0018](../../design/adr/0018-auth-model.md) |
+| OIDC (JWT Bearer + JWKS) | **experimental** | The primary team backend. Setup: [Server Deployment Guide — Scenario 3](server-deployment.md). JWKS cache flush: `nova server flush-jwks-cache`. [ADR-0018](../decisions.md) |
 | Offline ed25519 tokens | **experimental** | Air-gapped/CI/SLURM machine identity without an IdP. `nova server issue-token --subject worker-01 --roles reader,writer --expires-in 30d`; revoke with `nova server revoke-token <jti>`. Revocations are recorded in the `token_audit` table. |
-| SCIM 2.0 provisioning | **experimental** | Off by default (endpoints 404). Enable with `NOVAFABRIC_SERVER_SCIM_ENABLED=1` **and** `NOVAFABRIC_SCIM_TOKEN`. `/scim/v2/*` per RFC 7644; all provisioning actions land in the append-only `scim_audit_events` table. [ADR-0139](../../design/adr/0139-scim-provisioning.md) |
-| SAML 2.0 SSO | **experimental, license-gated** | SP metadata via `nova server saml-metadata`. The ACS endpoint deliberately returns **501** until an XML-DSIG verification library clears the dependency-license gate ([ADR-0138](../../design/adr/0138-saml-sso-server-mode.md) §D5) — NovaFabric never skips assertion signature verification. |
-| Device-grant demo flow | **off by default (endpoints 404)** | The RFC 8628 `/v0/auth/device/code\|token\|approve` flow is local/testing scaffolding whose HS256 tokens the real verifier never honours; `/approve` is unauthenticated. It stays unmounted unless you set `NOVAFABRIC_SERVER_DEMO_DEVICE_GRANT=1`. **Never enable it in production** — use OIDC or offline tokens instead. [ADR-0198](../../design/adr/0198-device-grant-demo-flow-hardening.md) |
+| SCIM 2.0 provisioning | **experimental** | Off by default (endpoints 404). Enable with `NOVAFABRIC_SERVER_SCIM_ENABLED=1` **and** `NOVAFABRIC_SCIM_TOKEN`. `/scim/v2/*` per RFC 7644; all provisioning actions land in the append-only `scim_audit_events` table. [ADR-0139](../decisions.md) |
+| SAML 2.0 SSO | **experimental, license-gated** | SP metadata via `nova server saml-metadata`. The ACS endpoint deliberately returns **501** until an XML-DSIG verification library clears the dependency-license gate ([ADR-0138](../decisions.md) §D5) — NovaFabric never skips assertion signature verification. |
+| Device-grant demo flow | **off by default (endpoints 404)** | The RFC 8628 `/v0/auth/device/code\|token\|approve` flow is local/testing scaffolding whose HS256 tokens the real verifier never honours; `/approve` is unauthenticated. It stays unmounted unless you set `NOVAFABRIC_SERVER_DEMO_DEVICE_GRANT=1`. **Never enable it in production** — use OIDC or offline tokens instead. [ADR-0198](../decisions.md) |
 
 ## 3. Roles and authorization
 
 **Status: experimental.**
 
-[ADR-0018](../../design/adr/0018-auth-model.md) defines six built-in roles.
+[ADR-0018](../decisions.md) defines six built-in roles.
 Four are enforced as route-level checks:
 
 | Role | Grants |
@@ -69,7 +69,7 @@ The hierarchy is `reader < writer < admin`; `admin` satisfies every check;
 `auditor` satisfies only auditor checks. The remaining two roles —
 `promoter` and `approver` — implement separation of duties in the
 maker-checker promotion and NovaSeal approval flows
-([ADR-0058](../../design/adr/0058-maker-checker-dual-approval.md)); the same
+([ADR-0058](../decisions.md)); the same
 identity can never serve as both maker and checker for one proposal.
 
 Assigning roles (either surface writes the same `role_assignments` table):
@@ -81,7 +81,7 @@ nova server assign-role --subject alice@example.com --role writer
 ```
 
 **Planned** (`future design`): org/workspace-scoped role bindings and named
-service accounts — [ADR-0178](../../design/adr/0178-workspace-organization-model.md).
+service accounts — [ADR-0178](../decisions.md).
 
 ## 4. Tenancy and isolation
 
@@ -93,14 +93,14 @@ database**, not in application code: `FORCE ROW LEVEL SECURITY` with a
 `retention_policies`, a per-transaction `SET LOCAL app.current_tenant_id`
 (safe under pgBouncer transaction pooling), and a split between the
 `novafabric_app` role (no `BYPASSRLS`) and `novafabric_migrator`
-([ADR-0040](../../design/adr/0040-production-metadata-store-interface.md),
-[ADR-0052](../../design/adr/0052-pgbouncer-transaction-mode-role-split.md)).
+([ADR-0040](../decisions.md),
+[ADR-0052](../decisions.md)).
 A CI gate (`metadata_store_security_gate`) re-proves cross-tenant isolation on
 every change.
 
 Tenancy today is a single flat `tenant_id` per deployment-defined scope. There
 is **no** organization/workspace/team hierarchy yet — that is
-[ADR-0178](../../design/adr/0178-workspace-organization-model.md)
+[ADR-0178](../decisions.md)
 (`future design`), which keeps `tenant_id` as the sole RLS key.
 
 ## 5. Audit trails
@@ -109,10 +109,10 @@ is **no** organization/workspace/team hierarchy yet — that is
 
 - Hash-chained append-only audit log; domain trails for SCIM
   (`scim_audit_events`), tokens (`token_audit`), SAML (redacted records), and
-  retention decisions ("deletion is evidence", [ADR-0134](../../design/adr/0134-data-retention-policy-scheduler.md)).
+  retention decisions ("deletion is evidence", [ADR-0134](../decisions.md)).
 - `nova audit …` maps capsule evidence to regulatory controls;
   `nova ledger anchor|verify|status` runs the adversary-anchored
-  accountability ledger ([ADR-0094](../../design/adr/0094-adversary-anchored-ledger-and-replay-attestation.md));
+  accountability ledger ([ADR-0094](../decisions.md));
   `nova seal log …` operates the Merkle log.
 - Give compliance staff the `auditor` role — read-only by construction.
 
@@ -120,30 +120,30 @@ is **no** organization/workspace/team hierarchy yet — that is
 
 - **Versioning:** all resource routes sit under `/v0`; the canonical contract
   is [`api/openapi.yaml`](../../api/openapi.yaml). A formal deprecation/sunset
-  policy is proposed in [ADR-0188](../../design/adr/0188-api-deprecation-sunset-policy.md)
+  policy is proposed in [ADR-0188](../decisions.md)
   (`future design`).
 - **Pagination:** cursor-based, default 50 / max 500 per page (**works
   today**). `GET /v0/capsules` now serves **keyset** cursors — see 6a
   (**experimental**).
 - **Rate limiting/quotas:** **experimental, default off** — in-process rate
-  limiting + storage quotas ([ADR-0179](../../design/adr/0179-api-rate-limiting-quotas.md)),
+  limiting + storage quotas ([ADR-0179](../decisions.md)),
   plus per-workspace usage metering, `GET /v0/usage` reporting, and
   per-workspace budgets
-  ([ADR-0208](../../design/adr/0208-usage-metering-workspace-quotas.md)).
+  ([ADR-0208](../decisions.md)).
   See [Quotas & rate limits](quotas-and-rate-limits.md); with the master
   switch off (the default), plan capacity accordingly.
 - **Health:** `GET /health` (unauthenticated). There is **no** Prometheus
   `/metrics`, `/livez`/`/readyz` split, or version endpoint yet — proposed in
-  [ADR-0182](../../design/adr/0182-self-observability-surface.md)
+  [ADR-0182](../decisions.md)
   (`future design`). For diagnostics today use `nova doctor`
   (add `--check-storage` for schema/migration state).
 
 ### 6a. Bulk capsule operations + keyset pagination (experimental, ADR-0206)
 
 **Status: experimental** — shipped by
-[ADR-0206](../../design/adr/0206-bulk-capsule-ops-keyset-pagination.md);
+[ADR-0206](../decisions.md);
 normative contract in
-[`design/spec/bulk-ops-pagination-v0.md`](../../design/spec/bulk-ops-pagination-v0.md).
+`design/spec/bulk-ops-pagination-v0.md`.
 
 **Keyset pagination on `GET /v0/capsules`:**
 
@@ -190,17 +190,17 @@ normative contract in
   `capsule_delete_refused` (single-delete 409s), `capsule_bulk_delete`
   (one summary per bulk request, dry runs included).
 - Bulk **export** is separate and already shipped —
-  [ADR-0141](../../design/adr/0141-batch-capsule-blob-export.md)
+  [ADR-0141](../decisions.md)
   (`nova export-batch`).
 
 ## 7. Backup and restore
 
 See the dedicated [Backup & Restore Runbook](backup-restore.md) — manual
 procedures that work today, the `nova backup` tooling
-([ADR-0181](../../design/adr/0181-backup-restore-dr-tooling.md),
+([ADR-0181](../decisions.md),
 `experimental`), and the automated Postgres restore
 (`nova restore` — pg profile auto-detected, ADR-0217,
-[ADR-0211](../../design/adr/0211-pg-restore-and-schema-skew-guard.md),
+[ADR-0211](../decisions.md),
 `experimental`).
 
 ### 7a. Startup schema-skew guard (experimental, ADR-0211)
@@ -230,23 +230,23 @@ and reports real `ok`/`fail` for Postgres too.
 ## 8. Enterprise hardening at a glance
 
 First slices shipped `experimental` 2026-07-16; tracked in the
-[enterprise-readiness plan](../../design/enterprise-readiness-plan-2026-07.md):
+enterprise-readiness plan:
 
 | Feature | ADR | Status |
 |---|---|---|
-| Secure-by-default local auth (no anonymous admin) | [0184](../../design/adr/0184-secure-by-default-local-server-auth.md) | experimental |
-| Workspaces, organizations, service accounts (`/v0/orgs`, `/v0/workspaces`, `/v0/service-accounts`) | [0178](../../design/adr/0178-workspace-organization-model.md) | experimental |
-| Rate limiting + storage quotas (default off; quota enforcement is warn-then-reject) | [0179](../../design/adr/0179-api-rate-limiting-quotas.md) | experimental |
-| `/metrics`, `/livez`, `/readyz`, `/v0/version` | [0182](../../design/adr/0182-self-observability-surface.md) | experimental |
-| Support bundle (`nova support-bundle`) | [0187](../../design/adr/0187-support-bundle-diagnostics.md) | experimental |
-| Backup sets (`nova backup create/verify`, `nova restore` local profile) | [0181](../../design/adr/0181-backup-restore-dr-tooling.md) | experimental |
-| Automated pg restore (`nova restore`, manifest-driven — [0217](../../design/adr/0217-automated-pg-restore.md)) + startup schema-skew guard ([0211](../../design/adr/0211-pg-restore-and-schema-skew-guard.md) Part B) | 0217 / 0211 | experimental |
-| Backup sets (`nova backup create/verify`, local profile; restore planned) | [0181](../../design/adr/0181-backup-restore-dr-tooling.md) | experimental |
+| Secure-by-default local auth (no anonymous admin) | [0184](../decisions.md) | experimental |
+| Workspaces, organizations, service accounts (`/v0/orgs`, `/v0/workspaces`, `/v0/service-accounts`) | [0178](../decisions.md) | experimental |
+| Rate limiting + storage quotas (default off; quota enforcement is warn-then-reject) | [0179](../decisions.md) | experimental |
+| `/metrics`, `/livez`, `/readyz`, `/v0/version` | [0182](../decisions.md) | experimental |
+| Support bundle (`nova support-bundle`) | [0187](../decisions.md) | experimental |
+| Backup sets (`nova backup create/verify`, `nova restore` local profile) | [0181](../decisions.md) | experimental |
+| Automated pg restore (`nova restore`, manifest-driven — [0217](../decisions.md)) + startup schema-skew guard ([0211](../decisions.md) Part B) | 0217 / 0211 | experimental |
+| Backup sets (`nova backup create/verify`, local profile; restore planned) | [0181](../decisions.md) | experimental |
 
 ## 9. Webhook subscriptions (experimental)
 
-**Status: experimental** ([ADR-0205](../../design/adr/0205-webhook-subscription-registry.md),
-spec [`webhook-registry-v0.md`](../../design/spec/webhook-registry-v0.md)) — API
+**Status: experimental** ([ADR-0205](../decisions.md),
+spec `webhook-registry-v0.md`) — API
 shapes may change. Server mode only; the env-configured `NOVA_EVENTS_*` /
 `NOVA_ALERTS_*` sinks are unchanged.
 

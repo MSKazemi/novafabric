@@ -2,7 +2,7 @@
 
 How to install and operate NovaFabric with **no internet connectivity** —
 classified networks, HPC enclaves, regulated environments. Labels follow the
-[docs honesty rule](../../CLAUDE.md): **works today**, **experimental**,
+[docs honesty rule](../../CONTRIBUTING.md#documentation-status-labels): **works today**, **experimental**,
 **planned**, or **future design**.
 
 The short version: NovaFabric is **local-first by design**. Core local-mode
@@ -17,7 +17,7 @@ and all have documented offline modes or honest "not usable offline" answers
 ## 1. No telemetry, no phone-home — the guarantee
 
 **Status: contract — accepted
-[ADR-0189](../../design/adr/0189-open-core-entitlement-stance.md).**
+[ADR-0189](../decisions.md).**
 
 - NovaFabric emits **zero unsolicited network traffic**: no telemetry, no
   update checks, no license keys, no seat/entitlement checks, no feature
@@ -27,7 +27,7 @@ and all have documented offline modes or honest "not usable offline" answers
   project license. Where a feature is withheld (e.g. SAML assertion
   consumption returns 501), the gate is a dependency-*license* question
   (ADR-0024/ADR-0138 §D5), never an entitlement check.
-- Self-tracing ([ADR-0182](../../design/adr/0182-self-observability-surface.md)
+- Self-tracing ([ADR-0182](../decisions.md)
   D5) is opt-in, default OFF, and can only target the deployment's **own**
   OTLP ingest or an operator-configured private endpoint — spans never leave
   the deployment.
@@ -108,7 +108,7 @@ nothing in the chart requires the public registry at runtime.
 ## 3. Offline identity: ed25519 tokens, no IdP
 
 **Status: experimental**
-([ADR-0018](../../design/adr/0018-auth-model.md);
+([ADR-0018](../decisions.md);
 `src/novafabric/server/offline_tokens.py`). This is the intended auth mode
 for air-gapped clusters, SLURM batch jobs, and CI without an OIDC provider.
 
@@ -128,7 +128,7 @@ for air-gapped clusters, SLURM batch jobs, and CI without an OIDC provider.
 
 Since v0.61, local no-OIDC mode also has the auto-generated local bearer
 token (`~/.novafabric/.server-token`,
-[ADR-0184](../../design/adr/0184-secure-by-default-local-server-auth.md)) —
+[ADR-0184](../decisions.md)) —
 also fully offline. Full setup:
 [Server Deployment Guide — Scenario 4](server-deployment.md).
 
@@ -150,9 +150,9 @@ most are experimental-maturity but network-free).
   verification explicitly requires "no live deployment, network, or private
   keys" ([Backup & Restore Runbook](backup-restore.md)).
 - `nova support-bundle` — works in local mode and offline
-  ([ADR-0187](../../design/adr/0187-support-bundle-diagnostics.md)).
+  ([ADR-0187](../decisions.md)).
 - Encryption at rest for the object store
-  ([ADR-0185](../../design/adr/0185-application-layer-encryption-at-rest.md))
+  ([ADR-0185](../decisions.md))
   with a **local KEK file**:
   `NOVA_OBJECT_STORE_ENCRYPTION=1` + `NOVA_OBJECT_STORE_KEK_PATH=<256-bit
   key file>` — no KMS required (fails closed if the flag is set without a
@@ -230,7 +230,7 @@ nova support-bundle                   # diagnostics, offline-safe
 - **Public-CA TLS and revocation checking** are your PKI's problem, as in
   any enclave; NovaFabric's `tls:` block takes your internal cert/key paths.
 - **Vulnerability-management cadence** (pip-audit/Dependabot,
-  [ADR-0186](../../design/adr/0186-dependency-vulnerability-management.md))
+  [ADR-0186](../decisions.md))
   runs in this repo's CI, not in your
   enclave — mirror updated wheels on your own schedule.
 - Anything labelled **future design** elsewhere (federation, at-scale graph

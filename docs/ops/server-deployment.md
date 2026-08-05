@@ -2,7 +2,7 @@
 
 This guide covers five deployment scenarios for NovaFabric v0.7. Each scenario
 is labelled with its current implementation status per the [docs honesty
-rule](../../CLAUDE.md): **works today**, **experimental**, **planned**, or
+rule](../../CONTRIBUTING.md#documentation-status-labels): **works today**, **experimental**, **planned**, or
 **future design**.
 
 ---
@@ -43,7 +43,7 @@ pip install 'novafabric[serve]'
 nova serve --experimental        # opens http://127.0.0.1:4321
 ```
 
-**Status: experimental.** See [ADR-0027](../../design/adr/0027-nova-serve-experimental-dashboard.md)
+**Status: experimental.** See [ADR-0027](../decisions.md)
 and [`dashboard.md`](../dashboard.md) for limitations.
 
 ---
@@ -82,7 +82,7 @@ production):
 export NOVA_DSN="postgresql://nova_user:s3cr3t@db.example.com:5432/novafabric"
 ```
 
-See [ADR-0029](../../design/adr/0029-server-config-schema.md) for the complete config
+See [ADR-0029](../decisions.md) for the complete config
 schema, env-var override rules, and secrets handling guidance.
 
 ### Start the server
@@ -121,7 +121,7 @@ nova doctor --check-storage --backend postgres
 
 The migration is idempotent — safe to re-run after a partial failure. It uses
 upsert semantics so no rows are duplicated. The SQLite file is never modified or
-deleted. See [ADR-0016](../../design/adr/0016-storage-backend-evolution.md) for the
+deleted. See [ADR-0016](../decisions.md) for the
 migration design.
 
 Exit codes: `0` = success, `1` = row-count mismatch, `2` = connection error.
@@ -164,7 +164,7 @@ oidc:
   jwks_refresh_interval: 3600     # seconds between JWKS re-fetches
 ```
 
-All OIDC keys can be overridden via env vars (see [ADR-0029](../../design/adr/0029-server-config-schema.md) §3):
+All OIDC keys can be overridden via env vars (see [ADR-0029](../decisions.md) §3):
 
 ```bash
 export NOVA_OIDC_ENABLED=true
@@ -406,7 +406,7 @@ schema-skew. Provide OIDC config through `extraEnv` or a mounted secret.
 ## Role assignment
 
 **Status: experimental.** Roles are enforced on all server API endpoints per
-[ADR-0018](../../design/adr/0018-auth-model.md).
+[ADR-0018](../decisions.md).
 
 The four built-in roles are:
 
@@ -573,7 +573,7 @@ Resolution order (highest priority first):
 4. `/etc/novafabric/nova-server.yaml`
 
 Every key has a corresponding `NOVA_<UPPERCASE_KEY>` env var that overrides
-the file value. See [ADR-0029](../../design/adr/0029-server-config-schema.md) §3 for the
+the file value. See [ADR-0029](../decisions.md) §3 for the
 complete env-var table.
 
 **Security:** never write secrets (Postgres passwords, private key contents)
@@ -586,7 +586,7 @@ permissions. The server logs a warning if `dsn` is read from the file when
 ## Ingest limits (experimental)
 
 > **Status: experimental** — ADR-0203 P1
-> ([spec](../../design/spec/ingest-hardening-v0.md)). Applies to
+> (spec). Applies to
 > `POST /v0/capsules` only; local-first commands are untouched.
 
 The capsule-upload route is bounded: the request body is size-capped, spooled
@@ -625,7 +625,7 @@ Env overrides: `NOVAFABRIC_SERVER_INGEST_MAX_UPLOAD_BYTES`,
   `<capsule_dir>/.ingest-tmp/`; both are removed on every exit path.
 
 **Recommended (normative, ADR-0203 D4):** for any non-loopback deployment,
-also enable the [ADR-0179](../../design/adr/0179-api-rate-limiting-quotas.md)
+also enable the [ADR-0179](../decisions.md)
 request-rate limiter — it stays opt-in and off by default:
 
 ```yaml
@@ -675,4 +675,4 @@ The SQLite file is never deleted or modified. Keep it as a backup until the
 team has confirmed that Postgres is stable.
 
 Postgres-to-SQLite downgrade migration is explicitly not supported per
-[ADR-0016](../../design/adr/0016-storage-backend-evolution.md).
+[ADR-0016](../decisions.md).

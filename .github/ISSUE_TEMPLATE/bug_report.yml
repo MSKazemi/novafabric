@@ -1,0 +1,114 @@
+name: Bug report
+description: Something in NovaFabric behaves incorrectly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. A bug report with a reproduction is one of
+        the most useful things you can give the project — it often turns into a
+        fix the same week.
+
+        If you are not sure whether something is a bug,
+        [ask in Discussions](https://github.com/novafabric/novafabric/discussions)
+        instead. That is not a lesser channel; it is the right one for "is this
+        supposed to work like this?"
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did NovaFabric do, and what did you expect instead?
+      placeholder: |
+        `nova validate` rejected a capsule that `nova capture` had just produced.
+        I expected a capsule from capture to always validate.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How can we reproduce it?
+      description: >
+        Exact commands, smallest case that still shows the problem. If you can
+        attach a redacted capsule or spec file, that is ideal.
+      placeholder: |
+        1. nova capture python hello.py
+        2. nova validate ~/.novafabric/capsules/<ulid>/
+        3. see the error below
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Full output
+      description: The complete error or unexpected output — not just the last line.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: NovaFabric version
+      description: "`nova --version`"
+      placeholder: "0.99.0"
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: "`python --version` (NovaFabric requires 3.12+)"
+      placeholder: "3.12.4"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows (WSL)
+        - Windows (native)
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: How are you running it?
+      options:
+        - Local mode (CLI only, the default)
+        - Server mode (`nova server`)
+        - Dashboard (`nova serve`)
+        - Cluster-scale (collector + node spool)
+        - HPC / SLURM
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else?
+      description: >
+        Relevant extras, adapters, config, or a workaround you found. Optional.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and did not find this
+          required: true
+        - label: >
+            My output contains no secrets, tokens, or private data (NovaFabric
+            redacts capsules, but pasted terminal output is not redacted)
+          required: true

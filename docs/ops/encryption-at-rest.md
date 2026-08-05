@@ -2,7 +2,7 @@
 
 This guide covers NovaFabric's **optional** application-layer envelope
 encryption for capsule payloads in the object capsule store
-([ADR-0185](../../design/adr/0185-application-layer-encryption-at-rest.md)).
+([ADR-0185](../decisions.md)).
 
 **Status: experimental** (v0.61, shipped 2026-07-16) — and **never the
 default**. Out of the box, NovaFabric's at-rest posture is *integrity, not
@@ -151,6 +151,6 @@ it yet.
   key-management guide this feature extends
 - [Backup & restore runbook](backup-restore.md) — where the KEK availability
   trade lands
-- [ADR-0185](../../design/adr/0185-application-layer-encryption-at-rest.md) —
+- [ADR-0185](../decisions.md) —
   the full decision record, including the encrypt-before-WORM invariant and
   the infra-gated cloud-KMS plan

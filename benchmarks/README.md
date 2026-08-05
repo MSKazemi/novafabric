@@ -1,9 +1,9 @@
 # NovaFabric capture-overhead benchmarks
 
 This directory holds the capture-overhead harnesses measured against the
-budgets in [ADR-0021 §6](../design/adr/0021-ai-factory-design-intent.md),
+budgets in [ADR-0021 §6](../docs/decisions.md),
 plus the SPK-COL spike harnesses gating
-[ADR-0020](../design/adr/0020-cluster-scale-low-overhead-capture.md)
+[ADR-0020](../docs/decisions.md)
 (cluster collector, gap-002).
 
 The benchmarks are **stdlib-only** (no `pytest-benchmark` dependency)
