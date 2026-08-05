@@ -316,7 +316,7 @@ def migrate(
         stacklevel=2,
     )
 
-    table = pq.read_table(str(source_parquet))  # type: ignore[no-untyped-call]
+    table = pq.read_table(str(source_parquet))
     edges: list[LineageEdge] = []
     run_id_set: set[str] = set()
 

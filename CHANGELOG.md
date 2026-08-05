@@ -9,6 +9,27 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Changed (dependency refresh — and two upstream incompatibilities caught before they shipped)
+
+- Refreshed the locked dependency set (~130 packages), including `python-ulid`
+  3.1.0 → **4.0.1** and `pyarrow` 24.0.0 → **25.0.0**. pyarrow 25 stopped shipping
+  a `py.typed` marker, so it joins the existing `ignore_missing_imports`
+  override list and nine now-redundant `# type: ignore` comments were removed.
+- **`typer` pinned `<0.26`.** typer 0.27.x registers **no subcommands** with this
+  app: `nova --help` lists 127 commands on 0.25.1 and **zero** on 0.27.1, and the
+  dashboard command-registry guard drops from 289 commands to one. Merging the
+  dependabot bulk-upgrade group unread would have shipped a completely
+  non-functional CLI.
+- **`fastapi` pinned `<0.137`.** 0.141.x (starlette 1.4) changes route mounting and
+  the path exposed to middleware: the holds router stops mounting, the Prometheus
+  route label regresses from template to raw path, and two self-trace privacy
+  assertions fail.
+
+Both bounds carry the reproduction in a comment next to the constraint, and both
+say what must be green before raising them. **Neither was detectable from the
+dependabot diff** — only from running the suite against the upgraded set.
+
+
 ## [0.100.1] — 2026-08-05
 
 ### Fixed (two release-tag workflows that only fail at release time)

@@ -76,7 +76,7 @@ ADS_SUBGRAPH_PAGE_EDGES_SCHEMA = pa.schema(
 
 def _to_ipc(table: pa.Table) -> bytes:
     buf = io.BytesIO()
-    with pa_ipc.new_stream(buf, table.schema) as writer:  # type: ignore[no-untyped-call]
+    with pa_ipc.new_stream(buf, table.schema) as writer:
         writer.write_table(table)
     return buf.getvalue()
 
@@ -170,7 +170,7 @@ class AdsValidator:
     def validate(self, ipc_bytes: bytes) -> dict[str, Any]:
         errors: list[str] = []
         try:
-            reader = pa_ipc.open_stream(ipc_bytes)  # type: ignore[no-untyped-call]
+            reader = pa_ipc.open_stream(ipc_bytes)
             schema = reader.schema
             schema_id = (schema.metadata or {}).get(b"schema_id", b"").decode("utf-8")
             if not schema_id:

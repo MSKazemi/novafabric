@@ -417,8 +417,8 @@ class LineageConsumer:
             ) as f:
                 edge_parquet_path = f.name
 
-            pq.write_table(node_table, node_parquet_path)  # type: ignore[no-untyped-call]
-            pq.write_table(edge_table, edge_parquet_path)  # type: ignore[no-untyped-call]
+            pq.write_table(node_table, node_parquet_path)
+            pq.write_table(edge_table, edge_parquet_path)
             logger.debug(
                 "bulk_insert_edges: wrote %d nodes + %d edges to Parquet",
                 len(node_kinds),
