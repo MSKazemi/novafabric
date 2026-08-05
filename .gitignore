@@ -1,39 +1,176 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-.eggs/
-build/
-dist/
-.venv/
-venv/
-.coverage
-.coverage.*
-coverage.json
-htmlcov/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.hypothesis/
+# ─────────────────────────────────────────────────────────────────────────────
+# .gitignore — NovaFabric
+# Universal build/junk/secret rules honoured by EVERY git operating in this tree
+# (the public .git and the private .git-private share this one working tree).
+#
+# NOTE: private material (design/, monetize/, bench/, site-config/, .claude/,
+# CLAUDE.md, THREAT_MODEL.md, …) is NOT listed here on purpose — it is versioned
+# in the private git and kept out of the public remote by the repo-local
+# allowlist in .git/info/exclude.
+# ─────────────────────────────────────────────────────────────────────────────
 
-# Node / web
-node_modules/
-web/dist/
-web/.astro/
-packages/*/dist/
-*.tsbuildinfo
-
-# Databases / logs / artifacts
-*.db
-*.log
-*.snap
-
-# Editor / OS
-.DS_Store
-.idea/
-.vscode/
-
-# Local env
+# ── Secrets ──────────────────────────────────────────────────────────────────
 .env
 .env.*
 *.local
+*.pem
+*.key
+.envrc
+credentials.json
+secrets.yaml
+secrets.yml
+.streamlit/secrets.toml
+.pypirc
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[codz]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+/lib/
+/lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+cython_debug/
+__pypackages__/
+.pdm-python
+.pdm-build/
+.pixi
+
+# ── Virtual environments ─────────────────────────────────────────────────────
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# ── Test / coverage / type-checkers / linters ────────────────────────────────
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+coverage.json
+nosetests.xml
+*.cover
+*.py.cover
+cover/
+htmlcov/
+.cache
+.hypothesis/
+.benchmarks/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+
+# ── Node / web build output ──────────────────────────────────────────────────
+node_modules/
+web/node_modules/
+web/test-results/
+.astro/
+*.tsbuildinfo
+src/novafabric/serve/static/topology/tsconfig.tsbuildinfo
+
+# ── NovaFabric runtime artifacts ─────────────────────────────────────────────
+.novafabric/
+.nova/
+*.db
+*.db-wal
+*.db-shm
+# Example output dirs (capsules accumulate here when examples are run)
+examples/*/runs/
+examples/*/capsule/
+
+# ── Editors / IDEs / AI tooling state ────────────────────────────────────────
+.vscode/
+.cursor/
+.idea/
+.playwright-mcp
+.playwright-mcp/*
+.superpowers/
+docs/superpowers/
+.gstack/
+tempCodeRunnerFile.py
+
+# ── Git worktrees ────────────────────────────────────────────────────────────
+.worktrees/
+
+# ── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Logs / packaging artifacts ───────────────────────────────────────────────
+*.log
+*.snap
+*.mo
+*.pot
+*.rdb
+*.aof
+*.pid
+celerybeat-schedule
+celerybeat.pid
+
+# ── Screenshot noise from browser tooling (real image assets re-included) ─────
+*.png
+!docs/**/*.png
+!web/public/**/*.png
+!web/src/**/*.png
+
+# ── Framework scratch (Django/Flask/Scrapy/Sphinx/Jupyter/marimo) ────────────
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+instance/
+.webassets-cache
+.scrapy
+docs/_build/
+.pybuilder/
+target/
+.ipynb_checkpoints
+profile_default/
+ipython_config.py
+/site
+.spyderproject
+.spyproject
+.ropeproject
+.abstra/
+marimo/_static/
+marimo/_lsp/
+__marimo__/
+
+# ── Build byproducts committed by mistake under design/ (private-tracked) ─────
+design/research/**/node_modules/
+design/publications/**/*.aux
+design/publications/**/*.fls
+design/publications/**/*.fdb_latexmk
+design/publications/**/*.blg
+design/publications/**/*.out
+design/publications/**/*.log
+design/publications/**/*.synctex.gz
+design/publications/**/*.toc
+design/publications/**/*.bcf
+design/publications/**/*.run.xml

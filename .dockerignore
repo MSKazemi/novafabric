@@ -15,7 +15,7 @@ env/
 # Private design corpus — 96M, never shipped in the image
 design/
 .claude/
-2public/
+.git-private
 
 # Node / dashboard build artifacts (source is compiled during the image build)
 **/node_modules
