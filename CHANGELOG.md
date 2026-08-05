@@ -11,6 +11,15 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Changed (dependency refresh — and two upstream incompatibilities caught before they shipped)
 
+Worked the nine open dependabot PRs by applying each locally and gating it,
+rather than merging from the diff. Taken: `mypy` 1.20.2 → **2.3.0** (the `mypy src`
+gate is clean under it), the GitHub Actions group (17 actions, clearing the Node 20
+deprecation warnings), and the web set including **TypeScript 7** and **js-yaml 5**
+— web build 61 pages, `tsc` clean, 116 vitest tests pass. `npm update` also moved
+the direct `tmp` dependency past the `overrides` pin, which npm rejects outright;
+the override is realigned.
+
+
 - Refreshed the locked dependency set (~130 packages), including `python-ulid`
   3.1.0 → **4.0.1** and `pyarrow` 24.0.0 → **25.0.0**. pyarrow 25 stopped shipping
   a `py.typed` marker, so it joins the existing `ignore_missing_imports`
