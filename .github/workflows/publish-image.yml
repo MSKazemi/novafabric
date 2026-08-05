@@ -78,6 +78,15 @@ jobs:
           # latest=auto (default flavor) tags :latest for non-prerelease semver tags.
           tags: |
             type=semver,pattern={{version}}
+            # Fallbacks for `workflow_dispatch`. The comment above promises a
+            # manual re-publish "if a tag run needs a retry", but with only the
+            # semver rule a dispatch from a branch derives NO tags at all and
+            # buildx fails with "tag is needed when pushing to registry" — so
+            # the escape hatch was broken in exactly the situation it exists
+            # for. Dispatching with `--ref v1.2.3` still takes the semver path;
+            # these only apply when the ref is not a tag.
+            type=ref,event=branch,enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=sha,format=short,enable=${{ github.event_name == 'workflow_dispatch' }}
             type=semver,pattern={{major}}.{{minor}}
 
       - name: Build and push
