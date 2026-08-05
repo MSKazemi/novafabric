@@ -34,7 +34,7 @@
     "clsx": "^2.1.1",
     "graphology": "^0.26.0",
     "graphology-layout-forceatlas2": "^0.10.1",
-    "js-yaml": "^4.1.1",
+    "js-yaml": "^5.2.3",
     "lucide-react": "^1.28.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
