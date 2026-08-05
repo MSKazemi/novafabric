@@ -124,3 +124,34 @@ def test_every_lint_invocation_covers_scripts() -> None:
             assert "scripts" in scope, f"{path.name}: ruff scope omits scripts/ -> {line.strip()}"
             checked += 1
     assert checked >= 4, f"expected to find the ruff invocations, found {checked}"
+
+
+@pytest.fixture(scope="module")
+def integration_job() -> dict:
+    workflow = yaml.safe_load(_CI_WORKFLOW_PATH.read_text())
+    jobs = workflow["jobs"]
+    assert "integration" in jobs, "the CI workflow no longer has an `integration` job"
+    return jobs["integration"]
+
+
+def test_integration_job_installs_all_extras(integration_job: dict) -> None:
+    """Fourth instance of the class this module was created for.
+
+    The `unit` job was fixed on 2026-08-01; the `integration` job carried the
+    same defect until 2026-08-05 and failed at ``Failed to spawn: alembic`` on
+    every run from at least 2026-07-30. ``alembic`` and ``psycopg`` live in the
+    ``server`` extra, so a plain ``uv sync --frozen`` installs neither and the
+    migration step dies before a single integration test runs.
+
+    The job went red rather than silent, which is the only reason it was ever
+    noticed — but nothing stopped it going red in the first place.
+    """
+    installs = [r for r in _run_steps(integration_job) if "uv sync" in r]
+    assert installs, "the integration job no longer installs the project"
+    for cmd in installs:
+        assert "--all-extras" in cmd, (
+            "the CI integration job must `uv sync --frozen --all-extras`. Without "
+            "the extras, alembic and psycopg are absent and the Postgres "
+            "migration step fails with `Failed to spawn: alembic` before any "
+            "integration test executes."
+        )

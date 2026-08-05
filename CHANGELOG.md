@@ -21,6 +21,18 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   a single user. The step is now `continue-on-error` with an explicit warning
   annotation: a supply-chain nicety must not be able to block the supply chain.
 
+### Fixed (CI's integration job had not executed a single test in over a week)
+
+- **`Failed to spawn: alembic`.** The `integration` job ran `uv sync --frozen`
+  without `--all-extras`; `alembic` and `psycopg` live in the `server` extra, so
+  neither was installed and the migration step died before any integration test
+  ran. Every run from at least 2026-07-30 was red for this reason.
+  **Fourth instance of the class BL-022 named for the `unit` job** — a CI job
+  installing without the extras it needs. Guarded by a new case in
+  `tests/packaging_metadata/test_ci_unit_job_install.py`. The two benchmark jobs
+  deliberately keep the plain sync: they measure capture overhead, and extra
+  imports would skew the numbers.
+
 ### Fixed (Postgres migrations were impossible to run as documented)
 
 - **`alembic -c alembic-postgres.ini upgrade head` failed with
