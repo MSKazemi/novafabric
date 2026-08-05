@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -86,4 +87,4 @@ def test_detect_empty_capsule(tmp_path: Path) -> None:
 def test_detect_help() -> None:
     result = runner.invoke(app, ["kg", "detect", "--help"])
     assert result.exit_code == 0
-    assert "--baseline" in result.output
+    assert_flag_in_help(result, "--baseline")

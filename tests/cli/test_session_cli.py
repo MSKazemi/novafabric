@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -155,8 +156,8 @@ def test_session_list_shows_sessions(session_root: Path) -> None:
 def test_capture_help_shows_session_flags() -> None:
     result = runner.invoke(app, ["capture", "--help"])
     assert result.exit_code == 0
-    assert "--session-id" in result.output
-    assert "--session-sequence" in result.output
+    assert_flag_in_help(result, "--session-id")
+    assert_flag_in_help(result, "--session-sequence")
 
 
 def test_capture_invalid_session_id_is_a_usage_error(tmp_path: Path) -> None:

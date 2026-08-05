@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import yaml
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -89,7 +90,7 @@ def test_save_collision_refused_with_hint(views_dir: Path) -> None:
         ],
     )
     assert result.exit_code == 1
-    assert "--force" in result.output or "--view-id" in result.output
+    assert_flag_in_help(result, "--force") or "--view-id" in result.output
 
 
 def test_save_force_overwrites_preserving_created_at(views_dir: Path) -> None:

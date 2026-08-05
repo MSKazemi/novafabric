@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from import_blob.helpers import (
@@ -42,9 +43,9 @@ class TestImportCli:
     def test_help_smoke(self) -> None:
         result = runner.invoke(app, ["import", "--help"])
         assert result.exit_code == 0
-        assert "--allow-unsigned" in result.output
-        assert "--dry-run" in result.output
-        assert "--public-key" in result.output
+        assert_flag_in_help(result, "--allow-unsigned")
+        assert_flag_in_help(result, "--dry-run")
+        assert_flag_in_help(result, "--public-key")
 
     def test_round_trip_with_json_report(
         self, export_dir: Path, store_root: Path, keys: tuple[Path, Path]

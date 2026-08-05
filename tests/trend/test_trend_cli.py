@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -147,5 +148,5 @@ def test_unknown_view_is_exit_1(capsule_dir: Path, views_dir: Path) -> None:
 def test_help_smoke() -> None:
     result = runner.invoke(app, ["trend", "--help"])
     assert result.exit_code == 0
-    assert "--metric" in result.output
-    assert "--html" in result.output
+    assert_flag_in_help(result, "--metric")
+    assert_flag_in_help(result, "--html")

@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.capsule.comments import COMMENTS_FILENAME, capsule_subject_digest, read_comments
@@ -138,7 +139,7 @@ def test_tombstone_requires_reply_to(tmp_path: Path) -> None:
         app, ["comment", "add", "--subject", str(cap), "--body", "n", "--tombstone"]
     )
     assert result.exit_code == 2
-    assert "--reply-to" in result.output
+    assert_flag_in_help(result, "--reply-to")
 
 
 def test_list_hides_tombstoned_by_default(tmp_path: Path) -> None:

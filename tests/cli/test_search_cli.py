@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -63,7 +64,7 @@ def test_help_smoke() -> None:
     result = runner.invoke(app, ["search", "--help"])
     assert result.exit_code == 0
     assert "experimental" in result.output
-    assert "--reindex" in result.output
+    assert_flag_in_help(result, "--reindex")
 
 
 def test_no_text_and_no_reindex_is_usage_error(tmp_path: Path) -> None:
