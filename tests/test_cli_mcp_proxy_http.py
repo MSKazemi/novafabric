@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -53,6 +54,7 @@ class TestParseListen:
     def test_out_of_range_port_errors(self) -> None:
         import typer
 
+
         with pytest.raises(typer.BadParameter, match="1..65535"):
             _parse_listen("127.0.0.1:99999")
 
@@ -69,7 +71,7 @@ class TestHttpModeFlagValidation:
             "--listen", "127.0.0.1:8765",
         ])
         assert result.exit_code != 0
-        assert "upstream-url" in result.output.lower()
+        assert_flag_in_help(result, "upstream-url", lower=True)
 
     def test_listen_with_command_errors(self, tmp_path: Path) -> None:
         """HTTP and stdio are mutually exclusive."""

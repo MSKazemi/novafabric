@@ -37,7 +37,7 @@ def strip_ansi(text: str) -> str:
     return _ANSI.sub("", text)
 
 
-def assert_flag_in_help(result: object, flag: str) -> None:
+def assert_flag_in_help(result: object, flag: str, *, lower: bool = False) -> None:
     """Assert *flag* appears in a Click/Typer ``result``'s help output.
 
     On failure, report the whole output rather than a fragment of it.
@@ -52,8 +52,9 @@ def assert_flag_in_help(result: object, flag: str) -> None:
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8", "replace")
     output = strip_ansi(raw)
+    haystack = output.lower() if lower else output
 
-    if flag in output:
+    if flag in haystack:
         return
 
     lines = output.splitlines()
@@ -61,7 +62,7 @@ def assert_flag_in_help(result: object, flag: str) -> None:
 
     # A wrapped flag is the leading hypothesis, so test it explicitly: does the
     # flag appear if whitespace (including newlines) is collapsed away?
-    squashed = re.sub(r"\s+", "", output)
+    squashed = re.sub(r"\s+", "", haystack)
     wrapped = re.sub(r"\s+", "", flag) in squashed
 
     detail = [
