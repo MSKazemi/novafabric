@@ -27,7 +27,19 @@ jobs:
   # --------------------------------------------------------------------------
   unit:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 15 minutes was not enough and had not been for weeks. This job hit the cap
+    # at ~15m15s on EVERY run from 2026-07-31 to 2026-08-05 — GitHub reports a
+    # timeout as `cancelled`, which reads like an interrupted run rather than a
+    # failure, so it never looked like the standing defect it was. The
+    # consequence: the ~11.6K-test suite and the 90% coverage gate have not
+    # actually executed in CI since BL-022 nominally fixed this job.
+    #
+    # The 205 s figure BL-022 recorded was measured on a developer machine with
+    # many cores. `-n auto` on a GitHub-hosted runner gets a handful, so that
+    # number never transferred — a local measurement is not a CI measurement.
+    # Raised to 40 to let the job finish and report a real duration; tighten it
+    # once there is a measured number from an actual green run.
+    timeout-minutes: 40
 
     steps:
       - name: Checkout

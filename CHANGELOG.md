@@ -31,6 +31,20 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   the declaration against what Astro actually requires, since agreeing with a
   wrong declaration is exactly how this got through.
 
+### Fixed (the unit suite and the coverage gate had never actually run in CI)
+
+- **The `unit` job hit its 15-minute cap on every run from 2026-07-31 onward** —
+  30 consecutive runs, ~15m15s each. GitHub reports a timeout as `cancelled`,
+  which reads as an interrupted run rather than a failure, so a permanently
+  broken job never looked like one. The consequence is the serious part: the
+  ~11.6K-test suite and the **90% coverage gate have not executed in CI** since
+  BL-022 nominally fixed this job.
+- Root cause of the wrong estimate: BL-022's "205 s" was measured on a developer
+  machine with many cores. `-n auto` on a GitHub-hosted runner gets a handful, so
+  the number never transferred. **A local measurement is not a CI measurement** —
+  the same lesson as "a source-tree test run cannot see a packaging defect".
+  Timeout raised to 40 minutes so the job can finish and report a real duration.
+
 ### Fixed (a migration test that had never actually asserted anything)
 
 - `test_migrate_row_counts_match` asserted `TableMigrationResult.source_rows` —
