@@ -230,7 +230,12 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # Must satisfy web/package.json "engines". Astro 7 refuses to build on
+          # Node 20 ("not supported by Astro! Please upgrade to >=22.12.0"), and
+          # this job pinned 20 — so the `web` job failed on every run until
+          # 2026-08-05. package.json also *claimed* >=20.0.0, so the pin looked
+          # correct; the declaration was the thing that was wrong.
+          node-version: "22"
           cache: "npm"
           cache-dependency-path: web/package-lock.json
 

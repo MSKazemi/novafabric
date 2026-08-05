@@ -21,6 +21,16 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   a single user. The step is now `continue-on-error` with an explicit warning
   annotation: a supply-chain nicety must not be able to block the supply chain.
 
+### Fixed (the CI `web` job could not build the site at all)
+
+- **`Node.js v20.20.2 is not supported by Astro! Please upgrade to >=22.12.0`.**
+  The `web` job pinned Node 20. What let it survive review is that
+  `web/package.json` *also* declared `>=20.0.0` — the pin matched the
+  declaration, and the declaration was what was wrong. Both corrected to 22, and
+  guarded by a test that checks the pin against the declaration **and** checks
+  the declaration against what Astro actually requires, since agreeing with a
+  wrong declaration is exactly how this got through.
+
 ### Fixed (CI's integration job had not executed a single test in over a week)
 
 - **`Failed to spawn: alembic`.** The `integration` job ran `uv sync --frozen`

@@ -155,3 +155,40 @@ def test_integration_job_installs_all_extras(integration_job: dict) -> None:
             "migration step fails with `Failed to spawn: alembic` before any "
             "integration test executes."
         )
+
+
+def test_ci_node_version_satisfies_the_web_package_engines() -> None:
+    """The CI Node pin must satisfy what `web/package.json` declares it needs.
+
+    The `web` job pinned Node 20 while Astro 7 requires >=22.12.0, so
+    `astro build` refused to run and the job failed on every push. What made it
+    survive review is that `web/package.json` *also* claimed `>=20.0.0` — the
+    pin matched the declaration, and the declaration was the thing that was
+    wrong. Checking the pin against the declaration alone would not have caught
+    it, so this asserts both are at least the version Astro actually requires.
+    """
+    import json
+    import re
+
+    package = json.loads((_REPO_ROOT / "web" / "package.json").read_text())
+    declared = package.get("engines", {}).get("node", "")
+    match = re.search(r"(\d+)", declared)
+    assert match, f"web/package.json declares no usable node engine: {declared!r}"
+    declared_major = int(match.group(1))
+
+    workflow = yaml.safe_load(_CI_WORKFLOW_PATH.read_text())
+    node_steps = [
+        step
+        for step in workflow["jobs"]["web"]["steps"]
+        if "setup-node" in str(step.get("uses", ""))
+    ]
+    assert node_steps, "the web job no longer sets up Node"
+    pinned_major = int(str(node_steps[0]["with"]["node-version"]).split(".")[0])
+
+    assert pinned_major >= declared_major, (
+        f"CI pins Node {pinned_major} but web/package.json requires {declared}"
+    )
+    assert declared_major >= 22, (
+        "Astro 7 requires Node >=22.12.0; web/package.json must not claim less, "
+        "or a too-low CI pin looks correct while the build cannot run"
+    )
