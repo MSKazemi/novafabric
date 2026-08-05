@@ -192,3 +192,40 @@ def test_ci_node_version_satisfies_the_web_package_engines() -> None:
         "Astro 7 requires Node >=22.12.0; web/package.json must not claim less, "
         "or a too-low CI pin looks correct while the build cannot run"
     )
+
+
+def test_every_workflow_that_runs_mypy_or_pytest_installs_all_extras() -> None:
+    """Scan for the whole class, not the instance that happened to break.
+
+    Five separate jobs have now failed because they ran `uv sync` without
+    `--all-extras`: `unit` (BL-022), `integration`, and the MetadataStore
+    Security Gate, each found only when something downstream went red. The
+    optional extras carry `alembic`, `uvicorn`, `psycopg`, `psycopg_pool`,
+    `nats-py`, `a2a-sdk` and `mcp`, and the code imports several of them at
+    module scope — so a missing extra is a collection error or an unresolved
+    import, never a graceful skip.
+
+    The two benchmark jobs are exempt by design: they measure capture overhead,
+    and installing extras changes what gets imported and skews the numbers.
+    """
+    exempt = {"seal-latency-gate", "capture-overhead-gate"}
+    offenders: list[str] = []
+
+    for workflow_path in sorted((_REPO_ROOT / ".github" / "workflows").glob("*.yml")):
+        workflow = yaml.safe_load(workflow_path.read_text())
+        for job_name, job in (workflow.get("jobs") or {}).items():
+            if job_name in exempt:
+                continue
+            runs = _run_steps(job)
+            needs_extras = any("mypy" in r or "pytest" in r for r in runs)
+            syncs = [r for r in runs if "uv sync" in r]
+            if not (needs_extras and syncs):
+                continue
+            if not all("--all-extras" in cmd for cmd in syncs):
+                offenders.append(f"{workflow_path.name}::{job_name}")
+
+    assert not offenders, (
+        "these jobs run mypy or pytest but install without --all-extras, so "
+        "optional dependencies are absent and the failure looks like a real "
+        "type or import error: " + ", ".join(offenders)
+    )

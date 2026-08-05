@@ -39,7 +39,16 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync
+        # --all-extras: this job type-checks `metadata_store/`, which imports
+        # `psycopg_pool` (server extra) and `alembic.command`. Without the extras
+        # mypy cannot resolve either and the gate fails with
+        # `Cannot find implementation or library stub for module named
+        # "psycopg_pool"` — not a real type error, just a missing install.
+        #
+        # Fifth instance of the class BL-022 named for the `unit` job. The guard
+        # in tests/packaging_metadata/ now covers every workflow that runs mypy
+        # or pytest, so the sixth cannot land silently.
+        run: uv sync --all-extras
 
       - name: Ruff lint
         run: uv run ruff check src/ tests/ scripts/
