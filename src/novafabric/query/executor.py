@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from novafabric.query.cache import scan_capsule_dir_cached
 from novafabric.query.engine import QueryIndex
 from novafabric.query.errors import QueryExecutionError
 from novafabric.query.indexer import scan_capsule_dir
@@ -161,19 +162,30 @@ def run_query(
     *,
     engine: str | None = None,
     now: datetime | None = None,
+    use_cache: bool = True,
+    rebuild_cache: bool = False,
 ) -> dict[str, Any]:
     """Execute a parsed query over a local capsule directory, offline.
 
-    Read-only end to end: the capsule dir is scanned, a derived in-memory
-    index is built (DuckDB or stdlib SQLite — identical semantics), and the
-    canonical result object (spec §Output JSON) is returned. No server, no
-    network, no writes.
+    The **capsules** are read-only: they are signed evidence and nothing here
+    writes to them. Since ADR-0225 the parsed rows are cached under
+    ``NOVAFABRIC_HOME`` so an unchanged capsule is not re-parsed on every query,
+    which is where ~92% of the scan time went. Pass ``use_cache=False`` for the
+    authoritative full scan, or ``rebuild_cache=True`` to discard and rewrite
+    the stored rows. A cache that is missing, stale or damaged costs time, never
+    correctness (ADR-0225 D3).
+
+    No server, no network.
     """
     now = now or datetime.now(timezone.utc)
     since_epoch, until_epoch, since_iso, until_iso = resolve_time_window(
         plan.since, plan.until, now
     )
-    rows = scan_capsule_dir(capsule_dir)
+    rows = (
+        scan_capsule_dir_cached(capsule_dir, rebuild=rebuild_cache)
+        if use_cache
+        else scan_capsule_dir(capsule_dir)
+    )
     index = QueryIndex.build(rows, engine=engine)
     try:
         call_rows = index.fetch_calls(plan.where, since_epoch, until_epoch)

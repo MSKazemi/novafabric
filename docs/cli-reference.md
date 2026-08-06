@@ -1108,9 +1108,21 @@ Options:
   rendering of it): `columns`, `rows`, `row_count`, `truncated`, `time_window`,
   and an `index {engine, built_at, capsule_count}` provenance block.
 - `--capsule-dir PATH` — capsule storage directory (defaults to `$NOVAFABRIC_CAPSULE_DIR`).
-- `--rebuild-index` — force a fresh index build. In this slice the derived index
-  is built in memory on every query (nothing is written to disk), so this is
-  currently always implied.
+- `--rebuild-index` — discard the cached rows and rebuild them from a full scan.
+- `--no-cache` — ignore the persistent index entirely and scan every capsule.
+  The authoritative answer, and slower.
+
+**The persistent index (ADR-0225).** Since the cache landed, a capsule is
+re-parsed only when it has actually changed, which is worth roughly **5×** on the
+scan (measured: 1841 ms → 375 ms at 10,000 capsules). Two things follow:
+
+- `nova query` **writes to `$NOVAFABRIC_HOME/query-index.db`**. It is a command
+  that previously wrote nothing at all, so this is called out rather than left to
+  be discovered. **Your capsules are still never written to** — they are signed
+  evidence, and the cache deliberately lives outside them.
+- A cache that is missing, stale or damaged costs you time, never correctness:
+  any problem falls back to the full scan. If you ever suspect it, `--no-cache`
+  gives the authoritative answer and `--rebuild-index` replaces the stored rows.
 
 Semantics: `count()` counts **distinct capsules**; other aggregates run over the
 matched model-call records, skipping capsules where the metric is absent (SQL

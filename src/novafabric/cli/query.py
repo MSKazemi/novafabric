@@ -123,8 +123,15 @@ def query_cmd(
         bool,
         typer.Option(
             "--rebuild-index",
-            help="Force a fresh index build. (This slice rebuilds the derived in-memory "
-            "index on every query, so this is currently always implied.)",
+            help="Discard the cached rows and rebuild them from a full scan.",
+        ),
+    ] = False,
+    no_cache: Annotated[
+        bool,
+        typer.Option(
+            "--no-cache",
+            help="Ignore the persistent index entirely and scan every capsule. "
+            "The authoritative answer, and slower.",
         ),
     ] = False,
 ) -> None:
@@ -144,7 +151,6 @@ def query_cmd(
       nova query --select 'p95(latency) AS p95_ms' --group-by status
       nova query --query-file q.yaml --capsule-dir ./capsules
     """
-    del rebuild_index  # accepted per ADR-0129; index is rebuilt fresh each run
     try:
         query_object = load_query_file(query_file) if query_file is not None else {}
         plan = plan_from_query_object(
@@ -163,7 +169,9 @@ def query_cmd(
 
     base = (capsule_dir or default_capsule_dir()).resolve()
     try:
-        result = run_query(plan, base)
+        result = run_query(
+            plan, base, use_cache=not no_cache, rebuild_cache=rebuild_index
+        )
     except QueryError as exc:
         typer.echo(f"Query error: {exc}", err=True)
         raise SystemExit(1) from exc
