@@ -53,8 +53,8 @@ from dataclasses import fields as dataclass_fields
 from pathlib import Path
 
 from novafabric._paths import nova_home
-from novafabric.eval.scores import SCORES_FILENAME
 from novafabric.query.indexer import (
+    INDEXED_FILENAMES,
     CallRow,
     IndexRows,
     ScoreRow,
@@ -74,7 +74,13 @@ INDEXER_SCHEMA_VERSION = 1
 
 #: Files whose content the indexer reads. Any change to one of these changes the
 #: rows a capsule contributes, so each is part of the signature.
-_INDEXED_FILES = ("capsule.yaml", "capsule.json", "model-calls.jsonl", SCORES_FILENAME)
+#:
+#: Derived from the indexer rather than restated here: two lists of the same fact
+#: agree until one of them is edited, and the divergence would be silent — a file
+#: read but unsigned-for makes the cache serve stale rows, which is the one
+#: outcome ADR-0225 D3 forbids. ``tests/query/test_indexer_signature_coupling.py``
+#: fails if the indexer ever reads outside this set.
+_INDEXED_FILES = INDEXED_FILENAMES
 
 _CALL_FIELDS = tuple(f.name for f in dataclass_fields(CallRow))
 _SCORE_FIELDS = tuple(f.name for f in dataclass_fields(ScoreRow))

@@ -9,6 +9,27 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Fixed (the query cache's correctness rule was a comment, not a mechanism)
+
+- ADR-0225 A1 fixed two instances of one class: a file the indexer reads whose
+  mutation the cache signature cannot see. The rule it landed — "the signature
+  covers the files the indexer reads" — then lived as a hand-maintained tuple in
+  `query/cache.py` that merely *happened* to agree with `query/indexer.py`.
+- The next instance was already in view. `tool-calls.jsonl` is captured with 34
+  fields and is the obvious next fact table; teaching the indexer to read it
+  without extending the tuple would have reproduced A1 exactly — an append moves
+  neither the directory mtime nor any signed-for file — and every test asserting
+  today's four files would still have passed.
+- The indexer now declares its own read-set (`indexer.INDEXED_FILENAMES`) and the
+  cache derives the signature from it, so the fact has one copy.
+  `tests/query/test_indexer_signature_coupling.py` derives that read-set
+  **independently** — from the indexer's AST literals plus its namespace
+  constants, which is how it sees `SCORES_FILENAME`, a name the module imports
+  rather than spells — and fails if the indexer ever reads outside the signature.
+- Proven the same way A1 was: injecting an unsigned-for read fails two tests by
+  name. Signature output is byte-identical for today's four files, so no existing
+  cache is invalidated.
+
 ### Fixed (the documented release gate was not the gate CI runs)
 
 - `CLAUDE.md` and `CONTRIBUTING.md` tell contributors that `make test-par` is the

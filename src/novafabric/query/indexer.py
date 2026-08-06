@@ -46,6 +46,20 @@ from novafabric.query.model import LOG_LEVEL_ALIASES, LOG_LEVEL_RANKS
 
 _MANIFEST_NAMES = ("capsule.yaml", "capsule.json")
 
+MODEL_CALLS_FILENAME = "model-calls.jsonl"
+
+#: Every capsule file :func:`scan_capsule` opens — the single source of truth for
+#: "what this indexer reads". The ADR-0225 row cache derives its change signature
+#: from this tuple, so a file added here is covered by the signature and a file
+#: read *without* being added here is a stale-answer defect (an append moves
+#: neither the directory mtime nor any signed-for file). Extend this whenever the
+#: indexer learns to read something new.
+INDEXED_FILENAMES: tuple[str, ...] = (
+    *_MANIFEST_NAMES,
+    MODEL_CALLS_FILENAME,
+    SCORES_FILENAME,
+)
+
 
 @dataclass(frozen=True)
 class CallRow:
@@ -162,7 +176,7 @@ def _log_level_of(record: dict[str, Any]) -> str:
 
 
 def _model_call_rows(capsule_dir: Path, dims: dict[str, Any]) -> list[CallRow]:
-    path = capsule_dir / "model-calls.jsonl"
+    path = capsule_dir / MODEL_CALLS_FILENAME
     rows: list[CallRow] = []
     if path.is_file():
         for line_no, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
