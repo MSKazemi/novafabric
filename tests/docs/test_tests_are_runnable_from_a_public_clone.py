@@ -19,6 +19,7 @@ the file exists.** Those two answers differ precisely where it matters.
 from __future__ import annotations
 
 import ast
+import re
 import subprocess
 from pathlib import Path
 
@@ -148,3 +149,47 @@ def test_the_promote_key_factory_is_public() -> None:
     factory would put a public clone back where it started.
     """
     assert "tests/fixtures/promote/generate_keys.py" in _tracked()
+
+
+def test_no_workflow_command_depends_on_a_private_path() -> None:
+    """CI must not run a script the public repository does not contain.
+
+    Found on 2026-08-06: the MetadataStore Security Gate ended with
+    `bash bench/rls_partition_pruning/ci_smoke.sh`, and `bench/` is excluded from
+    the public git — so that step could never pass. It stayed invisible because
+    the step *above* it was also failing, which skipped everything after.
+
+    Same rule as the tests and the docs, one layer up: the question is whether
+    the public git tracks the path, not whether it exists on somebody's disk.
+    Comments are excluded — several workflows legitimately cite a `design/`
+    document as provenance without reading it.
+    """
+    tracked = _tracked()
+    workflows = sorted((_REPO_ROOT / ".github" / "workflows").glob("*.yml"))
+    offenders: list[str] = []
+
+    pattern = re.compile(
+        r"(?<![\w/.-])(" + "|".join(_PRIVATE_ROOTS) + r")/[\w./-]+"
+    )
+
+    for workflow in workflows:
+        text = workflow.read_text(encoding="utf-8")
+        for lineno, line in enumerate(text.splitlines(), 1):
+            code = line.split("#", 1)[0]
+            for match in pattern.finditer(code):
+                path = match.group(0)
+                if path in tracked:
+                    continue
+                # An existence-guarded reference is fine: the step degrades
+                # instead of failing, which is how a workflow serves both the
+                # public repo and the private mirror. The guard is looked for
+                # anywhere in the same workflow, because `[ -f x ]` and the
+                # command it protects are on different lines.
+                if f"-f {path}" in text or f'-f "{path}"' in text:
+                    continue
+                offenders.append(f"{workflow.name}:{lineno} runs against {path!r}")
+
+    assert not offenders, (
+        "these CI steps reference paths the public git does not contain, so they "
+        "cannot succeed on a public checkout:\n  " + "\n  ".join(offenders)
+    )

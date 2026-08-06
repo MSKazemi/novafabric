@@ -9,6 +9,22 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Fixed (a CI step that could never pass on the public repository)
+
+- The MetadataStore Security Gate ended with
+  `bash bench/rls_partition_pruning/ci_smoke.sh`, and **`bench/` is excluded from
+  the public git** — so that step could not succeed on any public checkout. It
+  stayed invisible because the step above it was failing outright, which skipped
+  everything after: a step that can never run was hidden behind a step that
+  never ran. It now skips with a notice when the script is absent and still runs
+  on the private mirror.
+- Guarded by a new case in
+  `tests/docs/test_tests_are_runnable_from_a_public_clone.py`, extending that
+  file's rule from tests to **workflow commands**. It understands an
+  existence-guarded reference, so a workflow may legitimately serve both trees,
+  and it ignores comments — several workflows cite a `design/` document as
+  provenance without reading it.
+
 ### Fixed (a regression I introduced: mutmut 3.7 broke the FR-08 mutation gate)
 
 - **`mutmut` pinned `<3.6`.** The 2026-08-05 dependency refresh bumped it

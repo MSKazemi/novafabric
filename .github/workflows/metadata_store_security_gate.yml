@@ -146,4 +146,19 @@ jobs:
           fi
 
       - name: Benchmark smoke
-        run: bash bench/rls_partition_pruning/ci_smoke.sh
+        # `bench/` is excluded from the public repository, so this script does
+        # not exist in a CI checkout and this step could never pass there. It
+        # only surfaced now: FR-08 above was failing outright, which skipped
+        # everything after it, so a step that can never run was hidden behind a
+        # step that never ran.
+        #
+        # Skip-with-a-notice rather than fail: on the private mirror the script
+        # is present and the benchmark still runs, and the public repo stops
+        # reporting red for a file it is not meant to contain.
+        run: |
+          if [ -f bench/rls_partition_pruning/ci_smoke.sh ]; then
+            bash bench/rls_partition_pruning/ci_smoke.sh
+          else
+            echo "::notice title=Benchmark smoke skipped::bench/ is not part of \
+          this repository; the ADR-0051 pruning smoke test runs on the private mirror."
+          fi
