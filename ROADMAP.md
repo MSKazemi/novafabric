@@ -775,6 +775,96 @@ philosophy fit of each.
 
 ---
 
+## Dashboard Enterprise Program (2026-08, ADRs 0228–0239)
+
+> **Status label:** every item below is **`planned`** — and every ADR in the range is
+> **`proposed`, not accepted**. Nothing is implemented and nothing is scheduled. This epic
+> records the outcome of a 2026-08 audit of `nova serve` against the two leading LLM-
+> observability dashboards (LangSmith, Langfuse; contrast reads on Arize Phoenix,
+> Braintrust, W&B Weave), filtered through NovaFabric's philosophy.
+
+**The finding that ordered the program.** The dashboard authenticates but does not
+authorize. One shared bearer token grants every endpoint, including `DELETE /api/runs/{id}`,
+`POST /api/compliance/pii/erase`, and `POST /api/seal/{id}/bypass`.
+`POST /api/admin/roles` **writes** RBAC assignments into `server/rbac_store` and nothing in
+`serve/` ever **reads** them — so the roles UI is decorative. **Corrected 2026-08-06:** the
+further claim that this mints a server-mode admin role is **conditional, not flat** —
+`server/auth.py:348` takes roles from the JWT, and `rbac_store` is read only via the
+ADR-0178 workspace fallback, which short-circuits unless `workspace_store.feature_in_use()`.
+So the escalation is **dormant in simple deployments and live in exactly the enterprise
+deployments using workspaces/orgs/service accounts**; an unauthorized cross-mode write to a
+security-relevant table (and to ADR-0060's `LastAdminError` lockout invariant) is a real
+defect either way. ADR-0060 had already documented and deferred this gap at v0.14.
+The Helm chart still defaults to `mode: dashboard`
+with `serve.insecure: true`. This is the v0.98.1 "advanced, not closed" audit finding, now
+specified rather than restated.
+
+| Theme | ADRs | Scope | Status |
+|---|---|---|---|
+| **A — Enterprise access control** *(blocking)* | 0228–0231 | Scope model bound to ADR-0027's Layer A/B/C; tenant scoping via the shipped RLS + `begin_tenant_context()`; secure-by-default Helm posture; OCSF 1.7.0 audit events with before/after state | `planned` |
+| **B — Scale & navigation UX** | 0232–0234 | URL-serialized view state + filter grammar over the ADR-0129 DSL; three-way node/root/tree filter scope over parent/child capsules; bucketed aggregate strip + the **honest-degradation rule** | `planned` |
+| **C — Dashboards as code** | 0235–0236 | Widgets/dashboards as portable versioned JSON + a `nova dashboard` CLI group; chart-from-table promotion + a generic `Ratio` metric primitive | `planned` |
+| **D — Evidence-native differentiation** | 0237–0239 | Evaluator runs captured as Run Capsules (a replayable score); one comparison surface over `diff/_engine`; evidence cart → signed Evidence Bundle | `planned` |
+
+**Every one of the twelve is an "extends", not a "net-new" subsystem** — the primitives all
+ship and are in several cases stronger than the comparators'; they are simply not reachable
+from the surface where the relevant knowledge is produced. The program introduces **no new
+dependency**.
+
+**Hard sequencing:** 0230 must not land before 0228+0229 (flipping the deployment default
+is only responsible once there is something safe to flip to); 0231 depends on 0228 for a
+real actor; 0239 depends on 0228, 0232, and 0234.
+
+**Deliberately declined** (recorded so they are not re-proposed): real-time monitoring and
+alerting, a prompt playground, and hosted SaaS all remain **Not planned** — see the top of
+this file and `strategy/non-goals.md`. The one portable idea inside alerting (LangSmith's
+historical threshold preview) is captured as ADR-0234 OQ-2 against the shipped budget gate
+(ADR-0136). A charting library remains rejected (ADR-0038, ADR-0201).
+
+**⚠ Integration assessment (2026-08-06) — the cohort is NOT implementation-ready.**
+`spec/dashboard-program-integration-assessment.md` audited these twelve ADRs against the
+code and found three that **duplicate or contradict accepted, shipped ADRs**: ADR-0231
+substantially re-proposes **ADR-0191** (audit-log SIEM egress — OCSF/CEF export, rotation,
+redaction, integrity-on-export, all shipped); the competitive scan and catalog wrongly
+called alerting "declined" when **ADR-0192** ships an `ops.*` bus with Slack/PagerDuty/email
+adapters and a dashboard Alerts tab; and ADR-0232's `field:value` grammar **directly
+contradicts ADR-0204**'s normative *"user input is data, never syntax"* rule, which makes
+`-` and `:` literal. Plus: ADR-0237's blast radius is **ten** capsule-dir consumers rather
+than one metrics path (including compliance exports); ADR-0228's three-scope lattice cannot
+represent `server/rbac.Role.auditor`, which is deliberately outside the hierarchy; and
+ADR-0233/0236 both require an `INDEXER_SCHEMA_VERSION` bump against the just-merged ADR-0225
+cache. Eight of twelve ADRs now carry correction notes. Ten pre-implementation artifacts are
+missing, four of them hard gates — draft schemas + fixtures, a **dashboard-mode threat-model
+delta** (`THREAT_MODEL.md` has one for server mode and none for the mode Helm defaults to),
+an ADR-0230 migration note, and per-ADR test plans. **Root cause worth recording: the cohort
+was written by checking "does the primitive exist?" rather than "what breaks downstream?", and
+took a `ROADMAP.md` label as fact without checking code — the exact failure `CLAUDE.md` warns
+about.**
+
+**Pre-implementation gates (2026-08-06): 8 of 10 closed.** Draft schemas + fixtures (`52/52` verified, re-checkable via `design/spec/fixtures/verify_dashboard_fixtures.py`), a **dashboard-mode threat-model delta** (`nova serve` had shipped since v0.7 with none), a deployment-migration note, a test plan, and a delivery plan covering rollback, RFC-vs-PR, performance budgets, and doc surfaces. **7 of 12 ADRs require an RFC.** Two gates stay open and are *not* self-closeable: a **security review** of the authorization model (must be done by someone who did not design it) and a **`serve` OpenAPI contract** (~206 undocumented endpoints — deserves its own ADR, copying the conformance-test pattern ADR-0227 just established for `server/`).
+
+**Companion breadth sweep (2026-08-06).** `spec/dashboard-improvement-catalog.md` — a
+30-round, deliberately low-bar sweep producing **206 entries**: 160 new, 17 already
+covered by the ADRs above, 27 refining them, 2 declined. It answers a different question
+than the ADR cohort ("what would make this better to use on Tuesday?" rather than "what
+is architecturally significant?"), and the finding is that **only one of its ten
+highest-leverage items sits in the ADR cohort at all** — the first pass optimized for
+significance, which systematically filters out the papercuts. Five entries are flagged as
+warranting their own ADR, none authored: declared response models + operation IDs for
+`serve` (~206 endpoints, the same defect class ADR-0227 just fixed for `server/`), a
+keep-or-cut decision on the TV-5 3D view, hot-field denormalization, an annotation-queue
+surface, and cohort HTML export. **Unvalidated proposals** — read from code and docs, not
+tested with users.
+
+Design artifacts (private `design/`): consolidated plan `spec/dashboard-enterprise-program.md`,
+ADRs **0228–0239**, companion specs (`dashboard-authz-v0`, `audit-event-ocsf-v0`,
+`dashboard-widget-v0`, `view-state-url-v0`, `evidence-cart-v0`), the competitive-scan dossier
+`vision/library/2026-08-06-llm-observability-competitive-scan.md`, and ten idea cards under
+`vision/ideas/2026-08-06-*.md` (of which nine scored **go** and one — the time-travel
+dashboard — scored **watch**).
+
+---
+
 ## Next-100 Agentic Frontier (2027 program, ADRs 0142–0151)
 
 > **Status label:** every item below is **`future design`** or **`planned`** — design intent only,

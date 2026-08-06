@@ -69,6 +69,232 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   which do not inherit context, still fall back to the singleton rather than to
   `None` — silently dropping every event is the failure this fallback prevents.
 
+### Fixed (a doc-sync pass found the "read-only dashboard" claim in five more public docs)
+
+- **The claim exists in eight places, not the three previously recorded.** Fixed in
+  `docs/tutorials/why-novafabric.md` (×2), `docs/ops/server-deployment.md` (×2), and
+  `docs/cli-reference.md` (×1). The dashboard has not been read-only since v0.8 — it exposes
+  run deletion, PII erasure, and seal bypass behind a single token, and the ops guide and CLI
+  reference now say so rather than merely dropping the word.
+- **Not fixed, deliberately:** the two `deploy/helm/novafabric/values.yaml` instances land
+  with ADR-0230's default flip (deployment config, not documentation), and
+  `docs/releases/v0.58.0.md` is a **dated historical record** — amending a published release
+  note rewrites what was said at the time. ADR-0230 D4's guard is therefore widened to
+  `docs/` **and** `deploy/`, and must **exclude `docs/releases/`**.
+- ROADMAP's v0.98.1 row records fixing *"a false 'dashboard is read-only' claim"*. **That
+  sweep fixed one instance and left seven.** A guard scoped only to `deploy/` — as ADR-0230
+  originally specified — would have left five of them alive.
+
+### Added (delivery plan — 8 of 10 pre-implementation gates now closed)
+
+- **`design/spec/dashboard-program-delivery-plan.md`** closes M5, M7, M9, M10.
+- **RFC-vs-PR determination: 7 of 12 ADRs require an RFC** — 0228/0229/0230/0231
+  (security-relevant), 0235 (new CLI command), 0237 (Run Capsule schema **and** storage
+  format — two triggers), 0239 (Evidence Bundle schema). Four also require a threat-model
+  update, **which already exists**, so those RFCs are not blocked on it.
+- **⚠ Applying `CONTRIBUTING.md` literally found a gap in `CONTRIBUTING.md`.** Its
+  schema-change row enumerates *"Run Capsule, Asset Spec, Evidence Bundle"* and **omits
+  `QueryPlan`** — which ADR-0233 and ADR-0236 both change, which is public under ADR-0034's
+  stability policy, and which forces an `INDEXER_SCHEMA_VERSION` bump. Three ADRs therefore
+  have **no defined channel**. Recommendation: amend the row to name the *property* (any
+  schema under ADR-0034) rather than three formats, which is the version that cannot go stale.
+- **Rollback analysis found a pattern worth naming:** the reversible slices are exactly the
+  ones with no persisted artifact. 0230 is trivial (nothing to migrate); the query-schema
+  slices revert easily but a downgrade discards the ADR-0225 cache — correct, and a **silent
+  performance cliff on rollback** that belongs in release notes; 0228/0229 are deliberately
+  hard (backout is *disable enforcement, keep the credentials* — never delete the store); and
+  **0239 is not revertible at all** for bundles already in third-party hands, where the
+  remedy is disclosure rather than rollback.
+- **Two performance budgets are deliberately left blank** — tree expansion and group-by
+  cardinality — because writing a number with no measurement behind it is the same defect
+  this program spent nine iterations correcting elsewhere.
+- **M6 and M8 stay open, and are recorded as blocked rather than pending.** A security review
+  of the authorization model cannot be self-issued — being reviewed by someone who did not
+  design it *is* the gate. And `serve`'s missing OpenAPI deserves its own ADR: ADR-0227 just
+  fixed that exact defect class for `server/`, and writing a partial contract here would
+  create the second stale document that ADR removed.
+
+### Added (M4 closed — and it found three caps that cannot currently be measured)
+
+- **`design/spec/dashboard-program-test-plan.md`.** The useful result is not the plan, it is
+  what writing it exposed: **the existing dashboard scale gate cannot produce three of this
+  cohort's numbers, because its fixture is the wrong shape.**
+  `tests/bench/test_dashboard_scale_gate.py` seeds 100K *independent* runs — verified by grep,
+  which finds no `parent`, `child`, `world_size`, or `global_run_id`. So ADR-0233's
+  tree-expansion cap (whose expensive case is a `world_size: 4096` distributed run),
+  ADR-0236's group-by cardinality cap, and ADR-0234's absent-≠-zero rule (which needs rows
+  with **null `nova.cost.amount`**) have **no fixture that exercises them at all**.
+- Each of those ADRs states its cap must be *measured, not copied*. Until a distributed-shaped
+  and a sparse-cost fixture exist, the caps would be **guesses wearing a threshold's
+  clothing** — so the plan makes those fixtures a **prerequisite, not a follow-up**.
+- Tests are specified as **"must fail when …"** rather than "tests that it works", because a
+  rule that cannot fail is decoration. The plan also names what is **deliberately not
+  tested** — notably that **nothing validates the quality of ADR-0234's refusal messages**,
+  which is that decision's main risk, and is a user-research question rather than an
+  assertion.
+- Repo-specific traps are restated where they apply: no `tests/<name>/__init__.py` (it shadows
+  an installed dist and silently killed the coverage gate for six weeks), `uv sync
+  --all-extras`, `--dist=loadgroup`.
+
+### Added (M1 closed — the dashboard cohort now meets the schema bar it cites)
+
+- **8 draft JSON Schemas + 52 golden fixtures, all verified** (13 authz + 12 widget + 9 audit
+  + 7 view-state + 11 evidence-cart = **52/52 behave as expected**), each invalid case
+  rejected **for its stated reason**.
+- **`design/spec/fixtures/verify_dashboard_fixtures.py`** makes that number falsifiable
+  rather than decorative — anyone can re-run it and either reproduce 52/52 or not. A
+  verified-count claim nobody can re-check is the kind of artifact this program spent six
+  iterations finding elsewhere.
+- **Deliberately no OCSF projection schema.** That egress ships under ADR-0191; asserting
+  ownership of it in a new schema was precisely the F1 mistake, and not repeating it is the
+  point.
+- Rules moved from prose into structure: `redaction` becomes **required** the instant
+  `prior`/`current` appear (with `applied` a `const true`, so "we ran it and it was off"
+  cannot validate); a `shared-token` actor **may not carry an `id`**; a cart item **cannot
+  carry a resolved body**; `completeness.claim` is a `const "curated"` so **no configuration
+  can produce an exhaustiveness claim**; and `contains_held_evidence` is always required.
+- Each of the five fixture READMEs states **what its schema deliberately does not cover** —
+  route-table completeness, mutation-site capture, grammar→`QueryPlan` round-trip, per-item
+  resolvability. A schema implying it covered those would be the more dangerous artifact.
+
+### Added (draft schemas and verified golden fixtures for the dashboard cohort)
+
+- **4 draft JSON Schemas + 25 golden fixtures, all verified** with `jsonschema` (MIT) +
+  format checker — `serve-credential` and `route-scope-table` (**13/13** behave as
+  expected) and `dashboard-widget` and `dashboard` (**12/12**). Every invalid fixture is
+  rejected **for its stated reason**, not merely rejected.
+- **The load-bearing rules are encoded in the schemas, not left to the implementation.**
+  `rule` is *conditionally required* for `operate`/`admin` via `if`/`then`, so a route
+  classification cannot be recorded without citing the rule it came from. A `shared-token`
+  credential is constrained to `subject: local` / `scope: admin`, so the legacy token
+  cannot masquerade as a named identity.
+- **The widget schema deliberately inverts the house default** — `additionalProperties: true`,
+  because the spec requires unknown fields to validate and round-trip, or a mixed-version
+  team destroys each other's work through ordinary use. `version` is a `const`, so an
+  unknown *field* passes while an unknown *version* is rejected; two fixtures exist purely
+  to prove both halves of that asymmetry.
+- Both fixture READMEs state **what the schema deliberately does not cover** — route-table
+  completeness is a runtime check against the app's route set, and widget reference
+  resolvability and export byte-identity are acceptance criteria. A schema that implied it
+  covered those would be the more dangerous artifact.
+- **M1 is partial, not closed:** `dashboard-audit-record`, `dashboard-view-state`, and
+  `evidence-cart` remain.
+
+### Fixed (all 10 integration findings closed; two more gates shut)
+
+- **ADR-0237's fix is the opposite of what the finding proposed, and tracing the code is
+  what showed it.** The finding called for a "capsule-kind concept honoured at every
+  consumer" across all ten capsule-directory walkers. But `replay/_intervention.py` already
+  writes a genuine `capsule.yaml` documented as *"hard-marked … so the output can never be
+  mistaken for an original run"* — and **no consumer checks that mark**. Replays stay out of
+  the ten purely because `ReplayEngine` defaults `base_dir` to `.novafabric/replays/` and
+  `discover_capsule_dirs` walks exactly one base. **The marker is decorative; the directory
+  is what works.** D5 now writes evaluation capsules to `$NOVAFABRIC_HOME/evaluations/`, so
+  **zero consumers change** and no future consumer has to remember a filter. D5 also adds
+  the guard the convention lacks — `--output-dir` can currently point a derived capsule into
+  the capsule root and break it with one flag.
+- **ADR-0239 D8 answers the legal-hold question**: export under hold is **allowed and
+  recorded**, not blocked. A hold preserves, and export does not threaten preservation;
+  blocking it would make NovaFabric obstruct the process the hold serves, since producing
+  evidence to counsel or a regulator is often why a hold is in force. But the manifest now
+  carries per-item hold status and a `contains_held_evidence` flag — the recipient may have
+  handling obligations the bundle cannot enforce. NovaFabric **records** legal state; it
+  does not adjudicate it. The export path may never place, release, or modify a hold.
+- **`design/spec/dashboard-deployment-migration-v0.md`** closes the ADR-0230 migration gate:
+  who is affected, the single decision required, rollback, and what the flip explicitly does
+  **not** do (it narrows exposure, not privilege — authorization is ADR-0228's job). Key
+  finding: **there is nothing to migrate** — chart and flags only, no capsule, schema, or
+  stored state — so the risk is entirely "a deployment stops starting until someone decides",
+  which is intended. Flags the container-image default as an unanswered gap.
+- **All 10 findings resolved; all 12 ADRs now carry a resolution rather than an open
+  correction.** Remaining gates: M1 (schemas + fixtures), M4 (test plans), M5–M10.
+
+### Fixed (the dashboard ADRs are now corrected, not merely annotated)
+
+- **9 of 10 integration findings resolved in the ADRs themselves.** The previous pass
+  annotated them; this one revises them.
+- **ADR-0231 rewritten** to extend ADR-0191 rather than duplicate it. A live
+  `nova audit-log export --help` run confirmed **`--source dashboard` already ships**, so
+  v1's OCSF projection was not merely duplicative in principle — the exact feature exists.
+  New D1 is *"build no egress, no format, and no sink"*; only before/after state,
+  `identity_source`, and denial events survive. A *Revision history* section records what
+  was deleted and why. The rewrite also surfaced a new requirement: `DASHBOARD_FIELD_ALLOWLIST`
+  is **deny-by-default**, so a field added to the record and not the allowlist is **silently
+  dropped from every export** — enriched locally, unchanged in the SIEM, no error.
+- **ADR-0228 gains D1a — an orthogonal `audit` scope.** A cumulative `read ⊂ operate ⊂ admin`
+  chain cannot express `server/rbac.Role.auditor`, which the server deliberately keeps
+  outside its hierarchy: folding it into `read` loses the see-more half, into `operate` the
+  change-nothing half. Its Context now states the escalation **conditionally**, and it cites
+  ADR-0060 (which deferred this exact question at v0.14) and ADR-0178.
+- **ADR-0232 D5 rewritten** so content terms are a **quoted operand**: outside the quotes
+  `-` and `:` are grammar, inside them ADR-0204's *"user input is data, never syntax"* rule
+  governs unchanged. A bare unqualified word is now a grammar error, not an implicit content
+  search. **D2 gains a narrow carve-out** distinguishing *view state* (always in the URL)
+  from *transient interaction state*, which resolves the contradiction with ADR-0036's
+  shipped Compare gesture — that design is correct and stays.
+- **ADR-0233 D5 and ADR-0236 D7** now require the `INDEXER_SCHEMA_VERSION` bump explicitly,
+  and record that both touch the *same* constant and must merge one at a time.
+- **ADR-0230** cites ADR-0042 first: the shipped Helm default is not merely unsafe, it is an
+  **unsupported configuration** under an accepted ADR. **ADR-0235**'s parity-ratchet cost is
+  now a pre-CI gate in the widget spec's acceptance criteria.
+- **Still open:** ADR-0237 needs a capsule-kind design (its blast radius is ten capsule-dir
+  consumers), and ADR-0239 must answer whether evidence under legal hold may leave the system.
+
+### Added (`nova serve` finally has threat-model coverage)
+
+- **`THREAT_MODEL.md` gains a "Dashboard Mode (`nova serve`) — Threat Delta"** — S-18
+  (shared token defeats attribution), T-16 (evidence destruction with no second-actor
+  gate), R-7 (repudiation), I-16 (every read implicitly cross-tenant), D-15 (incomplete
+  ADR-0199 bounded-read retrofit), E-14 (conditional cross-mode escalation via
+  `role_assignments`), E-15 (no least privilege across ~206 endpoints).
+- **`nova serve` had shipped since v0.7 with zero threat-model coverage** while server
+  mode, cluster-scale, the v0.59 opt-in surfaces, enterprise readiness, and the trust-layer
+  cohort each had a full STRIDE delta. This is the third instance of that class — the
+  2026-07-30 pass closed the second for the trust-layer primitives. ADR-0184 closed the
+  *authentication* half in v0.59; **the authorization half was never modelled.**
+- **Every mitigation is marked `proposed`, none accepted**, so each row reads as an open
+  risk rather than a closed one. E-14 is stated **conditionally** on purpose: the escalation
+  is real only where `workspace_store.feature_in_use()` enables the ADR-0178 fallback, and a
+  flat claim would have been disproved on a simple deployment and the row dismissed.
+- Recorded as **residual rather than mitigated**: the Helm chart still calls the dashboard
+  *"read-only"* in two places, the audit log is deliberately unrotated, and the shipped chart
+  default matches **none of ADR-0042's four supported deployment tiers**.
+
+### Fixed (design — an integration audit found the dashboard cohort was not implementation-ready)
+
+- **`design/spec/dashboard-program-integration-assessment.md`.** The ADR cohort below was
+  written by asking *"does the primitive exist?"*. This asks *"what breaks downstream?"*,
+  and the difference produced real errors. **Eight of the twelve ADRs now carry correction
+  notes.**
+- **Three ADRs duplicate or contradict accepted, shipped work.** ADR-0231 substantially
+  re-proposes **ADR-0191** (accepted 2026-07-17, five slices shipped: `nova audit-log
+  export --format ocsf|cef|jsonl`, rotating-file and syslog sinks that never split a record,
+  deny-by-default redaction, integrity-on-export) — only its before/after state,
+  `identity_source`, and denial events survive. The competitive scan and catalog Round 17
+  called alerting **"declined"** when **ADR-0192** is accepted and shipped with an `ops.*`
+  bus, `AlertRouter`, **Slack/PagerDuty/email adapters**, and a dashboard Alerts tab. And
+  ADR-0232's `field:value` grammar **directly contradicts ADR-0204**'s normative *"user
+  input is data, never syntax — bare `-` and `:` are matched literally"* rule; that
+  collision would have surfaced only when a user typed `-model:gpt-4` and got nothing.
+- **ADR-0237's blast radius is ten capsule-directory consumers, not one metrics path** —
+  including `serve/routers/compliance_exports.py`, where silently including evaluation runs
+  in a regulatory export is a correctness defect rather than a metrics inconvenience.
+- **ADR-0228's three-scope cumulative lattice cannot represent `server/rbac.Role.auditor`**,
+  which `rbac.py:35` explicitly keeps outside the hierarchy. (Also good news the cohort
+  missed: an `auditor` role already existing is shipped, partial support for the
+  auditor's-view idea card.)
+- **ADR-0233 and ADR-0236 each require an `INDEXER_SCHEMA_VERSION` bump** against the
+  ADR-0225 persistent query cache merged the same day; without it a warm cache serves stale
+  answers — the wrong-but-fast outcome ADR-0225 D3 exists to prevent.
+- **Ten pre-implementation artifacts are missing**, four of them hard gates: draft schemas +
+  golden fixtures (the cohort cites the langfuse-parity bar and does not meet it), a
+  **dashboard-mode threat-model delta** — `THREAT_MODEL.md` carries a STRIDE table for
+  server mode and **nothing for the mode the Helm chart defaults to** — an ADR-0230
+  migration note, and per-ADR test plans.
+- **Root cause, recorded rather than smoothed over:** a `ROADMAP.md` label was taken as fact
+  and never checked against code. That is precisely the failure mode `CLAUDE.md`'s status
+  section warns about, and it propagated into a user-facing recommendation.
+
 ### Added (design only — the dashboard enterprise program, ADRs 0228–0239)
 
 - **A 2026-08 audit of `nova serve` against LangSmith and Langfuse**, with contrast
@@ -80,8 +306,8 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   `POST /api/seal/{id}/bypass`. `POST /api/admin/roles` **writes** RBAC
   assignments into `server/rbac_store`, and a grep of every `.py` under
   `src/novafabric/serve/` confirms **nothing there ever reads them** — so the roles
-  UI is decorative, and the dashboard's shared token can mint a server-mode admin
-  role that the OIDC-authenticated server will then trust. Tenancy is one hardcoded
+  UI is decorative. (**Corrected below** — the further escalation claim proved
+  conditional rather than flat.) Tenancy is one hardcoded
   literal (`serve/app.py:5279`). This is the v0.98.1 "advanced, not closed" finding,
   now specified rather than restated.
 - **Twelve ADRs in four themes** — enterprise access control (0228–0231), scale and

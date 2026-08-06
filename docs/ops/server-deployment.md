@@ -36,7 +36,7 @@ The local SQLite registry is created automatically at
 
 ### Optional local dashboard
 
-The experimental read-only dashboard is a separate optional extra:
+The experimental dashboard is a separate optional extra:
 
 ```bash
 pip install 'novafabric[serve]'
@@ -354,8 +354,9 @@ dropped) and applies schema migrations via an init container. See
 the full values reference.
 
 > **Dashboard vs. server mode.** By default both the container and the chart run
-> `nova serve` — the experimental read-only dashboard, which serves over HTTP
-> with a printed token (`--insecure`). For the multi-user REST API with
+> `nova serve` — the experimental dashboard, which serves over HTTP with a printed
+> token (`--insecure`). **It is not read-only:** it exposes irreversible operations
+> including run deletion, PII erasure, and seal bypass, all behind that single token. For the multi-user REST API with
 > OIDC/RBAC over Postgres, use **server mode** (Scenario 6). The default is
 > unchanged for backward compatibility.
 

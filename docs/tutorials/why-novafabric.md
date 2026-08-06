@@ -334,7 +334,7 @@ The same five primitives work from a laptop to a cluster:
 - **Server mode (shipped, experimental, v0.7):** a FastAPI service backed by Postgres,
   with OIDC, RBAC (`reader < writer < admin`, plus an orthogonal `auditor`), and
   offline CI tokens. Local mode never *requires* server mode.
-- **`nova serve --experimental` (v0.7):** a local-only, read-only dashboard that binds
+- **`nova serve --experimental` (v0.7):** a local-only dashboard that binds
   `127.0.0.1`, uses a one-shot token, and shows the equivalent CLI command on every
   page. The CLI + JSON remain the canonical interface through v1.0.
 
@@ -364,7 +364,7 @@ simplest proof that the whole pipeline works end to end.
 
 ```bash
 make nova-loop       # run all agents in a continuous loop
-make nova-dashboard  # open the local read-only dashboard
+make nova-dashboard  # open the local dashboard
 ```
 
 ---

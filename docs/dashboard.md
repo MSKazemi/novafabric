@@ -240,7 +240,7 @@ A short list, for completeness — the dashboard is not strictly a subset:
 ## Security model
 
 - **Localhost only** by default. `--host 0.0.0.0` is rejected without `--insecure`. Even with `--insecure`, put TLS in front of it; the dashboard does not terminate TLS.
-- **Token authentication.** A one-shot, cryptographically random URL-safe token (`secrets.token_urlsafe(32)`) is generated at start-up, written to `~/.novafabric/.serve-token` (mode 0600), and rotated on every restart. The token must be passed as `?token=…` on every `/api/*` request. `Bearer` headers are not accepted (so a stolen token can't be sent silently from a misconfigured tab).
+- **Token authentication.** A one-shot, cryptographically random URL-safe token (`secrets.token_urlsafe(32)`) is generated at start-up, written to `~/.novafabric/.serve-token` (mode 0600), and rotated on every restart. The token must be passed on every `/api/*` request, either as an `Authorization: Bearer …` header or as `?token=…`. When both are present the `Bearer` header is authoritative. (Bearer support was added in v0.97.0; this paragraph previously stated that Bearer headers were rejected, which has not been accurate since.)
 - **DNS-rebinding defence.** `Host` header must be `127.0.0.1`, `localhost`, or `::1`. Other hosts return 403 even with a valid token.
 - **CORS allowlist.** Only `http://localhost:*` and `http://127.0.0.1:*` origins are accepted. Defence in depth — the token is the authoritative gate.
 - **Constant-time token compare.** `_consteq` compares bytes equally regardless of where the mismatch is.

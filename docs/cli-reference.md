@@ -4596,7 +4596,7 @@ Options:
 >
 > | Command | Package extra | Purpose | Auth |
 > |---|---|---|---|
-> | `nova serve --experimental` | `novafabric[serve]` | **Local read-only dashboard** — browse capsules, registry, and lineage in a browser. Single-user, loopback-only. | Single-use token |
+> | `nova serve --experimental` | `novafabric[serve]` | **Local dashboard** — browse capsules, registry, and lineage in a browser. Single-user, loopback-only. **Not read-only** — it also exposes mutating and irreversible operations behind the session token. | Single-use token |
 > | `nova server start` | `novafabric[server]` | **Multi-user REST API** — Postgres/SQLite backend, OIDC + RBAC, offline tokens. For teams and CI pipelines. | OIDC Bearer / offline JWT |
 >
 > Local CLI commands (`nova capture`, `nova validate`, `nova replay`, etc.) require **neither** extra and work without any server.
