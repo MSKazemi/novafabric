@@ -381,7 +381,7 @@ info:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
   title: NovaFabric Multi-User REST API
-  version: 0.63.0
+  version: 0.100.1
 openapi: 3.1.0
 paths:
   /.well-known/mcp.json:
@@ -1016,11 +1016,16 @@ paths:
       description: 'Assertion Consumer Service (HTTP-POST binding).
 
 
-        Refuses (501) every assertion while the D5 gate is open. The posted body
+        Refuses (501) unless the experimental ACS is opted in. When enabled: verify
 
-        is never parsed: without an XXE-hardened parser and XML-DSIG verification
+        the XML-DSIG signature and parse under an XXE-hardened parser (V1/V2/V10),
 
-        (rules V1/V2/V10) NovaFabric does not touch untrusted assertion XML.'
+        apply the policy rules (V3–V9, V11), map attributes to roles, resolve the
+
+        subject, and mint a bearer token. Any failure rejects with 401 and issues
+        no
+
+        session; error messages never carry assertion contents (the closed audit rule).'
       operationId: assertion_consumer_service_v0_auth_saml_acs_post
       responses:
         '200':
@@ -1036,11 +1041,13 @@ paths:
       description: 'SP-initiated SSO entry point.
 
 
-        Refuses (501) while the ADR-0138 D5 library gate is open: starting a flow
+        Refuses (501) unless the experimental ACS is opted in (a flow whose assertion
 
-        whose assertion could never be verified at the ACS would strand the user
+        could never be verified would strand the user at the IdP). When enabled,
 
-        at the IdP.'
+        redirects (302) to the IdP SSO URL with a deflated, base64-encoded
+
+        ``SAMLRequest`` (HTTP-Redirect binding).'
       operationId: sp_initiated_login_v0_auth_saml_login_get
       responses:
         '200':
