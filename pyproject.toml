@@ -445,7 +445,15 @@ dev = [
     # Phase 5 — MetadataStore (ADR-0040) dev tooling
     # mutmut (BSD-2-Clause) — Tier A under ADR-0024.  Mutation testing for the
     # MetadataStore RLS and query invariants.
-    "mutmut>=3.0",
+    # Upper bound is deliberate. mutmut 3.6 renamed the config keys AND changed
+    # the execution model: it now runs pytest inside a `mutants/` tree holding
+    # only `source_paths`, so this gate's curated single-file target makes the
+    # invariant suites unimportable (`ModuleNotFoundError:
+    # novafabric.metadata_store.interface`). Bumped 3.5.0 -> 3.7.0 by the
+    # 2026-08-05 dependency refresh, which broke the FR-08 gate outright.
+    # Migrating the gate to the new model is real work; raise the ceiling only
+    # with `uv run mutmut run` green.
+    "mutmut>=3.0,<3.6",
     # sqlfluff (MIT) — Tier A under ADR-0024.  SQL linter for migration scripts
     # and raw DDL snippets in the MetadataStore.
     "sqlfluff>=3.0",

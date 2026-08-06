@@ -2920,7 +2920,7 @@ wheels = [
 
 [[package]]
 name = "mutmut"
-version = "3.7.0"
+version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -2930,9 +2930,9 @@ dependencies = [
     { name = "setproctitle" },
     { name = "textual" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d5/f9/a63500696f3f35c443ef566528e55630bf7e064436416278927f7bc9c408/mutmut-3.7.0.tar.gz", hash = "sha256:dc93260fabb3a6fd3693aa8d1746825885cb6f9e66c7f9cc1a0f34fc6388e14a", size = 63735, upload-time = "2026-07-31T10:52:58.876Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ac/0d/9ce4fc8b219504a336eb814c5a7ea8e379ad93ce05327ff3842aea93bf0b/mutmut-3.5.0.tar.gz", hash = "sha256:548186d4b0c494b7b9895db82871cb1f229b9271c9ff7cd633e348dd9afcc772", size = 36389, upload-time = "2026-02-22T18:46:41.824Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/93/16/93e3e6aa30e5bc4141724463ae9d9bcc283d08b02aa85dbf5a2b665f3108/mutmut-3.7.0-py3-none-any.whl", hash = "sha256:1d2f9a1bfa4a474b2213df6b17223150b492bf4a85af0eda4fb322297337fb32", size = 59070, upload-time = "2026-07-31T10:53:00.005Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/23/ac475f6db39643946feb09290a2178d603d2b623034d56d3f5059cddb769/mutmut-3.5.0-py3-none-any.whl", hash = "sha256:f19f2dd2e977eb9dc17255d8cb11e24fbfc3191620fba3108cac25779c9d78c9", size = 34242, upload-time = "2026-02-22T18:46:43.113Z" },
 ]
 
 [[package]]
@@ -3313,7 +3313,7 @@ dev = [
     { name = "hypothesis", specifier = ">=6.115" },
     { name = "lxml", specifier = ">=5.2.1" },
     { name = "moto", specifier = ">=5.0" },
-    { name = "mutmut", specifier = ">=3.0" },
+    { name = "mutmut", specifier = ">=3.0,<3.6" },
     { name = "mypy", specifier = ">=1.14" },
     { name = "novafabric", editable = "." },
     { name = "openai", specifier = ">=2.37.0" },

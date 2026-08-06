@@ -9,6 +9,20 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Fixed (a regression I introduced: mutmut 3.7 broke the FR-08 mutation gate)
+
+- **`mutmut` pinned `<3.6`.** The 2026-08-05 dependency refresh bumped it
+  3.5.0 → 3.7.0, and 3.6 changed both the config schema *and* the execution
+  model. The schema change is not a warning on 3.7: `tests_dir` as a string is
+  concatenated to a list and the CLI dies at import with `TypeError: can only
+  concatenate list (not "str") to list`, so the gate could not run at all. The
+  model change is worse — 3.7 runs pytest inside a `mutants/` tree holding only
+  `source_paths`, so this gate's deliberately curated single-file target makes
+  the invariant suites unimportable.
+- Migrating the gate to the new model is real work and is not bundled here.
+  Third upstream regression caught by gating the dependency refresh rather than
+  merging it, after `typer` and `fastapi`.
+
 ### Fixed (server mode could not index a run after applying its own migrations)
 
 - **RFC-0001 accepted (option C) and implemented; closes issue #23.**
