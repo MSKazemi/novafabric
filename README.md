@@ -529,8 +529,8 @@ you opt in:
   a first-class `deployment_environment` tag, variant (A/B) attribution recorded
   verbatim, observation log levels, and tool-call schema validation
   (`nova validate --schemas`).
-- **Offline analytics** — a read-only metrics query DSL over local capsules
-  (`nova query`), saved views (`nova view`), trend reports (`nova trend`),
+- **Offline analytics** — a metrics query DSL over local capsules that never
+  writes to them (`nova query`), saved views (`nova view`), trend reports (`nova trend`),
   per-usage-type token accounting, and a local model-pricing catalog
   (`nova pricing`, `nova cost estimate`). No server, no network.
 - **Governance** — declarative retention sweeps with WORM/legal-hold precedence

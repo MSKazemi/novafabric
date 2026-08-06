@@ -1059,7 +1059,10 @@ both flags can be passed together.
 ### nova query (experimental, ADR-0129)
 
 Aggregate metrics across **many local Run Capsules** with a small, bounded,
-declarative query — offline, read-only, no server, no network, no raw SQL. The
+declarative query — offline, no server, no network, no raw SQL, and it **never
+writes to your capsules**. (Since ADR-0225 it does maintain a derived index under
+`$NOVAFABRIC_HOME`; the capsules themselves stay untouched, which is the property
+that matters — see the persistent-index note below.) The
 grammar is a closed allow-list (spec: `capsule-query-dsl-v0`): exactly four
 clauses (`select`, `where`, `group_by`, time window); anything outside the
 allow-list is a hard parse error. Metrics are the *already-recorded* facts —

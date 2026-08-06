@@ -58,7 +58,7 @@ help:
 	@echo "NovaFabric — available targets:"
 	@echo "  test              Run Python test suite (pytest, benchmarks skipped)"
 	@echo "  test-fast         Fast dev loop: parallel (-n auto), no coverage, skips integration + testcontainers tiers (~90 s)"
-	@echo "  test-par          Full suite in parallel with coverage (~5 min; same scope as test)"
+	@echo "  test-par          Release gate — byte-for-byte what CI's unit job runs (~5 min)"
 	@echo "  benchmark         Run NovaSeal p99 latency gate (100 rounds, < 200 ms)"
 	@echo "  benchmark-capture Run capture-overhead p95 gate (30 captured runs, < 2000 ms)"
 	@echo "  lint              Run ruff linter on src/, tests/ and scripts/"
