@@ -1,16 +1,26 @@
 name: MetadataStore Security Gate
 
+# Path-filtered, plus the things the gate itself depends on.
+#
+# The first three are the code under test. The last three were missing and it
+# showed: pinning `mutmut` back to <3.6 to REPAIR this gate touched only
+# pyproject.toml, uv.lock and this file — so the gate did not re-run and could
+# not confirm its own fix. A gate that cannot be triggered by a change to its
+# own tooling is a gate you cannot repair without an unrelated commit.
+#
+# `workflow_dispatch` is the manual escape hatch for the same reason.
 on:
   push:
-    paths:
+    paths: &gate_paths
       - "src/novafabric/metadata_store/**"
       - "tests/metadata_store/**"
       - "tests/fixtures/broken_session_set.py"
+      - ".github/workflows/metadata_store_security_gate.yml"
+      - "pyproject.toml"
+      - "uv.lock"
   pull_request:
-    paths:
-      - "src/novafabric/metadata_store/**"
-      - "tests/metadata_store/**"
-      - "tests/fixtures/broken_session_set.py"
+    paths: *gate_paths
+  workflow_dispatch:
 
 jobs:
   security-gate:
