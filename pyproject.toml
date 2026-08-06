@@ -159,7 +159,7 @@ spkg = [
     # Security & Provenance Knowledge Graph (SPKG) — ADR-0111, Phase P1.
     # All Tier A under ADR-0024 (independently license-verified 2026-07-02).
     # rdflib (BSD-3-Clause) — RDF graph + PROV-O serialization for the canonical layer.
-    "rdflib>=7.1.0",
+    "rdflib>=7.6.0",
     # pyshacl (Apache-2.0) — SHACL shape validation of provenance triples on ingest (R11).
     "pyshacl>=0.29.0",
     # kuzu (MIT) — embedded openCypher LPG store for the SPKG operational view (ADR-0111 D2);
