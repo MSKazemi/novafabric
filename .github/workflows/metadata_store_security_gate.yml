@@ -104,9 +104,14 @@ jobs:
           # Curated mutation target: postgres.py SET LOCAL line only.
           # Runner uses testcontainers (Docker required on CI host).
           #
-          uv run mutmut run \
-            --paths-to-mutate src/novafabric/metadata_store/postgres.py \
-            --runner "uv run pytest tests/metadata_store/test_cross_tenant_isolation_pgbouncer.py tests/metadata_store/test_set_local_invariant.py -x --tb=short -q"
+          # Configuration comes from [tool.mutmut] in pyproject.toml.
+          #
+          # It used to be repeated here as --paths-to-mutate/--runner. mutmut 3.x
+          # has neither flag — `mutmut run` accepts only --max-children — so this
+          # step failed with `Error: No such option: --paths-to-mutate` for as
+          # long as mutmut 3 has been the pinned major. That break is older than
+          # the 3.5 -> 3.7 bump, which merely added a second one on top of it.
+          uv run mutmut run
           survived=$(uv run mutmut results 2>/dev/null | grep -c "survived" || true)
           if [ "${survived:-0}" -gt 0 ]; then
             echo "FAIL: mutant(s) survived — FR-08 SET LOCAL kill rate < 100%"
