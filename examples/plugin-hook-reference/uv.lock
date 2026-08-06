@@ -586,7 +586,7 @@ requires-dist = [
     { name = "rich", specifier = ">=13.9" },
     { name = "signxml", marker = "extra == 'saml'", specifier = ">=4.0" },
     { name = "sigstore", marker = "extra == 'sigstore'", specifier = ">=4.2.0" },
-    { name = "sqlalchemy", marker = "extra == 'server'", specifier = ">=2.0" },
+    { name = "sqlalchemy", marker = "extra == 'server'", specifier = ">=2.0.51" },
     { name = "typer", specifier = ">=0.15,<0.26" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'serve'", specifier = ">=0.32" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.32" },

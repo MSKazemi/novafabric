@@ -248,7 +248,7 @@ server = [
     "PyJWT>=2.13.0",
     # sqlalchemy (MIT) — Tier A under ADR-0024.  ORM + Core used by the Phase 5
     # MetadataStore (ADR-0040) for both SQLite local mode and Postgres server mode.
-    "sqlalchemy>=2.0",
+    "sqlalchemy>=2.0.51",
     # asyncpg (Apache-2.0) — Tier A under ADR-0024.  High-performance async Postgres
     # driver; required by sqlalchemy[asyncio] for the MetadataStore async session pool.
     "asyncpg>=0.30",
