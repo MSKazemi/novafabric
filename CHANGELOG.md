@@ -9,6 +9,26 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Fixed (every CI run raced to mint the promote fixture keys)
+
+- `tests/conftest.py::_materialise_promote_keys` is `scope="session"`, and under
+  pytest-xdist **a session is per worker, not per run**. Its only guard was "are
+  all six key files present?", which is a check, not a lock. On CI the keys are
+  always absent (they are untracked and minted on demand), so **every CI run
+  raced**: two workers both saw "not all present", both generated, and the
+  second overwrote `admin.pem` between another worker signing with the old key
+  and verifying against the new one.
+- It surfaced as `DSSE signature verification failed: signature mismatch` in
+  `tests/promote` — and, critically, **on a different set of tests each run**.
+  Two runs of one commit failed on disjoint tests, which is what distinguished a
+  race from a regression.
+- One worker now wins an `O_CREAT | O_EXCL` lock and generates while the rest
+  wait for the files, bounded at 60 s so a stale lock from a killed run reports
+  itself instead of hanging until the pytest timeout. No new dependency.
+- Verified both ways by wiping the keys and running `tests/promote -n 16`:
+  unfixed → 5 failed, then 12 failed + 1 error, then a pass; fixed → four passes.
+  Latent since the on-demand minting that fixed issue #24.
+
 ### Added (concurrent in-process captures can each own a recorder — ADR-0224 D3)
 
 - `get_current_recorder()` now resolves a **task-bound** recorder before the
