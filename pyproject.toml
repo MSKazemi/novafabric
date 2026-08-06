@@ -45,7 +45,7 @@ dependencies = [
     # 2026-08-05 while testing the dependabot bulk-upgrade group, which would have
     # shipped a completely non-functional CLI. Revisit with an explicit
     # `nova --help` check before raising the ceiling.
-    "typer>=0.15,<0.26",
+    "typer>=0.27.0,<0.28",
     "pydantic>=2.11",
     "PyYAML>=6.0",
     "rich>=13.9",
