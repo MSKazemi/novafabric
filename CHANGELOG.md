@@ -9,6 +9,92 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Added (design only — the dashboard enterprise program, ADRs 0228–0239)
+
+- **A 2026-08 audit of `nova serve` against LangSmith and Langfuse**, with contrast
+  reads on Arize Phoenix, Braintrust, and W&B Weave. Design artifacts only —
+  **no `src/` or `web/` change**, nothing implemented, every ADR `proposed`.
+- **The finding that ordered the program: the dashboard authenticates but does not
+  authorize.** One shared bearer token grants every endpoint, including
+  `DELETE /api/runs/{id}`, `POST /api/compliance/pii/erase`, and
+  `POST /api/seal/{id}/bypass`. `POST /api/admin/roles` **writes** RBAC
+  assignments into `server/rbac_store`, and a grep of every `.py` under
+  `src/novafabric/serve/` confirms **nothing there ever reads them** — so the roles
+  UI is decorative, and the dashboard's shared token can mint a server-mode admin
+  role that the OIDC-authenticated server will then trust. Tenancy is one hardcoded
+  literal (`serve/app.py:5279`). This is the v0.98.1 "advanced, not closed" finding,
+  now specified rather than restated.
+- **Twelve ADRs in four themes** — enterprise access control (0228–0231), scale and
+  navigation UX (0232–0234), dashboards as code (0235–0236), evidence-native
+  differentiation (0237–0239) — plus five companion specs and a consolidated
+  sequencing plan modeled on the earlier Langfuse-parity cohort. **Every one is an
+  "extends", not a net-new subsystem, and the program introduces no new
+  dependency**: the primitives all ship and are in several cases stronger than the
+  comparators', they are simply unreachable from the surface where the relevant
+  knowledge is produced.
+- **Ten idea cards** under `design/vision/ideas/2026-08-06-*.md` — nine scored **go**,
+  one (time-travel dashboard) **watch**, each with pre-registered kill criteria.
+- **Deliberately declined, and recorded so they are not re-proposed:** real-time
+  monitoring/alerting, a prompt playground, and hosted SaaS all remain
+  **Not planned**. The one portable idea inside alerting — LangSmith's historical
+  threshold preview — is captured as an open question against the *shipped* budget
+  gate (ADR-0136) rather than discarded along with the feature it arrived in.
+
+### Fixed (a false security claim in the dashboard documentation)
+
+- **`docs/dashboard.md` stated that `Bearer` headers "are not accepted (so a stolen
+  token can't be sent silently from a misconfigured tab)".** That has been untrue
+  since **v0.97.0**, which added Bearer-header auth: `serve/auth.py` extracts the
+  header and `serve/app.py` treats it as **authoritative over `?token=`**. The
+  parenthetical was worse than the error — it supplied a security *rationale* for a
+  property the code does not have. Corrected to describe both accepted forms and
+  which one wins.
+- Two further instances of a related false claim were found and are **not** fixed
+  here, because they sit in deployment configuration rather than documentation and
+  belong with the change that flips the default:
+  `deploy/helm/novafabric/values.yaml:42` and `:55` both describe `nova serve` as
+  the *"read-only"* dashboard. It has not been read-only since v0.8. ROADMAP's
+  v0.98.1 row records correcting "a false 'dashboard is read-only' claim" — that
+  sweep fixed the prose docs and missed both instances in the chart, which is the
+  file an operator reads **while deciding whether `insecure: true` is acceptable**.
+  Tracked in ADR-0230 D4, with a guard so it cannot regress a fourth time.
+
+### Added (`nova query` stops re-parsing capsules it has already read — ADR-0225)
+
+- `run_query` re-scanned and re-parsed **every** capsule on every invocation.
+  A persistent index now lives at `$NOVAFABRIC_HOME/query-index.db`, and a
+  capsule is re-parsed only when it has actually changed. Measured **5.1× at
+  2,000 capsules (362 ms → 71 ms) and 4.9× at 10,000 (1841 ms → 375 ms)**.
+- **`nova query` now writes to `$NOVAFABRIC_HOME`** — a command that previously
+  wrote nothing at all. Your **capsules are still never written to**: they are
+  signed evidence, and the cache deliberately lives outside them.
+- A cache that is missing, stale or damaged costs time, never correctness. Every
+  failure path — unreadable file, schema mismatch, damaged payload, a row whose
+  capsule was deleted, an unwritable location — falls back to the full scan, and
+  each has a test. `--no-cache` forces the authoritative path; `--rebuild-index`
+  now means something (it was previously accepted and ignored).
+
+### Fixed (a stale-answer bug designed out before it shipped — ADR-0225 A1)
+
+- ADR-0225 specified validating a capsule by its **directory** mtime. Measured
+  while implementing it, that is not sufficient: **appending to an existing
+  `scores.jsonl` does not change the directory's mtime**, and
+  `eval/scores.py::append_score` opens the file in `"a"` mode. The *first* score
+  on a capsule creates the file and moves the directory mtime; **every score
+  after that would have been invisible**, so `nova query 'avg(score[x])'` would
+  have served a stale answer indefinitely.
+- The design reasoned correctly about `capsule.json` (rewritten via `os.rename()`,
+  which *is* caught) and generalised from that one mutation to the directory.
+  The validator now covers the **files the indexer reads** — manifest,
+  `model-calls.jsonl`, `scores.jsonl` — each as `(mtime_ns, size)`. Pairing size
+  with mtime also closes the mtime-granularity hole the ADR flagged itself.
+- Verified in both directions: reverting to the directory-only rule fails four
+  tests, including the appended-score case by name.
+- The honest cost: the projected speed-up was ~13×, and the measured one is ~5×.
+  The difference is this correctness fix — four `stat` calls per capsule instead
+  of one, which makes discovery the dominant remaining cost. Recorded in the ADR
+  rather than left as an unexplained shortfall.
+
 ### Fixed (the published API contract described almost nothing — ADR-0227)
 
 - **`api/openapi.yaml` named 16 schemas for 75 operations and zero operation
