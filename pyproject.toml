@@ -96,7 +96,7 @@ saml = [
     # signxml (Apache-2.0) — XML-DSIG verification, XSW-resistant verify-then-use.
     "signxml>=4.0",
     # lxml (BSD-3-Clause) — XXE-hardenable XML parser (no DTD/entities/network).
-    "lxml>=5.2.1",
+    "lxml>=6.1.1",
 ]
 scale = [
     # Evidence Fabric v1.0 infrastructure extras (ADR-0066, cap-001..009).
@@ -502,7 +502,7 @@ dev = [
     # signxml (Apache-2.0) + lxml (BSD) — Tier A under ADR-0024.  SAML XML-DSIG
     # verification (ADR-0138); in the dev group so the SAML ACS tests run in CI.
     "signxml>=4.0",
-    "lxml>=5.2.1",
+    "lxml>=6.1.1",
 ]
 
 # ADR-0135 (experimental): reference masker for the pluggable PII masking
