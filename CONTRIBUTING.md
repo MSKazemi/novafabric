@@ -107,7 +107,7 @@ The suite is ~11.5K tests — use the tiered targets instead of a serial full ru
 ```bash
 make test-fast   # dev loop: parallel (-n auto), no coverage, skips integration
                  # + the testcontainers Postgres tier (~90 s)
-make test-par    # full scope + coverage, parallel (~5 min) — release gate
+make test-par    # release gate — exactly what CI's `unit` job runs (~5 min)
 make test        # full scope + coverage, serial — same gate, slower
 ```
 

@@ -9,6 +9,25 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Fixed (the documented release gate was not the gate CI runs)
+
+- `CLAUDE.md` and `CONTRIBUTING.md` tell contributors that `make test-par` is the
+  release gate. Measured against CI's `unit` job, it was not: `test-par` ran a
+  **wider** scope than CI (it did not exclude `tests/integration`) and omitted
+  the `--cov-fail-under=90` floor CI enforces, while `make test-fast` used
+  `--dist=load` against CI's `--dist=loadgroup`.
+- The distribution divergence is not cosmetic — **it is how the xdist key-minting
+  race above reached `main`**. A race that only manifests under a particular
+  worker distribution passed every local run and failed CI twice, on different
+  tests.
+- `make test-par` is now byte-for-byte the command CI runs. `make test-fast`
+  adopts CI's distribution while keeping its narrower scope, which is its point.
+- `tests/docs/test_makefile_matches_ci_gate.py` **parses the Makefile and the
+  workflow** and asserts they agree — nothing restates the flags, because a third
+  copy of a fact is a third thing to drift. It catches drift in both directions:
+  it also fails if the local gate starts skipping a tier CI runs, which would
+  make it quietly weaker than it looks.
+
 ### Fixed (every CI run raced to mint the promote fixture keys)
 
 - `tests/conftest.py::_materialise_promote_keys` is `scope="session"`, and under

@@ -121,14 +121,21 @@ test:
 # Postgres that adds ~4 min). Full `make test` / `make test-par` remain the
 # release gates.
 test-fast:
-	uv run pytest -n auto --dist=load --benchmark-disable -q \
+	uv run pytest -n auto --dist=loadgroup --benchmark-disable -q \
 		--ignore=tests/integration --ignore=tests/metadata_store
 
-# Full suite, parallel, with coverage (~5 min incl. the testcontainers Postgres
-# session). Same scope as `make test`, ~10x faster on a multi-core machine.
+# The release gate. Byte-for-byte the command CI's `unit` job runs, so passing
+# this locally means passing there — including the scope, the distribution and
+# the coverage floor. `tests/docs/test_makefile_matches_ci_gate.py` fails if the
+# two ever drift apart.
+#
+# It is written out in full rather than factored into a variable: this recipe is
+# meant to be readable next to .github/workflows/ci.yml and diffed against it by
+# eye as well as by the guard.
 test-par:
-	uv run pytest -n auto --dist=loadgroup --benchmark-disable \
-		--cov=novafabric --cov-report=term-missing
+	uv run pytest tests/ --ignore=tests/integration --benchmark-disable \
+		-n auto --dist=loadgroup \
+		--cov=novafabric --cov-report=term-missing --cov-fail-under=90
 
 benchmark:
 	mkdir -p .benchmark-results
