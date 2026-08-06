@@ -226,6 +226,36 @@ uv run python scripts/license_gate.py --ignore novafabric --list   # full invent
 
 ---
 
+## AI assistance
+
+**AI assistance is welcome**, and this project uses it — many commits here carry a
+`Co-Authored-By` trailer naming the assistant. It would be incoherent to accept that
+for maintainers and hold contributors to a different standard.
+
+The bar is about responsibility, not tooling:
+
+> However a change was produced, **you must understand it, be able to explain it in
+> review, have run the gates locally, and take responsibility for it.** Please
+> disclose substantial AI assistance in the pull-request description.
+
+Disclosure is not a warning label. It tells a reviewer where to look first, the same
+way "this is my first time in this subsystem" would.
+
+**What we will never do** is reject a change *because* it was AI-assisted. If a pull
+request is turned down it will be for a stated defect — untested, doesn't match the
+design, or the author cannot explain why this approach over another. That last question
+is the whole filter, and it is one any author of their own work answers easily.
+
+Two things make this workable rather than aspirational: CI runs the full gates, so
+unverified code fails before a human reads it; and the PR template asks you to confirm
+you ran them.
+
+If you are a coding agent, [`AGENTS.md`](AGENTS.md) is written for you — architecture,
+the exact commands, the invariants that get a change reverted, and what to do when a
+test fails that you cannot fix.
+
+---
+
 ## Code of conduct
 
 Participation is governed by [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md). It is
