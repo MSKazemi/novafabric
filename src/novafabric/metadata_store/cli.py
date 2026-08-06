@@ -513,7 +513,13 @@ def _migrate_table(
 
     # Determine conflict target based on table
     conflict_targets: dict[str, str] = {
-        "runs": "(run_id, tenant_id)",
+        # Must match the primary key exactly — Postgres infers the arbiter index
+        # from these columns. `runs` is range-partitioned on `started_at`
+        # (ADR-0051), so the partition column is part of the key and has to be
+        # named here too; RFC-0001 widened it to three columns. A stale target
+        # here fails with `InvalidColumnReference` at INSERT time, not at parse
+        # time, so it surfaces as a migration that dies partway through.
+        "runs": "(run_id, tenant_id, started_at)",
         "capsules": "(capsule_uri)",
         "signatures": "(run_id, signature_hash)",
         "retention_policies": "(tenant_id)",

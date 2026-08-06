@@ -9,6 +9,35 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Fixed (server mode could not index a run after applying its own migrations)
+
+- **RFC-0001 accepted (option C) and implemented; closes issue #23.**
+  `PostgresMetadataStore.register_run()` wrote `ON CONFLICT (run_id, tenant_id)`
+  while the migrated `runs` table's only unique constraint was
+  `PRIMARY KEY (run_id, started_at)` — Postgres cannot infer a conflict target
+  that is not a unique index, so **every insert raised
+  `InvalidColumnReference`**. Both halves were individually correct: ADR-0051
+  partitions by `started_at`, and Postgres requires the partition column in every
+  unique constraint, so `tenant_id` had fallen out of the key.
+- Migration **`v004`** widens the key to `(run_id, tenant_id, started_at)`, so
+  tenant separation is structural on the RLS-protected table rather than resting
+  on the policy alone. Idempotency on `(run_id, tenant_id)` moves into
+  `register_run` as a `WHERE NOT EXISTS` guard — **forced, not preferred**: no key
+  on a range-partitioned table can constrain that pair. ADR-0226 records the
+  residual concurrent-registration race rather than pretending it away.
+- **Two further defects, each hidden behind the one above it.** `register_run`
+  passed an explicit `NULL` `started_at`, which the partitioned table rejects
+  with *"no partition of relation found for row"* — now `COALESCE(…, NOW())`. And
+  `v002` declared partitions for 2024–2027 with **no `DEFAULT`**, so any timestamp
+  outside that window failed; `v004` adds one, removing a cliff the calendar
+  reaches unaided.
+- `nova db migrate-to-postgres` carried the same stale conflict target and is
+  updated with it.
+- **`tests/metadata_store`: 77 passed, from 6 failing.** New regression tests pin
+  each behaviour, and the idempotency test is verified to fail if the guard is
+  swapped back for an `ON CONFLICT`.
+
+
 ### Added (a GitHub Action — integration-led growth, the lever that compounds)
 
 - **`.github/actions/capture`** — any repository can now capture a CI step as a

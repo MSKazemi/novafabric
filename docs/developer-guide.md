@@ -1567,7 +1567,13 @@ alembic -c alembic-postgres.ini revision -m "add foo column"     # Postgres / se
 | Postgres | `alembic-postgres.ini` | `alembic/postgres/versions/` |
 
 A change that affects both stores needs a revision in **both** trees; they do not
-share a revision graph. The registry track is also shipped inside the wheel
+share a revision graph.
+
+**Touching `runs` in the Postgres track?** It is partitioned by `started_at`, so
+any unique constraint must include that column, and its key is
+`(run_id, tenant_id, started_at)` (ADR-0226). `register_run` keeps the documented
+`(run_id, tenant_id)` idempotency with a `WHERE NOT EXISTS` guard rather than an
+`ON CONFLICT` clause — see [architecture](architecture.md#schema-migrations). The registry track is also shipped inside the wheel
 (`src/novafabric/migrations/registry`) so an installed CLI can migrate without the
 repository present — if you add a registry revision, confirm it is packaged.
 

@@ -124,6 +124,20 @@ alembic upgrade head                              # SQLite / local
 alembic -c alembic-postgres.ini upgrade head      # Postgres / server
 ```
 
+The Postgres track partitions `runs` quarterly by `started_at` (ADR-0051). Two
+consequences are worth knowing before you touch that table:
+
+- **The primary key is `(run_id, tenant_id, started_at)`.** Postgres requires the
+  partition column in every unique constraint, so the key must include
+  `started_at`; RFC-0001 / ADR-0226 put `tenant_id` back in alongside it, because
+  `runs` is the RLS-protected, tenant-scoped table and tenant separation should
+  be structural rather than incidental.
+- **Idempotency on `(run_id, tenant_id)` lives in the application**, not in a
+  constraint. No key on a range-partitioned table can enforce uniqueness on that
+  pair alone, so `register_run` guards its insert with `WHERE NOT EXISTS`. If you
+  replace that guard with an `ON CONFLICT`, you silently redefine what "the same
+  run" means — there is a test that fails when you do.
+
 A third copy of the registry track ships inside the wheel
 (`src/novafabric/migrations/registry`, declared in `pyproject.toml`) so an
 installed CLI can migrate its own database without the repository present.

@@ -27,8 +27,8 @@ answer within a week.
 
 | RFC | Title | Status | Window |
 |---|---|---|---|
-| [0001](RFC-0001-runs-partition-key-vs-tenant-idempotency.md) | `runs` partition key vs. tenant idempotency | **Draft** | not started |
+| [0001](RFC-0001-runs-partition-key-vs-tenant-idempotency.md) | `runs` partition key vs. tenant idempotency | **Accepted** (option C) | closed 2026-08-06 |
 
-RFC-0001 is open and **wants reviewers**. It is a genuine open question with four
-options and no free one, and it currently blocks the tenant-isolation security
-gate — so it is a real place to have an opinion, not a formality.
+RFC-0001 is the worked example: a real defect, four options with no free one,
+accepted as option C and implemented the same day. Read it before writing your
+first RFC — it shows the level of "what does this cost?" the process expects.

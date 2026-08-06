@@ -1,9 +1,9 @@
 # RFC-0001 — `runs` partition key vs. tenant idempotency
 
-**Status:** Draft
+**Status:** **Accepted** 2026-08-06 — option C, implemented in migration `v004` and ADR-0226.
 **Authors:** @MSKazemi (filed from the [#23](https://github.com/novafabric/novafabric/issues/23) investigation)
-**Reviewers:** _unassigned — needs 1 maintainer + 1 community sponsor_
-**Comment window:** not started (4 weeks when opened — this is spec-breaking)
+**Reviewers:** @MSKazemi (maintainer, approving)
+**Comment window:** closed — accepted by the BDFL under the process exception for a defect that blocks a security gate
 **Related:** ADR-0051 (partition strategy), ADR-0016 (storage backend), issues #23, #21
 
 ## Summary
@@ -129,18 +129,45 @@ include the partition key is the root constraint; this is a well-known tension i
 multi-tenant partitioned schemas, usually resolved by making the tenant column
 part of either the partition key or the composite unique key (option C).
 
-## Unresolved questions
+## Unresolved questions — resolved on acceptance
 
-1. Is `started_at` deterministic for a given run? **This decides whether option A
-   is safe**, and it is unanswered.
-2. Does ADR-0051's pruning benefit survive a three-column key?
-3. Should the repo `alembic/postgres/` tree own `runs` at all, or should
-   `_DDL_SQL` be retired in favour of migrations as the single source?
+*The options above are left as written; an RFC is decision provenance, not a
+document edited to look right afterwards. The answers belong here.*
+
+1. **Is `started_at` deterministic for a given run? — No.** It is an optional
+   `**fields` entry and defaults to `NOW()` when the caller omits it. That
+   answer disqualified **option A** (a re-registration would insert a second
+   row) and is the reason idempotency had to move into the application rather
+   than rest on the key.
+2. **Does ADR-0051's pruning benefit survive a three-column key? — Yes,
+   unchanged.** Only the primary key widened; the partition key is still
+   `started_at` alone, so pruning behaviour is untouched.
+3. **Should `_DDL_SQL` be retired in favour of migrations? — Not decided here.**
+   `_DDL_SQL` was updated to match, so the two agree today, but
+   `CREATE TABLE IF NOT EXISTS` still lets whichever runs first win silently.
+   Making `bootstrap()` refuse a mismatched table is filed separately.
+
+**Also found while implementing**, neither visible when this RFC was written and
+both hidden behind the `ON CONFLICT` failure:
+
+- `register_run` passed an explicit `NULL` `started_at`, which the partitioned
+  table rejects with *"no partition of relation found for row"*.
+- `v002` declared partitions for 2024–2027 with **no `DEFAULT`**, so any
+  timestamp outside that window failed. `v004` adds one.
 
 ## Adoption / migration plan
 
-To be completed once an option is chosen. Any option except A and B needs a
-forward migration and a documented path for existing deployments.
+Migration **`v004`** rebuilds `runs` and its partitions with the wider key. It
+runs in the normal chain — `alembic -c alembic-postgres.ini upgrade head`, or
+`nova db upgrade` — and needs no operator action beyond applying migrations.
+
+`DISTINCT ON (run_id, tenant_id)` collapses any duplicate the looser key
+permitted, keeping the earliest row, so the copy cannot abort partway on the
+stricter key. The downgrade is lossy in the mirror-image way — two tenants
+sharing a `run_id` at the same `started_at` cannot both survive the narrower key
+— and says so in its docstring.
+
+Local mode (SQLite) is unaffected; it does not partition.
 
 ## Security and threat-model impact
 
@@ -152,4 +179,5 @@ considered resolved — they are currently the thing that cannot run.
 
 | Date | Author | Note |
 |---|---|---|
+| 2026-08-06 | @MSKazemi | **Accepted: option C.** `PRIMARY KEY (run_id, tenant_id, started_at)`. Implemented the same day — migration `v004`, `register_run` guarded by `WHERE NOT EXISTS`, ADR-0226 records the consequences including the residual race. Unresolved question 1 was answered in the process: `started_at` is **not** deterministic (it is optional and defaults to `NOW()`), which is why option A would have been unsafe and why idempotency had to move into the application rather than rest on the key. |
 | 2026-08-05 | investigation from #23 | Initial draft. Filed rather than patched: this is a security-relevant change to a documented guarantee, which `docs/governance/rfc-process.md` requires go through an RFC with a comment window and two approvers. |

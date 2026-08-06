@@ -47,12 +47,18 @@ CREATE TABLE IF NOT EXISTS runs (
     tenant_id         UUID,
     event_type        TEXT,
     global_run_id     UUID,
-    started_at        TIMESTAMPTZ,
+    -- NOT NULL DEFAULT NOW() mirrors the migrated table, where started_at is
+    -- the partition key and cannot be null.
+    started_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     status            TEXT DEFAULT 'pending',
     world_size        BIGINT,
     expected_children BIGINT,
     children_arrived  BIGINT DEFAULT 0,
-    PRIMARY KEY (run_id, tenant_id)
+    -- (run_id, tenant_id, started_at) matches the shape v004 leaves behind
+    -- (RFC-0001). bootstrap() uses CREATE TABLE IF NOT EXISTS, so whichever ran
+    -- first wins silently — keeping the two definitions in step is what stops a
+    -- store built one way from meeting code that expects the other.
+    PRIMARY KEY (run_id, tenant_id, started_at)
 );
 
 CREATE TABLE IF NOT EXISTS capsules (
@@ -279,15 +285,40 @@ class PostgresMetadataStore(MetadataStore):
                 conn.close()
 
     def register_run(self, run_id: UUID, tenant_id: UUID, **fields: Any) -> None:
-        """Index a new run.  Idempotent on (run_id, tenant_id) — ON CONFLICT DO NOTHING."""
+        """Index a new run.  Idempotent on ``(run_id, tenant_id)``.
+
+        The idempotency lives here rather than in an ``ON CONFLICT`` clause, and
+        that is a consequence of partitioning, not a preference.
+
+        ``runs`` is range-partitioned on ``started_at`` (ADR-0051), and Postgres
+        requires the partition column to be part of every unique constraint on a
+        partitioned table. So no key can enforce uniqueness on ``(run_id,
+        tenant_id)`` alone, and ``ON CONFLICT (run_id, tenant_id)`` cannot be
+        inferred — it raised ``InvalidColumnReference`` on every insert once the
+        migrations reached head (issue #23). RFC-0001 widened the key to
+        ``(run_id, tenant_id, started_at)``; this guard restores the documented
+        contract on top of it.
+
+        ``COALESCE`` on ``started_at`` matters too: the column is ``NOT NULL`` so
+        it can route to a partition, and callers may legitimately omit it. An
+        explicit ``NULL`` previously failed with "no partition of relation found
+        for row" — a second defect that was hidden behind the first.
+
+        **Residual race, stated rather than papered over:** two concurrent
+        registrations of the same run with *different* ``started_at`` can both
+        pass the ``NOT EXISTS`` probe and insert. The database cannot prevent it
+        while the partition key is a timestamp. See ADR-0226.
+        """
         conn = self._conn()
         conn.execute(
             """
             INSERT INTO runs
                 (run_id, tenant_id, event_type, global_run_id, started_at,
                  world_size, expected_children)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (run_id, tenant_id) DO NOTHING
+            SELECT %s, %s, %s, %s, COALESCE(%s, NOW()), %s, %s
+            WHERE NOT EXISTS (
+                SELECT 1 FROM runs WHERE run_id = %s AND tenant_id = %s
+            )
             """,
             (
                 str(run_id),
@@ -297,6 +328,8 @@ class PostgresMetadataStore(MetadataStore):
                 fields.get("started_at"),
                 fields.get("world_size"),
                 fields.get("expected_children"),
+                str(run_id),
+                str(tenant_id),
             ),
         )
 
