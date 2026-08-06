@@ -1,5 +1,7 @@
+import contextlib
 import os
 import shutil
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -124,6 +126,20 @@ def _materialise_promote_keys() -> None:
     private-key material — even throwaway material — costs more to explain than
     it is worth. Files already present are left untouched, so a maintainer's
     working tree does not churn.
+
+    **Exactly one process may generate.** ``scope="session"`` is per *worker*
+    under pytest-xdist, so every worker runs this, and on CI the keys are always
+    absent (they are untracked) — so every CI run raced. Two workers each saw
+    "not all present" and both generated; the second overwrote the first's
+    ``admin.pem`` between another test signing with the old key and verifying
+    against the new one. The symptom was ``DSSE signature verification failed:
+    signature mismatch`` in ``tests/promote``, hitting a *different* set of tests
+    on each run — which is what a race looks like from the outside, and why it
+    survived two green runs before showing up.
+
+    So one worker wins an ``O_CREAT | O_EXCL`` lock and generates while the rest
+    wait for the files instead of writing their own. No new dependency: an
+    exclusive create is atomic on every filesystem this suite runs on.
     """
     keys = Path(__file__).parent / "fixtures" / "promote" / "keys"
     expected = [
@@ -131,18 +147,47 @@ def _materialise_promote_keys() -> None:
         for role in ("admin", "approver", "proposer")
         for suffix in (".pem", "_cert.pem")
     ]
-    if all((keys / name).exists() for name in expected):
+
+    def _complete() -> bool:
+        return all((keys / name).exists() for name in expected)
+
+    if _complete():
         return
 
-    # Loaded by path rather than imported as `fixtures.promote.generate_keys`:
-    # `pythonpath=tests` lets an `__init__.py` under tests/ shadow an installed
-    # distribution of the same name, and `fixtures` is exactly that kind of name.
-    import importlib.util  # noqa: PLC0415
+    keys.mkdir(parents=True, exist_ok=True)
+    lock = keys / ".generating.lock"
+    try:
+        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        # Another worker holds it. Wait for the keys rather than racing to write
+        # them. Bounded, so a stale lock from a killed run reports itself instead
+        # of hanging the suite until the 300 s pytest-timeout fires.
+        deadline = time.monotonic() + 60.0
+        while time.monotonic() < deadline:
+            if _complete():
+                return
+            time.sleep(0.05)
+        raise RuntimeError(
+            f"timed out waiting for another worker to mint the promote keys in "
+            f"{keys}; if a previous run was killed mid-generation, delete {lock}"
+        )
 
-    script = Path(__file__).parent / "fixtures" / "promote" / "generate_keys.py"
-    spec = importlib.util.spec_from_file_location("_promote_generate_keys", script)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    for role in module.NAMES:
-        module.generate_key_and_cert(role)
+    try:
+        # Loaded by path rather than imported as `fixtures.promote.generate_keys`:
+        # `pythonpath=tests` lets an `__init__.py` under tests/ shadow an installed
+        # distribution of the same name, and `fixtures` is exactly that kind of name.
+        import importlib.util  # noqa: PLC0415
+
+        script = Path(__file__).parent / "fixtures" / "promote" / "generate_keys.py"
+        spec = importlib.util.spec_from_file_location("_promote_generate_keys", script)
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        for role in module.NAMES:
+            module.generate_key_and_cert(role)
+    finally:
+        os.close(fd)
+        # Released only once the keys are on disk, so a waiter that sees the lock
+        # disappear also sees a complete, self-consistent set.
+        with contextlib.suppress(OSError):
+            lock.unlink()
