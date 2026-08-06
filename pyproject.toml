@@ -45,7 +45,7 @@ dependencies = [
     # 2026-08-05 while testing the dependabot bulk-upgrade group, which would have
     # shipped a completely non-functional CLI. Revisit with an explicit
     # `nova --help` check before raising the ceiling.
-    "typer>=0.15,<0.26",
+    "typer>=0.15,<0.28",
     "pydantic>=2.11",
     "PyYAML>=6.0",
     "rich>=13.9",
@@ -187,7 +187,7 @@ serve = [
     # self-trace privacy assertions fail. Found 2026-08-05 testing the dependabot
     # bulk upgrade. Raise only with tests/test_server_observability.py and
     # tests/test_server_selftrace.py green.
-    "fastapi>=0.115,<0.137",
+    "fastapi>=0.115,<0.142",
     "uvicorn[standard]>=0.32",
     # --- Live Topology Dashboard backing stores (moved out of core by ADR-0222) ---
     # duckdb (MIT) — the in-process ClusterStore behind
@@ -214,7 +214,7 @@ federation = [
     # self-trace privacy assertions fail. Found 2026-08-05 testing the dependabot
     # bulk upgrade. Raise only with tests/test_server_observability.py and
     # tests/test_server_selftrace.py green.
-    "fastapi>=0.115,<0.137",
+    "fastapi>=0.115,<0.142",
 ]
 server = [
     # Multi-user server mode (v0.7). Optional install: `pip install novafabric[server]`.
@@ -225,7 +225,7 @@ server = [
     # self-trace privacy assertions fail. Found 2026-08-05 testing the dependabot
     # bulk upgrade. Raise only with tests/test_server_observability.py and
     # tests/test_server_selftrace.py green.
-    "fastapi>=0.115,<0.137",
+    "fastapi>=0.115,<0.142",
     "uvicorn[standard]>=0.32",
     # python-multipart (Apache-2.0) — Tier A under ADR-0024.  Required by FastAPI
     # for multipart/form-data upload endpoints (capsule upload).
@@ -432,7 +432,7 @@ dev = [
     # self-trace privacy assertions fail. Found 2026-08-05 testing the dependabot
     # bulk upgrade. Raise only with tests/test_server_observability.py and
     # tests/test_server_selftrace.py green.
-    "fastapi>=0.115,<0.137",
+    "fastapi>=0.115,<0.142",
     "httpx>=0.28",
     # Phase 4 — Object Capsule Store testing
     # boto3 (Apache-2.0) — S3/MinIO/Ceph WORM adapter + conformance suite.
@@ -454,7 +454,7 @@ dev = [
     # Migrating the gate to the new model is real work; raise the ceiling only
     # with `uv run mutmut run` green. Note that 3.5 does not work either — the
     # gate has never run on any mutmut 3.x. See issue #25.
-    "mutmut>=3.0,<3.6",
+    "mutmut>=3.0,<3.8",
     # sqlfluff (MIT) — Tier A under ADR-0024.  SQL linter for migration scripts
     # and raw DDL snippets in the MetadataStore.
     "sqlfluff>=3.0",
