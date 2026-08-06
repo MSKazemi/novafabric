@@ -25,6 +25,25 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   and it ignores comments — several workflows cite a `design/` document as
   provenance without reading it.
 
+### Changed (FR-08 now proves the invariant directly instead of via mutmut)
+
+- **The SET LOCAL kill proof was already written, by hand, and committed.**
+  `tests/fixtures/broken_session_set.py` is `BrokenMetadataStore` — identical to
+  `PostgresMetadataStore` except it uses session-scoped `SET`. The gate's own
+  scope was *"curated mutation target: postgres.py SET LOCAL line only"*, and that
+  single mutant already existed.
+- FR-08 now runs the pair that constitutes the proof and blocks on it: **the
+  mutant leaks across tenants** (`tc-005`) and **the real store does not**
+  (`candidate-zero`). A failing mutant beside a passing candidate is what a 100%
+  kill rate means for one line.
+- Generating that mutant with a framework that copies the working tree added
+  machinery rather than assurance — and delivered none of it, because the step
+  had **never once executed** (#25). `continue-on-error` is removed; the step is
+  blocking again and now returns a real verdict.
+- `mutmut` remains a dev dependency for ad-hoc runs; CI no longer gates on it.
+  Widening the target beyond the `SET LOCAL` line is a design question, not
+  something to bolt onto this step.
+
 ### Fixed (a regression I introduced: mutmut 3.7 broke the FR-08 mutation gate)
 
 - **`mutmut` pinned `<3.6`.** The 2026-08-05 dependency refresh bumped it

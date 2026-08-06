@@ -99,51 +99,32 @@ jobs:
         env:
           NOVAFABRIC_METADATA_BACKEND: sqlite
 
-      - name: FR-08 mutmut — SET LOCAL invariant kill-rate gate
-        id: fr08
-        # continue-on-error, deliberately, and it does NOT weaken this gate —
-        # because FR-08 has never once run to completion.
+      - name: FR-08 — SET LOCAL invariant kill proof
+        # Replaces a mutmut invocation that had never once run (issue #25).
         #
-        # mutmut 3.x has no --paths-to-mutate/--runner flags (that break predates
-        # the 3.5 -> 3.7 bump), and once those are removed it copies far more
-        # than the project tree and dies on whatever transient file it meets:
-        # a dangling symlink locally, `/run/user/1001/systemd/...` on the runner.
-        # Every recorded run of this workflow has failed.
+        # The gate's own scope was "curated mutation target: postgres.py SET
+        # LOCAL line only". That single mutant already exists, hand-written and
+        # committed: tests/fixtures/broken_session_set.py is BrokenMetadataStore,
+        # identical to PostgresMetadataStore except it uses session-scoped SET.
         #
-        # Blocking on a step that cannot execute also skipped everything after
-        # it — including the benchmark smoke — so four checks that DO work were
-        # reporting nothing. That is strictly worse than an honest amber. The
-        # step still runs and still fails loudly; it no longer takes the working
-        # checks down with it. Tracked separately; see the warning below.
-        continue-on-error: true
+        # The kill proof is the PAIR, and both halves are asserted below:
+        #   tc-005  the mutant LEAKS across tenants on a shared connection
+        #   candidate-zero  the real store does NOT
+        #
+        # A mutant that fails and a candidate that passes is what a 100% kill
+        # rate means for one line. Generating it with a framework that copies the
+        # working tree added machinery, not assurance — and the assurance it was
+        # supposed to add was never delivered, because the step never executed.
+        #
+        # mutmut is still a dev dependency for ad-hoc runs; CI no longer gates on
+        # it. Widening this beyond the SET LOCAL line is a real design question,
+        # not something to bolt on here.
         run: |
-          # Curated mutation target: postgres.py SET LOCAL line only.
-          # Runner uses testcontainers (Docker required on CI host).
-          #
-          # Configuration comes from [tool.mutmut] in pyproject.toml.
-          #
-          # It used to be repeated here as --paths-to-mutate/--runner. mutmut 3.x
-          # has neither flag — `mutmut run` accepts only --max-children — so this
-          # step failed with `Error: No such option: --paths-to-mutate` for as
-          # long as mutmut 3 has been the pinned major. That break is older than
-          # the 3.5 -> 3.7 bump, which merely added a second one on top of it.
-          uv run mutmut run
-          survived=$(uv run mutmut results 2>/dev/null | grep -c "survived" || true)
-          if [ "${survived:-0}" -gt 0 ]; then
-            echo "FAIL: mutant(s) survived — FR-08 SET LOCAL kill rate < 100%"
-            uv run mutmut results
-            exit 1
-          fi
-          echo "PASS: All SET LOCAL mutants killed — GDPR Article 32 invariant confirmed"
-
-      - name: Warn when FR-08 did not produce a verdict
-        if: always()
-        run: |
-          if [ "${{ steps.fr08.outcome }}" != "success" ]; then
-            echo "::warning title=FR-08 gave no verdict::The SET LOCAL mutation gate \
-          did not run. Tenant-isolation mutation coverage is UNVERIFIED — the other \
-          FR checks and the coverage floor still passed. See issue #25."
-          fi
+          uv run pytest \
+            tests/metadata_store/test_cross_tenant_isolation_pgbouncer.py \
+            tests/metadata_store/test_set_local_invariant.py \
+            -v --tb=short
+          echo "PASS: mutant leaks, candidate does not — SET LOCAL invariant confirmed"
 
       - name: Benchmark smoke
         # `bench/` is excluded from the public repository, so this script does
