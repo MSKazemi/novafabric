@@ -9,6 +9,55 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Fixed (the published API contract described almost nothing — ADR-0227)
+
+- **`api/openapi.yaml` named 16 schemas for 75 operations and zero operation
+  IDs.** Response bodies were published as `{[key: string]: unknown}` and
+  operations as FastAPI's derivations, such as
+  `revoke_membership_v0_workspaces__ws_id__memberships__principal___role__delete`.
+  Of 33 `response_model=` occurrences under `src/novafabric/server/`, **30 were
+  `response_model=None`**.
+- This surfaced as a `SDK (TypeScript)` CI failure that could not be fixed from
+  either end: the committed `types.gen.ts` type-checked but failed the drift
+  gate, and regenerating it passed the drift gate and then failed `tsc` with 15
+  errors. No generated file could satisfy both, because it was generated from a
+  document that no longer described the API the client was written against.
+- The divergence was not gradual. `git log -S"operationId: listAssets"` returns
+  `08484f4` — **v0.64.0**, the release that replaced a hand-authored spec with a
+  generated dump. The curated vocabulary went in one commit and the types were
+  never regenerated.
+- The routes for capsules, evidence and assets now **declare** their response
+  schemas and carry stable operation IDs. Declared, not bound: `response_model=`
+  filters the response body, and `list_capsules` alone returns `total` on the
+  first page and omits it on keyset pages, so binding a model would have changed
+  the wire format of a published API in order to improve a document. The spec
+  now names **28** schemas, and `npx tsc --noEmit` and `npm run check:drift`
+  pass together for the first time since v0.64.0.
+- Because a documentation-only declaration is a promise nothing checks,
+  `tests/server/test_openapi_schema_conformance.py` calls every declared route
+  and validates the real response against the model the route declares, reading
+  that model off the route rather than restating it. Verified in both
+  directions: renaming one field in a route's response makes it fail by name.
+
+### Fixed (three things the published contract stated that were not true)
+
+- **`PaginationMeta.total` was required**, which every page after the first
+  disproved — keyset pages omit it by design (ADR-0206). Now optional.
+- **`AssetStatus` listed four values**; the real enum has six. `validated` and
+  `pending_approval` were missing, so an ordinary promotion produced a status
+  the contract called impossible. The real enum is now reused rather than
+  restated, which is how it drifted in the first place.
+- **`submitCapsuleScore`'s `200` was declared bodiless.** The route returns the
+  same body for `200` and `201`; only the status differs.
+- No server behavior changed in any of these — they are corrections to a
+  document, and there is nothing to migrate.
+- Also removed: `generate-types.mjs`'s workaround for a dangling `$ref`. The
+  generated spec has no `components.responses` section and no dangling
+  references, and the patch had stopped doing anything anyway — it mutated a
+  copy of the section rather than the document, while still printing a warning
+  about a "pre-existing spec bug" on every run. Its removal left the generated
+  output byte-identical, which is what proved it dead.
+
 ### Added (the agent-facing and AI-assistance surface)
 
 - **`AGENTS.md` is now public** — a README for coding agents, per the

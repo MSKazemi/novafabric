@@ -26,6 +26,11 @@ from novafabric.server.errors import (
 )
 from novafabric.server.pagination import clamp_limit, decode_cursor, paginate
 from novafabric.server.rbac import Role, require_role
+from novafabric.server.schemas import (
+    AssetDetail,
+    AssetListResponse,
+    error_responses,
+)
 
 router = APIRouter(prefix="/assets", tags=["assets"])
 
@@ -33,7 +38,16 @@ router = APIRouter(prefix="/assets", tags=["assets"])
 # ---------- list ----------
 
 
-@router.get("", response_model=None)
+@router.get(
+    "",
+    response_model=None,
+    operation_id="listAssets",
+    summary="List assets",
+    responses={
+        200: {"model": AssetListResponse, "description": "A page of assets."},
+        **error_responses(400, 401, 403),
+    },
+)
 async def list_assets(
     limit: int = Query(default=50, ge=1, le=500),
     cursor: str | None = Query(default=None),
@@ -61,7 +75,17 @@ async def list_assets(
 # ---------- create ----------
 
 
-@router.post("", status_code=201, response_model=None)
+@router.post(
+    "",
+    status_code=201,
+    response_model=None,
+    operation_id="createAsset",
+    summary="Register an asset from a YAML spec",
+    responses={
+        201: {"model": AssetDetail, "description": "The registered asset."},
+        **error_responses(400, 401, 403, 409),
+    },
+)
 async def create_asset(
     body: dict[str, Any],
     db_path: Annotated[Path | None, Depends(get_db_path)] = None,
@@ -100,7 +124,16 @@ async def create_asset(
 # ---------- get by id ----------
 
 
-@router.get("/{asset_id}", response_model=None)
+@router.get(
+    "/{asset_id}",
+    response_model=None,
+    operation_id="getAsset",
+    summary="Get an asset by UUID",
+    responses={
+        200: {"model": AssetDetail, "description": "The asset."},
+        **error_responses(401, 403, 404),
+    },
+)
 async def get_asset(
     asset_id: str,
     db_path: Annotated[Path | None, Depends(get_db_path)] = None,
@@ -124,7 +157,16 @@ async def get_asset(
 # ---------- promote ----------
 
 
-@router.put("/{asset_id}/promote", response_model=None)
+@router.put(
+    "/{asset_id}/promote",
+    response_model=None,
+    operation_id="promoteAsset",
+    summary="Promote an asset to a new lifecycle status",
+    responses={
+        200: {"model": AssetDetail, "description": "The promoted asset."},
+        **error_responses(400, 401, 403, 404, 409, 412),
+    },
+)
 async def promote_asset(
     asset_id: str,
     body: dict[str, Any],

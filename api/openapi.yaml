@@ -1,5 +1,144 @@
 components:
   schemas:
+    AssetDetail:
+      description: A single asset with its spec and promotion provenance.
+      properties:
+        asset_type:
+          $ref: '#/components/schemas/AssetType'
+        created_at:
+          title: Created At
+          type: string
+        forced_promotion:
+          default: false
+          title: Forced Promotion
+          type: boolean
+        git_commit_sha:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Git Commit Sha
+        id:
+          title: Id
+          type: string
+        name:
+          title: Name
+          type: string
+        promoted_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Promoted At
+        promoted_by:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Promoted By
+        spec_json:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Raw JSON-serialized asset spec.
+          title: Spec Json
+        status:
+          $ref: '#/components/schemas/AssetStatus'
+        version:
+          description: SemVer string.
+          title: Version
+          type: string
+      required:
+      - id
+      - name
+      - version
+      - asset_type
+      - status
+      - created_at
+      title: AssetDetail
+      type: object
+    AssetListResponse:
+      description: '``GET /v0/assets``.'
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/AssetSummary'
+          title: Items
+          type: array
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Opaque cursor for the next page; null when no more pages.
+          title: Next Cursor
+        total:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          description: Total count of matching items, without pagination applied.
+            Present on the first page only; keyset pages omit it by design.
+          title: Total
+      required:
+      - items
+      title: AssetListResponse
+      type: object
+    AssetStatus:
+      enum:
+      - development
+      - validated
+      - pending_approval
+      - staging
+      - production
+      - archived
+      title: AssetStatus
+      type: string
+    AssetSummary:
+      description: One asset as returned by the list endpoint.
+      properties:
+        asset_type:
+          $ref: '#/components/schemas/AssetType'
+        created_at:
+          title: Created At
+          type: string
+        git_commit_sha:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Git Commit Sha
+        id:
+          title: Id
+          type: string
+        name:
+          title: Name
+          type: string
+        promoted_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Promoted At
+        status:
+          $ref: '#/components/schemas/AssetStatus'
+        version:
+          description: SemVer string.
+          title: Version
+          type: string
+      required:
+      - id
+      - name
+      - version
+      - asset_type
+      - status
+      - created_at
+      title: AssetSummary
+      type: object
+    AssetType:
+      enum:
+      - model
+      - agent
+      - prompt
+      - tool
+      - dataset
+      - evaluation
+      - deployment
+      title: AssetType
+      type: string
     AssignRoleRequest:
       properties:
         role:
@@ -14,7 +153,7 @@ components:
       - role
       title: AssignRoleRequest
       type: object
-    Body_upload_capsule_v0_capsules_post:
+    Body_uploadCapsule:
       properties:
         capsule:
           contentMediaType: application/octet-stream
@@ -22,7 +161,7 @@ components:
           type: string
       required:
       - capsule
-      title: Body_upload_capsule_v0_capsules_post
+      title: Body_uploadCapsule
       type: object
     BulkDeleteRequest:
       description: Body of ``POST /v0/capsules/bulk-delete`` (spec bulk-ops-pagination-v0).
@@ -37,6 +176,172 @@ components:
           title: Run Ids
           type: array
       title: BulkDeleteRequest
+      type: object
+    BundleSummary:
+      description: Evidence-bundle metadata.
+      properties:
+        bundle_id:
+          title: Bundle Id
+          type: string
+        bundle_path:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Bundle Path
+        created_at:
+          title: Created At
+          type: string
+        run_id:
+          title: Run Id
+          type: string
+        size_bytes:
+          title: Size Bytes
+          type: integer
+      required:
+      - bundle_id
+      - run_id
+      - created_at
+      - size_bytes
+      title: BundleSummary
+      type: object
+    CapsuleDetail:
+      description: A single run capsule, with the manifest fields the list view omits.
+      properties:
+        capture_mode:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Capture Mode
+        command:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Command
+        created_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Created At
+        duration_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Duration Ms
+        exit_code:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Exit Code
+        finished_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Finished At
+        model_call_count:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Model Call Count
+        mutating_tool_count:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Mutating Tool Count
+        novafabric_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Novafabric Version
+        run_id:
+          title: Run Id
+          type: string
+        schema_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Schema Version
+        status:
+          description: Run outcome; 'unknown' when the manifest does not record one.
+          title: Status
+          type: string
+        tool_call_count:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Tool Call Count
+      required:
+      - run_id
+      - status
+      title: CapsuleDetail
+      type: object
+    CapsuleListResponse:
+      description: '``GET /v0/capsules``.'
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/CapsuleSummary'
+          title: Items
+          type: array
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Opaque cursor for the next page; null when no more pages.
+          title: Next Cursor
+        total:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          description: Total count of matching items, without pagination applied.
+            Present on the first page only; keyset pages omit it by design.
+          title: Total
+      required:
+      - items
+      title: CapsuleListResponse
+      type: object
+    CapsuleSummary:
+      description: One run capsule as returned by the list endpoint.
+      properties:
+        command:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Command
+        created_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Created At
+        duration_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Duration Ms
+        exit_code:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Exit Code
+        finished_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Finished At
+        run_id:
+          title: Run Id
+          type: string
+        status:
+          description: Run outcome; 'unknown' when the manifest does not record one.
+          title: Status
+          type: string
+      required:
+      - run_id
+      - status
+      title: CapsuleSummary
       type: object
     CreateApiKeyRequest:
       properties:
@@ -166,6 +471,38 @@ components:
       - name
       title: CreateWorkspaceRequest
       type: object
+    ErrorDetail:
+      description: The inner object of the standard error envelope.
+      properties:
+        code:
+          examples:
+          - not_found
+          title: Code
+          type: string
+        details:
+          additionalProperties: true
+          description: Structured, machine-readable context for the error.
+          title: Details
+          type: object
+        message:
+          examples:
+          - Asset 'my-agent@v1.0' not found.
+          title: Message
+          type: string
+      required:
+      - code
+      - message
+      title: ErrorDetail
+      type: object
+    ErrorEnvelope:
+      description: 'Every non-2xx response body: ``{"error": {"code", "message", "details"}}``.'
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+      required:
+      - error
+      title: ErrorEnvelope
+      type: object
     HTTPValidationError:
       properties:
         detail:
@@ -261,6 +598,39 @@ components:
       - auditor
       title: Role
       type: string
+    ScoreSubmissionResult:
+      description: '``POST /v0/capsules/{run_id}/scores``.
+
+
+        Returned for **both** 201 (appended) and 200 (idempotent replay). The
+
+        previous published contract declared the 200 as bodiless; the route returns
+
+        the same body either way and only the status code differs.'
+      properties:
+        config_bound:
+          title: Config Bound
+          type: boolean
+        idempotent_replay:
+          title: Idempotent Replay
+          type: boolean
+        score:
+          additionalProperties: true
+          description: The stored score record.
+          title: Score
+          type: object
+        submission:
+          additionalProperties: true
+          description: 'Who submitted, as distinct from what evaluator produced the
+            value: principal, scope and received_at.'
+          title: Submission
+          type: object
+      required:
+      - score
+      - idempotent_replay
+      - config_bound
+      title: ScoreSubmissionResult
+      type: object
     UpdateWebhookRequest:
       properties:
         description:
@@ -878,7 +1248,7 @@ paths:
       - api-keys
   /v0/assets:
     get:
-      operationId: list_assets_v0_assets_get
+      operationId: listAssets
       parameters:
       - in: query
         name: limit
@@ -917,19 +1287,38 @@ paths:
         '200':
           content:
             application/json:
-              schema: {}
-          description: Successful Response
+              schema:
+                $ref: '#/components/schemas/AssetListResponse'
+          description: A page of assets.
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request parameters or body.
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Missing or invalid bearer token.
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Authenticated but not permitted (missing role).
         '422':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: List Assets
+      summary: List assets
       tags:
       - assets
     post:
-      operationId: create_asset_v0_assets_post
+      operationId: createAsset
       requestBody:
         content:
           application/json:
@@ -942,20 +1331,45 @@ paths:
         '201':
           content:
             application/json:
-              schema: {}
-          description: Successful Response
+              schema:
+                $ref: '#/components/schemas/AssetDetail'
+          description: The registered asset.
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request parameters or body.
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Missing or invalid bearer token.
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Authenticated but not permitted (missing role).
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: The request conflicts with the current state of the resource.
         '422':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Create Asset
+      summary: Register an asset from a YAML spec
       tags:
       - assets
   /v0/assets/{asset_id}:
     get:
-      operationId: get_asset_v0_assets__asset_id__get
+      operationId: getAsset
       parameters:
       - in: path
         name: asset_id
@@ -967,20 +1381,39 @@ paths:
         '200':
           content:
             application/json:
-              schema: {}
-          description: Successful Response
+              schema:
+                $ref: '#/components/schemas/AssetDetail'
+          description: The asset.
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Missing or invalid bearer token.
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Authenticated but not permitted (missing role).
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: The requested resource does not exist.
         '422':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Get Asset
+      summary: Get an asset by UUID
       tags:
       - assets
   /v0/assets/{asset_id}/promote:
     put:
-      operationId: promote_asset_v0_assets__asset_id__promote_put
+      operationId: promoteAsset
       parameters:
       - in: path
         name: asset_id
@@ -1000,15 +1433,52 @@ paths:
         '200':
           content:
             application/json:
-              schema: {}
-          description: Successful Response
+              schema:
+                $ref: '#/components/schemas/AssetDetail'
+          description: The promoted asset.
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request parameters or body.
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Missing or invalid bearer token.
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Authenticated but not permitted (missing role).
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: The requested resource does not exist.
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: The request conflicts with the current state of the resource.
+        '412':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: A precondition on the request was not met.
         '422':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Promote Asset
+      summary: Promote an asset to a new lifecycle status
       tags:
       - assets
   /v0/auth/saml/acs:
@@ -1088,7 +1558,7 @@ paths:
         and carry a ``Deprecation: true`` response header. A non-empty cursor
 
         that fails strict decoding is a 400 ``invalid_cursor``.'
-      operationId: list_capsules_v0_capsules_get
+      operationId: listCapsules
       parameters:
       - in: query
         name: limit
@@ -1111,15 +1581,35 @@ paths:
         '200':
           content:
             application/json:
-              schema: {}
-          description: Successful Response
+              schema:
+                $ref: '#/components/schemas/CapsuleListResponse'
+          description: A page of run capsules. `total` is present on the first page
+            only — keyset pages omit it by design (ADR-0206).
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request parameters or body.
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Missing or invalid bearer token.
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Authenticated but not permitted (missing role).
         '422':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: List Capsules
+      summary: List run capsules
       tags:
       - capsules
     post:
@@ -1137,26 +1627,57 @@ paths:
         directory, and published atomically via rename — a failed request never
 
         leaves a partial ``capsule_dir/<run_id>``.'
-      operationId: upload_capsule_v0_capsules_post
+      operationId: uploadCapsule
       requestBody:
         content:
           multipart/form-data:
             schema:
-              $ref: '#/components/schemas/Body_upload_capsule_v0_capsules_post'
+              $ref: '#/components/schemas/Body_uploadCapsule'
         required: true
       responses:
         '201':
           content:
             application/json:
-              schema: {}
-          description: Successful Response
+              schema:
+                $ref: '#/components/schemas/CapsuleSummary'
+          description: The stored capsule.
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request parameters or body.
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Missing or invalid bearer token.
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Authenticated but not permitted (missing role).
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: The request conflicts with the current state of the resource.
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: The request body exceeds the configured size limit.
         '422':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Upload Capsule
+      summary: Upload a run capsule archive
       tags:
       - capsules
   /v0/capsules/bulk-delete:
@@ -1236,7 +1757,7 @@ paths:
       tags:
       - capsules
     get:
-      operationId: get_capsule_v0_capsules__run_id__get
+      operationId: getCapsule
       parameters:
       - in: path
         name: run_id
@@ -1248,15 +1769,34 @@ paths:
         '200':
           content:
             application/json:
-              schema: {}
-          description: Successful Response
+              schema:
+                $ref: '#/components/schemas/CapsuleDetail'
+          description: The run capsule.
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Missing or invalid bearer token.
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Authenticated but not permitted (missing role).
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: The requested resource does not exist.
         '422':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Get Capsule
+      summary: Get a run capsule by run_id
       tags:
       - capsules
   /v0/capsules/{run_id}/scores:
@@ -1276,7 +1816,7 @@ paths:
         so
 
         *who submitted* stays distinguishable from *what evaluator produced the value*.'
-      operationId: submit_score_v0_capsules__run_id__scores_post
+      operationId: submitCapsuleScore
       parameters:
       - in: path
         name: run_id
@@ -1288,54 +1828,258 @@ paths:
         content:
           application/json:
             schema:
-              additionalProperties: true
-              title: Body
+              additionalProperties: false
+              description: 'The submission envelope (POST body / SDK argument shape).
+
+
+                Wire contract: ``schemas/score-submission-request.schema.json``. Unknown
+                keys
+
+                are rejected (closed schema).'
+              properties:
+                created_at:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Created At
+                eval_card_digest:
+                  title: Eval Card Digest
+                  type: string
+                evaluator_id:
+                  minLength: 1
+                  title: Evaluator Id
+                  type: string
+                name:
+                  minLength: 1
+                  title: Name
+                  type: string
+                run_id:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Run Id
+                score_id:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Score Id
+                significance:
+                  anyOf:
+                  - additionalProperties: false
+                    description: Optional ADR-0080 significance context carried on
+                      a score (requirement 7).
+                    properties:
+                      ci_high:
+                        title: Ci High
+                        type: number
+                      ci_low:
+                        title: Ci Low
+                        type: number
+                      confidence:
+                        maximum: 1.0
+                        minimum: 0.0
+                        title: Confidence
+                        type: number
+                      method:
+                        pattern: ^(wilson|sprt)$
+                        title: Method
+                        type: string
+                    required:
+                    - method
+                    - ci_low
+                    - ci_high
+                    - confidence
+                    title: SignificanceBlock
+                    type: object
+                  - type: 'null'
+                source:
+                  description: 'Provenance of a score (requirement 1, NF-010).
+
+
+                    ``heuristic`` and ``code`` scorers run offline on stored capsules
+                    at zero token
+
+                    cost; only ``judge`` scorers may spend tokens, and only on sampled
+                    subjects.'
+                  enum:
+                  - human
+                  - heuristic
+                  - code
+                  - judge
+                  title: ScoreSource
+                  type: string
+                subject:
+                  title: Subject
+                  type: string
+                subject_kind:
+                  default: span
+                  title: Subject Kind
+                  type: string
+                supersedes:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Supersedes
+                value:
+                  anyOf:
+                  - type: boolean
+                  - type: number
+                  - type: string
+                  title: Value
+                value_type:
+                  description: The type of a score value (requirement 1).
+                  enum:
+                  - boolean
+                  - categorical
+                  - numeric
+                  title: ScoreValueType
+                  type: string
+              required:
+              - name
+              - value
+              - value_type
+              - source
+              - evaluator_id
+              - subject
+              - eval_card_digest
+              title: ScoreSubmissionRequest
               type: object
+        description: The externally-computed evaluation record to append (ADR-0119).
         required: true
       responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScoreSubmissionResult'
+          description: Idempotent replay — `score_id` was already present with an
+            identical body, so no second line was appended. The body is the same as
+            the 201; only the status differs.
         '201':
           content:
             application/json:
-              schema: {}
-          description: Successful Response
+              schema:
+                $ref: '#/components/schemas/ScoreSubmissionResult'
+          description: Score appended.
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request parameters or body.
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Missing or invalid bearer token.
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Authenticated but not permitted (missing role).
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: The requested resource does not exist.
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: The request conflicts with the current state of the resource.
         '422':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Submit Score
+      summary: Append an externally-computed score to a capsule
       tags:
       - capsules
   /v0/evidence:
     post:
-      operationId: export_evidence_v0_evidence_post
+      operationId: exportEvidence
       requestBody:
         content:
           application/json:
             schema:
               additionalProperties: true
-              title: Body
+              description: '``POST /v0/evidence`` request body.'
+              properties:
+                allow_unsafe_skips:
+                  default: false
+                  title: Allow Unsafe Skips
+                  type: boolean
+                output_path:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  description: Optional override for the output ZIP path (server-side
+                    path).
+                  title: Output Path
+                run_id:
+                  description: The capsule run_id to export as evidence.
+                  title: Run Id
+                  type: string
+              required:
+              - run_id
+              title: EvidenceExportRequest
               type: object
+        description: The capsule to seal into an Evidence Bundle.
         required: true
       responses:
         '202':
           content:
             application/json:
-              schema: {}
-          description: Successful Response
+              schema:
+                $ref: '#/components/schemas/BundleSummary'
+          description: Bundle accepted; metadata for polling and download.
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request parameters or body.
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Missing or invalid bearer token.
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Authenticated but not permitted (missing role).
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: The requested resource does not exist.
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: The request conflicts with the current state of the resource.
         '422':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Export Evidence
+      summary: Export a capsule as an Evidence Bundle
       tags:
       - evidence
   /v0/evidence/{bundle_id}:
     get:
-      operationId: get_evidence_bundle_v0_evidence__bundle_id__get
+      operationId: getEvidenceBundle
       parameters:
       - in: path
         name: bundle_id
@@ -1347,20 +2091,39 @@ paths:
         '200':
           content:
             application/json:
-              schema: {}
-          description: Successful Response
+              schema:
+                $ref: '#/components/schemas/BundleSummary'
+          description: The bundle metadata.
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Missing or invalid bearer token.
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Authenticated but not permitted (missing role).
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: The requested resource does not exist.
         '422':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Get Evidence Bundle
+      summary: Get evidence-bundle metadata
       tags:
       - evidence
   /v0/evidence/{bundle_id}/download:
     get:
-      operationId: download_evidence_bundle_v0_evidence__bundle_id__download_get
+      operationId: downloadEvidenceBundle
       parameters:
       - in: path
         name: bundle_id
@@ -1373,14 +2136,33 @@ paths:
           content:
             application/json:
               schema: {}
-          description: Successful Response
+            application/zip: {}
+          description: The bundle archive.
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Missing or invalid bearer token.
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Authenticated but not permitted (missing role).
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: The requested resource does not exist.
         '422':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Download Evidence Bundle
+      summary: Download an evidence bundle ZIP
       tags:
       - evidence
   /v0/lineage/blast-radius:

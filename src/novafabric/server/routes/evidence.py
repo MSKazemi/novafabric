@@ -22,6 +22,12 @@ from novafabric.server.auth import AuthContext
 from novafabric.server.deps import get_capsule_dir, get_db_path
 from novafabric.server.errors import BadRequestError, ConflictError, NotFoundError
 from novafabric.server.rbac import Role, require_role
+from novafabric.server.schemas import (
+    BundleSummary,
+    EvidenceExportRequest,
+    error_responses,
+    request_body,
+)
 
 router = APIRouter(prefix="/evidence", tags=["evidence"])
 
@@ -42,7 +48,24 @@ def _now() -> str:
 # ---------- export ----------
 
 
-@router.post("", status_code=202, response_model=None)
+@router.post(
+    "",
+    status_code=202,
+    response_model=None,
+    operation_id="exportEvidence",
+    summary="Export a capsule as an Evidence Bundle",
+    openapi_extra=request_body(
+        EvidenceExportRequest,
+        description="The capsule to seal into an Evidence Bundle.",
+    ),
+    responses={
+        202: {
+            "model": BundleSummary,
+            "description": "Bundle accepted; metadata for polling and download.",
+        },
+        **error_responses(400, 401, 403, 404, 409),
+    },
+)
 async def export_evidence(
     body: dict[str, Any],
     capsule_dir: Annotated[Path, Depends(get_capsule_dir)] = None,  # type: ignore[assignment]
@@ -142,7 +165,16 @@ async def export_evidence(
 # ---------- get bundle metadata ----------
 
 
-@router.get("/{bundle_id}", response_model=None)
+@router.get(
+    "/{bundle_id}",
+    response_model=None,
+    operation_id="getEvidenceBundle",
+    summary="Get evidence-bundle metadata",
+    responses={
+        200: {"model": BundleSummary, "description": "The bundle metadata."},
+        **error_responses(401, 403, 404),
+    },
+)
 async def get_evidence_bundle(
     bundle_id: str,
     _auth: Annotated[AuthContext, Depends(require_role(Role.auditor))] = None,  # type: ignore[assignment]
@@ -157,7 +189,19 @@ async def get_evidence_bundle(
 # ---------- download ----------
 
 
-@router.get("/{bundle_id}/download", response_model=None)
+@router.get(
+    "/{bundle_id}/download",
+    response_model=None,
+    operation_id="downloadEvidenceBundle",
+    summary="Download an evidence bundle ZIP",
+    responses={
+        200: {
+            "content": {"application/zip": {}},
+            "description": "The bundle archive.",
+        },
+        **error_responses(401, 403, 404),
+    },
+)
 async def download_evidence_bundle(
     bundle_id: str,
     _auth: Annotated[AuthContext, Depends(require_role(Role.auditor))] = None,  # type: ignore[assignment]
