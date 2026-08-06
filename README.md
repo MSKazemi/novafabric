@@ -756,6 +756,7 @@ See [Citation](#citation) below, or the [`CITATION.cff`](CITATION.cff) file.
 - [Developer Guide](docs/developer-guide.md) — adding asset types, CLI commands, adapters
 - [Architecture](docs/architecture.md) — where everything lives
 - [RFC process](docs/governance/rfc-process.md) — for changes that need one
+- [AGENTS.md](AGENTS.md) — a README for coding agents: commands, invariants, what gets reverted
 - [Maintainer criteria](docs/governance/maintainer-criteria.md) — the path to merge rights
 - [Governance](GOVERNANCE.md) · [Contributors](CONTRIBUTORS.md) · [Support](SUPPORT.md)
 

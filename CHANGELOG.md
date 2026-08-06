@@ -9,6 +9,26 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Added (the agent-facing and AI-assistance surface)
+
+- **`AGENTS.md` is now public** — a README for coding agents, per the
+  [agents.md](https://agents.md/) convention: setup, the exact gate commands, the
+  ten invariants that get a change reverted, and the traps this repository has
+  actually hit. It was written fresh for a public audience rather than exported
+  from any internal file, and the one paragraph that enumerated non-public paths
+  was rewritten to state the *rule* — a public document may only link to what the
+  public git tracks — instead of the inventory.
+- **An AI-assistance policy in `CONTRIBUTING.md`.** This project's own commits
+  carry `Co-Authored-By` trailers naming an assistant; holding contributors to a
+  different standard would be incoherent. The bar is responsibility, not tooling:
+  understand it, be able to explain it, run the gates, disclose substantial
+  assistance. **A change will never be rejected *because* it was AI-assisted** —
+  only for a stated defect.
+- The pull-request template now names the **real** gates (`make test-fast`,
+  `lint`, `typecheck`, `check-links`) instead of stale commands that no longer
+  match the Makefile, and carries one responsibility checkbox.
+
+
 ### Fixed (a CI step that could never pass on the public repository)
 
 - The MetadataStore Security Gate ended with
