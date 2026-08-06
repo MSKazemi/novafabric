@@ -229,7 +229,7 @@ server = [
     "uvicorn[standard]>=0.32",
     # python-multipart (Apache-2.0) — Tier A under ADR-0024.  Required by FastAPI
     # for multipart/form-data upload endpoints (capsule upload).
-    "python-multipart>=0.0.31",
+    "python-multipart>=0.0.32",
     # psycopg3 (LGPL-3.0) — Tier B under ADR-0024.  Justification: the only
     # actively maintained async-capable Postgres driver; LGPL requires
     # distributing as a separate optional extra, not bundled in the default install.
