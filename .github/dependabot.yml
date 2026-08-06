@@ -8,6 +8,16 @@
 # Dependabot is dev-infra service configuration, not a runtime or dev
 # dependency; ADR-0024's license tiers apply to the updated packages it
 # proposes, not to the service itself (ADR-0186).
+#
+# EVERY publicly-tracked manifest must appear below. Dependabot only looks
+# where it is pointed, so a manifest with no entry here is silently
+# unmonitored — it does not warn, it simply never proposes a fix. That gap is
+# how `examples/`, `packages/` and `collector/` accumulated vulnerable
+# dependencies while the root lockfile was kept clean. Re-check with:
+#
+#   git ls-files | grep -E '(uv\.lock|package-lock\.json|go\.mod|Dockerfile)$'
+#
+# and confirm each result is covered by a directory or directories entry.
 version: 2
 updates:
   # Python dependencies. The repo is uv-managed (pyproject.toml + uv.lock),
@@ -35,9 +45,30 @@ updates:
         patterns:
           - "*"
 
-  # Showcase site (web/) npm dependencies.
+  # Standalone Python projects that carry their own lockfile and are therefore
+  # NOT resolved by the root uv.lock. There is no [tool.uv.workspace] table, so
+  # nothing about the root entry above reaches these.
+  - package-ecosystem: "uv"
+    directories:
+      - "/examples/plugin-hook-reference"
+      - "/packages/nova_worm_conformance"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      python-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    open-pull-requests-limit: 5
+
+  # npm workspaces. Each directory gets its own PRs; the group applies within
+  # a directory, not across them.
   - package-ecosystem: "npm"
-    directory: "/web"
+    directories:
+      - "/web"
+      - "/packages/nova-sdk-ts"
+      - "/packages/nova-dashboard"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -47,6 +78,21 @@ updates:
           - "minor"
           - "patch"
     open-pull-requests-limit: 10
+
+  # The Go collector. An entire language ecosystem that went unwatched until
+  # 2026-08-06 — nats-server and the CloudEvents SDK both ship security
+  # releases, and none of them were being surfaced.
+  - package-ecosystem: "gomod"
+    directory: "/collector"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      go-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    open-pull-requests-limit: 5
 
   # Docker base images (runtime image; ADR-0186 names these explicitly).
   - package-ecosystem: "docker"

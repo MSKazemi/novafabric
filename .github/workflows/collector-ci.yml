@@ -50,6 +50,39 @@ jobs:
           fi
           echo "OK: no flock/mmap/fcntl in internal/spool"
 
+  vuln:
+    name: Vulnerability Scan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: collector
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: collector/go.sum
+      # The Python supply chain has had a blocking pip-audit gate for a while;
+      # the Go one had nothing equivalent, so a CVE in nats-server or the
+      # CloudEvents SDK would have reached a release unremarked. Dependabot now
+      # watches collector/go.mod for *new versions*; this catches the case that
+      # matters more — a vulnerability in code the collector actually calls.
+      #
+      # govulncheck reports only vulnerabilities reachable from this module's
+      # call graph, so it is deliberately low-noise and safe to make blocking.
+      # If an unfixable advisory ever blocks a release, add an explicit,
+      # commented exclusion here rather than dropping the job — the Python side
+      # does the same through .pip-audit-waivers.toml.
+      #
+      # Pinned rather than @latest: the vulnerability *database* is fetched at
+      # run time either way, so tracking the newest scanner buys nothing and
+      # would let an upstream release change what this gate does without a
+      # commit. Bumped by Dependabot along with the rest of the Go module.
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+      - name: govulncheck ./...
+        run: $(go env GOPATH)/bin/govulncheck ./...
+
   unit:
     name: Unit Tests
     runs-on: ubuntu-latest
