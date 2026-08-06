@@ -24,6 +24,12 @@ import yaml
 from fastapi import APIRouter, Depends, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 
+# Imported eagerly, unlike the rest of this module's novafabric.eval imports:
+# the route decorator needs the model at import time to describe the request
+# body in the OpenAPI document (ADR-0227).
+from novafabric.eval.score_submission import (
+    ScoreSubmissionRequest as _ScoreSubmissionRequest,
+)
 from novafabric.server import capsule_delete, capsule_index, ingest
 from novafabric.server.auth import AuthContext
 from novafabric.server.config import ServerConfig
@@ -48,6 +54,14 @@ from novafabric.server.pagination import (
 )
 from novafabric.server.quotas import enforce_storage_quota
 from novafabric.server.rbac import Role, require_role
+from novafabric.server.schemas import (
+    CapsuleDetail,
+    CapsuleListResponse,
+    CapsuleSummary,
+    ScoreSubmissionResult,
+    error_responses,
+    request_body,
+)
 
 router = APIRouter(prefix="/capsules", tags=["capsules"])
 
@@ -184,7 +198,22 @@ def _is_valid_uuid(s: str) -> bool:
 # ---------- list ----------
 
 
-@router.get("", response_model=None)
+@router.get(
+    "",
+    response_model=None,
+    operation_id="listCapsules",
+    summary="List run capsules",
+    responses={
+        200: {
+            "model": CapsuleListResponse,
+            "description": (
+                "A page of run capsules. `total` is present on the first page "
+                "only — keyset pages omit it by design (ADR-0206)."
+            ),
+        },
+        **error_responses(400, 401, 403),
+    },
+)
 async def list_capsules(
     response: Response,
     limit: int = Query(default=50, ge=1, le=500),
@@ -260,7 +289,17 @@ async def list_capsules(
 # ---------- upload ----------
 
 
-@router.post("", status_code=201, response_model=None)
+@router.post(
+    "",
+    status_code=201,
+    response_model=None,
+    operation_id="uploadCapsule",
+    summary="Upload a run capsule archive",
+    responses={
+        201: {"model": CapsuleSummary, "description": "The stored capsule."},
+        **error_responses(400, 401, 403, 409, 413),
+    },
+)
 async def upload_capsule(
     request: Request,
     capsule: UploadFile,
@@ -396,7 +435,16 @@ async def upload_capsule(
 # ---------- get ----------
 
 
-@router.get("/{run_id}", response_model=None)
+@router.get(
+    "/{run_id}",
+    response_model=None,
+    operation_id="getCapsule",
+    summary="Get a run capsule by run_id",
+    responses={
+        200: {"model": CapsuleDetail, "description": "The run capsule."},
+        **error_responses(401, 403, 404),
+    },
+)
 async def get_capsule(
     run_id: str,
     capsule_dir: Annotated[Path, Depends(get_capsule_dir)] = None,  # type: ignore[assignment]
@@ -591,7 +639,32 @@ async def bulk_delete_capsules(
 # ---------- external score submission (ADR-0119, experimental) ----------
 
 
-@router.post("/{run_id}/scores", status_code=201, response_model=None)
+@router.post(
+    "/{run_id}/scores",
+    status_code=201,
+    response_model=None,
+    operation_id="submitCapsuleScore",
+    summary="Append an externally-computed score to a capsule",
+    openapi_extra=request_body(
+        _ScoreSubmissionRequest,
+        description="The externally-computed evaluation record to append (ADR-0119).",
+    ),
+    responses={
+        200: {
+            "model": ScoreSubmissionResult,
+            "description": (
+                "Idempotent replay — `score_id` was already present with an "
+                "identical body, so no second line was appended. The body is "
+                "the same as the 201; only the status differs."
+            ),
+        },
+        201: {
+            "model": ScoreSubmissionResult,
+            "description": "Score appended.",
+        },
+        **error_responses(400, 401, 403, 404, 409),
+    },
+)
 async def submit_score(
     run_id: str,
     body: dict[str, Any],

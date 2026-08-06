@@ -13,7 +13,19 @@ import type { components, operations } from "./types.gen.js";
 
 export type ErrorDetail = components["schemas"]["ErrorDetail"];
 export type ErrorEnvelope = components["schemas"]["ErrorEnvelope"];
-export type PaginationMeta = components["schemas"]["PaginationMeta"];
+/**
+ * The cursor-pagination envelope every list response carries.
+ *
+ * Derived from a list response rather than named directly: the server's
+ * pagination fields are inherited into each list schema, so they arrive on the
+ * wire flat rather than as a referenced `PaginationMeta` component. Deriving it
+ * keeps this type honest — it cannot drift from the shape the server actually
+ * sends. `total` is optional because keyset pages omit it (ADR-0206).
+ */
+export type PaginationMeta = Omit<
+  components["schemas"]["CapsuleListResponse"],
+  "items"
+>;
 export type AssetType = components["schemas"]["AssetType"];
 export type AssetStatus = components["schemas"]["AssetStatus"];
 export type AssetSummary = components["schemas"]["AssetSummary"];
@@ -22,8 +34,15 @@ export type AssetListResponse = components["schemas"]["AssetListResponse"];
 export type CapsuleSummary = components["schemas"]["CapsuleSummary"];
 export type CapsuleDetail = components["schemas"]["CapsuleDetail"];
 export type CapsuleListResponse = components["schemas"]["CapsuleListResponse"];
-/** Request body for `exportEvidence` — the capsule to seal into an Evidence Bundle. */
-export type EvidenceExportRequest = components["schemas"]["EvidenceExportRequest"];
+/**
+ * Request body for `exportEvidence` — the capsule to seal into an Evidence
+ * Bundle. Derived from the operation, matching `ScoreSubmission` below: request
+ * bodies are described inline on the operation rather than as shared components,
+ * because the routes validate them by hand and the schema documents the body
+ * without receiving it (ADR-0227).
+ */
+export type EvidenceExportRequest =
+  operations["exportEvidence"]["requestBody"]["content"]["application/json"];
 /** Evidence-bundle metadata returned by `exportEvidence` / `getEvidenceBundle`. */
 export type BundleSummary = components["schemas"]["BundleSummary"];
 

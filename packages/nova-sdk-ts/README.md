@@ -148,9 +148,21 @@ npm run build         # emit dist/ (ESM + d.ts)
 `src/types.gen.ts` is committed; `npm run check:drift` regenerates to a temp
 file and diffs, so any change to `api/openapi.yaml` without a matching
 regeneration fails the gate. Generation runs through
-`scripts/generate-types.mjs` rather than the bare `openapi-typescript` CLI
-because of a pre-existing spec bug (two dangling `$ref`s on
-`/admin/flush-jwks`); see the comment in that script.
+`scripts/generate-types.mjs` rather than the bare `openapi-typescript` CLI so
+the spec can be loaded and generated programmatically; the script no longer
+patches the document on the way through.
+
+`api/openapi.yaml` is itself generated from the server app
+(`scripts/gen_openapi.py`), so the chain is **server → spec → types** and the
+server is authoritative. Response schemas are *declared* on the routes rather
+than bound to them, which is why the generated types name real shapes without
+the server filtering any response body (`ADR-0227` — see the
+[decision ledger](../../docs/decisions.md)).
+
+Two types are derived from operations rather than from `components.schemas`:
+`EvidenceExportRequest` and `ScoreSubmission` are request bodies, which the spec
+describes inline on the operation, and `PaginationMeta`, whose fields the server
+inherits into each list schema and therefore sends flat.
 
 These gates run in CI via `.github/workflows/sdk-ts.yml`, path-scoped to
 `packages/nova-sdk-ts/**` and `api/openapi.yaml` (so a contract change that
