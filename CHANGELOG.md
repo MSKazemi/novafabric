@@ -33,9 +33,21 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   reaches unaided.
 - `nova db migrate-to-postgres` carried the same stale conflict target and is
   updated with it.
-- **`tests/metadata_store`: 77 passed, from 6 failing.** New regression tests pin
+- **`tests/metadata_store`: 109 passed, from 6 failing.** New regression tests pin
   each behaviour, and the idempotency test is verified to fail if the guard is
   swapped back for an `ON CONFLICT`.
+- **The MetadataStore Security Gate passes for the first time in its recorded
+  history** (89.28% against its 85% floor, from 80.21%). It had failed on every
+  run: first on mypy, then on the tests this defect broke, and finally on a
+  coverage threshold that was simply never reachable while the job died earlier.
+  `metadata_store/cli.py` went 66% → 90% with tests for the operator-facing
+  surface — including two that assert a password never reaches a console or a
+  log line, which is worth having regardless of the number.
+- `v004`'s upgrade *and* its lossy downgrade are exercised against a real
+  Postgres. Writing that test immediately caught a bug in the migration:
+  `DISTINCT ON (run_id, tenant_id)` guards the upgrade but not the downgrade,
+  whose target key is `(run_id, started_at)` — the dedupe now matches the key
+  being enforced in each direction.
 
 
 ### Added (a GitHub Action — integration-led growth, the lever that compounds)

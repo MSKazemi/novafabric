@@ -121,20 +121,26 @@ _COLUMNS = (
 )
 
 
-def _swap(op: Any, *, pkey_columns: str) -> None:
-    """Rebuild ``runs`` with *pkey_columns* as its primary key, preserving rows."""
+def _swap(op: Any, *, pkey_columns: str, dedupe_on: str) -> None:
+    """Rebuild ``runs`` with *pkey_columns* as its primary key, preserving rows.
+
+    *dedupe_on* must cover the key being enforced. Getting this wrong is not
+    theoretical: deduping on ``(run_id, tenant_id)`` protects the upgrade but not
+    the downgrade, whose target key is ``(run_id, started_at)`` — two tenants
+    sharing a timestamp then collide and the copy aborts halfway. Caught by
+    ``test_v004_downgrade_returns_to_the_narrow_key``.
+    """
     op.execute("DROP TABLE IF EXISTS runs_rekeyed CASCADE")
     _create_runs(op, "runs_rekeyed", pkey_columns=pkey_columns)
 
-    # DISTINCT ON collapses any duplicate that the looser key allowed to exist,
-    # keeping the earliest row. Without it the copy can violate the new,
-    # stricter key and abort the migration halfway.
+    # DISTINCT ON collapses any duplicate the looser key allowed to exist,
+    # keeping the earliest row rather than aborting the migration.
     op.execute(
         f"""
         INSERT INTO runs_rekeyed ({_COLUMNS})
-        SELECT DISTINCT ON (run_id, tenant_id) {_COLUMNS}
+        SELECT DISTINCT ON ({dedupe_on}) {_COLUMNS}
         FROM runs
-        ORDER BY run_id, tenant_id, started_at
+        ORDER BY {dedupe_on}, started_at
         """  # noqa: S608
     )
 
@@ -154,7 +160,10 @@ def upgrade() -> None:
     """Widen the runs primary key to (run_id, tenant_id, started_at)."""
     from alembic import op  # noqa: PLC0415
 
-    _swap(op, pkey_columns="run_id, tenant_id, started_at")
+    # Dedupe on the pair, not the triple: the new key permits two rows with the
+    # same run and tenant at different timestamps, but `register_run`'s contract
+    # does not. Collapsing them restores the invariant while migrating.
+    _swap(op, pkey_columns="run_id, tenant_id, started_at", dedupe_on="run_id, tenant_id")
 
 
 def downgrade() -> None:
@@ -168,4 +177,4 @@ def downgrade() -> None:
     """
     from alembic import op  # noqa: PLC0415
 
-    _swap(op, pkey_columns="run_id, started_at")
+    _swap(op, pkey_columns="run_id, started_at", dedupe_on="run_id, started_at")
