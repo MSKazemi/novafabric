@@ -20,6 +20,8 @@ anything else on this page first.
   larger, still well-specified
 - **Something that annoyed you** — a confusing error, a doc that lied, a missing
   flag. You do not need permission to fix that; open a PR.
+- **[Now / Next / Later](ROADMAP.md#now--next--later--the-10-second-version)** — if
+  you would rather see where the project is heading before picking something up.
 
 If nothing fits, say hello in
 [Discussions](https://github.com/novafabric/novafabric/discussions) and we will

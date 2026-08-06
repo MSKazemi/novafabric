@@ -752,6 +752,7 @@ See [Citation](#citation) below, or the [`CITATION.cff`](CITATION.cff) file.
 ### For contributors
 - **[Contributing](CONTRIBUTING.md)** — start here; 15 minutes from clone to PR
 - **[Good first issues](https://github.com/novafabric/novafabric/labels/good%20first%20issue)** — scoped and specified
+- **[Now / Next / Later](ROADMAP.md#now--next--later--the-10-second-version)** — where the project is and where you fit, in 10 seconds
 - [Developer Guide](docs/developer-guide.md) — adding asset types, CLI commands, adapters
 - [Architecture](docs/architecture.md) — where everything lives
 - [RFC process](docs/governance/rfc-process.md) — for changes that need one
