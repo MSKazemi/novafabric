@@ -9,6 +9,27 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Added (concurrent in-process captures can each own a recorder — ADR-0224 D3)
+
+- `get_current_recorder()` now resolves a **task-bound** recorder before the
+  process-wide singleton, and `bind_recorder()` / `unbind_recorder()` establish
+  one per capture. Because the hooks resolve the recorder when an event *fires*
+  rather than when they are installed, one installed patch layer can serve
+  several concurrent captures with each filing into its own capsule.
+- **ADR-0224 predicted this would "change the contract for every hook". It does
+  not** — no hook signature changed, and the nine hook modules were not touched.
+  What genuinely remains a contract change is `install_all()`'s token, which
+  returns `""` to the capture that loses the hook race; that is filed as the
+  remaining slice rather than smuggled in here.
+- The release handle is deliberately **not** a `contextvars.Token`: a capture may
+  tear down from a different task than the one that set it up. The boundary is
+  narrower than ADR-0224 stated — coroutines merely `await`-ed in sequence share
+  a context, so a Token would work there; it takes a separate `Task` or a thread
+  to make `Token.reset()` raise. Both directions are asserted in the suite.
+- **Observationally inert**: nothing binds yet, so no behaviour changed. Threads,
+  which do not inherit context, still fall back to the singleton rather than to
+  `None` — silently dropping every event is the failure this fallback prevents.
+
 ### Added (design only — the dashboard enterprise program, ADRs 0228–0239)
 
 - **A 2026-08 audit of `nova serve` against LangSmith and Langfuse**, with contrast
@@ -34,6 +55,16 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   knowledge is produced.
 - **Ten idea cards** under `design/vision/ideas/2026-08-06-*.md` — nine scored **go**,
   one (time-travel dashboard) **watch**, each with pre-registered kill criteria.
+- **A 30-round breadth sweep** — `design/spec/dashboard-improvement-catalog.md`,
+  **206 entries** (160 new, 17 already covered by the ADRs, 27 refining them, 2
+  declined), deliberately low-bar: papercuts, missing affordances, and shipped-but-
+  unreachable subsystems rather than architecturally significant decisions. **Only
+  one of its ten highest-leverage items sits in the ADR cohort** — the first pass
+  optimized for significance, which filters out most of what people actually feel.
+  Five entries are flagged as warranting their own ADR (none authored), including
+  declared response models and operation IDs for `serve`'s ~206 endpoints — the same
+  defect class ADR-0227 just fixed for `server/`, one surface over. Unvalidated:
+  read from code and docs, not tested with users.
 - **Deliberately declined, and recorded so they are not re-proposed:** real-time
   monitoring/alerting, a prompt playground, and hosted SaaS all remain
   **Not planned**. The one portable idea inside alerting — LangSmith's historical

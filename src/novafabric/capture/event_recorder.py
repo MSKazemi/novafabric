@@ -19,12 +19,21 @@ Module-level singleton (``_current_recorder``) is set by the orchestrator at
 run start / run end so that wire-level hooks (which do not receive the writer
 as a constructor argument) can record network events without coupling to the
 orchestrator or the hook installation sequence.
+
+Since ADR-0224 D3 the singleton is a **fallback**, not the only answer: a
+capture may bind a recorder to its own task with :func:`bind_recorder`, and
+:func:`get_current_recorder` prefers that. Because the hooks resolve the
+recorder when an event *fires* rather than when they are installed, one
+installed set of hooks can serve several concurrent in-process captures, each
+filing into its own capsule — and no hook's signature changes to allow it.
 """
 from __future__ import annotations
 
 import json
 import logging
+import secrets
 import threading
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -84,10 +93,35 @@ def _is_ai_api(url: str) -> bool:
 _current_recorder: EventRecorder | None = None
 _singleton_lock = threading.Lock()
 
+#: Per-task recorder (ADR-0224 D3). Overrides the process-wide singleton for
+#: the task that bound it, so two concurrent in-process captures each record
+#: into their own capsule through **one** set of installed hooks — the hooks
+#: resolve the recorder when an event fires, not when they are installed, so
+#: nothing about their signatures changes.
+_recorder_var: ContextVar[EventRecorder | None] = ContextVar(
+    "novafabric_current_recorder", default=None
+)
+
+#: Live bindings by handle. Exists so a binding can be released from a task
+#: *other* than the one that created it — see :func:`unbind_recorder`. Bounded
+#: by the number of concurrent captures in the process (single digits), and
+#: every entry is removed by the ``finally`` that pairs with its bind.
+_bindings: dict[str, EventRecorder] = {}
+_binding_lock = threading.Lock()
+
 
 def get_current_recorder() -> EventRecorder | None:
-    """Return the recorder active for the current capture run, or None."""
-    return _current_recorder
+    """Return the recorder active for the current capture run, or None.
+
+    A recorder bound to this task wins; otherwise the process-wide singleton
+    answers. That fallback is what keeps single-capture processes — the
+    subprocess ``sitecustomize`` loader and the orchestrator — working exactly
+    as before, and what makes a capture started on a bare thread still record:
+    **threads do not inherit context** (ADR-0224 D3), so a thread that binds
+    nothing sees the singleton rather than nothing at all.
+    """
+    bound = _recorder_var.get()
+    return bound if bound is not None else _current_recorder
 
 
 def set_current_recorder(recorder: EventRecorder | None) -> None:
@@ -96,10 +130,57 @@ def set_current_recorder(recorder: EventRecorder | None) -> None:
     Called by ``CaptureOrchestrator.run()`` at run start and run end so that
     wire-level hooks can call ``get_current_recorder()`` without holding a
     reference to the orchestrator.
+
+    Process-wide. For one capture among several in a process, bind a task-local
+    recorder with :func:`bind_recorder` instead.
     """
     global _current_recorder
     with _singleton_lock:
         _current_recorder = recorder
+
+
+def bind_recorder(recorder: EventRecorder) -> str:
+    """Bind *recorder* to the current task and return a release handle.
+
+    The returned handle — not a :class:`contextvars.Token` — is what
+    :func:`unbind_recorder` takes. That is deliberate and is the second
+    constraint ADR-0224 D3 records: ``bedrock_agentcore`` tears down from inside
+    a generator that is consumed later, possibly in a different task, and a
+    ``Token`` may only be reset in the context that produced it. Releasing with
+    one from elsewhere raises ``ValueError`` and would wedge the binding for the
+    life of the process.
+
+    The boundary is worth stating precisely, because it is narrower than it
+    looks: coroutines merely ``await``-ed in sequence share one context, so a
+    Token would work there. It is a separate ``Task`` — or a thread — that
+    copies the context and breaks the reset. Both cases are asserted in
+    ``tests/capture/test_task_scoped_recorder.py``.
+    """
+    handle = secrets.token_urlsafe(16)
+    with _binding_lock:
+        _bindings[handle] = recorder
+    _recorder_var.set(recorder)
+    return handle
+
+
+def unbind_recorder(handle: str) -> bool:
+    """Release a binding made by :func:`bind_recorder`.
+
+    Returns True if *handle* was live. Safe to call from any task, more than
+    once, and after the binding task has finished: an unknown handle is a no-op
+    rather than an error, because a teardown path must never raise into the
+    workload it is capturing.
+
+    Clearing the context variable only has an effect in the task that holds it;
+    other tasks' contexts are discarded with the task, so nothing leaks.
+    """
+    with _binding_lock:
+        recorder = _bindings.pop(handle, None)
+    if recorder is None:
+        return False
+    if _recorder_var.get() is recorder:
+        _recorder_var.set(None)
+    return True
 
 
 # ---------------------------------------------------------------------------
