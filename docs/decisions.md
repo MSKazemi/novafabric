@@ -29,7 +29,7 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | **rejected** | Considered and declined; kept as provenance. |
 
 
-**225 decisions recorded** — **215** accepted · **7** proposed · **3** superseded.
+**226 decisions recorded** — **216** accepted · **7** proposed · **3** superseded.
 
 | ADR | Title | Status | Date |
 |---|---|---|---|
@@ -258,3 +258,4 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | `ADR-0223` | Schema identity: nine schema pairs share one $id and disagree; separate the v1 target from the in-force v0 | accepted | 2026-08-02 |
 | `ADR-0224` | Concurrent in-process captures: single-owner hooks now, task-scoped recorder later | accepted | 2026-08-02 |
 | `ADR-0225` | Persistent nova query index: mtime-validated cache outside the capsule directory | accepted | 2026-08-02 |
+| `ADR-0226` | runs primary key: tenant_id belongs in the key; idempotency moves into the application | accepted | 2026-08-06 |
