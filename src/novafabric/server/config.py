@@ -352,6 +352,48 @@ def check_multi_org_shared_store(
         )
 
 
+class TlsConfigError(ValueError):
+    """The TLS configuration is unusable (missing/unreadable material)."""
+
+
+class TlsConfig(BaseModel):
+    """First-party TLS on the server listener (ADR-0241 slice 1).
+
+    ADR-0029 documented ``tls.enabled`` / ``tls.cert_path`` / ``tls.key_path``
+    without an implementation; this block makes them real. ``enabled: true``
+    requires both paths; :func:`check_tls_config` (run at launch, not at model
+    construction) verifies the files exist and the private key is owner-only
+    (not group/world readable) — the same posture as ``offline_key_path``.
+    mTLS client-certificate verification is a later ADR-0241 slice.
+    """
+
+    enabled: bool = False
+    cert_path: str | None = None
+    key_path: str | None = None
+
+
+def check_tls_config(tls: TlsConfig) -> None:
+    """Fail closed on unusable TLS material. Call before binding a listener."""
+    if not tls.enabled:
+        return
+    if not tls.cert_path or not tls.key_path:
+        raise TlsConfigError(
+            "tls.enabled requires both tls.cert_path and tls.key_path "
+            "(NOVA_TLS_CERT_PATH / NOVA_TLS_KEY_PATH)"
+        )
+    cert = Path(tls.cert_path)
+    key = Path(tls.key_path)
+    for name, path in (("tls.cert_path", cert), ("tls.key_path", key)):
+        if not path.is_file():
+            raise TlsConfigError(f"{name} does not exist: {path}")
+    mode = key.stat().st_mode & 0o077
+    if mode != 0:
+        raise TlsConfigError(
+            f"tls.key_path {key} is group/world-accessible "
+            f"(mode {oct(key.stat().st_mode & 0o777)}); chmod 600 it"
+        )
+
+
 class ServerConfig(BaseModel):
     host: str = Field(default="127.0.0.1")
     port: int = Field(default=7433, ge=1, le=65535)
@@ -384,6 +426,10 @@ class ServerConfig(BaseModel):
     # Webhook subscription registry (ADR-0205, experimental) — disabled by
     # default; off ⇒ no dispatch worker thread, byte-identical behavior.
     webhooks: WebhooksConfig = Field(default_factory=WebhooksConfig)
+
+    # First-party listener TLS (ADR-0241 slice 1) — off by default; the
+    # reverse-proxy posture remains supported.
+    tls: TlsConfig = Field(default_factory=TlsConfig)
 
     # ADR-0184 (experimental): explicit opt-out from local-token auth.
     # True restores the pre-0184 anonymous-admin behaviour when OIDC is off.
@@ -434,6 +480,12 @@ class ServerConfig(BaseModel):
             self.postgres_dsn = val
         if val := os.environ.get("NOVAFABRIC_OFFLINE_KEY_PATH"):
             self.offline_key_path = val
+        if val := os.environ.get("NOVA_TLS_ENABLED"):
+            self.tls.enabled = val.lower() in ("1", "true", "yes", "on")
+        if val := os.environ.get("NOVA_TLS_CERT_PATH"):
+            self.tls.cert_path = val
+        if val := os.environ.get("NOVA_TLS_KEY_PATH"):
+            self.tls.key_path = val
         if val := os.environ.get("NOVAFABRIC_SERVER_SCIM_ENABLED"):
             self.scim.enabled = val.lower() in ("1", "true", "yes", "on")
         if val := os.environ.get("NOVAFABRIC_SERVER_METRICS_EXEMPT"):

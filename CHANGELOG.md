@@ -9,6 +9,21 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Added (first-party listener TLS — ADR-0029's `tls.*` keys become real, first slice)
+
+- **`nova server start` and `nova serve` can terminate TLS natively**
+  (ADR-0241): a `tls:` config block (`enabled`/`cert_path`/`key_path` — the
+  names ADR-0029 documented in 2026 without an implementation) with
+  `NOVA_TLS_*` env overrides, wired through both the single-process and
+  `--workers` factory launch paths, plus `nova serve --tls-cert/--tls-key`.
+  Fail-closed at launch: missing material or a group/world-readable key
+  refuses to start rather than silently serving plaintext. Verified by a real
+  HTTPS round-trip test (uvicorn + self-signed cert + cert-pinned client, and
+  the plaintext-request-refused negative). The reverse-proxy posture remains
+  fully supported; native TLS exists for the deployments that have no proxy
+  (HPC nodes, plain VMs). Client CA-bundle contract, collector NATS TLS, and
+  mTLS stay planned (recorded in the ADR).
+
 ### Added (durable background jobs — accepted work survives the process, first slice)
 
 - **`novafabric.jobs`** (ADR-0242): a lease-claimed, crash-recoverable job store

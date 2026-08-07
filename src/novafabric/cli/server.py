@@ -255,7 +255,14 @@ def start_cmd(
         _launch_workers(uvicorn, cfg, config, workers)
     else:
         app = create_app(cfg)
-        uvicorn.run(app, host=cfg.host, port=cfg.port)
+        ssl_certfile, ssl_keyfile = _ssl_paths(cfg)
+        uvicorn.run(
+            app,
+            host=cfg.host,
+            port=cfg.port,
+            ssl_certfile=ssl_certfile,
+            ssl_keyfile=ssl_keyfile,
+        )
 
 
 def _launch_workers(
@@ -292,7 +299,24 @@ def _launch_workers(
         host=cfg.host,  # type: ignore[attr-defined]
         port=cfg.port,  # type: ignore[attr-defined]
         workers=workers,
+        ssl_certfile=_ssl_paths(cfg)[0],
+        ssl_keyfile=_ssl_paths(cfg)[1],
     )
+
+
+def _ssl_paths(cfg: object) -> "tuple[str | None, str | None]":
+    """uvicorn ssl paths from the validated TLS block (ADR-0241).
+
+    Validation is fail-closed at launch: unusable material refuses to start
+    rather than silently serving plaintext.
+    """
+    from novafabric.server.config import check_tls_config
+
+    tls = cfg.tls  # type: ignore[attr-defined]
+    check_tls_config(tls)
+    if not tls.enabled:
+        return (None, None)
+    return (tls.cert_path, tls.key_path)
 
 
 # ---------------------------------------------------------------------------

@@ -6,6 +6,7 @@ fastapi + uvicorn) and gated behind --experimental (mandatory flag).
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 import webbrowser
@@ -103,6 +104,23 @@ def serve_cmd(
             help="Louvain clustering resolution for the topology view. Lower values "
             "merge into fewer/larger clusters; higher values split further. "
             "Default 1.0 (or NOVA_TOPOLOGY_LOUVAIN_RESOLUTION).",
+        ),
+    ] = None,
+    tls_cert: Annotated[
+        Path | None,
+        typer.Option(
+            "--tls-cert",
+            help="Serve HTTPS with this certificate (PEM). Requires --tls-key. "
+            "ADR-0241: first-party TLS; the reverse-proxy posture remains "
+            "supported. Also NOVA_TLS_CERT_PATH.",
+        ),
+    ] = None,
+    tls_key: Annotated[
+        Path | None,
+        typer.Option(
+            "--tls-key",
+            help="Private key (PEM) for --tls-cert; must be chmod 600. "
+            "Also NOVA_TLS_KEY_PATH.",
         ),
     ] = None,
 ) -> None:
@@ -265,6 +283,18 @@ def serve_cmd(
 
     import uvicorn
 
+    # ADR-0241 slice 1: first-party TLS, fail-closed on unusable material.
+    from novafabric.server.config import TlsConfig, TlsConfigError, check_tls_config
+
+    cert = str(tls_cert) if tls_cert else os.environ.get("NOVA_TLS_CERT_PATH")
+    key = str(tls_key) if tls_key else os.environ.get("NOVA_TLS_KEY_PATH")
+    tls = TlsConfig(enabled=bool(cert or key), cert_path=cert, key_path=key)
+    try:
+        check_tls_config(tls)
+    except TlsConfigError as exc:
+        console.print(f"[bold red]TLS configuration error:[/bold red] {exc}")
+        raise typer.Exit(code=2) from None
+
     try:
         uvicorn.run(
             app,
@@ -272,6 +302,8 @@ def serve_cmd(
             port=port,
             log_level="warning",
             access_log=False,
+            ssl_certfile=cert if tls.enabled else None,
+            ssl_keyfile=key if tls.enabled else None,
         )
     except KeyboardInterrupt:
         pass

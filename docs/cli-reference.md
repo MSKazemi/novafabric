@@ -4878,6 +4878,7 @@ Options:
 - `--i-accept-shared-capsule-store` — acknowledge the unpartitioned capsule store and run multiple organizations anyway. Env: `NOVAFABRIC_SERVER_I_ACCEPT_SHARED_CAPSULE_STORE`
 - `--workers, -w INTEGER` — uvicorn worker processes for horizontal scaling (default `1`, **experimental**, v0.98.0). Values `>1` require `--backend postgres` — multiple processes cannot safely share a SQLite file — and launch the app through an import-string factory (`server/factory.py`) so each worker reconstructs its config from the config file and environment
 - `--log-format TEXT` — `text` (default) or `json` (**experimental**, v0.98.0). JSON emits one object per log record including the request-correlation id. Env: `NOVAFABRIC_SERVER_LOG_FORMAT`; the CLI exports it so `--workers` processes inherit the format
+- **Listener TLS (ADR-0241, experimental).** Set the `tls:` block in the config file (`enabled`, `cert_path`, `key_path`) or env `NOVA_TLS_ENABLED=1` + `NOVA_TLS_CERT_PATH` + `NOVA_TLS_KEY_PATH` to serve HTTPS natively (works with `--workers`). Fail-closed at launch: missing material or a group/world-readable key refuses to start. The reverse-proxy posture remains supported; native TLS exists for deployments (HPC nodes, VMs) that have no proxy
 
 **Request correlation (v0.98.0, experimental).** Every request carries an id — taken from an inbound
 `X-Request-ID` header (sanitised: safe characters, max 128, otherwise regenerated to block log
@@ -5958,6 +5959,7 @@ make serve-topology-only
 | Flag | Default | Purpose |
 |---|---|---|
 | `--topology` | off | Enable topology endpoints + SPA. Automatically implies `--tv5`. Requires `--experimental`. |
+| `--tls-cert PATH` / `--tls-key PATH` | off | Serve HTTPS natively (ADR-0241, **experimental**). Both required together; the key must be `chmod 600` — unusable material refuses to start. Env: `NOVA_TLS_CERT_PATH` / `NOVA_TLS_KEY_PATH`. |
 
 **Topology endpoints added when `--topology` is set:**
 

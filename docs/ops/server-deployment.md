@@ -288,6 +288,28 @@ offline_key_path: "/etc/novafabric/keys/offline-key.pem"
 The key file must be owned by the server process user and have mode `0600`.
 `nova server start` refuses to start if the key file is world-readable.
 
+### Native listener TLS (ADR-0241, experimental)
+
+Both `nova server start` and `nova serve` can terminate TLS themselves — for
+deployments with no reverse proxy in front (HPC login/compute nodes, plain
+VMs):
+
+```yaml
+# server.yaml
+tls:
+  enabled: true
+  cert_path: /etc/novafabric/tls/server.crt
+  key_path: /etc/novafabric/tls/server.key   # must be chmod 600
+```
+
+or `NOVA_TLS_ENABLED=1` + `NOVA_TLS_CERT_PATH` + `NOVA_TLS_KEY_PATH`
+(`nova serve` takes `--tls-cert` / `--tls-key`). Works with `--workers N`.
+Validation is fail-closed at launch: a missing file or a group/world-readable
+key refuses to start rather than silently serving plaintext. Certificate
+issuance and rotation stay with your PKI (rotation = replace files, restart);
+NovaFabric never operates a CA. The reverse-proxy posture remains fully
+supported — pick one termination point, not both.
+
 ---
 
 ## Scenario 5 — Kubernetes (Helm)
