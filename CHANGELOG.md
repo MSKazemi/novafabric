@@ -9,6 +9,21 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Added (air-gap bundle — install artifacts verifiable with zero network, first slice)
+
+- **Signed air-gap bundle format** (ADR-0249): `make airgap-bundle` /
+  `scripts/build_airgap_bundle.py` assemble one tar whose members are
+  inventoried in a DSSE-signed `airgap-manifest.json` — signed through the
+  same single-DSSE-writer stack as every other NovaFabric attestation, never
+  a second signing path, and **unsigned bundles are not a thing**.
+  `scripts/verify_airgap_bundle.py` verifies fully offline and names every
+  problem: a flipped byte fails **naming the member**, a member present but
+  absent from the signed manifest is reported as an unsigned stowaway, the
+  wrong key fails the signature. Deterministic manifest given a pinned
+  timestamp. The CI job assembling the full closure (dependency wheels,
+  image, chart, docs, CVE snapshot) and the network-disabled install gate
+  stay **planned** (recorded in the ADR).
+
 ### Added (jurisdiction-aware storage routing — residency enforced, not just proven, first slice)
 
 - **`JurisdictionRoutingAdapter`** (ADR-0247): capsule writes route to the

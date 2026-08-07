@@ -236,3 +236,29 @@ nova support-bundle                   # diagnostics, offline-safe
 - Anything labelled **future design** elsewhere (federation, at-scale graph
   backends, …) is equally unimplemented offline — the air gap changes
   nothing about the honesty labels.
+
+
+## Signed bundle format (ADR-0249, experimental — first slice)
+
+NovaFabric can now assemble and verify a **signed air-gap bundle**: one tar
+whose members are inventoried in a DSSE-signed `airgap-manifest.json`,
+verifiable with **zero network** — the public key, the manifest, and the
+bytes travel together.
+
+```bash
+# Build (maintainer side): wheels from dist/ + anything else you name
+make airgap-bundle           # needs NOVA_AIRGAP_SIGNING_KEY (ed25519 private key)
+
+# Verify (air-gapped side): names every problem — a tampered member, a
+# missing one, or an unsigned stowaway
+python scripts/verify_airgap_bundle.py \
+    --bundle novafabric-airgap.tar --public-key evidence.pub
+```
+
+A flipped byte in any member fails verification **naming that member**; a
+member present in the tar but absent from the signed manifest is reported as
+a finding, not ignored. What stays **planned** (tracked in ADR-0249): the CI
+job that assembles the full closure (dependency wheels per extras profile,
+container image, Helm chart, docs site, CVE advisory snapshot), the
+network-disabled install gate, and `nova doctor --check-cves` offline
+reporting.

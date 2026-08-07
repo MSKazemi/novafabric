@@ -176,6 +176,13 @@ coverage:
 bundle:
 	cd web && npm run build:dashboard
 
+airgap-bundle:  ## Build a signed air-gap bundle from dist/ (ADR-0249 slice 1)
+	uv build
+	uv run python scripts/build_airgap_bundle.py \
+		--out dist/novafabric-airgap.tar \
+		--signing-key $${NOVA_AIRGAP_SIGNING_KEY:?set NOVA_AIRGAP_SIGNING_KEY to an ed25519 private key (generate_keypair)} \
+		$$(for w in dist/*.whl dist/*.tar.gz; do echo --member "dist/$$(basename $$w)=$$w"; done)
+
 site:
 	# Builds the public website, including the docs/ tree as static pages.
 	# The deploy itself is manual — see web/README.md "Deploy". Building is not
