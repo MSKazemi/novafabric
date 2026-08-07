@@ -9,6 +9,21 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Added (writer lease with fencing tokens — the split-brain-proof core, first slice)
+
+- **`novafabric.ha`** (ADR-0244): a single-row writer lease anchored in the
+  store the writer must reach anyway — Postgres in server mode, with a
+  behaviorally-identical SQLite twin. Acquisition is one atomic upsert (never
+  check-then-act); every change of holder increments a **monotonic fencing
+  token**, the value later slices verify at the write path so a deposed
+  writer's writes are rejected at the data layer; renewal and release are
+  holder-guarded, so a writer that lost its lease learns on its next
+  heartbeat. One shared behavioral contract test runs against both backends
+  (the Postgres tier live in testcontainers, including the
+  cross-connection race: exactly one winner). The automated promotion loop
+  stays **planned** — ADR-0180's operator-run failover remains the shipping
+  posture.
+
 ### Added (first-party listener TLS — ADR-0029's `tls.*` keys become real, first slice)
 
 - **`nova server start` and `nova serve` can terminate TLS natively**
