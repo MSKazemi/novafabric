@@ -9,6 +9,22 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Added (jurisdiction-aware storage routing — residency enforced, not just proven, first slice)
+
+- **`JurisdictionRoutingAdapter`** (ADR-0247): capsule writes route to the
+  WORM backend registered for the tenant's jurisdiction
+  (tenant→jurisdiction map, tenant resolved from the `capsules/{tenant}/…`
+  layout). The load-bearing rule is **fail closed at write time** — a
+  jurisdiction with no registered backend refuses the write with a typed
+  error; a mis-configured region never silently lands elsewhere. Unmapped
+  tenants keep today's behavior (default pool). `apply_identical` refuses
+  cross-region pairs. And ADR-0077's shipped-but-never-consumed residency
+  gate finally has a caller: `get_object_checked` denies cross-border reads
+  by default, honors directional grants, and carries the denial reason —
+  `ResidencyPolicy` also gains the YAML loader it lacked. Per-capsule
+  labels, the lineage jurisdiction filter, and sealed relocation stay
+  **planned** (recorded in the ADR). New page: `docs/ops/data-residency.md`.
+
 ### Added (privileged-action governance — step-up auth + the chained-audit fix, first slice)
 
 - **Role grant/revoke joins the hash-chained audit log** (ADR-0246): the most
