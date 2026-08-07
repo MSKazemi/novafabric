@@ -31,6 +31,22 @@ uv run pytest tests/seal/test_benchmark.py -v --benchmark-json=.benchmark-result
 
 Required: `NovaSeal.seal()` p99 < 200 ms over 100 rounds.
 
+## 1b. Verify the remaining CI gates are green
+
+Three more blocking gates run in CI on every push; a release must not be tagged while
+any is red on `main` (check the Actions tab, or run locally as below):
+
+- **`capture-overhead-gate`** — capture-overhead p95 (`make benchmark-capture`; p95
+  < 2.0 s over 30 rounds).
+- **`web`** — the Astro site + dashboard build and typecheck (`make site`).
+- **`integration`** — the testcontainers tier (`uv run pytest tests/integration` with
+  Docker available; CI installs with `--all-extras`).
+
+This section exists so the documented release gate names **every** CI job — guarded by
+`tests/docs/test_support_policy.py`, which fails when a CI job is added without being
+documented here. (The `unit` job's exact command parity is separately guarded by
+`tests/docs/test_makefile_matches_ci_gate.py`.)
+
 ## 2. Run ruff
 
 ```bash

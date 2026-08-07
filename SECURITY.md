@@ -55,8 +55,9 @@ current version.
 | Latest tag        | Yes                    |
 | Anything earlier  | No — upgrade to latest |
 
-This table will be replaced by a real support-window policy at the v1.0
-freeze.
+The full policy — what upgrading promises today, the runtime support matrix,
+and the channel/LTS structure that takes effect at the v1.0 freeze — lives in
+[`docs/support-policy.md`](docs/support-policy.md).
 
 ## Scope
 

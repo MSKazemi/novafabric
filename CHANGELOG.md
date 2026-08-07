@@ -9,6 +9,23 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Added (support policy — the version-lifecycle contract, first slice)
+
+- **`docs/support-policy.md`** — the single source of truth for what "supported"
+  means: today's pre-1.0 stance (latest tag only) stated plainly, what upgrading
+  already promises (the ADR-0180 N→N+1 expand-contract release gate; capsules
+  readable forever), a runtime support matrix (Python ≥ 3.12, Postgres 16), and
+  the channel/LTS structure that takes effect at v1.0 — labelled **planned**, in
+  effect at the freeze, never before. `SECURITY.md` §Supported versions now links
+  it instead of ending at a TODO.
+- **The documented release gate now names every CI job.** `docs/release-process.md`
+  gains §1b (capture-overhead gate, `web` build, `integration` tier — three
+  blocking gates it never mentioned), and a new guard
+  (`tests/docs/test_support_policy.py`) fails by job name when a CI job exists that
+  the release process doesn't document — both directions, plus SECURITY↔policy
+  agreement and a Python-floor↔`requires-python` drift check. Same
+  a-promise-must-be-a-mechanism rule as the Makefile↔CI guard (BL-043).
+
 ### Fixed (the query cache's correctness rule was a comment, not a mechanism)
 
 - ADR-0225 A1 fixed two instances of one class: a file the indexer reads whose
