@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import AppearancePanel from './AppearancePanel';
 import Badge from '../ui/primitives/Badge';
@@ -125,21 +125,62 @@ export default function Sidebar({
   const gearRef = useRef<HTMLButtonElement>(null);
 
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
-    // Default: every group collapsed. 29 tabs expanded at once is a wall of
-    // links; collapsed groups make the seven areas the thing you scan first.
-    // The group holding the active tab always renders expanded (see
-    // `groupCollapsed` below), so the current location is never hidden.
-    const allCollapsed = () => new Set(NAV_GROUPS.map((g) => g.label));
+    // Default: every group collapsed EXCEPT the one holding the tab we open on,
+    // so the current location is visible on first load. 29 tabs expanded at once
+    // is a wall of links; collapsed groups make the seven areas the thing you
+    // scan first.
+    //
+    // This is a *seed*, not a rule — every group, including the active one,
+    // stays freely collapsible afterwards. Forcing the active group open at
+    // render time is what turned its header into a dead button.
+    const initialDefault = () =>
+      new Set(
+        NAV_GROUPS.filter((g) => !g.items.some((i) => i.id === tab)).map((g) => g.label),
+      );
     try {
       const raw = localStorage.getItem('novafabric.sidebar-groups');
-      return raw ? new Set(JSON.parse(raw) as string[]) : allCollapsed();
+      return raw ? new Set(JSON.parse(raw) as string[]) : initialDefault();
     } catch {
-      return allCollapsed();
+      return initialDefault();
     }
   });
 
-  const toggleGroup = (label: string, activeTabInGroup: boolean) => {
-    if (activeTabInGroup) return;
+  /**
+   * The group the sidebar opened *for* you, rather than one you opened
+   * yourself. Only this one is auto-managed: it gets closed again when you
+   * navigate out of it, which is what keeps the panel tidy. A group you opened
+   * by hand is yours and is never auto-closed.
+   */
+  const autoOpenedRef = useRef<string | null>(
+    NAV_GROUPS.find((g) => g.items.some((i) => i.id === tab))?.label ?? null,
+  );
+
+  // Navigation reveals. You can reach a tab without touching the sidebar — a
+  // `g x` shortcut, the command palette, a ?tab= deep link — and if its group
+  // were closed the sidebar would highlight nothing at all. So arriving at a
+  // tab opens its group, and releases the previously auto-opened one.
+  //
+  // Keyed on `tab` alone, deliberately: it runs only when the location actually
+  // changes, so collapsing the group you are already in stays collapsed instead
+  // of springing back open.
+  useEffect(() => {
+    const owner = NAV_GROUPS.find((g) => g.items.some((i) => i.id === tab));
+    if (!owner) return;
+    const prevAuto = autoOpenedRef.current;
+    if (prevAuto === owner.label) return;
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (prevAuto) next.add(prevAuto);
+      next.delete(owner.label);
+      try { localStorage.setItem('novafabric.sidebar-groups', JSON.stringify([...next])); } catch { /* ignore */ }
+      return next;
+    });
+    autoOpenedRef.current = owner.label;
+  }, [tab]);
+
+  const toggleGroup = (label: string) => {
+    // Touching a group by hand takes it out of the sidebar's control.
+    if (autoOpenedRef.current === label) autoOpenedRef.current = null;
     setCollapsedGroups(prev => {
       const next = new Set(prev);
       if (next.has(label)) { next.delete(label); } else { next.add(label); }
@@ -153,7 +194,10 @@ export default function Sidebar({
       aria-label="Dashboard navigation"
       className={clsx(
         'flex flex-col shrink-0 border-r border-[var(--color-border)] bg-[var(--color-bg-sunken)] transition-[width] duration-[var(--duration)] overflow-hidden',
-        collapsed ? 'w-11' : 'w-52',
+        // w-60 (15rem), not w-52 (13rem): at 13rem a row's badge/count sat flush
+        // against the hover shortcut hint with nothing between them, and long
+        // labels ran to the very edge. The extra 2rem buys real breathing room.
+        collapsed ? 'w-11' : 'w-60',
       )}
     >
       {/* Logo + collapse toggle */}
@@ -185,17 +229,30 @@ export default function Sidebar({
       <nav className="flex-1 overflow-y-auto py-1" role="navigation">
         {NAV_GROUPS.map((group) => {
           const groupHasActive = group.items.some(i => i.id === tab);
-          const groupCollapsed = !collapsed && collapsedGroups.has(group.label) && !groupHasActive;
+          // Every group collapses, including the one holding the active tab —
+          // pinning it open made its header a dead button (you could open a
+          // group but never close it). The current location stays discoverable
+          // via the marker on the collapsed header instead.
+          const groupCollapsed = !collapsed && collapsedGroups.has(group.label);
           return (
             <div key={group.label}>
               {!collapsed && (
                 <button
                   type="button"
-                  onClick={() => toggleGroup(group.label, groupHasActive)}
+                  onClick={() => toggleGroup(group.label)}
+                  aria-expanded={!groupCollapsed}
                   className="w-full flex items-center justify-between px-3 pt-2.5 pb-0.5 text-2xs font-medium uppercase tracking-wider text-[var(--color-text-faint)] select-none hover:text-[var(--color-text-muted)] transition-colors"
                 >
                   <span className="truncate">{group.label}</span>
                   <span aria-hidden="true" className="flex items-center gap-1 font-mono normal-case tracking-normal">
+                    {/* "You are here" when the active tab's group is closed. */}
+                    {groupCollapsed && groupHasActive && (
+                      <span
+                        data-testid="group-active-marker"
+                        title="Contains the current tab"
+                        className="w-1.5 h-1.5 rounded-full bg-[var(--color-accent)] shrink-0"
+                      />
+                    )}
                     {groupCollapsed && group.items.length}
                     <Icon name="chevron-down" size={10} className={clsx('transition-transform duration-[var(--duration-fast)]', groupCollapsed && '-rotate-90')} />
                   </span>
@@ -235,7 +292,14 @@ export default function Sidebar({
                     </span>
                     {!collapsed && (
                       <>
-                        <span className="flex-1 text-left font-medium">{item.label}</span>
+                        <span className="flex-1 text-left font-medium truncate">{item.label}</span>
+                        {/* The shortcut hint below is absolutely positioned at
+                            right-2 and takes no layout space, so this badge/count
+                            slot must stay clear of it. At the old w-52 it did not:
+                            measured 14px of hint-over-badge overlap on every row.
+                            The w-60 width is what keeps them apart —
+                            tests/e2e/dashboard-sidebar.spec.ts fails if that
+                            clearance is ever lost again. */}
                         {item.badge && <Badge className="shrink-0">{item.badge}</Badge>}
                         {count !== undefined && !item.badge && (
                           <span className={clsx(

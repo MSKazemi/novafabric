@@ -7802,7 +7802,15 @@ def create_app(
         _topo_hooks["seed_fn"] = _topology_seed_all
         _topo_hooks["loop_fn"] = _topology_auto_reseed_loop
 
-        @app.get("/topology/clusters", dependencies=[Depends(verify_token)])
+        # response_model=None: the return annotation is a function-local import,
+        # a forward ref Pydantic cannot resolve at schema-generation time. Without
+        # this, /api/openapi.json 500s on every topology-enabled server (the
+        # router_tv5.py:75 remedy).
+        @app.get(
+            "/topology/clusters",
+            dependencies=[Depends(verify_token)],
+            response_model=None,
+        )
         async def topology_clusters_endpoint() -> _StarletteResponse:
             """Return Arrow IPC cluster layer (ADS v1 cluster_layer schema)."""
             ipc = _topo_store.fetch_cluster_layer_arrow()
@@ -7939,7 +7947,13 @@ def create_app(
                 if queue in _topo_ws_clients:
                     _topo_ws_clients.remove(queue)
 
-        @app.get("/metrics/stream", dependencies=[Depends(verify_token)])
+        # response_model=None — same function-local forward-ref reason as
+        # /topology/clusters above.
+        @app.get(
+            "/metrics/stream",
+            dependencies=[Depends(verify_token)],
+            response_model=None,
+        )
         async def metrics_sse_stream(request: Request) -> _StarletteResponse:
             """SSE metrics stream (FR-21: Last-Event-ID reconnect support)."""
             import time as _t

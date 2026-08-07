@@ -85,9 +85,12 @@ test.describe('navigation (journey 2)', () => {
     await revealTab(page, 'Registry');
     await tabButton(page, 'Registry').click();
     await expect(tabButton(page, 'Registry')).toHaveAttribute('aria-current', 'page');
-    // Overview collapses once the active tab moves out of it, so Home's button
-    // leaves the DOM entirely — which is a stronger statement than "not current".
-    await expect(tabButton(page, 'Home')).toHaveCount(0);
+    // Home is no longer the current tab. Note Overview stays open here:
+    // `revealTab` probes by clicking group headers, which hands those groups to
+    // the user, and the sidebar never auto-closes a group you opened yourself.
+    // The auto-close path is pinned separately, with a gesture that does not
+    // touch any header — see dashboard-sidebar.spec.ts.
+    await expect(tabButton(page, 'Home')).not.toHaveAttribute('aria-current', 'page');
     // Breadcrumb in the top bar follows the active tab.
     await expect(page.getByRole('main').getByText('Registry', { exact: true }).first()).toBeVisible();
     await expect.poll(() => urlParam(page, 'tab')).toBe('registry');

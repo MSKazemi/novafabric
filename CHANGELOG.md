@@ -9,7 +9,37 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+
+- **`/api/openapi.json` no longer 500s on a topology-enabled server.**
+  `/topology/clusters` and `/metrics/stream` annotate their return type with a
+  `Response` class imported inside the app factory; FastAPI treated that
+  function-local forward reference as a response model and Pydantic could not
+  resolve it at schema-generation time, so every `nova serve --topology` host
+  answered the dashboard's `/api/docs` spec request with a traceback. Both
+  routes now declare `response_model=None` (the `router_tv5.py:75` remedy).
+  The dashboard OpenAPI ratchet is scoped to the canonical `create_app`, so no
+  test had ever generated the schema with the TV-5 routes mounted —
+  `tests/serve/test_openapi_topology_enabled.py` now does, and asserts neither
+  route binds a response model.
+
+- **Sidebar groups can be collapsed again.** A group holding the active tab was
+  forced open at render time and its header button short-circuited to a no-op,
+  so you could open a group but never close it — the plus/minus stopped working
+  the moment you picked anything inside. Every group now collapses, the active
+  one included. The properties that force-expanding was standing in for are kept
+  explicitly: the group owning the tab you boot into starts open, arriving at a
+  tab from a `g` shortcut / command palette / `?tab=` link opens its group, a
+  group opened *for* you closes again when you navigate out, and a group you
+  opened yourself is never auto-closed. A collapsed group holding the active tab
+  carries a "you are here" dot.
+
+- **Sidebar widened to 15rem (was 13rem).** At 13rem the hover shortcut hint —
+  absolutely positioned at the right edge, so it takes no layout space — was
+  painted directly on top of each row's badge or count: 14px of text-on-text
+  overlap, measured on every row. `tests/e2e/dashboard-sidebar.spec.ts` measures
+  real geometry in a browser (jsdom has no layout engine) and fails if that
+  clearance is ever lost again.
 
 ## [0.101.0] - 2026-08-07
 
