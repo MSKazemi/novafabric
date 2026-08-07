@@ -9,6 +9,16 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.101.0] - 2026-08-07
+
+**The enterprise-grade program (ADRs 0240–0249) — all ten first slices in one release.**
+The remaining enterprise gap had one shape: single-instance, single-key, single-region,
+best-effort-on-restart, contractually silent. Each entry below closes one facet; every ADR
+carries an Implementation status naming exactly what shipped and what stays planned.
+Full narrative: [docs/releases/v0.101.0.md](docs/releases/v0.101.0.md).
+
 ### Added (air-gap bundle — install artifacts verifiable with zero network, first slice)
 
 - **Signed air-gap bundle format** (ADR-0249): `make airgap-bundle` /

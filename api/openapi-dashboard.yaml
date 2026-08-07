@@ -448,7 +448,7 @@ info:
   license:
     name: Apache-2.0
   title: NovaFabric Dashboard API (serve)
-  version: 0.100.1
+  version: 0.101.0
 openapi: 3.1.0
 paths:
   /:
