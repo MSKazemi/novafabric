@@ -32,6 +32,41 @@ class PlaceHoldRequest(BaseModel):
     duration_days: int | None = None
 
 
+class HoldRecord(BaseModel):
+    """One legal hold as stored in ``holds.jsonl``."""
+
+    hold_id: str
+    registry: str
+    reason: str
+    duration_days: int | None = None
+    created_at: str
+    released_at: str | None = None
+
+
+class RegistryHolds(BaseModel):
+    name: str
+    holds: list[HoldRecord]
+
+
+class HoldsListResponse(BaseModel):
+    total_active: int
+    registries: list[RegistryHolds]
+
+
+class HoldCreatedResponse(BaseModel):
+    hold_id: str
+    registry: str
+    reason: str
+    duration_days: int | None = None
+    created_at: str
+
+
+class HoldReleasedResponse(BaseModel):
+    released: bool
+    hold_id: str
+    registry: str
+
+
 def build_holds_router(
     verify_token: Callable[..., Any],
     *,
@@ -61,7 +96,12 @@ def build_holds_router(
     def _active_holds(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return [h for h in records if h.get("released_at") is None]
 
-    @router.get("/api/holds")
+    @router.get(
+        "/api/holds",
+        operation_id="dashboardListHolds",
+        responses={200: {"model": HoldsListResponse}},
+        response_model=None,
+    )
     async def list_holds() -> dict[str, Any]:
         base = _holds_base()
         registries: list[dict[str, Any]] = []
@@ -76,7 +116,12 @@ def build_holds_router(
                 registries.append({"name": reg_dir.name, "holds": active})
         return {"total_active": total_active, "registries": registries}
 
-    @router.post("/api/holds")
+    @router.post(
+        "/api/holds",
+        operation_id="dashboardPlaceHold",
+        responses={200: {"model": HoldCreatedResponse}},
+        response_model=None,
+    )
     async def create_hold(body: PlaceHoldRequest = Body(...)) -> dict[str, Any]:
         for param, val in (("registry", body.registry),):
             if "/" in val or ".." in val:
@@ -104,7 +149,12 @@ def build_holds_router(
             f.write(json.dumps(record) + "\n")
         return {k: v for k, v in record.items() if k != "released_at"}
 
-    @router.post("/api/holds/{hold_id}/release")
+    @router.post(
+        "/api/holds/{hold_id}/release",
+        operation_id="dashboardReleaseHold",
+        responses={200: {"model": HoldReleasedResponse}},
+        response_model=None,
+    )
     async def release_hold(hold_id: str) -> dict[str, Any]:
         if "/" in hold_id or ".." in hold_id:
             raise HTTPException(status_code=400, detail="invalid hold_id")

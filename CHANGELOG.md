@@ -9,6 +9,26 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Added (the dashboard API gets a declared contract — first slice)
+
+- **`api/openapi-dashboard.yaml`** — the serve/ dashboard surface (198 routes under
+  the canonical app configuration) finally has a generated, committed OpenAPI
+  document (`scripts/gen_openapi_dashboard.py`, `--check` mode). It is labelled for
+  what it is: the **frozen** ADR-0183 surface, migrating to `/v0` — not an
+  endorsement. Unannotated operations carry `x-nova-contract: pending`; WebSocket
+  routes are inventoried under `x-nova-websockets` instead of being pretended into
+  paths.
+- **An annotation ratchet with teeth** (`tests/serve/test_openapi_dashboard_contract.py`
+  + `openapi_dashboard_pending.txt`, 195 entries): every route is either annotated
+  (`dashboard*` operation id + declared success response + **no** bound
+  `response_model` — the ADR-0227 filtering lesson, enforced) or listed exactly;
+  a new route fails by name, and an annotated route still on the list fails too,
+  so the pending set can only shrink. Committed YAML is byte-drift-guarded.
+- **First annotated family: legal holds** (`dashboardListHolds` /
+  `dashboardPlaceHold` / `dashboardReleaseHold`) with declared response models and
+  a conformance test that validates real responses against the models read off the
+  live routes. Zero behavior change to any route.
+
 ### Added (performance SLO catalog — every number labelled, first slice)
 
 - **`tests/bench/slo_catalog.toml` + generated `docs/slo.md`** — the single source
