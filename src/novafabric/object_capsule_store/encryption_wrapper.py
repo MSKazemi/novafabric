@@ -44,6 +44,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
 from novafabric.object_capsule_store.cas import compute_sha256
 from novafabric.object_capsule_store.exceptions import CASMismatchError
@@ -54,6 +55,9 @@ from novafabric.trust.envelope_encryption import (
     encrypt_blob,
 )
 from novafabric.trust.novaseal.signing_backend import KeyWrappingBackend
+
+if TYPE_CHECKING:
+    from novafabric.trust.tenant_keys import TenantKeyRegistry
 
 log = logging.getLogger(__name__)
 
@@ -78,9 +82,17 @@ class EncryptingAdapter(WormAdapter):
                  ``LocalSigningBackend(kek_path=...)`` or ``MockKmsBackend``.
     """
 
-    def __init__(self, inner: WormAdapter, backend: KeyWrappingBackend) -> None:
+    def __init__(
+        self,
+        inner: WormAdapter,
+        backend: KeyWrappingBackend,
+        tenant_keys: "TenantKeyRegistry | None" = None,
+    ) -> None:
         self._inner = inner
         self._backend = backend
+        # ADR-0243 slice 1: optional per-tenant KEK resolution. None keeps the
+        # flat single-backend behavior byte-for-byte.
+        self._tenant_keys = tenant_keys
 
     # -----------------------------------------------------------------------
     # Write path — encrypt before the WORM write (ADR-0185 normative ordering)
@@ -98,7 +110,15 @@ class EncryptingAdapter(WormAdapter):
         computed = compute_sha256(data)
         if computed != sha256_hex:
             raise CASMismatchError(key=key, expected=sha256_hex, observed=computed)
-        blob = encrypt_blob(data, backend=self._backend)
+        backend = self._backend
+        tenant_key_id: str | None = None
+        if self._tenant_keys is not None:
+            from novafabric.trust.tenant_keys import tenant_from_object_key
+
+            backend, tenant_key_id = self._tenant_keys.backend_for_write(
+                tenant_from_object_key(key)
+            )
+        blob = encrypt_blob(data, backend=backend, tenant_key_id=tenant_key_id)
         stored = blob.model_dump_json().encode("utf-8")
         return stored, compute_sha256(stored)
 
@@ -172,7 +192,12 @@ class EncryptingAdapter(WormAdapter):
         blob = self._parse_envelope(raw)
         if blob is None:
             return raw
-        return decrypt_blob(blob, backend=self._backend)
+        backend = (
+            self._tenant_keys.backend_for_read(blob)
+            if self._tenant_keys is not None
+            else self._backend
+        )
+        return decrypt_blob(blob, backend=backend)
 
     # -----------------------------------------------------------------------
     # Chain-log + namespace operations — pass-through (never encrypted)

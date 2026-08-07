@@ -9,6 +9,22 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Added (per-tenant KEKs — tenant-scoped key compromise and one-step offboarding, first slice)
+
+- **`novafabric.trust.tenant_keys`** (ADR-0243): each tenant's capsules can
+  now wrap their per-object DEKs under that tenant's **own** KEK
+  (`NOVA_OBJECT_STORE_TENANT_KEK_DIR/<tenant>.kek`, resolved from the
+  `capsules/{tenant}/…` key layout the store already uses). Key compromise
+  becomes tenant-scoped by construction, and **removing one tenant's KEK makes
+  exactly that tenant's data cryptographically unreadable** — reads fail
+  closed with an error naming the tenant (the offboarding semantic), while
+  every other tenant still decrypts (blast-radius test). Tenants without a
+  configured key keep the flat ADR-0185 default KEK — zero change for
+  existing deployments — and pre-existing envelopes stay readable forever
+  (the `tenant_key_id` field is additive; detection is a marker-subset
+  check). Cloud BYOK, rotation campaigns, and maker-checker shred stay
+  **planned** (recorded in the ADR).
+
 ### Added (writer lease with fencing tokens — the split-brain-proof core, first slice)
 
 - **`novafabric.ha`** (ADR-0244): a single-row writer lease anchored in the

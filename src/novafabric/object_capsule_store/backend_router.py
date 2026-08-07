@@ -46,6 +46,7 @@ _BACKENDS = ("s3", "minio", "ceph_rgw", "azure_blob", "local")
 # Opt-in envelope-encryption configuration (ADR-0185, experimental).
 ENV_ENCRYPTION = "NOVA_OBJECT_STORE_ENCRYPTION"
 ENV_KEK_PATH = "NOVA_OBJECT_STORE_KEK_PATH"
+ENV_TENANT_KEK_DIR = "NOVA_OBJECT_STORE_TENANT_KEK_DIR"
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 
@@ -79,12 +80,29 @@ def _maybe_wrap_encryption(adapter: WormAdapter) -> WormAdapter:
     kek_path = Path(kek_value)
     # key_path/cert_path are unused by the wrap capability; only kek_path matters.
     backend = LocalSigningBackend(kek_path, kek_path, kek_path=kek_path)
+
+    # ADR-0243 slice 1: optional per-tenant KEKs layered over the default.
+    tenant_keys = None
+    tenant_dir_value = os.environ.get(ENV_TENANT_KEK_DIR, "").strip()
+    if tenant_dir_value:
+        from novafabric.trust.tenant_keys import TenantKeyRegistry
+
+        tenant_dir = Path(tenant_dir_value)
+        if not tenant_dir.is_dir():
+            raise ValueError(
+                f"{ENV_TENANT_KEK_DIR} is set but {tenant_dir} is not a directory: "
+                "per-tenant envelope encryption (ADR-0243) requires an existing "
+                "directory of <tenant>.kek files. Refusing to start misconfigured."
+            )
+        tenant_keys = TenantKeyRegistry(backend, tenant_dir)
+
     log.info(
         "object-capsule-store envelope encryption enabled (ADR-0185, experimental): "
-        "wrapping %s with EncryptingAdapter (local KEK)",
+        "wrapping %s with EncryptingAdapter (local KEK%s)",
         type(adapter).__name__,
+        ", per-tenant KEK dir" if tenant_keys is not None else "",
     )
-    return EncryptingAdapter(adapter, backend)
+    return EncryptingAdapter(adapter, backend, tenant_keys=tenant_keys)
 
 
 def make_adapter(backend: str, **kwargs: Any) -> WormAdapter:

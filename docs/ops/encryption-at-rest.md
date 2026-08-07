@@ -74,6 +74,28 @@ The local-file KEK path uses the NovaSeal `LocalSigningBackend` wrap
 capability — suitable for dev/test parity and self-managed deployments where
 you control the file's lifecycle.
 
+### Per-tenant KEKs (ADR-0243, experimental)
+
+Optionally, each tenant's capsules can wrap their DEKs under that tenant's
+**own** KEK instead of the shared one — key compromise becomes tenant-scoped,
+and removing one tenant's KEK makes exactly that tenant's data
+cryptographically unreadable (the offboarding/erasure semantic, enforced
+fail-closed with an error naming the tenant):
+
+```bash
+mkdir /secure/tenant-keks
+head -c 32 /dev/urandom > /secure/tenant-keks/acme.kek     # one file per tenant
+export NOVA_OBJECT_STORE_TENANT_KEK_DIR=/secure/tenant-keks
+```
+
+Tenants **without** a `<tenant>.kek` file keep using the default KEK — zero
+change for existing deployments — and every pre-existing envelope stays
+readable forever (the `tenant_key_id` field is additive). The registry
+resolves tenants from the `capsules/{tenant}/…` key layout the store already
+uses. Customer-held cloud KMS keys (BYOK), rotation campaigns, and the
+maker-checker `tenant-keys shred` command are later ADR-0243 slices —
+**planned**, not implemented.
+
 ## 3. Crypto-shred
 
 Deleting the one wrapped DEK erases an object cryptographically while the

@@ -120,6 +120,13 @@ class EncryptedBlob(BaseModel):
     shredded: bool = Field(
         default=False, description="True once the wrapped DEK has been crypto-shredded"
     )
+    tenant_key_id: str | None = Field(
+        default=None,
+        description=(
+            "Tenant whose KEK wrapped this DEK (ADR-0243, additive). None means "
+            "the flat ADR-0185 default KEK — every pre-0243 envelope stays valid."
+        ),
+    )
 
     model_config = {"frozen": True}
 
@@ -170,7 +177,12 @@ def _require_wrap_capable(backend: object) -> KeyWrappingBackend:
 # ---------------------------------------------------------------------------
 
 
-def encrypt_blob(plaintext: bytes, *, backend: KeyWrappingBackend) -> EncryptedBlob:
+def encrypt_blob(
+    plaintext: bytes,
+    *,
+    backend: KeyWrappingBackend,
+    tenant_key_id: str | None = None,
+) -> EncryptedBlob:
     """Encrypt *plaintext* under a fresh per-object DEK wrapped by *backend*.
 
     A new random 256-bit DEK and 96-bit nonce are generated per call, so two
@@ -199,6 +211,7 @@ def encrypt_blob(plaintext: bytes, *, backend: KeyWrappingBackend) -> EncryptedB
         kek_ref=kms.kek_ref(),
         content_sha256=hashlib.sha256(ciphertext).hexdigest(),
         shredded=False,
+        tenant_key_id=tenant_key_id,
     )
 
 
