@@ -773,12 +773,25 @@ class TestReplays:
         )
         replay_id = schedule_resp.json()["replay_id"]
 
-        # Patch the job to pending so cancel works
+        # Cancel is a store-level transition now (ADR-0242): a non-terminal
+        # job cancels; if the background thread already finished, 409 is the
+        # correct (unchanged) contract. Force a deterministic non-terminal
+        # state by re-queueing the durable job when it already completed.
+        from novafabric.jobs import JobState
         from novafabric.server.routes import replays as replays_module
 
-        with replays_module._JOBS_LOCK:
-            if replay_id in replays_module._JOBS:
-                replays_module._JOBS[replay_id]["status"] = "pending"
+        store = replays_module._jobs()
+        if store.get(replay_id).state in (JobState.SUCCEEDED, JobState.FAILED):
+            import sqlite3
+
+            from novafabric.jobs.store import default_jobs_db_path
+
+            with sqlite3.connect(default_jobs_db_path()) as conn:
+                conn.execute(
+                    "UPDATE jobs SET state='queued', finished_at=NULL,"
+                    " worker_id=NULL WHERE job_id=?",
+                    (replay_id,),
+                )
 
         cancel_resp = client.delete(f"/v0/replays/{replay_id}")
         assert cancel_resp.status_code == 200
@@ -796,12 +809,24 @@ class TestReplays:
         )
         replay_id = schedule_resp.json()["replay_id"]
 
-        # Force into completed state
+        # Force into a terminal state via the durable store (ADR-0242).
+        import time as _time
+
+        from novafabric.jobs import JobState
         from novafabric.server.routes import replays as replays_module
 
-        with replays_module._JOBS_LOCK:
-            if replay_id in replays_module._JOBS:
-                replays_module._JOBS[replay_id]["status"] = "completed"
+        store = replays_module._jobs()
+        deadline = _time.monotonic() + 30
+        while _time.monotonic() < deadline:
+            if store.get(replay_id).state in (
+                JobState.SUCCEEDED,
+                JobState.FAILED,
+                JobState.CANCELLED,
+            ):
+                break
+            _time.sleep(0.05)
+        job = store.get(replay_id)
+        assert job.state in (JobState.SUCCEEDED, JobState.FAILED), job
 
         cancel_resp = client.delete(f"/v0/replays/{replay_id}")
         assert cancel_resp.status_code == 409

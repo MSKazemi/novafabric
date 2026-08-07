@@ -9,6 +9,25 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Added (durable background jobs — accepted work survives the process, first slice)
+
+- **`novafabric.jobs`** (ADR-0242): a lease-claimed, crash-recoverable job store
+  (SQLite/WAL under `$NOVAFABRIC_HOME/jobs.db`) plus a bounded runner. The claim
+  is one atomic `UPDATE … RETURNING` — never check-then-act; terminal writes are
+  worker-guarded so a deposed or cancelled worker's late result is dropped, not
+  resurrected; an expired lease returns the job to the queue while attempts
+  remain, else marks it `failed` with an explicit error — visibly, never
+  silently. Handlers cannot register without declaring idempotency or an
+  `already_done` guard.
+- **First consumer: `/v0/replays`.** Replay job *state* now survives restarts
+  and is correct across `--workers` processes (the old in-process `_JOBS` dict
+  lost every job on restart and was invisible to sibling workers — GET returned
+  404 for work that had been accepted). Interrupted replays read
+  `failed` (“worker died or process restarted”), response shapes and the
+  status vocabulary are byte-compatible, and SSE progress streaming is
+  unchanged. 21 new tests including the two-workers-cannot-claim-one-job race
+  case and the cancelled-job-late-result drop.
+
 ### Added (the dashboard API gets a declared contract — first slice)
 
 - **`api/openapi-dashboard.yaml`** — the serve/ dashboard surface (198 routes under

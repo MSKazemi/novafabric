@@ -5,6 +5,16 @@ Implements:
   GET    /v0/replays/{replay_id}             get status
   DELETE /v0/replays/{replay_id}             cancel
   GET    /v0/replays/{replay_id}/events      SSE stream of replay progress
+
+Job *state* is durable (ADR-0242: the shared :class:`~novafabric.jobs.JobStore`
+under ``$NOVAFABRIC_HOME/jobs.db``), so a restart or a different ``--workers``
+process reports correct status instead of 404 — the pre-ADR in-memory
+``_JOBS`` dict lost every job on restart and was invisible to sibling
+workers. SSE *progress events* remain in-process detail: after a restart the
+stream replays no history, but the terminal event is still emitted from
+durable state. Replay jobs are single-attempt (re-running a half-finished
+replay automatically is not wanted); an interrupted job therefore reads
+``failed`` with an explicit interruption error — visible, never silent.
 """
 
 from __future__ import annotations
@@ -12,13 +22,13 @@ from __future__ import annotations
 import json
 import threading
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 
+from novafabric.jobs import Job, JobNotFoundError, JobState, JobStore, StaleWorkerError
 from novafabric.server.auth import AuthContext
 from novafabric.server.deps import get_capsule_dir, get_db_path
 from novafabric.server.errors import BadRequestError, ConflictError, NotFoundError
@@ -26,24 +36,42 @@ from novafabric.server.rbac import Role, require_role
 
 router = APIRouter(prefix="/replays", tags=["replays"])
 
-# In-process job store — simple dict protected by a lock.
-# This is intentionally lightweight: replays are a convenience wrapper over
-# the existing CLI replay engine.  Persistent job storage is deferred to a
-# later pass.
-_JOBS: dict[str, dict[str, Any]] = {}
-_JOBS_LOCK = threading.Lock()
+_KIND = "replay"
+
+# Progress events are in-process, bounded per job; the durable store carries
+# state. One lock guards the event lists.
+_EVENTS: dict[str, list[dict[str, Any]]] = {}
+_EVENTS_LOCK = threading.Lock()
+_MAX_EVENTS_PER_JOB = 1000
+
+# Path-keyed cache: NOVAFABRIC_HOME can differ per process configuration (and
+# per test); the store for a given db path is constructed once and recovery
+# (expired leases → visible failed state) runs on that first construction.
+_stores: dict[Path, JobStore] = {}
+_store_lock = threading.Lock()
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+def _jobs() -> JobStore:
+    from novafabric.jobs.store import default_jobs_db_path
+
+    path = default_jobs_db_path()
+    with _store_lock:
+        store = _stores.get(path)
+        if store is None:
+            store = JobStore(path)
+            store.expire_leases()
+            _stores[path] = store
+        return store
 
 
-def _get_job(replay_id: str) -> dict[str, Any]:
-    with _JOBS_LOCK:
-        job = _JOBS.get(replay_id)
-    if not job:
+def _get_job(replay_id: str) -> Job:
+    try:
+        job = _jobs().get(replay_id)
+    except JobNotFoundError:
+        raise NotFoundError(f"Replay '{replay_id}' not found.") from None
+    if job.kind != _KIND:
         raise NotFoundError(f"Replay '{replay_id}' not found.")
-    return dict(job)
+    return job
 
 
 # ---------- schedule ----------
@@ -72,29 +100,28 @@ async def schedule_replay(
         raise NotFoundError(f"Capsule '{run_id}' not found.")
 
     replay_id = str(uuid.uuid4())
-    job: dict[str, Any] = {
-        "replay_id": replay_id,
-        "run_id": run_id,
-        "mode": mode,
-        "status": "pending",
-        "created_at": _now(),
-        "finished_at": None,
-        "error": None,
-        "_capsule_dir": str(capsule_path),
-        "_events": [],
-    }
-    with _JOBS_LOCK:
-        _JOBS[replay_id] = job
-
-    # Launch replay in a background thread
-    thread = threading.Thread(
-        target=_run_replay_job,
-        args=(replay_id, capsule_path, mode),
-        daemon=True,
+    store = _jobs()
+    store.enqueue(
+        _KIND,
+        {"run_id": run_id, "mode": mode, "capsule_dir": str(capsule_path)},
+        max_attempts=1,
+        job_id=replay_id,
     )
-    thread.start()
+    with _EVENTS_LOCK:
+        _EVENTS[replay_id] = []
 
-    return _job_summary(job)
+    # Claim immediately and execute in a background thread: the request-scoped
+    # runner keeps the pre-ADR execution model while the state is durable.
+    worker_id = f"replays-{uuid.uuid4().hex[:8]}"
+    claimed = store.claim(worker_id, kinds=(_KIND,), lease_seconds=3600.0)
+    if claimed is not None and claimed.job_id == replay_id:
+        threading.Thread(
+            target=_run_replay_job,
+            args=(replay_id, worker_id, capsule_path, mode),
+            daemon=True,
+        ).start()
+
+    return _job_summary(_get_job(replay_id))
 
 
 # ---------- get ----------
@@ -117,14 +144,12 @@ async def cancel_replay(
     _auth: Annotated[AuthContext, Depends(require_role(Role.writer))] = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
     job = _get_job(replay_id)
-    if job["status"] in ("completed", "failed", "cancelled"):
+    if job.state in (JobState.SUCCEEDED, JobState.FAILED, JobState.CANCELLED):
         raise ConflictError(
-            f"Replay '{replay_id}' is already in terminal state '{job['status']}'."
+            f"Replay '{replay_id}' is already in terminal state "
+            f"'{_STATE_TO_API[job.state]}'."
         )
-    with _JOBS_LOCK:
-        if replay_id in _JOBS:
-            _JOBS[replay_id]["status"] = "cancelled"
-            _JOBS[replay_id]["finished_at"] = _now()
+    _jobs().cancel(replay_id)
     return _job_summary(_get_job(replay_id))
 
 
@@ -152,21 +177,21 @@ async def replay_events(  # pragma: no cover — SSE streaming; tested in integr
 
         polls = 0
         while polls < max_polls:
-            with _JOBS_LOCK:
-                job = _JOBS.get(replay_id)
-            if not job:
+            try:
+                job = _jobs().get(replay_id)
+            except JobNotFoundError:
                 break
 
-            events = job.get("_events", [])
+            with _EVENTS_LOCK:
+                events = list(_EVENTS.get(replay_id, ()))
             for i, event in enumerate(events[from_idx:], start=from_idx):
                 data = json.dumps(event)
                 yield f"id: {i}\ndata: {data}\n\n"
                 from_idx = i + 1
 
-            if job["status"] in ("completed", "failed", "cancelled"):
-                # Emit a final terminal event
+            if job.state in (JobState.SUCCEEDED, JobState.FAILED, JobState.CANCELLED):
                 terminal_data = json.dumps(
-                    {"event": job["status"], "replay_id": replay_id}
+                    {"event": _STATE_TO_API[job.state], "replay_id": replay_id}
                 )
                 yield f"data: {terminal_data}\n\n"
                 break
@@ -184,19 +209,21 @@ async def replay_events(  # pragma: no cover — SSE streaming; tested in integr
 # ---------- background job runner ----------
 
 
-def _run_replay_job(replay_id: str, capsule_path: Path, mode: str) -> None:
-    """Execute the replay in a daemon thread; update job state."""
+def _push_event(replay_id: str, event_type: str, data: dict[str, Any]) -> None:
+    with _EVENTS_LOCK:
+        events = _EVENTS.setdefault(replay_id, [])
+        if len(events) < _MAX_EVENTS_PER_JOB:
+            events.append({"event": event_type, **data})
 
-    def _push_event(event_type: str, data: dict[str, Any]) -> None:
-        with _JOBS_LOCK:
-            if replay_id in _JOBS:
-                _JOBS[replay_id]["_events"].append({"event": event_type, **data})
 
-    with _JOBS_LOCK:
-        if replay_id in _JOBS:
-            _JOBS[replay_id]["status"] = "running"
+def _run_replay_job(
+    replay_id: str, worker_id: str, capsule_path: Path, mode: str
+) -> None:
+    """Execute the replay; terminal state goes through the guarded store write,
+    so a job cancelled meanwhile keeps ``cancelled`` and this thread's late
+    result is dropped (StaleWorkerError) instead of resurrecting the job."""
 
-    _push_event("progress", {"message": f"Starting {mode} replay…"})
+    _push_event(replay_id, "progress", {"message": f"Starting {mode} replay…"})
 
     try:
         from novafabric.replay._engine import ReplayEngine
@@ -214,35 +241,41 @@ def _run_replay_job(replay_id: str, capsule_path: Path, mode: str) -> None:
         else:  # pragma: no cover
             report = dict(result.__dict__)
 
-        _push_event("progress", {"message": "Replay complete.", "result": report})
-
-        with _JOBS_LOCK:
-            if replay_id in _JOBS:
-                _JOBS[replay_id]["status"] = "completed"
-                _JOBS[replay_id]["finished_at"] = _now()
-
-        _push_event("completed", {"replay_id": replay_id, "result": report})
+        _push_event(replay_id, "progress", {"message": "Replay complete.", "result": report})
+        try:
+            _jobs().finish(replay_id, worker_id, {"report": report})
+        except StaleWorkerError:  # cancelled meanwhile — keep cancelled
+            return
+        _push_event(replay_id, "completed", {"replay_id": replay_id, "result": report})
 
     except Exception as exc:  # noqa: BLE001  # pragma: no cover
         err_msg = str(exc)
-        _push_event("error", {"message": err_msg})
-        with _JOBS_LOCK:
-            if replay_id in _JOBS:
-                _JOBS[replay_id]["status"] = "failed"
-                _JOBS[replay_id]["finished_at"] = _now()
-                _JOBS[replay_id]["error"] = err_msg
+        _push_event(replay_id, "error", {"message": err_msg})
+        try:
+            _jobs().fail(replay_id, worker_id, err_msg)
+        except StaleWorkerError:
+            return
 
 
 # ---------- helpers ----------
 
+# Public API vocabulary is unchanged from the pre-ADR contract.
+_STATE_TO_API = {
+    JobState.QUEUED: "pending",
+    JobState.RUNNING: "running",
+    JobState.SUCCEEDED: "completed",
+    JobState.FAILED: "failed",
+    JobState.CANCELLED: "cancelled",
+}
 
-def _job_summary(job: dict[str, Any]) -> dict[str, Any]:
+
+def _job_summary(job: Job) -> dict[str, Any]:
     return {
-        "replay_id": job["replay_id"],
-        "run_id": job["run_id"],
-        "mode": job["mode"],
-        "status": job["status"],
-        "created_at": job["created_at"],
-        "finished_at": job["finished_at"],
-        "error": job.get("error"),
+        "replay_id": job.job_id,
+        "run_id": job.payload.get("run_id"),
+        "mode": job.payload.get("mode"),
+        "status": _STATE_TO_API[job.state],
+        "created_at": job.created_at,
+        "finished_at": job.finished_at,
+        "error": job.error,
     }
