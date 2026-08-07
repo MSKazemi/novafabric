@@ -352,6 +352,19 @@ def check_multi_org_shared_store(
         )
 
 
+class StepUpConfig(BaseModel):
+    """Step-up (fresh-auth) gate for destructive actions (ADR-0246 slice 1).
+
+    Off by default (experimental); flipping the server-mode default on is
+    deferred until the ADR-0228 authorization model lands. Freshness applies
+    to credentials carrying ``auth_time``/``iat``; API keys and the local
+    token are exempt in this slice.
+    """
+
+    enabled: bool = False
+    max_age_seconds: int = Field(default=300, ge=1)
+
+
 class TlsConfigError(ValueError):
     """The TLS configuration is unusable (missing/unreadable material)."""
 
@@ -427,6 +440,8 @@ class ServerConfig(BaseModel):
     # default; off ⇒ no dispatch worker thread, byte-identical behavior.
     webhooks: WebhooksConfig = Field(default_factory=WebhooksConfig)
 
+    # Step-up fresh-auth gate for destructive actions (ADR-0246, experimental).
+    step_up: StepUpConfig = Field(default_factory=StepUpConfig)
     # First-party listener TLS (ADR-0241 slice 1) — off by default; the
     # reverse-proxy posture remains supported.
     tls: TlsConfig = Field(default_factory=TlsConfig)
@@ -480,6 +495,10 @@ class ServerConfig(BaseModel):
             self.postgres_dsn = val
         if val := os.environ.get("NOVAFABRIC_OFFLINE_KEY_PATH"):
             self.offline_key_path = val
+        if val := os.environ.get("NOVAFABRIC_SERVER_STEP_UP_ENABLED"):
+            self.step_up.enabled = val.lower() in ("1", "true", "yes", "on")
+        if val := os.environ.get("NOVAFABRIC_SERVER_STEP_UP_MAX_AGE_SECONDS"):
+            self.step_up.max_age_seconds = int(val)
         if val := os.environ.get("NOVA_TLS_ENABLED"):
             self.tls.enabled = val.lower() in ("1", "true", "yes", "on")
         if val := os.environ.get("NOVA_TLS_CERT_PATH"):

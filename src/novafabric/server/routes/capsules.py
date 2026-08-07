@@ -62,6 +62,7 @@ from novafabric.server.schemas import (
     error_responses,
     request_body,
 )
+from novafabric.server.step_up import require_step_up
 
 router = APIRouter(prefix="/capsules", tags=["capsules"])
 
@@ -472,7 +473,11 @@ def _audit_append(**kwargs: Any) -> None:
     audit.append(**kwargs)
 
 
-@router.delete("/{run_id}", response_model=None)
+@router.delete(
+    "/{run_id}",
+    response_model=None,
+    dependencies=[Depends(require_step_up("capsule.delete"))],
+)
 async def delete_capsule(
     request: Request,
     run_id: str,
@@ -529,7 +534,11 @@ class BulkDeleteRequest(BaseModel):
     dry_run: bool = False
 
 
-@router.post("/bulk-delete", response_model=None)
+@router.post(
+    "/bulk-delete",
+    response_model=None,
+    dependencies=[Depends(require_step_up("capsule.bulk_delete"))],
+)
 async def bulk_delete_capsules(
     request: Request,
     body: BulkDeleteRequest,

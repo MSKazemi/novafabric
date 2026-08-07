@@ -9,6 +9,27 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Added (privileged-action governance — step-up auth + the chained-audit fix, first slice)
+
+- **Role grant/revoke joins the hash-chained audit log** (ADR-0246): the most
+  privileged mutation in the system had been auditing only to the append-only
+  dashboard log, which is not tamper-evident — found by the enterprise-program
+  integration audit. `POST/DELETE /v0/admin/roles` now also append
+  `role.assign`/`role.revoke` entries to the SHA-256-chained `AuditLog`
+  (chain verification asserted in test), flowing to SIEM egress like
+  api-key/webhook/quota events already did.
+- **Step-up (fresh-auth) gate for destructive actions** (experimental,
+  default **off**): with `step_up.enabled`, role grant/revoke and capsule
+  delete/bulk-delete require the caller's OIDC `auth_time`/`iat` to be within
+  `max_age_seconds` (default 300) — a stolen-but-valid session is no longer
+  enough to destroy evidence; stale auth gets 401 `step_up_required`. What
+  counts as destructive is one reviewed registry
+  (`server/step_up.py::DESTRUCTIVE_ACTIONS`), not scattered decorators — an
+  unregistered action name fails at wiring time. Credentials without a
+  freshness signal (API keys, local token) are exempt in this slice;
+  break-glass and access-review export remain **planned** (recorded in the
+  ADR).
+
 ### Added (per-tenant KEKs — tenant-scoped key compromise and one-step offboarding, first slice)
 
 - **`novafabric.trust.tenant_keys`** (ADR-0243): each tenant's capsules can

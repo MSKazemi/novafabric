@@ -21,8 +21,30 @@ from novafabric.server import rbac_store
 from novafabric.server.auth import AuthContext
 from novafabric.server.rbac import Role, require_role
 from novafabric.server.rbac_store import LastAdminError
+from novafabric.server.step_up import require_step_up
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+def _chained_audit(event_value: str, actor: str, subject: str, details: "dict[str, Any]") -> None:
+    """ADR-0246 §12.1 fix: the most privileged mutation joins the HASH-CHAINED
+    audit log (the dashboard append-only log alone is not tamper-evident).
+    Best-effort like every audit writer here — an audit IO failure must not
+    turn a completed grant into a 500, but it is logged, never swallowed."""
+    import logging
+
+    from novafabric.audit import AuditEventType, AuditLog
+    from novafabric.audit._paths import AUDIT_LOG_PATH
+
+    try:
+        AuditLog(AUDIT_LOG_PATH).append(
+            event_type=AuditEventType(event_value),
+            actor=actor,
+            resource_id=subject,
+            details=details,
+        )
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).exception("chained audit append failed")
 
 
 class AssignRoleRequest(BaseModel):
@@ -72,7 +94,9 @@ async def list_roles(
     return _list_roles_response()
 
 
-@router.post("/roles", status_code=201)
+@router.post(
+    "/roles", status_code=201, dependencies=[Depends(require_step_up("role.assign"))]
+)
 async def assign_role(
     body: AssignRoleRequest,
     auth: Annotated[AuthContext, Depends(require_role(Role.admin))],
@@ -80,6 +104,12 @@ async def assign_role(
     """Assign a role to a subject (idempotent). Admin only."""
     rbac_store.assign_role(body.subject, body.role.value, auth.subject)
     actor_fp = auth.subject[:8] if auth.subject else "anonymous"
+    _chained_audit(
+        "role.assign",
+        actor=auth.subject or "anonymous",
+        subject=body.subject,
+        details={"role": body.role.value},
+    )
     audit.append(
         action="assign_role",
         args={"subject": body.subject, "role": body.role.value},
@@ -95,7 +125,10 @@ async def assign_role(
     }
 
 
-@router.delete("/roles/{subject}/{role}")
+@router.delete(
+    "/roles/{subject}/{role}",
+    dependencies=[Depends(require_step_up("role.revoke"))],
+)
 async def revoke_role(
     subject: str,
     role: str,
@@ -134,6 +167,12 @@ async def revoke_role(
             status_code=404, detail=f"no assignment of role {role!r} to {subject!r}"
         )
 
+    _chained_audit(
+        "role.revoke",
+        actor=auth.subject or "anonymous",
+        subject=subject,
+        details={"role": role},
+    )
     audit.append(
         action="revoke_role",
         args={"subject": subject, "role": role},

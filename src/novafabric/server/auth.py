@@ -47,6 +47,11 @@ class AuthContext:
     subject: str
     roles: list[str] = field(default_factory=list)
     workspace: str | None = None
+    # ADR-0246: when the credential carries a freshness signal (OIDC
+    # ``auth_time``, else ``iat``), its POSIX timestamp; None for credential
+    # classes without one (API keys, local token) — the step-up gate treats
+    # those as exempt in slice 1.
+    auth_time: float | None = None
 
     def has_role(self, role: str) -> bool:
         return role in self.roles
@@ -344,11 +349,13 @@ async def verify_token(request: Request) -> AuthContext:
         raise _unauthenticated(f"Invalid token: {exc}")
 
     subject: str = payload.get("sub", "")
+    _freshness = payload.get("auth_time") or payload.get("iat")
+    auth_time: float | None = float(_freshness) if _freshness is not None else None
     # Support both "roles" and "nova_roles" claim names
     raw_roles: Any = payload.get("nova_roles") or payload.get("roles") or []
     roles: list[str] = list(raw_roles) if isinstance(raw_roles, list) else []
 
-    ctx = AuthContext(subject=subject, roles=roles)
+    ctx = AuthContext(subject=subject, roles=roles, auth_time=auth_time)
     request.state.auth = ctx
     return ctx
 

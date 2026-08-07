@@ -23,6 +23,8 @@ class AuditEventType(str, enum.Enum):
     PROMOTE_APPROVE = "promote.approve"
     RETENTION_ACTION = "retention.action"
     ALERT_DELIVERY = "alert.delivery"  # ADR-0192: one entry per attempted alert delivery
+    ROLE_ASSIGN = "role.assign"  # ADR-0246 slice 1: privileged mutations join the chained log
+    ROLE_REVOKE = "role.revoke"  # ADR-0246 slice 1
     API_KEY_CREATE = "api_key.create"  # ADR-0193
     API_KEY_REVOKE = "api_key.revoke"  # ADR-0193
     API_KEY_ROTATE = "api_key.rotate"  # ADR-0193 (slice 2)
