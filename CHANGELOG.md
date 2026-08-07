@@ -9,6 +9,21 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Added (performance SLO catalog — every number labelled, first slice)
+
+- **`tests/bench/slo_catalog.toml` + generated `docs/slo.md`** — the single source
+  for every published performance number, each carrying exactly one status:
+  `gated` (a CI gate enforces it and **reads its threshold from the catalog** —
+  the three existing gates' hardcoded constants are gone: capture-overhead p95,
+  seal p99, and the eight dashboard-scale p95 thresholds now come from the
+  catalog), `measured` (date + hardware + a `revalidate_by` expiry — a stale
+  measurement fails the suite by id until re-measured or demoted), or `target`
+  (aspiration, never a promise). Guards in `tests/bench/test_slo_catalog.py`:
+  well-formedness, every gated entry names a real gate, revalidation windows,
+  and docs/slo.md byte-drift. Three `measured` entries seeded with honest
+  provenance (Kuzu 10M-edge p99, the ADR-0225 5.1× index measurement, collector
+  seal-batch throughput). Zero gate thresholds changed.
+
 ### Added (support policy — the version-lifecycle contract, first slice)
 
 - **`docs/support-policy.md`** — the single source of truth for what "supported"

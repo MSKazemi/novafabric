@@ -1,0 +1,162 @@
+# SLO catalog — the single source for every published performance number (ADR-0248).
+#
+# Every entry carries exactly one status:
+#   gated    — a CI/release gate enforces it; `gate` names the test, `tier` the CI job.
+#              The gate test READS ITS THRESHOLD FROM THIS FILE, so the catalog and the
+#              gate cannot disagree.
+#   measured — observed on a stated date/commit/hardware; expires at `revalidate_by`
+#              (the guard test fails once that date passes — stale claims age out
+#              visibly, they do not fossilize).
+#   target   — aspiration; explicitly not a promise.
+#
+# Units are seconds unless stated. docs/slo.md is GENERATED from this file by
+# scripts/gen_slo_docs.py — edit here, then `python scripts/gen_slo_docs.py`.
+
+schema_version = 1
+
+# --- gated: capture -------------------------------------------------------
+
+[[entry]]
+id = "capture.trivial-run.p95"
+title = "Full captured run of `python -c pass` (subprocess spawn, fast-emit hooks, capsule write), p95"
+status = "gated"
+value = 2.000
+unit = "s"
+workload = "30 rounds, fresh run dir per round, warm filesystem"
+gate = "tests/bench/test_capture_overhead_gate.py::test_capture_overhead_p95_gate"
+tier = "ci:capture-overhead-gate"
+
+# --- gated: seal ----------------------------------------------------------
+
+[[entry]]
+id = "seal.seal-call.p99"
+title = "NovaSeal.seal() single-envelope latency, p99"
+status = "gated"
+value = 0.200
+unit = "s"
+workload = "100 rounds, in-process, SQLite Merkle log"
+gate = "tests/seal/test_benchmark.py::test_seal_p99_latency_gate"
+tier = "ci:seal-latency-gate"
+
+# --- gated: dashboard at 100K rows (nightly) ------------------------------
+# All eight run in-process against TestClient (network excluded), 30 rounds,
+# 100_000 seeded flat runs + 100_000 audit lines. Tier: nightly dashboard-scale
+# job with NOVA_DASHBOARD_SCALE=1. See docs/ops/dashboard-scale.md.
+
+[[entry]]
+id = "dashboard.runs-page.p95"
+title = "Dashboard /api/runs first page at 100K runs, p95"
+status = "gated"
+value = 0.100
+unit = "s"
+workload = "100K flat runs, in-process"
+gate = "tests/bench/test_dashboard_scale_gate.py::runs_page"
+tier = "nightly:dashboard-scale"
+
+[[entry]]
+id = "dashboard.runs-search-page.p95"
+title = "Dashboard /api/runs/search keyset page at 100K runs, p95"
+status = "gated"
+value = 0.100
+unit = "s"
+workload = "100K flat runs, in-process"
+gate = "tests/bench/test_dashboard_scale_gate.py::runs_search_page"
+tier = "nightly:dashboard-scale"
+
+[[entry]]
+id = "dashboard.analytics-summary.p95"
+title = "Dashboard /api/analytics/summary at 100K runs, p95"
+status = "gated"
+value = 0.250
+unit = "s"
+workload = "100K flat runs, in-process"
+gate = "tests/bench/test_dashboard_scale_gate.py::analytics_summary"
+tier = "nightly:dashboard-scale"
+
+[[entry]]
+id = "dashboard.report-throughput.p95"
+title = "Dashboard throughput report at 100K runs, p95"
+status = "gated"
+value = 0.300
+unit = "s"
+workload = "100K flat runs, in-process"
+gate = "tests/bench/test_dashboard_scale_gate.py::report_throughput"
+tier = "nightly:dashboard-scale"
+
+[[entry]]
+id = "dashboard.report-executive-summary.p95"
+title = "Dashboard executive-summary report at 100K runs, p95"
+status = "gated"
+value = 0.300
+unit = "s"
+workload = "100K flat runs, in-process"
+gate = "tests/bench/test_dashboard_scale_gate.py::report_executive_summary"
+tier = "nightly:dashboard-scale"
+
+[[entry]]
+id = "dashboard.report-run-history-page.p95"
+title = "Dashboard run-history report, first page at 100K runs, p95"
+status = "gated"
+value = 0.300
+unit = "s"
+workload = "100K flat runs, in-process"
+gate = "tests/bench/test_dashboard_scale_gate.py::report_run_history_page"
+tier = "nightly:dashboard-scale"
+
+[[entry]]
+id = "dashboard.report-run-history-deep-keyset.p95"
+title = "Dashboard run-history report, deep keyset page at 100K runs, p95"
+status = "gated"
+value = 0.300
+unit = "s"
+workload = "100K flat runs, in-process"
+gate = "tests/bench/test_dashboard_scale_gate.py::report_run_history_deep_keyset"
+tier = "nightly:dashboard-scale"
+
+[[entry]]
+id = "dashboard.audit-tail.p95"
+title = "Dashboard audit tail over 100K audit lines, p95"
+status = "gated"
+value = 0.100
+unit = "s"
+workload = "100K audit lines, in-process"
+gate = "tests/bench/test_dashboard_scale_gate.py::audit_tail"
+tier = "nightly:dashboard-scale"
+
+# --- measured -------------------------------------------------------------
+
+[[entry]]
+id = "lineage.kuzu-blast-radius.p99"
+title = "KuzuDB lineage blast-radius query at 10M edges, p99"
+status = "measured"
+value = 0.0455
+unit = "s"
+workload = "10M-edge synthetic graph, lineage bench harness (BQ-015 promotion gate)"
+hardware = "n1 experiment server"
+measured_on = 2026-05-16
+revalidate_by = 2026-11-01
+source = "ADR-0053 v2a gate clearance; ROADMAP Phase 6 row"
+
+[[entry]]
+id = "query.persistent-index.speedup"
+title = "`nova query` persistent-index speedup vs full scan at 2K/10K capsules"
+status = "measured"
+value = 5.1
+unit = "x"
+workload = "2K capsules 5.1x, 10K capsules 4.9x (ADR-0225 A1 measurement — not the projected 13x)"
+hardware = "n1 experiment server"
+measured_on = 2026-08-06
+revalidate_by = 2027-02-01
+source = "ADR-0225 amended measurement, BL-040"
+
+[[entry]]
+id = "collector.seal-batch.throughput"
+title = "Go collector NovaSeal batch processing throughput"
+status = "measured"
+value = 295000
+unit = "events/s"
+workload = "batch signing pipeline, p99 4.7 ms per batch (Phase 2 acceptance run)"
+hardware = "n1 experiment server"
+measured_on = 2026-05-10
+revalidate_by = 2026-11-01
+source = "ROADMAP Phase 2 row (BQ-011)"

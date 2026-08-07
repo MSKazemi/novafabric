@@ -23,6 +23,8 @@ from typing import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
+from bench.slo import slo_value
+
 pytestmark = pytest.mark.skipif(
     os.environ.get("NOVA_DASHBOARD_SCALE") != "1",
     reason="scale gate — set NOVA_DASHBOARD_SCALE=1 (nightly CI tier)",
@@ -36,15 +38,20 @@ N_AUDIT_LINES = 100_000
 ROUNDS = 30
 
 # p95 thresholds in seconds — see docs/ops/dashboard-scale.md before changing.
+# The numbers live in the SLO catalog (ADR-0248, slo_catalog.toml) so the
+# published claim and the gate cannot disagree.
+_GATE_NAMES = (
+    "runs_page",
+    "runs_search_page",
+    "analytics_summary",
+    "report_throughput",
+    "report_executive_summary",
+    "report_run_history_page",
+    "report_run_history_deep_keyset",
+    "audit_tail",
+)
 THRESHOLDS = {
-    "runs_page": 0.100,
-    "runs_search_page": 0.100,
-    "analytics_summary": 0.250,
-    "report_throughput": 0.300,
-    "report_executive_summary": 0.300,
-    "report_run_history_page": 0.300,
-    "report_run_history_deep_keyset": 0.300,
-    "audit_tail": 0.100,
+    name: slo_value(f"dashboard.{name.replace('_', '-')}.p95") for name in _GATE_NAMES
 }
 
 

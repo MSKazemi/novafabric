@@ -31,9 +31,12 @@ from pathlib import Path
 
 import pytest
 
+from bench.slo import slo_value
 from novafabric.capture.orchestrator import CaptureOrchestrator
 
-_P95_LIMIT_S = 2.000  # 2000 ms — CI-safe ceiling over the ~464 ms warm baseline
+# CI-safe ceiling over the ~464 ms warm baseline; the number lives in the
+# SLO catalog (ADR-0248) so the published claim and the gate cannot disagree.
+_P95_LIMIT_S = slo_value("capture.trivial-run.p95")
 _ROUNDS = 30
 _WARMUP_ROUNDS = 2
 

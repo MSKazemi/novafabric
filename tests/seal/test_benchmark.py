@@ -17,6 +17,7 @@ import datetime
 import math
 
 import pytest
+from bench.slo import slo_value
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -29,7 +30,9 @@ _MANIFEST_BASE: dict[str, object] = {
     "model": "gpt-4o",
     "status": "complete",
 }
-_P99_LIMIT_S = 0.200  # 200 ms
+# 200 ms — the number lives in the SLO catalog (ADR-0248) so the published
+# claim and the gate cannot disagree.
+_P99_LIMIT_S = slo_value("seal.seal-call.p99")
 
 
 # ---------------------------------------------------------------------------
