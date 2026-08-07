@@ -141,6 +141,10 @@ OCSF_CLASS_MAP: Final[dict[str, tuple[int, str, int]]] = {
     "alert.delivery": (_API_ACTIVITY, "API Activity", 1),
     # ADR-0193: API-key lifecycle transitions, done through the product's
     # CLI/API surface (credential *logon* events would be Authentication).
+    # ADR-0246 slice 1: role grant/revoke — privileged IAM mutations through
+    # the product surface (credential logons would be Authentication).
+    "role.assign": (_API_ACTIVITY, "API Activity", 1),  # Create
+    "role.revoke": (_API_ACTIVITY, "API Activity", 4),  # Delete
     "api_key.create": (_API_ACTIVITY, "API Activity", 1),  # Create
     "api_key.revoke": (_API_ACTIVITY, "API Activity", 4),  # Delete
     "api_key.rotate": (_API_ACTIVITY, "API Activity", 3),  # Update

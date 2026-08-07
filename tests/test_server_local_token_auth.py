@@ -233,8 +233,12 @@ class _FakeUvicornRun:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
-    def __call__(self, app_obj: object, host: str, port: int) -> None:
-        self.calls.append({"host": host, "port": port})
+    def __call__(
+        self, app_obj: object, host: str, port: int, **kwargs: object
+    ) -> None:
+        # Accept the same optional kwargs the real ``uvicorn.run`` takes
+        # (ssl_certfile/ssl_keyfile since ADR-0241) and record them.
+        self.calls.append({"host": host, "port": port, **kwargs})
 
 
 class TestStartCli:
@@ -266,7 +270,9 @@ class TestStartCli:
             tmp_path, "--host", "0.0.0.0", "--insecure-no-auth", "--i-know-this-is-public"
         )
         assert result.exit_code == 0, result.output
-        assert fake_run.calls == [{"host": "0.0.0.0", "port": 7433}]
+        assert fake_run.calls == [
+            {"host": "0.0.0.0", "port": 7433, "ssl_certfile": None, "ssl_keyfile": None}
+        ]
 
     def test_start_prints_token_to_terminal_never_to_the_logger(
         self,

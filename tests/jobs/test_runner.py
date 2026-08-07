@@ -11,13 +11,17 @@ import pytest
 
 from novafabric.jobs import Job, JobHandler, JobRunner, JobState, JobStore
 
+# Timing-sensitive (poller cadence + thread pool under xdist load): keep the
+# module on one worker so CPU starvation cannot stretch the margins.
+pytestmark = pytest.mark.xdist_group("jobs-runner")
+
 
 @pytest.fixture()
 def store(tmp_path: Path) -> JobStore:
     return JobStore(tmp_path / "jobs.db")
 
 
-def _wait_for(predicate, timeout: float = 10.0) -> None:
+def _wait_for(predicate, timeout: float = 30.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
