@@ -4,7 +4,7 @@
 
 Please do **not** open a public GitHub issue for security vulnerabilities.
 
-Use GitHub's [private vulnerability reporting](https://github.com/novafabric/novafabric/security/advisories/new) to report issues confidentially.
+Use GitHub's [private vulnerability reporting](https://github.com/MSKazemi/novafabric/security/advisories/new) to report issues confidentially.
 
 We will acknowledge reports within 5 business days and aim to release a fix within 30 days for confirmed vulnerabilities.
 
@@ -47,7 +47,7 @@ when a complete fix needs longer than the window.
 NovaFabric is pre-1.0 and releases frequently (multiple tagged releases per
 week during active development). Given that cadence, only the latest tagged
 release is supported — there is no maintained LTS line before v1.0. See the
-[releases page](https://github.com/novafabric/novafabric/releases) for the
+[releases page](https://github.com/MSKazemi/novafabric/releases) for the
 current version.
 
 | Version           | Supported              |

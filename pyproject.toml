@@ -82,10 +82,10 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://novafabric.ai"
-Documentation = "https://github.com/novafabric/novafabric/blob/main/docs/getting-started.md"
-Repository = "https://github.com/novafabric/novafabric"
-Changelog = "https://github.com/novafabric/novafabric/blob/main/CHANGELOG.md"
-Issues = "https://github.com/novafabric/novafabric/issues"
+Documentation = "https://github.com/MSKazemi/novafabric/blob/main/docs/getting-started.md"
+Repository = "https://github.com/MSKazemi/novafabric"
+Changelog = "https://github.com/MSKazemi/novafabric/blob/main/CHANGELOG.md"
+Issues = "https://github.com/MSKazemi/novafabric/issues"
 
 [project.optional-dependencies]
 saml = [

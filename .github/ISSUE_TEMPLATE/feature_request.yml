@@ -5,12 +5,12 @@ body:
   - type: markdown
     attributes:
       value: |
-        Before filing: check the [roadmap](https://github.com/novafabric/novafabric/blob/main/ROADMAP.md)
-        and the [decisions index](https://github.com/novafabric/novafabric/blob/main/docs/decisions.md) —
+        Before filing: check the [roadmap](https://github.com/MSKazemi/novafabric/blob/main/ROADMAP.md)
+        and the [decisions index](https://github.com/MSKazemi/novafabric/blob/main/docs/decisions.md) —
         the thing you want may already be planned or already decided against, and
         either answer saves you writing this out.
 
-        Some changes need an [RFC](https://github.com/novafabric/novafabric/blob/main/docs/governance/rfc-process.md)
+        Some changes need an [RFC](https://github.com/MSKazemi/novafabric/blob/main/docs/governance/rfc-process.md)
         rather than an issue — new CLI commands, schema changes, new runtime
         dependencies. File the issue anyway; a maintainer will tell you if it
         needs to become an RFC.

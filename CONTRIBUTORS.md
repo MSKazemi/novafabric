@@ -5,7 +5,7 @@ documentation, bug reports with reproductions, design feedback, and reviews all
 count and are all listed here.
 
 If you contributed and are not on this list, that is a bug: open a PR adding
-yourself, or [tell us in an issue](https://github.com/novafabric/novafabric/issues/new/choose)
+yourself, or [tell us in an issue](https://github.com/MSKazemi/novafabric/issues/new/choose)
 and we will. You do not need permission to add your own name.
 
 For the roles these lead to — steward, maintainer — see

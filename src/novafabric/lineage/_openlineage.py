@@ -13,7 +13,7 @@ import yaml
 _log = logging.getLogger(__name__)
 
 _NOVAFABRIC_NS = uuid.UUID("7b3f4e2a-1c0d-5b8e-9f6a-4d2e1a0c3b7f")
-_PRODUCER = "https://github.com/novafabric/novafabric"
+_PRODUCER = "https://github.com/MSKazemi/novafabric"
 _FACET_PRODUCER = "https://novafabric.io"
 _SCHEMA_URL = "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/RunEvent"
 _NOMINAL_TIME_SCHEMA = "https://openlineage.io/spec/facets/1-0-0/NominalTimeRunFacet.json"

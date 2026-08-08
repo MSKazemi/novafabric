@@ -33,7 +33,7 @@ function toSlug(file: string): string {
   return file.replace(/\.md$/, '').replace(/(^|\/)README$/, '$1index').replace(/\/index$/, '');
 }
 
-const GITHUB_BLOB = 'https://github.com/novafabric/novafabric/blob/main';
+const GITHUB_BLOB = 'https://github.com/MSKazemi/novafabric/blob/main';
 
 /**
  * Rewrites the relative `.md` links the repository uses into URLs that work on

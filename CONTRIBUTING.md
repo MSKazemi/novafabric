@@ -14,9 +14,9 @@ anything else on this page first.
 
 ### 1. Find something to work on — 2 minutes
 
-- **[Good first issues](https://github.com/novafabric/novafabric/labels/good%20first%20issue)** —
+- **[Good first issues](https://github.com/MSKazemi/novafabric/labels/good%20first%20issue)** —
   scoped, with the file paths and the definition of done written out
-- **[Help wanted](https://github.com/novafabric/novafabric/labels/help%20wanted)** —
+- **[Help wanted](https://github.com/MSKazemi/novafabric/labels/help%20wanted)** —
   larger, still well-specified
 - **Something that annoyed you** — a confusing error, a doc that lied, a missing
   flag. You do not need permission to fix that; open a PR.
@@ -24,13 +24,13 @@ anything else on this page first.
   you would rather see where the project is heading before picking something up.
 
 If nothing fits, say hello in
-[Discussions](https://github.com/novafabric/novafabric/discussions) and we will
+[Discussions](https://github.com/MSKazemi/novafabric/discussions) and we will
 find you something.
 
 ### 2. Set up — 5 minutes
 
 ```bash
-git clone git@github.com:novafabric/novafabric.git
+git clone git@github.com:MSKazemi/novafabric.git
 cd novafabric
 uv sync --all-extras
 ```
@@ -207,7 +207,7 @@ the limitation in the same breath as the capability.
 | New runtime dependency (Tier C: AGPL/SSPL/BSL/GPL/Elastic) | ADR with justification + migration path, then a `[[declaration]]` carrying both |
 | New runtime dependency (Tier D: field-of-use / "ethical source" terms) | Not accepted — no waiver exists |
 
-Unsure? [Ask in Discussions](https://github.com/novafabric/novafabric/discussions).
+Unsure? [Ask in Discussions](https://github.com/MSKazemi/novafabric/discussions).
 A maintainer will tell you which channel applies. Asking is always cheaper than
 writing the wrong document.
 

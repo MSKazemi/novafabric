@@ -338,16 +338,16 @@ provenance — the provenance platform attesting its own supply chain.
 ```bash
 # Image: keyless cosign signature (Sigstore/Fulcio + Rekor transparency log)
 cosign verify ghcr.io/novafabric/novafabric:<X.Y.Z> \
-  --certificate-identity-regexp '^https://github.com/novafabric/novafabric/' \
+  --certificate-identity-regexp '^https://github.com/MSKazemi/novafabric/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
 # Image: SLSA build provenance + SBOM (attached as OCI referrers)
 gh attestation verify oci://ghcr.io/novafabric/novafabric:<X.Y.Z> \
-  --repo novafabric/novafabric
+  --repo MSKazemi/novafabric
 cosign download sbom ghcr.io/novafabric/novafabric:<X.Y.Z>
 
 # Wheel: SLSA provenance for the PyPI distribution
-gh attestation verify novafabric-<X.Y.Z>-py3-none-any.whl --repo novafabric/novafabric
+gh attestation verify novafabric-<X.Y.Z>-py3-none-any.whl --repo MSKazemi/novafabric
 ```
 
 ### Quick start (bundled Postgres, evaluation only)

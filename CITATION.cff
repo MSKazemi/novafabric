@@ -14,7 +14,7 @@ authors:
   - family-names: "Seyedkazemi Ardebili"
     given-names: "Mohsen"
     alias: "MSKazemi"
-repository-code: "https://github.com/novafabric/novafabric"
+repository-code: "https://github.com/MSKazemi/novafabric"
 url: "https://novafabric.ai"
 license: Apache-2.0
 version: 0.101.0

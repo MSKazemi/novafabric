@@ -18,7 +18,7 @@ deliberative record for non-trivial changes.
 | New runtime dependency | **RFC** |
 | Storage format or backend change | **RFC** |
 | Anything touching the security posture | **RFC** |
-| Not sure | [Ask in Discussions](https://github.com/novafabric/novafabric/discussions) |
+| Not sure | [Ask in Discussions](https://github.com/MSKazemi/novafabric/discussions) |
 
 Asking is always cheaper than writing the wrong document. A maintainer will
 answer within a week.

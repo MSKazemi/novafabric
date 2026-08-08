@@ -101,8 +101,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Publish only from the public repo. PyPI's Trusted Publisher trusts
-    # novafabric/novafabric — a tag in the private mirror must not attempt to publish.
-    if: github.repository == 'novafabric/novafabric'
+    # MSKazemi/novafabric — a tag in the private mirror must not attempt to publish.
+    if: github.repository == 'MSKazemi/novafabric'
     # Must match the "Environment name" configured in the PyPI Trusted Publisher.
     environment:
       name: pypi

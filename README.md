@@ -2,13 +2,13 @@
 
 [![PyPI](https://img.shields.io/pypi/v/novafabric.svg)](https://pypi.org/project/novafabric/)
 [![Downloads](https://img.shields.io/pypi/dm/novafabric.svg)](https://pypi.org/project/novafabric/)
-[![CI](https://github.com/novafabric/novafabric/actions/workflows/ci.yml/badge.svg)](https://github.com/novafabric/novafabric/actions/workflows/ci.yml)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/novafabric/novafabric/badge)](https://scorecard.dev/viewer/?uri=github.com/novafabric/novafabric)
+[![CI](https://github.com/MSKazemi/novafabric/actions/workflows/ci.yml/badge.svg)](https://github.com/MSKazemi/novafabric/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/MSKazemi/novafabric/badge)](https://scorecard.dev/viewer/?uri=github.com/MSKazemi/novafabric)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/)
 [![Status](https://img.shields.io/badge/status-beta-yellow.svg)](#status)
-[![Good first issues](https://img.shields.io/github/issues/novafabric/novafabric/good%20first%20issue?label=good%20first%20issues&color=7057ff)](https://github.com/novafabric/novafabric/labels/good%20first%20issue)
-[![Discussions](https://img.shields.io/github/discussions/novafabric/novafabric)](https://github.com/novafabric/novafabric/discussions)
+[![Good first issues](https://img.shields.io/github/issues/novafabric/novafabric/good%20first%20issue?label=good%20first%20issues&color=7057ff)](https://github.com/MSKazemi/novafabric/labels/good%20first%20issue)
+[![Discussions](https://img.shields.io/github/discussions/novafabric/novafabric)](https://github.com/MSKazemi/novafabric/discussions)
 
 **Created and maintained by [Mohsen Seyedkazemi Ardebili](https://github.com/MSKazemi)** — AI systems engineer, platform architect, HPC researcher. Part of the [NovaFabric](https://github.com/novafabric) open-source lab.
 
@@ -61,7 +61,7 @@ is a portable signed folder you own, not a row in someone else's database. It is
 
 **⭐ Useful to you?** Star the repo — it is the main way other people building the
 same thing find it. **Want to help?** There are
-[good first issues](https://github.com/novafabric/novafabric/labels/good%20first%20issue)
+[good first issues](https://github.com/MSKazemi/novafabric/labels/good%20first%20issue)
 waiting, each with file paths and a definition of done, and
 [CONTRIBUTING.md](CONTRIBUTING.md) gets you from clone to pull request in about
 15 minutes.
@@ -751,7 +751,7 @@ See [Citation](#citation) below, or the [`CITATION.cff`](CITATION.cff) file.
 
 ### For contributors
 - **[Contributing](CONTRIBUTING.md)** — start here; 15 minutes from clone to PR
-- **[Good first issues](https://github.com/novafabric/novafabric/labels/good%20first%20issue)** — scoped and specified
+- **[Good first issues](https://github.com/MSKazemi/novafabric/labels/good%20first%20issue)** — scoped and specified
 - **[Now / Next / Later](ROADMAP.md#now--next--later--the-10-second-version)** — where the project is and where you fit, in 10 seconds
 - [Developer Guide](docs/developer-guide.md) — adding asset types, CLI commands, adapters
 - [Architecture](docs/architecture.md) — where everything lives
@@ -765,7 +765,7 @@ See [Citation](#citation) below, or the [`CITATION.cff`](CITATION.cff) file.
 ## Developer setup
 
 ```bash
-git clone git@github.com:novafabric/novafabric.git
+git clone git@github.com:MSKazemi/novafabric.git
 cd novafabric
 uv sync --all-extras   # --all-extras matters: a plain sync breaks ~30 tests
 make test-fast         # ~90 s
@@ -824,7 +824,7 @@ lives in [`CITATION.cff`](CITATION.cff); a BibTeX entry:
 @software{novafabric,
   author  = {Seyedkazemi Ardebili, Mohsen},
   title   = {{NovaFabric}: Replayable AI Infrastructure},
-  url      = {https://github.com/novafabric/novafabric},
+  url      = {https://github.com/MSKazemi/novafabric},
   version = {0.98.0},
   license = {Apache-2.0}
 }

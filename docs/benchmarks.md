@@ -110,7 +110,7 @@ That is the whole reason this page exists.
 ## Reproducing all of it
 
 ```bash
-git clone git@github.com:novafabric/novafabric.git
+git clone git@github.com:MSKazemi/novafabric.git
 cd novafabric
 uv sync --all-extras
 
@@ -120,4 +120,4 @@ uv run pytest tests/bench/test_capture_overhead_gate.py   # capture overhead, 30
 
 Both write a `--benchmark-json` artifact you can diff against these figures. If
 your numbers differ substantially and your hardware is comparable,
-[that is a bug report we want](https://github.com/novafabric/novafabric/issues/new?template=bug_report.yml).
+[that is a bug report we want](https://github.com/MSKazemi/novafabric/issues/new?template=bug_report.yml).

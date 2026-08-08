@@ -15,7 +15,7 @@ It bundles two skills:
 In Claude Code:
 
 ```text
-/plugin marketplace add novafabric/novafabric
+/plugin marketplace add MSKazemi/novafabric
 /plugin install novafabric@novafabric
 ```
 
@@ -61,8 +61,8 @@ Claude Code through it. Examples:
 
 Open-source (Apache-2.0) replayable AI infrastructure: capture every agent/LLM run as
 a signed, verifiable Run Capsule, then replay, diff, prove lineage, and gate promotion
-on policy. See the [main repository](https://github.com/novafabric/novafabric) and
-[`docs/`](https://github.com/novafabric/novafabric/tree/main/docs).
+on policy. See the [main repository](https://github.com/MSKazemi/novafabric) and
+[`docs/`](https://github.com/MSKazemi/novafabric/tree/main/docs).
 
 ## Honest status
 

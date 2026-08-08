@@ -44,11 +44,11 @@ Most questions are answered here:
 
 | What you have | Where it goes |
 |---|---|
-| "Is this supposed to work like this?" | [Discussions → Q&A](https://github.com/novafabric/novafabric/discussions/categories/q-a) |
-| "This is broken" | [Bug report](https://github.com/novafabric/novafabric/issues/new?template=bug_report.yml) |
-| "NovaFabric should be able to…" | [Feature request](https://github.com/novafabric/novafabric/issues/new?template=feature_request.yml) |
-| "The docs are wrong / unclear" | [Documentation issue](https://github.com/novafabric/novafabric/issues/new?template=documentation.yml) |
-| "Here's what I built with it" | [Discussions → Show and tell](https://github.com/novafabric/novafabric/discussions/categories/show-and-tell) |
+| "Is this supposed to work like this?" | [Discussions → Q&A](https://github.com/MSKazemi/novafabric/discussions/categories/q-a) |
+| "This is broken" | [Bug report](https://github.com/MSKazemi/novafabric/issues/new?template=bug_report.yml) |
+| "NovaFabric should be able to…" | [Feature request](https://github.com/MSKazemi/novafabric/issues/new?template=feature_request.yml) |
+| "The docs are wrong / unclear" | [Documentation issue](https://github.com/MSKazemi/novafabric/issues/new?template=documentation.yml) |
+| "Here's what I built with it" | [Discussions → Show and tell](https://github.com/MSKazemi/novafabric/discussions/categories/show-and-tell) |
 | "I found a vulnerability" | [SECURITY.md](SECURITY.md) — **never** a public issue |
 
 When reporting a problem, include:
@@ -66,14 +66,14 @@ When reporting a problem, include:
 Do **not** open a public issue for a vulnerability. Use the private disclosure
 process in [SECURITY.md](SECURITY.md) — GitHub private vulnerability reporting is
 enabled on this repository, so [*Security → Report a
-vulnerability*](https://github.com/novafabric/novafabric/security/advisories/new)
+vulnerability*](https://github.com/MSKazemi/novafabric/security/advisories/new)
 works directly.
 
 ## Contributing
 
 Want to fix it yourself? [CONTRIBUTING.md](CONTRIBUTING.md) has a 15-minute path
 from clone to pull request, and
-[good first issues](https://github.com/novafabric/novafabric/labels/good%20first%20issue)
+[good first issues](https://github.com/MSKazemi/novafabric/labels/good%20first%20issue)
 are kept stocked and specified.
 
 ## Commercial / research collaboration

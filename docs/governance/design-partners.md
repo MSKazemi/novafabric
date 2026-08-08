@@ -102,7 +102,7 @@ The project lead reviews and either accepts, asks for more information, or
 declines with reasons. **First response within 2 weeks.**
 
 Not ready to commit an organization? [Open a
-Discussion](https://github.com/novafabric/novafabric/discussions) instead —
+Discussion](https://github.com/MSKazemi/novafabric/discussions) instead —
 informal feedback on the spec is welcome from anyone and needs no paperwork.
 
 ---

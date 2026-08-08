@@ -1,7 +1,7 @@
 # RFC-0001 — `runs` partition key vs. tenant idempotency
 
 **Status:** **Accepted** 2026-08-06 — option C, implemented in migration `v004` and ADR-0226.
-**Authors:** @MSKazemi (filed from the [#23](https://github.com/novafabric/novafabric/issues/23) investigation)
+**Authors:** @MSKazemi (filed from the [#23](https://github.com/MSKazemi/novafabric/issues/23) investigation)
 **Reviewers:** @MSKazemi (maintainer, approving)
 **Comment window:** closed — accepted by the BDFL under the process exception for a defect that blocks a security gate
 **Related:** ADR-0051 (partition strategy), ADR-0016 (storage backend), issues #23, #21

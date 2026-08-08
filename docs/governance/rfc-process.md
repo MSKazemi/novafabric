@@ -41,7 +41,7 @@ An RFC is **not required** for:
   existing capsules — these still need PR review
 
 **If you are unsure, do not guess.** [Open a
-Discussion](https://github.com/novafabric/novafabric/discussions) and a
+Discussion](https://github.com/MSKazemi/novafabric/discussions) and a
 maintainer will tell you which channel your change belongs in. Asking is always
 cheaper than writing the wrong document.
 
@@ -52,7 +52,7 @@ cheaper than writing the wrong document.
 ### 1. Discuss informally first
 
 Before writing anything, [open a
-Discussion](https://github.com/novafabric/novafabric/discussions) describing the
+Discussion](https://github.com/MSKazemi/novafabric/discussions) describing the
 problem. This serves three purposes:
 
 1. Confirm an RFC is the right channel at all

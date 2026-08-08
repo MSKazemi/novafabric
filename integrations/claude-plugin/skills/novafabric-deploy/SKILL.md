@@ -66,5 +66,5 @@ kubectl logs deploy/nova-novafabric | grep -i token
 - Pod/container is Ready; `kubectl logs` (or `docker logs`) shows
   "starting dashboard on 0.0.0.0:4321".
 - The dashboard loads at `/dashboard?token=<token>` and `/api/docs` responds.
-- See [`deploy/helm/novafabric/README.md`](https://github.com/novafabric/novafabric/blob/main/deploy/helm/novafabric/README.md)
+- See [`deploy/helm/novafabric/README.md`](https://github.com/MSKazemi/novafabric/blob/main/deploy/helm/novafabric/README.md)
   for the full values reference.

@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Publish only from the public repo (never from the private mirror).
-    if: github.repository == 'novafabric/novafabric'
+    if: github.repository == 'MSKazemi/novafabric'
     permissions:
       contents: read
       # Required to push the OCI chart to GHCR with the built-in GITHUB_TOKEN.

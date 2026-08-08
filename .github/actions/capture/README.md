@@ -5,7 +5,7 @@ capsule, and keep it as a build artifact you can **replay and diff months
 later** — long after the runner is gone and the logs have rotated.
 
 ```yaml
-- uses: novafabric/novafabric/.github/actions/capture@main
+- uses: MSKazemi/novafabric/.github/actions/capture@main
   with:
     run: python my_agent.py
 ```
@@ -30,7 +30,7 @@ folder that verifies with no server and no network.
 **Capture an evaluation and keep the evidence on every push**
 
 ```yaml
-- uses: novafabric/novafabric/.github/actions/capture@main
+- uses: MSKazemi/novafabric/.github/actions/capture@main
   with:
     run: python -m evals.nightly --suite regression
     artifact-name: nightly-eval-capsule
@@ -40,7 +40,7 @@ folder that verifies with no server and no network.
 **Pin the version so CI is reproducible**
 
 ```yaml
-- uses: novafabric/novafabric/.github/actions/capture@main
+- uses: MSKazemi/novafabric/.github/actions/capture@main
   with:
     run: python agent.py
     novafabric-version: "0.100.1"
@@ -50,7 +50,7 @@ folder that verifies with no server and no network.
 
 ```yaml
 - id: capture
-  uses: novafabric/novafabric/.github/actions/capture@main
+  uses: MSKazemi/novafabric/.github/actions/capture@main
   with:
     run: python agent.py
 
@@ -124,7 +124,7 @@ nova replay <capsule-dir> --mode forensic
 nova diff <capsule-a> <capsule-b>
 ```
 
-[The auditor tutorial](https://github.com/novafabric/novafabric/blob/main/docs/tutorials/prove-a-run-to-an-auditor.md)
+[The auditor tutorial](https://github.com/MSKazemi/novafabric/blob/main/docs/tutorials/prove-a-run-to-an-auditor.md)
 walks the whole path, including what it does *not* prove.
 
 ## Limitations

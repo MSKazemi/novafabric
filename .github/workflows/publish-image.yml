@@ -25,8 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Publish only from the public repo. A tag pushed to the private mirror
-    # (novafabric/novafabric-private) must never publish images.
-    if: github.repository == 'novafabric/novafabric'
+    # (MSKazemi/novafabric-private) must never publish images.
+    if: github.repository == 'MSKazemi/novafabric'
     permissions:
       contents: read
       # Required to push to GHCR with the built-in GITHUB_TOKEN.

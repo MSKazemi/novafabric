@@ -251,7 +251,7 @@ async def service_provider_config(_actor: _Actor) -> JSONResponse:
             "schemas": [
                 "urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"
             ],
-            "documentationUri": "https://github.com/novafabric/novafabric",
+            "documentationUri": "https://github.com/MSKazemi/novafabric",
             "patch": {"supported": True},
             "bulk": {"supported": False, "maxOperations": 0, "maxPayloadSize": 0},
             "filter": {"supported": True, "maxResults": 200},

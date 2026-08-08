@@ -51,16 +51,16 @@ Install with: pip install novafabric
 - Full prompt/response capture is opt-in, never the default; all capture passes secret scanning and redaction
 - Core local-mode features require no internet, no server, and no database
 - Emits OpenTelemetry GenAI semantic conventions and OpenLineage, so it composes with existing observability stacks
-- Code repository: https://github.com/novafabric/novafabric
+- Code repository: https://github.com/MSKazemi/novafabric
 - Install: https://pypi.org/project/novafabric/
 - License: Apache-2.0
 
 ## Contributing
 
-- [Contributing guide](https://github.com/novafabric/novafabric/blob/main/CONTRIBUTING.md): 15 minutes from clone to pull request
-- [Good first issues](https://github.com/novafabric/novafabric/labels/good%20first%20issue)
-- [Discussions](https://github.com/novafabric/novafabric/discussions)
-- [Design partner program](https://github.com/novafabric/novafabric/blob/main/docs/governance/design-partners.md): three independent sign-offs gate the v1.0 format freeze; currently zero
+- [Contributing guide](https://github.com/MSKazemi/novafabric/blob/main/CONTRIBUTING.md): 15 minutes from clone to pull request
+- [Good first issues](https://github.com/MSKazemi/novafabric/labels/good%20first%20issue)
+- [Discussions](https://github.com/MSKazemi/novafabric/discussions)
+- [Design partner program](https://github.com/MSKazemi/novafabric/blob/main/docs/governance/design-partners.md): three independent sign-offs gate the v1.0 format freeze; currently zero
 
 ## Note
 

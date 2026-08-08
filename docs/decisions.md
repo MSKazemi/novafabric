@@ -14,7 +14,7 @@ than the deliberation. Everything an ADR decides that affects you as a user or
 contributor is reflected in the code, the [CHANGELOG](../CHANGELOG.md), the
 [ROADMAP](../ROADMAP.md), and the docs in this directory. If a decision here
 matters to something you are building and the public docs do not explain it,
-[open a Discussion](https://github.com/novafabric/novafabric/discussions) and
+[open a Discussion](https://github.com/MSKazemi/novafabric/discussions) and
 ask — we will write it up.
 
 **Proposing a change to a decision** is the [RFC

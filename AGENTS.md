@@ -114,7 +114,7 @@ New CLI command or default flag · schema change · storage format change · new
 runtime dependency · anything touching the security posture · governance change.
 
 See [the RFC process](docs/governance/rfc-process.md). If you are unsure,
-[ask in Discussions](https://github.com/novafabric/novafabric/discussions)
+[ask in Discussions](https://github.com/MSKazemi/novafabric/discussions)
 rather than guessing — asking is always cheaper than writing the wrong document.
 
 ---

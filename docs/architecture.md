@@ -6,7 +6,7 @@ Capsule is, how replay modes differ — read [concepts.md](concepts.md) first.
 
 > **New here?** The fastest orientation is: read
 > [Concepts](concepts.md) → skim [the subsystem map](#subsystem-map) below →
-> pick a [good first issue](https://github.com/novafabric/novafabric/labels/good%20first%20issue).
+> pick a [good first issue](https://github.com/MSKazemi/novafabric/labels/good%20first%20issue).
 > You do not need to understand the whole system to fix a bug in one subsystem.
 
 ---

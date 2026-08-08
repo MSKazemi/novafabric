@@ -4,8 +4,8 @@ contact_links:
     url: https://novafabric.ai
     about: Guides, concepts, CLI reference, and the FAQ.
   - name: Questions & ideas (Discussions)
-    url: https://github.com/novafabric/novafabric/discussions
+    url: https://github.com/MSKazemi/novafabric/discussions
     about: Ask usage questions or propose ideas before opening an issue.
   - name: Security disclosure
-    url: https://github.com/novafabric/novafabric/blob/main/SECURITY.md
+    url: https://github.com/MSKazemi/novafabric/blob/main/SECURITY.md
     about: Report vulnerabilities privately — do not open a public issue.

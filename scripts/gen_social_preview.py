@@ -51,7 +51,7 @@ TAGLINE = [
 ]
 COMMAND = "$ nova capture python my_agent.py"
 FOOTER_LEFT = "Open source · Apache-2.0 · Self-hosted"
-FOOTER_RIGHT = "github.com/novafabric/novafabric"
+FOOTER_RIGHT = "github.com/MSKazemi/novafabric"
 
 
 def _font(path: Path, size: int) -> ImageFont.FreeTypeFont:

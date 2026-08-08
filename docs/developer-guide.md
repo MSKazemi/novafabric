@@ -74,7 +74,7 @@ If you are *using* the `nova` CLI rather than modifying it, start with
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-git clone git@github.com:novafabric/novafabric.git
+git clone git@github.com:MSKazemi/novafabric.git
 cd novafabric
 uv sync --dev
 ```

@@ -1127,7 +1127,7 @@ When deploying to a new host for the first time:
 
 ```bash
 # 1. Clone and pull
-git clone https://github.com/novafabric/novafabric.git
+git clone https://github.com/MSKazemi/novafabric.git
 cd novafabric
 git pull
 

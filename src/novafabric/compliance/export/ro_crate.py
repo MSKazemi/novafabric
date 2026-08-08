@@ -85,7 +85,7 @@ def _build_metadata(
         "creator": {
             "@type": "SoftwareApplication",
             "name": "NovaFabric",
-            "url": "https://github.com/novafabric/novafabric",
+            "url": "https://github.com/MSKazemi/novafabric",
         },
     }
 
