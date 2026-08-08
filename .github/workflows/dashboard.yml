@@ -1,0 +1,77 @@
+name: Dashboard (nova-dashboard)
+
+# Quality gates for packages/nova-dashboard — the React dashboard bundled into
+# `nova serve`.
+#
+# Why this exists: the package shipped 13 test files and 175 tests that **no CI
+# job ever ran**. The `web` job in ci.yml covers the marketing site at the repo
+# root (`web/`), and sdk-ts.yml covers `packages/nova-sdk-ts`; nothing covered
+# this package. The gap surfaced while reviewing dependabot #43, which bumped 14
+# npm dependencies across nova-dashboard and nova-sdk-ts: its green checks
+# validated only the sdk half, so half the change was unverifiable from CI and
+# had to be run by hand before merging. A dependency bump should not require
+# that.
+#
+# Mirrors sdk-ts.yml deliberately — same shape, same Node version, same
+# path-scoping — so the two TypeScript packages are gated identically and a
+# contributor learns one pattern rather than two.
+#
+# Like sdk-ts.yml, this workflow does NOT publish. The package is
+# `"private": true` and is consumed by the Python package at build time.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/nova-dashboard/**"
+      - ".github/workflows/dashboard.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "packages/nova-dashboard/**"
+      - ".github/workflows/dashboard.yml"
+
+# Cancel in-flight runs of the same ref when new commits land.
+concurrency:
+  group: dashboard-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  dashboard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: packages/nova-dashboard/package-lock.json
+
+      - name: Install (locked)
+        working-directory: packages/nova-dashboard
+        run: npm ci
+
+      # Strict type-check before tests: a type error is cheaper to read here
+      # than as a runtime failure inside vitest.
+      - name: Type-check
+        working-directory: packages/nova-dashboard
+        run: npm run lint
+
+      - name: Unit tests
+        working-directory: packages/nova-dashboard
+        run: npm test
+
+      # The dashboard is served as static assets by `nova serve`, so a build
+      # failure is a shipping failure, not just a developer inconvenience.
+      - name: Build
+        working-directory: packages/nova-dashboard
+        run: npm run build
