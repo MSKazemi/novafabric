@@ -7,8 +7,8 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/)
 [![Status](https://img.shields.io/badge/status-beta-yellow.svg)](#status)
-[![Good first issues](https://img.shields.io/github/issues/novafabric/novafabric/good%20first%20issue?label=good%20first%20issues&color=7057ff)](https://github.com/MSKazemi/novafabric/labels/good%20first%20issue)
-[![Discussions](https://img.shields.io/github/discussions/novafabric/novafabric)](https://github.com/MSKazemi/novafabric/discussions)
+[![Good first issues](https://img.shields.io/github/issues/MSKazemi/novafabric/good%20first%20issue?label=good%20first%20issues&color=7057ff)](https://github.com/MSKazemi/novafabric/labels/good%20first%20issue)
+[![Discussions](https://img.shields.io/github/discussions/MSKazemi/novafabric)](https://github.com/MSKazemi/novafabric/discussions)
 
 **Created and maintained by [Mohsen Seyedkazemi Ardebili](https://github.com/MSKazemi)** — AI systems engineer, platform architect, HPC researcher. Part of the [NovaFabric](https://github.com/novafabric) open-source lab.
 
