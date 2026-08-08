@@ -132,7 +132,7 @@ worm-azure = [
 ]
 worm-gcs = [
     # google-cloud-storage (Apache-2.0) — Tier A under ADR-0024.
-    "google-cloud-storage>=2.19",
+    "google-cloud-storage>=3.13.0",
 ]
 seal-aws = [
     # boto3 (Apache-2.0) — Tier A under ADR-0024.
