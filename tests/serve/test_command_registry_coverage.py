@@ -15,11 +15,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import click
 import pytest
-import typer.main
 
-from novafabric.cli.main import app
+from novafabric.cli.introspect import command_paths
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GENERATED_TS = (
@@ -29,20 +27,7 @@ GENERATED_TS = (
 
 def _cli_command_paths() -> set[str]:
     """Every runnable `nova …` command path (leaf commands, excluding hidden)."""
-    root = typer.main.get_command(app)
-    paths: set[str] = set()
-
-    def walk(cmd: click.Command, path: str) -> None:
-        if isinstance(cmd, click.Group):
-            for name, sub in cmd.commands.items():
-                walk(sub, f"{path} {name}")
-            return
-        if getattr(cmd, "hidden", False):
-            return
-        paths.add(path)
-
-    walk(root, "nova")
-    return paths
+    return command_paths()
 
 
 def _registry_command_names() -> set[str]:

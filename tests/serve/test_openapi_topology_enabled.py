@@ -91,13 +91,14 @@ def test_topology_routes_declare_no_response_model(
     resolved routes carry no response field so the failure cannot silently
     return.
     """
-    from fastapi.routing import APIRoute
+    from novafabric.serve.introspect import iter_routes
 
     app = _topology_app(tmp_path, monkeypatch)
 
     checked = 0
-    for route in app.routes:
-        if isinstance(route, APIRoute) and route.path in {
+    for _info in iter_routes(app):
+        route = _info.route
+        if _info.path in {
             "/topology/clusters",
             "/metrics/stream",
         }:

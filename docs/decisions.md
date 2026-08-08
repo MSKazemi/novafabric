@@ -29,7 +29,7 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | **rejected** | Considered and declined; kept as provenance. |
 
 
-**227 decisions recorded** — **217** accepted · **7** proposed · **3** superseded.
+**250 decisions recorded** — **218** accepted · **29** proposed · **3** superseded.
 
 | ADR | Title | Status | Date |
 |---|---|---|---|
@@ -260,3 +260,26 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | `ADR-0225` | Persistent nova query index: mtime-validated cache outside the capsule directory | accepted | 2026-08-02 |
 | `ADR-0226` | runs primary key: tenant_id belongs in the key; idempotency moves into the application | accepted | 2026-08-06 |
 | `ADR-0227` | The OpenAPI contract declares response schemas without binding them | accepted | 2026-08-06 |
+| `ADR-0228` | Dashboard authorization: enforce the RBAC roles serve already writes | proposed | 2026-08-06 |
+| `ADR-0229` | Tenant scoping for the serve read path | proposed | 2026-08-06 |
+| `ADR-0230` | Secure-by-default deployment posture: the Helm chart stops defaulting to --insecure | proposed | 2026-08-06 |
+| `ADR-0231` | Dashboard audit enrichment — actor, state transitions, and denials on the shipped ADR-0191 egress | proposed | 2026-08-06 |
+| `ADR-0232` | URL-serialized view state and a filter grammar with observed-value autocomplete | proposed | 2026-08-06 |
+| `ADR-0233` | Three-way filter scope over the capsule tree: node, root, tree | proposed | 2026-08-06 |
+| `ADR-0234` | Aggregate strip above tables, and the honest-degradation rule for every aggregate | proposed | 2026-08-06 |
+| `ADR-0235` | Widgets and dashboards as portable versioned JSON, with a nova dashboard CLI | proposed | 2026-08-06 |
+| `ADR-0236` | Chart-from-table promotion and a generic Ratio metric primitive | proposed | 2026-08-06 |
+| `ADR-0237` | Evaluator runs are themselves Run Capsules: a score you can replay | proposed | 2026-08-06 |
+| `ADR-0238` | One comparison surface for every comparable object | proposed | 2026-08-06 |
+| `ADR-0239` | Evidence cart: collect while investigating, export one signed bundle | proposed | 2026-08-06 |
+| `ADR-0240` | The serve/ dashboard API gets a declared, conformance-derived OpenAPI contract | proposed | 2026-08-07 |
+| `ADR-0241` | Transport security: first-party TLS everywhere, opt-in mTLS across the distributed spine | proposed | 2026-08-07 |
+| `ADR-0242` | A durable, bounded background-job service — long-running work survives the process | proposed | 2026-08-07 |
+| `ADR-0243` | Per-tenant KEK hierarchy with customer-managed keys (BYOK) and tenant-wide crypto-shred | proposed | 2026-08-07 |
+| `ADR-0244` | Opt-in automated failover: Postgres-anchored leader lease with fencing tokens | proposed | 2026-08-07 |
+| `ADR-0245` | Release channels, LTS designations, and support windows — the version-lifecycle contract | proposed | 2026-08-07 |
+| `ADR-0246` | Privileged-action governance: step-up re-auth, sealed break-glass, access recertification | proposed | 2026-08-07 |
+| `ADR-0247` | Jurisdiction-aware storage routing: residency enforced at the object-capsule-store router | proposed | 2026-08-07 |
+| `ADR-0248` | A published performance SLO catalog — every number labelled gated, measured, or target | proposed | 2026-08-07 |
+| `ADR-0249` | An air-gapped distribution bundle, verifiable fully offline | proposed | 2026-08-07 |
+| `ADR-0250` | Introspect frameworks by shape, never by class identity | accepted | 2026-08-08 |

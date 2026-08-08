@@ -27,8 +27,9 @@ import pytest
 
 pytest.importorskip("fastapi")
 
-from fastapi.routing import APIRoute  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+
+from novafabric.serve.introspect import iter_routes  # noqa: E402
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -55,16 +56,18 @@ def contract_app() -> Any:
     return _load_generator().build_app()
 
 
-def _api_routes(app: Any) -> list[tuple[str, APIRoute]]:
+def _api_routes(app: Any) -> list[tuple[str, Any]]:
     out = []
-    for route in app.routes:
-        if isinstance(route, APIRoute):
-            for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
-                out.append((f"{method} {route.path}", route))
+    for info in iter_routes(app):
+        route = info.route
+        if getattr(route, "operation_id", None) is None and not hasattr(route, "responses"):
+            continue  # not an APIRoute-shaped entry (docs/static)
+        for method in sorted(info.methods - {"HEAD", "OPTIONS"}):
+            out.append((f"{method} {info.path}", route))
     return out
 
 
-def _is_annotated(route: APIRoute) -> bool:
+def _is_annotated(route: Any) -> bool:
     return (route.operation_id or "").startswith("dashboard")
 
 
@@ -139,8 +142,9 @@ class TestHoldsConformance:
 
     @staticmethod
     def _declared_model(app: Any, op_id: str) -> Any:
-        for route in app.routes:
-            if isinstance(route, APIRoute) and route.operation_id == op_id:
+        for info in iter_routes(app):
+            route = info.route
+            if getattr(route, "operation_id", None) == op_id:
                 decl = route.responses.get(200)
                 assert isinstance(decl, dict) and "model" in decl, (
                     f"{op_id}: no declared 200 model"

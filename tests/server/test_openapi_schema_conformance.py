@@ -49,10 +49,10 @@ import yaml
 pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
 
-from fastapi.routing import APIRoute  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
+from novafabric.serve.introspect import iter_routes  # noqa: E402
 from novafabric.server.app import create_app  # noqa: E402
 from novafabric.server.config import ServerConfig  # noqa: E402
 from novafabric.server.schemas import ErrorEnvelope  # noqa: E402
@@ -206,8 +206,9 @@ def _declared_models(app: Any) -> dict[tuple[str, int], type[BaseModel]]:
     to check the declaration, so the declaration has to be its input.
     """
     declared: dict[tuple[str, int], type[BaseModel]] = {}
-    for route in app.routes:
-        if not isinstance(route, APIRoute) or not route.operation_id:
+    for _info in iter_routes(app):
+        route = _info.route
+        if not getattr(route, "operation_id", None):
             continue
         for status, spec in (route.responses or {}).items():
             model = spec.get("model") if isinstance(spec, dict) else None
@@ -419,9 +420,9 @@ def test_every_declared_model_is_exercised(app: Any) -> None:
 def test_in_scope_operations_all_exist(app: Any) -> None:
     """The scope list names real operations — it cannot go stale silently."""
     operation_ids = {
-        route.operation_id
-        for route in app.routes
-        if isinstance(route, APIRoute) and route.operation_id
+        oid
+        for info in iter_routes(app)
+        if (oid := getattr(info.route, "operation_id", None))
     }
     missing = IN_SCOPE_OPERATIONS - operation_ids
     assert not missing, f"IN_SCOPE_OPERATIONS names operations that do not exist: {sorted(missing)}"
@@ -443,11 +444,10 @@ def test_declared_routes_do_not_bind_a_response_model(app: Any) -> None:
     says so.
     """
     offenders = sorted(
-        route.name
-        for route in app.routes
-        if isinstance(route, APIRoute)
-        and route.operation_id in IN_SCOPE_OPERATIONS
-        and route.response_model is not None
+        info.route.name
+        for info in iter_routes(app)
+        if getattr(info.route, "operation_id", None) in IN_SCOPE_OPERATIONS
+        and getattr(info.route, "response_model", None) is not None
     )
     assert not offenders, (
         "these routes bind a response_model, which filters the response body "

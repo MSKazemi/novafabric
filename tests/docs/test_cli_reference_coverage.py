@@ -18,23 +18,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import click
-import typer.main
-
-from novafabric.cli.main import app
+from novafabric.cli.introspect import top_level_command_names
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_REFERENCE = REPO_ROOT / "docs" / "cli-reference.md"
 
 
 def _top_level_commands() -> set[str]:
-    root = typer.main.get_command(app)
-    assert isinstance(root, click.Group)
-    return {
-        name
-        for name, sub in root.commands.items()
-        if not getattr(sub, "hidden", False)
-    }
+    return top_level_command_names()
 
 
 def test_cli_reference_exists() -> None:

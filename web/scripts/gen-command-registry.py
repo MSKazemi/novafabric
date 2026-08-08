@@ -22,9 +22,8 @@ import json
 from pathlib import Path
 
 import click
-import typer.main
 
-from novafabric.cli.main import app
+from novafabric.cli.introspect import root_command, subcommands
 
 OUT = (
     Path(__file__).resolve().parent.parent
@@ -162,9 +161,10 @@ def make_field(p: click.Parameter) -> dict | None:
     return field
 
 
-def walk(cmd: click.Command, path: str, out: list) -> None:
-    if isinstance(cmd, click.Group):
-        for name, sub in sorted(cmd.commands.items()):
+def walk(cmd, path: str, out: list) -> None:
+    children = subcommands(cmd)
+    if children is not None:
+        for name, sub in sorted(children.items()):
             walk(sub, f"{path} {name}", out)
         return
     if getattr(cmd, "hidden", False):
@@ -187,7 +187,7 @@ def walk(cmd: click.Command, path: str, out: list) -> None:
 
 
 def main() -> None:
-    root = typer.main.get_command(app)
+    root = root_command()
     out: list = []
     walk(root, "nova", out)
     out.sort(key=lambda r: r["name"])

@@ -39,13 +39,18 @@ classifiers = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    # Upper bound is deliberate. typer 0.27.x registers no subcommands with this
-    # app: `nova --help` lists 127 commands on 0.25.1 and **zero** on 0.27.1, and
-    # the dashboard command-registry guard drops from 289 commands to one. Found
-    # 2026-08-05 while testing the dependabot bulk-upgrade group, which would have
-    # shipped a completely non-functional CLI. Revisit with an explicit
-    # `nova --help` check before raising the ceiling.
-    "typer>=0.15,<0.26",
+    # The previous `<0.26` ceiling rested on a misdiagnosis, corrected 2026-08-08.
+    # It claimed typer 0.27.x "registers no subcommands" and would ship "a
+    # completely non-functional CLI". Measured on both versions, `nova --help`
+    # lists the same 123 commands, `nova seal verify --help` resolves, and a
+    # `nova capture` round-trip succeeds. What actually broke was introspection:
+    # typer 0.27 vendors its own Click, so TyperGroup no longer inherits from the
+    # installed click.Group and five copies of an isinstance-based walk each saw a
+    # one-command CLI. Fixed by novafabric.cli.introspect, which duck-types on
+    # `.commands` and refuses to return an empty tree. See ADR-0250.
+    # The ceiling stays to keep major Typer jumps deliberate — raise it after
+    # running tests/cli/test_introspect.py against the new version.
+    "typer>=0.15,<0.28",
     "pydantic>=2.11",
     "PyYAML>=6.0",
     "rich>=13.9",
@@ -454,7 +459,7 @@ dev = [
     # Migrating the gate to the new model is real work; raise the ceiling only
     # with `uv run mutmut run` green. Note that 3.5 does not work either — the
     # gate has never run on any mutmut 3.x. See issue #25.
-    "mutmut>=3.0,<3.6",
+    "mutmut>=3.0,<3.8",
     # sqlfluff (MIT) — Tier A under ADR-0024.  SQL linter for migration scripts
     # and raw DDL snippets in the MetadataStore.
     "sqlfluff>=3.0",

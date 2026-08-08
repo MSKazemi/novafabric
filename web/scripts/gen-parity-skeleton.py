@@ -15,10 +15,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import click
-import typer.main
-
-from novafabric.cli.main import app
+from novafabric.cli.introspect import command_paths
 
 PARITY_JSON = (
     Path(__file__).resolve().parent.parent
@@ -27,20 +24,7 @@ PARITY_JSON = (
 
 
 def cli_command_paths() -> set[str]:
-    root = typer.main.get_command(app)
-    paths: set[str] = set()
-
-    def walk(cmd: click.Command, path: str) -> None:
-        if isinstance(cmd, click.Group):
-            for name, sub in cmd.commands.items():
-                walk(sub, f"{path} {name}")
-            return
-        if getattr(cmd, "hidden", False):
-            return
-        paths.add(path)
-
-    walk(root, "nova")
-    return paths
+    return command_paths()
 
 
 def main() -> None:

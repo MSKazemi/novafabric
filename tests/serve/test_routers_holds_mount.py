@@ -10,10 +10,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from novafabric.serve.app import create_app
+from novafabric.serve.introspect import route_methods
 
 LOCALHOST_HEADERS = {"host": "127.0.0.1:4321"}
 TOKEN = "test-token-holds-router"
@@ -27,12 +27,7 @@ def _make_app(tmp_path: Path):  # noqa: ANN202
 
 def test_holds_router_routes_are_mounted(tmp_path: Path) -> None:
     app = _make_app(tmp_path)
-    mounted = {
-        (r.path, method)
-        for r in app.routes
-        if isinstance(r, APIRoute)
-        for method in r.methods
-    }
+    mounted = route_methods(app)
     assert ("/api/holds", "GET") in mounted
     assert ("/api/holds", "POST") in mounted
     assert ("/api/holds/{hold_id}/release", "POST") in mounted

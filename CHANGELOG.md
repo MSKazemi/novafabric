@@ -9,7 +9,46 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Added
+
+- **`novafabric.cli.introspect` and `novafabric.serve.introspect`** — the supported
+  ways to enumerate the `nova` command tree and the mounted HTTP route table
+  (ADR-0250). Both identify
+  structure by shape rather than by class identity, and both raise rather than
+  returning an empty surface. Nine hand-rolled copies of these walks (five for the
+  CLI, four for routes) are replaced by two tested modules.
+
+### Fixed
+
+- **Typer unpinned to `<0.28`; the CLI was never broken.** The previous `<0.26`
+  ceiling rested on a misdiagnosis recorded in `pyproject.toml`, which claimed
+  typer 0.27.x "registers no subcommands" and would ship "a completely
+  non-functional CLI". Measured on both versions, `nova --help` lists the same **123
+  commands**, `nova seal verify --help` resolves, and a `nova capture` round-trip
+  succeeds. What actually broke was introspection: typer 0.27 vendors its own Click
+  as `typer._click`, so `TyperGroup` stopped inheriting from the installed
+  `click.Group` and every `isinstance(cmd, click.Group)` walk reported a
+  one-command CLI — surfacing as ~289 "command no longer exists" assertions across
+  three unrelated test modules. Unblocks the Typer dependency and its security
+  updates.
+
+- **Route enumeration survives FastAPI's lazy router mounting.** FastAPI 0.141
+  stopped flattening included routers into `app.routes`, appending a single lazy
+  `_IncludedRouter` instead, which made every `isinstance(r, APIRoute)` contract
+  gate see an app with no endpoints. `serve/introspect.py` walks the real tree —
+  including nested include prefixes — and is verified against both the pinned
+  0.136.3 and the not-yet-adopted 0.141.1.
+
 ### Changed
+
+- **Dependencies:** `typer` `>=0.15,<0.26` → `>=0.15,<0.28`; `mutmut` `<3.6` → `<3.8`.
+  `fastapi` stays at `<0.137`: five HTTP metrics/self-trace tests still fail on
+  0.141.1 because the metrics middleware records no samples, which is a genuine
+  behaviour change and not introspection. Tracked separately; the raw-path privacy
+  assertion still passes, so no path data leaks — the samples are simply absent.
+
+- **Version ceilings must now state measured evidence, not inferred conclusions**
+  (ADR-0250). A ceiling comment records the command that was run and its output.
 
 - **Git history rewritten to a single authorship identity (2026-08-08).** Commit and
   annotated-tag *messages* were normalized and every commit now records one author and

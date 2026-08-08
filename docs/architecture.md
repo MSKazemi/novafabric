@@ -92,9 +92,9 @@ weight is, not a quality signal.
 
 | Module | What it does |
 |---|---|
-| `cli/` | Every `nova` subcommand. The largest module by file count — and the most approachable. |
+| `cli/` | Every `nova` subcommand. The largest module by file count — and the most approachable. `cli/introspect.py` is the one supported way to enumerate the command tree (ADR-0250). |
 | `server/` | Server mode: REST API, auth, API keys, tenancy. |
-| `serve/` | The dashboard backend that `nova serve` exposes. |
+| `serve/` | The dashboard backend that `nova serve` exposes. `serve/introspect.py` is the one supported way to enumerate mounted HTTP routes (ADR-0250). |
 | `web/` (repo root) | The dashboard frontend — Astro + React, with its own vitest suite. |
 | `metadata_store/` | SQLite and Postgres metadata backends, including row-level security. `dsn.py` is the one place a Postgres DSN is normalised — see [below](#one-dsn-two-consumers). |
 | `object_capsule_store/` | S3-compatible object storage for capsules at scale. |
@@ -188,6 +188,12 @@ because each one is load-bearing for a promise the project makes to users.
 9. **No root containers, no privileged Kubernetes access.**
 10. **Two top-level formats only** — Run Capsule and Evidence Bundle. A third is
     not on the table.
+11. **Framework structure is introspected by shape, never by class identity**
+    (ADR-0250). Enumerating the CLI or the route table goes through
+    `cli/introspect.py` or `serve/introspect.py`; no caller writes its own walk,
+    and neither uses `isinstance` against a third-party class. Both Typer and
+    FastAPI have changed those classes underneath the project, and each time an
+    `isinstance` walk reported an empty surface for a system that worked fine.
 
 ---
 

@@ -236,6 +236,15 @@ evaluation, deployment). To add an eighth:
    `tests/serve/test_command_registry_coverage.py` re-runs this introspection in
    CI and fails if the checked-in `generatedCommands.ts` drifts from the live
    Typer app — a forgotten regeneration is a test failure, not a silent gap.
+
+   **Enumerating the CLI: use `novafabric.cli.introspect`.** Never walk the Typer
+   app by hand, and never test for a command group with
+   `isinstance(cmd, click.Group)`. Typer 0.27 vendors its own Click, so that check
+   is `False` for a group that works perfectly — five hand-rolled copies of that
+   walk each concluded the CLI had one command, which was read as a broken CLI and
+   froze the Typer pin for weeks (ADR-0250). The same rule applies to HTTP routes:
+   use `novafabric.serve.introspect`, not `isinstance(r, APIRoute)` over
+   `app.routes`, which FastAPI 0.141 made empty for every included router.
 5. If the new command deserves a real dashboard panel (not just a copy-only
    command builder), add a row for it in
    `web/src/components/dashboard/commands/commandParity.json`
