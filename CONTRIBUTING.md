@@ -258,6 +258,30 @@ test fails that you cannot fix.
 
 ---
 
+## Licensing your contribution
+
+**NovaFabric is Apache-2.0 and stays that way.** Nothing here changes the license you receive
+the code under, and nothing here asks you to give up ownership of your work.
+
+On your first pull request a bot will ask you to sign a short
+[Contributor License Agreement](CLA.md). It is one comment, and it covers everything you
+contribute afterwards.
+
+**Why it exists.** Copyright in a contribution belongs to whoever wrote it. That is normally
+fine — until the project needs to make a licensing decision, at which point it needs permission
+from every person who ever contributed. Projects that skip this discover years later that they
+cannot adopt a newer license version, respond to a license change in a dependency, or offer
+separately-licensed components, because a contributor from 2027 is unreachable. The CLA keeps
+those doors open.
+
+**What you keep.** The copyright. You are granting a license, not transferring ownership, and
+your own code remains yours to use anywhere else you like.
+
+If you cannot agree to part of it, [open a Discussion](https://github.com/MSKazemi/novafabric/discussions)
+— we would rather adapt the agreement than lose your work.
+
+---
+
 ## Code of conduct
 
 Participation is governed by [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md). It is
