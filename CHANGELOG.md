@@ -11,6 +11,14 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Added
 
+- **Contributor License Agreement ([`CLA.md`](CLA.md)).** NovaFabric stays Apache-2.0
+  and this does not change the licence anyone receives the code under. Copyright in a
+  contribution belongs to whoever wrote it, so once outside contributions land, any
+  later licensing decision needs permission from every past contributor — the CLA
+  consolidates copyright with one party while contributors keep ownership of their
+  work. Signing is automated by the CLA Assistant workflow on each pull request; bots
+  are allowlisted. No DCO is added: section 4 of the CLA already covers provenance.
+
 - **`novafabric.cli.introspect` and `novafabric.serve.introspect`** — the supported
   ways to enumerate the `nova` command tree and the mounted HTTP route table
   (ADR-0250). Both identify
