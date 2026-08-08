@@ -115,3 +115,16 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    ignore:
+      # The runtime image tracks the interpreter the test suite actually runs on.
+      # ci.yml is Python 3.12 only, and pyproject.toml deliberately claims no
+      # classifier beyond 3.12 "until CI grows a matrix that exercises them" —
+      # so a 3.14 base image would ship users a runtime nothing here has tested.
+      # PR #55 proposed exactly that, skipping 3.13 outright.
+      #
+      # Patch updates still flow, which is what carries the CPython security
+      # fixes. Lift this when the CI matrix gains the newer interpreter.
+      - dependency-name: "python"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
