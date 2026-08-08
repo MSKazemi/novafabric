@@ -8,7 +8,7 @@
 # Two-stage build: wheel compiled in builder, runtime image stays slim.
 
 # ── stage 1: build wheel ─────────────────────────────────────────────────────
-FROM python:3.12-slim AS builder
+FROM python:3.13-slim AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
@@ -39,7 +39,7 @@ COPY schemas/ schemas/
 RUN uv build --wheel --no-sources
 
 # ── stage 2: runtime ─────────────────────────────────────────────────────────
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
