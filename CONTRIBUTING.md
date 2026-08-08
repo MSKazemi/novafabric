@@ -229,9 +229,10 @@ uv run python scripts/license_gate.py --ignore novafabric --list   # full invent
 
 ## AI assistance
 
-**AI assistance is welcome**, and this project uses it — many commits here carry a
-`Co-Authored-By` trailer naming the assistant. It would be incoherent to accept that
-for maintainers and hold contributors to a different standard.
+**AI assistance is welcome**, and this project uses it. The commit history records a
+single author throughout: a tool is a tool, and whoever submits a change owns it. It
+would be incoherent to accept AI assistance for maintainers and hold contributors to a
+different standard.
 
 The bar is about responsibility, not tooling:
 

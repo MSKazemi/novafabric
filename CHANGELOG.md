@@ -9,6 +9,24 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Git history rewritten to a single authorship identity (2026-08-08).** Commit and
+  annotated-tag *messages* were normalized and every commit now records one author and
+  committer. **No file content changed** — every commit's tree hash is byte-identical to
+  before, and all 49 tags still point at the same trees. Only commit hashes differ.
+
+  **If you cloned before 2026-08-08, your clone has diverged and `git pull` will
+  conflict.** Re-clone, or reset an untouched checkout onto the new history:
+
+  ```bash
+  git fetch --all --tags --prune --force
+  git reset --hard origin/main
+  ```
+
+  If you have local work on top of the old history, rebase it with
+  `git rebase --onto origin/main <old-base> <your-branch>` before resetting.
+
 ### Fixed
 
 - **`/api/openapi.json` no longer 500s on a topology-enabled server.**
