@@ -13,7 +13,7 @@ dependencies = [
     # boto3 (Apache-2.0) — S3-family backends
     "boto3>=1.38",
     # typer (MIT) — CLI
-    "typer>=0.15",
+    "typer>=0.27.1",
     # rich (MIT) — output formatting
     "rich>=13.9",
 ]
