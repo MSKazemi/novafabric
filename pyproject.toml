@@ -99,7 +99,7 @@ saml = [
     # cryptography + certifi are already present). This clears the ADR-0138 §D5
     # "no XML-signature library has cleared the license gate" premise.
     # signxml (Apache-2.0) — XML-DSIG verification, XSW-resistant verify-then-use.
-    "signxml>=4.0",
+    "signxml>=5.1.0",
     # lxml (BSD-3-Clause) — XXE-hardenable XML parser (no DTD/entities/network).
     "lxml>=5.2.1",
 ]
@@ -506,7 +506,7 @@ dev = [
     "moto>=5.0",
     # signxml (Apache-2.0) + lxml (BSD) — Tier A under ADR-0024.  SAML XML-DSIG
     # verification (ADR-0138); in the dev group so the SAML ACS tests run in CI.
-    "signxml>=4.0",
+    "signxml>=5.1.0",
     "lxml>=5.2.1",
 ]
 
