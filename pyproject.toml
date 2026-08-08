@@ -50,7 +50,7 @@ dependencies = [
     # `.commands` and refuses to return an empty tree. See ADR-0250.
     # The ceiling stays to keep major Typer jumps deliberate — raise it after
     # running tests/cli/test_introspect.py against the new version.
-    "typer>=0.15,<0.28",
+    "typer>=0.27.1,<0.28",
     "pydantic>=2.11",
     "PyYAML>=6.0",
     "rich>=13.9",
