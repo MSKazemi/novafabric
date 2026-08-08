@@ -410,7 +410,7 @@ dev = [
     "pytest-benchmark>=4.0",
     # pytest-timeout (MIT) — Tier A under ADR-0024.  Suite-health: a hung test
     # fails by name instead of stalling the whole run (suite-health backlog item 2).
-    "pytest-timeout>=2.3",
+    "pytest-timeout>=2.4.0",
     # trove-classifiers (Apache-2.0) — Tier A under ADR-0024.  PyPI's own
     # canonical classifier registry; lets tests/packaging_metadata/test_project_metadata.py
     # validate pyproject.toml's `classifiers` list against real, spelled-correctly
