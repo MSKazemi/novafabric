@@ -158,7 +158,7 @@ seal-gcp = [
 sigstore = [
     # sigstore (Apache-2.0) — Tier A under ADR-0024.
     # Keyless signing backend for novafabric[sigstore] optional extra (ADR-0071).
-    "sigstore>=4.2.0",
+    "sigstore>=4.5.0",
 ]
 spkg = [
     # Security & Provenance Knowledge Graph (SPKG) — ADR-0111, Phase P1.
