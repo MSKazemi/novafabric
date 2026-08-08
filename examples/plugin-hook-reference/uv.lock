@@ -617,7 +617,7 @@ dev = [
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-benchmark", specifier = ">=4.0" },
     { name = "pytest-cov", specifier = ">=6.0" },
-    { name = "pytest-timeout", specifier = ">=2.3" },
+    { name = "pytest-timeout", specifier = ">=2.4.0" },
     { name = "pytest-xdist", specifier = ">=3.6" },
     { name = "python-louvain", specifier = ">=0.16" },
     { name = "ruff", specifier = ">=0.9" },
