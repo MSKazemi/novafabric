@@ -32,6 +32,21 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # fastapi 0.137+ (starlette 1.4 route mounting) is a KNOWN incompatibility,
+      # not a stale pin. It regresses the Prometheus route label from template to
+      # raw path and breaks two self-trace privacy assertions. Established
+      # 2026-08-05 and re-confirmed by PR #53, which failed exactly the five tests
+      # the pyproject.toml comment predicted.
+      #
+      # Dependabot rewrites the `fastapi<0.137` constraint in pyproject.toml
+      # rather than respecting it, so the manifest bound alone does not stop the
+      # bump — only this rule does.
+      #
+      # Lift this together with the four pyproject.toml bounds, and only with
+      # tests/test_server_observability.py and tests/test_server_selftrace.py green.
+      - dependency-name: "fastapi"
+        versions: [">=0.137"]
     open-pull-requests-limit: 10
 
   # GitHub Actions used by the workflows in .github/workflows/.
