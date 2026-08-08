@@ -423,7 +423,7 @@ dev = [
     "trove-classifiers>=2024.1.31",
     # pytest-xdist (MIT) — Tier A under ADR-0024.  Parallel test execution for
     # the 5.5K-test suite (suite-health backlog item 3); dev runs use `-n auto`.
-    "pytest-xdist>=3.6",
+    "pytest-xdist>=3.8.0",
     "ruff>=0.9",
     "mypy>=1.14",
     "types-PyYAML>=6.0",
