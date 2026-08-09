@@ -26,6 +26,24 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   returning an empty surface. Nine hand-rolled copies of these walks (five for the
   CLI, four for routes) are replaced by two tested modules.
 
+### Security
+
+- **Two HIGH advisories patched in the published npm packages.** `nanoid` 3.3.16 →
+  3.3.18 ([GHSA-2v37-7h3g-55p8](https://github.com/advisories/GHSA-2v37-7h3g-55p8),
+  custom generators can loop indefinitely when size is zero) in both
+  `@novafabric/sdk` and the bundled dashboard, and `js-yaml` 4.3.0 → 4.3.1
+  ([GHSA-5p4m-2wfm-xmqj](https://github.com/advisories/GHSA-5p4m-2wfm-xmqj),
+  quadratic CPU consumption in `!!omap` resolution) transitively under
+  `@redocly/openapi-core` in the SDK. Lockfile-only — no `package.json` range
+  moved, so nothing downstream is forced to a new major.
+
+  Worth recording *how* these were missed rather than just that they were fixed:
+  the private mirror's alert list showed seven open advisories while the public
+  repo reported **zero** with alerting enabled, and the backlog had filed them as
+  private-only and therefore out of scope. Two of the three affected manifests are
+  public. The vulnerable versions were confirmed by reading the lockfiles, which is
+  the only check that settled it — neither alert list was right on its own.
+
 ### Fixed
 
 - **Typer unpinned to `<0.28`; the CLI was never broken.** The previous `<0.26`
