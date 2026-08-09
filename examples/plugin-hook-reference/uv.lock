@@ -549,7 +549,7 @@ requires-dist = [
     { name = "nats-py", marker = "extra == 'scale'", specifier = ">=2.9.0" },
     { name = "networkx", specifier = ">=3.6.1" },
     { name = "novafabric", extras = ["saml", "scale", "sigstore", "spkg", "seal-postgres", "serve", "federation", "server", "lineage-kuzu", "janusgraph", "lineage-migration", "compliance", "scale-kg", "ocs-compress", "watch", "otlp", "query", "clickhouse", "nats", "avro", "energy-gpu"], marker = "extra == 'all'", editable = "../../" },
-    { name = "nvidia-ml-py", marker = "extra == 'energy-gpu'", specifier = ">=12.0.0" },
+    { name = "nvidia-ml-py", marker = "extra == 'energy-gpu'", specifier = ">=13.610.43" },
     { name = "openai-agents", marker = "extra == 'openai-agents'", specifier = ">=0.17.3" },
     { name = "opentelemetry-proto", marker = "extra == 'otlp'", specifier = ">=1.20" },
     { name = "opentelemetry-sdk", specifier = ">=1.29" },
