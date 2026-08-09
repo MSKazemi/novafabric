@@ -1,0 +1,140 @@
+name: Release toolchain
+
+# publish-image.yml and publish-chart.yml fire only on a v* tag, so no pull
+# request has ever executed the actions they depend on. Dependabot PR #58 made
+# that concrete: seven MAJOR action bumps across the image build and the cosign
+# signing path, with a fully green check run that exercised none of them. The
+# next release tag would have been their first execution — on the workflow that
+# builds and signs what users install.
+#
+# This job runs that toolchain whenever the publish path changes, doing what the
+# real workflows do minus the publishing: build the image without pushing,
+# install cosign and helm and prove they run, lint and package the chart.
+#
+# Keep the action versions below IDENTICAL to publish-image.yml and
+# publish-chart.yml. Dependabot's `actions` group bumps every workflow together,
+# so a version that would break a release now surfaces here, on a pull request,
+# instead of on a tag.
+#
+# Not covered, deliberately:
+#   - docker/login-action needs real registry credentials, which must never be
+#     exposed to a pull request. Its majors have so far been runtime-only.
+#   - Multi-arch emulation. setup-qemu-action runs, but the build below is
+#     linux/amd64 so a pull request does not pay for arm64 emulation.
+#   - cosign sign / attest, which require the OIDC identity of a tag run.
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/publish-image.yml"
+      - ".github/workflows/publish-chart.yml"
+      - ".github/workflows/release-toolchain.yml"
+      - "deploy/docker/**"
+      - "deploy/helm/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/publish-image.yml"
+      - ".github/workflows/publish-chart.yml"
+      - ".github/workflows/release-toolchain.yml"
+      - "deploy/docker/**"
+      - "deploy/helm/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  image-toolchain:
+    name: Image build toolchain (no push)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Derive image tags and labels
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # A pull request has no v* ref, so the semver rules in
+          # publish-image.yml derive nothing here. These stand in only to prove
+          # the action runs and emits a usable tag set.
+          tags: |
+            type=ref,event=pr
+            type=sha,format=short
+
+      - name: Fail if metadata-action produced no tags
+        # Silent-failure guard. An empty `tags` output is exactly the condition
+        # that makes the real build fail with "tag is needed when pushing to
+        # registry", and an unasserted empty string would sail past the build
+        # below because push is false.
+        run: |
+          tags="${{ steps.meta.outputs.tags }}"
+          if [ -z "${tags//[[:space:]]/}" ]; then
+            echo "::error::metadata-action produced no tags; the tagging rules regressed."
+            exit 1
+          fi
+          echo "Derived tags:"; echo "$tags"
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          # amd64 only: this validates the build inputs, not arm64 emulation.
+          platforms: linux/amd64
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          # Every input the real publish step passes is exercised here, so an
+          # input removed by a major surfaces as a failure rather than at a tag.
+          sbom: true
+          provenance: mode=max
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v4.1.2
+
+      - name: Prove cosign runs
+        # The signing call itself needs a tag run's OIDC identity, so this
+        # confirms the installer produced a working binary of the expected
+        # major — the part the version bump can break.
+        run: cosign version
+
+  chart-toolchain:
+    name: Helm chart toolchain (no push)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v3.16.4
+
+      - name: Lint chart
+        run: helm lint deploy/helm/novafabric
+
+      - name: Package chart
+        # Mirrors publish-chart.yml. The real step derives the version from the
+        # tag; a pull request has none, so a placeholder proves packaging works.
+        run: |
+          helm package deploy/helm/novafabric \
+            --version 0.0.0-ci \
+            --app-version 0.0.0-ci \
+            --destination "$RUNNER_TEMP"
+          test -f "$RUNNER_TEMP/novafabric-0.0.0-ci.tgz"
