@@ -23,10 +23,9 @@ and where an outside contributor fits.
 | | Size | Issue |
 |---|---|---|
 | Task-scoped `EventRecorder` (ADR-0224 phase 2; two constraints already established) | L | [#7](https://github.com/MSKazemi/novafabric/issues/7) |
-| `nova doctor --check-extras` — detect the most common setup failure | S | [#4](https://github.com/MSKazemi/novafabric/issues/4) |
 | Capture adapters: LlamaIndex · Pydantic AI · Haystack | S each | [#1](https://github.com/MSKazemi/novafabric/issues/1) [#2](https://github.com/MSKazemi/novafabric/issues/2) [#3](https://github.com/MSKazemi/novafabric/issues/3) |
 
-**New here?** The adapters and `--check-extras` are labelled
+**New here?** The adapters are labelled
 [good first issue](https://github.com/MSKazemi/novafabric/labels/good%20first%20issue)
 and each one names the files, the test to add, and what "done" means.
 
