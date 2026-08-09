@@ -11,6 +11,31 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Added
 
+- **`nova replay`, `nova validate` and `nova diff` accept a run id, not just a path.**
+  `nova capture` ends by printing `(run_id=01HX…)`, so the run id is what a user has in
+  hand — but every capsule-taking command required a directory path, and the documented
+  first run therefore did not work. The README's
+  `nova replay 01HX… --mode forensic` failed with "Not a valid capsule directory", and
+  `docs/getting-started.md` had to reconstruct the path with
+  `RUN=.novafabric/capsules/$(ls -t …)` — a line that resolved to nothing, because it is
+  relative to the working directory while `nova capture` writes under
+  `~/.novafabric/capsules/`. Verified by installing the built wheel into a clean 3.12
+  venv and following the README: capture → validate → replay now works by id.
+
+  **A path always wins.** If the reference names an existing capsule directory it is used
+  as given and no lookup happens, so every invocation that worked before resolves to
+  exactly the same directory — this widens the accepted input without changing any input
+  that already worked. An unknown id now names the directory searched and how to point
+  elsewhere, instead of only saying the reference was not a directory.
+
+  Two guards keep the onboarding docs from drifting back
+  (`tests/docs/test_onboarding_paths_are_real.py`), asserting against
+  `default_capsule_dir()` rather than a restated path. Worth knowing while reading them:
+  **there are two capture defaults.** The CLI writes to `~/.novafabric/capsules/`; the
+  in-process SDK defaults to `./.novafabric/runs/` relative to the working directory
+  (`capture/orchestrator.py:207`). Both are correct in their own context, and mixing them
+  up is what made the guide wrong.
+
 - **The release toolchain is now exercised on pull requests** —
   `.github/workflows/release-toolchain.yml`. `publish-image.yml` and `publish-chart.yml` fire only
   on a `v*` tag, so no pull request ran the actions that build and sign the released image; a green

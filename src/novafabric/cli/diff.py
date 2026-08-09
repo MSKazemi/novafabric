@@ -8,6 +8,7 @@ from typing import Annotated, Any
 import typer
 from rich.console import Console
 
+from novafabric.cli._capsule_ref import CapsuleRefError, resolve_capsule_ref
 from novafabric.eval.regression_diff import (
     DEFAULT_ALPHA,
     DEFAULT_BETA,
@@ -75,10 +76,14 @@ def _capsule_diff(
     from novafabric.diff._engine import DiffEngine
     from novafabric.diff._format import format_github_annotations, format_json, format_text
 
+    resolved: list[Path] = []
     for p in (capsule_a, capsule_b):
-        if not p.is_dir() or not (p / "capsule.yaml").exists():
-            console.print(f"[red]Not a valid capsule directory: {p}[/red]")
-            raise typer.Exit(code=1)
+        try:
+            resolved.append(resolve_capsule_ref(p))
+        except CapsuleRefError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from exc
+    capsule_a, capsule_b = resolved
 
     # ADR-0116: read-only grouping by recorded (experiment_id, variant_id).
     groups: dict[str, str] | None = None

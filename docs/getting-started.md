@@ -142,10 +142,15 @@ and an `error` block. NovaFabric's own exit code mirrors the wrapped command's
 exit code, so it is safe to drop `nova capture` in front of any command in an
 existing pipeline.
 
-Take a look at a few of these files:
+Take a look at a few of these files. `nova capture` printed a `run_id=` — use it,
+or let the shell pick the most recent capsule:
 
 ```bash
-RUN=.novafabric/capsules/$(ls -t .novafabric/capsules/ | head -1)
+# Either paste the run id nova printed …
+RUN=~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX
+
+# … or take the newest one
+RUN=~/.novafabric/capsules/$(ls -t ~/.novafabric/capsules/ | head -1)
 
 # The manifest — run id, status, timing, command
 cat $RUN/capsule.yaml
@@ -156,6 +161,10 @@ cat $RUN/outputs/stdout.txt
 # Environment snapshot — Python version, installed packages, OS, hardware
 cat $RUN/env.lock
 ```
+
+Capsules are written under `~/.novafabric/capsules/` by default. Set
+`NOVAFABRIC_CAPSULE_DIR` to put them somewhere else — if you do, use that path
+here instead.
 
 `env.lock` records the Python version, up to 200 installed packages, safe
 environment variables (secrets excluded), OS / arch / CPU / memory, and GPU
@@ -209,7 +218,7 @@ if you prefer capturing without wrapping in a subprocess — see the
 After the run, look at the model-calls record:
 
 ```bash
-RUN=.novafabric/capsules/$(ls -t .novafabric/capsules/ | head -1)
+RUN=~/.novafabric/capsules/$(ls -t ~/.novafabric/capsules/ | head -1)
 cat $RUN/model-calls.jsonl | python -m json.tool | head -40
 ```
 

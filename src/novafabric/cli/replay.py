@@ -7,6 +7,7 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
+from novafabric.cli._capsule_ref import CapsuleRefError, resolve_capsule_ref
 from novafabric.replay._engine import ReplayEngine
 from novafabric.replay._flags import ReplayFlags
 from novafabric.replay._intervention import InterventionError
@@ -23,7 +24,12 @@ console = Console()
 
 
 def replay_cmd(
-    capsule: Annotated[Path, typer.Argument(help="Path to the run capsule directory")],
+    capsule: Annotated[
+        Path,
+        typer.Argument(
+            help="Run capsule directory, or the run id printed by `nova capture`."
+        ),
+    ],
     mode: Annotated[
         ReplayMode,
         typer.Option("--mode", help="Replay mode.")
@@ -76,11 +82,14 @@ def replay_cmd(
 
     \b
     Examples:
-      # Default mocked replay
+      # By run id — the id `nova capture` printed
+      nova replay 01HXAY7M5JZ8R7K4P9DPBYK2WX
+
+      # Or by path
       nova replay path/to/my-capsule/
 
       # Forensic mode — observe without writing
-      nova replay --mode forensic path/to/my-capsule/
+      nova replay --mode forensic 01HXAY7M5JZ8R7K4P9DPBYK2WX
 
       # Dry-run: show what would execute
       nova replay --dry-run path/to/my-capsule/
@@ -88,9 +97,11 @@ def replay_cmd(
       # Counterfactual: what if the model had answered differently?
       nova replay --mode intervention --intervention-file spec.yaml path/to/my-capsule/
     """
-    if not capsule.is_dir() or not (capsule / "capsule.yaml").exists():
-        console.print(f"[red]Not a valid capsule directory: {capsule}[/red]")
-        raise typer.Exit(code=1)
+    try:
+        capsule = resolve_capsule_ref(capsule)
+    except CapsuleRefError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
     if mode is ReplayMode.intervention and intervention_file is None:
         console.print(
             "[red]--mode intervention requires --intervention-file[/red]"

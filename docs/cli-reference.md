@@ -902,9 +902,16 @@ from the reader's own assertion.
 
 ### nova replay \<capsule\>
 
-Replay a captured run from its capsule directory.
+Replay a captured run. `<capsule>` is either the **run id** `nova capture` printed, or a
+path to the capsule directory. A path that exists is always used as given; only a
+reference that is not a usable path is looked up as a run id, in
+`$NOVAFABRIC_CAPSULE_DIR` (default `~/.novafabric/capsules/`).
 
 ```bash
+# By run id — what `nova capture` hands you
+nova replay 01HXAY7M5JZ8R7K4P9DPBYK2WX --mode forensic
+
+# By path — including the ./.novafabric/runs/ the in-process SDK writes to
 nova replay .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --mode forensic
 nova replay .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --mode mocked
 nova replay .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --mode semantic
@@ -946,7 +953,11 @@ Output is written to `.novafabric/replays/<replay-ulid>/replay_result.yaml`.
 Structurally compare two run capsules. Smart-routed: if both arguments contain `@`,
 falls back to the asset registry diff (v0.1 behavior).
 
+Each argument is either a **run id** or a capsule directory path, resolved the same way
+as [`nova replay`](#nova-replay-capsule).
+
 ```bash
+nova diff 01HXAY7M5JZ8R7K4P9DPBYK2WX 01HYBZ8N6KA9S8L5Q0EQCZL3XY
 nova diff .novafabric/runs/01HX.../ .novafabric/runs/01HY.../
 nova diff cap-a/ cap-b/ --output-format json
 nova diff cap-a/ cap-b/ --output-format github-annotation
@@ -4492,7 +4503,12 @@ Smart routing:
 - If `path` is a **directory containing `capsule.yaml`**: validates the run capsule
   against `run-capsule.schema.json`, `environment.schema.json`, and `secret-redaction.schema.json`,
   and checks all required files exist.
+- If `path` does not exist but is a **run id**, the capsule of that id is validated,
+  resolved in `$NOVAFABRIC_CAPSULE_DIR` (default `~/.novafabric/capsules/`).
 - Otherwise: validates `path` as an asset YAML spec (v0.1 behavior).
+
+An existing path always wins, so an asset spec, a capsule directory and a replay
+directory are all routed exactly as before.
 
 ```bash
 nova validate .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/

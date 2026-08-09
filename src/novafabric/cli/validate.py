@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 
@@ -8,6 +9,7 @@ import typer
 import yaml
 from rich.console import Console
 
+from novafabric.cli._capsule_ref import CapsuleRefError, resolve_capsule_ref
 from novafabric.spec.validator import (
     SpecValidationError,
     print_spec_error,
@@ -275,6 +277,13 @@ def validate_cmd(
       # Tool-call schema conformance report (ADR-0128)
       nova validate --schemas .novafabric/runs/<run-id>/
     """
+    # A bare run id means the capsule of that id. Only consulted when the reference
+    # is not already a usable path, so every existing invocation is untouched — an
+    # asset spec, a capsule directory and a replay directory all still win outright.
+    if not spec_file.exists():
+        with contextlib.suppress(CapsuleRefError):
+            spec_file = resolve_capsule_ref(spec_file)
+
     if _is_replay_dir(spec_file):
         _validate_replay(spec_file)
         return
