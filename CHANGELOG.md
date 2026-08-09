@@ -11,6 +11,25 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Added
 
+- **The release toolchain is now exercised on pull requests** —
+  `.github/workflows/release-toolchain.yml`. `publish-image.yml` and `publish-chart.yml` fire only
+  on a `v*` tag, so no pull request ran the actions that build and sign the released image; a green
+  check run said nothing about them. Dependabot #58 made that concrete by proposing seven *major*
+  action bumps — including `sigstore/cosign-installer` v3→v4 — with every check green and not one
+  of them exercised. The new job runs that toolchain with publishing disabled: buildx build with
+  `push: false` passing every input the release step passes, cosign installed and run, chart linted
+  and packaged. `tests/docs/test_release_toolchain_matches_publish.py` holds its action versions
+  identical to the publish workflows, since a smoke test pinned to different versions is a green
+  check that proves nothing. What it still cannot cover — `docker/login-action`, `cosign sign`,
+  and arm64 emulation — is named in [`docs/release-process.md`](docs/release-process.md) §1c rather
+  than left to look like coverage.
+
+- **Researcher and standards-body entry points** — [`docs/for-researchers.md`](docs/for-researchers.md)
+  (making a reproducible, reviewable, citable paper artifact, and what NovaFabric does *not* solve),
+  [`docs/standards-conformance.md`](docs/standards-conformance.md) (every specification implemented,
+  how to verify each claim, and what is explicitly not claimed), a JOSS-style `paper/`, and a
+  `.zenodo.json` + expanded `CITATION.cff` so an archived release is citable.
+
 - **Contributor License Agreement ([`CLA.md`](CLA.md)).** NovaFabric stays Apache-2.0
   and this does not change the licence anyone receives the code under. Copyright in a
   contribution belongs to whoever wrote it, so once outside contributions land, any
@@ -70,8 +89,26 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 - **Dependencies:** `typer` `>=0.15,<0.26` → `>=0.15,<0.28`; `mutmut` `<3.6` → `<3.8`.
   `fastapi` stays at `<0.137`: five HTTP metrics/self-trace tests still fail on
   0.141.1 because the metrics middleware records no samples, which is a genuine
-  behaviour change and not introspection. Tracked separately; the raw-path privacy
+  behaviour change and not introspection. Tracked as
+  [#54](https://github.com/MSKazemi/novafabric/issues/54); the raw-path privacy
   assertion still passes, so no path data leaks — the samples are simply absent.
+  The ceiling is now enforced by a Dependabot `ignore` rule as well as the manifest
+  bound, because Dependabot rewrites the `pyproject.toml` constraint rather than
+  respecting it and re-proposed the same red PR ([#53](https://github.com/MSKazemi/novafabric/pull/53)).
+
+  Floors aligned to the version already resolving and under test, continuing the
+  #46–#49 batch: `uvicorn[standard]` `>=0.32` → `>=0.52.1` (serve + server extras),
+  `nvidia-ml-py` `>=12.0.0` → `>=13.610.43` (energy-gpu), `google-adk` `>=1.34.0` →
+  `>=2.6.2` (openai-agents), `sigstore` `>=4.2.0` → `>=4.5.0`. The OpenTelemetry
+  Collector set moved to the v0.158.0 / v1.64.0 train, and the GitHub Actions used by
+  the publish workflows took seven major bumps.
+
+  The `python` base image is held at **3.12** by a new Dependabot `ignore` on major and
+  minor updates (patch still flows, so CPython security fixes are unaffected). CI runs a
+  single 3.12 job and `pyproject.toml` deliberately claims no classifier beyond 3.12
+  "until CI grows a matrix that exercises them", so a proposed 3.14 base image
+  ([#55](https://github.com/MSKazemi/novafabric/pull/55)) would have shipped a runtime
+  nothing here tests — its green checks only proved the image *builds*.
 
 - **Version ceilings must now state measured evidence, not inferred conclusions**
   (ADR-0250). A ceiling comment records the command that was run and its output.

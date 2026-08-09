@@ -42,10 +42,32 @@ any is red on `main` (check the Actions tab, or run locally as below):
 - **`integration`** — the testcontainers tier (`uv run pytest tests/integration` with
   Docker available; CI installs with `--all-extras`).
 
-This section exists so the documented release gate names **every** CI job — guarded by
-`tests/docs/test_support_policy.py`, which fails when a CI job is added without being
-documented here. (The `unit` job's exact command parity is separately guarded by
-`tests/docs/test_makefile_matches_ci_gate.py`.)
+This section exists so the documented release gate names every job in `ci.yml` — guarded by
+`tests/docs/test_support_policy.py`, which fails when a job is added there without being
+documented here. Note the guard's scope: it reads `ci.yml` only, so a job in a *separate*
+workflow file is not covered by it. (The `unit` job's exact command parity is separately guarded
+by `tests/docs/test_makefile_matches_ci_gate.py`.)
+
+## 1c. What the tag run will be the first to execute
+
+`publish-image.yml` and `publish-chart.yml` fire only on a `v*` tag. Nothing on a pull request
+runs them, so their actions are the one part of the pipeline a green PR says nothing about.
+
+`release-toolchain.yml` covers most of that gap: on any change to the publish path it runs the
+same toolchain with publishing disabled — buildx build with `push: false` passing every input the
+release step passes, cosign installed and run, chart linted and packaged. Its action versions are
+held identical to the publish workflows by `tests/docs/test_release_toolchain_matches_publish.py`,
+because a smoke test pinned to different versions is a green check that proves nothing.
+
+Three things it still cannot cover, so a tag run is their first execution:
+
+- **`docker/login-action`** — needs real registry credentials, which must never be exposed to a
+  pull request. A login failure is at least loud and immediate.
+- **`cosign sign` and `actions/attest-build-provenance`** — both need the OIDC identity of a tag
+  run. The installer is proven; the signing call is not.
+- **arm64** — the smoke build is `linux/amd64`, so emulation is exercised only at release.
+
+After a release, check those three in the run log rather than assuming them.
 
 ## 2. Run ruff
 
