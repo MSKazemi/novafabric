@@ -66,6 +66,14 @@ waiting, each with file paths and a definition of done, and
 [CONTRIBUTING.md](CONTRIBUTING.md) gets you from clone to pull request in about
 15 minutes.
 
+**Came here for a specific reason?**
+📄 **Researcher** → [For researchers](docs/for-researchers.md) — making a paper artifact
+reproducible, reviewable and citable, and what this does *not* solve ·
+📐 **Standards or specification work** → [Standards and specifications](docs/standards-conformance.md)
+— every spec implemented, how to verify each claim, and what is explicitly **not** claimed ·
+🏛 **Compliance or audit** → [Assurance cases](docs/assurance-cases.md) — conformance
+receipts, never verdicts.
+
 ---
 
 ## What you will learn from this README

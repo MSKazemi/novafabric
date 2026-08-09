@@ -1,0 +1,45 @@
+{
+  "title": "NovaFabric: portable, verifiable execution evidence for AI and HPC runs",
+  "description": "<p>NovaFabric is a self-hosted, open-source toolkit that captures, replays, diffs, and audits AI-agent and model runs as portable, secret-redacted, signed evidence capsules. It runs entirely in the user's own infrastructure, from a laptop to a cluster, with no accounts and no telemetry.</p><p>It is built around five primitives &mdash; Asset Registry, Run Capsule, Replay, Lineage, and Evidence Bundle &mdash; and four honest replay modes (forensic, mocked, semantic, exact). Evidence bundles verify offline using only sha256sum and an ed25519 verifier, with no NovaFabric installation required.</p><p>Interoperates with established specifications rather than inventing formats: OpenTelemetry GenAI semantic conventions, in-toto/DSSE, RFC 3161 timestamping, W3C PROV, OpenLineage, and CycloneDX.</p>",
+  "upload_type": "software",
+  "license": "Apache-2.0",
+  "access_right": "open",
+  "creators": [
+    {
+      "name": "Seyedkazemi Ardebili, Mohsen",
+      "affiliation": "Independent researcher"
+    }
+  ],
+  "keywords": [
+    "reproducibility",
+    "provenance",
+    "AI agents",
+    "large language models",
+    "evidence",
+    "audit",
+    "lineage",
+    "replay",
+    "research software",
+    "high-performance computing",
+    "OpenTelemetry",
+    "in-toto",
+    "AI governance"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/MSKazemi/novafabric",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    },
+    {
+      "identifier": "https://novafabric.ai",
+      "relation": "isDocumentedBy",
+      "scheme": "url"
+    },
+    {
+      "identifier": "https://pypi.org/project/novafabric/",
+      "relation": "isIdenticalTo",
+      "scheme": "url"
+    }
+  ]
+}

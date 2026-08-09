@@ -76,6 +76,8 @@ Task- and workflow-oriented references for day-to-day use.
 | [Trust surfaces](trust-surfaces.md) | `nova merkle-tree`, `nova trust-radar`, `nova redaction-xray`, `nova passport` (experimental) — human-readable projections of a capsule's trust evidence |
 | [Drift detection](drift-gate.md) | `nova drift` (experimental) — offline two-sample drift, silent-failure flags, and root-cause correlation over sealed runs |
 | [Assurance cases](assurance-cases.md) | `nova assure-case` / `nova assure-coverage` (experimental) — machine-checkable argument graphs bound to sealed evidence |
+| [For researchers](for-researchers.md) | Using NovaFabric for a reproducible, reviewable, citable paper artifact — and what it does not solve |
+| [Standards and specifications](standards-conformance.md) | Every specification implemented, how to verify each claim, and what is explicitly **not** claimed |
 | [Developer guide](developer-guide.md) | Local dev setup, extension points, adding asset types and commands |
 
 ## Reference
