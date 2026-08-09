@@ -11,6 +11,30 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Added
 
+- **`nova doctor --check-extras`** ([#4](https://github.com/MSKazemi/novafabric/issues/4)) —
+  answers "which of the 32 extras do I need?" without reading `pyproject.toml`. Lists each
+  extra as complete or incomplete, names the distributions missing from each, and prints the
+  exact `pip install 'novafabric[<extra>]'` command. Exit code stays 0: most installs
+  deliberately omit most extras, so incompleteness is information, not failure.
+
+  Extra names and requirements are read from installed distribution metadata rather than
+  hardcoded. Two details that decide whether such a check works at all: the requirement
+  marker is single-quoted (`extra == 'serve'`), so matching only the double-quoted form
+  finds nothing and the check silently passes while checking nothing; and presence is tested
+  per **distribution**, not by importing, because a distribution name is not reliably its
+  import name — an early `find_spec` version reported `python-louvain` missing when it was
+  installed, and telling someone to reinstall what they already have is worse than silence.
+
+- **Fixed: every "install this extra" instruction printed through Rich had the extra name
+  silently deleted.** Rich reads `[serve]` in `pip install 'novafabric[serve]'` as a markup
+  tag and drops it, so the rendered instruction was `pip install 'novafabric'` — which
+  reinstalls the base package and changes nothing. It fired at exactly the moment a user was
+  blocked on a missing extra, in five call sites (`cli/serve.py`, three in `cli/kg.py`,
+  `metadata_store/cli.py`). The source strings were correct all along, so no ordinary test
+  could have caught it; only rendering them does, which is what
+  `tests/cli/test_extras_install_hints.py` now asserts — including a scan that fails on any
+  new call site written the unescaped way.
+
 - **`nova replay`, `nova validate` and `nova diff` accept a run id, not just a path.**
   `nova capture` ends by printing `(run_id=01HX…)`, so the run id is what a user has in
   hand — but every capsule-taking command required a directory path, and the documented

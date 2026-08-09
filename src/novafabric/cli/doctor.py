@@ -8,6 +8,12 @@ from rich.console import Console
 from rich.table import Table
 
 from novafabric.capsule.env_contract import SchedulerEnvDiagnosis, diagnose_scheduler_env
+from novafabric.cli._extras import (
+    declared_extras,
+    extra_requirements,
+    missing_requirements,
+    rich_install_command,
+)
 from novafabric.storage import StorageInfo, get_backend
 
 console = Console()
@@ -32,6 +38,16 @@ def doctor_cmd(
                 "Detect a scheduler-vs-NOVAFABRIC_*-env-var mismatch, e.g. a "
                 "Slurm site's --export=NONE policy silently dropping capture "
                 "identity (OQ-06, PAR-ADR-003)."
+            ),
+        ),
+    ] = False,
+    check_extras: Annotated[
+        bool,
+        typer.Option(
+            "--check-extras",
+            help=(
+                "Report which optional extras are fully installed and name the "
+                "exact command to install any that are not."
             ),
         ),
     ] = False,
@@ -73,6 +89,9 @@ def doctor_cmd(
       # Basic health check
       nova doctor
 
+      # Which optional extras are installed, and how to install the rest
+      nova doctor --check-extras
+
       # Include storage backend checks
       nova doctor --check-storage
 
@@ -82,15 +101,19 @@ def doctor_cmd(
       # Check a specific database path
       nova doctor --db-path ~/custom/novafabric.db
     """
-    if not check_storage and not check_scheduler:
+    if not check_storage and not check_scheduler and not check_extras:
         console.print(
-            "[yellow]Hint:[/yellow] pass [bold]--check-storage[/bold] to inspect "
+            "[yellow]Hint:[/yellow] pass [bold]--check-extras[/bold] to see which "
+            "optional extras are installed, [bold]--check-storage[/bold] to inspect "
             "the storage backend, or [bold]--check-scheduler[/bold] to detect a "
             "scheduler/env-var contract mismatch."
         )
         return
 
     failed = False
+
+    if check_extras:
+        _print_extras_report()
 
     if check_storage:
         try:
@@ -200,3 +223,65 @@ def _print_scheduler_report(diagnosis: SchedulerEnvDiagnosis) -> None:
             console.print(f"  - {hint}")
 
     console.print()
+
+
+def _print_extras_report() -> None:
+    """Report each optional extra as complete or incomplete, and how to fix it.
+
+    Diagnostic only — it never changes the exit code. A missing extra is a
+    deliberate choice for most installs (there are 32 of them, and nobody wants all
+    of them), so treating absence as failure would make `nova doctor` red for
+    almost everyone.
+    """
+    extras = declared_extras()
+
+    console.print()
+    console.print("[bold]Optional extras[/bold]")
+
+    if not extras:
+        console.print(
+            "  [yellow]No extras declared in the installed metadata.[/yellow] This is "
+            "expected when running from a source checkout rather than an installed "
+            "distribution."
+        )
+        return
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(width=2)
+    table.add_column(style="cyan", no_wrap=True)
+    table.add_column()
+
+    incomplete: list[str] = []
+    for extra in extras:
+        # `all` just re-exports the others; reporting it doubles every line.
+        if extra == "all":
+            continue
+        required = extra_requirements(extra)
+        if not required:
+            continue
+        missing = missing_requirements(extra)
+        if missing:
+            incomplete.append(extra)
+            table.add_row("[red]✗[/red]", extra, f"[dim]missing:[/dim] {', '.join(missing)}")
+        else:
+            table.add_row("[green]✓[/green]", extra, f"[dim]{', '.join(required)}[/dim]")
+
+    console.print(table)
+    console.print()
+
+    if not incomplete:
+        console.print("  [green]All declared extras are fully installed.[/green]")
+        return
+
+    console.print(
+        f"  {len(incomplete)} of {len(extras) - 1} extras incomplete. Features that "
+        f"depend on them will fail at import."
+    )
+    console.print("  Install one with:")
+    for extra in incomplete[:3]:
+        console.print(f"    {rich_install_command(extra)}")
+    if len(incomplete) > 3:
+        console.print(f"    [dim]… and {len(incomplete) - 3} more listed above[/dim]")
+    console.print(
+        "  [dim]Developing on the repo? `uv sync --all-extras` installs every one.[/dim]"
+    )

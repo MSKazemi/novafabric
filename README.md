@@ -119,7 +119,29 @@ pip install novafabric
 uv add novafabric
 ```
 
-NovaFabric requires **Python 3.12+**.
+NovaFabric requires **Python 3.12+**. That is the whole install — capture, validate,
+replay and diff all work with no extras.
+
+<details>
+<summary><b>Optional extras</b> — only if you need one</summary>
+
+Everything beyond the core is opt-in, so the base install stays small. The common ones:
+
+| Want to… | Install |
+|---|---|
+| Browse runs in a local dashboard (`nova serve`) | `pip install 'novafabric[serve]'` |
+| Aggregate across runs (`nova query`) | `pip install 'novafabric[query]'` |
+| Run multi-user server mode | `pip install 'novafabric[server]'` |
+| Export compliance documents | `pip install 'novafabric[compliance]'` |
+| Sign with Sigstore | `pip install 'novafabric[sigstore]'` |
+
+Quote the argument — most shells treat `[` and `]` as glob characters.
+
+Not sure what you have? **`nova doctor --check-extras`** lists every extra as complete or
+incomplete and prints the exact command for the ones you are missing. Commands that need an
+extra also say which one when it is absent, so you can install it and re-run.
+
+</details>
 
 ### 1. Capture a run
 

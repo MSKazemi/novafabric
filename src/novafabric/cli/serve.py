@@ -18,6 +18,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from novafabric._paths import default_capsule_dir
+from novafabric.cli._extras import rich_install_command
 
 console = Console()
 
@@ -177,7 +178,7 @@ def serve_cmd(
         console.print(Panel(
             "[bold red]The `serve` extra is not installed.[/bold red]\n\n"
             "Install it with:\n\n"
-            "  [bold]pip install 'novafabric[serve]'[/bold]\n\n"
+            f"  [bold]{rich_install_command('serve')}[/bold]\n\n"
             "(adds fastapi + uvicorn — both Apache-2.0 / MIT, ADR-0024 Tier A).",
             title="nova serve",
             border_style="red",

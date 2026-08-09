@@ -300,3 +300,60 @@ def test_doctor_no_flags_mentions_check_scheduler() -> None:
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 0
     assert_flag_in_help(result, "--check-scheduler")
+
+
+# ---------------------------------------------------------------------------
+# nova doctor --check-extras
+# ---------------------------------------------------------------------------
+
+
+def test_doctor_check_extras_lists_extras_and_stays_zero() -> None:
+    """Diagnostic, not a gate.
+
+    Most installs deliberately omit most of the 32 extras, so a non-zero exit
+    would make `nova doctor` red for almost every user.
+    """
+    result = runner.invoke(app, ["doctor", "--check-extras"])
+
+    assert result.exit_code == 0
+    assert "Optional extras" in result.stdout
+    assert "serve" in result.stdout
+
+
+def test_doctor_check_extras_names_the_install_command_with_the_extra_intact() -> None:
+    """The bug this exists to prevent: Rich stripping ``[serve]`` from the hint.
+
+    A rendered ``pip install 'novafabric'`` is not a fix — it reinstalls the base
+    package and changes nothing.
+    """
+    with patch("novafabric.cli.doctor.missing_requirements", return_value=["fastapi"]):
+        result = runner.invoke(app, ["doctor", "--check-extras"])
+
+    assert result.exit_code == 0
+    assert "incomplete" in result.stdout
+    assert "novafabric[" in result.stdout, "the extra name was stripped from the hint"
+    assert "pip install 'novafabric'\n" not in result.stdout
+
+
+def test_doctor_check_extras_reports_all_complete_when_nothing_is_missing() -> None:
+    with patch("novafabric.cli.doctor.missing_requirements", return_value=[]):
+        result = runner.invoke(app, ["doctor", "--check-extras"])
+
+    assert result.exit_code == 0
+    assert "All declared extras are fully installed" in result.stdout
+
+
+def test_doctor_check_extras_explains_an_uninstalled_source_checkout() -> None:
+    """No metadata is a situation to report, not a crash."""
+    with patch("novafabric.cli.doctor.declared_extras", return_value=[]):
+        result = runner.invoke(app, ["doctor", "--check-extras"])
+
+    assert result.exit_code == 0
+    assert "source checkout" in result.stdout
+
+
+def test_doctor_no_flags_hint_mentions_check_extras() -> None:
+    result = runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == 0
+    assert_flag_in_help(result, "--check-extras")

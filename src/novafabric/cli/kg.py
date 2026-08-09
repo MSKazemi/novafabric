@@ -20,6 +20,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from novafabric.cli._extras import rich_install_command
+
 console = Console()
 logger = logging.getLogger(__name__)
 
@@ -934,7 +936,7 @@ def kg_build_provenance_cmd(
         )
     except ImportError as exc:
         console.print(
-            f"[red]Error:[/red] {exc} — install the SPKG extra: pip install novafabric[spkg]",
+            f"[red]Error:[/red] {exc} — install the SPKG extra: {rich_install_command('spkg')}",
             highlight=False,
         )
         raise typer.Exit(1)
@@ -1013,7 +1015,7 @@ def kg_build_cmd(
         from novafabric.kg.spkg.graph_store import SpkgGraphStore
     except ImportError as exc:
         console.print(
-            f"[red]Error:[/red] {exc} — install the SPKG extra: pip install novafabric[spkg]",
+            f"[red]Error:[/red] {exc} — install the SPKG extra: {rich_install_command('spkg')}",
             highlight=False,
         )
         raise typer.Exit(1)
@@ -1159,7 +1161,7 @@ def _spkg_store_from_capsule(capsule_dir: Path) -> SpkgGraphStore:
         from novafabric.kg.spkg.provo_mapping import read_lineage_edges
     except ImportError as exc:
         console.print(
-            f"[red]Error:[/red] {exc} — install the SPKG extra: pip install novafabric[spkg]",
+            f"[red]Error:[/red] {exc} — install the SPKG extra: {rich_install_command('spkg')}",
             highlight=False,
         )
         raise typer.Exit(1)

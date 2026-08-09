@@ -4622,16 +4622,43 @@ Options:
 
 Requires: `pip install 'novafabric[server]'`
 
-### nova doctor [--check-storage] [--check-scheduler]
+### nova doctor [--check-extras] [--check-storage] [--check-scheduler]
 
 Run diagnostic checks on the NovaFabric installation.
 
 ```bash
+nova doctor --check-extras
 nova doctor --check-storage
 nova doctor --check-storage --backend postgres
 nova doctor --check-storage --backend postgres --postgres-dsn "postgresql://..."
 nova doctor --check-storage --db-path /path/to/custom.db
 nova doctor --check-scheduler
+```
+
+With `--check-extras`: lists every optional extra as complete or incomplete, names the
+distributions missing from each, and prints the exact `pip install 'novafabric[<extra>]'`
+command. This answers "which extra do I need?" without reading `pyproject.toml`.
+
+The extra names and their requirements are read from the installed distribution metadata,
+so the report cannot drift from what the package actually declares. Presence is checked per
+*distribution*, not by importing — a distribution name is not reliably its import name
+(`python-louvain` imports as `community`), and a diagnostic should not execute third-party
+imports just to look.
+
+**Exit code stays 0.** Most installs deliberately omit most extras, so an incomplete extra
+is information, not failure.
+
+```console
+$ nova doctor --check-extras
+
+Optional extras
+✓   query              duckdb
+✗   serve              missing: fastapi, uvicorn
+
+  1 of 31 extras incomplete. Features that depend on them will fail at import.
+  Install one with:
+    pip install 'novafabric[serve]'
+  Developing on the repo? `uv sync --all-extras` installs every one.
 ```
 
 Without any flag, prints a hint and exits 0. With `--check-storage`:

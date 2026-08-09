@@ -24,6 +24,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from novafabric.cli._extras import rich_install_command
+
 console = Console()
 
 # ---------------------------------------------------------------------------
@@ -104,7 +106,7 @@ def migrate_to_postgres_cmd(
     except ImportError:
         console.print(
             "[red]Error:[/red] psycopg is not installed. "
-            "Install novafabric[server]: pip install novafabric[server]"
+            f"Install the server extra: {rich_install_command('server')}"
         )
         raise typer.Exit(code=2) from None
 
