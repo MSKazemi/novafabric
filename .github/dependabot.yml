@@ -103,6 +103,20 @@ updates:
       interval: "weekly"
       day: "monday"
     groups:
+      # ⚠ Do not read "minor-patch" as "low risk" for this ecosystem. PR #52 came
+      # through this group carrying component, processor, receiver, exporter and
+      # extension across a v0 -> v1 transition, and otelcol up 54 minor versions.
+      # Go module resolution drags the rest of a release train along to stay
+      # consistent, and that resolution is not filtered by update-types.
+      #
+      # It also did not compile: the same PR left go.opentelemetry.io/collector
+      # itself at v0.104.0 while everything else moved to v0.158.0, so xconnector
+      # bound to a fanoutconsumer that had since been split into its own module.
+      # CI caught it — Build Artifacts, Lint, Unit Tests and the Vulnerability
+      # Scan all failed on the unresolved symbol.
+      #
+      # So the group is kept, and the gate is CI rather than the label: review a
+      # go-minor-patch PR by reading its go.mod diff, not by trusting its title.
       go-minor-patch:
         update-types:
           - "minor"
