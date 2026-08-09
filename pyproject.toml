@@ -312,7 +312,7 @@ openai-agents = [
 google-adk = [
     # google-adk (Apache-2.0) — Google ADK BasePlugin adapter (E-6).
     # Tier A under ADR-0024.
-    "google-adk>=1.34.0",
+    "google-adk>=2.6.2",
 ]
 bedrock-agentcore = [
     # boto3 (Apache-2.0) — AWS Bedrock AgentCore client wrapper (E-7).
