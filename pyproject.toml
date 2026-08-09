@@ -283,7 +283,7 @@ compliance = [
     # presidio-analyzer (MIT) — Tier A under ADR-0024.  NLP-based PII detection
     # for cap-001 (GDPR Art.17 erasure support).  Lazy import only — not required
     # for RegexDetector default path.
-    "presidio-analyzer>=2.2",
+    "presidio-analyzer>=2.2.364",
     # weasyprint (BSD-2-Clause) — Tier A under ADR-0024.  PDF rendering for
     # cap-002 Annex IV technical documentation export.  Lazy import only —
     # JSON-LD export works without it.

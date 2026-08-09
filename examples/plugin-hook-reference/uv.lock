@@ -554,7 +554,7 @@ requires-dist = [
     { name = "opentelemetry-proto", marker = "extra == 'otlp'", specifier = ">=1.20" },
     { name = "opentelemetry-sdk", specifier = ">=1.29" },
     { name = "opentelemetry-semantic-conventions", specifier = ">=0.50b0" },
-    { name = "presidio-analyzer", marker = "extra == 'compliance'", specifier = ">=2.2" },
+    { name = "presidio-analyzer", marker = "extra == 'compliance'", specifier = ">=2.2.364" },
     { name = "prometheus-client", marker = "extra == 'server'", specifier = ">=0.21" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'seal-postgres'", specifier = ">=3.2" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'server'", specifier = ">=3.2" },
