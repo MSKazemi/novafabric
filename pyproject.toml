@@ -193,7 +193,7 @@ serve = [
     # bulk upgrade. Raise only with tests/test_server_observability.py and
     # tests/test_server_selftrace.py green.
     "fastapi>=0.115,<0.137",
-    "uvicorn[standard]>=0.32",
+    "uvicorn[standard]>=0.52.1",
     # --- Live Topology Dashboard backing stores (moved out of core by ADR-0222) ---
     # duckdb (MIT) — the in-process ClusterStore behind
     # serve/topology/cluster_store.py (dashboard ADR-003).
@@ -231,7 +231,7 @@ server = [
     # bulk upgrade. Raise only with tests/test_server_observability.py and
     # tests/test_server_selftrace.py green.
     "fastapi>=0.115,<0.137",
-    "uvicorn[standard]>=0.32",
+    "uvicorn[standard]>=0.52.1",
     # python-multipart (Apache-2.0) — Tier A under ADR-0024.  Required by FastAPI
     # for multipart/form-data upload endpoints (capsule upload).
     "python-multipart>=0.0.31",
