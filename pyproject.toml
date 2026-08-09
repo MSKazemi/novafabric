@@ -388,7 +388,7 @@ energy-gpu = [
     # actively maintained package and is what actually provides `import
     # pynvml`; depending on the deprecated `pynvml` distribution here would
     # install a package that cannot satisfy the import it's meant to enable.
-    "nvidia-ml-py>=12.0.0",
+    "nvidia-ml-py>=13.610.43",
 ]
 all = [
     # Aggregate escape hatch: a self-referencing PEP 508 extras list so
