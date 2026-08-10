@@ -260,7 +260,7 @@ server = [
     # prometheus-client (Apache-2.0) — Tier A under ADR-0024.  Prometheus text
     # exposition for the self-observability surface (/metrics, ADR-0182).
     # Lazy import: lean installs never load it; /metrics 503s with an install hint.
-    "prometheus-client>=0.21",
+    "prometheus-client>=0.26.0",
 ]
 lineage-kuzu = [
     # kuzu (MIT) — Tier A under ADR-0024.  Embedded openCypher graph DB for
@@ -446,7 +446,7 @@ dev = [
     # MPL-2.0 is Tier A under ADR-0024 for dev dependencies.
     "hypothesis>=6.115",
     # prometheus-client (Apache-2.0) — optional metrics instrumentation.
-    "prometheus-client>=0.21",
+    "prometheus-client>=0.26.0",
     # Phase 5 — MetadataStore (ADR-0040) dev tooling
     # mutmut (BSD-2-Clause) — Tier A under ADR-0024.  Mutation testing for the
     # MetadataStore RLS and query invariants.
