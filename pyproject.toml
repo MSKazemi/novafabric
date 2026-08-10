@@ -121,7 +121,7 @@ scale = [
     # duckdb (MIT) — in-process store behind evidence_fabric/duckdb_accumulator.py
     # and evidence_fabric/rebuild.py.  Moved here from [project.dependencies] by
     # ADR-0222: every duckdb import site is already extra-gated code.
-    "duckdb>=1.5.2",
+    "duckdb>=1.5.5",
     # pyarrow (Apache-2.0) — Parquet/Arrow for evidence_fabric/pii_table.py
     # (Iceberg-compatible PII event log) and the LineageConsumer Parquet sink.
     # Moved here from [project.dependencies] by ADR-0222.
@@ -197,7 +197,7 @@ serve = [
     # --- Live Topology Dashboard backing stores (moved out of core by ADR-0222) ---
     # duckdb (MIT) — the in-process ClusterStore behind
     # serve/topology/cluster_store.py (dashboard ADR-003).
-    "duckdb>=1.5.2",
+    "duckdb>=1.5.5",
     # pyarrow (Apache-2.0) — Arrow IPC encoder for the binary ADS topology
     # frames in serve/topology/ads_encoder.py.
     "pyarrow>=24.0.0",
@@ -344,7 +344,7 @@ query = [
     # result rows are identical either way and the engine actually used is
     # reported in the result's `index.engine` field.  Installing this extra is
     # a performance choice, never a correctness one.  See ADR-0222.
-    "duckdb>=1.5.2",
+    "duckdb>=1.5.5",
 ]
 clickhouse = [
     # clickhouse-connect (Apache-2.0) — Tier A under ADR-0024.
@@ -486,7 +486,7 @@ dev = [
     # pyarrow (Apache-2.0) — predates ADR-0222; same reason.
     "pyarrow>=24.0.0",
     # duckdb (MIT) — Tier A under ADR-0024. Extras: [scale]/[serve]/[query].
-    "duckdb>=1.5.2",
+    "duckdb>=1.5.5",
     # python-louvain (BSD-3-Clause) — Tier A under ADR-0024. Extra: [serve].
     "python-louvain>=0.16",
     # clickhouse-connect (Apache-2.0) — Tier A under ADR-0024.
