@@ -490,10 +490,18 @@ def capture_cmd(
         raise typer.BadParameter(str(exc), param_hint="'--session-id'") from exc
 
     status_icon = "[green]✓[/green]" if result.exit_code == 0 else "[red]✗[/red]"
-    console.print(
-        f"{status_icon} Capsule written: {result.capsule_dir}  "
-        f"(run_id={result.run_id})"
-    )
+    if result.command_missing:
+        missing = cmd[0] if cmd else "<unknown>"
+        console.print(f"[red]✗[/red] Command not found: {missing}")
+        console.print(
+            "  The capsule was still written (a failed setup is evidence too):"
+        )
+        console.print(f"  {result.capsule_dir}  (run_id={result.run_id})")
+    else:
+        console.print(
+            f"{status_icon} Capsule written: {result.capsule_dir}  "
+            f"(run_id={result.run_id})"
+        )
 
     # NF-032/033: opt-in OTel GenAI span emission alongside the capsule.
     if emit_otel_genai:

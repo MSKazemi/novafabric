@@ -104,6 +104,9 @@ class CaptureResult:
     run_id: str
     capsule_dir: Path
     exit_code: int
+    # True when the runner could not start the workload (e.g. missing binary).
+    # Distinct from a workload that ran and exited non-zero — including 127.
+    command_missing: bool = False
 
 
 class AssetStatusCheckError(Exception):
@@ -704,7 +707,7 @@ class CaptureOrchestrator:
         except Exception:  # noqa: BLE001 — emission must never block the run
             pass
 
-        return CaptureResult(run_id=run_id, capsule_dir=capsule_dir, exit_code=exit_code)
+        return CaptureResult(run_id=run_id, capsule_dir=capsule_dir, exit_code=exit_code, command_missing=(runner_result.runner_status == "failed_setup"))
 
 
 # ---------------------------------------------------------------------------
