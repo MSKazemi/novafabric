@@ -263,22 +263,22 @@ test fails that you cannot fix.
 **NovaFabric is Apache-2.0 and stays that way.** Nothing here changes the license you receive
 the code under, and nothing here asks you to give up ownership of your work.
 
-On your first pull request a bot will ask you to sign a short
-[Contributor License Agreement](CLA.md). It is one comment, and it covers everything you
-contribute afterwards.
+**There is no CLA.** Nothing to sign, no account to create, nothing for your employer's legal
+team to review. You certify your contribution with one line on the commit, under the
+[Developer Certificate of Origin](DCO.md) — the same one the Linux kernel uses:
 
-**Why it exists.** Copyright in a contribution belongs to whoever wrote it. That is normally
-fine — until the project needs to make a licensing decision, at which point it needs permission
-from every person who ever contributed. Projects that skip this discover years later that they
-cannot adopt a newer license version, respond to a license change in a dependency, or offer
-separately-licensed components, because a contributor from 2027 is unreachable. The CLA keeps
-those doors open.
+```bash
+git commit -s -m "your message"
+```
 
-**What you keep.** The copyright. You are granting a license, not transferring ownership, and
-your own code remains yours to use anywhere else you like.
+That appends a `Signed-off-by:` trailer saying you wrote the change, or have the right to
+submit it. Forgot it? `git commit --amend --signoff && git push --force-with-lease`. Want it
+always on? `git config --global format.signOff true`.
 
-If you cannot agree to part of it, [open a Discussion](https://github.com/MSKazemi/novafabric/discussions)
-— we would rather adapt the agreement than lose your work.
+**What you keep.** The copyright. Your contribution is licensed under Apache-2.0, the same as
+the rest of the project, and your own code remains yours to use anywhere else you like.
+
+Questions? [Open a Discussion](https://github.com/MSKazemi/novafabric/discussions).
 
 ---
 
