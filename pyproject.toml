@@ -256,7 +256,7 @@ server = [
     "sqlalchemy>=2.0",
     # asyncpg (Apache-2.0) — Tier A under ADR-0024.  High-performance async Postgres
     # driver; required by sqlalchemy[asyncio] for the MetadataStore async session pool.
-    "asyncpg>=0.30",
+    "asyncpg>=0.31.0",
     # prometheus-client (Apache-2.0) — Tier A under ADR-0024.  Prometheus text
     # exposition for the self-observability surface (/metrics, ADR-0182).
     # Lazy import: lean installs never load it; /metrics 503s with an install hint.
