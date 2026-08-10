@@ -73,6 +73,10 @@ guide use `nova`.
 > Narrow extras exist for optional integrations (e.g. `pip install
 > "novafabric[serve]"` for the experimental dashboard, or `"novafabric[all]"`
 > for everything) — see [docs/operator-guide.md](operator-guide.md#package-installation).
+>
+> Not sure which you have or need? **`nova doctor --check-extras`** lists every extra as
+> complete or incomplete and prints the exact install command for the ones you are missing.
+> Commands that need an extra also name it when it is absent.
 
 > **Changed in v0.99.0 — the default install is much smaller (412 MB → 113 MB).**
 > `duckdb`, `pyarrow`, `python-louvain` and `clickhouse-connect` are no longer

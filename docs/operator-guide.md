@@ -125,6 +125,14 @@ Install everything at once with `pip install
 `seal-aws`/`seal-azure`/`seal-gcp`) and agent-framework adapter extras, which
 you should install individually for the one vendor/framework you actually use.
 
+To see the full list against your own install rather than this prose, run
+**`nova doctor --check-extras`**. It reports every declared extra as complete or
+incomplete, names the distributions missing from each, and prints the exact
+`pip install 'novafabric[<extra>]'` command. The list comes from the installed
+distribution metadata, so it stays correct as extras are added or renamed — this
+section can go stale, that output cannot. Exit code stays 0: an omitted extra is
+a normal choice, not a failure.
+
 #### Changed in v0.99.0 — a leaner default install
 
 A plain `pip install novafabric` now pulls **113 MB / 42 packages** instead of
