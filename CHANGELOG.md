@@ -11,18 +11,15 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Changed
 
-- **Contributions are certified with a DCO instead of a CLA.** `CLA.md` and the CLA Assistant
-  workflow are removed; `DCO.md` and a sign-off check replace them. A CLA asks contributors to
-  grant the right to relicense their work under any terms — the same mechanism behind the
-  MongoDB, Elastic, HashiCorp and Redis relicensings — and experienced contributors reasonably
-  read it as a signal that a project may go proprietary. NovaFabric is Apache-2.0 and stays
-  that way, and its whole thesis is Run Capsules and Evidence Bundles becoming a format other
-  tools rely on. A format becomes a standard through adoption, so contribution barriers cost
-  more here than the relicensing option they preserve.
+- **The CLA stays, and the contributor-facing wording is clearer about what it does and does
+  not do.** `CONTRIBUTING.md` now leads with the cost (one comment on your first pull request)
+  and states plainly that contributors keep the copyright in their work, that a license is
+  being granted rather than ownership transferred, and that every release stays Apache-2.0.
 
-  Contributing is now one line: `git commit -s`. No signing page, no account, no employer legal
-  review. The same move Spring (Framework, Security, Boot) and Helm made, and the default across
-  CNCF projects.
+  A brief experiment replacing the CLA with a DCO was reverted the same day. The DCO is a
+  lighter ask, but it certifies provenance only — it grants no right to make a licensing
+  decision later, which is the entire reason this project consolidates copyright while it is
+  still small enough to do so.
 
 ### Added
 

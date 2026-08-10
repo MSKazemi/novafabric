@@ -263,22 +263,23 @@ test fails that you cannot fix.
 **NovaFabric is Apache-2.0 and stays that way.** Nothing here changes the license you receive
 the code under, and nothing here asks you to give up ownership of your work.
 
-**There is no CLA.** Nothing to sign, no account to create, nothing for your employer's legal
-team to review. You certify your contribution with one line on the commit, under the
-[Developer Certificate of Origin](DCO.md) — the same one the Linux kernel uses:
+**What it takes:** one comment on your first pull request. A bot posts a link to the
+[CLA](CLA.md), you reply once, and it covers everything you contribute afterwards. Nothing to
+email, no account to create, no form.
 
-```bash
-git commit -s -m "your message"
-```
+**What you keep — all of it.** The copyright in your contribution stays yours. You are granting
+a license, not transferring ownership, and your own code remains yours to use anywhere else,
+including in other projects. Your contribution ships under Apache-2.0 like the rest of the
+project, and every release stays Apache-2.0.
 
-That appends a `Signed-off-by:` trailer saying you wrote the change, or have the right to
-submit it. Forgot it? `git commit --amend --signoff && git push --force-with-lease`. Want it
-always on? `git config --global format.signOff true`.
+**Why it exists.** Copyright belongs to whoever wrote the code. That is normally fine — until
+the project needs to make a licensing decision, at which point it needs permission from every
+person who ever contributed. Projects that skip this step find out years later that they cannot
+adopt a newer license version, or respond to a license change in a dependency, because a
+contributor from 2027 is unreachable. This keeps those doors open.
 
-**What you keep.** The copyright. Your contribution is licensed under Apache-2.0, the same as
-the rest of the project, and your own code remains yours to use anywhere else you like.
-
-Questions? [Open a Discussion](https://github.com/MSKazemi/novafabric/discussions).
+If you cannot agree to part of it, [open a Discussion](https://github.com/MSKazemi/novafabric/discussions)
+— we would rather adapt the agreement than lose your work.
 
 ---
 
