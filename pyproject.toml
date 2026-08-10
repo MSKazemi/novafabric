@@ -287,7 +287,7 @@ compliance = [
     # weasyprint (BSD-2-Clause) — Tier A under ADR-0024.  PDF rendering for
     # cap-002 Annex IV technical documentation export.  Lazy import only —
     # JSON-LD export works without it.
-    "weasyprint>=60.0",
+    "weasyprint>=69.0",
 ]
 scale-kg = [
     # kuzu (MIT) — Tier A under ADR-0024.  Embedded openCypher graph DB for
