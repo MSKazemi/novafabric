@@ -1,0 +1,63 @@
+title: "[Q&A] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Questions are welcome and expected — this is the right place for them.**
+        You will get a real answer from a human, usually within 24–48 hours.
+
+        Two things worth trying first, because they answer most questions instantly:
+        the [FAQ](https://github.com/MSKazemi/novafabric/blob/main/docs/faq.md) and
+        `nova doctor` (or `nova doctor --check-extras` if something failed to import).
+
+        > **Never paste secrets.** API keys, tokens, and internal hostnames tend to
+        > hide in captured output and stack traces. Redact before posting.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: What are you trying to do?
+      description: >-
+        Describe the goal, not only the error. Knowing what you were trying to
+        achieve very often changes the answer.
+      placeholder: |
+        I want to capture a Slurm job that runs a fine-tuning script, and keep the
+        capsule for an audit six months from now.
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you tried, and what happened?
+      description: >-
+        Paste the exact command and the output. Trimmed is fine; say where you
+        trimmed. This is the single field that most determines how fast you get a
+        useful answer.
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: NovaFabric version
+      description: Output of `nova --version`.
+      placeholder: "0.101.0"
+    validations:
+      required: false
+
+  - type: input
+    id: environment
+    attributes:
+      label: OS and Python version
+      placeholder: "Ubuntu 24.04, Python 3.12.3"
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        If this turns out to be a bug rather than a question, we will open an issue
+        from this discussion and credit you — you do not need to refile it.

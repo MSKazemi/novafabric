@@ -10,6 +10,8 @@
 [![Good first issues](https://img.shields.io/github/issues/MSKazemi/novafabric/good%20first%20issue?label=good%20first%20issues&color=7057ff)](https://github.com/MSKazemi/novafabric/labels/good%20first%20issue)
 [![Discussions](https://img.shields.io/github/discussions/MSKazemi/novafabric)](https://github.com/MSKazemi/novafabric/discussions)
 
+**English** · *No translations yet — [help us add yours](https://github.com/MSKazemi/novafabric/issues/73). Translations are credited exactly like code, and a [short guide](docs/i18n/README.md) tells you what to translate and what to leave alone.*
+
 **Created and maintained by [Mohsen Seyedkazemi Ardebili](https://github.com/MSKazemi)** — AI systems engineer, platform architect, HPC researcher. Part of the [NovaFabric](https://github.com/novafabric) open-source lab.
 
 > **NovaFabric turns any command — a script, an agent, a model run, an HPC training job, a notebook cell — into a portable execution capsule:** a schema-valid, secret-redacted, replayable evidence folder you own, produced with no application code changes.
@@ -67,12 +69,17 @@ waiting, each with file paths and a definition of done, and
 15 minutes.
 
 **Came here for a specific reason?**
+🏗 **Evaluating this for a team** → [For platform teams](docs/for-platform-teams.md) — the
+60-second answer, the supply-chain facts, the risks we would raise if we were you, and how
+to run a real evaluation in an afternoon ·
 📄 **Researcher** → [For researchers](docs/for-researchers.md) — making a paper artifact
 reproducible, reviewable and citable, and what this does *not* solve ·
 📐 **Standards or specification work** → [Standards and specifications](docs/standards-conformance.md)
 — every spec implemented, how to verify each claim, and what is explicitly **not** claimed ·
 🏛 **Compliance or audit** → [Assurance cases](docs/assurance-cases.md) — conformance
-receipts, never verdicts.
+receipts, never verdicts ·
+✍️ **Writing or speaking about NovaFabric** → [Press & media kit](docs/press-kit.md) — logos,
+boilerplate, the palette, and the facts, so you never have to ask.
 
 ---
 
@@ -121,6 +128,12 @@ uv add novafabric
 
 NovaFabric requires **Python 3.12+**. That is the whole install — capture, validate,
 replay and diff all work with no extras.
+
+**Nothing to install at all?** Open the repo in a preconfigured browser environment —
+Python, `uv`, and every extra are set up for you, and the walkthrough below runs
+as-is:
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/MSKazemi/novafabric)
 
 <details>
 <summary><b>Optional extras</b> — only if you need one</summary>
@@ -600,9 +613,9 @@ an RFC 9745/8594 API deprecation mechanism, and the trust surfaces
 See [`docs/releases/v0.60.0.md`](docs/releases/v0.60.0.md) and
 [`docs/releases/v0.61.0.md`](docs/releases/v0.61.0.md).
 
-### v0.62–v0.98 — all `experimental`
+### v0.62–v0.101 — all `experimental`
 
-The latest tagged release is **v0.98.0**. Since v0.61, each release has shipped one
+The latest tagged release is **v0.101.0**. Since v0.61, each release has shipped one
 verifiable, additive slice at a time (no big-bang rewrites); highlights:
 
 - **Enterprise audit closure (v0.62–v0.63)** — SIEM egress, `ops.*` alerting
@@ -657,7 +670,7 @@ verifiable, additive slice at a time (no big-bang rewrites); highlights:
 
 See [`CHANGELOG.md`](CHANGELOG.md) and [`ROADMAP.md`](ROADMAP.md) for the full
 release-by-release detail, and `docs/releases/v0.64.0.md` through
-`docs/releases/v0.98.0.md` for individual release notes.
+`docs/releases/v0.101.0.md` for individual release notes.
 
 > **Not yet frozen:** on-disk Run Capsule and Evidence Bundle formats change until the
 > v1.0 schema freeze. Do not treat capsule internals as a stable contract before then.
@@ -725,7 +738,7 @@ capsules you own, with run-to-run structural diff and cryptographic provenance. 
 [How NovaFabric compares](#how-novafabric-compares).
 
 **Is NovaFabric production-ready?**
-It is **beta** (v0.98.0). Local capture, replay, diff, lineage, the trust layer,
+It is **beta** (v0.101.0). Local capture, replay, diff, lineage, the trust layer,
 policy gates, eval suites, and the asset registry are usable; server mode, the
 cluster-scale collector, the dashboard, the at-scale lineage backends, and every
 cohort shipped since v0.59 (observability parity, enterprise readiness, cloud KMS,
@@ -749,6 +762,12 @@ See [Citation](#citation) below, or the [`CITATION.cff`](CITATION.cff) file.
 - [CLI Reference](docs/cli-reference.md)
 - [Python API](docs/python-api.md)
 - [Architecture](docs/architecture.md)
+- [FAQ — the longer answers](docs/faq.md) — evaluating, troubleshooting, trust, and contributing
+
+### For teams evaluating NovaFabric
+- **[For platform teams](docs/for-platform-teams.md)** — licence, maturity, supply chain, operating it, and the risks we would raise if we were you
+- [Adopters](ADOPTERS.md) — who uses NovaFabric and for what; add yourself
+- [Support policy](docs/support-policy.md) · [SLO catalog](docs/slo.md) · [Security policy](SECURITY.md) · [Trust surfaces](docs/trust-surfaces.md)
 
 ### For the curious
 - [Architecture](docs/architecture.md) — the subsystem map and the design invariants
@@ -759,7 +778,10 @@ See [Citation](#citation) below, or the [`CITATION.cff`](CITATION.cff) file.
 - [Architecture decisions](docs/decisions.md) — 225 recorded decisions
 
 ### Release notes
-- [v0.98.0 — Enterprise readiness: `--workers`, opt-in Postgres pooling, JSON logs + `X-Request-ID`, signed artifacts, Seal-tab trust surfaces, six security fixes](docs/releases/v0.98.0.md) (latest; see [`docs/releases/`](docs/releases/) for every v0.64.0–v0.98.0 release note and [`CHANGELOG.md`](CHANGELOG.md) for the full history)
+- [v0.101.0 — The enterprise-grade program: ten first slices (jobs, HA, tenant keys, jurisdiction, air-gap bundle, TLS, step-up auth, SLO catalog, serve contract ratchet, support policy)](docs/releases/v0.101.0.md) (latest; see [`docs/releases/`](docs/releases/) for every v0.64.0–v0.101.0 release note and [`CHANGELOG.md`](CHANGELOG.md) for the full history)
+- [v0.100.0 — Release-pipeline repair: v0.98.0–v0.99.0 had never reached PyPI (a blocking SBOM step took the publish job down with it)](docs/releases/v0.100.0.md)
+- [v0.99.0 — Opened to outside contributions; API keys whose id started with a hyphen were unmanageable](docs/releases/v0.99.0.md)
+- [v0.98.0 — Enterprise readiness: `--workers`, opt-in Postgres pooling, JSON logs + `X-Request-ID`, signed artifacts, Seal-tab trust surfaces, six security fixes](docs/releases/v0.98.0.md)
 - [v0.97.0 — Dashboard modernization: design system, 7-group navigation, `g`-sequence shortcuts, `?sub=` Compliance hub, honest truncation, serve security fixes](docs/releases/v0.97.0.md)
 - [v0.94.0 — Backlog-audit batch: `nova lineage consume` NATS daemon, KuzuDB bulk-COPY schema, multi-TSA fallback, `nova doctor --check-scheduler`](docs/releases/v0.94.0.md)
 - [v0.63.0 — Enterprise-audit second slices: notification adapters, Alerts tab, API-key rotation + REST, SDK helpers](docs/releases/v0.63.0.md)

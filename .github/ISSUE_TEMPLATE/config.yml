@@ -3,9 +3,18 @@ contact_links:
   - name: Documentation
     url: https://novafabric.ai
     about: Guides, concepts, CLI reference, and the FAQ.
+  - name: FAQ — the longer answers
+    url: https://github.com/MSKazemi/novafabric/blob/main/docs/faq.md
+    about: Evaluating it, troubleshooting, trust and security, and contributing. Check here before opening an issue.
   - name: Questions & ideas (Discussions)
     url: https://github.com/MSKazemi/novafabric/discussions
     about: Ask usage questions or propose ideas before opening an issue.
+  - name: Evaluating NovaFabric for a team
+    url: https://github.com/MSKazemi/novafabric/blob/main/docs/for-platform-teams.md
+    about: Licence, maturity, supply chain, operating it, and the risks we would raise if we were you.
+  - name: Already using NovaFabric?
+    url: https://github.com/MSKazemi/novafabric/blob/main/ADOPTERS.md
+    about: Add yourself to ADOPTERS.md — it directly shapes the roadmap and what stays supported.
   - name: Security disclosure
     url: https://github.com/MSKazemi/novafabric/blob/main/SECURITY.md
     about: Report vulnerabilities privately — do not open a public issue.

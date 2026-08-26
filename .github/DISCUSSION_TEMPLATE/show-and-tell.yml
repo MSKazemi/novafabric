@@ -1,0 +1,44 @@
+title: "[Show and tell] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Show us what you built.** A pipeline, a talk, a blog post, a paper, a
+        hack that should not have worked, a screenshot of your capsule tree — all
+        of it is welcome, and none of it has to be polished.
+
+        This is also the fastest way to get credited: anything posted here can go
+        into [CONTRIBUTORS.md](https://github.com/MSKazemi/novafabric/blob/main/CONTRIBUTORS.md)
+        (non-code contributions count) and, if you are using NovaFabric for real
+        work, into [ADOPTERS.md](https://github.com/MSKazemi/novafabric/blob/main/ADOPTERS.md).
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What did you build or write?
+      description: A couple of sentences and a link, if there is one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: interesting
+    attributes:
+      label: What was the interesting or annoying part?
+      description: >-
+        Optional, and the most useful field on this form. What surprised you, what
+        was harder than it should have been, what you expected to exist and did
+        not. This is where the next round of fixes comes from.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: credit
+    attributes:
+      label: May we link this from the project?
+      options:
+        - "Yes — link it and credit me"
+        - "Yes — link it, but do not use my name"
+        - "No, just sharing here"
+    validations:
+      required: false

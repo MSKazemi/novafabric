@@ -122,11 +122,23 @@ implemented versus design intent.
 | [Cluster-scale migration](ops/cluster-scale-migration.md) | Migrating from SQLite + filesystem toward Postgres + object storage + graph DB |
 | [Lineage store migration](lineage/migration-guide.md) | Migrating the lineage store from SQLite to KuzuDB |
 
+## Decide (evaluating NovaFabric)
+
+| Document | What it covers |
+|---|---|
+| [For platform teams](for-platform-teams.md) | The evaluation page — licence, maturity, supply chain, operating it, the risks we would raise if we were you, and how to run a real evaluation in an afternoon |
+| [For researchers](for-researchers.md) | Making a paper artifact reproducible, reviewable and citable — and what this does *not* solve |
+| [How NovaFabric compares](comparison.md) | Honest comparison against observability and experiment-tracking tools, **including where NovaFabric loses** |
+| [FAQ — the longer answers](faq.md) | Evaluating, using, troubleshooting, trust and security, and contributing |
+| [Adopters](../ADOPTERS.md) | Who uses NovaFabric and for what — and how to add yourself |
+| [Press & media kit](press-kit.md) | Logos, palette, and approved boilerplate for writing or speaking about NovaFabric |
+
 ## Extend
 
 | Document | What it covers |
 |---|---|
 | [Writing a hook plugin](integrations/writing-a-hook-plugin.md) | Authoring a third-party capture-hook plugin (entry-point discovery, install contract) |
+| [Translating NovaFabric](i18n/README.md) | What to translate, what to leave in English, and how translations are kept honest about staleness |
 
 ## Releases
 

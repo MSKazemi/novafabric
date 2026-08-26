@@ -1,0 +1,59 @@
+title: "[Idea] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Ideas are how the roadmap actually gets set.** Half-formed is fine — an
+        idea does not have to arrive as a design document.
+
+        Worth knowing before you write: NovaFabric has explicit
+        [non-goals](https://github.com/MSKazemi/novafabric/blob/main/docs/architecture.md#what-novafabric-is-not),
+        and being outside them is not a reason to stay quiet — it is a reason to
+        say why the boundary is wrong.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you hitting?
+      description: >-
+        The problem, in your own words, before any proposed solution. This is the
+        part that survives even when the eventual implementation looks nothing
+        like what either of us first imagined.
+      placeholder: |
+        I cannot tell which of last month's 400 capsules came from the same
+        pipeline version without opening each one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to see?
+      description: A sketch is enough. CLI shape, output format, or just the behaviour.
+    validations:
+      required: false
+
+  - type: textarea
+    id: today
+    attributes:
+      label: How do you work around it today?
+      description: >-
+        Existing workarounds tell us how painful this is and often reveal a
+        simpler fix than the proposed feature.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: help
+    attributes:
+      label: Would you be interested in helping build it?
+      description: >-
+        "No" is a completely fine answer and does not reduce the idea's weight.
+      options:
+        - "Just raising it — no time to implement"
+        - "I could test a prototype"
+        - "I could help implement it with guidance"
+        - "I would like to implement it"
+    validations:
+      required: false

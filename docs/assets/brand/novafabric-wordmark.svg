@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 64" width="640" height="128" fill="none" role="img" aria-label="NovaFabric">
+  <title>NovaFabric</title>
+  <!-- Mark, scaled from the canonical 32-unit favicon geometry into a 44-unit box at (10,10). -->
+  <g transform="translate(10 10) scale(1.375)">
+    <rect width="32" height="32" rx="7" fill="#111114"/>
+    <polygon points="16,3.5 27.5,10 27.5,22 16,28.5 4.5,22 4.5,10"
+             stroke="#c4f0a8" stroke-width="1.5" fill="none" stroke-linejoin="round"/>
+    <path d="M10 23 L10 9 L22 23 L22 9"
+          stroke="#c4f0a8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  </g>
+  <!-- Wordmark: monospace, "Nova" in text-white, "Fabric" in signal-lime. -->
+  <text x="70" y="41"
+        font-family="JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+        font-size="26" font-weight="600" letter-spacing="-0.5">
+    <tspan fill="#e6e6ea">Nova</tspan><tspan fill="#c4f0a8">Fabric</tspan>
+  </text>
+</svg>
