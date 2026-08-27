@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
 import typer
 from rich.console import Console
@@ -216,7 +217,20 @@ def verify_cmd(
         except Exception:
             pass
 
+    # ADR-0251 §2: capsule_id above came from log-entry.json, a file inside the
+    # capsule an attacker can rewrite. Re-derive it from the signed payload and
+    # treat a disagreement as a failure rather than trusting the file.
+    dsse_bytes = b""
+    dsse_file = seal_dir / "manifest.dsse"
+    if dsse_file.exists():
+        dsse_bytes = dsse_file.read_bytes()
+    capsule_id_ok = True
+    derived_capsule_id = _derive_capsule_id(dsse_bytes)
+    if derived_capsule_id and capsule_id and derived_capsule_id != capsule_id:
+        capsule_id_ok = False
+
     result = seal.verify(capsule_id=capsule_id, seal_dir=str(seal_dir))
+    binding = _capsule_binding_report(capsule_dir, dsse_bytes)
 
     # Print results
     console.print(f"\n[bold]NovaSeal verification:[/bold] {capsule_dir.name}")
@@ -233,6 +247,13 @@ def verify_cmd(
     else:
         _print_check("Timestamp (RFC 3161)", result.timestamp_ok)
     _print_check("Merkle log inclusion", result.log_integrity_ok)
+    binding_ok = _print_capsule_binding(binding)
+    if not capsule_id_ok:
+        _print_check("Log-entry capsule_id matches the signed payload", False)
+        console.print(
+            f"    [red]log-entry.json says[/red] {capsule_id}\n"
+            f"    [red]signed payload hashes to[/red] {derived_capsule_id}"
+        )
 
     if result.errors:
         console.print()
@@ -242,7 +263,7 @@ def verify_cmd(
     console.print()
     console.print(str(result))
 
-    if not result.valid:
+    if not result.valid or not binding_ok or not capsule_id_ok:
         # ADR-0192 wired source: the evidence guarantee itself failed, so
         # this is `critical` — the run can no longer be proven.
         from novafabric.events.sources import (  # noqa: PLC0415
@@ -255,6 +276,167 @@ def verify_cmd(
             signature_ok=result.signature_ok,
         )
         raise typer.Exit(code=1)
+
+
+def _derive_capsule_id(dsse_bytes: bytes) -> str:
+    """SHA-256 of the DSSE payload — the capsule_id, recomputed rather than read.
+
+    ADR-0251 §2: ``cli/verify.py`` read ``capsule_id`` from ``log-entry.json``, a
+    file inside the capsule directory. An identifier read from an attacker-writable
+    file and never checked is a suggestion, not an identifier.
+    """
+    import base64
+    import json
+
+    if not dsse_bytes:
+        return ""
+    try:
+        payload = base64.urlsafe_b64decode(json.loads(dsse_bytes)["payload"] + "==")
+    except (ValueError, KeyError, TypeError):
+        return ""
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _capsule_binding_report(capsule_dir: Path, dsse_bytes: bytes) -> dict[str, Any]:
+    """Check that *capsule_dir* is the directory the seal was made over (ADR-0251).
+
+    The DSSE signature proves a manifest was signed. It does not prove that
+    manifest describes this directory: ``capsule.yaml`` was never opened during
+    verification, and the manifest names its evidence files by filename with no
+    digest. Both halves were measured green against a forged capsule on
+    2026-08-27.
+
+    Returns a report dict; the caller prints and decides the exit code. Never
+    raises — an unreadable envelope degrades to ``present=False``, which prints
+    NOT PRESENT rather than a check that did not run.
+    """
+    import base64
+    import json
+
+    report: dict[str, Any] = {
+        "manifest_present": False,
+        "manifest_ok": False,
+        "differing_keys": [],
+        "digests_present": False,
+        "digests_ok": False,
+        "mismatched": [],
+        "missing": [],
+        "unlisted": [],
+        "errors": [],
+    }
+    if not dsse_bytes:
+        return report
+
+    try:
+        envelope = json.loads(dsse_bytes)
+        payload = base64.urlsafe_b64decode(envelope["payload"] + "==")
+        signed = json.loads(payload)
+    except (ValueError, KeyError, TypeError) as exc:
+        report["errors"].append(f"Cannot decode signed payload: {exc}")
+        return report
+    if not isinstance(signed, dict):
+        report["errors"].append("Signed payload is not a manifest object")
+        return report
+
+    # --- half 1: does capsule.yaml on disk match the signed payload? ---
+    manifest_file = capsule_dir / "capsule.yaml"
+    if not manifest_file.exists():
+        # Not every sealed directory is a run capsule — the object capsule store
+        # seals a single-field manifest with no capsule.yaml at all. §4: absent is
+        # reported as absent, not failed.
+        pass
+    else:
+        report["manifest_present"] = True
+        try:
+            import yaml
+
+            on_disk = yaml.safe_load(manifest_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            report["errors"].append(f"Cannot read capsule.yaml: {exc}")
+            on_disk = None
+        if isinstance(on_disk, dict):
+            differing = sorted(
+                k for k in set(signed) | set(on_disk) if signed.get(k) != on_disk.get(k)
+            )
+            report["differing_keys"] = differing
+            report["manifest_ok"] = not differing
+        elif on_disk is not None:
+            report["errors"].append("capsule.yaml did not parse as a mapping")
+
+    # --- half 2: do the evidence files still hash to what was signed? ---
+    digests = signed.get("evidence_digests")
+    if not isinstance(digests, dict):
+        return report  # sealed before ADR-0251 — absent, reported as NOT PRESENT
+    report["digests_present"] = True
+
+    on_disk_files = {
+        path.relative_to(capsule_dir).as_posix()
+        for path in capsule_dir.rglob("*")
+        if path.is_file()
+        and not path.is_symlink()
+        and path.relative_to(capsule_dir).parts[0] not in {".seal", "capsule.yaml"}
+    }
+    for rel, expected in sorted(digests.items()):
+        target = capsule_dir / rel
+        if not target.is_file():
+            report["missing"].append(rel)
+            continue
+        actual = "sha256:" + hashlib.sha256(target.read_bytes()).hexdigest()
+        if not isinstance(expected, dict) or actual != expected.get("sha256"):
+            report["mismatched"].append(rel)
+    # Files added after sealing are legitimate (`nova export-c2pa` writes one).
+    # Report them so nothing is silently uncovered; never fail on them.
+    report["unlisted"] = sorted(on_disk_files - set(digests))
+    report["digests_ok"] = not report["mismatched"] and not report["missing"]
+    return report
+
+
+def _print_capsule_binding(report: dict[str, Any]) -> bool:
+    """Print the ADR-0251 binding checks. Returns False if the capsule is unbound."""
+    ok = True
+
+    if not report["manifest_present"]:
+        console.print(
+            "  [yellow]⊘[/yellow] Manifest binding: "
+            "[yellow]NOT PRESENT[/yellow] (no capsule.yaml to compare)"
+        )
+    elif report["manifest_ok"]:
+        _print_check("Manifest binding (capsule.yaml == signed payload)", True)
+    else:
+        _print_check("Manifest binding (capsule.yaml == signed payload)", False)
+        keys = ", ".join(report["differing_keys"][:8])
+        more = len(report["differing_keys"]) - 8
+        console.print(
+            f"    [red]capsule.yaml disagrees with the signed payload:[/red] {keys}"
+            + (f" (+{more} more)" if more > 0 else "")
+        )
+        ok = False
+
+    if not report["digests_present"]:
+        console.print(
+            "  [yellow]⊘[/yellow] Evidence binding: "
+            "[yellow]NOT PRESENT[/yellow] (sealed before evidence_digests)"
+        )
+    elif report["digests_ok"]:
+        _print_check("Evidence binding (per-file sha256)", True)
+    else:
+        _print_check("Evidence binding (per-file sha256)", False)
+        for rel in report["mismatched"]:
+            console.print(f"    [red]modified:[/red] {rel}")
+        for rel in report["missing"]:
+            console.print(f"    [red]missing:[/red] {rel}")
+        ok = False
+
+    if report["unlisted"]:
+        console.print(
+            f"    [yellow]not covered by the seal ({len(report['unlisted'])}):[/yellow] "
+            + ", ".join(report["unlisted"][:5])
+            + (" …" if len(report["unlisted"]) > 5 else "")
+        )
+    for err in report["errors"]:
+        console.print(f"  [red]✗[/red] {err}")
+        ok = False
+    return ok
 
 
 def _is_export_manifest(path: Path) -> bool:

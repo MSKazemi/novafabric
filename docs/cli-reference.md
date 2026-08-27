@@ -2208,9 +2208,8 @@ Without `--certify`/`--anchor`, `attest-replay` behavior is unchanged (including
 
 ### nova verify \<capsule\>
 
-Verify a capsule's cryptographic seal: DSSE envelope signature, RFC 3161 timestamp
-integrity, and Merkle log inclusion proof. Requires NovaSeal configuration
-([ADR-0041](./decisions.md)). **experimental** —
+Verify a capsule's cryptographic seal — and that the capsule on disk is the one that was
+sealed. Requires NovaSeal configuration ([ADR-0041](./decisions.md)). **experimental** —
 shipped v0.10; see [v0.10.0 release notes](releases/v0.10.0.md).
 
 ```bash
@@ -2219,13 +2218,20 @@ nova verify <capsule> --seal-config ~/.novafabric/novaseal.yaml
 NOVAFABRIC_SEAL_CONFIG=./novaseal.yaml nova verify <capsule>
 ```
 
-Checks (all three must pass for exit 0):
+Checks (all must pass for exit 0):
 
 | Check | What is verified |
 |---|---|
 | Signature | DSSE envelope signature — ECDSA P-256 against the certificate embedded in the envelope |
 | Timestamp | RFC 3161 TSR integrity — SHA-256 of the DSSE bytes matches the messageImprint in the TSR |
 | Merkle log | Inclusion proof — leaf hash at the stored index recomputes the Merkle root |
+| Manifest binding | `capsule.yaml` on disk matches the signed DSSE payload, and `capsule_id` is recomputed from that payload rather than read from `log-entry.json` (ADR-0251) |
+| Evidence binding | every file listed in the manifest's `evidence_digests` still hashes to the value that was signed (ADR-0251) |
+
+The first three prove *a* manifest was signed by *a* key at *a* time. The last two prove
+that manifest describes **this** directory. Without them, editing a recorded token count
+in `model-calls.jsonl` — or the `status` field in `capsule.yaml` itself — left all three
+original checks green.
 
 Options:
 - `--seal-config PATH` — path to `novaseal.yaml` (default: `~/.novafabric/novaseal.yaml`; env: `NOVAFABRIC_SEAL_CONFIG`)
@@ -2240,11 +2246,33 @@ Example output (all passing):
 ```
 NovaSeal verification: 01HXAY7M5JZ8R7K4P9DPBYK2WX
   ✓ Signature (DSSE ECDSA P-256): OK
+    Intent: authored
   ✓ Timestamp (RFC 3161): OK
   ✓ Merkle log inclusion: OK
+  ✓ Manifest binding (capsule.yaml == signed payload): OK
+  ✓ Evidence binding (per-file sha256): OK
 
 signature_ok=True, timestamp_ok=True, log_integrity_ok=True
 ```
+
+Example output (a modified capsule):
+
+```
+  ✓ Signature (DSSE ECDSA P-256): OK
+  ✓ Timestamp (RFC 3161): OK
+  ✓ Merkle log inclusion: OK
+  ✓ Manifest binding (capsule.yaml == signed payload): OK
+  ✗ Evidence binding (per-file sha256): FAIL
+    modified: model-calls.jsonl
+```
+
+**Capsules sealed before `evidence_digests` shipped** print
+`⊘ Evidence binding: NOT PRESENT (sealed before evidence_digests)` and still exit 0. They
+are not invalid, they are unbound — and a check that did not run is never reported as OK.
+
+**Files added after sealing** — `nova export-c2pa` writes `c2pa-manifest.json`, for
+instance — are listed as `not covered by the seal` but never fail the capsule. Adding a
+derived artifact next to a capsule is normal; failing on it would make the check unusable.
 
 Capsules produced without a NovaSeal config have no `.seal/` directory; `nova verify`
 exits 1 with an informational message (not an error — unsigned capsules are valid).

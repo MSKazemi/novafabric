@@ -9,6 +9,40 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Security
+
+- **`nova verify` now checks that the capsule on disk is the one that was sealed**
+  (ADR-0251). Its three checks — DSSE
+  signature, RFC 3161 timestamp, Merkle inclusion — were each correct and none was bound to
+  the directory it was printed about. Measured on a freshly sealed capsule: appending a
+  fabricated model call (`tokens_in: 999999`) to `model-calls.jsonl` verified green, and so
+  did editing `status: success` to `status: success-FORGED` in `capsule.yaml` — the very
+  document the signature is over. The CLI read `capsule_id` from `log-entry.json`, a file
+  inside the capsule, and `NovaSeal.verify()` never opened `capsule.yaml` at all.
+
+  Two bindings close it. The manifest now carries `evidence_digests`, a `sha256`/`size_bytes`
+  entry for every evidence file, computed before the manifest becomes the signed payload;
+  and `nova verify` re-reads `capsule.yaml`, compares it to the decoded payload, and
+  re-derives `capsule_id` rather than trusting the file. Both forgeries now exit 1 and name
+  what changed.
+
+  Capsules sealed earlier have no `evidence_digests` and print
+  `⊘ Evidence binding: NOT PRESENT (sealed before evidence_digests)` — not a green check.
+  That is the same rule the RFC 3161 honesty fix established: a check that did not run is
+  never reported as OK. Files added after sealing (`nova export-c2pa` writes one) are named
+  as not covered but never fail the capsule, because adding a derived artifact next to a
+  capsule is normal and a check that fails on it would be switched off within a week.
+
+  `lineage.jsonl` was written nine lines *after* the seal call and is now emitted before it,
+  so it is covered like everything else. `capture-health.json` is still written after
+  sealing and is reported as uncovered rather than silently dropped.
+
+- **`nova capture --mark-provenance` produced capsules that failed `nova validate`.** The
+  run-capsule schema sets `additionalProperties: false` and never declared
+  `content_provenance_ref`, the field that path writes for EU AI Act Art.50 marking, so the
+  Art.50 marker and the validator had disagreed since ADR-0074 shipped. Declared in both
+  schema trees.
+
 ### Changed
 
 - **The CLA stays, and the contributor-facing wording is clearer about what it does and does

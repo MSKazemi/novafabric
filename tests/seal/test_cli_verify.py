@@ -240,4 +240,7 @@ class TestTimestampPresenceIsReportedHonestly:
         cli = runner.invoke(
             app, ["verify", str(capsule_dir), "--seal-config", str(config_path)]
         )
-        assert "NOT PRESENT" not in cli.output
+        # Scoped to the timestamp line: ADR-0251 added two more NOT PRESENT
+        # checks to this output, and a bare substring test would catch those.
+        assert "Timestamp (RFC 3161): OK" in cli.output
+        assert "Timestamp (RFC 3161): NOT PRESENT" not in cli.output

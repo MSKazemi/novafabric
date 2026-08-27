@@ -619,10 +619,11 @@ class CaptureOrchestrator:
                     file=_sys.stderr,
                 )
 
-        # --- NovaSeal (v0.10 Phase 0 — opt-in, non-blocking) ---
-        _seal_capsule(capsule_dir, manifest)
-
         # --- lineage emission (v0.4) ---
+        # ADR-0251 §6: emitted *before* sealing so lineage.jsonl is covered by
+        # evidence_digests. The writer needs only capsule.yaml, which already
+        # exists; index_capsule_lineage() writes outside the capsule, so its
+        # position is immaterial.
         # Always write lineage.jsonl AND index the run into the lineage
         # DB — even for no-edge captures, the run-node must be
         # queryable via `nova lineage provenance <run_id>`. The SQLite
@@ -645,6 +646,18 @@ class CaptureOrchestrator:
                 file=_sys.stderr,
             )
         # --- end lineage emission ---
+
+        # --- ADR-0251: bind the seal to the bytes on disk -------------------
+        # The manifest names its evidence files by filename with no digest, so a
+        # signature over it proves only that the names are unchanged. Hash every
+        # evidence file into the manifest *before* it becomes the signed payload,
+        # then rewrite capsule.yaml so the file on disk and the signed payload
+        # agree — verify compares them (ADR-0251 §2).
+        manifest["evidence_digests"] = _evidence_digests(capsule_dir)
+        writer.write_text("capsule.yaml", yaml.dump(manifest, allow_unicode=True))
+
+        # --- NovaSeal (v0.10 Phase 0 — opt-in, non-blocking) ---
+        _seal_capsule(capsule_dir, manifest)
 
         # Hot-path optimization (v0.6.8): same is_configured() short-
         # circuit as the START event above.
@@ -730,6 +743,39 @@ def _mark_content_provenance(capsule_dir: Path) -> None:
             f"[novafabric] ⚠ C2PA provenance marking failed (capsule is still valid): {exc}",
             file=_sys.stderr,
         )
+
+
+#: Capsule-relative paths never covered by ``evidence_digests``.
+#: ``.seal/`` does not exist yet at digest time, and ``capsule.yaml`` is the
+#: carrier of the digest map itself — it is bound instead by comparing it to the
+#: signed DSSE payload at verify time (ADR-0251 §2).
+_DIGEST_EXCLUDED_TOP: frozenset[str] = frozenset({".seal", "capsule.yaml"})
+
+
+def _evidence_digests(capsule_dir: Path) -> dict[str, Any]:
+    """Hash every evidence file in *capsule_dir* for inclusion in the manifest.
+
+    ADR-0251: the signed manifest names its evidence files (``model_calls_ref``,
+    ``trace_ref``, …) by filename and nothing else, so a signature over it proves
+    only that the *names* are unchanged.  Editing a recorded token count left
+    ``nova verify`` fully green.  This map puts the bytes inside the signed
+    payload.
+
+    Keys are capsule-relative POSIX paths, sorted, so the payload is stable across
+    filesystems.  Entry shape matches the Evidence Bundle's ``ArtifactEntry``
+    (``sha256`` in ``sha256:<hex>`` form, ``size_bytes``) so the two tamper-evidence
+    layers read alike.
+    """
+    digests: dict[str, Any] = {}
+    for path in sorted(capsule_dir.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        rel = path.relative_to(capsule_dir)
+        if rel.parts[0] in _DIGEST_EXCLUDED_TOP:
+            continue
+        data = path.read_bytes()
+        digests[rel.as_posix()] = {"sha256": _sha256(data), "size_bytes": len(data)}
+    return digests
 
 
 def _seal_capsule(capsule_dir: Path, manifest: dict[str, Any]) -> None:

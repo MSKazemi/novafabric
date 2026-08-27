@@ -417,6 +417,33 @@
       "type": "integer",
       "minimum": 0,
       "description": "Zero-based turn/step order of this run within session_id (ADR-0122). Requires session_id; advisory \u2014 the session manifest is authoritative."
+    },
+    "evidence_digests": {
+      "type": "object",
+      "description": "ADR-0251: content digests for every evidence file in the capsule directory at seal time, keyed by capsule-relative POSIX path. Optional and additive \u2014 capsules sealed before ADR-0251 omit it and `nova verify` reports the binding as NOT PRESENT rather than OK. Excludes .seal/ (written after) and capsule.yaml itself (bound instead by comparing it to the signed DSSE payload). Entry shape matches the Evidence Bundle ArtifactEntry.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sha256",
+          "size_bytes"
+        ],
+        "properties": {
+          "sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "description": "SHA-256 of this file's bytes, in sha256:<hex> form."
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "content_provenance_ref": {
+      "type": "string",
+      "description": "ADR-0074 / EU AI Act Art.50: relative path to the C2PA synthetic-content provenance marker, written by `nova capture --mark-provenance` when the run produced >=1 model call. Absent otherwise."
     }
   },
   "if": {
