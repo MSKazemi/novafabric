@@ -782,7 +782,7 @@ the `CAPABILITY_MAP.md` row to `experimental`. Write an ADR only if it changes a
 
 ## Working with the SPKG (`kg/spkg/`) — experimental
 
-The Security & Provenance Knowledge Graph (ADR-0111, spec in private `design/`) turns capsule lineage
+The Security & Provenance Knowledge Graph ([ADR-0111](./decisions.md)) turns capsule lineage
 into a security-reasoning graph. It has two layers and a detector, all under `src/novafabric/kg/spkg/`:
 
 | Module | Role | Heavy deps? |
