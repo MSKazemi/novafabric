@@ -11,6 +11,38 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Security
 
+- **A token `nova serve` issued authenticated nothing, and sat on disk in cleartext**
+  (ADR-0252). `POST /api/admin/tokens` returned 200 with a token and *"Save this token — it
+  will not be shown again"*; every request carrying it got **401**, because `verify_token`
+  compared only against the single server token and never consulted the store it had just
+  written. That store, `~/.novafabric/tokens.jsonl`, held the secret verbatim at mode
+  **0664** — while `auth.py` goes to deliberate trouble to create `.serve-token` at 0600
+  atomically, with a comment explaining why. A revoke rewrote the file through
+  `tmp.write_text()`, so even a hand-hardened 0600 came back 0664.
+
+  Issued tokens now authenticate by `Authorization: Bearer` or `?token=`; the record keeps
+  a `sha256:` digest and no secret; every write path is 0600 and reading repairs a wider
+  mode left by an older version; and revocation denies, because something finally reads
+  the flag. Records written before this still authenticate — locking an operator out to
+  punish them for an old file is the wrong trade.
+
+  An issued token carries **exactly** the dashboard token's access: `nova serve`
+  authenticates, it does not authorize. The response warning says so instead of implying a
+  scope that does not exist. Scoped credentials remain a server-mode feature, where OIDC
+  supplies a subject and roles have somewhere to be enforced.
+
+  Two smaller corrections alongside: the audit record cited
+  `nova server issue-token --label <label>`, a command that mints an unrelated offline
+  ed25519 JWT and has no `--label` flag at all — an audit trail whose reproduction command
+  is wrong is worse than one with none. And `test_issue_token_confirmed` asserted
+  `record["token"] == data["token"]`, pinning the cleartext-on-disk behaviour as expected;
+  it now asserts the digest.
+
+  Checked while there and **not** a defect: of 84 mutating routes in `serve/`, zero lack
+  `Depends(verify_token)` — verified by walking the dependency tree of every route on the
+  built app, not by matching decorators. `GET /api/admin/roles` already documents that in
+  local mode the shared token is unconditionally admin.
+
 - **`nova verify` now checks that the capsule on disk is the one that was sealed**
   (ADR-0251). Its three checks — DSSE
   signature, RFC 3161 timestamp, Merkle inclusion — were each correct and none was bound to

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from novafabric.serve import token_store
 from novafabric.serve.app import create_app
 
 LOCALHOST_HEADERS = {"host": "127.0.0.1:4321"}
@@ -72,7 +73,10 @@ def test_issue_token_confirmed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     record = json.loads(tokens_file.read_text().strip().splitlines()[0])
     assert record["label"] == "test-label"
     assert record["fingerprint"] == data["fingerprint"]
-    assert record["token"] == data["token"]
+    # ADR-0252: the store keeps a digest, never the token. This assertion used to
+    # read `record["token"] == data["token"]` — it pinned the defect in place.
+    assert "token" not in record
+    assert record["token_digest"] == token_store.digest(data["token"])
     assert record["revoked"] is False
 
 

@@ -345,8 +345,8 @@ caller-supplied numbers isn't a mutating or boundary-crossing action).
 | `POST` | `/api/admin/roles` | Assign a role to a subject (idempotent). Local-mode admin shortcut. |
 | `DELETE` | `/api/admin/roles/{subject}/{role}` | Revoke a role from a subject. 404 if not found, 409 if lockout would occur. |
 | `GET` | `/api/admin/tokens` | List issued local tokens (stored in ~/.novafabric/tokens.jsonl), newest-first. Bounded: `limit` (default 200, max 2000) + byte-offset `cursor`; adds `next_cursor`/`truncated` (ADR-0199 B2). |
-| `POST` | `/api/admin/tokens` | Issue a new local session token. |
-| `DELETE` | `/api/admin/tokens/{fingerprint}` | Revoke a token by fingerprint. |
+| `POST` | `/api/admin/tokens` | Issue a new local session token. The token is returned **once** and stored only as a `sha256:` digest (`0600`); it cannot be recovered from the file. It authenticates by `Authorization: Bearer` or `?token=`, and carries **the same full access as the dashboard token** — `nova serve` authenticates, it does not authorize (ADR-0252). |
+| `DELETE` | `/api/admin/tokens/{fingerprint}` | Revoke a token by fingerprint. Revocation takes effect immediately: the next request with that token gets 401. |
 
 ## alerts  (1)
 

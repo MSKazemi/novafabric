@@ -44,7 +44,7 @@ from novafabric.registry.runs_cache import (
 from novafabric.registry.runs_cache import (
     query_runs as _query_runs_cache,
 )
-from novafabric.serve import audit
+from novafabric.serve import audit, token_store
 from novafabric.serve import reports as _reports
 from novafabric.serve.auth import extract_bearer, is_localhost_host, token_matches
 from novafabric.serve.capsule_loader import (
@@ -784,13 +784,25 @@ def create_app(
         # Bearer-first: when an Authorization header is present it is authoritative;
         # the ?token= query form stays supported for the SPA and existing links.
         candidate = extract_bearer(authorization) or t
-        if not candidate or not _consteq(candidate, token):
+        if not candidate:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="missing or invalid token",
             )
-        # Returns a short fingerprint for audit logging.
-        return candidate[:8]
+        if _consteq(candidate, token):
+            # Returns a short fingerprint for audit logging.
+            return candidate[:8]
+        # ADR-0252: a token minted by POST /api/admin/tokens used to get 401 on
+        # every endpoint — the endpoint said "save this token" for a credential
+        # that worked nowhere. Checked only after the server token misses, so the
+        # common path still does zero IO.
+        issued = token_store.find_active(candidate)
+        if issued is not None:
+            return str(issued.get("fingerprint", ""))[:8]
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="missing or invalid token",
+        )
 
     # ---------- routes ----------
 
@@ -3767,42 +3779,40 @@ def create_app(
         actor_fp: str = Depends(verify_token),
     ) -> dict[str, Any]:
         """Issue a new local session token."""
-        import hashlib
-        import json as _json
         import secrets as _secrets
-        from datetime import datetime, timezone
 
         if not body.confirmed:
             raise HTTPException(
                 status_code=400, detail="confirmation required (set confirmed=true)"
             )
         new_token = _secrets.token_urlsafe(32)
-        fp = hashlib.sha256(new_token.encode()).hexdigest()[:16]
-        record = {
-            "label": body.label,
-            "token": new_token,  # stored locally only, never transmitted again
-            "fingerprint": fp,
-            "created_at": datetime.now(tz=timezone.utc).isoformat(),
-            "revoked": False,
-        }
-        tokens_path = Path.home() / ".novafabric" / "tokens.jsonl"
-        tokens_path.parent.mkdir(parents=True, exist_ok=True)
-        with tokens_path.open("a") as f:
-            f.write(_json.dumps(record) + "\n")
+        # ADR-0252: the store keeps a digest, not the token, and writes 0600. The
+        # previous record held the secret verbatim in a 0664 file — while the list
+        # endpoint two functions up takes care never to return it over the wire.
+        record = token_store.issue(body.label, new_token)
+        fp = record["fingerprint"]
         audit.append(
             action="issue_token",
             args={"label": body.label},
-            cli_equivalent=f"nova server issue-token --label {body.label}",
+            # There is no CLI that mints this kind of token. `nova server
+            # issue-token` produces an unrelated offline ed25519 JWT (ADR-0018)
+            # and has no --label flag; citing it made the audit trail name a
+            # command that does not exist.
+            cli_equivalent="",
             actor_token_fp=actor_fp,
             extra={"fingerprint": fp},
         )
-        # Return the token value ONCE — after this it's only available via the file
+        # Return the token value ONCE — it is not recoverable from the store.
         return {
             "ok": True,
             "token": new_token,
             "fingerprint": fp,
             "label": body.label,
-            "warning": "Save this token — it will not be shown again.",
+            "warning": (
+                "Save this token — it is stored only as a digest and cannot be "
+                "shown again. It carries the same full access as the dashboard "
+                "token: nova serve authenticates, it does not authorize."
+            ),
         }
 
     @app.delete("/api/admin/tokens/{fingerprint}")
@@ -3811,30 +3821,14 @@ def create_app(
         actor_fp: str = Depends(verify_token),
     ) -> dict[str, Any]:
         """Revoke a token by fingerprint."""
-        import json as _json
-        import os as _os
 
         if "/" in fingerprint or ".." in fingerprint:
             raise HTTPException(status_code=400, detail="invalid fingerprint")
-        tokens_path = Path.home() / ".novafabric" / "tokens.jsonl"
-        if not tokens_path.exists():
+        # ADR-0252: revocation now takes effect, because verify_token reads this
+        # store. It also rewrites at 0600 — the old rewrite created its temp file
+        # at the process umask, so one revoke widened a 0600 file back to 0664.
+        if not token_store.revoke(fingerprint):
             raise HTTPException(status_code=404, detail="token not found")
-        lines = tokens_path.read_text().splitlines()
-        updated = []
-        found = False
-        for line in lines:
-            if not line.strip():
-                continue
-            t = _json.loads(line)
-            if t.get("fingerprint") == fingerprint:
-                t["revoked"] = True
-                found = True
-            updated.append(_json.dumps(t))
-        if not found:
-            raise HTTPException(status_code=404, detail="token not found")
-        tmp = tokens_path.with_suffix(".tmp")
-        tmp.write_text("\n".join(updated) + "\n")
-        _os.replace(tmp, tokens_path)
         audit.append(
             action="revoke_token",
             args={"fingerprint": fingerprint},
