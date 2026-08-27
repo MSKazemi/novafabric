@@ -108,6 +108,64 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **The Azure Blob WORM backend could never store a capsule.** `put_object()` —
+  the primary capsule-write path — passed `content_md5` as base64 *text*, but the
+  generated `azure-storage-blob` layer serializes that header as `bytearray` and
+  base64-encodes it itself. Every call raised
+  `TypeError: blob_content_md5 must be type bytearray`, taking `apply_identical()`
+  down with it and making the `CASMismatchError` branch unreachable. The adapter now
+  sends the raw 16-byte digest. Verified against a live storage account: a capsule
+  write that previously raised now stores, and its `sha256` metadata round-trips.
+
+- **Azure WORM confirmation tokens were always empty.** `upload_blob()` returns a
+  **dict**, so `getattr(resp, "version_id", "")` never matched and
+  `WormPutResult.confirmation_token`, `put_log_object()` and
+  `put_log_object_if_absent()` all silently returned `""` — discarding the evidence
+  that a write reached immutable storage — even though the service does return a
+  version id (`2026-08-27T15:58:40.7869181Z` observed live). Fixed at all three call
+  sites; injected test doubles that expose an attribute keep working. The sibling S3
+  adapter was already correct, so this was Azure-only.
+
+  `object_capsule_store/worm/azure.py` had no test importing it at all — the
+  `AzureWormAdapter` mock tests cover a *different* class of the same name in
+  `storage/_azure_worm.py`. The new contract tests deliberately avoid `MagicMock`,
+  which accepts any argument of any type and is why both defects survived: the fakes
+  enforce the two real SDK behaviours (bytes-only `content_md5`, dict response).
+
+- **The 32-writer manifest-chain test deadlocked instead of running.** Its adapter
+  wrapper serialized calls with
+  `(lock.acquire(), fn(...), lock.release())[1]` — tuple elements evaluate left to
+  right, so a raising `fn` aborts before `lock.release()` and never returns the
+  lock. `put_log_object_if_absent` raises `ConditionalPutConflict` on precisely the
+  version race the test exists to create, so the first conflict wedged the lock and
+  all 32 workers blocked forever, with the process burning no CPU. Now serialized
+  through a `with lock:` wrapper. The whole gated
+  `tests/object_capsule_store` tier had been unrunnable as a result; it now
+  completes in seconds.
+
+  With the deadlock gone the test reveals a real gap, so it is marked `xfail`
+  rather than quietly passing: **FR-02 (32 threads × 1,000 commits → 32,000 dense
+  unique versions) is not met.** `ManifestChainWriter` retries a conflict
+  immediately, with no backoff and a fixed per-append budget of 32, so the writers
+  advance in lockstep and roughly 30 of 32 exhaust it. Measured at 32 threads:
+  0/32 workers fail at 200 commits each, 30–31/32 fail at 700–1,000. Committed
+  versions stayed dense and unique in every run, so this is a liveness limit and
+  not a data-integrity defect. Both a larger budget and jittered backoff help, but
+  neither was reliable enough to retune a cluster-scale spine module on — the same
+  configuration gave 0 failures in 1.1 s on one trial and 18 in 46.7 s on the next.
+  Choosing the retry policy needs an ADR and a benchmark not dominated by GIL
+  scheduling; the writer is deliberately left unchanged.
+
+- **The MinIO and Ceph conditional-PUT acceptance tests could not run.** Their
+  helpers constructed the adapters with `endpoint=`, `access_key=` and `secret_key=`
+  long after both had settled on `endpoint_url=` plus boto3's credential chain, so
+  `test_occ_backends.py` raised `TypeError` before reaching an assertion. Being
+  gated behind `NOVA_INTEGRATION=1` and a live backend, nothing went red. AC-2
+  conditional PUT now passes against a real MinIO for the first time, and a
+  signature-conformance guard that needs no gate and no network
+  (`test_integration_helper_signatures.py`) fails in the ordinary unit run if these
+  constructors drift again.
+
 - **Captured model calls never recorded which backend was called.** The openai-SDK
   hook patches `Completions.create`, so unlike the HTTP-transport hooks it never
   sees a request URL — it called `extract_request_attributes()` without `url=`, and

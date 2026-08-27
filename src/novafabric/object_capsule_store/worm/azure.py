@@ -38,7 +38,6 @@ Requires: ``pip install novafabric[worm-azure]``
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import logging
 from collections.abc import Iterator
@@ -53,6 +52,20 @@ from novafabric.object_capsule_store.worm.base import (
 )
 
 log = logging.getLogger(__name__)
+
+
+def _version_id(resp: Any) -> str:
+    """Extract the blob version id from an ``upload_blob`` response.
+
+    ``upload_blob`` returns a **dict**, not an object, so ``getattr`` silently
+    yielded "" for every real upload and the WORM confirmation token was always
+    empty — even though the service returns a version id (observed live
+    2026-08-27: ``2026-08-27T15:57:46.7859289Z``).  Objects are still handled so
+    injected test doubles keep working.
+    """
+    if isinstance(resp, dict):
+        return str(resp.get("version_id") or "")
+    return str(getattr(resp, "version_id", "") or "")
 
 
 class AzureWormAdapter(WormAdapter):
@@ -94,14 +107,20 @@ class AzureWormAdapter(WormAdapter):
         content_type: str = "application/octet-stream",
     ) -> WormPutResult:
         locked_until = datetime.now(tz=timezone.utc) + timedelta(days=retention_days)
-        md5_b64 = base64.b64encode(hashlib.md5(data).digest()).decode("ascii")  # noqa: S324 — Azure requires MD5
+        # ``ContentSettings.content_md5`` must be the RAW 16-byte digest: the
+        # generated SDK layer serializes it as "bytearray" and base64-encodes it
+        # itself.  Handing it pre-encoded base64 *text* raised
+        # ``TypeError: blob_content_md5 must be type bytearray`` on every call,
+        # so put_object() — and apply_identical() through it — could never store
+        # a capsule.  Verified against a live storage account 2026-08-27.
+        md5_digest = hashlib.md5(data).digest()  # noqa: S324 — Azure requires MD5
         metadata = {"sha256": sha256_hex}
         blob_client = self._container_client.get_blob_client(key)
         try:
             resp = blob_client.upload_blob(
                 data,
                 overwrite=False,
-                content_settings=self._content_settings(content_type, md5_b64),
+                content_settings=self._content_settings(content_type, md5_digest),
                 metadata=metadata,
             )
         except Exception as exc:
@@ -111,7 +130,7 @@ class AzureWormAdapter(WormAdapter):
                     key=key, expected=sha256_hex, observed="<azure_md5_mismatch>"
                 ) from exc
             raise
-        version_id: str = getattr(resp, "version_id", "") or ""
+        version_id: str = _version_id(resp)
         return WormPutResult(
             key=key,
             confirmation_token=version_id,
@@ -144,7 +163,7 @@ class AzureWormAdapter(WormAdapter):
         resp = blob_client.upload_blob(
             data, overwrite=True, content_settings=self._content_settings("application/json")
         )
-        return getattr(resp, "version_id", "") or ""
+        return _version_id(resp)
 
     def put_log_object_if_absent(self, key: str, data: bytes) -> str:
         blob_client = self._container_client.get_blob_client(key)
@@ -154,7 +173,7 @@ class AzureWormAdapter(WormAdapter):
                 overwrite=False,
                 content_settings=self._content_settings("application/json"),
             )
-            return getattr(resp, "version_id", "") or ""
+            return _version_id(resp)
         except Exception as exc:
             if "BlobAlreadyExists" in str(exc):
                 raise ConditionalPutConflict(key) from exc
@@ -181,10 +200,10 @@ class AzureWormAdapter(WormAdapter):
         return blob_client.exists()  # type: ignore[no-any-return]
 
     @staticmethod
-    def _content_settings(content_type: str, md5_b64: str = "") -> Any:
+    def _content_settings(content_type: str, md5_digest: bytes = b"") -> Any:
         from azure.storage.blob import ContentSettings  # noqa: PLC0415
 
         kwargs: dict[str, Any] = {"content_type": content_type}
-        if md5_b64:
-            kwargs["content_md5"] = md5_b64
+        if md5_digest:
+            kwargs["content_md5"] = md5_digest
         return ContentSettings(**kwargs)

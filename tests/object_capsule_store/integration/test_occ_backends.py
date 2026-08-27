@@ -44,14 +44,38 @@ pytestmark = pytest.mark.skipif(
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _s3_compatible_client(endpoint_url: str, access_key: str, secret_key: str) -> object:
+    """Build a boto3 client for an S3-compatible endpoint.
+
+    The MinIO/Ceph adapters take their credentials from boto3's standard chain,
+    so explicit per-backend keys have to be threaded in through a prebuilt
+    client rather than constructor kwargs.
+    """
+    import boto3
+    from botocore.config import Config
+
+    return boto3.client(
+        "s3",
+        endpoint_url=endpoint_url,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        config=Config(signature_version="s3v4"),
+        region_name=os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
+    )
+
+
 def _minio_adapter() -> object:
     from novafabric.object_capsule_store.worm.minio import MinioWormAdapter
 
+    endpoint_url = os.environ.get("MINIO_ENDPOINT", "http://localhost:9000")
     return MinioWormAdapter(
         bucket=os.environ.get("MINIO_BUCKET", "nova-occ-test"),
-        endpoint=os.environ.get("MINIO_ENDPOINT", "http://localhost:9000"),
-        access_key=os.environ.get("MINIO_ACCESS_KEY", "minioadmin"),
-        secret_key=os.environ.get("MINIO_SECRET_KEY", "minioadmin"),
+        endpoint_url=endpoint_url,
+        client=_s3_compatible_client(
+            endpoint_url,
+            os.environ.get("MINIO_ACCESS_KEY", "minioadmin"),
+            os.environ.get("MINIO_SECRET_KEY", "minioadmin"),
+        ),
     )
 
 
@@ -66,11 +90,15 @@ def _s3_adapter() -> object:
 def _ceph_adapter() -> object:
     from novafabric.object_capsule_store.worm.ceph import CephWormAdapter
 
+    endpoint_url = os.environ.get("CEPH_ENDPOINT", "http://localhost:7480")
     return CephWormAdapter(
         bucket=os.environ.get("CEPH_BUCKET", "nova-occ-test"),
-        endpoint=os.environ.get("CEPH_ENDPOINT", "http://localhost:7480"),
-        access_key=os.environ.get("CEPH_ACCESS_KEY", ""),
-        secret_key=os.environ.get("CEPH_SECRET_KEY", ""),
+        endpoint_url=endpoint_url,
+        client=_s3_compatible_client(
+            endpoint_url,
+            os.environ.get("CEPH_ACCESS_KEY", ""),
+            os.environ.get("CEPH_SECRET_KEY", ""),
+        ),
     )
 
 
