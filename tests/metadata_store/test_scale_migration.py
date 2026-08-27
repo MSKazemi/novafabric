@@ -239,8 +239,14 @@ class TestPostgresMigration100k:
             pg_row = pg_conn.execute("SELECT COUNT(*) FROM runs").fetchone()
             assert pg_row is not None
             pg_count: int = pg_row[0]
+            # Read on a NEW connection, deliberately: the migration CLI once
+            # reported "PASS — row counts verified" from its own uncommitted
+            # transaction while every row was rolled back at close. Include the
+            # CLI's own output here — without it this assertion says only
+            # "0 rows" and gives no hint that the CLI believed it succeeded.
             assert pg_count >= EXPECTED_ROWS, (
-                f"Postgres has {pg_count} rows; expected at least {EXPECTED_ROWS}"
+                f"Postgres has {pg_count} rows; expected at least {EXPECTED_ROWS}.\n"
+                f"CLI reported:\n{result.output}"
             )
 
             # --- 1 % checksum: sampled run_ids exist in source SQLite ------

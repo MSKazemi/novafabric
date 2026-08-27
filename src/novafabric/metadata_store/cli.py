@@ -467,6 +467,29 @@ CREATE TABLE IF NOT EXISTS retention_policies (
 """
 
 
+
+def _pg_conflict_target(pg_conn: Any, table: str) -> str:
+    """Return the ``ON CONFLICT`` target for *table*, read from the live schema.
+
+    Returns the primary-key columns as ``"(col, ...)"``, or ``""`` when the table
+    has no primary key (in which case the caller omits the ON CONFLICT clause and
+    the insert is not idempotent — the pre-existing behaviour for unknown tables).
+    """
+    row = pg_conn.execute(
+        """
+        SELECT string_agg(a.attname, ', ' ORDER BY k.ord)
+        FROM pg_constraint con
+        JOIN pg_class c ON c.oid = con.conrelid
+        JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS k(attnum, ord) ON TRUE
+        JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum
+        WHERE con.contype = 'p' AND c.relname = %s AND c.relnamespace = 'public'::regnamespace
+        """,
+        (table,),
+    ).fetchone()
+    cols = row[0] if row and row[0] else ""
+    return f"({cols})" if cols else ""
+
+
 def _ensure_pg_schema(pg_conn: Any) -> None:
     """Create tables in Postgres if they don't already exist (no RLS)."""
     # Execute each CREATE TABLE separately — psycopg can't run semicolon-separated batches
@@ -513,20 +536,19 @@ def _migrate_table(
     placeholders = ", ".join(["%s"] * len(columns))
     col_names = ", ".join(columns)
 
-    # Determine conflict target based on table
-    conflict_targets: dict[str, str] = {
-        # Must match the primary key exactly — Postgres infers the arbiter index
-        # from these columns. `runs` is range-partitioned on `started_at`
-        # (ADR-0051), so the partition column is part of the key and has to be
-        # named here too; RFC-0001 widened it to three columns. A stale target
-        # here fails with `InvalidColumnReference` at INSERT time, not at parse
-        # time, so it surfaces as a migration that dies partway through.
-        "runs": "(run_id, tenant_id, started_at)",
-        "capsules": "(capsule_uri)",
-        "signatures": "(run_id, signature_hash)",
-        "retention_policies": "(tenant_id)",
-    }
-    conflict_target = conflict_targets.get(table, "")
+    # Determine conflict target from the LIVE schema, not a hardcoded map.
+    #
+    # Postgres infers the arbiter index from these columns and requires an exact
+    # match, failing with `InvalidColumnReference` at INSERT time rather than at
+    # parse time — so a stale target surfaces as a migration that dies partway
+    # through. It cannot be hardcoded because the target database legitimately
+    # has two different shapes: `_PG_DDL` below bootstraps an unpartitioned
+    # `runs` with PRIMARY KEY (run_id, tenant_id), while a server-mode database
+    # migrated by alembic has it range-partitioned on `started_at` (ADR-0051,
+    # widened by RFC-0001), which forces the partition column into the key.
+    # A map matching one shape is guaranteed wrong against the other; asking the
+    # database is correct against both.
+    conflict_target = _pg_conflict_target(pg_conn, table)
     if conflict_target:
         on_conflict = f"ON CONFLICT {conflict_target} DO NOTHING"
     else:
@@ -544,6 +566,18 @@ def _migrate_table(
             for row_vals in batch:
                 pg_conn.execute(sql, row_vals)
         total_written += len(batch)
+
+    # Commit explicitly. psycopg3 starts an implicit transaction on the first bare
+    # execute() — the `SELECT * FROM {table}` read above does exactly that — after
+    # which every `with pg_conn.transaction()` block is a *nested* block and issues
+    # a SAVEPOINT, not a COMMIT. Releasing a savepoint does not commit the enclosing
+    # transaction, so without this the whole migration was discarded when the
+    # connection closed: the rows were visible to this connection (and therefore to
+    # the verification count below, which reported "PASS"), and gone to everyone
+    # else. Only `_ensure_pg_schema` survived, because its transaction() block is
+    # the outermost one and does commit — which is why the tables existed but were
+    # empty.
+    pg_conn.commit()
 
     pg_count = pg_conn.execute(          f"SELECT COUNT(*) FROM {table}"  # noqa: S608
     ).fetchone()[0]

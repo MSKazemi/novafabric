@@ -14,7 +14,9 @@ Covers:
 from __future__ import annotations
 
 import datetime
+import hashlib
 import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -214,6 +216,112 @@ class TestAzureKvSigningBackend:
 
         with pytest.raises(ImportError, match="pip install novafabric\\[seal-azure\\]"):
             backend.sign_digest(b"\x00" * 32)
+
+    def test_converts_p1363_signature_to_der(self, ec_key_and_cert, monkeypatch):
+        """Key Vault returns raw r||s; sign_digest() must return DER.
+
+        Regression for a bug found 2026-08-27 against a LIVE vault: Key Vault's
+        es256 returns a 64-byte IEEE-P1363 signature, unlike AWS KMS, GCP KMS and
+        the local PEM backend, which all return DER. The raw bytes were passed
+        through unchanged, so create_envelope() succeeded and verify_envelope()
+        then failed with "signature mismatch" — every Azure-sealed capsule was
+        unverifiable, and no test caught it because every Azure test was a mock.
+        """
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec as _ec
+        from cryptography.hazmat.primitives.asymmetric import utils as _asym
+
+        from novafabric.trust.novaseal.signing_backend import AzureKvSigningBackend
+
+        _, cert_path, key = ec_key_and_cert
+        digest = hashlib.sha256(b"payload").digest()
+
+        # Sign locally, then re-encode as raw r||s to mimic what Key Vault returns.
+        der_sig = key.sign(digest, _ec.ECDSA(_asym.Prehashed(hashes.SHA256())))
+        r, s_val = _asym.decode_dss_signature(der_sig)
+        p1363 = r.to_bytes(32, "big") + s_val.to_bytes(32, "big")
+        assert len(p1363) == 64 and p1363[:1] != b"\x30"
+
+        pub_numbers = key.public_key().public_numbers()
+
+        class _FakeCrypto:
+            def __init__(self, *a, **kw): pass
+            def sign(self, alg, dg):
+                return SimpleNamespace(signature=p1363)
+
+        class _FakeKeyClient:
+            def __init__(self, *a, **kw): pass
+            def get_key(self, name): return SimpleNamespace(key=pub_numbers)
+
+        monkeypatch.setitem(
+            sys.modules, "azure.identity",
+            SimpleNamespace(DefaultAzureCredential=lambda *a, **kw: object()),
+        )
+        monkeypatch.setitem(
+            sys.modules, "azure.keyvault.keys", SimpleNamespace(KeyClient=_FakeKeyClient),
+        )
+        monkeypatch.setitem(
+            sys.modules, "azure.keyvault.keys.crypto",
+            SimpleNamespace(
+                CryptographyClient=_FakeCrypto,
+                SignatureAlgorithm=SimpleNamespace(es256="ES256"),
+            ),
+        )
+
+        backend = AzureKvSigningBackend(
+            vault_url="https://myvault.vault.azure.net/",
+            key_name="test-key",
+            cert_path=cert_path,
+        )
+        out = backend.sign_digest(digest)
+
+        # Must be DER, and must verify as DER against the real public key.
+        assert out[:1] == b"\x30", "sign_digest() must return DER, not raw r||s"
+        key.public_key().verify(
+            out, digest, _ec.ECDSA(_asym.Prehashed(hashes.SHA256()))
+        )
+
+    def test_passes_der_signature_through_unchanged(self, ec_key_and_cert, monkeypatch):
+        """A backend already returning DER must not be re-encoded."""
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec as _ec
+        from cryptography.hazmat.primitives.asymmetric import utils as _asym
+
+        from novafabric.trust.novaseal.signing_backend import AzureKvSigningBackend
+
+        _, cert_path, key = ec_key_and_cert
+        digest = hashlib.sha256(b"payload").digest()
+        der_sig = key.sign(digest, _ec.ECDSA(_asym.Prehashed(hashes.SHA256())))
+
+        class _FakeCrypto:
+            def __init__(self, *a, **kw): pass
+            def sign(self, alg, dg): return SimpleNamespace(signature=der_sig)
+
+        class _FakeKeyClient:
+            def __init__(self, *a, **kw): pass
+            def get_key(self, name): return SimpleNamespace(key=None)
+
+        monkeypatch.setitem(
+            sys.modules, "azure.identity",
+            SimpleNamespace(DefaultAzureCredential=lambda *a, **kw: object()),
+        )
+        monkeypatch.setitem(
+            sys.modules, "azure.keyvault.keys", SimpleNamespace(KeyClient=_FakeKeyClient),
+        )
+        monkeypatch.setitem(
+            sys.modules, "azure.keyvault.keys.crypto",
+            SimpleNamespace(
+                CryptographyClient=_FakeCrypto,
+                SignatureAlgorithm=SimpleNamespace(es256="ES256"),
+            ),
+        )
+
+        backend = AzureKvSigningBackend(
+            vault_url="https://myvault.vault.azure.net/",
+            key_name="test-key",
+            cert_path=cert_path,
+        )
+        assert backend.sign_digest(digest) == der_sig
 
 
 # ---------------------------------------------------------------------------

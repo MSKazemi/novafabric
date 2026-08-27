@@ -41,13 +41,26 @@ def _call_azure() -> str:
 
     # AzureOpenAI auto-reads AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY.
     client = AzureOpenAI(api_version=os.environ.get("OPENAI_API_VERSION", "2024-10-21"))
-    response = client.chat.completions.create(
-        model=os.environ["AZURE_OPENAI_DEPLOYMENT"],
-        max_tokens=64,
-        messages=[
-            {"role": "user", "content": "In one sentence: what is replayable AI infrastructure?"},
-        ],
-    )
+    messages = [
+        {"role": "user", "content": "In one sentence: what is replayable AI infrastructure?"},
+    ]
+    deployment = os.environ["AZURE_OPENAI_DEPLOYMENT"]
+
+    # Reasoning-era models (gpt-5*, o*) reject `max_tokens` outright with
+    # "Unsupported parameter: 'max_tokens' ... Use 'max_completion_tokens'",
+    # while older deployments (gpt-4o and earlier) only accept `max_tokens`.
+    # Try the current spelling first and fall back, so this example works against
+    # whichever deployment the reader actually has.
+    try:
+        response = client.chat.completions.create(
+            model=deployment, max_completion_tokens=64, messages=messages,
+        )
+    except Exception as exc:  # noqa: BLE001
+        if "max_completion_tokens" not in str(exc):
+            raise
+        response = client.chat.completions.create(
+            model=deployment, max_tokens=64, messages=messages,
+        )
     text = response.choices[0].message.content or ""
     print(f"Model said: {text}")
     return text

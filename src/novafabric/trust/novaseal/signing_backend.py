@@ -326,12 +326,30 @@ class AzureKvSigningBackend:
                 "Install with: pip install novafabric[seal-azure]"
             ) from exc
 
+        from cryptography.hazmat.primitives.asymmetric.utils import (
+            encode_dss_signature,
+        )
+
         credential = DefaultAzureCredential()
         key_client = KeyClient(vault_url=self._vault_url, credential=credential)
         key = key_client.get_key(self._key_name)
         crypto_client = CryptographyClient(key, credential=credential)
         result = crypto_client.sign(SignatureAlgorithm.es256, digest)
-        return bytes(result.signature)
+        signature = bytes(result.signature)
+
+        # Key Vault returns ECDSA signatures as raw r||s (IEEE P1363), NOT DER —
+        # unlike AWS KMS, GCP KMS and the local PEM backend, which all return DER.
+        # ``cryptography``'s ``verify()`` (used by envelope.verify_envelope) only
+        # accepts DER, so passing the raw form through produced envelopes that
+        # signed without error and then failed verification with "signature
+        # mismatch". Verified against a live vault 2026-08-27: es256 returns
+        # exactly 64 bytes with no 0x30 SEQUENCE tag.
+        half = len(signature) // 2
+        if len(signature) == 2 * half and signature[:1] != b"\x30":
+            r = int.from_bytes(signature[:half], "big")
+            s_val = int.from_bytes(signature[half:], "big")
+            return encode_dss_signature(r, s_val)
+        return signature
 
     def get_cert_der(self) -> bytes:
         """Return DER bytes of the local X.509 certificate."""

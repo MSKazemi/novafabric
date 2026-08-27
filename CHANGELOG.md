@@ -106,7 +106,73 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   returning an empty surface. Nine hand-rolled copies of these walks (five for the
   CLI, four for routes) are replaced by two tested modules.
 
+### Fixed
+
+- **Captured model calls never recorded which backend was called.** The openai-SDK
+  hook patches `Completions.create`, so unlike the HTTP-transport hooks it never
+  sees a request URL — it called `extract_request_attributes()` without `url=`, and
+  every record carried `endpoint: ""`. That erased the only field distinguishing an
+  Azure OpenAI deployment from `api.openai.com`, which is exactly the claim
+  `examples/azure-openai` exists to demonstrate. The hook now reads the client's
+  `base_url`, defensively: a client object of unexpected shape yields `""` rather
+  than breaking capture. Verified against a live Azure deployment — capsules now
+  record `https://<resource>.openai.azure.com/openai/`.
+
+- **`examples/azure-openai` could not run against any current model.** It sent
+  `max_tokens`, which reasoning-era deployments (`gpt-5*`, `o*`) reject outright
+  with `Unsupported parameter: 'max_tokens' ... Use 'max_completion_tokens'`. The
+  example now sends `max_completion_tokens` and falls back to `max_tokens`, so it
+  works against both old and new deployments. Its test only ever exercised the
+  no-credentials skip path ("live capture is not exercised in CI"), so the example
+  had never actually run.
+
+- **`nova migrate-to-postgres` silently discarded every row while reporting
+  "PASS — row counts verified".** Two independent defects in the documented
+  SQLite→Postgres migration path, both found by running the command against a real
+  Postgres rather than a mock:
+
+  1. **Nothing was ever committed.** psycopg3 opens an implicit transaction on the
+     first bare `execute()` — the per-table `SELECT * FROM …` read — after which
+     every `with pg_conn.transaction()` block nests as a SAVEPOINT rather than a
+     transaction. Releasing a savepoint does not commit the enclosing transaction,
+     so the inserts lived only in the CLI's own connection: the verification count
+     ran on that same connection, saw the rows, and printed PASS, while a second
+     connection saw none and `close()` rolled the whole migration back. Only the
+     schema survived, because `_ensure_pg_schema()` runs first and its block *is*
+     the outermost one — which is why the tables existed and were empty. The
+     migration now commits explicitly.
+  2. **The `ON CONFLICT` target could not match the table it was inserting into.**
+     The target for `runs` was hardcoded to `(run_id, tenant_id, started_at)` to
+     match a server-mode schema range-partitioned on `started_at`, but the CLI's own
+     bootstrap DDL creates `PRIMARY KEY (run_id, tenant_id)`. Postgres requires an
+     exact arbiter-index match and fails at INSERT time, so the migration aborted
+     with `InvalidColumnReference` against any database the CLI had created itself.
+     The target is now read from the live schema, which is correct against both
+     shapes.
+
+  The scale test that catches this (`test_postgres_migration_100k_rows`) lives in
+  the nightly infra-gated tier, so neither defect was visible to `make test-par` or
+  to PR CI. Its row-count assertion now includes the CLI's own output, so the next
+  failure of this kind reports "the CLI thought it succeeded" instead of "0 rows".
+
 ### Security
+
+- **Azure Key Vault seals were silently unverifiable — every capsule signed with
+  `AzureKvSigningBackend` failed its own verification.** Key Vault returns ECDSA
+  signatures as raw `r||s` (IEEE P1363); AWS KMS, GCP Cloud KMS and the local PEM
+  backend all return DER, and `verify_envelope()` (via `cryptography`) accepts only
+  DER. The raw 64 bytes were passed through unchanged, so `create_envelope()`
+  succeeded without error and verification then failed with `signature mismatch`.
+  `sign_digest()` now converts P1363 to DER, passing an already-DER signature
+  through untouched.
+
+  Found by running the code against a live Key Vault rather than a mock: every
+  existing test for this backend asserted an `ImportError` or a factory return
+  type, so none ever executed `sign_digest()`. Confirmed end-to-end — sign then
+  verify against a real vault fails before the change and succeeds after — and
+  locked in by two regression tests that need no Azure account. The Key Vault
+  *wrapping* backend (`AzureKvWrappingBackend`, the other half of ADR-0185) was
+  verified correct against the same vault and is unchanged.
 
 - **Two HIGH advisories patched in the published npm packages.** `nanoid` 3.3.16 →
   3.3.18 ([GHSA-2v37-7h3g-55p8](https://github.com/advisories/GHSA-2v37-7h3g-55p8),

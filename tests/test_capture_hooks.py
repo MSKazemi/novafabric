@@ -67,6 +67,45 @@ def test_openai_hook_records_chat(tmp_path: Path) -> None:
     assert r["gen_ai.usage.output_tokens"] == 5
 
 
+def test_openai_hook_records_azure_endpoint(tmp_path: Path) -> None:
+    """The SDK hook must record which backend was called.
+
+    Regression for a gap found 2026-08-27 against a live Azure OpenAI
+    deployment: unlike the HTTP-transport hooks, this hook never sees a request
+    URL, so `extract_request_attributes()` was called without `url=` and every
+    record carried `endpoint: ""`. That erases the only field distinguishing an
+    Azure deployment from api.openai.com — exactly the claim that
+    `examples/azure-openai` exists to demonstrate.
+    """
+    from novafabric.capture.hooks._openai import OpenAIHook
+
+    writer = make_writer(tmp_path)
+    hook = OpenAIHook(writer=writer, parent_span_id="0" * 16)
+
+    fake_response = MagicMock(
+        model="gpt-5-nano", id="chatcmpl-y",
+        choices=[], usage=MagicMock(prompt_tokens=1, completion_tokens=1),
+    )
+    azure = "https://my-resource.openai.azure.com/openai/"
+    hook._intercept(
+        MagicMock(return_value=fake_response), azure,
+        model="gpt-5-nano", messages=[],
+    )
+
+    assert _model_calls(tmp_path)[0]["endpoint"] == azure
+
+
+def test_openai_hook_endpoint_survives_odd_client(tmp_path: Path) -> None:
+    """A client object of unexpected shape must not break capture."""
+    from novafabric.capture.hooks._openai import _base_url
+
+    class _NoClient:
+        pass
+
+    assert _base_url(_NoClient()) == ""
+    assert _base_url(None) == ""
+
+
 def test_openai_hook_extracts_request_semconv_fields(tmp_path: Path) -> None:
     """C-4 phase 2: per-SDK hook must populate the request-side semconv
     fields (temperature, max_tokens, top_p, seed, etc.) — not just

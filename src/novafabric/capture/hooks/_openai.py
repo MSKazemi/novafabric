@@ -20,6 +20,22 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+def _base_url(resource: Any) -> str:
+    """Best-effort base URL of the client behind an openai SDK resource.
+
+    The SDK hook patches ``Completions.create``, so unlike the HTTP-transport
+    hooks it never sees a request URL and left ``endpoint`` empty on every
+    record. That erases the only field distinguishing an Azure deployment from
+    api.openai.com — precisely the claim ``examples/azure-openai`` exists to
+    demonstrate. Never raises: capture must not fail because a client object
+    has an unexpected shape.
+    """
+    try:
+        return str(getattr(resource._client, "base_url", "") or "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 class OpenAIHook:
     def __init__(self, writer: "CapsuleWriter", parent_span_id: str) -> None:
         self._writer = writer
@@ -35,7 +51,9 @@ class OpenAIHook:
             @functools.wraps(self._original)
             def patched(inner_self: Any, *args: Any, **kwargs: Any) -> Any:
                 original_bound = hook_self._original.__get__(inner_self, type(inner_self))
-                return hook_self._intercept(original_bound, **kwargs)
+                return hook_self._intercept(
+                    original_bound, _base_url(inner_self), **kwargs
+                )
 
             _mod.Completions.create = patched  # type: ignore[method-assign, assignment]
         except (ImportError, AttributeError):
@@ -52,17 +70,18 @@ class OpenAIHook:
         finally:
             self._original = None
 
-    def _intercept(self, original_bound: Any, **kwargs: Any) -> Any:
+    def _intercept(self, original_bound: Any, endpoint: str = "", **kwargs: Any) -> Any:
         started = _now()
         t0 = time.monotonic()
         try:
             response = original_bound(**kwargs)
             duration_ms = int((time.monotonic() - t0) * 1000)
-            self._record(started, _now(), duration_ms, kwargs, response, "success")
+            self._record(started, _now(), duration_ms, kwargs, response, "success",
+                         endpoint)
             return response
         except Exception as exc:
             self._record_error(started, _now(), int((time.monotonic() - t0) * 1000),
-                               kwargs, exc)
+                               kwargs, exc, endpoint)
             raise
 
     def _record(
@@ -73,6 +92,7 @@ class OpenAIHook:
         kwargs: dict[str, Any],
         response: Any,
         status: str,
+        endpoint: str = "",
     ) -> None:
         choices: list[dict[str, Any]] = []
         finish_reasons: list[str] = []
@@ -98,7 +118,9 @@ class OpenAIHook:
             status=status,
         )
         # Request-side semconv fields (temperature, max_tokens, top_p, seed, ...).
-        record.update(extract_request_attributes(kwargs, gen_ai_system="openai"))
+        record.update(
+            extract_request_attributes(kwargs, url=endpoint, gen_ai_system="openai")
+        )
         # Response-side fields the SDK lets us populate richly.
         record["gen_ai.response.model"] = getattr(response, "model", record["gen_ai.request.model"])
         record["gen_ai.response.choices"] = choices
@@ -127,6 +149,7 @@ class OpenAIHook:
         duration_ms: int,
         kwargs: dict[str, Any],
         exc: Exception,
+        endpoint: str = "",
     ) -> None:
         record = build_record_envelope(
             model_call_id=new_ulid(),
@@ -136,7 +159,9 @@ class OpenAIHook:
             duration_ms=duration_ms,
             status="error",
         )
-        record.update(extract_request_attributes(kwargs, gen_ai_system="openai"))
+        record.update(
+            extract_request_attributes(kwargs, url=endpoint, gen_ai_system="openai")
+        )
         record["error"] = {
             "type": type(exc).__name__, "message": str(exc), "traceback_ref": None,
         }
