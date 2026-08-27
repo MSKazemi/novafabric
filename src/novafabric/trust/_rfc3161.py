@@ -205,77 +205,87 @@ def _build_timestamp_request(digest: bytes) -> tuple[bytes, int]:
 # ---------------------------------------------------------------------------
 
 
+# id-ct-TSTInfo (RFC 3161 §2.4.2): 1.2.840.113549.1.9.16.1.4, as a DER OID TLV.
+_TSTINFO_OID_TLV = bytes(
+    [0x06, 0x0B, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x10, 0x01, 0x04]
+)
+
+
+def _read_tlv(buf: bytes, pos: int) -> tuple[int, bytes, int]:
+    """Read one DER TLV at ``pos``; return ``(tag, value, next_pos)``."""
+    tag = buf[pos]
+    pos += 1
+    first = buf[pos]
+    pos += 1
+    if first & 0x80 == 0:
+        length = first
+    else:
+        n_bytes = first & 0x7F
+        length = int.from_bytes(buf[pos : pos + n_bytes], "big")
+        pos += n_bytes
+    end = pos + length
+    if end > len(buf):
+        raise ValueError("DER length runs past the end of the buffer")
+    return tag, buf[pos:end], end
+
+
 def _extract_nonce_from_tsr(der: bytes) -> int | None:
-    """Extract the nonce INTEGER from a DER-encoded TimeStampResp.
+    """Extract the nonce INTEGER from the TSTInfo of a DER TimeStampResp.
 
-    The nonce is embedded inside TSTInfo (the encapsulated content of the
-    TimeStampToken CMS SignedData).  Rather than fully parsing the CMS
-    structure, we perform a best-effort scan: we look for all INTEGER TLVs
-    that appear as direct or indirect children of the outermost SEQUENCE and
-    return the *first* non-trivial one (> 1 byte content) that is 4–9 bytes in
-    length (consistent with a 32-to-64-bit nonce with optional leading 0x00 for
-    sign disambiguation).
+    The nonce is a *positional* field of TSTInfo (RFC 3161 §2.4.2)::
 
-    If no matching INTEGER is found, returns None (nonce absent from TSR —
-    treated as a degrade, not a failure).
+        TSTInfo ::= SEQUENCE {
+            version         INTEGER,
+            policy          TSAPolicyId,
+            messageImprint  MessageImprint,
+            serialNumber    INTEGER,
+            genTime         GeneralizedTime,
+            accuracy        Accuracy   OPTIONAL,
+            ordering        BOOLEAN    DEFAULT FALSE,
+            nonce           INTEGER    OPTIONAL,
+            ... }
 
-    This is intentionally a heuristic: a fully-standards-compliant nonce
-    extraction would require parsing the complete CMS SignedData → TSTInfo
-    chain, which is deferred to v0.2 when a proper ASN.1 library is added.
-    RFC 3161 §2.4.2 specifies the nonce location precisely; this implementation
-    is a structural approximation sufficient for replay protection against
-    practical replay attacks.
+    so it is the first INTEGER that follows ``genTime``. This used to be a
+    best-effort scan that returned the first 4-to-9-byte INTEGER anywhere in the
+    response — which is ``serialNumber``, three fields earlier. Against a real
+    TSA the comparison therefore failed on *every* request, always reporting the
+    TSA's serial number as the returned nonce and raising "possible replay or
+    MITM attack" (observed against freetsa.org: sent 12473090696047252391, read
+    14044904342208178637 — the same constant for every distinct nonce sent).
+    Timestamping is best-effort, so the error was swallowed and every capsule
+    silently shipped with no RFC 3161 token at all.
+
+    Returns ``None`` when the TSR carries no nonce (permitted: the field is
+    OPTIONAL) or cannot be parsed — an absent nonce degrades, it does not fail.
     """
-    def scan(buf: bytes) -> int | None:
-        pos = 0
-        while pos < len(buf):
-            try:
-                tag = buf[pos]
-                pos += 1
-                first = buf[pos]
-                pos += 1
-                if first & 0x80 == 0:
-                    length = first
-                else:
-                    n_bytes = first & 0x7F
-                    if pos + n_bytes > len(buf):
-                        return None
-                    length = int.from_bytes(buf[pos:pos + n_bytes], "big")
-                    pos += n_bytes
-            except (IndexError, ValueError):
-                return None
-
-            value = buf[pos:pos + length]
-            pos += length
-
-            if tag == 0x02 and 4 <= length <= 9:
-                # Candidate nonce integer: positive, 4–9 bytes (32-to-64-bit)
-                # Strip optional leading 0x00 (sign byte) before interpreting
-                raw = value.lstrip(b"\x00") or b"\x00"
-                return int.from_bytes(raw, "big")
-            elif tag in (0x30, 0x31, 0xa0, 0xa1):
-                # Recurse into SEQUENCE, SET, and IMPLICIT/EXPLICIT tags
-                result = scan(value)
-                if result is not None:
-                    return result
-        return None
-
     try:
-        # Skip the outermost SEQUENCE tag+length to enter TimeStampResp body
-        pos = 0
-        tag = der[pos]
-        pos += 1
-        if tag != 0x30:
+        oid_at = der.find(_TSTINFO_OID_TLV)
+        if oid_at < 0:
             return None
-        first = der[pos]
-        pos += 1
-        if first & 0x80 == 0:
-            body_start = pos
+
+        # eContent follows the eContentType OID as [0] EXPLICIT OCTET STRING.
+        tag, value, _ = _read_tlv(der, oid_at + len(_TSTINFO_OID_TLV))
+        if tag == 0xA0:
+            inner_tag, inner_value, _ = _read_tlv(value, 0)
+            tstinfo_der = inner_value if inner_tag == 0x04 else value
+        elif tag == 0x04:
+            tstinfo_der = value
         else:
-            n_bytes = first & 0x7F
-            pos += n_bytes
-            body_start = pos
-        return scan(der[body_start:])
+            return None
+
+        tag, tstinfo, _ = _read_tlv(tstinfo_der, 0)
+        if tag != 0x30:  # TSTInfo must be a SEQUENCE
+            return None
+
+        pos = 0
+        seen_gentime = False
+        while pos < len(tstinfo):
+            tag, value, pos = _read_tlv(tstinfo, pos)
+            if tag == 0x18:  # GeneralizedTime — genTime
+                seen_gentime = True
+            elif tag == 0x02 and seen_gentime:
+                return int.from_bytes(value, "big", signed=True)
+        return None
     except (IndexError, ValueError):
         return None
 

@@ -108,6 +108,27 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **RFC 3161 timestamping failed against every real TSA, and blamed the TSA.**
+  `_extract_nonce_from_tsr()` returned the first nonce-sized INTEGER anywhere in
+  the response; in a genuine `TimeStampResp` that is `serialNumber`, three
+  positional fields ahead of `nonce` in TSTInfo (RFC 3161 §2.4.2). Every request
+  therefore "mismatched" — always with the same constant — and raised
+  `possible replay or MITM attack`. Timestamping is best-effort, so the error was
+  swallowed and every capsule silently shipped with no timestamp token at all.
+  The extractor now locates the TSTInfo eContent by its OID and reads the nonce
+  positionally. Verified live against freetsa.org: the nonce round-trips, the
+  TSR verifies against its payload, and verification fails for a different
+  payload. `tests/fixtures/rfc3161/freetsa-response.tsr` captures a real
+  response as a regression fixture — the hand-built TSRs in the suite passed
+  throughout, because no synthetic fixture reproduced TSTInfo's field order.
+
+- **`nova verify` could not check an Evidence Bundle.** The bundle manifest
+  records a `sha256` for every packaged artifact — the property that makes the
+  bundle tamper-evident — but nothing recomputed them, so the guarantee shipped
+  as prose in the bundle README and had to be checked by hand. `nova verify
+  <bundle.zip>` now recomputes every artifact digest and reports modified,
+  missing, and unlisted files by name, exiting non-zero on any divergence.
+
 - **Re-importing `novafabric.kg.store` silently disabled all four KG Prometheus
   metrics.** A collector name may only be registered once per process, so a
   second import — after a module reload, after `del sys.modules[...]`, or via a

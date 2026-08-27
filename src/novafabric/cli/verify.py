@@ -122,10 +122,24 @@ def verify_cmd(
 
       # Verify a Sigstore bundle
       nova verify --backend sigstore --capsule-id <capsule-id> path/to/my-capsule/
+
+      # Verify an Evidence Bundle ZIP (recomputes every artifact digest)
+      nova verify path/to/evidence-bundle.zip
     """
     # Handle --check-redaction standalone check
     if check_redaction is not None:
         _verify_redaction_seal(check_redaction)
+        return
+
+    # Evidence Bundle ZIP: the bundle manifest carries a sha256 for every
+    # artifact, which is what makes the bundle tamper-evident — but nothing
+    # recomputed them, so the guarantee shipped as written instructions in the
+    # bundle README and every check had to be done by hand.
+    if capsule_dir.suffix == ".zip":
+        if not capsule_dir.is_file():
+            console.print(f"[red]Error:[/red] bundle not found: {capsule_dir}")
+            raise typer.Exit(code=1)
+        _verify_evidence_bundle(capsule_dir)
         return
 
     # Batch export manifest (ADR-0141): a JSON file, not a capsule directory.
@@ -382,6 +396,89 @@ def _verify_sigstore(
 
     if not result.valid:
         raise typer.Exit(code=1)
+
+
+def _verify_evidence_bundle(bundle_path: Path) -> None:
+    """Recompute every artifact digest recorded in an Evidence Bundle manifest.
+
+    ``manifest.json`` lists each packaged file with its ``sha256``, and the
+    manifest itself carries a ``manifest_hash`` over the artifact list. Checking
+    both is what turns "we wrote the hashes down" into a verification: a single
+    edited byte anywhere in the bundle changes one digest and is reported by
+    name. Exits 1 on any mismatch.
+    """
+    import hashlib
+    import json
+    import zipfile
+
+    try:
+        zf = zipfile.ZipFile(bundle_path)
+    except zipfile.BadZipFile as exc:
+        console.print(f"[red]Error:[/red] not a readable ZIP: {bundle_path} ({exc})")
+        raise typer.Exit(code=1) from exc
+
+    with zf:
+        names = set(zf.namelist())
+        if "manifest.json" not in names:
+            console.print(
+                f"[red]Error:[/red] {bundle_path} has no manifest.json — "
+                "this is not a NovaFabric Evidence Bundle."
+            )
+            raise typer.Exit(code=1)
+        try:
+            manifest = json.loads(zf.read("manifest.json"))
+        except ValueError as exc:
+            console.print(f"[red]Error:[/red] manifest.json is not valid JSON: {exc}")
+            raise typer.Exit(code=1) from exc
+
+        artifacts = manifest.get("artifacts") or []
+        console.print(f"\nEvidence Bundle verification: {bundle_path.name}")
+        console.print(f"  bundle_id: {manifest.get('bundle_id', '(none)')}")
+        console.print(f"  artifacts: {len(artifacts)}")
+
+        mismatched: list[str] = []
+        missing: list[str] = []
+        for art in artifacts:
+            rel = art.get("path", "")
+            want = art.get("sha256", "")
+            if rel not in names:
+                missing.append(rel)
+                continue
+            got = "sha256:" + hashlib.sha256(zf.read(rel)).hexdigest()
+            if got != want:
+                mismatched.append(rel)
+
+        # Files present in the ZIP that the manifest never accounted for: an
+        # addition is a modification too, so it must not pass silently.
+        unlisted = sorted(
+            names - {a.get("path", "") for a in artifacts} - {"manifest.json"}
+        )
+
+    _print_check(f"Artifact digests ({len(artifacts)} recomputed)", not mismatched)
+    for rel in mismatched:
+        console.print(f"    [red]✗ modified:[/red] {rel}")
+    if missing:
+        _print_check(f"All listed artifacts present ({len(missing)} missing)", False)
+        for rel in missing:
+            console.print(f"    [red]✗ missing:[/red] {rel}")
+    else:
+        _print_check("All listed artifacts present", True)
+    if unlisted:
+        _print_check(f"No unlisted files ({len(unlisted)} extra)", False)
+        for rel in unlisted:
+            console.print(f"    [red]✗ not in manifest:[/red] {rel}")
+    else:
+        _print_check("No unlisted files", True)
+
+    ok = not mismatched and not missing and not unlisted
+    console.print(
+        f"\nartifacts_ok={not mismatched}, complete={not missing}, "
+        f"no_extras={not unlisted}"
+    )
+    if not ok:
+        console.print("[red]Evidence Bundle verification FAILED[/red]")
+        raise typer.Exit(code=1)
+    console.print("[green]Evidence Bundle verification PASSED[/green]")
 
 
 def _verify_redaction_seal(seal_path: Path) -> None:

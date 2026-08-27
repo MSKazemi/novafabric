@@ -13,6 +13,7 @@ All tests use mocked TSA responses to avoid network calls.
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -63,22 +64,32 @@ class TestExtractNonceFromTsr:
         # We only assert it does not raise
         assert result is None or isinstance(result, int)
 
-    def test_finds_nonce_in_nested_sequence(self):
-        """A nonce-sized INTEGER nested in a SEQUENCE is found."""
-        nonce_int = 0xDEADBEEFCAFEBABE  # 8 bytes
-        nonce_bytes = _der_integer(nonce_int)
-        inner_seq = _der_sequence(nonce_bytes)
-        tsr = _make_granted_tsr(inner_seq)
-        result = _extract_nonce_from_tsr(tsr)
-        assert result == nonce_int
+    def test_finds_the_nonce_in_a_real_tstinfo_shape(self):
+        nonce_int = 0xDEADBEEFCAFEBABE
+        tsr = _build_tsr_with_nonce(nonce_int)
+        assert _extract_nonce_from_tsr(tsr) == nonce_int
 
-    def test_finds_4_byte_nonce(self):
-        """A 4-byte nonce (32-bit) is within the 4-9 byte length window."""
-        nonce_int = 0xABCD_1234  # fits in 4 bytes
-        nonce_bytes = _der_integer(nonce_int)
-        tsr = _make_granted_tsr(_der_sequence(nonce_bytes))
-        result = _extract_nonce_from_tsr(tsr)
-        assert result == nonce_int
+    def test_finds_a_4_byte_nonce(self):
+        nonce_int = 0xABCD_1234
+        tsr = _build_tsr_with_nonce(nonce_int)
+        assert _extract_nonce_from_tsr(tsr) == nonce_int
+
+    def test_does_not_return_the_serial_number(self):
+        """The regression: serialNumber sits three fields ahead of the nonce.
+
+        Returning it made every comparison against a real TSA fail, always with
+        the same constant, always reported as "possible replay or MITM attack".
+        """
+        serial = 0x11223344
+        nonce_int = 0x99887766_55443322
+        tsr = _build_tsr_with_nonce(nonce_int, )
+        assert _extract_nonce_from_tsr(tsr) != serial
+        assert _extract_nonce_from_tsr(tsr) == nonce_int
+
+    def test_absent_nonce_degrades_to_none_rather_than_failing(self):
+        """The nonce field is OPTIONAL; some TSAs omit it entirely."""
+        tsr = _build_tsr_with_nonce(None)
+        assert _extract_nonce_from_tsr(tsr) is None
 
 
 # ---------------------------------------------------------------------------
@@ -119,11 +130,45 @@ class TestBuildTimestampRequest:
 # ---------------------------------------------------------------------------
 
 
-def _build_tsr_with_nonce(nonce_int: int) -> bytes:
-    """Build a minimal but valid TSR DER containing a specific nonce."""
-    nonce_bytes = _der_integer(nonce_int)
-    nonce_seq = _der_sequence(nonce_bytes)  # nest as SEQUENCE to be reachable
-    return _make_granted_tsr(nonce_seq)
+# id-ct-TSTInfo OID TLV — 1.2.840.113549.1.9.16.1.4
+_TSTINFO_OID = bytes(
+    [0x06, 0x0B, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x10, 0x01, 0x04]
+)
+
+
+def _der_gentime(value: bytes = b"20260827173122Z") -> bytes:
+    return bytes([0x18, len(value)]) + value
+
+
+def _der_explicit0(data: bytes) -> bytes:
+    return bytes([0xA0, len(data)]) + data
+
+
+def _build_tstinfo(nonce_int: int | None, serial: int = 0xABCD1234) -> bytes:
+    """Build a TSTInfo SEQUENCE with RFC 3161 §2.4.2 field *order*.
+
+    The order is what matters: ``serialNumber`` is an INTEGER three fields
+    ahead of ``nonce``, so a parser that simply hunts for a nonce-sized INTEGER
+    returns the serial number instead. The old fake TSR wrapped a bare INTEGER
+    in a SEQUENCE, which no real TSA emits — so these tests passed against an
+    extractor that never once read a real nonce correctly.
+    """
+    fields = [
+        _der_integer(1),  # version
+        b"\x06\x04\x2a\x03\x04\x05",  # policy OID (arbitrary)
+        _der_sequence(_der_octet(b"\x00" * 32)),  # messageImprint
+        _der_integer(serial),  # serialNumber — the decoy
+        _der_gentime(),  # genTime
+    ]
+    if nonce_int is not None:
+        fields.append(_der_integer(nonce_int))  # nonce, after genTime
+    return _der_sequence(b"".join(fields))
+
+
+def _build_tsr_with_nonce(nonce_int: int | None) -> bytes:
+    """Build a TSR whose TSTInfo carries ``nonce_int`` in the correct position."""
+    econtent = _der_explicit0(_der_octet(_build_tstinfo(nonce_int)))
+    return _make_granted_tsr(_TSTINFO_OID + econtent)
 
 
 class TestNonceReplayProtection:
@@ -280,3 +325,47 @@ class TestTsrSha256InManifest:
         assert "timestamp_failure_reason" in manifest
         # No tsr_sha256 when TSA failed
         assert "manifest_dsse_tsr_sha256" not in manifest
+
+
+# ---------------------------------------------------------------------------
+# Regression: a real TSA response, captured once, checked forever
+# ---------------------------------------------------------------------------
+
+
+class TestAgainstARealTsaResponse:
+    """Synthetic TSRs did not catch this; a captured real one does.
+
+    ``tests/fixtures/rfc3161/freetsa-response.tsr`` is a DER TimeStampResp from
+    freetsa.org. The request that produced it sent nonce 12473090696047252391.
+    The old extractor returned 14044904342208178637 for it — freetsa's
+    serialNumber — and returned that same constant for every nonce ever sent.
+    """
+
+    FIXTURE = (
+        Path(__file__).resolve().parents[1]
+        / "fixtures"
+        / "rfc3161"
+        / "freetsa-response.tsr"
+    )
+    SENT_NONCE = 12473090696047252391
+
+    def test_extracts_the_nonce_that_was_actually_sent(self) -> None:
+        tsr = self.FIXTURE.read_bytes()
+        assert _extract_nonce_from_tsr(tsr) == self.SENT_NONCE
+
+    def test_does_not_return_the_tsa_serial_number(self) -> None:
+        tsr = self.FIXTURE.read_bytes()
+        assert _extract_nonce_from_tsr(tsr) != 14044904342208178637
+
+    def test_a_real_response_passes_the_replay_check(self) -> None:
+        """End to end: the nonce comparison must not reject a legitimate TSR."""
+        tsr = self.FIXTURE.read_bytes()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = tsr
+
+        with patch(
+            "novafabric.trust._rfc3161._build_timestamp_request",
+            return_value=(b"\x30\x03\x02\x01\x01", self.SENT_NONCE),
+        ), patch("novafabric.trust._rfc3161.httpx.post", return_value=mock_response):
+            assert add_rfc3161_timestamp(b"payload", "https://tsa.example/tsr") == tsr
