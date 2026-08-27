@@ -114,7 +114,12 @@ def test_replay_without_checkpoint():
     n_before=st.integers(min_value=1, max_value=30),
     n_after=st.integers(min_value=0, max_value=20),
 )
-@settings(max_examples=100)
+# ``deadline=None``: this property asserts byte-equivalence, not latency, and
+# runs under ``-n auto`` where a worker can be descheduled mid-example. Hypothesis
+# flagged exactly that — 382 ms on the first call, 17 ms on the retry — and
+# reported it as FlakyFailure, i.e. a red gate caused by machine load rather than
+# by the invariant. Performance is gated by tests/bench, not here.
+@settings(max_examples=100, deadline=None)
 def test_hypothesis_byte_equivalent_replay(n_before: int, n_after: int) -> None:
     """FR-03: ∀ (n_before, n_after): checkpoint @ n_before + delta replay == full replay."""
     adapter = InMemoryWormAdapter()

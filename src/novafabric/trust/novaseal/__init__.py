@@ -31,6 +31,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from novafabric.trust.novaseal.envelope import (
     EnvelopeError,
@@ -47,6 +48,9 @@ from novafabric.trust.novaseal.timestamp import (
     verify_timestamp,
 )
 from novafabric.trust.novaseal.trust_chain import CertChainResult, verify_tsa_cert_chain
+
+if TYPE_CHECKING:  # pragma: no cover — typing only
+    from novafabric.trust.novaseal.signing_backend import SigningBackend
 
 log = logging.getLogger(__name__)
 
@@ -85,6 +89,12 @@ class VerificationResult:
     signing_intent: SigningIntent | None = None
     ca_chain_ok: bool = False
     ca_chain_errors: list[str] = field(default_factory=list)  # noqa: RUF009
+    # Whether an RFC 3161 token was actually present and verified. ``timestamp_ok``
+    # is deliberately True when timestamping was skipped (the TSA is best-effort),
+    # so it alone cannot tell "timestamped" from "never timestamped" — and
+    # reporting a bare "Timestamp: OK" for a capsule that carries no token
+    # overstates the evidence.
+    timestamp_present: bool = False
 
     def __str__(self) -> str:
         parts = [
@@ -131,6 +141,11 @@ class NovaSeal:
                    When it has more than one entry, each is tried in order
                    until one succeeds. Omit (or pass a single-entry list) for
                    the original single-TSA behavior.
+        backend:   Optional ``SigningBackend``. Required for the cloud profiles
+                   (``aws_kms``, ``azure_kv``, ``gcp_kms``), which have no local
+                   private key to load. Build one with
+                   ``novafabric.trust.novaseal.config.build_signing_backend()``.
+                   Omit for the local profile.
     """
 
     def __init__(
@@ -139,9 +154,18 @@ class NovaSeal:
         tsa_url: str,
         db_path: str,
         tsa_urls: list[str] | None = None,
+        backend: "SigningBackend | None" = None,
     ) -> None:
         self._config = config
-        self._key_path = Path(config.key_path)
+        self._backend = backend
+        # A cloud profile (aws_kms / azure_kv / gcp_kms) has no local private key.
+        # ``config.key_path`` is stringified by callers, so an absent path arrives
+        # as the literal "None"; treat that as unset rather than as a filename.
+        self._key_path = (
+            Path(config.key_path)
+            if config.key_path and config.key_path != "None"
+            else Path()
+        )
         self._cert_path = Path(config.cert_path)
         self._tsa_url = tsa_url
         self._tsa_urls = tsa_urls
@@ -174,7 +198,11 @@ class NovaSeal:
         # 1. Create DSSE envelope
         try:
             dsse_bytes = create_envelope(
-                payload, self._key_path, self._cert_path, intent=intent
+                payload,
+                self._key_path,
+                self._cert_path,
+                intent=intent,
+                backend=self._backend,
             )
         except EnvelopeError as exc:
             raise SealError(f"DSSE signing failed: {exc}") from exc
@@ -240,6 +268,7 @@ class NovaSeal:
 
         # --- Timestamp ---
         timestamp_ok = False
+        timestamp_present = False
         tsr_file = seal_path / "manifest.dsse.tsr"
         if not tsr_file.exists():
             # TSA may have been skipped — treat as ok if TSR file absent
@@ -250,6 +279,7 @@ class NovaSeal:
                 # Empty TSR = TSA was explicitly skipped
                 timestamp_ok = True
             elif dsse_bytes:
+                timestamp_present = True
                 timestamp_ok = verify_timestamp(tsr_bytes, dsse_bytes)
                 if not timestamp_ok:
                     errors.append("TSR verification failed: hash mismatch or invalid DER")
@@ -284,6 +314,7 @@ class NovaSeal:
             valid=valid,
             signature_ok=signature_ok,
             timestamp_ok=timestamp_ok,
+            timestamp_present=timestamp_present,
             log_integrity_ok=log_integrity_ok,
             errors=errors,
             signing_intent=signing_intent,

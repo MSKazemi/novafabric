@@ -209,7 +209,15 @@ def verify_cmd(
     _print_check("Signature (DSSE ECDSA P-256)", result.signature_ok)
     if result.signing_intent is not None:
         console.print(f"    Intent: {result.signing_intent.value}")
-    _print_check("Timestamp (RFC 3161)", result.timestamp_ok)
+    if result.timestamp_ok and not result.timestamp_present:
+        # Timestamping is best-effort, so a missing token still verifies — but
+        # printing "OK" would claim evidence this capsule does not carry.
+        console.print(
+            "  [yellow]⊘[/yellow] Timestamp (RFC 3161): "
+            "[yellow]NOT PRESENT[/yellow] (TSA skipped or unavailable)"
+        )
+    else:
+        _print_check("Timestamp (RFC 3161)", result.timestamp_ok)
     _print_check("Merkle log inclusion", result.log_integrity_ok)
 
     if result.errors:

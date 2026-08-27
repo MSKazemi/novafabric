@@ -781,7 +781,9 @@ class TestCostReportEndpointDuckDB:
 
         assert resp.status_code == 200
         data = resp.json()
-        assert data["backend"] == "duckdb"
+        # An empty on-disk accumulator now hands off to the capsules, and the
+        # label names whichever source actually answered.
+        assert data["backend"] in {"duckdb", "capsules"}
         assert data["ok"] is True
         assert isinstance(data["by_model"], list)
         assert data["totals"]["cost_usd"] == 0.0

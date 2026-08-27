@@ -145,3 +145,99 @@ class TestVerifyCommand:
         )
         assert result.exit_code == 1
         assert "FAIL" in result.output
+
+
+def _local_config(base):
+    """Rebuild the fixture's local KeyConfig from the paths it wrote."""
+    return KeyConfig(
+        profile="local",
+        key_path=str(base / "seal.key"),
+        cert_path=str(base / "seal.crt"),
+    )
+
+
+class TestTimestampPresenceIsReportedHonestly:
+    """``nova verify`` must not print "Timestamp: OK" for a capsule with no token.
+
+    Timestamping is best-effort: an absent or empty ``manifest.dsse.tsr`` still
+    verifies, so ``timestamp_ok`` is True in that case.  On its own it therefore
+    cannot distinguish "timestamped and verified" from "never timestamped" — and
+    the CLI printed a green ✓ either way, claiming evidence the capsule does not
+    carry.  ``timestamp_present`` is what separates the two.
+    """
+
+    def test_result_marks_an_empty_tsr_as_not_present(self, sealed_capsule):
+        capsule_dir, config_path = sealed_capsule
+        tsr = capsule_dir / ".seal" / "manifest.dsse.tsr"
+        assert tsr.read_bytes() == b"", "fixture expects a TSA-skipped capsule"
+
+        seal = NovaSeal(
+            config=_local_config(config_path.parent),
+            tsa_url="",
+            db_path=str(config_path.parent / "merkle.db"),
+        )
+        result = seal.verify("", str(capsule_dir / ".seal"))
+
+        assert result.timestamp_ok is True  # best-effort: absence is not failure
+        assert result.timestamp_present is False
+
+    def test_result_marks_a_missing_tsr_file_as_not_present(self, sealed_capsule):
+        capsule_dir, config_path = sealed_capsule
+        (capsule_dir / ".seal" / "manifest.dsse.tsr").unlink()
+
+        seal = NovaSeal(
+            config=_local_config(config_path.parent),
+            tsa_url="",
+            db_path=str(config_path.parent / "merkle.db"),
+        )
+        result = seal.verify("", str(capsule_dir / ".seal"))
+
+        assert result.timestamp_ok is True
+        assert result.timestamp_present is False
+
+    def test_cli_prints_not_present_instead_of_ok(self, sealed_capsule):
+        capsule_dir, config_path = sealed_capsule
+        result = runner.invoke(
+            app,
+            ["verify", str(capsule_dir), "--seal-config", str(config_path)],
+        )
+        assert result.exit_code == 0, result.output
+        assert "NOT PRESENT" in result.output
+        # The machine-readable line still reports the best-effort verdict.
+        assert "timestamp_ok=True" in result.output
+
+    def test_a_real_token_is_marked_present_and_checked(
+        self, sealed_capsule, monkeypatch
+    ):
+        """The positive case: a non-empty TSR must be verified *and* flagged.
+
+        Without this, ``timestamp_present`` would be satisfied by a constant
+        ``False`` — the very bug the absent-token tests above cannot catch.
+        """
+        capsule_dir, config_path = sealed_capsule
+        (capsule_dir / ".seal" / "manifest.dsse.tsr").write_bytes(b"\x30\x80fake-der")
+
+        seen: list[bytes] = []
+
+        def _fake_verify_timestamp(tsr_bytes, dsse_bytes):
+            seen.append(tsr_bytes)
+            return True
+
+        monkeypatch.setattr(
+            "novafabric.trust.novaseal.verify_timestamp", _fake_verify_timestamp
+        )
+        seal = NovaSeal(
+            config=_local_config(config_path.parent),
+            tsa_url="",
+            db_path=str(config_path.parent / "merkle.db"),
+        )
+        result = seal.verify("", str(capsule_dir / ".seal"))
+
+        assert seen == [b"\x30\x80fake-der"]
+        assert result.timestamp_present is True
+        assert result.timestamp_ok is True
+
+        cli = runner.invoke(
+            app, ["verify", str(capsule_dir), "--seal-config", str(config_path)]
+        )
+        assert "NOT PRESENT" not in cli.output

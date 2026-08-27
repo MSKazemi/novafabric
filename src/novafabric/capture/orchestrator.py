@@ -749,14 +749,25 @@ def _seal_capsule(capsule_dir: Path, manifest: dict[str, Any]) -> None:
 
         config = KeyConfig(
             profile=profile.profile,
-            key_path=str(profile.key_path),
+            key_path=str(profile.key_path or ""),
             cert_path=str(profile.cert_path),
         )
+        # The cloud profiles have no local private key, so they must sign through
+        # a SigningBackend. Without this the seal fell through to the local PEM
+        # branch of create_envelope() and failed with a misleading
+        # "No such file or directory: 'None'" — which meant aws_kms, azure_kv and
+        # gcp_kms could never actually seal a capsule.
+        backend = None
+        if profile.profile != "local":
+            from novafabric.trust.novaseal.config import build_signing_backend
+
+            backend = build_signing_backend(profile)
         seal = NovaSeal(
             config=config,
             tsa_url=profile.tsa_url,
             tsa_urls=profile.tsa_urls,
             db_path=str(profile.merkle_db),
+            backend=backend,
         )
         bundle = seal.seal(manifest)
 

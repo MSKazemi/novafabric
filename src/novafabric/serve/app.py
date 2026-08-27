@@ -511,6 +511,97 @@ def _list_evidence_bundles(limit: int | None = None) -> tuple[list[dict[str, Any
     return results, total
 
 
+
+def _cost_report_from_capsules(
+    capsule_dir: "Path", days: int, run_id: "str | None" = None
+) -> "dict[str, Any]":
+    """Aggregate per-model token usage straight from capsule ``model-calls.jsonl``.
+
+    The DuckDB accumulator is the *cluster-scale* projection: it is fed by the
+    NATS consumer and the collector app, both of which open it at ``:memory:``.
+    Nothing writes the on-disk file, so in local mode the cost view reported
+    ``$0.0000`` and ``0`` model calls no matter how much was actually spent —
+    while every capsule already carried exact ``gen_ai.usage.*`` counts. Reading
+    the capsules keeps the endpoint's promise that cost data is available with no
+    external infrastructure, and uses the same source ``/api/runs`` reads.
+
+    Returns the ``{model: {...}}`` shape of ``query_cost_report``.
+    """
+    import datetime as _dt
+    import json as _j
+
+    cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)
+    try:
+        from novafabric.cost.interceptor import CostInterceptor
+
+        price_table = CostInterceptor.PRICE_TABLE
+    except Exception:  # noqa: BLE001 — pricing must never break the report
+        price_table = {}
+
+    agg: dict[str, dict[str, Any]] = {}
+    if not capsule_dir.is_dir():
+        return agg
+    for cdir in capsule_dir.iterdir():
+        if not cdir.is_dir() or (run_id and cdir.name != run_id):
+            continue
+        calls_file = cdir / "model-calls.jsonl"
+        if not calls_file.is_file():
+            continue
+        for line in calls_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = _j.loads(line)
+            except ValueError:
+                continue
+            started = rec.get("started_at") or ""
+            try:
+                when = _dt.datetime.fromisoformat(started.replace("Z", "+00:00"))
+            except ValueError:
+                when = None
+            if when is not None and when < cutoff:
+                continue
+            model = (
+                rec.get("gen_ai.request.model")
+                or rec.get("gen_ai.response.model")
+                or ""
+            )
+            if not model:
+                continue
+            usage = rec.get("nova.usage") or {}
+            tok_in = int(
+                rec.get("gen_ai.usage.input_tokens") or usage.get("input_tokens") or 0
+            )
+            tok_out = int(
+                rec.get("gen_ai.usage.output_tokens") or usage.get("output_tokens") or 0
+            )
+            entry = agg.setdefault(
+                model,
+                {"calls": 0, "tokens_in": 0, "tokens_out": 0},
+            )
+            entry["calls"] += 1
+            entry["tokens_in"] += tok_in
+            entry["tokens_out"] += tok_out
+
+    for model, entry in agg.items():
+        prices = price_table.get(model)
+        if prices:
+            inp, outp = prices
+            cost = (entry["tokens_in"] / 1000.0) * inp + (
+                entry["tokens_out"] / 1000.0
+            ) * outp
+        else:
+            cost = 0.0
+        # A model missing from PRICE_TABLE costs $0.00 here, which is not the
+        # same claim as "this model was free".  Callers must be able to tell the
+        # two apart, so record it rather than let a zero pass for a measurement.
+        entry["priced"] = bool(prices)
+        entry["cost_usd"] = round(cost, 6)
+        entry["estimated_tokens"] = entry["tokens_in"] + entry["tokens_out"]
+    return agg
+
+
 def create_app(
     *,
     token: str,
@@ -5233,7 +5324,13 @@ def create_app(
 
         When ``NOVA_CLICKHOUSE_URL`` is set, queries ClickHouse.  Otherwise
         falls back to the local DuckDB accumulator (Evidence Fabric self-contained
-        mode) so cost data is always available without external infrastructure.
+        mode) and, when that is empty or unavailable, to the capsules on disk —
+        so cost data is always available without external infrastructure.
+
+        ``backend`` names which of the three answered.  ``unpriced_models`` lists
+        models that were used but are absent from the price table: their tokens
+        and call counts are real, their ``cost_usd`` is 0.0 because no price is
+        known, not because the calls were free.
         """
         import datetime as _dt  # noqa: PLC0415
 
@@ -5258,7 +5355,15 @@ def create_app(
                     "by_model": [],
                 }
 
-        # Self-contained fallback: query the DuckDB accumulator.
+        # Self-contained fallback: query the DuckDB accumulator, then the
+        # capsules themselves.  The accumulator is the cluster-scale projection
+        # and is only ever fed by the NATS consumer and the collector app, both
+        # of which open it at ``:memory:`` — so in local mode it is always empty
+        # and this endpoint reported $0.00 for runs whose capsules carried exact
+        # ``gen_ai.usage.*`` counts.  Reading the capsules keeps the documented
+        # promise that cost data needs no external infrastructure.
+        _by_model_raw: dict[str, Any] = {}
+        _backend = "duckdb"
         try:
             from novafabric.evidence_fabric.duckdb_accumulator import (
                 DuckDBAccumulator,  # noqa: PLC0415
@@ -5282,45 +5387,62 @@ def create_app(
             _by_model_raw = await asyncio.get_event_loop().run_in_executor(
                 None, _duckdb_query
             )
+        except Exception as exc:  # noqa: BLE001 — duckdb is an optional extra
+            logger.debug("cost/report: DuckDB backend unavailable: %s", exc)
+            _by_model_raw = {}
 
-            # Build response in the same shape as the ClickHouse path.
-            by_model = [
-                {
-                    "model_id": model,
-                    "provider": "unknown",
-                    "input_tokens": v["tokens_in"],
-                    "output_tokens": v["tokens_out"],
-                    "cost_usd": v["cost_usd"],
-                    "calls": v["calls"],
+        if not _by_model_raw:
+            try:
+                _by_model_raw = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: _cost_report_from_capsules(capsule_dir, days, run_id),
+                )
+                _backend = "capsules"
+            except Exception as exc:
+                logger.warning("cost/report: capsule fallback failed: %s", exc)
+                return {
+                    "ok": False,
+                    "backend": "capsules",
+                    "error": str(exc),
+                    "run_id": run_id,
+                    "days": days,
+                    "totals": {
+                        "input_tokens": 0,
+                        "completion_tokens": 0,
+                        "cost_usd": 0.0,
+                    },
+                    "by_model": [],
                 }
-                for model, v in _by_model_raw.items()
-            ]
-            total_input = sum(v["tokens_in"] for v in _by_model_raw.values())
-            total_output = sum(v["tokens_out"] for v in _by_model_raw.values())
-            total_cost = sum(v["cost_usd"] for v in _by_model_raw.values())
-            return {
-                "ok": True,
-                "backend": "duckdb",
-                "run_id": run_id,
-                "days": days,
-                "totals": {
-                    "input_tokens": total_input,
-                    "completion_tokens": total_output,
-                    "cost_usd": round(total_cost, 6),
-                },
-                "by_model": sorted(by_model, key=lambda r: r["cost_usd"], reverse=True),
+
+        by_model = [
+            {
+                "model_id": model,
+                "provider": "unknown",
+                "input_tokens": v["tokens_in"],
+                "output_tokens": v["tokens_out"],
+                "cost_usd": v["cost_usd"],
+                "calls": v["calls"],
+                "priced": bool(v.get("priced", True)),
             }
-        except Exception as exc:
-            logger.warning("cost/report: DuckDB fallback failed: %s", exc)
-            return {
-                "ok": False,
-                "backend": "duckdb",
-                "error": str(exc),
-                "run_id": run_id,
-                "days": days,
-                "totals": {"input_tokens": 0, "completion_tokens": 0, "cost_usd": 0.0},
-                "by_model": [],
-            }
+            for model, v in _by_model_raw.items()
+        ]
+        unpriced = sorted(r["model_id"] for r in by_model if not r["priced"])
+        total_input = sum(v["tokens_in"] for v in _by_model_raw.values())
+        total_output = sum(v["tokens_out"] for v in _by_model_raw.values())
+        total_cost = sum(v["cost_usd"] for v in _by_model_raw.values())
+        return {
+            "ok": True,
+            "backend": _backend,
+            "run_id": run_id,
+            "days": days,
+            "totals": {
+                "input_tokens": total_input,
+                "completion_tokens": total_output,
+                "cost_usd": round(total_cost, 6),
+            },
+            "by_model": sorted(by_model, key=lambda r: r["cost_usd"], reverse=True),
+            "unpriced_models": unpriced,
+        }
 
     # ---------- DB-SCH-1: Schema inspection route (v0.19.0, cap-001) ----------
 

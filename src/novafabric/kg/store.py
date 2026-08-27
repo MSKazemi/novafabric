@@ -21,34 +21,63 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Prometheus metrics — optional at runtime (prometheus_client is a dev dep).
+#
+# Registration must be idempotent.  A ``prometheus_client`` collector name may
+# only be registered once per process, so a *second* import of this module —
+# after a reload, after ``del sys.modules[...]``, or via a second import path —
+# raised ``ValueError: Duplicate timeseries``.  The old blanket ``except`` then
+# set all four metrics to ``None``, permanently and silently disabling KG
+# observability for the rest of the process.  Reuse whatever is already
+# registered instead, and say so when metrics really are unavailable.
+def _register(factory: Any, name: str, doc: str, labels: list[str] | None = None) -> Any:
+    """Create a collector, or return the one already registered under ``name``."""
+    try:
+        return factory(name, doc, labels) if labels else factory(name, doc)
+    except ValueError:
+        from prometheus_client import REGISTRY  # noqa: PLC0415
+
+        existing = REGISTRY._names_to_collectors.get(name)
+        if existing is None:
+            # Counters register their sample names, not the collector name.
+            existing = REGISTRY._names_to_collectors.get(name.removesuffix("_total"))
+        if existing is None:
+            logger.warning("KG metric %s could not be registered or resolved", name)
+        return existing
+
+
 try:
     from prometheus_client import Counter as _PCounter
     from prometheus_client import Gauge as _PGauge
 
-    _kg_node_merge_total = _PCounter(
+    _kg_node_merge_total = _register(
+        _PCounter,
         "novafabric_kg_node_merge_total",
         "Total KG node MERGE upserts by node type",
         ["node_type"],
     )
-    _kg_edge_upsert_total = _PCounter(
+    _kg_edge_upsert_total = _register(
+        _PCounter,
         "novafabric_kg_edge_upsert_total",
         "Total KG edge upserts (CRDT G-counter writes) by edge type",
         ["edge_type"],
     )
-    _kg_crdt_merge_total = _PCounter(
+    _kg_crdt_merge_total = _register(
+        _PCounter,
         "novafabric_kg_crdt_merge_total",
         "KG CRDT merges where an existing edge call_count was incremented",
         ["edge_type"],
     )
-    _kg_node_count = _PGauge(
+    _kg_node_count = _register(
+        _PGauge,
         "novafabric_kg_node_count",
         "Current total KG node count across all node types",
     )
-except Exception:  # noqa: BLE001
-    _kg_node_merge_total = None  # type: ignore[assignment]
-    _kg_edge_upsert_total = None  # type: ignore[assignment]
-    _kg_crdt_merge_total = None  # type: ignore[assignment]
-    _kg_node_count = None  # type: ignore[assignment]
+except ImportError:  # prometheus_client not installed — metrics are optional
+    logger.debug("prometheus_client unavailable; KG metrics disabled")
+    _kg_node_merge_total = None
+    _kg_edge_upsert_total = None
+    _kg_crdt_merge_total = None
+    _kg_node_count = None
 
 SCHEMA_DDL: list[str] = [
     (

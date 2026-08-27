@@ -3277,7 +3277,18 @@ paths:
 
         falls back to the local DuckDB accumulator (Evidence Fabric self-contained
 
-        mode) so cost data is always available without external infrastructure.'
+        mode) and, when that is empty or unavailable, to the capsules on disk —
+
+        so cost data is always available without external infrastructure.
+
+
+        ``backend`` names which of the three answered.  ``unpriced_models`` lists
+
+        models that were used but are absent from the price table: their tokens
+
+        and call counts are real, their ``cost_usd`` is 0.0 because no price is
+
+        known, not because the calls were free.'
       parameters:
       - in: query
         name: run_id

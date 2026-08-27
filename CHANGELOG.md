@@ -108,6 +108,45 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **Re-importing `novafabric.kg.store` silently disabled all four KG Prometheus
+  metrics.** A collector name may only be registered once per process, so a
+  second import — after a module reload, after `del sys.modules[...]`, or via a
+  second import path — raised `Duplicate timeseries` and the module's blanket
+  `except` set `_kg_node_merge_total`, `_kg_edge_upsert_total`,
+  `_kg_crdt_merge_total` and `_kg_node_count` to `None` for the rest of the
+  process, with no log line. Registration is now per-metric and idempotent: it
+  reuses the already-registered collector, and only a genuinely absent
+  `prometheus_client` disables metrics.
+
+- **None of the three cloud KMS signing backends could seal a capsule.**
+  `build_signing_backend()` had zero production callers: the capture orchestrator
+  built a `NovaSeal` without a backend, so an `aws_kms`, `azure_kv` or `gcp_kms`
+  profile fell through to the local-PEM branch of `create_envelope()` and failed
+  with `No such file or directory: 'None'` — a message that pointed at a missing
+  key file rather than at unwired cloud signing. `NovaSeal` now accepts a
+  `backend=` and the orchestrator builds one for every non-`local` profile.
+  Verified end to end against a live Azure Key Vault HSM key: a captured run seals
+  and `nova verify` reports `signature_ok=True`.
+
+- **`nova verify` reported "Timestamp (RFC 3161): OK" for capsules carrying no
+  token.** Timestamping is best-effort, so an absent or empty `manifest.dsse.tsr`
+  correctly leaves `timestamp_ok` True — which means that flag alone cannot tell
+  "timestamped and verified" from "never timestamped", and the CLI printed the
+  same green check for both. `VerificationResult` now carries `timestamp_present`
+  and the CLI prints `⊘ NOT PRESENT (TSA skipped or unavailable)` when no token
+  was verified. The machine-readable `timestamp_ok=` line is unchanged.
+
+- **The dashboard's Cost & Usage panel always read `$0.0000` / 0 model calls.**
+  `/api/cost/report`'s self-contained fallback queries the DuckDB accumulator, but
+  the accumulator's only writers — the NATS consumer and the collector app — both
+  open it at `:memory:`, so the on-disk file is empty in local mode and the
+  endpoint contradicted its own documented promise of cost data "without external
+  infrastructure". It now falls back to the capsules on disk, using the same
+  `model-calls.jsonl` source `/api/runs` already reads, and reports which backend
+  answered. Models absent from `CostInterceptor.PRICE_TABLE` are listed in a new
+  `unpriced_models` field with `priced: false` per row, so a `$0.00` for an
+  unpriced model is not mistaken for a measurement that the calls were free.
+
 - **The Azure Blob WORM backend could never store a capsule.** `put_object()` —
   the primary capsule-write path — passed `content_md5` as base64 *text*, but the
   generated `azure-storage-blob` layer serializes that header as `bytearray` and

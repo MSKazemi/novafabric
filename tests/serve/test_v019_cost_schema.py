@@ -97,8 +97,10 @@ class TestCostRoutes:
         res = client.get(f"/api/cost/report?{TOKEN_Q}", headers=HEADERS)
         assert res.status_code == 200
         body = res.json()
-        # Local DuckDB fallback: ok=True, backend="duckdb", empty by_model list.
-        assert body["backend"] == "duckdb"
+        # Local self-contained fallback: ok=True and an empty by_model list.
+        # An empty accumulator hands off to the capsules (none here), and the
+        # label names whichever source answered.
+        assert body["backend"] in {"duckdb", "capsules"}
         assert body["ok"] is True
         assert body["totals"]["cost_usd"] == 0.0
         assert isinstance(body["by_model"], list)
