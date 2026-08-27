@@ -23,6 +23,7 @@ interface CostReport {
   days: number;
   totals: { input_tokens: number; completion_tokens: number; cost_usd: number };
   by_model: Array<Record<string, unknown>>;
+  unpriced_models?: string[];
   note: string;
 }
 
@@ -100,6 +101,22 @@ function ReportPanel({ report }: { report: CostReport }) {
           <p className="text-lg font-mono font-bold text-[var(--color-text)]">${report.totals.cost_usd.toFixed(4)}</p>
         </div>
       </div>
+
+      {/* A model with no published price contributes $0.00 to the total. That is
+          not a measurement that the calls were free, so the figure must not be
+          shown bare — the tokens above are real either way. */}
+      {report.unpriced_models && report.unpriced_models.length > 0 && (
+        <div className="rounded border border-[var(--color-warning,#b45309)] bg-[var(--color-bg-sunken)] px-3 py-2 text-xs">
+          <span className="font-mono uppercase tracking-wider text-[var(--color-warning,#b45309)]">
+            no published price
+          </span>
+          <span className="ml-2 text-[var(--color-text-muted)]">
+            {report.unpriced_models.join(', ')} — token counts above are exact; the
+            cost excludes {report.unpriced_models.length === 1 ? 'this model' : 'these models'}{' '}
+            because no price is known, not because the calls were free.
+          </span>
+        </div>
+      )}
 
       {report.by_model.length > 0 && (() => {
         // Chart only when the backend really returned per-model rows — key

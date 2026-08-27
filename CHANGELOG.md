@@ -157,6 +157,12 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   and the CLI prints `⊘ NOT PRESENT (TSA skipped or unavailable)` when no token
   was verified. The machine-readable `timestamp_ok=` line is unchanged.
 
+- **The dashboard showed an unpriced model's cost as a bare `$0.0000`.** The API
+  reports `unpriced_models` and `priced: false`, but the Cost panel rendered the
+  total with nothing to distinguish "no published price" from "these calls were
+  free". It now shows the unpriced models under the totals, next to the token
+  counts that are exact either way.
+
 - **The dashboard's Cost & Usage panel always read `$0.0000` / 0 model calls.**
   `/api/cost/report`'s self-contained fallback queries the DuckDB accumulator, but
   the accumulator's only writers — the NATS consumer and the collector app — both
