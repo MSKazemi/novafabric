@@ -33,6 +33,28 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **A `force-include` with no matching `COPY` could still reach a release tag — the guard
+  against it was `paths:`-filtered to the files the defect never touches.** The wheel
+  force-includes four repo-root paths (`alembic/` and the three canonical JSON Schemas)
+  that runtime code loads. `uv build` on a developer machine cannot see a missing `COPY`,
+  because there the repo root *is* the build context; only Docker's narrower context
+  exposes it. That has shipped **twice** — `alembic/` (2026-07-24), and BL-037's schemas
+  (v0.99.0), which left the container image unbuildable for two releases with
+  `FileNotFoundError: Forced include not found: /build/schemas/export-manifest.schema.json`.
+  The v0.100.1 fix added `release-toolchain.yml` to build the image on a pull request, and
+  that is a real guard — but it is filtered to `deploy/docker/**`, `deploy/helm/**` and the
+  publish workflows, while **the change that causes this defect is an edit to
+  `pyproject.toml` that deliberately does not touch the Dockerfile**. It could not have
+  caught a third instance. `pyproject.toml`, `uv.lock` and `.dockerignore` are now in the
+  filter, and `tests/docs/test_force_include_reaches_the_docker_build.py` asserts the
+  invariant directly — every force-include source exists, is COPYed into the builder stage
+  *before* `RUN uv build`, and is not removed from the context by `.dockerignore` — in
+  milliseconds, on every suite run, without Docker. Two of its assertions guard the guard,
+  because an empty force-include section or a broken Dockerfile parse would make the rest
+  vacuously true. Verified by removing `COPY schemas/ schemas/` (the exact v0.99.0 defect):
+  three assertions fail. The builder stage was also built locally to confirm `main` is
+  green, rather than inferring it from the presence of the `COPY` line.
+
 - **`release.yml` went red on most releases because a tag has two publishers.** The
   workflow fires on a `v*` tag push and runs `gh release create`; `dualgit release`
   separately *prints* a `gh release create` for a human to run, deliberately, because

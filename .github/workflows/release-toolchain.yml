@@ -31,6 +31,17 @@ on:
       - ".github/workflows/release-toolchain.yml"
       - "deploy/docker/**"
       - "deploy/helm/**"
+      # The image build reads these too. Omitting them is what let the wheel's
+      # force-include list drift away from the Dockerfile's COPY list twice:
+      # alembic/ (2026-07-24) and the three canonical JSON Schemas (v0.99.0,
+      # which left the image unbuildable for two releases). Both were edits to
+      # pyproject.toml that deliberately did NOT touch deploy/docker/, so this
+      # filter could not see them. The invariant itself is asserted by
+      # tests/docs/test_force_include_reaches_the_docker_build.py; this is the
+      # slower belt to that braces.
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".dockerignore"
   push:
     branches: [main]
     paths:
@@ -39,6 +50,17 @@ on:
       - ".github/workflows/release-toolchain.yml"
       - "deploy/docker/**"
       - "deploy/helm/**"
+      # The image build reads these too. Omitting them is what let the wheel's
+      # force-include list drift away from the Dockerfile's COPY list twice:
+      # alembic/ (2026-07-24) and the three canonical JSON Schemas (v0.99.0,
+      # which left the image unbuildable for two releases). Both were edits to
+      # pyproject.toml that deliberately did NOT touch deploy/docker/, so this
+      # filter could not see them. The invariant itself is asserted by
+      # tests/docs/test_force_include_reaches_the_docker_build.py; this is the
+      # slower belt to that braces.
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".dockerignore"
   workflow_dispatch:
 
 permissions:
