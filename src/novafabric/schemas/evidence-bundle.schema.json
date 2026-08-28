@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/evidence-bundle.schema.json",
-  "$comment": "schema_version 0.1.0; tracks design/spec/evidence-bundle-v0.md. Validates manifest.json inside an Evidence Bundle zip. The bundle layout itself is enforced by the spec, not by this schema.  STATUS: IN FORCE. This is what an installed CLI validates against and what existing capsules were written against. The OAS v1.0 target lives at the sibling $id ending -v1.schema.json and is not yet in force. See ADR-0223.",
+  "$comment": "schema_version 0.1.0; tracks the private design/spec/evidence-bundle-v0.md. Validates manifest.json inside an Evidence Bundle zip. The bundle layout itself is enforced by the spec, not by this schema.  STATUS: IN FORCE. This is what an installed CLI validates against and what existing capsules were written against. The OAS v1.0 target lives at the sibling $id ending -v1.schema.json and is not yet in force. See ADR-0223.",
   "title": "EvidenceBundle",
   "description": "manifest.json at the root of a NovaFabric Evidence Bundle. The audit-ready, signed package produced by 'novafabric export-evidence'. Self-contained: all schemas are vendored; verification requires only stock cosign and in-toto tooling.",
   "type": "object",

@@ -104,6 +104,21 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   halves. ⚠ the vendored JSON is imported at build time, so the dashboard bundle under
   `src/novafabric/serve/static/_astro/` keeps the old copies until the site is rebuilt.
 
+- **Published JSON Schemas named private `design/` documents as if a reader could open them.**
+  Issue #5 reported one instance of this in the developer guide; `a536d77` swept `docs/` (11 files,
+  26 references) and added a guard scoped to `git ls-files docs`. The class was wider than that
+  gate: 402 references across 223 public-tracked files. The tier that reaches strangers is the
+  schemas — their `$comment` strings are served from `novafabric.io/schemas/` and read by consumers
+  with no way to obtain a `design/` path. **104 references across 75 schema files** now say *the
+  private* `design/…`, which is the rule the guard has always encoded: naming a private document is
+  honest, naming it without saying it is private is a dead end. The guard in
+  `tests/docs/test_no_unmarked_private_path_prose.py` now covers `schemas/`,
+  `src/novafabric/schemas/` and `web/src/data/schemas/` as well as `docs/`, red-green proven.
+  Machine-readable `x-novafabric.spec` pointers are exempt with the reason stated in the module
+  docstring, not silently. ⚠ the remaining tier — `design/` paths in `src/**/*.py` docstrings that
+  surface in `help()` and the generated API reference — is **not** swept and is deliberately not
+  asserted, so the gap stays visible rather than looking closed.
+
 ### Security
 
 - **The sdist could carry the entire private tree, including the private git history**

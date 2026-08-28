@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/export-manifest.schema.json",
   "title": "ExportManifest",
-  "$comment": "Governed by ADR-0141 (accepted 2026-07-13). schema_version 0.1.0. Tracks design/spec/batch-blob-export-v0.md. A pointer manifest for a signed batch of content-addressed capsule exports; written last as the atomic completion marker. Graduated verbatim from design/spec/schemas/ on implementation.",
+  "$comment": "Governed by ADR-0141 (accepted 2026-07-13). schema_version 0.1.0. Tracks the private design/spec/batch-blob-export-v0.md. A pointer manifest for a signed batch of content-addressed capsule exports; written last as the atomic completion marker. Graduated verbatim from the private design/spec/schemas/ on implementation.",
   "type": "object",
   "additionalProperties": false,
   "required": [

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/score-submission-request.schema.json",
-  "$comment": "schema_version 0.1.0; graduated 2026-07-15 from design/spec/schemas/ on ADR-0119 acceptance. Tracks design/spec/score-submission-api-v0.md. Experimental. Ingest contract over the existing Score model (ADR-0099); adds only the optional 'supersedes' field.",
+  "$comment": "schema_version 0.1.0; graduated 2026-07-15 from the private design/spec/schemas/ on ADR-0119 acceptance. Tracks the private design/spec/score-submission-api-v0.md. Experimental. Ingest contract over the existing Score model (ADR-0099); adds only the optional 'supersedes' field.",
   "title": "ScoreSubmissionRequest",
   "description": "POST /v1/capsules/{id}/scores body (also the SDK/CLI argument shape).",
   "type": "object",

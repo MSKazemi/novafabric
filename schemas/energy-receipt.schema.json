@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/energy-receipt.schema.json",
-  "$comment": "schema_version 0.1.0; tracks design/spec/energy-receipt-v0.1.md and design/adr/0093-energy-anchored-action-receipts.md. One record per consequential agent action in energy-receipts.jsonl inside a Run Capsule. Core principle: measured-or-declared-unknown, NEVER fabricated.",
+  "$comment": "schema_version 0.1.0; tracks the private design/spec/energy-receipt-v0.1.md and the private design/adr/0093-energy-anchored-action-receipts.md. One record per consequential agent action in energy-receipts.jsonl inside a Run Capsule. Core principle: measured-or-declared-unknown, NEVER fabricated.",
   "title": "EnergyReceipt",
   "description": "An Energy-Anchored Action Receipt: a signed record of MEASURED (or honestly-declared-unknown) energy in joules, carbon in gCO2e, and provenanced grid intensity for one consequential agent action. Additive in-capsule JSONL stream (ADR-0093); NOT a third top-level format (ADR-0034).",
   "type": "object",

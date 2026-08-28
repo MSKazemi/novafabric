@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/resolved-composition-manifest.schema.json",
-  "$comment": "Experimental — governed by ADR-0115 (accepted 2026-07-13). Graduated from design/spec/schemas/ on first implementation; schema_version 0.1.0. Tracks design/spec/prompt-composition-v0.md.",
+  "$comment": "Experimental — governed by ADR-0115 (accepted 2026-07-13). Graduated from the private design/spec/schemas/ on first implementation; schema_version 0.1.0. Tracks the private design/spec/prompt-composition-v0.md.",
   "title": "ResolvedCompositionManifest",
   "description": "Flattened, content-addressed evidence of the entire transitive composition tree + final assembled prompt hash, frozen at capture.",
   "type": "object",

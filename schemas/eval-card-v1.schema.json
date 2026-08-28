@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/eval-card-v1.schema.json",
-  "$comment": "schema_version 1.0.0; tracks design/spec/features/NF-002-010-signed-eval-cards.md (NF-002) and ADR-0099. A signed, content-addressed evaluator card stored as an Asset-Registry asset (asset_type: eval-card). eval_card_digest = sha256 over the canonical-JSON bytes of the card EXCLUDING the signature block. Planned/experimental.",
+  "$comment": "schema_version 1.0.0; tracks the private design/spec/features/NF-002-010-signed-eval-cards.md (NF-002) and ADR-0099. A signed, content-addressed evaluator card stored as an Asset-Registry asset (asset_type: eval-card). eval_card_digest = sha256 over the canonical-JSON bytes of the card EXCLUDING the signature block. Planned/experimental.",
   "title": "EvalCard",
   "description": "The reproducibility key for an evidence-grade Score: pins the exact evaluator (judge model, prompt version, rubric, dataset version, human-agreement calibration) that produced a score, and carries an Ed25519 signature so the binding is tamper-evident.",
   "type": "object",

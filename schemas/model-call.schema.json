@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/model-call-v1.schema.json",
-  "$comment": "schema_version 1.0.0; tracks design/spec/model-call-v1.md. OTel GenAI semconv attribute names are preserved as dotted property keys.  STATUS: OAS v1.0 TARGET schema, NOT yet in force. ADR-0034 \u00a71 freezes a spec only when all four conditions hold; conditions 2 (spec doc 'Adopted') and 3 (>=3 design-partner sign-offs) are open as of 2026-08-02, so the spec is in pre-freeze draft status. The in-force schema an installed CLI validates against is the packaged copy under src/novafabric/schemas/, which keeps the original $id. See ADR-0223.",
+  "$comment": "schema_version 1.0.0; tracks the private design/spec/model-call-v1.md. OTel GenAI semconv attribute names are preserved as dotted property keys.  STATUS: OAS v1.0 TARGET schema, NOT yet in force. ADR-0034 \u00a71 freezes a spec only when all four conditions hold; conditions 2 (spec doc 'Adopted') and 3 (>=3 design-partner sign-offs) are open as of 2026-08-02, so the spec is in pre-freeze draft status. The in-force schema an installed CLI validates against is the packaged copy under src/novafabric/schemas/, which keeps the original $id. See ADR-0223.",
   "title": "ModelCall",
   "description": "One record in model-calls.jsonl inside a NovaFabric Run Capsule. OTel GenAI semconv aligned.",
   "type": "object",

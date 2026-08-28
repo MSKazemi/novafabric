@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/protected-label-pending-move.schema.json",
-  "$comment": "Experimental — governed by ADR-0114 (accepted 2026-07-13). Graduated from design/spec/schemas/ on first implementation; schema_version 0.1.0. Additive optional fields over the draft: proposer_key_fp/proposer_signature and per-approval approver_key_fp/approver_signature carry the Ed25519 maker-checker crypto (ADR-0058 keyring); signature_ref stays reserved for NovaSeal (P3). Tracks design/spec/protected-labels-v0.md.",
+  "$comment": "Experimental — governed by ADR-0114 (accepted 2026-07-13). Graduated from the private design/spec/schemas/ on first implementation; schema_version 0.1.0. Additive optional fields over the draft: proposer_key_fp/proposer_signature and per-approval approver_key_fp/approver_signature carry the Ed25519 maker-checker crypto (ADR-0058 keyring); signature_ref stays reserved for NovaSeal (P3). Tracks the private design/spec/protected-labels-v0.md.",
   "title": "ProtectedLabelPendingMove",
   "description": "In-flight protected move + its approvals (maker-checker).",
   "type": "object",

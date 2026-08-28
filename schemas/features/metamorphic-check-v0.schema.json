@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/features/metamorphic-check-v0.schema.json",
-  "$comment": "schema_version 0.x (v0, not frozen); tracks design/spec/features/NF-007-009-statistical-regression-diff.md §4.2. Declarative check-spec consumed by `nova eval offline --check metamorphic --spec <yaml>`. Standalone additive/optional fragment; does not modify any capsule schema.",
+  "$comment": "schema_version 0.x (v0, not frozen); tracks the private design/spec/features/NF-007-009-statistical-regression-diff.md §4.2. Declarative check-spec consumed by `nova eval offline --check metamorphic --spec <yaml>`. Standalone additive/optional fragment; does not modify any capsule schema.",
   "title": "MetamorphicCheckSpec",
   "description": "Additive/optional — v0, not frozen. A zero-token NF-009 metamorphic check over an already-stored capsule: records whose *input* collapses to the same value under `transform` form metamorphic pairs, and every pair's *output* MUST satisfy `invariant`. Read-only over the capsule; no model call. The boolean result is emitted as a `code` Score bound to the capsule Merkle root.",
   "type": "object",

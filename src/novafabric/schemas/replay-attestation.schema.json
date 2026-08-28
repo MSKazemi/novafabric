@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/replay-attestation.schema.json",
-  "$comment": "schema_version 0.1.0; tracks design/spec/replay-attestation-v0.1.md and ADR-0094 (B). Additive superset of the ReperformanceAttestation produced by src/novafabric/evidence/reperformance.py — NOT a fork. Emitted as an in-capsule record and wrapped as an in-toto predicate (predicateType https://novafabric.io/replay-attestation/v0); never a third top-level format (ADR-0034 two-format rule).",
+  "$comment": "schema_version 0.1.0; tracks the private design/spec/replay-attestation-v0.1.md and ADR-0094 (B). Additive superset of the ReperformanceAttestation produced by src/novafabric/evidence/reperformance.py — NOT a fork. Emitted as an in-capsule record and wrapped as an in-toto predicate (predicateType https://novafabric.io/replay-attestation/v0); never a third top-level format (ADR-0034 two-format rule).",
   "title": "ReplayAttestation",
   "description": "A signed reproducibility certificate for a NovaFabric replay (ADR-0094). Extends the re-performance attestation with a determinism_class, the pinned environment/model block that justifies the class, an optional bounded-equivalence record, the input authorization, and a ledger_ref back-link (B -> A) to the Adversary-Anchored Accountability Ledger checkpoint that sealed the run.",
   "type": "object",

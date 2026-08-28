@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/score-config-v0.schema.json",
-  "$comment": "schema_version 0.1.0; tracks design/spec/score-config-v0.md and ADR-0117 (accepted 2026-07-13). A ScoreConfig is a named, immutable, content-addressed catalog entry constraining Scores under the same name; it extends the existing Score model (ADR-0099) additively and does not change scores.jsonl or score-v1.schema.json. Experimental \u2014 not yet a frozen format.",
+  "$comment": "schema_version 0.1.0; tracks the private design/spec/score-config-v0.md and ADR-0117 (accepted 2026-07-13). A ScoreConfig is a named, immutable, content-addressed catalog entry constraining Scores under the same name; it extends the existing Score model (ADR-0099) additively and does not change scores.jsonl or score-v1.schema.json. Experimental \u2014 not yet a frozen format.",
   "title": "ScoreConfig",
   "description": "Named, immutable, content-addressed definition constraining a Score's shape for cross-capsule comparability.",
   "type": "object",

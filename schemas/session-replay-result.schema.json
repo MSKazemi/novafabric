@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/session-replay-result.schema.json",
-  "$comment": "Governed by ADR-0123 (accepted 2026-07-13); graduated from design/spec/schemas/ on the P1 implementation (2026-07-15). schema_version 0.1.0. Tracks design/spec/session-replay-v0.md. SessionReplayResult is an additive record over the per-capsule replay engine (ADR-0005); adds no new mode and no new top-level format. Delta vs the accepted draft: one additive divergence kind `replay_failed` (P1: the re-executed turn exited non-zero).",
+  "$comment": "Governed by ADR-0123 (accepted 2026-07-13); graduated from the private design/spec/schemas/ on the P1 implementation (2026-07-15). schema_version 0.1.0. Tracks the private design/spec/session-replay-v0.md. SessionReplayResult is an additive record over the per-capsule replay engine (ADR-0005); adds no new mode and no new top-level format. Delta vs the accepted draft: one additive divergence kind `replay_failed` (P1: the re-executed turn exited non-zero).",
   "title": "SessionReplayResult",
   "description": "One record per `nova session replay` \u2014 ordered per-turn results + whole-session verdict.",
   "type": "object",

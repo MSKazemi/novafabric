@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/token-usage.schema.json",
-  "$comment": "Governed by ADR-0132 (accepted 2026-07-13). schema_version 0.1.0. Tracks design/spec/token-usage-types-v0.md. nova.usage: additive, optional per-type token block recorded VERBATIM from the provider payload. Superset of the legacy gen_ai.usage.* scalars. absent != zero. NovaFabric records, never re-tokenizes. Also inlined into model-call.schema.json (nova.usage) and run-capsule.schema.json (usage_totals).",
+  "$comment": "Governed by ADR-0132 (accepted 2026-07-13). schema_version 0.1.0. Tracks the private design/spec/token-usage-types-v0.md. nova.usage: additive, optional per-type token block recorded VERBATIM from the provider payload. Superset of the legacy gen_ai.usage.* scalars. absent != zero. NovaFabric records, never re-tokenizes. Also inlined into model-call.schema.json (nova.usage) and run-capsule.schema.json (usage_totals).",
   "title": "TokenUsage",
   "description": "nova.usage — full per-type token usage block on a model-call record. All fields optional.",
   "type": "object",

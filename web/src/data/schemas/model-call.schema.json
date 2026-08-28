@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/model-call.schema.json",
-  "$comment": "schema_version 0.1.0; tracks design/spec/model-call-v0.md. OTel GenAI semconv attribute names are preserved as dotted property keys.  STATUS: IN FORCE. This is what an installed CLI validates against and what existing capsules were written against. The OAS v1.0 target lives at the sibling $id ending -v1.schema.json and is not yet in force. See ADR-0223.",
+  "$comment": "schema_version 0.1.0; tracks the private design/spec/model-call-v0.md. OTel GenAI semconv attribute names are preserved as dotted property keys.  STATUS: IN FORCE. This is what an installed CLI validates against and what existing capsules were written against. The OAS v1.0 target lives at the sibling $id ending -v1.schema.json and is not yet in force. See ADR-0223.",
   "title": "ModelCall",
   "description": "One record in model-calls.jsonl inside a NovaFabric Run Capsule. OTel GenAI semconv aligned.",
   "type": "object",

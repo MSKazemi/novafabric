@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/agent-execution-graph.schema.json",
-  "$comment": "Accepted (ADR-0124, 2026-07-13); implemented experimental 2026-07-15. Graduated from design/spec/schemas/ \u2014 identity metadata changed only, contract unchanged. schema_version 0.1.0. Tracks design/spec/agent-execution-graph-v0.md. A read-only, content-addressed projection of ONE capsule's model/tool/span records into its execution DAG; adds no capture path.",
+  "$comment": "Accepted (ADR-0124, 2026-07-13); implemented experimental 2026-07-15. Graduated from the private design/spec/schemas/ \u2014 identity metadata changed only, contract unchanged. schema_version 0.1.0. Tracks the private design/spec/agent-execution-graph-v0.md. A read-only, content-addressed projection of ONE capsule's model/tool/span records into its execution DAG; adds no capture path.",
   "title": "AgentExecutionGraph",
   "description": "Deterministic, content-addressed execution DAG reconstructed from one Run Capsule.",
   "type": "object",

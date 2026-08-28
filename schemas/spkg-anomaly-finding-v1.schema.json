@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/spkg-anomaly-finding-v1.schema.json",
-  "$comment": "schema_version 0.1.0; tracks design/adr/0111-security-provenance-knowledge-graph.md (ADR-0111) and design/architecture/security-provenance-knowledge-graph.md. Additive/optional: zero or more AnomalyFinding records (one per line of an OPTIONAL sidecar `spkg-findings.jsonl`). A capsule/graph without findings remains valid. Future design — not yet a frozen v1 format; emitted only when the SPKG detector runs (opt-in, non-blocking).",
+  "$comment": "schema_version 0.1.0; tracks the private design/adr/0111-security-provenance-knowledge-graph.md (ADR-0111) and the private design/architecture/security-provenance-knowledge-graph.md. Additive/optional: zero or more AnomalyFinding records (one per line of an OPTIONAL sidecar `spkg-findings.jsonl`). A capsule/graph without findings remains valid. Future design — not yet a frozen v1 format; emitted only when the SPKG detector runs (opt-in, non-blocking).",
   "title": "AnomalyFinding",
   "description": "One graph-based anomaly/threat finding emitted by the NovaFabric Security & Provenance Knowledge Graph (SPKG) detector. Edge-level by default (which lineage edge / tool call is anomalous). Per ADR-0111 R2, every finding MUST carry an explanation mapped to a MITRE ATT&CK technique and/or a D3FEND artifact — a bare score is not a valid finding.",
   "type": "object",

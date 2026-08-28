@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/session-manifest.schema.json",
-  "$comment": "schema_version 0.1.0; tracks design/spec/session-capsule-v0.md (ADR-0122, experimental). Validates session.json — an ordered, by-reference grouping of N independent Run Capsules; copies no capsule data. Distinct from parent/child (ADR-0039). Graduated from the design draft on acceptance. Cross-item invariants (unique ascending sequence, manifest-wins conflict resolution, dangling/tampered member reporting) are behavioral, enforced by novafabric.session, not expressible in JSON Schema.",
+  "$comment": "schema_version 0.1.0; tracks the private design/spec/session-capsule-v0.md (ADR-0122, experimental). Validates session.json — an ordered, by-reference grouping of N independent Run Capsules; copies no capsule data. Distinct from parent/child (ADR-0039). Graduated from the design draft on acceptance. Cross-item invariants (unique ascending sequence, manifest-wins conflict resolution, dangling/tampered member reporting) are behavioral, enforced by novafabric.session, not expressible in JSON Schema.",
   "title": "SessionManifest",
   "description": "session.json — ordered, by-reference grouping of N independent Run Capsules.",
   "type": "object",

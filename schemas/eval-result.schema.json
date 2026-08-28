@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/eval-result.schema.json",
-  "$comment": "schema_version 0.1.0; tracks design/spec/eval-result-v0.md. Validates the JSON output of a NovaFabric benchmark eval run (e.g. GAIA, SWE-bench, AgentBench). Extends the OpenLineage DataQualityMetrics facet pattern. Required by v0.9 Standard Eval Suites.",
+  "$comment": "schema_version 0.1.0; tracks the private design/spec/eval-result-v0.md. Validates the JSON output of a NovaFabric benchmark eval run (e.g. GAIA, SWE-bench, AgentBench). Extends the OpenLineage DataQualityMetrics facet pattern. Required by v0.9 Standard Eval Suites.",
   "title": "EvalResult",
   "description": "Output record of a single benchmark eval run against a Run Capsule. Captures suite identity, OCI image digest for reproducibility, per-metric outcomes, and optional statistical context.",
   "type": "object",

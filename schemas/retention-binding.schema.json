@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/retention-binding.schema.json",
-  "$comment": "schema_version 0.1.0 \u2014 ADR-0134 (accepted 2026-07-13), graduated from design/spec/. Thin orchestration over ADR-0031 policy / ADR-0069 crypto-shred / ADR-0062 dual-object; adds NO new retention semantics or deletion primitive. Deletion is evidence.",
+  "$comment": "schema_version 0.1.0 \u2014 ADR-0134 (accepted 2026-07-13), graduated from the private design/spec/. Thin orchestration over ADR-0031 policy / ADR-0069 crypto-shred / ADR-0062 dual-object; adds NO new retention semantics or deletion primitive. Deletion is evidence.",
   "title": "RetentionBinding",
   "description": "One policy\u2192item\u2192action binding under retention-policy.yaml `bindings:`.",
   "type": "object",

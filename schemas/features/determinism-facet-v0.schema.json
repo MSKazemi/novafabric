@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/features/determinism-facet-v0.schema.json",
-  "$comment": "schema_version 0.x (v0, not frozen); tracks design/spec/features/NF-012-014-determinism-attestation.md. Standalone additive/optional fragment intended to live under environment.schema.json extensions as a 'determinism' $def. Does not modify environment.schema.json or run-capsule.schema.json.",
+  "$comment": "schema_version 0.x (v0, not frozen); tracks the private design/spec/features/NF-012-014-determinism-attestation.md. Standalone additive/optional fragment intended to live under environment.schema.json extensions as a 'determinism' $def. Does not modify environment.schema.json or run-capsule.schema.json.",
   "title": "DeterminismFacet",
   "description": "Additive/optional — v0, not frozen. The additive 'determinism' block (NF-012/013/014) recorded inside a capsule env.lock. Records batch-invariance config, tensor-parallel size + reduction order, dtype, and speculative-decoding state so an attested-exact replay can assert bit-identical logits. Absence of this block ⇒ attested:false and today's replay behavior unchanged. 'attested' is computed true only when batch_invariance.enabled and the replay bit-identity assertion has passed; 'degradation_reason' carries the honest non-attested path.",
   "type": "object",

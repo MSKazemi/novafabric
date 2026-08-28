@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/significance-diff-v1.schema.json",
-  "$comment": "schema_version 1.0.0; tracks design/spec/features/NF-007-009-statistical-regression-diff.md (NF-007) and ADR-0099; extends ADR-0080. A statistical regression-diff record: compares a baseline vs candidate run set by Wilson interval + Wald SPRT (three-valued verdict), never by raw delta. Planned/experimental. Offline, zero-token — arithmetic over already-stored outcomes.",
+  "$comment": "schema_version 1.0.0; tracks the private design/spec/features/NF-007-009-statistical-regression-diff.md (NF-007) and ADR-0099; extends ADR-0080. A statistical regression-diff record: compares a baseline vs candidate run set by Wilson interval + Wald SPRT (three-valued verdict), never by raw delta. Planned/experimental. Offline, zero-token — arithmetic over already-stored outcomes.",
   "title": "SignificanceDiff",
   "description": "Statistically-grounded behavioral regression diff between two run sets. A regression is ACCEPT_H1 only; a single-run dip cannot fire the gate.",
   "type": "object",

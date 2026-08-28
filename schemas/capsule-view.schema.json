@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/capsule-view.schema.json",
-  "$comment": "schema_version 0.1.0; tracks design/spec/capsule-viewer-v0.md (ADR-0140, accepted 2026-07-13; graduated from design/spec/schemas/ on first implementation slice). The CapsuleView summary document embedded inline in a single self-contained HTML file (zero external requests, opens from file://). A PROJECTION of fields the capsule already carries \u2014 never adds content, preserves redaction markers verbatim, never un-redacts (ADR-0009).",
+  "$comment": "schema_version 0.1.0; tracks the private design/spec/capsule-viewer-v0.md (ADR-0140, accepted 2026-07-13; graduated from the private design/spec/schemas/ on first implementation slice). The CapsuleView summary document embedded inline in a single self-contained HTML file (zero external requests, opens from file://). A PROJECTION of fields the capsule already carries \u2014 never adds content, preserves redaction markers verbatim, never un-redacts (ADR-0009).",
   "title": "CapsuleView",
   "description": "Bounded non-sensitive summary of one Run Capsule, embedded inline in the shareable HTML.",
   "type": "object",

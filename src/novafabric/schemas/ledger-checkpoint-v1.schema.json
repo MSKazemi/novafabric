@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/ledger-checkpoint-v1.schema.json",
-  "$comment": "schema_version 1.0.0; tracks design/spec/ledger-checkpoint-v1.md and ADR-0094 (A). In-capsule record at capsule_dir/.ledger/checkpoint.json. Additive/optional alongside the byte-identical jsonl evidence streams; the per-stream sidecar chains live in capsule_dir/.ledger/<stream>.chain.json. DSSE-signed by the ADR-0089 RatchetSigner, appended to the ADR-0041 MerkleLog, and externally anchored (ADR-0070 RFC3161 / ADR-0071 Sigstore).",
+  "$comment": "schema_version 1.0.0; tracks the private design/spec/ledger-checkpoint-v1.md and ADR-0094 (A). In-capsule record at capsule_dir/.ledger/checkpoint.json. Additive/optional alongside the byte-identical jsonl evidence streams; the per-stream sidecar chains live in capsule_dir/.ledger/<stream>.chain.json. DSSE-signed by the ADR-0089 RatchetSigner, appended to the ADR-0041 MerkleLog, and externally anchored (ADR-0070 RFC3161 / ADR-0071 Sigstore).",
   "title": "LedgerCheckpoint",
   "description": "A multi-stream checkpoint of an Adversary-Anchored Accountability Ledger (ADR-0094). Aggregates the sealed head of every per-stream sidecar chain in a capsule plus the binding identity (node epoch + agent + principal), so a verifier can prove no stream was truncated, reordered, or rewritten below the signed head.",
   "type": "object",

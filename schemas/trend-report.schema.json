@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/trend-report.schema.json",
-  "$comment": "Accepted (ADR-0131, 2026-07-13); implemented experimental 2026-07-15. Graduated from design/spec/schemas/ — identity metadata changed only, contract unchanged. schema_version 0.1.0. Tracks design/spec/trend-report-v0.md. Offline snapshot of one metric (cost | latency | score:<name>) bucketed by day/week/asset over local capsules (ADR-0129 extraction/filter path). No thresholds/alerts (that is ADR-0136). JSON is source of truth; optional self-contained static HTML is a projection.",
+  "$comment": "Accepted (ADR-0131, 2026-07-13); implemented experimental 2026-07-15. Graduated from the private design/spec/schemas/ — identity metadata changed only, contract unchanged. schema_version 0.1.0. Tracks the private design/spec/trend-report-v0.md. Offline snapshot of one metric (cost | latency | score:<name>) bucketed by day/week/asset over local capsules (ADR-0129 extraction/filter path). No thresholds/alerts (that is ADR-0136). JSON is source of truth; optional self-contained static HTML is a projection.",
   "title": "TrendReport",
   "description": "Canonical JSON output of `nova trend` — bucketed series of one metric.",
   "type": "object",

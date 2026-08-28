@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/features/translog-checkpoint-v0.schema.json",
-  "$comment": "schema_version 0.x (v0, not frozen); tracks design/spec/features/NF-041-047-verifiable-transparency-log.md. Standalone additive/optional fragment. This models the parsed/structured form of a C2SP signed-note checkpoint referenced from an Evidence Bundle via extensions/. The canonical wire form is the C2SP signed-note text body (origin\\ntree_size\\nbase64(root_hash)\\n[ext lines]) plus '— <keyname> <base64 sig>' lines; this schema is the decoded object.",
+  "$comment": "schema_version 0.x (v0, not frozen); tracks the private design/spec/features/NF-041-047-verifiable-transparency-log.md. Standalone additive/optional fragment. This models the parsed/structured form of a C2SP signed-note checkpoint referenced from an Evidence Bundle via extensions/. The canonical wire form is the C2SP signed-note text body (origin\\ntree_size\\nbase64(root_hash)\\n[ext lines]) plus '— <keyname> <base64 sig>' lines; this schema is the decoded object.",
   "title": "TransparencyLogCheckpoint",
   "description": "Additive/optional — v0, not frozen. A C2SP-style transparency-log checkpoint / signed note (NF-042). Emitted for every log head: origin, tree_size, root_hash (base64), timestamp, and the origin-signer signature(s) plus K-of-M witness cosignatures (NF-043). A head is 'witness-final' only with a quorum of valid witness cosignatures. Optional extension lines (sparse-Merkle map root, RFC 3161 TSA digest) are forward-compatible; unknown extensions are ignored.",
   "type": "object",

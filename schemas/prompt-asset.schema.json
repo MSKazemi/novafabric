@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/prompt-asset.schema.json",
-  "$comment": "Experimental \u2014 governed by ADR-0112 (accepted 2026-07-13). Graduated from design/spec/schemas/ on first implementation; schema_version 0.1.0. Tracks design/spec/prompt-asset-v0.md.",
+  "$comment": "Experimental \u2014 governed by ADR-0112 (accepted 2026-07-13). Graduated from the private design/spec/schemas/ on first implementation; schema_version 0.1.0. Tracks the private design/spec/prompt-asset-v0.md.",
   "title": "PromptAsset",
   "description": "A first-class, managed registry asset recording a prompt as a versioned, content-addressed, immutable record. Extends the generic AssetSpec (asset_type='prompt') with prompt-native fields.",
   "type": "object",

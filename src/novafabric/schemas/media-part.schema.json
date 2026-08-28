@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/media-part.schema.json",
-  "$comment": "schema_version 0.1.0; tracks design/spec/multimodal-capture-v0.md (ADR-0125, accepted 2026-07-13; graduated from design/spec/schemas/ 2026-07-15, experimental). Additive MediaPart reference block on a model-call ContentPart ('media' key); reuses the outputs/ blob store + sha256 content-addressing. Byte capture opt-in (ADR-0021 §4).",
+  "$comment": "schema_version 0.1.0; tracks the private design/spec/multimodal-capture-v0.md (ADR-0125, accepted 2026-07-13; graduated from the private design/spec/schemas/ 2026-07-15, experimental). Additive MediaPart reference block on a model-call ContentPart ('media' key); reuses the outputs/ blob store + sha256 content-addressing. Byte capture opt-in (ADR-0021 §4).",
   "title": "MediaPart",
   "description": "Content-addressed reference to image/audio/video/document on a model-call message part.",
   "type": "object",

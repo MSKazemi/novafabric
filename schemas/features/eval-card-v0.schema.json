@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/features/eval-card-v0.schema.json",
-  "$comment": "schema_version 0.x (v0, not frozen); tracks design/spec/features/NF-002-010-signed-eval-cards.md. Standalone additive/optional fragment referenced from a capsule via extensions/. Does not modify run-capsule.schema.json.",
+  "$comment": "schema_version 0.x (v0, not frozen); tracks the private design/spec/features/NF-002-010-signed-eval-cards.md. Standalone additive/optional fragment referenced from a capsule via extensions/. Does not modify run-capsule.schema.json.",
   "title": "SignedEvalCard",
   "description": "Additive/optional — v0, not frozen. A content-addressed, signed eval card (NF-002): the reproducibility key an evaluator's Score references by digest. Carries evaluator identity, judge model + version, prompt version, rubric, dataset version, and a human-agreement calibration summary. eval_card_digest = sha256 over canonical-JSON of this object with the 'signature' block excluded (NF-002 req 5).",
   "type": "object",

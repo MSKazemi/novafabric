@@ -36,6 +36,20 @@ Scope, stated rather than implied:
   contained, including which ADR files it added; editing them to read better
   today would falsify the record. They are listed in the failure message anyway
   when they match, so the exemption is visible rather than silent.
+
+The class is wider than ``docs/``, which is what the first version of this guard
+missed. Measured on 2026-08-28 across the whole public tree: **402 references in
+223 files**. The published JSON Schemas are the tier that matters most after
+``docs/`` — their ``$comment`` strings are served from ``novafabric.io/schemas/``
+and read by third parties who have no way to open a ``design/`` path — so they
+get their own case below. The remaining tier, ``src/**/*.py`` docstrings that
+reach ``help()`` and the generated API reference, is not yet swept and is
+deliberately not asserted here rather than being silently included.
+
+* ``x-novafabric`` blocks inside a schema are exempt. Their ``spec`` value is a
+  machine-readable document identifier, not prose addressed to a reader, and the
+  same file's ``$comment`` already marks the tree as private. Editing the value
+  would corrupt the datum.
 """
 from __future__ import annotations
 
@@ -85,4 +99,46 @@ def test_no_public_doc_names_a_private_path_without_saying_it_is_private() -> No
         "public docs name a private design/ path without marking it private — a "
         "dead end for every reader, and invisible to `make check-links` because "
         "prose is not a link:\n  " + "\n  ".join(offenders)
+    )
+
+
+def _public_schemas() -> list[str]:
+    out = subprocess.run(
+        ["git", "ls-files", "schemas", "src/novafabric/schemas", "web/src/data/schemas"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return [p for p in out.splitlines() if p.endswith(".json")]
+
+
+def test_the_schema_sweep_is_not_vacuous() -> None:
+    """A bad path would make the case below pass without checking anything."""
+    schemas = _public_schemas()
+    assert len(schemas) >= 100, len(schemas)
+    assert any("design/" in (REPO / s).read_text(encoding="utf-8") for s in schemas)
+
+
+def test_no_published_schema_names_a_private_path_without_saying_it_is_private() -> None:
+    """``$comment`` is served to third parties who cannot open a `design/` path."""
+    offenders: list[str] = []
+
+    for rel in _public_schemas():
+        text = (REPO / rel).read_text(encoding="utf-8", errors="ignore")
+        for match in PRIVATE_PATH.finditer(text):
+            start = max(0, match.start() - WINDOW)
+            context = text[start : match.end() + WINDOW].lower()
+            if any(marker in context for marker in MARKERS):
+                continue
+            if '"spec": "' in text[max(0, match.start() - 12) : match.start()]:
+                continue  # x-novafabric machine-readable pointer, see module docstring
+            line = text.count("\n", 0, match.start()) + 1
+            offenders.append(f"{rel}:{line}  {match.group(0)}")
+
+    assert not offenders, (
+        "published JSON Schemas name a private design/ path without marking it "
+        "private. These $comment strings are served from novafabric.io/schemas/ "
+        "and read by consumers who have no way to open the document:\n  "
+        + "\n  ".join(offenders)
     )

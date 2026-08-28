@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/replay-policy.schema.json",
-  "$comment": "schema_version 0.1.0; tracks design/spec/replay-policy-v0.md. Every field is optional; missing sections fall back to spec-documented defaults.  STATUS: IN FORCE. This is what an installed CLI validates against and what existing capsules were written against. The OAS v1.0 target lives at the sibling $id ending -v1.schema.json and is not yet in force. See ADR-0223.",
+  "$comment": "schema_version 0.1.0; tracks the private design/spec/replay-policy-v0.md. Every field is optional; missing sections fall back to spec-documented defaults.  STATUS: IN FORCE. This is what an installed CLI validates against and what existing capsules were written against. The OAS v1.0 target lives at the sibling $id ending -v1.schema.json and is not yet in force. See ADR-0223.",
   "title": "ReplayPolicy",
   "description": "Content of replay.yaml inside a NovaFabric Run Capsule. Governs what replay does with external resources and mutating tools.",
   "type": "object",

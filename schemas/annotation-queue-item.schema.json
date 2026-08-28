@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/annotation-queue-item.schema.json",
-  "$comment": "Graduated from design/spec/schemas/ on ADR-0118 acceptance (2026-07-13); first slice implemented 2026-07-15 (experimental). schema_version 0.1.0. Tracks design/spec/annotation-queue-v0.md. Workflow layer only; completion writes existing HUMAN-source Score records (ADR-0099), unchanged.",
+  "$comment": "Graduated from the private design/spec/schemas/ on ADR-0118 acceptance (2026-07-13); first slice implemented 2026-07-15 (experimental). schema_version 0.1.0. Tracks the private design/spec/annotation-queue-v0.md. Workflow layer only; completion writes existing HUMAN-source Score records (ADR-0099), unchanged.",
   "title": "QueueItem",
   "type": "object",
   "additionalProperties": false,

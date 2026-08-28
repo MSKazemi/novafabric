@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/safety-case.schema.json",
-  "$comment": "schema_version 0.1.0; tracks design/spec/safety-case-v0.1.md and design/adr/0095-evidence-grounded-safety-case-and-admissible-evidence.md. A Claims-Arguments-Evidence (CAE) tree auto-assembled from existing NovaFabric artifacts. Carried INSIDE an Evidence Bundle as safety-case.json + attestations/safety-case.intoto.json; NOT a third top-level format (ADR-0034). Core invariant I1: eval evidence MUST carry process evidence; a bare pass/fail is a schema violation.",
+  "$comment": "schema_version 0.1.0; tracks the private design/spec/safety-case-v0.1.md and the private design/adr/0095-evidence-grounded-safety-case-and-admissible-evidence.md. A Claims-Arguments-Evidence (CAE) tree auto-assembled from existing NovaFabric artifacts. Carried INSIDE an Evidence Bundle as safety-case.json + attestations/safety-case.intoto.json; NOT a third top-level format (ADR-0034). Core invariant I1: eval evidence MUST carry process evidence; a bare pass/fail is a schema violation.",
   "title": "SafetyCase",
   "description": "An Evidence-Grounded Safety Case: a CAE tree (Claim -> ArgumentStrategy -> Claim*|Evidence*) whose leaves bind to real NovaFabric artifacts. Backing states are assigned mechanically from evidence statistics so honesty is structural, not editorial.",
   "type": "object",

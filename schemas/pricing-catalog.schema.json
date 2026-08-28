@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/pricing-catalog.schema.json",
-  "$comment": "Governed by ADR-0133 (accepted 2026-07-13). schema_version 0.1.0. Tracks design/spec/model-pricing-catalog-v0.md. A local YAML/JSON pricing file MERGED over the built-in PRICE_TABLE (ADR-0066); layers builtin < user < project < explicit. Fully offline \u2014 no remote registry, no fetch. Prices keyed by ADR-0132 usage type; effective-dated; user-asserted estimates. Runtime validation: pydantic models in src/novafabric/cost/pricing_catalog.py.",
+  "$comment": "Governed by ADR-0133 (accepted 2026-07-13). schema_version 0.1.0. Tracks the private design/spec/model-pricing-catalog-v0.md. A local YAML/JSON pricing file MERGED over the built-in PRICE_TABLE (ADR-0066); layers builtin < user < project < explicit. Fully offline \u2014 no remote registry, no fetch. Prices keyed by ADR-0132 usage type; effective-dated; user-asserted estimates. Runtime validation: pydantic models in src/novafabric/cost/pricing_catalog.py.",
   "title": "PricingCatalog",
   "description": "A local, user-extensible model pricing catalog merged over the built-in price table.",
   "type": "object",

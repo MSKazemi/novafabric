@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/experiment.schema.json",
-  "$comment": "Accepted (ADR-0120, 2026-07-13); implemented experimental 2026-07-15. Graduated from design/spec/schemas/ \u2014 identity metadata changed only, contract unchanged. schema_version 0.1.0. Tracks design/spec/dataset-experiment-v0.md. New optional artifact \u2014 does not alter Run Capsule, Score, or eval_results schemas.",
+  "$comment": "Accepted (ADR-0120, 2026-07-13); implemented experimental 2026-07-15. Graduated from the private design/spec/schemas/ \u2014 identity metadata changed only, contract unchanged. schema_version 0.1.0. Tracks the private design/spec/dataset-experiment-v0.md. New optional artifact \u2014 does not alter Run Capsule, Score, or eval_results schemas.",
   "title": "Experiment",
   "description": "Immutable, content-addressed dataset-experiment record (one target across a pinned dataset).",
   "type": "object",

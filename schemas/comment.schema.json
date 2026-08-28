@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/comment.schema.json",
-  "$comment": "schema_version 0.1.0; governed by ADR-0121 (accepted 2026-07-13); tracks design/spec/capsule-comments-v0.md. Graduated from design/spec/schemas/comment.schema.json. One line of the OPTIONAL capsule file `comments.jsonl` (capsule/span/run/score subjects) or one registry note row (asset subjects, P3 planned); append-only, mirrors scores.jsonl (ADR-0099). A capsule without comments.jsonl remains valid. Experimental — not yet a frozen format.",
+  "$comment": "schema_version 0.1.0; governed by ADR-0121 (accepted 2026-07-13); tracks the private design/spec/capsule-comments-v0.md. Graduated from the private design/spec/schemas/comment.schema.json. One line of the OPTIONAL capsule file `comments.jsonl` (capsule/span/run/score subjects) or one registry note row (asset subjects, P3 planned); append-only, mirrors scores.jsonl (ADR-0099). A capsule without comments.jsonl remains valid. Experimental — not yet a frozen format.",
   "title": "Comment",
   "description": "Append-only human annotation on a capsule/span/run/score digest or an asset ref.",
   "type": "object",
