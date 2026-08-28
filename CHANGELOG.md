@@ -31,6 +31,22 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   than as separately invoked. `make bench-scale` also un-hides the dashboard p95 gate at a
   100,000-run store, which is skipped by default but takes ~7 s.
 
+### Fixed
+
+- **`robots.txt` shipped in the wheel carried a note addressed to the maintainer by name.**
+  `src/novafabric/serve/static/` is a built copy of the marketing site under `web/`, mounted at
+  `/` by `nova serve` — so everything in it is packaged and installed by `pip install
+  novafabric`, including files that look like build artifacts. The published v0.101.0 wheel
+  therefore contained `novafabric/serve/static/robots.txt` with an internal note
+  (*"RECOMMENDATION FOR MOHSEN: ..."*) written while editing the website. Nothing in Python
+  referenced the file and no test covered it, so it was invisible from inside the codebase.
+  The guidance itself was sound and is kept, rewritten as advice addressed to the reader.
+  Guarded by `tests/test_robots_txt_shipped_is_publishable.py`, which pins the shipped copy to
+  its source under `web/public/` and fails on any personal address; both assertions were
+  red-green proven against a reintroduced note. ⚠ note the class, not just the instance: a
+  directory copied wholesale into the package is a **public surface**, whatever it looks like
+  in the source tree.
+
 ### Security
 
 - **The sdist could carry the entire private tree, including the private git history**

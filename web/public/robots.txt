@@ -43,9 +43,9 @@ Allow: /
 # Blocking them does NOT affect your appearance in ChatGPT, Claude, Gemini, or Perplexity.
 # Uncomment any block below to opt out of that vendor's model training.
 #
-# RECOMMENDATION FOR MOHSEN: leaving training bots allowed maximises the chance
-# that future model versions know about NovaFabric. Block them only if you have
-# a legal or policy reason to do so. No silent changes made here.
+# Default here is to leave training bots allowed: it maximises the chance that a
+# future model version knows this project exists. Block them only for a legal or
+# policy reason. Nothing below is enabled without an explicit edit.
 #
 # User-agent: GPTBot
 # Disallow: /
