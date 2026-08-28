@@ -46,15 +46,38 @@ def _main_db_file(conn: sqlite3.Connection) -> str | None:
 
 
 def init_schema(conn: sqlite3.Connection, *, force: bool = False) -> None:
+    """Ensure the registry schema exists, running the DDL once per (process, db file).
+
+    The memo is checked and set under **one** hold of the lock, with the DDL inside it.
+    This used to be a check-then-act: the membership test took the lock, released it, ran
+    ``_init_schema`` unlocked, then took the lock again to record the result. Two threads
+    could therefore both miss the memo and both run the full ``executescript`` — which is
+    precisely the repeated-DDL cost this memo exists to remove, so under concurrency the
+    optimisation quietly stopped applying.
+
+    The window is not theoretical: ``serve`` calls this from four sites that run
+    concurrently against the same db file — the lifespan's ``run_in_executor`` bootstrap,
+    the stats refresh thread, the capsule-watcher thread, and the request handlers.
+    ``tests/serve/test_schema_init_once.py`` asserts once-per-db and had been passing only
+    because the window is narrow; it failed with ``2 == 1`` once the per-app stats cache
+    (ADR-0257) began cold-starting its refresh thread alongside the first request.
+
+    Holding the lock across the DDL serialises first-init across *all* db files rather than
+    per file. That is deliberate: the work is idempotent ``CREATE IF NOT EXISTS``, it runs
+    once per file per process, and production has exactly one registry db — a per-file lock
+    table would buy nothing for the extra state. No deadlock is possible, because a thread
+    waiting on this lock holds no sqlite lock: it has not begun the DDL yet.
+    """
     dbfile = _main_db_file(conn)
-    if dbfile is not None and not force:
-        with _SCHEMA_READY_LOCK:
-            if dbfile in _SCHEMA_READY:
-                return
-    _init_schema(conn)
-    if dbfile is not None:
-        with _SCHEMA_READY_LOCK:
-            _SCHEMA_READY.add(dbfile)
+    if dbfile is None:
+        # Unknowable path (in-memory db, or PRAGMA database_list failed): cannot memo.
+        _init_schema(conn)
+        return
+    with _SCHEMA_READY_LOCK:
+        if dbfile in _SCHEMA_READY and not force:
+            return
+        _init_schema(conn)
+        _SCHEMA_READY.add(dbfile)
 
 
 def _init_schema(conn: sqlite3.Connection) -> None:
