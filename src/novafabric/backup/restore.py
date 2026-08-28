@@ -821,7 +821,7 @@ def _verify_pg_rls(dsn: str) -> RestoreStepResult:
 
     All three verifiers ADR-0229 names are run, and the role split is not
     optional among them. ``BYPASSRLS`` on a role makes Postgres skip row-level
-    security outright, whatever ``FORCE ROW LEVEL SECURITY`` says and whatever
+    security outright, whatever the table's forced-RLS flag says and whatever
     the policy text is, so a restore into a cluster where ``novafabric_app``
     carries it would satisfy both table-level checks while tenant isolation is
     entirely defeated. Checking only those two is not a weaker proof of the same
