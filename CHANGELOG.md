@@ -84,6 +84,21 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **One test could leave capture-hook state set for the next test in the same xdist
+  worker.** `tests/conftest.py` already reset `capture.event_recorder`'s process-globals
+  between tests; it did not reset those of `capture.hooks`, a sibling module with the
+  identical pattern. A leak detector run over the whole `test-fast` selection — snapshotting
+  every process-global at the *start* of each test, so anything dirty there genuinely
+  survived the previous one — found exactly one surviving global in 12,010 tests:
+  `_recorder_set_by_install`, left set by a test that installs deferred hooks and never
+  uninstalls them. No shipped behaviour changes, and the leak could not have blanked a live
+  recorder — the identity guard in `clear_current_recorder` already prevents that — but a
+  test that inherits state is a test whose result depends on the selection. The same run
+  cleared the standing suspicion that unreset module globals explain the intermittent
+  `make test-fast` failure: of 24 globals watched, 13 are import-time registries with one
+  constant value and the other 5 are bounded and uniquely keyed, so none can change a later
+  test's outcome.
+
 - **A `force-include` with no matching `COPY` could still reach a release tag — the guard
   against it was `paths:`-filtered to the files the defect never touches.** The wheel
   force-includes four repo-root paths (`alembic/` and the three canonical JSON Schemas)

@@ -78,12 +78,29 @@ def _isolated_capture_recorder() -> Iterator[None]:
     This is test hygiene, not a substitute for ADR-0224 phase 2 — production code still
     has a process-global recorder, and concurrent in-process captures still need the
     task-scoped fix.
+
+    ``capture.hooks`` is reset for the same reason and was missed the first time: it is a
+    *sibling* module with the identical process-global pattern, and resetting only
+    ``event_recorder`` verified one instance of the pattern rather than the pattern. A
+    leak detector run over the whole ``test-fast`` selection (12,010 tests, 2026-08-28)
+    found exactly one surviving global — ``_recorder_set_by_install``, left set by a test
+    that calls ``install_all_deferred`` and never ``uninstall_all``. Its blast radius is
+    contained by the identity guard in ``clear_current_recorder`` (a stale handle can no
+    longer blank a recorder it does not own), so this closes a real leak rather than a
+    live failure.
     """
     from novafabric.capture import event_recorder as _er
+    from novafabric.capture import hooks as _hooks
 
     def _reset() -> None:
         _er._current_recorder = None
         _er._recorder_var.set(None)
+        # Only these two. ``_installed`` is deliberately NOT cleared: it holds live
+        # hook objects whose ``uninstall()`` is the only way to undo them, so emptying
+        # the list would strand installed hooks — a worse failure than the leak. The
+        # detector found no evidence it leaks, so it is left alone.
+        _hooks._recorder_set_by_install = None
+        _hooks._hook_owner = None
 
     _reset()
     yield
