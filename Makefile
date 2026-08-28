@@ -8,6 +8,7 @@ COMPOSE_PROD := docker compose -f deploy/docker/docker-compose.yml --profile pro
 COMPOSE_AGE  := docker compose -f deploy/docker/docker-compose.yml --profile age
 
 .PHONY: whitepaper help test lint typecheck coverage benchmark benchmark-capture \
+	bench-scale bench-lineage \
         check-links check-decisions site \
         bundle serve-local deploy-local \
         topology-build topology-test serve-topology \
@@ -61,6 +62,8 @@ help:
 	@echo "  test-par          Release gate — byte-for-byte what CI's unit job runs (~5 min)"
 	@echo "  benchmark         Run NovaSeal p99 latency gate (100 rounds, < 200 ms)"
 	@echo "  benchmark-capture Run capture-overhead p95 gate (30 captured runs, < 2000 ms)"
+	@echo "  bench-scale       Dashboard p95 gate at 100K rows (~7s; skipped by default)"
+	@echo "  bench-lineage     Lineage bench (standalone pkg — bench/ is not in the root run)"
 	@echo "  lint              Run ruff linter on src/, tests/ and scripts/"
 	@echo "  typecheck         Run mypy on src/"
 	@echo "  check-links       Verify every relative link in public docs resolves"
@@ -146,6 +149,19 @@ benchmark-capture:
 	mkdir -p .benchmark-results
 	uv run pytest tests/bench/test_capture_overhead_gate.py -v \
 		--benchmark-json=.benchmark-results/capture_overhead.json
+
+# --- bench/ is NOT part of the root pytest run -------------------------------
+# `testpaths = ["tests"]`, so a bare `pytest` collects 0 of its tests. Running
+# `pytest bench/` from the repo root FAILS with 7 collection errors, and that is
+# expected, not a regression: bench/lineage is a separate distribution that is
+# not in the main venv, and bench/lineage/tests/ and bench/testbench/tests/ both
+# claim the top-level module name `tests`. Each bench is its own package and
+# must be run from its own directory. These targets are the documented way in.
+bench-scale:  ## Dashboard scale gate (p95 @ 100K rows) — cheap, ~7s, normally skipped
+	NOVA_DASHBOARD_SCALE=1 uv run pytest tests/bench/test_dashboard_scale_gate.py -v
+
+bench-lineage:  ## Lineage bench suite — standalone package, own venv/lockfile
+	cd bench/lineage && uv run --frozen pytest -q
 
 lint:
 	# --no-cache: a stale ruff cache reported "All checks passed!" for hours on
