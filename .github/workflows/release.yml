@@ -48,8 +48,31 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Interpolated into env, not into the script body: `title` is derived
+          # from the first line of a file in the repo, so inlining it as
+          # ${{ }} inside `run:` would let that line run as shell.
+          RELEASE_TITLE: ${{ steps.notes.outputs.title }}
+          RELEASE_NOTES: ${{ steps.notes.outputs.notes_file }}
         run: |
+          # Two things create the release for a tag: this workflow, on the tag
+          # push, and a human running the command `dualgit release` prints for
+          # them. `gh release create` is not idempotent, so whichever arrived
+          # second got HTTP 422 "Release.tag_name already exists" and the run
+          # went red for a release that had in fact been published. That is
+          # 6 of the last 10 runs of this workflow, including v0.99.0 — where
+          # the release was created at 12:44:20Z and this step failed at
+          # 12:44:35Z, 15 seconds behind.
+          #
+          # The job's contract is "a release exists for this tag with these
+          # notes", and an existing release satisfies it. Report what is there
+          # so a divergence is visible in the log, but do not fail on it.
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "::notice::Release ${GITHUB_REF_NAME} already exists; created outside this run, not recreating."
+            echo "existing title: $(gh release view "${GITHUB_REF_NAME}" --json name --jq .name)"
+            echo "notes this run would have used: ${RELEASE_TITLE}"
+            exit 0
+          fi
           gh release create "${GITHUB_REF_NAME}" \
-            --title "${{ steps.notes.outputs.title }}" \
-            --notes-file "${{ steps.notes.outputs.notes_file }}" \
+            --title "${RELEASE_TITLE}" \
+            --notes-file "${RELEASE_NOTES}" \
             --latest=true

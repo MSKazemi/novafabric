@@ -33,6 +33,25 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **`release.yml` went red on most releases because a tag has two publishers.** The
+  workflow fires on a `v*` tag push and runs `gh release create`; `dualgit release`
+  separately *prints* a `gh release create` for a human to run, deliberately, because
+  releases are outward-facing and are not automated here. `gh release create` is not
+  idempotent, so whichever arrived second got `HTTP 422 Validation Failed /
+  Release.tag_name already exists` and the run went red **for a release that had in fact
+  been published**. That is **6 of the 10 most recent runs** — v0.98.1, v0.98.2, v0.98.3,
+  v0.99.0, plus three tags re-pushed by the 2026-08-08 history rewrite. On v0.99.0 the
+  release was created at 12:44:20Z and the step failed at 12:44:35Z, fifteen seconds
+  behind. Every tag has its release; nothing was ever unpublished. The create is now
+  guarded by a `gh release view` existence check that reports the divergence in the log
+  and exits 0, because the job's contract is *a release exists for this tag* and an
+  existing release satisfies it. The derived title also moved from a `${{ }}` expression
+  inlined in the `run:` body into `env:` — it is read from the first line of
+  `docs/releases/<tag>.md`, so as written that line was interpolated into the shell.
+  `tests/docs/test_release_workflow_is_idempotent.py` asserts the guard three ways,
+  including by executing the real step body against a stub `gh`; all three fail against
+  the pre-fix workflow.
+
 - **The 100k-row Postgres migration gate had never passed — and the defect was in the
   test, not the migration.** `nightly-scale-gates.yml` is **0-for-27**: every run since the
   workflow landed has been red, which is why nothing was ever learned from it. The test
