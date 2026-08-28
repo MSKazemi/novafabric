@@ -7,12 +7,16 @@ Network errors are logged as warnings and do NOT raise — Rekor is additive.
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 import logging
 import os
 from typing import Any
+
+# Third private copy of the base64 decoder, now consolidated: the payload hash
+# published to Rekor is computed from it, so a decoder that drifts from the
+# encoder writes a wrong hash into a transparency log.
+from novafabric.trust.novaseal.envelope import _b64_decode as _decode_b64url
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +24,6 @@ REKOR_ENTRY_KIND = "dsse"
 REKOR_ENTRY_API_VERSION = "0.0.1"
 
 
-def _decode_b64url(s: str) -> bytes:
-    """Decode base64url with padding."""
-    pad = 4 - len(s) % 4
-    return base64.urlsafe_b64decode(s + "=" * (pad if pad != 4 else 0))
 
 
 def maybe_publish(envelope_bytes: bytes, *, timeout_s: float = 10.0) -> str | None:

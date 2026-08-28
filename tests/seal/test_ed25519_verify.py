@@ -11,8 +11,8 @@ from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 from novafabric.trust.novaseal.envelope import (
     PAYLOAD_TYPE,
     EnvelopeError,
-    _b64url_decode,
-    _b64url_encode,
+    _b64_decode,
+    _b64_encode,
     _pae,
     create_envelope,
     verify_envelope,
@@ -50,12 +50,12 @@ def _build_ed25519_envelope(payload: bytes, private_key, public_key) -> bytes:
 
     sig_entry = {
         "keyid": "ed25519-test",
-        "sig": _b64url_encode(signature),
-        "pubkey": _b64url_encode(pubkey_pem),
+        "sig": _b64_encode(signature),
+        "pubkey": _b64_encode(pubkey_pem),
     }
 
     envelope = {
-        "payload": _b64url_encode(payload),
+        "payload": _b64_encode(payload),
         "payloadType": PAYLOAD_TYPE,
         "signatures": [sig_entry],
     }
@@ -93,10 +93,10 @@ class TestEd25519VerifyViaPublicKeyField:
 
         env = json.loads(envelope_bytes)
         # Flip a byte in the signature
-        sig_bytes = _b64url_decode(env["signatures"][0]["sig"])
+        sig_bytes = _b64_decode(env["signatures"][0]["sig"])
         tampered = bytearray(sig_bytes)
         tampered[0] ^= 0xFF
-        env["signatures"][0]["sig"] = _b64url_encode(bytes(tampered))
+        env["signatures"][0]["sig"] = _b64_encode(bytes(tampered))
 
         tampered_envelope = json.dumps(env, separators=(",", ":")).encode()
         with pytest.raises(EnvelopeError, match="signature"):
@@ -110,7 +110,7 @@ class TestEd25519VerifyViaPublicKeyField:
 
         env = json.loads(envelope_bytes)
         # Replace payload with a different value
-        env["payload"] = _b64url_encode(b'{"run_id": "TAMPERED"}')
+        env["payload"] = _b64_encode(b'{"run_id": "TAMPERED"}')
         tampered_envelope = json.dumps(env, separators=(",", ":")).encode()
 
         with pytest.raises(EnvelopeError, match="signature"):
@@ -129,11 +129,11 @@ class TestEd25519VerifyViaPublicKeyField:
         pubkey_pem = _public_key_to_pem(pub2)
         sig_entry = {
             "keyid": "ed25519-wrong",
-            "sig": _b64url_encode(signature),
-            "pubkey": _b64url_encode(pubkey_pem),
+            "sig": _b64_encode(signature),
+            "pubkey": _b64_encode(pubkey_pem),
         }
         envelope = {
-            "payload": _b64url_encode(payload),
+            "payload": _b64_encode(payload),
             "payloadType": PAYLOAD_TYPE,
             "signatures": [sig_entry],
         }
@@ -210,11 +210,11 @@ class TestMissingKeyFields:
 
         sig_entry = {
             "keyid": "no-key-field",
-            "sig": _b64url_encode(signature),
+            "sig": _b64_encode(signature),
             # No 'cert' and no 'pubkey'
         }
         envelope = {
-            "payload": _b64url_encode(payload),
+            "payload": _b64_encode(payload),
             "payloadType": PAYLOAD_TYPE,
             "signatures": [sig_entry],
         }
@@ -226,7 +226,7 @@ class TestMissingKeyFields:
     def test_no_signatures_raises(self) -> None:
         """Envelope with empty signatures list raises EnvelopeError."""
         envelope = {
-            "payload": _b64url_encode(b"data"),
+            "payload": _b64_encode(b"data"),
             "payloadType": PAYLOAD_TYPE,
             "signatures": [],
         }

@@ -25,6 +25,11 @@ from cryptography.x509 import NameOID, load_pem_x509_certificate
 
 from novafabric.promote.exceptions import PredicateValidationError
 
+# Base64 helpers — one definition, shared with NovaSeal.  This module used to
+# carry its own byte-identical copy of the URL-safe, unpadded pair, so the DSSE
+# interop defect fixed in ``trust.novaseal.envelope`` existed here twice.
+from novafabric.trust.novaseal.envelope import _b64_decode, _b64_encode
+
 # ---------------------------------------------------------------------------
 # Payload type constants
 # ---------------------------------------------------------------------------
@@ -55,19 +60,6 @@ def _pae(payload_type: str, payload: bytes) -> bytes:
     return b"DSSEv1" + _sp(payload_type.encode("utf-8")) + _sp(payload)
 
 
-# ---------------------------------------------------------------------------
-# Base64url helpers (no padding)
-# ---------------------------------------------------------------------------
-
-def _b64url_encode(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
-
-
-def _b64url_decode(s: str) -> bytes:
-    pad = 4 - len(s) % 4
-    if pad != 4:
-        s += "=" * pad
-    return base64.urlsafe_b64decode(s)
 
 
 # ---------------------------------------------------------------------------
@@ -153,13 +145,13 @@ def sign_promote_envelope(
 
     keyid = hashlib.sha256(cert_der).hexdigest()
     envelope = {
-        "payload": _b64url_encode(payload),
+        "payload": _b64_encode(payload),
         "payloadType": payload_type,
         "signatures": [
             {
                 "keyid": keyid,
-                "sig": _b64url_encode(signature),
-                "cert": _b64url_encode(cert_der),
+                "sig": _b64_encode(signature),
+                "cert": _b64_encode(cert_der),
             }
         ],
     }
@@ -199,10 +191,10 @@ def verify_promote_envelope(
             f"Unexpected payloadType {payload_type!r}; expected {expected_payload_type!r}"
         )
 
-    payload = _b64url_decode(payload_b64)
+    payload = _b64_decode(payload_b64)
     sig_entry = sigs[0]
-    sig_bytes = _b64url_decode(sig_entry.get("sig", ""))
-    cert_der = _b64url_decode(sig_entry.get("cert", ""))
+    sig_bytes = _b64_decode(sig_entry.get("sig", ""))
+    cert_der = _b64_decode(sig_entry.get("cert", ""))
 
     try:
         cert = load_pem_x509_certificate(_der_to_pem_cert(cert_der))

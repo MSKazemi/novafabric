@@ -14,8 +14,8 @@ from cryptography.hazmat.primitives.asymmetric import ed25519 as _ed25519
 from novafabric.trust.novaseal.envelope import (
     PAYLOAD_TYPE,
     EnvelopeError,
-    _b64url_decode,
-    _b64url_encode,
+    _b64_decode,
+    _b64_encode,
     _pae,
     create_envelope,
     extract_payload,
@@ -102,21 +102,51 @@ class TestPAE:
 # Base64url
 # ---------------------------------------------------------------------------
 
-class TestB64Url:
+class TestB64:
+    """The DSSE spec puts *standard*, padded base64 on the wire (RFC 4648 §4).
+
+    These tests replace three that asserted the opposite — ``test_no_padding``
+    and ``test_url_safe`` pinned the URL-safe unpadded output that a stock
+    verifier cannot read.  They encoded a wrong contract, so they are gone
+    rather than adjusted.
+    """
+
     def test_roundtrip(self):
         for data in [b"", b"hello", b"\x00\xff\xfe", b"a" * 100]:
-            assert _b64url_decode(_b64url_encode(data)) == data
+            assert _b64_decode(_b64_encode(data)) == data
 
-    def test_no_padding(self):
-        encoded = _b64url_encode(b"hello")
-        assert "=" not in encoded
-
-    def test_url_safe(self):
-        # Should use - and _ not + and /
+    def test_encoder_is_spec_compliant_standard_base64(self):
         data = bytes(range(256))
-        encoded = _b64url_encode(data)
-        assert "+" not in encoded
-        assert "/" not in encoded
+        encoded = _b64_encode(data)
+        # standard alphabet, not URL-safe
+        assert "-" not in encoded
+        assert "_" not in encoded
+        # and padded, so length is always a multiple of 4
+        assert len(encoded) % 4 == 0
+        assert _base64.b64decode(encoded) == data
+
+    def test_a_stock_decoder_reads_our_envelope_payload(self):
+        """The whole point of DSSE: someone else's tool must be able to read it."""
+        payload = json.dumps(
+            {"_type": "https://in-toto.io/Statement/v1", "subject": [{"name": "x"}]}
+        ).encode()
+        # exactly what a third-party verifier does — no NovaFabric code involved
+        assert _base64.b64decode(_b64_encode(payload)) == payload
+
+    @pytest.mark.parametrize(
+        "encode",
+        [
+            # legacy NovaSeal: URL-safe, unpadded — must keep verifying
+            lambda d: _base64.urlsafe_b64encode(d).rstrip(b"=").decode("ascii"),
+            lambda d: _base64.urlsafe_b64encode(d).decode("ascii"),
+            lambda d: _base64.b64encode(d).decode("ascii"),
+            lambda d: _base64.b64encode(d).decode("ascii").rstrip("="),
+        ],
+        ids=["urlsafe-unpadded-legacy", "urlsafe-padded", "standard-padded", "standard-unpadded"],
+    )
+    def test_decoder_is_tolerant_of_every_encoding_in_the_wild(self, encode):
+        for data in [b"", b"hello", bytes(range(256)), b"\xfb\xff\xfe", b"a" * 100]:
+            assert _b64_decode(encode(data)) == data
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +205,7 @@ class TestVerifyEnvelope:
         env_bytes = create_envelope(payload, key_path, cert_path)
         env = json.loads(env_bytes)
         # Tamper with the payload
-        env["payload"] = _b64url_encode(b'{"run_id": "TAMPERED"}')
+        env["payload"] = _b64_encode(b'{"run_id": "TAMPERED"}')
         tampered = json.dumps(env).encode()
         with pytest.raises(EnvelopeError, match="[Ss]ignature"):
             verify_envelope(tampered)
@@ -212,7 +242,7 @@ class TestVerifyEnvelope:
         env_bytes = create_envelope(payload, key_path, cert_path)
         env = json.loads(env_bytes)
         # Replace cert with garbage
-        env["signatures"][0]["cert"] = _b64url_encode(b"not a cert")
+        env["signatures"][0]["cert"] = _b64_encode(b"not a cert")
         with pytest.raises(EnvelopeError):
             verify_envelope(json.dumps(env).encode())
 
