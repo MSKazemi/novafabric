@@ -188,7 +188,9 @@ class _RunEventBus:
                 pass  # slow consumer — drop rather than block
 
 
-_run_bus = _RunEventBus()
+# NOTE: the bus is instantiated **per app** inside create_app(), not here. A
+# module-level instance is shared by every create_app() in the process, so one
+# app's new-run events are broadcast to another app's SSE subscribers.
 
 
 # DD-2 collector health-file discovery. The /tmp fallback exists for
@@ -319,7 +321,11 @@ class _StatsCache:
             return dt.isoformat()
 
 
-_stats_cache = _StatsCache()
+# NOTE: the cache is instantiated **per app** inside create_app(), not here.
+# See the _RunEventBus note above — the same isolation rule applies, and here it
+# also broke conditional GET: /api/stats memoises its payload per app while a
+# module-level cache is per process, so another app's ~2 s refresh loop flipped
+# this app's data between two requests and churned the ETag.
 
 
 def _get_version() -> str:
@@ -625,6 +631,14 @@ def create_app(
     """
 
     _db_path = db_path  # capture for lifespan closure
+
+    # Per-app instance state. Both of these were module-level singletons, which
+    # made every app in a process share one bus and one stats cache: an SSE
+    # subscriber on app A received app B's runs, and /api/stats could serve app
+    # B's counts for app A's capsule directory. Constructing them here is what
+    # makes create_app() the isolated factory its docstring already claims.
+    _run_bus = _RunEventBus()
+    _stats_cache = _StatsCache()
 
     # Mutable holder so that topology startup hooks (defined later in the
     # topology_enabled block) are visible to _lifespan at runtime.  The
