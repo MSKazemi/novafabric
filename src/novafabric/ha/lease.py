@@ -29,6 +29,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from novafabric._sqlite_util import ensure_wal
+
 
 @dataclass(frozen=True)
 class LeaseState:
@@ -112,8 +114,8 @@ class SqliteLeaseStore(WriterLeaseStore):
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=30000")
+        ensure_wal(conn, what="lease database")
         return conn
 
     def acquire(self, holder_id: str, ttl_seconds: float) -> LeaseState | None:

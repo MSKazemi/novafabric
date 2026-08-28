@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from novafabric._paths import nova_home
+from novafabric._sqlite_util import ensure_wal
 from novafabric.jobs.models import Job, JobState
 
 
@@ -96,8 +97,8 @@ class JobStore:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=30000")
+        ensure_wal(conn, what="jobs database")
         return conn
 
     # ---------- write side ----------

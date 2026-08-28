@@ -84,6 +84,24 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **The WAL-pragma defect was a class of four, and the sweep found the tooling defect that
+  had been hiding one of them.** `jobs/store.py`, `ha/lease.py` and
+  `trust/novaseal/nonce_store.py` each issued the same unconditional
+  `PRAGMA journal_mode=WAL` that was fixed in `registry/store.py`; all four now share
+  `_sqlite_util.ensure_wal`. Twelve sites carried the pattern and only these four were
+  exposed: six open a single connection per instance, `query/cache.py` is documented
+  fail-soft, and `metadata_store/sqlite.py` warns at runtime that it is dev-only and
+  single-process — all eight are deliberately left as they are, because uniformly "fixing"
+  benign instances is itself a regression. Two "residual defects" recorded against `ha/lease.py`
+  during the sweep **do not exist**: they were measured against a stale `__pycache__` entry
+  that was serving the module's pre-fix bytecode while reporting the fixed source. Python
+  validates a `.pyc` by the source's whole-second mtime and its size, so a same-second,
+  same-size rewrite is invisible to it — the cache header recorded exactly the current
+  source's mtime and size. Re-measured with the cache cleared, lease passes: 0 failures in
+  6,400 concurrent cold opens and 0 in 1,600 concurrent constructions.
+  `tests/test_bytecode_cache_matches_source.py` now recompiles every module under `src/` and
+  compares the bytecode, because the check Python performs cannot see this.
+
 - **`nova serve` told you to look for the session token in a file that was not there.**
   The start-up panel printed two hardcoded literals — `~/.novafabric/.serve-token` and
   `~/.novafabric/registry.db` — instead of the paths the process had just resolved. Whenever

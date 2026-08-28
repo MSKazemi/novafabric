@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from novafabric import _sqlite_util
 from novafabric.registry import store
 
 
@@ -37,7 +38,7 @@ def test_second_connection_issues_no_journal_mode_write(tmp_path: Path) -> None:
     conn = sqlite3.connect(str(db))
     conn.set_trace_callback(statements.append)
     try:
-        store._ensure_wal(conn)
+        store.ensure_wal(conn)
     finally:
         conn.set_trace_callback(None)
         conn.close()
@@ -48,7 +49,7 @@ def test_second_connection_issues_no_journal_mode_write(tmp_path: Path) -> None:
 
 
 class _RefusesWalWrite:
-    """Duck-typed stand-in: ``_ensure_wal`` uses only ``execute`` and ``commit``.
+    """Duck-typed stand-in: ``ensure_wal`` uses ``execute``/``commit``/``rollback``.
 
     ``sqlite3.Connection`` is a C type and rejects attribute assignment, so the
     refusal has to be injected by delegation rather than by monkeypatching.
@@ -65,6 +66,15 @@ class _RefusesWalWrite:
     def commit(self) -> None:
         self._conn.commit()
 
+    def rollback(self) -> None:
+        self._conn.rollback()
+
+
+@pytest.fixture
+def instant_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip the real backoff so exhausting the budget stays sub-second."""
+    monkeypatch.setattr(_sqlite_util.time, "sleep", lambda _seconds: None)
+
 
 def test_losing_the_race_to_another_writer_is_not_an_error(tmp_path: Path) -> None:
     """The retry's exit condition is the invariant, not 'my statement succeeded'.
@@ -76,12 +86,14 @@ def test_losing_the_race_to_another_writer_is_not_an_error(tmp_path: Path) -> No
     store.get_connection(db).close()  # already WAL, as if a rival thread had won
     conn = sqlite3.connect(str(db))
     try:
-        store._ensure_wal(_RefusesWalWrite(conn))  # type: ignore[arg-type]
+        store.ensure_wal(_RefusesWalWrite(conn))  # type: ignore[arg-type]
     finally:
         conn.close()
 
 
-def test_a_persistently_locked_journal_mode_still_raises(tmp_path: Path) -> None:
+def test_a_persistently_locked_journal_mode_still_raises(
+    tmp_path: Path, instant_backoff: None
+) -> None:
     """Retrying is bounded, and WAL is never silently abandoned.
 
     Callers that expect concurrent readers must not be handed a connection in a
@@ -91,7 +103,7 @@ def test_a_persistently_locked_journal_mode_still_raises(tmp_path: Path) -> None
     conn = sqlite3.connect(str(db))
     try:
         with pytest.raises(sqlite3.OperationalError):
-            store._ensure_wal(_RefusesWalWrite(conn))  # type: ignore[arg-type]
+            store.ensure_wal(_RefusesWalWrite(conn))  # type: ignore[arg-type]
     finally:
         conn.close()
 

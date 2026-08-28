@@ -27,10 +27,11 @@ import logging
 import os
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Optional
 
-from novafabric._sqlite_util import connect_sqlite
+from novafabric._sqlite_util import connect_sqlite, ensure_wal
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,7 @@ class NonceStore:
     # ------------------------------------------------------------------
 
     def _init_schema(self) -> None:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn, conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS nonces (
@@ -102,7 +103,7 @@ class NonceStore:
     def _connect(self) -> sqlite3.Connection:
         assert self._db_path is not None
         conn = connect_sqlite(str(self._db_path), check_same_thread=False)
-        conn.execute("PRAGMA journal_mode=WAL")
+        ensure_wal(conn, what="nonce database")
         conn.execute("PRAGMA synchronous=NORMAL")
         return conn
 
@@ -118,7 +119,7 @@ class NonceStore:
         """
         if self._offline:
             return
-        with self._connect() as conn:
+        with closing(self._connect()) as conn, conn:
             conn.execute(
                 "INSERT OR IGNORE INTO nonces (nonce, seen_at) VALUES (?, ?)",
                 (nonce, time.time()),
@@ -136,7 +137,7 @@ class NonceStore:
         """
         if self._offline:
             return False
-        with self._connect() as conn:
+        with closing(self._connect()) as conn, conn:
             row = conn.execute(
                 "SELECT 1 FROM nonces WHERE nonce = ? LIMIT 1", (nonce,)
             ).fetchone()
@@ -154,7 +155,7 @@ class NonceStore:
         if self._offline:
             return 0
         cutoff = time.time() - max_age_days * 86400.0
-        with self._connect() as conn:
+        with closing(self._connect()) as conn, conn:
             cur = conn.execute(
                 "DELETE FROM nonces WHERE seen_at < ?", (cutoff,)
             )
