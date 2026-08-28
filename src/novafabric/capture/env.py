@@ -24,8 +24,13 @@ _ALLOW_PREFIXES = (
 )
 
 
+def _digest(value: str) -> str:
+    """The bare hex digest, with no algorithm prefix."""
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
 def _stable_hash(value: str) -> str:
-    return "sha256:" + hashlib.sha256(value.encode()).hexdigest()
+    return "sha256:" + _digest(value)
 
 
 def _detect_package_manager(cwd: Path) -> tuple[str, str]:
@@ -174,7 +179,7 @@ def capture_environment(created_at: str, run_id: str) -> dict[str, Any]:
                      "detail": f"{lock_kind} declared but not found"}
                 )
 
-    hostname_hash = _stable_hash(socket.gethostname())[:16]
+    hostname_hash = _digest(socket.gethostname())[:16]
     lang = os.environ.get("LANG", "en_US.UTF-8")
     tz = os.environ.get("TZ", "") or "UTC"
 

@@ -33,6 +33,31 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **The `env.lock` hostname digest was 36 bits, not the 64 it looked like.**
+  `capture/env.py` hashed the hostname, then truncated the *prefixed* string:
+  `_stable_hash()` already returns `"sha256:" + hexdigest`, so `[:16]` consumed the
+  seven-character prefix and left **9 hex characters**, which the call site then
+  prefixed a second time. Every capsule written before this fix records
+  `hostname: sha256:sha256:<9 hex>`. The visible half is cosmetic; the truncation is
+  not — a hostname is short and enumerable, which is the reason it is hashed rather
+  than stored, and 36 bits is inside brute-force range for a dictionary of plausible
+  names. `environment.schema.json` types the field as a bare `string`, so no schema
+  validation could catch either half, and the existing test asserted only that the raw
+  hostname was absent — true of a malformed digest too. Guarded now by an assertion on
+  the prefix, the length, and the digest's value.
+
+- **The flagship example capsule carried the maintainer's machine identity.**
+  `examples/capsules/minimal-run/` — the capsule a new user opens to learn the format —
+  recorded `HOME`, `USER` and `USERNAME` for a real account, a `PATH` naming that
+  laptop's editor extensions and plugin caches down to version numbers, and a build
+  path under a private worktree in `outputs/stdout.txt`. Nothing there is a credential,
+  so no secret scanner would have fired. It is also the wrong lesson: the example that
+  teaches what NovaFabric captures showed it absorbing one developer's tooling, in a
+  tool that sells disciplined redaction. Replaced with a neutral demo identity — values
+  substituted, never deleted, because a capsule missing the fields teaches the format
+  wrong. A new guard sweeps everything `git ls-files` reports, so the check is against
+  what the public remote actually carries rather than what happens to be in the tree.
+
 - **Ingest accepted an archive that could not be read back as a capsule** (ADR-0260).
   Removing the blanket path-flattening left its mirror image untouched: an archive whose
   members share no single top-level directory is correctly not reshaped, but the result

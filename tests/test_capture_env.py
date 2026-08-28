@@ -1,3 +1,4 @@
+import hashlib
 import json
 import socket
 from datetime import datetime, timezone
@@ -54,6 +55,43 @@ def test_env_lock_redacts_hostname() -> None:
     raw_hostname = socket.gethostname()
     hostname_field = lock["host"].get("hostname", "")
     assert raw_hostname not in hostname_field, "raw hostname must be redacted"
+
+
+def test_env_lock_hostname_is_one_prefix_and_a_full_16_char_digest() -> None:
+    """The redaction test above passes on a *malformed* digest, so it proved too little.
+
+    Until 2026-08-28 the field read ``sha256:sha256:5f58771cb``. Two defects in one
+    line: ``_stable_hash`` already returns ``"sha256:" + hexdigest``, and the call site
+    both prefixed it a second time and applied ``[:16]`` to the *prefixed* string. The
+    slice therefore consumed the 7-character prefix and left **9 hex characters — 36
+    bits** where 16 hex characters (64 bits) were intended.
+
+    The bit count is the part that matters. A hostname is short, low-entropy and
+    enumerable, which is the whole reason it is hashed rather than stored; 36 bits is
+    inside brute-force range for a dictionary of plausible names, so the field leaked
+    far more than it looked like it did. Every capsule written before the fix carries
+    the truncated form, including the 928 captures of the 2026-08-28 campaign.
+
+    ``environment.schema.json`` types this field as a bare ``string``, so no schema
+    validation could have caught either half.
+    """
+    lock = capture_environment(created_at=NOW, run_id=RUN_ID)
+    hostname_field = lock["host"]["hostname"]
+
+    assert not hostname_field.startswith("sha256:sha256:"), (
+        f"the algorithm prefix is applied twice: {hostname_field!r}"
+    )
+    algo, _, digest = hostname_field.partition(":")
+    assert algo == "sha256", hostname_field
+    assert len(digest) == 16, (
+        f"expected a 16-character (64-bit) truncated digest, got {len(digest)} "
+        f"characters in {hostname_field!r}; a shorter digest of a value as "
+        "enumerable as a hostname is reversible"
+    )
+    assert all(c in "0123456789abcdef" for c in digest), hostname_field
+
+    expected = hashlib.sha256(socket.gethostname().encode()).hexdigest()[:16]
+    assert digest == expected, "the digest must be of the hostname, truncated after hashing"
 
 
 def test_env_lock_best_effort_has_reasons(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
