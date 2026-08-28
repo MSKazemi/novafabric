@@ -74,7 +74,8 @@ dependencies = [
     # implementation behind `nx.community.louvain_communities` used by
     # lineage/analytics/insights.py (networkx's own Louvain, NOT python-louvain).
     # Moving it to an extra would break `nova --help` on a plain install.
-    # See design/adr/0222-default-install-dependency-tier-reclassification.md.
+    # See the private design/adr/0222-default-install-dependency-tier-reclassification.md
+# (public index: docs/decisions.md).
     "networkx>=3.6.1",
     # NOTE (ADR-0222 OQ-2): `pyjwt` and `python-multipart` used to be pinned
     # here *and* in the `server` extra. They are declared once now, in `server`,

@@ -20,13 +20,13 @@ and spec, and states the additive/optional/v0-not-frozen contract.
 
 ## Files
 
-| File | NF-id(s) | Governing ADR | Spec | Docs-honesty label |
+| File | NF-id(s) | Governing ADR | Spec (not published) | Docs-honesty label |
 |---|---|---|---|---|
-| `eval-card-v0.schema.json` | NF-002 (with NF-010) | ADR-0099 | `design/spec/features/NF-002-010-signed-eval-cards.md` | **superseded** → implemented as `schemas/eval-card-v1.schema.json` (`experimental`); this v0 draft retained for history |
-| `determinism-facet-v0.schema.json` | NF-012 / NF-013 / NF-014 | ADR-0100 | `design/spec/features/NF-012-014-determinism-attestation.md` | future design |
-| `translog-checkpoint-v0.schema.json` | NF-042 (transparency log NF-041..050) | ADR-0097 | `design/spec/features/NF-041-047-verifiable-transparency-log.md` | planned |
-| `delegation-chain-v0.schema.json` | NF-084 (identity layer NF-083..089) | ADR-0106 | `design/spec/features/NF-083-089-agent-identity-delegation.md` | future design |
-| `dataset-provenance-card-v0.schema.json` | NF-058 (with NF-055 / NF-057) | ADR-0105 | `design/spec/features/NF-055-057-058-supply-chain.md` | planned |
+| `eval-card-v0.schema.json` | NF-002 (with NF-010) | ADR-0099 | private `design/spec/features/NF-002-010-signed-eval-cards.md` | **superseded** → implemented as `schemas/eval-card-v1.schema.json` (`experimental`); this v0 draft retained for history |
+| `determinism-facet-v0.schema.json` | NF-012 / NF-013 / NF-014 | ADR-0100 | private `design/spec/features/NF-012-014-determinism-attestation.md` | future design |
+| `translog-checkpoint-v0.schema.json` | NF-042 (transparency log NF-041..050) | ADR-0097 | private `design/spec/features/NF-041-047-verifiable-transparency-log.md` | planned |
+| `delegation-chain-v0.schema.json` | NF-084 (identity layer NF-083..089) | ADR-0106 | private `design/spec/features/NF-083-089-agent-identity-delegation.md` | future design |
+| `dataset-provenance-card-v0.schema.json` | NF-058 (with NF-055 / NF-057) | ADR-0105 | private `design/spec/features/NF-055-057-058-supply-chain.md` | planned |
 
 ## Contract (applies to every fragment)
 

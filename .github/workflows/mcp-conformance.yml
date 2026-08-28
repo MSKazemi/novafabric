@@ -1,7 +1,7 @@
 name: MCP conformance
 
 # Wire-compatibility gate for MCP 2026-07-28 (NF-038/NF-039, spec
-# design/spec/features/NF-038-039-mcp-2026-conformance.md).
+# the private design/spec/features/NF-038-039-mcp-2026-conformance.md).
 #
 # Why this lane exists (spec R9): MCP capture is evidence. A spec drift that
 # silently changes what we record does not fail any normal test — the code

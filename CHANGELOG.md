@@ -33,6 +33,31 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **The site linked "the load-bearing constraint" to a page that does not exist.**
+  `web/src/lib/links.ts` built GitHub blob URLs from repo-relative paths, and two of
+  its three constants pointed into `design/` — which publishes **zero** files. The
+  `/why` page's "non-goals doc" link, introduced in the sentence calling it the
+  load-bearing constraint, was a 404 for every visitor; so was the unused ADR-0027
+  link. The file's own header explained the 404s away as temporary ("until the repo
+  is public"), months after it went public — a stale comment converting a defect into
+  an accepted condition. Both now point at their published counterparts
+  (`docs/architecture.md#what-novafabric-is-not`, `docs/decisions.md`). A new guard
+  asks git what the repository tracks rather than whether a file exists, because in
+  this checkout the working tree also holds the private superset and `exists()`
+  returns true for every one of these targets.
+
+- **Naming a private `design/` path without saying it is private — the class is now
+  closed for the whole public tree.** Issue #5 was fixed for `docs/` only; later
+  passes extended it to the published schemas and the shipped source. This one sweeps
+  everything `git ls-files` reports, so a new public surface is covered the day it is
+  added rather than the day someone extends a list of directories. That immediately
+  found two tiers a directory-by-directory count had missed: `schemas/features/README.md`
+  (a README inside a published schema directory, five spec references in a table) and
+  the built dashboard bundle. Remaining exemptions are named in the test rather than
+  left silent: `docs/releases/` and `CHANGELOG.md` are dated records, `tests/` is not
+  shipped, and `src/novafabric/serve/static/` is generated — its source is guarded
+  instead, and a site rebuild is what clears the one stale match it still carries.
+
 - **The `env.lock` hostname digest was 36 bits, not the 64 it looked like.**
   `capture/env.py` hashed the hostname, then truncated the *prefixed* string:
   `_stable_hash()` already returns `"sha256:" + hexdigest`, so `[:16]` consumed the

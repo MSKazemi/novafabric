@@ -87,7 +87,7 @@ mv src/novafabric_example_plugin src/novafabric_<your_name>
 - [`src/novafabric/capture/hooks/_plugin.py`](../../src/novafabric/capture/hooks/_plugin.py)
   — `HookProtocol`, `HookPluginInfo`, the entry-point group name, and
   the discovery / failure-isolation behavior
-- `design/governance/RFC-0001-multi-vendor-strategy.md`
+- `design/governance/RFC-0001-multi-vendor-strategy.md` (private — maintainers only)
   §"Detailed design — Option C, sub-track C-2" — the strategic
   rationale
 

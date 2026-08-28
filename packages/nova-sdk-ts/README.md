@@ -42,7 +42,7 @@ design and asserted by test.
 
 - **No agent framework** — no orchestration, prompt management, run wrappers,
   or capture; NovaFabric explicitly does not compete with agent frameworks
-  (`design/strategy/non-goals.md`)
+  (the private `design/strategy/non-goals.md`)
 - **No OIDC flows** — identity acquisition belongs to the host application;
   the SDK only attaches the bearer token you give it
 - **No telemetry** — no version checks, no analytics, no network calls other

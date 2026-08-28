@@ -156,6 +156,6 @@ nova lineage provenance $(nova list --json | jq -r '.[0].run_id')
 
 ## Related
 
-- Demo design: `design/publications/demos/black-box-recorder-5-minute-demo.md`
+- Demo design: `design/publications/demos/black-box-recorder-5-minute-demo.md` (private — maintainers only)
 - CLI reference: `docs/cli-reference.md`
-- Architecture: `design/architecture/README.md` (start here)
+- Architecture: `design/architecture/README.md` (private; the published map is [docs/architecture.md](../../docs/architecture.md))

@@ -37,8 +37,17 @@ private superset. That distinction is the whole point: the earlier community
 audit found 151 dead public links precisely because it tested "file exists"
 instead of "tracked publicly".
 
-One exemption, named rather than silent: ``docs/releases/`` holds dated release
-notes. ``v0.6.10.md`` cites a path on the maintainer's own machine and says so
+⚠ **A guard that greps for a string cannot be excluded from its own sweep by
+accident.** This file quotes ``/home/mohsen`` twice — once in the prose above and
+once in the pattern — so it matches itself. That was invisible when the guard was
+first written and run, because an uncommitted file is not in ``git ls-files``:
+the sweep's scope silently widened the moment the file was committed, and a test
+that had just been proven red-green went red at HEAD. Verifying a
+``git ls-files``-scoped check *before* committing it does not verify the state
+that ships. This file is therefore skipped by name below.
+
+Two further exemptions, named rather than silent: ``docs/releases/`` holds dated
+release notes. ``v0.6.10.md`` cites a path on the maintainer's own machine and says so
 in the same sentence ("founder's machine"). Editing a shipped release note to
 tidy history is worse than the disclosure, which is deliberate and labelled.
 """
@@ -54,7 +63,10 @@ REPO = Path(__file__).resolve().parents[2]
 # is too common to grep for on its own; these two forms are not.
 PERSONAL = re.compile(r"/home/mohsen\b|(?<=[=:] )mohsen$|(?<=[=:] )mohsen(?=\s)")
 
-EXEMPT_PREFIXES = ("docs/releases/",)
+#: This file matches its own pattern; see the docstring.
+SELF = "tests/docs/test_no_personal_machine_data_in_public_tree.py"
+
+EXEMPT_PREFIXES = ("docs/releases/", SELF)
 
 # Binary and lockfile noise that cannot meaningfully contain prose.
 SKIP_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".pdf", ".woff2")

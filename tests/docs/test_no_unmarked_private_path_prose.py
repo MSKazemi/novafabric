@@ -50,9 +50,28 @@ generated from the FastAPI route table, not from module docstrings. The exposure
 for the source tier is ``help()`` and the public source itself, which is narrower
 than a generated site but is still a public surface.
 
-``tests/`` (32 references) is not covered: it is not shipped and not read by
-users. Root files (ROADMAP, pyproject, CI workflows) are not covered either;
-that tier is still open.
+The final case below closes the class: it sweeps **everything** ``git ls-files``
+reports, so a new public surface is covered the day it is added rather than the
+day someone remembers to extend a list of directories. The three tiered cases are
+kept because their failure messages say what each surface is and how it reaches a
+reader; the catch-all is the backstop, not a replacement.
+
+Two exemptions, both named here and both listed in the failure message when they
+match, so neither is silent:
+
+* ``docs/releases/`` — see above.
+* ``CHANGELOG.md`` (77 references) — the same reasoning as ``docs/releases/``.
+  It is one dated record per release, and rewriting a shipped entry so it reads
+  better today falsifies what that release actually said.
+* ``tests/`` (32 references) — not shipped, not read by users, and the guards
+  themselves must be free to quote the paths they are guarding.
+* ``src/novafabric/serve/static/`` — **generated**. It is the built dashboard
+  bundle, checked in so ``nova serve`` works from a wheel. Hand-editing build
+  output would be overwritten by the next build and would make the artifact
+  disagree with its source. Its source *is* covered: ``web/src/lib/links.ts`` is
+  guarded by ``test_site_links_resolve_publicly.py``. The bundle currently
+  carries one stale match — ``why/index.html`` renders the pre-fix non-goals
+  link — and a site rebuild is what clears it.
 
 * ``x-novafabric`` blocks inside a schema are exempt. Their ``spec`` value is a
   machine-readable document identifier, not prose addressed to a reader, and the
@@ -74,7 +93,15 @@ PRIVATE_PATH = re.compile(r"`?\bdesign/[A-Za-z0-9_./-]+")
 MARKERS = ("private", "not published", "not part of this repository", "maintainers")
 
 WINDOW = 240
-EXEMPT_PREFIXES = ("docs/releases/",)
+EXEMPT_PREFIXES = (
+    "docs/releases/",
+    "CHANGELOG.md",
+    "tests/",
+    "src/novafabric/serve/static/",  # generated; its source is guarded instead
+)
+
+#: Extensions that cannot carry prose addressed to a reader.
+BINARY_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".pdf", ".woff2")
 
 
 def _public_docs() -> list[str]:
@@ -188,4 +215,57 @@ def test_no_shipped_source_file_names_a_private_path_without_saying_it_is_privat
         "These strings reach help() and are read directly in the public "
         "repository, where the design/ tree does not exist:\n  "
         + "\n  ".join(offenders)
+    )
+
+
+def _everything_public() -> list[str]:
+    out = subprocess.run(
+        ["git", "ls-files"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return [p for p in out.splitlines() if not p.endswith(BINARY_SUFFIXES)]
+
+
+def test_the_whole_tree_sweep_is_not_vacuous() -> None:
+    files = _everything_public()
+    assert len(files) > 1000, f"expected the public tree, got {len(files)} files"
+    assert "ROADMAP.md" in files and "pyproject.toml" in files
+
+
+def test_no_publicly_tracked_file_names_a_private_path_without_saying_it_is_private() -> None:
+    """The backstop: every public surface, not an enumerated list of directories.
+
+    This is what actually closes issue #5's class. The tiered cases above cover
+    ``docs/``, the published schemas and the shipped source with surface-specific
+    messages; this one catches the rest — ROADMAP, ``pyproject.toml``, CI
+    workflows, example READMEs, the SDK package, and the site's own TypeScript.
+    """
+    offenders: list[str] = []
+    exempted: list[str] = []
+
+    for rel in _everything_public():
+        path = REPO / rel
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for match in PRIVATE_PATH.finditer(text):
+            start = max(0, match.start() - WINDOW)
+            context = text[start : match.end() + WINDOW].lower()
+            if any(marker in context for marker in MARKERS):
+                continue
+            if '"spec": "' in text[start : match.start()]:
+                continue  # machine-readable x-novafabric pointer, see the docstring
+            line = text.count("\n", 0, match.start()) + 1
+            entry = f"{rel}:{line}  {match.group(0)}"
+            (exempted if rel.startswith(EXEMPT_PREFIXES) else offenders).append(entry)
+
+    assert not offenders, (
+        "publicly tracked files name a private design/ path without marking it "
+        "private. To a reader this is indistinguishable from a file they should "
+        "be able to open. Say it is private, or point at the published "
+        "counterpart (docs/decisions.md for an ADR, docs/architecture.md for "
+        "design rationale):\n  " + "\n  ".join(offenders)
     )

@@ -113,7 +113,7 @@ uv run python benchmarks/spk_col1_offset_replay.py --runs 50 --events-per-run 20
 ```
 
 Outcomes are recorded in
-`design/research/novafabric-sota-landscape-2026/_spikes/SPK-COL.md`.
+the private `design/research/novafabric-sota-landscape-2026/_spikes/SPK-COL.md`.
 
 ```bash
 # SPK-COL-3 — OTel-Arrow vs OTLP+zstd wire A/B (needs otelcol-contrib binary

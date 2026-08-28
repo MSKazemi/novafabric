@@ -3,7 +3,8 @@
 //
 // DB-KG-1 — Capsule Knowledge Graph tab (v0.18.0)
 // Backend: GET /api/kg/status, GET /api/kg/agents/{id}/edges
-// Reference: design/adr/0067-capsule-knowledge-graph-v1.md
+// Reference: the private design/adr/0067-capsule-knowledge-graph-v1.md
+// (public index: docs/decisions.md).
 
 export interface KGStatus {
   store: string;
