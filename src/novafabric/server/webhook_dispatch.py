@@ -419,6 +419,25 @@ class WebhookDispatcher:
 
     def _record_result(self, attempt: _Attempt, result: DeliveryResult) -> None:
         chain_attempt = attempt.chain_attempt + 1  # 1-based count so far
+
+        # Evidence before state, deliberately.
+        #
+        # The audit append used to run *after* the store write. The store row is the
+        # durable, queryable signal, so any observer -- the API, an operator, a test --
+        # naturally synchronises on it; and it could report a terminal ``failed`` while
+        # the hash-chained log did not yet contain the attempt explaining it. Worse, a
+        # crash in that window left the gap **permanently**: a delivery marked failed
+        # with no audit record of its final attempt.
+        #
+        # Ordering it this way inverts which failure is possible. An audit entry whose
+        # store write never lands is an over-record -- visible, self-describing, and
+        # recoverable. A state change with no evidence is an unexplainable hole. For an
+        # append-only evidence trail the first is strictly the better failure.
+        #
+        # Safe to move earlier: ``_audit`` swallows every exception by contract (D4 --
+        # auditing must never break dispatch), so this cannot fail the delivery path.
+        self._audit_attempt(attempt, result, chain_attempt)
+
         if result.ok:
             store.record_attempt(
                 attempt.delivery_id,
@@ -461,7 +480,6 @@ class WebhookDispatcher:
             )
             with self._lock:
                 heapq.heappush(self._attempts, retry)
-        self._audit_attempt(attempt, result, chain_attempt)
 
     # -- overflow + audit --------------------------------------------------
 

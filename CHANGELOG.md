@@ -30,6 +30,21 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **A webhook delivery could be marked `failed` before the audit log recorded why.**
+  `_record_result()` wrote the delivery row first and appended the hash-chained audit
+  entry last. The row is the durable, queryable signal, so every observer — the API, an
+  operator, the test suite — synchronises on it, and could read a terminal state while
+  the audit log still lacked the attempt explaining it. A crash in that window made the
+  gap **permanent**: a delivery marked failed with no audit record of its final attempt.
+  The audit append now precedes the store write, which inverts which failure is possible
+  — an audit entry whose store write never lands is a visible, self-describing
+  over-record, while a state change with no evidence is an unexplainable hole. Safe to
+  reorder because `_audit()` swallows every exception by contract, so it cannot break
+  dispatch. This also explains an intermittent failure in
+  `test_dead_letter_after_max_attempts`, which read 4 audit entries where the row already
+  said `failed` with 5 attempts; the new test asserts the ordering invariant directly
+  rather than waiting on the race.
+
 - **The registry schema-DDL memo gave no protection under concurrency at all.**
   `init_schema()` checked the "already initialised" set under its lock, *released* the
   lock, ran the full `CREATE TABLE` script, then re-took the lock to record the result —

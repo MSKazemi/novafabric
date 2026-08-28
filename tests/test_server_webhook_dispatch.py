@@ -734,3 +734,63 @@ class TestRestEndToEnd:
                 headers=_bearer(TEST_TOKEN),
             )
             assert upload.status_code == 201, upload.text
+
+
+class TestEvidencePrecedesState:
+    """A terminal delivery state must never be visible before its audit entry.
+
+    The store row is the durable, queryable signal, so every observer synchronises on
+    it. If the hash-chained audit append runs *after* the store write, an observer can
+    read ``failed`` and find the log does not yet contain the attempt that explains it
+    -- and a crash in that window makes the gap permanent. This test asserts the
+    ordering directly rather than waiting on the symptom, because the symptom is a race
+    and a race that does not fire is not a passing test.
+    """
+
+    def test_audit_entry_is_written_before_the_store_row(
+        self, db: Path, receiver: _Receiver, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from novafabric.server import webhook_dispatch as wd
+
+        order: list[tuple[str, int]] = []
+        real_record = wd.store.record_attempt
+
+        def spy_record(delivery_id, **kw):  # type: ignore[no-untyped-def]
+            order.append(("state", len([o for o in order if o[0] == "audit"])))
+            return real_record(delivery_id, **kw)
+
+        real_audit = wd.WebhookDispatcher._audit_attempt
+
+        def spy_audit(self, attempt, result, chain_attempt):  # type: ignore[no-untyped-def]
+            order.append(("audit", chain_attempt))
+            return real_audit(self, attempt, result, chain_attempt)
+
+        monkeypatch.setattr(wd.store, "record_attempt", spy_record)
+        monkeypatch.setattr(wd.WebhookDispatcher, "_audit_attempt", spy_audit)
+
+        receiver.server.response_code = 500  # type: ignore[attr-defined]
+        d = WebhookDispatcher(
+            db_path=db,
+            config=DispatchConfig(schedule_s=(0.0, 0.0, 0.0, 0.0, 0.0), timeout_s=2.0),
+        )
+        d.start()
+        try:
+            _, record = store.create_webhook(receiver.url, actor="test", db_path=db)
+            d.enqueue_event(_event())
+            assert _wait_for(lambda: bool(_rows(db, record["hook_id"], "failed")))
+        finally:
+            d.stop()
+
+        # Every state write must be preceded by at least as many audit appends as
+        # there have been state writes -- i.e. they strictly alternate audit-first.
+        seen_audit = seen_state = 0
+        for kind, _ in order:
+            if kind == "audit":
+                seen_audit += 1
+            else:
+                seen_state += 1
+                assert seen_audit >= seen_state, (
+                    f"state write #{seen_state} landed with only {seen_audit} audit "
+                    f"append(s) before it — evidence lags state: {order}"
+                )
+        assert seen_state == 5, f"expected the 5-attempt schedule, saw {order}"
