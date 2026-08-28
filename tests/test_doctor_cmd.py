@@ -415,3 +415,66 @@ class TestLegacyCleartextTokenReport:
     def test_flag_is_documented_in_help(self) -> None:
         result = runner.invoke(app, ["doctor", "--help"])
         assert_flag_in_help(result, "--check-tokens")
+
+
+def test_every_nova_command_doctor_prints_actually_exists() -> None:
+    """A remediation hint naming a command that does not exist is worse than none.
+
+    `nova doctor` is what an operator runs when something is already wrong, and
+    its remediation lines are copied and pasted verbatim. A hint like
+    ``nova serve token list`` for a subcommand that was never built sends that
+    operator to a "No such command" error while the real problem stands.
+
+    This guard exists because exactly that shipped: the cleartext-token
+    remediation invented ``nova serve token list``/``token revoke``, which the
+    CLI has never had — token issue and revoke live on the dashboard's
+    ``/api/admin/tokens`` routes instead. Checking the string against the real
+    command tree is the only thing that catches it, because a hint is plain text
+    that no import, type check or route test ever exercises.
+    """
+    import ast as _ast
+    import re as _re
+    from pathlib import Path as _Path
+
+    from novafabric.cli.introspect import command_paths
+
+    source = _Path("src/novafabric/cli/doctor.py").read_text()
+    literals = [
+        node.value
+        for node in _ast.walk(_ast.parse(source))
+        if isinstance(node, _ast.Constant) and isinstance(node.value, str)
+    ]
+    # `nova …` inside backticks — how every hint in this file spells a command.
+    # Anchored on the CLOSING backtick. A lazy quantifier ending at whitespace
+    # captures only "nova serve" out of `nova serve token list`, which silently
+    # reduces this guard to "is the first word a command" — the first two
+    # versions of this test passed the bad string for exactly that reason.
+    pattern = _re.compile(r"`(nova [a-z0-9 <>\[\]_.-]+?)`")
+    valid = command_paths(include_hidden=True)
+
+    bad: list[str] = []
+    for text in literals:
+        for raw in pattern.findall(text):
+            words = raw.split()
+            # Longest prefix that is a real command path. Trimming until
+            # *something* matches would pass anything starting with a valid
+            # command — "nova serve token list" would reduce to "nova serve" and
+            # sail through, which is how the bug this guards against survived a
+            # first version of this very test.
+            best = 0
+            for i in range(len(words), 0, -1):
+                if " ".join(words[:i]) in valid:
+                    best = i
+                    break
+            leftover = words[best:]
+            # Options and <placeholders> after a real command are fine; a bare
+            # word is a subcommand being claimed, and it does not exist.
+            if best == 0 or any(
+                not w.startswith(("-", "<", "[")) for w in leftover
+            ):
+                bad.append(" ".join(words))
+
+    assert not bad, (
+        "nova doctor prints these commands, and the CLI has no such command: "
+        + "; ".join(sorted(set(bad)))
+    )

@@ -63,7 +63,15 @@ def generate_token() -> str:
 def write_token_file(token: str) -> Path:
     """Write the token to $NOVAFABRIC_HOME/.serve-token with mode 0600.
 
-    Returns the path. Caller is responsible for cleanup on shutdown.
+    Returns the path. **The file deliberately outlives the process**: it is
+    priority 2 in :func:`generate_token`, so a restarted ``nova serve`` reuses
+    the same token instead of invalidating every open browser session. Removing
+    it on shutdown would make that branch unreachable.
+
+    The consequence is worth stating rather than leaving to be discovered: a
+    usable bearer token stays on disk at 0600 after the server exits, until
+    something removes it. :func:`clear_token_file` is that something, and it has
+    no caller — nothing in the shipped product deletes this file.
     """
     path = serve_token_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -77,6 +85,13 @@ def write_token_file(token: str) -> Path:
 
 
 def clear_token_file() -> None:
+    """Delete the persisted serve token, if present. Never raises.
+
+    Has no production caller by design — see :func:`write_token_file` for why
+    the file persists. Kept because the file is a live credential and something
+    has to be able to remove it: this is what a "log out everywhere" action or a
+    teardown script calls.
+    """
     path = serve_token_path()
     if path.exists():
         try:

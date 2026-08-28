@@ -33,6 +33,14 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **`nova doctor`'s cleartext-token remediation named a command that does not exist.**
+  It pointed at `nova serve token list` / `nova serve token revoke`; `nova serve` has no
+  subcommands at all. Token issue and revoke live on the dashboard's `/api/admin/tokens`
+  routes, which the hint now names. A remediation line is copied and pasted verbatim by an
+  operator who already has a problem, so a wrong one sends them to a "No such command"
+  error while the real issue stands. A guard test now checks every `nova …` command
+  `doctor` prints against the real command tree.
+
 - **`nova doctor` never reported serve tokens left in cleartext.** ADR-0252 stopped
   writing the token secret itself, but could not rewrite records already on disk, and
   `token_store.legacy_plaintext_count()` was added to count them — its docstring naming

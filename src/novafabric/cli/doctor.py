@@ -346,4 +346,7 @@ def _print_legacy_token_report(*, explicit: bool) -> None:
     console.print()
     console.print("[bold]Remediation[/bold]")
     console.print("  - revoke each affected token and issue a replacement")
-    console.print("  - `nova serve token list` shows them; `... token revoke <fingerprint>`")
+    console.print(
+        "  - the running dashboard exposes them: GET /api/admin/tokens, "
+        "DELETE /api/admin/tokens/{fingerprint}"
+    )
