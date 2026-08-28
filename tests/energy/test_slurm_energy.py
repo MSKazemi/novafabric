@@ -177,3 +177,78 @@ def test_runner_capture_energy_no_receipt_when_nonzero_returncode(tmp_path):
         wrote = runner._capture_energy("1", spec)
 
     assert wrote is False
+
+
+# --------------------------------------------------------------------------- #
+# B1 — a zero from sacct is not a measurement
+# --------------------------------------------------------------------------- #
+
+_SACCT_ZERO = (
+    "ConsumedEnergyRaw|Elapsed|NNodes\n"
+    "|00:00:30|1\n"
+    "0|00:00:30|1\n"  # unpopulated `energy` TRES renders as literal 0
+)
+
+
+def test_zero_energy_is_not_labelled_measured(tmp_path):
+    """B1 — 713 receipts on a real cluster claimed `measured` for this shape.
+
+    SLURM renders an *unpopulated* `energy` TRES as the literal `0`, not as an
+    empty field, so the missing-column guard never fires. `AcctGatherEnergyType`
+    was `(null)` and the guest had neither IPMI nor RAPL, so no counter existed
+    to produce the number. This is the default posture of SLURM on any cloud VM.
+    """
+    receipt = capture_slurm_energy(
+        capsule_dir=tmp_path,
+        job_id="9",
+        sacct_output=_SACCT_ZERO,
+        run_id="r",
+        node_id="n1",
+    )
+    assert receipt is not None
+    assert receipt.confidence is not Confidence.MEASURED
+    assert receipt.measurement_source is MeasurementSource.UNAVAILABLE
+    assert receipt.measured_joules is None
+    assert receipt.consistency_errors() == []
+
+
+def test_zero_energy_does_not_claim_a_counter_it_never_probed(tmp_path):
+    """AC4 — `counters_available` must be a probe result, not configuration."""
+    receipt = capture_slurm_energy(
+        capsule_dir=tmp_path,
+        job_id="9",
+        sacct_output=_SACCT_ZERO,
+        run_id="r",
+        node_id="n1",
+    )
+    assert receipt is not None
+    assert list(receipt.hardware.counters_available) == []
+
+
+def test_zero_energy_is_measured_when_a_counter_is_confirmed(tmp_path):
+    """A cluster with a real energy plugin may legitimately report ~0 J."""
+    receipt = capture_slurm_energy(
+        capsule_dir=tmp_path,
+        job_id="9",
+        sacct_output=_SACCT_ZERO,
+        run_id="r",
+        node_id="n1",
+        energy_counter_available=True,
+    )
+    assert receipt is not None
+    assert receipt.confidence is Confidence.MEASURED
+    assert receipt.measured_joules == 0.0
+
+
+def test_nonzero_energy_still_measured_without_a_probe(tmp_path):
+    """Regression: a real reading needs no probe to stay `measured`."""
+    receipt = capture_slurm_energy(
+        capsule_dir=tmp_path,
+        job_id="9",
+        sacct_output=_SACCT_OUTPUT,
+        run_id="r",
+        node_id="n1",
+    )
+    assert receipt is not None
+    assert receipt.confidence is Confidence.MEASURED
+    assert receipt.measured_joules == 123456.0

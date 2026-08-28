@@ -18,7 +18,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from novafabric.energy._attribution import load_receipts, write_receipts
-from novafabric.energy._receipt import EnergyReceipt
+from novafabric.energy._receipt import (
+    ActionKind,
+    ActionRef,
+    EnergyReceipt,
+    unavailable_receipt,
+)
 from novafabric.energy._sacct import parse_sacct_energy, sacct_job_receipt
 
 #: the sacct --format the runner should request to get a measured energy total
@@ -69,18 +74,45 @@ def capture_slurm_energy(
     sacct_output: str,
     run_id: str,
     node_id: str,
+    energy_counter_available: bool | None = None,
 ) -> EnergyReceipt | None:
-    """Parse a captured ``sacct`` energy string and append a measured receipt.
+    """Parse a captured ``sacct`` energy string and append an energy receipt.
 
     Returns the appended :class:`EnergyReceipt`, or ``None`` when the captured
-    output carries no ``ConsumedEnergyRaw`` value (energy accounting not
-    configured) — in which case nothing is written.
+    output carries no ``ConsumedEnergyRaw`` column at all — in which case
+    nothing is written.
+
+    A ``ConsumedEnergyRaw`` of **0 is not a measurement** unless a counter is
+    known to exist. SLURM renders an *unpopulated* ``energy`` TRES as the
+    literal ``0``, so the missing-column guard above never fires; on a cloud VM
+    — where ``AcctGatherEnergyType`` defaults to ``(null)`` and neither IPMI nor
+    RAPL is exposed to the guest — every job yields ``0``. Labelling that
+    ``confidence: measured`` / ``direct_counter`` asserts the strongest receipt
+    class for a number no counter produced (B1). Pass
+    *energy_counter_available* ``True`` (from a plugin probe) to accept a
+    genuine near-zero reading; otherwise a ``0`` records an honest
+    ``unavailable`` receipt instead.
     """
     consumed = parse_sacct_energy(sacct_output)
     if consumed is None:
         return None
 
     elapsed_s = _parse_elapsed_seconds(sacct_output)
+    if consumed == 0.0 and energy_counter_available is not True:
+        # counters_available is left EMPTY on purpose: it must report what a
+        # probe found, never an echo of the configured plugin name.
+        receipt = unavailable_receipt(
+            action_ref=ActionRef(kind=ActionKind.JOB_STEP, id=job_id),
+            run_id=run_id,
+            capsule_id=f"capsule:{capsule_dir.name}",
+            node_id=node_id,
+            counters_available=(),
+            wall_clock_s=elapsed_s,
+        )
+        existing = load_receipts(capsule_dir)
+        write_receipts(capsule_dir, [*existing, receipt])
+        return receipt
+
     receipt = sacct_job_receipt(
         job_id=job_id,
         run_id=run_id,

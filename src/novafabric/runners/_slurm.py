@@ -209,6 +209,8 @@ class SlurmRunner:
         # source and fall back to sacct (which has the advantage of
         # working long after slurmctld has forgotten the job, ~5 min).
         self._scontrol = scontrol_bin
+        # Cached AcctGatherEnergyType probe (see _energy_counter_available).
+        self._energy_counter: bool | None = None
 
     def supports(self) -> tuple[bool, str]:
         # sacct is no longer strictly required (scontrol covers state
@@ -227,6 +229,41 @@ class SlurmRunner:
         if proc.returncode != 0:
             return False, f"`{self._sbatch}` is not usable"
         return True, ""
+
+    def _energy_counter_available(self) -> bool:
+        """Whether SLURM actually has an energy-gathering plugin loaded.
+
+        ``AccountingStorageTRES`` routinely lists ``energy`` while
+        ``AcctGatherEnergyType`` is unset — the default on any cloud VM, where
+        neither IPMI nor RAPL is exposed to the guest. SLURM then renders the
+        unpopulated TRES as the literal ``0`` and NovaFabric cannot tell that
+        from a real near-zero reading. Probing the plugin resolves it, and is
+        correct even for a job that genuinely consumed almost nothing (B1).
+
+        Cached: the value cannot change while a job runs. Fail-closed — an
+        unreadable config means we do not claim a counter.
+        """
+        if self._energy_counter is not None:
+            return self._energy_counter
+        available = False
+        try:
+            proc = subprocess.run(
+                [self._scontrol, "show", "config"],
+                capture_output=True, timeout=10,
+            )
+            if proc.returncode == 0:
+                for line in proc.stdout.decode(errors="replace").splitlines():
+                    if line.split("=")[0].strip() != "AcctGatherEnergyType":
+                        continue
+                    value = line.partition("=")[2].strip().lower()
+                    available = value not in (
+                        "", "(null)", "none", "acct_gather_energy/none",
+                    )
+                    break
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            logger.warning("could not probe AcctGatherEnergyType: %s", exc)
+        self._energy_counter = available
+        return available
 
     def _capture_energy(self, jobid: str, spec: RunnerJobSpec) -> bool:
         """Query ``sacct`` for the job's measured energy and record a receipt.
@@ -263,6 +300,7 @@ class SlurmRunner:
                 sacct_output=proc.stdout.decode(errors="replace"),
                 run_id=run_id,
                 node_id=node_id,
+                energy_counter_available=self._energy_counter_available(),
             )
         except OSError as exc:
             logger.warning("could not write energy receipt for job %s: %s", jobid, exc)
@@ -432,20 +470,41 @@ class SlurmRunner:
         except Exception:  # noqa: BLE001 — energy capture must never fail the run
             logger.warning("energy capture raised for job %s", jobid, exc_info=True)
 
-        # sacct ExitCode format is "<workload>:<signal>". Use the workload
-        # half. If parsing fails, use 0/1 based on the success state.
+        # sacct ExitCode format is "<workload>:<signal>".  The terminal STATE is
+        # authoritative, not the workload half: a job killed by a signal reports
+        # "0:15", whose workload half is 0 even though the job never completed.
+        # Trusting that half sealed `status: success` for cancelled, timed-out
+        # and OOM-killed jobs alike (B10) — `orchestrator.py` derives
+        # `status = "success" if exit_code == 0`, so this value is the whole seal.
         workload_exit = 0
+        signal_num = 0
         if exit_code_str and ":" in exit_code_str:
+            raw_workload, _, raw_signal = exit_code_str.partition(":")
             try:
-                workload_exit = int(exit_code_str.split(":", 1)[0])
+                workload_exit = int(raw_workload)
             except ValueError:
-                workload_exit = 0 if last_state in _SACCT_SUCCESS_STATES else 1
-        elif last_state not in _SACCT_SUCCESS_STATES:
-            workload_exit = 1
+                workload_exit = 0
+            try:
+                signal_num = int(raw_signal)
+            except ValueError:
+                signal_num = 0
 
+        succeeded = last_state in _SACCT_SUCCESS_STATES
+        if not succeeded and workload_exit == 0:
+            # Report the signal via the POSIX 128+N convention when SLURM
+            # recorded one, so the capsule preserves *how* the job died.
+            workload_exit = 128 + signal_num if signal_num else 1
+
+        killed = bool(signal_num) and not succeeded
         return RunnerJobResult(
             exit_code=workload_exit,
-            runner_status="completed" if last_state in _SACCT_SUCCESS_STATES else "completed",
+            runner_status="killed" if killed else "completed",
             stdout=stdout_bytes, stderr=stderr_bytes,
+            runner_error=(
+                f"job {jobid} terminated in state {last_state} "
+                f"(sacct ExitCode {exit_code_str})"
+                if killed
+                else None
+            ),
             runner_metadata=runner_metadata,
         )

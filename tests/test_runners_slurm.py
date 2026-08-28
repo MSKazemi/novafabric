@@ -508,3 +508,86 @@ class TestSlurmRunnerLiveSmoke:
             "model-calls.jsonl not found — sitecustomize injection or "
             "wire capture did not fire on the compute node"
         )
+
+
+class TestSlurmTerminalStateIsAuthoritative:
+    """B10 — a job SLURM did not complete must never seal exit_code 0.
+
+    Found on live infrastructure: `scancel` on a running job produced
+    ``JobState=CANCELLED ExitCode=0:15``. The workload half of ``0:15`` is
+    ``0``, the ``elif`` that would have caught the non-success state was
+    skipped because the ``if`` branch had already been taken, and the capsule
+    sealed ``status: success, exit_code: 0`` for a job that was killed.
+
+    ``orchestrator.py`` derives ``status = "success" if exit_code == 0``, so
+    the exit code is the whole seal.
+    """
+
+    @pytest.mark.parametrize(
+        ("state", "sacct_exit", "expect_zero"),
+        [
+            ("COMPLETED", "0:0", True),      # the only success state
+            ("CANCELLED", "0:15", False),    # the B10 reproduction
+            ("TIMEOUT", "0:15", False),
+            ("OUT_OF_MEMORY", "0:125", False),
+            ("NODE_FAIL", "0:0", False),
+            ("FAILED", "1:0", False),
+            ("FAILED", "0:0", False),        # state overrides a 0 workload half
+            ("PREEMPTED", "0:15", False),
+        ],
+    )
+    def test_only_completed_yields_exit_code_zero(
+        self, tmp_path: Path, state: str, sacct_exit: str, expect_zero: bool
+    ) -> None:
+        sbatch = subprocess.CompletedProcess([], 0, b"12345\n", b"")
+        scontrol = subprocess.CompletedProcess(
+            [], 0,
+            f"JobId=12345 JobState={state} ExitCode={sacct_exit} ".encode(),
+            b"",
+        )
+        capsule_dir = tmp_path / "capsule"
+        capsule_dir.mkdir(parents=True, exist_ok=True)
+        (capsule_dir / "slurm-12345.out").write_bytes(b"")
+        (capsule_dir / "slurm-12345.err").write_bytes(b"")
+
+        spec = RunnerJobSpec(
+            run_id="01TESTSLURM00000000000000000",
+            command=["echo"],
+            capsule_dir=capsule_dir,
+            env={"NOVAFABRIC_SPAN_ID": "0" * 16},
+            runner_options={"partition": "debug"},
+        )
+        with patch("subprocess.run", side_effect=[sbatch, scontrol]):
+            result = SlurmRunner().run(spec)
+
+        if expect_zero:
+            assert result.exit_code == 0, f"{state}/{sacct_exit} should succeed"
+        else:
+            assert result.exit_code != 0, (
+                f"{state}/{sacct_exit} sealed exit_code 0 — the capsule would "
+                f"record status: success for a job that did not complete"
+            )
+        # the terminal state must survive into the capsule either way
+        assert result.runner_metadata["final_state"] == state
+
+    def test_signal_killed_job_reports_the_signal(self, tmp_path: Path) -> None:
+        """A signal-terminated job carries 128+signal, the POSIX convention."""
+        sbatch = subprocess.CompletedProcess([], 0, b"12345\n", b"")
+        scontrol = subprocess.CompletedProcess(
+            [], 0, b"JobId=12345 JobState=CANCELLED ExitCode=0:15 ", b"",
+        )
+        capsule_dir = tmp_path / "capsule"
+        capsule_dir.mkdir(parents=True, exist_ok=True)
+        (capsule_dir / "slurm-12345.out").write_bytes(b"")
+        (capsule_dir / "slurm-12345.err").write_bytes(b"")
+        spec = RunnerJobSpec(
+            run_id="01TESTSLURM00000000000000000",
+            command=["echo"],
+            capsule_dir=capsule_dir,
+            env={"NOVAFABRIC_SPAN_ID": "0" * 16},
+            runner_options={"partition": "debug"},
+        )
+        with patch("subprocess.run", side_effect=[sbatch, scontrol]):
+            result = SlurmRunner().run(spec)
+        assert result.exit_code == 143  # 128 + SIGTERM
+        assert result.runner_status == "killed"
