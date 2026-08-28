@@ -132,59 +132,92 @@ class AIBOMExporter:
 
         components: list[AIBOMComponent] = []
 
-        # Primary model component.
-        model_name = manifest.get("model") or manifest.get("model_id", "unknown-model")
-        provider = manifest.get("provider", "")
-        model_version = manifest.get("model_version", "")
-
-        model_props = [
-            {"name": "nova:provider", "value": provider},
-            {"name": "nova:run_id", "value": run_id},
-        ]
-        if manifest.get("input_tokens"):
-            model_props.append(
-                {"name": "nova:input_tokens", "value": str(manifest["input_tokens"])}
-            )
-        if manifest.get("output_tokens"):
-            model_props.append(
-                {"name": "nova:output_tokens", "value": str(manifest["output_tokens"])}
-            )
-
+        # Model components.
+        #
+        # The manifest keys below (``model``, ``provider``, ``model_version``,
+        # ``tools``) are NOT written by `nova capture` — a real capsule.yaml has
+        # ``model_calls_ref``/``tool_calls_ref`` and counts instead. Reading only the
+        # manifest therefore produced a BOM naming ``unknown-model`` with zero tool
+        # components for every captured run, while ``model-calls.jsonl`` recorded the
+        # actual ``gen_ai.response.model`` of every call. An AI Bill of Materials that
+        # does not enumerate the AI it billed is worse than absent, and it passed
+        # conformance because CycloneDX only requires that *a* model component exist.
+        # The manifest keys are still honoured first, so callers that synthesise a
+        # manifest keep their exact previous output.
         model_card = self._build_model_card(manifest, capsule_dir)
         model_hashes = self._model_hashes(manifest) if citations else []
-        model_ext_refs = (
-            self._model_card_ref(model_name, model_version, model_card_ref)
-            if model_card_ref
-            else []
-        )
         model_citations = (
             self._citations(capsule_digest, run_id, "outputs/model", inclusion_proof)
             if citations
             else []
         )
-        components.append(
-            AIBOMComponent(
-                type="machine-learning-model",
-                name=model_name,
-                version=model_version,
-                description=f"AI model captured in NovaFabric run {run_id}",
-                properties=model_props,
-                model_card=model_card,
-                hashes=model_hashes,
-                external_references=model_ext_refs,
-                citations=model_citations,
-            )
-        )
 
-        # Tool components.
+        model_specs = self._model_specs(manifest, capsule_dir)
+        for spec in model_specs:
+            model_props = [
+                {"name": "nova:provider", "value": spec["provider"]},
+                {"name": "nova:run_id", "value": run_id},
+            ]
+            for prop_key, manifest_key in (
+                ("nova:input_tokens", "input_tokens"),
+                ("nova:output_tokens", "output_tokens"),
+            ):
+                value = spec.get(manifest_key) or manifest.get(manifest_key)
+                if value:
+                    model_props.append({"name": prop_key, "value": str(value)})
+            if spec.get("call_count"):
+                model_props.append(
+                    {"name": "nova:model_call_count", "value": str(spec["call_count"])}
+                )
+            components.append(
+                AIBOMComponent(
+                    type="machine-learning-model",
+                    name=spec["name"],
+                    version=spec["version"],
+                    description=f"AI model captured in NovaFabric run {run_id}",
+                    properties=model_props,
+                    model_card=model_card,
+                    hashes=model_hashes,
+                    external_references=(
+                        self._model_card_ref(spec["name"], spec["version"], model_card_ref)
+                        if model_card_ref
+                        else []
+                    ),
+                    citations=model_citations,
+                )
+            )
+
+        # Tool components — from the manifest first, then any tool actually invoked.
+        seen_tools: set[str] = set()
         for tool in manifest.get("tools", []):
             tool_name = tool if isinstance(tool, str) else tool.get("name", "unknown-tool")
+            seen_tools.add(tool_name)
             components.append(
                 AIBOMComponent(
                     type="library",
                     name=tool_name,
                     description=f"Tool used in run {run_id}",
                     properties=[{"name": "nova:component_type", "value": "tool"}],
+                )
+            )
+        for spec in self._tool_specs(capsule_dir):
+            if spec["name"] in seen_tools:
+                continue
+            seen_tools.add(spec["name"])
+            tool_props = [{"name": "nova:component_type", "value": "tool"}]
+            if spec["provider"]:
+                tool_props.append({"name": "nova:provider", "value": spec["provider"]})
+            if spec["call_count"]:
+                tool_props.append(
+                    {"name": "nova:tool_call_count", "value": str(spec["call_count"])}
+                )
+            components.append(
+                AIBOMComponent(
+                    type="library",
+                    name=spec["name"],
+                    version=spec["version"],
+                    description=f"Tool used in run {run_id}",
+                    properties=tool_props,
                 )
             )
 
@@ -285,6 +318,106 @@ class AIBOMExporter:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+        """Read a capsule JSONL evidence file, skipping unparseable lines.
+
+        A damaged evidence line must not fail a compliance export; a partial BOM is
+        worth more than an exception.
+        """
+        if not path.exists():
+            return []
+        records: list[dict[str, Any]] = []
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(record, dict):
+                records.append(record)
+        return records
+
+    def _model_specs(
+        self, manifest: dict[str, Any], capsule_dir: Path
+    ) -> list[dict[str, Any]]:
+        """Resolve the model components to emit, best source first.
+
+        1. An explicit manifest ``model``/``model_id`` — preserves prior behaviour for
+           callers that synthesise a manifest.
+        2. Otherwise the distinct models in ``model-calls.jsonl``, which is what
+           `nova capture` actually writes.
+        3. Otherwise a single ``unknown-model`` placeholder, because CycloneDX requires
+           at least one ``machine-learning-model`` component.
+        """
+        explicit = manifest.get("model") or manifest.get("model_id")
+        if explicit:
+            return [{
+                "name": explicit,
+                "version": manifest.get("model_version", ""),
+                "provider": manifest.get("provider", ""),
+                "call_count": 0,
+            }]
+
+        aggregated: dict[str, dict[str, Any]] = {}
+        for call in self._read_jsonl(capsule_dir / "model-calls.jsonl"):
+            name = call.get("gen_ai.response.model") or call.get("gen_ai.request.model")
+            if not name:
+                continue
+            entry = aggregated.setdefault(
+                str(name),
+                {
+                    "name": str(name),
+                    "version": "",
+                    "provider": str(call.get("gen_ai.system") or ""),
+                    "call_count": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                },
+            )
+            entry["call_count"] += 1
+            for key, field in (
+                ("input_tokens", "gen_ai.usage.input_tokens"),
+                ("output_tokens", "gen_ai.usage.output_tokens"),
+            ):
+                value = call.get(field)
+                if isinstance(value, int):
+                    entry[key] += value
+        if aggregated:
+            return [aggregated[k] for k in sorted(aggregated)]
+
+        return [{
+            "name": "unknown-model",
+            "version": manifest.get("model_version", ""),
+            "provider": manifest.get("provider", ""),
+            "call_count": 0,
+        }]
+
+    def _tool_specs(self, capsule_dir: Path) -> list[dict[str, Any]]:
+        """Distinct tools actually invoked, from ``tool-calls.jsonl``."""
+        aggregated: dict[str, dict[str, Any]] = {}
+        for call in self._read_jsonl(capsule_dir / "tool-calls.jsonl"):
+            name = call.get("tool_name")
+            if not name:
+                continue
+            entry = aggregated.setdefault(
+                str(name),
+                {
+                    "name": str(name),
+                    "version": str(call.get("tool_version") or ""),
+                    "provider": str(call.get("tool_provider") or ""),
+                    "call_count": 0,
+                },
+            )
+            entry["call_count"] += 1
+        return [aggregated[k] for k in sorted(aggregated)]
 
     def _load_manifest(self, capsule_dir: Path) -> dict[str, Any]:
         manifest_path = capsule_dir / "capsule.yaml"

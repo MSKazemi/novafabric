@@ -36,7 +36,7 @@ are the part of the system that must keep working offline in five years.
 | **JSON Schema** | draft 2020-12 | `schemas/run-capsule.schema.json` and siblings define every artefact the system emits | `nova validate <run-id>` — or validate the schema with any 2020-12 validator | works today |
 | **Merkle inclusion proofs** | RFC 6962-style tree | Evidence Provenance tree over capsule hashes | `nova merkle-tree <run-id>` | works today |
 | **SLSA** | provenance for released artefacts | Build provenance and signed release artefacts in the publish pipeline | release attestations on the GitHub release | works today |
-| **CycloneDX** | 1.7, AI/ML profile | AI Bill of Materials generated from capsule facts | `nova export-aibom <run-id>` | experimental |
+| **CycloneDX** | 1.7, AI/ML profile | AI Bill of Materials built from the capsule's evidence files: one `machine-learning-model` component per distinct model in `model-calls.jsonl` with tokens summed per model, plus every tool in `tool-calls.jsonl` | `nova export-aibom <run-id>` | experimental |
 | **C2PA** | content credentials | Provenance manifest for generated media | `nova export-c2pa <run-id>` | experimental |
 
 **Why this section matters most.** An Evidence Bundle is designed to be verifiable with
@@ -53,7 +53,8 @@ data can leave the system.
 |---|---|---|---|---|
 | **OpenTelemetry** | traces, GenAI semantic conventions | Model calls and spans are recorded against the GenAI semconv; `trace.jsonl` is OTel-shaped | inspect `model-calls.jsonl` / `trace.jsonl` in any capsule | works today |
 | **OpenLineage** | run/job/dataset events | Emits lineage as OpenLineage events for ingestion by Marquez and others | `nova lineage emit-openlineage` | works today |
-| **W3C PROV** | PROV-O (RDF) | Exports the provenance graph as PROV-O triples | `nova lineage export-prov` | experimental |
+| **W3C PROV** | PROV-JSON and PROV-N | Exports a run's provenance — the run as a PROV `activity`, each evidence file as an `entity` `wasGeneratedBy` it, plus cross-capsule lineage edges | `nova lineage export-prov` · `--format prov-n` | works today |
+| **W3C PROV** | PROV-O (RDF) | Maps capsule provenance to PROV-O for the semantic knowledge graph — a *different* surface from `export-prov` above | `nova kg build-provenance --format turtle` with the `novafabric[spkg]` extra | experimental |
 | **SHACL** | shape validation | Validates provenance triples on ingest into the knowledge graph | `novafabric[spkg]` extra | experimental |
 | **openCypher** | query | Graph queries over the capsule knowledge graph | `nova kg query` | experimental |
 | **Model Context Protocol** | MCP tool exchanges | Transparent MCP proxy records tool calls; a conformance suite runs in CI | `nova mcp conformance` · `.github/workflows/mcp-conformance.yml` | experimental |

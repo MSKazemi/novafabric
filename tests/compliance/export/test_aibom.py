@@ -133,6 +133,122 @@ class TestAIBOMExporter:
         assert "nova:provider" in prop_names
 
 
+class TestAIBOMFromEvidenceFiles:
+    """A BOM must enumerate the AI it actually billed (ADR-0256 defect class).
+
+    `nova capture` writes ``model_calls_ref``/``tool_calls_ref`` and counts into
+    ``capsule.yaml`` — never a ``model``, ``provider`` or ``tools`` key. Reading only
+    the manifest therefore produced ``unknown-model`` and zero tool components for
+    every captured run, and passed conformance, because CycloneDX only requires that
+    *a* ``machine-learning-model`` component exist.
+    """
+
+    @staticmethod
+    def _write(capsule_dir: Path, name: str, records: list[dict]) -> None:
+        (capsule_dir / name).write_text(
+            "".join(json.dumps(r) + "\n" for r in records), encoding="utf-8"
+        )
+
+    def test_models_come_from_model_calls_when_manifest_is_silent(
+        self, tmp_path: Path
+    ) -> None:
+        capsule_dir = tmp_path / "cap"
+        capsule_dir.mkdir()
+        (capsule_dir / "capsule.yaml").write_text("run_id: R1\nschema_version: 0.1.0\n")
+        self._write(capsule_dir, "model-calls.jsonl", [
+            {"gen_ai.response.model": "claude-opus-5", "gen_ai.system": "anthropic",
+             "gen_ai.usage.input_tokens": 1200, "gen_ai.usage.output_tokens": 300},
+            {"gen_ai.response.model": "claude-opus-5", "gen_ai.system": "anthropic",
+             "gen_ai.usage.input_tokens": 900, "gen_ai.usage.output_tokens": 150},
+            {"gen_ai.response.model": "gpt-5", "gen_ai.system": "openai",
+             "gen_ai.usage.input_tokens": 400, "gen_ai.usage.output_tokens": 80},
+        ])
+        from novafabric.compliance.export.aibom import AIBOMExporter
+
+        doc = AIBOMExporter().build_aibom(capsule_dir)
+        models = [c for c in doc.components if c.type == "machine-learning-model"]
+        assert [m.name for m in models] == ["claude-opus-5", "gpt-5"]
+
+        props = {p["name"]: p["value"] for p in models[0].properties}
+        assert props["nova:provider"] == "anthropic"
+        assert props["nova:model_call_count"] == "2"
+        # Tokens are summed per model, not per capsule.
+        assert props["nova:input_tokens"] == "2100"
+        assert props["nova:output_tokens"] == "450"
+
+    def test_request_model_used_when_response_model_absent(self, tmp_path: Path) -> None:
+        capsule_dir = tmp_path / "cap"
+        capsule_dir.mkdir()
+        (capsule_dir / "capsule.yaml").write_text("run_id: R1\n")
+        self._write(capsule_dir, "model-calls.jsonl",
+                    [{"gen_ai.request.model": "llama-4", "gen_ai.system": "ollama"}])
+        from novafabric.compliance.export.aibom import AIBOMExporter
+
+        doc = AIBOMExporter().build_aibom(capsule_dir)
+        models = [c for c in doc.components if c.type == "machine-learning-model"]
+        assert [m.name for m in models] == ["llama-4"]
+
+    def test_tools_come_from_tool_calls_and_are_deduped(self, tmp_path: Path) -> None:
+        capsule_dir = tmp_path / "cap"
+        capsule_dir.mkdir()
+        (capsule_dir / "capsule.yaml").write_text("run_id: R1\n")
+        self._write(capsule_dir, "tool-calls.jsonl", [
+            {"tool_name": "web_search", "tool_version": "1.2.0", "tool_provider": "builtin"},
+            {"tool_name": "bash", "tool_version": "5.2", "tool_provider": "os"},
+            {"tool_name": "web_search", "tool_version": "1.2.0", "tool_provider": "builtin"},
+        ])
+        from novafabric.compliance.export.aibom import AIBOMExporter
+
+        doc = AIBOMExporter().build_aibom(capsule_dir)
+        tools = [c for c in doc.components if c.type == "library"]
+        assert [t.name for t in tools] == ["bash", "web_search"]
+        props = {p["name"]: p["value"] for p in tools[1].properties}
+        assert props["nova:tool_call_count"] == "2"
+        assert tools[1].version == "1.2.0"
+
+    def test_explicit_manifest_model_still_wins(self, tmp_path: Path) -> None:
+        """Callers that synthesise a manifest keep their exact previous output."""
+        capsule_dir = tmp_path / "cap"
+        capsule_dir.mkdir()
+        (capsule_dir / "capsule.yaml").write_text(
+            "run_id: R1\nmodel: pinned-model\nprovider: acme\nmodel_version: '9'\n"
+        )
+        self._write(capsule_dir, "model-calls.jsonl",
+                    [{"gen_ai.response.model": "ignored-model"}])
+        from novafabric.compliance.export.aibom import AIBOMExporter
+
+        doc = AIBOMExporter().build_aibom(capsule_dir)
+        models = [c for c in doc.components if c.type == "machine-learning-model"]
+        assert [m.name for m in models] == ["pinned-model"]
+        assert models[0].version == "9"
+
+    def test_damaged_evidence_line_does_not_fail_the_export(self, tmp_path: Path) -> None:
+        """A partial BOM is worth more than an exception."""
+        capsule_dir = tmp_path / "cap"
+        capsule_dir.mkdir()
+        (capsule_dir / "capsule.yaml").write_text("run_id: R1\n")
+        (capsule_dir / "model-calls.jsonl").write_text(
+            json.dumps({"gen_ai.response.model": "good-model"}) + "\n{ not json\n\n",
+            encoding="utf-8",
+        )
+        from novafabric.compliance.export.aibom import AIBOMExporter
+
+        doc = AIBOMExporter().build_aibom(capsule_dir)
+        models = [c for c in doc.components if c.type == "machine-learning-model"]
+        assert [m.name for m in models] == ["good-model"]
+
+    def test_no_model_calls_still_yields_a_model_component(self, tmp_path: Path) -> None:
+        """CycloneDX requires at least one; the placeholder path is retained."""
+        capsule_dir = tmp_path / "cap"
+        capsule_dir.mkdir()
+        (capsule_dir / "capsule.yaml").write_text("run_id: R1\n")
+        from novafabric.compliance.export.aibom import AIBOMExporter
+
+        doc = AIBOMExporter().build_aibom(capsule_dir)
+        models = [c for c in doc.components if c.type == "machine-learning-model"]
+        assert [m.name for m in models] == ["unknown-model"]
+
+
 class TestExportAibomCli:
     def test_default_output(self, capsule_dir: Path) -> None:
         runner = CliRunner()

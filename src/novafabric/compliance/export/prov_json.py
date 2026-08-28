@@ -13,12 +13,22 @@
 # limitations under the License.
 """W3C PROV-JSON export for NovaFabric Run Capsules.
 
-Generates W3C PROV-JSON (https://www.w3.org/TR/prov-json/) from the
-lineage.jsonl file inside a capsule directory.
+Generates W3C PROV-JSON (https://www.w3.org/TR/prov-json/) from a capsule
+directory, using **two** sources:
 
-Each lineage edge maps to a ``wasDerivedFrom`` or ``used`` relation.
-Each run_id becomes an ``activity``.
-Each capsule (source/target) becomes an ``entity``.
+1. ``capsule.yaml`` — the run itself. Every capsule records a ``run_id``, its
+   start/finish times, the command, and a ``sha256`` for each evidence file it
+   produced. That is already a complete PROV triple (an ``activity``, the
+   ``entity`` it produced, and ``wasGeneratedBy`` linking them), so it is always
+   emitted.
+2. ``lineage.jsonl`` — *cross-capsule* edges, mapped to ``wasDerivedFrom`` /
+   ``used`` / ``wasGeneratedBy``.
+
+Source 2 alone is not sufficient, and relying on it was a defect. ``lineage.jsonl``
+is empty for any run that is not downstream of another run — the single most common
+capsule there is — so a first-in-chain capsule exported as a document asserting the
+artifact had *no provenance at all*, in the one format an external auditor is most
+likely to consume. The capsule knew the answer; the exporter was not reading it.
 
 No external PROV library is required — the JSON is hand-crafted per the spec.
 """
@@ -82,13 +92,77 @@ def _node_id(value: object) -> str | None:
     return str(value)
 
 
+def _seed_from_manifest(doc: dict[str, Any], capsule_dir: Path) -> None:
+    """Emit the run's own provenance from ``capsule.yaml``, in place.
+
+    A capsule always knows that run ``R`` produced evidence files ``E1..En``
+    between two timestamps. Encoding only ``lineage.jsonl`` discards that, so
+    this seeds the activity/entity/wasGeneratedBy core before lineage edges are
+    layered on top. A missing or unreadable manifest is not an error — the
+    documented skeleton-document behaviour is preserved.
+    """
+    manifest_path = capsule_dir / "capsule.yaml"
+    if not manifest_path.exists():
+        return
+    try:
+        import yaml
+
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return
+    if not isinstance(manifest, dict):
+        return
+
+    run_id = manifest.get("run_id")
+    if not run_id:
+        return
+
+    aid = _prov_id(_NF_PREFIX, _sanitize_id(str(run_id)))
+    activity: dict[str, Any] = {"prov:type": _prov_id(_NF_PREFIX, "Run")}
+    if manifest.get("created_at"):
+        activity["prov:startTime"] = str(manifest["created_at"])
+    if manifest.get("finished_at"):
+        activity["prov:endTime"] = str(manifest["finished_at"])
+    command = manifest.get("command")
+    if isinstance(command, list):
+        activity[_prov_id(_NF_PREFIX, "command")] = " ".join(str(c) for c in command)
+    elif command:
+        activity[_prov_id(_NF_PREFIX, "command")] = str(command)
+    for key in ("status", "exit_code", "capture_mode", "novafabric_version"):
+        if manifest.get(key) is not None:
+            activity[_prov_id(_NF_PREFIX, key)] = manifest[key]
+    doc["activity"].setdefault(aid, activity)
+
+    digests = manifest.get("evidence_digests")
+    if not isinstance(digests, dict):
+        return
+
+    for n, (filename, meta) in enumerate(sorted(digests.items()), start=1):
+        eid = _prov_id(_NF_PREFIX, _sanitize_id(f"{run_id}/{filename}"))
+        entity: dict[str, Any] = {
+            "prov:type": _prov_id(_NF_PREFIX, "Evidence"),
+            _prov_id(_NF_PREFIX, "filename"): filename,
+        }
+        if isinstance(meta, dict):
+            if meta.get("sha256"):
+                entity[_prov_id(_NF_PREFIX, "sha256")] = meta["sha256"]
+            if meta.get("size_bytes") is not None:
+                entity[_prov_id(_NF_PREFIX, "sizeBytes")] = meta["size_bytes"]
+        doc["entity"].setdefault(eid, entity)
+
+        # Distinct relation-id namespace so lineage's own counters cannot collide.
+        rid = _prov_id(_NF_PREFIX, f"capsuleGen_{n}")
+        doc["wasGeneratedBy"][rid] = {"prov:entity": eid, "prov:activity": aid}
+
+
 def export_prov_json(capsule_dir: Path) -> dict[str, Any]:
     """Generate a W3C PROV-JSON document from ``lineage.jsonl``.
 
     Args:
-        capsule_dir: Path to the capsule directory.  ``lineage.jsonl`` is read
-            from this directory.  If the file is absent or empty, a valid
-            skeleton document is returned.
+        capsule_dir: Path to the capsule directory. Both ``capsule.yaml`` and
+            ``lineage.jsonl`` are read from it. If ``lineage.jsonl`` is absent or
+            empty the run's own provenance is still emitted from the manifest;
+            only a capsule with neither yields the empty skeleton document.
 
     Returns:
         A ``dict`` conforming to the W3C PROV-JSON schema with keys:
@@ -113,6 +187,8 @@ def export_prov_json(capsule_dir: Path) -> dict[str, Any]:
         "used": {},
         "wasDerivedFrom": {},
     }
+
+    _seed_from_manifest(doc, capsule_dir)
 
     lineage_path = capsule_dir / "lineage.jsonl"
     if not lineage_path.exists():

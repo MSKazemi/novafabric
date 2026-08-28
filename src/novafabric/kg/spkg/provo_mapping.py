@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -171,15 +172,122 @@ def read_lineage_edges(capsule_dir: str | Path) -> list[dict[str, Any]]:
     return edges
 
 
-def capsule_lineage_to_provo(capsule_dir: str | Path) -> Graph:
-    """Map an entire capsule's ``lineage.jsonl`` to one PROV-O RDF graph (P1 batch ingest).
+def _xsd_datetime(value: Any) -> str | None:
+    """Return ``value`` as an xsd:dateTime lexical form, or ``None`` if it is not one.
 
-    Merges each edge's PROV-O triples (via :func:`read_lineage_edges`) into a single graph.
-    A missing ``lineage.jsonl`` yields an empty graph. Validate with :func:`validate_provo`.
+    The SHACL shapes constrain ``prov:generatedAtTime`` to ``xsd:dateTime``, so a
+    manifest timestamp that does not parse is dropped rather than emitted — a seeded
+    triple must never be the reason a capsule fails validation.
     """
-    from rdflib import Graph  # lazy import
+    if not value:
+        return None
+    text = str(value).strip()
+    try:
+        datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return text
 
+
+def capsule_manifest_to_provo(capsule_dir: str | Path) -> Graph:
+    """Return the PROV-O triples a capsule knows about *itself*, from ``capsule.yaml``.
+
+    Every capsule records that run ``R`` produced evidence files ``E1..En`` between two
+    timestamps. That is provenance, and it exists even when ``lineage.jsonl`` is empty —
+    which is the normal state of a first-in-chain capsule. Deriving the graph from
+    lineage alone therefore asserted "no provenance" for exactly the capsules that have
+    nothing upstream to point at.
+
+    The run becomes a ``prov:Activity`` and each evidence file a ``prov:Entity`` linked by
+    ``prov:wasGeneratedBy``. Entities carry ``nf:capsuleRunId`` so the result satisfies
+    ``nf:GeneratedEntityShape``; timestamps are emitted only when they parse as
+    ``xsd:dateTime``. URIs use the same ``node_id_for`` scheme as :func:`lineage_edge_to_provo`,
+    so seeded and lineage-derived triples merge on the same subjects instead of duplicating them.
+
+    A missing, unreadable, or ``run_id``-less manifest yields an empty graph, not an error.
+    """
+    from rdflib import RDF, XSD, Graph, Literal, Namespace  # lazy import
+
+    NFNS = Namespace(ontology.NF)
+    PROV = Namespace(ontology.PROV)
     g = Graph()
+    g.bind("prov", PROV)
+    g.bind("nf", NFNS)
+
+    manifest_path = Path(capsule_dir) / "capsule.yaml"
+    if not manifest_path.exists():
+        return g
+    try:
+        import yaml
+
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return g
+    if not isinstance(manifest, dict):
+        return g
+
+    run_id = manifest.get("run_id")
+    if not run_id:
+        return g
+    run_id = str(run_id)
+
+    run_uri = _node_uri(NFNS, {"kind": "run", "ref": run_id})
+    g.add((run_uri, RDF.type, PROV.Activity))
+    g.add((run_uri, NFNS.capsuleRunId, Literal(run_id, datatype=XSD.string)))
+    started = _xsd_datetime(manifest.get("created_at"))
+    if started:
+        g.add((run_uri, PROV.startTime, Literal(started, datatype=XSD.dateTime)))
+    ended = _xsd_datetime(manifest.get("finished_at"))
+    if ended:
+        g.add((run_uri, PROV.endTime, Literal(ended, datatype=XSD.dateTime)))
+    command = manifest.get("command")
+    if isinstance(command, list):
+        command = " ".join(str(c) for c in command)
+    if command:
+        g.add((run_uri, NFNS.command, Literal(str(command), datatype=XSD.string)))
+    for key, attr in (
+        ("status", "status"),
+        ("capture_mode", "captureMode"),
+        ("novafabric_version", "novafabricVersion"),
+    ):
+        if manifest.get(key) is not None:
+            g.add((run_uri, NFNS[attr], Literal(str(manifest[key]), datatype=XSD.string)))
+    if manifest.get("exit_code") is not None:
+        g.add((run_uri, NFNS.exitCode, Literal(int(manifest["exit_code"]), datatype=XSD.integer)))
+
+    digests = manifest.get("evidence_digests")
+    if not isinstance(digests, dict):
+        return g
+
+    for filename, meta in sorted(digests.items()):
+        ent = _node_uri(NFNS, {"kind": "artifact", "ref": f"{run_id}/{filename}"})
+        g.add((ent, RDF.type, PROV.Entity))
+        g.add((ent, PROV.wasGeneratedBy, run_uri))
+        # Required by nf:GeneratedEntityShape — without it the seed would fail SHACL.
+        g.add((ent, NFNS.capsuleRunId, Literal(run_id, datatype=XSD.string)))
+        g.add((ent, NFNS.filename, Literal(str(filename), datatype=XSD.string)))
+        if ended:
+            g.add((ent, PROV.generatedAtTime, Literal(ended, datatype=XSD.dateTime)))
+        if isinstance(meta, dict):
+            if meta.get("sha256"):
+                g.add((ent, NFNS.sha256, Literal(str(meta["sha256"]), datatype=XSD.string)))
+            if meta.get("size_bytes") is not None:
+                g.add(
+                    (ent, NFNS.sizeBytes, Literal(int(meta["size_bytes"]), datatype=XSD.integer))
+                )
+    return g
+
+
+def capsule_lineage_to_provo(capsule_dir: str | Path) -> Graph:
+    """Map an entire capsule to one PROV-O RDF graph (P1 batch ingest).
+
+    The graph is the capsule's own manifest provenance (:func:`capsule_manifest_to_provo`)
+    merged with the triples of every edge in ``lineage.jsonl`` (via
+    :func:`read_lineage_edges`). A capsule with no lineage still yields the run and its
+    evidence; only a capsule with neither a manifest nor lineage yields an empty graph.
+    Validate with :func:`validate_provo`.
+    """
+    g = capsule_manifest_to_provo(capsule_dir)
     for edge in read_lineage_edges(capsule_dir):
         g += lineage_edge_to_provo(edge)
     return g

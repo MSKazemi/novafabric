@@ -129,8 +129,26 @@ def export_ro_crate(capsule_dir: Path, output_path: Path) -> Path:
             f"Expected a directory, got: {capsule_dir}"
         )
 
-    # Resolve run_id from directory name (ULID or any string)
+    # Resolve run_id from the manifest, falling back to the directory name.
+    #
+    # This used to read `capsule_dir.name` alone. On a freshly captured capsule the
+    # directory IS the run id, so the result was correct -- by coincidence. It stops
+    # being correct the moment the directory is renamed, copied under another name,
+    # or extracted from an archive, and `identifier` is precisely the RO-Crate field
+    # that is supposed to survive relocation. Found by the F10 fidelity check, which
+    # compares the exported document against the capsule's own manifest rather than
+    # against a list of required keys (ADR-0256).
     run_id = capsule_dir.name
+    manifest_path = capsule_dir / "capsule.yaml"
+    if manifest_path.exists():
+        try:
+            import yaml
+
+            manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+            if isinstance(manifest, dict) and manifest.get("run_id"):
+                run_id = str(manifest["run_id"])
+        except Exception:  # noqa: BLE001 - a damaged manifest must not fail the export
+            pass
 
     # Collect files to include
     file_entities: list[dict[str, Any]] = []
