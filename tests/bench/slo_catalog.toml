@@ -135,7 +135,7 @@ workload = "10M-edge synthetic graph, lineage bench harness (BQ-015 promotion ga
 hardware = "n1 experiment server"
 measured_on = 2026-05-16
 revalidate_by = 2026-11-01
-source = "ADR-0053 v2a gate clearance; ROADMAP Phase 6 row"
+source = "ROADMAP Phase 6 row; rationale in ADR-0053 (private design record)"
 
 [[entry]]
 id = "query.persistent-index.speedup"
@@ -147,7 +147,7 @@ workload = "2K capsules 5.1x, 10K capsules 4.9x (ADR-0225 A1 measurement — not
 hardware = "n1 experiment server"
 measured_on = 2026-08-06
 revalidate_by = 2027-02-01
-source = "ADR-0225 amended measurement, BL-040"
+source = "BL-040; rationale in ADR-0225 (private design record)"
 
 [[entry]]
 id = "collector.seal-batch.throughput"
@@ -160,3 +160,98 @@ hardware = "n1 experiment server"
 measured_on = 2026-05-10
 revalidate_by = 2026-11-01
 source = "ROADMAP Phase 2 row (BQ-011)"
+
+# --- measured: the 2026-08-28 Azure campaign ------------------------------
+# Seven numbers from the paper campaign (ADR-0255). All were produced on
+# ephemeral Azure VMs that the campaign plan destroys, so `hardware` names a
+# machine that will not exist at `revalidate_by`. That is deliberate and is why
+# each entry's `source` points at the harvested artifact rather than at a host:
+# re-validating these means re-provisioning equivalent VMs and re-running the
+# harness, not sshing anywhere. The raw artifacts and their SHA-256 manifests are
+# kept in the private research record, not published here (see the docs honesty
+# rule): the number and its workload are the contract, the harvest is the audit
+# trail behind it.
+
+[[entry]]
+id = "capture.absolute-overhead.mean"
+title = "Absolute wall-clock cost of full capture, independent of workload length"
+status = "measured"
+value = 4.56
+unit = "s"
+workload = "7-point compute sweep 3M-400M (61.8x baseline range), n=30 reps/point, ascending; sd 0.29 s, CV 0.064. Reverse-order control over the same 7 points agrees at 4.34 s (4.8% apart) with a tighter spread, so run order does not produce it."
+hardware = "Azure Standard_D8s_v5 (8 vCPU), westeurope, nova-runner"
+measured_on = 2026-08-28
+revalidate_by = 2027-03-01
+source = "c1_asc.json + c1_desc.json from the 2026-08-28 campaign (private research record)"
+
+[[entry]]
+id = "topology.recluster.per-node"
+title = "Cluster-topology recluster cost per node (linear regime)"
+status = "measured"
+value = 0.0177
+unit = "s/node"
+workload = "3 repetitions of a 100-4000-node sweep; R2=0.994, per-size CV 0.018-0.097. Crosses a 30 s service objective at ~1700 nodes -- reported as a limit, not omitted."
+hardware = "Azure Standard_D8s_v5 (8 vCPU), westeurope, nova-bench2"
+measured_on = 2026-08-28
+revalidate_by = 2027-03-01
+source = "f12_rep{1,2,3}.json from the 2026-08-28 campaign (private research record)"
+
+[[entry]]
+id = "topology.cluster-load.p99"
+title = "Topology read path, p99, worst observed across the node-count range"
+status = "measured"
+value = 0.002
+unit = "s"
+workload = "worst p99 over 3 repetitions of a 100-4000-node sweep (0.98-1.99 ms); a separate single 100-8000-node sweep (80x range) stayed within 1.05-1.74 ms. Flat against node count while recluster is linear in it."
+hardware = "Azure Standard_D8s_v5 (8 vCPU), westeurope, nova-bench2"
+measured_on = 2026-08-28
+revalidate_by = 2027-03-01
+source = "f12_rep{1,2,3}.json + f12_topology.json from the 2026-08-28 campaign (private research record)"
+
+[[entry]]
+id = "policy.decision.p99"
+title = "OPA policy decision latency, p99, worst of four policies"
+status = "measured"
+value = 0.029
+unit = "s"
+workload = "4 policies x 500 iterations (promote allow/deny, replay-mutating allow/deny); p50 20.3-21.0 ms, p99 23.8-29.3 ms, all four decisions correct. Correctness only holds after the harness defect that omitted `asset_type` was fixed -- before that the bench measured the wrong decision."
+hardware = "Azure Standard_D8s_v5 (8 vCPU), westeurope, nova-bench2"
+measured_on = 2026-08-28
+revalidate_by = 2027-03-01
+source = "f9_opa.json + f9_sod.json from the 2026-08-28 campaign (private research record)"
+
+[[entry]]
+id = "lineage.bulk-copy.throughput"
+title = "Lineage bulk-copy sustained edge rate -- MISSES its own service objective 7.5x"
+status = "measured"
+value = 1340
+unit = "edges/s"
+workload = "bulk-copy path against a 10000 edges/s objective set by our own SLO -- a 7.5x miss. Recorded because a catalog that carries only the objectives we meet is not a catalog."
+hardware = "Azure Standard_D8s_v5 (8 vCPU), westeurope, nova-bench3"
+measured_on = 2026-08-28
+revalidate_by = 2027-03-01
+source = "lineage_bulk_copy.json from the 2026-08-28 campaign (private research record)"
+
+[[entry]]
+id = "metadata.rls-overhead.p50"
+title = "Postgres row-level-security cost on tenant-scoped reads, p50, at concurrency >= 4"
+status = "measured"
+value = 7.4
+unit = "%"
+workload = "worst p50 cost vs a BYPASSRLS baseline over 100K/1000-tenant and 1M/5000-tenant tables at concurrency 4-32 (range 2.9-7.4%). At concurrency 1 the cost is 13.7-19.2% -- the fixed per-query policy evaluation is not amortised there. Tenant isolation verified exact in both runs."
+hardware = "Azure Standard_D8s_v5 (8 vCPU), westeurope, nova-bench3"
+measured_on = 2026-08-28
+revalidate_by = 2027-03-01
+source = "e4_rls_100k.json + e4_rls_1m.json from the 2026-08-28 campaign (private research record)"
+
+[[entry]]
+id = "collector.marginal-per-event"
+title = "Marginal cost added to one instrumented call in a warm process"
+status = "measured"
+value = 0.00055
+unit = "s"
+workload = "median marginal overhead across three call durations: +0.412 ms on an 11.5 ms call (3.58%), +0.514 ms on 52.2 ms (0.99%), +0.547 ms on 102.2 ms (0.54%). Roughly constant in absolute terms, so the percentage falls as calls get longer."
+hardware = "Azure Standard_D8s_v5 (8 vCPU), westeurope, nova-bench4"
+measured_on = 2026-08-28
+revalidate_by = 2027-03-01
+source = "c4.log, SPK-COL-2, from the 2026-08-28 campaign (private research record)"
