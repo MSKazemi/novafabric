@@ -2,7 +2,7 @@
 
 Secure-by-default local mode: instead of granting anonymous admin, the server
 requires an auto-generated bearer token. Token resolution has parity with
-``novafabric.serve.auth`` (the dashboard's one-shot token):
+``novafabric.serve.auth`` (the dashboard's session token):
 
 1. ``NOVAFABRIC_SERVER_TOKEN`` env var — pin a stable token in Docker / CI.
 2. Existing ``$NOVAFABRIC_HOME/.server-token`` file — survive restarts.

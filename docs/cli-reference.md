@@ -6017,7 +6017,7 @@ Mandatory flag: `--experimental`. Without it the command prints the gate banner 
 | `--no-browser` | off | Don't auto-open a browser tab. |
 
 **Authentication.** The server binds `127.0.0.1`, validates the `Host` header, and requires a
-one-shot session token on every `/api/*` request (the probes `GET /api/health`, `/livez`, and
+session token on every `/api/*` request (the probes `GET /api/health`, `/livez`, and
 `/readyz` are open). The browser is launched with the token already in the URL; for scripts,
 pass it either way — since **v0.97.0** an `Authorization: Bearer` header is accepted everywhere
 `?token=` is, and when the header carries a Bearer credential it is the authoritative one:

@@ -1393,7 +1393,7 @@ nova serve --experimental
 The `--experimental` flag is mandatory and acknowledges that the dashboard
 API may change.
 
-The terminal prints a URL with an embedded one-shot session token:
+The terminal prints a URL with an embedded session token:
 
 ```
 Dashboard: http://127.0.0.1:4321/?token=<token>
@@ -1401,8 +1401,15 @@ API docs:  http://127.0.0.1:4321/api/docs?token=<token>
 ```
 
 Click the URL to open the dashboard in your browser. The token is also
-written to `~/.novafabric/.serve-token` (mode 0600) and rotated on every
-restart.
+written to `$NOVAFABRIC_HOME/.serve-token` (mode 0600) — the start-up panel
+prints the resolved path, which is `~/.novafabric/.serve-token` only when
+`NOVAFABRIC_HOME` is unset.
+
+The token is **not** rotated on every restart. `nova serve` reuses an existing
+`.serve-token` file so that a restart does not break open browser sessions, so
+a URL you were given earlier keeps working after a restart — and the token
+stays readable on disk (mode 0600) after the server exits. Delete the file if
+you want the next start to mint a fresh token.
 
 **Flags:**
 

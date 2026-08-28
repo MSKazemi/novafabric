@@ -84,6 +84,26 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **`nova serve` told you to look for the session token in a file that was not there.**
+  The start-up panel printed two hardcoded literals — `~/.novafabric/.serve-token` and
+  `~/.novafabric/registry.db` — instead of the paths the process had just resolved. Whenever
+  `NOVAFABRIC_HOME` or `NOVAFABRIC_DB_PATH` is set (the normal configuration for anyone who
+  keeps NovaFabric data outside their home directory) both lines named a file that does not
+  exist. The token line is the one that hurts: it is the *recovery* instruction, so the single
+  documented way to recover a working dashboard URL sent you to an empty directory. The panel
+  now prints the resolved paths, and `--db-path --help` describes the real precedence
+  (`NOVAFABRIC_DB_PATH`, else `$NOVAFABRIC_HOME/registry.db`).
+
+- **The dashboard token was documented as "one-shot" and "rotated on every restart"; it is
+  neither.** `generate_token()` reuses an existing `.serve-token` file by design, so a restart
+  keeps old URLs working — and the token stays readable on disk after the server exits, with
+  nothing in the shipped product deleting it (`clear_token_file` has no caller). The docs said
+  the opposite in seven places, which is a security-relevant inversion: a reader who stops the
+  server believing the token rotated would leave a live credential on disk. `docs/dashboard.md`,
+  `docs/user-guide.md`, `docs/cli-reference.md`, both tutorials, the CLI banner, and the
+  `local_token` module docstring now state the real behaviour and how to force a fresh token.
+
+
 - **`get_connection()` could raise `OperationalError: database is locked` when several
   threads opened the registry database at once.** `PRAGMA journal_mode=WAL` is a *write*
   needing a brief exclusive lock, and SQLite does not apply a connection's busy timeout to

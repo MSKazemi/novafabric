@@ -96,7 +96,7 @@ pip install 'novafabric[serve]'
 # 2. Start the server (--experimental is mandatory)
 nova serve --experimental
 
-# 3. Open the URL the panel prints (it embeds a one-shot session token).
+# 3. Open the URL the panel prints (it embeds the session token).
 # Or paste the token manually if you prefer to type the URL.
 ```
 
@@ -240,7 +240,7 @@ A short list, for completeness — the dashboard is not strictly a subset:
 ## Security model
 
 - **Localhost only** by default. `--host 0.0.0.0` is rejected without `--insecure`. Even with `--insecure`, put TLS in front of it; the dashboard does not terminate TLS.
-- **Token authentication.** A one-shot, cryptographically random URL-safe token (`secrets.token_urlsafe(32)`) is generated at start-up, written to `~/.novafabric/.serve-token` (mode 0600), and rotated on every restart. The token must be passed on every `/api/*` request, either as an `Authorization: Bearer …` header or as `?token=…`. When both are present the `Bearer` header is authoritative. (Bearer support was added in v0.97.0; this paragraph previously stated that Bearer headers were rejected, which has not been accurate since.)
+- **Token authentication.** A cryptographically random URL-safe token (`secrets.token_urlsafe(32)`) is generated at start-up and written to `$NOVAFABRIC_HOME/.serve-token` (mode 0600); the start-up panel prints the resolved path. It is **not** rotated on every restart — an existing token file is reused so a restart does not invalidate open browser sessions, and the token therefore survives on disk after the server exits until something deletes it. The token must be passed on every `/api/*` request, either as an `Authorization: Bearer …` header or as `?token=…`. When both are present the `Bearer` header is authoritative. (Bearer support was added in v0.97.0; this paragraph previously stated that Bearer headers were rejected, which has not been accurate since.)
 - **DNS-rebinding defence.** `Host` header must be `127.0.0.1`, `localhost`, or `::1`. Other hosts return 403 even with a valid token.
 - **CORS allowlist.** Only `http://localhost:*` and `http://127.0.0.1:*` origins are accepted. Defence in depth — the token is the authoritative gate.
 - **Constant-time token compare.** `_consteq` compares bytes equally regardless of where the mismatch is.

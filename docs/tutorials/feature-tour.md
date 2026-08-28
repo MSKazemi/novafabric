@@ -713,7 +713,7 @@ curl "http://127.0.0.1:4321/api/reports/run-history?token=<TOKEN>&from=2026-05-1
 curl "http://127.0.0.1:4321/api/reports/evidence-inventory?token=<TOKEN>"
 ```
 
-> The dashboard is **local-only**: it binds `127.0.0.1`, uses a one-shot token, and
+> The dashboard is **local-only**: it binds `127.0.0.1`, requires a session token, and
 > every page shows its CLI equivalent so anything you see can be reproduced in a
 > pipeline. It is not a hosted UI. Reports are read-only (Layer A); the write actions
 > the dashboard does expose (Layer B — register, eval, promote, forensic replay,

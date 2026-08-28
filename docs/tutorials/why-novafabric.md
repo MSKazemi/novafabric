@@ -335,7 +335,7 @@ The same five primitives work from a laptop to a cluster:
   with OIDC, RBAC (`reader < writer < admin`, plus an orthogonal `auditor`), and
   offline CI tokens. Local mode never *requires* server mode.
 - **`nova serve --experimental` (v0.7):** a local-only dashboard that binds
-  `127.0.0.1`, uses a one-shot token, and shows the equivalent CLI command on every
+  `127.0.0.1`, requires a session token, and shows the equivalent CLI command on every
   page. The CLI + JSON remain the canonical interface through v1.0.
 
 > **Corrected 2026-07-30 — this used to be accurate, it no longer is.** The

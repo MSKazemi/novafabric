@@ -28,7 +28,7 @@ _EXPERIMENTAL_BANNER = """\
 This dashboard:
   • is opt-in (you ran `--experimental` to enable it),
   • binds to 127.0.0.1 only (localhost),
-  • requires a one-shot session token on /api/* routes,
+  • requires a session token on /api/* routes (reused across restarts),
   • is read-only (Layer A); mutations are not yet supported.
 
 Schemas, endpoints, and behaviour may change. The CLI remains canonical —
@@ -69,7 +69,9 @@ def serve_cmd(
         Path | None,
         typer.Option(
             "--db-path",
-            help="Registry/lineage SQLite path. Defaults to ~/.novafabric/registry.db.",
+            help="Registry/lineage SQLite path. Defaults to $NOVAFABRIC_DB_PATH, "
+                 "else $NOVAFABRIC_HOME/registry.db (~/.novafabric/registry.db when "
+                 "NOVAFABRIC_HOME is unset). The startup panel prints the resolved path.",
         ),
     ] = None,
     no_browser: Annotated[
@@ -195,11 +197,12 @@ def serve_cmd(
         )
 
     # Token + auth
+    from novafabric.registry.store import get_db_path as _registry_db_path
     from novafabric.serve.app import create_app
     from novafabric.serve.auth import generate_token, write_token_file
 
     token = generate_token()
-    write_token_file(token)
+    token_path = write_token_file(token)
 
     # Static dashboard (optional — ships in the wheel; absent during dev)
     static_dir = Path(__file__).parent.parent / "serve" / "static"
@@ -260,13 +263,13 @@ def serve_cmd(
         _EXPERIMENTAL_BANNER + "\n"
         f"[bold]Listening:[/bold] http://{host}:{port}\n"
         f"[bold]Capsules:[/bold]  {resolved_capsule_dir}\n"
-        f"[bold]Registry:[/bold]  {db_path or '~/.novafabric/registry.db'}\n\n"
+        f"[bold]Registry:[/bold]  {db_path or _registry_db_path()}\n\n"
         + home_line
         + f"[bold]Dashboard:[/bold] {url}\n"
         f"[bold]API docs:[/bold]  {api_docs}\n"
         + topo_line
         + tv5_line
-        + "\n[dim]Token also written to ~/.novafabric/.serve-token (mode 0600).[/dim]\n"
+        + f"\n[dim]Token also written to {token_path} (mode 0600).[/dim]\n"
         "[dim]Press Ctrl+C to stop.[/dim]",
         title="nova serve",
         border_style="green",
