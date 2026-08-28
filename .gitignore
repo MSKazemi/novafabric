@@ -174,3 +174,10 @@ design/publications/**/*.synctex.gz
 design/publications/**/*.toc
 design/publications/**/*.bcf
 design/publications/**/*.run.xml
+
+# Maintainer's private inbox/backlog (single entry point for ideas + tasks,
+# driven by the mska-note skill). Never published.
+.note
+.note.*
+.mohsen.note
+.mohsen.note.*
