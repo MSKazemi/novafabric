@@ -818,11 +818,26 @@ def _verify_pg_rls(dsn: str) -> RestoreStepResult:
     ``--no-privileges`` restores may lose role-linked state; the idempotent
     schema-ensure re-applies ENABLE/FORCE RLS + the tenant_isolation policy,
     then the rls helpers assert it — proven, not assumed.
+
+    All three verifiers ADR-0229 names are run, and the role split is not
+    optional among them. ``BYPASSRLS`` on a role makes Postgres skip row-level
+    security outright, whatever ``FORCE ROW LEVEL SECURITY`` says and whatever
+    the policy text is, so a restore into a cluster where ``novafabric_app``
+    carries it would satisfy both table-level checks while tenant isolation is
+    entirely defeated. Checking only those two is not a weaker proof of the same
+    thing — it is a proof that goes vacuous under exactly the condition the
+    third check exists to detect. And ``--no-privileges`` losing *role-linked*
+    state, this function's own stated reason for re-verifying, is precisely how
+    that attribute drifts.
     """
     import psycopg
 
     from novafabric.metadata_store.postgres import _TENANT_TABLES, PostgresMetadataStore
-    from novafabric.metadata_store.rls import verify_force_rls, verify_policy_text
+    from novafabric.metadata_store.rls import (
+        verify_force_rls,
+        verify_policy_text,
+        verify_role_split,
+    )
 
     name = "verify-rls"
     try:
@@ -831,6 +846,7 @@ def _verify_pg_rls(dsn: str) -> RestoreStepResult:
         with psycopg.connect(dsn) as conn:
             forced = verify_force_rls(conn, _TENANT_TABLES)
             policies = verify_policy_text(conn, _TENANT_TABLES)
+            roles = verify_role_split(conn)
     except Exception as exc:  # noqa: BLE001 — any failure is a failed restore
         return RestoreStepResult(
             name=name,
@@ -844,10 +860,25 @@ def _verify_pg_rls(dsn: str) -> RestoreStepResult:
             ok=False,
             detail=f"RLS not enforced on: {', '.join(bad)}",
         )
+    # A missing key is a failure, not a pass: verify_role_split() omits any role
+    # it did not find, so treating absence as "no BYPASSRLS" would report success
+    # precisely when the app role does not exist to be checked.
+    if roles.get("novafabric_app_bypassrls") is not False:
+        return RestoreStepResult(
+            name=name,
+            ok=False,
+            detail=(
+                "novafabric_app has BYPASSRLS or is missing — RLS is bypassed "
+                "regardless of FORCE RLS and policy text; tenant isolation is not enforced"
+            ),
+        )
     return RestoreStepResult(
         name=name,
         ok=True,
-        detail=f"FORCE RLS + tenant_isolation verified on {len(_TENANT_TABLES)} table(s)",
+        detail=(
+            f"FORCE RLS + tenant_isolation verified on {len(_TENANT_TABLES)} table(s); "
+            "novafabric_app confirmed without BYPASSRLS"
+        ),
     )
 
 

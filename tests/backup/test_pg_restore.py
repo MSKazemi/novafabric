@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from novafabric.backup import restore
 from novafabric.backup.create import create_backup
 from novafabric.backup.models import BackupManifest
 from novafabric.backup.restore import (
@@ -225,3 +226,68 @@ def test_old_set_without_counts_skips_honestly() -> None:
     step = _verify_pg_counts(FAKE_DSN, manifest)
     assert step.ok is True
     assert "skipped" in step.detail
+
+
+class TestVerifyRlsChecksTheRoleSplit:
+    """The restore's RLS proof must include the check the other two depend on.
+
+    ``verify_force_rls`` and ``verify_policy_text`` both ask table-level
+    questions. ``BYPASSRLS`` is a *role* attribute, and Postgres skips row-level
+    security entirely for a role that has it — so both table checks still pass,
+    truthfully, while no policy is ever applied. Verifying only those two is not
+    a weaker proof of tenant isolation; it is a proof that goes vacuous under
+    exactly the condition the role check exists to detect.
+
+    ADR-0229 names all three verifiers. ``_verify_pg_rls`` called two.
+    """
+
+    @staticmethod
+    def _patch(monkeypatch, *, roles):
+        import contextlib
+
+        import novafabric.metadata_store.rls as rls
+
+        class _Store:
+            def __init__(self, dsn): pass
+            def bootstrap(self): pass
+
+        @contextlib.contextmanager
+        def _connect(dsn):
+            yield object()
+
+        monkeypatch.setattr(
+            "novafabric.metadata_store.postgres.PostgresMetadataStore", _Store
+        )
+        monkeypatch.setattr("psycopg.connect", _connect)
+        # Both table-level checks pass — that is the whole point of the case.
+        monkeypatch.setattr(rls, "verify_force_rls", lambda c, t: dict.fromkeys(t, True))
+        monkeypatch.setattr(rls, "verify_policy_text", lambda c, t: dict.fromkeys(t, True))
+        monkeypatch.setattr(rls, "verify_role_split", lambda c: roles)
+
+    def test_app_role_with_bypassrls_fails_the_step(self, monkeypatch) -> None:
+        self._patch(
+            monkeypatch,
+            roles={"novafabric_app_bypassrls": True, "novafabric_migrator_bypassrls": True},
+        )
+        result = restore._verify_pg_rls("postgresql://x/y")
+        assert result.ok is False, (
+            "restore reported RLS verified while novafabric_app can bypass every "
+            "policy it just confirmed"
+        )
+        assert "BYPASSRLS" in result.detail
+
+    def test_missing_app_role_fails_rather_than_passes(self, monkeypatch) -> None:
+        """Absence is not proof of absence of the attribute."""
+        self._patch(monkeypatch, roles={"novafabric_migrator_bypassrls": True})
+        result = restore._verify_pg_rls("postgresql://x/y")
+        assert result.ok is False
+
+    def test_correct_role_split_still_passes(self, monkeypatch) -> None:
+        """The new check must not turn a healthy restore red."""
+        self._patch(
+            monkeypatch,
+            roles={"novafabric_app_bypassrls": False, "novafabric_migrator_bypassrls": True},
+        )
+        result = restore._verify_pg_rls("postgresql://x/y")
+        assert result.ok is True, result.detail
+        assert "without BYPASSRLS" in result.detail

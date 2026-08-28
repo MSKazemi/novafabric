@@ -30,6 +30,21 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **A restore could report tenant isolation verified while it was fully bypassed.**
+  `_verify_pg_rls()` ran two of the three RLS verifiers ADR-0229 names —
+  `verify_force_rls` and `verify_policy_text` — and skipped `verify_role_split`, which
+  had no caller anywhere in the codebase. Both checks that did run ask table-level
+  questions, but `BYPASSRLS` is a *role* attribute and makes Postgres skip row-level
+  security outright: a restore into a cluster where `novafabric_app` carried it would
+  truthfully confirm FORCE RLS and a canonical policy on every tenant table while no
+  policy was ever applied. That is not a weaker proof of the same property — it is a
+  proof that goes vacuous under exactly the condition the omitted check detects, and
+  `--no-privileges` losing role-linked state is the function's own stated reason for
+  re-verifying. The restore step now runs all three and fails if `novafabric_app` has
+  BYPASSRLS **or is absent**, since `verify_role_split()` omits roles it cannot find and
+  reading that absence as "no BYPASSRLS" would report success precisely when there is
+  nothing to check.
+
 - **A finishing capture could silently switch off a concurrent one.**
   `CaptureOrchestrator.run()` bracketed a run with `set_current_recorder(rec)` and an
   unconditional `set_current_recorder(None)`. That is correct for one run at a time and
