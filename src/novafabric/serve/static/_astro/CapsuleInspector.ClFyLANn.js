@@ -1,1 +1,0 @@
-import{t as e}from"./CapsuleInspector.CSAZqo6P.js";export{e as default};

@@ -69,9 +69,12 @@ match, so neither is silent:
   bundle, checked in so ``nova serve`` works from a wheel. Hand-editing build
   output would be overwritten by the next build and would make the artifact
   disagree with its source. Its source *is* covered: ``web/src/lib/links.ts`` is
-  guarded by ``test_site_links_resolve_publicly.py``. The bundle currently
-  carries one stale match — ``why/index.html`` renders the pre-fix non-goals
-  link — and a site rebuild is what clears it.
+  guarded by ``test_site_links_resolve_publicly.py``. The exemption is about
+  *where the fix belongs*, not about tolerating a match: when the bundle was
+  rebuilt on 2026-08-29 it picked up both the marked ``$comment`` strings and
+  the repointed link, and the sweep finds nothing in it today. The exemption
+  stays so that a future source-side lag is reported against the source rather
+  than against generated output.
 
 * ``x-novafabric`` blocks inside a schema are exempt. Their ``spec`` value is a
   machine-readable document identifier, not prose addressed to a reader, and the
