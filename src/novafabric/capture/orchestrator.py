@@ -324,7 +324,11 @@ class CaptureOrchestrator:
         # --- Event recorder (file_events / network_events / human_approvals) ---
         # Set module-level singleton so wire-level hooks can call
         # get_current_recorder() without holding a reference to the orchestrator.
-        from novafabric.capture.event_recorder import EventRecorder, set_current_recorder
+        from novafabric.capture.event_recorder import (
+            EventRecorder,
+            clear_current_recorder,
+            set_current_recorder,
+        )
         _event_recorder = EventRecorder(
             capsule_dir=capsule_dir,
             run_id=run_id,
@@ -679,8 +683,11 @@ class CaptureOrchestrator:
         # writes capture-health.json only when events were actually dropped.
         _event_recorder.finalize_health()
 
-        # Clear the module-level recorder singleton now that the run is done.
-        set_current_recorder(None)
+        # Clear the module-level recorder singleton now that the run is done —
+        # but only if it is still ours. An unconditional clear here would blank
+        # the recorder of any capture that started while this one was running,
+        # and record.py drops events on a None recorder silently.
+        clear_current_recorder(_event_recorder)
 
         # ADR-0092 slice C (C0): close the run on the spool. Fail-open.
         if _spool_sink is not None:

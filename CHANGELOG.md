@@ -30,6 +30,20 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **A finishing capture could silently switch off a concurrent one.**
+  `CaptureOrchestrator.run()` bracketed a run with `set_current_recorder(rec)` and an
+  unconditional `set_current_recorder(None)`. That is correct for one run at a time and
+  wrong the moment two overlap in one process: whichever finished first blanked the
+  singleton the other was still recording through. Because every `record_*` path is
+  fail-open, the loser's events would then vanish with no error, no log line and no gap
+  marker — a capsule quietly missing events. Teardown now calls a new
+  `clear_current_recorder(rec)`, which clears only if that recorder is still the installed
+  one. The hook path's `_recorder_set_by_install` flag had the same shape — it recorded
+  that *we* set a recorder, not that ours was still installed — and now holds the recorder
+  and clears by identity too. No shipped path runs two orchestrators in one process today
+  (the daemon forks per worker, `run_experiment` iterates sequentially, the CLI runs one),
+  so this removes a trap rather than fixing a live outage.
+
 - **A webhook delivery could be marked `failed` before the audit log recorded why.**
   `_record_result()` wrote the delivery row first and appended the hash-chained audit
   entry last. The row is the durable, queryable signal, so every observer — the API, an

@@ -14,7 +14,10 @@ _installed: list[object] = []
 # Tracks whether install_all() set the EventRecorder singleton itself (vs an
 # orchestrator that manages its own recorder lifecycle). Only when we set it do
 # we clear it in uninstall_all() — so we never clobber an externally-owned one.
-_recorder_set_by_install: bool = False
+#: The recorder ``install_all()`` installed, or None. Holds the object rather
+#: than a bool so ``uninstall_all()`` can clear by identity: the flag alone
+#: only records that *we* set one, not that ours is still the one installed.
+_recorder_set_by_install: object | None = None
 
 # ── Single-owner guard for the process-global hooks (ADR-0224) ─────────────
 #
@@ -198,12 +201,13 @@ def _ensure_recorder(writer: "CapsuleWriter") -> None:
         )
         if get_current_recorder() is None:
             _cap_dir = writer.capsule_dir
-            set_current_recorder(EventRecorder(
+            _rec = EventRecorder(
                 capsule_dir=_cap_dir,
                 run_id=_cap_dir.name,
                 capsule_id=_cap_dir.name,
-            ))
-            _recorder_set_by_install = True
+            )
+            set_current_recorder(_rec)
+            _recorder_set_by_install = _rec
     except Exception:
         pass  # fail-open: recorder is best-effort; never block capture
 
@@ -357,12 +361,12 @@ def uninstall_all(token: str | None = None) -> bool:
     _installed.clear()
     # Clear the recorder only if install_all() set it (in-process SDK / adapter
     # paths). When an orchestrator owns the recorder it clears its own.
-    if _recorder_set_by_install:
+    if _recorder_set_by_install is not None:
         try:
-            from novafabric.capture.event_recorder import set_current_recorder
-            set_current_recorder(None)
+            from novafabric.capture.event_recorder import clear_current_recorder
+            clear_current_recorder(_recorder_set_by_install)  # type: ignore[arg-type]
         except Exception:
             pass
         finally:
-            _recorder_set_by_install = False
+            _recorder_set_by_install = None
     return True

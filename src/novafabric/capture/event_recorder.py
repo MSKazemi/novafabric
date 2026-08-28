@@ -139,6 +139,33 @@ def set_current_recorder(recorder: EventRecorder | None) -> None:
         _current_recorder = recorder
 
 
+def clear_current_recorder(recorder: EventRecorder) -> bool:
+    """Clear the singleton, but only if *recorder* is still the one installed.
+
+    Returns True if the slot was cleared. This is the teardown half of
+    :func:`set_current_recorder` and exists because an unconditional
+    ``set_current_recorder(None)`` is not composable: with two captures
+    overlapping in one process, whichever finishes first blanks the slot the
+    other is still recording through, and every ``record_*`` path is fail-open,
+    so the loser's events vanish without an error, a log line, or a gap marker.
+
+    No shipped path runs two orchestrators in one process — the daemon forks per
+    worker, ``run_experiment`` iterates its dataset sequentially, and the CLI
+    runs one command. The guard is therefore cheap insurance on a hazard rather
+    than a fix for a live outage, and it belongs here because this module's own
+    docstring invites callers to run concurrent in-process captures.
+
+    Idempotent and never raises: teardown runs in a ``finally`` beside the
+    workload being captured.
+    """
+    global _current_recorder
+    with _singleton_lock:
+        if _current_recorder is not recorder:
+            return False
+        _current_recorder = None
+        return True
+
+
 def bind_recorder(recorder: EventRecorder) -> str:
     """Bind *recorder* to the current task and return a release handle.
 

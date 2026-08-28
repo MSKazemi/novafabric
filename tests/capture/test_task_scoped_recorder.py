@@ -44,6 +44,7 @@ import pytest
 from novafabric.capture.event_recorder import (
     EventRecorder,
     bind_recorder,
+    clear_current_recorder,
     get_current_recorder,
     set_current_recorder,
     unbind_recorder,
@@ -274,4 +275,56 @@ class TestBackwardCompatibility:
         set_current_recorder(rec)
         assert get_current_recorder() is rec
         set_current_recorder(None)
+        assert get_current_recorder() is None
+
+
+class TestClearIsIdentityGuarded:
+    """Run A's teardown must not blank run B's recorder.
+
+    ``CaptureOrchestrator.run()`` brackets a run with
+    ``set_current_recorder(rec)`` ... ``set_current_recorder(None)``, and the
+    clear is unconditional. That is correct for one run at a time and wrong the
+    moment two overlap in one process: the first to finish clears the singleton
+    the second is still recording through, and ``record.py`` resolves ``None``
+    to a silent no-op because every ``record_*`` path is fail-open. The result
+    is a capsule that is missing events and says nothing about it.
+
+    No shipped path runs two orchestrators in one process today — the daemon
+    forks per worker, ``run_experiment`` iterates sequentially, and the CLI runs
+    one. So this guards a hazard rather than fixing a live outage, which is the
+    honest reason it is cheap: identity-compare on clear costs nothing and
+    removes a trap from the path the module's own docstring invites callers onto.
+    """
+
+    def test_clearing_with_a_foreign_recorder_leaves_the_live_one_alone(
+        self, tmp_path: Path
+    ) -> None:
+        run_a = _recorder(tmp_path, "run-a")
+        run_b = _recorder(tmp_path, "run-b")
+
+        set_current_recorder(run_a)
+        set_current_recorder(run_b)  # B starts while A is still running
+
+        # A finishes and tears down. It must clear only if it still owns the slot.
+        clear_current_recorder(run_a)
+
+        assert get_current_recorder() is run_b, (
+            "run A's teardown blanked run B's recorder; every event B records "
+            "from here is silently dropped by the fail-open no-op in record.py"
+        )
+
+        clear_current_recorder(run_b)
+        assert get_current_recorder() is None
+
+    def test_clearing_the_owner_still_clears(self, tmp_path: Path) -> None:
+        """The guard must not turn teardown into a leak."""
+        rec = _recorder(tmp_path, "solo")
+        set_current_recorder(rec)
+        clear_current_recorder(rec)
+        assert get_current_recorder() is None
+
+    def test_clearing_when_nothing_is_set_is_a_no_op(self, tmp_path: Path) -> None:
+        """Teardown runs in a ``finally``; it must never raise into the workload."""
+        assert get_current_recorder() is None
+        clear_current_recorder(_recorder(tmp_path, "never-set"))
         assert get_current_recorder() is None
