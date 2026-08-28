@@ -33,6 +33,22 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **Ingest accepted an archive that could not be read back as a capsule** (ADR-0260).
+  Removing the blanket path-flattening left its mirror image untouched: an archive whose
+  members share no single top-level directory is correctly not reshaped, but the result
+  has no `capsule.yaml` at the capsule root, and the upload still answered **201**. Every
+  reader then misses the manifest while the store reports a capsule. `POST /v0/capsules`
+  now rejects such an archive with 422 and reason `no_capsule_root`, and the two shapes a
+  real producer emits — flat, and one shared `<run_id>/` root — are unaffected. Found by
+  driving real capsules through real REST ingest on a live cluster; no unit test had posed
+  the shape.
+
+- **Crash-orphaned ingest *directories* were never reclaimed.** The startup reaper freed the
+  `.spool` body file but skipped the `<run_id>.<hex>` extraction directory, so a crash during
+  extraction still leaked. Measured under SIGKILL on a live hub: 201 MB of spool reclaimed,
+  28 MB of extraction directory left behind permanently. The reaper now reclaims both kinds,
+  under the same start-time guard that protects in-flight requests.
+
 - **Capsule upload silently flattened nested files and could overwrite them** (ADR-0260).
   `POST /v0/capsules` dropped the first path component of *every* archive member, so a flat
   capsule's `outputs/stdout.txt` landed as `stdout.txt` — and a sibling `inputs/stdout.txt`

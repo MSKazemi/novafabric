@@ -22,6 +22,7 @@ lowered via config so fixtures stay small).
 from __future__ import annotations
 
 import io
+import os
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -838,3 +839,125 @@ class TestOrphanedSpoolReclamation:
             pass  # entering the context runs the lifespan startup
 
         assert not orphan.exists(), "startup did not reclaim the orphaned spool"
+
+
+class TestCapsuleMustLandAtRoot:
+    """A capsule the server cannot read is not an ingested capsule.
+
+    Found on live infrastructure (Phase 2 verification, 2026-08-28): a
+    multi-rooted archive is correctly left unstripped by ``archive_strip_top``,
+    but the result had no ``capsule.yaml`` at the capsule root and the upload
+    still answered 201. Same silent-acceptance failure as B12, other face.
+    """
+
+    def test_multi_rooted_archive_is_rejected(
+        self, client: TestClient, capsule_dir: Path
+    ) -> None:
+        manifest = yaml.safe_dump(_manifest("multi-root-run")).encode()
+        data = _zip_bytes(
+            {
+                "meta/capsule.yaml": manifest,
+                "multi-root-run/outputs/stdout.txt": b"hi",
+            }
+        )
+        resp = _upload(client, data)
+
+        # 422 is this endpoint's existing code for a zip guard violation
+        # (entry-count, ratio, unsafe member name all answer 422).
+        assert resp.status_code == 422, (
+            f"multi-rooted archive accepted with {resp.status_code}; the capsule "
+            "on disk has no readable capsule.yaml"
+        )
+        assert not (capsule_dir / "multi-root-run").exists()
+
+    def test_rejection_names_the_reason(
+        self, client: TestClient, capsule_dir: Path
+    ) -> None:
+        manifest = yaml.safe_dump(_manifest("reason-run")).encode()
+        data = _zip_bytes(
+            {"meta/capsule.yaml": manifest, "other/trace.jsonl": b"{}"}
+        )
+        resp = _upload(client, data)
+        assert resp.status_code == 422
+        body = resp.json()
+        assert "no_capsule_root" in str(body), body
+
+    def test_the_two_legitimate_shapes_still_pass(
+        self, client: TestClient, capsule_dir: Path
+    ) -> None:
+        """Regression fence: the guard must not reject what B12's fix restored."""
+        flat = _valid_capsule_zip("flat-ok", {"outputs/stdout.txt": b"hi"})
+        assert _upload(client, flat).status_code == 201
+        assert (capsule_dir / "flat-ok" / "outputs" / "stdout.txt").read_text() == "hi"
+
+        manifest = yaml.safe_dump(_manifest("rooted-ok")).encode()
+        rooted = _zip_bytes(
+            {
+                "rooted-ok/capsule.yaml": manifest,
+                "rooted-ok/outputs/stdout.txt": b"hi",
+            }
+        )
+        assert _upload(client, rooted).status_code == 201
+        assert (capsule_dir / "rooted-ok" / "outputs" / "stdout.txt").read_text() == "hi"
+
+    def test_spool_and_tmp_are_cleaned_after_rejection(
+        self, client: TestClient, capsule_dir: Path
+    ) -> None:
+        manifest = yaml.safe_dump(_manifest("cleanup-run")).encode()
+        data = _zip_bytes({"a/capsule.yaml": manifest, "b/trace.jsonl": b"{}"})
+        assert _upload(client, data).status_code == 422
+
+        spool = capsule_dir / ".ingest-tmp"
+        leftovers = list(spool.iterdir()) if spool.is_dir() else []
+        assert leftovers == [], f"rejection left {leftovers} behind"
+
+
+class TestOrphanedExtractionDirReclamation:
+    """A crash during extraction strands a directory, not a ``.spool`` file.
+
+    Measured on Azure 2026-08-28: SIGKILL during extraction left the 201 MB
+    spool *and* a 28 MB ``<run_id>.<hex>`` directory; the first cut of the
+    reaper freed only the file. A partial reaper still leaks.
+    """
+
+    def test_orphaned_extraction_dir_is_reclaimed(self, tmp_path: Path) -> None:
+        from novafabric.server.ingest import reap_orphaned_spools
+
+        spool = tmp_path / "spool"
+        spool.mkdir()
+        stale = spool / "run-abc.deadbeef"
+        (stale / "outputs").mkdir(parents=True)
+        (stale / "outputs" / "blob.bin").write_bytes(b"x" * 1024)
+        os.utime(stale, (1000, 1000))
+
+        removed = reap_orphaned_spools(spool, started_at=5000.0)
+
+        assert removed == 1
+        assert not stale.exists()
+
+    def test_in_flight_extraction_dir_is_left_alone(self, tmp_path: Path) -> None:
+        from novafabric.server.ingest import reap_orphaned_spools
+
+        spool = tmp_path / "spool"
+        spool.mkdir()
+        live = spool / "run-live.cafebabe"
+        (live / "outputs").mkdir(parents=True)
+        os.utime(live, (9000, 9000))
+
+        assert reap_orphaned_spools(spool, started_at=5000.0) == 0
+        assert live.is_dir()
+
+    def test_both_kinds_are_counted_together(self, tmp_path: Path) -> None:
+        from novafabric.server.ingest import reap_orphaned_spools
+
+        spool = tmp_path / "spool"
+        spool.mkdir()
+        f = spool / "tmpabc.spool"
+        f.write_bytes(b"body")
+        os.utime(f, (1000, 1000))
+        d = spool / "run-xyz.0f0f"
+        d.mkdir()
+        os.utime(d, (1000, 1000))
+
+        assert reap_orphaned_spools(spool, started_at=5000.0) == 2
+        assert not f.exists() and not d.exists()
