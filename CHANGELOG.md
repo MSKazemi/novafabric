@@ -31,6 +31,36 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   than as separately invoked. `make bench-scale` also un-hides the dashboard p95 gate at a
   100,000-run store, which is skipped by default but takes ~7 s.
 
+### Security
+
+- **The sdist could carry the entire private tree, including the private git history**
+  (ADR-0259). This repo is dual-git — one working tree, a public `.git` and a private
+  `.git-private` — and the split is enforced by `.git/info/exclude`, a repo-local allowlist
+  that exists on no remote. `.gitignore` says so in its own header: the private material is
+  *"NOT listed here on purpose"*. **hatchling reads `.gitignore`; it does not read
+  `.git/info/exclude`**, so the only firewall this repository has was invisible to the tool
+  that builds the sdist. Measured: `uv build` produced a **343 MB** sdist containing
+  `.git-private/` in full (170 MB — the entire private history, a ~150 MB pack file),
+  `design/` (191 MB), `experiments/` (33 MB), `.claude/`, `monetize/`, `site-config/`,
+  `CLAUDE.md` and `THREAT_MODEL.md`.
+
+  **Nothing leaked.** Every sdist on PyPI is built by CI from a clean checkout of the
+  *public* repository, which contains none of these paths; the published v0.101.0 sdist was
+  downloaded and verified — 7 MB, no `design/`, no `.git-private/`, no `experiments/`. But
+  the exposure depended entirely on *where* the build ran, and `dualgit release` prints a
+  release command for a human to run locally, so it was one `uv build` away.
+
+  `[tool.hatch.build.targets.sdist].exclude` now names every private top-level path,
+  anchored with `/` so the deliberate carve-outs (`tests/bench`,
+  `integrations/claude-plugin`) are untouched. A hand-maintained list rots, so
+  `tests/docs/test_sdist_excludes_every_private_path.py` derives the requirement from the
+  two gitdirs — *(private-tracked) − (public-tracked)* is private by definition — and fails
+  until each is excluded; it caught one path the hand-written list had missed.
+  `.git-private/` is tracked by neither git and is asserted separately by name. A local
+  `uv build` now yields a **7.26 MB** sdist with zero private paths, removing nothing the
+  published sdist had; a wheel built from it installs into a clean venv and runs outside the
+  source tree with all three force-included JSON Schemas resolving from `site-packages`.
+
 ### Fixed
 
 - **A `force-include` with no matching `COPY` could still reach a release tag — the guard

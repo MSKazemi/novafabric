@@ -525,6 +525,53 @@ include = [
 # schema-skew guard and `nova db upgrade --track registry` depend on it. The
 # root checkout stays the dev entry point; this is a build-time mapping, not a
 # second copy in the source tree.
+[tool.hatch.build.targets.sdist]
+# ⚠ SECURITY, not tidiness. This repo is DUAL-GIT: one working tree, a public
+# `.git` and a private `.git-private`. The private material — design/, the
+# experiment campaign, monetize/, site-config/, .claude/, CLAUDE.md,
+# THREAT_MODEL.md — is deliberately NOT in .gitignore. The .gitignore header
+# says so explicitly: it is "kept out of the public remote by the repo-local
+# allowlist in .git/info/exclude".
+#
+# hatchling reads .gitignore. It does NOT read .git/info/exclude, so the ONLY
+# firewall this repo has is invisible to the packaging tool. Measured before
+# this section existed, `uv build` on a developer machine produced a **343 MB**
+# sdist containing `.git-private/` in full — the entire private git history,
+# a ~150 MB pack file — plus design/ (191 MB) and experiments/ (33 MB).
+#
+# Nothing leaked: every sdist on PyPI was built by CI from a clean public
+# checkout that has none of these paths, and the published v0.101.0 sdist is
+# 7 MB and verified clean. But a single local `uv build` + upload would have
+# published the whole private repository, and nothing in the build stopped it.
+#
+# Anchored with a leading `/` so `tests/bench` (a deliberate public carve-out)
+# and `integrations/claude-plugin` (a shipped product surface) are untouched.
+# tests/docs/test_sdist_excludes_every_private_path.py derives the required
+# entries from the two gitdirs and fails if a new private path is not listed.
+exclude = [
+  "/.git-private",
+  "/.claude",
+  "/.claude-plugin",
+  "/.dualgit",
+  "/CLAUDE.md",
+  "/THREAT_MODEL.md",
+  "/design",
+  "/experiments",
+  "/monetize",
+  "/papers",
+  "/priv",
+  "/ship",
+  "/site-config",
+  "/bench",
+  "/.benchmark-results",
+  "/.p2p.toml",
+  "/.p2p-undo",
+  "/.p2p-history.jsonl",
+  "/.p2p-manifest.json",
+  "/p2p-sync-report.html",
+  "/_linkcheck_probe.md",
+]
+
 [tool.hatch.build.targets.wheel.force-include]
 "alembic" = "novafabric/migrations/registry"
 # Canonical JSON Schemas that runtime code loads. They live at the repo root
