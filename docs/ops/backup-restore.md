@@ -180,8 +180,8 @@ policies still travel via the database backup paths above.
 ## Part 2 — `nova backup` tooling
 
 Governed by [ADR-0181](../decisions.md)
-(accepted 2026-07-16) and specified in
-`design/spec/backup-restore-v0.md`.
+(accepted 2026-07-16); the underlying spec is held in the maintainers' private
+`design/` tree and is not published.
 
 **Works today (experimental):**
 

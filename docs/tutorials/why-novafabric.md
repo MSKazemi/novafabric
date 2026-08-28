@@ -349,7 +349,7 @@ The same five primitives work from a laptop to a cluster:
 > 6, complete as of v0.70.0). `nova serve --topology` (the live topology
 > dashboard, ADR-0068) is also shipped experimental. What is genuinely still
 > design intent only: cross-cluster **federation** and full cross-org identity
-> (Phase 6 of `design/architecture/cluster-scale.md`'s federation layer, not to
+> (Phase 6 of `design/architecture/cluster-scale.md` (private)'s federation layer, not to
 > be confused with the lineage-backend Phase 6 above). See
 > `docs/tutorials/cluster-scale.md` for the full, corrected status table.
 

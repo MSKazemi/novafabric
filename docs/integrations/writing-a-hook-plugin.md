@@ -127,7 +127,7 @@ self._writer.append_model_call({...})  # for LLM calls
 self._writer.append_tool_call({...})   # for tool / RPC calls
 ```
 
-The record schemas are documented in `design/spec/tool-call-v0.md` and `design/spec/model-call-v0.md`. The capsule writer is thread-safe; multiple hooks (built-in + plugins) writing concurrently is supported.
+The record schemas are documented in `design/spec/tool-call-v0.md` (private) and `design/spec/model-call-v0.md` (private). The capsule writer is thread-safe; multiple hooks (built-in + plugins) writing concurrently is supported.
 
 **Public surface, in writing.** The two constructor arguments (`writer`, `parent_span_id`) and the three lifecycle methods are the public surface. Anything starting with `_` on the writer or hook objects is internal and may change without notice. Coupling to internals will break.
 

@@ -3,7 +3,7 @@
 This guide covers protecting a shared `nova server` deployment from noisy
 clients: in-process API rate limiting and warn-then-reject storage quotas
 ([ADR-0179](../decisions.md); normative
-budgets in `design/spec/rate-limiting-quotas-v0.md`).
+budgets in `design/spec/rate-limiting-quotas-v0.md` (private)).
 
 **Status: experimental** (v0.61, shipped 2026-07-16) — and **disabled by
 default**. With the feature off (the default), no middleware is installed at
@@ -152,7 +152,7 @@ Hard limits must be ≥ their soft counterpart (validated at config load).
 ## 3. Per-workspace budgets & usage metering
 
 **Status: experimental** ([ADR-0208](../decisions.md);
-normative contract in `design/spec/usage-metering-v0.md`). Behind the same
+normative contract in `design/spec/usage-metering-v0.md` (private)). Behind the same
 master switch (`rate_limits.enabled`); with the switch off there is no
 accounting, no middleware, and no new tables — zero behavior change.
 
@@ -243,5 +243,5 @@ deliberately coarse (bounded accumulator, crash loses at most one interval).
 - [Server admin guide](server-admin-guide.md) — roles, tokens, and audit
   trails
 - [ADR-0179](../decisions.md) — the
-  decision record; `design/spec/rate-limiting-quotas-v0.md` — normative
+  decision record; `design/spec/rate-limiting-quotas-v0.md` (private) — normative
   defaults and the 429/quota contracts

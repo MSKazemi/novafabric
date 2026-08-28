@@ -259,7 +259,7 @@ the per-SDK hooks (`_openai`, `_anthropic`) and the wire-level hooks
 (`_httpx`, `_requests`, `_aiohttp`, `_urllib3`) when present in the request
 body — so `nova replay --mode exact` has the determinism inputs it needs
 (temperature, top_p, seed) regardless of which transport the captured call
-took. See `design/spec/model-call-v0.md` for the full
+took. See `design/spec/model-call-v0.md` (private) for the full
 field reference.
 
 This format is stable across providers and is the basis for two things:
@@ -836,7 +836,7 @@ Art.17 erasure), CycloneDX AI-SBOM, and more. Every exporter is a **pure
 projection over already-captured evidence** — it renders facts, never
 adjudicates compliance — and each is marked with an `evidence_source`
 provenance tag (`operator_asserted` / `capsule_verified` / `unverifiable`,
-`design/spec/evidence-source-provenance-marker.md`)
+specified in the maintainers' private `design/` tree)
 so a reader can tell what was actually observed from what an operator merely
 declared.
 
@@ -905,6 +905,6 @@ Where to go next:
 
 - **CLI reference** — every command and flag: [`docs/cli-reference.md`](cli-reference.md)
 - **Writing a hook plugin** — [`docs/integrations/writing-a-hook-plugin.md`](integrations/writing-a-hook-plugin.md)
-- **Model-call field reference** — `design/spec/model-call-v0.md`
+- **Model-call field reference** — `design/spec/model-call-v0.md` (private)
 - **Runner design and anti-patterns** — ADR-0025
 - **Trust-layer and sealing design intent** — [ADR-0041](./decisions.md)

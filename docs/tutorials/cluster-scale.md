@@ -7,7 +7,7 @@
 > (v0.7) is shipped, and — contrary to an earlier draft of this page — the
 > collector hierarchy, hot/cold storage split, and lineage-at-scale tiers below
 > it are **also shipped, as experimental**, not still "design + build." See
-> `design/architecture/cluster-scale.md` (the authoritative, actively-maintained
+> `design/architecture/cluster-scale.md` (private) (the authoritative, actively-maintained
 > version of this material) for full per-phase evidence. What genuinely remains
 > design intent only is cross-cluster **federation** (Phase 6) and full
 > cross-org identity — those are called out explicitly below.
@@ -222,7 +222,7 @@ access to the issuer.
 | Rack/node-level collector daemon | ✓ shipped experimental (Phase 2, v0.14.3 — Go `collector/`, 295K events/sec p99 4.7ms; plus a lighter Python `collector_app/` FastAPI receiver, v0.29.0) |
 | Graph traversal indexes for lineage at scale | ✓ shipped experimental — all four at-scale backends (KuzuDB v0.17.0/Phase 6, Postgres recursive-CTE v0.68.0, Apache AGE v0.69.0, JanusGraph v0.70.0), all testcontainers-verified; zero remaining stub backends |
 | Short-lived agent credentials (offline-verifiable, scoped per-agent-namespace) | — needs design + build. (A related but narrower piece exists: `nova server` issues Ed25519 offline service-account tokens for CI, not per-agent scoped compute-node identity at 1M scale.) |
-| Multi-cluster federation | — not yet designed (Phase 6; depends on 2–5 being stable in production, per `design/architecture/cluster-scale.md`) |
+| Multi-cluster federation | — not yet designed (Phase 6; depends on 2–5 being stable in production, per `design/architecture/cluster-scale.md` (private)) |
 | Cross-org lineage and identity | — not yet designed |
 
 ---
@@ -327,11 +327,15 @@ the one piece still waiting on real multi-cluster patterns.
 
 ## References
 
-- `design/architecture/cluster-scale.md` — formal design principles
-- `design/adr/0020` — low-overhead capture on compute nodes
-- `design/adr/0021` — AI-factory design intent
-- `design/adr/0022` — polyglot persistence and object storage
-- `design/adr/0023` — cache architecture
-- `design/adr/0032` — parent/child capsule hierarchy (prerequisite for multi-node
-  agent linking)
+Each decision below is summarised — title, status, and rationale — in the public ADR
+index, [`docs/decisions.md`](../decisions.md). The full ADR texts and the formal
+design principles live in the maintainers' private `design/` tree and are not part of
+this repository, so the index is the reference a reader here can actually open.
+
+- [ADR-0020](../decisions.md) — low-overhead capture on compute nodes
+- [ADR-0021](../decisions.md) — AI-factory design intent
+- [ADR-0022](../decisions.md) — polyglot persistence and object storage
+- [ADR-0023](../decisions.md) — cache architecture
+- [ADR-0032](../decisions.md) — parent/child capsule hierarchy (prerequisite for
+  multi-node agent linking)
 - `ROADMAP.md` — release sequencing

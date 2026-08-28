@@ -6,7 +6,7 @@ surface shipped in v0.61: Prometheus `/metrics`, split `/livez` / `/readyz`
 probes, the structured `/v0/version` identity endpoint, and opt-in
 self-tracing into the deployment's own OTLP ingest
 ([ADR-0182](../decisions.md); companion
-spec: `design/spec/ops-observability-surface-v0.md`).
+spec: `design/spec/ops-observability-surface-v0.md` (private)).
 
 **Status: experimental** (v0.61, shipped 2026-07-16). Endpoint paths are
 stable in intent, but metric names and label sets may still change before the
@@ -105,9 +105,10 @@ fallback):
 ### Inventory
 
 All metrics carry the `nova_` prefix and an `app` label (`server` | `serve`).
-The normative inventory lives in
-`design/spec/ops-observability-surface-v0.md` §"Initial metric inventory";
-what is registered today:
+The normative inventory lives in a spec held in the maintainers' private
+`design/` tree, which is not part of this repository; what is registered today
+is listed here in full, so this page — not that spec — is what a reader can
+verify against a running server:
 
 | Metric | Type | Labels | Notes |
 |---|---|---|---|
@@ -328,9 +329,9 @@ fail-safe — a missing audit log or events file yields an empty list, never a
 
 `alerting_configured` reflects whether a `NOVA_ALERTS_*` endpoint is configured.
 
-Full variable reference and normative semantics:
-`design/spec/lifecycle-webhooks-v0.md` §"Operational alerts";
-decision record: `design/adr/0192-alerting-notification-bus.md`.
+Decision record: [ADR-0192 — Alerting & notification bus](../decisions.md). The
+full variable reference and normative semantics live in a spec in the maintainers'
+private `design/` tree, which is not published.
 
 ---
 
@@ -342,5 +343,5 @@ decision record: `design/adr/0192-alerting-notification-bus.md`.
   to gate `/metrics` and `/v0/version`
 - [Server deployment](server-deployment.md) — deployment topologies
 - [ADR-0182](../decisions.md) — the
-  decision record; `design/spec/ops-observability-surface-v0.md` — the
+  decision record; `design/spec/ops-observability-surface-v0.md` (private) — the
   normative endpoint/metric contract

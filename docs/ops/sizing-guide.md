@@ -197,9 +197,9 @@ server process.** What *is* contractual:
 - The Helm chart pins `replicaCount: 1` deliberately — do not scale it out.
 
 For growth beyond one writer + one Postgres, the design intent (collector
-tier, object capsule store, federation) is documented in
-`design/architecture/cluster-scale.md` and the honest shipped-vs-designed
-split in [Cluster scale — 1,000,000 agents](../tutorials/cluster-scale.md).
+tier, object capsule store, federation) is documented in the maintainers' private
+`design/` tree; the honest shipped-vs-designed split is public, in
+[Cluster scale — 1,000,000 agents](../tutorials/cluster-scale.md).
 The WORM object store and collector tiers exist in-tree as **experimental**;
 federation remains **future design**.
 

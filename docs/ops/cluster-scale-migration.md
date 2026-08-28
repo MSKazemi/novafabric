@@ -419,4 +419,4 @@ nova lineage blast-radius <any-run-id> --depth 3
          (KuzuDB → JanusGraph)  (DuckDB accumulator)
 ```
 
-See `design/architecture/cluster-scale.md` for the full architecture.
+See `design/architecture/cluster-scale.md` (private) for the full architecture.

@@ -581,7 +581,7 @@ The dashboard exposes two topology views that are easy to confuse:
 **Re-ingest All** only updates the KG topology. It has no effect on the live Topology view.
 **Restarting `nova serve`** re-seeds the live Topology from disk. It does not change KuzuDB.
 
-Full comparison with update-trigger matrix: [`design/architecture/lineage.md — KG topology vs. Live Topology`](./architecture.md#kg-topology-vs-live-topology).
+Full comparison with update-trigger matrix: [KG topology vs. Live Topology](./architecture.md#kg-topology-vs-live-topology).
 
 ---
 
@@ -590,7 +590,7 @@ Full comparison with update-trigger matrix: [`design/architecture/lineage.md —
 - [ADR-0027](./decisions.md) — full architectural decision record.
 - [what NovaFabric is not](./architecture.md#what-novafabric-is-not) — the original "no web UI through v1.0" stance and its narrow exception.
 - [`docs/cli-reference.md`](cli-reference.md) — the canonical CLI reference. Every dashboard action maps to a command listed there.
-- [`design/adr/0011-evidence-bundle.md`](./decisions.md) — the signing key model the dashboard reuses.
+- [ADR-0011 — Evidence Bundle](./decisions.md) — the signing key model the dashboard reuses.
 - `web/` (in the repo) — the showcase site that explains what NovaFabric does using baked-in fixture data. Different audience: the showcase is *marketing*; the dashboard is *operational*.
 - [ADR-0036](./decisions.md) — cross-run comparison UX design (v0.9).
 - [ADR-0037](./decisions.md) — Evidence Tab native implementation (v0.9).

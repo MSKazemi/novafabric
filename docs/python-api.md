@@ -889,7 +889,7 @@ with NovaFabricClient(
     })
 ```
 
-Contract points (normative spec: `design/spec/python-client-v0.md`):
+Contract points (normative spec: `design/spec/python-client-v0.md` (private)):
 
 - **Config resolution** — constructor argument → environment variable
   (`NOVAFABRIC_SERVER_URL`, `NOVAFABRIC_API_KEY`, `NOVAFABRIC_TOKEN`) → error.
@@ -955,7 +955,7 @@ validate_marked(doc.completeness_summary())
 `operator_asserted` and `unverifiable` must **not** carry a ref (a reference
 would misrepresent them as a re-performed verification). The marker is additive
 and optional on the wire — a pre-ADR-0197 document deserializes with
-`evidence_source is None`. See `design/spec/evidence-source-provenance-marker.md`.
+`evidence_source is None`. See `design/spec/evidence-source-provenance-marker.md` (private).
 
 ---
 

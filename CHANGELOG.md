@@ -33,6 +33,17 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **Public docs named private `design/` paths as if a reader could open them** (issue #5).
+  `make check-links` verifies that every relative *link* resolves, but prose is not a
+  link, so a sentence like "specified in `design/spec/backup-restore-v0.md`" passed the
+  gate while being a dead end for every visitor — the `design/` tree is not part of this
+  repository. 26 such references across 11 files now either say the document is private
+  or point at the public ADR index instead, and `docs/api-reference.md` no longer tells
+  contributors to run a generator script they do not have. A new test closes the gap the
+  issue named: prose references are checked against the files the **public** git tracks.
+  `docs/releases/` is exempt as a dated record of what each release contained, and the
+  test names any match there rather than hiding it.
+
 - **`nova doctor`'s cleartext-token remediation named a command that does not exist.**
   It pointed at `nova serve token list` / `nova serve token revoke`; `nova serve` has no
   subcommands at all. Token issue and revoke live on the dashboard's `/api/admin/tokens`

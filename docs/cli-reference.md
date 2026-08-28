@@ -1680,7 +1680,7 @@ A partially malformed capsule still yields a best-effort graph plus notes.
 Commands for migrating lineage edges between backends and generating deployment
 profiles for cluster-scale lineage infrastructure.
 
-**Reference:** `src/novafabric/cli/lineage_migrate.py`, `design/adr/0053-lineage-at-scale.md`.
+**Reference:** `src/novafabric/cli/lineage_migrate.py`, `design/adr/0053-lineage-at-scale.md` (private).
 
 ### nova lineage-store migrate
 
@@ -5463,7 +5463,7 @@ the walk; `entry_hash`/`prev_hash` are exported verbatim in `jsonl` and ride
 in the OCSF `unmapped` object, so a SIEM analyst can check that what the SIEM
 holds is what the chain produced. In `ocsf` format, audit event types map onto
 OCSF classes (API Activity 6003, Application Lifecycle 6002, Authentication
-3002) per the mapping table in `design/spec/audit-siem-egress-v0.md`; fields
+3002) per the mapping table in `design/spec/audit-siem-egress-v0.md` (private); fields
 OCSF has no slot for are preserved verbatim under `unmapped` — no silent loss.
 
 In `cef` format (for legacy ArcSight-style collectors) each entry becomes one
@@ -5473,8 +5473,8 @@ never disagree about what an event is; the CEF signature id keeps the **native**
 hashes map to labelled custom strings (`cs1`=`entryHash`, `cs2`=`prevHash`) and
 every remaining redacted field is packed into `cs6` as compact JSON — again, no
 silent loss. The manifest line is itself a CEF event, so a `cef` stream is pure
-CEF with no JSON line to special-case. Full mapping and escaping tables:
-`design/spec/audit-siem-egress-v0.md` §2b.
+CEF with no JSON line to special-case. The full mapping and escaping tables live in a spec in the maintainers'
+private `design/` tree and are not published.
 
 There is no `server` source and none is planned: the server app writes its
 route events into the same log as the dashboard, so `--source dashboard`
@@ -5704,7 +5704,7 @@ assembled with `novafabric.policy.budget_block_from_capsule(capsule_dir)` (reads
 never treated as zero: absent ceilings or absent data pass with an explicit
 "no data" reason (`skip_unmeasured`, the default), while
 `input.context.missing_evidence: "require_measured"` fail-closes on a declared
-ceiling with no recorded evidence. Spec: `design/spec/budget-gate-v0.md`.
+ceiling with no recorded evidence. Spec: `design/spec/budget-gate-v0.md` (private).
 The `nova policy budget set|list|show` authoring commands and the budget-gate
 verdict record are **future design** (ADR-0136 P2/P3) — not yet implemented.
 
@@ -6996,7 +6996,7 @@ nova kg query my-agent --output json
 The `mcp_servers` key lists MCPServer nodes reachable via the 2-hop path
 `Agent → Tool → MCPServer`.  Empty when no MCP-namespaced tool calls were recorded.
 
-**Reference:** `src/novafabric/kg/`, `design/adr/0067-capsule-knowledge-graph-v1.md`.
+**Reference:** `src/novafabric/kg/`, `design/adr/0067-capsule-knowledge-graph-v1.md` (private).
 
 ### nova kg audit
 
@@ -7309,13 +7309,14 @@ reached 1.0 stability.
 
 Top-level alias: `from novafabric.adapters import make_a2a_interceptor`
 
-**Reference:** `src/novafabric/adapters/`, `design/adr/0078-ecosystem-adapters.md`.
+**Reference:** `src/novafabric/adapters/`, `design/adr/0078-ecosystem-adapters.md` (private).
 
 ## Accountability Spine (experimental, ADRs 0093–0095)
 
 Three research-grounded features for tamper-evident ex-post evidence. All additive and
-opt-in; none is a third top-level format (ADR-0034). See
-`design/architecture/accountability-spine.md`.
+opt-in; none is a third top-level format ([ADR-0034](./decisions.md)). The
+architecture note behind it is in the maintainers' private `design/` tree and is
+not published.
 
 ### nova energy probe
 
@@ -7356,7 +7357,7 @@ and joules per action.
 nova energy report ./my-capsule --format table
 ```
 
-**Reference:** `src/novafabric/energy/`, `design/adr/0093-energy-anchored-action-receipts.md`.
+**Reference:** `src/novafabric/energy/`, `design/adr/0093-energy-anchored-action-receipts.md` (private).
 
 ### nova ledger anchor
 
@@ -7385,7 +7386,7 @@ Show the current chain heads and checkpoint state for a capsule.
 nova ledger status ./my-capsule
 ```
 
-**Reference:** `src/novafabric/trust/ledger/`, `design/adr/0094-adversary-anchored-ledger-and-replay-attestation.md`.
+**Reference:** `src/novafabric/trust/ledger/`, `design/adr/0094-adversary-anchored-ledger-and-replay-attestation.md` (private).
 
 ### nova safety-case build
 
@@ -7442,7 +7443,7 @@ is `self-authenticating`. The checker supplies independent timestamp evidence vi
 nova evidence check-admissibility custody.json --timestamp-ok
 ```
 
-**Reference:** `src/novafabric/safetycase/`, `design/adr/0095-evidence-grounded-safety-case-and-admissible-evidence.md`.
+**Reference:** `src/novafabric/safetycase/`, `design/adr/0095-evidence-grounded-safety-case-and-admissible-evidence.md` (private).
 
 ### GET /api/runs/{id}/energy (dashboard API)
 

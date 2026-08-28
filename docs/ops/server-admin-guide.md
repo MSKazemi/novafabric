@@ -141,9 +141,8 @@ is **no** organization/workspace/team hierarchy yet — that is
 ### 6a. Bulk capsule operations + keyset pagination (experimental, ADR-0206)
 
 **Status: experimental** — shipped by
-[ADR-0206](../decisions.md);
-normative contract in
-`design/spec/bulk-ops-pagination-v0.md`.
+[ADR-0206](../decisions.md). The normative contract is
+specified in the maintainers' private `design/` tree and is not published.
 
 **Keyset pagination on `GET /v0/capsules`:**
 
