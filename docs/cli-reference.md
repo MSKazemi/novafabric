@@ -300,7 +300,19 @@ Output:
 ✓ Capsule written: .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX  (run_id=01HXAY7M5JZ8R7K4P9DPBYK2WX)
 ```
 
-Exit code mirrors the wrapped command's exit code.
+Exit code mirrors the wrapped command's exit code, with two exceptions that
+NovaFabric produces itself: `124` when the workload exceeded its wall-clock
+deadline, and `127` when the workload **never started** (the command does not
+exist, is not executable, or the runner could not launch it). A capsule is
+written in every case, including both of those — the attempt is evidence.
+
+Because a real program can also exit `127`, the code alone cannot tell the two
+apart, so the never-started case prints an extra line naming the reason:
+
+```
+✗ Workload never started: [Errno 2] No such file or directory: 'my-agnet'
+✗ Capsule written: .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX  (run_id=01HXAY7M5JZ8R7K4P9DPBYK2WX)
+```
 
 **Observation log levels (ADR-0127 — experimental).** Every record in
 `model-calls.jsonl` / `tool-calls.jsonl` may carry an additive optional severity

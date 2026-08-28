@@ -33,6 +33,21 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **`nova capture` could not tell a mistyped command from a genuinely failing one.**
+  Both printed a byte-identical `✗ Capsule written: …` line and both exited `127`, so
+  `nova capture my-agnet` looked exactly like an agent that ran and failed — the one
+  case where the user needs to know it is a typo, not a bug in their agent. Every
+  runner already classified this correctly as `runner_status="failed_setup"`, but the
+  orchestrator dropped `runner_status` and `runner_error` on the floor: `CaptureResult`
+  never carried them, so the CLI had no signal to act on. Both are now plumbed through
+  as optional fields and the never-started case prints the reason. Keyed on
+  `runner_status`, **not** on `exit_code == 127` — a real program that exits 127 would
+  otherwise be mislabelled, and a regression test asserts exactly that. The two
+  deliberate invariants are unchanged: the capsule is still written, and the exit code
+  is still `127`. `docs/cli-reference.md` now documents both NovaFabric-produced exit
+  codes (`124` timeout, `127` never started) instead of claiming the exit code always
+  mirrors the wrapped command's.
+
 - **Public docs named private `design/` paths as if a reader could open them** (issue #5).
   `make check-links` verifies that every relative *link* resolves, but prose is not a
   link, so a sentence like "specified in `design/spec/backup-restore-v0.md`" passed the

@@ -101,9 +101,25 @@ def _build_host_info() -> dict[str, Any]:
 
 @dataclass
 class CaptureResult:
+    """What :meth:`CaptureOrchestrator.run` hands back to its caller.
+
+    ``runner_status`` and ``runner_error`` are carried through from
+    :class:`~novafabric.runners.RunnerJobResult` because the exit code alone
+    cannot distinguish *the workload ran and failed* from *the workload never
+    started*: a local command that does not exist and a program that genuinely
+    ``exit 127``s are both ``exit_code=127``.  Only ``runner_status ==
+    "failed_setup"`` identifies the former, and every runner sets it.
+
+    Both are optional so that a caller constructing a ``CaptureResult``
+    directly keeps working; ``None`` means "the runner did not say", not
+    "completed".
+    """
+
     run_id: str
     capsule_dir: Path
     exit_code: int
+    runner_status: str | None = None
+    runner_error: str | None = None
 
 
 class AssetStatusCheckError(Exception):
@@ -724,7 +740,13 @@ class CaptureOrchestrator:
         except Exception:  # noqa: BLE001 — emission must never block the run
             pass
 
-        return CaptureResult(run_id=run_id, capsule_dir=capsule_dir, exit_code=exit_code)
+        return CaptureResult(
+            run_id=run_id,
+            capsule_dir=capsule_dir,
+            exit_code=exit_code,
+            runner_status=runner_result.runner_status,
+            runner_error=runner_result.runner_error,
+        )
 
 
 # ---------------------------------------------------------------------------

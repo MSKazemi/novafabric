@@ -490,6 +490,13 @@ def capture_cmd(
         raise typer.BadParameter(str(exc), param_hint="'--session-id'") from exc
 
     status_icon = "[green]✓[/green]" if result.exit_code == 0 else "[red]✗[/red]"
+    if result.runner_status == "failed_setup":
+        # The workload never ran. Exit code 127 here is NovaFabric reporting a
+        # setup failure, not the workload's own status — and a real program
+        # that exits 127 produces the identical code, so the exit code alone
+        # cannot carry this. Only runner_status can, so key the message on it.
+        detail = result.runner_error or "the runner did not report a reason"
+        console.print(f"[red]✗[/red] Workload never started: {detail}")
     console.print(
         f"{status_icon} Capsule written: {result.capsule_dir}  "
         f"(run_id={result.run_id})"
