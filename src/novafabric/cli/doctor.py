@@ -41,6 +41,16 @@ def doctor_cmd(
             ),
         ),
     ] = False,
+    check_tokens: Annotated[
+        bool,
+        typer.Option(
+            "--check-tokens",
+            help=(
+                "Audit serve tokens whose secret is still stored in cleartext "
+                "(pre-ADR-0252 records). Exits non-zero if any are found."
+            ),
+        ),
+    ] = False,
     check_extras: Annotated[
         bool,
         typer.Option(
@@ -101,12 +111,13 @@ def doctor_cmd(
       # Check a specific database path
       nova doctor --db-path ~/custom/novafabric.db
     """
-    if not check_storage and not check_scheduler and not check_extras:
+    if not check_storage and not check_scheduler and not check_extras and not check_tokens:
         console.print(
             "[yellow]Hint:[/yellow] pass [bold]--check-extras[/bold] to see which "
             "optional extras are installed, [bold]--check-storage[/bold] to inspect "
-            "the storage backend, or [bold]--check-scheduler[/bold] to detect a "
-            "scheduler/env-var contract mismatch."
+            "the storage backend, [bold]--check-scheduler[/bold] to detect a "
+            "scheduler/env-var contract mismatch, or [bold]--check-tokens[/bold] "
+            "to audit serve tokens still stored in cleartext."
         )
         return
 
@@ -134,6 +145,15 @@ def doctor_cmd(
         _print_scheduler_report(diagnosis)
         if not diagnosis.ok:
             failed = True
+
+    # Legacy cleartext serve tokens (ADR-0252). Always reported, because an
+    # operator who does not already know these exist is exactly the operator who
+    # will not think to pass a flag asking about them. Only an explicit
+    # --check-tokens makes it affect the exit code, so no existing invocation
+    # changes its result.
+    _print_legacy_token_report(explicit=check_tokens)
+    if check_tokens and _legacy_token_count() > 0:
+        failed = True
 
     if failed:
         raise typer.Exit(1)
@@ -285,3 +305,45 @@ def _print_extras_report() -> None:
     console.print(
         "  [dim]Developing on the repo? `uv sync --all-extras` installs every one.[/dim]"
     )
+
+
+def _legacy_token_count() -> int:
+    """Cleartext serve-token records still on disk, or 0 if unreadable.
+
+    Never raises: `nova doctor` reporting nothing because a diagnostic threw is
+    the failure mode this whole check exists to avoid.
+    """
+    try:
+        from novafabric.serve.token_store import legacy_plaintext_count
+
+        return legacy_plaintext_count()
+    except Exception:  # noqa: BLE001 — a diagnostic must not break the command
+        return 0
+
+
+def _print_legacy_token_report(*, explicit: bool) -> None:
+    """Report serve tokens whose secret is still stored in the clear (ADR-0252).
+
+    ADR-0252 stopped writing the secret itself; it could not rewrite records
+    already on disk. Without this report an operator has no way to learn that
+    those records are still there, which would leave the migration half-done and
+    silent — the token store would be *newly* correct and *historically* leaky
+    with nothing saying so.
+    """
+    count = _legacy_token_count()
+    if count == 0:
+        if explicit:
+            console.print()
+            console.print("[bold]Serve tokens[/bold]")
+            console.print("[green]OK[/green] — no token secret is stored in cleartext.")
+        return
+    console.print()
+    console.print("[bold]Serve tokens[/bold]")
+    console.print(
+        f"[red]{count} token record(s) still store the secret in cleartext[/red] "
+        "(pre-ADR-0252 records; newly issued tokens store only a fingerprint)."
+    )
+    console.print()
+    console.print("[bold]Remediation[/bold]")
+    console.print("  - revoke each affected token and issue a replacement")
+    console.print("  - `nova serve token list` shows them; `... token revoke <fingerprint>`")

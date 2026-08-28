@@ -11,6 +11,9 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Added
 
+- **`nova doctor --check-tokens`** — audits serve-token records whose secret is still
+  stored in cleartext (pre-ADR-0252). See the corresponding entry under *Fixed*.
+
 - **Seven measured performance numbers in the SLO catalog** (ADR-0248 mechanism, ADR-0255
   measurements) — absolute capture overhead (4.56 s, independent of a 61.8x workload range),
   topology recluster cost per node and read-path p99, OPA policy decision p99, Postgres RLS
@@ -29,6 +32,17 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   100,000-run store, which is skipped by default but takes ~7 s.
 
 ### Fixed
+
+- **`nova doctor` never reported serve tokens left in cleartext.** ADR-0252 stopped
+  writing the token secret itself, but could not rewrite records already on disk, and
+  `token_store.legacy_plaintext_count()` was added to count them — its docstring naming
+  `nova doctor` as the consumer. Nothing called it, so the number existed and no operator
+  could ever see it, leaving the token store newly correct and historically leaky with
+  nothing saying so. `nova doctor` now reports the count during any run (an operator who
+  does not know these records exist is exactly the one who will not pass a flag asking
+  about them) and gains `--check-tokens`, which exits non-zero when any are found. Only
+  the explicit flag affects the exit code, so no existing invocation changes its result.
+  The report counts the secrets and never prints one.
 
 - **A restore could report tenant isolation verified while it was fully bypassed.**
   `_verify_pg_rls()` ran two of the three RLS verifiers ADR-0229 names —

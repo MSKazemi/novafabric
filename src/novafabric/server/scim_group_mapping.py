@@ -15,8 +15,14 @@ Semantics (ADR-0139 D3):
 
 This module is a pure, side-effect-free resolver plus one audit-emitting helper.
 It does not itself gate any request — role *enforcement* remains in
-``novafabric.server.rbac``. Wiring the SCIM Group HTTP routes to call this is a
-separate, reviewed slice.
+``novafabric.server.rbac``.
+
+``resolve_roles`` **is** live: the SCIM Group routes call it through
+``routes/scim.py::_reconcile_member``. ``apply_group_membership`` is **not**, and
+must not be wired — see its own docstring. ADR-0190 superseded it with
+``scim_store.reconcile_subject_roles``, which owns the parts this module never
+had: SCIM-ownership of a grant, the ADR-0060 last-admin guard, and the actual
+role mutation.
 """
 from __future__ import annotations
 
@@ -108,12 +114,23 @@ def apply_group_membership(
     scim_request_id: str | None = None,
     db_path: Path | None = None,
 ) -> RoleChange:
-    """Resolve a membership change to a role change and audit it when non-empty.
+    """SUPERSEDED by ADR-0190 — do not wire this into a route.
 
-    Computes the subject's roles before and after the membership change. When the
-    effective role set changes, appends exactly one append-only provisioning audit
-    event (``operation="group-role-remap"``) via the existing SCIM audit store; no
-    event is written when the roles are unchanged. Returns the :class:`RoleChange`.
+    Despite the name it **applies nothing**. It resolves the subject's roles
+    before and after the membership change, appends one ``group-role-remap``
+    audit event when the effective set differs, and returns the
+    :class:`RoleChange`. No role is granted, revoked, or persisted anywhere.
+
+    Calling it from a request path would therefore write an audit record for a
+    role change that never happened — evidence of a state transition that did not
+    occur, which is worse than no evidence, because the audit log is what an
+    operator trusts when the two disagree.
+
+    The live path is ``routes/scim.py::_reconcile_member`` →
+    ``scim_store.reconcile_subject_roles`` (ADR-0190), which mutates roles,
+    touches only SCIM-owned grants, enforces the ADR-0060 last-admin guard, and
+    writes its own audit event on change. Kept for its ADR-0139 D3 resolution
+    semantics and its tests; it has no production caller by design.
     """
     before = resolve_roles(groups_before, mapping)
     after = resolve_roles(groups_after, mapping)

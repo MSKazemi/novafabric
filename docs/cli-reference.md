@@ -207,7 +207,7 @@ Status: **experimental**.
 | [`nova server list-scim-events`](#nova-server-list-scim-events-experimental-adr-0139-d5) | Read-only SCIM provisioning audit trail (experimental) |
 | [`nova server api-key`](#nova-server-api-key-create-experimental-adr-0193) | First-class API keys: create, list, revoke, rotate (experimental) |
 | [`nova login`](#nova-login) / [`nova logout`](#nova-logout) | Authenticate with a NovaFabric server |
-| [`nova doctor`](#nova-doctor---check-storage---check-scheduler) | Installation, storage, and scheduler/env-var diagnostics |
+| [`nova doctor`](#nova-doctor---check-extras---check-storage---check-scheduler---check-tokens) | Installation, storage, scheduler/env-var, and token-at-rest diagnostics |
 | [`nova migrate-to-postgres`](#nova-migrate-to-postgres) | Migrate the local SQLite registry to Postgres |
 | [`nova backup`](#nova-backup-create-experimental-adr-0181) / [`nova restore`](#nova-restore-set-path-experimental-adr-0181--adr-0211) | Evidence-grade backup sets: create, verify offline, restore (local + automated pg restore, experimental) |
 | [`nova support-bundle`](#nova-support-bundle-experimental-adr-0187) | Secret-safe diagnostics tarball for support (experimental) |
@@ -4650,7 +4650,7 @@ Options:
 
 Requires: `pip install 'novafabric[server]'`
 
-### nova doctor [--check-extras] [--check-storage] [--check-scheduler]
+### nova doctor [--check-extras] [--check-storage] [--check-scheduler] [--check-tokens]
 
 Run diagnostic checks on the NovaFabric installation.
 
@@ -4661,7 +4661,19 @@ nova doctor --check-storage --backend postgres
 nova doctor --check-storage --backend postgres --postgres-dsn "postgresql://..."
 nova doctor --check-storage --db-path /path/to/custom.db
 nova doctor --check-scheduler
+nova doctor --check-tokens
 ```
+
+With `--check-tokens`: reports how many serve-token records still store the secret itself
+rather than only a fingerprint. ADR-0252 stopped writing the secret, but could not rewrite
+records already on disk, so an upgraded install can be correct for new tokens and still hold
+old ones in the clear.
+
+**This one report also prints during any `nova doctor` run**, not only with its flag — an
+operator who does not already know such records exist is exactly the operator who will not
+think to ask about them. Only the explicit `--check-tokens` makes it affect the exit code
+(**1** when any are found), so no existing invocation changes its result. The report counts
+the affected records and never prints a secret.
 
 With `--check-extras`: lists every optional extra as complete or incomplete, names the
 distributions missing from each, and prints the exact `pip install 'novafabric[<extra>]'`

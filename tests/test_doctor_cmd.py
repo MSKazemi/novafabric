@@ -1,6 +1,7 @@
 """Tests for src/novafabric/cli/doctor.py — nova doctor command."""
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from unittest.mock import patch
@@ -357,3 +358,60 @@ def test_doctor_no_flags_hint_mentions_check_extras() -> None:
 
     assert result.exit_code == 0
     assert_flag_in_help(result, "--check-extras")
+
+
+class TestLegacyCleartextTokenReport:
+    """`nova doctor` must surface pre-ADR-0252 tokens whose secret is on disk.
+
+    ADR-0252 stopped writing the secret itself, but it could not rewrite records
+    already written. ``token_store.legacy_plaintext_count()`` was added to count
+    them and its docstring named ``nova doctor`` as the consumer — and nothing
+    called it, so the number existed and no operator could ever see it. A
+    migration that stays silent about what it could not migrate is not finished.
+    """
+
+    @staticmethod
+    def _seed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, records: list) -> Path:
+        store = tmp_path / "tokens.jsonl"
+        store.write_text("".join(json.dumps(r) + "\n" for r in records))
+        monkeypatch.setattr("novafabric.serve.token_store.tokens_path", lambda: store)
+        return store
+
+    def test_cleartext_record_is_reported_and_exits_nonzero(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._seed(
+            tmp_path,
+            monkeypatch,
+            [{"label": "old", "token": "s3cret-in-the-clear", "fingerprint": "aa"}],
+        )
+        result = runner.invoke(app, ["doctor", "--check-tokens"])
+        assert result.exit_code == 1, result.output
+        assert "cleartext" in result.output
+        assert "1 token record" in result.output
+        assert "s3cret-in-the-clear" not in result.output, (
+            "the report must count the secret, never print it"
+        )
+
+    def test_fingerprint_only_records_are_clean(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._seed(tmp_path, monkeypatch, [{"label": "new", "fingerprint": "bb"}])
+        result = runner.invoke(app, ["doctor", "--check-tokens"])
+        assert result.exit_code == 0, result.output
+        assert "OK" in result.output
+
+    def test_other_checks_warn_without_changing_their_exit_code(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The warning surfaces unasked; it must not retroactively fail a run."""
+        self._seed(
+            tmp_path, monkeypatch, [{"label": "old", "token": "x", "fingerprint": "aa"}]
+        )
+        result = runner.invoke(app, ["doctor", "--check-extras"])
+        assert "cleartext" in result.output
+        assert result.exit_code == 0, result.output
+
+    def test_flag_is_documented_in_help(self) -> None:
+        result = runner.invoke(app, ["doctor", "--help"])
+        assert_flag_in_help(result, "--check-tokens")
