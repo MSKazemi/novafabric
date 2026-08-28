@@ -33,6 +33,16 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **The shipped dashboard served the dead link and the stale schemas for three
+  releases' worth of fixes.** `src/novafabric/serve/static/` is the built site,
+  checked in so `nova serve` works from a wheel — and the site's JSON is imported at
+  *build* time, so every source-side fix sat inert until a rebuild. The bundle now
+  carries the corrected non-goals link, the synced run-capsule schema (`facets`,
+  `session_id`, `sequence`, `usage_totals`, `evidence_digests` are all present in the
+  built validator for the first time), the corrected showcase ULID, and the marked
+  `$comment` strings. Verified rather than assumed: every `_astro` chunk referenced by
+  a built page exists on disk, because a stale chunk hash renders a blank page.
+
 - **The site linked "the load-bearing constraint" to a page that does not exist.**
   `web/src/lib/links.ts` built GitHub blob URLs from repo-relative paths, and two of
   its three constants pointed into `design/` — which publishes **zero** files. The
