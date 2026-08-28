@@ -56,6 +56,41 @@ def _hermetic_novafabric_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 
 
 @pytest.fixture(autouse=True)
+def _isolated_capture_recorder() -> Iterator[None]:
+    """No test inherits, or bequeaths, a capture recorder (ADR-0254 Stage 0).
+
+    ``capture.event_recorder`` keeps a **module-level** ``_current_recorder`` plus a
+    ``ContextVar``. Neither was reset between tests, so a test that set a recorder and did
+    not clear it left it visible to every later test in the same process. Measured
+    2026-08-28 across ``tests/capture``, ``tests/test_capture_hooks.py`` and
+    ``tests/adapters``: **113 tests finished with recorder state still set.**
+
+    That is what made the suite un-subsettable. Under ``pytest-xdist`` the *selection*
+    decides which tests share a worker, so changing the selection changes who inherits
+    whose leftover recorder — which is why a reduced pre-merge selection failed three
+    ``EventRecorder`` tests on one run and passed the identical command on the next.
+    Speed work (test impact analysis, a smaller pre-merge tier, re-sharding) all works by
+    changing the selection, so all of it depends on this fixture existing.
+
+    Resetting **before** each test is the half that protects; resetting after keeps the
+    report honest for anything that inspects state at session end.
+
+    This is test hygiene, not a substitute for ADR-0224 phase 2 — production code still
+    has a process-global recorder, and concurrent in-process captures still need the
+    task-scoped fix.
+    """
+    from novafabric.capture import event_recorder as _er
+
+    def _reset() -> None:
+        _er._current_recorder = None
+        _er._recorder_var.set(None)
+
+    _reset()
+    yield
+    _reset()
+
+
+@pytest.fixture(autouse=True)
 def _default_noop_policy_engine(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[None]:
