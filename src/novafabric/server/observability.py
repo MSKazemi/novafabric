@@ -84,6 +84,55 @@ CHECK_UNKNOWN = "unknown"
 #: Single collapsed route label for requests that matched no registered route.
 UNMATCHED_ROUTE = "unmatched"
 
+#: Key under which fastapi >=0.137 records the router a request was routed
+#: through. Absent on older versions, which flatten included routers instead.
+_FASTAPI_SCOPE_KEY = "fastapi"
+
+
+def included_router_prefix(scope: Mapping[str, Any]) -> str:
+    """Return the mount prefix of the included router that served *scope*.
+
+    fastapi < 0.137 flattens ``include_router(prefix=...)`` into the parent
+    router, so every matched route already carries its full path and this
+    returns ``""``. fastapi >= 0.137 keeps the included router **mounted**: the
+    app's route table holds ``_IncludedRouter`` objects and ``scope["route"]``
+    is the *inner* route, whose ``.path`` is relative to the mount. The prefix
+    has to come from somewhere else, or every metric label and span name silently
+    loses its ``/v0``.
+
+    This reads a private fastapi structure, which is a deliberate, bounded bet:
+    there is no public API that exposes the mount prefix to middleware. Every
+    lookup is defensive and the fallback is the unprefixed template — a
+    degraded label, never an exception on a live request. Because a silent
+    fallback is exactly how this regressed in the first place,
+    ``tests/test_server_observability.py`` asserts the real prefix against the
+    real app, so a fastapi release that moves this fails the suite loudly
+    instead of quietly shortening the label again.
+    """
+    scope_extra = scope.get(_FASTAPI_SCOPE_KEY)
+    if not isinstance(scope_extra, Mapping):
+        return ""
+    context = getattr(scope_extra.get("included_router"), "include_context", None)
+    prefix = getattr(context, "prefix", "")
+    return prefix if isinstance(prefix, str) else ""
+
+
+def resolve_route_template(scope: Mapping[str, Any]) -> str:
+    """Full registered route template for *scope*, or :data:`UNMATCHED_ROUTE`.
+
+    Always a bounded template (``/v0/assets/{asset_id}``), never a raw path —
+    that distinction is what keeps the ``route`` metric label's cardinality
+    finite.
+    """
+    template = getattr(scope.get("route"), "path", None)
+    if not isinstance(template, str) or not template:
+        return UNMATCHED_ROUTE
+    prefix = included_router_prefix(scope)
+    if prefix and not template.startswith(prefix):
+        return prefix + template
+    return template
+
+
 #: Bounded outcome vocabulary for ``nova_ingest_events_total`` (spec D4).
 INGEST_OUTCOMES = ("accepted", "rejected")
 
@@ -262,8 +311,7 @@ def install_http_metrics_middleware(
             return response
         finally:
             duration_s = time.perf_counter() - start
-            route = request.scope.get("route")
-            template = getattr(route, "path", None) or UNMATCHED_ROUTE
+            template = resolve_route_template(request.scope)
             try:
                 metrics.observe(template, request.method, status_code, duration_s)
                 if ingest_routes:
@@ -556,8 +604,7 @@ def install_self_tracing_middleware(app: FastAPI, emitter: SelfTraceEmitter) -> 
             status_code = response.status_code
             return response
         finally:
-            route = request.scope.get("route")
-            template = getattr(route, "path", None) or UNMATCHED_ROUTE
+            template = resolve_route_template(request.scope)
             try:
                 emitter.emit_http_span(
                     route=template,

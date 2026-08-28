@@ -243,6 +243,12 @@ class TestAttributePrivacy:
             )
             assert _wait_for(lambda: b"/v0/assets/" in sink.bodies())
             blob = sink.bodies()
+            # Every assertion below is a NEGATIVE one, and a negative assertion
+            # over an empty payload is vacuously true. Prove a span actually
+            # arrived before concluding it is clean, so "nothing was emitted"
+            # can never be mistaken for "nothing leaked".
+            assert blob, "no self-trace payload emitted — privacy checks would be vacuous"
+            assert b'"http.route"' in blob
             assert b"sst-super-secret-token" not in blob
             assert b"raw-tenant-4242" not in blob  # raw path segment
             assert b"tenant-9999" not in blob  # tenant header value
@@ -261,7 +267,12 @@ class TestAttributePrivacy:
                 json={"slug": "body-canary-org", "name": "Body Canary"},
             )
             assert _wait_for(lambda: b"/v0/orgs" in sink.bodies())
-            assert b"body-canary-org" not in sink.bodies()
+            blob = sink.bodies()
+            # Same vacuity guard as above: an empty payload contains no body,
+            # but that proves nothing about redaction.
+            assert blob, "no self-trace payload emitted — privacy checks would be vacuous"
+            assert b'"http.route"' in blob
+            assert b"body-canary-org" not in blob
         finally:
             _close_emitter(app)
 

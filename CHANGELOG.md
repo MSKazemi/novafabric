@@ -33,6 +33,27 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **`fastapi` is unpinned — the ceiling was real, but its stated cause was wrong** (issue #54).
+  Four extras held `fastapi<0.137` and `.github/dependabot.yml` carried a matching `ignore`,
+  both attributing the breakage to *"starlette 1.4 route mounting"* regressing the Prometheus
+  `route` label *"from template to raw path"*. Three parts of that were false: **starlette 1.4.1
+  was already installed** under the ceiling with all 40 tests green, fastapi 0.141.1 actually
+  pulls **starlette 1.6.0**, and the label never became a raw path — so the cardinality argument
+  the pin was justified with did not apply. The real change is in **fastapi**, not starlette:
+  `include_router(prefix=...)` no longer flattens into the parent router but mounts an
+  `_IncludedRouter`, so `scope["route"]` is the *inner* route and its `.path` has lost the
+  prefix. Every `route` label and self-trace span name silently shortened from
+  `/v0/assets/{asset_id}` to `/assets/{asset_id}` — still bounded, still plausible, just wrong;
+  the ingest counters, which key off the template, stopped counting entirely.
+  `resolve_route_template()` now restores the prefix and both middlewares use it. It reads a
+  private fastapi structure because no public API exposes a mount prefix to middleware, so the
+  bet is made loud rather than silent: `TestRouteTemplateResolution` asserts the resolved
+  template against the real app, and a fastapi release that moves it fails the suite instead of
+  quietly shortening the label again. The two self-trace privacy tests now assert that a span
+  actually arrived before concluding it is clean — every other assertion in them is a negative
+  one, and a negative assertion over an empty payload is vacuously true. Verified on both
+  fastapi 0.136.3 and 0.141.1; the full suite is green on 0.141.1 / starlette 1.6.0.
+
 - **`nova capture` could not tell a mistyped command from a genuinely failing one.**
   Both printed a byte-identical `✗ Capsule written: …` line and both exited `127`, so
   `nova capture my-agnet` looked exactly like an agent that ran and failed — the one

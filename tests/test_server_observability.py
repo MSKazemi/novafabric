@@ -358,3 +358,74 @@ class TestHealthAlias:
         assert body["ok"] is True
         assert body["service"] == "nova-server"
         assert set(body) == {"ok", "service", "version", "backend"}
+
+
+class TestRouteTemplateResolution:
+    """The `/v0` prefix must survive however fastapi chooses to mount routers.
+
+    fastapi < 0.137 flattens `include_router(prefix=...)`, so the matched route
+    carries the full path. fastapi >= 0.137 keeps the router **mounted** and
+    `scope["route"]` is the inner route, whose `.path` has no prefix. That
+    change silently shortened every `route` label from `/v0/assets/{asset_id}`
+    to `/assets/{asset_id}` — still a bounded template, so nothing crashed and
+    no cardinality alarm fired; the label was just quietly wrong.
+
+    `resolve_route_template()` closes that by reading a **private** fastapi
+    structure, which is only defensible if its disappearance is loud. These
+    tests are that alarm: they assert the resolved prefix against the real app,
+    so a fastapi release that moves it fails here instead of in production
+    dashboards.
+    """
+
+    def test_route_label_carries_the_v0_prefix(self, client: TestClient) -> None:
+        pytest.importorskip("prometheus_client")
+        client.get("/v0/assets/some-asset-id")
+        text = client.get("/metrics").text
+        assert 'route="/v0/assets/{asset_id}"' in text
+        # The failure mode being guarded is the *unprefixed* template, which is
+        # a plausible-looking label rather than an obviously broken one.
+        assert 'route="/assets/{asset_id}"' not in text
+
+    def test_unprefixed_router_is_left_alone(self, client: TestClient) -> None:
+        """A route registered without a prefix must not gain a phantom one."""
+        pytest.importorskip("prometheus_client")
+        client.get("/livez")
+        text = client.get("/metrics").text
+        assert 'route="/livez"' in text
+
+    def test_resolver_falls_back_to_the_bare_template(self) -> None:
+        from novafabric.server.observability import (
+            UNMATCHED_ROUTE,
+            resolve_route_template,
+        )
+
+        class _Route:
+            path = "/assets/{asset_id}"
+
+        # No fastapi scope key at all (fastapi < 0.137, or a plain starlette
+        # route): the template is already complete and is returned untouched.
+        assert resolve_route_template({"route": _Route()}) == "/assets/{asset_id}"
+        # A malformed/absent scope must degrade to a bounded label, never raise
+        # on a live request.
+        assert resolve_route_template({}) == UNMATCHED_ROUTE
+        assert resolve_route_template({"route": None}) == UNMATCHED_ROUTE
+        assert (
+            resolve_route_template({"route": _Route(), "fastapi": "not-a-mapping"})
+            == "/assets/{asset_id}"
+        )
+
+    def test_prefix_is_not_applied_twice(self) -> None:
+        """An already-prefixed template must not become `/v0/v0/...`."""
+        from novafabric.server.observability import resolve_route_template
+
+        class _Ctx:
+            prefix = "/v0"
+
+        class _Router:
+            include_context = _Ctx()
+
+        class _Route:
+            path = "/v0/assets/{asset_id}"
+
+        scope = {"route": _Route(), "fastapi": {"included_router": _Router()}}
+        assert resolve_route_template(scope) == "/v0/assets/{asset_id}"
