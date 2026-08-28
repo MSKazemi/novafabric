@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/diff-report.schema.json",
-  "$comment": "schema_version 0.1.0; validates the JSON produced by nova diff --output-format json.",
+  "$comment": "schema_version 0.1.0; validates the JSON produced by nova diff --output-format json.  STATUS: IN FORCE. This is what an installed CLI validates against. The OAS v1.0 target lives at the sibling $id ending -v1.schema.json. See ADR-0223.",
   "title": "DiffReport",
   "description": "Structural diff report between two NovaFabric run capsules.",
   "type": "object",
@@ -23,17 +23,35 @@
     },
     "summary": {
       "type": "object",
-      "required": ["changed", "added", "removed"],
+      "required": [
+        "changed",
+        "added",
+        "removed"
+      ],
       "properties": {
-        "changed": {"type": "integer", "minimum": 0},
-        "added": {"type": "integer", "minimum": 0},
-        "removed": {"type": "integer", "minimum": 0}
+        "changed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "added": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "removed": {
+          "type": "integer",
+          "minimum": 0
+        }
       },
       "description": "Aggregate change counts across all sections."
     },
     "sections": {
       "type": "object",
-      "required": ["environment", "model_calls", "tool_calls", "outputs"],
+      "required": [
+        "environment",
+        "model_calls",
+        "tool_calls",
+        "outputs"
+      ],
       "properties": {
         "environment": {
           "type": "object",
@@ -43,10 +61,18 @@
               "items": {
                 "type": "object",
                 "properties": {
-                  "field": {"type": "string"},
+                  "field": {
+                    "type": "string"
+                  },
                   "before": {},
                   "after": {},
-                  "severity": {"type": "string", "enum": ["minor", "major"]}
+                  "severity": {
+                    "type": "string",
+                    "enum": [
+                      "minor",
+                      "major"
+                    ]
+                  }
                 }
               }
             }
@@ -55,18 +81,37 @@
         "model_calls": {
           "type": "object",
           "properties": {
-            "aligned": {"type": "integer", "minimum": 0},
-            "changed": {"type": "integer", "minimum": 0},
-            "added": {"type": "integer", "minimum": 0},
-            "removed": {"type": "integer", "minimum": 0},
-            "pairs": {"type": "array"}
+            "aligned": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "changed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "added": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "removed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "pairs": {
+              "type": "array"
+            }
           }
         },
         "tool_calls": {
           "type": "object",
           "properties": {
-            "aligned": {"type": "integer", "minimum": 0},
-            "pairs": {"type": "array"}
+            "aligned": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "pairs": {
+              "type": "array"
+            }
           }
         },
         "outputs": {
@@ -77,9 +122,21 @@
               "items": {
                 "type": "object",
                 "properties": {
-                  "path": {"type": "string"},
-                  "before_hash": {"type": ["string", "null"]},
-                  "after_hash": {"type": ["string", "null"]}
+                  "path": {
+                    "type": "string"
+                  },
+                  "before_hash": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "after_hash": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
                 }
               }
             }

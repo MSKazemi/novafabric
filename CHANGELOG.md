@@ -33,6 +33,46 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **Capsule upload silently flattened nested files and could overwrite them** (ADR-0260).
+  `POST /v0/capsules` dropped the first path component of *every* archive member, so a flat
+  capsule's `outputs/stdout.txt` landed as `stdout.txt` — and a sibling `inputs/stdout.txt`
+  overwrote it. Four members in, three files out, HTTP **201**, and the capsule verified 12 of
+  14 `evidence_digests` with nothing reporting the loss. All 415 capsules federated during the
+  multi-cluster campaign were damaged this way. The strip is now a whole-archive decision: one
+  leading component is dropped only when every file member shares the same top-level directory,
+  which preserves the `<run_id>/…` export layout while leaving flat and multi-root archives
+  intact. ⚠ **Behaviour change** — see ADR 0260; already-stored capsules are not repaired.
+  Two existing tests asserted the old flattening and were corrected.
+
+- **The SLURM runner certified cancelled, timed-out and OOM-killed jobs as successful.**
+  `sacct` reports `ExitCode` as `<workload>:<signal>`, so a job killed by a signal yields
+  `0:15` — whose workload half is `0`. The runner took that half and skipped the branch that
+  would have caught the non-success state, then sealed `exit_code: 0`; `capture/orchestrator.py`
+  derives `status = "success" if exit_code == 0`, so the capsule recorded **success for a job
+  that never completed**. The terminal state is now authoritative — only `COMPLETED` may yield
+  `0`, a signal-terminated job reports `128+signal` and `runner_status: "killed"`, and the
+  degenerate `"completed" if … else "completed"` ternary is gone. Verified by a table-driven
+  test over CANCELLED / TIMEOUT / OUT_OF_MEMORY / NODE_FAIL / PREEMPTED / FAILED.
+
+- **Energy receipts claimed `confidence: measured` on hardware with no energy counter.**
+  SLURM renders an *unpopulated* `energy` TRES as the literal `0` rather than an empty field,
+  so the "not configured" guard never fired and every job produced a `measured` /
+  `direct_counter` receipt carrying `0.0 J` — 713 of them on one cluster, each sealed by
+  `payload_hash`. This is the default posture of SLURM on **any** cloud VM, where
+  `AcctGatherEnergyType` is unset and neither IPMI nor RAPL is exposed to the guest. A `0` is
+  now recorded as an honest `unavailable` / `unknown` receipt with `measured_joules: null`
+  unless a probe of `AcctGatherEnergyType` confirms a plugin is loaded, and
+  `hardware.counters_available` reflects that probe instead of echoing configuration. A
+  genuine non-zero reading is unaffected.
+
+- **Ingest spool files orphaned by a crash were never reclaimed.** A spool is owned by its
+  request and deleted on every exit path, but a kill between creation and cleanup stranded it
+  permanently: one was measured still present **52 minutes and a full service restart** after
+  the crash that created it, on a hub that published 4,826 capsules in the meantime. There is
+  now a startup reaper that removes `.spool` files predating the current process — files that
+  cannot have a live owner — and never touches one that may be in flight. It is fail-open and
+  cannot block startup.
+
 - **`robots.txt` shipped in the wheel carried a note addressed to the maintainer by name.**
   `src/novafabric/serve/static/` is a built copy of the marketing site under `web/`, mounted at
   `/` by `nova serve` — so everything in it is packaged and installed by `pip install
@@ -46,6 +86,23 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   red-green proven against a reintroduced note. ⚠ note the class, not just the instance: a
   directory copied wholesale into the package is a **public surface**, whatever it looks like
   in the source tree.
+
+- **The website validated its showcase against a stale copy of the schemas, and said it could not.**
+  The Spec page states that "the showcase site validates its fixture against the same schemas at
+  build time, so the demo can never silently drift from the real format". There are in fact
+  *three* copies of every schema — `schemas/` (the OAS v1.0 target), `src/novafabric/schemas/`
+  (what an installed CLI enforces) and `web/src/data/schemas/` (what the site compiles into its
+  build-time validator). Only the first two were guarded. Seven of the ten vendored copies had
+  drifted, between them omitting **27 properties** the packaged schemas declare — including
+  `facets`, the headline extension point, plus `session_id`, `sequence`, `usage_totals` and
+  `evidence_digests`. Because these schemas are `additionalProperties: false`, a capsule that
+  `nova validate` accepts was rejected by the site's own validator; that was reproduced against
+  the site's own fixture before the fix. All ten copies are now synced from the packaged
+  schemas, which also surfaced a showcase `run_id` (`01KS9K8R2NHQXM7P3D2VBC8LMN`) that is not a
+  valid ULID — the stale schema had a laxer pattern and had been hiding it. Guarded by
+  `tests/packaging_metadata/test_site_schemas_match_packaged.py`, red-green proven on both
+  halves. ⚠ the vendored JSON is imported at build time, so the dashboard bundle under
+  `src/novafabric/serve/static/_astro/` keeps the old copies until the site is rebuilt.
 
 ### Security
 

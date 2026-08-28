@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novafabric.io/schemas/model-call.schema.json",
-  "$comment": "schema_version 0.1.0; tracks design/spec/model-call-v0.md. OTel GenAI semconv attribute names are preserved as dotted property keys.",
+  "$comment": "schema_version 0.1.0; tracks design/spec/model-call-v0.md. OTel GenAI semconv attribute names are preserved as dotted property keys.  STATUS: IN FORCE. This is what an installed CLI validates against and what existing capsules were written against. The OAS v1.0 target lives at the sibling $id ending -v1.schema.json and is not yet in force. See ADR-0223.",
   "title": "ModelCall",
   "description": "One record in model-calls.jsonl inside a NovaFabric Run Capsule. OTel GenAI semconv aligned.",
   "type": "object",
@@ -87,12 +87,16 @@
     },
     "gen_ai.request.messages": {
       "type": "array",
-      "items": {"$ref": "#/$defs/Message"},
+      "items": {
+        "$ref": "#/$defs/Message"
+      },
       "description": "OTel-aligned. Full message list sent to the model."
     },
     "gen_ai.response.choices": {
       "type": "array",
-      "items": {"$ref": "#/$defs/Choice"},
+      "items": {
+        "$ref": "#/$defs/Choice"
+      },
       "description": "OTel-aligned. The model's response choices."
     },
     "gen_ai.usage.input_tokens": {
@@ -107,8 +111,41 @@
     },
     "status": {
       "type": "string",
-      "enum": ["success", "error", "timeout", "denied", "partial"],
+      "enum": [
+        "success",
+        "error",
+        "timeout",
+        "denied",
+        "partial"
+      ],
       "description": "Outcome of the model invocation."
+    },
+    "log_level": {
+      "type": "string",
+      "enum": [
+        "debug",
+        "info",
+        "warn",
+        "error"
+      ],
+      "description": "ADR-0127: optional severity of this observation \u2014 a stored forensic attribute, never a live signal. Absent is read as 'info' by filters; absence is preserved (never back-filled)."
+    },
+    "status_message": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "ADR-0127: optional one-line human-readable reason for the level. Secret-scanned and redacted at capture (ADR-0009); an annotation, not a log stream."
+    },
+    "log_level_source": {
+      "type": "string",
+      "enum": [
+        "framework",
+        "span-status",
+        "adapter",
+        "user"
+      ],
+      "description": "ADR-0127: provenance of log_level; on disagreement the most severe source wins at capture and is recorded here."
     },
     "gen_ai.request.temperature": {
       "type": "number",
@@ -128,7 +165,9 @@
     },
     "gen_ai.request.stop_sequences": {
       "type": "array",
-      "items": {"type": "string"},
+      "items": {
+        "type": "string"
+      },
       "description": "OTel gen_ai.request.stop_sequences."
     },
     "gen_ai.request.frequency_penalty": {
@@ -151,53 +190,159 @@
       "type": "array",
       "items": {
         "type": "string",
-        "enum": ["stop", "length", "content_filter", "tool_calls", "error"]
+        "enum": [
+          "stop",
+          "length",
+          "content_filter",
+          "tool_calls",
+          "error"
+        ]
       },
       "description": "One finish reason per choice."
     },
     "nova.cost": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["currency", "amount"],
+      "required": [
+        "currency",
+        "amount"
+      ],
       "properties": {
-        "currency": {"type": "string", "description": "ISO 4217 currency code."},
+        "currency": {
+          "type": "string",
+          "description": "ISO 4217 currency code."
+        },
         "amount": {
           "oneOf": [
-            {"type": "number", "minimum": 0},
-            {"type": "null"}
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
           ],
           "description": "Total cost. Null when the provider does not expose rates."
         },
         "breakdown": {
           "type": "object",
-          "additionalProperties": {"type": "number"},
+          "additionalProperties": {
+            "type": "number"
+          },
           "description": "Itemized cost by component (input, output, cache, etc.)."
         }
       },
       "description": "NovaFabric extension: monetary cost of this model call."
     },
+    "nova.usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cached_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_write_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasoning_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "audio_input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "audio_output_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "image_input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "image_output_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "extra": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Open map for provider usage types NovaFabric does not yet name (snake_case key -> non-negative count). Forward-compatibility hinge: new provider token types land here with no schema change."
+        },
+        "raw_ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Pointer to the verbatim provider usage payload under extensions/ (e.g. extensions/io.openai/usage), when kept for audit."
+        }
+      },
+      "description": "NovaFabric extension (ADR-0132): per-type token usage recorded VERBATIM from the provider payload. All fields optional; absent means not reported (never zero). Superset of the gen_ai.usage.* scalars, which it must match when present."
+    },
     "nova.cache": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["hit", "kind"],
+      "required": [
+        "hit",
+        "kind"
+      ],
       "properties": {
-        "hit": {"type": "boolean"},
+        "hit": {
+          "type": "boolean"
+        },
         "kind": {
           "type": "string",
-          "enum": ["prompt-cache", "kv-cache", "provider-cache", "none"]
+          "enum": [
+            "prompt-cache",
+            "kv-cache",
+            "provider-cache",
+            "none"
+          ]
         },
-        "scope": {"type": "string"}
+        "scope": {
+          "type": "string"
+        }
       },
       "description": "NovaFabric extension: provider-side or SDK-side cache status."
     },
     "nova.carbon": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["co2e_grams", "energy_kwh", "region"],
+      "required": [
+        "co2e_grams",
+        "energy_kwh",
+        "region"
+      ],
       "properties": {
-        "co2e_grams": {"type": "number"},
-        "energy_kwh": {"type": "number"},
-        "region": {"type": "string"}
+        "co2e_grams": {
+          "type": "number"
+        },
+        "energy_kwh": {
+          "type": "number"
+        },
+        "region": {
+          "type": "string"
+        }
       },
       "description": "NovaFabric extension: carbon attribution if the runtime exposes it."
     },
@@ -205,25 +350,49 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "accelerator_kind": {"type": "string"},
-        "accelerator_count": {"type": "integer", "minimum": 0},
-        "gpu_model": {"type": "string"},
-        "batch_size": {"type": "integer", "minimum": 1},
-        "dtype": {"type": "string"}
+        "accelerator_kind": {
+          "type": "string"
+        },
+        "accelerator_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gpu_model": {
+          "type": "string"
+        },
+        "batch_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "dtype": {
+          "type": "string"
+        }
       },
       "description": "NovaFabric extension: hardware context for local inference."
     },
     "nova.streaming": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["streamed"],
+      "required": [
+        "streamed"
+      ],
       "properties": {
-        "streamed": {"type": "boolean"},
-        "chunk_count": {"type": "integer", "minimum": 0},
+        "streamed": {
+          "type": "boolean"
+        },
+        "chunk_count": {
+          "type": "integer",
+          "minimum": 0
+        },
         "first_token_ms": {
           "oneOf": [
-            {"type": "integer", "minimum": 0},
-            {"type": "null"}
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       },
@@ -233,11 +402,17 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "gateway_id": {"type": "string"},
-        "route_decision_reason": {"type": "string"},
+        "gateway_id": {
+          "type": "string"
+        },
+        "route_decision_reason": {
+          "type": "string"
+        },
         "fallback_chain": {
           "type": "array",
-          "items": {"type": "string"}
+          "items": {
+            "type": "string"
+          }
         }
       },
       "description": "NovaFabric extension: gateway routing metadata."
@@ -245,17 +420,31 @@
     "nova.judge": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["role", "target_call_id"],
+      "required": [
+        "role",
+        "target_call_id"
+      ],
       "properties": {
         "role": {
           "type": "string",
-          "enum": ["judge", "reference"]
+          "enum": [
+            "judge",
+            "reference"
+          ]
         },
-        "target_call_id": {"$ref": "#/$defs/Ulid"},
+        "target_call_id": {
+          "$ref": "#/$defs/Ulid"
+        },
         "similarity": {
           "oneOf": [
-            {"type": "number", "minimum": 0, "maximum": 1},
-            {"type": "null"}
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       },
@@ -271,7 +460,9 @@
     },
     "tool_choice_call_ids": {
       "type": "array",
-      "items": {"$ref": "#/$defs/Ulid"},
+      "items": {
+        "$ref": "#/$defs/Ulid"
+      },
       "description": "tool_call_ids in tool-calls.jsonl triggered by this call's tool choices."
     },
     "error": {
@@ -304,77 +495,330 @@
     },
     "ContentPart": {
       "type": "object",
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "properties": {
         "type": {
           "type": "string",
-          "enum": ["text", "image", "audio", "video", "document"]
+          "enum": [
+            "text",
+            "image",
+            "audio",
+            "video",
+            "document"
+          ]
         },
-        "text": {"type": "string"},
+        "text": {
+          "type": "string"
+        },
         "source": {
           "type": "object",
-          "required": ["kind"],
+          "required": [
+            "kind"
+          ],
           "properties": {
             "kind": {
               "type": "string",
-              "enum": ["inline", "url", "artifact_ref"]
+              "enum": [
+                "inline",
+                "url",
+                "artifact_ref"
+              ]
             },
-            "uri": {"type": "string"},
-            "data": {"type": "string"},
-            "media_type": {"type": "string"},
-            "duration_ms": {"type": "integer", "minimum": 0}
+            "uri": {
+              "type": "string"
+            },
+            "data": {
+              "type": "string"
+            },
+            "media_type": {
+              "type": "string"
+            },
+            "duration_ms": {
+              "type": "integer",
+              "minimum": 0
+            }
           }
+        },
+        "media": {
+          "$ref": "#/$defs/MediaPart",
+          "description": "ADR-0125: content-addressed reference to this part's media content (sha256 content_hash, byte_size, optional outputs/ blob_ref). Present when the capture layer rewrote inline media bytes; byte capture is opt-in (--capture-media)."
         }
       }
+    },
+    "MediaPart": {
+      "$comment": "ADR-0125 (multimodal-capture-v0): folded verbatim from media-part.schema.json. Additive and optional; text-only parts remain valid unchanged.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "media_type",
+        "content_hash",
+        "byte_size",
+        "redacted"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "image",
+            "audio",
+            "video",
+            "document"
+          ]
+        },
+        "media_type": {
+          "type": "string",
+          "pattern": "^[a-z]+/[A-Za-z0-9.+-]+$"
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "redacted": {
+          "type": "boolean"
+        },
+        "blob_ref": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^outputs/[0-9a-f]{64}\\.[A-Za-z0-9]+$"
+            }
+          ]
+        },
+        "sampled": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "strategy",
+                "original_byte_size"
+              ],
+              "properties": {
+                "strategy": {
+                  "enum": [
+                    "thumbnail",
+                    "clip",
+                    "first-page"
+                  ]
+                },
+                "original_byte_size": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "note": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "source_hint": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind"
+              ],
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "inline",
+                    "url",
+                    "provider_ref"
+                  ]
+                },
+                "uri": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "provider": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dimensions": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "width",
+                "height"
+              ],
+              "properties": {
+                "width": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "height": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          ]
+        },
+        "extensions": {
+          "type": "object"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "image",
+                  "document"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "duration_ms"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "audio",
+                  "document"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "dimensions"
+              ]
+            }
+          }
+        }
+      ]
     },
     "ToolCallRef": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "name", "arguments"],
+      "required": [
+        "id",
+        "name",
+        "arguments"
+      ],
       "properties": {
-        "id": {"type": "string"},
-        "name": {"type": "string"},
-        "arguments": {"type": "object"}
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "arguments": {
+          "type": "object"
+        }
       },
       "description": "Tool choice produced by an assistant message."
     },
     "Message": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["role", "content"],
+      "required": [
+        "role",
+        "content"
+      ],
       "properties": {
         "role": {
           "type": "string",
-          "enum": ["system", "user", "assistant", "tool", "developer"],
+          "enum": [
+            "system",
+            "user",
+            "assistant",
+            "tool",
+            "developer"
+          ],
           "description": "Message speaker role."
         },
         "content": {
           "oneOf": [
-            {"type": "string"},
+            {
+              "type": "string"
+            },
             {
               "type": "array",
-              "items": {"$ref": "#/$defs/ContentPart"}
+              "items": {
+                "$ref": "#/$defs/ContentPart"
+              }
             },
-            {"type": "null"}
+            {
+              "type": "null"
+            }
           ],
           "description": "Message content. String for plain text; array for multi-part; null for tool-call-only assistant turns."
         },
         "name": {
           "oneOf": [
-            {"type": "string"},
-            {"type": "null"}
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ],
           "description": "Speaker name (supported by some providers)."
         },
         "tool_calls": {
           "type": "array",
-          "items": {"$ref": "#/$defs/ToolCallRef"},
+          "items": {
+            "$ref": "#/$defs/ToolCallRef"
+          },
           "description": "Tool choices produced by an assistant turn."
         },
         "tool_call_id": {
           "oneOf": [
-            {"type": "string"},
-            {"type": "null"}
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ],
           "description": "When role is 'tool': the id of the assistant tool call this message answers."
         }
@@ -383,7 +827,11 @@
     "Choice": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["index", "message", "finish_reason"],
+      "required": [
+        "index",
+        "message",
+        "finish_reason"
+      ],
       "properties": {
         "index": {
           "type": "integer",
@@ -396,13 +844,23 @@
         },
         "finish_reason": {
           "type": "string",
-          "enum": ["stop", "length", "content_filter", "tool_calls", "error"],
+          "enum": [
+            "stop",
+            "length",
+            "content_filter",
+            "tool_calls",
+            "error"
+          ],
           "description": "Why the model stopped generating."
         },
         "logprobs": {
           "oneOf": [
-            {"type": "object"},
-            {"type": "null"}
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
           ],
           "description": "Provider logprob output, if returned."
         }
@@ -411,14 +869,25 @@
     "ErrorInfo": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "message"],
+      "required": [
+        "type",
+        "message"
+      ],
       "properties": {
-        "type": {"type": "string"},
-        "message": {"type": "string"},
+        "type": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
         "traceback_ref": {
           "oneOf": [
-            {"type": "string"},
-            {"type": "null"}
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       }
