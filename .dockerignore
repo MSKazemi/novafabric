@@ -12,10 +12,48 @@
 venv/
 env/
 
-# Private design corpus — 96M, never shipped in the image
+# Private design corpus — never shipped in the image.
+#
+# ⚠ Docker does not read .git/info/exclude, which is the ONLY firewall separating
+# this dual-git working tree's public and private halves (.gitignore deliberately
+# does not list the private material — see its header). So every private path must
+# be named here explicitly, exactly as it must be named in
+# [tool.hatch.build.targets.sdist].exclude for the same reason (ADR-0259).
+#
+# This is defense in depth, not a live leak: the Dockerfile uses targeted COPY
+# lines and has no `COPY . .`, so nothing private reaches the image. But the
+# context is transmitted to the daemon and cached — which leaves this machine the
+# moment a remote or shared buildx driver is used — and a single future
+# `COPY . .` would publish whatever is in it. Measured on this machine, the
+# reported build-context transfer went from 13.48 MB to 168 kB once this list was
+# completed. (The private paths total ~88 MB on disk, but much of that is already
+# caught by the generic rules above — *.log, __pycache__ — so the two numbers are
+# not the same thing and should not be conflated.)
+#
+# tests/docs/test_private_paths_never_enter_a_build.py derives the required set
+# from the two gitdirs and fails if a new private path is missing here.
 design/
 .claude/
 .git-private
+.claude-plugin/
+.dualgit/
+CLAUDE.md
+THREAT_MODEL.md
+experiments/
+monetize/
+papers/
+priv/
+ship/
+site-config/
+.benchmark-results/
+_linkcheck_probe.md
+# p2p working artifacts — untracked by either git, so the derived guard does not
+# require them, but .p2p-undo/ alone is 36 MB of pointless build context.
+.p2p.toml
+.p2p-undo/
+.p2p-history.jsonl
+.p2p-manifest.json
+p2p-sync-report.html
 
 # Node / dashboard build artifacts (source is compiled during the image build)
 **/node_modules

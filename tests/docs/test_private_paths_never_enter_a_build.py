@@ -12,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The sdist must not be able to carry private material out of this tree.
+"""No build artifact may carry private material out of this tree.
+
+There are two consumers of this working tree that package or transmit it
+wholesale — the **sdist** (hatchling) and the **Docker build context** — and each
+needs its own exclusion list. This module derives the required set once and
+asserts it against both.
 
 This repo is dual-git: one working tree, a public `.git` and a private
 `.git-private`. The private material is deliberately **not** in `.gitignore` —
@@ -31,6 +36,16 @@ A hand-maintained exclude list rots: the next private top-level directory is not
 in it. So this derives the required set from the two gitdirs — anything the
 private git tracks that the public git does not is private by definition — and
 fails until it is excluded.
+
+The Docker case is **defense in depth, not a live leak**, and is worth stating
+precisely: the Dockerfile uses targeted `COPY` lines and has no `COPY . .`, so
+nothing private reaches the published image today. What does happen is that
+private material (`experiments/`, 50 MB on disk; `.p2p-undo/`, 36 MB; `monetize/`,
+`papers/`, `site-config/`, `CLAUDE.md`, `THREAT_MODEL.md`) is sent into the build
+context — transmitted to the daemon and held in its cache, which leaves this
+machine the moment a remote or shared buildx driver is used, and becomes an image
+leak the first time someone writes `COPY . .`. Measured here, completing the
+`.dockerignore` list took the reported context transfer from 13.48 MB to 168 kB.
 """
 
 from __future__ import annotations
@@ -61,6 +76,17 @@ def _tracked(gitdir: Path) -> set[str]:
     )
     assert result.returncode == 0, f"git ls-files failed: {result.stderr}"
     return {p.split("/", 1)[0] for p in result.stdout.split("\0") if p}
+
+
+def _dockerignore_patterns() -> list[str]:
+    path = ROOT / ".dockerignore"
+    if not path.exists():
+        return []
+    return [
+        ln.strip()
+        for ln in path.read_text(encoding="utf-8").splitlines()
+        if ln.strip() and not ln.strip().startswith("#")
+    ]
 
 
 def _sdist_excludes() -> list[str]:
@@ -111,4 +137,37 @@ def test_the_private_gitdir_itself_is_excluded() -> None:
     assert ".git-private" in excluded, (
         ".git-private is not in the sdist exclude list. It is tracked by neither "
         "gitdir, so no derived rule covers it — it must be named explicitly."
+    )
+
+
+def test_the_dockerignore_exists_and_has_rules() -> None:
+    """Guard the guard: no .dockerignore would make the check below vacuous."""
+    assert _dockerignore_patterns(), (
+        ".dockerignore is missing or empty, so the entire working tree — "
+        "including the private material — is sent into every build context."
+    )
+
+
+def test_every_private_only_top_level_path_is_excluded_from_the_docker_context() -> None:
+    """The build context must not carry private material either.
+
+    No live leak today: the Dockerfile has no `COPY . .`, so nothing private
+    reaches the image. But the context is transmitted to the daemon and cached,
+    and a single future `COPY . .` would publish whatever is in it.
+    """
+    private_only = _tracked(PRIVATE_GITDIR) - _tracked(ROOT / ".git")
+    private_only.add(".git-private")  # tracked by neither git; the worst to ship
+    assert private_only, "derived nothing private — this check would be vacuous"
+
+    patterns = {p.lstrip("/").rstrip("/") for p in _dockerignore_patterns()}
+    patterns |= {
+        p[3:].rstrip("/") for p in _dockerignore_patterns() if p.startswith("**/")
+    }
+    missing = sorted(p for p in private_only if p not in patterns)
+    assert not missing, (
+        "these top-level paths are tracked ONLY by the private git, so they are "
+        "private by definition, but .dockerignore does not exclude them:\n"
+        f"  {missing}\n"
+        "Docker does not read .git/info/exclude either, so every one of these is "
+        "sent into the build context on every build. Add them to .dockerignore."
     )

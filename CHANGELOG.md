@@ -53,13 +53,34 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   `[tool.hatch.build.targets.sdist].exclude` now names every private top-level path,
   anchored with `/` so the deliberate carve-outs (`tests/bench`,
   `integrations/claude-plugin`) are untouched. A hand-maintained list rots, so
-  `tests/docs/test_sdist_excludes_every_private_path.py` derives the requirement from the
+  `tests/docs/test_private_paths_never_enter_a_build.py` derives the requirement from the
   two gitdirs — *(private-tracked) − (public-tracked)* is private by definition — and fails
   until each is excluded; it caught one path the hand-written list had missed.
   `.git-private/` is tracked by neither git and is asserted separately by name. A local
   `uv build` now yields a **7.26 MB** sdist with zero private paths, removing nothing the
   published sdist had; a wheel built from it installs into a clean venv and runs outside the
   source tree with all three force-included JSON Schemas resolving from `site-packages`.
+
+- **The Docker build context carried private material too — the same class, swept**
+  (ADR-0259). Having fixed the sdist, every tool in the repo that packages or copies the
+  working tree wholesale was checked against the same question: *does it read
+  `.git/info/exclude`?* None do. The wheel is safe by construction (`src/` layout plus an
+  explicit `force-include` list), `helm package` takes a subdirectory as its argument and
+  cannot reach the repo root, and `scripts/build_airgap_bundle.py` is a strict allowlist
+  (`--member arcname=src`). **`.dockerignore` was the second instance**: it named `design/`,
+  `.claude/`, `.git-private` and `bench/` but not `experiments/`, `monetize/`, `papers/`,
+  `priv/`, `ship/`, `site-config/`, `.dualgit/`, `.claude-plugin/`, `.benchmark-results/`,
+  `CLAUDE.md` or `THREAT_MODEL.md`.
+
+  This one is **defense in depth, not a live leak** — the Dockerfile uses targeted `COPY`
+  lines and has no `COPY . .`, so nothing private has ever reached the published image. What
+  did happen is that those paths entered the build context, which is transmitted to the
+  daemon and cached, leaves the machine as soon as a remote or shared buildx driver is used,
+  and would become an image leak the first time someone writes `COPY . .`. Completing the
+  list took the reported context transfer from **13.48 MB to 168 kB**, and the builder stage
+  still builds. The guard test was renamed to
+  `tests/docs/test_private_paths_never_enter_a_build.py` and now derives the private set once
+  from the two gitdirs, asserting it against **both** the sdist excludes and `.dockerignore`.
 
 ### Fixed
 

@@ -546,7 +546,7 @@ include = [
 #
 # Anchored with a leading `/` so `tests/bench` (a deliberate public carve-out)
 # and `integrations/claude-plugin` (a shipped product surface) are untouched.
-# tests/docs/test_sdist_excludes_every_private_path.py derives the required
+# tests/docs/test_private_paths_never_enter_a_build.py derives the required
 # entries from the two gitdirs and fails if a new private path is not listed.
 exclude = [
   "/.git-private",
