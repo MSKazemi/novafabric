@@ -20,6 +20,7 @@ from __future__ import annotations
 import io
 import tempfile
 import zipfile
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -95,6 +96,41 @@ def check_content_length(content_length: str | None, limits: IngestConfig) -> No
 # --------------------------------------------------------------------------- #
 # Step 2 — chunked spool to disk (authoritative size enforcement)
 # --------------------------------------------------------------------------- #
+
+
+def reap_orphaned_spools(spool_dir: Path, *, started_at: float) -> int:
+    """Delete ``.spool`` files that cannot belong to any live request.
+
+    A spool file is owned by the request that created it and removed on every
+    exit path — but a crash between creation and cleanup strands it, and
+    nothing ever reclaimed it. One such orphan was measured surviving 52
+    minutes and a full service restart on a busy hub (B9). The leak is small
+    per event and unbounded in time.
+
+    *started_at* is this process's start time: a spool older than that predates
+    the current server and therefore has no owner. Files at or after it may be
+    in flight and are never touched.
+
+    Fail-open — a missing directory or an unreadable entry returns/skips rather
+    than raising, because reclamation must never prevent the server starting.
+    Returns the number of files removed.
+    """
+    removed = 0
+    try:
+        entries = list(spool_dir.iterdir())
+    except OSError:
+        return 0
+    for entry in entries:
+        if entry.suffix != ".spool":
+            continue
+        try:
+            if entry.stat().st_mtime >= started_at:
+                continue  # may belong to an in-flight request
+            entry.unlink()
+            removed += 1
+        except OSError:  # pragma: no cover — racing cleanup or permissions
+            continue
+    return removed
 
 
 async def spool_upload(
@@ -223,11 +259,42 @@ def _check_member_guards(
 # --------------------------------------------------------------------------- #
 
 
-def safe_member_relpath(name: str) -> Path | None:
+def archive_strip_top(names: Iterable[str]) -> bool:
+    """Whether one leading path component may be dropped from every member.
+
+    True only when every *file* member shares a single top-level directory —
+    the ``<run_id>/capsule.yaml`` layout produced by ``nova capsule export``,
+    where that directory is packaging and not part of the capsule.
+
+    Any member sitting at the archive root, or a second distinct top-level
+    directory, makes the strip destructive: ``outputs/stdout.txt`` would become
+    ``stdout.txt`` and could overwrite a sibling that flattens onto the same
+    name (ADR-0260). In those shapes nothing may be dropped.
+
+    Deliberately does not validate names — the per-member ``..``/absolute-path
+    guard in :func:`safe_member_relpath` remains the sole authority on safety.
+    """
+    tops: set[str] = set()
+    for name in names:
+        if name.endswith("/"):
+            continue
+        parts = Path(name).parts
+        if parts and parts[0] in ("/", "\\"):
+            parts = parts[1:]
+        if len(parts) < 2:
+            return False  # a member at the archive root
+        tops.add(parts[0])
+        if len(tops) > 1:
+            return False
+    return len(tops) == 1
+
+
+def safe_member_relpath(name: str, *, strip_top: bool = True) -> Path | None:
     """Extraction-relative path for a member, or ``None`` for directory entries.
 
-    Retains the historical behavior of stripping the top-level path component
-    (flat ZIPs and single-subdir ZIPs both land flat in the capsule dir).
+    Drops the leading path component when *strip_top* — which the caller
+    determines once per archive via :func:`archive_strip_top`, because the
+    decision cannot be made correctly from a single member's name.
     Rejects any name containing a ``..`` segment or resolving to an absolute
     path — the ADR-0203 Context §4 zip-slip guard.
     """
@@ -248,7 +315,7 @@ def safe_member_relpath(name: str) -> Path | None:
         parts = parts[1:]
     if not parts:
         return None
-    rel = Path(*parts[1:]) if len(parts) > 1 else Path(parts[0])
+    rel = Path(*parts[1:]) if (strip_top and len(parts) > 1) else Path(*parts)
     if rel.is_absolute():  # pragma: no cover — defense in depth
         raise _guard_violation(
             REASON_UNSAFE_MEMBER_NAME,
@@ -324,9 +391,10 @@ def extract_archive(
     """
     resolved_root = tmp_root.resolve()
     state = _GuardState(limits=limits)
+    strip_top = archive_strip_top(m.filename for m in zf.infolist())
     for member in zf.infolist():
         state.add_entry()
-        rel = safe_member_relpath(member.filename)
+        rel = safe_member_relpath(member.filename, strip_top=strip_top)
         if rel is None:
             continue
         out_path = tmp_root / rel

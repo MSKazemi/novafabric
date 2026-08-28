@@ -167,6 +167,25 @@ def create_app(config: ServerConfig) -> FastAPI:
             init_schema(conn)
         finally:
             conn.close()
+
+        # B9: reclaim ingest spool files stranded by a crash. A spool is owned
+        # by its request and removed on every exit path, but a kill between
+        # creation and cleanup left it forever — one was measured surviving 52
+        # minutes and a full restart on a busy hub. Anything older than this
+        # process cannot have a live owner. Fail-open: never blocks startup.
+        import time as _time
+
+        from novafabric._paths import default_capsule_dir
+        from novafabric.server.ingest import SPOOL_DIR_NAME, reap_orphaned_spools
+
+        try:
+            _reaped = reap_orphaned_spools(
+                default_capsule_dir() / SPOOL_DIR_NAME, started_at=_time.time()
+            )
+            if _reaped:
+                logger.info("reclaimed %d orphaned ingest spool file(s)", _reaped)
+        except Exception:  # noqa: BLE001 — reclamation must never break startup
+            logger.warning("ingest spool reclamation failed", exc_info=True)
         # ADR-0178 (experimental): idempotent default org/workspace bootstrap —
         # existing single-team deployments land in a default hierarchy with no
         # operator action. Registry-tier scoping only; no tenant_id/RLS change.

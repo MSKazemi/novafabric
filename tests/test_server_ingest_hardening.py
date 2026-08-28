@@ -560,7 +560,12 @@ class TestHappyPathRegression:
             zf.writestr("outputs/a.txt", "hi")
         resp = _upload(client, buf.getvalue())
         assert resp.status_code == 201, resp.text
-        assert (capsule_dir / "dir-run" / "a.txt").read_text() == "hi"
+        # This archive is FLAT (``capsule.yaml`` sits at the root), so no
+        # component may be dropped and ``outputs/`` must survive.
+        # Until ADR-0260 this asserted ``dir-run/a.txt`` — i.e. it pinned the
+        # B12 flattening defect in place. See TestNestedMemberPreservation.
+        assert (capsule_dir / "dir-run" / "outputs" / "a.txt").read_text() == "hi"
+        assert not (capsule_dir / "dir-run" / "a.txt").exists()
 
     def test_concurrent_duplicate_racing_publish_409(
         self,
@@ -648,3 +653,188 @@ class TestIngestHelpers:
         assert safe_member_relpath("top/nested/x.txt") == Path("nested/x.txt")
         with pytest.raises(ValidationError):
             safe_member_relpath("a/../../evil")
+
+
+class TestNestedMemberPreservation:
+    """B12 — ingest must not flatten nested capsule files.
+
+    Found on live infrastructure: a real capsule uploaded through REST arrived
+    with ``outputs/stdout.txt`` written to ``stdout.txt``, overwriting the
+    sibling ``inputs/stdout.txt`` that flattened onto the same name. The server
+    returned 201 and the capsule verified 12 of 14 digests, so nothing in the
+    response or the store reported the loss.
+
+    The strip is only correct when the archive has a single top-level directory
+    (``<run_id>/...``). It must be a whole-archive decision, not a per-member one.
+    """
+
+    def test_flat_archive_keeps_nested_paths(self, tmp_path: Path) -> None:
+        """AC1/AC3 — the exact B12 reproduction: 4 members in, 4 files out."""
+        from novafabric.server.ingest import extract_archive
+
+        data = _zip_bytes(
+            {
+                "capsule.yaml": b"manifest",
+                "outputs/stdout.txt": b"I AM OUTPUTS",
+                "inputs/stdout.txt": b"I AM INPUTS",
+                "trace.jsonl": b"{}",
+            }
+        )
+        zf = zipfile.ZipFile(io.BytesIO(data))
+        root = tmp_path / "x"
+        root.mkdir()
+        extract_archive(zf, root, IngestConfig())
+
+        written = sorted(
+            str(p.relative_to(root)) for p in root.rglob("*") if p.is_file()
+        )
+        assert written == [
+            "capsule.yaml",
+            "inputs/stdout.txt",
+            "outputs/stdout.txt",
+            "trace.jsonl",
+        ]
+        # the overwrite is the damaging half of the defect
+        assert (root / "outputs/stdout.txt").read_bytes() == b"I AM OUTPUTS"
+        assert (root / "inputs/stdout.txt").read_bytes() == b"I AM INPUTS"
+
+    def test_single_rooted_archive_still_strips_its_root(
+        self, tmp_path: Path
+    ) -> None:
+        """AC2 — the legitimate case keeps working, nested structure intact."""
+        from novafabric.server.ingest import extract_archive
+
+        data = _zip_bytes(
+            {
+                "01ABC/capsule.yaml": b"manifest",
+                "01ABC/outputs/stdout.txt": b"out",
+                "01ABC/inputs/stdout.txt": b"in",
+            }
+        )
+        zf = zipfile.ZipFile(io.BytesIO(data))
+        root = tmp_path / "x"
+        root.mkdir()
+        extract_archive(zf, root, IngestConfig())
+
+        written = sorted(
+            str(p.relative_to(root)) for p in root.rglob("*") if p.is_file()
+        )
+        assert written == ["capsule.yaml", "inputs/stdout.txt", "outputs/stdout.txt"]
+        assert (root / "outputs/stdout.txt").read_bytes() == b"out"
+
+    def test_mixed_roots_strip_nothing(self, tmp_path: Path) -> None:
+        """AC5 — no single shared root means no component may be dropped."""
+        from novafabric.server.ingest import extract_archive
+
+        data = _zip_bytes({"a/x.txt": b"1", "b/y.txt": b"2"})
+        zf = zipfile.ZipFile(io.BytesIO(data))
+        root = tmp_path / "x"
+        root.mkdir()
+        extract_archive(zf, root, IngestConfig())
+
+        written = sorted(
+            str(p.relative_to(root)) for p in root.rglob("*") if p.is_file()
+        )
+        assert written == ["a/x.txt", "b/y.txt"]
+
+
+class TestOrphanedSpoolReclamation:
+    """B9 — a spool file orphaned by a crash must not survive forever.
+
+    Measured on the live hub: an upload in flight at 16:18:57 was interrupted
+    when the server was SIGKILLed; the server restarted 4 s later and the
+    6,882-byte `.spool` file was still present 52 minutes and one full service
+    lifecycle afterwards, while the store published 4,826 capsules around it.
+    There is no reaper on startup, on a timer, or on the ingest path.
+    """
+
+    def test_reaper_removes_spool_files_older_than_process_start(
+        self, tmp_path: Path
+    ) -> None:
+        import os
+        import time
+
+        from novafabric.server.ingest import SPOOL_DIR_NAME, reap_orphaned_spools
+
+        spool_dir = tmp_path / SPOOL_DIR_NAME
+        spool_dir.mkdir()
+        orphan = spool_dir / "tmpdead.spool"
+        orphan.write_bytes(b"x" * 10)
+        old = time.time() - 3600
+        os.utime(orphan, (old, old))
+
+        removed = reap_orphaned_spools(spool_dir, started_at=time.time())
+        assert removed == 1
+        assert not orphan.exists()
+
+    def test_reaper_never_touches_an_in_flight_spool(self, tmp_path: Path) -> None:
+        """AC2 — a spool newer than process start belongs to a live request."""
+        import time
+
+        from novafabric.server.ingest import SPOOL_DIR_NAME, reap_orphaned_spools
+
+        spool_dir = tmp_path / SPOOL_DIR_NAME
+        spool_dir.mkdir()
+        started_at = time.time() - 60  # process started a minute ago
+        live = spool_dir / "tmplive.spool"
+        live.write_bytes(b"in flight")  # mtime = now, i.e. after startup
+
+        assert reap_orphaned_spools(spool_dir, started_at=started_at) == 0
+        assert live.exists()
+
+    def test_reaper_ignores_non_spool_files(self, tmp_path: Path) -> None:
+        import os
+        import time
+
+        from novafabric.server.ingest import SPOOL_DIR_NAME, reap_orphaned_spools
+
+        spool_dir = tmp_path / SPOOL_DIR_NAME
+        spool_dir.mkdir()
+        keep = spool_dir / "notes.txt"
+        keep.write_text("keep me")
+        old = time.time() - 3600
+        os.utime(keep, (old, old))
+
+        assert reap_orphaned_spools(spool_dir, started_at=time.time()) == 0
+        assert keep.exists()
+
+    def test_reaper_is_silent_when_the_directory_is_absent(
+        self, tmp_path: Path
+    ) -> None:
+        """AC3 — a missing or unreadable spool dir must never block startup."""
+        import time
+
+        from novafabric.server.ingest import reap_orphaned_spools
+
+        assert reap_orphaned_spools(tmp_path / "nope", started_at=time.time()) == 0
+
+    def test_server_startup_actually_reaps(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The reaper must be WIRED, not merely defined.
+
+        An unexecuted reclamation path is the same defect class as the leak it
+        is meant to fix, so this drives the app's real lifespan rather than
+        calling the function directly.
+        """
+        import os
+        import time
+
+        from novafabric.server.ingest import SPOOL_DIR_NAME
+
+        store = tmp_path / "caps"
+        spool_dir = store / SPOOL_DIR_NAME
+        spool_dir.mkdir(parents=True)
+        orphan = spool_dir / "tmporphan.spool"
+        orphan.write_bytes(b"stranded by a crash")
+        old = time.time() - 3600
+        os.utime(orphan, (old, old))
+        monkeypatch.setenv("NOVAFABRIC_CAPSULE_DIR", str(store))
+
+        cfg = ServerConfig.model_validate(
+            {"db_path": str(tmp_path / "t.db"), "insecure_no_auth": True}
+        )
+        with TestClient(create_app(cfg), raise_server_exceptions=False):
+            pass  # entering the context runs the lifespan startup
+
+        assert not orphan.exists(), "startup did not reclaim the orphaned spool"
