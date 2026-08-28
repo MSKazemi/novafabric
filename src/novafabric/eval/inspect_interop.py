@@ -18,7 +18,7 @@ Imports the **scorer results** of an Inspect AI (UK AISI) JSON eval log as
 evidence-grade :class:`~novafabric.eval.scores.Score` records, and exports a
 capsule's ``scores.jsonl`` back as an Inspect-compatible JSON log. Parsing is
 **pure stdlib JSON against the documented Inspect log structure** — interop
-without installing ``inspect-ai`` (spec: ``design/spec/features/
+without installing ``inspect-ai`` (spec: ``the private design/spec/features/
 NF-024-028-inspect-interop.md``).
 
 Honesty invariants (ADR-0021 §4, spec R2–R4):

@@ -115,9 +115,24 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   `tests/docs/test_no_unmarked_private_path_prose.py` now covers `schemas/`,
   `src/novafabric/schemas/` and `web/src/data/schemas/` as well as `docs/`, red-green proven.
   Machine-readable `x-novafabric.spec` pointers are exempt with the reason stated in the module
-  docstring, not silently. ⚠ the remaining tier — `design/` paths in `src/**/*.py` docstrings that
-  surface in `help()` and the generated API reference — is **not** swept and is deliberately not
-  asserted, so the gap stays visible rather than looking closed.
+  docstring, not silently.
+
+  The **shipped source tree** is swept the same way, across **75 files** — docstrings
+  that reach `help()`/`inspect.getdoc` and are read directly in the public repository, where the
+  `design/` tree does not exist. Two of them were user-facing runtime messages rather than
+  docstrings: `nova serve` told an operator to consult `design/governance/acceptance-record.md`
+  after they overrode a safety gate, and `nova server` refused to start with a message pointing at
+  `design/security-reviews/…`. A third, the `spec_section` on a capsule-migration error, was the
+  only one of six in that file to carry a path instead of an identifier — it is printed to the
+  user's terminal by `nova migrate-capsule`, so it now reads `Run Capsule v1 spec §Structure` like
+  its five siblings. The published `api/openapi.yaml` carried the last one, in
+  `x-deprecation-policy.adr`; it now names **ADR-0188** and the public index `docs/decisions.md`,
+  which really does list it. ⚠ correcting the previous entry in this section: there is **no
+  docstring-based documentation generator in this repository** — `docs/python-api.md` is written by
+  hand and `docs/api-reference.md` is generated from the FastAPI route table, not from docstrings.
+  The exposure is `help()` and the public source itself. `tests/` (32 references) is deliberately
+  not covered — not shipped, not read by users — and the root-file tier (ROADMAP, pyproject, CI)
+  is still open; both exclusions are named in the guard's docstring rather than left implicit.
 
 ### Security
 

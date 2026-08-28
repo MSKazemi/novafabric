@@ -6418,7 +6418,7 @@ def create_app(
                 "own OQ-01 before this may be active; no such review has occurred. "
                 "An operator has explicitly overridden the safe default "
                 "(NOVA_CAP003_ENABLED=true) — see "
-                "design/governance/acceptance-record.md (SCALE-ADR-003)."
+                "the private design/governance/acceptance-record.md (SCALE-ADR-003)."
                 if cap003_enabled
                 else "cap-003 (dual-object GDPR/WORM split) is disabled "
                 "(NOVA_CAP003_ENABLED default is false — the mandatory safety gate "

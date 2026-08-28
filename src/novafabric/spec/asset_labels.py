@@ -25,7 +25,7 @@ target_version`` into the immutable asset version set. Two records:
   resolved to. Replay uses the frozen version and never re-resolves the
   label, so a capsule stays deterministic after the label moves.
 
-Invariants (ADR-0113 D1–D3; spec ``design/spec/asset-labels-v0.md``):
+Invariants (ADR-0113 D1–D3; spec ``the private design/spec/asset-labels-v0.md``):
 
 * A label resolves to exactly one existing version; labels are scoped per
   asset name.

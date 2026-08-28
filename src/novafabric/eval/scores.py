@@ -19,7 +19,7 @@ record binding ``(value, evaluator-identity, subject-span-digest, verdict)`` int
 Run Capsule*. This module defines the additive, optional ``scores.jsonl`` capsule
 file and its record model.
 
-Design invariants (see ``design/spec/features/NF-002-010-signed-eval-cards.md``):
+Design invariants (see ``the private design/spec/features/NF-002-010-signed-eval-cards.md``):
 
 - **Additive-first (SPK-EVAL-1):** ``scores.jsonl`` is optional; a capsule without it
   stays valid. This module never mutates an existing capsule file other than the

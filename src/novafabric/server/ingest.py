@@ -1,7 +1,7 @@
 """Hardened capsule-ingest helpers (ADR-0203 P1, experimental).
 
 Implements the normative streaming algorithm from
-``design/spec/ingest-hardening-v0.md`` for ``POST /v0/capsules``:
+``the private design/spec/ingest-hardening-v0.md`` for ``POST /v0/capsules``:
 
 - ``Content-Length`` fast-path rejection (413 ``payload_too_large``);
 - chunked spool-to-disk body read with authoritative byte counting;
@@ -18,6 +18,7 @@ chunked decompression, no unbounded buffering. Stdlib only (ADR-0024).
 from __future__ import annotations
 
 import io
+import shutil
 import tempfile
 import zipfile
 from collections.abc import Iterable
@@ -35,6 +36,7 @@ REASON_ENTRY_COUNT = "entry_count"
 REASON_TOTAL_UNCOMPRESSED = "total_uncompressed"
 REASON_COMPRESSION_RATIO = "compression_ratio"
 REASON_UNSAFE_MEMBER_NAME = "unsafe_member_name"
+REASON_NO_CAPSULE_ROOT = "no_capsule_root"
 
 #: Ratio floor (normative): the compression-ratio guard is evaluated only once
 #: the decompressed size exceeds this — tiny, highly compressible files must
@@ -99,21 +101,29 @@ def check_content_length(content_length: str | None, limits: IngestConfig) -> No
 
 
 def reap_orphaned_spools(spool_dir: Path, *, started_at: float) -> int:
-    """Delete ``.spool`` files that cannot belong to any live request.
+    """Delete ingest temporaries that cannot belong to any live request.
 
-    A spool file is owned by the request that created it and removed on every
-    exit path — but a crash between creation and cleanup strands it, and
-    nothing ever reclaimed it. One such orphan was measured surviving 52
-    minutes and a full service restart on a busy hub (B9). The leak is small
-    per event and unbounded in time.
+    The spool directory holds two kinds of transient: the ``.spool`` file the
+    body streams into, and the ``<run_id>.<hex>`` directory the archive extracts
+    into. Both are owned by one request and removed on every exit path — but a
+    crash between creation and cleanup strands them, and nothing ever reclaimed
+    them. One such orphan was measured surviving 52 minutes and a full service
+    restart on a busy hub (B9). The leak is small per event and unbounded in time.
 
-    *started_at* is this process's start time: a spool older than that predates
-    the current server and therefore has no owner. Files at or after it may be
-    in flight and are never touched.
+    Both kinds are reaped. Reaping only the file was the first cut, and a live
+    crash-injection run on Azure showed why that is not enough: killing the hub
+    during extraction reclaimed a 201 MB spool and left a 28 MB extraction
+    directory behind for good. A partial reaper still leaks, just more slowly.
+
+    *started_at* is this process's start time: anything older predates the
+    current server and therefore has no owner. Entries at or after it may be in
+    flight and are never touched. Everything under the spool directory is
+    transient by construction — published capsules live in the capsule store,
+    reached by an atomic rename out of here — so age is a sufficient test.
 
     Fail-open — a missing directory or an unreadable entry returns/skips rather
     than raising, because reclamation must never prevent the server starting.
-    Returns the number of files removed.
+    Returns the number of entries removed.
     """
     removed = 0
     try:
@@ -121,12 +131,16 @@ def reap_orphaned_spools(spool_dir: Path, *, started_at: float) -> int:
     except OSError:
         return 0
     for entry in entries:
-        if entry.suffix != ".spool":
-            continue
         try:
+            is_dir = entry.is_dir()
+            if not is_dir and entry.suffix != ".spool":
+                continue
             if entry.stat().st_mtime >= started_at:
                 continue  # may belong to an in-flight request
-            entry.unlink()
+            if is_dir:
+                shutil.rmtree(entry, ignore_errors=True)
+            else:
+                entry.unlink()
             removed += 1
         except OSError:  # pragma: no cover — racing cleanup or permissions
             continue
@@ -425,3 +439,26 @@ def extract_archive(
                 state.add_bytes(len(chunk), member.filename, member_compressed)
                 dst.write(chunk)
         state.total_compressed += member.compress_size
+
+
+def assert_capsule_at_root(tmp_root: Path) -> None:
+    """The extracted tree must carry ``capsule.yaml`` at its own root.
+
+    :func:`archive_strip_top` deliberately declines to reshape an archive whose
+    members do not share one top-level directory — there is no single root to
+    strip, and guessing one merges two namespaces. What is left, though, is a
+    directory that is not a capsule: ``capsule.yaml`` sits a level down, every
+    reader misses it, and the upload still answered 201. Silent acceptance of an
+    unreadable capsule is the same defect ADR-0260 removed, wearing its other
+    face, so this rejects instead. Found by driving real capsules through real
+    REST ingest on a live cluster; no unit test had posed the shape.
+    """
+    if (tmp_root / "capsule.yaml").is_file():
+        return
+    raise _guard_violation(
+        REASON_NO_CAPSULE_ROOT,
+        "Archive did not yield capsule.yaml at the capsule root: members must "
+        "either sit at the archive root or share exactly one top-level directory.",
+        0,
+        0,
+    )

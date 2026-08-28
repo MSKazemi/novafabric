@@ -1,7 +1,7 @@
 """Restore a local-profile backup set (ADR-0181 second slice, experimental).
 
 ``restore_backup`` implements the spec's normative restore order
-(``design/spec/backup-restore-v0.md`` §Restore procedure) for the LOCAL
+(``the private design/spec/backup-restore-v0.md`` §Restore procedure) for the LOCAL
 (SQLite) profile:
 
 1. **Verify the set first** — a set that fails ``verify_backup`` is refused

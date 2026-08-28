@@ -31,7 +31,7 @@ bounded overlap window, then predecessor auto-revokes at verify time), coarse
 ``last_used_at`` tracking (at most one write per configurable interval), and
 the columns ``last_used_at`` / ``rotated_to`` / ``rotate_expires_at`` (added
 in-place to pre-slice-2 databases). The ``/v0/api-keys`` REST resource lives in
-``server/routes/api_keys.py``. See ``design/spec/api-keys-v0.md``.
+``server/routes/api_keys.py``. See ``the private design/spec/api-keys-v0.md``.
 """
 
 from __future__ import annotations

@@ -6,7 +6,7 @@ is a **stored, filterable forensic attribute** — written once at capture and
 read back through the ADR-0129 query DSL — never a live signal: NovaFabric
 records the level; it does not raise, alert, retry, or block on it.
 
-Contract (``design/spec/observation-log-levels-v0.md``):
+Contract (``the private design/spec/observation-log-levels-v0.md``):
 
 - Stored domain is exactly ``debug | info | warn | error`` (lower-case).
   Producers normalize framework names *before* writing

@@ -3,7 +3,7 @@
 Wraps the Capsule Query DSL's own execution path
 (:func:`novafabric.query.executor.run_query`) with **zero** new query
 grammar: the request body's ``q`` is the same JSON/YAML query-object document
-``nova query --query-file`` already accepts (``design/spec/capsule-query-dsl-v0.md``),
+``nova query --query-file`` already accepts (``the private design/spec/capsule-query-dsl-v0.md``),
 not a free-text SQL-like string — ADR-0129 defines no single unified query
 string, only the closed ``select`` / ``where`` / ``group_by`` / time-window
 clauses. Reusing :func:`novafabric.query.parser.validate_query_object` for

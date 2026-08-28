@@ -8,7 +8,7 @@ content-addressed ``capsule_ref`` (``[<relative-path>@]sha256:<hex>`` over
 the member's ``capsule.yaml`` bytes) and is never copied.
 
 Schema: ``schemas/session-manifest.schema.json`` (v0.1.0), graduated from
-the accepted design draft (``design/spec/session-capsule-v0.md``).
+the accepted design draft (``the private design/spec/session-capsule-v0.md``).
 """
 
 from __future__ import annotations

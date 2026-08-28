@@ -9,8 +9,8 @@ fail-closed validated by the ADR-0129 parser at **save time** and again at
 **run time** (``store.save_view`` / ``nova view run``), never here.
 
 Wire contract: ``schemas/saved-view.schema.json`` (graduated from
-``design/spec/schemas/`` on ADR acceptance); spec:
-``design/spec/saved-views-v0.md``. Status: **experimental**.
+``the private design/spec/schemas/`` on ADR acceptance); spec:
+``the private design/spec/saved-views-v0.md``. Status: **experimental**.
 """
 
 from __future__ import annotations

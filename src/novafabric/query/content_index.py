@@ -5,7 +5,7 @@ capsules, stored in the registry database beside ``runs_cache``. Same
 contract as ``runs_cache``: a derived, rebuildable cache — never the source
 of truth; per-run deletable; rebuilt from disk by ``nova search --reindex``.
 
-Normative invariants (``design/spec/content-search-v0.md``):
+Normative invariants (``the private design/spec/content-search-v0.md``):
 
 1. **Corpus ⊆ secret-scan targets** — only files listed in
    :data:`novafabric.capture.secrets.SCAN_TARGETS` are ever indexed.

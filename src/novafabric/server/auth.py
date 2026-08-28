@@ -41,7 +41,7 @@ class AuthContext:
                (today: only ADR-0193 API keys set it). Additive (ADR-0208):
                consumed as usage-metering *attribution* — it is NOT
                enforcement; the binding remains unenforced at request time
-               per design/spec/api-keys-v0.md "Deferred".
+               per the private design/spec/api-keys-v0.md "Deferred".
     """
 
     subject: str

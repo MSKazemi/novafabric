@@ -2,7 +2,7 @@
 
 The plan is the parsed, validated form of a Capsule Query — exactly four
 clauses (``select`` / ``where`` / ``group_by`` / time window) drawn from a
-closed allow-list (``design/spec/capsule-query-dsl-v0.md``). Anything outside
+closed allow-list (``the private design/spec/capsule-query-dsl-v0.md``). Anything outside
 the allow-list never reaches a plan: the parser rejects it first.
 """
 

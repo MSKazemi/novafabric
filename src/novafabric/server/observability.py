@@ -1,6 +1,6 @@
 """Self-observability surface for the NovaFabric HTTP apps (ADR-0182, experimental).
 
-Implements the contract in ``design/spec/ops-observability-surface-v0.md``:
+Implements the contract in ``the private design/spec/ops-observability-surface-v0.md``:
 
 - ``/livez``   — process liveness only; never checks dependencies.
 - ``/readyz``  — itemized dependency readiness (db, migrations, object_store);
@@ -24,7 +24,7 @@ Second slice (ADR-0182 D4/D5):
   tenant identifiers in span attributes. Non-loopback endpoint hosts are
   refused unless ``NOVAFABRIC_SELF_TRACE_ALLOW_REMOTE=1`` — this is explicitly
   **not telemetry**; spans never leave the deployment (no-phone-home,
-  ``design/strategy/non-goals.md`` reaffirmed).
+  ``the private design/strategy/non-goals.md`` reaffirmed).
 
 Normative rules honoured here (spec §"Privacy and cardinality rules"):
 

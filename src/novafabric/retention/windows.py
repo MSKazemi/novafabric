@@ -16,7 +16,7 @@
 A ``window`` is either an ISO-8601 duration (``P1825D``) measured from the
 item's ``created_at``, or an absolute RFC 3339 date (``2031-01-01``).
 Calendar components are approximated deterministically: 1 year = 365 days,
-1 month = 30 days (documented in ``design/spec/retention-scheduler-v0.md``).
+1 month = 30 days (documented in ``the private design/spec/retention-scheduler-v0.md``).
 All computation is UTC.
 """
 

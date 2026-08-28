@@ -1,7 +1,7 @@
 """Per-workspace usage metering (ADR-0208 P1, experimental).
 
 Registry-SQLite ledger + counters + lazy monthly rollups, per
-``design/spec/usage-metering-v0.md``:
+``the private design/spec/usage-metering-v0.md``:
 
 - ``usage_ledger`` — append-only journal, one row per countable act, with a
   partial unique index on ``(metric, ref)`` so replayed inserts are no-ops
@@ -76,7 +76,7 @@ ATTRIBUTION_DEFAULT = "default"
 #: as ``quotas.DEFAULT_CACHE_TTL_SECONDS``).
 DEFAULT_USAGE_CACHE_TTL_SECONDS = 5.0
 
-# Schemas normative in design/spec/usage-metering-v0.md (three-table DDL).
+# Schemas normative in the private design/spec/usage-metering-v0.md (three-table DDL).
 _DDL = """
 CREATE TABLE IF NOT EXISTS usage_ledger (
     ledger_id    TEXT PRIMARY KEY,

@@ -23,7 +23,7 @@ one ``name`` coherent and comparable across capsules: an aggregate can pin the e
 ``content_digest`` it was computed against (ADR-0117 D4).
 
 Wire contract: ``schemas/score-config-v0.schema.json``. Normative constraints C1–C5
-(design/spec/score-config-v0.md) are enforced by the model validator here.
+(the private design/spec/score-config-v0.md) are enforced by the model validator here.
 
 The catalog (SQLite storage, version bumping, resolution) lives in
 :mod:`novafabric.eval.score_config_catalog`. This module is pure data + stdlib hashing:

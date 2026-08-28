@@ -59,7 +59,7 @@ def build_spec() -> dict:
     from novafabric.server.deprecation import DEPRECATION_REGISTER
 
     spec["x-deprecation-policy"] = {
-        "adr": "design/adr/0188-api-deprecation-sunset-policy.md",
+        "adr": "ADR-0188 (public index: docs/decisions.md)",
         "register": "docs/api-reference.md#deprecation-register-adr-0188",
         "headers": ["Deprecation", "Sunset", "Link"],
         "minimum-window": "two minor releases",

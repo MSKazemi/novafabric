@@ -1,6 +1,6 @@
 """In-process token-bucket rate limiter for the server app (ADR-0179, experimental).
 
-First slice of the contract in ``design/spec/rate-limiting-quotas-v0.md``:
+First slice of the contract in ``the private design/spec/rate-limiting-quotas-v0.md``:
 
 - stdlib-only token buckets on a **monotonic clock**, held in a **bounded**
   in-process map (LRU eviction) — deliberately not distributed, because the

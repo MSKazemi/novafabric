@@ -53,7 +53,7 @@ class EventType(str, Enum):
 class EventEnvelope(BaseModel):
     """EventEnvelope v1 — canonical evidence event for NovaFabric agents and collectors.
 
-    Spec: design/architecture/event-envelope-v1.md
+    Spec: the private design/architecture/event-envelope-v1.md
     Schema: schemas/event-envelope-v1/envelope-v1.json
     """
 

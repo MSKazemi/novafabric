@@ -19,7 +19,7 @@ An eval card is the *reproducibility key* for an evidence-grade
 prompt version, rubric, dataset version, human-agreement calibration) that produced
 a score, and carries an Ed25519 signature so the binding is tamper-evident.
 
-Design invariants (``design/spec/features/NF-002-010-signed-eval-cards.md``):
+Design invariants (``the private design/spec/features/NF-002-010-signed-eval-cards.md``):
 
 - **Content-addressed (req 5):** ``eval_card_digest`` = ``sha256`` over the card's
   canonical-JSON bytes *excluding* the ``signature`` block. Signing therefore never

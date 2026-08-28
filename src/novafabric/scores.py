@@ -30,7 +30,7 @@ evaluation score into a Run Capsule's append-only ``scores.jsonl``::
 Local-first: works with ``pip install novafabric``, offline, no server, no model
 call. Validation is fail-closed (on rejection nothing is written), append-only
 (a correction is a new record with ``supersedes``), and idempotent by
-``score_id``. See ``design/spec/score-submission-api-v0.md`` for the contract;
+``score_id``. See ``the private design/spec/score-submission-api-v0.md`` for the contract;
 the implementation lives in :mod:`novafabric.eval.score_submission`.
 """
 

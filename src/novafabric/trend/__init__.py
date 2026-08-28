@@ -4,7 +4,7 @@ A `nova trend` report is a read-only, offline **snapshot artifact**: one
 metric (``cost``, ``score:<name>``, or ``latency``) bucketed by ``day`` /
 ``week`` / ``asset`` over the local capsule directory, rendered as canonical
 ``TrendReport`` JSON and optionally one self-contained static HTML file.
-Spec: ``design/spec/trend-report-v0.md``. Status: **experimental**.
+Spec: ``the private design/spec/trend-report-v0.md``. Status: **experimental**.
 """
 
 from novafabric.trend.errors import TrendError, TrendUsageError

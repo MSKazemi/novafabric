@@ -22,7 +22,7 @@ tables — mirroring the score-config catalog's storage decision
 (:mod:`novafabric.eval.score_config_catalog`): no new storage backend, no
 change to the shared ``assets`` schema, no server, no internet.
 
-Workflow invariants (spec ``design/spec/annotation-queue-v0.md``, normative):
+Workflow invariants (spec ``the private design/spec/annotation-queue-v0.md``, normative):
 
 * **Atomic claim** — ``pending → assigned`` is a single state-guarded
   ``UPDATE``; if two reviewers race, exactly one wins.

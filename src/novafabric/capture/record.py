@@ -12,7 +12,7 @@ defined by ADR-0082 into whatever run is currently being captured:
     record.guardrail(guardrail_name="pii-filter", outcome="blocked")
     record.evaluator(evaluator_name="answer-relevance", score=0.91)
 
-Contract (normative in ``design/spec/extended-event-wiring-v0.md``):
+Contract (normative in ``the private design/spec/extended-event-wiring-v0.md``):
 
 - Every function resolves the current :class:`~novafabric.capture.event_recorder.EventRecorder`
   singleton **per call**. With no active capture run, each call is a silent

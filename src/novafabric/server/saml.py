@@ -1,6 +1,6 @@
 """SAML 2.0 SSO (SP role) for server mode — ADR-0138, experimental partial slice.
 
-Implements the parts of ADR-0138 / ``design/spec/saml-sso-v0.md`` that do NOT
+Implements the parts of ADR-0138 / ``the private design/spec/saml-sso-v0.md`` that do NOT
 require the gated SAML library (ADR-0138 §D5 leaves the XML-signature library
 as an open pre-adoption license gate — "this ADR authorizes the design, not
 the dependency"):

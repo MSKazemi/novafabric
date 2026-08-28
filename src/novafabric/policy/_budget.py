@@ -17,7 +17,7 @@ kept as such. Mixed recorded currencies are never silently summed
 (cross-currency normalization is out of scope for v0): the cost dimension is
 then reported unmeasured.
 
-The returned block is the spec shape defined in ``design/spec/budget-gate-v0.md``
+The returned block is the spec shape defined in ``the private design/spec/budget-gate-v0.md``
 and is consumed by the reference policy
 ``policies/novafabric/defaults/budget_gate.rego``.
 """
@@ -125,7 +125,7 @@ def budget_block_from_capsule(capsule_dir: Path) -> dict[str, Any]:
     """Assemble the recorded ``budget`` rollup block for the policy input.
 
     Reads a captured capsule directory and returns the ADR-0136 ``budget``
-    block (see ``design/spec/budget-gate-v0.md``)::
+    block (see ``the private design/spec/budget-gate-v0.md``)::
 
         {
           "total_cost":   {"currency": ..., "amount": ...} | None,

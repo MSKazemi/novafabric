@@ -5,7 +5,7 @@ A pricing catalog is a single local YAML or JSON file that assigns per-token
 models absent from the built-in ``PRICE_TABLE`` — self-hosted, fine-tuned, or
 private models — without editing source and without any network call.
 
-Invariants (normative — see ``design/spec/model-pricing-catalog-v0.md``):
+Invariants (normative — see ``the private design/spec/model-pricing-catalog-v0.md``):
 
 - **Fully local and offline.** The merged catalog is a pure function of the
   on-disk discovery layers plus the built-in table. No remote registry, no

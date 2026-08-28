@@ -8,7 +8,7 @@ failure is recorded in the capsule's ``redaction-proof.json``
 hanging, or invalid masker redacts the field — it never un-redacts, never
 leaks a raw value, and never blocks the captured workload.
 
-Spec: ``design/spec/pii-masking-pipeline-v0.md``. Schemas:
+Spec: ``the private design/spec/pii-masking-pipeline-v0.md``. Schemas:
 ``schemas/masking-config.schema.json``, ``schemas/masker-finding.schema.json``,
 ``schemas/masker-error.schema.json``.
 """

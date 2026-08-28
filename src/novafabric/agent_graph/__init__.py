@@ -8,7 +8,7 @@ is written at run time, and nothing is inferred beyond what the spans encode —
 gaps attach to a synthetic root with explicit ``reconstruction_notes``.
 
 Distinct from cross-run lineage (ADR-0090) and the fleet SPKG (ADR-0111).
-Spec: ``design/spec/agent-execution-graph-v0.md``. Status: **experimental**.
+Spec: ``the private design/spec/agent-execution-graph-v0.md``. Status: **experimental**.
 """
 
 from novafabric.agent_graph.builder import build_agent_graph

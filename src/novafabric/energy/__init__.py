@@ -1,7 +1,7 @@
 """Energy-Anchored Action Receipts (ADR-0093, Accountability Spine feature A).
 
 Measured-or-declared-unknown energy + carbon, bound (in later slices) into the
-NovaSeal/Evidence machinery. See ``design/architecture/energy-anchored-receipts.md``.
+NovaSeal/Evidence machinery. See ``the private design/architecture/energy-anchored-receipts.md``.
 """
 
 from __future__ import annotations

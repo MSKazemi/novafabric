@@ -1,7 +1,7 @@
 """Shareable capsule viewer (ADR-0140) — single-file offline HTML export.
 
 Projects a Run Capsule into a bounded, redaction-preserving ``CapsuleView``
-summary (spec: ``design/spec/capsule-viewer-v0.md``, schema:
+summary (spec: ``the private design/spec/capsule-viewer-v0.md``, schema:
 ``schemas/capsule-view.schema.json``) and renders it as **one** self-contained
 HTML file: inline CSS, no JavaScript, zero external requests, opens from
 ``file://``. Experimental.

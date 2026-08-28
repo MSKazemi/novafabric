@@ -5,7 +5,7 @@ Run Capsule's already-captured records (``model-calls.jsonl`` +
 ``tool-calls.jsonl`` + the OTel span tree in ``trace.jsonl``). Nothing here
 touches the capture path; the model mirrors
 ``schemas/agent-execution-graph.schema.json`` and the canonicalisation rules in
-``design/spec/agent-execution-graph-v0.md`` §Canonicalisation.
+``the private design/spec/agent-execution-graph-v0.md`` §Canonicalisation.
 """
 
 from __future__ import annotations

@@ -21,7 +21,7 @@ submit`` CLI, and the optional server REST endpoints. It ingests an
 ``scores.jsonl`` via the existing :func:`novafabric.eval.scores.append_score` —
 it never runs an evaluator and performs no model call.
 
-Validation invariants (spec ``design/spec/score-submission-api-v0.md``,
+Validation invariants (spec ``the private design/spec/score-submission-api-v0.md``,
 fail-closed — on any rejection **nothing is written**):
 
 1. **Well-formed** — all shipped :class:`~novafabric.eval.scores.Score`

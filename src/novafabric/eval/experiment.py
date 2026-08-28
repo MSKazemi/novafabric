@@ -18,8 +18,8 @@ An ``Experiment`` is an **immutable, content-addressed** record of one target ru
 across every item of a *pinned* dataset: it links each dataset item to the Run
 Capsule and the evidence-grade :class:`~novafabric.eval.scores.Score` records
 (ADR-0099) it produced, and carries a per-metric aggregate. Wire contract:
-``schemas/experiment.schema.json`` (graduated from ``design/spec/schemas/``);
-companion spec ``design/spec/dataset-experiment-v0.md``.
+``schemas/experiment.schema.json`` (graduated from ``the private design/spec/schemas/``);
+companion spec ``the private design/spec/dataset-experiment-v0.md``.
 
 Invariants (ADR-0120 D1):
 

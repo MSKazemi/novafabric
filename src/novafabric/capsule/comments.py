@@ -18,7 +18,7 @@ A comment is the human-authored counterpart to the machine-derived ``Score``
 record (``eval/scores.py``, ADR-0099): where a score binds ``(value, evaluator,
 subject, verdict)``, a comment binds ``(body, author, subject, created_at)``.
 This module defines the additive, optional ``comments.jsonl`` capsule file and
-its record model. See ``design/spec/capsule-comments-v0.md`` and
+its record model. See ``the private design/spec/capsule-comments-v0.md`` and
 ``schemas/comment.schema.json`` for the wire contract.
 
 Design invariants (ADR-0121 D1–D4):

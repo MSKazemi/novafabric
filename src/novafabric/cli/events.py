@@ -2,7 +2,7 @@
 
 Experimental (ADR-0137). Strictly opt-in: nothing is emitted until the user
 configures a sink via ``NOVA_EVENTS_LOG`` / ``NOVA_EVENTS_WEBHOOK``. See
-``design/spec/lifecycle-webhooks-v0.md`` for the record contract.
+``the private design/spec/lifecycle-webhooks-v0.md`` for the record contract.
 """
 
 from __future__ import annotations

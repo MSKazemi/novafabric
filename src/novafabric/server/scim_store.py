@@ -1,6 +1,6 @@
 """SQLite store for SCIM 2.0 provisioning (server mode only).
 
-ADR-0139 / spec ``design/spec/scim-provisioning-v0.md``: stored SCIM User
+ADR-0139 / spec ``the private design/spec/scim-provisioning-v0.md``: stored SCIM User
 subset (PII-minimal, closed) plus the append-only provisioning audit log.
 
 Additive tables in the existing registry SQLite database — no existing table

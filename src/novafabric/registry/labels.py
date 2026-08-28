@@ -21,7 +21,7 @@ current pointer of a label is a projection (the newest row per
 SQLite triggers enforce append-only at the storage layer: ``UPDATE`` and
 ``DELETE`` on the table abort.
 
-Invariants (ADR-0113 D1–D4; spec ``design/spec/asset-labels-v0.md``):
+Invariants (ADR-0113 D1–D4; spec ``the private design/spec/asset-labels-v0.md``):
 
 * **Append-only moves** — :func:`set_label` only ever inserts; prior rows
   are never mutated or deleted.

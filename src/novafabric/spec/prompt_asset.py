@@ -17,7 +17,7 @@
 A prompt version is an immutable, content-addressed record layered over the
 generic registry ``AssetSpec`` (``asset_type='prompt'``).
 
-Invariants (ADR-0112 D1/D2; spec ``design/spec/prompt-asset-v0.md``):
+Invariants (ADR-0112 D1/D2; spec ``the private design/spec/prompt-asset-v0.md``):
 
 * Once a ``(prompt_id, version)`` is written, its ``content_hash``,
   ``template``, ``variables``, ``config``, and ``commit_message`` are frozen.

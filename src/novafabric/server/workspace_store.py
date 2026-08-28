@@ -4,7 +4,7 @@ Experimental. SQLite tables in the same registry DB the server already uses
 (follows the ``rbac_store.py`` / ``scim_store.py`` pattern): ``organizations``,
 ``workspaces``, ``memberships``, ``service_accounts``.
 
-NORMATIVE per spec I1/I2 (``design/spec/workspace-org-model-v0.md``): this module
+NORMATIVE per spec I1/I2 (``the private design/spec/workspace-org-model-v0.md``): this module
 makes NO ``tenant_id`` or RLS changes anywhere — this layer is scoping only.
 ``tenant_id`` remains the sole RLS isolation key; a workspace is never a security
 boundary. Workspace access control is application-enforced on top of

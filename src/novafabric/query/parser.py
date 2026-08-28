@@ -2,7 +2,7 @@
 
 Accepts the two equivalent query forms — CLI flag strings and the JSON/YAML
 query object — and compiles both into the same :class:`~novafabric.query.model.QueryPlan`.
-Anything outside the allow-list of ``design/spec/capsule-query-dsl-v0.md`` is a
+Anything outside the allow-list of ``the private design/spec/capsule-query-dsl-v0.md`` is a
 hard :class:`~novafabric.query.errors.QueryParseError` **before any storage
 access** (fail closed; the offending token is named).
 """

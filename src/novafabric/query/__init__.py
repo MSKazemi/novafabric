@@ -2,7 +2,7 @@
 
 A bounded, declarative, read-only ``filter → group-by → aggregate`` surface
 over *local* Run Capsules — no server, no network, no raw SQL. Spec:
-``design/spec/capsule-query-dsl-v0.md``. Status: **experimental**.
+``the private design/spec/capsule-query-dsl-v0.md``. Status: **experimental**.
 """
 
 from novafabric.query.errors import (

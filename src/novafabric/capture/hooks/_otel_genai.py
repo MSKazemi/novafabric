@@ -15,7 +15,7 @@ This guarantees:
 3. **Forward extensibility.** Adding a new semconv field means editing
    one file, not four.
 
-Per `design/spec/model-call-v0.md`, fields are emitted only when present
+Per the private `design/spec/model-call-v0.md`, fields are emitted only when present
 in the body — there is no "default 0" for unset fields. This matches
 the OTel semconv contract and avoids polluting records with synthetic
 values.

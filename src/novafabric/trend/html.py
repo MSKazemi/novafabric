@@ -1,7 +1,7 @@
 """Single-file offline HTML renderer for a ``TrendReport`` (ADR-0131 P3).
 
 Emits exactly **one** self-contained ``.html`` file satisfying the normative
-static-HTML contract of ``design/spec/trend-report-v0.md``:
+static-HTML contract of ``the private design/spec/trend-report-v0.md``:
 
 - zero external requests — no CDN, fonts, images, scripts, ``fetch``/sockets;
 - all CSS inline in ``<style>``; **no JavaScript at all** — the chart is a

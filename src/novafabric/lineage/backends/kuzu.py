@@ -2,7 +2,7 @@
 
 Ships as *production-candidate* pending benchmark confirmation of
 depth-5 p99 < 500ms at 10M edges (Phase 6 cap-003).
-See design/adr/0053-lineagestore-v2-tiering.md for the gate condition.
+See the private design/adr/0053-lineagestore-v2-tiering.md for the gate condition.
 """
 
 from __future__ import annotations

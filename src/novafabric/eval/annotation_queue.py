@@ -26,7 +26,7 @@ Wire contracts: ``schemas/annotation-queue.schema.json`` and
 ``subject_selector`` / ``extensions`` objects). The metrics a reviewer grades
 are **score configs** (ADR-0117), referenced by name — never inlined.
 
-Invariants enforced here (spec ``design/spec/annotation-queue-v0.md``):
+Invariants enforced here (spec ``the private design/spec/annotation-queue-v0.md``):
 
 * ULID identities; ``sha256:`` content-addressed ``subject`` (identical form to
   ``Score.subject``).

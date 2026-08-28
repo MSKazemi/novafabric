@@ -1,6 +1,6 @@
 """Typed models for backup-set manifests and verification results (ADR-0181).
 
-The manifest schema follows ``design/spec/backup-restore-v0.md`` with the
+The manifest schema follows ``the private design/spec/backup-restore-v0.md`` with the
 first-slice ``local-full`` profile: the local SQLite deployment has no separate
 object-store manifest (capsule blobs travel in the set), so
 ``object_store_manifest`` is ``None`` and ``db_dump`` points at the SQLite

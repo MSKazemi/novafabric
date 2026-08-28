@@ -375,6 +375,8 @@ async def upload_capsule(
             tmp_root = spool_dir / f"{run_id}.{secrets.token_hex(8)}"
             tmp_root.mkdir(parents=True)
             ingest.extract_archive(zf, tmp_root, limits)
+            # A capsule that cannot be read is not an ingested capsule.
+            ingest.assert_capsule_at_root(tmp_root)
 
         # Step 6 — atomic publish (re-check the duplicate right before the
         # rename; TOCTOU narrowing).

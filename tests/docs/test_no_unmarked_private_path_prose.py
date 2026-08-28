@@ -39,12 +39,20 @@ Scope, stated rather than implied:
 
 The class is wider than ``docs/``, which is what the first version of this guard
 missed. Measured on 2026-08-28 across the whole public tree: **402 references in
-223 files**. The published JSON Schemas are the tier that matters most after
-``docs/`` — their ``$comment`` strings are served from ``novafabric.io/schemas/``
-and read by third parties who have no way to open a ``design/`` path — so they
-get their own case below. The remaining tier, ``src/**/*.py`` docstrings that
-reach ``help()`` and the generated API reference, is not yet swept and is
-deliberately not asserted here rather than being silently included.
+223 files**. Three tiers reach a stranger and each has its own case below:
+``docs/``; the published JSON Schemas, whose ``$comment`` strings are served from
+``novafabric.io/schemas/``; and the shipped source tree, whose docstrings reach
+``help()``/``inspect.getdoc`` and are read directly on GitHub.
+
+⚠ There is **no docstring-based documentation generator in this repository** —
+``docs/python-api.md`` is written by hand and ``docs/api-reference.md`` is
+generated from the FastAPI route table, not from module docstrings. The exposure
+for the source tier is ``help()`` and the public source itself, which is narrower
+than a generated site but is still a public surface.
+
+``tests/`` (32 references) is not covered: it is not shipped and not read by
+users. Root files (ROADMAP, pyproject, CI workflows) are not covered either;
+that tier is still open.
 
 * ``x-novafabric`` blocks inside a schema are exempt. Their ``spec`` value is a
   machine-readable document identifier, not prose addressed to a reader, and the
@@ -140,5 +148,44 @@ def test_no_published_schema_names_a_private_path_without_saying_it_is_private()
         "published JSON Schemas name a private design/ path without marking it "
         "private. These $comment strings are served from novafabric.io/schemas/ "
         "and read by consumers who have no way to open the document:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def _public_source() -> list[str]:
+    out = subprocess.run(
+        ["git", "ls-files", "src"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return [p for p in out.splitlines() if p.endswith((".py", ".md", ".rego"))]
+
+
+def test_the_source_sweep_is_not_vacuous() -> None:
+    src = _public_source()
+    assert len(src) >= 500, len(src)
+    assert any("design/" in (REPO / s).read_text(encoding="utf-8") for s in src)
+
+
+def test_no_shipped_source_file_names_a_private_path_without_saying_it_is_private() -> None:
+    """Docstrings reach ``help()`` and are read directly in the public repo."""
+    offenders: list[str] = []
+
+    for rel in _public_source():
+        text = (REPO / rel).read_text(encoding="utf-8", errors="ignore")
+        for match in PRIVATE_PATH.finditer(text):
+            start = max(0, match.start() - WINDOW)
+            context = text[start : match.end() + WINDOW].lower()
+            if any(marker in context for marker in MARKERS):
+                continue
+            line = text.count("\n", 0, match.start()) + 1
+            offenders.append(f"{rel}:{line}  {match.group(0)}")
+
+    assert not offenders, (
+        "shipped source names a private design/ path without marking it private. "
+        "These strings reach help() and are read directly in the public "
+        "repository, where the design/ tree does not exist:\n  "
         + "\n  ".join(offenders)
     )

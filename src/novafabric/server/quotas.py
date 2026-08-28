@@ -1,6 +1,6 @@
 """Storage-quota enforcement for the server app (ADR-0179 second slice, experimental).
 
-Second slice of the contract in ``design/spec/rate-limiting-quotas-v0.md``
+Second slice of the contract in ``the private design/spec/rate-limiting-quotas-v0.md``
 (the rate-limit track shipped first — see ``rate_limit.py``):
 
 - usage is **derived from the existing capsule store** (capsule count, total

@@ -1,6 +1,6 @@
 """EventEnvelope v1 — canonical wire format for NovaFabric evidence events.
 
-Spec: design/architecture/event-envelope-v1.md
+Spec: the private design/architecture/event-envelope-v1.md
 Schema: schemas/event-envelope-v1/envelope-v1.json (SHA-256 pinned per §7)
 
 Public API:

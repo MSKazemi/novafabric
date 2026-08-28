@@ -23,7 +23,7 @@ Extends the ADR-0113 deployment-label layer with three **additive** tables:
 * ``asset_label_move_approvals`` — append-only checker decisions, each
   Ed25519-signed via the ADR-0058 keyring.
 
-Invariants (ADR-0114 D1–D3; spec ``design/spec/protected-labels-v0.md``):
+Invariants (ADR-0114 D1–D3; spec ``the private design/spec/protected-labels-v0.md``):
 
 * **Two-principal rule, crypto-level** — an approval is refused when the
   approver's key fingerprint equals the proposer's key fingerprint *or* the

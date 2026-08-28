@@ -134,7 +134,7 @@ class CapsuleMigrator:
                 f"No capsule.yaml found in {source}",
                 field="capsule.yaml",
                 rule="capsule directory must contain capsule.yaml",
-                spec_section="design/spec/run-capsule-v1.md §Structure",
+                spec_section="Run Capsule v1 spec §Structure",
             )
         with open(capsule_yaml) as f:
             data = yaml.safe_load(f)

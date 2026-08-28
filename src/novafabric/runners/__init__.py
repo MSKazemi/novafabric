@@ -10,7 +10,7 @@ Public API:
 
 Future runners (`DockerRunner`, `KubernetesRunner`, `SlurmRunner`) live in
 sibling files and satisfy the same protocol. See
-:doc:`design/adr/0025-runner-spec-interface.md </../design/adr/0025-runner-spec-interface>`
+the private ``design/adr/0025-runner-spec-interface.md``
 for the design.
 """
 from __future__ import annotations

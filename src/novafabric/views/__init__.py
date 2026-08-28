@@ -4,7 +4,7 @@ A saved view wraps a verbatim ADR-0129 query object with a name and optional
 advisory display preferences, stored one-per-file under
 ``.novafabric/views/`` (YAML default, JSON equally valid). Data, not code:
 running a view is exactly running its stored query through the ADR-0129
-engine. Spec: ``design/spec/saved-views-v0.md``. Status: **experimental**.
+engine. Spec: ``the private design/spec/saved-views-v0.md``. Status: **experimental**.
 """
 
 from novafabric.views.errors import (

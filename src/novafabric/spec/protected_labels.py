@@ -26,7 +26,7 @@ records:
   (maker); applied when enough *distinct* checkers approved and the policy
   gate allows.
 
-Invariants (ADR-0114 D1–D3; spec ``design/spec/protected-labels-v0.md``):
+Invariants (ADR-0114 D1–D3; spec ``the private design/spec/protected-labels-v0.md``):
 
 * An approval's ``approver`` MUST differ from ``proposed_by`` (no
   self-approval); enforced at the crypto level via the ADR-0058 Ed25519

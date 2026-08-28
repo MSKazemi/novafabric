@@ -9,7 +9,7 @@ redaction markers verbatim (ADR-0140 D2/D3; ADR-0009). There is no un-redact
 path and no ``--show-secrets`` flag.
 
 Wire contract: ``schemas/capsule-view.schema.json`` (``schema_version 0.1.0``);
-spec: ``design/spec/capsule-viewer-v0.md``.
+spec: ``the private design/spec/capsule-viewer-v0.md``.
 """
 
 from __future__ import annotations

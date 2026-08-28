@@ -4,7 +4,7 @@ Normalizes provider-reported usage payloads into the additive, optional
 ``nova.usage`` block on a model-call record, and rolls per-call blocks up
 into the capsule-level ``usage_totals`` aggregate at finalize.
 
-Invariants (normative — see ``design/spec/token-usage-types-v0.md``):
+Invariants (normative — see ``the private design/spec/token-usage-types-v0.md``):
 
 - **Verbatim.** Every count is copied from the provider usage payload;
   NovaFabric never re-tokenizes content to compute a usage type.

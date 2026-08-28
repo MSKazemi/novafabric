@@ -10,8 +10,8 @@ manifest-anchored row counts, RLS proof — ADR-0217; the schema-skew guard and
 ``nova db upgrade --track`` disambiguation are ADR-0211 Part B), and
 ``manifest-only`` sets verify chain heads against the live WORM bucket and
 rebuild the metadata DB (ADR-0216 D6). Specs:
-``design/spec/backup-restore-v0.md``,
-``design/spec/pg-restore-skew-guard-v0.md``.
+``the private design/spec/backup-restore-v0.md``,
+``the private design/spec/pg-restore-skew-guard-v0.md``.
 """
 
 from novafabric.backup.create import (

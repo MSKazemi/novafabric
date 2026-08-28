@@ -3,7 +3,7 @@
 Computes a time- or asset-bucketed series of **one** metric (``cost``,
 ``score:<name>``, or ``latency``) over a local capsule directory and shapes
 it into the canonical ``TrendReport`` JSON (``schemas/trend-report.schema.json``,
-spec ``design/spec/trend-report-v0.md``). Status: **experimental**.
+spec ``the private design/spec/trend-report-v0.md``). Status: **experimental**.
 
 Design invariants (ADR-0131 D1–D6):
 

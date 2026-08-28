@@ -2,7 +2,7 @@
 
 Experimental. Declarative, read-only ``filter → group-by → aggregate`` over
 the local capsule directory: no server, no network, no raw SQL. The grammar
-is a closed allow-list (``design/spec/capsule-query-dsl-v0.md``); anything
+is a closed allow-list (``the private design/spec/capsule-query-dsl-v0.md``); anything
 outside it is a hard parse error.
 """
 

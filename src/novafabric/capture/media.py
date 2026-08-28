@@ -2,7 +2,7 @@
 
 When a model call's messages carry inline media (base64 image/audio/video/
 document blocks), the capture layer replaces the inline bytes with a
-content-addressed **MediaPart** reference block (``design/spec/
+content-addressed **MediaPart** reference block (``the private design/spec/
 multimodal-capture-v0.md``): the part records ``media_type``, a
 ``sha256:<hex>`` ``content_hash`` over the raw decoded bytes, ``byte_size``,
 ``redacted``, and an optional ``blob_ref`` into the capsule's existing

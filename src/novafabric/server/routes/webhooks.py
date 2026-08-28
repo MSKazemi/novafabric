@@ -2,7 +2,7 @@
 
 Role-gated CRUD + test ping + delivery log + redeliver, mirroring the
 ADR-0193 ``routes/api_keys.py`` shape. RBAC per the spec matrix
-(``design/spec/webhook-registry-v0.md``): mutations are admin-only; list/get
+(``the private design/spec/webhook-registry-v0.md``): mutations are admin-only; list/get
 and the delivery log are admin **or** auditor; the signing secret is returned
 exactly once by create and by nothing else.
 

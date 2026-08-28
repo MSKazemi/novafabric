@@ -44,7 +44,7 @@ OCSF mapping (ADR-0191 D2 — conservative, documented)
 Unknown event types fall back to API Activity (6003, activity Unknown) —
 never dropped. Anything OCSF has no field for rides verbatim in the OCSF
 ``unmapped`` object (incl. ``entry_hash``/``prev_hash`` — D5): no silent
-information loss. The companion spec ``design/spec/audit-siem-egress-v0.md``
+information loss. The companion spec ``the private design/spec/audit-siem-egress-v0.md``
 carries the same tables; tests/audit/test_siem_export.py fails CI when a new
 event type lacks a mapping.
 
@@ -120,7 +120,7 @@ _ACTIVITY_UNKNOWN: Final[int] = 0
 
 #: ADR-0191 D2 mapping table: audit ``event_type`` value →
 #: ``(class_uid, class_name, activity_id)``. Keep in lockstep with
-#: ``design/spec/audit-siem-egress-v0.md`` §2 — the golden-corpus test
+#: ``the private design/spec/audit-siem-egress-v0.md`` §2 — the golden-corpus test
 #: fails when an ``AuditEventType`` member is missing here.
 OCSF_CLASS_MAP: Final[dict[str, tuple[int, str, int]]] = {
     "policy.allow": (_API_ACTIVITY, "API Activity", _ACTIVITY_OTHER),

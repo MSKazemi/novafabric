@@ -2,7 +2,7 @@
 
 A pure, read-only function of capsule contents: reads ``model-calls.jsonl``,
 ``tool-calls.jsonl``, and ``trace.jsonl``, applies the fixed rule set of
-``design/spec/agent-execution-graph-v0.md`` §Reconstruction algorithm, and
+``the private design/spec/agent-execution-graph-v0.md`` §Reconstruction algorithm, and
 never infers structure the records did not encode. Gaps (missing parent span,
 orphan tool call, malformed self-parent/cycle) attach the node to a synthetic
 ``root`` with an explicit ``reconstruction_note`` — honesty over completeness.

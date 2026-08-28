@@ -175,7 +175,7 @@ class UsageConfig(BaseModel):
     All of it inert unless ``server.rate_limits.enabled`` (the existing
     experimental master switch); ``metering_enabled`` is the accounting
     kill-switch that keeps rate limits on while metering is off. Defaults are
-    the normative numbers from ``design/spec/usage-metering-v0.md``.
+    the normative numbers from ``the private design/spec/usage-metering-v0.md``.
     """
 
     metering_enabled: bool = True
@@ -196,7 +196,7 @@ class IngestConfig(BaseModel):
     cap, disk-spool chunk size, and zip-bomb guards. All byte/entry keys and
     ``zip_max_ratio`` accept ``0`` = disabled (escape hatch, discouraged).
     Defaults are the normative numbers from
-    ``design/spec/ingest-hardening-v0.md``.
+    ``the private design/spec/ingest-hardening-v0.md``.
     """
 
     #: Cap on the request body of POST /v0/capsules. 0 = unlimited.
@@ -239,7 +239,7 @@ class RateLimitsConfig(BaseModel):
     Additive and **disabled by default** — an absent block or ``enabled: false``
     means the limiter is fully inert and upgrading changes zero behavior.
     Per-class defaults are the normative budgets from
-    ``design/spec/rate-limiting-quotas-v0.md``.
+    ``the private design/spec/rate-limiting-quotas-v0.md``.
     """
 
     enabled: bool = False
@@ -332,7 +332,7 @@ def check_multi_org_shared_store(
     Rather than let that gap be discovered in production, a deployment that
     has actually created more than one organization must acknowledge it. This
     narrows a *claim* — it does not fix the isolation gap; the remediation
-    options are in ``design/security-reviews/2026-07-18-capsule-store-tenant-
+    options are in ``the private design/security-reviews/2026-07-18-capsule-store-tenant-
     isolation.md`` and are gated on Security-Architect review.
 
     Single-organization deployments — the default, and the only shape the
@@ -343,7 +343,7 @@ def check_multi_org_shared_store(
             f"Refusing to start: {org_count} organizations exist, but the "
             f"capsule store is NOT tenant-partitioned — any authenticated "
             f"reader can list and fetch every organization's capsules "
-            f"(ADR-0178, see design/security-reviews/"
+            f"(ADR-0178, see the private design/security-reviews/"
             f"2026-07-18-capsule-store-tenant-isolation.md). Server mode is "
             f"single-tenant-safe only today. Pass "
             f"--i-accept-shared-capsule-store (or set "

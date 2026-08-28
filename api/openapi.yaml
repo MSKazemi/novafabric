@@ -3236,7 +3236,7 @@ paths:
       tags:
       - workspaces
 x-deprecation-policy:
-  adr: design/adr/0188-api-deprecation-sunset-policy.md
+  adr: 'ADR-0188 (public index: docs/decisions.md)'
   currently-deprecated: []
   headers:
   - Deprecation

@@ -1,7 +1,7 @@
 """Single-file offline HTML renderer for a ``CapsuleView`` (ADR-0140 P2).
 
 Emits exactly **one** self-contained ``.html`` file satisfying the normative
-contract of ``design/spec/capsule-viewer-v0.md`` Part 2:
+contract of ``the private design/spec/capsule-viewer-v0.md`` Part 2:
 
 - zero external requests — no CDN, fonts, images, scripts, ``fetch``/sockets;
 - all CSS inline in ``<style>``; no JavaScript at all (no-JS static tables);

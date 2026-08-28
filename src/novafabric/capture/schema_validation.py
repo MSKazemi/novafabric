@@ -2,9 +2,9 @@
 
 The tool-call format has always *declared* where a tool's contract lives
 (`arguments_schema_ref` / `result_schema_ref`, see
-``design/spec/tool-call-v1.md``) without enforcing it. This module turns a
+``the private design/spec/tool-call-v1.md``) without enforcing it. This module turns a
 present schema_ref into a recorded ``schema_validation`` verdict block
-(``design/spec/toolcall-schema-validation-v0.md``):
+(``the private design/spec/toolcall-schema-validation-v0.md``):
 
 - **Record-only.** A validation failure is recorded in the verdict's
   ``errors[]`` and is NEVER raised into the captured application.

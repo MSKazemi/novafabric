@@ -2,7 +2,7 @@
 #
 # Compares the capsule's ALREADY-RECORDED cost/energy/token rollup
 # (input.resource.budget — assembled by novafabric.policy.budget_block_from_capsule,
-# spec: design/spec/budget-gate-v0.md) against declared ceilings
+# spec: the private design/spec/budget-gate-v0.md) against declared ceilings
 # (input.context.budget_ceilings). A promotion gate, not a live alert:
 # it acts on sealed evidence at promote time and never watches running spend.
 #

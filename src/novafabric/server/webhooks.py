@@ -5,7 +5,7 @@ same registry SQLite DB the sibling server stores use (``api_keys.py`` /
 ``workspace_store.py`` pattern: per-call connections, idempotent
 ``CREATE TABLE IF NOT EXISTS`` DDL).
 
-Secret scheme (spec ``design/spec/webhook-registry-v0.md``):
+Secret scheme (spec ``the private design/spec/webhook-registry-v0.md``):
 
 - Full secret string ``nvwh_<hook_id>_<secret>`` (``secrets.token_urlsafe``),
   returned exactly ONCE by :func:`create_webhook` and never by any other

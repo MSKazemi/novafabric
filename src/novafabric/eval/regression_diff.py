@@ -20,7 +20,7 @@ a three-valued verdict (``ACCEPT_H0`` / ``ACCEPT_H1`` / ``CONTINUE``). Agentic p
 swings several points as noise even at temperature 0, so a bare delta gate fires on noise;
 this fires **only** on a statistically significant regression (``ACCEPT_H1``).
 
-Design invariants (``design/spec/features/NF-007-009-statistical-regression-diff.md``):
+Design invariants (``the private design/spec/features/NF-007-009-statistical-regression-diff.md``):
 
 - **Zero-token, offline (req 2):** pure arithmetic over already-stored pass/fail outcomes
   and numeric scores; never re-invokes a workload, never calls a model.

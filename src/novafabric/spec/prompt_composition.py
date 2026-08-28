@@ -23,7 +23,7 @@ label (``@production``, ADR-0113; the reserved ``latest`` counts as a label).
 A reference is a placeholder for the referenced asset's *resolved body*,
 spliced in at the reference site — textual inclusion is the only mechanism.
 
-Invariants (ADR-0115 D1–D5; spec ``design/spec/prompt-composition-v0.md``):
+Invariants (ADR-0115 D1–D5; spec ``the private design/spec/prompt-composition-v0.md``):
 
 * The composition graph is a **bounded acyclic DAG**: cycles are rejected,
   and no node may sit deeper than :data:`MAX_COMPOSITION_DEPTH` (= 8, root

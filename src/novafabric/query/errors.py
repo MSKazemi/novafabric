@@ -11,7 +11,7 @@ class QueryParseError(QueryError):
     """A query failed allow-list validation before any storage access.
 
     Raised for any field, operator, function, metric, or clause outside the
-    closed allow-list of ``design/spec/capsule-query-dsl-v0.md`` — the query
+    closed allow-list of ``the private design/spec/capsule-query-dsl-v0.md`` — the query
     fails closed with the offending token named.
     """
 

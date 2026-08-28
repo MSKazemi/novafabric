@@ -82,7 +82,7 @@ _SCAN_TARGETS = [
 ]
 
 # Public alias: the ADR-0135 masking pipeline walks exactly the same targets
-# the built-in scanner does (design/spec/pii-masking-pipeline-v0.md).
+# the built-in scanner does (the private design/spec/pii-masking-pipeline-v0.md).
 SCAN_TARGETS: list[tuple[str, str]] = _SCAN_TARGETS
 
 
