@@ -213,7 +213,21 @@ class TestPostgresMigration100k:
             row[0]
             for row in sqlite_conn.execute("SELECT run_id FROM runs").fetchall()
         }
+        # ``postgres_url`` is a SESSION-scoped container shared by every test in
+        # tests/metadata_store, so `runs` also holds other tests' rows. Every
+        # assertion below must therefore be scoped to the tenants THIS test
+        # seeded (fresh uuid4 per invocation) — otherwise the 1% sample draws
+        # foreign rows and the checksum fails for a reason that has nothing to
+        # do with the migration. That is exactly what made this test fail on
+        # every nightly run: ~5 of 1000 sampled rows belonged to other tests.
+        sqlite_tenant_ids = [
+            row[0]
+            for row in sqlite_conn.execute(
+                "SELECT DISTINCT tenant_id FROM runs"
+            ).fetchall()
+        ]
         sqlite_conn.close()
+        assert len(sqlite_tenant_ids) == N_TENANTS
         assert src_count == EXPECTED_ROWS
 
         # Run migration CLI
@@ -236,7 +250,10 @@ class TestPostgresMigration100k:
         import psycopg  # noqa: PLC0415
 
         with psycopg.connect(postgres_url) as pg_conn:
-            pg_row = pg_conn.execute("SELECT COUNT(*) FROM runs").fetchone()
+            pg_row = pg_conn.execute(
+                "SELECT COUNT(*) FROM runs WHERE tenant_id = ANY(%s)",
+                (sqlite_tenant_ids,),
+            ).fetchone()
             assert pg_row is not None
             pg_count: int = pg_row[0]
             # Read on a NEW connection, deliberately: the migration CLI once
@@ -244,15 +261,19 @@ class TestPostgresMigration100k:
             # transaction while every row was rolled back at close. Include the
             # CLI's own output here — without it this assertion says only
             # "0 rows" and gives no hint that the CLI believed it succeeded.
-            assert pg_count >= EXPECTED_ROWS, (
-                f"Postgres has {pg_count} rows; expected at least {EXPECTED_ROWS}.\n"
+            # Scoped to this test's tenants, so it can be EXACT: `>=` was only
+            # ever needed to tolerate the other tests sharing this container.
+            assert pg_count == EXPECTED_ROWS, (
+                f"Postgres has {pg_count} rows for this test's {N_TENANTS} "
+                f"tenants; expected exactly {EXPECTED_ROWS}.\n"
                 f"CLI reported:\n{result.output}"
             )
 
             # --- 1 % checksum: sampled run_ids exist in source SQLite ------
             rows = pg_conn.execute(
-                "SELECT run_id FROM runs ORDER BY random() LIMIT %s",
-                (SAMPLE_SIZE,),
+                "SELECT run_id FROM runs WHERE tenant_id = ANY(%s) "
+                "ORDER BY random() LIMIT %s",
+                (sqlite_tenant_ids, SAMPLE_SIZE),
             ).fetchall()
 
         pg_sample_ids = [row[0] for row in rows]

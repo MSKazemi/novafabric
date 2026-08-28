@@ -33,6 +33,26 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **The 100k-row Postgres migration gate had never passed — and the defect was in the
+  test, not the migration.** `nightly-scale-gates.yml` is **0-for-27**: every run since the
+  workflow landed has been red, which is why nothing was ever learned from it. The test
+  asserted row-count parity as `pg_count >= EXPECTED_ROWS` — deliberately tolerant, because
+  `postgres_url` is a **session-scoped** testcontainer shared by all nine Postgres test files
+  in `tests/metadata_store/`, so `runs` legitimately holds other tests' rows. It then drew its
+  1% checksum sample with `SELECT run_id FROM runs ORDER BY random() LIMIT 1000` over the
+  **whole table** and required every sampled id to exist in *this* test's source SQLite. The
+  two assertions contradict each other: the first says foreign rows are expected, the second
+  forbids them. With ~500 foreign rows in a 100k table the sample drew about 5, and the gate
+  failed on a migration that was correct. Both assertions are now scoped to the 20 `uuid4`
+  tenants the test seeds, which also lets the count assertion tighten from `>=` to `==`.
+  Scoping is by **tenant**, not by run_id, so the checksum stays non-vacuous: injecting 10,000
+  run_ids that are absent from the source — under the test's own tenants, holding the row count
+  fixed — still fails it, on 89 of 1000 sampled rows. The same 5,000 foreign-tenant rows that
+  fail the pre-fix assertions (47 of 1000) now pass. This is the campaign's recurring class
+  seen from the other side: not a check that passes because its condition was never exercised,
+  but a check that fails for a reason unrelated to what it guards, which is just as effective
+  at teaching everyone to ignore it.
+
 - **`fastapi` is unpinned — the ceiling was real, but its stated cause was wrong** (issue #54).
   Four extras held `fastapi<0.137` and `.github/dependabot.yml` carried a matching `ignore`,
   both attributing the breakage to *"starlette 1.4 route mounting"* regressing the Prometheus
