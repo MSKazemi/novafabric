@@ -183,7 +183,7 @@ def create_app(config: ServerConfig) -> FastAPI:
                 default_capsule_dir() / SPOOL_DIR_NAME, started_at=_time.time()
             )
             if _reaped:
-                logger.info("reclaimed %d orphaned ingest spool file(s)", _reaped)
+                logger.info("reclaimed %d orphaned ingest temporaries", _reaped)
         except Exception:  # noqa: BLE001 — reclamation must never break startup
             logger.warning("ingest spool reclamation failed", exc_info=True)
         # ADR-0178 (experimental): idempotent default org/workspace bootstrap —
