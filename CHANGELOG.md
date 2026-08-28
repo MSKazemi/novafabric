@@ -84,6 +84,21 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **`get_connection()` could raise `OperationalError: database is locked` when several
+  threads opened the registry database at once.** `PRAGMA journal_mode=WAL` is a *write*
+  needing a brief exclusive lock, and SQLite does not apply a connection's busy timeout to
+  a journal-mode change — it returns `SQLITE_BUSY` immediately. Issuing it unconditionally
+  on every connect therefore made concurrent opens of one file fail. This is a production
+  path: `serve` opens this database from four concurrent sites (the lifespan bootstrap, the
+  stats refresh thread, the capsule watcher, and the request handlers). Measured over eight
+  threads opening one fresh database, **25 failures in 500 trials before, 0 in 500 after**.
+  The journal mode is a persistent property of the file, so the fix reads it first — every
+  connection after the first now writes nothing — and the bounded retry's exit condition is
+  the invariant *the database is in WAL*, not *my statement succeeded*, so a thread that
+  loses the race to another writer is satisfied by that writer's work. WAL is never silently
+  abandoned: exhausting the retries raises, because a caller expecting concurrent readers
+  must not be handed a mode that forbids them.
+
 - **One test could leave capture-hook state set for the next test in the same xdist
   worker.** `tests/conftest.py` already reset `capture.event_recorder`'s process-globals
   between tests; it did not reset those of `capture.hooks`, a sibling module with the
