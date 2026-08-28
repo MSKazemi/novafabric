@@ -9,6 +9,167 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Added
+
+- **Seven measured performance numbers in the SLO catalog** (ADR-0248 mechanism, ADR-0255
+  measurements) — absolute capture overhead (4.56 s, independent of a 61.8x workload range),
+  topology recluster cost per node and read-path p99, OPA policy decision p99, Postgres RLS
+  cost on tenant-scoped reads, the collector's marginal per-event cost, and lineage bulk-copy
+  throughput. The catalog now carries an objective we **miss**: bulk copy sustains 1340 edges/s
+  against our own 10,000 edges/s target, a 7.5x shortfall. A catalog that lists only the
+  objectives we meet is advertising, not a contract. `docs/slo.md` is regenerated from it.
+
+- **`make bench-scale` and `make bench-lineage`** — the two benchmark suites that a bare
+  `pytest` never runs, now reachable and documented. `bench/` is deliberately outside
+  `testpaths`, so the root run collects **0** of its tests, and `pytest bench/` from the repo
+  root fails with 7 collection errors — expected, because each bench is its own distribution
+  (`bench/lineage` has its own `pyproject.toml` and lockfile) and two of them both claim the
+  top-level module name `tests`. Nothing said so anywhere, so the suites read as broken rather
+  than as separately invoked. `make bench-scale` also un-hides the dashboard p95 gate at a
+  100,000-run store, which is skipped by default but takes ~7 s.
+
+### Fixed
+
+- **The registry schema-DDL memo gave no protection under concurrency at all.**
+  `init_schema()` checked the "already initialised" set under its lock, *released* the
+  lock, ran the full `CREATE TABLE` script, then re-took the lock to record the result —
+  a check-then-act. Every thread that arrived before the first one finished therefore
+  missed the memo and ran the DDL too. Measured with 8 threads released from a barrier:
+  **8 of 8 ran it**, so on a busy dashboard the once-per-database optimisation was simply
+  not in effect. This is not a theoretical arrangement — `serve` calls `init_schema()`
+  from four concurrent sites against the same file: the lifespan's `run_in_executor`
+  bootstrap, the stats refresh thread, the capsule-watcher thread, and the request
+  handlers. The check, the DDL and the record now happen under one hold of the lock.
+  `tests/serve/test_schema_init_once.py` asserted this invariant already but could only
+  catch a violation by luck; the new test removes the luck with a barrier and a widened
+  window, and fails with `8 == 1` against the old code.
+
+- **The SPK-COL-1 replay benchmark printed `verdict: PASS` for runs in which the durability
+  arm never executed.** `--restart-cmd` is optional, and a skipped restart leg left
+  `restart_equal is None`, which satisfied the conjunction that computes the overall verdict —
+  so a harness that had measured nothing about crash durability reported a pass, and a draft
+  written from that log claimed durability nothing had tested. A skipped check is not a passed
+  check: the verdict is now `PASS` only when every arm ran and passed, `INCOMPLETE` when one was
+  skipped (exit 1, with the flag to pass), and `FAIL` otherwise. Two escape routes are closed
+  alongside it — a broker that loses the stream across a restart raised an unhandled
+  `NotFoundError` instead of reporting `FAIL`, and the teardown `delete_stream` then 404'd on
+  the way out, discarding a verdict that had already been determined. Verified against a live
+  NATS broker in all three states: skipped → `INCOMPLETE`, memory-backed stream → `FAIL`,
+  file-backed stream → `PASS`.
+
+- **Every `measured` entry in the published SLO catalog cited a source no reader could open.**
+  `slo_catalog.toml` and the `docs/slo.md` generated from it both ship publicly, while their
+  `source` fields pointed at raw benchmark artifacts and internal design records that are not
+  part of the published tree — so for the only audience that reads a published catalog, every
+  reference resolved to nothing. Sources now name the artifact and say plainly when it is not
+  published, rather than pretending to be a link. A new guard test enforces it, and it checks
+  **tracked by the publishing git**, not *file exists* — the paths did exist in the development
+  tree, which is precisely why the problem survived unnoticed.
+
+- **Two apps built in one process shared one SSE bus and one stats cache** (ADR-0257).
+  `create_app()` calls itself a "pure factory", but `_RunEventBus` and `_StatsCache` were
+  instantiated at module scope and closed over by every app the process built. `/api/stats`
+  could therefore answer with another app's counts for a capsule directory it had never read
+  (demonstrated: an app over an empty directory reporting a neighbour's 3 runs), and an SSE
+  subscriber on one app received another app's runs. `nova serve` runs one app per process, so
+  this is not a live multi-tenant leak today — but `create_app` is a public importable factory
+  and the isolation its docstring promises was not there. Both are now constructed per app;
+  the module exposes neither name. 5 tests added, 3 of which fail against the pre-fix source.
+
+- **The PROV-O RDF export of a capsule with no lineage was an empty graph that SHACL said was
+  valid** (ADR-0256 Amendment 4). `capsule_lineage_to_provo()` built its graph purely from
+  `lineage.jsonl`, so a first-in-chain capsule — the normal state of any run with nothing upstream —
+  produced zero triples, and `nova kg build-provenance` reported success on them. The failure hid
+  behind SHACL itself: **an empty graph vacuously satisfies every shape**, so `validate_provo()`
+  returned `conforms=True` forever. The graph is now seeded from `capsule.yaml` first
+  (new `capsule_manifest_to_provo()`): the run becomes a `prov:Activity` and each `evidence_digests`
+  entry a `prov:Entity` joined by `prov:wasGeneratedBy`, carrying `nf:filename`, `nf:sha256` and
+  `nf:sizeBytes`. On a real capsule this is 0 -> 72 SHACL-valid triples. The SHACL shapes in
+  `ontology.py` are **unchanged** — the seed satisfies the existing `nf:capsuleRunId` constraint,
+  and a timestamp is emitted only when it parses as `xsd:dateTime`, so a malformed manifest field
+  is dropped rather than turned into a validation failure. Fourth and last instance of the class
+  fixed this cycle; six tests added.
+
+- **RO-Crate's persistent identifier came from the directory name, not the capsule**
+  (ADR-0256 Amendment 3). `ro_crate.py` did `run_id = capsule_dir.name` — a variable named
+  `run_id` assigned a filesystem basename. On a freshly captured capsule the directory *is* the run
+  id, so the output was correct by coincidence and every test passed; it stopped being correct the
+  moment the capsule was renamed, copied under another name, or extracted from an archive, which is
+  exactly what RO-Crate's `identifier` field exists to survive. It now reads `run_id` from
+  `capsule.yaml`, falling back to the directory name when no readable manifest exists.
+
+- **The export-conformance benchmark now checks whether documents are true, not just well-formed.**
+  `bench/f10_compliance/export_conformance.py` verified that required keys were *present*. It could
+  not tell `unknown-model` from a real model name, nor an empty provenance graph from a complete
+  one, which is why three defective exporters passed it for their entire lives. A new fidelity layer
+  compares each generated document against the capsule's own evidence files — every model in
+  `model-calls.jsonl` and tool in `tool-calls.jsonl` must appear as a component, the run must appear
+  as a PROV activity, and a placeholder component is a failure when real models were called. It is
+  reported as a separate `faithful` column beside `conformant`, because a format can be perfectly
+  well-formed and still be a lie. Replaying the two pre-fix exporter outputs through it produces 5
+  and 3 specific failures respectively: it would have caught both on day one.
+
+- **The AI-BOM never listed the models the run actually called** (ADR-0256 Amendment 1).
+  `aibom` resolved its model component from `manifest.get("model") or manifest.get("model_id",
+  "unknown-model")` and its tools from `manifest.get("tools", [])` — but `nova capture` writes
+  **none** of those keys into `capsule.yaml`. It writes `model_calls_ref`/`tool_calls_ref` and
+  counts, while `model-calls.jsonl` carries `gen_ai.request.model`, `gen_ai.response.model`,
+  `gen_ai.system` and per-call token usage as *required* fields. Every captured run therefore
+  exported a CycloneDX AI Bill of Materials containing one component literally named
+  **`unknown-model`** with an empty provider and **zero tool components**, however many models and
+  tools the run really used — and it passed conformance, because CycloneDX only requires that *a*
+  `machine-learning-model` component exist. The exporter now reads the evidence files: one
+  component per distinct model with tokens summed **per model**, tools from `tool-calls.jsonl`
+  deduped with versions, providers and call counts. An explicit manifest `model` still wins, so
+  synthesised manifests keep byte-identical output. Verified on a capsule with 3 model calls
+  across 2 models and 3 tool calls across 2 tools: **1 placeholder → 4 real components**.
+
+- **PROV-JSON export claimed that most capsules had no provenance at all** (ADR-0256).
+  `nova lineage export-prov` read **only** `lineage.jsonl`, which records *cross-capsule* edges and
+  is empty for any run not downstream of another — the first run in a chain, and every standalone
+  run. Those capsules exported a syntactically valid, semantically false document: correct
+  namespaces, **zero entities, zero activities, zero relations**, exit code 0. Meanwhile their own
+  `capsule.yaml` recorded the run id, its start and finish times, the command, and a `sha256` for
+  every file it produced — a complete PROV triple sitting unread. The export now seeds the run as
+  an `activity` and each `evidence_digests` entry as an `entity` `wasGeneratedBy` it, then layers
+  lineage edges on top. On a real capsule: **0 → 9 entities, 1 activity, 9 relations**, and export
+  conformance across the six regulatory formats goes **83 % (5/6) → 100 % (6/6)**. PROV-N renders
+  from the same document and is fixed with it. A test had asserted `doc["activity"] == {}` — it
+  encoded the defect as a requirement, so the suite was green *because* of the bug.
+
+- **The governance benchmark measured the wrong policy decision.**
+  `bench/f9_governance/opa_latency.py` built its `promote` scenarios without an `asset_type`, but
+  `promote_gate.rego` applies the eval-score threshold to agents only
+  (`eval_ok if input.resource.asset_type != "agent"`). The low-score *deny* case therefore passed the
+  eval gate unconditionally and the bench reported `all decisions correct: False` — it was measuring
+  a decision the policy was never asked to make. Both promote scenarios now set `asset_type="agent"`;
+  all four decisions are correct, at p50 ≈ 21 ms over 500 iterations per policy.
+
+- **The test suite could not be safely run as a subset** (ADR-0254). `tests/conftest.py` never
+  reset `capture.event_recorder`'s module-level recorder or its `ContextVar` between tests, so
+  **71 tests inherited recorder state** from an earlier test in the same process. Under
+  `pytest-xdist` the *selection* decides which tests share a worker, so any change to the
+  selection changed who inherited what — a reduced selection failed three `EventRecorder` tests
+  on one run and passed the identical command on the next. An autouse `_isolated_capture_recorder`
+  fixture now resets both before and after every test (71 → 0 inherited). Test-only change; no
+  production behaviour is affected.
+
+- **NovaSeal DSSE envelopes could not be read by any non-NovaFabric verifier** (ADR-0253).
+  The DSSE spec puts `payload`, `sig` and `cert` on the wire as standard base64 (RFC 4648
+  §4, padded); NovaSeal emitted base64**url** without padding. Fed to a stock
+  `base64.b64decode`, **309 of 399** realistic in-toto statement payloads raised
+  `Incorrect padding`, and with padding restored **73%** still decoded to the wrong bytes
+  because `-`/`_` are not in the standard alphabet. Since the whole point of DSSE is that
+  someone else's tool can verify our envelopes, this defeated the format.
+
+  Envelopes are now encoded to the spec and decoded **tolerantly** — either alphabet,
+  padded or not — so every envelope sealed before this release keeps verifying. Nothing is
+  re-signed and no signature changes: DSSE signs the PAE over the *decoded* payload bytes,
+  never over the base64 text. The encoder/decoder pair had been copied into three modules
+  (`trust/novaseal/envelope.py`, `promote/predicates.py`, `promote/rekor_client.py`) and is
+  now defined once; `rekor_client` was verified separately because it derives the payload
+  hash written to a transparency log.
+
 ### Security
 
 - **A token `nova serve` issued authenticated nothing, and sat on disk in cleartext**
