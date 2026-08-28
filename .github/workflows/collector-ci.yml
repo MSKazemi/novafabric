@@ -15,7 +15,13 @@ on:
 
 env:
   # go.mod requires Go ≥ 1.25 since the OTel 1.43.0 bump (Dependabot Phase C).
-  GO_VERSION: "1.26.5"
+  # 1.26.7 (>= 1.26.6) clears the four stdlib advisories that make
+  # `govulncheck ./...` fail on every run: GO-2026-5026 (x/net idna punycode),
+  # GO-2026-5972 (encoding/asn1 recursion), GO-2026-6090 (crypto/tls
+  # post-handshake), GO-2026-6218 (net/url resolvePath). All four are reported
+  # by vuln.go.dev as fixed in 1.26.6; the collector's own code is not implicated
+  # and golang.org/x/net is already v0.57.0 (>= the 0.55.0 fix).
+  GO_VERSION: "1.26.7"
   GOPATH: ${{ github.workspace }}/.gopath
 
 jobs:
