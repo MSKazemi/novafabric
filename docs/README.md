@@ -133,6 +133,13 @@ implemented versus design intent.
 | [Adopters](../ADOPTERS.md) | Who uses NovaFabric and for what — and how to add yourself |
 | [Press & media kit](press-kit.md) | Logos, palette, and approved boilerplate for writing or speaking about NovaFabric |
 
+## Integrate
+
+| Document | What it covers |
+|---|---|
+| [Integrations index](integrations/README.md) | The front door for "how do I run this alongside X" — and an honest list of what has no guide yet |
+| [GitHub Actions](integrations/github-actions.md) | Capturing a CI step as a capsule and uploading it as a build artifact (inputs, outputs, and what happens when the step fails) |
+
 ## Extend
 
 | Document | What it covers |

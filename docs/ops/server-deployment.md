@@ -627,13 +627,26 @@ ingest:
   zip_max_entries: 10000               # archive member cap → 422 zip_guard_violation
   zip_max_uncompressed_bytes: 2147483648  # 2 GiB decompressed-total cap
   zip_max_ratio: 100.0                 # compression-ratio cap (per member + total)
+  max_concurrent_unpack: 16            # concurrent unpacks per worker (1-256)
 ```
 
 Env overrides: `NOVAFABRIC_SERVER_INGEST_MAX_UPLOAD_BYTES`,
 `NOVAFABRIC_SERVER_INGEST_SPOOL_CHUNK_BYTES`,
 `NOVAFABRIC_SERVER_INGEST_ZIP_MAX_ENTRIES`,
 `NOVAFABRIC_SERVER_INGEST_ZIP_MAX_UNCOMPRESSED_BYTES`,
-`NOVAFABRIC_SERVER_INGEST_ZIP_MAX_RATIO`.
+`NOVAFABRIC_SERVER_INGEST_ZIP_MAX_RATIO`,
+`NOVAFABRIC_SERVER_INGEST_MAX_CONCURRENT_UNPACK`.
+
+- **`max_concurrent_unpack`** (ADR-0262, **works today**) bounds how many capsules
+  one worker unpacks at the same time. Unpacking is blocking CPU + disk work; until
+  ADR-0262 it ran inline on the worker's event loop, so **each worker served exactly
+  one upload at a time** and ingest capacity was `workers / service_time`. A 314-VM
+  fleet measured the result: throughput pinned at 61.6 req/s, flat across a 9x span
+  of offered load, p99 26.8 s — on a host at ~20% CPU. Nothing was lost (41,774
+  uploads, 41,774 stored capsules) — it was slow, not lossy. The work now runs in the
+  threadpool, and this key is the bound that keeps a higher concurrency from becoming
+  unbounded concurrent extraction. **Raising it raises peak transient disk and memory
+  proportionally** (see the transient-disk note below); lower it on a small host.
 
 - Rejections use the standard error envelope: HTTP **413**
   `payload_too_large` (body over the cap; `details` carries
@@ -645,7 +658,9 @@ Env overrides: `NOVAFABRIC_SERVER_INGEST_MAX_UPLOAD_BYTES`,
   (escape hatch, discouraged).
 - Transient disk: up to `max_upload_bytes` (spool) plus the decompressed size
   (temp extract dir) per in-flight upload, under
-  `<capsule_dir>/.ingest-tmp/`; both are removed on every exit path.
+  `<capsule_dir>/.ingest-tmp/`; both are removed on every exit path. Since
+  ADR-0262 a worker can have up to `max_concurrent_unpack` extractions in flight,
+  so size the volume for that multiple.
 
 **Recommended (normative, ADR-0203 D4):** for any non-loopback deployment,
 also enable the [ADR-0179](../decisions.md)

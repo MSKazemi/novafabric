@@ -1481,7 +1481,7 @@ unchanged.)
 
 **Security model:**
 - Localhost only by default (binds `127.0.0.1`)
-- One-shot session token required on every `/api/*` request — either as
+- Session token required on every `/api/*` request — either as
   `?token=<token>` or as an `Authorization: Bearer <token>` header (when the
   header is present it is authoritative)
 - DNS-rebinding defence (`Host` header validated)

@@ -11,6 +11,65 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Added
 
+- **Capture adapters for LlamaIndex, Pydantic AI, and Haystack** (closes issues #1, #2, #3).
+  `wrap_engine`, `wrap_agent`, and `wrap_pipeline` wrap the framework's entry point so each
+  invocation writes its own capsule, with the wire hooks claimed and `metadata.wire_capture`
+  stamped per ADR-0224. All three stay importable when their framework is absent and raise an
+  `ImportError` naming the install command at call time.
+
+  Two details worth knowing:
+
+  - **LlamaIndex has no single entry point.** A query engine exposes `query`, a chat engine
+    `chat`, an agent `chat` or `run`. The adapter checks an ordered list and records which one
+    it patched in `metadata.entry_point`; an object exposing none of them raises rather than
+    capturing nothing silently.
+  - **Pydantic AI's `run_sync` drives `run` internally.** Both are patched, so a re-entrancy
+    guard is required: without it one user-visible call opens *two* capsules and the inner one
+    takes the wire hooks from the outer, leaving neither stream complete.
+
+  New capsule-writing adapters share `adapters/_capsule.py` instead of copying the manifest
+  literal an eleventh time. The eleven existing adapters are deliberately unchanged — that
+  duplication is how all eight of them once drifted into writing a `tags` key the schema
+  rejects, but rewriting working, tested adapters buys nothing today. The static schema guard
+  covers the shared core because it globs the whole adapters directory.
+
+- **Three runnable examples and an integrations guide for the environments the README
+  already promised** (closes issues #70, #71, #72, #74). Each was executed against the real
+  thing before being documented, and each README states what the capsule does **not**
+  contain — the omissions are the reason the examples are worth having:
+
+  - `examples/notebook-capture/` — the two working Jupyter shapes (`nova capture --
+    jupyter nbconvert --execute`, and `@agent` inside a cell). NovaFabric ships no
+    notebook-specific code, so there is no per-cell capture, and a notebook's own cell
+    output reaches the executed notebook but **never the capsule**. Running the kernel in a
+    different virtualenv from `novafabric` degrades silently: the capture hooks fail with
+    `No module named 'novafabric'` on stderr, `model-calls.jsonl` stays empty, and
+    `capsule.yaml` records the `nova` process's interpreter rather than the kernel's — while
+    the run still reports `status: success`.
+  - `examples/hpc-slurm-job/` — capture under a batch scheduler; the capsule records no job
+    id, node, cluster, or partition.
+  - `examples/docker-run/` — capture of a containerized run; the environment lock describes
+    the host, and no image digest is recorded.
+  - `docs/integrations/` — a front door for "how do I run this alongside X", starting with
+    GitHub Actions, plus an honest list of what has no guide yet.
+
+- **Concurrent in-process captures each get their own complete capsule** (ADR-0224 phase 2,
+  closes issue #7). Two captures running in one process no longer have to take turns: the
+  one that loses the hook race now binds its own recorder **and writer** to its task and
+  files its events into its own capsule, through the winner's single patch layer. No hook
+  constructor signature changed and no adapter changed — the hooks resolve both when an
+  event *fires*, and the token stays opaque to callers.
+
+  `metadata.wire_capture` gains a fourth value, **`scoped-concurrent`**: this capture
+  installed no wire hooks but recorded its own stream anyway. It is deliberately distinct
+  from `skipped-concurrent`, which still means the stream is genuinely absent — collapsing
+  the two would tell a reader a complete stream was missing.
+
+  **`installed-contended` still warns.** A bare thread inherits no context, so an event it
+  raises still resolves to the hook owner. The narrowing is real but partial, and an
+  evidence system reports the residual instead of rounding it to zero.
+
+
 - **`nova doctor --check-tokens`** — audits serve-token records whose secret is still
   stored in cleartext (pre-ADR-0252). See the corresponding entry under *Fixed*.
 
@@ -32,6 +91,101 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   100,000-run store, which is skipped by default but takes ~7 s.
 
 ### Fixed
+
+- **The local server bearer token no longer reaches supervised logs.**
+  `nova server start` printed the secret to `stderr` on the theory that stderr is a
+  human terminal. Under `nohup`, systemd, Docker/Kubernetes and CI it is a durable,
+  routinely-collected file, so the guard separated two equally durable channels. A
+  fleet-scale run found the token on line 1 of a 3.3 MB server log and in two further
+  evidence files, none matched by any ignore rule. The token is now emitted in full
+  only when `sys.stderr.isatty()`; otherwise the start-up line carries a
+  non-reversible SHA-256 fingerprint, the token-file path, and the
+  `NOVAFABRIC_SERVER_TOKEN` hint. **This changes `nova server start` output in
+  non-interactive contexts.** See ADR-0263.
+- **Documentation no longer calls the session tokens "one-shot".** Both the server
+  token and the `nova serve` token are reused from disk across restarts and outlive
+  the process; three surfaces still described them as one-shot.
+
+- **Capsule ingest no longer serialises a whole worker per upload** (ADR-0262, campaign-3
+  defect B15). `POST /v0/capsules` was `async def` but did every expensive step — zip open,
+  guarded member reads, extraction, atomic rename, index write — inline on the worker's
+  event loop. A coroutine that never yields owns its loop, so **each worker served exactly
+  one upload at a time** and ingest capacity was `workers / service_time` by construction.
+
+  A 314-VM, ten-region fleet measured the consequence: accepted throughput pinned at
+  **61.6 req/s, flat to 1.036x across a 9x span of offered load**, with p99 reaching
+  **26,761 ms against the 200 ms objective — a 134x miss** — while the host sat at ~20% CPU.
+  It was serialised, not saturated. Little's Law, `8 workers / 130 ms`, and a
+  concurrency-1 control all agreed on the mechanism.
+
+  The blocking work now runs in the threadpool, bounded per worker by the new optional
+  **`server.ingest.max_concurrent_unpack`** (default 16) so that removing a serialisation
+  cannot become unbounded concurrent extraction. Matched A/B on one worker, restarted
+  between arms: at concurrency 8, **20.63 -> 31.92 req/s (+55%)** and **p50 387.2 -> 96.3 ms
+  (-75%)**; scaling with concurrency goes from 1.13x (flat) to 2.04x.
+
+  **Nothing was ever lost** — 41,774 uploads produced 41,774 stored capsules, exact match,
+  0 duplicates, 0 errors. The evidence plane was slow under load, not lossy, which is why
+  this went unmeasured for so long. The remaining scaling is sub-linear: this removes the
+  serialisation, not every limit, and the 130 ms service time is still the term that must
+  fall to reach the objective.
+
+- **The server no longer starts against a metadata backend with no schema** (ADR-0262,
+  campaign-3 defect B14). The ADR-0211 skew guard's `unstamped` state conflated an
+  `init_schema()`-bootstrapped database (populated, no stamp — fine) with one whose
+  migration never ran (**zero tables** — nothing on the metadata plane can work). It warned
+  once and started in both cases. On the fleet that meant **41,774 uploads answered with
+  HTTP 201, no metadata rows written, and no error logged**: the capsules were durable and
+  verify, but the server's own report of what it had done was false for a whole plane.
+
+  An `unstamped` **Postgres** target with zero application tables now refuses startup,
+  naming `nova db upgrade`. Unreadable targets still start — never refuse on ignorance
+  (ADR-0182) — local SQLite mode is untouched, and `NOVAFABRIC_ALLOW_SCHEMA_SKEW=1`
+  downgrades the refusal as it already does for `behind`/`ahead_or_foreign`.
+
+- **`nova db upgrade` no longer needs `alembic` on `PATH`** (ADR-0262, campaign-3 defect
+  B13). Both metadata-track sites shelled out to the bare name `alembic`. The console script
+  is installed by the `server` extra, but a subprocess only finds it when the venv's `bin/`
+  is on `PATH` — untrue under `uv run`, a systemd unit, or any wrapper invoking the
+  interpreter by absolute path. There it raised a bare `FileNotFoundError: 'alembic'`, which
+  is exactly how the fleet's Postgres schema came to be missing. Both sites now run
+  `sys.executable -m alembic`, and a genuinely absent alembic yields an actionable message
+  instead of a traceback. The registry track already did the equivalent programmatically;
+  this carries that reasoning across.
+
+
+- **Redaction no longer destroys the identifiers it was protecting** (ADR-0261, rule pack
+  `gitleaks-core-v0` 0.4.0 → 0.5.0). Three rules matched a bare token by length alone, so a
+  40-hex git commit id, a 32-hex MD5 and a bare UUID were redacted as if they were API keys.
+  A controlled run (14 planted secrets, 9 decoys, N=10) measured the cost: recall 1.000 but
+  **precision 0.824 — three decoys destroyed on every run**, one per unguarded rule.
+
+  The guards are structural, not contextual. A SHA-1 is 40 characters of lowercase hex; a
+  Cohere key draws 40 characters from a 62-character alphabet, so excluding the all-hex case
+  costs `(16/62)**40` of recall. Measured both ways rather than asserted: over 5,000 random
+  keys per rule none was missed, and over 5,000 random digests per rule none was flagged.
+  Re-running the same corpus gives **precision 1.000, zero decoys destroyed**, recall unchanged.
+
+  **One deliberate trade, stated rather than hidden:** a pre-prefix Pinecone key *is* a UUID
+  and a NovaFabric run id *is* a UUID — structurally identical, so no pattern separates them.
+  The rule now matches only the prefixed `pckey_`/`pcsk_` formats, and a legacy bare-UUID key
+  of that vendor is **no longer detected**. For an evidence system, destroying every run and
+  capsule identifier is the worse error. The test corpus scores that blind spot separately so
+  the recall figure cannot be inflated by omitting it.
+
+- **`tool_calls_mocked` no longer reports substitutions that never happened** (ADR-0261).
+  Every replay path set it to `len(tool_calls)`, which the schema documents as "tool calls
+  served from cache". None ever were: the engine writes only model calls into the replay
+  queue and installs only `MockModelDispatcher`. `MockToolDispatcher` has no `install()` and
+  is referenced nowhere outside its own module. The field is now `0` on all four paths, and
+  the capsule's tool-call count moves to a new **optional** `tool_calls_available` field that
+  claims nothing about substitution.
+
+  **Behaviour change:** `tool_calls_mocked` feeds `evidence.reperformance.outcome_digest_of`,
+  so replay outcome digests differ before and after this change. A stable digest over a
+  fabricated field is worth less than a truthful one; the comparison it preserved was
+  reporting agreement on a number the engine never earned.
+
 
 - **The shipped dashboard served the dead link and the stale schemas for three
   releases' worth of fixes.** `src/novafabric/serve/static/` is the built site,
