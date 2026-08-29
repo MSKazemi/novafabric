@@ -260,7 +260,9 @@ class ReplayEngine:
             policy_flags_used=self._flags.active_flag_names(),
             env_warnings=[w.as_dict() for w in env_warnings],
             model_calls_mocked=len(mutated_model_calls),
-            tool_calls_mocked=len(mutated_tool_calls),
+            # ADR-0261: no tool response is substituted on any path.
+            tool_calls_mocked=0,
+            tool_calls_available=len(mutated_tool_calls),
             exit_code=exit_code,
             intervention=intervention_meta,
         )
@@ -308,7 +310,8 @@ class ReplayEngine:
             policy_flags_used=["--mode=forensic"],
             env_warnings=[w.as_dict() for w in env_warnings],
             model_calls_mocked=len(model_calls),
-            tool_calls_mocked=len(tool_calls),
+            tool_calls_mocked=0,  # ADR-0261
+            tool_calls_available=len(tool_calls),
             schema_drift=schema_drift or None,
         )
         write_replay_result(result, result_dir)
@@ -339,7 +342,8 @@ class ReplayEngine:
             policy_flags_used=self._flags.active_flag_names(),
             env_warnings=[w.as_dict() for w in env_warnings],
             model_calls_mocked=0,
-            tool_calls_mocked=len(tool_calls),
+            tool_calls_mocked=0,  # ADR-0261
+            tool_calls_available=len(tool_calls),
         )
         result_dir.mkdir(parents=True, exist_ok=True)
         (result_dir / "dry_run_report.txt").write_text(report)
@@ -508,7 +512,8 @@ class ReplayEngine:
             policy_flags_used=self._flags.active_flag_names(),
             env_warnings=[w.as_dict() for w in env_warnings],
             model_calls_mocked=len(model_calls),
-            tool_calls_mocked=len(tool_calls),
+            tool_calls_mocked=0,  # ADR-0261
+            tool_calls_available=len(tool_calls),
             exit_code=exit_code,
             schema_drift=schema_drift or None,
         )

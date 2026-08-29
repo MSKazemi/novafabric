@@ -38,12 +38,23 @@
     },
     "mode": {
       "type": "string",
-      "enum": ["mocked", "forensic", "exact", "semantic"],
+      "enum": [
+        "mocked",
+        "forensic",
+        "exact",
+        "semantic"
+      ],
       "description": "Replay mode used."
     },
     "status": {
       "type": "string",
-      "enum": ["success", "failure", "aborted", "dry_run", "interrupted"],
+      "enum": [
+        "success",
+        "failure",
+        "aborted",
+        "dry_run",
+        "interrupted"
+      ],
       "description": "Outcome of the replay."
     },
     "start_time": {
@@ -61,7 +72,9 @@
     },
     "policy_flags_used": {
       "type": "array",
-      "items": {"type": "string"},
+      "items": {
+        "type": "string"
+      },
       "description": "Safety ladder flags active during this replay."
     },
     "env_warnings": {
@@ -69,11 +82,31 @@
       "items": {
         "type": "object",
         "properties": {
-          "field": {"type": "string"},
-          "recorded": {"type": ["string", "null"]},
-          "current": {"type": ["string", "null"]},
-          "severity": {"type": "string", "enum": ["minor", "major"]},
-          "message": {"type": "string"}
+          "field": {
+            "type": "string"
+          },
+          "recorded": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "current": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "minor",
+              "major"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
         }
       },
       "description": "Environment differences between recorded env.lock and current runtime."
@@ -86,17 +119,29 @@
     "tool_calls_mocked": {
       "type": "integer",
       "minimum": 0,
-      "description": "Number of tool calls served from cache."
+      "description": "Number of tool responses served from cache. ADR-0261: this is currently always 0 -- the replay engine substitutes model responses only, and no tool dispatcher is installed on any path. See tool_calls_available for the count the capsule carried."
+    },
+    "tool_calls_available": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Tool calls the capsule carried into this replay and that a dispatcher could serve. Additive and optional (ADR-0261); not a claim that any were substituted."
     },
     "exit_code": {
-      "type": ["integer", "null"],
+      "type": [
+        "integer",
+        "null"
+      ],
       "description": "Exit code of the replayed command (mocked mode only)."
     },
     "error": {
       "type": "object",
       "properties": {
-        "type": {"type": "string"},
-        "message": {"type": "string"}
+        "type": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
       },
       "description": "Error details if status is failure or aborted."
     },
@@ -105,11 +150,33 @@
       "items": {
         "type": "object",
         "properties": {
-          "tool_call_id": {"type": ["string", "null"]},
-          "tool_name": {"type": ["string", "null"]},
-          "arguments_valid": {"type": ["boolean", "null"]},
-          "result_valid": {"type": ["boolean", "null"]},
-          "errors": {"type": "array"}
+          "tool_call_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tool_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "arguments_valid": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "result_valid": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "errors": {
+            "type": "array"
+          }
         }
       },
       "description": "Tool calls whose stored arguments/result no longer conform to their declared *_schema_ref (ADR-0128). Additive, optional; recorded in every mode, gating only in exact."

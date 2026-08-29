@@ -86,7 +86,12 @@
     "tool_calls_mocked": {
       "type": "integer",
       "minimum": 0,
-      "description": "Number of tool calls served from cache."
+      "description": "Number of tool responses served from cache. ADR-0261: this is currently always 0 -- the replay engine substitutes model responses only, and no tool dispatcher is installed on any path. See tool_calls_available for the count the capsule carried."
+    },
+    "tool_calls_available": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Tool calls the capsule carried into this replay and that a dispatcher could serve. Additive and optional (ADR-0261); not a claim that any were substituted."
     },
     "exit_code": {
       "type": ["integer", "null"],

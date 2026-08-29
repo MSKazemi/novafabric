@@ -10,7 +10,8 @@ from typing import Any
 from novafabric.capture._ulid import new_ulid
 
 PACK_NAME = "gitleaks-core-v0"
-PACK_VERSION = "0.4.0"  # 0.4.0: + novafabric-webhook-secret (nvwh_, ADR-0205)
+PACK_VERSION = "0.5.0"  # 0.5.0: digest/UUID false-positive guards (ADR-0261)
+#                        0.4.0: + novafabric-webhook-secret (nvwh_, ADR-0205)
 
 # 14 key patterns — ordered from most to least specific to avoid false positives
 _RULES: list[dict[str, Any]] = [
@@ -38,8 +39,17 @@ _RULES: list[dict[str, Any]] = [
      "pattern": re.compile(r"wcs_[A-Za-z0-9]{30,50}")},
     {"id": "qdrant-api-key", "severity": "medium",
      "pattern": re.compile(r"qdrant_[A-Za-z0-9]{30,50}")},
+    # False-positive guard (pack 0.5.0, ADR-0261): a bare 40-character token that
+    # is entirely lowercase hex is a SHA-1 -- a git commit id, a blob digest --
+    # not a Cohere key. `git rev-parse HEAD` is an ordinary coding-agent tool
+    # call, so without this guard every commit id in a capsule is destroyed.
+    # A real Cohere key draws 40 characters from a 62-character alphabet; the
+    # probability that one is all lowercase hex is (16/62)^40 ~ 1e-24, so the
+    # recall cost is not measurable. Same reasoning as ADR-0125 below.
     {"id": "cohere-api-key", "severity": "high",
-     "pattern": re.compile(r"(?<![A-Za-z0-9])[A-Za-z0-9]{40}(?![A-Za-z0-9])")},
+     "pattern": re.compile(
+         r"(?<![A-Za-z0-9])(?![0-9a-f]{40}(?![A-Za-z0-9]))[A-Za-z0-9]{40}(?![A-Za-z0-9])"
+     )},
     # False-positive guard (pack 0.2.1, ADR-0125): a bare 64-hex string that is
     # a capsule content address — prefixed "sha256:" (Artifact/MediaPart
     # content_hash) or "outputs/" (content-addressed blob ref) — is NOT a
@@ -48,12 +58,25 @@ _RULES: list[dict[str, Any]] = [
      "pattern": re.compile(
          r"(?<![0-9a-f])(?<!sha256:)(?<!outputs/)[0-9a-f]{64}(?![0-9a-f])"
      )},
+    # False-positive guard (pack 0.5.0, ADR-0261): a bare 32-character token that
+    # is entirely lowercase hex is an MD5 digest, not a Mistral key. Recall cost
+    # is (16/62)^32 ~ 4e-19.
     {"id": "mistral-api-key", "severity": "high",
-     "pattern": re.compile(r"(?<![A-Za-z0-9])[A-Za-z0-9]{32}(?![A-Za-z0-9])")},
-    {"id": "pinecone-api-key", "severity": "medium",
      "pattern": re.compile(
-         r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+         r"(?<![A-Za-z0-9])(?![0-9a-f]{32}(?![A-Za-z0-9]))[A-Za-z0-9]{32}(?![A-Za-z0-9])"
      )},
+    # ADR-0261. This rule previously matched a bare UUID. A Pinecone legacy key
+    # IS a UUID and a NovaFabric run id IS a UUID: they are structurally
+    # identical, so no pattern can separate them, and the old rule therefore
+    # redacted every run, capsule and trace identifier it saw. For an evidence
+    # system whose capsules are addressed by those identifiers that is the more
+    # damaging error, so the rule now matches only Pinecone's prefixed formats
+    # -- `pckey_` (current) and `pcsk_` (legacy) -- which are unambiguous.
+    # Residual risk, stated rather than hidden: a pre-prefix bare-UUID Pinecone
+    # key is NOT detected by this rule. Configure a custom rule if you still
+    # issue them.
+    {"id": "pinecone-api-key", "severity": "medium",
+     "pattern": re.compile(r"pc(?:key|sk)_[A-Za-z0-9\-_]{16,120}")},
 ]
 
 _PACK_RULES_HASH = "sha256:" + hashlib.sha256(

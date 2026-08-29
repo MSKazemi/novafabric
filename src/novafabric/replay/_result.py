@@ -19,7 +19,18 @@ class ReplayResult:
     policy_flags_used: list[str]
     env_warnings: list[dict[str, str]]
     model_calls_mocked: int = 0
+    # ADR-0261. This counts tool responses actually SERVED FROM CACHE, which is
+    # currently always zero: `_run_mocked_subprocess` writes only model calls
+    # into the replay queue and the hook loader installs only
+    # `MockModelDispatcher`. `MockToolDispatcher` exists but has no `install()`
+    # and is never instantiated, so no tool response is ever substituted. Until
+    # that lands, reporting `len(tool_calls)` here asserted work the engine had
+    # not done. The capsule's tool-call count is preserved in
+    # `tool_calls_available` below.
     tool_calls_mocked: int = 0
+    # ADR-0261, additive and optional: tool calls the capsule carried into this
+    # replay and that a tool dispatcher COULD serve. Not a claim that any were.
+    tool_calls_available: int | None = None
     exit_code: int | None = None
     error: dict[str, Any] | None = None
     # semantic-mode fields
@@ -49,6 +60,8 @@ class ReplayResult:
             "model_calls_mocked": self.model_calls_mocked,
             "tool_calls_mocked": self.tool_calls_mocked,
         }
+        if self.tool_calls_available is not None:
+            d["tool_calls_available"] = self.tool_calls_available
         if self.exit_code is not None:
             d["exit_code"] = self.exit_code
         if self.error is not None:
