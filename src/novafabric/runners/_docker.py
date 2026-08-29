@@ -27,21 +27,15 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
 
+from novafabric.runners._options import coerce_str_dict, coerce_str_list
 from novafabric.runners._types import ContainerEvalError, RunnerJobResult, RunnerJobSpec
 
-
-def _coerce_str_dict(value: Any) -> dict[str, str]:
-    if not isinstance(value, dict):
-        return {}
-    return {str(k): str(v) for k, v in value.items()}
-
-
-def _coerce_str_list(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [str(v) for v in value]
+# Both accept the CLI's string form as well as a config file's real list/dict —
+# see novafabric.runners._options for why that distinction was silently losing
+# every structured option passed with --runner-option.
+_coerce_str_dict = coerce_str_dict
+_coerce_str_list = coerce_str_list
 
 
 class DockerRunner:

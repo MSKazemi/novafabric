@@ -29,16 +29,16 @@ import subprocess
 import time
 from typing import Any
 
+from novafabric.runners._options import coerce_str_dict
 from novafabric.runners._poll import jittered_sleep
 from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
 
 _DEFAULT_IN_POD_CAPSULE = "/novafabric/capsule"
 
 
-def _coerce_str_dict(value: Any) -> dict[str, str]:
-    if not isinstance(value, dict):
-        return {}
-    return {str(k): str(v) for k, v in value.items()}
+# Accepts the CLI's "k=v,k2=v2" string as well as a real mapping — see
+# novafabric.runners._options.
+_coerce_str_dict = coerce_str_dict
 
 
 def _build_job_manifest(

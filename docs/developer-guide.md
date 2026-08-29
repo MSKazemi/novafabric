@@ -976,7 +976,58 @@ Rules:
 2. Use `get_current_recorder()` — never instantiate a new recorder.
 3. Restore the original method on `unwrap()` if reversibility matters.
 4. Add an entry to `src/novafabric/adapters/__init__.py`.
-5. Register the adapter in `docs/cli-reference.md` and [`docs/architecture.md`](architecture.md).
+5. Add the framework to the adapter roster in
+   [`docs/for-platform-teams.md`](for-platform-teams.md) and note it in
+   [`docs/architecture.md`](architecture.md).
+
+### Two kinds of adapter
+
+The pattern above is for an adapter that records **into a capsule someone else
+opened** — `nova capture` is already running and the adapter adds framework
+detail to it.
+
+An adapter can instead **own the capsule**, so that calling the wrapped object
+is all a user has to do. Those wrap the framework's entry point and write a
+complete manifest around it: `dspy.py`, `crewai.py`, `llamaindex.py`,
+`pydantic_ai.py`, `haystack.py`.
+
+New capsule-writing adapters should use the shared core rather than copying a
+manifest literal — the eleven adapters written before it each carry their own
+copy, which is how all eight of them once drifted into writing a `tags` key the
+schema rejects:
+
+```python
+from novafabric.adapters._capsule import begin_capture, require
+
+def wrap_thing(thing, *, run_name=None, data_dir=None):
+    require("myframework", "my-framework")        # ImportError with an install hint
+    original = thing.run
+
+    def _wrapped(*args, **kwargs):
+        cap = begin_capture(framework="myframework",
+                            run_name=run_name or type(thing).__name__,
+                            data_dir=data_dir)
+        try:
+            return original(*args, **kwargs)
+        except Exception as exc:
+            cap.fail(exc)                          # records it; does not swallow
+            raise
+        finally:
+            cap.finish()                           # releases hooks, writes the capsule
+
+    thing.run = _wrapped
+    return thing
+```
+
+`begin_capture` claims the wire hooks and `finish` stamps
+`metadata.wire_capture` from the returned token before releasing them, which is
+what ADR-0224 requires — a capsule has to say whether its wire stream is
+complete. Getting that ordering wrong is the single easiest mistake here.
+
+**Watch for a framework whose sync entry point drives its async one** (Pydantic
+AI's `run_sync` calls `run`). Patching both without a re-entrancy guard opens
+two capsules for one user-visible call, and the inner one takes the wire hooks
+from the outer, so neither stream is complete. `pydantic_ai.py` shows the guard.
 
 ### Typed `record_*` methods (extended event taxonomy, ADR-0082)
 

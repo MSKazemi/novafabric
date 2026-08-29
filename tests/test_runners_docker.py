@@ -248,13 +248,37 @@ class TestDockerRunnerErrorPaths:
 
 
 class TestCoercionHelpers:
-    def test_coerce_str_dict_filters_non_dict(self) -> None:
-        assert _coerce_str_dict("not a dict") == {}
-        assert _coerce_str_dict({"a": 1}) == {"a": "1"}
+    """Runner options arrive in two shapes and both must survive.
 
-    def test_coerce_str_list_filters_non_list(self) -> None:
-        assert _coerce_str_list("not a list") == []
+    A YAML spec supplies real lists and dicts. The CLI's ``--runner-option
+    k=v`` supplies **strings**, because that is all a shell argument can be.
+    Discarding the string form silently dropped every option a CLI user
+    passed: `--runner-option volumes=/host:/work` mounted nothing, and the
+    container then failed with `can't open file '/work/payload.py'` — a
+    misconfiguration reported as a workload error.
+    """
+
+    def test_coerce_str_dict_filters_junk(self) -> None:
+        assert _coerce_str_dict("not a dict") == {}, "no k=v pair, nothing to take"
+        assert _coerce_str_dict({"a": 1}) == {"a": "1"}
+        assert _coerce_str_dict(7) == {}
+        assert _coerce_str_dict(None) == {}
+
+    def test_coerce_str_dict_parses_the_cli_string_form(self) -> None:
+        assert _coerce_str_dict("a=1,b=2") == {"a": "1", "b": "2"}
+        assert _coerce_str_dict(" a = 1 ") == {"a": "1"}, "shell quoting leaves spaces"
+
+    def test_coerce_str_list_filters_junk(self) -> None:
         assert _coerce_str_list(["a", 1]) == ["a", "1"]
+        assert _coerce_str_list(7) == []
+        assert _coerce_str_list(None) == []
+
+    def test_coerce_str_list_parses_the_cli_string_form(self) -> None:
+        """The regression that a real Docker run exposed."""
+        assert _coerce_str_list("/host:/work") == ["/host:/work"]
+        assert _coerce_str_list("a,b") == ["a", "b"]
+        assert _coerce_str_list("a, ,b") == ["a", "b"], "empty items dropped"
+        assert _coerce_str_list("") == []
 
 
 class TestNonRootSafetyDefaults:

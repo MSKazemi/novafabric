@@ -9,6 +9,9 @@ from novafabric.adapters.mlflow import validate_run_id
 #   from novafabric.adapters.autogen import wrap_agent
 #   from novafabric.adapters.crewai import wrap_crew
 #   from novafabric.adapters.dspy import wrap_program
+#   from novafabric.adapters.llamaindex import wrap_engine
+#   from novafabric.adapters.pydantic_ai import wrap_agent
+#   from novafabric.adapters.haystack import wrap_pipeline
 
 __all__ = [
     "get_head_sha",
@@ -23,6 +26,9 @@ __all__ = [
     "make_google_adk_plugin",
     "wrap_bedrock_agentcore",
     "make_a2a_interceptor",
+    "wrap_llamaindex",
+    "wrap_pydantic_ai",
+    "wrap_haystack",
 ]
 
 
@@ -72,3 +78,21 @@ def make_a2a_interceptor(**kwargs):  # type: ignore[no-untyped-def]
     """Alias: ``novafabric.adapters.a2a.make_interceptor``."""
     from novafabric.adapters.a2a import make_interceptor
     return make_interceptor(**kwargs)
+
+
+def wrap_llamaindex(engine, **kwargs):  # type: ignore[no-untyped-def]
+    """Alias: ``novafabric.adapters.llamaindex.wrap_engine``."""
+    from novafabric.adapters.llamaindex import wrap_engine
+    return wrap_engine(engine, **kwargs)
+
+
+def wrap_pydantic_ai(agent, **kwargs):  # type: ignore[no-untyped-def]
+    """Alias: ``novafabric.adapters.pydantic_ai.wrap_agent``."""
+    from novafabric.adapters.pydantic_ai import wrap_agent
+    return wrap_agent(agent, **kwargs)
+
+
+def wrap_haystack(pipeline, **kwargs):  # type: ignore[no-untyped-def]
+    """Alias: ``novafabric.adapters.haystack.wrap_pipeline``."""
+    from novafabric.adapters.haystack import wrap_pipeline
+    return wrap_pipeline(pipeline, **kwargs)
