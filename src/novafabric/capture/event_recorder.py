@@ -102,11 +102,30 @@ _recorder_var: ContextVar[EventRecorder | None] = ContextVar(
     "novafabric_current_recorder", default=None
 )
 
+#: Per-task capsule writer (ADR-0224 D3, phase 2 — 2026-08-29).
+#:
+#: The recorder ContextVar above was landed on 2026-08-06 on the conclusion that
+#: it alone gave concurrent captures their own capsules. Measuring that on
+#: 2026-08-29 showed it covers ``NetworkEvent`` and nothing else: every wire hook
+#: writes its **model call** — the richest record it produces — through the
+#: ``self._writer`` it was constructed with, which belongs to whichever capture
+#: won the hook race. So a second capture's model calls were still filed into the
+#: first capture's capsule.
+#:
+#: Resolving the writer per task too closes that, and (like the recorder) needs no
+#: hook signature to change, because the hooks resolve it when an event *fires*.
+_writer_var: ContextVar[Any | None] = ContextVar(
+    "novafabric_current_writer", default=None
+)
+
 #: Live bindings by handle. Exists so a binding can be released from a task
-#: *other* than the one that created it — see :func:`unbind_recorder`. Bounded
+#: *other* than the one that created it — see :func:`unbind_capture`. Bounded
 #: by the number of concurrent captures in the process (single digits), and
 #: every entry is removed by the ``finally`` that pairs with its bind.
-_bindings: dict[str, EventRecorder] = {}
+#:
+#: Each entry holds the recorder **and** the writer, so the two can never drift
+#: apart: one call binds a whole capture, one call releases it.
+_bindings: dict[str, tuple[EventRecorder | None, Any | None]] = {}
 _binding_lock = threading.Lock()
 
 
@@ -166,48 +185,98 @@ def clear_current_recorder(recorder: EventRecorder) -> bool:
         return True
 
 
-def bind_recorder(recorder: EventRecorder) -> str:
-    """Bind *recorder* to the current task and return a release handle.
+def bind_capture(
+    recorder: EventRecorder | None = None,
+    writer: Any | None = None,
+) -> str:
+    """Bind a whole capture — its recorder *and* its writer — to the current task.
 
-    The returned handle — not a :class:`contextvars.Token` — is what
-    :func:`unbind_recorder` takes. That is deliberate and is the second
-    constraint ADR-0224 D3 records: ``bedrock_agentcore`` tears down from inside
-    a generator that is consumed later, possibly in a different task, and a
-    ``Token`` may only be reset in the context that produced it. Releasing with
+    Returns a release handle for :func:`unbind_capture`.
+
+    The handle is deliberately **not** a :class:`contextvars.Token`, which is the
+    second constraint ADR-0224 D3 records: ``bedrock_agentcore`` tears down from
+    inside a generator that is consumed later, possibly in a different task, and
+    a ``Token`` may only be reset in the context that produced it. Releasing with
     one from elsewhere raises ``ValueError`` and would wedge the binding for the
     life of the process.
 
-    The boundary is worth stating precisely, because it is narrower than it
-    looks: coroutines merely ``await``-ed in sequence share one context, so a
-    Token would work there. It is a separate ``Task`` — or a thread — that
-    copies the context and breaks the reset. Both cases are asserted in
-    ``tests/capture/test_task_scoped_recorder.py``.
+    The boundary is narrower than it looks: coroutines merely ``await``-ed in
+    sequence share one context, so a Token would work there. It takes a separate
+    ``Task`` — or a thread — to copy the context and break the reset. Both cases
+    are asserted in ``tests/capture/test_task_scoped_recorder.py`` and
+    ``tests/capture/test_task_scoped_writer.py``.
+
+    Binding both halves together is the point: a capture whose recorder is
+    task-scoped but whose writer is not files its network events correctly and
+    its model calls into somebody else's capsule, which is precisely the defect
+    this function was added to close.
     """
     handle = secrets.token_urlsafe(16)
     with _binding_lock:
-        _bindings[handle] = recorder
-    _recorder_var.set(recorder)
+        _bindings[handle] = (recorder, writer)
+    if recorder is not None:
+        _recorder_var.set(recorder)
+    if writer is not None:
+        _writer_var.set(writer)
     return handle
 
 
-def unbind_recorder(handle: str) -> bool:
-    """Release a binding made by :func:`bind_recorder`.
+def unbind_capture(handle: str) -> bool:
+    """Release a binding made by :func:`bind_capture`.
 
     Returns True if *handle* was live. Safe to call from any task, more than
     once, and after the binding task has finished: an unknown handle is a no-op
     rather than an error, because a teardown path must never raise into the
     workload it is capturing.
 
-    Clearing the context variable only has an effect in the task that holds it;
+    Each slot is cleared only if it still holds *this* binding's object, so a
+    nested capture that bound after this one cannot be blanked by this release.
+    Clearing a context variable only has an effect in the task that holds it;
     other tasks' contexts are discarded with the task, so nothing leaks.
     """
     with _binding_lock:
-        recorder = _bindings.pop(handle, None)
-    if recorder is None:
+        entry = _bindings.pop(handle, None)
+    if entry is None:
         return False
-    if _recorder_var.get() is recorder:
+    recorder, writer = entry
+    if recorder is not None and _recorder_var.get() is recorder:
         _recorder_var.set(None)
+    if writer is not None and _writer_var.get() is writer:
+        _writer_var.set(None)
     return True
+
+
+def get_current_writer(default: Any = None) -> Any:
+    """Return the capsule writer active for the current capture, else *default*.
+
+    The hooks pass their own ``self._writer`` as *default*, so a process running
+    a single capture — and any thread, which inherits no context — resolves
+    exactly the writer it did before this function existed. Only a task that
+    explicitly bound a capture scope is redirected.
+
+    Typed ``Any`` rather than ``CapsuleWriter`` on purpose: this module must not
+    import :mod:`novafabric.capture.capsule`, and the return is only ever used to
+    call the same ``append_*`` methods the caller's own default supports. The
+    narrowing that matters — *never None when the caller passed a writer* — is
+    guaranteed by the fallback, not by the annotation.
+    """
+    bound = _writer_var.get()
+    return bound if bound is not None else default
+
+
+def bind_recorder(recorder: EventRecorder) -> str:
+    """Bind *recorder* to the current task and return a release handle.
+
+    Kept as the narrow form of :func:`bind_capture` for callers that have no
+    writer to bind. Prefer :func:`bind_capture` for a real capture: binding the
+    recorder alone leaves model calls filing into the hook owner's capsule.
+    """
+    return bind_capture(recorder=recorder)
+
+
+def unbind_recorder(handle: str) -> bool:
+    """Release a binding made by :func:`bind_recorder` or :func:`bind_capture`."""
+    return unbind_capture(handle)
 
 
 # ---------------------------------------------------------------------------

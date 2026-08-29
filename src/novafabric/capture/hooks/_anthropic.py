@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from novafabric.capture._ulid import new_ulid
+from novafabric.capture.event_recorder import get_current_writer
 from novafabric.capture.hooks._otel_genai import (
     build_record_envelope,
     extract_request_attributes,
@@ -105,7 +106,7 @@ class AnthropicHook:
         response_id = getattr(response, "id", None)
         if response_id:
             record["gen_ai.response.id"] = str(response_id)
-        self._writer.append_model_call(record)
+        get_current_writer(self._writer).append_model_call(record)
 
     def _record_error(
         self,
@@ -127,4 +128,4 @@ class AnthropicHook:
         record["error"] = {
             "type": type(exc).__name__, "message": str(exc), "traceback_ref": None,
         }
-        self._writer.append_model_call(record)
+        get_current_writer(self._writer).append_model_call(record)

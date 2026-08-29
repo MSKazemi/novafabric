@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from novafabric.capture._ulid import new_ulid
-from novafabric.capture.event_recorder import _is_ai_api, get_current_recorder
+from novafabric.capture.event_recorder import _is_ai_api, get_current_recorder, get_current_writer
 from novafabric.capture.hooks._layering import is_inside_higher_layer
 from novafabric.capture.hooks._otel_genai import (
     build_record_envelope,
@@ -175,7 +175,7 @@ class Urllib3Hook:
                 gen_ai_system=self._registry.gen_ai_system(full_url),
             ))
             try:
-                self._writer.append_model_call(record)
+                get_current_writer(self._writer).append_model_call(record)
             except Exception:
                 pass
 

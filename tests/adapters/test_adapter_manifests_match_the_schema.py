@@ -145,7 +145,7 @@ def test_a2a_adapter_capsule_passes_the_real_validator(tmp_path: Path) -> None:
     # ADR-0224: the capsule must say whether its wire stream is complete.
     # Asserted on REAL adapter output, not just grepped for in the source.
     assert manifest["metadata"]["wire_capture"] in {
-        "installed", "installed-contended", "skipped-concurrent"
+        "installed", "installed-contended", "scoped-concurrent", "skipped-concurrent"
     }, manifest["metadata"]
     assert manifest["metadata"]["agent"] == "agent-a"
     assert (
@@ -257,14 +257,24 @@ def test_every_adapter_records_whether_wire_capture_was_active() -> None:
     )
 
 
-def test_wire_capture_state_covers_all_three_outcomes() -> None:
-    """The marker is only useful if it distinguishes the three cases."""
+def test_wire_capture_state_covers_all_four_outcomes() -> None:
+    """The marker is only useful if it distinguishes every case.
+
+    ADR-0224 phase 2 added the fourth: a capture that owns no hooks but bound
+    its own recorder and writer, so its own events reached its own capsule
+    through the owner's single patch layer. Before phase 2 that capture recorded
+    nothing and said ``skipped-concurrent``; conflating the two would tell a
+    reader a complete stream was absent.
+    """
     from novafabric.capture import hooks
 
     assert hooks.wire_capture_state("") == "skipped-concurrent"
+    assert hooks.wire_capture_state(hooks._PARTICIPANT_PREFIX + "abc") == (
+        "scoped-concurrent"
+    )
 
     hooks._contended_owners.clear()
-    token = "tok-uncontended"
+    token = hooks._OWNER_PREFIX + "uncontended"
     hooks._hook_owner = token
     try:
         assert hooks.wire_capture_state(token) == "installed"
@@ -273,3 +283,10 @@ def test_wire_capture_state_covers_all_three_outcomes() -> None:
     finally:
         hooks._hook_owner = None
         hooks._contended_owners.clear()
+
+    # All four are distinct — a marker that collapses two states is not a marker.
+    assert len({
+        hooks.wire_capture_state(""),
+        hooks.wire_capture_state(hooks._PARTICIPANT_PREFIX + "x"),
+        hooks.wire_capture_state(hooks._OWNER_PREFIX + "y"),
+    }) == 3

@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from novafabric.capture._ulid import new_ulid
+from novafabric.capture.event_recorder import get_current_writer
 
 if TYPE_CHECKING:
     from novafabric.capture.capsule import CapsuleWriter
@@ -241,7 +242,7 @@ class MCPHook:
             "envelope": self._build_envelope(name, arguments, request_id),
             "response_envelope": self._build_response_envelope(request_id, response),
         }
-        self._writer.append_tool_call(record)
+        get_current_writer(self._writer).append_tool_call(record)
 
     def _record_error(
         self,
@@ -279,4 +280,4 @@ class MCPHook:
             "envelope": self._build_envelope(name, arguments, request_id),
             "response_envelope": None,
         }
-        self._writer.append_tool_call(record)
+        get_current_writer(self._writer).append_tool_call(record)

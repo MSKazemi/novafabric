@@ -69,14 +69,39 @@ def test_second_concurrent_capture_does_not_stack_a_second_patch_layer(
     assert layers_after_a > 0
 
     token_b = hooks.install_all(writer=_writer(tmp_path, "run-B"), parent_span_id="B")
-    assert token_b == "", "the second capture must not claim the hooks"
+    # ADR-0224 phase 2 (2026-08-29): the loser's token is no longer `""`. It is
+    # a *participant* token — it owns no hooks (asserted next) but does own a
+    # capture-scope binding it must later release, which an empty token could
+    # never carry. What must not change is that no second layer is stacked.
+    assert not hooks.current_hook_owner() == token_b, "B must not own the hooks"
+    assert hooks.wire_capture_state(token_b) == "scoped-concurrent"
     assert len(hooks._installed) == layers_after_a, "a second patch layer was stacked"
 
 
 def test_second_capture_does_not_redirect_the_recorder(tmp_path: Path) -> None:
-    """Failure mode 1 — the evidence-integrity one."""
+    """Failure mode 1 — the evidence-integrity one.
+
+    Phase 1 fixed this by making B record nothing: the process-wide singleton
+    stayed A's. Phase 2 fixes it properly — B binds its **own** recorder to its
+    own task, so B's events go to B's capsule instead of being dropped, while
+    A's singleton is still untouched. Both halves are asserted, because "B no
+    longer corrupts A" and "B is now recorded" are different claims.
+    """
+    # Read the singleton through the module: `from ... import _current_recorder`
+    # binds the value at import time and would not see a later reassignment.
+    from novafabric.capture import event_recorder as _er  # noqa: PLC0415
+
     hooks.install_all(writer=_writer(tmp_path, "run-A"), parent_span_id="A")
-    hooks.install_all(writer=_writer(tmp_path, "run-B"), parent_span_id="B")
+    token_b = hooks.install_all(writer=_writer(tmp_path, "run-B"), parent_span_id="B")
+
+    # A's process-wide singleton is intact — B never redirected it.
+    assert _er._current_recorder is not None
+    assert _er._current_recorder._capsule_dir.name == "run-A"
+    # ...and B, in its own task, now resolves its own recorder rather than A's.
+    assert _recorder_capsule() == "run-B"
+
+    hooks.uninstall_all(token_b)
+    # Once B releases, this task resolves A's singleton again.
     assert _recorder_capsule() == "run-A"
 
 
@@ -88,6 +113,7 @@ def test_the_loser_cannot_tear_down_the_winner(tmp_path: Path) -> None:
 
     assert hooks.uninstall_all(token_b) is False
     assert len(hooks._installed) > 0, "B tore down A's hooks"
+    # B's binding is released by that call, so this task sees A's singleton.
     assert _recorder_capsule() == "run-A", "B cleared A's recorder"
     assert hooks.current_hook_owner() == token_a
 

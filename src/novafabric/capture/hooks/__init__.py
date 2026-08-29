@@ -41,6 +41,26 @@ _recorder_set_by_install: object | None = None
 _HOOK_OWNER_LOCK = threading.Lock()
 _hook_owner: str | None = None
 
+# ── Token contract (ADR-0224 D3, phase 2 — 2026-08-29) ─────────────────────
+#
+# Phase 1's token had two states: a non-empty string (you own the hooks) and
+# ``""`` (you lost the race, nothing was installed and nothing is yours to
+# release). ADR-0224 named the third state as the remaining slice: for the
+# loser to *participate* — bind its own recorder and writer so its events land
+# in its own capsule through the winner's single patch layer — and later
+# release that binding, the token has to say which of the two it is.
+#
+# The prefix is internal. Callers still treat the token as opaque and still
+# hand it straight back to uninstall_all(); wire_capture_state() decodes it.
+_OWNER_PREFIX = "own:"
+_PARTICIPANT_PREFIX = "par:"
+
+#: Capture-scope binding handles held by participant tokens, so uninstall_all()
+#: can release a binding it did not create in the same task. Bounded by the
+#: number of concurrent captures (single digits); every entry is removed by the
+#: uninstall that pairs with its install.
+_participant_bindings: dict[str, str] = {}
+
 #: Owner tokens that were live while another capture tried to claim the hooks.
 #:
 #: This is the residual risk the single-owner guard does NOT remove. The hooks
@@ -57,16 +77,22 @@ _contended_owners: set[str] = set()
 
 
 def _claim_hook_ownership() -> str:
-    """Become owner of the process-global hooks. Returns a token, or ``""``."""
+    """Become owner of the process-global hooks.
+
+    Returns an **owner** token (``own:``-prefixed) when this call took
+    ownership, or a **participant** token (``par:``-prefixed) when another
+    capture already owns them. Both are non-empty and both must be handed back
+    to :func:`uninstall_all`; only the owner tears anything down.
+    """
     global _hook_owner
     with _HOOK_OWNER_LOCK:
         if _hook_owner is None:
-            _hook_owner = uuid.uuid4().hex
+            _hook_owner = _OWNER_PREFIX + uuid.uuid4().hex
             return _hook_owner
         # Someone already owns them: record that the owner's capsule may now
-        # contain this capture's wire events.
+        # contain this capture's wire events (see wire_capture_state).
         _contended_owners.add(_hook_owner)
-        return ""
+        return _PARTICIPANT_PREFIX + uuid.uuid4().hex
 
 
 def _release_hook_ownership(token: str) -> bool:
@@ -77,7 +103,12 @@ def _release_hook_ownership(token: str) -> bool:
     """
     global _hook_owner
     with _HOOK_OWNER_LOCK:
-        if token and _hook_owner is not None and _hook_owner == token:
+        if (
+            token
+            and token.startswith(_OWNER_PREFIX)
+            and _hook_owner is not None
+            and _hook_owner == token
+        ):
             _hook_owner = None
             return True
         return False
@@ -97,24 +128,39 @@ def current_hook_owner() -> str | None:
 def wire_capture_state(token: str) -> str:
     """The honest ``metadata.wire_capture`` value for a capture holding *token*.
 
-    Three states, because "the stream is short" has three different causes and
-    a reader must not have to guess which:
+    Four states, because "the stream is short" has four different causes and a
+    reader must not have to guess which:
 
     - ``"installed"`` — this capture owned the hooks for its whole life and
       nothing else overlapped. The wire stream is this run's, and complete.
     - ``"installed-contended"`` — this capture owned the hooks, but another
-      capture overlapped it. The hooks are process-global patches holding this
-      capture's writer, so the stream may contain **the other run's** events.
-      Complete, but not exclusively this run's.
-    - ``"skipped-concurrent"`` — another capture owned the hooks, so no
-      wire-level hooks were installed for this one. Its adapter-level record is
-      still complete; the wire stream is absent, not empty.
+      capture overlapped it. The patches are process-global, so events raised in
+      a context that bound nothing — most importantly a **bare thread**, which
+      inherits no context — still fall back to this capture's writer. The stream
+      may therefore contain the other run's events. Complete, not exclusive.
+    - ``"scoped-concurrent"`` — another capture owned the hooks, so this one
+      installed none; but it bound its own recorder and writer, so events raised
+      **in its own task** were filed into its own capsule through the owner's
+      single patch layer. This is what ADR-0224 phase 2 added: the stream is this
+      run's, and complete for everything the run did in its own context.
+    - ``"skipped-concurrent"`` — no wire-level hooks and no binding. The
+      adapter-level record is still complete; the wire stream is absent, not
+      empty. Phase 1's outcome for the race loser, kept for callers that pass an
+      empty token.
+
+    ``"installed-contended"`` deliberately still warns after phase 2. The
+    narrowing is real but partial: a task-bound concurrent capture no longer
+    cross-files, yet a thread it spawns inherits no binding and still resolves to
+    the owner. An evidence system reports the residual rather than rounding it to
+    zero.
 
     Read this **before** :func:`uninstall_all`, which forgets the contention
     record so it cannot accumulate across a long-lived process.
     """
     if not token:
         return "skipped-concurrent"
+    if token.startswith(_PARTICIPANT_PREFIX):
+        return "scoped-concurrent"
     return "installed-contended" if owner_was_contended(token) else "installed"
 
 
@@ -212,6 +258,67 @@ def _ensure_recorder(writer: "CapsuleWriter") -> None:
         pass  # fail-open: recorder is best-effort; never block capture
 
 
+def _bind_participant_scope(token: str, writer: "CapsuleWriter") -> None:
+    """Give a race-losing capture its own task-scoped recorder and writer.
+
+    Fail-open, like every other hook-installation path: a capture that cannot
+    bind degrades to phase-1 behaviour (its wire events go to the owner) rather
+    than failing the run it is trying to observe.
+    """
+    try:
+        from novafabric.capture.event_recorder import EventRecorder, bind_capture
+
+        cap_dir = writer.capsule_dir
+        recorder = EventRecorder(
+            capsule_dir=cap_dir, run_id=cap_dir.name, capsule_id=cap_dir.name
+        )
+        handle = bind_capture(recorder=recorder, writer=writer)
+        with _HOOK_OWNER_LOCK:
+            _participant_bindings[token] = handle
+    except Exception:
+        pass  # fail-open: never block a capture on its own bookkeeping
+
+
+def _release_all_participant_scopes() -> int:
+    """Release every outstanding participant binding. Returns how many.
+
+    Called when the hooks themselves go away. A participant's binding exists to
+    redirect events raised through the **owner's** patch layer; once that layer
+    is gone the binding cannot serve its purpose, and leaving it set would
+    misdirect the next capture that runs in the same task. Teardown of the
+    hooks is therefore the outer bound on a binding's lifetime, independent of
+    whether each participant remembered to hand its token back.
+    """
+    with _HOOK_OWNER_LOCK:
+        handles = list(_participant_bindings.values())
+        _participant_bindings.clear()
+    if not handles:
+        return 0
+    try:
+        from novafabric.capture.event_recorder import unbind_capture
+
+        for handle in handles:
+            unbind_capture(handle)
+    except Exception:
+        pass
+    return len(handles)
+
+
+def _release_participant_scope(token: str) -> bool:
+    """Release a participant's binding. True if one was live."""
+    with _HOOK_OWNER_LOCK:
+        handle = _participant_bindings.pop(token, None)
+    if handle is None:
+        return False
+    try:
+        from novafabric.capture.event_recorder import unbind_capture
+
+        unbind_capture(handle)
+    except Exception:
+        pass
+    return True
+
+
 def _install_plugins(writer: "CapsuleWriter", parent_span_id: str) -> None:
     """Discover and install third-party hook plugins (entry-point group).
 
@@ -256,11 +363,17 @@ def install_all(writer: "CapsuleWriter", parent_span_id: str) -> str:
     startup, see :func:`install_all_deferred` (``--fast-emit``).
     """
     token = _claim_hook_ownership()
-    if not token:
-        # Another capture owns the hooks. Installing anyway would stack a
-        # second patch layer and file this capture's events into the owner's
-        # capsule (ADR-0224 failure modes 1 and 2).
-        return ""
+    if token.startswith(_PARTICIPANT_PREFIX):
+        # Another capture owns the hooks. Installing anyway would stack a second
+        # patch layer and file this capture's events into the owner's capsule
+        # (ADR-0224 failure modes 1 and 2), so we install nothing.
+        #
+        # Phase 2: instead of recording nothing, bind this capture's own
+        # recorder and writer to the calling task. The owner's single patch
+        # layer resolves both when an event *fires*, so events raised in this
+        # capture's context are filed into this capture's capsule.
+        _bind_participant_scope(token, writer)
+        return token
     _ensure_recorder(writer)
 
     for sdk_module, hook_module_path, hook_class_name in _BUILT_IN_HOOKS:
@@ -343,6 +456,12 @@ def uninstall_all(token: str | None = None) -> bool:
     caller (SDK wrapper, framework adapters) must pass its token.
     """
     global _recorder_set_by_install
+    if token is not None and token.startswith(_PARTICIPANT_PREFIX):
+        # A participant installed nothing, so it tears nothing down — but it did
+        # bind a capture scope, and that must be released or the ContextVar keeps
+        # a finished capture's writer alive for the rest of the task.
+        _release_participant_scope(token)
+        return False
     if token is not None and not _release_hook_ownership(token):
         return False
     if token:
@@ -353,6 +472,9 @@ def uninstall_all(token: str | None = None) -> bool:
         # Legacy unconditional path: drop any live ownership so the next
         # capture in this process can claim the hooks.
         _release_hook_ownership(current_hook_owner() or "")
+    # The patch layer is about to go. No participant binding can outlive it —
+    # see _release_all_participant_scopes for why that bound is the right one.
+    _release_all_participant_scopes()
     for hook in _installed:
         try:
             hook.uninstall()  # type: ignore[attr-defined]

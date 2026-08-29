@@ -878,17 +878,20 @@ class TestA2AInterceptor:
         installs: list[str] = []
         uninstalls: list[str] = []
         # Observe the real call sites without letting them patch live SDKs, but
-        # mimic the REAL ownership contract (ADR-0224): install_all returns a
-        # token, empty when another capture already owns the hooks, and
-        # uninstall_all only tears down for the owner. A mock that ignored that
-        # would prove nothing about the behaviour under test.
+        # mimic the REAL ownership contract (ADR-0224): install_all returns an
+        # owner token to the capture that claims the hooks and a *participant*
+        # token to one that finds them already owned, and uninstall_all only
+        # tears down for the owner. A fake that drifts from the real contract
+        # proves nothing about the behaviour under test — so the prefixes are
+        # taken from the module rather than hardcoded here, and this fake fails
+        # loudly if they are ever renamed.
         _owner: list[str] = []
 
         def _fake_install(**kw: object) -> str:
             installs.append(str(kw["parent_span_id"]))
             if _owner:
-                return ""
-            _owner.append(str(kw["parent_span_id"]))
+                return hooks_mod._PARTICIPANT_PREFIX + str(kw["parent_span_id"])
+            _owner.append(hooks_mod._OWNER_PREFIX + str(kw["parent_span_id"]))
             return _owner[0]
 
         def _fake_uninstall(token: str | None = None) -> bool:
@@ -961,7 +964,11 @@ class TestA2AInterceptor:
         ]
         assert len(manifests) == 2, manifests
         states = sorted(m["metadata"]["wire_capture"] for m in manifests)
-        assert states == ["installed", "skipped-concurrent"], states
+        # ADR-0224 phase 2: the capture that loses the hook race no longer
+        # records nothing. It binds its own recorder and writer, so its events
+        # reach its own capsule through the winner's single patch layer, and it
+        # says so — `scoped-concurrent`, not `skipped-concurrent`.
+        assert states == ["installed", "scoped-concurrent"], states
 
     def test_non_send_message_calls_are_passthrough(self, tmp_path: Path) -> None:
         import asyncio
