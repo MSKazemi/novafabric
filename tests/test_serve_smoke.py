@@ -44,9 +44,13 @@ def test_nova_serve_subprocess_starts_and_responds(tmp_path: Path) -> None:
     )
 
     try:
-        # Wait up to 8s for bind
+        # Wait for bind. The budget has to cover a cold interpreter start plus
+        # the app import while the rest of the suite saturates every core: a
+        # measured cold bind is ~1.3s idle but ~7.6s under 20-way load, so the
+        # old 8s budget failed intermittently under `make test-par`. Kept well
+        # inside the 30s @pytest.mark.timeout above.
         url = f"http://127.0.0.1:{port}/api/health"
-        deadline = time.time() + 8
+        deadline = time.time() + 20
         last_err: Exception | None = None
         while time.time() < deadline:
             try:

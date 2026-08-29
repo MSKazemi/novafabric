@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,7 @@ from novafabric.evidence_fabric import (
     LocalPIITable,
     PIIEvent,
 )
+from novafabric.evidence_fabric import queue_consumer as queue_consumer_mod
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -454,6 +456,78 @@ class TestEventQueueConsumer:
             assert stats["processed"] == 10
             assert stats["errors"] == 0
             assert stats["dead_letter"] == 0
+            acc.close()
+
+        _run(_go())
+
+    def test_stop_does_not_lose_events_in_flight(self, tmp_path: Path) -> None:
+        """stop() must account for a batch that is mid-ingest.
+
+        Regression: stop() cancelled the drain task outright. Events already
+        taken off the queue by _process_batch were then dropped with no error,
+        no dead-letter entry and no processed count -- the queue was empty, so
+        stop()'s own flush loop could not see them either. Under load this
+        surfaced as a bare ``assert 0 == 10``.
+        """
+
+        async def _go() -> None:
+            acc = _make_accumulator(tmp_path)
+            original = acc.ingest_capsule_events
+            entered = asyncio.Event()
+
+            def _slow(events: Any) -> Any:
+                entered.set()
+                time.sleep(0.4)
+                return original(events)
+
+            acc.ingest_capsule_events = _slow  # type: ignore[method-assign]
+
+            consumer = EventQueueConsumer(acc, batch_size=20)
+            await consumer.start()
+            for ev in _make_model_events(10):
+                await consumer.publish(ev)
+
+            # Stop precisely while the batch is inside the executor call.
+            await asyncio.wait_for(entered.wait(), timeout=10)
+            await consumer.stop()
+
+            stats = consumer.stats
+            assert stats["processed"] + stats["dead_letter"] == 10, (
+                f"events vanished: {stats}"
+            )
+            assert stats["processed"] == 10
+            acc.close()
+
+        _run(_go())
+
+    def test_stop_dead_letters_events_when_grace_expires(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If the batch outlives the grace period, events are preserved."""
+
+        async def _go() -> None:
+            monkeypatch.setattr(queue_consumer_mod, "_STOP_GRACE_SECONDS", 0.1)
+            acc = _make_accumulator(tmp_path)
+            entered = asyncio.Event()
+
+            def _hang(events: Any) -> Any:
+                entered.set()
+                time.sleep(3.0)
+
+            acc.ingest_capsule_events = _hang  # type: ignore[method-assign]
+
+            consumer = EventQueueConsumer(acc, batch_size=20)
+            await consumer.start()
+            for ev in _make_model_events(10):
+                await consumer.publish(ev)
+
+            await asyncio.wait_for(entered.wait(), timeout=10)
+            await consumer.stop()
+
+            stats = consumer.stats
+            assert stats["processed"] + stats["dead_letter"] == 10, (
+                f"events vanished on the cancellation path: {stats}"
+            )
             acc.close()
 
         _run(_go())

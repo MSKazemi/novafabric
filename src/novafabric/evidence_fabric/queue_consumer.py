@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 
 _QUEUE_MAX = 10_000
 _DEAD_LETTER_MAX = 1_000
+# How long stop() waits for an in-flight batch to finish before it resorts
+# to cancellation. Cancelling mid-batch used to drop every event already
+# taken off the queue, silently: not ingested, not counted, not dead-lettered.
+_STOP_GRACE_SECONDS = 5.0
 
 
 class EventQueueConsumer:
@@ -71,12 +75,26 @@ class EventQueueConsumer:
         logger.debug("EventQueueConsumer: started (batch_size=%d)", self._batch_size)
 
     async def stop(self) -> None:
-        """Stop the background drain loop and flush remaining events."""
+        """Stop the background drain loop and flush remaining events.
+
+        The drain loop is asked to finish (``_running = False``) and then
+        *awaited*, so a batch that is mid-ingest completes and is accounted
+        for. Cancellation is a last resort after ``_STOP_GRACE_SECONDS``,
+        because events taken off the queue no longer exist anywhere else:
+        cancelling mid-batch dropped them with no error, no dead-letter entry
+        and no ``processed`` increment.
+        """
         self._running = False
         if self._task is not None:
-            self._task.cancel()
+            task = self._task
             try:
-                await self._task
+                await asyncio.wait_for(task, timeout=_STOP_GRACE_SECONDS)
+            except (TimeoutError, asyncio.TimeoutError):
+                logger.warning(
+                    "EventQueueConsumer: drain loop did not finish within %.1fs; "
+                    "cancelling (in-flight events are dead-lettered)",
+                    _STOP_GRACE_SECONDS,
+                )
             except asyncio.CancelledError:
                 pass
             self._task = None
@@ -145,6 +163,12 @@ class EventQueueConsumer:
                     None, self._accumulator.ingest_edges, edges
                 )
                 self._processed += len(edges)
+            except asyncio.CancelledError:
+                # These edges are already off the queue, so the flush loop in
+                # stop() can never see them again. Preserve them instead of
+                # letting cancellation drop them silently.
+                self._add_to_dead_letter(edges)
+                raise
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "EventQueueConsumer: failed to ingest %d edges: %s",
@@ -160,6 +184,11 @@ class EventQueueConsumer:
                     None, self._accumulator.ingest_capsule_events, capsule_events
                 )
                 self._processed += len(capsule_events)
+            except asyncio.CancelledError:
+                # Same reasoning as the edge path above: off the queue means
+                # unrecoverable, so cancellation must not lose them.
+                self._add_to_dead_letter(capsule_events)
+                raise
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "EventQueueConsumer: failed to ingest %d capsule events: %s",
