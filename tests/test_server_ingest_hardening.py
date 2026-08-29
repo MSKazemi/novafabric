@@ -29,6 +29,7 @@ from typing import Any
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
@@ -961,3 +962,80 @@ class TestOrphanedExtractionDirReclamation:
 
         assert reap_orphaned_spools(spool, started_at=5000.0) == 2
         assert not f.exists() and not d.exists()
+
+
+# ---------------------------------------------------------------------------
+# B15 (campaign 3): capsule unpack must not block the worker's event loop
+# ---------------------------------------------------------------------------
+#
+# A 314-VM fleet measured accepted ingest throughput pinned at 61.6 req/s, flat
+# to 1.036x across a 9x span of offered load, with p99 reaching 26.8 s against a
+# 200 ms objective — while the host sat at ~20% CPU. It was serialised, not
+# saturated: `upload_capsule` was `async def` but did every expensive step (zip
+# open, guarded member reads, extraction, atomic rename, index write) inline on
+# the event loop, so one worker served exactly one upload at a time and capacity
+# was workers / service_time. Reproduced locally on ONE worker: throughput at
+# concurrency 8 was 1.13x that at concurrency 1 (flat) before the fix and 2.04x
+# after, with p50 falling 387.2 ms -> 96.3 ms.
+#
+# These tests pin the structural property, not the timing: the blocking work
+# must live in functions the handler dispatches to a thread, and the number of
+# concurrent unpacks must stay bounded.
+
+
+def test_upload_handler_dispatches_blocking_work_to_a_thread() -> None:
+    """The handler must await the blocking steps, never inline them."""
+    import inspect
+
+    from novafabric.server.routes import capsules as mod
+
+    source = inspect.getsource(mod.upload_capsule)
+    assert "run_in_threadpool" in source, (
+        "upload_capsule must dispatch the unpack off the event loop (B15)"
+    )
+    # The expensive calls must NOT appear in the coroutine body any more.
+    for blocking in ("extract_archive", "os.rename", "zipfile.ZipFile"):
+        assert blocking not in source, (
+            f"{blocking} is back on the event loop — B15 regression"
+        )
+
+
+def test_blocking_steps_live_in_plain_sync_functions() -> None:
+    """The extracted workers must be sync — an async one would defeat the point."""
+    import inspect
+
+    from novafabric.server.routes import capsules as mod
+
+    for name in ("_unpack_and_publish", "_index_and_meter"):
+        fn = getattr(mod, name)
+        assert not inspect.iscoroutinefunction(fn), f"{name} must be sync"
+    unpack = inspect.getsource(mod._unpack_and_publish)
+    assert "extract_archive" in unpack
+    assert "os.rename" in unpack
+
+
+def test_concurrent_unpack_is_bounded_and_configurable() -> None:
+    """Raising per-worker concurrency must not allow unbounded extraction."""
+    from novafabric.server.config import IngestConfig
+
+    assert IngestConfig().max_concurrent_unpack == 16
+    assert IngestConfig(max_concurrent_unpack=1).max_concurrent_unpack == 1
+    with pytest.raises(ValidationError):
+        IngestConfig(max_concurrent_unpack=0)
+    with pytest.raises(ValidationError):
+        IngestConfig(max_concurrent_unpack=257)
+
+
+def test_unpack_limiter_is_created_once_per_app() -> None:
+    """The semaphore is per worker process and must not be rebuilt per request."""
+    from types import SimpleNamespace
+
+    from novafabric.server.config import IngestConfig
+    from novafabric.server.routes.capsules import _unpack_slot
+
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
+    limits = IngestConfig(max_concurrent_unpack=3)
+    first = _unpack_slot(request, limits)  # type: ignore[arg-type]
+    second = _unpack_slot(request, limits)  # type: ignore[arg-type]
+    assert first is second
+    assert first.value == 3

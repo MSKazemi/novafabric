@@ -17,12 +17,15 @@ import shutil
 import time
 import uuid
 import zipfile
+from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from typing import Annotated, Any
 
+import anyio
 import yaml
 from fastapi import APIRouter, Depends, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 # Imported eagerly, unlike the rest of this module's novafabric.eval imports:
 # the route decorator needs the model at import time to describe the request
@@ -65,6 +68,21 @@ from novafabric.server.schemas import (
 from novafabric.server.step_up import require_step_up
 
 router = APIRouter(prefix="/capsules", tags=["capsules"])
+
+
+def _unpack_slot(request: Request, limits: Any) -> AbstractAsyncContextManager[Any]:
+    """Bound how many capsules one worker unpacks concurrently (B15).
+
+    The limiter is per app instance (so per uvicorn worker) and created lazily
+    on first use, because it must be constructed inside the running event loop.
+    Sized by ``server.ingest.max_concurrent_unpack``; a config change takes
+    effect on restart, which is when workers are re-created anyway.
+    """
+    limiter = getattr(request.app.state, "unpack_limiter", None)
+    if limiter is None:
+        limiter = anyio.Semaphore(int(limits.max_concurrent_unpack))
+        request.app.state.unpack_limiter = limiter
+    return limiter
 
 # Matches OrphanManager.pending_parent_timeout_s default (FR-14).
 _ORPHAN_TIMEOUT_S: float = 86_400.0
@@ -328,12 +346,45 @@ async def upload_capsule(
     # Step 2 — chunked spool to disk; authoritative size enforcement.
     spool_dir = capsule_dir / ingest.SPOOL_DIR_NAME
     spool_path, received = await ingest.spool_upload(capsule, spool_dir, limits)
+    if received == 0:
+        spool_path.unlink(missing_ok=True)
+        raise BadRequestError("Capsule file is empty.")
 
+    # Steps 3-7 are blocking CPU + disk work (zip open, guarded reads,
+    # member-by-member extraction, atomic rename). B15: they used to run inline
+    # here, on the worker's event loop, so a single upload monopolised the whole
+    # worker for its entire ~130 ms service time. A 314-VM fleet measured the
+    # consequence exactly -- accepted throughput pinned at workers / service
+    # time (61.6 req/s on 8 workers), flat to 1.036x across a 9x span of offered
+    # load, while p99 climbed to 26.8 s. The host was never resource-bound
+    # (CPU ~20%): it was serialised, not saturated. Running the blocking section
+    # in the threadpool lets one worker overlap uploads; the semaphore bounds
+    # how many it may unpack at once so this cannot become unbounded concurrent
+    # extraction.
+    async with _unpack_slot(request, limits):
+        run_id, manifest, dest = await run_in_threadpool(
+            _unpack_and_publish, spool_path, spool_dir, capsule_dir, limits
+        )
+
+    return await run_in_threadpool(
+        _index_and_meter, request, run_id, manifest, dest, db_path, capsule_dir, _auth
+    )
+
+
+def _unpack_and_publish(
+    spool_path: Path,
+    spool_dir: Path,
+    capsule_dir: Path,
+    limits: Any,
+) -> tuple[str, dict[str, Any], Path]:
+    """Steps 3-7, off the event loop. Raises the same errors as before.
+
+    Returns ``(run_id, manifest, dest)``. The cleanup invariant is unchanged:
+    the spool file and any temp directory go away on every exit path, so a
+    failed request never leaves a partial ``capsule_dir/<run_id>``.
+    """
     tmp_root: Path | None = None
     try:
-        if received == 0:
-            raise BadRequestError("Capsule file is empty.")
-
         # Step 3 — open from disk; central-directory prechecks.
         try:
             zf = zipfile.ZipFile(spool_path)
@@ -391,8 +442,25 @@ async def upload_capsule(
         if tmp_root is not None:
             shutil.rmtree(tmp_root, ignore_errors=True)
 
-    # Step 8 — indexing and the success response are unchanged.
-    # Index the capsule in MetadataStore (best-effort — never blocks the upload).
+    return run_id, manifest, dest
+
+
+def _index_and_meter(
+    request: Request,
+    run_id: str,
+    manifest: dict[str, Any],
+    dest: Path,
+    db_path: Path | None,
+    capsule_dir: Path,
+    _auth: AuthContext | None,
+) -> dict[str, Any]:
+    """Step 8 — indexing, metering, webhooks, response. Also blocking.
+
+    Every branch here is best-effort by prior design (the capsule store is the
+    source of truth), and every one of them does synchronous IO -- a psycopg
+    round-trip and a SQLite write. Kept off the event loop for the same reason
+    as the unpack.
+    """
     import uuid as _uuid
 
     _raw_tenant_id = getattr(_auth, "tenant_id", None)

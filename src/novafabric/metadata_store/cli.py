@@ -213,6 +213,32 @@ def _alembic_ini_path(backend: str) -> Path | None:
     return ini_path if ini_path.exists() else None
 
 
+def _alembic_argv(ini_path: str | Path, revision: str) -> list[str]:
+    """Return the argv that runs alembic *in the interpreter running nova*.
+
+    B13: this used to be a bare ``["alembic", ...]``. The console script is
+    installed by the ``server`` extra, but a subprocess only finds it if the
+    venv's ``bin/`` is on ``PATH`` — which is not true under ``uv run``, a
+    systemd unit, or any wrapper that invokes the interpreter by absolute
+    path. There the bare name raised ``FileNotFoundError: 'alembic'`` out of
+    ``subprocess.run`` with no message of ours, and on a Postgres deployment
+    that left the metadata schema uncreated (see the fail-open note in
+    ``server/app.py``'s lifespan). ``sys.executable -m alembic`` resolves
+    through the same interpreter that already imports novafabric, so it
+    cannot miss an alembic that is installed.
+    """
+    import sys  # noqa: PLC0415
+
+    return [sys.executable, "-m", "alembic", "-c", str(ini_path), "upgrade", revision]
+
+
+#: Actionable text when alembic is not importable at all (as opposed to not on PATH).
+_ALEMBIC_MISSING_HINT = (
+    "alembic is not installed in this interpreter. Install the server extra: "
+    "`pip install 'novafabric[server]'` (or `uv sync --all-extras` in a checkout)."
+)
+
+
 def run_alembic_upgrade(
     backend: str, *, dsn: str | None = None, revision: str = "head"
 ) -> tuple[bool, str]:
@@ -245,12 +271,16 @@ def run_alembic_upgrade(
         )
         scrub = None
 
-    proc = subprocess.run(  # noqa: S603 — fixed binary, no shell
-        ["alembic", "-c", str(ini_path), "upgrade", revision],
-        env=env,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        proc = subprocess.run(  # noqa: S603 — fixed argv, no shell
+            _alembic_argv(ini_path, revision),
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        # B13: never surface a bare FileNotFoundError to the caller.
+        return False, _ALEMBIC_MISSING_HINT
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "no output").strip()
         if scrub:
@@ -361,11 +391,16 @@ def db_upgrade_cmd(
         env["NOVAFABRIC_DB_PATH"] = db_path
         console.print(f"  db_path: [dim]{db_path}[/dim]")
 
-    proc = subprocess.run(  # noqa: S603
-        ["alembic", "-c", ini_path, "upgrade", revision],
-        env=env,
-        capture_output=False,
-    )
+    try:
+        proc = subprocess.run(  # noqa: S603 — fixed argv, no shell
+            _alembic_argv(ini_path, revision),
+            env=env,
+            capture_output=False,
+        )
+    except FileNotFoundError as exc:
+        # B13: never surface a bare FileNotFoundError to the operator.
+        console.print(f"[red]Error:[/red] {_ALEMBIC_MISSING_HINT}")
+        raise typer.Exit(code=2) from exc
 
     if proc.returncode != 0:
         console.print(

@@ -17,6 +17,7 @@ a non-zero exit.
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -183,8 +184,14 @@ def test_db_upgrade_succeeds_when_alembic_succeeds(
     result = runner.invoke(mcli.metadata_db_app, ["upgrade", "--backend", "sqlite"])
 
     assert result.exit_code == 0
-    assert calls and calls[0][0] == "alembic"
+    # Since B13 the argv runs alembic through *this* interpreter rather than the
+    # bare console script, which a subprocess only finds when the venv's bin/ is
+    # on PATH. The track is still asserted, via the ini path.
+    assert calls
+    assert calls[0][0] == sys.executable
+    assert calls[0][1:3] == ["-m", "alembic"]
     assert "upgrade" in calls[0]
+    assert "metadata_store" in str(calls[0][calls[0].index("-c") + 1])
 
 
 def test_migrate_to_postgres_help_lists_its_flags() -> None:

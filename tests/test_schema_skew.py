@@ -436,3 +436,123 @@ class TestRegistryTrackResolution:
             "postgresql+psycopg://u@h/db"
         ) == "postgresql+psycopg://u@h/db"
         assert registry_track._sqlalchemy_url("sqlite:///x.db") == "sqlite:///x.db"
+
+
+# ---------------------------------------------------------------------------
+# B14 (campaign 3): an empty Postgres backend must not start silently
+# ---------------------------------------------------------------------------
+#
+# On a 314-VM fleet the server was started with `--backend postgres` against a
+# database with zero tables (its migration had died — see B13). The guard
+# reported `unstamped`, warned once, and started; the server then returned
+# HTTP 201 for all 41,774 uploads, wrote no metadata rows, and logged no error.
+# The capsules were durable and verify — the failure is that the server's own
+# report of what it did was false for a whole plane.
+
+
+class _EmptyBackendHarness:
+    """Force `unstamped` and control the table count the guard sees."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, table_count: int | None):
+        from novafabric.server import schema_skew as ss
+
+        monkeypatch.setattr(
+            ss,
+            "compare_revisions",
+            lambda *a, **kw: ss.SkewReport(
+                status=ss.STATUS_UNSTAMPED,
+                backend="postgres",
+                db_revision=None,
+                head_revision="abc123",
+                detail="no alembic_version stamp",
+                track="registry",
+            ),
+        )
+        monkeypatch.setattr(
+            ss, "postgres_application_tables", lambda _dsn: table_count
+        )
+        self.ss = ss
+
+
+_DSN = "postgresql://u:secret@db.internal:5432/nova"
+
+
+def test_empty_postgres_backend_refuses_to_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    h = _EmptyBackendHarness(monkeypatch, table_count=0)
+    monkeypatch.delenv(h.ss.ALLOW_SCHEMA_SKEW_ENV, raising=False)
+    with pytest.raises(h.ss.SchemaSkewError) as exc:
+        h.ss.enforce_schema_skew_guard(backend="postgres", target=_DSN)
+    assert "no tables" in str(exc.value)
+    assert "nova db upgrade" in str(exc.value)
+
+
+def test_empty_backend_refusal_never_echoes_the_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    h = _EmptyBackendHarness(monkeypatch, table_count=0)
+    monkeypatch.delenv(h.ss.ALLOW_SCHEMA_SKEW_ENV, raising=False)
+    with pytest.raises(h.ss.SchemaSkewError) as exc:
+        h.ss.enforce_schema_skew_guard(backend="postgres", target=_DSN)
+    message = str(exc.value)
+    assert "secret" not in message
+    assert "db.internal" not in message
+    assert _DSN not in message
+
+
+def test_populated_but_unstamped_postgres_still_starts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The legacy init_schema()-bootstrapped case must keep working."""
+    h = _EmptyBackendHarness(monkeypatch, table_count=17)
+    monkeypatch.delenv(h.ss.ALLOW_SCHEMA_SKEW_ENV, raising=False)
+    report = h.ss.enforce_schema_skew_guard(backend="postgres", target=_DSN)
+    assert report.status == h.ss.STATUS_UNSTAMPED
+
+
+def test_unreadable_backend_still_starts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """None means 'could not tell' — never refuse on ignorance (ADR-0182)."""
+    h = _EmptyBackendHarness(monkeypatch, table_count=None)
+    monkeypatch.delenv(h.ss.ALLOW_SCHEMA_SKEW_ENV, raising=False)
+    report = h.ss.enforce_schema_skew_guard(backend="postgres", target=_DSN)
+    assert report.status == h.ss.STATUS_UNSTAMPED
+
+
+def test_empty_backend_refusal_is_overridable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    h = _EmptyBackendHarness(monkeypatch, table_count=0)
+    monkeypatch.setenv(h.ss.ALLOW_SCHEMA_SKEW_ENV, "1")
+    report = h.ss.enforce_schema_skew_guard(backend="postgres", target=_DSN)
+    assert report.status == h.ss.STATUS_UNSTAMPED
+
+
+def test_sqlite_local_mode_is_untouched(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Local mode must never acquire a Postgres-shaped startup requirement."""
+    from novafabric.server import schema_skew as ss
+
+    monkeypatch.setattr(
+        ss,
+        "compare_revisions",
+        lambda *a, **kw: ss.SkewReport(
+            status=ss.STATUS_UNSTAMPED,
+            backend="sqlite",
+            db_revision=None,
+            head_revision="abc123",
+            detail="no alembic_version stamp",
+            track="registry",
+        ),
+    )
+
+    def _must_not_run(_dsn: str) -> int:
+        raise AssertionError("the empty-backend probe must not run for sqlite")
+
+    monkeypatch.setattr(ss, "postgres_application_tables", _must_not_run)
+    monkeypatch.delenv(ss.ALLOW_SCHEMA_SKEW_ENV, raising=False)
+    report = ss.enforce_schema_skew_guard(
+        backend="sqlite", target=tmp_path / "registry.db"
+    )
+    assert report.status == ss.STATUS_UNSTAMPED

@@ -20,7 +20,10 @@ server lifespan **before** ``init_schema()``: ``behind`` and
 ``ahead_or_foreign`` refuse to start (:class:`SchemaSkewError`, message
 contracts E-SKEW-BEHIND / E-SKEW-AHEAD); ``NOVAFABRIC_ALLOW_SCHEMA_SKEW=1``
 downgrades both to one structured warning; ``unstamped`` and ``unknown`` warn
-and start. Messages carry backend name and revisions only — never DSNs,
+and start --- except that an ``unstamped`` Postgres target with **no
+application tables at all** is refused (E-SKEW-EMPTY), because a server whose
+metadata plane cannot work would otherwise answer uploads with 201 and write
+nothing. Messages carry backend name and revisions only — never DSNs,
 hostnames, or credentials.
 """
 
@@ -155,6 +158,47 @@ def _read_stamp_postgres(dsn: str) -> tuple[Optional[str], str]:
     if row is None or not row[0]:
         return None, _UNSTAMPED
     return str(row[0]), _STAMPED
+
+
+def postgres_application_tables(dsn: str) -> Optional[int]:
+    """Count application tables in the target's ``public`` schema, or None.
+
+    ``alembic_version`` is excluded: it is bookkeeping, not schema. None means
+    "could not tell" (psycopg absent, unreachable, auth failure) and must never
+    be treated as zero — the honesty rule forbids refusing on ignorance.
+
+    Used to split the ``unstamped`` state in two. An ``init_schema()``-created
+    deployment is unstamped *and populated*; a database whose migration never
+    ran is unstamped *and empty*, and only the second one cannot work.
+    """
+    try:
+        import psycopg  # noqa: PLC0415
+    except ImportError:
+        return None
+    try:
+        with psycopg.connect(dsn, connect_timeout=2) as conn:
+            row = conn.execute(
+                "SELECT count(*) FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_name <> 'alembic_version'"
+            ).fetchone()
+    except Exception:  # noqa: BLE001 — unreachable / auth failure / timeout
+        return None
+    if row is None or row[0] is None:
+        return None
+    return int(row[0])
+
+
+def empty_backend_message(backend: str) -> str:
+    """E-SKEW-EMPTY: the configured backend has no schema at all."""
+    return (
+        f"Refusing to start: the configured {backend} metadata backend contains "
+        "no tables — its migration has not run. The capsule store would still "
+        "accept uploads and return 201 while writing no metadata at all, so the "
+        "server refuses rather than report success it cannot deliver. "
+        "Run `nova db upgrade --backend postgres` (see `nova doctor "
+        "--check-storage`). "
+        f"Override: {ALLOW_SCHEMA_SKEW_ENV}=1."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -350,6 +394,29 @@ def enforce_schema_skew_guard(
         raise SchemaSkewError(message, report=report)
 
     if report.status == STATUS_UNSTAMPED:
+        # B14 (campaign 3): `unstamped` conflated two very different states.
+        # An init_schema()-bootstrapped database is unstamped but *populated*
+        # and works fine. A database whose migration never ran is unstamped and
+        # *empty*, and nothing on the metadata plane can work — yet the server
+        # started on a single warning and then answered 41,774 capsule uploads
+        # with 201 while writing zero rows and logging zero errors. The capsules
+        # were durable, so nothing was lost; what failed was the server's report
+        # of what it had done. Refuse instead, for the configured server-mode
+        # backend only — local SQLite mode is untouched, and an unreadable
+        # target still starts (never refuse on ignorance).
+        if backend == "postgres" and isinstance(target, str) and target:
+            table_count = postgres_application_tables(target)
+            if table_count == 0:
+                message = empty_backend_message(backend)
+                if allow_schema_skew():
+                    logger.warning(
+                        "EMPTY METADATA BACKEND OVERRIDDEN (%s=1) — %s",
+                        ALLOW_SCHEMA_SKEW_ENV,
+                        message,
+                        extra=report.log_fields(event="schema_empty_overridden"),
+                    )
+                    return report
+                raise SchemaSkewError(message, report=report)
         logger.warning(
             "schema-skew guard: database is not alembic-stamped (backend=%s) — "
             "starting; stamping adoption is planned. Inspect with "
