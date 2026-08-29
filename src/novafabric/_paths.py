@@ -49,7 +49,11 @@ def registry_db_path() -> Path:
 
 
 def serve_token_path() -> Path:
-    """One-shot serve token file: ``$NOVAFABRIC_HOME/.serve-token``."""
+    """Serve session-token file: ``$NOVAFABRIC_HOME/.serve-token``.
+
+    Persistent, not one-shot: an existing file is reused across restarts and
+    outlives the process until something deletes it.
+    """
     return nova_home() / ".serve-token"
 
 

@@ -11,6 +11,7 @@ requires an auto-generated bearer token. Token resolution has parity with
 
 from __future__ import annotations
 
+import hashlib
 import os
 import secrets
 import stat
@@ -23,6 +24,21 @@ TOKEN_ENV: Final[str] = "NOVAFABRIC_SERVER_TOKEN"
 
 #: Subject the local token authenticates as (always role ``admin``).
 LOCAL_ADMIN_SUBJECT: Final[str] = "local-admin"
+
+#: Characters of the hex digest used to identify a token without revealing it.
+FINGERPRINT_LEN: Final[int] = 12
+
+
+def token_fingerprint(token: str) -> str:
+    """Return a short, non-reversible identifier for ``token``.
+
+    Used where an operator needs to tell two tokens apart -- log lines,
+    non-interactive start-up output -- without the secret itself appearing on a
+    stream a supervisor may capture. This is a digest, deliberately *not* a
+    prefix of the token: a prefix would disclose part of the secret.
+    """
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    return digest[:FINGERPRINT_LEN]
 
 
 def generate_token() -> str:

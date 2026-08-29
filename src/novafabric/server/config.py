@@ -210,6 +210,13 @@ class IngestConfig(BaseModel):
     #: Max compression ratio (uncompressed/compressed), per member (past the
     #: 1 MiB floor) and for the archive total. 0 = disabled.
     zip_max_ratio: float = Field(default=100.0, ge=0)
+    #: B15: how many capsules one worker may unpack at once. Unpacking is
+    #: blocking CPU+disk work; before this existed it ran inline on the event
+    #: loop, so a worker served exactly one upload at a time and a fleet
+    #: measured ingest capacity as workers / service_time (61.6 req/s on
+    #: 8 workers). It now runs in the threadpool, bounded here so that raising
+    #: concurrency cannot turn into unbounded concurrent extraction.
+    max_concurrent_unpack: int = Field(default=16, ge=1, le=256)
 
 
 class BulkConfig(BaseModel):
@@ -537,6 +544,9 @@ class ServerConfig(BaseModel):
             self.ingest.zip_max_uncompressed_bytes = int(val)
         if val := os.environ.get("NOVAFABRIC_SERVER_INGEST_ZIP_MAX_RATIO"):
             self.ingest.zip_max_ratio = float(val)
+        # ADR-0262 (B15): bound on concurrent unpacking per worker.
+        if val := os.environ.get("NOVAFABRIC_SERVER_INGEST_MAX_CONCURRENT_UNPACK"):
+            self.ingest.max_concurrent_unpack = int(val)
         # ADR-0208 usage-metering overrides (NOVAFABRIC_SERVER_USAGE_*)
         if val := os.environ.get("NOVAFABRIC_SERVER_USAGE_METERING_ENABLED"):
             self.usage.metering_enabled = val.lower() in ("1", "true", "yes", "on")

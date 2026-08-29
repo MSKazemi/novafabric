@@ -212,15 +212,36 @@ def start_cmd(
                 cfg.host,
             )
         else:
-            from novafabric.server.local_token import TOKEN_ENV, ensure_local_token
+            import sys as _sys
+
+            from novafabric.server.local_token import (
+                TOKEN_ENV,
+                ensure_local_token,
+                token_fingerprint,
+            )
 
             token, token_path = ensure_local_token()
             cfg.local_token = token
-            # Print the secret to the terminal only (err channel) — never to the
-            # application logger, which may be aggregated to stdout/journald/files.
-            typer.echo(
-                "Local auth token (OIDC disabled, ADR-0184): " + token, err=True
-            )
+            # The secret is printed only when stderr is a terminal a human is
+            # watching. Under nohup, systemd, Docker/Kubernetes, CI and every
+            # other supervisor, stderr is a durable, routinely-collected file --
+            # so the older "err channel is ephemeral" split protected nothing
+            # (ADR-0263). Non-interactive starts get a non-reversible
+            # fingerprint plus the path instead, which is enough to tell two
+            # tokens apart without disclosing either.
+            if _sys.stderr.isatty():
+                typer.echo(
+                    "Local auth token (OIDC disabled, ADR-0184): " + token,
+                    err=True,
+                )
+            else:
+                typer.echo(
+                    "Local auth token (OIDC disabled, ADR-0184): "
+                    f"fingerprint {token_fingerprint(token)}, not shown because "
+                    "stderr is not a terminal. Read it from "
+                    f"{token_path} (mode 0600), or pin one via {TOKEN_ENV}.",
+                    err=True,
+                )
             typer.echo(
                 "Pass it on every request: Authorization: Bearer <token> "
                 f"(e.g. curl -H 'Authorization: Bearer <token>' "

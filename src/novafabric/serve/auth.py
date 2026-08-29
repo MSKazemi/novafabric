@@ -1,4 +1,9 @@
-"""One-shot token generation + verification for `nova serve`."""
+"""Session-token generation + verification for `nova serve`.
+
+The token is *persistent*, not one-shot: an existing ``.serve-token`` is
+reused so a restart does not invalidate open browser sessions, and it
+survives on disk after the process exits.
+"""
 
 from __future__ import annotations
 

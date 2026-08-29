@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -274,7 +275,7 @@ class TestStartCli:
             {"host": "0.0.0.0", "port": 7433, "ssl_certfile": None, "ssl_keyfile": None}
         ]
 
-    def test_start_prints_token_to_terminal_never_to_the_logger(
+    def test_start_withholds_token_from_non_tty_and_from_the_logger(
         self,
         tmp_path: Path,
         fake_run: _FakeUvicornRun,
@@ -301,8 +302,19 @@ class TestStartCli:
         assert not any("Authorization: Bearer" in rec.getMessage() for rec in caplog.records)
         # The logger still tells an operator where to find the token.
         assert any("Local auth token stored at" in rec.getMessage() for rec in caplog.records)
-        # The operator gets the real token, and the hint, on the terminal.
-        assert token in result.output
+        # CliRunner's streams are NOT a tty, which is exactly the shape every
+        # supervised deployment has (nohup, systemd, Docker, CI). The secret
+        # must not appear there -- this assertion previously required the
+        # opposite and pinned the leak as correct (B16 / ADR-0263).
+        assert token not in result.output, (
+            "bearer token written to a non-tty stderr, which supervisors capture"
+        )
+        # The operator still gets everything needed to recover it.
+        from novafabric.server.local_token import TOKEN_ENV, token_fingerprint
+
+        assert token_fingerprint(token) in result.output
+        assert str(server_token_path()) in result.output
+        assert TOKEN_ENV in result.output
         assert "Authorization: Bearer" in result.output
 
     def test_start_insecure_logs_warning(
@@ -318,3 +330,86 @@ class TestStartCli:
             "INSECURE" in rec.getMessage() and rec.levelno == logging.WARNING
             for rec in caplog.records
         )
+
+
+# ---------------------------------------------------------------------------
+# B16 / ADR-0263: the token is emitted only to an interactive terminal.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "openpty"), reason="requires a pty")
+class TestTokenEmissionIsTtyGated:
+    """The secret must reach a human terminal and nothing else.
+
+    The non-tty half is asserted in ``TestStartCli`` above, where ``CliRunner``
+    already provides a non-tty stream. This half needs a *real* pty: mocking
+    ``isatty`` would assert the branch rather than the behaviour, which is the
+    mistake the original test made when it called ``CliRunner`` output "the
+    terminal".
+    """
+
+    CHILD = """
+import sys, uvicorn
+uvicorn.run = lambda *a, **k: None
+from novafabric.cli.main import app
+try:
+    app(["server", "start", "--config", sys.argv[1]])
+except SystemExit:
+    pass
+"""
+
+    def _run_on_pty(self, tmp_path: Path) -> str:
+        import os
+        import subprocess
+
+        env = dict(os.environ)
+        env["NOVAFABRIC_HOME"] = str(tmp_path)
+        env.pop("NOVAFABRIC_SERVER_TOKEN", None)
+        env["COLUMNS"] = "200"
+
+        primary, secondary = os.openpty()
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, "-c", self.CHILD, str(tmp_path / "no-such.yaml")],
+                stdout=secondary,
+                stderr=secondary,
+                stdin=subprocess.DEVNULL,
+                env=env,
+                cwd=str(tmp_path),
+            )
+            os.close(secondary)
+            secondary = -1
+            chunks: list[bytes] = []
+            while True:
+                try:
+                    data = os.read(primary, 65536)
+                except OSError:
+                    break
+                if not data:
+                    break
+                chunks.append(data)
+            proc.wait(timeout=60)
+        finally:
+            if secondary != -1:
+                os.close(secondary)
+            os.close(primary)
+        return b"".join(chunks).decode("utf-8", "replace")
+
+    def test_token_is_printed_when_stderr_is_a_terminal(self, tmp_path: Path) -> None:
+        output = self._run_on_pty(tmp_path)
+        token_file = tmp_path / ".server-token"
+        assert token_file.exists(), output
+        token = token_file.read_text().strip()
+        # On a real terminal the operator convenience is preserved in full.
+        assert token in output, output
+
+    def test_fingerprint_does_not_disclose_the_token(self) -> None:
+        from novafabric.server.local_token import token_fingerprint
+
+        token = "c3_" + "a" * 40
+        fp = token_fingerprint(token)
+        # A digest, not a prefix: no run of the secret may appear in it.
+        assert fp not in token
+        assert token[:8] not in fp
+        assert fp == token_fingerprint(token)
+        assert fp != token_fingerprint(token + "x")
