@@ -112,7 +112,7 @@ scale = [
     # clickhouse-connect (Apache-2.0) — ClickHouse sink for cost attribution (cap-002).
     "clickhouse-connect>=0.8.0",
     # fastavro (MIT) — Avro serialisation for capsule event schemas (cap-001).
-    "fastavro>=1.9.7",
+    "fastavro>=1.12.2",
     # pyiceberg (Apache-2.0) — Iceberg table format for object capsule store (cap-009).
     "pyiceberg>=0.7.0",
     # blake3 (Apache-2.0/CC0-1.0) — BLAKE3 digest for dual-object store (cap-003).
@@ -355,7 +355,7 @@ avro = [
     # the install hint raised by evidence_fabric/avro_serializer.py's
     # ImportError — actually resolves (phantom-extra bug fix). Version-aligned
     # with the `scale` extra above, which bundles the same package.
-    "fastavro>=1.9.7",
+    "fastavro>=1.12.2",
 ]
 energy-gpu = [
     # nvidia-ml-py (BSD-3-Clause) — Tier A under ADR-0024. Provides the
