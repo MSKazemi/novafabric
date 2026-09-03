@@ -32,6 +32,27 @@ if ! git $GITDIR status --porcelain 2>/dev/null | grep -qE '\.py$'; then
   exit 0
 fi
 
+# LOAD SHED. Several sessions ending turns at once used to stack full-width
+# xdist runs (measured 2026-09-04: load 49–65 on 20 cores, 11 GiB in swap).
+# If the box is already saturated, running one more suite helps nobody: skip,
+# say so, and let pre-push remain the real gate.
+NPROC=$(nproc 2>/dev/null || echo 4)
+LOAD1=$(printf '%.0f' "$(cut -d' ' -f1 /proc/loadavg 2>/dev/null || echo 0)")
+if [ "$LOAD1" -ge "$NPROC" ]; then
+  jq -n --arg m "scoped tests SKIPPED — machine saturated (load $LOAD1 on $NPROC cores); pre-push remains the gate" \
+     '{systemMessage:$m}'
+  exit 0
+fi
+
+# SERIALIZE. One scoped run per repo at a time; a second session waits its turn
+# instead of doubling the load, and gives up (without blocking) rather than
+# queueing forever.
+exec 9>"${STATE_DIR}/scoped-tests.lock"
+if ! flock -w 240 9; then
+  jq -n '{systemMessage:"scoped tests SKIPPED — another scoped run held the lock for 240s; pre-push remains the gate"}'
+  exit 0
+fi
+
 OUT=$(./scripts/run-scoped-tests.sh direct 2>&1)
 STATUS=$?
 

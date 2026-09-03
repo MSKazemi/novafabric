@@ -9,6 +9,18 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
+### Changed
+
+- **The dev-loop test tiers are now load-aware and polite** (dev tooling only; no
+  runtime or CLI change). `-n auto` used to claim every core per run; concurrent
+  sessions each doing that was measured at load 49–65 on 20 cores with 11 GiB in
+  swap. `scripts/test-workers.sh` now sizes workers to the free cores and memory
+  and is exported as `PYTEST_XDIST_AUTO_NUM_WORKERS` (the pytest command lines —
+  and CI parity of `make test-par` — are untouched). Automated runs are `nice`d,
+  the Stop hook sheds when the machine is saturated, and concurrent scoped runs
+  serialize on a lock. Override: `NOVA_TEST_WORKERS=8 make test-fast`.
+  Guard: `tests/docs/test_worker_throttle.py`.
+
 ### Added
 
 - **`nova capture-ui` — computer-use evidence, with keystrokes treated as the hazard they are**

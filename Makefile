@@ -3,6 +3,13 @@
 # Delegates to sub-project Makefiles and provides top-level convenience targets.
 # Python quality gates are run via `uv run`; Go targets delegate to collector/Makefile.
 
+# Load-aware `-n auto`: pytest-xdist reads PYTEST_XDIST_AUTO_NUM_WORKERS as the
+# value of `auto`, so every test target inherits a worker count sized to the
+# cores and memory that are actually free (scripts/test-workers.sh) instead of
+# claiming all of them. The pytest command lines are untouched — `test-par`
+# stays byte-for-byte CI's command. Override: NOVA_TEST_WORKERS=8 make test-fast
+export PYTEST_XDIST_AUTO_NUM_WORKERS ?= $(shell ./scripts/test-workers.sh)
+
 COMPOSE      := docker compose -f deploy/docker/docker-compose.yml
 COMPOSE_PROD := docker compose -f deploy/docker/docker-compose.yml --profile prod
 COMPOSE_AGE  := docker compose -f deploy/docker/docker-compose.yml --profile age

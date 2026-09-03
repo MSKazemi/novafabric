@@ -39,8 +39,11 @@ echo "pre-push: running the test gate (make test-fast, ~4 min). NOVA_SKIP_TEST_G
 #
 # Unsetting them makes the suite see the default .git (public), which is what
 # "publicly tracked" means in those guards, and matches how the suite runs everywhere else.
+# nice: the gate must finish, not win the scheduler — interactive work and the
+# editor stay responsive while it runs. Worker count is already load-aware via
+# the Makefile's PYTEST_XDIST_AUTO_NUM_WORKERS export (scripts/test-workers.sh).
 if env -u FORCE_COLOR -u COLORTERM -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
-     make test-fast >&2; then
+     nice -n 10 make test-fast >&2; then
   echo "$DIGEST" > "$STAMP"
   echo "pre-push: test gate GREEN" >&2
   exit 0

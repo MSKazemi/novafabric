@@ -200,6 +200,16 @@ rung is defined by what it can prove and what it costs.
 `pre-push` hook runs tier 2 and refuses to push red. In normal work you type none of them.
 Design and rationale: ADR-0267.
 
+**Every tier is load-aware.** `-n auto` would otherwise claim *all* cores per run, and several
+concurrent sessions each doing that has been measured to push this class of machine to load 49–65
+on 20 cores with 11 GiB in swap. `scripts/test-workers.sh` sizes the worker count to the cores and
+memory that are actually free (never below 1, never above `nproc`), and the Makefile exports it as
+`PYTEST_XDIST_AUTO_NUM_WORKERS`, which pytest-xdist reads as the value of `auto` — the pytest
+command lines are untouched, so `test-par` remains byte-for-byte CI's command. Automated runs are
+additionally `nice`d, the Stop hook skips (without blocking) when the machine is already saturated,
+and concurrent scoped runs serialize on a lock instead of stacking. Force a count with
+`NOVA_TEST_WORKERS=8 make test-fast`. Guard: `tests/docs/test_worker_throttle.py`.
+
 **How selection works.** `scripts/testsel.py` builds the import graph with `ast` — it parses,
 it never executes — and maps changed files to test files. The governing rule is that
 **ambiguity selects more, never less**: a changed `pyproject.toml`, `uv.lock`, `Makefile` or

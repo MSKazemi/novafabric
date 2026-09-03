@@ -16,6 +16,10 @@ shift || true
 # ANSI escapes break ~88 CLI/JSON assertions in this suite.
 unset FORCE_COLOR COLORTERM
 
+# Size `-n auto` to the cores/memory that are actually free, and run niced so
+# an automated QA pass never outcompetes interactive work. See scripts/test-workers.sh.
+export PYTEST_XDIST_AUTO_NUM_WORKERS="${PYTEST_XDIST_AUTO_NUM_WORKERS:-$(./scripts/test-workers.sh)}"
+
 SEL=$(uv run python scripts/testsel.py --mode "$MODE" 2>/tmp/testsel.err)
 REASON=$(cat /tmp/testsel.err)
 
@@ -26,12 +30,12 @@ fi
 
 if [ "$SEL" = "*" ]; then
   echo "scoped tests: escalating to the full fast suite — $REASON"
-  exec uv run pytest -n auto --dist=loadgroup --benchmark-disable -q \
+  exec nice -n 10 uv run pytest -n auto --dist=loadgroup --benchmark-disable -q \
        -m "not container" --ignore=tests/integration "$@"
 fi
 
 COUNT=$(echo "$SEL" | wc -l)
 echo "scoped tests: $REASON"
 # shellcheck disable=SC2086
-exec uv run pytest -n auto --dist=loadgroup --benchmark-disable -q \
+exec nice -n 10 uv run pytest -n auto --dist=loadgroup --benchmark-disable -q \
      -m "not container" -p no:randomly $SEL "$@"
