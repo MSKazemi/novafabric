@@ -579,7 +579,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'serve'", specifier = ">=0.52.1" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.52.1" },
     { name = "watchdog", marker = "extra == 'watch'", specifier = ">=4.0.0" },
-    { name = "weasyprint", marker = "extra == 'compliance'", specifier = ">=60.0" },
+    { name = "weasyprint", marker = "extra == 'compliance'", specifier = ">=69.0" },
     { name = "zstandard", marker = "extra == 'ocs-compress'", specifier = ">=0.23.0" },
 ]
 provides-extras = ["saml", "scale", "worm-s3", "worm-azure", "worm-gcs", "seal-aws", "seal-azure", "seal-gcp", "sigstore", "spkg", "seal-postgres", "serve", "federation", "server", "lineage-kuzu", "janusgraph", "lineage-migration", "compliance", "scale-kg", "ocs-compress", "openai-agents", "google-adk", "bedrock-agentcore", "a2a", "watch", "otlp", "query", "clickhouse", "nats", "avro", "energy-gpu", "all"]
