@@ -32,15 +32,20 @@ when a complete fix needs longer than the window.
 ### Dependency scanning and waivers
 
 - CI runs [pip-audit](https://pypi.org/project/pip-audit/) against the locked
-  dependency set on every pull request and weekly; HIGH/CRITICAL findings
-  block merges.
+  Python dependency set on every pull request and weekly; HIGH/CRITICAL
+  findings block merges.
+- CI runs `npm audit` against every tracked npm lockfile (`web/`,
+  `packages/nova-dashboard/`, `packages/nova-sdk-ts/`) on lockfile changes
+  and weekly, behind the same severity gate; HIGH/CRITICAL advisories block.
 - Release container images are scanned with trivy; CRITICAL findings with an
   available fix block the release.
-- Exceptions go through the checked-in waiver file
-  [`.pip-audit-waivers.toml`](.pip-audit-waivers.toml): every waiver carries
-  the vulnerability id, a written justification, and an **expiry date**. An
-  expired waiver fails CI by construction, so accepted risk is always
-  time-boxed and re-reviewed — waivers cannot rot into permanence.
+- Exceptions go through the checked-in waiver files
+  [`.pip-audit-waivers.toml`](.pip-audit-waivers.toml) and
+  [`.npm-audit-waivers.toml`](.npm-audit-waivers.toml) — one schema, parsed
+  by the same code: every waiver carries the vulnerability id, a written
+  justification, and an **expiry date**. An expired waiver fails CI by
+  construction, so accepted risk is always time-boxed and re-reviewed —
+  waivers cannot rot into permanence.
 
 ## Supported versions
 

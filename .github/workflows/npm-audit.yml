@@ -1,0 +1,96 @@
+name: npm-audit
+
+# Dependency vulnerability gate for the npm trees (ADR-0186, Amendment 1).
+# The Python closure has had this discipline since ADR-0186 (pip-audit.yml);
+# the three publicly tracked npm lockfiles had NO audit at all — found
+# 2026-09-04 with eight HIGH advisories sitting unread in web/. Same
+# contract, same waiver schema, shared parser:
+#
+#   - HIGH/CRITICAL advisories (and advisories whose severity is missing —
+#     fail closed) BLOCK the job.
+#   - MODERATE/LOW/INFO advisories report without blocking.
+#   - Exceptions go through .npm-audit-waivers.toml (id, justification,
+#     expiry); an EXPIRED waiver fails the job by construction.
+#
+# No `npm ci` and no install scripts run here: `npm audit` reads the
+# lockfile and asks the registry, which is all a scan of what we consume
+# needs. This extends — does not replace — Scorecard and CodeQL.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/package-lock.json"
+      - "packages/nova-dashboard/package-lock.json"
+      - "packages/nova-sdk-ts/package-lock.json"
+      - ".npm-audit-waivers.toml"
+      - "scripts/npm_audit_gate.py"
+      - ".github/workflows/npm-audit.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "web/package-lock.json"
+      - "packages/nova-dashboard/package-lock.json"
+      - "packages/nova-sdk-ts/package-lock.json"
+      - ".npm-audit-waivers.toml"
+      - "scripts/npm_audit_gate.py"
+      - ".github/workflows/npm-audit.yml"
+  schedule:
+    # Weekly re-audit — newly published advisories must surface even when
+    # no lockfile changed. Tuesdays 06:45 UTC, beside pip-audit's 06:30.
+    - cron: "45 6 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: npm-audit (${{ matrix.tree }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        tree:
+          - web
+          - packages/nova-dashboard
+          - packages/nova-sdk-ts
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Run npm audit against the lockfile
+        # npm audit exits non-zero when it finds anything; the severity +
+        # waiver gate below decides what actually blocks, so findings are
+        # not a failure of THIS step — a missing/empty report is.
+        working-directory: ${{ matrix.tree }}
+        run: |
+          npm audit --json > npm-audit-report.json \
+            || echo "npm audit reported findings; the gate step decides below"
+          test -s npm-audit-report.json
+
+      - name: Severity + waiver gate
+        run: |
+          python3 scripts/npm_audit_gate.py \
+            --report "${{ matrix.tree }}/npm-audit-report.json" \
+            --waivers .npm-audit-waivers.toml \
+            --label "${{ matrix.tree }}"
+
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: npm-audit-${{ strategy.job-index }}-${{ github.sha }}
+          path: ${{ matrix.tree }}/npm-audit-report.json
