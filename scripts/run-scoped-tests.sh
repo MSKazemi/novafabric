@@ -20,7 +20,15 @@ unset FORCE_COLOR COLORTERM
 # an automated QA pass never outcompetes interactive work. See scripts/test-workers.sh.
 export PYTEST_XDIST_AUTO_NUM_WORKERS="${PYTEST_XDIST_AUTO_NUM_WORKERS:-$(./scripts/test-workers.sh)}"
 
-SEL=$(uv run python scripts/testsel.py --mode "$MODE" 2>/tmp/testsel.err)
+# .venv/bin directly, not `uv run`: uv serializes on a project-wide lock that
+# every concurrent session contends for. Automated runs must never queue on it;
+# the uv fallback only exists for a tree whose venv is not built yet.
+PY=".venv/bin/python"
+[ -x "$PY" ] || PY="uv run python"
+PYTEST=".venv/bin/pytest"
+[ -x "$PYTEST" ] || PYTEST="uv run pytest"
+
+SEL=$($PY scripts/testsel.py --mode "$MODE" 2>/tmp/testsel.err)
 REASON=$(cat /tmp/testsel.err)
 
 if [ -z "$SEL" ]; then
@@ -30,12 +38,12 @@ fi
 
 if [ "$SEL" = "*" ]; then
   echo "scoped tests: escalating to the full fast suite — $REASON"
-  exec nice -n 10 uv run pytest -n auto --dist=loadgroup --benchmark-disable -q \
+  exec nice -n 10 $PYTEST -n auto --dist=loadgroup --benchmark-disable -q \
        -m "not container" --ignore=tests/integration "$@"
 fi
 
 COUNT=$(echo "$SEL" | wc -l)
 echo "scoped tests: $REASON"
 # shellcheck disable=SC2086
-exec nice -n 10 uv run pytest -n auto --dist=loadgroup --benchmark-disable -q \
+exec nice -n 10 $PYTEST -n auto --dist=loadgroup --benchmark-disable -q \
      -m "not container" -p no:randomly $SEL "$@"

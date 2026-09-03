@@ -38,11 +38,18 @@ SCRIPT = REPO / "scripts" / "test-workers.sh"
 MAKEFILE = (REPO / "Makefile").read_text()
 
 
-def _run(env_extra: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+def _run(
+    env_extra: dict[str, str] | None = None, args: list[str] | None = None
+) -> subprocess.CompletedProcess[str]:
     env = {k: v for k, v in os.environ.items() if k != "NOVA_TEST_WORKERS"}
     env.update(env_extra or {})
     return subprocess.run(
-        [str(SCRIPT)], capture_output=True, text=True, timeout=30, env=env, cwd=REPO
+        [str(SCRIPT), *(args or [])],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+        cwd=REPO,
     )
 
 
@@ -77,6 +84,30 @@ def test_makefile_exports_the_throttle() -> None:
         MAKEFILE,
         re.MULTILINE,
     ), "Makefile no longer exports PYTEST_XDIST_AUTO_NUM_WORKERS from scripts/test-workers.sh"
+
+
+def test_gate_mode_grants_at_least_as_many_workers() -> None:
+    """--gate floors at nproc/2: a serial push gate (measured 34 min) is worse
+    than a briefly oversubscribed one. Memory-capped, so >= is the invariant."""
+    normal = _run()
+    gate = _run(args=["--gate"])
+    assert gate.returncode == 0, gate.stderr
+    n_gate = int(gate.stdout.strip())
+    nproc = os.cpu_count() or 1
+    assert int(normal.stdout.strip()) <= n_gate <= nproc
+
+
+def test_gate_script_exists_and_prepush_hook_delegates_to_it() -> None:
+    """The hand-run gate and the pre-push gate must be the same code path —
+    two copies of digest/stamp logic is how they drift apart."""
+    gate = REPO / "scripts" / "test-gate.sh"
+    assert gate.is_file() and os.access(gate, os.X_OK)
+    hook = (REPO / "scripts" / "hooks" / "pre-push-test-gate.sh").read_text()
+    assert "./scripts/test-gate.sh" in hook, "pre-push no longer delegates to scripts/test-gate.sh"
+    assert "sha256sum" not in hook, "pre-push grew its own digest logic — it must live only in test-gate.sh"
+    assert re.search(r"^test-gate:\n\t\./scripts/test-gate\.sh$", MAKEFILE, re.MULTILINE), (
+        "Makefile lost the test-gate target"
+    )
 
 
 def test_no_pytest_recipe_hardcodes_a_worker_count() -> None:

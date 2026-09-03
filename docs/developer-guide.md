@@ -192,6 +192,7 @@ rung is defined by what it can prove and what it costs.
 | 0b | `make test-direct` | tests directly covering your change | **~17 s** |
 | 1 | `make test-impacted` | full static import closure of your change | seconds–minutes |
 | 2 | `make test-fast` | everything except Docker and `tests/integration` | ~4 min |
+| 2 | `make test-gate` | tier 2 + the push-gate stamp — run it *before* pushing | ~4 min, then pushes are instant |
 | 3 | `make test-par` | the release gate — byte-for-byte CI's `unit` job, coverage ≥ 90% | ~5 min |
 | — | `make test-container` | the Docker tier alone | needs a daemon |
 
@@ -209,6 +210,21 @@ command lines are untouched, so `test-par` remains byte-for-byte CI's command. A
 additionally `nice`d, the Stop hook skips (without blocking) when the machine is already saturated,
 and concurrent scoped runs serialize on a lock instead of stacking. Force a count with
 `NOVA_TEST_WORKERS=8 make test-fast`. Guard: `tests/docs/test_worker_throttle.py`.
+
+**Run the push gate by hand, then push.** git opens the SSH connection to the remote *before*
+running `pre-push`, so a long in-hook gate can outlive it — measured 2026-09-04: a 34-minute
+gate run under load ended with GitHub closing the connection and a *green* gate failing to push
+(SIGPIPE, exit 141). `make test-gate` runs the same gate (same script — `scripts/test-gate.sh`,
+which the hook itself calls, so the two can never drift) and stamps the result; the push that
+follows sees the stamp and completes in seconds. Because a person is waiting on it, the gate
+gets a floor of half the cores even on a loaded box (`--gate` mode of `test-workers.sh`),
+still memory-capped and `nice`d.
+
+**Hooks never touch the uv project lock.** `uv run` serializes every invocation on one
+project-wide lock; with many concurrent sessions the per-edit lint hook and the scoped test
+runs would queue on it (the documented deadlock signature: zero CPU across all siblings). The
+hooks call `.venv/bin/ruff`, `.venv/bin/python`, `.venv/bin/pytest` directly, falling back to
+`uv run` only when the venv does not exist yet.
 
 **How selection works.** `scripts/testsel.py` builds the import graph with `ast` — it parses,
 it never executes — and maps changed files to test files. The governing rule is that

@@ -15,7 +15,12 @@ case "$FILE" in
 esac
 [ -f "$FILE" ] || exit 0
 
-OUT=$(uv run ruff check "$FILE" 2>&1)
+# .venv/bin directly, not `uv run`: uv serializes on a project-wide lock that
+# every concurrent session contends for (documented deadlock signature: zero
+# CPU across siblings). A per-edit hook must never queue on it.
+RUFF=".venv/bin/ruff"
+[ -x "$RUFF" ] || RUFF="uv run ruff"
+OUT=$($RUFF check "$FILE" 2>&1)
 STATUS=$?
 if [ $STATUS -ne 0 ]; then
   echo "ruff found problems in $FILE — fix them now:" >&2

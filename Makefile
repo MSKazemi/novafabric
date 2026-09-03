@@ -16,7 +16,7 @@ COMPOSE_AGE  := docker compose -f deploy/docker/docker-compose.yml --profile age
 
 .PHONY: papers papers-check help test lint typecheck coverage benchmark benchmark-capture \
 	test-fast test-par test-container test-changed test-watch \
-	test-direct test-impacted test-index \
+	test-direct test-impacted test-index test-gate \
 	bench-scale bench-lineage \
         check-links check-decisions site \
         bundle serve-local deploy-local \
@@ -59,6 +59,7 @@ help:
 	@echo "  test-changed      DISABLED - testmon is unusable here (>10 min); use test-direct"
 	@echo "  test-watch        test-direct, rerun on every save (pytest-watcher)"
 	@echo "  test-container    The Docker tier only (testcontainers + docker CLI); skips without a daemon"
+	@echo "  test-gate         Run the push gate NOW and stamp it — the next push skips the re-run"
 	@echo "  test-par          Release gate — byte-for-byte what CI's unit job runs (~5 min)"
 	@echo "  benchmark         Run NovaSeal p99 latency gate (100 rounds, < 200 ms)"
 	@echo "  benchmark-capture Run capture-overhead p95 gate (30 captured runs, < 2000 ms)"
@@ -151,6 +152,13 @@ test-container:
 # turn (.claude/settings.json), so in normal work nobody types it.
 test-direct:
 	./scripts/run-scoped-tests.sh direct
+
+# The push gate, runnable by hand: run test-fast on this tree and stamp the
+# result so the pre-push hook skips the re-run. Prefer this before `dualgit
+# ship` — git opens the SSH connection BEFORE pre-push runs, and a long in-hook
+# gate can outlive it (measured 2026-09-04: green gate, dead connection).
+test-gate:
+	./scripts/test-gate.sh
 
 # Tier 1 — every test whose static import closure reaches the changed modules.
 # Broader and slower than test-direct, narrower than the whole suite. If the

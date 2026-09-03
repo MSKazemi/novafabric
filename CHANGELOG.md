@@ -20,6 +20,15 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   the Stop hook sheds when the machine is saturated, and concurrent scoped runs
   serialize on a lock. Override: `NOVA_TEST_WORKERS=8 make test-fast`.
   Guard: `tests/docs/test_worker_throttle.py`.
+- **`make test-gate` — run the push gate by hand, then push instantly.** git opens
+  the SSH connection *before* `pre-push` runs, so a long in-hook gate run can
+  outlive it (measured: 34 min under load → GitHub closed the connection → a
+  *green* gate failed to push with SIGPIPE). The gate now lives in
+  `scripts/test-gate.sh` — the hook delegates to the same script, so the two
+  paths cannot drift — and a user-initiated gate gets a floor of half the cores
+  (`test-workers.sh --gate`), memory-capped and `nice`d. Hooks also call
+  `.venv/bin/*` directly instead of `uv run`, so concurrent sessions no longer
+  queue on the uv project lock.
 
 ### Added
 
