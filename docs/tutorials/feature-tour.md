@@ -670,18 +670,25 @@ closes.
 # Validate the S3 backend supports Object Lock COMPLIANCE
 nova storage validate --endpoint https://s3.amazonaws.com --bucket nova-capsules
 
-# Inspect the object split for a run (informational; full behaviour gated on flag)
-nova storage inspect --run-id run_xyz
+# Show where a run's dual-object split lives (computes names; does not contact the store)
+nova storage inspect --run-id run_xyz --json
 
-# Request erasure of a subject's PII payload
-nova erasure request --run-id run_xyz
-nova erasure status --request-id <id>
+# Erase a data subject (GDPR Art.17 crypto-shredding, ADR-0069)
+nova pii erase <subject_id>
+nova pii status --capsule <path>
 ```
 
 This supports a GDPR right-to-erasure workflow: the audit trail (hashes, signatures,
-lineage) survives while the subject's PII payload is deleted. Dashboard equivalents: the
-**Compliance** tab has a GDPR Erasure panel; the **Infra** tab has a Storage Operations
-card.
+lineage) survives while the subject's PII payload becomes undecryptable. Dashboard
+equivalents: the **Compliance** tab has a GDPR Erasure panel (which calls
+`/api/compliance/erasure/*`, the persisted queue of ADR-0210); the **Infra** tab has a
+Storage Operations card.
+
+> **Corrected 2026-09-02.** This section previously showed `nova erasure request` /
+> `nova erasure status`. Those commands were stubs: `request` printed
+> `GDPR erasure request queued` and exited 0 having written nothing, for any run id
+> including one that did not exist, and `status` reported `pending` for any id. They now
+> fail loudly (exit `2`) and name the working path shown above.
 
 ---
 

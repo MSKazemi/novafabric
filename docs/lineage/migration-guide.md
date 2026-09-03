@@ -138,12 +138,44 @@ implementations (not stubs) — see "Corrected 2026-07-30" above — but neither
 
 ---
 
+## Upgrading an existing KuzuDB lineage store
+
+**works today.** Releases before 0.102 stored KuzuDB lineage in a single `Run` node
+table. That format had no place for a non-run node, so an *asset* endpoint was written
+as a `Run` keyed on the empty string and read back with an empty ref. From 0.102 the
+backend uses one generic `Node` table keyed by `node_id_for(kind, ref)`, matching the
+SQLite, Postgres and AGE backends (ADR-0266).
+
+**No action is required.** Opening an existing database migrates it in place: run nodes
+and run-to-run edges are copied into the new tables and the old ones are dropped. The
+migration is idempotent and runs once.
+
+⚠ **One class of edge cannot be migrated.** An edge whose non-run endpoint was stored as
+an empty-key `Run` is not recoverable, because the old schema never persisted that
+endpoint's ref. Those edges are counted and reported through a warning on the
+`novafabric.lineage.backends.kuzu` logger:
+
+```
+migrated legacy kuzu lineage schema (ADR 0266): N run nodes and M edges copied;
+K edges could not be migrated because the legacy schema never persisted their
+non-run endpoint (re-ingest those capsules to restore them)
+```
+
+If `K > 0`, re-ingest the affected capsules to restore those edges.
+
+⚠ **`node_id` changed.** It was the raw `run_id` and is now the 26-character
+`node_id_for(kind, ref)` hash used by every other backend. Anything that persisted a
+KuzuDB `node_id` outside the store must be recomputed. `ref` is unchanged.
+
+---
+
 ## Known limitations
 
 | Limitation | Status |
 |------------|--------|
 | `migrate` CLI target is SQLite only (the CLI hardcodes `SqliteLineageStore`; no `--target-backend` flag) | **works today, as a CLI-surface gap** — the KuzuDB / Postgres / AGE / JanusGraph *backends* are implemented (see below), just not yet wired as `migrate` CLI destinations |
 | KuzuDB 10M-edge benchmark (ADR-0053 v2a gate, depth-5 p99 < 500 ms) | **cleared** — 45.5ms p99 blast-radius @10M edges, measured in the external `nova-lineage-bench` |
+| KuzuDB replay chains are bounded at 30 hops; the SQLite reference bounds at 100 | **works today, as a documented backend limit** (ADR-0266) — an engine ceiling, not a tuning choice: Kuzu's binder rejects a variable-length upper bound above 30 outright. A replay chain deeper than 30 hops is truncated on KuzuDB and not on SQLite |
 | Apache AGE backend | **experimental, testcontainers-verified** (v0.69.0) — `lineage/backends/age.py` is a real openCypher implementation, not a stub |
 | Postgres backend | **experimental, testcontainers-verified** (v0.68.0) — `lineage/backends/postgres.py` uses recursive CTEs, no AGE extension needed |
 | JanusGraph backend | **experimental, testcontainers-verified** (v0.70.0) — requires Docker/Cassandra + Gremlin (GraphSON serializer, not default GraphBinary); not suitable for local-only deployments |

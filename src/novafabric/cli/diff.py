@@ -222,6 +222,18 @@ def diff_cmd(
     alpha: Annotated[float, typer.Option(help="False-positive budget.")] = DEFAULT_ALPHA,
     beta: Annotated[float, typer.Option(help="False-negative budget.")] = DEFAULT_BETA,
     sig_json: Annotated[bool, typer.Option("--json", help="Emit the diff record as JSON.")] = False,
+    media: Annotated[
+        bool,
+        typer.Option("--media", help="Compare the two capsules' media parts (NF-170)."),
+    ] = False,
+    perceptual: Annotated[
+        bool,
+        typer.Option("--perceptual", help="Also compare media by pHash (--media; opt-in)."),
+    ] = False,
+    hamming_threshold: Annotated[
+        int,
+        typer.Option("--hamming", help="Near-duplicate distance for --perceptual."),
+    ] = 10,
 ) -> None:
     """Compare two asset versions or two run capsules.
 
@@ -246,7 +258,16 @@ def diff_cmd(
 
       # Fail CI if any difference is found
       nova diff --assert-no-regressions my-agent@v1.0 my-agent@v1.1
+
+      # Compare the two runs' media parts by exact hash, then by pHash (NF-170)
+      nova diff --media runs/run-01/ runs/run-02/
+      nova diff --media --perceptual runs/run-01/ runs/run-02/ --json
     """
+    # NF-170 media diff — capsule paths only, and a distinct output shape.
+    if media:
+        _run_media_diff(ref_a, ref_b, perceptual, hamming_threshold, sig_json)
+        return
+
     # NF-007 statistical regression diff — a distinct mode with no positional refs.
     if significance:
         _run_significance(baseline, candidate, metric, p0, p1, alpha, beta, sig_json)
@@ -315,3 +336,68 @@ def diff_cmd(
     console.print()
     for k, (va, vb) in diffs.items():
         console.print(f"  [cyan]{k}[/cyan]: {va!r} → {vb!r}")
+
+
+def _run_media_diff(
+    ref_a: str | None,
+    ref_b: str | None,
+    perceptual: bool,
+    threshold: int,
+    json_out: bool,
+) -> None:
+    """NF-170: compare two capsules' media parts by exact hash, optionally also by pHash.
+
+    Perceptual comparison needs an image decoder, which is **not** a declared dependency
+    (ADR-0148 status note). When one is unavailable the command says so and exits ``2``, rather
+    than returning exact-only results under a ``--perceptual`` flag — that would report "no
+    near-duplicates" about a check that never ran.
+
+    It reports; it does not gate: exit ``0`` whatever the classifications.
+    """
+    from novafabric.diff.media import (  # noqa: PLC0415
+        MediaDiffError,
+        diff_media,
+        pillow_decoder,
+    )
+
+    if ref_a is None or ref_b is None:
+        raise typer.BadParameter("--media needs two capsule paths")
+
+    decoder = None
+    if perceptual:
+        try:
+            pillow_decoder(b"")
+        except MediaDiffError as exc:
+            if "not installed" in str(exc):
+                console.print(f"[red]--perceptual unavailable:[/red] {exc}")
+                raise typer.Exit(2) from exc
+            decoder = pillow_decoder  # a decode failure here just means the probe bytes were bad
+        else:  # pragma: no cover - the empty probe never decodes successfully
+            decoder = pillow_decoder
+
+    try:
+        result = diff_media(
+            ref_a, ref_b, perceptual=perceptual, decoder=decoder, threshold=threshold
+        )
+    except MediaDiffError as exc:
+        console.print(f"[red]Could not diff media:[/red] {exc}")
+        raise typer.Exit(2) from exc
+
+    if json_out:
+        print(json.dumps(result.model_dump(exclude_none=True), indent=2))
+        raise typer.Exit(0)
+
+    counts = result.counts
+    console.print(
+        f"Media diff — {result.parts_a} part(s) vs {result.parts_b}, pairing {result.pairing}"
+        + (f", perceptual (hamming <= {threshold})" if result.perceptual else "")
+    )
+    console.print("  " + (", ".join(f"{v}: {n}" for v, n in sorted(counts.items())) or "no parts"))
+    for pair in result.pairs:
+        if pair.verdict == "identical":
+            continue
+        detail = f" (hamming {pair.hamming})" if pair.hamming is not None else ""
+        console.print(f"    [{pair.index}] {pair.verdict}{detail}")
+        if pair.perceptual_unavailable:
+            console.print(f"        [dim]{pair.perceptual_unavailable}[/dim]")
+    raise typer.Exit(0)

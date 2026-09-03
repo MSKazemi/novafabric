@@ -11,6 +11,577 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Added
 
+- **`nova provenance` — a C2PA manifest bound to the exact bytes of a captured media part**
+  (ADR-0148 D1, NF-161/162/163; experimental). **This closes D1**, leaving only NF-166/167
+  (computer-use capture, capture-path) open on ADR-0148.
+
+  `bind` binds a manifest to a MediaPart's `content_hash`, `verify` reports the three
+  NF-161 checks, `output` prints the NF-163 per-artifact receipts and their NF-094
+  cross-link, and `watermark show` reads the NF-162 presence *claims*. No C2PA library was
+  added as a dependency: manifests are read as JSON sidecars at
+  `outputs/<sha256-hex>.c2pa.json`, in the same manifest shape the shipped ADR-0074
+  exporter already emits. Extracting an **embedded** JUMBF manifest is not implemented and
+  is documented as such.
+
+  ⚠ **`cert_chain_ok` is `null` for every input, and is never inferred from a signature.**
+  The signer's public identity *is* read; verifying an X.509 chain needs a trust store and a
+  verifier that NovaFabric does not ship offline, so the field carries the reason
+  `no_offline_cert_chain_verifier` instead of a fabricated `true`. A verification that never
+  happened must not enter signed evidence.
+
+  ⚠ **A binding checked against stored bytes is not the same evidence as one checked against
+  a recorded field.** Byte capture is opt-in, so most capsules hold a `content_hash` and no
+  blob. Every entry records which basis was used in `bound_against`; only `blob_bytes` can
+  detect a blob whose bytes no longer match what was recorded, and a test pins the two to
+  opposite verdicts on a tampered blob to keep them from being conflated.
+
+  **Absent is not false**, three times over: media with no manifest yields no entry rather
+  than a failed binding; a manifest declaring no hard binding yields `null`, not `false`; and
+  watermark `present` is `true` / `false` / `unknown`, where `unknown` means no claim exists
+  and never renders or serialises as `false`. Watermark presence stays **pattern-only** — no
+  proprietary detector is imported, shipped, or depended on, enforced by a test that imports
+  the package in a fresh interpreter.
+
+  It reports; it does not gate — `verify` exits `0` even when it finds a **broken** binding,
+  because reporting one is the job succeeding. `--strict` is the opt-in gate.
+
+- **`nova diff --media` — media parts compared by exact hash, and optionally by pHash**
+  (ADR-0148 D3, NF-170; experimental).
+
+  Classifies each pair `identical` / `near-duplicate` / `changed` / `added` / `removed`. Exact
+  comparison is the default and needs nothing new; perceptual comparison is opt-in.
+
+  **No image decoder was added as a dependency.** Pillow's licence (MIT-CMU) is not enumerated in
+  ADR-0024's Tier A list, and it is currently present only *transitively* — via WeasyPrint — which
+  is exactly the kind of availability that disappears when an unrelated extra changes. The decoder
+  is therefore injected, the 64-bit DCT pHash is implemented in stdlib Python, and `--perceptual`
+  **refuses** when no decoder is available rather than returning exact-only results under a
+  perceptual flag. Whether to declare a `media` extra is left as an owner decision.
+
+  ⚠ **The first implementation had half its hash bits decided by floating-point dust.** A sparse
+  DCT — any image with flat regions, i.e. exactly the screenshots a computer-use agent produces —
+  has "zero" coefficients that are really ±1e-14, and the median landed inside that noise. Measured
+  on this tree: a **brightness-only** change, which perturbs nothing but the DC term, flipped
+  **12 of 64 bits**. Near-zero coefficients are now snapped to exactly zero, and a regression test
+  pins brightness-invariance at exactly `0`.
+
+  Two more properties are load-bearing. **`changed` needs an identity content cannot supply** —
+  content hashes alone give only `identical`/`added`/`removed`, so parts are paired *positionally*
+  and that basis is reported rather than left implicit, because a wrong pairing produces confident
+  nonsense. And **an image with too little low-frequency structure is not compared perceptually**:
+  a flat fill or a pure checkerboard hashes like every other one, so they would all be
+  near-duplicates of each other; such pairs are reported unavailable instead. A pair that could not
+  be compared stays `changed` with a stated reason, never promoted on missing evidence.
+
+  It reports; it does not gate — exit `0` whatever the classifications.
+
+- **`nova toolschema conformance` — conformance evidence that is tamper-evident, not merely
+  recorded** (ADR-0148 D2, NF-168; experimental). **This closes D2**: NF-164, NF-165, NF-168 and
+  NF-169 are all shipped.
+
+  **The arrangement is the feature.** The ADR-0128 verdicts live in the capsule facet; the
+  **digest alone** goes into the signed in-toto predicate. Verification recomputes from the facet
+  and compares against the attestation — two independent sources. A seal whose verification
+  recomputes from the object that carries the digest re-hashes its own input and **can never
+  fail**; that vacuity is guarded by mutation, and proven end to end by sealing a real capsule,
+  rewriting a recorded failure as a pass, and watching `--verify` exit `1`.
+
+  Two further decisions, each a way the requirement could have been met on paper:
+
+  - **A call that declared no schema is `unchecked`, never conforming.** Otherwise a capsule where
+    nothing declared a schema would report perfect conformance having validated nothing.
+  - **Sealing an empty verdict list is refused** — a digest over nothing is a constant, so every
+    call-free capsule would seal to the same value and compare equal: a seal that proves nothing
+    while looking like one.
+
+  Nothing is re-validated — the ADR-0128 verdict is reused verbatim — and sealing goes through the
+  existing `capsule_statement(extra_predicate=...)`, introducing no third top-level format
+  (ADR-0034). ⚠ An ADR-0128 verdict carries `checked_at`, so re-running validation yields a
+  different digest by design: the seal covers *this record*, not the act of validating.
+
+  Sealing exits `0` whatever the counts (it records, it does not gate); `--verify` exits `1` on a
+  mismatch, because a broken seal is a finding.
+
+- **`nova toolschema deprecations` — which sealed runs are still pinned to a retired tool
+  version?** (ADR-0148 D2, NF-169; experimental).
+
+  Turns a deprecation announcement into the list of runs it actually affects. With NF-164 landing
+  alongside it, ADR-0148's D2 is now three of four.
+
+  ⚠ **One deviation from the spec, declared rather than papered over.** D2 asks this to
+  *"reference the lineage edges of dependent runs"*. The lineage graph has no tool nodes to
+  reference — `lineage/_writer.py` emits `run`, `asset` and `artifact` and nothing else — so a
+  lineage-based implementation would return an empty list for every input while reading as *"no
+  run is affected"*. The data exists elsewhere: `tool_version` is a **required** field of every
+  `tool-calls.jsonl` record, so the dependent set is read from the sealed capsules, the same
+  source NF-165 already uses. Emitting tool nodes into lineage is the follow-on, and it is a
+  capture-path change.
+
+  **Three buckets, not two.** The tool-call schema documents `tool_version` as *"Semver if known;
+  `unknown` otherwise"*, so a run recorded that way can be neither confirmed as pinned nor cleared
+  of it. Folding it into the dependent list over-reports; dropping it silently under-reports while
+  looking complete — so it is reported separately, and deprecating the literal version `unknown`
+  is refused outright, since it would flag every run whose version the capture path could not
+  determine.
+
+  `capsules_scanned` travels with the record, because without it an empty dependent list drawn
+  from three capsules is indistinguishable from one drawn from three thousand. An unparseable
+  `deprecated_at` is refused rather than stored, and an absent `successor` stays absent rather
+  than becoming `""` — which would read as a successor that exists and was not named.
+
+  It reuses the strict tool-call reader added for the NF-155 collector (extended additively to
+  carry the version) rather than becoming a third parser of that file, and takes the run id from
+  the shared scanner's rows so the manifest wins over the directory name. It **reports; it does
+  not gate** — no verdict field, exit `0` whether or not runs are pinned.
+
+- **`nova toolschema track` — what kind of schema change is this?** (ADR-0148 D2, NF-164;
+  experimental).
+
+  ADR-0148's D2 had one of four features built: NF-165 answered *"which past runs would this
+  schema break?"* while nothing answered *"what kind of change is it at all?"*. The two compose —
+  classify first, then measure the blast radius.
+
+  Classification follows D2's **additive-safe rule** into the spec's closed vocabulary
+  (`additive` / `breaking` / `deprecation` / `unknown`), with a bounded diff of
+  added/removed/tightened/deprecated paths. Every decision below was verified by mutating the
+  implementation until the matching test went red:
+
+  - **A new *required* property is `breaking`, not `added`.** It is an addition, and it breaks
+    every payload ever recorded — the one case the additive-safe rule is most easily implemented
+    wrongly.
+  - **`unknown` never falls back to safe.** A schema built from `allOf`/`anyOf`/`oneOf`/`not`/
+    `$ref` is not traversed here and is reported `unknown` **with a reason**; classing an
+    unanalysed schema `additive` would read as "safe to ship". The differences that *were* found
+    are still reported, because "we could not classify" is not "we found nothing".
+  - **Truncating the diff must not soften the class.** The bound applies to the recorded evidence
+    only — a breaking change past the cap still classifies as breaking — and
+    `diff_truncated`/`diff_total` keep a partial list from reading as a complete one.
+  - **Precedence is explicit**: breaking beats deprecation beats additive, so a release that both
+    deprecates one field and removes another is breaking.
+
+  Digests are over **canonical content**, deliberately *not* NF-165's raw-file-bytes digest. That
+  one identifies a *file* — the right answer to "which file did I check?" — while this identifies
+  a *schema*, and under file hashing a whitespace-only reformat would produce two different
+  digests with an empty diff: a recorded change containing no changes. A test pins both halves so
+  the two constructions are not silently unified later.
+
+  It **classifies; it does not gate**: no `safe`/`allowed`/verdict field, and the command exits
+  `0` whatever the class.
+
+- **`nova drift collect` — the sealed-capsule collector the detectors have been waiting on**
+  (ADR-0147 D2/D6; experimental).
+
+  Every `nova drift` subcommand took a **hand-written JSON document**: the detectors were real,
+  but the samples had to be transcribed out of capsules by a human. `docs/drift-gate.md` has said
+  so honestly since v0.61, and ADR-0147's "still future design" list named this first. It is the
+  single dependency shared by the whole D2/D6 surface.
+
+  `nova drift collect --capsules DIR --window 7d..` now reads the capsules and emits either the
+  neutral per-run record list, a `nova drift detect` document, or a `nova drift silent-failure`
+  document. The tests pipe the output straight into the sibling detector rather than asserting a
+  shape, so the two contracts cannot drift apart.
+
+  **It adds no new capsule reader.** `query/indexer.py` (ADR-0129) already defines what *is* a
+  capsule — every immediate subdirectory carrying a manifest — and already extracts model calls
+  and scores, with the ADR-0225 row cache in front of it. A second walker would be a second
+  definition of the same thing, and the two would eventually disagree about which directories
+  count. The window resolves through the same `resolve_time_window`, so `nova drift` and
+  `nova query` cannot come to mean different things by `since`/`until` (half-open: `since`
+  inclusive, `until` exclusive — pinned by a test rather than assumed).
+
+  Four rules keep the numbers honest, each verified by mutating the implementation until the
+  matching test went red:
+
+  - **A missing value is not a zero.** A run that recorded no cost is absent from a cost sample
+    rather than a `0.0` in it, and every document reports `contributing` and `missing` counts.
+    Zeros would drag the distribution toward a drift that did not happen. A *partial* sum is
+    visible as one: `cost_calls` travels with `cost`.
+  - **Mixed currencies are refused, not summed** — within a run and across the sample.
+  - **An empty sample cannot become a drift document.** A statistic over nothing is no evidence,
+    not evidence of no drift, and the two must not serialise the same way. An empty *window*
+    remains a legitimate `n: 0`.
+  - **The record `kind` is derived from the dimension**, never supplied: `score:<name>` is NF-151
+    output-drift; cost, tokens, latency and `model-calls` are NF-152 behavioral-drift. A caller
+    who could label a cost distribution as output-drift would file the evidence under a claim it
+    does not support.
+
+  An unknown dimension is refused rather than sampling to nothing, because an empty sample reads
+  as "nothing drifted". It **collects and does not judge**: no `drifted` flag is computed there,
+  and `--threshold`/`--statistic` are required inputs because they are the caller's policy.
+
+  **`--emit fingerprint` collects a trajectory too**, keyed by run id rather than by the window:
+  `query.indexer` gained a public `find_capsule(dir, run_id)` so `drift/` did not grow a second
+  directory walk. **A malformed line in `tool-calls.jsonl` is refused, never skipped** —
+  `capture/schema_validation` reads the same file tolerantly and is right to, since one bad line
+  should not fail a conformance summary, but here it would silently drop a step and a trajectory
+  missing a step still produces a valid-looking signature. A test asserts the tolerant reader
+  accepts the very file this one rejects, so the divergence stays deliberate and visible. Scores
+  are opt-in via `--quality-metric`, because folding in whatever scores exist would change the
+  basis — and the signature — unasked, and an out-of-range score is reported rather than dropped
+  to make the document valid.
+
+  **`--emit root-cause` completes the collector**, reading both provenance lists from the lineage
+  store. The decision that shapes it: `LineageStore.provenance(ref)` returns `[]` **both** for a
+  ref with no ancestors and for a ref that is not in the graph at all, and `find_root_cause([],
+  [])` returns `confidence: no_change` — *"nothing changed between these runs"*, a finding
+  manufactured out of missing data that nothing downstream can tell from a real one. A run absent
+  from the graph is therefore **refused, naming the run**, with presence established through a new
+  public `LineageStore.has_node(ref, kind=None)` that delegates to the existing lookup —
+  `AbstractLineageStore` and its five backends are deliberately untouched, because node identity
+  has already existed here as four divergent copies once (ADR-0266) and a sixth definition to
+  answer "is this ref here?" would be the same mistake in a new place. The ancestor counts and the
+  walk `--depth` travel with the document, because a run with zero ancestors and a walk too
+  shallow to reach the change both look exactly like "no change" once the lists are diffed.
+
+  **No `nova drift` subcommand now requires a hand-written document.** The only remaining unbuilt
+  piece of ADR-0147 is the NF-153 canary orchestration, which needs live infrastructure.
+
+- **`nova drift fingerprint` — did the *behaviour* shift, or only the numbers?**
+  (ADR-0147 D5, NF-155; experimental).
+
+  D5 has two halves. The root-cause half (NF-157) shipped in v0.61; the behavioral
+  fingerprint had never been written, and the 2026-07-20 ADR audit recorded it as *"not built
+  — unblocked"*. It was the last ADR-0147 slice needing neither live infrastructure nor an
+  owner decision.
+
+  A fingerprint is a deterministic, offline-reproducible signature over a run's
+  C3-canonicalized trajectory, its tool mix, and its score profile. **It calls the ADR-0144
+  canonicalizer rather than normalizing a second way** — a test pins the call, because a second
+  normalizer would drift from the first and the two would disagree about whether a run changed.
+
+  The three properties it stands on all fail *quietly*, so each is tested, and each was
+  re-checked by mutating the implementation until the matching test went red:
+
+  - **Deterministic** — a signature that varies per call makes every run look shifted.
+  - **Stable across benign non-determinism** — a collapsed idempotent retry, a reordered pair
+    of *declared-commutable* calls, and a difference in argument key order all leave the
+    signature unmoved; a different trajectory moves it.
+  - **Version-sensitive** — the signature covers the canonicalization `rules_version`, so a
+    rules change cannot read as "no shift", and comparing across rule versions is **refused**
+    rather than scored: a distance between two canonicalizations looks precise and means nothing.
+
+  **`distance` is never computed from the signatures.** A digest has no metric — comparing two
+  hex strings can only answer same/different, which is the `shifted` boolean. The distance is
+  the mean of the contributing components (normalized edit distance · total-variation over the
+  tool mix · mean-score gap), each bounded `[0, 1]`, and every component is reported beside the
+  total. A component present on only one side **does not contribute as zero**, because
+  averaging an absent component in as zero dilutes a real shift toward "unchanged"; when no
+  component is shared, `distance` and `shifted` are `null` with a stated reason — *unknown* is
+  not *unchanged*.
+
+  Two refusals are deliberate. A run with no tool calls and no scores is **not** fingerprinted:
+  a signature over nothing compares equal to every other nothing, so it would report "behaviour
+  unchanged" when nothing was measured. And an out-of-range score is refused rather than
+  clamped — a silent clamp makes a 5-point Likert score read as a saturated 1.0.
+
+  Like every detector in the package it is an **observation, not a verdict**: no
+  `regressed`/`failed` field, and the command exits `0` whether or not a shift is flagged.
+
+- **`nova replay-equivalence regime` — could this replay have been expected to match?**
+  (ADR-0144 D3 input; experimental).
+
+  An equivalence verdict means something different depending on the regime the original run
+  executed in: divergence from a `temperature=1.2` run tells you almost nothing, while the same
+  divergence from a fully pinned run is a finding. **Nothing recorded that difference.**
+
+  `evidence/replay_attestation.py` (ADR-0094 B, via `nova replay --certify`) already classifies a
+  replay `BIT_EXACT` / `BOUNDED_EQUIVALENT` / `NON_DETERMINISTIC` and does read pins — but it
+  needs an **executed replay**, compares outcome digests, and does not consider **temperature**.
+  This answers the earlier, narrower question from the **capsule alone**: was the original run's
+  *sampling* regime one where a replay could be expected to match? The two are complementary.
+
+  Three deliberate properties:
+
+  - **`unknown` is not `eligible`.** A run that recorded no temperature has not demonstrated
+    anything; converting absence of evidence into evidence would make the assessment worse than
+    none. A run with **no model calls** is `unknown` too — "nothing was non-deterministic because
+    nothing happened" is the obvious wrong answer.
+  - **The facts travel with the verdict.** Per-call temperatures and the counts of missing pins
+    are reported alongside the conclusion, so a caller who accepts temperature-0 without a pinned
+    seed can reach that from the record. Policy hidden inside a boolean cannot be disagreed with.
+  - **Both capture shapes are read** — plain body keys and `gen_ai.request.*` semconv attributes,
+    flat or nested under `request`. Reading one would silently report `unknown` for half the
+    capture paths.
+
+  **Neither `verdict_for()` nor `classify_determinism()` is touched.** Folding temperature into the
+  shipped classifier would change what a signed `ReplayAttestation` asserts, which is an ADR-level
+  decision about an existing evidence artifact.
+
+- **The capsule-facet contract is documented and enforced.** Adding a facet is the most-repeated
+  extension pattern in the codebase — 22 modules — and had no recipe in the developer guide, while
+  `docs/architecture.md` listed neither `assure/` nor `a2a/` in its module map. Both are fixed, and
+  `tests/docs/test_capsule_facet_contract.py` now walks every module defining `FACET_NAME` and
+  asserts what is genuinely universal: `FACET_NAME`, `SCHEMA_VERSION`, `attach_facet`, and that no
+  two modules claim the same `facets[...]` key (which would make one silently overwrite the other).
+
+  The guard deliberately does **not** require `facet_from_capsule`. 15 of 22 modules have a reader
+  and 7 do not, and measurement showed nothing reads those 7 back by any means — so requiring one
+  would have added seven functions with zero callers, the `bind_recorder` mistake this project has
+  already made once. The recipe records that reading back is added when a caller needs it, so the
+  distinction is not re-litigated as a backlog item.
+
+- **`nova assure-canary record` — the canary-run record** (ADR-0147 D3, NF-153 evidence half;
+  experimental).
+
+  Records one canary replay of a pinned baseline: `baseline_id`, `ran_at`, `stack_fingerprint`,
+  the C3 `verdict`, `drift_score` and `alarm`. `alarm` is **derived** from the verdict rather than
+  supplied, so an alarm cannot disagree with its own verdict. Equivalence is never scored here.
+
+  **The stack fingerprint is what makes a canary meaningful.** It answers *"was this run judged
+  against the same stack as the baseline?"* — a verdict compared across two different stacks is
+  not a comparison, and a "regression" that is really a stack change is a false alarm that looks
+  exactly like a true one. Two of its three required properties fail *quietly*, so each is tested:
+  deterministic (a varying digest makes every canary look like a stack change), order-independent
+  (a stack is a set; if order mattered every canary would look like a regression), and
+  version-sensitive. An unknown baseline stack is recorded as `null`, never `true` — "we don't
+  know" must not read as "they matched".
+
+  ⚠ **This records a canary; it does not schedule or perform one.** NF-153 also requires re-running
+  each pinned baseline against the current stack on a declared cadence, which needs live
+  infrastructure and is **not built**. ADR-0147's standing production loop still does not exist.
+
+- **`nova assure-alarm check` — the standing production regression alarm** (ADR-0147 D4, NF-156;
+  experimental).
+
+  Runs the shipped Wilson + Wald-SPRT primitive (NF-007, ADR-0080) over a window of run outcomes
+  and emits `no-regression` / `regression` / `inconclusive`, firing **only** on a statistically
+  significant regression. It re-implements no statistics; a test pins that it calls
+  `significance_diff`.
+
+  **Why an SPRT rather than a threshold:** agentic pass@1 swings several points as noise even at
+  temperature 0, so a delta gate fires on noise. Measured here — an all-healthy window and a
+  **single-run dip** both return `no-regression`, a sustained drop returns `regression`, a tiny
+  sample returns `inconclusive`. All three are reachable, so the guard is not vacuous.
+  `inconclusive` does **not** fire: treating "not enough evidence yet" as a regression is the
+  false alarm the SPRT exists to prevent.
+
+  ⚠ **Polarity is declared, not assumed.** The primitive reads `1` as *pass*, while the ADR offers
+  the window as "drifted/not (or pass/fail)" — opposite polarities. Feeding drift flags in raw
+  makes the alarm fire on *improvement* and stay silent on a real regression, with every number
+  still looking plausible, so inversion is an explicit `--drift-flags` argument and a test requires
+  it to change the verdict.
+
+  **It is not the promote gate.** ADR-0080 is unchanged and this never uses its exit-code contract
+  (`3` on regression); the alarm exits `1`, because an alarm exists to be noticed.
+
+- **`nova assure-impact report` — model-update impact over C3 verdicts** (ADR-0147 D3, NF-154;
+  experimental).
+
+  Aggregates per-run equivalence verdicts for a corpus of pinned baselines replayed through a
+  substituted model into `{n, equivalent, regressed, inconclusive, cost_delta, token_delta,
+  worst_regressions}` for `from_model` → `to_model`. It scores no equivalence itself — that is C3.
+
+  **It decides nothing**, which ADR-0147 requires: no recommendation field, and a regression is
+  *not* a non-zero exit, because exiting non-zero would be the adoption decision made by an exit
+  code.
+
+  Three guards, because each corresponding mistake produces a report that looks precise and is
+  wrong:
+
+  - **A run with no cost data is not a run that cost zero.** Every delta reports how many runs
+    contributed and how many carried nothing.
+  - **A corpus mixing currencies is refused, not summed** — EUR minor units plus JPY minor units
+    is a number with no meaning. Money is integer minor units + ISO-4217 throughout, never a float.
+  - **`equivalent + regressed + inconclusive == n` is enforced.** A baseline that could not be
+    replayed is *inconclusive* — never dropped, never counted as a pass.
+
+  **NF-153, the canary-replay scheduler, is still unbuilt**, so ADR-0147's standing production
+  loop does not exist yet.
+
+- **`nova replay-equivalence check` — the C3 behavioral-equivalence verdict, finally reachable**
+  (ADR-0144 NF-128/NF-122; experimental).
+
+  The equivalence engine has shipped since v0.59.0 and had **no CLI**, which ADR-0144's own
+  status row recorded. That mattered beyond convenience: ADR-0147 D3 specifies the canary-replay
+  scheduler and the model-update impact report as *consuming* C3 and never re-implementing it —
+  "one verdict engine, many consumers" — and they cannot consume what has no callable surface.
+
+  Two trajectories in, one verdict out: `equivalent`, `distance`, the `tolerance` it was judged
+  against, and every divergent step. The command computes nothing itself; a test pins that it
+  calls `replay.equivalence.compare`.
+
+  Non-equivalence exits `1` — unlike `nova drift`, whose detectors are observations and always
+  exit `0`, this is the condition a canary alarms on. The verdict records `rules_version` and
+  `rules_applied`, because a verdict whose canonicalization is unknown cannot be re-derived, and
+  tolerated divergences are still listed so allowing slack never hides what it allowed.
+
+  **Not shipped:** the fused `nova replay --check-equivalence` form ADR-0147 names. `nova replay`
+  performs a replay; folding the verdict into it needs replay-engine integration and remains
+  future work.
+
+- **`nova assure-run` — proof that the assurance loop ran, and detection when it didn't**
+  (ADR-0147 D7, NF-159; experimental).
+
+  Records `schedule_id`, `ran_at`, the NF-160 baselines checked, the detectors run, alarms fired
+  and `next_due`, sealing through the existing in-toto statement rather than introducing a third
+  top-level format.
+
+  The interesting half is detecting a run that **never happened**, because a missed run writes
+  nothing — there is no record of it to inspect. Absence becomes evidence only because every
+  success states when the next run is due, so the miss is detected against the *previous*
+  attestation: the artifact that proves the failure is the last success.
+
+  That makes `next_due` the mechanism rather than a convenience field, so it is **derived** from
+  `ran_at` plus the cadence and cannot be supplied by the caller — a caller-chosen value could
+  promise a date that never arrives, leaving the requirement unmeetable while looking
+  implemented. A non-positive cadence is refused for the same reason, and exactly-due is
+  deliberately not yet overdue.
+
+  **D3 and D4 remain unbuilt**, so ADR-0147's standing production loop still does not exist:
+  this proves a run happened and catches one that did not, but it does not schedule anything.
+
+- **`nova a2a-objects` — A2A object mapping with a round-trip that can actually fail**
+  (ADR-0149 D1, NF-172; experimental). Together with NF-171 this **completes ADR-0149 D1/P1**.
+
+  A2A `Task` (id + lifecycle state), `Message` (role + parts digest) and `Artifact` (name +
+  `content_hash`) map onto capsule entities, with a generated field-by-field `mapping_manifest`
+  and a `roundtrip_digest` that re-export must reproduce.
+
+  The design point that matters: **the digest is computed over the re-exported objects, not over
+  the stored facet.** Hashing what was stored would make a round-trip re-hash the same bytes and
+  pass unconditionally — a check that cannot fail. Six tests tamper with one mapped field of each
+  object kind and require the round-trip to fail *and* name the diverging object; all six would
+  pass vacuously under the storage-digest design.
+
+  Message `parts` can carry user content, so they are bound by digest and never stored
+  (ADR-0009); a re-export carries `parts_digest` in their place, which is a bounded
+  reconstruction rather than a fabricated one. Every source field the mapping does not carry is
+  listed in that object's `unmapped[]` and reported by the CLI — nothing is dropped silently.
+
+- **`nova a2a-card` — the portable A2A Agent Card facet** (ADR-0149 D1, NF-171; experimental).
+
+  The full signed A2A 1.0 Agent Card now travels with the capsule as a content-addressed
+  document, so a tool that has never seen NovaFabric can read the agent's identity out of the
+  evidence. `nova a2a-card capture` records it; `nova a2a-card verify` recomputes the fingerprint
+  and reports whether the card was altered since capture — no key material, no network.
+
+  Card identity is **not** re-derived: `card_fingerprint` comes from the existing
+  `a2a/messages.py` helper, so delegation (NF-089), message binding (NF-101) and portability
+  (NF-171) agree on which card an agent presented.
+
+  **`signature_ok` is never fabricated.** A2A cards are JWS-signed and NovaFabric has no JWS
+  verifier, so `signed` is structural (a signature block is *present*) and `signature_ok` stays
+  absent, with `signature_status` recording why. Supply a verifier through the Python API to get
+  a real verdict; a verifier that raises is recorded as a failed verification rather than
+  blocking the capture.
+
+  **Partial by design:** NF-172 (`a2a_objects`, `mapping_manifest`, `roundtrip_digest`) is not
+  built, so ADR-0149's D1/P1 is partially delivered. There is still no SCITT, AGNTCY, WebMCP,
+  ACP or ModelPack code in the tree.
+
+- **`nova assure-baseline` — golden baseline pinning** (ADR-0147 D1, NF-160; experimental).
+
+  ADR-0147 opens its first decision with the reason this had to exist first: *"A drift loop is
+  meaningless without a fixed reference."* Every detector in that ADR measures against a pinned
+  baseline, and until now `baseline_id` was an optional passthrough string in the drift detector
+  with nothing behind it — no pin object, no immutability, no re-verification.
+
+  `nova assure-baseline pin` designates a sealed capsule as golden, binding the run to its
+  capsule Merkle root so the pin names **specific bytes** rather than a run id that could later
+  point at different content. `nova assure-baseline verify` recomputes that root offline and
+  reports whether the pinned bytes are still the bytes on disk, exiting `1` on a mismatch.
+
+  Three properties are enforced rather than documented:
+
+  - **The pin is immutable by type.** The models are frozen, `immutable=False` is rejected, and
+    superseding returns a *new* pin naming its predecessor while leaving the old one
+    byte-identical — so a comparison made against last quarter's baseline stays reproducible.
+  - **Verification reports; it never repairs.** A mismatch is never written back into the pin.
+    Updating it to the observed root would redefine the object and turn detected corruption into
+    a silently accepted new baseline.
+  - **A run with no capsule supplied is skipped, not failed.** A check that could not run did
+    not find corruption.
+
+  Additive and fail-open: a capsule with no baseline is returned byte-identical.
+
+  **Not in this slice:** `nova assure-baseline list`, which needs a global pin registry — a
+  storage decision of its own. And D2–D7 are unchanged: the standing production loop in
+  ADR-0147's title still does not exist. D1 was its prerequisite, not the loop.
+
+- **The test suite now runs itself — four tiers, and the fast one is 14× faster than what it
+  replaces.** (ADR-0267)
+
+  The suite is 12,280 tests, so "run the tests" is a ladder, not a command. What was missing was
+  the bottom rung: the documented inner loop, `make test-changed` (pytest-testmon), was measured
+  at **over 10 minutes** on both a cold and a warm index — `pytest-testmon` cannot run under
+  `pytest-xdist`, so its baseline is a *serial* run of the whole suite. It had been documented as
+  "sub-second on an unchanged tree", true of a much smaller suite and never re-measured. The
+  cheapest real feedback available was therefore ~4 minutes.
+
+  New `make test-direct` runs the tests that directly cover a change in **~17 s** (622 tests for
+  a one-package change, against 12,206 in 233 s for the whole fast suite), and `make test-impacted`
+  widens to the full static import closure. Selection is by `scripts/testsel.py`, which builds the
+  import graph with `ast` — it parses, it never executes — and indexes 864 test files in 2.4 s.
+
+  The governing rule is that **ambiguity selects more, never less**: a changed `pyproject.toml`,
+  `uv.lock`, `Makefile` or root `conftest.py` escalates to the whole suite, as does anything
+  unparseable. `test-impacted` also escalates past a 40% share, because `lineage/__init__.py`
+  eagerly imports every backend, so a one-backend change legitimately reaches 55% of all test
+  files — past that point selecting has stopped saving anything. Static selection cannot see
+  string-referenced entrypoints, so these tiers are a fast pre-check and `make test-fast` remains
+  the gate.
+
+  `make test-changed` now fails loudly with the reason rather than being deleted, so nobody
+  re-adds it and re-measures the same ten minutes.
+
+- **One behavioural contract for every lineage backend — and it found two real defects on
+  the first run.**
+
+  `tests/lineage/contract.py` states what an `AbstractLineageStore` must do, in absolute terms
+  rather than "same as SQLite", and all five backends now run it. This is what makes a
+  container-free laptop run worth something: SQLite and Kuzu are embedded, so the full contract
+  runs with no daemon, and CI adds Postgres, AGE and JanusGraph to verify the SQL/Cypher
+  binding rather than the semantics.
+
+  Conformance today — SQLite (reference) 6/6, Postgres 6/6, AGE 6/6, **Kuzu 6/6**, JanusGraph
+  5/6 with its documented run-only vertex model. Kuzu passed only **4/6** when the contract
+  first ran; both divergences were new findings and are now fixed (see *Fixed*, below):
+  `replay_chain()` returns ancestors in arbitrary order — measured over 40 fresh stores on
+  identical input it produced **5 distinct orderings and was correct only 3 times**, because the
+  Cypher is a `DISTINCT` match with no `ORDER BY` and order is contractual — and `provenance()`
+  returns an empty ref for an asset node, because the Kuzu schema declares only a `Run` node
+  table. Its own tests missed both by asserting
+  `len(result) >= 1` and set-membership, and by never inserting an asset edge.
+
+  Declared divergences are `xfail(strict=True)`, so a fix fails the suite until the exemption is
+  removed — a known gap cannot decay into a stale comment. A *non-deterministic* divergence may
+  opt out of strict via `Divergence(reason, strict=False)`, because a strict xfail on a flaky
+  result is itself flaky; the measured rate goes in the reason.
+  `tests/docs/test_lineage_contract_covers_every_backend.py` fails if a new backend ships
+  without running the contract.
+
+- **The dev loop selects tests by marker, not by directory — and `make test-fast` now
+  runs 52 more tests in 35 s less time.**
+
+  Tests needing a live Docker daemon carry a `container` marker, applied automatically:
+  `tests/conftest.py` names the fixtures that *start* a container and marks any test whose
+  fixture closure reaches one, so a test requesting `pg_store` is marked without anyone
+  remembering to, because `pg_store` requires `postgres_dsn`.
+
+  `make test-fast` deselects that marker instead of ignoring whole directories. The
+  `--ignore=tests/metadata_store` it replaces was discarding **73 Docker-free tests** along
+  with the 41 that genuinely need a container — the blind spot in which a docstring
+  regression once survived seven passes of the gate. Measured on one machine, back to back:
+  **12,133 passed in 263.7 s → 12,185 passed in 229.1 s.**
+
+  New targets: `make test-changed` (pytest-testmon — reruns only the tests a diff can
+  affect; measured 4.75 s → 0.14 s on an unchanged tree), `make test-watch` (the same on
+  every save), and `make test-container` (the Docker tier alone).
+
+  `tests/test_example_docker_run.py` no longer probes the daemon at import. Its `skipif`
+  condition was evaluated during *collection*, so every pytest invocation in the repo — including
+  ones that never selected the file — paid a `docker info` subprocess with a 10 s timeout.
+
+  Postgres tests accept `NOVA_TEST_POSTGRES_DSN` to run against a server you already have,
+  creating and dropping a throwaway database per session so isolation is unchanged. It refuses
+  a non-local host unless `NOVA_TEST_POSTGRES_ALLOW_REMOTE=1` is also set, because the tier
+  creates and drops databases.
+
+  CI is deliberately untouched: the `unit` job still runs the container tier, so coverage and
+  the 90% floor are exactly as before. `tests/docs/test_container_marker_is_complete.py` fails
+  if a new container fixture escapes the marker, and proves its own non-vacuity.
+
+
 - **Capture adapters for LlamaIndex, Pydantic AI, and Haystack** (closes issues #1, #2, #3).
   `wrap_engine`, `wrap_agent`, and `wrap_pipeline` wrap the framework's entry point so each
   invocation writes its own capsule, with the wire hooks claimed and `metadata.wire_capture`
@@ -91,6 +662,248 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   100,000-run store, which is skipped by default but takes ~7 s.
 
 ### Fixed
+
+- **13 facet names were written into capsules that the closed schema registry rejects.**
+
+  `facets` is `additionalProperties: false` on purpose (ADR-0196 D2), and 13 of 28 facet
+  modules declared a `FACET_NAME` absent from the registry — so any capsule carrying one
+  failed `nova validate` with *"Additional properties are not allowed"*. Reproduced against
+  a real captured capsule before the fix: exit `1`. Now registered in all three live copies
+  of `run-capsule.schema.json` (packaged, the OAS v1.0 target, and the dashboard's).
+
+  Affected: `a2a_card`, `a2a_objects`, `assurance_attestation`, `baseline`, `canary_run`,
+  `fingerprint`, `impact_report`, `media_provenance`, `output_conformance`,
+  `regression_alarm`, `tool_deprecation`, `tool_schema_change`, `watermark_presence`.
+
+  **A guard for exactly this existed and had gone stale.** ADR-0196 D4 added
+  `tests/capsule/test_facets_container.py` after five facets shipped with the same defect —
+  but it checked a **hand-written literal of 14 modules** whose own comment claimed it was
+  "discovered by import". The tree grew to 28; the literal did not, so half the modules were
+  never checked. It is now an AST walk of `src/novafabric/`, with a non-vacuity assertion so
+  it cannot silently shrink again, and `tests/docs/test_capsule_facet_contract.py`
+  additionally checks all **three** schema copies. Proven red-green by de-registering two
+  names.
+
+  Registering `tool_schema_change` also exposed a wrong assumption in that guard: it probed
+  every facet with `{"schema_version": ...}`, but that facet is an **array** — its module
+  writes a list. The probe now follows each facet's registered type rather than inviting the
+  schema to be re-typed to match the test.
+
+- **Three surfaces reported an S3 object key the writer never produces.**
+
+  `storage/dual_object_store.py` stores the dual-object split at `audit/<run_id>/audit.json`
+  and `pii/<run_id>/pii.json`. `nova storage inspect`, `GET /api/storage/inspect/{run_id}`,
+  and the dashboard Storage Operations card each independently hardcoded
+  `<run_id>_audit.json` and presented it as the S3 key.
+
+  Prefix-scoped S3 lifecycle rules, Object Lock retention policies and bucket policies are
+  the standard way to manage a PII object. One written against the reported prefix would have
+  matched **nothing**, silently governing no object at all.
+
+  Both sides were pinned by passing tests — `test_dual_object_store_s3.py` asserted the
+  writer's prefixes, `test_v018_dashboard_parity.py` asserted the reporters' flat names — and
+  nothing compared the two.
+
+  `s3_audit_key()`, `s3_pii_key()`, `local_audit_filename()` and `local_pii_filename()` in
+  `storage/dual_object_store.py` are now the single source of truth, used by the writer and
+  all three reporting surfaces.
+  `tests/scale_architecture/test_object_keys_agree_across_surfaces.py` asserts the reported
+  key *equals the key the writer used*; reinstating the old hardcoded string fails it.
+
+### Changed
+
+- `nova storage inspect` reports the layout in effect (`s3` or `local`), gains `--json`, and
+  states that it computes names without contacting the store — `existence_checked` is always
+  `false`. Its docstring previously claimed to "inspect a stored object and show its
+  metadata"; it never opened a store, and returned keys for run ids that do not exist.
+  `GET /api/storage/inspect/{run_id}` gains the same `layout` and `existence_checked` fields.
+
+- **`nova erasure request` reported a GDPR Art.17 erasure it never performed.**
+
+  It printed `GDPR erasure request queued for run_id=…` and **exited 0 while doing nothing** — no
+  queue row written, no key destroyed — including for a run id that did not exist. `nova erasure
+  status` returned `status=pending` for **any** id, including ids never created, because it
+  consulted nothing.
+
+  `docs/cli-reference.md` compounded it, listing `nova erasure request` among the commands that
+  *"actually destroy the wrapping DEK for a data subject"*.
+
+  On an Art.17 surface a false success is the most damaging behaviour available: the operator
+  records an erasure as started, and nothing started. Both commands now fail loudly (exit `2`) and
+  name the working path, and the documentation is corrected.
+
+  **The working paths were never affected:** `nova pii erase <subject_id>` performs DEK
+  crypto-shredding (ADR-0069), and `POST /v0/erasure` uses the persisted queue in
+  `pii/erasure_queue.py` behind an explicit confirmation and a fail-closed cap-003 gate.
+
+  **Not done, and it is an owner decision:** wiring `nova erasure request` to that queue would
+  change what a compliance command *does*, and the server route's confirmation and gating would
+  have to be reproduced faithfully. Failing loudly removes the false claim today without making
+  that call.
+
+- **`nova memory trace` could not see the blast radius it exists to find.** (ADR-0143 NF-114)
+
+  The command's own docstring calls `readers` *"the blast radius"* — the runs that read a memory
+  item implicated in a bad answer. But it searched a single capsule, and a persistent memory store
+  exists precisely so run A can write what run B reads. If run A poisoned a key and runs B, C and D
+  read it, querying A's capsule returned **only A's own operations**. It answered a different
+  question from the one it named.
+
+  The library was never the problem — `edges_for_events`, `writers_of` and `readers_of` all take a
+  sequence of edges. Only the CLI was scoped. `--also-capsule` (repeatable) widens it; the existing
+  single-capsule form is unchanged.
+
+  Widening created a new way to be wrong, so the result now reports **how many capsules were
+  searched** and how many carried memory operations, in both output formats: a blast radius over 3
+  of 50 capsules is not the blast radius, and an answer whose coverage is unstated reads as
+  complete. Writers and readers are ordered by event time *across* capsules, a run appearing in two
+  of them is counted once, and a capsule path that does not exist is an error rather than a silent
+  skip — dropping one would shrink a blast radius without saying so.
+
+- **A timed-out replay recorded that the command "exited with code 124". It did not exit — it was
+  killed.**
+
+  `_run_mocked_subprocess` returns `124` (the conventional shell timeout code) on
+  `subprocess.TimeoutExpired`, and the failure branch then wrote
+  `{"type": "NonZeroExit", "message": "Replayed command exited with code 124"}`. That is a false
+  statement in an evidence record. The same branch described a command that **never launched** as
+  having "exited with code 1".
+
+  A command may also legitimately exit `124` itself, so the exit code alone cannot tell the two
+  apart. The reason now travels separately: a timeout records `ReplayTimeout`, a launch failure
+  records `ReplayLaunchError`, and an ordinary non-zero exit is still `NonZeroExit`. The timeout
+  is a named constant, since it appears in the message. Purely additive — `error` is not part of
+  `outcome_digest_of`, so no signed digest changes.
+
+  **Not fixed, and deliberately so:** `status` is still `failure` and `verdict_for()` still returns
+  `mismatch`, so a signed `ReperformanceAttestation` continues to assert that a replay which never
+  finished *disagreed*. `schemas/replay-result.schema.json` declares an `interrupted` status for
+  exactly this state and the engine has never emitted it. Changing what a signed attestation means
+  is an ADR-level decision about an existing evidence artifact, so it is recorded here and pinned
+  by a test rather than changed unilaterally.
+
+- **`docs/drift-gate.md` described a third of its own subsystem, and one transcript had gone
+  stale.** It is the user-facing guide for ADR-0147 and covered only the three `nova drift`
+  commands, while nine are now shipped. Two concrete problems:
+
+  - Its "Typical loop" told the reader to compare against *"your frozen baseline"* when **no
+    mechanism existed to freeze one**. `nova assure-baseline pin` is now that mechanism, and the
+    loop starts there — a baseline that can drift is not a baseline.
+  - Its `nova drift detect` transcript predated the assurance-honesty line those commands now
+    print, so the documented output no longer matched the real output. Corrected against a live
+    run, not from memory.
+
+  The guide now maps all nine commands with the question each answers, and explains why their exit
+  codes differ: a **detector** reports and exits `0`, a **check** with a verdict exits non-zero,
+  and `assure-impact` exits `0` even on regressions because ADR-0147 forbids it from deciding
+  adoption — a non-zero exit *would be* that decision. Every exit-code claim in the table was
+  verified by running the command.
+
+  It also states plainly what does not exist: **NovaFabric schedules nothing.** The loop is one
+  you drive from cron, CI or by hand, which is exactly why `nova assure-run check` exists.
+
+- **A flaky test in the suite — and it was the anti-vacuity one.**
+
+  `tests/test_sqlite_wal_cold_start_class.py::test_the_unconditional_form_is_what_breaks` asserts
+  that a cold-start SQLite race **reproduces at least once**, so that a pass in the sibling
+  "the fix holds" tests means something. It failed once and then passed on a re-run of the
+  identical tree.
+
+  The cause was arithmetic, not environment. The race reproduces on about **5.7% of trials**
+  (measured 17/300 on this tree; the module's original figure was 25/500 = 5.0%), so
+  `assert seen > 0` over 60 trials fails on `0.943**60` ≈ **3% of runs** — roughly one run in 33,
+  by construction.
+
+  The loop now **stops at the first reproduction** and may spend up to 400 trials. That makes a
+  false failure ≈ `7e-11` *and* makes the typical run faster, because the expected number of
+  trials to the first hit is ~18 rather than an unconditional 60: the arm went from ~1.9 s to
+  **0.33 s**, and the whole file from 23.6 s to 18.3 s. The full budget is only ever spent when
+  the race genuinely will not reproduce — the one case worth spending time on.
+
+  Verified: the arm still **fails** (in 13.0 s, with a message saying the harness has stopped
+  racing rather than got unlucky) when the race is made unreproducible, and **0 failures in 40
+  consecutive runs** where the old design would have expected about one.
+
+- **`nova drift` output did not carry the assurance-honesty line its own ADR requires.**
+  (ADR-0147 I-4)
+
+  ADR-0147 states that *every* `drift`/`assure` CLI output MUST carry it. `nova drift detect`,
+  `silent-failure` and `root-cause` did not — confirmed by running them, not by reading the code.
+
+  This is not cosmetic. The commands render verdict-shaped output — `DRIFTED` in red,
+  `silent-failure` in red — with nothing saying that this is an observation against a *declared*
+  threshold rather than a judgement that something is wrong. I-4 exists because a detector that
+  looks like a gate gets treated as one.
+
+  All three now emit it. The line is defined once in `assure/_honesty.py` and shared with
+  `nova assure-baseline`, so the two groups cannot drift apart. On `--json` it goes to stderr, so
+  `nova drift detect --json | jq` still works. A test walks the Typer app rather than naming the
+  three commands, so a fourth cannot ship without it.
+
+- **A DSSE envelope's second signature was neither honoured nor detected.** (ADR-0151 Amendment 1)
+
+  `verify_envelope` read `signatures[0]` and stopped — its docstring said so explicitly. Two
+  consequences: a hybrid envelope carrying a classic and a post-quantum signature could not be
+  verified by a party that understood only one of them (the recorded blocker for ADR-0151 NF-191),
+  and an envelope carrying one valid and one **forged** signature verified silently, because the
+  forged entry was never read.
+
+  Every entry in `signatures` is now evaluated under an explicit keyword-only policy:
+  `require="any"` (default) verifies if at least one signature verifies — hybrid-OR, which is what
+  a dual-signed envelope needs; `require="all"` requires every signature to verify. When
+  everything fails, the error names every index and its own reason instead of only the first.
+
+  **The classic path is unchanged, and that is asserted rather than claimed.** For a
+  single-signature envelope — everything NovaFabric produces today — both policies behave
+  identically to before, down to the exact error string, and the equivalence tests pass against
+  both the old and the new implementation.
+
+  This clears the blocker; it does not build NF-191. No PQC algorithm, no new dependency and no
+  `nova seal --hybrid-pqc` flag ships here.
+
+- **The `pre-push` attribution guard was never installed in this repository.** (ADR-0267)
+  The global rules describe it as "the last line of defence" covering annotated tag messages,
+  `--no-verify` commits and CHANGELOG/CONTRIBUTORS credit files. Neither gitdir had a `pre-push`
+  hook at all: the hook lives in the git init template, which gained it on 2026-08-21, while both
+  gitdirs here were created on 2026-08-05/06 — **an init template only applies at `git init` or
+  `git clone`, so updating it does not reach a repository that already exists.** Restored
+  verbatim into both gitdirs and verified by tripping it, not by listing it.
+
+- **Kuzu lineage backend: assets were stored as runs with an empty ref, and `replay_chain()`
+  was non-deterministic** (ADR-0266).
+
+  The Kuzu schema declared a single `Run(run_id)` node table, so an *asset* endpoint had
+  nowhere to live: `insert()` read an absent `run_id`, stored the asset as a `Run` keyed on the
+  empty string, and every query then reported it as `kind="run"` with `ref=""`. Separately,
+  `replay_chain()` was a `DISTINCT` match with no `ORDER BY` — measured over 40 fresh stores on
+  identical input it returned **5 distinct orderings and was correct only 3/40 (~7.5 %)**, while
+  order is contractual (the chain renders as "D was replayed from C, which came from B").
+
+  Kuzu now uses the same generic node model as every other backend: one `Node` table keyed by
+  `node_id_for(kind, ref)`, with `kind` and `ref` as data. `replay_chain()` orders by hop
+  distance, breaks ties on `ref`, excludes the anchor so a cyclic graph cannot report a run as
+  its own ancestor, and carries `step` like SQLite/Postgres/AGE.
+
+  Node identity itself is now defined **once**, as `node_from_edge_dict()` in
+  `novafabric/lineage/_types.py`. It had existed as four separate copies — two in `_store.py`,
+  one each in the Postgres and AGE backends — which is how a backend came to disagree with its
+  siblings on what a node *is* without any test noticing.
+
+  **Two behaviour changes to note.** Kuzu's `node_id` was the raw `run_id` and is now the
+  26-char `node_id_for(kind, ref)` hash, matching the other four backends. And a pre-existing
+  Kuzu database is **migrated on open** rather than silently read as empty; an edge whose
+  non-run endpoint was stored as an empty-key `Run` cannot be recovered, because the old schema
+  never persisted its ref — those are counted and reported through a warning, and re-ingesting
+  the affected capsules is the only way to restore them.
+
+  Known limit, recorded rather than hidden: Kuzu bounds a replay chain at 30 hops where the
+  SQLite reference bounds at 100. That is an engine ceiling — Kuzu's binder rejects a larger
+  upper bound outright — not a tuning choice.
+
+- **`metrics.json` would have been packaged into the sdist and the Docker build context.**
+  It is tracked only by the private git, so the build guard added with ADR-0259 correctly
+  failed on it; it is now excluded in both `pyproject.toml` and `.dockerignore`. Unrelated to
+  the lineage work — found because the guard runs in `make test-fast`.
 
 - **The local server bearer token no longer reaches supervised logs.**
   `nova server start` printed the secret to `stderr` on the theory that stderr is a

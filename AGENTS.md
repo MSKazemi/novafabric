@@ -22,7 +22,7 @@ This is the single most common wasted debugging session in this repo.
 ## Gates — all four must pass
 
 ```bash
-make test-fast     # ~90 s, parallel, skips integration + testcontainers tiers
+make test-fast     # ~4 min, parallel, no Docker (-m "not container")
 make lint          # ruff check src tests scripts
 make typecheck     # mypy src (strict)
 make check-links   # every relative link in a public doc resolves

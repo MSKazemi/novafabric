@@ -29,7 +29,7 @@ import json
 import struct
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
@@ -230,47 +230,15 @@ def create_envelope(
 # Envelope verification
 # ---------------------------------------------------------------------------
 
-def verify_envelope(envelope_bytes: bytes, expected_payload: bytes | None = None) -> bool:
-    """Verify the DSSE envelope signature.
+def _verify_signature_entry(sig_entry: dict[str, Any], pae: bytes) -> None:
+    """Verify one DSSE ``signatures`` entry, or raise :class:`EnvelopeError`.
 
-    Checks that the signature in the first entry of ``signatures`` verifies
-    against the certificate included in the envelope (self-contained check;
-    no external trust anchors are consulted in v0.1).
-
-    Args:
-        envelope_bytes:    JSON bytes of the DSSE envelope.
-        expected_payload:  If provided, also verify the decoded payload matches.
-
-    Returns:
-        True if signature is valid (and payload matches if provided).
-
-    Raises:
-        EnvelopeError: if the envelope is malformed or signature verification fails.
+    This is the body that used to live inline in :func:`verify_envelope` for
+    ``signatures[0]``. The key-type branches are unchanged — only their location
+    is — so a single-signature envelope takes exactly the same path and raises
+    exactly the same errors as before.
     """
-    try:
-        env = json.loads(envelope_bytes)
-    except json.JSONDecodeError as exc:
-        raise EnvelopeError(f"Envelope is not valid JSON: {exc}") from exc
-
-    payload = _b64_decode(env.get("payload", ""))
-    payload_type = env.get("payloadType", "")
-    sigs = env.get("signatures", [])
-
-    if not sigs:
-        raise EnvelopeError("Envelope has no signatures")
-
-    if payload_type != PAYLOAD_TYPE:
-        raise EnvelopeError(
-            f"Unexpected payloadType {payload_type!r}; expected {PAYLOAD_TYPE!r}"
-        )
-
-    if expected_payload is not None and payload != expected_payload:
-        raise EnvelopeError("Envelope payload does not match expected bytes")
-
-    sig_entry = sigs[0]
     sig_bytes = _b64_decode(sig_entry.get("sig", ""))
-
-    pae = _pae(payload_type, payload)
 
     # Determine key type from the envelope.  Envelopes produced by Go
     # (Ed25519) embed a raw PEM public key in "pubkey"; envelopes produced by
@@ -299,7 +267,7 @@ def verify_envelope(envelope_bytes: bytes, expected_payload: bytes | None = None
                 raise EnvelopeError(
                     f"DSSE Ed25519 signature verification error: {exc}"
                 ) from exc
-            return True
+            return
 
         if isinstance(public_key, ec.EllipticCurvePublicKey):
             try:
@@ -312,7 +280,7 @@ def verify_envelope(envelope_bytes: bytes, expected_payload: bytes | None = None
                 raise EnvelopeError(
                     f"DSSE ECDSA signature verification error: {exc}"
                 ) from exc
-            return True
+            return
 
         raise EnvelopeError(
             f"Unsupported key type in 'pubkey' field: {type(public_key).__name__}"
@@ -344,7 +312,7 @@ def verify_envelope(envelope_bytes: bytes, expected_payload: bytes | None = None
             raise EnvelopeError(
                 f"DSSE signature verification error: {exc}"
             ) from exc
-        return True
+        return
 
     if isinstance(public_key, ed25519.Ed25519PublicKey):
         try:
@@ -357,11 +325,106 @@ def verify_envelope(envelope_bytes: bytes, expected_payload: bytes | None = None
             raise EnvelopeError(
                 f"DSSE Ed25519 signature verification error: {exc}"
             ) from exc
-        return True
+        return
 
     raise EnvelopeError(
         f"Unsupported key type in cert: {type(public_key).__name__}"
     )
+
+
+def verify_envelope(
+    envelope_bytes: bytes,
+    expected_payload: bytes | None = None,
+    *,
+    require: str = "any",
+) -> bool:
+    """Verify the DSSE envelope signatures.
+
+    Every entry in ``signatures`` is considered. Until 2026-09-02 only
+    ``signatures[0]`` was examined, which meant a second signature — valid or
+    forged — was neither honoured nor detected. That was the recorded blocker for
+    ADR-0151 NF-191 (hybrid post-quantum signing), because a hybrid envelope
+    carries a classic and a post-quantum signature side by side.
+
+    Args:
+        envelope_bytes:    JSON bytes of the DSSE envelope.
+        expected_payload:  If provided, also verify the decoded payload matches.
+        require:
+            ``"any"`` (default) — hybrid-OR: the envelope verifies if **at least
+            one** signature verifies. This is what a hybrid classic+PQ envelope
+            needs, since a verifier that knows only one of the two algorithms
+            must still be able to accept it.
+
+            ``"all"`` — threshold: **every** signature must verify. Use when an
+            envelope is meant to carry independent co-signatures and a single
+            valid signature is not sufficient.
+
+        For a single-signature envelope — which is every envelope this project
+        currently produces — the two policies are identical, and identical to the
+        behaviour before multi-signature support existed. No classic path changes.
+
+    Returns:
+        True if the envelope verifies under *require* (and the payload matches if
+        *expected_payload* was given).
+
+    Raises:
+        EnvelopeError: if the envelope is malformed, or verification fails under
+            *require*. With more than one signature the message names every
+            signature index and its individual reason, because reporting only the
+            first would hide which of a hybrid pair actually broke.
+    """
+    if require not in ("any", "all"):
+        raise EnvelopeError(
+            f"Unknown verification policy {require!r}; expected 'any' or 'all'"
+        )
+
+    try:
+        env = json.loads(envelope_bytes)
+    except json.JSONDecodeError as exc:
+        raise EnvelopeError(f"Envelope is not valid JSON: {exc}") from exc
+
+    payload = _b64_decode(env.get("payload", ""))
+    payload_type = env.get("payloadType", "")
+    sigs = env.get("signatures", [])
+
+    if not sigs:
+        raise EnvelopeError("Envelope has no signatures")
+
+    if payload_type != PAYLOAD_TYPE:
+        raise EnvelopeError(
+            f"Unexpected payloadType {payload_type!r}; expected {PAYLOAD_TYPE!r}"
+        )
+
+    if expected_payload is not None and payload != expected_payload:
+        raise EnvelopeError("Envelope payload does not match expected bytes")
+
+    pae = _pae(payload_type, payload)
+
+    failures: list[str] = []
+    verified = 0
+    for index, sig_entry in enumerate(sigs):
+        try:
+            _verify_signature_entry(sig_entry, pae)
+        except EnvelopeError as exc:
+            failures.append(f"signatures[{index}]: {exc}")
+        else:
+            verified += 1
+
+    if require == "all" and failures:
+        raise EnvelopeError(
+            f"{len(failures)} of {len(sigs)} signature(s) failed under "
+            f"require='all': " + "; ".join(failures)
+        )
+    if require == "any" and verified == 0:
+        # Preserve the historical single-signature message verbatim: for one
+        # signature the caller should see exactly the error it always saw.
+        if len(sigs) == 1:
+            raise EnvelopeError(failures[0].split(": ", 1)[1])
+        raise EnvelopeError(
+            f"No signature verified ({len(sigs)} tried): " + "; ".join(failures)
+        )
+
+    return True
 
 
 def extract_intent(envelope_bytes: bytes) -> Optional[SigningIntent]:

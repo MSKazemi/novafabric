@@ -46,7 +46,10 @@ def test_output_drift_json(tmp_path):
         app, ["drift", "detect", str(_write(tmp_path, _OUTPUT_DOC)), "--json"]
     )
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    # stdout only: ADR-0147's honesty line rides on stderr precisely so that
+    # `nova drift ... --json | jq` keeps working. Parsing the merged stream
+    # would assert a contract the CLI does not offer.
+    payload = json.loads(result.stdout)
     assert payload["kind"] == "output"
     assert payload["drifted"] is True
     assert payload["value"] > 0.2
@@ -64,7 +67,10 @@ def test_behavioral_tool_mix_json(tmp_path):
     }
     result = runner.invoke(app, ["drift", "detect", str(_write(tmp_path, doc)), "--json"])
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    # stdout only: ADR-0147's honesty line rides on stderr precisely so that
+    # `nova drift ... --json | jq` keeps working. Parsing the merged stream
+    # would assert a contract the CLI does not offer.
+    payload = json.loads(result.stdout)
     assert payload["kind"] == "behavioral"
     assert payload["dimension"] == "tool-call-mix"
     assert payload["value"] > 0.0
@@ -121,7 +127,10 @@ def test_silent_failure_json(tmp_path):
         ["drift", "silent-failure", str(_write_named(tmp_path, "sf.json", _SF_DOC)), "--json"],
     )
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    # stdout only: ADR-0147's honesty line rides on stderr precisely so that
+    # `nova drift ... --json | jq` keeps working. Parsing the merged stream
+    # would assert a contract the CLI does not offer.
+    payload = json.loads(result.stdout)
     assert payload["silent_failures"] == 1
     assert payload["total_reported_success"] == 2
 
@@ -163,7 +172,10 @@ def test_root_cause_json(tmp_path):
         app, ["drift", "root-cause", str(_write_named(tmp_path, "rc.json", _RC_DOC)), "--json"]
     )
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    # stdout only: ADR-0147's honesty line rides on stderr precisely so that
+    # `nova drift ... --json | jq` keeps working. Parsing the merged stream
+    # would assert a contract the CLI does not offer.
+    payload = json.loads(result.stdout)
     assert payload["confidence"] == "sole_change"
     assert payload["correlation_only"] is True
     assert payload["changes"][0]["kind"] == "model"

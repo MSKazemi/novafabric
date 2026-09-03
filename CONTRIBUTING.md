@@ -49,7 +49,8 @@ VS Code and the setup above runs for you.
 
 ```bash
 uv run pytest tests/<the-area-you-touched>   # fast, targeted
-make test-fast                               # the whole fast tier (~90 s)
+make test-changed                            # only what your diff can affect
+make test-fast                               # the whole fast tier (~4 min)
 ```
 
 Write the test first if you can. If you are fixing a bug, a test that fails
@@ -105,14 +106,81 @@ contribution.
 The suite is ~11.5K tests — use the tiered targets instead of a serial full run:
 
 ```bash
-make test-fast   # dev loop: parallel (-n auto), no coverage, skips integration
-                 # + the testcontainers Postgres tier (~90 s)
-make test-par    # release gate — exactly what CI's `unit` job runs (~5 min)
-make test        # everything, serial, incl. tests/integration — WIDER than the
-                 # gate above, and without its coverage floor
+make test-changed  # inner loop: reruns only the tests your diff can affect
+make test-watch    # the same, on every save
+make test-fast     # dev loop: parallel (-n auto), no coverage, no Docker (~4 min)
+make test-container # the Docker tier on its own
+make test-par      # release gate — exactly what CI's `unit` job runs (~5 min)
+make test          # everything, serial, incl. tests/integration — WIDER than the
+                   # gate above, and without its coverage floor
 ```
 
 Coverage must remain at or above 90%.
+
+#### The `container` marker
+
+Tests that need a live Docker daemon are marked `container`, and the marking is
+automatic: `tests/conftest.py` lists the fixtures that *start* a container
+(`CONTAINER_FIXTURES`) and marks any test whose fixture closure reaches one. So a
+test that requests `pg_store` is marked without anyone deciding to mark it,
+because `pg_store` requires `postgres_dsn`.
+
+`make test-fast` deselects that marker rather than ignoring directories. That
+matters: the `--ignore=tests/metadata_store` it replaced discarded **73
+Docker-free tests** along with the 41 real ones, and a docstring regression once
+survived seven passes of the gate inside that blind spot. Measured on the same
+machine, the switch runs **52 more tests in 35 s less** wall-clock.
+
+If you add a fixture that starts a container, add its name to
+`CONTAINER_FIXTURES`. `tests/docs/test_container_marker_is_complete.py` fails if
+you forget.
+
+#### Backend contracts — why a laptop run is trustworthy
+
+Skipping the container tier only helps if what remains still tells you something.
+That is what `tests/lineage/contract.py` is for: **one** set of behavioural
+assertions that every `AbstractLineageStore` backend runs. SQLite and Kuzu are
+embedded, so a laptop exercises the full contract against two real backends with
+no daemon; CI adds Postgres, AGE and JanusGraph on top. What CI verifies is the
+SQL/Cypher binding, not the semantics — those you already checked locally.
+
+`tests/ha/test_lease.py` does the same for the writer lease via
+`run_lease_contract`, shared with the Postgres tier.
+
+A backend that genuinely cannot satisfy a check declares it:
+
+```python
+contract_params({"provenance_reaches_assets": "no Asset node table — see T46"})
+```
+
+That marks the check `xfail(strict=True)`, so fixing the backend fails the suite
+until the exemption is deleted. A known gap stays visible and expires by itself.
+
+This is not theoretical. Extracting the contract immediately found two real
+divergences in the Kuzu backend — `replay_chain` results in arbitrary order (5
+distinct orderings in 40 identical runs) and empty asset refs — that its own
+tests missed because they asserted `len(result) >= 1` and set-membership where
+the reference asserts exact order and exact refs. Both were found on a laptop,
+with no container running.
+`tests/docs/test_lineage_contract_covers_every_backend.py` fails if a new backend
+ships without running the contract.
+
+#### Keeping Postgres warm
+
+testcontainers 4.15 has no container-reuse API, so the tier starts a fresh
+container per session. To point it at a Postgres you already run:
+
+```bash
+docker run -d --name nova-test-pg -p 5433:5432 \
+    -e POSTGRES_PASSWORD=postgres postgres:16-alpine
+export NOVA_TEST_POSTGRES_DSN=postgresql://postgres:postgres@localhost:5433/postgres
+```
+
+The fixture creates a throwaway database on that server per session and drops it
+afterwards, so runs stay isolated. It refuses a non-local host unless you also
+set `NOVA_TEST_POSTGRES_ALLOW_REMOTE=1` — this tier creates and drops databases.
+Be honest about the payoff: measured here it saved ~2 s on an already-pulled
+image. The real dev-loop win is not running the tier at all.
 
 A suite-wide `pytest-timeout` (300 s per test) makes hangs fail by name, and an
 autouse fixture strips ambient `NOVAFABRIC_*` env vars so tests never read or

@@ -128,7 +128,7 @@ export default function GdprErasurePanel({ runIds }: { runIds: string[] }) {
 
       <div className="border-t border-[var(--color-border)] pt-3 space-y-2">
         <p className="text-[10px] font-mono uppercase tracking-wider text-[var(--color-text-faint)]">Check Erasure Status</p>
-        <p className="text-[10px] text-[var(--color-text-faint)]">nova erasure status — list pending/completed erasure requests for a subject</p>
+        <p className="text-[10px] text-[var(--color-text-faint)]">GET /api/compliance/erasure/status — the persisted queue (ADR-0210). There is no CLI equivalent: nova erasure status is not implemented.</p>
         <div className="flex gap-2">
           <SuggestInput
             value={statusSubjectId}

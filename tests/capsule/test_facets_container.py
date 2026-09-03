@@ -26,6 +26,7 @@ today's five facets and leaves the sixth to rediscover the same gap.
 
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 from typing import Any
@@ -48,44 +49,65 @@ BASELINE = (
 #: with shipped builders — keeping the two lists distinct stops a registered
 #: name from reading as evidence that something produces it.
 REGISTERED_FACETS = (
+    "a2a_card",
     "a2a_messages",
+    "a2a_objects",
+    "assurance_attestation",
     "assurance_case",
-    "cost_attribution",
+    "baseline",
+    "canary_run",
     "conversation",
+    "cost_attribution",
     "embodied",
     "federation",
     "fetch_provenance",
+    "fingerprint",
     "frontier_safety",
+    "impact_report",
+    "media_provenance",
     "memstore_mutation",
     "model_provenance",
+    "output_conformance",
     "preservation",
+    "regression_alarm",
     "risk_transfer",
     "safety",
     "science_provenance",
     "settlement",
+    "tool_deprecation",
+    "tool_schema_change",
+    "watermark_presence",
 )
 
 #: Modules that ship a facet builder, as (import path, expected facet name).
-#: Discovered by import rather than hand-listed: the first version of this was
-#: a literal asserting only a subset relation, so when ADR-0167 shipped
-#: `frontier_safety` the list silently understated what existed and nothing
-#: failed. A list that can quietly go stale is not much of a guard.
-FACET_MODULES = (
-    ("novafabric.a2a.messages", "a2a_messages"),
-    ("novafabric.assure.case", "assurance_case"),
-    ("novafabric.cost.attribution", "cost_attribution"),
-    ("novafabric.embodied.facet", "embodied"),
-    ("novafabric.federation.facet", "federation"),
-    ("novafabric.frontier_safety.facet", "frontier_safety"),
-    ("novafabric.hitl.conversation", "conversation"),
-    ("novafabric.memstore.ledger", "memstore_mutation"),
-    ("novafabric.provenance.model_provenance", "model_provenance"),
-    ("novafabric.retrieval.fetch_provenance", "fetch_provenance"),
-    ("novafabric.risk_transfer.actuarial", "risk_transfer"),
-    ("novafabric.safety.decisions", "safety"),
-    ("novafabric.science.provenance", "science_provenance"),
-    ("novafabric.settlement.facet", "settlement"),
-)
+#: **Walked from the tree, not hand-listed.** The previous version was a literal
+#: of 14 whose own comment claimed it was discovered — and while the tree grew to
+#: 28 facet modules the literal did not, so `test_shipped_builder_facet_name_is_
+#: registered` silently ran over half the modules. That is how 13 facet names came
+#: to be written into capsules the schema rejects (fixed 2026-09-03). A list that
+#: can quietly go stale is not much of a guard, so this one cannot.
+def _discover_facet_modules() -> tuple[tuple[str, str], ...]:
+    """Every `src/novafabric/**.py` assigning a literal `FACET_NAME`."""
+    src = REPO_ROOT / "src" / "novafabric"
+    found: list[tuple[str, str]] = []
+    for path in sorted(src.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"), str(path))
+        for node in tree.body:
+            if not isinstance(node, ast.Assign) or not isinstance(
+                node.value, ast.Constant
+            ):
+                continue
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "FACET_NAME":
+                    module = ".".join(
+                        ("novafabric", *path.relative_to(src).with_suffix("").parts)
+                    )
+                    found.append((module, str(node.value.value)))
+    return tuple(found)
+
+
+FACET_MODULES = _discover_facet_modules()
+
 
 
 @pytest.fixture(scope="module")
@@ -96,6 +118,24 @@ def schema() -> dict[str, Any]:
 @pytest.fixture
 def capsule() -> dict[str, Any]:
     return json.loads(BASELINE.read_text())
+
+
+def test_the_module_walk_is_not_vacuous() -> None:
+    """The walk replaced a literal that had gone stale at 14 while the tree held 28.
+
+    Every parametrised check below runs over `FACET_MODULES`, so a discovery bug
+    would make them all pass over an empty or truncated set — which is precisely the
+    failure the literal had. This asserts the walk still finds them.
+    """
+    assert len(FACET_MODULES) >= 28, (
+        f"only {len(FACET_MODULES)} facet module(s) discovered — the walk is broken"
+    )
+    names = {name for _module, name in FACET_MODULES}
+    unregistered = sorted(names - set(REGISTERED_FACETS))
+    assert not unregistered, (
+        "these modules write a facets[...] key absent from REGISTERED_FACETS, so a "
+        f"capsule carrying one fails schema validation: {unregistered}"
+    )
 
 
 def test_baseline_capsule_is_valid(
@@ -112,11 +152,25 @@ def test_capsule_without_facets_stays_valid(
     jsonschema.validate(capsule, schema)
 
 
+def _probe(schema: dict[str, Any], facet_name: str) -> Any:
+    """A minimal well-formed body for *facet_name*, matching its registered type.
+
+    Not every facet is an object: `tool_schema_change` is a **list** of change
+    records, because that is what its module writes. A probe that assumed
+    `{"schema_version": ...}` for all of them would fail on the array facets and
+    invite "fix" by re-typing the schema to match the test — the wrong direction.
+    """
+    declared = schema["properties"]["facets"]["properties"][facet_name]
+    if declared.get("type") == "array":
+        return []
+    return {"schema_version": "0.1.0"}
+
+
 @pytest.mark.parametrize("facet_name", REGISTERED_FACETS)
 def test_each_registered_facet_validates(
     schema: dict[str, Any], capsule: dict[str, Any], facet_name: str
 ) -> None:
-    capsule["facets"] = {facet_name: {"schema_version": "0.1.0"}}
+    capsule["facets"] = {facet_name: _probe(schema, facet_name)}
     jsonschema.validate(capsule, schema)
 
 
@@ -150,7 +204,7 @@ def test_shipped_builder_facet_name_is_registered(
 def test_all_registered_facets_together_validate(
     schema: dict[str, Any], capsule: dict[str, Any]
 ) -> None:
-    capsule["facets"] = {n: {"schema_version": "0.1.0"} for n in REGISTERED_FACETS}
+    capsule["facets"] = {n: _probe(schema, n) for n in REGISTERED_FACETS}
     jsonschema.validate(capsule, schema)
 
 

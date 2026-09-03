@@ -37,6 +37,47 @@ class LineageNode:
     payload: dict[str, Any]
 
 
+def node_ref_from_edge_dict(node_dict: dict[str, Any]) -> str:
+    """Return the canonical ``ref`` for a raw edge endpoint dict.
+
+    Every backend keys its nodes on ``(kind, ref)``, so this mapping *is* node
+    identity. It lived as four separate copies — SQLite, Postgres, AGE and the
+    Kuzu backend each had their own — which is exactly how the Kuzu backend came
+    to store an asset as a run with an empty ref (see ADR 0266).
+    """
+    kind = node_dict.get("kind", "")
+    if kind == "run":
+        return str(node_dict.get("run_id", ""))
+    if kind == "asset":
+        return node_ref_for_asset(
+            str(node_dict.get("registry", "local")),
+            str(node_dict.get("asset_ref", "")),
+        )
+    if kind == "artifact":
+        artifact_ref = node_dict.get("artifact_ref", {}) or {}
+        return node_ref_for_artifact(
+            str(artifact_ref.get("capsule_run_id", "")),
+            str(artifact_ref.get("path", "")),
+        )
+    return str(node_dict.get("ref", str(node_dict)))
+
+
+def node_from_edge_dict(node_dict: dict[str, Any]) -> LineageNode:
+    """Resolve a raw edge endpoint dict into a :class:`LineageNode`.
+
+    The single definition of node identity shared by every backend.
+    """
+    kind = str(node_dict.get("kind", ""))
+    ref = node_ref_from_edge_dict(node_dict)
+    return LineageNode(
+        node_id=node_id_for(kind, ref),
+        kind=kind,
+        ref=ref,
+        first_seen_capsule_run_id=node_dict.get("capsule_run_id"),
+        payload=node_dict,
+    )
+
+
 @dataclass
 class LineageEdge:
     edge_type: str

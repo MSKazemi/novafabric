@@ -116,10 +116,15 @@ def test_trace_of_an_unknown_key_is_empty_not_an_error(capsule: Path) -> None:
         app, ["memory", "trace", str(capsule), "--key", "absent", "-o", "json"]
     )
     assert res.exit_code == 0
+    # Still exact equality, not a subset check: the payload shape is a contract.
+    # `capsules_searched` / `capsules_with_memory_operations` were added with
+    # `--also-capsule` so a partial blast radius cannot read as a complete one.
     assert json.loads(res.stdout) == {
         "memory_key": "absent",
         "writers": [],
         "readers": [],
+        "capsules_searched": 1,
+        "capsules_with_memory_operations": 1,
     }
 
 

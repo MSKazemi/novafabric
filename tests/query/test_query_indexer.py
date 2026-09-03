@@ -9,7 +9,7 @@ from typing import Any, Callable
 import pytest
 
 from novafabric.query import QueryIndexError
-from novafabric.query.indexer import scan_capsule_dir
+from novafabric.query.indexer import find_capsule, scan_capsule_dir
 
 CapsuleFactory = Callable[..., Path]
 RecordFactory = Callable[..., dict[str, Any]]
@@ -203,3 +203,41 @@ def test_scan_is_read_only(
     after = sorted(p.relative_to(capsule_dir) for p in capsule_dir.rglob("*"))
     assert before == after
     assert mtimes == {p: p.stat().st_mtime_ns for p in capsule_dir.rglob("*") if p.is_file()}
+
+
+# ── find_capsule — one definition of "what is a capsule", shared ──────────
+
+
+def test_find_capsule_locates_a_run(make_capsule: CapsuleFactory, capsule_dir: Path) -> None:
+    make_capsule("run-one")
+    expected = make_capsule("run-two")
+    assert find_capsule(capsule_dir, "run-two") == expected
+
+
+def test_find_capsule_prefers_the_manifest_run_id_over_the_directory_name(
+    make_capsule: CapsuleFactory, capsule_dir: Path
+) -> None:
+    """The directory name is only the fallback the scanner already uses."""
+    capsule = make_capsule("dir-name", manifest_extra={"run_id": "real-run-id"})
+    assert find_capsule(capsule_dir, "real-run-id") == capsule
+    assert find_capsule(capsule_dir, "dir-name") is None
+
+
+def test_find_capsule_ignores_a_directory_without_a_manifest(
+    make_capsule: CapsuleFactory, capsule_dir: Path
+) -> None:
+    make_capsule("run-real")
+    (capsule_dir / "run-fake").mkdir()
+    assert find_capsule(capsule_dir, "run-fake") is None
+
+
+def test_find_capsule_returns_none_for_an_unknown_run(
+    make_capsule: CapsuleFactory, capsule_dir: Path
+) -> None:
+    make_capsule("run-real")
+    assert find_capsule(capsule_dir, "run-missing") is None
+
+
+def test_find_capsule_fails_closed_on_a_missing_directory(tmp_path: Path) -> None:
+    with pytest.raises(QueryIndexError, match="capsule directory not found"):
+        find_capsule(tmp_path / "nope", "run-x")

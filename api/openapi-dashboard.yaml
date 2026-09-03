@@ -9464,7 +9464,16 @@ paths:
       x-nova-contract: pending
   /api/storage/inspect/{run_id}:
     get:
-      description: Show dual-object split for a run (DB-STG-1, cap-003).
+      description: 'Show dual-object split for a run (DB-STG-1, cap-003).
+
+
+        Keys come from the writer''s own helpers in ``storage.dual_object_store``.
+
+        This route previously hardcoded ``<run_id>_audit.json`` as the S3 key while
+
+        the writer used ``audit/<run_id>/audit.json`` — so a lifecycle or Object
+
+        Lock policy scoped to the reported prefix would have matched no object.'
       parameters:
       - in: path
         name: run_id

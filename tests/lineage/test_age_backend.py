@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 
+from lineage import contract
 from novafabric.lineage._types import LineageEdge
 from novafabric.lineage.backends.sqlite import SqliteLineageStore
 
@@ -133,3 +134,15 @@ class TestAgeBehaviour:
         _load(age_store)
         after = age_store.blast_radius("01RUNA", max_depth=5)
         assert _refs(before) == _refs(after)
+
+
+# ---------------------------------------------------------------------------
+# The shared backend contract
+# ---------------------------------------------------------------------------
+# The same checks the embedded backends run on a laptop with no container.
+
+
+class TestAGELineageContract:
+    @pytest.mark.parametrize("check", contract.contract_params())
+    def test_contract(self, check: str, age_store) -> None:
+        contract.CONTRACT_CHECKS[check](age_store)

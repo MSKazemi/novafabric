@@ -7,7 +7,9 @@ COMPOSE      := docker compose -f deploy/docker/docker-compose.yml
 COMPOSE_PROD := docker compose -f deploy/docker/docker-compose.yml --profile prod
 COMPOSE_AGE  := docker compose -f deploy/docker/docker-compose.yml --profile age
 
-.PHONY: whitepaper help test lint typecheck coverage benchmark benchmark-capture \
+.PHONY: papers papers-check help test lint typecheck coverage benchmark benchmark-capture \
+	test-fast test-par test-container test-changed test-watch \
+	test-direct test-impacted test-index \
 	bench-scale bench-lineage \
         check-links check-decisions site \
         bundle serve-local deploy-local \
@@ -24,41 +26,32 @@ COMPOSE_AGE  := docker compose -f deploy/docker/docker-compose.yml --profile age
         age-up age-down \
         docker-up docker-build docker-down docker-logs docker-token update _wait-token
 
-# ── Whitepaper ───────────────────────────────────────────────────────────────
+# ── Papers ───────────────────────────────────────────────────────────
 
-whitepaper:
-	@command -v pandoc >/dev/null 2>&1 || { \
-		echo "[whitepaper] pandoc not found — installing via snap..."; \
-		sudo snap install pandoc; \
-	}
-	pandoc docs/whitepaper/novafabric-position-paper.md \
-	  --from markdown \
-	  --to pdf \
-	  --pdf-engine=xelatex \
-	  -V geometry:margin=1in \
-	  -V fontsize=11pt \
-	  -V mainfont="DejaVu Serif" \
-	  -V monofont="DejaVu Sans Mono" \
-	  -o docs/whitepaper/novafabric-position-paper.pdf
-	@echo "[whitepaper] → docs/whitepaper/novafabric-position-paper.pdf"
+# The manuscript portfolio (ADR 0264). papers/ is private in full and is not
+# part of any public build; these targets exist so the gate is one command.
+# They replace `whitepaper` / `whitepaper-html`, deleted 2026-08-29: both read
+# docs/whitepaper/novafabric-position-paper.md, which no longer exists, and the
+# first one's opening move was `sudo snap install pandoc`.
 
-whitepaper-html:
-	@python3 -c "\
-import markdown, pathlib, sys; \
-src = pathlib.Path('docs/whitepaper/novafabric-position-paper.md').read_text(); \
-src = src[src.find('---', 3)+3:].strip() if src.startswith('---') else src; \
-html = markdown.markdown(src, extensions=['tables', 'fenced_code']); \
-out = pathlib.Path('docs/whitepaper/novafabric-position-paper.html'); \
-style = 'body{font-family:sans-serif;max-width:900px;margin:40px auto;padding:0 20px;line-height:1.6}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:6px 12px}code{background:#f4f4f4;padding:2px 4px;border-radius:3px}pre{background:#f4f4f4;padding:12px;overflow-x:auto}pre code{background:none;padding:0}'; \
-out.write_text(f'<!DOCTYPE html><html><head><meta charset=\"utf-8\"><style>{style}</style></head><body>' + html + '</body></html>'); \
-print(f'[whitepaper] → {out} ({len(html)} chars)')"
+papers:
+	@$(MAKE) --no-print-directory -C papers all
+
+papers-check:
+	@$(MAKE) --no-print-directory -C papers check
 
 # ── Help ─────────────────────────────────────────────────────────────────────
 
 help:
 	@echo "NovaFabric — available targets:"
 	@echo "  test              Run Python test suite (pytest, benchmarks skipped)"
-	@echo "  test-fast         Fast dev loop: parallel (-n auto), no coverage, skips integration + testcontainers tiers (~90 s)"
+	@echo "  test-fast         Fast dev loop: parallel (-n auto), no coverage, no Docker (-m 'not container')"
+	@echo "  test-direct       Tier 0 inner loop: tests directly covering your change (~17s)"
+	@echo "  test-impacted     Tier 1: everything whose import closure reaches your change"
+	@echo "  test-index        Rebuild the test-selector import index"
+	@echo "  test-changed      DISABLED - testmon is unusable here (>10 min); use test-direct"
+	@echo "  test-watch        test-direct, rerun on every save (pytest-watcher)"
+	@echo "  test-container    The Docker tier only (testcontainers + docker CLI); skips without a daemon"
 	@echo "  test-par          Release gate — byte-for-byte what CI's unit job runs (~5 min)"
 	@echo "  benchmark         Run NovaSeal p99 latency gate (100 rounds, < 200 ms)"
 	@echo "  benchmark-capture Run capture-overhead p95 gate (30 captured runs, < 2000 ms)"
@@ -69,8 +62,8 @@ help:
 	@echo "  check-links       Verify every relative link in public docs resolves"
 	@echo "  check-decisions   Verify docs/decisions.md matches the ADR tree"
 	@echo "  site              Build the public website (web/dist/), docs pages included"
-	@echo "  whitepaper        Build PDF from docs/whitepaper/novafabric-position-paper.md"
-	@echo "  whitepaper-html   Build HTML version of the whitepaper"
+	@echo "  papers            Build every LaTeX manuscript in papers/ (private)"
+	@echo "  papers-check      Build, then run the portfolio gate over papers/"
 	@echo "  coverage          Run pytest with coverage report"
 	@echo "  bundle            Build web dashboard (web/) and copy to static dir"
 	@echo "  serve-local       Build bundle + start nova serve --experimental"
@@ -119,13 +112,64 @@ help:
 test:
 	uv run pytest --benchmark-disable --cov=novafabric --cov-report=term-missing
 
-# Fast dev loop (~90 s): parallel, no coverage, skips the two infra-heavy tiers
-# (tests/integration is CI-only; tests/metadata_store spins a testcontainers
-# Postgres that adds ~4 min). Full `make test` / `make test-par` remain the
-# release gates.
+# Fast dev loop: parallel, no coverage, no Docker.
+#
+# Scope is chosen by MARKER, not by directory. `-m "not container"` drops
+# exactly the tests whose fixture closure starts a container (see
+# CONTAINER_FIXTURES in tests/conftest.py) and nothing else. The directory-level
+# `--ignore=tests/metadata_store` this replaces was throwing away 73 Docker-free
+# tests in that tier — which is how a docstring regression survived seven passes
+# of this gate. tests/integration stays ignored: it is CI-only by design.
+#
+# Full `make test` / `make test-par` remain the release gates and still run the
+# container tier.
 test-fast:
 	uv run pytest -n auto --dist=loadgroup --benchmark-disable -q \
-		--ignore=tests/integration --ignore=tests/metadata_store
+		-m "not container" \
+		--ignore=tests/integration
+
+# The container tier on its own — testcontainers Postgres/AGE/JanusGraph and the
+# docker-CLI examples. Needs a reachable Docker daemon; skips cleanly without one.
+# Export TESTCONTAINERS_REUSE_ENABLE=true (see docs/developer-guide.md) to keep
+# the containers warm between runs instead of paying startup every time.
+test-container:
+	uv run pytest -m "container" --benchmark-disable -q \
+		--dist=loadgroup -n auto
+
+# Tier 0 — the inner loop. The tests that directly cover what you changed,
+# selected by scripts/testsel.py from location and module name. ~17 s on a
+# one-package change, against ~4 min for the whole fast suite.
+#
+# This is what the Claude Code Stop hook runs automatically at the end of every
+# turn (.claude/settings.json), so in normal work nobody types it.
+test-direct:
+	./scripts/run-scoped-tests.sh direct
+
+# Tier 1 — every test whose static import closure reaches the changed modules.
+# Broader and slower than test-direct, narrower than the whole suite. If the
+# closure exceeds 40% of the suite it escalates to `test-fast` on its own,
+# because past that point selecting has stopped saving anything.
+test-impacted:
+	./scripts/run-scoped-tests.sh impact
+
+# Rebuild the selector's import index. It is rebuilt automatically when missing;
+# do this by hand after a large refactor. ~2.5 s for ~860 test files.
+test-index:
+	uv run python scripts/testsel.py --rebuild-index --build-only
+
+# ⚠ MEASURED UNUSABLE ON THIS SUITE (2026-09-01) — kept only so the finding is
+# not rediscovered. pytest-testmon cannot run under pytest-xdist, so its baseline
+# is a SERIAL run of 12,280 tests: measured at over 10 MINUTES on both a cold and
+# a warm index, not the "sub-second" this once claimed. Use `test-direct`.
+test-changed:
+	@echo "test-changed is unusable on this suite (>10 min, testmon cannot parallelise)."
+	@echo "Use 'make test-direct' (~17 s) or 'make test-impacted'. See docs/developer-guide.md."
+	@exit 1
+
+# test-direct, rerun on every save. Uses --runner because the selection is
+# recomputed per run from the current diff, not fixed at launch.
+test-watch:
+	uv run ptw . --runner ./scripts/watch-runner.sh
 
 # The release gate. Byte-for-byte the command CI's `unit` job runs, so passing
 # this locally means passing there — including the scope, the distribution and

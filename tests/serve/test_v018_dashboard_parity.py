@@ -21,6 +21,12 @@ pytest.importorskip("starlette")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from novafabric.serve.app import create_app  # noqa: E402
+from novafabric.storage.dual_object_store import (  # noqa: E402
+    local_audit_filename,
+    local_pii_filename,
+    s3_audit_key,
+    s3_pii_key,
+)
 
 VALID_TOKEN = "test-token-1234567890abcdef"
 HEADERS = {"host": "127.0.0.1:4321"}
@@ -293,9 +299,10 @@ class TestStorageRoutes:
         )
         assert res.status_code == 200
         body = res.json()
-        assert body["audit_object_key"] == "run-abc-123_audit.json"
+        assert body["audit_object_key"] == local_audit_filename("run-abc-123")
         assert body["pii_object_key"] is None
         assert body["cap003_enabled"] is False
+        assert body["layout"] == "local", "no S3 env is configured in this fixture"
 
     def test_inspect_returns_pii_key_with_flag_on(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -306,8 +313,37 @@ class TestStorageRoutes:
         )
         assert res.status_code == 200
         body = res.json()
-        assert body["pii_object_key"] == "run-abc-123_pii.json"
+        assert body["pii_object_key"] == local_pii_filename("run-abc-123")
         assert body["cap003_enabled"] is True
+
+    def test_inspect_reports_the_s3_keys_the_writer_actually_uses(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The regression this route shipped with for four releases.
+
+        It hardcoded ``run-abc-123_audit.json`` and presented it as the S3 key,
+        while the writer stored ``audit/run-abc-123/audit.json``. A lifecycle rule
+        or Object Lock policy scoped to the reported prefix matched no object.
+        See ``tests/scale_architecture/test_object_keys_agree_across_surfaces.py``.
+        """
+        monkeypatch.setenv("NOVA_CAP003_ENABLED", "true")
+        monkeypatch.setenv("NOVA_S3_BUCKET", "nova-capsules")
+        res = client.get(f"/api/storage/inspect/run-abc-123?{TOKEN_Q}", headers=AUTH)
+        assert res.status_code == 200
+        body = res.json()
+
+        assert body["layout"] == "s3"
+        assert body["audit_object_key"] == s3_audit_key("run-abc-123")
+        assert body["pii_object_key"] == s3_pii_key("run-abc-123")
+        assert body["audit_object_key"] != "run-abc-123_audit.json"
+
+    def test_inspect_never_claims_the_object_exists(
+        self, client: TestClient
+    ) -> None:
+        """It computes names without contacting the store, and must say so."""
+        res = client.get(f"/api/storage/inspect/never-stored?{TOKEN_Q}", headers=AUTH)
+        assert res.status_code == 200
+        assert res.json()["existence_checked"] is False
 
 
 @pytest.fixture(autouse=True)

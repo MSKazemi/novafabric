@@ -90,7 +90,8 @@ Commands grouped by primitive and task. Each entry links to its full section.
 | [`nova cost fairness`](#nova-cost-fairness-experimental-adr-0146) | Per-agent cost/energy/calls fairness ledger: share, Gini, max/mean — descriptive (experimental) |
 | [`nova cost usage-breakdown`](#nova-cost-usage-breakdown-experimental-adr-0132) | Token usage-type composition of a capsule — descriptive (experimental) |
 | [`nova pricing`](#nova-pricing-listshowadd-experimental-adr-0133) | Local model-pricing catalog: list, show, add (experimental) |
-| [`nova drift`](#offline-drift-and-tool-schema-analysis-experimental-adr-01470148) | Offline drift, silent-failure, and root-cause detectors over sealed capsules (experimental) |
+| [`nova drift`](#offline-drift-and-tool-schema-analysis-experimental-adr-01470148) | Collects samples from sealed capsules, then runs the offline drift, silent-failure, root-cause and behavioral-fingerprint detectors over them (experimental) |
+| [`nova provenance`](#nova-provenance-experimental-adr-0148-d1) | Bind C2PA manifests to captured media hashes; read watermark-presence claims (experimental) |
 | [`nova toolschema impact`](#nova-toolschema-impact-experimental-adr-0148) | Which historical runs break under a new tool schema (experimental) |
 
 ### Lineage
@@ -894,14 +895,28 @@ nova memory trace .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --key user_prefs
 nova memory trace .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ -k user_prefs -o json
 ```
 
+```bash
+nova memory trace runs/A/ --key user_prefs --also-capsule runs/B/ --also-capsule runs/C/
+```
+
 Options:
 - `--key, -k TEXT` — memory key to trace (required)
+- `--also-capsule PATH` — another capsule to search (repeatable)
 - `--output, -o text|json` — output format (default: `text`)
 
-**Scope, honestly:** the trace covers operations recorded *in the capsule you
-point at*. A value written by run A and read by run B shows both sides only if
-both runs' operations are in that capsule. Cross-capsule memory provenance
-needs the merged lineage store and is **planned**, not implemented.
+**Scope, honestly:** a persistent memory store exists so one run can read what
+another wrote, so a single capsule usually *cannot* answer this — the runs that
+read a poisoned key live in their own capsules, not the writer's. Pass every
+capsule that might have touched the key.
+
+The result always reports **how many capsules were searched** and how many
+carried memory operations, in both output formats. That matters: a blast radius
+over 3 of 50 capsules is not the blast radius, and an answer whose coverage is
+unstated reads as a complete one. Writers and readers are ordered by event time
+*across* capsules, and a run appearing in two of them is counted once.
+
+A capsule path that does not exist is an error, not a skip — silently dropping
+one would shrink a blast radius without saying so.
 
 A read may carry `origin_run_id` — what the reading agent believed it was
 reading. That is recorded as a *claim* on the edge, not as the edge's source:
@@ -1354,6 +1369,433 @@ and `2` only on missing or malformed input. This first slice takes the
 samples/runs directly in the document; a collector that reads them from sealed
 capsules over a `--baseline`/`--window` range is a documented follow-on.
 
+### nova a2a-objects map (experimental, ADR-0149)
+
+Map A2A `Task` / `Message` / `Artifact` objects onto capsule entities, recording a
+field-by-field `mapping_manifest` and a `roundtrip_digest`.
+
+```bash
+nova a2a-objects map --objects objects.json --out facet.json
+```
+
+Options:
+- `--objects` (required) — JSON: `{"tasks": [...], "messages": [...], "artifacts": [...]}`
+- `--out` — write the facet JSON here (default: print to stdout)
+
+> **Message parts are bound, never stored.** A `parts` array can carry user
+> content, so the mapping keeps only `parts_digest` (ADR-0009). A re-export
+> therefore carries `parts_digest` in place of `parts` — a bounded reconstruction,
+> not a fabricated one.
+>
+> **Nothing is dropped silently.** Any field of a source object that this mapping
+> does not carry is listed in that object's `unmapped[]`, and the command reports
+> the count.
+
+Exit codes: `0` (mapped, or nothing to map), `2` (missing/malformed input).
+
+---
+
+### nova a2a-objects roundtrip (experimental, ADR-0149)
+
+Re-export the mapped objects and assert they reproduce the `roundtrip_digest`.
+
+```bash
+nova a2a-objects roundtrip --facet facet.json
+```
+
+Options:
+- `--facet` (required) — a facet JSON, or a capsule carrying one in `facets.a2a_objects`
+
+Exit codes: `0` (round-trip reproduces the digest), `1` (**divergence** — the
+diverging object and its fields are named on stderr), `2` (bad input).
+
+The digest is computed over the **re-exported** objects rather than over the stored
+facet, so the check exercises map → store → export. A digest taken over storage
+would be re-derived from the same bytes and match unconditionally.
+
+---
+
+### nova a2a-card capture (experimental, ADR-0149)
+
+Record an A2A 1.0 Agent Card as portable capsule evidence. The **full** card is
+stored, not a summary, so any A2A-aware tool can read the agent's identity out of
+the evidence without knowing anything about NovaFabric's schema.
+
+```bash
+nova a2a-card capture --card card.json \
+  --well-known-url https://acme.example/.well-known/agent.json \
+  --outputs ./outputs --out facet.json
+```
+
+Options:
+- `--card` (required) — the A2A Agent Card JSON document
+- `--well-known-url` — where the card was served from
+- `--a2a-version` — protocol version (default `1.0`)
+- `--outputs` — write the standalone portable export into this directory
+- `--out` — write the facet JSON here (default: print to stdout)
+
+> **`signature_ok` is not asserted.** A2A 1.0 cards are JWS-signed and NovaFabric
+> has no JWS verifier wired, so the facet records
+> `signature_status: "unverified: no JWS verifier configured"` rather than a verdict
+> nobody reached. `signed` is structural — it says a signature block is *present*,
+> never that it is valid. Supply a verifier through the Python API
+> (`a2a.card.build_facet(..., verifier=...)`) to get a real `signature_ok`.
+
+Exit codes: `0` (captured), `2` (missing or malformed card).
+
+---
+
+### nova a2a-card verify (experimental, ADR-0149)
+
+Recompute the card fingerprint from a stored facet and report whether the card has
+been altered since capture. Needs no key material and no network.
+
+```bash
+nova a2a-card verify --facet facet.json
+```
+
+Options:
+- `--facet` (required) — a facet JSON, or a capsule carrying one in `facets.a2a_card`
+
+Exit codes: `0` (fingerprint matches), `1` (**the card changed**), `2` (bad input).
+
+The recorded fingerprint is never rewritten to the observed one — that would
+redefine which card was presented and turn a detected alteration into a silently
+accepted new identity.
+
+---
+
+### nova replay-equivalence regime (experimental, ADR-0144)
+
+Report whether a run executed in a regime where a replay could be **expected** to
+match — the context an equivalence verdict needs to mean anything.
+
+```bash
+nova replay-equivalence regime --capsule ./capsule
+```
+
+Options:
+- `--capsule` (required) — capsule directory holding `model-calls.jsonl`
+
+Exit codes: `0` (eligible), `1` (**not eligible, or unknown**), `2` (bad input).
+
+> **Why this matters.** Divergence from a run taken at `temperature=1.2` tells you
+> almost nothing; the same divergence from a fully pinned run is a finding.
+> `schemas/replay-attestation.schema.json` already names the classes — `BIT_EXACT`,
+> `BOUNDED_EQUIVALENT`, `NON_DETERMINISTIC`, the last for *"missing pins, unpinned
+> seed/temperature"* — and this supplies the input they need.
+>
+> **`unknown` is not `eligible`, and exits `1`.** A run that recorded no
+> temperature has not demonstrated a replay was expected to match. That is a
+> statement about the evidence, not an accusation about the run.
+>
+> **The facts travel with the verdict.** `calls_without_temperature`,
+> `calls_with_nonzero_temperature`, `calls_without_seed` and the observed
+> `temperatures` are all reported, so a caller who accepts temperature-0 without a
+> pinned seed can reach that conclusion from the record rather than being bound by
+> the stricter default.
+
+---
+
+### nova replay-equivalence check (experimental, ADR-0144)
+
+Emit the **behavioral-equivalence verdict** for two trajectories: were the tool
+calls the replay made equivalent to the baseline's, under a declared match mode and
+tolerance?
+
+```bash
+nova replay-equivalence check --baseline baseline.json --replay replay.json \
+  --mode ordered --tolerance 0.0
+```
+
+Each trajectory is a JSON array of `{"name": "...", "arguments": {...}}` objects.
+
+Options:
+- `--baseline` / `--replay` (required) — the two trajectories
+- `--mode` — correspondence required: `set` | `ordered` (default) | `edit`
+- `--tolerance` — maximum distance still counted as equivalent (default `0.0`, exact)
+- `--rule` — canonicalization rule (repeatable)
+- `--commutable` — a tool whose order does not matter (repeatable)
+- `--idempotent` — a tool whose retries collapse (repeatable)
+
+Exit codes: `0` (equivalent), `1` (**not equivalent**), `2` (bad input).
+
+> **Why non-equivalence is a non-zero exit.** Unlike `nova drift`, whose detectors
+> are observations and always exit `0`, non-equivalence is the condition a canary
+> replay alarms on (ADR-0147 D3).
+>
+> The verdict records `rules_version` and `rules_applied`, because a verdict whose
+> canonicalization is unknown cannot be re-derived later. Tolerated divergences are
+> still listed — allowing slack does not hide what it allowed.
+>
+> **This is not `nova replay --check-equivalence`.** ADR-0147 writes the surface
+> that way; `nova replay` performs a replay, and fusing the verdict into it needs
+> integration with the replay engine's output. That remains future work. This is the
+> verdict surface a scheduler calls.
+
+---
+
+### nova assure-impact report (experimental, ADR-0147)
+
+Aggregate per-run **C3 equivalence verdicts** for a corpus of pinned baselines
+replayed through a substituted model, into one report for `from_model` → `to_model`.
+
+```bash
+nova assure-impact report --corpus corpus.json --worst 5 --out report.json
+```
+
+The corpus is `{"from_model": "...", "to_model": "...", "runs": [...]}`, where each
+run carries `baseline_id`, the C3 `equivalent` verdict, its `distance`, and
+optionally `cost_before`/`cost_after` (integer minor units + ISO-4217) and
+`tokens_before`/`tokens_after`.
+
+Options:
+- `--corpus` (required) — the corpus document
+- `--worst` — how many regressions to list (default 5)
+- `--out` — write the report JSON here
+
+Exit codes: `0` (report produced — **including when runs regressed**), `2` (bad input).
+
+> **It decides nothing.** ADR-0147 states NF-154 must not decide whether to adopt
+> the new model, so there is no recommendation field and a regression is not a
+> non-zero exit — exiting non-zero would be the adoption decision, made by an exit
+> code.
+>
+> **Three things the report refuses to fudge.** A run with no cost data is not a run
+> that cost zero, so each delta reports how many runs contributed and how many
+> carried nothing. A corpus mixing currencies is refused rather than summed. And
+> `equivalent + regressed + inconclusive == n` is enforced — a baseline that could
+> not be replayed is *inconclusive*, never silently counted as a pass.
+
+---
+
+### nova assure-alarm check (experimental, ADR-0147)
+
+The **standing production regression alarm**. Runs the shipped Wilson + Wald-SPRT
+primitive over a window of run outcomes and emits `no-regression`, `regression` or
+`inconclusive` — firing **only** on a statistically significant regression.
+
+```bash
+nova assure-alarm check --window window.json
+```
+
+The window document is `{"metric": "...", "baseline": [1,0,...], "window": [1,0,...]}`,
+where each outcome is `1 = healthy`.
+
+Options:
+- `--window` (required) — the window document
+- `--drift-flags` — outcomes are `1 = drifted` rather than `1 = healthy`; both sides are inverted
+- `--p0` / `--p1` — SPRT null / alternative pass-rates
+
+Exit codes: `0` (no regression, **or inconclusive**), `1` (**alarm fired**), `2` (bad input).
+
+> **Why an SPRT and not a threshold.** Agentic pass@1 swings several points as noise
+> even at temperature 0, so a bare delta gate fires on noise. A single-run dip does
+> not fire here. `inconclusive` means "not enough evidence yet" and is **not** a
+> regression — treating undecided as regression is the false alarm the SPRT exists
+> to prevent.
+>
+> ⚠ **Polarity matters.** If your window is drift flags (`1 = drifted`) and you omit
+> `--drift-flags`, the alarm inverts silently: it fires on improvement and stays
+> quiet on a real regression, while every number in the output still looks plausible.
+>
+> **This is not the promote gate.** ADR-0147 D4 leaves ADR-0080 unchanged, so this
+> never uses the gate's exit-code contract (`3` on regression). It exits `1` because
+> an alarm exists to be noticed.
+
+---
+
+### nova assure-canary record (experimental, ADR-0147)
+
+Record one **canary replay** of a pinned baseline: which baseline, when, which
+stack, the C3 equivalence verdict, its drift score, and whether that alarms.
+
+```bash
+nova assure-canary record --run canary.json --out record.json
+```
+
+The run document is `{"baseline_id", "ran_at", "stack": {component: version},
+"equivalent": bool, "drift_score": float, "baseline_stack": {...}}`.
+
+Options:
+- `--run` (required) — the run document
+- `--out` — write the record JSON here
+
+Exit codes: `0` (equivalent), `1` (**alarm — not equivalent**), `2` (bad input).
+
+> ⚠ **This records a canary run; it does not schedule or perform one.** NF-153 also
+> requires re-running each pinned baseline against the current stack on a declared
+> cadence. That orchestration needs live infrastructure and is **not built** —
+> ADR-0147's standing production loop still does not exist.
+>
+> **The stack fingerprint is the point.** It answers *"was this canary judged
+> against the same stack as the baseline?"*, because a verdict compared across two
+> different stacks is not a comparison, and a "regression" that is really a stack
+> change is a false alarm that looks exactly like a true one. The command says so
+> when the stack changed — and says so distinctly when the baseline's stack is
+> **unknown**, which is not the same as matched.
+>
+> Equivalence is never scored here; the verdict comes from
+> `nova replay-equivalence check`.
+
+---
+
+### nova assure-run record (experimental, ADR-0147)
+
+Record that a scheduled continuous-assurance run executed — which baselines it
+checked, which detectors ran, how many alarms fired, and when the next run is due.
+
+```bash
+nova assure-run record --schedule nightly --ran-at 2026-07-12T00:00:00Z \
+  --cadence 86400 --baseline bl-support-agent-golden-2026Q2 \
+  --detector output-drift --alarms 1 --out attestation.json
+```
+
+Options:
+- `--schedule` (required) — identifier of the assurance schedule
+- `--ran-at` (required) — RFC 3339 timestamp of the run (a UTC offset is required)
+- `--cadence` (required) — expected seconds between runs; must be positive
+- `--baseline` — a `baseline_id` this run checked (repeatable)
+- `--detector` — a detector that ran (repeatable)
+- `--alarms` — how many alarms fired (default `0`)
+- `--out` — write the attestation JSON here
+
+> `next_due` is **derived** from `--ran-at` plus `--cadence` and cannot be supplied.
+> It is the mechanism by which a missed run is detected, so a caller-chosen value
+> could promise a due date that never arrives.
+
+Exit codes: `0` (recorded), `2` (bad timestamp, non-positive cadence, empty schedule id).
+
+---
+
+### nova assure-run check (experimental, ADR-0147)
+
+Report whether the next assurance run is overdue.
+
+```bash
+nova assure-run check --attestation attestation.json --now 2026-07-15T00:00:00Z
+```
+
+Options:
+- `--attestation` (required) — attestation JSON, or a capsule carrying one
+- `--now` (required) — the RFC 3339 instant to judge against
+
+Exit codes: `0` (on time), `1` (**overdue**), `2` (bad input).
+
+> **How a run that never happened is detected.** A missed run writes nothing, so
+> there is no record of it to inspect. The verdict is computed against the
+> *previous* attestation's `next_due` — the artifact that proves the failure is the
+> last success. Exactly-due is not yet overdue.
+
+---
+
+### nova assure-baseline pin (experimental, ADR-0147)
+
+Designate a sealed capsule as a **golden baseline** — the fixed reference every
+drift detector measures against. The pin binds the run to its capsule Merkle
+root, so it names specific bytes rather than a run id that could later point at
+different content.
+
+A pin is **immutable**: it is never edited, and a new pin supersedes it. That is
+what keeps a comparison made last quarter reproducible after the baseline moves on.
+
+```bash
+nova assure-baseline pin --capsule ./capsule --run run-8f2a \
+  --id bl-support-agent-golden-2026Q2 --criterion goal \
+  --pinned-at 2026-07-01T00:00:00Z --out pin.json
+```
+
+Options:
+- `--capsule` (required) — directory of the sealed golden capsule
+- `--run` (required) — run id of that capsule
+- `--id` (required) — identifier for this baseline
+- `--criterion` (required) — which axis this is a baseline for: `goal` | `trajectory` | `output-dist` | `cost`
+- `--pinned-at` (required) — RFC 3339 timestamp
+- `--out` — write the pin as JSON to this path (default: print to stdout)
+
+Exit codes: `0` (pinned), `2` (missing capsule, unknown criterion, or malformed input).
+
+---
+
+### nova assure-baseline verify (experimental, ADR-0147)
+
+Recompute a pinned capsule's sealed root offline and report whether the pinned
+bytes are still the bytes on disk. **The pin is never rewritten** — not even on a
+mismatch. Updating it to match what was found would "repair" the record by
+redefining the object, turning detected corruption into a silently accepted new
+baseline.
+
+```bash
+nova assure-baseline verify --pin pin.json --capsule ./capsule --run run-8f2a
+```
+
+Options:
+- `--pin` (required) — a baseline pin JSON, or a capsule carrying one in `facets.baseline`
+- `--capsule` (required) — directory of the capsule to re-hash
+- `--run` (required) — which pinned run that capsule corresponds to
+
+Exit codes: `0` (roots match), `1` (**mismatch** — the pinned bytes changed), `2` (bad input, or the run is not in this pin).
+
+> **Not in this slice:** `nova assure-baseline list`. Listing pins across a fleet
+> needs a global pin registry, which is a storage decision of its own. The pin
+> lives in `facets.baseline` on the capsule, as ADR-0147 §4.1 specifies.
+
+---
+
+### nova drift collect (experimental, ADR-0147)
+
+Read sealed capsules into the document a drift detector consumes. Until this
+existed, every `nova drift` subcommand took a hand-written document.
+
+It reads through the same ADR-0129 scanner `nova query` uses — one definition of
+what a capsule is, one meaning for a window (`since` inclusive, `until`
+exclusive) — with the ADR-0225 row cache in front of it.
+
+```bash
+nova drift collect --capsules ./capsules --window 7d.. --json
+nova drift collect --capsules ./capsules --window 7d.. --emit silent-failure \
+  --quality-metric pass-rate --threshold 0.8 --json > runs.json
+nova drift collect --capsules ./capsules --emit detect --dimension cost \
+  --baseline 30d..2026-07-05T00:00:00Z --window 2026-07-05T00:00:00Z.. \
+  --statistic psi --threshold 0.2 --json > drift.json
+nova drift collect --capsules ./capsules --emit fingerprint \
+  --run run-42 --baseline-run golden-1 --threshold 0.2 --json > fp.json
+nova drift collect --emit root-cause --run run-42 --baseline-run golden-1 --json > rc.json
+```
+
+Options:
+- `--capsules PATH` (required) — directory of sealed Run Capsules
+- `--window SINCE..UNTIL` (required) — the window being examined; either side may be empty. `SINCE` accepts a duration (`7d`) or a timestamp
+- `--emit runs|detect|silent-failure|fingerprint|root-cause` — default `runs`, the neutral per-run record list
+- `--baseline SINCE..UNTIL` — the comparison window (`--emit detect`)
+- `--dimension D` — `cost`, `prompt-tokens`, `completion-tokens`, `total-tokens`, `latency`, `model-calls`, or `score:<name>`. The record `kind` is **derived** from it: `score:*` is output-drift, the rest is behavioral-drift
+- `--statistic psi|ks` — the two-sample statistic (`--emit detect`)
+- `--threshold FLOAT` — your policy; **never defaulted**
+- `--quality-metric NAME` — the score to read (`--emit silent-failure`; **opt-in** for `--emit fingerprint`, where folding scores in unasked would change the basis and the signature)
+- `--run ID` / `--baseline-run ID` — the run to fingerprint and the one to compare it against (`--emit fingerprint`, which is keyed by run id rather than by the window)
+- `--commutable NAME` / `--idempotent NAME` — repeatable; passed through to the C3 canonicalizer
+- `--kind KIND` — provenance kind to compare; repeatable (`--emit root-cause`)
+- `--depth N` — lineage walk depth, default `5`; recorded in the document because a walk too shallow to reach the change looks exactly like no change (`--emit root-cause`)
+- `--lineage-db PATH` — lineage store to read; the default store when omitted (`--emit root-cause`)
+- `--baseline-id ID` — optional pinned-baseline id to record
+- `--no-cache` — authoritative full scan, ignoring the ADR-0225 row cache
+- `--json` — emit the document (the form the detectors read)
+
+It **collects; it does not judge** — no `drifted` flag is computed here. A run
+that recorded no value is left out of a sample and counted as `missing`, never
+entered as a zero; mixed currencies are refused rather than summed; and an empty
+sample refuses to become a drift document, because a statistic over nothing is
+no evidence rather than evidence of no drift.
+
+`--emit root-cause` reads the lineage store rather than the capsule tree, so it
+needs no `--capsules`. A run **absent from the lineage graph is refused**: an empty
+ancestor list on both sides diffs to `no_change`, which would report "nothing
+changed" from missing data.
+
+Exit codes: `0` (document rendered), `2` (bad input, unknown dimension, missing policy flag, or an empty sample).
+
+---
+
 ### nova drift detect (experimental, ADR-0147)
 
 Compute an offline two-sample drift record from supplied samples — no model
@@ -1408,6 +1850,222 @@ Options:
 - `--json` — emit the root-cause hypothesis as JSON
 
 Exit codes: `0` (rendered, whether or not anything changed), `2` (bad input).
+
+---
+
+### nova drift fingerprint (experimental, ADR-0147)
+
+Compute a run's **behavioral fingerprint** — a deterministic, offline-reproducible
+signature over its C3-canonicalized trajectory, tool mix and score profile — and,
+when a baseline is supplied, the distance to it.
+
+Because the trajectory is canonicalized by the same ADR-0144 canonicalizer the
+equivalence engine uses, a collapsed idempotent retry or a reordered pair of
+*declared-commutable* calls does **not** move the signature, while a different
+trajectory does. The distance is computed from the basis components, never from the
+signatures — a digest can only answer same/different.
+
+```bash
+nova drift fingerprint run.json
+nova drift fingerprint run.json --json
+```
+
+Options:
+- `<document>` (positional, required) — JSON: `{run: {run_id, calls: [{name, arguments}], scores?}, baseline?: {…same shape…}, threshold?, commutable?: [], idempotent?: []}`. Scores are higher-is-better in `[0, 1]`; an out-of-range score is refused rather than clamped. `threshold` is required whenever `baseline` is present.
+- `--json` — emit the fingerprint (or the comparison) as JSON
+
+A comparison whose two fingerprints share no basis component reports `distance: null`
+and `shifted: null` with a stated reason — *unknown* is not *unchanged*. Comparing
+fingerprints built under different canonicalization rule versions is refused rather
+than scored.
+
+Exit codes: `0` (rendered, shifted or not — it is an observation, not a gate), `2` (bad input).
+
+---
+
+### nova provenance (experimental, ADR-0148 D1)
+
+Bind a C2PA / Content-Credentials manifest to the exact `content_hash` of a captured
+media part, and read back the recorded watermark-presence *claims*.
+
+```bash
+nova provenance bind --capsule ./capsules/run-42
+nova provenance bind --capsule ./capsules/run-42 --write
+nova provenance bind --capsule ./capsules/run-42 \
+  --manifest ./aa11….c2pa.json --write
+nova provenance bind --capsule ./capsules/run-42 --output-hash sha256:aa11… \
+  --producing-model img-gen-v3 --producing-run-id run_42 \
+  --art50-marking-claimed --nf094-receipt-digest sha256:ee55… --write
+nova provenance show    --capsule ./capsules/run-42 --json
+nova provenance verify  --capsule ./capsules/run-42
+nova provenance verify  --capsule ./capsules/run-42 --strict
+nova provenance output  --capsule ./capsules/run-42
+nova provenance watermark show --capsule ./capsules/run-42 --bind --write
+```
+
+Subcommands:
+- `bind` — discover manifests and bind them to media hashes (NF-161/163). Writes nothing
+  without `--write`
+- `show` — print the `media_provenance` facet a capsule already carries
+- `verify` — per-entry `active_manifest_ok` / `hard_binding_ok` / `cert_chain_ok`
+- `output` — the NF-163 per-artifact output receipts and their NF-094 cross-link
+- `watermark show` — the NF-162 presence claims; `--bind` reads them from the manifests
+
+Key options:
+- `--capsule PATH` (required) — one Run Capsule directory
+- `--manifest PATH` — an explicit manifest named `<sha256-hex>.c2pa.json`, repeatable.
+  Overrides sidecar discovery. **The filename is the binding**: a manifest named for other
+  content will not attach to whatever media the capsule happens to hold
+- `--output-hash HASH` — `content_hash` of media the agent *produced*, repeatable (NF-163)
+- `--producing-model` / `--producing-run-id` / `--art50-marking-claimed` /
+  `--nf094-receipt-digest` — the NF-163 fields carried on output entries only
+- `--capture-manifests` — record that manifest bytes were retained (ADR-0125 opt-in)
+- `--write` — persist the facet into `capsule.yaml`
+- `--strict` (`verify` only) — exit `1` when any binding is not established
+- `--json` — emit as JSON, including on the empty path
+
+**`cert_chain_ok` is always `unknown`, and never inferred from a signature.** The signer's
+public identity *is* read out of the manifest, but verifying an X.509 chain needs a trust
+store and a chain verifier, and NovaFabric ships neither offline and adds no dependency for
+one. The field therefore stays `null` and carries the machine-readable reason
+`no_offline_cert_chain_verifier`. A fabricated `true` would put a verification that never
+happened into signed evidence.
+
+**A binding checked against stored bytes is stronger than one checked against a recorded
+field.** Byte capture is opt-in (ADR-0125 D2), so most capsules hold a `content_hash` and no
+blob. Both comparisons are worth making, but they are not the same evidence, so every entry
+records which one was used in `bound_against` (`blob_bytes` or `recorded_hash`). Only the
+first can detect a blob whose bytes no longer match what was recorded.
+
+**Absent is not false.** Media with no manifest produces **no entry** — never one with
+`hard_binding_ok: false`. A manifest declaring no hard binding yields `null`, not `false`.
+And a watermark `present` has three values: `true`, `false` (somebody looked and said no),
+and `unknown` (**no claim exists**). `unknown` never renders or serialises as `false`.
+
+**Watermark presence is pattern-only.** NovaFabric records a claim carried by C2PA
+soft-binding, a declared assertion, or a third-party detector's result handed to it as data.
+It never imports, ships, or depends at runtime on a proprietary detector (SynthID, Luna) —
+enforced by a test that imports the package in a fresh interpreter and asserts none is
+loaded.
+
+⚠ **Manifests are discovered as JSON sidecars** at `outputs/<sha256-hex>.c2pa.json`, or
+passed with `--manifest`. Extracting an **embedded** JUMBF manifest from image bytes is
+**not implemented** and would need a C2PA library; a capsule whose media carries only
+embedded manifests yields no entries. `media_parts_scanned` and `manifests_found` travel
+with every answer so that reads as "nothing was found", not "nothing was there".
+
+Fail-open (ADR-0148 I-3): a capsule with no manifests produces no facet and exits `0`.
+
+Exit codes: `0` (bound, shown, or verified — **including a verify that found a broken
+binding**, because reporting one is the job succeeding), `1` (`verify --strict` with any
+binding not established), `2` (bad input).
+
+---
+
+### nova toolschema conformance (experimental, ADR-0148)
+
+Seal a capsule's recorded ADR-0128 conformance verdicts so they are **tamper-evident**,
+or verify an existing seal.
+
+```bash
+nova toolschema conformance --capsule ./capsules/run-42 --json
+nova toolschema conformance --capsule ./capsules/run-42 --predicate --json
+nova toolschema conformance --capsule ./capsules/run-42 --verify sha256:49fd32…
+```
+
+Options:
+- `--capsule PATH` (required) — one sealed Run Capsule directory
+- `--predicate` — emit the in-toto predicate fragment (the **digest and counts only**) for
+  `capsule_statement(extra_predicate=...)`
+- `--verify DIGEST` — recompute from the recorded verdicts and compare
+- `--json` — emit as JSON
+
+**The verdicts and the digest live apart on purpose.** The verdicts belong in the capsule
+facet; the digest goes into the signed attestation. That is what leaves `--verify` two
+independent sources to compare — a check that recomputed from the object carrying the
+digest would re-hash its own input and could never fail.
+
+**A call that declared no schema is `unchecked`, never conforming.** Otherwise a capsule
+where nothing declared a schema would report perfect conformance having validated nothing.
+
+⚠ An ADR-0128 verdict carries `checked_at`, so re-running validation yields a different
+verdict and therefore a different digest. The seal covers *this record*, not the act of
+validating; a re-derived digest differing from the sealed one is not a seal failure.
+
+Exit codes: `0` (sealed, whatever the counts — it records, it does not gate; or verified),
+`1` (**`--verify` mismatch** — a broken seal is a finding), `2` (bad input, or a capsule with
+no tool calls, since a digest over an empty list is a constant).
+
+---
+
+### nova toolschema deprecations (experimental, ADR-0148)
+
+Flag every sealed run still pinned to a retired tool version.
+
+```bash
+nova toolschema deprecations --capsules ./capsules --tool mcp://acme/search \
+  --version 1.0.0 --deprecated-at 2026-07-28 --successor mcp://acme/search@2
+```
+
+Options:
+- `--capsules PATH` (required) — directory of sealed Run Capsules to scan
+- `--tool ID` (required) — the tool whose version is retired
+- `--version V` (required) — the retired version
+- `--deprecated-at DATE` (required) — ISO-8601; an unparseable date is refused rather than stored
+- `--successor ID` — replacement tool, when one was declared. Absent stays **absent** — never `""`
+- `--json` — emit the `tool_deprecation` record as JSON
+
+**Three buckets, not two.** `tool_version` is a required field of the ADR-0128 tool-call
+schema, documented as *"Semver if known; `unknown` otherwise"*. A run recorded as
+`unknown` can be neither confirmed as pinned nor cleared, so it is reported in its own
+`unknown_version_run_ids` list rather than folded into either answer. Deprecating the
+literal version `unknown` is refused, since it would flag every run whose version the
+capture path could not determine.
+
+`capsules_scanned` travels with the result: without it, "no run is affected" and "no
+capsule was searched" serialise identically.
+
+⚠ **Scope.** The dependent set is read from each capsule's `tool-calls.jsonl`, not from
+the lineage graph — `lineage/_writer.py` emits `run`, `asset` and `artifact` nodes only,
+so there are no tool nodes to reference. Emitting them is a documented follow-on.
+
+It **reports; it does not gate** — exit `0` whether or not any run is pinned, `2` only on bad input.
+
+---
+
+### nova toolschema track (experimental, ADR-0148)
+
+Classify a tool-schema change between two versions: `additive`, `breaking`,
+`deprecation`, or `unknown`.
+
+```bash
+nova toolschema track --tool mcp://acme/search --from-schema v1.json --to-schema v2.json
+nova toolschema track --tool mcp://acme/search --from-schema v1.json \
+  --to-schema v2.json --json
+```
+
+Options:
+- `--tool ID` (required) — stable tool identity, e.g. `mcp://acme/search`
+- `--from-schema PATH` / `--to-schema PATH` (required) — the two JSON Schemas
+- `--max-diff N` — bound on the recorded diff, default `100`. The **class is computed over the full comparison**, so truncating the evidence never softens the verdict; `diff_truncated` and `diff_total` say the list is partial
+- `--json` — emit the `tool_schema_change` record as JSON
+
+It follows the **additive-safe rule**: a new *optional* property is `additive`, while a
+removal, a type change, an optional-to-required tightening, or a **new required**
+property is `breaking` — that last one is an addition that breaks every payload ever
+recorded. A schema built from `allOf`/`anyOf`/`oneOf`/`not`/`$ref` is not traversed and
+is reported as `unknown` **with a reason**, because calling an unanalysed schema
+`additive` would read as "safe to ship".
+
+Digests are over **canonical content**, not file bytes, so reformatting a schema is not
+a change. (`nova toolschema impact` hashes the file itself — it identifies *which file
+was checked*, a different question.)
+
+It **classifies; it does not gate** — `breaking` is a fact about two schemas, not a
+decision about shipping one. Pair it with `nova toolschema impact` to see which past
+runs the change would actually break.
+
+Exit codes: `0` (record rendered, whatever the class), `2` (missing/malformed schema, or a schema that is not a JSON object).
 
 ---
 
@@ -2669,7 +3327,7 @@ Exit 1 when no sink is configured; delivery itself is best-effort.
 
 These commands require `pip install 'novafabric[compliance]'` for full functionality.
 
-> **OQ-01 status (corrected):** `nova subject-proof` (below) remains **LEGAL-HOLD DRAFT MODE** — it looks up an existing redaction proof; PII stays in a `legal_hold/` staging area, not sealed capsules. The DEK-based crypto-shredding strategy this note used to describe as "planned for v0.26.x" **has since shipped** (ADR-0069, v0.44.0) as separate commands — see [`nova pii erase`](#nova-pii-erase-subject_id) and [`nova erasure request`](#nova-erasure-request) below — which actually destroy the wrapping DEK for a data subject rather than only staging a proof.
+> **OQ-01 status (corrected):** `nova subject-proof` (below) remains **LEGAL-HOLD DRAFT MODE** — it looks up an existing redaction proof; PII stays in a `legal_hold/` staging area, not sealed capsules. The DEK-based crypto-shredding strategy this note used to describe as "planned for v0.26.x" **has since shipped** (ADR-0069, v0.44.0) as [`nova pii erase`](#nova-pii-erase-subject_id) below, which actually destroys the wrapping DEK for a data subject rather than only staging a proof. **Corrected 2026-09-02:** this sentence also named `nova erasure request`, which never destroyed anything — it printed a success message and did nothing, and now fails loudly.
 
 ### nova export-annex-iv \<capsule\> --output-dir \<dir\> --deployment-id \<id\>
 
@@ -4125,6 +4783,42 @@ signal); it emits a boolean `code` score. A malformed spec or unknown transform/
 
 Show field-level differences between two registered versions of an asset.
 Both arguments must contain `@` to trigger asset diff; otherwise capsule diff is used (see above).
+
+### nova diff --media (experimental, ADR-0148)
+
+> **Experimental — NF-170.** Compares two runs' **media parts** by exact `sha256`, and
+> optionally by a perceptual hash, classifying each pair
+> `identical` | `near-duplicate` | `changed` | `added` | `removed`.
+
+```bash
+nova diff --media runs/run-01/ runs/run-02/
+nova diff --media --perceptual runs/run-01/ runs/run-02/ --json
+```
+
+Options:
+- `--media` — compare media parts instead of the usual capsule fields
+- `--perceptual` — additionally compare `changed` pairs by pHash (**opt-in**; exact remains the default)
+- `--hamming N` — near-duplicate distance for `--perceptual`, default `10` of 64 bits
+- `--json` — emit the media diff as JSON
+
+⚠ **`changed` needs an identity that content cannot supply.** Content hashes alone give only
+`identical` / `added` / `removed` — a changed part hashes differently, so it looks like a
+removal plus an addition. Parts are therefore paired **positionally**, which is an assumption
+about the two runs rather than a fact about them, and the basis is reported as `pairing` rather
+than left implicit.
+
+⚠ **Perceptual comparison needs an image decoder, which is not a declared dependency.** Where
+one is unavailable, `--perceptual` exits `2` rather than returning exact-only results — that
+would report "no near-duplicates" about a check that never ran. A pair that could not be
+compared stays `changed` and carries the reason in `perceptual_unavailable`; it is never
+promoted to `near-duplicate` on missing evidence.
+
+⚠ **An image with too little low-frequency structure is not compared perceptually.** A flat
+fill or a purely high-frequency pattern hashes like every other one, so any answer would be a
+coincidence — such pairs are reported unavailable, not near-duplicate.
+
+Exit codes: `0` (rendered, whatever the classifications — it reports, it does not gate),
+`2` (missing capsule, or `--perceptual` with no decoder available).
 
 ### nova diff --significance (experimental)
 
@@ -6649,13 +7343,33 @@ Catalog file schema: `schemas/pricing-catalog.schema.json`
 
 ### nova storage inspect
 
-Show audit and PII object info for a run (cap-003).
+Show where a run's dual-object split is stored, under the layout in effect.
 
 ```bash
 nova storage inspect --run-id 01HXAY7MZPQRSTUVWXYZ
+nova storage inspect --run-id 01HXAY7MZPQRSTUVWXYZ --json
 ```
 
-PII object is only written when `NOVA_CAP003_ENABLED=true`.
+The two layouts are not the same shape, and which one applies depends on whether the S3
+backend is configured (`NOVA_S3_ENDPOINT_URL` or `NOVA_S3_BUCKET`):
+
+| Layout | audit object | PII object |
+|---|---|---|
+| S3 | `audit/<run_id>/audit.json` | `pii/<run_id>/pii.json` |
+| local | `<run_id>_audit.json` | `<run_id>_pii.json` |
+
+The PII object is reported only when `NOVA_CAP003_ENABLED=true`.
+
+This command **computes** names; it does not contact the store. An unknown run id yields
+keys just as readily as a real one, so `existence_checked` is always `false` in the JSON
+output. Use it to write a lifecycle or Object Lock policy, not to prove an object exists.
+
+> **Corrected 2026-09-02.** This command, `GET /api/storage/inspect/{run_id}`, and the
+> dashboard Storage Operations card all reported `<store>/<run_id>_audit.json` as the S3
+> key, while the writer stored `audit/<run_id>/audit.json`. A lifecycle rule, Object Lock
+> retention policy, or bucket policy scoped to the reported prefix would have matched **no
+> object** — silently governing nothing. All three now read the writer's own helpers in
+> `storage/dual_object_store.py`, and a cross-surface guard test pins the agreement.
 
 ### nova storage validate
 
@@ -6669,23 +7383,31 @@ NOVA_S3_ENDPOINT_URL=http://minio:9000 nova storage validate
 
 Exits 0 on success, 1 if Object Lock is absent or disabled.
 
-### nova erasure request
+### nova erasure request — NOT IMPLEMENTED
 
-Queue a GDPR erasure request to delete a run's PII payload (cap-003).
+> **Corrected 2026-09-02.** This command was documented as queueing an erasure
+> request. It did not. It printed `GDPR erasure request queued for run_id=…` and
+> **exited 0 while doing nothing** — no queue row, no key destroyed — including
+> for a run id that did not exist. On a GDPR Art.17 surface a false success is
+> the most damaging behaviour available: the operator records an erasure as
+> started and nothing started.
+>
+> It now fails loudly (exit `2`) and names the working path.
 
-```bash
-nova erasure request --run-id 01HXAY7MZPQRSTUVWXYZ
-```
+**Use instead:** [`nova pii erase <subject_id>`](#nova-pii-erase-subject_id) for
+Art.17 crypto-shredding (ADR-0069), or `POST /v0/erasure` on the server, which
+uses the persisted queue in `pii/erasure_queue.py` behind an explicit
+confirmation and a fail-closed cap-003 gate.
 
-Requires S3 GOVERNANCE mode Object Lock and `NOVA_CAP003_ENABLED=true`.
+### nova erasure status — NOT IMPLEMENTED
 
-### nova erasure status
+> **Corrected 2026-09-02.** This returned `status=pending` for **any** id,
+> including ids that were never created — it consulted nothing. A status surface
+> that cannot distinguish "pending" from "never existed" is worse than none on a
+> compliance path. It now fails loudly (exit `2`).
 
-Check the status of a pending GDPR erasure request.
-
-```bash
-nova erasure status --request-id req-abc123
-```
+The erasure receipts written by `nova pii erase` are the record of what actually
+happened.
 
 ### nova policy capture-level get
 

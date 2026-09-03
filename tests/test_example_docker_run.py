@@ -13,9 +13,12 @@ skips cleanly rather than failing. The skip is deliberate and narrow: it covers
 
 from __future__ import annotations
 
+import functools
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
+from typing import TypeVar
 
 import pytest
 import yaml
@@ -26,7 +29,10 @@ from novafabric.cli.main import app
 EXAMPLE_DIR = Path(__file__).resolve().parent.parent / "examples" / "docker-run"
 IMAGE = "python:3.12-slim"
 
+_F = TypeVar("_F", bound=Callable[..., None])
 
+
+@functools.lru_cache(maxsize=1)
 def _docker_available() -> bool:
     if shutil.which("docker") is None:
         return False
@@ -41,9 +47,29 @@ def _docker_available() -> bool:
     return proc.returncode == 0
 
 
-requires_docker = pytest.mark.skipif(
-    not _docker_available(), reason="docker daemon not reachable"
-)
+# The daemon tier is a marker plus a fixture, deliberately *not* a module-level
+# `skipif`: a `skipif` condition is evaluated during collection, so every pytest
+# invocation in this repo — including the ones that never select this file —
+# paid a `docker info` subprocess with a 10 s timeout before it could collect
+# anything. `-m "not container"` now drops these tests without probing the
+# daemon at all, and the fixture still skips cleanly when the tier *is* selected
+# on a machine without Docker.
+@pytest.fixture()
+def _require_docker_daemon() -> None:
+    """Skip, at setup time, if the daemon is unreachable.
+
+    Same narrow contract the module docstring states: this covers "no docker"
+    only, never a docker run that failed. Deliberately not ``autouse``: two
+    tests in this module assert things about the example's *files* and must keep
+    running on a machine with no Docker at all.
+    """
+    if not _docker_available():
+        pytest.skip("docker daemon not reachable")
+
+
+def requires_docker(func: _F) -> _F:
+    """Put a test in the Docker-daemon tier."""
+    return pytest.mark.container(pytest.mark.usefixtures("_require_docker_daemon")(func))
 
 
 def _sole_capsule(out_dir: Path) -> Path:

@@ -287,6 +287,31 @@ def scan_capsule(capsule_dir: Path) -> tuple[list[CallRow], list[ScoreRow]] | No
     return _model_call_rows(capsule_dir, dims), _score_rows(capsule_dir, dims)
 
 
+def find_capsule(capsule_dir: str | Path, run_id: str) -> Path | None:
+    """Locate the capsule for *run_id* under *capsule_dir*, or ``None``.
+
+    Uses the same rule :func:`scan_capsule_dir` does — every immediate subdirectory carrying a
+    manifest is one capsule — so a caller that needs a *single* capsule's files does not have to
+    re-derive what a capsule is. A second definition would eventually disagree with this one
+    about which directories count.
+
+    The manifest's ``run_id`` wins over the directory name, which is only the fallback the
+    scanner already uses.
+    """
+    base = Path(capsule_dir)
+    if not base.is_dir():
+        raise QueryIndexError(f"capsule directory not found: {base}")
+    for child in sorted(base.iterdir()):
+        if not child.is_dir():
+            continue
+        manifest = _load_manifest(child)
+        if manifest is None:
+            continue
+        if (_opt_str(manifest.get("run_id")) or child.name) == run_id:
+            return child
+    return None
+
+
 def scan_capsule_dir(capsule_dir: str | Path) -> IndexRows:
     """Scan a local capsule directory into index rows.
 

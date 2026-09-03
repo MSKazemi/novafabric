@@ -42,6 +42,12 @@ _MOCK_HOOK_LOADER = textwrap.dedent("""\
             print(f"[novafabric] mock dispatcher install failed: {_e}", file=_sys.stderr)
 """)
 
+#: How long a mocked/intervention replay subprocess may run before it is killed.
+#: Named because the timeout is now reported as a distinct outcome rather than
+#: being flattened into an exit code.
+REPLAY_SUBPROCESS_TIMEOUT_S = 600
+
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -243,11 +249,14 @@ class ReplayEngine:
         command: list[str] = manifest.get("command", [])
         exit_code: int | None = None
         if command:
-            exit_code = self._run_mocked_subprocess(command, mutated_model_calls)
+            exit_code, run_error = self._run_mocked_subprocess(
+                command, mutated_model_calls
+            )
             status = "success" if exit_code == 0 else "failure"
         else:
             # no re-executable command — emit the mutated streams only
             status = "success"
+            run_error = None
 
         result = ReplayResult(
             replay_id=replay_id,
@@ -267,7 +276,7 @@ class ReplayEngine:
             intervention=intervention_meta,
         )
         if status == "failure":
-            result.error = {
+            result.error = run_error or {
                 "type": "NonZeroExit",
                 "message": f"Replayed command exited with code {exit_code}",
             }
@@ -498,7 +507,7 @@ class ReplayEngine:
                 error={"type": "MissingCommand", "message": "capsule.yaml has no command field"},
             )
 
-        exit_code = self._run_mocked_subprocess(command, model_calls)
+        exit_code, run_error = self._run_mocked_subprocess(command, model_calls)
         status = "success" if exit_code == 0 else "failure"
 
         result = ReplayResult(
@@ -518,7 +527,7 @@ class ReplayEngine:
             schema_drift=schema_drift or None,
         )
         if status == "failure":
-            result.error = {
+            result.error = run_error or {
                 "type": "NonZeroExit",
                 "message": f"Replayed command exited with code {exit_code}",
             }
@@ -527,7 +536,13 @@ class ReplayEngine:
 
     def _run_mocked_subprocess(
         self, command: list[str], model_calls: list[dict[str, Any]]
-    ) -> int:
+    ) -> tuple[int, dict[str, Any] | None]:
+        """Run the replayed command; return its exit code and why it stopped.
+
+        The second element is ``None`` for an ordinary exit (the code says it
+        all) and a populated error for a timeout or a launch failure, where the
+        exit code alone would misdescribe what happened.
+        """
         with tempfile.TemporaryDirectory(prefix="nf_replay_") as tmp:
             site_dir = Path(tmp) / "site"
             site_dir.mkdir()
@@ -544,10 +559,28 @@ class ReplayEngine:
 
             try:
                 proc = subprocess.run(
-                    command, env=env, capture_output=True, timeout=600
+                    command, env=env, capture_output=True,
+                    timeout=REPLAY_SUBPROCESS_TIMEOUT_S,
                 )
-                return proc.returncode
+                return proc.returncode, None
             except subprocess.TimeoutExpired:
-                return 124
-            except Exception:
-                return 1
+                # 124 is the conventional shell timeout code, but a command may
+                # legitimately exit 124 itself — so the code alone cannot say
+                # which happened. Reporting this as "exited with code 124" (as
+                # this path used to, via the NonZeroExit branch) states something
+                # that did not occur: the command did not exit, it was killed.
+                return 124, {
+                    "type": "ReplayTimeout",
+                    "message": (
+                        "the replayed command did not finish within "
+                        f"{REPLAY_SUBPROCESS_TIMEOUT_S}s and was terminated; it "
+                        "did not exit on its own"
+                    ),
+                }
+            except Exception as exc:
+                # The command may never have launched. "exited with code 1" would
+                # assert an exit that never happened.
+                return 1, {
+                    "type": "ReplayLaunchError",
+                    "message": f"the replayed command could not be run: {exc}",
+                }

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from lineage import contract
 from novafabric.lineage._types import LineageEdge
 from novafabric.lineage.backends.sqlite import SqliteLineageStore
 from novafabric.lineage.store import AbstractLineageStore
@@ -132,3 +133,23 @@ class TestSqliteLineageStoreRoundTrip:
 
         rows = store.time_travel(ref="run-A", asof="2099-12-31T23:59:59Z", kind="run")
         assert isinstance(rows, list)
+
+
+# ---------------------------------------------------------------------------
+# The shared backend contract
+# ---------------------------------------------------------------------------
+# SQLite is the reference implementation, so it must satisfy every check with no
+# declared divergence. If a check ever has to be exempted here, the contract is
+# what is wrong, not the backend.
+
+
+class TestSqliteLineageContract:
+    @pytest.fixture()
+    def store(self, tmp_path: Path) -> SqliteLineageStore:
+        store = SqliteLineageStore(db_path=tmp_path / "contract.db")
+        contract.load(store)
+        return store
+
+    @pytest.mark.parametrize("check", contract.contract_params())
+    def test_contract(self, check: str, store: SqliteLineageStore) -> None:
+        contract.CONTRACT_CHECKS[check](store)

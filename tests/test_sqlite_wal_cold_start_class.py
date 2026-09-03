@@ -14,6 +14,13 @@ These tests race the real stores rather than a stand-in, because the defect
 lives in how each store opens its own database. The race tests are necessarily
 statistical; the deterministic tests at the bottom cover ``ensure_wal``'s retry
 branches, which a healthy race never reaches.
+
+Being statistical is not the same as being flaky. The anti-vacuity arm below
+asserts that the race *does* reproduce, and at a ~5.7% per-trial rate a 60-trial
+budget failed ~3% of runs — observed once here, failing and then passing on the
+identical tree. That arm now stops at the first reproduction and may spend up to
+``ANTI_VACUITY_TRIALS``, which makes a false failure ~7e-11 while making the
+typical run faster. See the constants for the arithmetic.
 """
 from __future__ import annotations
 
@@ -27,6 +34,28 @@ from novafabric import _sqlite_util
 from novafabric._sqlite_util import WAL_ATTEMPTS, ensure_wal
 
 THREADS = 8
+
+#: Trials the anti-vacuity arm may spend looking for one reproduction.
+#:
+#: The cold-start race reproduces on about **5.7% of trials** (measured on this
+#: tree 2026-09-02: 17/300; the module docstring's original figure was 25/500 =
+#: 5.0%). ``assert seen > 0`` over 60 trials therefore fails on ``0.943**60`` ≈
+#: **3% of runs** — flaky by arithmetic, not by environment, and it was observed
+#: failing once and passing on a re-run of the identical tree.
+#:
+#: At 400 trials that becomes ``0.943**400`` ≈ 7e-11. The budget costs nothing in
+#: the normal case because the loop **stops at the first reproduction**: expected
+#: trials to first hit is ~18, so a typical run is *faster* than the old
+#: unconditional 60 (~0.6 s against ~1.9 s at 31 ms/trial). The full budget is
+#: only ever spent when the race genuinely will not reproduce, which is the one
+#: case worth spending time on.
+ANTI_VACUITY_TRIALS = 400
+
+#: Trials each "the fix holds" arm runs. Every trial must pass, so there is no
+#: early exit and the cost is paid in full. At a 5.7% per-trial exposure, 60
+#: trials hit the risky window ~3.4 times on average and would catch a fully
+#: reverted fix with probability 1 - 0.943**60 ≈ 97%.
+HOLDS_TRIALS = 60
 
 
 def _open(db: Path, setup) -> sqlite3.Connection:
@@ -85,15 +114,21 @@ def test_the_unconditional_form_is_what_breaks(tmp_path: Path) -> None:
 
         return _open(db, setup)
 
-    seen = 0
-    for _ in range(60):
+    trials_used = 0
+    for attempt in range(1, ANTI_VACUITY_TRIALS + 1):
         db.unlink(missing_ok=True)
+        trials_used = attempt
         if _race(old_style):
-            seen += 1
-    assert seen > 0, (
-        "the harness never reproduced the cold-start failure in 60 trials, so a "
-        "pass in the tests below would prove nothing"
-    )
+            break
+    else:  # pragma: no cover - ~7e-11 with the measured reproduction rate
+        pytest.fail(
+            f"the harness never reproduced the cold-start failure in "
+            f"{ANTI_VACUITY_TRIALS} trials, so a pass in the tests below would "
+            "prove nothing. At the measured ~5.7% per-trial rate this should "
+            "happen about once in 10^10 runs, so treat it as the harness having "
+            "stopped racing — not as luck."
+        )
+    assert trials_used <= ANTI_VACUITY_TRIALS
 
 
 def test_ensure_wal_survives_a_concurrent_cold_start(tmp_path: Path) -> None:
@@ -102,7 +137,7 @@ def test_ensure_wal_survives_a_concurrent_cold_start(tmp_path: Path) -> None:
     def new_style() -> sqlite3.Connection:
         return _open(db, ensure_wal)
 
-    for _ in range(60):
+    for _ in range(HOLDS_TRIALS):
         db.unlink(missing_ok=True)
         assert _race(new_style) == []
 

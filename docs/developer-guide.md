@@ -168,7 +168,7 @@ and the documentation link check must be clean. These are the same commands enfo
 in CI (see also `CONTRIBUTING.md`).
 
 ```bash
-make test-fast     # tests (~90 s)
+make test-fast     # tests (~4 min measured; the old "~90 s" was stale)
 make lint          # ruff check src tests scripts
 make typecheck     # mypy src
 make check-links   # every relative link in a public doc resolves
@@ -180,6 +180,46 @@ exists — this repository keeps one working tree and two gits, so `design/`,
 `.claude/`, `CLAUDE.md` and `THREAT_MODEL.md` are all present on your disk and
 absent for every reader of the published repository. Checking existence passes
 locally and fails only for the person the docs are written for.
+
+### How the test tiers work
+
+The suite is **12,280 tests**, so "run the tests" is not one command — it is a ladder, and each
+rung is defined by what it can prove and what it costs.
+
+| Tier | Command | Scope | Measured |
+|---|---|---|---|
+| 0a | *(automatic)* | lint the file you just edited | ~0.2 s |
+| 0b | `make test-direct` | tests directly covering your change | **~17 s** |
+| 1 | `make test-impacted` | full static import closure of your change | seconds–minutes |
+| 2 | `make test-fast` | everything except Docker and `tests/integration` | ~4 min |
+| 3 | `make test-par` | the release gate — byte-for-byte CI's `unit` job, coverage ≥ 90% | ~5 min |
+| — | `make test-container` | the Docker tier alone | needs a daemon |
+
+**Tiers 0 and 2 run by themselves.** With the hooks in `.claude/settings.json` installed, a
+`PostToolUse` hook lints each edited file, a `Stop` hook runs tier 0b before a turn ends, and a
+`pre-push` hook runs tier 2 and refuses to push red. In normal work you type none of them.
+Design and rationale: ADR-0267.
+
+**How selection works.** `scripts/testsel.py` builds the import graph with `ast` — it parses,
+it never executes — and maps changed files to test files. The governing rule is that
+**ambiguity selects more, never less**: a changed `pyproject.toml`, `uv.lock`, `Makefile` or
+root `conftest.py` escalates to the whole suite, and so does anything it cannot parse or scope.
+
+**What tiers 0 and 1 cannot see.** Static analysis cannot follow a string-referenced entrypoint,
+a plugin registered by name, or a runtime `importlib` call. A green tier 0 is a fast pre-check,
+**not** evidence that a change is safe to push — that is what tier 2 and CI are for.
+
+> ⚠ `make test-changed` (pytest-testmon) is **disabled** and the target fails loudly. Measured
+> 2026-09-01, it took **over 10 minutes** on both a cold and a warm index: testmon cannot run
+> under `pytest-xdist`, so its baseline is a *serial* run of the whole suite. It had been
+> documented as "sub-second on an unchanged tree", which stopped being true as the suite grew.
+
+Rebuild the selector index by hand after a large refactor (it is rebuilt automatically when
+missing, and takes ~2.5 s):
+
+```bash
+make test-index
+```
 
 ### Tests
 
@@ -371,6 +411,106 @@ async def example_endpoint(run_id: str) -> dict[str, Any]:
 Add tests in `tests/test_serve_app.py` using the `client` fixture — three tests minimum: auth required (no token → 401), unknown run → 404, happy path → expected shape.
 
 The matching dashboard panel goes in that tab's directory — `web/src/components/dashboard/tabs/<tab>/<Panel>.tsx` — and is rendered by the tab shell (see *Tab structure* above). Add a `Dashboard equivalent:` note in `docs/cli-reference.md` under the corresponding CLI command, and if the command now has a real panel, upgrade its `commandParity.json` entry from `builder-only` to `real-panel` with its `tab` and `api` (the guard checks the `api` string appears in **both** `web/src/lib/api.ts` and `src/novafabric/serve/`).
+
+## Adding a capsule facet
+
+A **facet** is an additive block under `capsule["facets"]` recording one kind of
+evidence about a run. It is the most-repeated extension pattern in this codebase —
+28 modules as of 2026-09-03 — so it has a contract, and
+`tests/docs/test_capsule_facet_contract.py` enforces it across every module rather
+than naming them.
+
+### The contract
+
+Every facet module defines:
+
+| symbol | why |
+|---|---|
+| `FACET_NAME` | the key under `capsule["facets"]`. Must be unique — two modules claiming one key means one silently overwrites the other, which the guard rejects. |
+| `SCHEMA_VERSION` | a facet without one cannot be read back safely once its shape changes. |
+| `attach_facet(capsule, facet)` | writes it in, additively. |
+
+and registers `FACET_NAME` in the capsule schema. ⚠ **This step is not optional and is easy to miss.** `properties.facets` is `additionalProperties: false` (ADR-0196 D2), so a facet name the registry does not know makes every capsule carrying it fail
+`nova validate` with *"Additional properties are not allowed"*. Add one entry —
+
+```json
+"my_evidence": { "type": "object", "description": "See ADR-0XXX." }
+```
+
+— to **all three** live copies:
+
+- `src/novafabric/schemas/run-capsule.schema.json` — what an installed CLI validates against
+- `schemas/run-capsule.schema.json` — the OAS v1.0 target (not yet in force, ADR-0034 §1)
+- `web/src/data/schemas/run-capsule.schema.json` — the dashboard's copy, kept identical to
+  the packaged one by `tests/packaging_metadata/test_site_schemas_match_packaged.py`
+
+Use `"type": "array"` when your facet is a *list* of records rather than one object.
+`tests/docs/test_capsule_facet_contract.py` fails if any declared `FACET_NAME` is absent
+from any of the three. **On 2026-09-03 that check did not exist and 13 of 28 facet names
+were unregistered** — every one of those modules had a green `attach_facet` test against a
+plain `dict`, and the schema had its own green validity test, and nothing spanned the two.
+Your `attach_facet` test proves the shape you write; only a test that runs the real
+validator proves a capsule carrying it still validates. Write both.
+
+```python
+FACET_NAME = "my_evidence"
+SCHEMA_VERSION = "0.1.0"
+
+
+def attach_facet(capsule: dict[str, Any], facet: MyFacet | None) -> dict[str, Any]:
+    if facet is None:
+        return capsule            # fail-open: no material, no facet
+    out = dict(capsule)           # never mutate the caller's dict
+    facets = dict(out.get("facets") or {})
+    facets[FACET_NAME] = facet.model_dump(exclude_none=True)
+    out["facets"] = facets
+    return out
+```
+
+### The four invariants every existing facet honours
+
+1. **Additive.** A capsule that carries no facet of your kind must come back
+   **byte-identical** to one captured before your feature existed. Test that
+   directly — it is the property that lets facets ship without a schema break.
+2. **Fail-open.** Absent material means no facet. Never an exception, never a
+   blocked workload. NovaFabric must not break the thing it is observing.
+3. **Digests, not content.** Anything that can carry user data — prompts, message
+   parts, retrieved documents, payment details — is bound by a `sha256:` digest and
+   never stored (ADR-0009). A test that greps the serialised facet for the
+   plaintext is cheap and catches the regression that matters.
+4. **`exclude_none=True` when dumping.** In a layer whose point is that "not
+   recorded" differs from "recorded as nothing", that distinction has to survive
+   serialisation.
+
+### Reading a facet back is optional, and deliberately so
+
+15 of the 22 modules also define `facet_from_capsule(capsule) -> Facet | None`.
+The other 7 do not, and that is **not a backlog item**: nothing reads those facets
+back today, so adding readers would mean seven functions with no callers. This
+project has made that mistake once already (`bind_recorder` — built, documented,
+tested, zero production callers), and the standing lesson is *wire it when a caller
+needs it, not before*.
+
+So add a reader when something needs to read. When you do:
+
+```python
+def facet_from_capsule(capsule: dict[str, Any]) -> MyFacet | None:
+    facets = capsule.get("facets")
+    if not isinstance(facets, dict):
+        return None
+    block = facets.get(FACET_NAME)
+    if not isinstance(block, dict):
+        return None
+    try:
+        return MyFacet.model_validate(block)
+    except ValueError as exc:
+        raise MyFacetError(f"capsule holds an invalid {FACET_NAME} facet: {exc}") from exc
+```
+
+Absent is `None` — the overwhelmingly common case, and not an error. Malformed
+raises **your** error type, so a caller never has to catch a Pydantic internal.
+
+---
 
 ## Adding a new report format
 

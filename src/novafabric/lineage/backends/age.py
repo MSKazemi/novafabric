@@ -20,31 +20,17 @@ import json
 import threading
 from typing import Any
 
-from novafabric.lineage._types import LineageEdge, LineageNode, node_id_for
+from novafabric.lineage._types import (
+    LineageEdge,
+    node_from_edge_dict,
+)
 from novafabric.lineage.store import AbstractLineageStore, NodeRow
 
 _GRAPH = "lineage"
 
 
-def _node_from_edge_dict(node_dict: dict[str, Any]) -> LineageNode:
-    """Resolve a node from an edge endpoint (mirrors the SQLite/Postgres backends)."""
-    kind = node_dict.get("kind", "")
-    if kind == "run":
-        ref = node_dict.get("run_id", "")
-    elif kind == "asset":
-        ref = f"{node_dict.get('registry', 'local')}:{node_dict.get('asset_ref', '')}"
-    elif kind == "artifact":
-        art = node_dict.get("artifact_ref", {})
-        ref = f"artifact:{art.get('capsule_run_id', '')}:{art.get('path', '')}"
-    else:
-        ref = node_dict.get("ref", str(node_dict))
-    return LineageNode(
-        node_id=node_id_for(kind, ref),
-        kind=kind,
-        ref=ref,
-        first_seen_capsule_run_id=node_dict.get("capsule_run_id"),
-        payload=node_dict,
-    )
+#: Node identity is defined once, in ``_types``; every backend shares it.
+_node_from_edge_dict = node_from_edge_dict
 
 
 def _vertex_props(agtype_value: Any) -> dict[str, Any]:

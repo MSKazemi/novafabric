@@ -65,6 +65,10 @@ venv.bak/
 
 # ── Test / coverage / type-checkers / linters ────────────────────────────────
 .pytest_cache/
+# pytest-testmon's change-detection index (make test-changed / test-watch).
+# Machine-local and rebuilt on demand — never shared.
+.testmondata
+.testmondata*
 .tox/
 .nox/
 .coverage
@@ -139,6 +143,11 @@ celerybeat.pid
 !docs/**/*.png
 !web/public/**/*.png
 !web/src/**/*.png
+# Manuscript figures. Every figure in papers/ is TikZ today, so nothing has
+# been lost yet -- but a raster figure dropped into a paper's figures/ would
+# be silently ignored by the blanket *.png rule above, and `git status` would
+# never mention it. papers/ is private in full; this only affects .git-private.
+!papers/**/figures/*.png
 
 # ── Framework scratch (Django/Flask/Scrapy/Sphinx/Jupyter/marimo) ────────────
 local_settings.py
@@ -181,3 +190,6 @@ design/publications/**/*.run.xml
 .note.*
 .mohsen.note
 .mohsen.note.*
+
+# Generated cache for scripts/testsel.py (rebuilt automatically; ~2.5 s)
+.testsel-index.json

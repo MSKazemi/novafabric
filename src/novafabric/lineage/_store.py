@@ -6,33 +6,15 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from novafabric.lineage._types import LineageEdge, LineageNode, node_id_for
+from novafabric.lineage._types import (
+    LineageEdge,
+    LineageNode,
+    node_from_edge_dict,
+)
 from novafabric.registry.store import get_connection
 
-
-def _make_node_from_edge_dict(node_dict: dict[str, Any]) -> LineageNode:
-    """Derive a :class:`LineageNode` from a raw source/target node dict."""
-    kind = node_dict.get("kind", "")
-    if kind == "run":
-        ref = str(node_dict.get("run_id", ""))
-    elif kind == "asset":
-        registry = node_dict.get("registry", "local")
-        asset_ref = node_dict.get("asset_ref", "")
-        ref = f"{registry}:{asset_ref}"
-    elif kind == "artifact":
-        artifact_ref = node_dict.get("artifact_ref", {})
-        capsule_run_id = artifact_ref.get("capsule_run_id", "")
-        path = artifact_ref.get("path", "")
-        ref = f"artifact:{capsule_run_id}:{path}"
-    else:
-        ref = node_dict.get("ref", str(node_dict))
-    return LineageNode(
-        node_id=node_id_for(kind, str(ref)),
-        kind=kind,
-        ref=str(ref),
-        first_seen_capsule_run_id=node_dict.get("capsule_run_id"),
-        payload=node_dict,
-    )
+#: Node identity is defined once, in ``_types``; every backend shares it.
+_make_node_from_edge_dict = node_from_edge_dict
 
 
 _DDL = """
@@ -135,21 +117,7 @@ class LineageStore:
         node_dict: dict[str, Any],
         nodes: list[LineageNode],
     ) -> str:
-        kind = node_dict.get("kind", "")
-        if kind == "run":
-            ref = node_dict.get("run_id", "")
-        elif kind == "asset":
-            registry = node_dict.get("registry", "local")
-            asset_ref = node_dict.get("asset_ref", "")
-            ref = f"{registry}:{asset_ref}"
-        elif kind == "artifact":
-            artifact_ref = node_dict.get("artifact_ref", {})
-            capsule_run_id = artifact_ref.get("capsule_run_id", "")
-            path = artifact_ref.get("path", "")
-            ref = f"artifact:{capsule_run_id}:{path}"
-        else:
-            ref = node_dict.get("ref", str(node_dict))
-        return node_id_for(kind, ref)
+        return node_from_edge_dict(node_dict).node_id
 
     def _node_id_for_ref(self, ref: str, kind: str | None) -> str | None:
         if kind:
@@ -163,6 +131,18 @@ class LineageStore:
                 (ref,),
             ).fetchone()
         return dict(row)["node_id"] if row else None
+
+    def has_node(self, ref: str, kind: str | None = None) -> bool:
+        """Is *ref* present in the graph at all?
+
+        Needed because an empty :meth:`provenance` result is ambiguous: it means *"this ref has no
+        ancestors"* **and** *"this ref is not in the graph"*. A caller that diffs two empty
+        ancestor lists concludes "nothing changed" — a finding manufactured from missing data.
+
+        Delegates to the same lookup :meth:`provenance` uses, so node identity keeps one
+        definition rather than gaining another copy.
+        """
+        return self._node_id_for_ref(ref, kind) is not None
 
     def _rows_to_dicts(self, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
         return [dict(r) for r in rows]

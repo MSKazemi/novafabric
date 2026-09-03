@@ -205,7 +205,13 @@
     "tab": "ops",
     "api": "/api/doctor"
   },
+  "nova drift collect": {
+    "status": "builder-only"
+  },
   "nova drift detect": {
+    "status": "builder-only"
+  },
+  "nova drift fingerprint": {
     "status": "builder-only"
   },
   "nova drift root-cause": {
@@ -1123,7 +1129,16 @@
     "status": "cli-only",
     "reason": "Collects local diagnostics into a filesystem archive for support."
   },
+  "nova toolschema conformance": {
+    "status": "builder-only"
+  },
+  "nova toolschema deprecations": {
+    "status": "builder-only"
+  },
   "nova toolschema impact": {
+    "status": "builder-only"
+  },
+  "nova toolschema track": {
     "status": "builder-only"
   },
   "nova trend": {
@@ -1165,6 +1180,60 @@
     "status": "builder-only"
   },
   "nova view show": {
+    "status": "builder-only"
+  },
+  "nova assure-baseline pin": {
+    "status": "builder-only"
+  },
+  "nova assure-baseline verify": {
+    "status": "builder-only"
+  },
+  "nova a2a-card capture": {
+    "status": "builder-only"
+  },
+  "nova a2a-card verify": {
+    "status": "builder-only"
+  },
+  "nova a2a-objects map": {
+    "status": "builder-only"
+  },
+  "nova a2a-objects roundtrip": {
+    "status": "builder-only"
+  },
+  "nova assure-run record": {
+    "status": "builder-only"
+  },
+  "nova assure-run check": {
+    "status": "builder-only"
+  },
+  "nova replay-equivalence check": {
+    "status": "builder-only"
+  },
+  "nova assure-impact report": {
+    "status": "builder-only"
+  },
+  "nova assure-alarm check": {
+    "status": "builder-only"
+  },
+  "nova assure-canary record": {
+    "status": "builder-only"
+  },
+  "nova replay-equivalence regime": {
+    "status": "builder-only"
+  },
+  "nova provenance bind": {
+    "status": "builder-only"
+  },
+  "nova provenance output": {
+    "status": "builder-only"
+  },
+  "nova provenance show": {
+    "status": "builder-only"
+  },
+  "nova provenance verify": {
+    "status": "builder-only"
+  },
+  "nova provenance watermark show": {
     "status": "builder-only"
   }
 }

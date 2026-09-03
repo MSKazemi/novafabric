@@ -1,1 +1,0 @@
-import{t as e}from"./CapsuleInspector.D847nymr.js";export{e as default};

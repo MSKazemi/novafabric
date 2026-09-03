@@ -11,12 +11,55 @@ import pytest
 _REAL_WHICH = shutil.which
 
 
+#: Fixtures that *start* a container. A test is a container test iff it requests
+#: one of these, directly or transitively — so this set is the single place the
+#: tier is defined, and derived fixtures (``pg_store``, ``age_store``,
+#: ``jg_store``, …) are covered automatically by pytest's own fixture closure.
+#:
+#: Adding a new container fixture without adding it here is caught by
+#: ``tests/docs/test_container_marker_is_complete.py``, not by review.
+CONTAINER_FIXTURES = frozenset(
+    {
+        "postgres_url",  # tests/metadata_store/conftest.py (+ two function-scoped overrides)
+        "postgres_dsn",  # tests/lineage/test_postgres_backend.py
+        "age_dsn",  # tests/lineage/test_age_backend.py
+        "age_compose_dsn",  # tests/deploy/test_age_compose_integration.py
+        "janusgraph_endpoint",  # tests/lineage/test_janusgraph_backend.py
+        "restore_target_dsn",  # tests/metadata_store/test_backup_pg_restore.py
+    }
+)
+
+
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
         "real_opa: do NOT force NoopEngine — let get_policy_engine() select the "
         "real OpaEngine when the opa binary is installed.",
     )
+    config.addinivalue_line(
+        "markers",
+        "container: needs a live Docker daemon (testcontainers, or the docker "
+        "CLI). Applied automatically to any test whose fixture closure includes "
+        "a container fixture; deselect with -m 'not container' (what `make "
+        "test-fast` does). CI's unit job runs the tier in full.",
+    )
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    """Mark every test whose fixture closure starts a container.
+
+    Tiering used to be done with ``--ignore=tests/metadata_store``, which is a
+    *directory*-level instrument for a *dependency*-level property: 17 of that
+    directory's 20 test files never touch Docker, and skipping them is how a
+    docstring regression survived seven passes of the fast gate. Keying on the
+    fixture closure instead means the marker follows what a test actually needs,
+    and nobody has to remember to decorate anything.
+    """
+    for item in items:
+        if CONTAINER_FIXTURES.intersection(getattr(item, "fixturenames", ())):
+            item.add_marker(pytest.mark.container)
 
 
 @pytest.fixture(autouse=True)

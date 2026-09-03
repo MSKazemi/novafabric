@@ -1,0 +1,77 @@
+{
+  "assets_ref": "assets.jsonl",
+  "capture_mode": "cli-wrapper",
+  "command": [
+    "python",
+    "-c",
+    "print('hi')"
+  ],
+  "created_at": "2026-09-03T15:21:30.375159Z",
+  "duration_ms": 2549,
+  "environment_ref": "env.lock",
+  "evidence_digests": {
+    "assets.jsonl": {
+      "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0
+    },
+    "env.lock": {
+      "sha256": "sha256:67cc6d4dc4102039c9a98d17e89f88cff3b4c2f5123717ad4a4b0ea089a695ea",
+      "size_bytes": 13389
+    },
+    "lineage.jsonl": {
+      "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0
+    },
+    "model-calls.jsonl": {
+      "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0
+    },
+    "outputs/stdout.txt": {
+      "sha256": "sha256:98ea6e4f216f2fb4b69fff9b3a44842c38686ca685f3f55dc48c5d3fb1107be4",
+      "size_bytes": 3
+    },
+    "redaction-proof.json": {
+      "sha256": "sha256:09edf821ab767732b8b57eac1f9248d09809fc173e5c2b6cc0d24931a423d8e8",
+      "size_bytes": 2002
+    },
+    "replay.yaml": {
+      "sha256": "sha256:0d282f33e66fb1ffde780f8bcfec49160891cfb8d1cbabae00f596f1b576c446",
+      "size_bytes": 22
+    },
+    "tool-calls.jsonl": {
+      "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0
+    },
+    "trace.jsonl": {
+      "sha256": "sha256:08d2533038f38d58f04a6431eee7a848a47209384e6dc8299c30347c2ecfdc08",
+      "size_bytes": 270
+    }
+  },
+  "exit_code": 0,
+  "finished_at": "2026-09-03T15:21:32.924967Z",
+  "host": {
+    "arch": "x86_64",
+    "cpu_count": 20,
+    "gpu": [],
+    "hostname_redacted": true,
+    "memory_bytes": 33276723200,
+    "os": "linux",
+    "python": "3.14.6"
+  },
+  "inputs": [],
+  "model_call_count": 0,
+  "model_calls_ref": "model-calls.jsonl",
+  "mutating_tool_count": 0,
+  "novafabric_version": "0.101.0",
+  "outputs": [],
+  "redaction_proof_ref": "redaction-proof.json",
+  "replay_policy_ref": "replay.yaml",
+  "run_id": "01M1KXRQG7148SJASNVXCQ2NR7",
+  "schema_version": "0.1.0",
+  "status": "success",
+  "tool_call_count": 0,
+  "tool_calls_ref": "tool-calls.jsonl",
+  "trace_ref": "trace.jsonl",
+  "trace_root_span_id": "68c3b1926b9dc4bb",
+  "working_directory": "/tmp/work"
+}

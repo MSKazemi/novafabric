@@ -134,8 +134,16 @@ it carried.
 
 Each facet is populated by a **record-only** evidence module: it records what
 another system did and never orchestrates, enforces, adjudicates, moves funds,
-controls a device, or sits in a hot path. All are **experimental** Python APIs
-today; none of them registers a `nova` CLI command.
+controls a device, or sits in a hot path. All are **experimental**.
+
+Most are **Python APIs only** — NovaFabric ships the schema, the validation and
+the binding rules, and *your* integration code produces the facet. Nothing in
+NovaFabric writes them for you, and they register no `nova` command.
+
+The exception is `novafabric.a2a`, which additionally ships
+[`nova a2a-card`](cli-reference.md) and [`nova a2a-objects`](cli-reference.md) for
+the portable Agent Card and the Task/Message/Artifact mapping (ADR-0149). The
+`a2a_messages` facet in the table below remains API-only.
 
 | Module | Capsule facet | Records | ADR |
 |---|---|---|---|

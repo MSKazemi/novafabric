@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+from lineage import contract
 from novafabric.lineage._types import LineageEdge
 from novafabric.lineage.backends.sqlite import SqliteLineageStore
 
@@ -134,3 +135,19 @@ class TestPostgresBehaviour:
         _load(pg_store)
         after = pg_store.blast_radius("01RUNA", max_depth=5)
         assert _refs(before) == _refs(after)
+
+
+# ---------------------------------------------------------------------------
+# The shared backend contract
+# ---------------------------------------------------------------------------
+# The parity classes above compare Postgres to SQLite. That is a good check but
+# an incomplete one: a differential assertion cannot say which side is wrong when
+# the two disagree, and it cannot run at all on a machine with one backend. The
+# contract states the expected answers absolutely, and is the same contract the
+# embedded backends run on a laptop with no container.
+
+
+class TestPostgresLineageContract:
+    @pytest.mark.parametrize("check", contract.contract_params())
+    def test_contract(self, check: str, pg_store) -> None:
+        contract.CONTRACT_CHECKS[check](pg_store)

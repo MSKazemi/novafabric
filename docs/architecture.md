@@ -87,6 +87,9 @@ weight is, not a quality signal.
 | `diagnose/` | Causal-graph attribution and counterfactual root-cause search. |
 | `query/` | The offline capsule query DSL. |
 | `eval/`, `evals/`, `judge/`, `scores.py` | Evaluation harness, scoring, regression gates. |
+| `assure/` | Assurance cases, golden baselines, canary records, the impact report and the standing regression alarm (ADR-0147, ADR-0166). |
+| `drift/` | Offline drift detection over sealed runs: two-sample drift, silent-failure flags, root-cause correlation and behavioral fingerprints (ADR-0147). |
+| `a2a/` | A2A interoperability evidence: message envelopes, the portable Agent Card, and Task/Message/Artifact object mapping (ADR-0142, ADR-0149). |
 
 ### Serving and scale
 

@@ -36,6 +36,42 @@ if TYPE_CHECKING:
     from novafabric.storage.nova_object_store import NovaObjectStore
 
 
+#: The dual-object split writes two objects per run, under **two different
+#: layouts** depending on the backend: a prefixed key layout on S3, and a flat
+#: ``<run_id>_<part>.json`` filename in a local output directory.
+#:
+#: These four functions are the single source of truth for those names. Before
+#: they existed, the writer used the S3 prefixes while every *reporting* surface
+#: (``nova storage inspect``, ``GET /api/storage/inspect/{run_id}``, and the
+#: dashboard Storage Operations card, which renders the route) independently
+#: hardcoded ``<run_id>_audit.json`` as if it were the S3 key. Two green test
+#: files pinned the two conventions against each other and nobody compared them.
+#:
+#: An operator who scopes an S3 lifecycle rule, an Object Lock retention policy,
+#: or a bucket policy to the reported prefix would have matched **nothing** — the
+#: standard way to manage a PII object, silently applying to no object at all.
+
+
+def s3_audit_key(run_id: str) -> str:
+    """S3 object key of the audit (no-PII) record for *run_id*."""
+    return f"audit/{run_id}/audit.json"
+
+
+def s3_pii_key(run_id: str) -> str:
+    """S3 object key of the PII payload for *run_id* (written only when cap-003 is on)."""
+    return f"pii/{run_id}/pii.json"
+
+
+def local_audit_filename(run_id: str) -> str:
+    """Filename of the audit record inside a local output directory."""
+    return f"{run_id}_audit.json"
+
+
+def local_pii_filename(run_id: str) -> str:
+    """Filename of the PII payload inside a local output directory."""
+    return f"{run_id}_pii.json"
+
+
 @dataclass
 class DualObjectResult:
     """Result from a dual-object store split operation (cap-003, ADR-0066)."""
@@ -189,7 +225,7 @@ class DualObjectStore:
         # S3 path
         audit_record, pii_payload = self._extract_pii_fields(capsule_data)
 
-        audit_key = f"audit/{run_id}/audit.json"
+        audit_key = s3_audit_key(run_id)
         audit_bytes = json.dumps(audit_record, indent=2).encode()
         compliance_store.put_object(audit_key, audit_bytes, metadata={"run_id": run_id})
         log.debug("cap-003: wrote audit record to S3 key %s", audit_key)
@@ -201,7 +237,7 @@ class DualObjectStore:
         pii_digest: str | None = None
 
         if self.enabled:
-            pii_key = f"pii/{run_id}/pii.json"
+            pii_key = s3_pii_key(run_id)
             governance_store.put_object(
                 pii_key,
                 pii_bytes,
@@ -231,8 +267,8 @@ class DualObjectStore:
         """
         audit_record, pii_payload = self._extract_pii_fields(capsule_data)
 
-        audit_path = output_dir / f"{run_id}_audit.json"
-        pii_path = output_dir / f"{run_id}_pii.json"
+        audit_path = output_dir / local_audit_filename(run_id)
+        pii_path = output_dir / local_pii_filename(run_id)
 
         audit_path.write_text(json.dumps(audit_record, indent=2), encoding="utf-8")
 

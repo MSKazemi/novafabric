@@ -6,14 +6,21 @@ from typing import Annotated
 import typer
 
 from novafabric.capsule.cli import capsule_phase3_app
+from novafabric.cli.a2a_card import app as a2a_card_app
+from novafabric.cli.a2a_objects import app as a2a_objects_app
 from novafabric.cli.aibom import aibom_app
 from novafabric.cli.annotate import annotate_app
 from novafabric.cli.api_proxy import api_proxy_cmd
 from novafabric.cli.approve import approve_cmd
 from novafabric.cli.asset import asset_app
 from novafabric.cli.assure import assure_cmd
+from novafabric.cli.assure_alarm import app as assure_alarm_app
+from novafabric.cli.assure_baseline import app as assure_baseline_app
+from novafabric.cli.assure_canary import app as assure_canary_app
 from novafabric.cli.assure_case import assure_case_cmd
 from novafabric.cli.assure_coverage import assure_coverage_cmd
+from novafabric.cli.assure_impact import app as assure_impact_app
+from novafabric.cli.assure_run import app as assure_run_app
 from novafabric.cli.audit import app as audit_app
 from novafabric.cli.audit_log import app as audit_log_app
 from novafabric.cli.backup import app as backup_app
@@ -101,12 +108,14 @@ from novafabric.cli.policy import app as policy_app
 from novafabric.cli.pricing import app as pricing_app
 from novafabric.cli.promote import promote_app
 from novafabric.cli.prompt import prompt_app
+from novafabric.cli.provenance import app as provenance_app
 from novafabric.cli.query import query_cmd
 from novafabric.cli.rebuild import app as rebuild_app
 from novafabric.cli.redact import redact_cmd, subject_proof_cmd
 from novafabric.cli.redaction_xray import redaction_xray_cmd
 from novafabric.cli.register import register_cmd
 from novafabric.cli.replay import replay_cmd
+from novafabric.cli.replay_equivalence import app as replay_equivalence_app
 from novafabric.cli.report import report_cmd
 from novafabric.cli.retention import app as retention_app
 from novafabric.cli.rollback import rollback_cmd
@@ -204,6 +213,54 @@ app.add_typer(
     drift_app,
     name="drift",
     help="Offline drift detection over sealed capsule windows (experimental, ADR-0147).",
+)
+app.add_typer(
+    assure_baseline_app,
+    name="assure-baseline",
+    help="Pin and re-verify golden baselines for drift detection (experimental, ADR-0147).",
+)
+app.add_typer(
+    a2a_card_app,
+    name="a2a-card",
+    help="Portable A2A Agent Card evidence (experimental, ADR-0149 NF-171).",
+)
+app.add_typer(
+    a2a_objects_app,
+    name="a2a-objects",
+    help="A2A Task/Message/Artifact object mapping (experimental, ADR-0149 NF-172).",
+)
+app.add_typer(
+    assure_run_app,
+    name="assure-run",
+    help="Record and check continuous-assurance runs (experimental, ADR-0147 NF-159).",
+)
+app.add_typer(
+    replay_equivalence_app,
+    name="replay-equivalence",
+    help="Behavioral-equivalence verdict over two trajectories (experimental, ADR-0144).",
+)
+app.add_typer(
+    assure_impact_app,
+    name="assure-impact",
+    help="Model-update impact report over C3 verdicts (experimental, ADR-0147 NF-154).",
+)
+app.add_typer(
+    assure_alarm_app,
+    name="assure-alarm",
+    help="Standing production regression alarm (experimental, ADR-0147 NF-156).",
+)
+app.add_typer(
+    assure_canary_app,
+    name="assure-canary",
+    help="Record a canary replay of a pinned baseline (experimental, ADR-0147 NF-153).",
+)
+app.add_typer(
+    provenance_app,
+    name="provenance",
+    help=(
+        "Per-artifact content provenance: bind C2PA manifests to captured media "
+        "hashes (experimental, ADR-0148 D1)."
+    ),
 )
 app.add_typer(
     toolschema_app,

@@ -1,12 +1,13 @@
 # Citation metadata. GitHub renders a "Cite this repository" button from this file.
 #
-# TODO(owner), both require action outside the repository:
-#   1. ORCID — add `orcid: "https://orcid.org/0000-0000-0000-0000"` under the author
-#      once registered (free, https://orcid.org/register). It is what links this
-#      software to the rest of your publication record, and JOSS requires one.
-#   2. DOI — after linking the repo on https://zenodo.org and cutting one release,
+# ORCID: resolved 2026-08-29 (0000-0002-1166-6559, checksum-valid) and now set below.
+#
+# TODO(owner), still requires action outside the repository:
+#   1. DOI — after linking the repo on https://zenodo.org and cutting one release,
 #      Zenodo mints a concept DOI covering all versions. Add it under `identifiers`
 #      and to the README badge row. `.zenodo.json` already carries the metadata.
+#      This is the single highest-leverage open item in the publication portfolio:
+#      one deposit clears the outstanding owner marker in every manuscript at once.
 cff-version: 1.2.0
 message: "If you use NovaFabric in your research or tooling, please cite it as below."
 title: "NovaFabric: portable, verifiable execution evidence for AI and HPC runs"
@@ -26,13 +27,13 @@ authors:
   - family-names: "Seyedkazemi Ardebili"
     given-names: "Mohsen"
     alias: "MSKazemi"
-    # orcid: "https://orcid.org/0000-0000-0000-0000"   # see TODO 1 above
+    orcid: "https://orcid.org/0000-0002-1166-6559"
 repository-code: "https://github.com/MSKazemi/novafabric"
 url: "https://novafabric.ai"
 license: Apache-2.0
 version: 0.101.0
 date-released: 2026-08-07
-# identifiers:                                          # see TODO 2 above
+# identifiers:                                          # see TODO 1 above
 #   - type: doi
 #     value: "10.5281/zenodo.XXXXXXX"
 #     description: "Concept DOI — resolves to the latest release"

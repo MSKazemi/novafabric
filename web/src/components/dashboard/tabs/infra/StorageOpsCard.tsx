@@ -13,7 +13,7 @@ export default function StorageOpsCard({ runIds }: { runIds: string[] }) {
 
   const [runId, setRunId] = useState('');
   const [inspLoading, setInspLoading] = useState(false);
-  const [inspResult, setInspResult] = useState<{ audit_object_key: string; pii_object_key: string | null; cap003_enabled: boolean; note: string } | null>(null);
+  const [inspResult, setInspResult] = useState<{ audit_object_key: string; pii_object_key: string | null; cap003_enabled: boolean; layout?: string; note: string } | null>(null);
   const [inspErr, setInspErr] = useState<string | null>(null);
 
   const validate = useCallback(async () => {
@@ -120,6 +120,7 @@ export default function StorageOpsCard({ runIds }: { runIds: string[] }) {
         )}
         {inspResult && (
           <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-3 py-2 space-y-1 text-[11px] font-mono">
+            <div><span className="text-[var(--color-text-faint)]">layout:</span> {inspResult.layout ?? 'unknown'} <span className="text-[var(--color-text-faint)]">(names computed; the store was not contacted)</span></div>
             <div><span className="text-[var(--color-text-faint)]">audit:</span> {inspResult.audit_object_key}</div>
             <div>
               <span className="text-[var(--color-text-faint)]">pii:</span>{' '}

@@ -74,7 +74,7 @@ Task- and workflow-oriented references for day-to-day use.
 | [Warm capture daemon](warm-capture-daemon.md) | Removing per-run cold-start cost for fleets, HPC job arrays, and CI farms (experimental, Linux only) |
 | [Security & Provenance Knowledge Graph](security-knowledge-graph.md) | `nova kg` (experimental) — anomaly detection, attack-path, and blast-radius over a capsule's lineage |
 | [Trust surfaces](trust-surfaces.md) | `nova merkle-tree`, `nova trust-radar`, `nova redaction-xray`, `nova passport` (experimental) — human-readable projections of a capsule's trust evidence |
-| [Drift detection](drift-gate.md) | `nova drift` (experimental) — offline two-sample drift, silent-failure flags, and root-cause correlation over sealed runs |
+| [Drift detection](drift-gate.md) | `nova drift` (experimental) — collects samples from sealed capsules, then offline two-sample drift, silent-failure flags, root-cause correlation and behavioral fingerprints over them |
 | [Assurance cases](assurance-cases.md) | `nova assure-case` / `nova assure-coverage` (experimental) — machine-checkable argument graphs bound to sealed evidence |
 | [For researchers](for-researchers.md) | Using NovaFabric for a reproducible, reviewable, citable paper artifact — and what it does not solve |
 | [Standards and specifications](standards-conformance.md) | Every specification implemented, how to verify each claim, and what is explicitly **not** claimed |

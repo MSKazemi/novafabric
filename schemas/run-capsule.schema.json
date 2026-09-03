@@ -277,13 +277,33 @@
       "description": "First-party NovaFabric evidence facets (ADR-0196). Additive and optional: a capsule without this key is valid and unchanged. Distinct from `extensions`, which carries THIRD-PARTY vendor data \u2014 an auditor must be able to tell NovaFabric-recorded evidence from a vendor annotation. The registry below is closed on purpose (ADR-0196 D2): an unregistered name is either a typo, which would silently produce a capsule missing the evidence its author believed it carried, or an unreviewed evidence surface. Each facet's internal shape is owned by its own ADR, not redefined here.",
       "additionalProperties": false,
       "properties": {
+        "a2a_card": {
+          "type": "object",
+          "description": "See ADR-0149 D1 (NF-171)."
+        },
         "a2a_messages": {
           "type": "object",
           "description": "See ADR-0142."
         },
+        "a2a_objects": {
+          "type": "object",
+          "description": "See ADR-0149 D1 (NF-172)."
+        },
+        "assurance_attestation": {
+          "type": "object",
+          "description": "See ADR-0147 D7 (NF-159)."
+        },
         "assurance_case": {
           "type": "object",
           "description": "See ADR-0166."
+        },
+        "baseline": {
+          "type": "object",
+          "description": "See ADR-0147 D1 (NF-160)."
+        },
+        "canary_run": {
+          "type": "object",
+          "description": "See ADR-0147 D3 (NF-153)."
         },
         "conversation": {
           "type": "object",
@@ -305,9 +325,21 @@
           "type": "object",
           "description": "See ADR-0153."
         },
+        "fingerprint": {
+          "type": "object",
+          "description": "See ADR-0147 D5 (NF-155)."
+        },
         "frontier_safety": {
           "type": "object",
           "description": "See ADR-0167."
+        },
+        "impact_report": {
+          "type": "object",
+          "description": "See ADR-0147 D3 (NF-154)."
+        },
+        "media_provenance": {
+          "type": "object",
+          "description": "See ADR-0148 D1 (NF-161/NF-163)."
         },
         "memstore_mutation": {
           "type": "object",
@@ -317,9 +349,17 @@
           "type": "object",
           "description": "See ADR-0152."
         },
+        "output_conformance": {
+          "type": "object",
+          "description": "See ADR-0148 D2 (NF-168)."
+        },
         "preservation": {
           "type": "object",
           "description": "See ADR-0165."
+        },
+        "regression_alarm": {
+          "type": "object",
+          "description": "See ADR-0147 D4 (NF-156)."
         },
         "risk_transfer": {
           "type": "object",
@@ -336,6 +376,18 @@
         "settlement": {
           "type": "object",
           "description": "See ADR-0163."
+        },
+        "tool_deprecation": {
+          "type": "object",
+          "description": "See ADR-0148 D2 (NF-169)."
+        },
+        "tool_schema_change": {
+          "type": "array",
+          "description": "See ADR-0148 D2 (NF-164). A list of change records."
+        },
+        "watermark_presence": {
+          "type": "object",
+          "description": "See ADR-0148 D1 (NF-162)."
         }
       }
     },

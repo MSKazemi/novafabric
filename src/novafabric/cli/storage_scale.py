@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import typer
 
 app = typer.Typer(
@@ -10,25 +12,71 @@ app = typer.Typer(
 )
 
 
+def _s3_configured() -> bool:
+    """True when the S3 backend is configured, i.e. the S3 key layout applies."""
+    return bool(os.getenv("NOVA_S3_ENDPOINT_URL") or os.getenv("NOVA_S3_BUCKET"))
+
+
 @app.command("inspect")
 def storage_inspect_cmd(
     run_id: str = typer.Option(..., "--run-id", help="Run identifier to inspect"),
+    output_json: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON instead of text"
+    ),
 ) -> None:
-    """Inspect a stored object and show its metadata.
+    """Show where a run's dual-object split is stored, under the layout in effect.
 
-    Scope: single storage object.
+    This computes object names from the run id and the configured backend. It does
+    **not** contact the store, so it reports a location, never an existence claim:
+    an unknown run id yields keys just as readily as a real one.
+
+    Scope: single run, name computation only.
 
     \b
     Examples:
       nova storage inspect --run-id <run-id>
+      NOVA_S3_BUCKET=nova-capsules nova storage inspect --run-id <run-id> --json
     """
-    typer.echo(f"Storage objects for run_id={run_id}:")
-    typer.echo(f"  audit: <store>/{run_id}_audit.json")
-    typer.echo(
-        f"  pii:   <store>/{run_id}_pii.json"
-        "  (active by default — OQ-01 resolved ADR-0069;"
-        " set NOVA_CAP003_ENABLED=false to disable)"
+    import json
+
+    from novafabric.storage.dual_object_store import (
+        local_audit_filename,
+        local_pii_filename,
+        s3_audit_key,
+        s3_pii_key,
     )
+
+    cap003 = os.getenv("NOVA_CAP003_ENABLED", "false").lower() == "true"
+    s3 = _s3_configured()
+
+    audit = s3_audit_key(run_id) if s3 else local_audit_filename(run_id)
+    pii = (s3_pii_key(run_id) if s3 else local_pii_filename(run_id)) if cap003 else None
+
+    payload = {
+        "run_id": run_id,
+        "layout": "s3" if s3 else "local",
+        "audit_object_key": audit,
+        "pii_object_key": pii,
+        "cap003_enabled": cap003,
+        "existence_checked": False,
+    }
+
+    if output_json:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    where = (
+        f"bucket {os.getenv('NOVA_S3_BUCKET', '<NOVA_S3_BUCKET>')}"
+        if s3
+        else "the local output directory passed to the writer"
+    )
+    typer.echo(f"Dual-object split for run_id={run_id}  (layout: {payload['layout']}, in {where})")
+    typer.echo(f"  audit: {audit}")
+    if pii is None:
+        typer.echo("  pii:   (none — cap-003 disabled; set NOVA_CAP003_ENABLED=true to write it)")
+    else:
+        typer.echo(f"  pii:   {pii}")
+    typer.echo("  note:  computed from the run id; the store was not contacted.")
 
 
 @app.command("validate")

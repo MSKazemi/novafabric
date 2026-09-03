@@ -47,6 +47,7 @@ ship/
 site-config/
 .benchmark-results/
 _linkcheck_probe.md
+metrics.json
 # p2p working artifacts. p2p was RETIRED 2026-08-29 and these files no longer
 # exist; the entries are kept as a harmless guard in case anything recreates them.
 .p2p.toml

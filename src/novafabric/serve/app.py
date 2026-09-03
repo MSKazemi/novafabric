@@ -5286,17 +5286,34 @@ def create_app(
 
     @app.get("/api/storage/inspect/{run_id}", dependencies=[Depends(verify_token)])
     async def storage_inspect_endpoint(run_id: str) -> dict[str, Any]:
-        """Show dual-object split for a run (DB-STG-1, cap-003)."""
+        """Show dual-object split for a run (DB-STG-1, cap-003).
+
+        Keys come from the writer's own helpers in ``storage.dual_object_store``.
+        This route previously hardcoded ``<run_id>_audit.json`` as the S3 key while
+        the writer used ``audit/<run_id>/audit.json`` — so a lifecycle or Object
+        Lock policy scoped to the reported prefix would have matched no object.
+        """
+        from novafabric.storage.dual_object_store import (
+            local_audit_filename,
+            local_pii_filename,
+            s3_audit_key,
+            s3_pii_key,
+        )
+
+        s3 = bool(os.getenv("NOVA_S3_ENDPOINT_URL") or os.getenv("NOVA_S3_BUCKET"))
+        audit = s3_audit_key(run_id) if s3 else local_audit_filename(run_id)
+        pii = s3_pii_key(run_id) if s3 else local_pii_filename(run_id)
         return {
             "run_id": run_id,
-            "audit_object_key": f"{run_id}_audit.json",
-            "pii_object_key": (
-                f"{run_id}_pii.json" if _cap003_enabled() else None
-            ),
+            "layout": "s3" if s3 else "local",
+            "audit_object_key": audit,
+            "pii_object_key": pii if _cap003_enabled() else None,
             "cap003_enabled": _cap003_enabled(),
+            "existence_checked": False,
             "note": (
-                "Object keys are computed from the run_id and the configured store layout. "
-                "Inspect the actual object via `nova storage inspect --run-id <id>` in the CLI."
+                "Object names are computed from the run_id and the layout in effect; "
+                "the store was not contacted, so this is a location, not an existence "
+                "claim. `nova storage inspect --run-id <id>` reports the same names."
             ),
         }
 

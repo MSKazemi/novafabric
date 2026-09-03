@@ -29,6 +29,7 @@ from pathlib import Path
 
 import pytest
 
+from lineage import contract
 from novafabric.lineage._types import LineageEdge
 from novafabric.lineage.backends.sqlite import SqliteLineageStore
 
@@ -122,3 +123,41 @@ class TestJanusGraphParity:
     def test_provenance_is_nonempty(self, jg_store) -> None:
         # Regression pin: the pre-fix code (no .emit()) returned [] here.
         assert _refs(jg_store.provenance("01RUND", depth=5)) == {"01RUNC", "01RUNB", "01RUNA"}
+
+
+# ---------------------------------------------------------------------------
+# The shared backend contract
+# ---------------------------------------------------------------------------
+
+
+class TestJanusGraphLineageContract:
+    """JanusGraph against the same contract the other four backends run.
+
+    Its own fixture above loads a run-only chain because this backend models run
+    vertices only; the contract graph includes an asset, so this class loads the
+    full reference graph and declares the asset gap rather than quietly using a
+    smaller graph. The exemption is `strict` — add an Asset vertex label and this
+    file fails until the entry is deleted.
+    """
+
+    DIVERGENCES = {
+        "provenance_reaches_assets": (
+            "JanusGraphLineageStore models run vertices only, so there is no "
+            "asset node for provenance() to return"
+        ),
+    }
+
+    @pytest.fixture()
+    def store(self, janusgraph_endpoint):
+        from novafabric.lineage.backends.janusgraph import JanusGraphLineageStore
+
+        store = JanusGraphLineageStore(gremlin_endpoint=janusgraph_endpoint)
+        store._connect()
+        store._g.V().drop().toList()  # isolate: shared server
+        contract.load(store)
+        yield store
+        store.close()
+
+    @pytest.mark.parametrize("check", contract.contract_params(DIVERGENCES))
+    def test_contract(self, check: str, store) -> None:
+        contract.CONTRACT_CHECKS[check](store)

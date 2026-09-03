@@ -822,7 +822,7 @@ See [Citation](#citation) below, or the [`CITATION.cff`](CITATION.cff) file.
 git clone git@github.com:MSKazemi/novafabric.git
 cd novafabric
 uv sync --all-extras   # --all-extras matters: a plain sync breaks ~30 tests
-make test-fast         # ~90 s
+make test-fast         # ~4 min, parallel, needs no Docker
 make lint typecheck check-links
 ```
 

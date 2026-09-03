@@ -83,6 +83,45 @@ def _require_capsule(capsule: Path) -> None:
         raise typer.Exit(code=2)
 
 
+
+def _gather(capsules: list[Path]) -> tuple[list[Any], dict[str, int]]:
+    """Load memory edges from every capsule, with the coverage that produced them.
+
+    Coverage travels with the answer because a blast radius is only as wide as
+    the capsules searched. A reader who cannot see that 3 of 50 capsules were
+    scanned will read a partial answer as a complete one — which is the failure
+    this command already had at a scope of one.
+    """
+    edges: list[Any] = []
+    with_operations = 0
+    for capsule in capsules:
+        _require_capsule(capsule)
+        events = _load_events(capsule)
+        if events:
+            with_operations += 1
+        edges.extend(edges_for_events(events))
+    return edges, {
+        "capsules_searched": len(capsules),
+        "capsules_with_memory_operations": with_operations,
+    }
+
+
+def _dedupe(run_ids: list[str]) -> list[str]:
+    """Drop repeats while preserving order.
+
+    The same run's events can appear in more than one supplied capsule (a parent
+    and its child, or the same capsule passed twice). Counting it twice would
+    overstate a blast radius.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for run_id in run_ids:
+        if run_id not in seen:
+            seen.add(run_id)
+            out.append(run_id)
+    return out
+
+
 @memory_app.command("lineage")
 def memory_lineage(
     capsule: _CapsuleArg,
@@ -128,28 +167,51 @@ def memory_trace(
     capsule: _CapsuleArg,
     key: _KeyArg,
     output: _OutputArg = MemoryOutputFormat.text,
+    also: Annotated[
+        list[Path] | None,
+        typer.Option(
+            "--also-capsule",
+            help="Another capsule to search (repeatable). A blast radius spans runs.",
+        ),
+    ] = None,
 ) -> None:
     """Back-trace a memory key: which runs wrote it, and which read it.
 
     This is the poisoned-read query (NF-114): given a memory item implicated
     in a bad answer, `writers` is where the value came from and `readers` is
     the blast radius.
+
+    A persistent memory store exists so one run can read what another wrote, so
+    a single capsule cannot answer this: pass every capsule that might have
+    touched the key with `--also-capsule`. The result always reports how many
+    capsules were searched — a blast radius over 3 of 50 capsules is not the
+    blast radius, and an answer whose coverage is unstated reads as complete.
     """
-    _require_capsule(capsule)
-    edges = edges_for_events(_load_events(capsule))
-    writers = writers_of(edges, key)
-    readers = readers_of(edges, key)
+    capsules = [capsule, *(also or [])]
+    edges, coverage = _gather(capsules)
+    writers = _dedupe(writers_of(edges, key))
+    readers = _dedupe(readers_of(edges, key))
 
     if output is MemoryOutputFormat.json:
         console.print_json(
-            json.dumps({"memory_key": key, "writers": writers, "readers": readers})
+            json.dumps(
+                {
+                    "memory_key": key,
+                    "writers": writers,
+                    "readers": readers,
+                    **coverage,
+                }
+            )
         )
         return
 
+    searched = coverage["capsules_searched"]
     console.print(f"[bold]memory:{key}[/bold]")
     if not writers and not readers:
         console.print(
-            "  no recorded operations on this key in this capsule", style="dim"
+            f"  no recorded operations on this key in the {searched} capsule(s) "
+            "searched",
+            style="dim",
         )
         return
     console.print(f"  written by ({len(writers)}), oldest first:")
@@ -158,3 +220,8 @@ def memory_trace(
     console.print(f"  read by ({len(readers)}), oldest first:")
     for run_id in readers or ["—"]:
         console.print(f"    {run_id}")
+    console.print(
+        f"  searched {searched} capsule(s); "
+        f"{coverage['capsules_with_memory_operations']} carried memory operations",
+        style="dim",
+    )
