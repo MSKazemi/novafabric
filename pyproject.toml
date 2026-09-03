@@ -305,7 +305,7 @@ bedrock-agentcore = [
 a2a = [
     # a2a-sdk (Apache-2.0) — A2A ClientCallInterceptor adapter (E-8).
     # Tier A under ADR-0024.
-    "a2a-sdk>=1.0.3",
+    "a2a-sdk>=1.1.2",
 ]
 watch = [
     # watchdog (Apache-2.0) — Tier A under ADR-0024.
