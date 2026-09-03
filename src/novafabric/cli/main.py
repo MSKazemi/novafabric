@@ -28,6 +28,7 @@ from novafabric.cli.backup import restore_cmd
 from novafabric.cli.capsule import app as capsule_app
 from novafabric.cli.capture import capture_cmd
 from novafabric.cli.capture_level import app as capture_level_app
+from novafabric.cli.capture_ui import app as capture_ui_app
 from novafabric.cli.classify import app as classify_app
 from novafabric.cli.collector import collector_app
 from novafabric.cli.comment import app as comment_app
@@ -253,6 +254,14 @@ app.add_typer(
     assure_canary_app,
     name="assure-canary",
     help="Record a canary replay of a pinned baseline (experimental, ADR-0147 NF-153).",
+)
+app.add_typer(
+    capture_ui_app,
+    name="capture-ui",
+    help=(
+        "Computer-use evidence: GUI actions and observations "
+        "(experimental, ADR-0148 D3)."
+    ),
 )
 app.add_typer(
     provenance_app,

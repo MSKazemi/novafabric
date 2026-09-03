@@ -143,6 +143,21 @@ def redact_secrets_in_text(text: str) -> str:
     return text
 
 
+def scan_text_rule_ids(text: str) -> list[str]:
+    """Rule ids from the ADR-0009 pack that match *text*, in pack order.
+
+    The text-level counterpart of :func:`redact_secrets_in_text`, which transforms but does
+    not report. :class:`SecretScannerV0` is file-oriented — it walks ``_SCAN_TARGETS`` inside
+    a capsule directory — so a caller holding a bare string had no way to ask *which* rule
+    fired. NF-166 needs exactly that: on a match it suppresses the typed-text digest
+    entirely, and the reason has to name the rule.
+
+    One rule set, one reader: this iterates the same ``_RULES`` the scanner and the redactor
+    use, so a new rule reaches all three at once.
+    """
+    return [str(rule["id"]) for rule in _RULES if rule["pattern"].search(text)]
+
+
 def recompute_chain_hash(proof: dict[str, Any]) -> dict[str, Any]:
     """Recompute chain_hash over a proof's canonical JSON. Returns the same dict."""
     proof = dict(proof)

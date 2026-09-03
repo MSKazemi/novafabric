@@ -11,6 +11,34 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Added
 
+- **`nova capture-ui` — computer-use evidence, with keystrokes treated as the hazard they are**
+  (ADR-0148 D3, NF-166/167; experimental). **This closes ADR-0148 at 10 of 10.**
+
+  `ui_actions` records navigate / click / type / key / scroll / drag / screenshot;
+  `ui_observations` content-addresses each screenshot and DOM snapshot as an ADR-0125
+  MediaPart. `show` and `verify` read them back. NovaFabric never performs a GUI action —
+  driving a browser is acting, not recording, and the ADR rejects it as scope.
+
+  ⚠ **A digest of typed text is not a redaction, and the spec's literal `sha256` would have
+  been a verifiable oracle.** What people type into GUIs is exactly the low-entropy material
+  a dictionary defeats — passwords, PINs, coupon codes, postcodes, dates of birth — so
+  anyone holding the capsule could confirm a guess by hashing candidates. Three layers now
+  apply: typed text is **scanned before it is digested** and a secret-rule match writes **no
+  digest at all** (only `redacted: true` and the rule name, because a digest *of a detected
+  secret* is a checkable record of it); what survives is digested under a **per-capsule
+  salt** recorded once, so within-run repetition stays detectable while precomputed tables
+  and cross-capsule correlation do not work; and the residual — a salt does not stop someone
+  holding the capsule brute-forcing a short input — is printed by the CLI rather than implied
+  away. Opting into byte capture is not opting out of the secret rules.
+
+  Proven by mutation: reverting the secret suppression, the salt, or the fail-open guard each
+  turns the corresponding tests red.
+
+  **Fail-open is a safety property here.** NovaFabric sits beside an agent driving a real
+  browser, so a capture hook that raises must not stop the agent's click — nothing propagates,
+  and a lost action increments `dropped`, which travels with the facet so a short list never
+  reads as a complete one.
+
 - **`nova provenance` — a C2PA manifest bound to the exact bytes of a captured media part**
   (ADR-0148 D1, NF-161/162/163; experimental). **This closes D1**, leaving only NF-166/167
   (computer-use capture, capture-path) open on ADR-0148.

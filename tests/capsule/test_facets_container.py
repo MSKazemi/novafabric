@@ -76,6 +76,8 @@ REGISTERED_FACETS = (
     "settlement",
     "tool_deprecation",
     "tool_schema_change",
+    "ui_actions",
+    "ui_observations",
     "watermark_presence",
 )
 

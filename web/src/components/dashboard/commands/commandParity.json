@@ -1235,5 +1235,11 @@
   },
   "nova provenance watermark show": {
     "status": "builder-only"
+  },
+  "nova capture-ui show": {
+    "status": "builder-only"
+  },
+  "nova capture-ui verify": {
+    "status": "builder-only"
   }
 }

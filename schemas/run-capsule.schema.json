@@ -385,6 +385,14 @@
           "type": "array",
           "description": "See ADR-0148 D2 (NF-164). A list of change records."
         },
+        "ui_actions": {
+          "type": "object",
+          "description": "See ADR-0148 D3 (NF-166)."
+        },
+        "ui_observations": {
+          "type": "object",
+          "description": "See ADR-0148 D3 (NF-167)."
+        },
         "watermark_presence": {
           "type": "object",
           "description": "See ADR-0148 D1 (NF-162)."

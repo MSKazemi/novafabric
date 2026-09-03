@@ -91,6 +91,7 @@ Commands grouped by primitive and task. Each entry links to its full section.
 | [`nova cost usage-breakdown`](#nova-cost-usage-breakdown-experimental-adr-0132) | Token usage-type composition of a capsule — descriptive (experimental) |
 | [`nova pricing`](#nova-pricing-listshowadd-experimental-adr-0133) | Local model-pricing catalog: list, show, add (experimental) |
 | [`nova drift`](#offline-drift-and-tool-schema-analysis-experimental-adr-01470148) | Collects samples from sealed capsules, then runs the offline drift, silent-failure, root-cause and behavioral-fingerprint detectors over them (experimental) |
+| [`nova capture-ui`](#nova-capture-ui-experimental-adr-0148-d3) | Computer-use GUI actions and observations; typed text is a salted digest, never raw (experimental) |
 | [`nova provenance`](#nova-provenance-experimental-adr-0148-d1) | Bind C2PA manifests to captured media hashes; read watermark-presence claims (experimental) |
 | [`nova toolschema impact`](#nova-toolschema-impact-experimental-adr-0148) | Which historical runs break under a new tool schema (experimental) |
 
@@ -1880,6 +1881,65 @@ fingerprints built under different canonicalization rule versions is refused rat
 than scored.
 
 Exit codes: `0` (rendered, shifted or not — it is an observation, not a gate), `2` (bad input).
+
+---
+
+### nova capture-ui (experimental, ADR-0148 D3)
+
+Read the GUI actions a computer-use agent took and the screens it saw (NF-166/167).
+
+```bash
+nova capture-ui show   --capsule ./capsules/run-42
+nova capture-ui show   --capsule ./capsules/run-42 --json
+nova capture-ui verify --capsule ./capsules/run-42
+nova capture-ui verify --capsule ./capsules/run-42 --strict
+```
+
+Subcommands:
+- `show` — the recorded `ui_actions` and `ui_observations`
+- `verify` — check that stored observation bytes still hash to their `content_hash`
+
+Options: `--capsule PATH` (required) · `--json` · `--strict` (`verify` only)
+
+⚠ **A digest of typed text is not a redaction — read this before enabling GUI capture.**
+Keystrokes are the highest-PII-risk content NovaFabric touches, and what people type into
+GUIs is exactly the low-entropy material a dictionary defeats: passwords, PINs, coupon
+codes, postcodes, names, dates of birth. A plain `sha256` of that is a *verifiable oracle* —
+anyone holding the capsule confirms a guess by hashing candidates. Three layers apply:
+
+1. **Scanned before it is digested.** Typed text goes through the ADR-0009 rule pack first.
+   On a match **no digest is written at all** — the action records `redacted: true` with a
+   `redaction_reason` naming the rule. A digest *of a detected secret* is strictly worse
+   than an absence.
+2. **Salted per capsule.** What survives is digested under a random salt recorded once in
+   the facet. "Was the same string typed twice in this run?" stays answerable — the only
+   thing the field is for — while precomputed tables and cross-capsule correlation stop
+   working.
+3. **The residual is stated, not hidden.** A salted digest **does not** stop someone holding
+   the capsule from brute-forcing a short input: the salt is right beside it. `show` prints
+   that caveat whenever it prints a digest.
+
+Raw typed text is stored **only** when byte capture is opted in (`NOVAFABRIC_CAPTURE_MEDIA=1`,
+ADR-0125) *and* the text survives the redaction pass. Opting in is not opting out of the
+secret rules.
+
+**Observations are ADR-0125 MediaParts, not a second blob store.** Screenshots and DOM
+snapshots carry `content_hash` and `byte_size` always, `blob_ref` only under the same opt-in.
+An observation with no `blob_ref` is **not** an integrity failure in `verify` —
+reference-metadata-only is the default, and counting it as unresolved would make every
+privacy-preserving capsule look corrupt.
+
+**Fail-open is a safety property (ADR-0148 I-3).** NovaFabric sits beside an agent driving a
+real browser. A capture hook that raises must not stop the agent's click, so nothing here
+propagates an exception — a lost action increments `dropped`, which travels with the facet
+so a short list never reads as a complete one.
+
+⚠ **NovaFabric never performs a GUI action.** It records that one was declared. Driving or
+replaying a browser is acting, not recording, and ADR-0148 rejects it as scope.
+
+Exit codes: `0` (shown, or verified — **including a verify that finds a tampered
+observation**, because reporting one is the job succeeding), `1` (`verify --strict` with any
+unresolved observation), `2` (bad input).
 
 ---
 
