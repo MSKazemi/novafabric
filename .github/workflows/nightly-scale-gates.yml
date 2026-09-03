@@ -82,25 +82,34 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
-    services:
-      minio:
-        image: bitnami/minio:latest
-        env:
-          MINIO_ROOT_USER: novatest
-          MINIO_ROOT_PASSWORD: novatest-secret
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 9000:9000
-
+    # MinIO runs as an explicit step rather than a `services:` container.
+    # Bitnami retired its free Docker Hub catalog, so `bitnami/minio:latest`
+    # now returns "manifest unknown" and this job failed at container startup
+    # every night from 2026-08-05 onward.  (The surviving `bitnamilegacy/*`
+    # mirror is an unmaintained archive with no security updates — not a
+    # dependency this project should adopt.)  The official `minio/minio` image
+    # needs `server /data` as its command, and `services:` cannot supply one,
+    # so the container is started here instead.
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 1
+
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=novatest \
+            -e MINIO_ROOT_PASSWORD=novatest-secret \
+            minio/minio:latest server /data
+          for _ in $(seq 1 60); do
+            if curl -fsS http://localhost:9000/minio/health/live >/dev/null; then
+              echo "MinIO is live"; exit 0
+            fi
+            sleep 1
+          done
+          echo "MinIO did not become live within 60s"; docker logs minio; exit 1
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -114,6 +123,31 @@ jobs:
 
       - name: Install project + all extras
         run: uv sync --frozen --all-extras
+
+      - name: Create the OCC test bucket
+        # The tests take the bucket as given and never create it, so a missing
+        # bucket surfaces as NoSuchBucket on the first PutObject rather than as
+        # a setup error.  The retired Bitnami image was configurable to
+        # pre-create buckets; the official image is not, and this job never set
+        # that variable anyway — so this step is a genuine gap being closed,
+        # not a port of previous behaviour.
+        env:
+          AWS_ACCESS_KEY_ID: novatest
+          AWS_SECRET_ACCESS_KEY: novatest-secret
+        run: |
+          uv run python - <<'PY'
+          import boto3
+          from botocore.config import Config
+
+          client = boto3.client(
+              "s3",
+              endpoint_url="http://localhost:9000",
+              config=Config(signature_version="s3v4"),
+              region_name="us-east-1",
+          )
+          client.create_bucket(Bucket="nova-occ-test")
+          print("buckets:", [b["Name"] for b in client.list_buckets()["Buckets"]])
+          PY
 
       - name: Object-store concurrency + WORM + rebuild tiers
         env:

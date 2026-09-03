@@ -691,6 +691,65 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **Two example scripts could not be run from a clone, and the tests that checked
+  said otherwise.**
+
+  `examples/hpc-slurm-job/job.sbatch` and `examples/notebook-capture/run.sh` were committed
+  as mode `100644` while the authoring working tree held `775`. Both READMEs tell readers to
+  execute them directly, so every reader got *Permission denied* on a file that worked
+  perfectly for whoever wrote it.
+
+  Two tests already asserted "must be executable" and passed forever, because they asked the
+  **filesystem** — which carried a bit that was never committed. CI checks out from git, saw
+  `644`, and `main` went red. A local `chmod` is invisible to `git status`, so nothing else
+  in the repository could surface the difference.
+
+  Generalised as a guard rather than patched twice: every tracked file under `examples/`
+  whose blob begins with a shebang must be mode `100755` **in the index**, with the list
+  derived from git so a new example is covered on arrival. The guard is proven by
+  reintroducing the bug — it goes red, and green again when reverted.
+
+  ⚠ **A property that must survive a clone has to be asserted against what git recorded,
+  never against the working tree.**
+
+- **The Docker example test stopped being able to tell a container from its host.**
+
+  `test_the_environment_lock_describes_the_host_not_the_container` proves the capsule locks
+  the *host* environment. It could only do so while the two reported different Python
+  versions — and it pinned `python:3.12-slim` while GitHub's runner moved to Python 3.12.14,
+  so both sides reported the identical version and the test could no longer distinguish them.
+  It failed loudly instead of passing vacuously, which is the design working.
+
+  The contrasting image is now derived from the running interpreter's minor version rather
+  than hardcoded, making the collision unreachable instead of merely unlikely. `IMAGE` still
+  matches the tag the README documents, so the other tests keep exercising the documented path.
+
+- **The lockfile drifted from `pyproject.toml`, and no gate could see it.**
+
+  Four merged Dependabot PRs raised dependency floors in `pyproject.toml` without
+  regenerating `uv.lock`, leaving its `[package.metadata] requires-dist` block stale. The
+  resolved package versions were already correct, so nothing installed the wrong dependency —
+  but the lockfile no longer recorded the project's declared constraints, and
+  `uv lock --check` failed.
+
+  It survived because **every** CI job installs with `uv sync --frozen`, which takes the
+  lockfile as given and never compares it to the manifest. That is right for a build and
+  useless as a check. CI now runs `uv lock --check` explicitly — the comparison `--frozen`
+  deliberately skips.
+
+- **The nightly object-store gate had never run, for two independent reasons.**
+
+  `bitnami/minio:latest` returns *manifest unknown* since Bitnami retired its free Docker Hub
+  catalog, so the job died at container startup every night from 2026-08-05 onward. Behind
+  that, the tests take the `nova-occ-test` bucket as given and nothing ever created it — the
+  dead image was merely masking a second failure that would have followed it.
+
+  MinIO now starts as an explicit step on the official, maintained `minio/minio` image
+  (`services:` cannot supply the `server /data` command it needs), and the bucket is created
+  before the tests run. Verified end-to-end against a real container: the conditional-PUT
+  (`If-None-Match`) OCC scenario passes. The surviving `bitnamilegacy/*` mirror was rejected
+  as an unmaintained archive with no security updates.
+
 - **13 facet names were written into capsules that the closed schema registry rejects.**
 
   `facets` is `additionalProperties: false` on purpose (ADR-0196 D2), and 13 of 28 facet

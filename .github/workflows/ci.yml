@@ -58,6 +58,18 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Lockfile is in sync with pyproject.toml
+        # Every other step installs with `uv sync --frozen`, which takes the
+        # lockfile as given and never compares it to pyproject.toml.  That is
+        # the right behaviour for a build (reproducible, no surprise resolve)
+        # but it means a lockfile that no longer matches the manifest installs
+        # cleanly and CI stays green.  Four merged Dependabot PRs raised
+        # dependency floors in pyproject.toml without regenerating uv.lock, and
+        # nothing noticed until `uv lock --check` was run by hand.
+        # This step is the check `--frozen` deliberately skips.  It resolves
+        # only metadata, so it costs a couple of seconds.
+        run: uv lock --check
+
       - name: Install project + dev deps
         # --all-extras is REQUIRED, not a convenience.  Without it ~61 tests
         # ERROR instead of skipping (alembic, uvicorn, nats-py, a2a-sdk, mcp),

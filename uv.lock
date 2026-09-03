@@ -3244,7 +3244,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "a2a-sdk", marker = "extra == 'a2a'", specifier = ">=1.0.3" },
+    { name = "a2a-sdk", marker = "extra == 'a2a'", specifier = ">=1.1.2" },
     { name = "alembic", marker = "extra == 'server'", specifier = ">=1.14" },
     { name = "asyncpg", marker = "extra == 'server'", specifier = ">=0.31.0" },
     { name = "azure-identity", marker = "extra == 'seal-azure'", specifier = ">=1.20.0" },
@@ -3266,8 +3266,8 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'federation'", specifier = ">=0.115" },
     { name = "fastapi", marker = "extra == 'serve'", specifier = ">=0.115" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.115" },
-    { name = "fastavro", marker = "extra == 'avro'", specifier = ">=1.9.7" },
-    { name = "fastavro", marker = "extra == 'scale'", specifier = ">=1.9.7" },
+    { name = "fastavro", marker = "extra == 'avro'", specifier = ">=1.12.2" },
+    { name = "fastavro", marker = "extra == 'scale'", specifier = ">=1.12.2" },
     { name = "google-adk", marker = "extra == 'google-adk'", specifier = ">=2.6.2" },
     { name = "google-cloud-kms", marker = "extra == 'seal-gcp'", specifier = ">=3.3.0" },
     { name = "google-cloud-storage", marker = "extra == 'worm-gcs'", specifier = ">=3.13.0" },
@@ -3300,7 +3300,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.11" },
     { name = "pyiceberg", marker = "extra == 'scale'", specifier = ">=0.7.0" },
     { name = "pyjwt", marker = "extra == 'server'", specifier = ">=2.13.0" },
-    { name = "pyshacl", marker = "extra == 'spkg'", specifier = ">=0.29.0" },
+    { name = "pyshacl", marker = "extra == 'spkg'", specifier = ">=0.40.1" },
     { name = "python-louvain", marker = "extra == 'serve'", specifier = ">=0.16" },
     { name = "python-multipart", marker = "extra == 'server'", specifier = ">=0.0.31" },
     { name = "python-ulid", specifier = ">=2.7.0" },
@@ -3314,7 +3314,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'serve'", specifier = ">=0.52.1" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.52.1" },
     { name = "watchdog", marker = "extra == 'watch'", specifier = ">=4.0.0" },
-    { name = "weasyprint", marker = "extra == 'compliance'", specifier = ">=60.0" },
+    { name = "weasyprint", marker = "extra == 'compliance'", specifier = ">=69.0" },
     { name = "zstandard", marker = "extra == 'ocs-compress'", specifier = ">=0.23.0" },
 ]
 provides-extras = ["saml", "scale", "worm-s3", "worm-azure", "worm-gcs", "seal-aws", "seal-azure", "seal-gcp", "sigstore", "spkg", "seal-postgres", "serve", "federation", "server", "lineage-kuzu", "janusgraph", "lineage-migration", "compliance", "scale-kg", "ocs-compress", "openai-agents", "google-adk", "bedrock-agentcore", "a2a", "watch", "otlp", "query", "clickhouse", "nats", "avro", "energy-gpu", "all"]

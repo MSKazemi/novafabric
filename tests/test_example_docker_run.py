@@ -16,6 +16,7 @@ from __future__ import annotations
 import functools
 import shutil
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import TypeVar
@@ -28,6 +29,27 @@ from novafabric.cli.main import app
 
 EXAMPLE_DIR = Path(__file__).resolve().parent.parent / "examples" / "docker-run"
 IMAGE = "python:3.12-slim"
+
+
+def _image_whose_python_differs_from_the_host() -> str:
+    """A stock image whose Python minor version cannot equal the host's.
+
+    `IMAGE` deliberately matches the tag the README tells readers to run, so the
+    rest of this module exercises the documented path. One test, however, proves
+    the capsule locks the *host* environment rather than the container's, and it
+    can only do so while the two report different versions.
+
+    Hardcoding a second tag re-runs the bug that made this necessary: the
+    example pinned `python:3.12-slim` and GitHub's runner image moved to Python
+    3.12.14, so container and host reported the identical version and the test
+    could no longer tell them apart. Choosing the tag relative to the running
+    interpreter makes that collision unreachable instead of merely unlikely.
+    """
+    host_minor = sys.version_info.minor
+    for minor in (13, 12, 11):
+        if minor != host_minor:
+            return f"python:3.{minor}-slim"
+    raise AssertionError(f"no contrasting tag for host Python 3.{host_minor}")
 
 _F = TypeVar("_F", bound=Callable[..., None])
 
@@ -147,7 +169,7 @@ def test_the_environment_lock_describes_the_host_not_the_container(
             "capture",
             "--output-dir", str(tmp_path),
             "--runner", "docker",
-            "--runner-option", f"image={IMAGE}",
+            "--runner-option", f"image={_image_whose_python_differs_from_the_host()}",
             "--runner-option", "workdir=/work",
             "--runner-option", f"extra_volumes={EXAMPLE_DIR}:/work:ro",
             "python", "/work/payload.py",
@@ -166,8 +188,10 @@ def test_the_environment_lock_describes_the_host_not_the_container(
     )
     host_python = str(manifest["host"]["python"])
     assert container_python != host_python, (
-        "the container and host happen to run the same Python, so this test "
-        "cannot distinguish them — pin a different image tag"
+        f"container and host both report Python {container_python}, so this "
+        "test cannot tell which environment the capsule locked. The image is "
+        "chosen to differ from the host minor version, so reaching this means "
+        "_image_whose_python_differs_from_the_host() picked a colliding tag."
     )
 
 
