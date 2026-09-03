@@ -606,9 +606,35 @@ exclude = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "packages/nova_worm_conformance/src", "tests"]
-# Suite-health (2026-07-15): no single test may hang the run. 300s is ~20x the
-# slowest legitimate test outside the benchmark suite; hangs fail by name.
-timeout = 300
+# Suite-health: no single test may hang the run; hangs fail by name.
+#
+# ⚠ The previous value (300s, set 2026-07-15) carried the rationale "~20x the
+# slowest legitimate test outside the benchmark suite". Re-measured 2026-09-04
+# with `--durations=50` over the full parallel suite, that claim was false and
+# the suite had simply outgrown it:
+#
+#     245.8s  1.22x  test_prompt_analytics_flow_end_to_end
+#     213.6s  1.40x  test_sp1_attack_path_latency_budget
+#     213.2s  1.41x  test_run_list_show_compare_roundtrip
+#     176.8s  1.70x  test_kuzu_replay_chain_order_is_deterministic
+#     164.3s  1.83x  test_run_with_baseline_gates_ci
+#
+# Eleven tests sat within 3x of the cap and three within 1.5x, in a suite that
+# runs `-n auto` (20 workers on 20 cores) and demonstrably costs up to 5x under
+# contention — measured on test_serve_smoke: 3.2s idle, 16.8s loaded. A 1.22x
+# margin cannot survive that, so the cap was firing on tests that were merely
+# slow. Four consecutive pre-push gate runs were blocked that way, each on a
+# different unrelated test.
+#
+# 900s keeps the cap doing its actual job — a hang is unbounded, so it still
+# fails by name, just ten minutes later — while no longer policing slowness it
+# was never sized to police. Tests that genuinely must be fast keep their own
+# tighter @pytest.mark.timeout (test_tls: 60s, test_serve_smoke: 90s); that is
+# where precision belongs.
+#
+# ⚠ This number is only meaningful next to a measurement. Re-run
+# `--durations=50` before changing it again rather than reasoning from the value.
+timeout = 900
 
 [tool.coverage.run]
 omit = [
