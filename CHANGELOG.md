@@ -1327,6 +1327,35 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **Withdrawn: the published claim that v0.38.0 meets the Scale-S4 latency criterion.**
+
+  `docs/releases/v0.38.0.md` told readers that v0.38.0 "meets the Scale-S4 acceptance
+  criterion: `nova seal log verify` p99 < 200 ms at 1M log entries." **It does not, and no
+  released version ever did.** The backend itself shipped and works; only the latency claim
+  was false.
+
+  `verify_consistency()` samples the entry_json re-hash but always recomputes the Merkle root
+  from **every** stored leaf hash — that full pass *is* the tamper detection for the
+  `leaf_hash` column, so it cannot be sampled away. At 1M leaves it costs ~1M Python SHA-256
+  calls: **measured at 1361 ms in-process with no database involved at all**, 6.8x the entire
+  200 ms budget. The nightly gate measures ~1879 ms end-to-end. Faster hardware does not close
+  a gap of that shape.
+
+  ⚠ **The gate that proves this ran every night and was red continuously from 2026-08-05 —
+  30+ consecutive failures — while the docs claimed the opposite.** A scheduled gate nobody
+  reads is not a gate; it is a second place for the truth to sit unread.
+
+  The threshold is not quietly relaxed. Reaching 200 ms means verifying inclusion proofs
+  against a signed tree head instead of recomputing the full root — a *weaker* guarantee, not
+  an optimisation — so it needs an ADR rather than a new number. Until then the criterion is
+  documented as unmet on every surface that carried it: the release note (correction plus the
+  original sentence struck through, not silently rewritten), the module/class/method
+  docstrings, the developer guide, and both ROADMAP rows.
+
+  The test is re-scoped to what it can actually support: a regression guard against a measured
+  ceiling. It also called `max()` of **5** samples a "p99" — with n=5 the maximum estimates
+  roughly the 83rd percentile, so the statistic was misnamed independently of the threshold.
+
 - **Two example scripts could not be run from a clone, and the tests that checked
   said otherwise.**
 

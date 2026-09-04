@@ -24,13 +24,28 @@ Scale-S4 — Postgres backend
     ``PostgresMerkleLog`` uses psycopg (psycopg3).  Install:
         pip install novafabric[seal-postgres]
 
-    ``verify_consistency()`` on the Postgres backend is a *sampled* check:
-    it spot-checks SAMPLE_SIZE random leaves + verifies the current root
-    against a recomputed root from all stored leaf hashes.  At 1M entries
-    this completes in < 200 ms (p99) — the Scale-S4 acceptance criterion.
-    The sampled check skips re-hashing every entry_json (trusts the stored
-    leaf_hash values for entries outside the sample), which is sound given
-    the append-only guarantee enforced at the DB layer.
+    ``verify_consistency()`` on the Postgres backend is *partially* sampled:
+    it spot-checks SAMPLE_SIZE random leaves, then verifies the current root
+    against a root recomputed from **all** stored leaf hashes.  Sampling
+    therefore applies only to the entry_json re-hash (entries outside the
+    sample are trusted to match their stored leaf_hash, which is sound given
+    the append-only guarantee enforced at the DB layer).  The root
+    recomputation is never sampled — that full pass *is* the tamper
+    detection for the stored leaf_hash column.
+
+    ⚠ **The Scale-S4 acceptance criterion of p99 < 200 ms at 1M entries is
+    NOT met, and is not reachable with this algorithm.**  Recomputing the
+    root over 1M leaves costs ~1M SHA-256 calls in Python: measured at
+    1361 ms in-process with no database involved at all, 6.8x the entire
+    200 ms budget, plus the cost of streaming 1M hashes out of Postgres.
+    The nightly gate measures ~1879 ms end-to-end and has been red
+    continuously since 2026-08-05.
+
+    Reaching 200 ms would mean not recomputing the full root — verifying
+    inclusion proofs for the sampled leaves against a signed tree head
+    instead, as Certificate Transparency does.  That is a different and
+    weaker guarantee, not a speed-up, so it needs an ADR rather than a
+    quiet substitution.  Until then the criterion is documented as unmet.
 
     For a full re-hash audit (slower, O(N) Python SHA-256 calls), call
     ``verify_consistency(full=True)``.
@@ -584,8 +599,11 @@ class PostgresMerkleLog:
     Uses psycopg (psycopg3).  Connection is established lazily on first use.
     Install: ``pip install novafabric[seal-postgres]``
 
-    ``verify_consistency()`` performs a *sampled* check in < 200 ms at 1M entries
-    (Scale-S4 acceptance criterion).  Pass ``full=True`` for a full O(N) audit.
+    ``verify_consistency()`` samples the entry_json re-hash but always recomputes
+    the root from every stored leaf hash, so it is O(N) even on the fast path
+    (~1.9 s at 1M entries).  The Scale-S4 target of p99 < 200 ms is **not met** —
+    see the module docstring.  Pass ``full=True`` to additionally re-hash every
+    entry_json.
     """
 
     def __init__(self, dsn: str) -> None:
@@ -761,7 +779,9 @@ class PostgresMerkleLog:
 
         Fast path (default): spot-checks up to SAMPLE_SIZE random leaves, then
         reads all leaf_hashes (not entry_json) to recompute and verify the root.
-        Completes in < 200 ms at 1M entries (Scale-S4 acceptance criterion).
+        "Fast" is relative to ``full=True`` only — the root pass is O(N) and
+        measures ~1.9 s at 1M entries.  The Scale-S4 target of p99 < 200 ms is
+        **not met**; see the module docstring for the measurement and why.
 
         Full audit (``full=True``): also re-hashes every entry_json to verify
         each stored leaf_hash.  O(N) Python SHA-256 calls; slow at large N.

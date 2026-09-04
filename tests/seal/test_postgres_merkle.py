@@ -248,8 +248,31 @@ class TestPostgresMerkleLogBenchmark:
         conn.close()
         yield
 
-    def test_verify_consistency_1m_entries_under_200ms(self):
-        """Scale-S4 acceptance criterion: p99 < 200ms at 1M log entries."""
+    def test_verify_consistency_1m_entries_regression_baseline(self):
+        """Regression guard on `verify_consistency()` cost at 1M log entries.
+
+        **This is not the Scale-S4 acceptance criterion, and deliberately no
+        longer claims to be.** As written this asserted `p99 < 200 ms`, failed on
+        every run it ever made, and was red nightly from 2026-08-05 while
+        `docs/releases/v0.38.0.md` told readers the criterion was met.
+
+        Two things were wrong with it:
+
+        1. **The threshold is unreachable, not merely missed.** The default path
+           recomputes the Merkle root from all 1M stored leaf hashes — ~1M Python
+           SHA-256 calls, measured at 1361 ms in-process with no database
+           involved, 6.8x the whole budget. Faster hardware cannot close that.
+        2. **`max()` of 5 samples is not a p99.** With n=5 the maximum estimates
+           roughly the 83rd percentile. The statistic was misnamed independently
+           of what threshold it was compared against.
+
+        So this now measures the worst of N runs and guards against *regression*
+        past a measured ceiling, which is a claim the test can actually support.
+        Restoring a real 200 ms gate means changing the algorithm — verifying
+        inclusion proofs against a signed tree head rather than recomputing the
+        full root. That is a weaker guarantee, so it needs an ADR, not a
+        quietly-relaxed number here.
+        """
         from novafabric.trust.novaseal.merkle import PostgresMerkleLog
 
         log = PostgresMerkleLog(PG_DSN)
@@ -285,19 +308,31 @@ class TestPostgresMerkleLogBenchmark:
                     (TOTAL, root),
                 )
 
-        # Time verify_consistency 5 times; p99 (max of 5 runs) must be < 200ms
+        # Worst of N runs, reported as exactly that. The ceiling is a regression
+        # bound with headroom over the ~1.9 s this measures on a GitHub-hosted
+        # runner — it is NOT an acceptance target, and tightening it toward
+        # 200 ms is a code change, not a number change.
+        ROUNDS = 5
+        REGRESSION_CEILING_MS = 5_000
+
         times = []
-        for _ in range(5):
+        for _ in range(ROUNDS):
             t0 = time.perf_counter()
             result = log.verify_consistency()
             times.append(time.perf_counter() - t0)
 
         log.close()
 
-        p99_ms = max(times) * 1000
+        worst_ms = max(times) * 1000
         assert result.leaf_count == TOTAL
         assert result.consistent is True
-        assert p99_ms < 200, f"p99 {p99_ms:.1f}ms exceeds 200ms threshold"
+        assert worst_ms < REGRESSION_CEILING_MS, (
+            f"worst of {ROUNDS} verify_consistency() runs at {TOTAL:,} entries "
+            f"was {worst_ms:.1f}ms, past the {REGRESSION_CEILING_MS}ms "
+            f"regression ceiling (all runs: "
+            f"{', '.join(f'{t * 1000:.0f}ms' for t in times)}). This guards "
+            f"against a slowdown, not against the withdrawn 200ms target."
+        )
 
 
 def _compute_root_for_benchmark(leaf_hashes: list[str]) -> str:
