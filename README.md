@@ -126,10 +126,14 @@ NovaFabric is a *flight simulator* — it re-flies the route.
 pip install novafabric
 # or with uv:
 uv add novafabric
+# or as an isolated CLI tool (no project, no venv to manage):
+uv tool install novafabric      # same via: pipx install novafabric
 ```
 
 NovaFabric requires **Python 3.12+**. That is the whole install — capture, validate,
-replay and diff all work with no extras.
+replay and diff all work with no extras. The tool-install form puts `nova` on your
+PATH in its own isolated environment, which is the right shape when you use it as a
+CLI rather than as a library.
 
 **Nothing to install at all?** Open the repo in a preconfigured browser environment —
 Python, `uv`, and every extra are set up for you, and the walkthrough below runs
