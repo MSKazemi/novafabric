@@ -549,7 +549,7 @@ setup. The limits are documented here so they are visible before they bite.
 | Limit | Root cause | Planned fix |
 |---|---|---|
 | **~10,000 capsules** before `/api/runs` slows noticeably | `list_run_summaries()` (`serve/capsule_loader.py:51`) re-reads every `capsule.yaml` from disk on every request — O(N disk). | **Scale-S1 (shipped v0.32.0) + Scale-S3 (shipped v0.36.0):** `runs_cache` SQLite index + `CapsuleWatcher` background indexer; `nova ingest-capsule` CLI for manual re-index. |
-| **NovaSeal Merkle log verify** scans full SQLite table | `serve/app.py`, `nova seal log verify` | **Scale-S4** (planned v1.x): Postgres path for the NovaSeal policy and Merkle log store. |
+| **NovaSeal Merkle log verify** is O(N) on either backend | `serve/app.py`, `nova seal log verify` | **Scale-S4 shipped v0.38.0** — set `NOVAFABRIC_SEAL_DB_PATH=postgresql://…` for the Postgres Merkle log. ⚠ Postgres removes the SQLite table scan but **not** the O(N) cost: the root is recomputed from every leaf either way (~1.9 s at 1M entries). The originally-published p99 < 200 ms figure was withdrawn — see `docs/releases/v0.38.0.md`. |
 | **SQLite registry** breaks at ~1M rows | No partitioning in SQLite | Flip `NOVAFABRIC_METADATA_BACKEND=postgres` — the Postgres tier (`PostgresMetadataStore`) is already implemented. |
 
 ### Storage backends — three separate systems
@@ -561,7 +561,7 @@ See [Storage Architecture](./architecture.md#production-storage-stack-polyglot-p
 |---|---|---|
 | Capsule content | Flat files under `$NOVAFABRIC_HOME/capsules/` — always filesystem | Object Capsule Store (`NOVA_OCS_BACKEND`) |
 | Registry + lineage | `~/.novafabric/registry.db` (SQLite) | `NOVAFABRIC_METADATA_BACKEND=postgres` + `NOVAFABRIC_METADATA_DSN=...` |
-| NovaSeal policy + Merkle log | `~/.novafabric/novaseal-merkle.db` (SQLite) | No Postgres path yet (Scale-S4) |
+| NovaSeal policy + Merkle log | `~/.novafabric/novaseal-merkle.db` (SQLite) | `NOVAFABRIC_SEAL_DB_PATH=postgresql://…` (`PostgresMerkleLog`, Scale-S4, shipped v0.38.0) |
 
 ---
 

@@ -29,7 +29,7 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | **rejected** | Considered and declined; kept as provenance. |
 
 
-**250 decisions recorded** — **218** accepted · **29** proposed · **3** superseded.
+**268 decisions recorded** — **222** accepted · **30** proposed · **3** superseded · **13** unknown.
 
 | ADR | Title | Status | Date |
 |---|---|---|---|
@@ -283,3 +283,21 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | `ADR-0248` | A published performance SLO catalog — every number labelled gated, measured, or target | proposed | 2026-08-07 |
 | `ADR-0249` | An air-gapped distribution bundle, verifiable fully offline | proposed | 2026-08-07 |
 | `ADR-0250` | Introspect frameworks by shape, never by class identity | accepted | 2026-08-08 |
+| `ADR-0251` | Bind the seal to the capsule on disk | accepted | 2026-08-27 |
+| `ADR-0252` | A token nova serve issues must authenticate, and must not sit on disk in cleartext | accepted | 2026-08-27 |
+| `ADR-0253` | DSSE envelopes go on the wire as standard base64, and are read back tolerantly | accepted | 2026-08-28 |
+| `ADR-0254` | Test tiering: fix state leakage before buying speed | accepted | 2026-08-28 |
+| `ADR-0255` | Experiment campaign design — what the papers claim, and what proves it | proposed | 2026-08-28 |
+| `ADR-0256` | Prov json exports the run itself | unknown | — |
+| `ADR-0257` | Create app owns its mutable state | unknown | — |
+| `ADR-0258` | Audit write ordering | unknown | — |
+| `ADR-0259` | Sdist must not carry the private tree | unknown | — |
+| `ADR-0260` | Ingest must preserve nested capsule paths | unknown | — |
+| `ADR-0261` | Redaction guards and truthful replay counters | unknown | — |
+| `ADR-0262` | Ingest must not block the worker event loop | unknown | — |
+| `ADR-0263` | Local token lifecycle and emission | unknown | — |
+| `ADR-0264` | Papers portfolio and layout | unknown | — |
+| `ADR-0265` | Multicluster scheduler campaign | unknown | — |
+| `ADR-0266` | Kuzu lineage storage format | unknown | — |
+| `ADR-0267` | Automated test tiers and hooks | unknown | — |
+| `ADR-0268` | Merkle verification cost vs guarantee | unknown | — |

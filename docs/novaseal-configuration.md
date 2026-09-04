@@ -253,6 +253,18 @@ merkle_db: postgres://user:pass@pghost/novafabric_seal
 The `NOVAFABRIC_SEAL_DB_PATH` env var also accepts this format for
 programmatic override without editing `novaseal.yaml`.
 
+**What Postgres does and does not buy you.** It removes SQLite's single-writer
+limit and its sequential table scan, which is the reason to switch at high write
+volume. It does **not** make `nova seal log verify` sub-linear: the Merkle root is
+recomputed from every stored leaf hash on both backends, so verification is O(N)
+either way — roughly **1.9 s at 1M entries**, dominated by ~1M SHA-256 calls in
+Python rather than by the database.
+
+⚠ Earlier releases documented a p99 < 200 ms verification at 1M entries. **That
+figure was never achieved and has been withdrawn** — see the correction in
+[`docs/releases/v0.38.0.md`](releases/v0.38.0.md). Budget for seconds, not
+milliseconds, when scheduling verification at that scale.
+
 ---
 
 ## 4. Environment variables — complete reference
