@@ -11,6 +11,24 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Added
 
+- **The dashboard's connect screen pointed at the wrong port and a file that does not exist.**
+
+  Found by opening the dashboard. The connect form pre-filled `http://127.0.0.1:4444` while
+  `nova serve` binds **4321**, so a user who ran the server and opened the dashboard got a form
+  aimed at nothing — and the failure surfaced as *"Token rejected"*, sending them after a
+  credential problem they did not have.
+
+  The same screen said to run `cat ~/.novafabric/.serve-token`. The token is written to
+  `$NOVAFABRIC_HOME/.serve-token` (`_paths.nova_home()`), so that instruction returns *No such
+  file or directory* for anyone who sets the variable. Both messages now name the variable, with
+  `~/.novafabric` given only as the fallback.
+
+  Same class as the S3-object-key defect: **a surface reporting a value the writer never
+  produces.** Guarded by `tests/docs/test_dashboard_defaults_match_the_cli.py`, which parses the
+  default port out of the Typer signature and compares it to the `.tsx` constants, and requires
+  any UI text naming `.serve-token` to mention `NOVAFABRIC_HOME` *before* the bare default —
+  a reader takes the first path they see.
+
 - **`nova capture-ui` — computer-use evidence, with keystrokes treated as the hazard they are**
   (ADR-0148 D3, NF-166/167; experimental). **This closes ADR-0148 at 10 of 10.**
 

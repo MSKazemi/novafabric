@@ -9,7 +9,7 @@ interface ConnectPanelProps {
 
 export default function ConnectPanel({ onConnected, bootError, setBootError }: ConnectPanelProps) {
   const [token, setToken] = useState('');
-  const [base, setBase] = useState('http://127.0.0.1:4444');
+  const [base, setBase] = useState('http://127.0.0.1:4321');
   const [busy, setBusy] = useState(false);
 
   const onSubmit = useCallback(async (e: React.FormEvent) => {
@@ -55,7 +55,7 @@ export default function ConnectPanel({ onConnected, bootError, setBootError }: C
               type="url"
               value={base}
               onChange={(e) => setBase(e.target.value)}
-              placeholder="http://127.0.0.1:4444"
+              placeholder="http://127.0.0.1:4321"
               className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm focus:border-[var(--color-accent)] focus:outline-none"
               required
             />
@@ -72,7 +72,7 @@ export default function ConnectPanel({ onConnected, bootError, setBootError }: C
               className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm focus:border-[var(--color-accent)] focus:outline-none"
               required
             />
-            <p className="mt-1 text-2xs text-[var(--color-text-faint)]">Also at <code>~/.novafabric/.serve-token</code> (mode 0600)</p>
+            <p className="mt-1 text-2xs text-[var(--color-text-faint)]">Also at <code>$NOVAFABRIC_HOME/.serve-token</code> (mode 0600) — <code>~/.novafabric/.serve-token</code> when that variable is unset</p>
           </label>
 
           {bootError && (

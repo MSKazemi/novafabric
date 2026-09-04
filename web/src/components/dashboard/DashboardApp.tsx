@@ -157,7 +157,7 @@ function DashboardInner() {
         setConnected(true);
       } catch {
         clearConnection();
-        setBootError('Token rejected — get the current token from the terminal: cat ~/.novafabric/.serve-token');
+        setBootError('Token rejected — get the current token from the terminal: cat "${NOVAFABRIC_HOME:-$HOME/.novafabric}/.serve-token"');
       }
     })();
 
