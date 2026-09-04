@@ -11,6 +11,15 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Added
 
+- **The documentation landing page now opens with the product, not a wall of tables.**
+
+  `docs/README.md` — the page a GitHub visitor lands on from the README's docs links — now
+  carries the animated terminal demo (`docs/assets/demo.svg`) and a click-to-play link to the
+  7-minute narrated demo video (<https://youtu.be/uQatmJIJI68>), with the same
+  synthetic-narration disclosure the README and novafabric.ai carry. This was the last
+  documented surface still missing the watch URL; all three (README, site `/demo`, docs
+  landing) now agree.
+
 - **The dashboard's connect screen pointed at the wrong port and a file that does not exist.**
 
   Found by opening the dashboard. The connect form pre-filled `http://127.0.0.1:4444` while

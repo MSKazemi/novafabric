@@ -11,6 +11,26 @@ happened; NovaFabric tells you whether a past run can be safely **replayed**,
 **compared**, and **proven**. Everything runs inside your own infrastructure —
 laptop to cluster, online or air-gapped — with no accounts and no telemetry.
 
+<p align="center">
+  <img src="assets/demo.svg" alt="Animated terminal demo: nova capture records an agent run into a portable capsule, nova validate checks it, nova replay re-runs it offline with no API keys, and nova diff shows what changed between the two runs." width="700">
+</p>
+
+## ▶ Watch it end to end (7 minutes)
+
+<p align="center">
+  <a href="https://youtu.be/uQatmJIJI68">
+    <img src="https://img.youtube.com/vi/uQatmJIJI68/maxresdefault.jpg" alt="Watch the NovaFabric demo on YouTube: I tried to forge my AI agent's evidence — it caught me" width="700">
+  </a>
+</p>
+
+[*I tried to forge my AI agent's evidence — it caught me*](https://youtu.be/uQatmJIJI68)
+— capture, seal, `nova verify`, two tamper attempts caught and named, then the
+same run in the dashboard. English captions included. Narration is a synthetic
+voice generated locally with Piper (MIT); the terminal output is verbatim from
+the live run, re-rendered on screen for legibility.
+
+---
+
 This page is the documentation map. Each linked document states clearly whether a
 feature is **works today**, **experimental**, or **planned / future design** —
 the [Concepts](concepts.md) page and the [ROADMAP](../ROADMAP.md) are the
