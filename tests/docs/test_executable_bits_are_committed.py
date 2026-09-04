@@ -34,6 +34,7 @@ the tree to that declaration.
 
 from __future__ import annotations
 
+import os
 import pathlib
 import subprocess
 
@@ -121,10 +122,27 @@ def test_every_shebang_file_is_committed_executable() -> None:
     )
 
 
-def test_core_filemode_is_false_which_is_why_this_test_reads_git() -> None:
-    """Pins the premise. If someone sets core.fileMode=true, a plain `stat` check would
-    start working and this test's indirection would look like pointless ceremony — so the
-    reason is asserted, not just written in the docstring above."""
+def test_reading_git_stays_correct_whatever_core_filemode_says() -> None:
+    """Pins the premise without pinning one machine's configuration.
+
+    ``core.fileMode`` is per-clone and never committed. Both gitdirs here set it to
+    ``false`` -- the whole reason the check above reads git rather than ``stat`` -- but a
+    fresh clone on an ordinary filesystem gets ``true`` from git's own autodetection.
+    Asserting ``false`` outright therefore pinned this laptop rather than the property,
+    and went red the first time CI ran it.
+
+    So assert what actually has to hold in each case:
+
+    * ``false`` -- git ignores the worktree bit, so the index is the only authority and
+      the indirection above is load-bearing. There is nothing further to check.
+    * ``true``  -- the worktree bit is authoritative too, so the two views must agree.
+      A disagreement means a mode changed on disk and was never committed: the same
+      defect this module exists to catch, seen from the other side.
+
+    On a clean checkout the ``true`` branch is satisfied by construction, since git writes
+    the worktree bits from the index. It earns its place on a dirty or hand-edited tree,
+    which is exactly where the original 34-file gap was introduced.
+    """
     out = subprocess.run(
         ["git", "config", "core.fileMode"],
         cwd=REPO_ROOT,
@@ -132,7 +150,17 @@ def test_core_filemode_is_false_which_is_why_this_test_reads_git() -> None:
         text=True,
         check=False,
     ).stdout.strip()
-    assert out in ("false", ""), (
-        f"core.fileMode is {out!r}. If it is now true, the worktree bit is authoritative "
-        "again and this test can be simplified — but check both gitdirs first."
+
+    if out != "true":
+        return
+
+    disagree = [
+        f"{path}: git={mode}, worktree="
+        f"{'executable' if os.access(REPO_ROOT / path, os.X_OK) else 'not executable'}"
+        for path, mode in SHEBANG_FILES
+        if (mode == "100755") != os.access(REPO_ROOT / path, os.X_OK)
+    ]
+    assert not disagree, (
+        "core.fileMode is true in this clone, so git and the worktree must agree on the "
+        "executable bit, but they do not:\n" + "\n".join(f"  {d}" for d in disagree)
     )
