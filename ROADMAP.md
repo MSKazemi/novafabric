@@ -16,14 +16,24 @@ and where an outside contributor fits.
 | | Where |
 |---|---|
 | **Freeze the v1.0 capsule format** — blocked on **0 of 3** independent [design-partner](docs/governance/design-partners.md) sign-offs. No amount of engineering unblocks it. | The single largest gate on v1.0 |
-| **RFC-0001** — `runs` partition key vs. tenant idempotency. Currently the only cause of a red `unit` job, and it blocks the tenant-isolation gate. | [`docs/rfcs/`](docs/rfcs/) · [#23](https://github.com/MSKazemi/novafabric/issues/23) |
+
+*(RFC-0001 — `runs` partition key vs. tenant idempotency — previously listed here as
+the cause of a red `unit` job, was **accepted 2026-08-06** and implemented in
+migration `v004` / ADR-0226; issue #23 is closed and its tests pass. This row had
+been stale for a month — re-derived 2026-09-04.)*
 
 ### Next — specified, unclaimed, ready to build
 
 | | Size | Issue |
 |---|---|---|
-| Task-scoped `EventRecorder` (ADR-0224 phase 2; two constraints already established) | L | [#7](https://github.com/MSKazemi/novafabric/issues/7) |
 | Capture adapters: LlamaIndex · Pydantic AI · Haystack | S each | [#1](https://github.com/MSKazemi/novafabric/issues/1) [#2](https://github.com/MSKazemi/novafabric/issues/2) [#3](https://github.com/MSKazemi/novafabric/issues/3) |
+
+*(The task-scoped `EventRecorder` — ADR-0224 phase 2, issue #7 — previously listed
+here as unclaimed, is **implemented on `main`** (2026-08-29, ADR-0224 §D3
+Amendment 2): concurrent in-process captures each file into their own capsule,
+proven by `tests/capture/test_task_scoped_writer.py`, with the `capture-overhead-gate`
+green. It appears under Shipped once it is in a tagged release, per this file's
+label rule. Re-derived 2026-09-04.)*
 
 **New here?** The adapters are labelled
 [good first issue](https://github.com/MSKazemi/novafabric/labels/good%20first%20issue)
