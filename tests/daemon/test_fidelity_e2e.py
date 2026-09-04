@@ -26,13 +26,33 @@ def _normalize(capsule_dir: Path) -> dict:
     return {k: v for k, v in data.items() if k not in VOLATILE}
 
 
-def _wait_for(path: Path, timeout: float = 15.0) -> bool:
+def _wait_for_socket(
+    path: Path, proc: subprocess.Popen, log: Path, timeout: float = 60.0
+) -> None:
+    """Block until the daemon binds its socket, or fail with real diagnostics.
+
+    The timeout is generous because the suite runs under `pytest -n auto`, where a
+    fresh interpreter plus imports takes far longer than on an idle machine; 15s
+    was enough alone and failed reproducibly under load. Polling `proc.poll()`
+    keeps that generosity cheap -- a daemon that actually dies fails immediately
+    instead of burning the whole timeout, so "slow" stays distinguishable from
+    "crashed" rather than collapsing into one unexplained assertion.
+    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if path.exists():
-            return True
+            return
+        if proc.poll() is not None:
+            raise AssertionError(
+                f"daemon exited with code {proc.returncode} before binding {path}\n"
+                f"--- daemon output ---\n{log.read_text(errors='replace')}"
+            )
         time.sleep(0.1)
-    return False
+    raise AssertionError(
+        f"daemon socket {path} never appeared within {timeout:.0f}s "
+        f"(process still alive={proc.poll() is None})\n"
+        f"--- daemon output ---\n{log.read_text(errors='replace')}"
+    )
 
 
 @pytest.mark.skipif(not _HAVE_CLI, reason="nova/novacap console scripts not installed")
@@ -52,12 +72,16 @@ def test_daemon_capsule_matches_direct(tmp_path):
 
     # 2) start the daemon, run the same workload via novacap
     sock = tmp_path / "run" / "capture.sock"
+    # Kept on disk rather than DEVNULL: it is the only way a failure here can say
+    # why the daemon never came up.
+    daemon_log = tmp_path / "daemon.log"
+    log_fh = daemon_log.open("wb")
     daemon = subprocess.Popen(
         ["nova", "daemon", "start"], env=env,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        stdout=log_fh, stderr=subprocess.STDOUT,
     )
     try:
-        assert _wait_for(sock), "daemon socket never appeared"
+        _wait_for_socket(sock, daemon, daemon_log)
         subprocess.run(
             ["novacap", *workload],
             check=True, env=env, cwd=str(tmp_path),
@@ -69,6 +93,7 @@ def test_daemon_capsule_matches_direct(tmp_path):
             daemon.wait(timeout=10)
         except subprocess.TimeoutExpired:
             daemon.kill()
+        log_fh.close()
 
     all_dirs = sorted((tmp_path / "capsules").glob("*"))
     assert len(all_dirs) == 2, f"expected 2 capsules, got {len(all_dirs)}"
