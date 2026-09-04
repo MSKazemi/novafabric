@@ -9,27 +9,6 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ## [Unreleased]
 
-### Changed
-
-- **The dev-loop test tiers are now load-aware and polite** (dev tooling only; no
-  runtime or CLI change). `-n auto` used to claim every core per run; concurrent
-  sessions each doing that was measured at load 49–65 on 20 cores with 11 GiB in
-  swap. `scripts/test-workers.sh` now sizes workers to the free cores and memory
-  and is exported as `PYTEST_XDIST_AUTO_NUM_WORKERS` (the pytest command lines —
-  and CI parity of `make test-par` — are untouched). Automated runs are `nice`d,
-  the Stop hook sheds when the machine is saturated, and concurrent scoped runs
-  serialize on a lock. Override: `NOVA_TEST_WORKERS=8 make test-fast`.
-  Guard: `tests/docs/test_worker_throttle.py`.
-- **`make test-gate` — run the push gate by hand, then push instantly.** git opens
-  the SSH connection *before* `pre-push` runs, so a long in-hook gate run can
-  outlive it (measured: 34 min under load → GitHub closed the connection → a
-  *green* gate failed to push with SIGPIPE). The gate now lives in
-  `scripts/test-gate.sh` — the hook delegates to the same script, so the two
-  paths cannot drift — and a user-initiated gate gets a floor of half the cores
-  (`test-workers.sh --gate`), memory-capped and `nice`d. Hooks also call
-  `.venv/bin/*` directly instead of `uv run`, so concurrent sessions no longer
-  queue on the uv project lock.
-
 ### Added
 
 - **`nova capture-ui` — computer-use evidence, with keystrokes treated as the hazard they are**
@@ -630,7 +609,6 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   the 90% floor are exactly as before. `tests/docs/test_container_marker_is_complete.py` fails
   if a new container fixture escapes the marker, and proves its own non-vacuity.
 
-
 - **Capture adapters for LlamaIndex, Pydantic AI, and Haystack** (closes issues #1, #2, #3).
   `wrap_engine`, `wrap_agent`, and `wrap_pipeline` wrap the framework's entry point so each
   invocation writes its own capsule, with the wire hooks claimed and `metadata.wire_capture`
@@ -689,7 +667,6 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   raises still resolves to the hook owner. The narrowing is real but partial, and an
   evidence system reports the residual instead of rounding it to zero.
 
-
 - **`nova doctor --check-tokens`** — audits serve-token records whose secret is still
   stored in cleartext (pre-ADR-0252). See the corresponding entry under *Fixed*.
 
@@ -710,115 +687,109 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   than as separately invoked. `make bench-scale` also un-hides the dashboard p95 gate at a
   100,000-run store, which is skipped by default but takes ~7 s.
 
-### Fixed
+- **`nova doctor --check-extras`** ([#4](https://github.com/MSKazemi/novafabric/issues/4)) —
+  answers "which of the 32 extras do I need?" without reading `pyproject.toml`. Lists each
+  extra as complete or incomplete, names the distributions missing from each, and prints the
+  exact `pip install 'novafabric[<extra>]'` command. Exit code stays 0: most installs
+  deliberately omit most extras, so incompleteness is information, not failure.
 
-- **Two example scripts could not be run from a clone, and the tests that checked
-  said otherwise.**
+  Extra names and requirements are read from installed distribution metadata rather than
+  hardcoded. Two details that decide whether such a check works at all: the requirement
+  marker is single-quoted (`extra == 'serve'`), so matching only the double-quoted form
+  finds nothing and the check silently passes while checking nothing; and presence is tested
+  per **distribution**, not by importing, because a distribution name is not reliably its
+  import name — an early `find_spec` version reported `python-louvain` missing when it was
+  installed, and telling someone to reinstall what they already have is worse than silence.
 
-  `examples/hpc-slurm-job/job.sbatch` and `examples/notebook-capture/run.sh` were committed
-  as mode `100644` while the authoring working tree held `775`. Both READMEs tell readers to
-  execute them directly, so every reader got *Permission denied* on a file that worked
-  perfectly for whoever wrote it.
+- **Fixed: every "install this extra" instruction printed through Rich had the extra name
+  silently deleted.** Rich reads `[serve]` in `pip install 'novafabric[serve]'` as a markup
+  tag and drops it, so the rendered instruction was `pip install 'novafabric'` — which
+  reinstalls the base package and changes nothing. It fired at exactly the moment a user was
+  blocked on a missing extra, in five call sites (`cli/serve.py`, three in `cli/kg.py`,
+  `metadata_store/cli.py`). The source strings were correct all along, so no ordinary test
+  could have caught it; only rendering them does, which is what
+  `tests/cli/test_extras_install_hints.py` now asserts — including a scan that fails on any
+  new call site written the unescaped way.
 
-  Two tests already asserted "must be executable" and passed forever, because they asked the
-  **filesystem** — which carried a bit that was never committed. CI checks out from git, saw
-  `644`, and `main` went red. A local `chmod` is invisible to `git status`, so nothing else
-  in the repository could surface the difference.
+- **`nova replay`, `nova validate` and `nova diff` accept a run id, not just a path.**
+  `nova capture` ends by printing `(run_id=01HX…)`, so the run id is what a user has in
+  hand — but every capsule-taking command required a directory path, and the documented
+  first run therefore did not work. The README's
+  `nova replay 01HX… --mode forensic` failed with "Not a valid capsule directory", and
+  `docs/getting-started.md` had to reconstruct the path with
+  `RUN=.novafabric/capsules/$(ls -t …)` — a line that resolved to nothing, because it is
+  relative to the working directory while `nova capture` writes under
+  `~/.novafabric/capsules/`. Verified by installing the built wheel into a clean 3.12
+  venv and following the README: capture → validate → replay now works by id.
 
-  Generalised as a guard rather than patched twice: every tracked file under `examples/`
-  whose blob begins with a shebang must be mode `100755` **in the index**, with the list
-  derived from git so a new example is covered on arrival. The guard is proven by
-  reintroducing the bug — it goes red, and green again when reverted.
+  **A path always wins.** If the reference names an existing capsule directory it is used
+  as given and no lookup happens, so every invocation that worked before resolves to
+  exactly the same directory — this widens the accepted input without changing any input
+  that already worked. An unknown id now names the directory searched and how to point
+  elsewhere, instead of only saying the reference was not a directory.
 
-  ⚠ **A property that must survive a clone has to be asserted against what git recorded,
-  never against the working tree.**
+  Two guards keep the onboarding docs from drifting back
+  (`tests/docs/test_onboarding_paths_are_real.py`), asserting against
+  `default_capsule_dir()` rather than a restated path. Worth knowing while reading them:
+  **there are two capture defaults.** The CLI writes to `~/.novafabric/capsules/`; the
+  in-process SDK defaults to `./.novafabric/runs/` relative to the working directory
+  (`capture/orchestrator.py:207`). Both are correct in their own context, and mixing them
+  up is what made the guide wrong.
 
-- **The Docker example test stopped being able to tell a container from its host.**
+- **The release toolchain is now exercised on pull requests** —
+  `.github/workflows/release-toolchain.yml`. `publish-image.yml` and `publish-chart.yml` fire only
+  on a `v*` tag, so no pull request ran the actions that build and sign the released image; a green
+  check run said nothing about them. Dependabot #58 made that concrete by proposing seven *major*
+  action bumps — including `sigstore/cosign-installer` v3→v4 — with every check green and not one
+  of them exercised. The new job runs that toolchain with publishing disabled: buildx build with
+  `push: false` passing every input the release step passes, cosign installed and run, chart linted
+  and packaged. `tests/docs/test_release_toolchain_matches_publish.py` holds its action versions
+  identical to the publish workflows, since a smoke test pinned to different versions is a green
+  check that proves nothing. What it still cannot cover — `docker/login-action`, `cosign sign`,
+  and arm64 emulation — is named in [`docs/release-process.md`](docs/release-process.md) §1c rather
+  than left to look like coverage.
 
-  `test_the_environment_lock_describes_the_host_not_the_container` proves the capsule locks
-  the *host* environment. It could only do so while the two reported different Python
-  versions — and it pinned `python:3.12-slim` while GitHub's runner moved to Python 3.12.14,
-  so both sides reported the identical version and the test could no longer distinguish them.
-  It failed loudly instead of passing vacuously, which is the design working.
+- **Researcher and standards-body entry points** — [`docs/for-researchers.md`](docs/for-researchers.md)
+  (making a reproducible, reviewable, citable paper artifact, and what NovaFabric does *not* solve),
+  [`docs/standards-conformance.md`](docs/standards-conformance.md) (every specification implemented,
+  how to verify each claim, and what is explicitly not claimed), a JOSS-style `paper/`, and a
+  `.zenodo.json` + expanded `CITATION.cff` so an archived release is citable.
 
-  The contrasting image is now derived from the running interpreter's minor version rather
-  than hardcoded, making the collision unreachable instead of merely unlikely. `IMAGE` still
-  matches the tag the README documents, so the other tests keep exercising the documented path.
+- **Contributor License Agreement ([`CLA.md`](CLA.md)).** NovaFabric stays Apache-2.0
+  and this does not change the licence anyone receives the code under. Copyright in a
+  contribution belongs to whoever wrote it, so once outside contributions land, any
+  later licensing decision needs permission from every past contributor — the CLA
+  consolidates copyright with one party while contributors keep ownership of their
+  work. Signing is automated by the CLA Assistant workflow on each pull request; bots
+  are allowlisted. No DCO is added: section 4 of the CLA already covers provenance.
 
-- **The lockfile drifted from `pyproject.toml`, and no gate could see it.**
-
-  Four merged Dependabot PRs raised dependency floors in `pyproject.toml` without
-  regenerating `uv.lock`, leaving its `[package.metadata] requires-dist` block stale. The
-  resolved package versions were already correct, so nothing installed the wrong dependency —
-  but the lockfile no longer recorded the project's declared constraints, and
-  `uv lock --check` failed.
-
-  It survived because **every** CI job installs with `uv sync --frozen`, which takes the
-  lockfile as given and never compares it to the manifest. That is right for a build and
-  useless as a check. CI now runs `uv lock --check` explicitly — the comparison `--frozen`
-  deliberately skips.
-
-- **The nightly object-store gate had never run, for two independent reasons.**
-
-  `bitnami/minio:latest` returns *manifest unknown* since Bitnami retired its free Docker Hub
-  catalog, so the job died at container startup every night from 2026-08-05 onward. Behind
-  that, the tests take the `nova-occ-test` bucket as given and nothing ever created it — the
-  dead image was merely masking a second failure that would have followed it.
-
-  MinIO now starts as an explicit step on the official, maintained `minio/minio` image
-  (`services:` cannot supply the `server /data` command it needs), and the bucket is created
-  before the tests run. Verified end-to-end against a real container: the conditional-PUT
-  (`If-None-Match`) OCC scenario passes. The surviving `bitnamilegacy/*` mirror was rejected
-  as an unmaintained archive with no security updates.
-
-- **13 facet names were written into capsules that the closed schema registry rejects.**
-
-  `facets` is `additionalProperties: false` on purpose (ADR-0196 D2), and 13 of 28 facet
-  modules declared a `FACET_NAME` absent from the registry — so any capsule carrying one
-  failed `nova validate` with *"Additional properties are not allowed"*. Reproduced against
-  a real captured capsule before the fix: exit `1`. Now registered in all three live copies
-  of `run-capsule.schema.json` (packaged, the OAS v1.0 target, and the dashboard's).
-
-  Affected: `a2a_card`, `a2a_objects`, `assurance_attestation`, `baseline`, `canary_run`,
-  `fingerprint`, `impact_report`, `media_provenance`, `output_conformance`,
-  `regression_alarm`, `tool_deprecation`, `tool_schema_change`, `watermark_presence`.
-
-  **A guard for exactly this existed and had gone stale.** ADR-0196 D4 added
-  `tests/capsule/test_facets_container.py` after five facets shipped with the same defect —
-  but it checked a **hand-written literal of 14 modules** whose own comment claimed it was
-  "discovered by import". The tree grew to 28; the literal did not, so half the modules were
-  never checked. It is now an AST walk of `src/novafabric/`, with a non-vacuity assertion so
-  it cannot silently shrink again, and `tests/docs/test_capsule_facet_contract.py`
-  additionally checks all **three** schema copies. Proven red-green by de-registering two
-  names.
-
-  Registering `tool_schema_change` also exposed a wrong assumption in that guard: it probed
-  every facet with `{"schema_version": ...}`, but that facet is an **array** — its module
-  writes a list. The probe now follows each facet's registered type rather than inviting the
-  schema to be re-typed to match the test.
-
-- **Three surfaces reported an S3 object key the writer never produces.**
-
-  `storage/dual_object_store.py` stores the dual-object split at `audit/<run_id>/audit.json`
-  and `pii/<run_id>/pii.json`. `nova storage inspect`, `GET /api/storage/inspect/{run_id}`,
-  and the dashboard Storage Operations card each independently hardcoded
-  `<run_id>_audit.json` and presented it as the S3 key.
-
-  Prefix-scoped S3 lifecycle rules, Object Lock retention policies and bucket policies are
-  the standard way to manage a PII object. One written against the reported prefix would have
-  matched **nothing**, silently governing no object at all.
-
-  Both sides were pinned by passing tests — `test_dual_object_store_s3.py` asserted the
-  writer's prefixes, `test_v018_dashboard_parity.py` asserted the reporters' flat names — and
-  nothing compared the two.
-
-  `s3_audit_key()`, `s3_pii_key()`, `local_audit_filename()` and `local_pii_filename()` in
-  `storage/dual_object_store.py` are now the single source of truth, used by the writer and
-  all three reporting surfaces.
-  `tests/scale_architecture/test_object_keys_agree_across_surfaces.py` asserts the reported
-  key *equals the key the writer used*; reinstating the old hardcoded string fails it.
+- **`novafabric.cli.introspect` and `novafabric.serve.introspect`** — the supported
+  ways to enumerate the `nova` command tree and the mounted HTTP route table
+  (ADR-0250). Both identify
+  structure by shape rather than by class identity, and both raise rather than
+  returning an empty surface. Nine hand-rolled copies of these walks (five for the
+  CLI, four for routes) are replaced by two tested modules.
 
 ### Changed
+
+- **The dev-loop test tiers are now load-aware and polite** (dev tooling only; no
+  runtime or CLI change). `-n auto` used to claim every core per run; concurrent
+  sessions each doing that was measured at load 49–65 on 20 cores with 11 GiB in
+  swap. `scripts/test-workers.sh` now sizes workers to the free cores and memory
+  and is exported as `PYTEST_XDIST_AUTO_NUM_WORKERS` (the pytest command lines —
+  and CI parity of `make test-par` — are untouched). Automated runs are `nice`d,
+  the Stop hook sheds when the machine is saturated, and concurrent scoped runs
+  serialize on a lock. Override: `NOVA_TEST_WORKERS=8 make test-fast`.
+  Guard: `tests/docs/test_worker_throttle.py`.
+- **`make test-gate` — run the push gate by hand, then push instantly.** git opens
+  the SSH connection *before* `pre-push` runs, so a long in-hook gate run can
+  outlive it (measured: 34 min under load → GitHub closed the connection → a
+  *green* gate failed to push with SIGPIPE). The gate now lives in
+  `scripts/test-gate.sh` — the hook delegates to the same script, so the two
+  paths cannot drift — and a user-initiated gate gets a floor of half the cores
+  (`test-workers.sh --gate`), memory-capped and `nice`d. Hooks also call
+  `.venv/bin/*` directly instead of `uv run`, so concurrent sessions no longer
+  queue on the uv project lock.
 
 - `nova storage inspect` reports the layout in effect (`s3` or `local`), gains `--json`, and
   states that it computes names without contacting the store — `existence_checked` is always
@@ -1074,7 +1045,6 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   instead of a traceback. The registry track already did the equivalent programmatically;
   this carries that reasoning across.
 
-
 - **Redaction no longer destroys the identifiers it was protecting** (ADR-0261, rule pack
   `gitleaks-core-v0` 0.4.0 → 0.5.0). Three rules matched a bare token by length alone, so a
   40-hex git commit id, a 32-hex MD5 and a bare UUID were redacted as if they were API keys.
@@ -1106,7 +1076,6 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   so replay outcome digests differ before and after this change. A stable digest over a
   fabricated field is worth less than a truthful one; the comparison it preserved was
   reporting agreement on a number the engine never earned.
-
 
 - **The shipped dashboard served the dead link and the stale schemas for three
   releases' worth of fixes.** `src/novafabric/serve/static/` is the built site,
@@ -1285,58 +1254,166 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   not covered — not shipped, not read by users — and the root-file tier (ROADMAP, pyproject, CI)
   is still open; both exclusions are named in the guard's docstring rather than left implicit.
 
-### Security
+- **The CLA stays, and the contributor-facing wording is clearer about what it does and does
+  not do.** `CONTRIBUTING.md` now leads with the cost (one comment on your first pull request)
+  and states plainly that contributors keep the copyright in their work, that a license is
+  being granted rather than ownership transferred, and that every release stays Apache-2.0.
 
-- **The sdist could carry the entire private tree, including the private git history**
-  (ADR-0259). This repo is dual-git — one working tree, a public `.git` and a private
-  `.git-private` — and the split is enforced by `.git/info/exclude`, a repo-local allowlist
-  that exists on no remote. `.gitignore` says so in its own header: the private material is
-  *"NOT listed here on purpose"*. **hatchling reads `.gitignore`; it does not read
-  `.git/info/exclude`**, so the only firewall this repository has was invisible to the tool
-  that builds the sdist. Measured: `uv build` produced a **343 MB** sdist containing
-  `.git-private/` in full (170 MB — the entire private history, a ~150 MB pack file),
-  `design/` (191 MB), `experiments/` (33 MB), `.claude/`, `monetize/`, `site-config/`,
-  `CLAUDE.md` and `THREAT_MODEL.md`.
+  A brief experiment replacing the CLA with a DCO was reverted the same day. The DCO is a
+  lighter ask, but it certifies provenance only — it grants no right to make a licensing
+  decision later, which is the entire reason this project consolidates copyright while it is
+  still small enough to do so.
 
-  **Nothing leaked.** Every sdist on PyPI is built by CI from a clean checkout of the
-  *public* repository, which contains none of these paths; the published v0.101.0 sdist was
-  downloaded and verified — 7 MB, no `design/`, no `.git-private/`, no `experiments/`. But
-  the exposure depended entirely on *where* the build ran, and `dualgit release` prints a
-  release command for a human to run locally, so it was one `uv build` away.
+- **Dependencies:** `typer` `>=0.15,<0.26` → `>=0.15,<0.28`; `mutmut` `<3.6` → `<3.8`.
+  `fastapi` stays at `<0.137`: five HTTP metrics/self-trace tests still fail on
+  0.141.1 because the metrics middleware records no samples, which is a genuine
+  behaviour change and not introspection. Tracked as
+  [#54](https://github.com/MSKazemi/novafabric/issues/54); the raw-path privacy
+  assertion still passes, so no path data leaks — the samples are simply absent.
+  The ceiling is now enforced by a Dependabot `ignore` rule as well as the manifest
+  bound, because Dependabot rewrites the `pyproject.toml` constraint rather than
+  respecting it and re-proposed the same red PR ([#53](https://github.com/MSKazemi/novafabric/pull/53)).
 
-  `[tool.hatch.build.targets.sdist].exclude` now names every private top-level path,
-  anchored with `/` so the deliberate carve-outs (`tests/bench`,
-  `integrations/claude-plugin`) are untouched. A hand-maintained list rots, so
-  `tests/docs/test_private_paths_never_enter_a_build.py` derives the requirement from the
-  two gitdirs — *(private-tracked) − (public-tracked)* is private by definition — and fails
-  until each is excluded; it caught one path the hand-written list had missed.
-  `.git-private/` is tracked by neither git and is asserted separately by name. A local
-  `uv build` now yields a **7.26 MB** sdist with zero private paths, removing nothing the
-  published sdist had; a wheel built from it installs into a clean venv and runs outside the
-  source tree with all three force-included JSON Schemas resolving from `site-packages`.
+  Floors aligned to the version already resolving and under test, continuing the
+  #46–#49 batch: `uvicorn[standard]` `>=0.32` → `>=0.52.1` (serve + server extras),
+  `nvidia-ml-py` `>=12.0.0` → `>=13.610.43` (energy-gpu), `google-adk` `>=1.34.0` →
+  `>=2.6.2` (openai-agents), `sigstore` `>=4.2.0` → `>=4.5.0`. The OpenTelemetry
+  Collector set moved to the v0.158.0 / v1.64.0 train, and the GitHub Actions used by
+  the publish workflows took seven major bumps.
 
-- **The Docker build context carried private material too — the same class, swept**
-  (ADR-0259). Having fixed the sdist, every tool in the repo that packages or copies the
-  working tree wholesale was checked against the same question: *does it read
-  `.git/info/exclude`?* None do. The wheel is safe by construction (`src/` layout plus an
-  explicit `force-include` list), `helm package` takes a subdirectory as its argument and
-  cannot reach the repo root, and `scripts/build_airgap_bundle.py` is a strict allowlist
-  (`--member arcname=src`). **`.dockerignore` was the second instance**: it named `design/`,
-  `.claude/`, `.git-private` and `bench/` but not `experiments/`, `monetize/`, `papers/`,
-  `priv/`, `ship/`, `site-config/`, `.dualgit/`, `.claude-plugin/`, `.benchmark-results/`,
-  `CLAUDE.md` or `THREAT_MODEL.md`.
+  The `python` base image is held at **3.12** by a new Dependabot `ignore` on major and
+  minor updates (patch still flows, so CPython security fixes are unaffected). CI runs a
+  single 3.12 job and `pyproject.toml` deliberately claims no classifier beyond 3.12
+  "until CI grows a matrix that exercises them", so a proposed 3.14 base image
+  ([#55](https://github.com/MSKazemi/novafabric/pull/55)) would have shipped a runtime
+  nothing here tests — its green checks only proved the image *builds*.
 
-  This one is **defense in depth, not a live leak** — the Dockerfile uses targeted `COPY`
-  lines and has no `COPY . .`, so nothing private has ever reached the published image. What
-  did happen is that those paths entered the build context, which is transmitted to the
-  daemon and cached, leaves the machine as soon as a remote or shared buildx driver is used,
-  and would become an image leak the first time someone writes `COPY . .`. Completing the
-  list took the reported context transfer from **13.48 MB to 168 kB**, and the builder stage
-  still builds. The guard test was renamed to
-  `tests/docs/test_private_paths_never_enter_a_build.py` and now derives the private set once
-  from the two gitdirs, asserting it against **both** the sdist excludes and `.dockerignore`.
+- **Version ceilings must now state measured evidence, not inferred conclusions**
+  (ADR-0250). A ceiling comment records the command that was run and its output.
+
+- **Git history rewritten to a single authorship identity (2026-08-08).** Commit and
+  annotated-tag *messages* were normalized and every commit now records one author and
+  committer. **No file content changed** — every commit's tree hash is byte-identical to
+  before, and all 49 tags still point at the same trees. Only commit hashes differ.
+
+  **If you cloned before 2026-08-08, your clone has diverged and `git pull` will
+  conflict.** Re-clone, or reset an untouched checkout onto the new history:
+
+  ```bash
+  git fetch --all --tags --prune --force
+  git reset --hard origin/main
+  ```
+
+  If you have local work on top of the old history, rebase it with
+  `git rebase --onto origin/main <old-base> <your-branch>` before resetting.
 
 ### Fixed
+
+- **Two example scripts could not be run from a clone, and the tests that checked
+  said otherwise.**
+
+  `examples/hpc-slurm-job/job.sbatch` and `examples/notebook-capture/run.sh` were committed
+  as mode `100644` while the authoring working tree held `775`. Both READMEs tell readers to
+  execute them directly, so every reader got *Permission denied* on a file that worked
+  perfectly for whoever wrote it.
+
+  Two tests already asserted "must be executable" and passed forever, because they asked the
+  **filesystem** — which carried a bit that was never committed. CI checks out from git, saw
+  `644`, and `main` went red. A local `chmod` is invisible to `git status`, so nothing else
+  in the repository could surface the difference.
+
+  Generalised as a guard rather than patched twice: every tracked file under `examples/`
+  whose blob begins with a shebang must be mode `100755` **in the index**, with the list
+  derived from git so a new example is covered on arrival. The guard is proven by
+  reintroducing the bug — it goes red, and green again when reverted.
+
+  ⚠ **A property that must survive a clone has to be asserted against what git recorded,
+  never against the working tree.**
+
+- **The Docker example test stopped being able to tell a container from its host.**
+
+  `test_the_environment_lock_describes_the_host_not_the_container` proves the capsule locks
+  the *host* environment. It could only do so while the two reported different Python
+  versions — and it pinned `python:3.12-slim` while GitHub's runner moved to Python 3.12.14,
+  so both sides reported the identical version and the test could no longer distinguish them.
+  It failed loudly instead of passing vacuously, which is the design working.
+
+  The contrasting image is now derived from the running interpreter's minor version rather
+  than hardcoded, making the collision unreachable instead of merely unlikely. `IMAGE` still
+  matches the tag the README documents, so the other tests keep exercising the documented path.
+
+- **The lockfile drifted from `pyproject.toml`, and no gate could see it.**
+
+  Four merged Dependabot PRs raised dependency floors in `pyproject.toml` without
+  regenerating `uv.lock`, leaving its `[package.metadata] requires-dist` block stale. The
+  resolved package versions were already correct, so nothing installed the wrong dependency —
+  but the lockfile no longer recorded the project's declared constraints, and
+  `uv lock --check` failed.
+
+  It survived because **every** CI job installs with `uv sync --frozen`, which takes the
+  lockfile as given and never compares it to the manifest. That is right for a build and
+  useless as a check. CI now runs `uv lock --check` explicitly — the comparison `--frozen`
+  deliberately skips.
+
+- **The nightly object-store gate had never run, for two independent reasons.**
+
+  `bitnami/minio:latest` returns *manifest unknown* since Bitnami retired its free Docker Hub
+  catalog, so the job died at container startup every night from 2026-08-05 onward. Behind
+  that, the tests take the `nova-occ-test` bucket as given and nothing ever created it — the
+  dead image was merely masking a second failure that would have followed it.
+
+  MinIO now starts as an explicit step on the official, maintained `minio/minio` image
+  (`services:` cannot supply the `server /data` command it needs), and the bucket is created
+  before the tests run. Verified end-to-end against a real container: the conditional-PUT
+  (`If-None-Match`) OCC scenario passes. The surviving `bitnamilegacy/*` mirror was rejected
+  as an unmaintained archive with no security updates.
+
+- **13 facet names were written into capsules that the closed schema registry rejects.**
+
+  `facets` is `additionalProperties: false` on purpose (ADR-0196 D2), and 13 of 28 facet
+  modules declared a `FACET_NAME` absent from the registry — so any capsule carrying one
+  failed `nova validate` with *"Additional properties are not allowed"*. Reproduced against
+  a real captured capsule before the fix: exit `1`. Now registered in all three live copies
+  of `run-capsule.schema.json` (packaged, the OAS v1.0 target, and the dashboard's).
+
+  Affected: `a2a_card`, `a2a_objects`, `assurance_attestation`, `baseline`, `canary_run`,
+  `fingerprint`, `impact_report`, `media_provenance`, `output_conformance`,
+  `regression_alarm`, `tool_deprecation`, `tool_schema_change`, `watermark_presence`.
+
+  **A guard for exactly this existed and had gone stale.** ADR-0196 D4 added
+  `tests/capsule/test_facets_container.py` after five facets shipped with the same defect —
+  but it checked a **hand-written literal of 14 modules** whose own comment claimed it was
+  "discovered by import". The tree grew to 28; the literal did not, so half the modules were
+  never checked. It is now an AST walk of `src/novafabric/`, with a non-vacuity assertion so
+  it cannot silently shrink again, and `tests/docs/test_capsule_facet_contract.py`
+  additionally checks all **three** schema copies. Proven red-green by de-registering two
+  names.
+
+  Registering `tool_schema_change` also exposed a wrong assumption in that guard: it probed
+  every facet with `{"schema_version": ...}`, but that facet is an **array** — its module
+  writes a list. The probe now follows each facet's registered type rather than inviting the
+  schema to be re-typed to match the test.
+
+- **Three surfaces reported an S3 object key the writer never produces.**
+
+  `storage/dual_object_store.py` stores the dual-object split at `audit/<run_id>/audit.json`
+  and `pii/<run_id>/pii.json`. `nova storage inspect`, `GET /api/storage/inspect/{run_id}`,
+  and the dashboard Storage Operations card each independently hardcoded
+  `<run_id>_audit.json` and presented it as the S3 key.
+
+  Prefix-scoped S3 lifecycle rules, Object Lock retention policies and bucket policies are
+  the standard way to manage a PII object. One written against the reported prefix would have
+  matched **nothing**, silently governing no object at all.
+
+  Both sides were pinned by passing tests — `test_dual_object_store_s3.py` asserted the
+  writer's prefixes, `test_v018_dashboard_parity.py` asserted the reporters' flat names — and
+  nothing compared the two.
+
+  `s3_audit_key()`, `s3_pii_key()`, `local_audit_filename()` and `local_pii_filename()` in
+  `storage/dual_object_store.py` are now the single source of truth, used by the writer and
+  all three reporting surfaces.
+  `tests/scale_architecture/test_object_keys_agree_across_surfaces.py` asserts the reported
+  key *equals the key the writer used*; reinstating the old hardcoded string fails it.
 
 - **The WAL-pragma defect was a class of four, and the sweep found the tooling defect that
   had been hiding one of them.** `jobs/store.py`, `ha/lease.py` and
@@ -1374,7 +1451,6 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   server believing the token rotated would leave a live credential on disk. `docs/dashboard.md`,
   `docs/user-guide.md`, `docs/cli-reference.md`, both tutorials, the CLI banner, and the
   `local_token` module docstring now state the real behaviour and how to force a fresh token.
-
 
 - **`get_connection()` could raise `OperationalError: database is locked` when several
   threads opened the registry database at once.** `PRAGMA journal_mode=WAL` is a *write*
@@ -1717,171 +1793,6 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   now defined once; `rekor_client` was verified separately because it derives the payload
   hash written to a transparency log.
 
-### Security
-
-- **A token `nova serve` issued authenticated nothing, and sat on disk in cleartext**
-  (ADR-0252). `POST /api/admin/tokens` returned 200 with a token and *"Save this token — it
-  will not be shown again"*; every request carrying it got **401**, because `verify_token`
-  compared only against the single server token and never consulted the store it had just
-  written. That store, `~/.novafabric/tokens.jsonl`, held the secret verbatim at mode
-  **0664** — while `auth.py` goes to deliberate trouble to create `.serve-token` at 0600
-  atomically, with a comment explaining why. A revoke rewrote the file through
-  `tmp.write_text()`, so even a hand-hardened 0600 came back 0664.
-
-  Issued tokens now authenticate by `Authorization: Bearer` or `?token=`; the record keeps
-  a `sha256:` digest and no secret; every write path is 0600 and reading repairs a wider
-  mode left by an older version; and revocation denies, because something finally reads
-  the flag. Records written before this still authenticate — locking an operator out to
-  punish them for an old file is the wrong trade.
-
-  An issued token carries **exactly** the dashboard token's access: `nova serve`
-  authenticates, it does not authorize. The response warning says so instead of implying a
-  scope that does not exist. Scoped credentials remain a server-mode feature, where OIDC
-  supplies a subject and roles have somewhere to be enforced.
-
-  Two smaller corrections alongside: the audit record cited
-  `nova server issue-token --label <label>`, a command that mints an unrelated offline
-  ed25519 JWT and has no `--label` flag at all — an audit trail whose reproduction command
-  is wrong is worse than one with none. And `test_issue_token_confirmed` asserted
-  `record["token"] == data["token"]`, pinning the cleartext-on-disk behaviour as expected;
-  it now asserts the digest.
-
-  Checked while there and **not** a defect: of 84 mutating routes in `serve/`, zero lack
-  `Depends(verify_token)` — verified by walking the dependency tree of every route on the
-  built app, not by matching decorators. `GET /api/admin/roles` already documents that in
-  local mode the shared token is unconditionally admin.
-
-- **`nova verify` now checks that the capsule on disk is the one that was sealed**
-  (ADR-0251). Its three checks — DSSE
-  signature, RFC 3161 timestamp, Merkle inclusion — were each correct and none was bound to
-  the directory it was printed about. Measured on a freshly sealed capsule: appending a
-  fabricated model call (`tokens_in: 999999`) to `model-calls.jsonl` verified green, and so
-  did editing `status: success` to `status: success-FORGED` in `capsule.yaml` — the very
-  document the signature is over. The CLI read `capsule_id` from `log-entry.json`, a file
-  inside the capsule, and `NovaSeal.verify()` never opened `capsule.yaml` at all.
-
-  Two bindings close it. The manifest now carries `evidence_digests`, a `sha256`/`size_bytes`
-  entry for every evidence file, computed before the manifest becomes the signed payload;
-  and `nova verify` re-reads `capsule.yaml`, compares it to the decoded payload, and
-  re-derives `capsule_id` rather than trusting the file. Both forgeries now exit 1 and name
-  what changed.
-
-  Capsules sealed earlier have no `evidence_digests` and print
-  `⊘ Evidence binding: NOT PRESENT (sealed before evidence_digests)` — not a green check.
-  That is the same rule the RFC 3161 honesty fix established: a check that did not run is
-  never reported as OK. Files added after sealing (`nova export-c2pa` writes one) are named
-  as not covered but never fail the capsule, because adding a derived artifact next to a
-  capsule is normal and a check that fails on it would be switched off within a week.
-
-  `lineage.jsonl` was written nine lines *after* the seal call and is now emitted before it,
-  so it is covered like everything else. `capture-health.json` is still written after
-  sealing and is reported as uncovered rather than silently dropped.
-
-- **`nova capture --mark-provenance` produced capsules that failed `nova validate`.** The
-  run-capsule schema sets `additionalProperties: false` and never declared
-  `content_provenance_ref`, the field that path writes for EU AI Act Art.50 marking, so the
-  Art.50 marker and the validator had disagreed since ADR-0074 shipped. Declared in both
-  schema trees.
-
-### Changed
-
-- **The CLA stays, and the contributor-facing wording is clearer about what it does and does
-  not do.** `CONTRIBUTING.md` now leads with the cost (one comment on your first pull request)
-  and states plainly that contributors keep the copyright in their work, that a license is
-  being granted rather than ownership transferred, and that every release stays Apache-2.0.
-
-  A brief experiment replacing the CLA with a DCO was reverted the same day. The DCO is a
-  lighter ask, but it certifies provenance only — it grants no right to make a licensing
-  decision later, which is the entire reason this project consolidates copyright while it is
-  still small enough to do so.
-
-### Added
-
-- **`nova doctor --check-extras`** ([#4](https://github.com/MSKazemi/novafabric/issues/4)) —
-  answers "which of the 32 extras do I need?" without reading `pyproject.toml`. Lists each
-  extra as complete or incomplete, names the distributions missing from each, and prints the
-  exact `pip install 'novafabric[<extra>]'` command. Exit code stays 0: most installs
-  deliberately omit most extras, so incompleteness is information, not failure.
-
-  Extra names and requirements are read from installed distribution metadata rather than
-  hardcoded. Two details that decide whether such a check works at all: the requirement
-  marker is single-quoted (`extra == 'serve'`), so matching only the double-quoted form
-  finds nothing and the check silently passes while checking nothing; and presence is tested
-  per **distribution**, not by importing, because a distribution name is not reliably its
-  import name — an early `find_spec` version reported `python-louvain` missing when it was
-  installed, and telling someone to reinstall what they already have is worse than silence.
-
-- **Fixed: every "install this extra" instruction printed through Rich had the extra name
-  silently deleted.** Rich reads `[serve]` in `pip install 'novafabric[serve]'` as a markup
-  tag and drops it, so the rendered instruction was `pip install 'novafabric'` — which
-  reinstalls the base package and changes nothing. It fired at exactly the moment a user was
-  blocked on a missing extra, in five call sites (`cli/serve.py`, three in `cli/kg.py`,
-  `metadata_store/cli.py`). The source strings were correct all along, so no ordinary test
-  could have caught it; only rendering them does, which is what
-  `tests/cli/test_extras_install_hints.py` now asserts — including a scan that fails on any
-  new call site written the unescaped way.
-
-- **`nova replay`, `nova validate` and `nova diff` accept a run id, not just a path.**
-  `nova capture` ends by printing `(run_id=01HX…)`, so the run id is what a user has in
-  hand — but every capsule-taking command required a directory path, and the documented
-  first run therefore did not work. The README's
-  `nova replay 01HX… --mode forensic` failed with "Not a valid capsule directory", and
-  `docs/getting-started.md` had to reconstruct the path with
-  `RUN=.novafabric/capsules/$(ls -t …)` — a line that resolved to nothing, because it is
-  relative to the working directory while `nova capture` writes under
-  `~/.novafabric/capsules/`. Verified by installing the built wheel into a clean 3.12
-  venv and following the README: capture → validate → replay now works by id.
-
-  **A path always wins.** If the reference names an existing capsule directory it is used
-  as given and no lookup happens, so every invocation that worked before resolves to
-  exactly the same directory — this widens the accepted input without changing any input
-  that already worked. An unknown id now names the directory searched and how to point
-  elsewhere, instead of only saying the reference was not a directory.
-
-  Two guards keep the onboarding docs from drifting back
-  (`tests/docs/test_onboarding_paths_are_real.py`), asserting against
-  `default_capsule_dir()` rather than a restated path. Worth knowing while reading them:
-  **there are two capture defaults.** The CLI writes to `~/.novafabric/capsules/`; the
-  in-process SDK defaults to `./.novafabric/runs/` relative to the working directory
-  (`capture/orchestrator.py:207`). Both are correct in their own context, and mixing them
-  up is what made the guide wrong.
-
-- **The release toolchain is now exercised on pull requests** —
-  `.github/workflows/release-toolchain.yml`. `publish-image.yml` and `publish-chart.yml` fire only
-  on a `v*` tag, so no pull request ran the actions that build and sign the released image; a green
-  check run said nothing about them. Dependabot #58 made that concrete by proposing seven *major*
-  action bumps — including `sigstore/cosign-installer` v3→v4 — with every check green and not one
-  of them exercised. The new job runs that toolchain with publishing disabled: buildx build with
-  `push: false` passing every input the release step passes, cosign installed and run, chart linted
-  and packaged. `tests/docs/test_release_toolchain_matches_publish.py` holds its action versions
-  identical to the publish workflows, since a smoke test pinned to different versions is a green
-  check that proves nothing. What it still cannot cover — `docker/login-action`, `cosign sign`,
-  and arm64 emulation — is named in [`docs/release-process.md`](docs/release-process.md) §1c rather
-  than left to look like coverage.
-
-- **Researcher and standards-body entry points** — [`docs/for-researchers.md`](docs/for-researchers.md)
-  (making a reproducible, reviewable, citable paper artifact, and what NovaFabric does *not* solve),
-  [`docs/standards-conformance.md`](docs/standards-conformance.md) (every specification implemented,
-  how to verify each claim, and what is explicitly not claimed), a JOSS-style `paper/`, and a
-  `.zenodo.json` + expanded `CITATION.cff` so an archived release is citable.
-
-- **Contributor License Agreement ([`CLA.md`](CLA.md)).** NovaFabric stays Apache-2.0
-  and this does not change the licence anyone receives the code under. Copyright in a
-  contribution belongs to whoever wrote it, so once outside contributions land, any
-  later licensing decision needs permission from every past contributor — the CLA
-  consolidates copyright with one party while contributors keep ownership of their
-  work. Signing is automated by the CLA Assistant workflow on each pull request; bots
-  are allowlisted. No DCO is added: section 4 of the CLA already covers provenance.
-
-- **`novafabric.cli.introspect` and `novafabric.serve.introspect`** — the supported
-  ways to enumerate the `nova` command tree and the mounted HTTP route table
-  (ADR-0250). Both identify
-  structure by shape rather than by class identity, and both raise rather than
-  returning an empty surface. Nine hand-rolled copies of these walks (five for the
-  CLI, four for routes) are replaced by two tested modules.
-
-### Fixed
-
 - **RFC 3161 timestamping failed against every real TSA, and blamed the TSA.**
   `_extract_nonce_from_tsr()` returned the first nonce-sized INTEGER anywhere in
   the response; in a genuine `TimeStampResp` that is `serialNumber`, three
@@ -2053,7 +1964,195 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   to PR CI. Its row-count assertion now includes the CLI's own output, so the next
   failure of this kind reports "the CLI thought it succeeded" instead of "0 rows".
 
+- **Typer unpinned to `<0.28`; the CLI was never broken.** The previous `<0.26`
+  ceiling rested on a misdiagnosis recorded in `pyproject.toml`, which claimed
+  typer 0.27.x "registers no subcommands" and would ship "a completely
+  non-functional CLI". Measured on both versions, `nova --help` lists the same **123
+  commands**, `nova seal verify --help` resolves, and a `nova capture` round-trip
+  succeeds. What actually broke was introspection: typer 0.27 vendors its own Click
+  as `typer._click`, so `TyperGroup` stopped inheriting from the installed
+  `click.Group` and every `isinstance(cmd, click.Group)` walk reported a
+  one-command CLI — surfacing as ~289 "command no longer exists" assertions across
+  three unrelated test modules. Unblocks the Typer dependency and its security
+  updates.
+
+- **Route enumeration survives FastAPI's lazy router mounting.** FastAPI 0.141
+  stopped flattening included routers into `app.routes`, appending a single lazy
+  `_IncludedRouter` instead, which made every `isinstance(r, APIRoute)` contract
+  gate see an app with no endpoints. `serve/introspect.py` walks the real tree —
+  including nested include prefixes — and is verified against both the pinned
+  0.136.3 and the not-yet-adopted 0.141.1.
+
+- **`/api/openapi.json` no longer 500s on a topology-enabled server.**
+  `/topology/clusters` and `/metrics/stream` annotate their return type with a
+  `Response` class imported inside the app factory; FastAPI treated that
+  function-local forward reference as a response model and Pydantic could not
+  resolve it at schema-generation time, so every `nova serve --topology` host
+  answered the dashboard's `/api/docs` spec request with a traceback. Both
+  routes now declare `response_model=None` (the `router_tv5.py:75` remedy).
+  The dashboard OpenAPI ratchet is scoped to the canonical `create_app`, so no
+  test had ever generated the schema with the TV-5 routes mounted —
+  `tests/serve/test_openapi_topology_enabled.py` now does, and asserts neither
+  route binds a response model.
+
+- **Sidebar groups can be collapsed again.** A group holding the active tab was
+  forced open at render time and its header button short-circuited to a no-op,
+  so you could open a group but never close it — the plus/minus stopped working
+  the moment you picked anything inside. Every group now collapses, the active
+  one included. The properties that force-expanding was standing in for are kept
+  explicitly: the group owning the tab you boot into starts open, arriving at a
+  tab from a `g` shortcut / command palette / `?tab=` link opens its group, a
+  group opened *for* you closes again when you navigate out, and a group you
+  opened yourself is never auto-closed. A collapsed group holding the active tab
+  carries a "you are here" dot.
+
+- **Sidebar widened to 15rem (was 13rem).** At 13rem the hover shortcut hint —
+  absolutely positioned at the right edge, so it takes no layout space — was
+  painted directly on top of each row's badge or count: 14px of text-on-text
+  overlap, measured on every row. `tests/e2e/dashboard-sidebar.spec.ts` measures
+  real geometry in a browser (jsdom has no layout engine) and fails if that
+  clearance is ever lost again.
+
 ### Security
+
+- **Runtime image no longer runs as root** — `deploy/docker/Dockerfile` now
+  creates and switches to `nova` (uid/gid 1000), matching the uid the Helm
+  chart has pinned in `podSecurityContext` all along; until now the chart and
+  the image disagreed about who may write `/data`. `/data` is chown'd before
+  privileges drop, and a guard test pins the image uid to the chart uid so
+  the two can only change together. Verified by building the image and
+  running it: `id` reports uid 1000, `/data` is writable, the CLI runs.
+- **No more unbounded queues** — the capsule watcher's watchdog event queue
+  is bounded (4096) and overflow *degrades to a full incremental rescan*
+  instead of dropping create events, because a dropped event here is a
+  capsule that silently never reaches the index; the NATS consumer's
+  injection queue is bounded with backpressure. Overflow test proves a burst
+  larger than the queue still indexes every capsule.
+
+- **npm dependency audit gate** — the three tracked npm lockfiles (`web/`,
+  `packages/nova-dashboard/`, `packages/nova-sdk-ts/`) are now audited in CI
+  behind the same severity + waiver discipline as the Python closure
+  (ADR-0186 Amendment 1): HIGH/CRITICAL advisories block, waivers are
+  time-boxed in `.npm-audit-waivers.toml` and expire loudly, and advisories
+  are deduplicated by GHSA id so one vulnerability is one decision. Found and
+  fixed in the same change: `fast-uri` (4 advisories, two SSRF, reached from
+  the production `ajv` dependency), `nanoid`, and `qs` updated in `web/`;
+  `fflate` updated in the dashboard. One advisory waived with a written
+  justification: extract-zip symlink traversal in the dev-only Lighthouse CI
+  chain, where no fixed version exists upstream.
+
+- **The sdist could carry the entire private tree, including the private git history**
+  (ADR-0259). This repo is dual-git — one working tree, a public `.git` and a private
+  `.git-private` — and the split is enforced by `.git/info/exclude`, a repo-local allowlist
+  that exists on no remote. `.gitignore` says so in its own header: the private material is
+  *"NOT listed here on purpose"*. **hatchling reads `.gitignore`; it does not read
+  `.git/info/exclude`**, so the only firewall this repository has was invisible to the tool
+  that builds the sdist. Measured: `uv build` produced a **343 MB** sdist containing
+  `.git-private/` in full (170 MB — the entire private history, a ~150 MB pack file),
+  `design/` (191 MB), `experiments/` (33 MB), `.claude/`, `monetize/`, `site-config/`,
+  `CLAUDE.md` and `THREAT_MODEL.md`.
+
+  **Nothing leaked.** Every sdist on PyPI is built by CI from a clean checkout of the
+  *public* repository, which contains none of these paths; the published v0.101.0 sdist was
+  downloaded and verified — 7 MB, no `design/`, no `.git-private/`, no `experiments/`. But
+  the exposure depended entirely on *where* the build ran, and `dualgit release` prints a
+  release command for a human to run locally, so it was one `uv build` away.
+
+  `[tool.hatch.build.targets.sdist].exclude` now names every private top-level path,
+  anchored with `/` so the deliberate carve-outs (`tests/bench`,
+  `integrations/claude-plugin`) are untouched. A hand-maintained list rots, so
+  `tests/docs/test_private_paths_never_enter_a_build.py` derives the requirement from the
+  two gitdirs — *(private-tracked) − (public-tracked)* is private by definition — and fails
+  until each is excluded; it caught one path the hand-written list had missed.
+  `.git-private/` is tracked by neither git and is asserted separately by name. A local
+  `uv build` now yields a **7.26 MB** sdist with zero private paths, removing nothing the
+  published sdist had; a wheel built from it installs into a clean venv and runs outside the
+  source tree with all three force-included JSON Schemas resolving from `site-packages`.
+
+- **The Docker build context carried private material too — the same class, swept**
+  (ADR-0259). Having fixed the sdist, every tool in the repo that packages or copies the
+  working tree wholesale was checked against the same question: *does it read
+  `.git/info/exclude`?* None do. The wheel is safe by construction (`src/` layout plus an
+  explicit `force-include` list), `helm package` takes a subdirectory as its argument and
+  cannot reach the repo root, and `scripts/build_airgap_bundle.py` is a strict allowlist
+  (`--member arcname=src`). **`.dockerignore` was the second instance**: it named `design/`,
+  `.claude/`, `.git-private` and `bench/` but not `experiments/`, `monetize/`, `papers/`,
+  `priv/`, `ship/`, `site-config/`, `.dualgit/`, `.claude-plugin/`, `.benchmark-results/`,
+  `CLAUDE.md` or `THREAT_MODEL.md`.
+
+  This one is **defense in depth, not a live leak** — the Dockerfile uses targeted `COPY`
+  lines and has no `COPY . .`, so nothing private has ever reached the published image. What
+  did happen is that those paths entered the build context, which is transmitted to the
+  daemon and cached, leaves the machine as soon as a remote or shared buildx driver is used,
+  and would become an image leak the first time someone writes `COPY . .`. Completing the
+  list took the reported context transfer from **13.48 MB to 168 kB**, and the builder stage
+  still builds. The guard test was renamed to
+  `tests/docs/test_private_paths_never_enter_a_build.py` and now derives the private set once
+  from the two gitdirs, asserting it against **both** the sdist excludes and `.dockerignore`.
+
+- **A token `nova serve` issued authenticated nothing, and sat on disk in cleartext**
+  (ADR-0252). `POST /api/admin/tokens` returned 200 with a token and *"Save this token — it
+  will not be shown again"*; every request carrying it got **401**, because `verify_token`
+  compared only against the single server token and never consulted the store it had just
+  written. That store, `~/.novafabric/tokens.jsonl`, held the secret verbatim at mode
+  **0664** — while `auth.py` goes to deliberate trouble to create `.serve-token` at 0600
+  atomically, with a comment explaining why. A revoke rewrote the file through
+  `tmp.write_text()`, so even a hand-hardened 0600 came back 0664.
+
+  Issued tokens now authenticate by `Authorization: Bearer` or `?token=`; the record keeps
+  a `sha256:` digest and no secret; every write path is 0600 and reading repairs a wider
+  mode left by an older version; and revocation denies, because something finally reads
+  the flag. Records written before this still authenticate — locking an operator out to
+  punish them for an old file is the wrong trade.
+
+  An issued token carries **exactly** the dashboard token's access: `nova serve`
+  authenticates, it does not authorize. The response warning says so instead of implying a
+  scope that does not exist. Scoped credentials remain a server-mode feature, where OIDC
+  supplies a subject and roles have somewhere to be enforced.
+
+  Two smaller corrections alongside: the audit record cited
+  `nova server issue-token --label <label>`, a command that mints an unrelated offline
+  ed25519 JWT and has no `--label` flag at all — an audit trail whose reproduction command
+  is wrong is worse than one with none. And `test_issue_token_confirmed` asserted
+  `record["token"] == data["token"]`, pinning the cleartext-on-disk behaviour as expected;
+  it now asserts the digest.
+
+  Checked while there and **not** a defect: of 84 mutating routes in `serve/`, zero lack
+  `Depends(verify_token)` — verified by walking the dependency tree of every route on the
+  built app, not by matching decorators. `GET /api/admin/roles` already documents that in
+  local mode the shared token is unconditionally admin.
+
+- **`nova verify` now checks that the capsule on disk is the one that was sealed**
+  (ADR-0251). Its three checks — DSSE
+  signature, RFC 3161 timestamp, Merkle inclusion — were each correct and none was bound to
+  the directory it was printed about. Measured on a freshly sealed capsule: appending a
+  fabricated model call (`tokens_in: 999999`) to `model-calls.jsonl` verified green, and so
+  did editing `status: success` to `status: success-FORGED` in `capsule.yaml` — the very
+  document the signature is over. The CLI read `capsule_id` from `log-entry.json`, a file
+  inside the capsule, and `NovaSeal.verify()` never opened `capsule.yaml` at all.
+
+  Two bindings close it. The manifest now carries `evidence_digests`, a `sha256`/`size_bytes`
+  entry for every evidence file, computed before the manifest becomes the signed payload;
+  and `nova verify` re-reads `capsule.yaml`, compares it to the decoded payload, and
+  re-derives `capsule_id` rather than trusting the file. Both forgeries now exit 1 and name
+  what changed.
+
+  Capsules sealed earlier have no `evidence_digests` and print
+  `⊘ Evidence binding: NOT PRESENT (sealed before evidence_digests)` — not a green check.
+  That is the same rule the RFC 3161 honesty fix established: a check that did not run is
+  never reported as OK. Files added after sealing (`nova export-c2pa` writes one) are named
+  as not covered but never fail the capsule, because adding a derived artifact next to a
+  capsule is normal and a check that fails on it would be switched off within a week.
+
+  `lineage.jsonl` was written nine lines *after* the seal call and is now emitted before it,
+  so it is covered like everything else. `capture-health.json` is still written after
+  sealing and is reported as uncovered rather than silently dropped.
+
+- **`nova capture --mark-provenance` produced capsules that failed `nova validate`.** The
+  run-capsule schema sets `additionalProperties: false` and never declared
+  `content_provenance_ref`, the field that path writes for EU AI Act Art.50 marking, so the
+  Art.50 marker and the validator had disagreed since ADR-0074 shipped. Declared in both
+  schema trees.
 
 - **Azure Key Vault seals were silently unverifiable — every capsule signed with
   `AzureKvSigningBackend` failed its own verification.** Key Vault returns ECDSA
@@ -2088,103 +2187,6 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
   public. The vulnerable versions were confirmed by reading the lockfiles, which is
   the only check that settled it — neither alert list was right on its own.
 
-### Fixed
-
-- **Typer unpinned to `<0.28`; the CLI was never broken.** The previous `<0.26`
-  ceiling rested on a misdiagnosis recorded in `pyproject.toml`, which claimed
-  typer 0.27.x "registers no subcommands" and would ship "a completely
-  non-functional CLI". Measured on both versions, `nova --help` lists the same **123
-  commands**, `nova seal verify --help` resolves, and a `nova capture` round-trip
-  succeeds. What actually broke was introspection: typer 0.27 vendors its own Click
-  as `typer._click`, so `TyperGroup` stopped inheriting from the installed
-  `click.Group` and every `isinstance(cmd, click.Group)` walk reported a
-  one-command CLI — surfacing as ~289 "command no longer exists" assertions across
-  three unrelated test modules. Unblocks the Typer dependency and its security
-  updates.
-
-- **Route enumeration survives FastAPI's lazy router mounting.** FastAPI 0.141
-  stopped flattening included routers into `app.routes`, appending a single lazy
-  `_IncludedRouter` instead, which made every `isinstance(r, APIRoute)` contract
-  gate see an app with no endpoints. `serve/introspect.py` walks the real tree —
-  including nested include prefixes — and is verified against both the pinned
-  0.136.3 and the not-yet-adopted 0.141.1.
-
-### Changed
-
-- **Dependencies:** `typer` `>=0.15,<0.26` → `>=0.15,<0.28`; `mutmut` `<3.6` → `<3.8`.
-  `fastapi` stays at `<0.137`: five HTTP metrics/self-trace tests still fail on
-  0.141.1 because the metrics middleware records no samples, which is a genuine
-  behaviour change and not introspection. Tracked as
-  [#54](https://github.com/MSKazemi/novafabric/issues/54); the raw-path privacy
-  assertion still passes, so no path data leaks — the samples are simply absent.
-  The ceiling is now enforced by a Dependabot `ignore` rule as well as the manifest
-  bound, because Dependabot rewrites the `pyproject.toml` constraint rather than
-  respecting it and re-proposed the same red PR ([#53](https://github.com/MSKazemi/novafabric/pull/53)).
-
-  Floors aligned to the version already resolving and under test, continuing the
-  #46–#49 batch: `uvicorn[standard]` `>=0.32` → `>=0.52.1` (serve + server extras),
-  `nvidia-ml-py` `>=12.0.0` → `>=13.610.43` (energy-gpu), `google-adk` `>=1.34.0` →
-  `>=2.6.2` (openai-agents), `sigstore` `>=4.2.0` → `>=4.5.0`. The OpenTelemetry
-  Collector set moved to the v0.158.0 / v1.64.0 train, and the GitHub Actions used by
-  the publish workflows took seven major bumps.
-
-  The `python` base image is held at **3.12** by a new Dependabot `ignore` on major and
-  minor updates (patch still flows, so CPython security fixes are unaffected). CI runs a
-  single 3.12 job and `pyproject.toml` deliberately claims no classifier beyond 3.12
-  "until CI grows a matrix that exercises them", so a proposed 3.14 base image
-  ([#55](https://github.com/MSKazemi/novafabric/pull/55)) would have shipped a runtime
-  nothing here tests — its green checks only proved the image *builds*.
-
-- **Version ceilings must now state measured evidence, not inferred conclusions**
-  (ADR-0250). A ceiling comment records the command that was run and its output.
-
-- **Git history rewritten to a single authorship identity (2026-08-08).** Commit and
-  annotated-tag *messages* were normalized and every commit now records one author and
-  committer. **No file content changed** — every commit's tree hash is byte-identical to
-  before, and all 49 tags still point at the same trees. Only commit hashes differ.
-
-  **If you cloned before 2026-08-08, your clone has diverged and `git pull` will
-  conflict.** Re-clone, or reset an untouched checkout onto the new history:
-
-  ```bash
-  git fetch --all --tags --prune --force
-  git reset --hard origin/main
-  ```
-
-  If you have local work on top of the old history, rebase it with
-  `git rebase --onto origin/main <old-base> <your-branch>` before resetting.
-
-### Fixed
-
-- **`/api/openapi.json` no longer 500s on a topology-enabled server.**
-  `/topology/clusters` and `/metrics/stream` annotate their return type with a
-  `Response` class imported inside the app factory; FastAPI treated that
-  function-local forward reference as a response model and Pydantic could not
-  resolve it at schema-generation time, so every `nova serve --topology` host
-  answered the dashboard's `/api/docs` spec request with a traceback. Both
-  routes now declare `response_model=None` (the `router_tv5.py:75` remedy).
-  The dashboard OpenAPI ratchet is scoped to the canonical `create_app`, so no
-  test had ever generated the schema with the TV-5 routes mounted —
-  `tests/serve/test_openapi_topology_enabled.py` now does, and asserts neither
-  route binds a response model.
-
-- **Sidebar groups can be collapsed again.** A group holding the active tab was
-  forced open at render time and its header button short-circuited to a no-op,
-  so you could open a group but never close it — the plus/minus stopped working
-  the moment you picked anything inside. Every group now collapses, the active
-  one included. The properties that force-expanding was standing in for are kept
-  explicitly: the group owning the tab you boot into starts open, arriving at a
-  tab from a `g` shortcut / command palette / `?tab=` link opens its group, a
-  group opened *for* you closes again when you navigate out, and a group you
-  opened yourself is never auto-closed. A collapsed group holding the active tab
-  carries a "you are here" dot.
-
-- **Sidebar widened to 15rem (was 13rem).** At 13rem the hover shortcut hint —
-  absolutely positioned at the right edge, so it takes no layout space — was
-  painted directly on top of each row's badge or count: 14px of text-on-text
-  overlap, measured on every row. `tests/e2e/dashboard-sidebar.spec.ts` measures
-  real geometry in a browser (jsdom has no layout engine) and fails if that
-  clearance is ever lost again.
 
 ## [0.101.0] - 2026-08-07
 

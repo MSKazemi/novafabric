@@ -78,12 +78,28 @@ RUN WHL=$(ls dist/novafabric-*.whl) \
        "${WHL}[server,serve,clickhouse,lineage-kuzu,lineage-migration]" \
     && rm -rf dist/
 
-RUN mkdir -p /data/capsules /data/nova /data/kuzu
+# Non-root by default (CLAUDE.md anti-pattern list; found 2026-09-04 as the
+# one gap in an otherwise-aligned chain: the Helm chart already pinned
+# runAsUser/runAsGroup/fsGroup 1000 while this image defined NO such user and
+# owned /data as root, so the chart's pods and this image disagreed about who
+# may write the data dirs). uid/gid 1000 here MUST match the chart's
+# podSecurityContext -- change them together or not at all.
+#
+# Bind-mount note: `mkdir -p` in the entrypoint succeeds on any EXISTING
+# mounted dir regardless of owner; a host dir owned by another uid surfaces
+# as a loud permission error on first write, not silent breakage. Named
+# volumes inherit this chown on first use.
+RUN groupadd --gid 1000 nova \
+    && useradd --uid 1000 --gid 1000 --no-create-home --shell /usr/sbin/nologin nova \
+    && mkdir -p /data/capsules /data/nova /data/kuzu \
+    && chown -R nova:nova /data
 
 COPY deploy/docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 VOLUME ["/data/capsules", "/data/nova", "/data/kuzu"]
 EXPOSE 4321
+
+USER nova
 
 ENTRYPOINT ["/entrypoint.sh"]

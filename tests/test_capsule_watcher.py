@@ -556,3 +556,99 @@ class TestIngestCapsuleCLI:
         assert result.exit_code == 0
         assert "warning" in result.output.lower()
         assert "stopped" in result.output
+
+
+# ── WatchdogBackend bounded queue (no-unbounded-queues rule) ──────────────
+
+
+class TestWatchdogBackendBoundedQueue:
+    """The event queue is bounded, and overflow must DEGRADE, never DROP.
+
+    A dropped create event here is a capsule that silently never reaches the
+    index while everything reports healthy — the misreport failure class.
+    So the contract is: queue full → flag → next poll_once runs the polling
+    backend's incremental rescan, and every capsule still gets indexed.
+    """
+
+    def test_queue_is_bounded(self, tmp_path: Path) -> None:
+        if not _has_watchdog():
+            pytest.skip("watchdog not installed — skip WatchdogBackend tests")
+        from novafabric.serve.capsule_watcher import WatchdogBackend
+
+        caps = tmp_path / "caps"
+        caps.mkdir()
+        backend = WatchdogBackend(caps)
+        try:
+            assert backend._queue.maxsize == WatchdogBackend.QUEUE_MAX > 0
+        finally:
+            backend.close()
+
+    def test_overflow_degrades_to_rescan_and_loses_nothing(self, tmp_path: Path) -> None:
+        """More create events than the queue holds -> every capsule indexed."""
+        if not _has_watchdog():
+            pytest.skip("watchdog not installed — skip WatchdogBackend tests")
+        import queue as queue_mod
+
+        from novafabric.registry.runs_cache import count_cached_runs, ensure_runs_cache
+        from novafabric.serve.capsule_watcher import WatchdogBackend
+
+        caps = tmp_path / "caps"
+        caps.mkdir()
+        conn = sqlite3.connect(str(tmp_path / "r.db"))
+        conn.row_factory = sqlite3.Row
+        ensure_runs_cache(conn)
+
+        backend = WatchdogBackend(caps)
+        try:
+            # Shrink the bound so the test does not need 4096 files, then
+            # simulate the observer thread outrunning the drain: more real
+            # capsules than the queue can hold, enqueued the way the handler
+            # does it (put_nowait; on Full set the overflow flag).
+            backend._queue = queue_mod.Queue(maxsize=3)
+            total = 8
+            for i in range(total):
+                path = _make_capsule(caps, f"run_burst_{i:03d}")
+                try:
+                    backend._queue.put_nowait(path)
+                except queue_mod.Full:
+                    backend._overflowed.set()
+
+            assert backend._overflowed.is_set(), (
+                "8 events into a maxsize-3 queue must overflow — if this "
+                "fails the test itself is vacuous"
+            )
+
+            n = backend.poll_once(caps, conn)
+            conn.commit()
+
+            assert count_cached_runs(conn) == total, (
+                "overflow dropped capsules from the index instead of "
+                "degrading to a rescan"
+            )
+            assert n >= total
+            assert not backend._overflowed.is_set(), "flag must clear after the rescan"
+        finally:
+            backend.close()
+
+    def test_no_overflow_means_no_rescan_flag(self, tmp_path: Path) -> None:
+        if not _has_watchdog():
+            pytest.skip("watchdog not installed — skip WatchdogBackend tests")
+        from novafabric.registry.runs_cache import ensure_runs_cache
+        from novafabric.serve.capsule_watcher import WatchdogBackend
+
+        caps = tmp_path / "caps"
+        caps.mkdir()
+        conn = sqlite3.connect(str(tmp_path / "r.db"))
+        conn.row_factory = sqlite3.Row
+        ensure_runs_cache(conn)
+
+        backend = WatchdogBackend(caps)
+        try:
+            _make_capsule(caps, "run_single")
+            import time
+
+            time.sleep(0.3)  # let inotify fire
+            backend.poll_once(caps, conn)
+            assert not backend._overflowed.is_set()
+        finally:
+            backend.close()

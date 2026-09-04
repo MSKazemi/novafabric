@@ -105,8 +105,11 @@ class NATSJetStreamConsumer:
         self._running = False
         self._task: asyncio.Task[None] | None = None
 
-        # Injection queue — used by put() for tests only
-        self._inject_queue: asyncio.Queue[bytes] = asyncio.Queue()
+        # Injection queue — used by put() for tests only. Bounded all the
+        # same (project rule: no unbounded queues): if a caller ever misuses
+        # put() as a production ingest path, a full queue makes put() await
+        # (backpressure) instead of growing without limit.
+        self._inject_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=1024)
 
     # ------------------------------------------------------------------
     # Lifecycle

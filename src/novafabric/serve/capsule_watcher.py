@@ -76,11 +76,22 @@ class WatchdogBackend:
 
     name = "watchdog"
 
+    # Bound on the event queue (project rule: no unbounded queues — the
+    # observer thread produces, poll_once consumes every NOVA_WATCHER_INTERVAL
+    # seconds, and a mass ingest can create directories faster than the drain).
+    # 4096 Path entries is far past any burst a 2 s poll window has seen, and
+    # overflow DEGRADES to a full incremental rescan rather than dropping —
+    # a dropped create event here would mean a capsule that silently never
+    # reaches the index, which is exactly the misreport class this system
+    # exists to prevent.
+    QUEUE_MAX = 4096
+
     def __init__(self, capsule_dir: Path) -> None:
         from watchdog.observers import Observer  # noqa: PLC0415
 
         self._capsule_dir = capsule_dir
-        self._queue: queue.Queue[Path] = queue.Queue()
+        self._queue: queue.Queue[Path] = queue.Queue(maxsize=self.QUEUE_MAX)
+        self._overflowed = threading.Event()
         self._observer = Observer()
         self._scheduled = False
         if capsule_dir.exists():
@@ -92,11 +103,19 @@ class WatchdogBackend:
         )
 
         queue_ref = self._queue
+        overflow_ref = self._overflowed
 
         class _Handler(FileSystemEventHandler):
             def on_created(self, event: Any) -> None:
-                if event.is_directory:
-                    queue_ref.put(Path(event.src_path))
+                if not event.is_directory:
+                    return
+                try:
+                    queue_ref.put_nowait(Path(event.src_path))
+                except queue.Full:
+                    # Never block or raise in the observer thread. The flag
+                    # makes the next poll_once run a full incremental rescan,
+                    # which indexes this capsule anyway — degraded, not lost.
+                    overflow_ref.set()
 
         self._observer.schedule(
             _Handler(), str(self._capsule_dir), recursive=False
@@ -115,6 +134,24 @@ class WatchdogBackend:
         from novafabric.serve.capsule_loader import load_capsule_manifest  # noqa: PLC0415
 
         inserted = 0
+        if self._overflowed.is_set():
+            # The bounded queue overflowed since the last poll: events were
+            # not enqueued, so the queue alone is no longer a complete record
+            # of what was created. Fall back to the polling backend's
+            # incremental rescan (idempotent upserts make any double-visit of
+            # still-queued paths harmless), then continue draining normally.
+            self._overflowed.clear()
+            from novafabric.registry.runs_cache import (  # noqa: PLC0415
+                build_runs_index,
+            )
+
+            logger.warning(
+                "capsule watcher event queue overflowed (maxsize=%d); "
+                "degrading to a full incremental rescan of %s",
+                self.QUEUE_MAX,
+                capsule_dir,
+            )
+            inserted += build_runs_index(capsule_dir, conn, incremental=True)
         while True:
             try:
                 p = self._queue.get_nowait()

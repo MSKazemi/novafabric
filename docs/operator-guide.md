@@ -1098,6 +1098,14 @@ The `nova` service uses three mounts. All host paths default to
 |---------------|-------------------|---------|
 | `/data/capsules` | `$NOVA_DATA_DIR/capsules` | Run capsule directories (written by `nova capture`, read by all tabs) |
 | `/data/nova` | `$NOVA_DATA_DIR/nova` | `NOVAFABRIC_HOME` inside the container — registry DB, serve token, audit log |
+
+> **Ownership (non-root image):** the container runs as `nova` (uid/gid 1000 —
+> the same uid the Helm chart pins in `podSecurityContext`). Docker creates a
+> missing bind-mount host path as root, and a root-owned `/data/*` surfaces as
+> a loud permission error on the container's first write. Pre-create
+> `$NOVA_DATA_DIR` as a user-owned directory (the default `~/novafabric-data`
+> already is), or `chown -R 1000` a path that was created by an older, root
+> deployment.
 | `/data/kuzu` | Docker named volume `kuzu-data` | KuzuDB knowledge graph store |
 
 **All testbench workloads must write capsules to the host path that maps to
@@ -1123,9 +1131,10 @@ without any error.
 | `NOVA_WATCHER_INTERVAL` | `2.0` | `2.0` | Poll interval in seconds for `PollingBackend` and `nova ingest-capsule --watch` |
 
 > **Why `NOVAFABRIC_EVIDENCE_DIR` matters:** The serve app defaults to
-> `$HOME/.novafabric/evidence` which inside the container resolves to
-> `/root/.novafabric/evidence` — an ephemeral path that is not mounted and
-> disappears on container restart. The correct path is `/data/capsules/evidence`
+> `$HOME/.novafabric/evidence`, and inside the container that is a path that is
+> not mounted anywhere — it disappears on restart, and since the image runs as
+> the non-root `nova` user (uid 1000) the home directory does not even exist to
+> be written. The correct path is `/data/capsules/evidence`
 > (inside the capsule volume), which persists across restarts and is written to
 > by the testbench export stage.
 
