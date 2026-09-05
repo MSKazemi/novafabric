@@ -2071,6 +2071,26 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Security
 
+- **gRPC-Go bumped past a HIGH advisory the open Dependabot PR would not have fixed**
+  (GHSA-vp52-pcj8-j9qc, heap exhaustion via HTTP/2 DATA frame fragmentation).
+  `collector/go.mod` pinned `google.golang.org/grpc v1.82.1`; the advisory covers
+  **`<= 1.83.0`** and is first patched in **1.83.1**.
+
+  ⚠ The open dependency PR bumps grpc to **1.83.0** — inside the vulnerable range. Merging
+  it would have moved the version, closed nothing, and read as if the advisory were handled.
+  **A version bump is not a fix until it is checked against the advisory's patched version**,
+  not merely against "newer than what we had".
+
+  Bumped to `v1.83.1` (indirect). `go build`, `go vet` clean; `go test ./...` shows the same
+  two pre-existing environment-dependent failures as an unmodified control run of the same
+  tree, so the bump introduces none.
+
+  ⚠ This advisory was invisible where anyone would look for it: the **public repository
+  reports 0 Dependabot alerts because its dependency graph is dead**, while the private
+  mirror reports 9 HIGH + 3 MEDIUM. Of those, exactly two are in publicly-tracked files —
+  this one, and an `extract-zip` finding already waived in `.npm-audit-waivers.toml` as a
+  dev-only chain with no upstream fix. **An empty alert list is not evidence of no alerts.**
+
 - **Runtime image no longer runs as root** — `deploy/docker/Dockerfile` now
   creates and switches to `nova` (uid/gid 1000), matching the uid the Helm
   chart has pinned in `podSecurityContext` all along; until now the chart and
