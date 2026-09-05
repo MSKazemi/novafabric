@@ -2071,6 +2071,34 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Security
 
+- **The push gate could skip the suite for a tree it had never tested.**
+
+  `scripts/test-gate.sh` skips `make test-fast` entirely when its digest matches the stamp in
+  `.git/nova-test-gate-passed`, which makes that digest a correctness boundary, not a
+  convenience. It hashed `find src tests scripts -name '*.py'` — **Python sources only**.
+
+  Everything else was invisible to it: `pyproject.toml` and `uv.lock` (a dependency bump —
+  the highest-risk change class in the repo — could not invalidate the stamp), `collector/`,
+  `web/`, `packages/`, `schemas/`, the `Makefile`, `.github/workflows/`, every non-`.py`
+  fixture, and the whole of `docs/`. The ~186 guards in `tests/docs` assert against precisely
+  those files, so a docs-only edit that broke a docs guard would push green.
+
+  Caught in the act: after changing `collector/go.mod`, `collector/go.sum` and `CHANGELOG.md`,
+  the digest was **byte-identical** to the stamp and the gate printed *"already GREEN for this
+  exact tree — nothing to run."*
+
+  Now hashes every tracked and untracked-but-not-ignored file — **0.58 s over 4342 files**, so
+  the narrow key was never buying anything. `GIT_DIR` is unset while enumerating, for the same
+  reason it already was around the suite: git exports it to hooks, so the private pre-push
+  would otherwise digest the 17.9k-file private index and break the "one tree, one digest, one
+  stamp" invariant.
+
+  ⚠ **A cache key that omits an input is not a cache — it is a way to skip work you believe
+  you did.** Guarded by `tests/docs/test_test_gate_digest_covers_the_tree.py`, which reads the
+  file list out of the script itself (`--print-files`, the same list the digest is computed
+  from) so a future narrowing cannot pass the guard while changing the real key. Proven by
+  restoring the old enumeration: 9 passed → 9 failed → 9 passed.
+
 - **gRPC-Go bumped past a HIGH advisory the open Dependabot PR would not have fixed**
   (GHSA-vp52-pcj8-j9qc, heap exhaustion via HTTP/2 DATA frame fragmentation).
   `collector/go.mod` pinned `google.golang.org/grpc v1.82.1`; the advisory covers
