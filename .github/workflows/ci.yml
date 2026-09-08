@@ -271,6 +271,14 @@ jobs:
         working-directory: web
         run: npm run lint
 
+      # web/ carries vitest.config.ts and tests/unit/*.test.tsx, but no job ran
+      # them until 2026-09-08 — a vitest bump here was unverifiable by CI.
+      # Playwright suites (test:e2e/test:visual/test:a11y) stay out: they need
+      # browsers and a served build.
+      - name: Unit tests (vitest)
+        working-directory: web
+        run: npm run test:unit
+
       - name: Build showcase site
         working-directory: web
         run: npm run build

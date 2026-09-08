@@ -44,7 +44,11 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          # CI must satisfy the devDependency engines (vitest 5 needs
+          # "^22.12.0 || ^24.0.0 || >=26.0.0"). This is deliberately NOT the
+          # same as package.json "engines", which describes what a *consumer*
+          # of the published SDK needs and stays at >=18.
+          node-version: "22"
           cache: "npm"
           cache-dependency-path: packages/nova-sdk-ts/package-lock.json
 
