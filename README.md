@@ -12,7 +12,7 @@
 
 **English** · *No translations yet — [help us add yours](https://github.com/MSKazemi/novafabric/issues/73). Translations are credited exactly like code, and a [short guide](docs/i18n/README.md) tells you what to translate and what to leave alone.*
 
-**Created and maintained by [Mohsen Seyedkazemi Ardebili](https://github.com/MSKazemi)** — AI systems engineer, platform architect, HPC researcher. Part of the [NovaFabric](https://github.com/novafabric) open-source lab.
+**Created and maintained by [Mohsen Seyedkazemi Ardebili](https://github.com/MSKazemi)** — AI Platform & MLOps Engineer, building agentic AI systems on Kubernetes. Part of the [NovaFabric](https://github.com/novafabric) open-source lab.
 
 > **NovaFabric turns any command — a script, an agent, a model run, an HPC training job, a notebook cell — into a portable execution capsule:** a schema-valid, secret-redacted, replayable evidence folder you own, produced with no application code changes.
 
