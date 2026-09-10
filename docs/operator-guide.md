@@ -577,6 +577,23 @@ runners:
         memory: "8Gi"
 ```
 
+> ### ⚠ Wire-level capture does not run under the Kubernetes runner
+>
+> `--runner kubernetes` records **stdout, exit code and the environment lock**,
+> but **not model calls or tool calls**: `model-calls.jsonl` and
+> `tool-calls.jsonl` come back **empty regardless of what the workload did**, and
+> the capsule still reports `status: success`.
+>
+> The runner does not inject NovaFabric's capture hook loader into the pod — its
+> capsule is an `emptyDir`, so neither the Docker bind-mount nor the SLURM
+> shared-filesystem mechanism transfers (defect B3, [ADR-0272](../design/adr/0272-kubernetes-capture-hook-injection.md)).
+> As of this release the runner **says so** on stderr and sets
+> `runner_metadata.wire_capture = "unavailable"`, so the gap is visible rather
+> than silent — but it is not yet fixed.
+>
+> If you need model-call evidence today, use `--runner docker` (fixed in the same
+> release), `--runner slurm`, or `--runner local`.
+
 **Environment variables (changed — ADR-0270, unreleased):** the pod receives
 **only** `NOVAFABRIC_*` variables plus anything you name in `extra_env`. The
 environment of the shell you ran `nova capture` in is *not* forwarded.

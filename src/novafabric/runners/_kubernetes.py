@@ -339,6 +339,26 @@ class KubernetesRunner:
         if pod_name:
             runner_metadata["pod_name"] = pod_name
 
+        # B3 / ADR-0272 option E, until the loader can actually reach the pod.
+        # This runner injects neither `sitecustomize.py` nor `PYTHONPATH`, so the
+        # workload runs bare: `model-calls.jsonl` comes back EMPTY no matter what
+        # the workload did. Say so. A capsule that silently omits every model
+        # call while reporting `success` is worse than one that admits it could
+        # not capture -- and the operator can currently only find out by counting
+        # lines in a file that looks complete.
+        runner_metadata["wire_capture"] = "unavailable"
+        runner_metadata["wire_capture_reason"] = (
+            "the Kubernetes runner does not yet inject the capture hook loader "
+            "into the pod (ADR-0272); model/tool calls are NOT recorded"
+        )
+        stderr_bytes += (
+            b"[novafabric] WARNING: wire-level capture did not run. The "
+            b"Kubernetes runner does not inject the hook loader into the pod, so "
+            b"model-calls.jsonl and tool-calls.jsonl will be empty regardless of "
+            b"what the workload did. stdout, exit code and the environment lock "
+            b"are still captured. See ADR-0272.\n"
+        )
+
         if not succeeded and not failed:
             return RunnerJobResult(
                 exit_code=124, runner_status="timeout",

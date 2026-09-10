@@ -30,6 +30,7 @@ from pathlib import Path
 
 from novafabric.runners._env import forwardable_env
 from novafabric.runners._options import coerce_str_dict, coerce_str_list
+from novafabric.runners._sitecustomize import HOOK_LOADER as _HOOK_LOADER
 from novafabric.runners._types import ContainerEvalError, RunnerJobResult, RunnerJobSpec
 
 # Both accept the CLI's string form as well as a config file's real list/dict —
@@ -110,10 +111,30 @@ class DockerRunner:
         # see on the host after the container exits.
         in_container_capsule = "/novafabric/capsule"
 
+        # Materialize the sitecustomize hook loader into the capsule dir,
+        # which is bind-mounted into the container below. Without it the
+        # workload's interpreter never loads NovaFabric's hooks, so
+        # `model-calls.jsonl` comes back EMPTY while the capsule still reports
+        # `status: success` -- silent, total loss of the primary evidence
+        # (defect B3; the same omission the SLURM runner fixed in v0.6.11).
+        (spec.capsule_dir / "sitecustomize.py").write_text(
+            _HOOK_LOADER, encoding="utf-8"
+        )
+
         # Env: start from the orchestrator-provided env, then override the
         # capsule path so it's container-relative. Then layer extra_env.
         env = dict(spec.env)
         env["NOVAFABRIC_CAPSULE_DIR"] = in_container_capsule
+        # Prepend the in-container capsule dir to PYTHONPATH so the loader
+        # above auto-loads at interpreter startup. This is the half that makes
+        # wire-level capture actually fire; preserve any PYTHONPATH the
+        # orchestrator passed through.
+        _existing_pp = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = (
+            f"{in_container_capsule}:{_existing_pp}"
+            if _existing_pp
+            else in_container_capsule
+        )
         for k, v in _coerce_str_dict(opts.get("extra_env")).items():
             env[k] = v
 
@@ -124,8 +145,13 @@ class DockerRunner:
         # Each env var as -e KEY=VALUE, default-deny (ADR-0270): NOVAFABRIC_*
         # plus the operator's explicit extra_env. The orchestrator passes its
         # full env in spec.env, and `docker inspect` exposes whatever we set.
+        # PYTHONPATH is allow-listed deliberately: it is set by this runner
+        # (above), not inherited from the submitter, and capture does not fire
+        # without it. It is not the submitting shell's PYTHONPATH unless the
+        # orchestrator passed one, which is then prefixed rather than replaced.
         for key, value in forwardable_env(
-            env, also_allow=_coerce_str_dict(opts.get("extra_env"))
+            env,
+            also_allow={"PYTHONPATH", *_coerce_str_dict(opts.get("extra_env"))},
         ).items():
             argv.extend(["-e", f"{key}={value}"])
 
