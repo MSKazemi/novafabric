@@ -20,6 +20,7 @@ from __future__ import annotations
 import io
 import shutil
 import tempfile
+import time as _time
 import zipfile
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -46,6 +47,13 @@ RATIO_FLOOR_BYTES = 1_048_576  # 1 MiB
 #: Spool + temp-extract directory, kept on the same filesystem as the capsule
 #: store so the final publish rename is atomic.
 SPOOL_DIR_NAME = ".ingest-tmp"
+
+#: How far back a spool entry must be before it can be considered ownerless.
+#: An upload is bounded by the ingest size cap and takes minutes at most, so an
+#: hour is far beyond any live request while still reclaiming promptly after a
+#: crash. This is the term that makes reaping safe under ``--workers N``, where
+#: each worker reaps with its own start time (B9 follow-up).
+SPOOL_REAP_GRACE_S = 3600.0
 
 
 # --------------------------------------------------------------------------- #
@@ -115,17 +123,33 @@ def reap_orphaned_spools(spool_dir: Path, *, started_at: float) -> int:
     during extraction reclaimed a 201 MB spool and left a 28 MB extraction
     directory behind for good. A partial reaper still leaks, just more slowly.
 
-    *started_at* is this process's start time: anything older predates the
-    current server and therefore has no owner. Entries at or after it may be in
-    flight and are never touched. Everything under the spool directory is
-    transient by construction — published capsules live in the capsule store,
-    reached by an atomic rename out of here — so age is a sufficient test.
+    *started_at* is this process's start time. An entry is reaped only when it
+    is older than **both** that and ``now - SPOOL_REAP_GRACE_S``.
+
+    Requiring both matters under ``--workers N``. Each worker runs its own
+    lifespan, so each runs this reaper with its *own* start time, and uvicorn
+    respawns a worker that dies. A worker respawned at T would see every other
+    worker's in-flight spool (created before T) as "predating the current
+    server" and delete it mid-upload — the file *and* the half-extracted
+    directory. Measured: a reaper given a start time 50 ms after two in-flight
+    entries removed both. The grace period is the half that holds in a
+    multi-process deployment; the start time only narrows it further on a single
+    one.
+
+    Everything under the spool directory is transient by construction —
+    published capsules live in the capsule store, reached by an atomic rename
+    out of here — so age is a sufficient test once it is measured against a
+    horizon no live request can be behind.
 
     Fail-open — a missing directory or an unreadable entry returns/skips rather
     than raising, because reclamation must never prevent the server starting.
     Returns the number of entries removed.
     """
     removed = 0
+    # Older than this process AND older than any plausible in-flight upload.
+    # min() is "older than both": on a fresh boot the grace term dominates, and
+    # on a respawn it is what stops this worker eating a sibling's upload.
+    cutoff = min(started_at, _time.time() - SPOOL_REAP_GRACE_S)
     try:
         entries = list(spool_dir.iterdir())
     except OSError:
@@ -135,8 +159,8 @@ def reap_orphaned_spools(spool_dir: Path, *, started_at: float) -> int:
             is_dir = entry.is_dir()
             if not is_dir and entry.suffix != ".spool":
                 continue
-            if entry.stat().st_mtime >= started_at:
-                continue  # may belong to an in-flight request
+            if entry.stat().st_mtime >= cutoff:
+                continue  # may belong to an in-flight request, here or in a sibling worker
             if is_dir:
                 shutil.rmtree(entry, ignore_errors=True)
             else:
