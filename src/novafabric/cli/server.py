@@ -264,12 +264,23 @@ def start_cmd(
     typer.echo("Press Ctrl+C to stop.")
 
     if workers > 1:
-        # SQLite cannot be safely shared by multiple writer processes; refuse
-        # rather than corrupt the registry.
+        # The *metadata store* cannot be SQLite across writer processes; refuse
+        # rather than corrupt it.
+        #
+        # B8: the old wording said "the SQLite backend cannot be shared safely
+        # across worker processes", which reads as "postgres ⇒ no shared
+        # SQLite". That is false. server/capsule_index.py writes the registry
+        # index (`registry.db`) from every worker on every upload whatever
+        # --backend says, so choosing postgres does not remove the shared SQLite
+        # writer -- it unlocks the multi-worker mode that makes it shared. Say
+        # what is actually being refused.
         if cfg.backend != "postgres":
             typer.echo(
-                f"--workers {workers} requires --backend postgres; the SQLite "
-                f"backend cannot be shared safely across worker processes.",
+                f"--workers {workers} requires --backend postgres: the SQLite "
+                f"metadata store cannot be shared across writer processes. "
+                f"(The registry index at registry.db is written by every worker "
+                f"under either backend; it is opened with a busy timeout for "
+                f"that reason.)",
                 err=True,
             )
             raise typer.Exit(code=2)

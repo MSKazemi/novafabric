@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from novafabric._paths import registry_db_path
+from novafabric._sqlite_util import connect_sqlite
 from novafabric.query.content_index import delete_run as _content_delete_run
 from novafabric.query.content_index import maybe_index_capsule
 from novafabric.registry.runs_cache import (
@@ -41,7 +42,21 @@ def open_index(db_path: Path | None) -> sqlite3.Connection:
     """
     path = db_path if db_path is not None else registry_db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    # B8: this index is written by EVERY uvicorn worker on every upload, so it
+    # is a concurrently-written SQLite store regardless of --backend.
+    #
+    # This is a NO-OP today and is here for one reason: inheritance. Python's
+    # sqlite3.connect already applies a 5 s busy timeout (measured: bare and
+    # connect_sqlite both report busy_timeout=5000, journal_mode=delete), which
+    # is why campaign-2 drove 1,984 uploads at 64-way concurrency with zero lock
+    # errors. But a bare connect routes *around* _sqlite_util, so it would not
+    # pick up any future hardening applied there -- which is precisely what B8
+    # flagged. Going through the helper costs nothing and closes that gap.
+    #
+    # connect_sqlite sets busy_timeout and ONLY that. Journal mode stays
+    # untouched on purpose: PRAGMA journal_mode=WAL is itself a write that
+    # ignores the busy timeout under a concurrent open.
+    conn = connect_sqlite(path)
     conn.row_factory = sqlite3.Row
     ensure_runs_cache(conn)
     return conn
