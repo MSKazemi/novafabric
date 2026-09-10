@@ -126,6 +126,19 @@ class AssetStatusCheckError(Exception):
     """Raised when an asset fails the --require-asset-status pre-flight check."""
 
 
+class CapsuleDirectoryError(Exception):
+    """The capsule output directory could not be created or written.
+
+    A full disk, a read-only mount, a missing parent and a permission denial are
+    all *routine* operational conditions on the machines NovaFabric runs on --
+    an HPC scratch filesystem hitting quota mid-campaign is the ordinary case,
+    not the exotic one. Before this existed they surfaced as a raw 37-to-83 line
+    traceback ending in ``OSError: [Errno 28] No space left on device`` (B11),
+    which states the errno but not which directory NovaFabric chose, why it
+    chose it, or what the operator should do next.
+    """
+
+
 def check_asset_status(
     asset_ref: str,
     require_statuses: list[str] | None,
@@ -221,7 +234,20 @@ class CaptureOrchestrator:
         capture_media: bool = False,
     ) -> None:
         self._base_dir = base_dir or (Path.cwd() / ".novafabric" / "runs")
-        self._base_dir.mkdir(parents=True, exist_ok=True)
+        _chosen = "the -o/--output directory" if base_dir else "the default capsule directory"
+        try:
+            self._base_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            # B11: a full disk / read-only mount / missing parent is routine.
+            # Name the path, say it was NovaFabric's choice and not the
+            # workload's, and give the operator the next move -- the workload
+            # has not started yet, so nothing is half-captured.
+            raise CapsuleDirectoryError(
+                f"cannot create {_chosen} {self._base_dir}: "
+                f"{exc.strerror or exc} (errno {exc.errno}). "
+                f"The workload was not started. Free space, fix the permissions, "
+                f"or choose another location with `-o <dir>`."
+            ) from exc
         # ADR-0025: orchestrator depends only on the RunnerSpec protocol;
         # default to LocalRunner to preserve v0.5.x behavior.
         self._runner: RunnerSpec = runner if runner is not None else LocalRunner()

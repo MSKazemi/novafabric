@@ -13,7 +13,11 @@ from rich.console import Console
 
 from novafabric._paths import default_capsule_dir
 from novafabric.capture.deployment_env import InvalidDeploymentEnvironmentError
-from novafabric.capture.orchestrator import AssetStatusCheckError, CaptureOrchestrator
+from novafabric.capture.orchestrator import (
+    AssetStatusCheckError,
+    CapsuleDirectoryError,
+    CaptureOrchestrator,
+)
 from novafabric.capture.session import InvalidSessionMembershipError
 from novafabric.capture.variant import InvalidVariantAttributionError
 from novafabric.runners import (
@@ -450,15 +454,21 @@ def capture_cmd(
     registry_db_path = Path(db_env) if db_env else None
 
     base_dir = output_dir or default_capsule_dir()
-    orch = CaptureOrchestrator(
-        base_dir=base_dir,
-        runner=runner,
-        mark_provenance=mark_provenance,
-        fast_emit=fast_emit,
-        emit_spool=emit_spool,
-        masking_pipeline=pipeline,
-        capture_media=capture_media,
-    )
+    try:
+        orch = CaptureOrchestrator(
+            base_dir=base_dir,
+            runner=runner,
+            mark_provenance=mark_provenance,
+            fast_emit=fast_emit,
+            emit_spool=emit_spool,
+            masking_pipeline=pipeline,
+            capture_media=capture_media,
+        )
+    except CapsuleDirectoryError as exc:
+        # B11: a full disk or unwritable output dir is an operational
+        # condition, not a bug. One actionable line, not a traceback.
+        console.print(f"[red]Cannot start capture:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
 
     try:
         result = orch.run(
