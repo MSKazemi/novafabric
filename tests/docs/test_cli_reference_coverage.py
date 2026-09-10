@@ -67,3 +67,59 @@ def test_no_documented_commands_that_no_longer_exist() -> None:
         f"cli-reference.md headings reference command(s) not in the CLI: "
         f"{sorted(set(stale))}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Leaf coverage — the scope note above says "deliberately top-level only",
+# on the reasoning that requiring every leaf would force boilerplate sections.
+#
+# Measured 2026-09-10: that fear did not materialise. All **263** subcommand
+# paths are already documented, across cli-reference and the guides. So this
+# holds what the docs have actually achieved rather than demanding new prose —
+# a mention of `nova <group> <sub>` anywhere in the user-facing set, which is
+# the same bar the top-level guard uses.
+#
+# ⚠ It looks at the same working tree the CLI is imported from. An earlier
+# measurement compared HEAD's *docs* against the working tree's *commands* and
+# reported five phantom gaps (`nova dashboard …`) — a feature whose module,
+# registration and documentation are all uncommitted together. Comparing two
+# different states of the tree invents drift that does not exist.
+# ---------------------------------------------------------------------------
+
+USER_FACING = (
+    REPO_ROOT / "docs" / "cli-reference.md",
+    REPO_ROOT / "docs" / "user-guide.md",
+    REPO_ROOT / "docs" / "operator-guide.md",
+    REPO_ROOT / "docs" / "getting-started.md",
+    REPO_ROOT / "docs" / "developer-guide.md",
+    REPO_ROOT / "README.md",
+)
+
+
+def _leaf_command_paths() -> list[str]:
+    from typer.main import get_command
+
+    from novafabric.cli.main import app
+
+    def walk(command, path):
+        yield path, command
+        for name, sub in (getattr(command, "commands", None) or {}).items():
+            yield from walk(sub, [*path, name])
+
+    return [" ".join(p) for p, _ in walk(get_command(app), []) if len(p) > 1]
+
+
+def test_the_command_tree_has_subcommands() -> None:
+    """Guard the guard: an empty walk would make the check below vacuous."""
+    leaves = _leaf_command_paths()
+    assert len(leaves) > 100, f"walked only {len(leaves)} subcommands: {leaves[:5]}"
+
+
+def test_every_subcommand_is_mentioned_somewhere() -> None:
+    text = "\n".join(p.read_text(encoding="utf-8") for p in USER_FACING if p.is_file())
+    missing = sorted(p for p in _leaf_command_paths() if f"nova {p}" not in text)
+    assert not missing, (
+        f"{len(missing)} subcommand(s) are registered but appear in no "
+        f"user-facing document: {missing}. A user can run these today and find "
+        f"nothing written about them."
+    )
