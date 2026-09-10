@@ -246,6 +246,24 @@ nova capture --runner slurm \
   python train.py
 ```
 
+> **One thing does change with the workload: its environment.** `--runner local`
+> runs as you, on your machine, and keeps your full environment. Every other
+> runner sends the workload somewhere else, so it receives **only** `NOVAFABRIC_*`
+> variables — plus `PATH` for `slurm`, and anything you name explicitly in
+> `extra_env` for `docker` and `kubernetes`:
+>
+> ```bash
+> nova capture --runner kubernetes \
+>   --runner-option image=myorg/agent-runtime:latest \
+>   --runner-option namespace=ml-jobs \
+>   --runner-option extra_env='{"LOG_LEVEL":"debug"}' \
+>   python agent.py
+> ```
+>
+> Credentials do not belong in `extra_env` — those values are stored in the
+> Kubernetes `Job` object. Use a `Secret` bound to the pod's `service_account`.
+> See [`operator-guide.md`](operator-guide.md) §3.4 and ADR-0270.
+
 Pass runner-specific options with `--runner-option key=value` (repeatable). All
 runners are non-privileged by design — see the enforcement notes per runner.
 

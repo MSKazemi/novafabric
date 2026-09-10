@@ -29,6 +29,7 @@ import subprocess
 import time
 from typing import Any
 
+from novafabric.runners._env import forwardable_env
 from novafabric.runners._options import coerce_str_dict
 from novafabric.runners._poll import jittered_sleep
 from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
@@ -119,6 +120,14 @@ class KubernetesRunner:
       e.g. ``{"requests": {"cpu": "1", "memory": "2Gi"},
               "limits": {"cpu": "2", "memory": "4Gi"}}``.
     - ``poll_interval_s`` (float) — Job-status poll interval. Default 2.0.
+    - ``extra_env`` (dict[str, str]) — additional env vars to place in the
+      pod. The submitting shell's environment is **not** inherited (ADR-0270):
+      only ``NOVAFABRIC_*`` and the keys named here are forwarded.
+
+      These land in the Job object as literal ``value:`` entries, readable by
+      anyone with ``get job`` in the namespace. Never put a credential here —
+      use a Kubernetes Secret and a ``serviceAccount``, or mount it into the
+      image, so the value never enters the manifest.
     """
 
     name: str = "kubernetes"
@@ -181,7 +190,13 @@ class KubernetesRunner:
             )
 
         in_pod_capsule = _DEFAULT_IN_POD_CAPSULE
-        env = dict(spec.env)
+        # Default-deny (ADR-0270). spec.env is the submitting shell's whole
+        # environment; a Job object is readable by anyone with `get job` in the
+        # namespace and is persisted in etcd, so only NOVAFABRIC_* and the
+        # operator's explicit extra_env may cross into it. Defect B2.
+        extra_env = _coerce_str_dict(opts.get("extra_env"))
+        env = forwardable_env(spec.env, also_allow=extra_env)
+        env.update(extra_env)
         env["NOVAFABRIC_CAPSULE_DIR"] = in_pod_capsule
 
         # Job name is derived from run_id (kubernetes name rules: lowercase,

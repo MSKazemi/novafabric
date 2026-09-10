@@ -207,6 +207,11 @@ class TestJobManifest:
         assert m_explicit["spec"]["template"]["spec"]["serviceAccountName"] == "agent-runner"
 
     def test_env_vars_passed_as_list_of_dicts(self) -> None:
+        """Serialisation shape only. `_build_job_manifest` is a pure builder and
+        is NOT the allowlist gate — `K: V` reaching the manifest here is correct.
+        The gate is in `run()`, where spec.env is filtered before it ever gets
+        here (ADR-0270); it is asserted in tests/test_runners_env_forwarding.py.
+        Filtering in both places would be the duplicated-check anti-pattern."""
         manifest = _build_job_manifest(
             job_name="x", namespace="ns", image="i", command=["echo"],
             env={"NOVAFABRIC_SPAN_ID": "abc", "K": "V"},

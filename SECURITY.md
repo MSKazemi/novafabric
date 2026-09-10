@@ -92,6 +92,19 @@ STRIDE analysis in the project's internal threat model:
   pre-production blocking condition regardless of the opt-in flag.
 - **OTLP GenAI ingest** (`POST /api/otlp/v1/traces`) — token-authenticated;
   foreign span data is secret-scanned at write time.
+- **Remote runners** (`nova capture --runner {docker,kubernetes,slurm,lsf,pbs}`)
+  — send the workload to a container, cluster or batch scheduler. They forward a
+  **default-deny allowlist** of environment variables (`NOVAFABRIC_*`, plus
+  `PATH` for `slurm` and any explicit `extra_env`), never the submitting shell's
+  environment (ADR-0270). `--runner local` is the deliberate exception: it runs
+  as you, on your machine, inside the existing trust boundary.
+
+  Fixed in this line: **B2** (disclosed 2026-08-28, fixed 2026-09-10) — the
+  Kubernetes runner wrote every submitting environment variable into the `Job`
+  object as a literal `value:`, readable with `get job` and persisted in etcd.
+  If you ran `nova capture --runner kubernetes` on an affected version, treat any
+  credential that was in that shell as exposed to anyone with read access to the
+  namespace, and rotate it.
 
 If you find a way to make any disabled-by-default surface reachable without
 explicit opt-in, that is a vulnerability — please report it.

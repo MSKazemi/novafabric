@@ -558,6 +558,7 @@ nova capture \
 | `node_selector` | no | Dict of node selector labels |
 | `resources` | no | Container resources block (requests and limits) |
 | `poll_interval_s` | no | Job status poll interval in seconds. Default 2.0 |
+| `extra_env` | no | Dict of env vars to place in the pod. **The submitting shell's environment is not inherited** — see below |
 
 **Example resources block:**
 
@@ -575,6 +576,29 @@ runners:
         cpu: "4"
         memory: "8Gi"
 ```
+
+**Environment variables (changed — ADR-0270, unreleased):** the pod receives
+**only** `NOVAFABRIC_*` variables plus anything you name in `extra_env`. The
+environment of the shell you ran `nova capture` in is *not* forwarded.
+
+Previously every variable of the submitting shell was written into the
+`Job` object as a literal `value:` — readable by anyone with `get job` in the
+namespace and persisted in etcd. If your workload used to pick up a variable
+implicitly, name it explicitly now:
+
+```bash
+nova capture --runner kubernetes \
+  --runner-option image=myorg/agent-runtime:abc1234 \
+  --runner-option namespace=novafabric-runs \
+  --runner-option extra_env='{"LOG_LEVEL":"debug"}' \
+  python my_agent.py
+```
+
+> **Do not put credentials in `extra_env`.** Its values become literal `value:`
+> entries in the Job object, which is exactly the exposure ADR-0270 closed. Give
+> the pod a `service_account` bound to a Kubernetes `Secret`, or bake the
+> credential into the image's own secret mount, so the value never enters the
+> manifest.
 
 **Security posture:** The KubernetesRunner sets `allowPrivilegeEscalation: false`,
 `privileged: false`, `hostNetwork: false`, `hostPID: false`, `hostIPC: false`

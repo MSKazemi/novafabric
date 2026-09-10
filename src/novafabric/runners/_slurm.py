@@ -28,6 +28,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from novafabric.runners._env import forwardable_env
 from novafabric.runners._poll import jittered_sleep
 from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
 
@@ -70,9 +71,10 @@ def _build_wrap_script(
     real cluster.)
     """
     lines: list[str] = ["set -e"]
-    for k, v in env.items():
-        if k.startswith("NOVAFABRIC_") or k in ("PATH",):
-            lines.append(f"export {k}={_shell_quote(v)}")
+    # Default-deny (ADR-0270). PATH is the one addition SLURM needs: the batch
+    # script runs on a compute node that must find the same interpreter.
+    for k, v in forwardable_env(env, also_allow={"PATH"}).items():
+        lines.append(f"export {k}={_shell_quote(v)}")
     # Make sure NOVAFABRIC_CAPSULE_DIR points at the (shared-FS) path.
     lines.append(f"export NOVAFABRIC_CAPSULE_DIR={_shell_quote(str(capsule_dir))}")
     # Prepend the capsule dir to PYTHONPATH so sitecustomize.py

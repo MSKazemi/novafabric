@@ -28,6 +28,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from novafabric.runners._env import forwardable_env
 from novafabric.runners._options import coerce_str_dict, coerce_str_list
 from novafabric.runners._types import ContainerEvalError, RunnerJobResult, RunnerJobSpec
 
@@ -120,15 +121,13 @@ class DockerRunner:
         # options, then image, then command.
         argv: list[str] = [self._docker, "run", "--rm"]
 
-        # Each env var as -e KEY=VALUE. Filter to NOVAFABRIC_* + extra_env
-        # to avoid leaking arbitrary host env (PATH, HOME, secrets, etc.)
-        # into the container — docker would otherwise inherit nothing,
-        # but the orchestrator passes its full env in spec.env.
-        for key, value in env.items():
-            if key.startswith("NOVAFABRIC_") or key in _coerce_str_dict(
-                opts.get("extra_env")
-            ):
-                argv.extend(["-e", f"{key}={value}"])
+        # Each env var as -e KEY=VALUE, default-deny (ADR-0270): NOVAFABRIC_*
+        # plus the operator's explicit extra_env. The orchestrator passes its
+        # full env in spec.env, and `docker inspect` exposes whatever we set.
+        for key, value in forwardable_env(
+            env, also_allow=_coerce_str_dict(opts.get("extra_env"))
+        ).items():
+            argv.extend(["-e", f"{key}={value}"])
 
         # Capsule volume — host:container, rw.
         argv.extend(["-v", f"{spec.capsule_dir}:{in_container_capsule}"])
