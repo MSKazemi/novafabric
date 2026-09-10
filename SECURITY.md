@@ -122,6 +122,7 @@ docs for its own risk surface would have missed all four.
 | `NOVAFABRIC_SERVER_I_KNOW_THIS_IS_PUBLIC` | the non-loopback refusal | the two above **combine**: `insecure_no_auth` on a non-loopback bind raises `InsecureBindError` unless this is also set. ADR-0184 makes anonymous admin on a network-reachable interface a *doubly*-explicit choice — this is the second half |
 | `NOVAFABRIC_SERVE_ALLOW_ANY_PATH` | the dashboard path denylist | `nova serve` endpoints that take a caller-chosen path (evidence export, capsule migrate, promote-sign) stop refusing system directories. Note this is a **denylist, deliberately not a sandbox** |
 | `NOVAFABRIC_SERVER_WEBHOOKS_ALLOW_INSECURE_URL` | webhook URL validation | permits insecure webhook destinations; the outbound path is the only one that leaves the trust boundary |
+| `NOVAFABRIC_SERVER_DEMO_DEVICE_GRANT` | the device-grant guard | enables local/testing scaffolding whose `/approve` endpoint is **unauthenticated**. The code's own comment says it is off by default "so no production deployment exposes an unauthenticated role-approval surface" |
 
 Each accepts `1`/`true`/`yes`/`on`.
 

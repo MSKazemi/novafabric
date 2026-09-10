@@ -54,7 +54,8 @@ full NovaSeal configuration reference, see
    - 3.5 [LSF and PBS/Torque clusters (LSFRunner, PBSRunner) — experimental](#35-lsf-and-pbstorque-clusters-lsfrunner-pbsrunner--experimental)
 4. [URL registry configuration](#4-url-registry-configuration)
 5. [Troubleshooting](#5-troubleshooting)
-   - 5b. [NovaSeal configuration](#5b-novaseal-configuration-cryptographic-signing)
+   - 5a. [Server environment variables](#5a-server-environment-variables)
+- 5b. [NovaSeal configuration](#5b-novaseal-configuration-cryptographic-signing)
    - 5c. [SAML 2.0 SSO (server mode — experimental, partial)](#5c-saml-20-sso-server-mode--experimental-partial)
 - 5d. [Server credentials: which token, and what the server must be told](#5d-server-credentials-which-token-and-what-the-server-must-be-told)
 6. [What is not supported yet](#6-what-is-not-supported-yet)
@@ -963,6 +964,61 @@ print('user override exists:', os.path.exists(user))
 print('vendored default:', _VENDORED_DEFAULT_PATH)
 "
 ```
+
+---
+
+## 5a. Server environment variables
+
+Every value below is read from the environment by `nova server`. All defaults are
+the ones the code actually applies, read from a default `ServerConfig` rather
+than transcribed. Safety-off switches are **not** here — they are in
+[`SECURITY.md`](../SECURITY.md) §Escape hatches, deliberately in one place.
+
+### Outbound webhooks
+
+Disabled by default. This is the only path that leaves the trust boundary.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `NOVAFABRIC_SERVER_WEBHOOKS_ENABLED` | `false` | Master switch |
+| `NOVAFABRIC_SERVER_WEBHOOKS_QUEUE_MAX` | `1000` | Bounded queue; beyond it deliveries are shed rather than buffered without limit |
+| `NOVAFABRIC_SERVER_WEBHOOKS_MAX_ATTEMPTS` | `5` | Retries before a delivery is abandoned |
+| `NOVAFABRIC_SERVER_WEBHOOKS_TIMEOUT_S` | `5.0` | Per-attempt HTTP timeout |
+| `NOVAFABRIC_SERVER_WEBHOOKS_DELIVERY_RETENTION_DAYS` | `30` | Delivery-record age cap |
+| `NOVAFABRIC_SERVER_WEBHOOKS_DELIVERY_RETENTION_ROWS` | `10000` | Delivery-record row cap — whichever bites first |
+
+### Usage metering
+
+| Variable | Default | Effect |
+|---|---|---|
+| `NOVAFABRIC_SERVER_USAGE_METERING_ENABLED` | `true` | Master switch |
+| `NOVAFABRIC_SERVER_USAGE_FLUSH_INTERVAL_S` | `60.0` | How often the in-memory accumulator is flushed |
+| `NOVAFABRIC_SERVER_USAGE_ACCUMULATOR_MAX_ENTRIES` | `10000` | Bound on the accumulator between flushes |
+| `NOVAFABRIC_SERVER_USAGE_ROLLUP_RETENTION_MONTHS` | `24` | Aggregated rollups |
+| `NOVAFABRIC_SERVER_USAGE_LEDGER_RETENTION_MONTHS` | `3` | Raw ledger rows — deliberately shorter than the rollups |
+
+### Step-up re-authentication
+
+| Variable | Default | Effect |
+|---|---|---|
+| `NOVAFABRIC_SERVER_STEP_UP_ENABLED` | `false` | Require re-auth for privileged actions |
+| `NOVAFABRIC_SERVER_STEP_UP_MAX_AGE_SECONDS` | `300` | How long a step-up stays valid |
+
+### Storage and identity
+
+| Variable | Default | Effect |
+|---|---|---|
+| `NOVAFABRIC_DB_URL` | — | Target Postgres URL for `nova db` migrations |
+| `NOVAFABRIC_API_WORKERS` | `1` | ⚠ Read by `SQLiteMetadataStore`, which **refuses to construct** when this is > 1. It is the guard behind "SQLite cannot be shared across writer processes" — see §3 on `--workers` |
+| `NOVAFABRIC_AUDIT_LOG_PATH` | — | Deployment audit-log path override |
+
+### Other
+
+| Variable | Default | Effect |
+|---|---|---|
+| `NOVA_NATS_DUPLICATE_WINDOW_S` | `120` | Lineage consumer de-duplication window |
+| `NOVAFABRIC_TRUTHFUL_QA_OCI_IMAGE` | — | TruthfulQA eval suite image reference |
+| `NOVAFABRIC_TRUTHFUL_QA_OCI_DIGEST` | — | Pins that image to an exact digest |
 
 ---
 

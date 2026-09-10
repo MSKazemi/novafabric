@@ -143,8 +143,15 @@ def test_every_registered_runner_is_documented() -> None:
 # ---------------------------------------------------------------------------
 
 #: Names that mean "a safety default can be turned off here".
+#:
+#: ⚠ This is a heuristic and it has already had a false negative. The first
+#: version omitted DEMO and therefore missed
+#: NOVAFABRIC_SERVER_DEMO_DEVICE_GRANT, whose own comment says it exposes "an
+#: unauthenticated role-approval surface" — the most dangerous switch in the
+#: set. A pattern guard is only as good as its alternation; widen it whenever a
+#: new escape hatch is named something this does not anticipate.
 _ESCAPE_HATCH = re.compile(
-    r"NOVA[A-Z_]*(INSECURE|ALLOW|I_KNOW|I_ACCEPT|SKIP|DISABLE|UNSAFE|NO_AUTH|BYPASS)[A-Z_]*"
+    r"NOVA[A-Z_]*(INSECURE|ALLOW|I_KNOW|I_ACCEPT|SKIP|DISABLE|UNSAFE|NO_AUTH|BYPASS|DEMO)[A-Z_]*"
 )
 
 SECURITY_DOCS = (
