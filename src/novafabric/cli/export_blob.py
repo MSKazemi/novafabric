@@ -30,7 +30,10 @@ def export_blob_cmd(
         typer.Option(
             "--dest",
             help=(
-                "Destination: a local directory (always works) or s3://bucket[/prefix] "
+                # `\[` escapes the bracket for Rich, which parses "[/prefix]"
+                # as a closing markup tag and raises MarkupError otherwise (B5).
+                # Same convention as cli/verify.py and cli/_extras.py.
+                r"Destination: a local directory (always works) or s3://bucket\[/prefix] "
                 "(any S3-compatible endpoint; set NOVA_S3_ENDPOINT_URL for a private one). "
                 "azure:// and gcs:// are planned (ADR-0141 P2)."
             ),
