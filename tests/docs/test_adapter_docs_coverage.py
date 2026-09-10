@@ -1,4 +1,4 @@
-"""Guard: every exported framework adapter is mentioned in user-facing docs.
+"""Guard: every exported adapter and every registered runner is documented.
 
 `docs/cli-reference.md` is drift-guarded for **CLI commands**
 (`test_cli_reference_coverage.py`), and the dashboard registry is guarded
@@ -82,3 +82,49 @@ def test_each_adapter_module_is_importable_without_its_framework() -> None:
 
     for module in ("llamaindex", "pydantic_ai", "haystack"):
         importlib.import_module(f"novafabric.adapters.{module}")
+
+
+# ---------------------------------------------------------------------------
+# Runners — the same asymmetry, found by asking the same question again.
+#
+# `--runner lsf` and `--runner pbs` have been selectable from the CLI for some
+# time, are in the registry, and are covered by unit tests. Both appeared in
+# **zero** user-facing documents until 2026-09-10. Being experimental is a
+# reason to label them, not a reason to hide them: a user can already pick one
+# from `nova capture --runner`, and finding nothing written about it is worse
+# than finding "experimental".
+# ---------------------------------------------------------------------------
+
+RUNNER_DOCS = (
+    REPO_ROOT / "docs" / "operator-guide.md",
+    REPO_ROOT / "docs" / "user-guide.md",
+    REPO_ROOT / "docs" / "cli-reference.md",
+)
+
+
+def _registered_runner_names() -> set[str]:
+    """Runner names the CLI will actually accept, from the registry itself."""
+    from novafabric.runners._registry import known_runner_names
+
+    return set(known_runner_names())
+
+
+def test_the_runner_registry_is_actually_populated() -> None:
+    """Guard the guard: an empty registry would make the check vacuous."""
+    names = _registered_runner_names()
+    assert len(names) >= 6, f"expected the full runner set, found {sorted(names)}"
+
+
+def test_every_registered_runner_is_documented() -> None:
+    text = "\n".join(p.read_text(encoding="utf-8") for p in RUNNER_DOCS if p.is_file())
+    missing = sorted(
+        name
+        for name in _registered_runner_names()
+        if f"--runner {name}" not in text and f"`{name}`" not in text
+    )
+    assert not missing, (
+        f"runners are selectable from `nova capture --runner` but documented "
+        f"nowhere: {missing}. A user can pick one today and find nothing "
+        f"written about it. Label experimental ones as experimental — the docs "
+        f"honesty rule — but do not leave them undiscoverable."
+    )

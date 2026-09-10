@@ -51,6 +51,7 @@ full NovaSeal configuration reference, see
    - 3.2 [Docker or OCI container (DockerRunner)](#32-docker-or-oci-container-dockerrunner)
    - 3.3 [SLURM cluster (SlurmRunner)](#33-slurm-cluster-slurmrunner)
    - 3.4 [Kubernetes (KubernetesRunner)](#34-kubernetes-kubernetesrunner)
+   - 3.5 [LSF and PBS/Torque clusters (LSFRunner, PBSRunner) — experimental](#35-lsf-and-pbstorque-clusters-lsfrunner-pbsrunner--experimental)
 4. [URL registry configuration](#4-url-registry-configuration)
 5. [Troubleshooting](#5-troubleshooting)
    - 5b. [NovaSeal configuration](#5b-novaseal-configuration-cryptographic-signing)
@@ -634,6 +635,52 @@ recovered.
 **Known limitation (v0.6):** The KubernetesRunner does not surface the workload's
 exact exit code when the Job fails. It reports `0` on `succeeded` and `1` on
 `failed`. Exact exit codes are queued for a v0.6.x follow-up.
+
+---
+
+### 3.5 LSF and PBS/Torque clusters (LSFRunner, PBSRunner) — experimental
+
+**Status: experimental.** Both are registered, selectable as `--runner lsf` /
+`--runner pbs`, and covered by unit tests, but they have not been exercised on a
+live cluster the way `slurm` has. They were previously documented nowhere, which
+is not the same as not existing — `nova capture --runner lsf` has been accepted
+by the CLI for some time.
+
+Both follow the SLURM model: write a job script into the capsule directory,
+submit it, poll for completion, and read stdout/stderr back. Wire-level capture
+works — each writes a fixed job-script template that puts the hook loader on
+`PYTHONPATH`.
+
+```bash
+nova capture --runner lsf \
+  --runner-option queue=normal \
+  --runner-option walltime=2:00 \
+  python train.py
+
+nova capture --runner pbs \
+  --runner-option queue=default \
+  --runner-option nodes=2 --runner-option ppn=8 \
+  --runner-option walltime=02:00:00 \
+  python train.py
+```
+
+| Option | LSF (`bsub`) | PBS (`qsub`) |
+|---|---|---|
+| queue | `queue` → `-q`, default `normal` | `queue` → `-q`, default `default` |
+| size | `n_cores` → `-n`, default 1 | `nodes` / `ppn` → `-l nodes=N:ppn=M`, default 1/1 |
+| wall clock | `walltime` → `-W`, `H:MM` | `walltime` → `-l walltime=`, `HH:MM:SS` |
+| job name | `job_name` → `-J` | `job_name` → `-N` |
+| resources | `resource_requirement` → `-R` | — |
+| poll | `poll_interval_s`, default 30.0 | `poll_interval_s`, default 30.0 |
+| logs | `output_dir`, default capsule dir | `output_dir`, default capsule dir |
+
+**Preconditions — not verified by the runner; the job fails loudly if wrong:**
+
+- The capsule directory must be on a **shared filesystem** visible to every
+  compute host. This is the same requirement as `slurm` and the most common
+  cause of an empty capsule.
+- The compute-host environment must have `novafabric` importable — typically the
+  same virtualenv the submitter uses.
 
 ---
 
