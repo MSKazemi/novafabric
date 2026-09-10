@@ -562,6 +562,7 @@ include = [
 exclude = [
   "/.git-private",
   "/.claude",
+  "/data",
   "/.claude-plugin",
   "/.dualgit",
   "/CLAUDE.md",

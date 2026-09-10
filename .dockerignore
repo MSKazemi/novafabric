@@ -34,6 +34,7 @@ env/
 # from the two gitdirs and fails if a new private path is missing here.
 design/
 .claude/
+data/
 .git-private
 .claude-plugin/
 .dualgit/
