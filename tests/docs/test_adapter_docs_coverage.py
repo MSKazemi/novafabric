@@ -186,3 +186,57 @@ def test_every_escape_hatch_is_documented() -> None:
         f"nowhere an operator would look: {missing}. A control that cannot be "
         f"found cannot be audited. Add it to SECURITY.md §Escape hatches."
     )
+
+
+# ---------------------------------------------------------------------------
+# Every environment variable, not just the ones a pattern recognises.
+#
+# The escape-hatch guard above is a heuristic and has already had a false
+# negative (DEMO_DEVICE_GRANT). THIS guard is the one that actually found it:
+# it asks the flat question — does the code read a variable no document
+# mentions? — and needs no judgement about which names sound dangerous.
+#
+# Coverage went 117/142 -> 142/142 on 2026-09-10. Written only once the
+# documentation was complete: a guard that fails on main blocks every push and
+# gets deleted rather than fixed.
+# ---------------------------------------------------------------------------
+
+_ENV_READ = re.compile(r'(?:os\.environ(?:\.get)?\(|getenv\()\s*"(NOVA[A-Z0-9_]+)"')
+
+ALL_ENV_DOCS = (
+    REPO_ROOT / "SECURITY.md",
+    REPO_ROOT / "README.md",
+    REPO_ROOT / "docs" / "operator-guide.md",
+    REPO_ROOT / "docs" / "user-guide.md",
+    REPO_ROOT / "docs" / "cli-reference.md",
+    REPO_ROOT / "docs" / "developer-guide.md",
+    REPO_ROOT / "docs" / "getting-started.md",
+    REPO_ROOT / "docs" / "api-reference.md",
+    REPO_ROOT / "docs" / "dashboard.md",
+    REPO_ROOT / "docs" / "ops" / "server-deployment.md",
+)
+
+
+def _env_vars_read_by_src() -> set[str]:
+    src = REPO_ROOT / "src" / "novafabric"
+    found: set[str] = set()
+    for path in src.rglob("*.py"):
+        found.update(_ENV_READ.findall(path.read_text(encoding="utf-8")))
+    return found
+
+
+def test_env_var_scan_still_finds_them() -> None:
+    """Guard the guard: a regex that stopped matching would pass silently."""
+    names = _env_vars_read_by_src()
+    assert len(names) >= 130, f"expected ~142 env vars, found {len(names)}"
+
+
+def test_every_env_var_read_by_the_code_is_documented() -> None:
+    text = "\n".join(p.read_text(encoding="utf-8") for p in ALL_ENV_DOCS if p.is_file())
+    missing = sorted(n for n in _env_vars_read_by_src() if n not in text)
+    assert not missing, (
+        f"environment variables the code reads but no document mentions: "
+        f"{missing}. An operator cannot configure, audit or even discover these. "
+        f"Operational knobs go in docs/operator-guide.md §5a; anything that "
+        f"switches a safety default off goes in SECURITY.md §Escape hatches."
+    )

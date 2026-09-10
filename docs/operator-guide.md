@@ -1012,10 +1012,61 @@ Disabled by default. This is the only path that leaves the trust boundary.
 | `NOVAFABRIC_API_WORKERS` | `1` | ⚠ Read by `SQLiteMetadataStore`, which **refuses to construct** when this is > 1. It is the guard behind "SQLite cannot be shared across writer processes" — see §3 on `--workers` |
 | `NOVAFABRIC_AUDIT_LOG_PATH` | — | Deployment audit-log path override |
 
+### Rate limiting
+
+Off by default. Per-class token buckets; the audit keys fire when rejections
+cross a threshold inside a window, so a burst is logged once rather than per
+request.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `NOVAFABRIC_SERVER_RATE_LIMITS_ENABLED` | `false` | Master switch. Class defaults when on: ingest 100/s burst 200, read 50/s burst 100, admin 10/s burst 20 |
+| `NOVAFABRIC_SERVER_RATE_LIMITS_AUDIT_THRESHOLD_REJECTIONS` | `100` | Rejections before an audit event |
+| `NOVAFABRIC_SERVER_RATE_LIMITS_AUDIT_WINDOW_SECONDS` | `60` | Window the threshold is counted over |
+
+### Observability
+
+| Variable | Default | Effect |
+|---|---|---|
+| `NOVAFABRIC_SERVER_SELF_TRACING` | `false` | Emit NovaFabric's own OTel spans |
+| `NOVAFABRIC_SERVER_SELF_TRACING_ENDPOINT` | — | OTLP destination for those spans |
+| `NOVAFABRIC_SERVER_METRICS_EXEMPT` | `false` | Exempt `/metrics` from auth |
+| `NOVA_BUILD_SHA` | — | Build SHA reported in observability output |
+| `NOVA_COLLECTOR_METRICS_URL` | `http://localhost:9464/metrics` | Where the dashboard scrapes collector metrics |
+
+### API shape
+
+| Variable | Default | Effect |
+|---|---|---|
+| `NOVAFABRIC_SERVER_BULK_MAX_ITEMS` | `100` | Cap on items per bulk request |
+| `NOVAFABRIC_SERVER_PAGINATION_LEGACY_OFFSET_CURSORS` | `true` | Keep accepting legacy offset cursors alongside the current form |
+| `NOVA_SERVE_MAX_FILE_BYTES` | `5000000` | `nova serve` per-file read cap |
+
+### Object store and paths
+
+| Variable | Default | Effect |
+|---|---|---|
+| `NOVA_S3_ACCESS_KEY` / `NOVA_S3_SECRET_KEY` | — | ⚠ **Credentials.** Prefer an instance role or a mounted secret; a value here is visible to anything that can read the process environment |
+| `NOVA_S3_GOVERNANCE_BUCKET` / `NOVA_S3_COMPLIANCE_BUCKET` | — | Buckets for the dual object store |
+| `NOVA_OBJECT_STORE_ENCRYPTION` | off unless `1` | Enables backup object encryption |
+| `NOVAFABRIC_BACKEND` | `sqlite` | Storage backend selector |
+| `NOVAFABRIC_JOBS_DB` | — | Jobs database path override |
+| `NOVAFABRIC_LOG_DIR` | — | Log directory the support bundle collects from |
+| `NOVA_EVIDENCE_DUCKDB_PATH` | — | Evidence DuckDB path |
+
+### Capture
+
+| Variable | Default | Effect |
+|---|---|---|
+| `NOVAFABRIC_CAPTURE_SOCKET` | — | Capture daemon socket path override |
+| `NOVAFABRIC_FAST_EMIT` | off unless `1` | Fast-emit mode inside the captured process |
+
 ### Other
 
 | Variable | Default | Effect |
 |---|---|---|
+| `NOVAFABRIC_SERVER_TOKEN` | — | Pin the local auth token instead of letting the server generate one (see §5d) |
+| `NOVAFABRIC_WEBHOOKS_QUEUE_MAX` | `1000` | Accepted as an alias of `NOVAFABRIC_SERVER_WEBHOOKS_QUEUE_MAX` |
 | `NOVA_NATS_DUPLICATE_WINDOW_S` | `120` | Lineage consumer de-duplication window |
 | `NOVAFABRIC_TRUTHFUL_QA_OCI_IMAGE` | — | TruthfulQA eval suite image reference |
 | `NOVAFABRIC_TRUTHFUL_QA_OCI_DIGEST` | — | Pins that image to an exact digest |
