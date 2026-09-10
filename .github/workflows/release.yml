@@ -19,6 +19,12 @@ jobs:
   github-release:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Release only from the public repo, matching publish-pypi/image/chart. A tag
+    # reaches BOTH gitdirs by design, so without this the private mirror created a
+    # second, duplicate GitHub Release for every tag — v0.101.0 exists on both, three
+    # seconds apart. Actions is now disabled on the mirror, but that is a repo setting
+    # a future re-enable would silently undo; the guard belongs in the workflow.
+    if: github.repository == 'MSKazemi/novafabric'
 
     steps:
       - name: Checkout
