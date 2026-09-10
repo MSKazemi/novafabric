@@ -55,6 +55,7 @@ full NovaSeal configuration reference, see
 5. [Troubleshooting](#5-troubleshooting)
    - 5b. [NovaSeal configuration](#5b-novaseal-configuration-cryptographic-signing)
    - 5c. [SAML 2.0 SSO (server mode — experimental, partial)](#5c-saml-20-sso-server-mode--experimental-partial)
+- 5d. [Server credentials: which token, and what the server must be told](#5d-server-credentials-which-token-and-what-the-server-must-be-told)
 6. [What is not supported yet](#6-what-is-not-supported-yet)
 7. [Docker Compose deployment (`nova serve` + dashboard)](#7-docker-compose-deployment-nova-serve--dashboard)
    - 7.6 [Deployment mode: dashboard or server (`NOVA_MODE`)](#76-deployment-mode-dashboard-or-server-nova_mode)
@@ -977,6 +978,66 @@ nova verify --seal-config ~/configs/novaseal.yaml /path/to/capsule/
 **Network note:** The TSA request (`tsa_url`) requires outbound HTTPS on port 443.
 On air-gapped clusters, set `tsa_url: ""` to skip timestamping, or run a private
 TSA inside the cluster and point `tsa_url` at it.
+
+---
+
+## 5d. Server credentials: which token, and what the server must be told
+
+`nova server` accepts three credential classes. Picking the wrong one, or
+configuring only half of one, is the most common first-multi-node-deploy failure
+(defect B6) — so this section states both halves of each.
+
+| Credential | Shape | Server needs | Use for |
+|---|---|---|---|
+| **Local token** (ADR-0184) | opaque string | nothing — generated at startup | single-node, loopback |
+| **Offline JWT** (ADR-0018/0178) | three dot-separated segments | **`NOVAFABRIC_OFFLINE_KEY_PATH`** | multi-node, airgapped, Slurm |
+| **API key** | opaque string | key store | long-lived integrations |
+
+### The local token — single node
+
+Generated on first start, stored at `$NOVAFABRIC_HOME/.server-token` (mode 0600).
+
+It is printed **only when stderr is a terminal**. Under `nohup`, systemd, Docker,
+Kubernetes or CI, stderr is a durable, routinely-collected file, so a
+non-interactive start prints a **fingerprint and the path** instead — read the
+token from the file. That is deliberate (ADR-0263): the token used to land in
+plaintext on line 1 of every server log.
+
+### Offline JWTs — multi-node
+
+Issue one on the machine holding the signing key:
+
+```bash
+nova server issue-token --subject bench@example.com --roles writer,reader --expires-in 30d
+```
+
+`--key-path` defaults to `NOVAFABRIC_OFFLINE_KEY_PATH`, else
+`~/.novafabric/keys/offline-key.pem`; a keypair is generated if absent. The token
+goes to **stdout**, so `TOK=$(nova server issue-token …)` captures only the token.
+
+> **The half that is easy to miss.** The server ignores offline JWTs entirely
+> unless it is started with `NOVAFABRIC_OFFLINE_KEY_PATH` set. Without it a
+> perfectly valid token is rejected — and until this was fixed the 401 said
+> *"Invalid local token"*, sending operators to check the wrong file for a
+> credential they never presented.
+>
+> ```bash
+> NOVAFABRIC_OFFLINE_KEY_PATH=~/.novafabric/keys/offline-key.pub nova server start
+> ```
+>
+> **Give the server the `.pub`, not the private key.** Verification accepts
+> either — it derives the public key from a private one if no `.pub` sits beside
+> it — but shipping the signing key to every server defeats the point of offline
+> signing. Issue tokens on one trusted machine; distribute only the public half.
+
+Revoke by token id with `nova server revoke-token`.
+
+### Precedence
+
+API key first, then offline JWT (only when the key path is configured **and** the
+bearer is JWT-shaped), then the local token. A JWT-shaped credential is never
+compared against the local token — that is what makes the 401 able to name the
+class you actually presented.
 
 ---
 
