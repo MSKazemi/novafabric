@@ -586,7 +586,8 @@ runners:
 >
 > The runner does not inject NovaFabric's capture hook loader into the pod — its
 > capsule is an `emptyDir`, so neither the Docker bind-mount nor the SLURM
-> shared-filesystem mechanism transfers (defect B3, [ADR-0272](../design/adr/0272-kubernetes-capture-hook-injection.md)).
+> shared-filesystem mechanism transfers (defect B3, `ADR-0272` — see the
+> [decisions index](decisions.md)).
 > As of this release the runner **says so** on stderr and sets
 > `runner_metadata.wire_capture = "unavailable"`, so the gap is visible rather
 > than silent — but it is not yet fixed.
