@@ -418,20 +418,23 @@ def issue_token_cmd(
         typer.echo(f"Failed to issue token: {exc}", err=True)
         raise typer.Exit(code=1)
 
-    typer.echo(token)
     # B6a: the server ignores offline tokens entirely unless it was started
     # with NOVAFABRIC_OFFLINE_KEY_PATH. Nothing else told the operator that, so
     # a correctly-minted token came back 401 "Invalid local token" and the
-    # documented multi-node path cost a debugging session. Say it here, on
-    # stderr so `TOK=$(nova server issue-token ...)` still captures only the
-    # token.
+    # documented multi-node path cost a debugging session.
+    #
+    # Printed on stderr, and BEFORE the token, for two reasons that must both
+    # hold: `TOK=$(nova server issue-token ...)` captures stdout only, and the
+    # token stays the LAST line of the combined stream -- which is the contract
+    # tests/test_server_cli_commands.py relies on to extract it.
     typer.echo(
-        f"\nThe server accepts this token only if it was started with\n"
+        f"The server accepts this token only if it was started with\n"
         f"  NOVAFABRIC_OFFLINE_KEY_PATH={resolved_key.with_suffix('.pub')}\n"
         f"Without it, offline-JWT authentication is disabled and this token is "
         f"rejected. See ADR-0018.",
         err=True,
     )
+    typer.echo(token)
 
 
 # ---------------------------------------------------------------------------

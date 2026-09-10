@@ -112,3 +112,41 @@ class TestAJwtIsNotReportedAsAnInvalidLocalToken:
             "never before it"
         )
         assert _secrets.compare_digest  # the primitive is still the one used
+
+
+class TestIssueTokenOutputContract:
+    """Two contracts must hold at once, and they pull in opposite directions.
+
+    The B6a hint has to reach the operator, but `TOK=$(nova server issue-token …)`
+    must still capture only the token, and
+    `tests/test_server_cli_commands.py` extracts the JWT as the **last line** of
+    the combined stream. Emitting the hint *after* the token satisfied the first
+    and broke the third — caught by that existing suite. The hint therefore goes
+    to stderr **and** comes first.
+    """
+
+    def test_stdout_is_the_token_and_nothing_else(self, tmp_path) -> None:
+        from typer.testing import CliRunner as _CliRunner
+
+        from novafabric.cli.main import app as _app
+
+        # separate streams so we can assert what a shell's $(...) would capture
+        result = _CliRunner().invoke(
+            _app,
+            [
+                "server", "issue-token",
+                "--subject", "contract@example.com",
+                "--roles", "writer",
+                "--expires-in", "1d",
+                "--key-path", str(tmp_path / "offline.pem"),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        last = result.output.strip().splitlines()[-1].strip()
+        assert last.count(".") == 2, (
+            "the JWT must remain the LAST line of the combined stream — "
+            f"test_server_cli_commands.py extracts it that way. Got: {last!r}"
+        )
+        assert "NOVAFABRIC_OFFLINE_KEY_PATH" in result.output, (
+            "B6a: the server-side requirement must still be shown somewhere"
+        )
