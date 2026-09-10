@@ -267,6 +267,33 @@ nova capture --runner slurm \
 Pass runner-specific options with `--runner-option key=value` (repeatable). All
 runners are non-privileged by design — see the enforcement notes per runner.
 
+---
+
+### Capturing a framework agent without `nova capture`
+
+A runner captures a *command*. If your agent is a framework object inside a
+Python process, wrap it instead — each invocation writes its own Run Capsule,
+and the wire-level hooks record the model calls the framework makes.
+
+```python
+from novafabric.adapters import wrap_llamaindex, wrap_pydantic_ai, wrap_haystack
+
+engine = wrap_llamaindex(index.as_query_engine())   # LlamaIndex
+agent  = wrap_pydantic_ai(agent, run_name="support-bot")  # Pydantic AI
+pipe   = wrap_haystack(pipe, run_name="rag-qa")     # Haystack
+```
+
+Each wrapper patches the entry point **in place** and returns the same object, so
+existing references keep working. Install the framework itself (`pip install
+llama-index` / `pydantic-ai` / `haystack-ai`) — these are not NovaFabric extras,
+and the `wrap_*` call raises `ImportError` naming the command if the framework is
+absent.
+
+Adapters exist for LangGraph, AutoGen, CrewAI, DSPy, the OpenAI Agents SDK,
+Google ADK, AWS Bedrock AgentCore and the A2A SDK as well. Full reference,
+including each adapter's entry-point and capture-mode details, is in
+[`cli-reference.md`](cli-reference.md) §Framework Adapters.
+
 **`local` (default).** Runs the workload as a local subprocess. Equivalent to
 the pre-v0.6 behavior. No additional setup required.
 
