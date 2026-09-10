@@ -20,6 +20,7 @@ adapter would force boilerplate; requiring nothing let three vanish.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import novafabric.adapters as adapters_pkg
@@ -127,4 +128,54 @@ def test_every_registered_runner_is_documented() -> None:
         f"nowhere: {missing}. A user can pick one today and find nothing "
         f"written about it. Label experimental ones as experimental — the docs "
         f"honesty rule — but do not leave them undiscoverable."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Escape hatches — the same question, asked of the safety defaults.
+#
+# 22 of 130 NOVA* environment variables were read by the code and documented
+# nowhere. Most are operational knobs. Four were not: they switch off
+# authentication, the non-loopback bind refusal, the dashboard path denylist,
+# and webhook URL validation. A control an operator cannot find is a control
+# they cannot audit, and a deployment review that greps the docs for its own
+# risk surface would have missed all four.
+# ---------------------------------------------------------------------------
+
+#: Names that mean "a safety default can be turned off here".
+_ESCAPE_HATCH = re.compile(
+    r"NOVA[A-Z_]*(INSECURE|ALLOW|I_KNOW|I_ACCEPT|SKIP|DISABLE|UNSAFE|NO_AUTH|BYPASS)[A-Z_]*"
+)
+
+SECURITY_DOCS = (
+    REPO_ROOT / "SECURITY.md",
+    REPO_ROOT / "docs" / "operator-guide.md",
+    REPO_ROOT / "docs" / "cli-reference.md",
+    REPO_ROOT / "docs" / "user-guide.md",
+)
+
+
+def _escape_hatch_env_vars() -> set[str]:
+    """Escape-hatch env var names, read out of the source tree itself."""
+    src = REPO_ROOT / "src" / "novafabric"
+    found: set[str] = set()
+    for path in src.rglob("*.py"):
+        for match in _ESCAPE_HATCH.finditer(path.read_text(encoding="utf-8")):
+            found.add(match.group(0))
+    return {n for n in found if not n.endswith("_")}
+
+
+def test_escape_hatches_are_actually_found() -> None:
+    """Guard the guard: a regex that matches nothing would pass silently."""
+    hatches = _escape_hatch_env_vars()
+    assert len(hatches) >= 8, f"expected the escape-hatch set, found {sorted(hatches)}"
+
+
+def test_every_escape_hatch_is_documented() -> None:
+    text = "\n".join(p.read_text(encoding="utf-8") for p in SECURITY_DOCS if p.is_file())
+    missing = sorted(n for n in _escape_hatch_env_vars() if n not in text)
+    assert not missing, (
+        f"environment variables that switch OFF a safety default, documented "
+        f"nowhere an operator would look: {missing}. A control that cannot be "
+        f"found cannot be audited. Add it to SECURITY.md §Escape hatches."
     )
