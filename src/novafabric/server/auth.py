@@ -175,6 +175,29 @@ def _verify_local_token(request: Request, config: ServerConfig) -> AuthContext:
         )
     presented = auth_header.removeprefix("Bearer ").strip()
     if not secrets.compare_digest(presented.encode(), expected.encode()):
+        # B6b: this is the fall-through for *every* credential class, so an
+        # offline JWT that was never going to be accepted lands here and gets
+        # told "Invalid local token" -- sending the operator to check
+        # $NOVAFABRIC_HOME/.server-token for a credential they did not present.
+        # The discriminator is the same one _try_offline_token uses.
+        if presented.count(".") == 2:
+            if config.offline_key_path:
+                raise _unauthenticated(
+                    "This is JWT-shaped, so it was tried as an offline token and "
+                    "rejected: the signature did not verify against "
+                    "NOVAFABRIC_OFFLINE_KEY_PATH, or the token is expired. It is "
+                    "not the opaque local token either. See ADR-0018."
+                )
+            # B6a: the server ignores offline tokens entirely unless that env
+            # var is set, and nothing else tells the operator that.
+            raise _unauthenticated(
+                "This is JWT-shaped, but offline-JWT authentication is DISABLED "
+                "on this server: NOVAFABRIC_OFFLINE_KEY_PATH is not set, so "
+                "tokens minted by `nova server issue-token` are never accepted. "
+                "Start the server with NOVAFABRIC_OFFLINE_KEY_PATH=<public-key>, "
+                "or send the opaque local token from "
+                "$NOVAFABRIC_HOME/.server-token instead. See ADR-0018/ADR-0184."
+            )
         raise _unauthenticated("Invalid local token")
 
     ctx = AuthContext(subject=LOCAL_ADMIN_SUBJECT, roles=["admin"])
