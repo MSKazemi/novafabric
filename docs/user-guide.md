@@ -289,9 +289,26 @@ llama-index` / `pydantic-ai` / `haystack-ai`) — these are not NovaFabric extra
 and the `wrap_*` call raises `ImportError` naming the command if the framework is
 absent.
 
-Adapters exist for LangGraph, AutoGen, CrewAI, DSPy, the OpenAI Agents SDK,
-Google ADK, AWS Bedrock AgentCore and the A2A SDK as well. Full reference,
-including each adapter's entry-point and capture-mode details, is in
+Adapters ship for eleven frameworks. Each is importable by name from
+`novafabric.adapters`:
+
+| Framework | Entry point | Wraps |
+|---|---|---|
+| LangGraph | `wrap_langgraph(graph)` | a compiled graph |
+| AutoGen | `wrap_autogen(agent)` | an agent |
+| CrewAI | `wrap_crewai(crew)` | a crew |
+| DSPy | `wrap_dspy(program)` | a program |
+| LlamaIndex | `wrap_llamaindex(engine)` | a query/chat engine or agent |
+| Pydantic AI | `wrap_pydantic_ai(agent)` | an `Agent` |
+| Haystack | `wrap_haystack(pipeline)` | a `Pipeline` |
+| OpenAI Agents SDK | `register_openai_agents()` | registers a trace processor |
+| Google ADK | `make_google_adk_plugin()` | returns a plugin |
+| AWS Bedrock AgentCore | `wrap_bedrock_agentcore(agent)` | an agent |
+| A2A SDK | `make_a2a_interceptor()` | returns an interceptor |
+
+The last four are not wrappers — they hook the framework's own extension point
+(ADR-0078) rather than patching a method. Full reference, including each
+adapter's entry-point and capture-mode details, is in
 [`cli-reference.md`](cli-reference.md) §Framework Adapters.
 
 **`local` (default).** Runs the workload as a local subprocess. Equivalent to

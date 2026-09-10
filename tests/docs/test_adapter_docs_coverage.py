@@ -1,0 +1,84 @@
+"""Guard: every exported framework adapter is mentioned in user-facing docs.
+
+`docs/cli-reference.md` is drift-guarded for **CLI commands**
+(`test_cli_reference_coverage.py`), and the dashboard registry is guarded
+separately. The **Python adapter API** was guarded by nothing — and that is
+exactly how three of them shipped invisible.
+
+Found 2026-09-10: `wrap_llamaindex`, `wrap_pydantic_ai` and `wrap_haystack` were
+implemented, exported from `novafabric.adapters.__all__`, and covered by 19
+passing tests — while appearing in **no user-facing document at all**. Nobody
+could discover them, so nothing ever contradicted the ROADMAP row that still
+listed all three under *"Next — specified, unclaimed, ready to build"* with
+issues #1/#2/#3 open. Under-claiming is the drift nobody is incentivised to
+catch, because nothing breaks when it happens.
+
+Scope note: mirrors the sibling guard's bar deliberately — a **mention** in one
+of the user-facing docs, not a prescribed section shape. Requiring a section per
+adapter would force boilerplate; requiring nothing let three vanish.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import novafabric.adapters as adapters_pkg
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+#: Where a user could reasonably discover an adapter.
+USER_FACING_DOCS = (
+    REPO_ROOT / "docs" / "cli-reference.md",
+    REPO_ROOT / "docs" / "user-guide.md",
+    REPO_ROOT / "docs" / "developer-guide.md",
+)
+
+
+def _exported_adapter_symbols() -> set[str]:
+    """Public adapter entry points, from the package's own ``__all__``.
+
+    Derived from the source of truth rather than a hand-written list, so a new
+    adapter is covered the moment it is exported — the mirror-list mistake that
+    makes a guard quietly stop guarding.
+    """
+    return {
+        name
+        for name in getattr(adapters_pkg, "__all__", ())
+        if name.startswith(("wrap_", "register_", "make_"))
+    }
+
+
+def test_the_export_list_is_actually_populated() -> None:
+    """Guard the guard: an empty set would make the coverage test vacuous."""
+    exported = _exported_adapter_symbols()
+    assert len(exported) >= 8, (
+        f"expected the full adapter export surface, found {sorted(exported)}"
+    )
+
+
+def test_every_exported_adapter_is_mentioned_in_user_facing_docs() -> None:
+    text = "\n".join(
+        p.read_text(encoding="utf-8") for p in USER_FACING_DOCS if p.is_file()
+    )
+    missing = sorted(name for name in _exported_adapter_symbols() if name not in text)
+    assert not missing, (
+        "adapters are exported but documented nowhere a user would look: "
+        f"{missing}. They ship invisible — which is how wrap_llamaindex, "
+        "wrap_pydantic_ai and wrap_haystack stayed on the ROADMAP as unbuilt "
+        "while passing 19 tests. Add them to docs/cli-reference.md "
+        "§Framework Adapters (reference) or docs/user-guide.md (tutorial)."
+    )
+
+
+def test_each_adapter_module_is_importable_without_its_framework() -> None:
+    """The documented promise: importing the module never requires the framework.
+
+    Every adapter module must stay importable so `from novafabric.adapters
+    import wrap_x` works on a machine that has never installed the framework;
+    the `ImportError` naming the install command is raised at **call** time.
+    Asserted here because the docs say so in both guides.
+    """
+    import importlib
+
+    for module in ("llamaindex", "pydantic_ai", "haystack"):
+        importlib.import_module(f"novafabric.adapters.{module}")
