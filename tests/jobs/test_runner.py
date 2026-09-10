@@ -101,8 +101,32 @@ def test_failures_retry_bounded_then_fail(store: JobStore) -> None:
         time.sleep(0.2)
     finally:
         runner.stop()
-    assert attempts == [1, 2, 3]
     got = store.get(job.job_id)
+    # The assertion is UNCHANGED and deliberately still strict -- widening it
+    # would delete the evidence. Only the failure *message* is enriched.
+    #
+    # Known flake, seen three times in a real gate (2026-09-03, 2026-09-10 x2),
+    # always as `[1, 2] != [1, 2, 3]`: the job reached FAILED having run the
+    # handler twice with max_attempts=3. Two candidate mechanisms, neither
+    # confirmed, and the `error` column is what discriminates them:
+    #
+    #   "lease expired after N attempt(s)" -> an attempt was CLAIMED (which
+    #       increments `attempt`) but starved before the handler ran, and
+    #       expire_leases() failed the job on a budget that was never spent.
+    #       That is a real reliability defect in the jobs subsystem.
+    #   "boom on attempt 3"               -> a pure test race; the state was
+    #       read before the third attempt's bookkeeping landed.
+    #
+    # Two prior attempts to reproduce on demand (40 in-process iterations and
+    # 12 pytest runs, both under 20 CPU burners) produced 0 failures, so the
+    # column has never been read. It is printed here so the NEXT occurrence in
+    # any gate is decisive rather than another sighting.
+    assert attempts == [1, 2, 3], (
+        f"attempts={attempts} state={got.state} error={got.error!r} "
+        f"max_attempts=3 -- see .claude/plans/known-flake-jobs-retry-2026-09-03.md; "
+        f"an 'error' naming a lease expiry means the retry budget was charged "
+        f"for an attempt that never ran"
+    )
     assert got.error is not None and "boom on attempt 3" in got.error
 
 
