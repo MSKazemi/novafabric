@@ -18,3 +18,8 @@
 id = "GHSA-jmr9-qjv8-65gv"
 justification = "extract-zip symlink path traversal, reached only through the @lhci/cli -> lighthouse -> puppeteer dev-only chain in web/ (Lighthouse perf checks; never in a build artifact or production path). No fixed version exists upstream as of 2026-09-04: extract-zip 2.0.1 and @lhci/cli 0.15.1 are both the latest releases and both flagged; npm's only offered 'fix' is a downgrade to @lhci/cli 0.12.0. Exposure requires lhci extracting a malicious Chrome archive, i.e. a compromised Google CDN. Re-check upstream at expiry."
 expires = "2026-11-04"
+
+[[waiver]]
+id = "GHSA-7pqw-9j4j-h8q3"
+justification = "extract-zip arbitrary file write via symlink archive entries — the twin advisory to GHSA-jmr9-qjv8-65gv: same package, same version (2.0.1), same dev-only chain (@lhci/cli -> lighthouse -> puppeteer-core -> @puppeteer/browsers -> extract-zip), never in a build artifact or production path. Verified 2026-09-09: the advisory range is `<= 2.0.1` and 2.0.1 is the LAST version extract-zip ever published, so no fixed version exists to upgrade to; @lhci/cli 0.15.1 is already the latest release. npm reports `fixAvailable` as a semver-MAJOR DOWNGRADE to @lhci/cli 0.12.0, which is not a fix. Upstream has resolved this only in @puppeteer/browsers 3.x, which replaced extract-zip with modern-tar; lighthouse 12.6.1 still pins @puppeteer/browsers 2.13.2, so the fix reaches this tree when lighthouse bumps, not by any change we can make here. Exposure requires lhci extracting a malicious Chrome archive, i.e. a compromised Google CDN. Re-check upstream at expiry."
+expires = "2026-11-04"
