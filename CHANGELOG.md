@@ -1336,6 +1336,25 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
+- **`nightly-scale-gates.yml`'s `object-store-scale` job had been red every night since at least
+  2026-09-17 — Docker Hub discontinued the `minio/minio` image entirely.**
+
+  `docker pull minio/minio` (any tag) now returns `pull access denied ... repository does not
+  exist`, and Docker Hub's own API returns `object not found` for the repository — MinIO Inc.
+  removed free Docker Hub distribution, not a local or workflow misconfiguration. This is the
+  second such removal this job has hit: `bitnami/minio` was retired first (2026-08-05), the
+  workflow moved to the official `minio/minio` image, and that image is now gone too.
+
+  `postgres-scale` and `dashboard-scale` (the other two jobs in this workflow) were green
+  throughout — only the MinIO container-startup step failed, before any test ran.
+
+  Switched to `quay.io/minio/minio` — MinIO's own community-edition mirror, same image content
+  (verified: identical digest to what Docker Hub last served), same `server /data` command.
+  Proven red→green locally, reproducing the workflow's exact commands: `minio/minio:latest`
+  fails to pull with the identical error CI shows; `quay.io/minio/minio:latest` pulls, starts,
+  and passes its health check; the full `tests/object_capsule_store` suite then runs clean
+  (172 passed, 4 skipped, 1 xfailed) against it.
+
 - **Withdrawn: the published claim that v0.38.0 meets the Scale-S4 latency criterion.**
 
   `docs/releases/v0.38.0.md` told readers that v0.38.0 "meets the Scale-S4 acceptance
