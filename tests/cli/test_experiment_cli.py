@@ -237,7 +237,10 @@ def test_run_invalid_dataset_exits_2(tmp_path: Path) -> None:
     bad.write_text("{not json\n", encoding="utf-8")
     result = _run(tmp_path, bad, _ECHO_CODE)
     assert result.exit_code == 2
-    assert "invalid JSON" in result.output
+    # Rich wraps the error line at the console width; tmp_path's length varies by
+    # test-session position, so the wrap point can land between these two words.
+    # Collapse whitespace before checking (same idiom as tests/cli/test_drift_collect_cli.py).
+    assert "invalid JSON" in " ".join(result.output.split())
 
 
 def test_show_missing_experiment_exits_2(tmp_path: Path) -> None:

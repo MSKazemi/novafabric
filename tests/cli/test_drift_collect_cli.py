@@ -204,7 +204,10 @@ def test_fingerprint_without_a_run_is_refused(tmp_path: Path) -> None:
 def test_a_run_with_nothing_to_fingerprint_exits_two(tmp_path: Path) -> None:
     result = _run(_store(tmp_path), "--emit", "fingerprint", "--run", "run-1", "--no-cache")
     assert result.exit_code == 2
-    assert "nothing to fingerprint" in result.output
+    # Rich wraps the error line at the console width; tmp_path's length varies by
+    # test-session position, so the wrap point can land between these two words.
+    # Collapse whitespace before checking, matching the rest of this file.
+    assert "nothing to fingerprint" in " ".join(result.output.split())
 
 
 # ── root-cause reads the lineage store, not the capsule tree ─────────────
