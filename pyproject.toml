@@ -446,7 +446,7 @@ dev = [
     # Migrating the gate to the new model is real work; raise the ceiling only
     # with `uv run mutmut run` green. Note that 3.5 does not work either — the
     # gate has never run on any mutmut 3.x. See issue #25.
-    "mutmut>=3.0,<3.8",
+    "mutmut>=3.0,<3.9",
     # sqlfluff (MIT) — Tier A under ADR-0024.  SQL linter for migration scripts
     # and raw DDL snippets in the MetadataStore.
     "sqlfluff>=3.0",
