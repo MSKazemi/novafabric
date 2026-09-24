@@ -6,6 +6,58 @@ and audits** AI-agent and model runs. Every command works locally, without a
 server, without accounts, and without network access to any NovaFabric-operated
 service.
 
+## nova dashboard
+
+**Status: experimental** (ADR-0235). Widgets and dashboards are portable, versioned JSON files
+under `$NOVAFABRIC_HOME/dashboards`. **Files are the storage, not an export format** — there is no
+database table of user dashboards, so deleting that directory removes them with nothing left to
+migrate. They live outside any capsule directory: capsules are signed evidence and stay read-only.
+
+```bash
+nova dashboard list                              # what is on disk
+nova dashboard validate ./untrusted.widget.json  # check without installing
+nova dashboard apply ./widgets/                  # install a file or a directory (idempotent)
+nova dashboard show run-throughput               # print one as JSON
+nova dashboard export run-throughput -o ./out.widget.json
+```
+
+A minimal widget:
+
+```json
+{
+  "$novafabricWidget": true,
+  "version": 1,
+  "id": "run-throughput",
+  "title": "Runs per day",
+  "query": {"select": ["count()"], "group_by": ["status"], "since": "7d"},
+  "presentation": {"chart": "bar"}
+}
+```
+
+A dashboard **references** widgets by id and never inlines them, so one widget is reusable:
+
+```json
+{
+  "$novafabricDashboard": true,
+  "version": 1,
+  "id": "ops",
+  "title": "Ops",
+  "widgets": [{"widget": "run-throughput", "position": {"x": 0, "y": 0, "w": 6, "h": 4}}]
+}
+```
+
+⚠ **A widget is untrusted input.** These files are designed to be shared, so treat one that
+arrives from outside as you would any other foreign input. `nova dashboard validate` checks the
+JSON Schema first and then hands the embedded `query` to the same validator `nova query` uses, so
+a widget cannot express a query the CLI itself forbids. The `id` field is the only one that
+reaches a path and is constrained by the schema; there is no user-supplied code, no raw SQL, and
+no templating.
+
+ⓘ **Fields this build does not recognise are preserved** on export, so a file authored by a newer
+NovaFabric round-trips without losing its settings. A newer *format version* is refused rather
+than parsed — a wrong chart is worse than no chart.
+
+
 ## What you will learn
 
 This page is the complete reference for the `nova` CLI: every command, every
@@ -202,7 +254,8 @@ Status: **experimental**.
 
 | Command | Purpose |
 |---|---|
-| [`nova serve --experimental`](#nova-serve---experimental) | Read-only local dashboard (loopback, single-user) |
+| [`nova dashboard`](#nova-dashboard) | Manage dashboards and widgets as portable JSON files (ADR-0235) |
+| [`nova serve --experimental`](#nova-serve---experimental) | Local dashboard (loopback, single-user; not read-only — Layer B mutations ship) |
 | [`nova server start`](#nova-server-start) | Multi-user REST API (Postgres/SQLite, OIDC, RBAC) |
 | [`nova server saml-metadata`](#nova-server-saml-metadata) | Emit the SAML SP metadata XML for IdP registration (experimental) |
 | [`nova server scim-map-group`](#nova-server-scim-map-group-group-role-experimental-adr-0139-d3) | Declare IdP-group → RBAC-role mappings for SCIM provisioning (experimental) |
@@ -276,6 +329,10 @@ Options:
 - `--output-dir, -o PATH` — base directory for capsule storage (default: `$NOVAFABRIC_HOME/capsules/`)
 - `--timeout FLOAT` — wall-clock deadline in seconds for the captured command (default: 600). Increase for long-running agents: `nova capture --timeout 3600 python agent.py`
 - `--runner {local,docker,kubernetes,slurm,lsf,pbs}` — execution backend (default: `local`). Tab-completion available via `nova --install-completion`.
+  - Every runner except `local` forwards **only** `NOVAFABRIC_*` environment
+    variables into the workload, plus `PATH` for `slurm` and whatever you name in
+    `extra_env` for `docker`/`kubernetes` (ADR-0270). `local` runs as you, on your
+    machine, and keeps your full environment.
 - `--environment TEXT` — **experimental** ([ADR-0126](./decisions.md)). Deployment-environment tag recorded verbatim on the capsule as the additive optional `deployment_environment` field (with its provenance in `environment_source`): conventionally `production` | `staging` | `development` | `test`, or any custom string (e.g. `prod-eu`, `canary` — a value outside the conventional four warns but is accepted). Precedence: this flag > the `NOVAFABRIC_ENVIRONMENT` env var > the SDK `deployment_environment=` argument; if none is supplied both fields stay absent (read as `unknown`) and the manifest is byte-compatible with earlier capsules. Never inferred from host/branch/namespace. **Distinct from the `env.lock` technical environment** (ADR-0007) — this is a delivery-lifecycle label, not a reproducibility fingerprint. Example: `nova capture --environment production -- python agent.py`
 - `--experiment TEXT`, `--variant TEXT`, `--variant-source TEXT` (+ optional `--variant-label TEXT`, `--variant-assigned-at RFC3339`) — **experimental** ([ADR-0116](./decisions.md)). Record which A/B experiment and variant an **external** allocator had active for this run, as the additive optional `variant` block on the capsule manifest (`experiment_id`, `variant_id`, `assignment_source`, plus optional `variant_label`, `assigned_at`). **Record-only:** every field is copied verbatim from what you supply — NovaFabric never assigns, splits, samples, or analyzes variants (that is LaunchDarkly/Statsig/GrowthBook territory, an explicit non-goal), so `--variant-source` (the external assigner, e.g. `launchdarkly`, `statsig`, `upstream-router`) is required with the other two and is never defaulted, and `--variant-assigned-at` is never substituted with the capture time. Precedence: these flags > the `NOVAFABRIC_VARIANT*` env vars > the SDK `variant=` mapping argument, resolved atomically per source (no cross-source mixing). If nothing supplies a block it stays absent and the manifest is byte-compatible with earlier capsules. An incomplete flag set fails before capture starts; incomplete ambient env vars warn and are ignored (never block the workload). Example: `nova capture --experiment exp1 --variant arm-b --variant-source statsig -- python agent.py`
 - `--session-id ULID`, `--session-sequence INT` — **experimental** ([ADR-0122](./decisions.md)). Tag the run as one ordered turn of a multi-turn *session* (a conversation or workflow of N otherwise-independent runs), recorded as the additive optional `session_id` / `sequence` back-reference fields on the capsule manifest. `--session-id` must be a ULID (create one with `nova session new`); `--session-sequence` is the zero-based turn index and requires `--session-id`. Precedence: these flags > the `NOVAFABRIC_SESSION_ID` / `NOVAFABRIC_SESSION_SEQUENCE` env vars > the SDK `session_id=`/`session_sequence=` arguments, resolved atomically per source. Absent = a standalone run, byte-compatible with earlier capsules. The `session.json` manifest (`nova session`, below) stays the **authoritative** ordered index; the capsule-side fields are advisory. **Not** the parent/child distributed-run hierarchy (ADR-0039) — that groups the workers of *one* job; a session groups *separate* runs over time. Example: `nova capture --session-id 01HZ8S9K3M4YZ2K7N9DPBYK2W0 --session-sequence 2 -- python agent.py`
@@ -1196,6 +1253,61 @@ NOVAFABRIC_QUERY_ENGINE=duckdb nova query --select 'count()' --group-by model
 If that variable is set but DuckDB is not installed, the query still runs on
 SQLite and logs a warning naming the extra — a read-only query is never failed
 over an engine preference.
+
+#### Derived metrics — `ratio()` (ADR-0236, experimental)
+
+`ratio(<operand>, <operand>) [AS alias]` divides one selected aggregate by another. Operands name
+other select items in the same query, by explicit alias or by canonical expression text:
+
+```bash
+nova query --select "count(), sum(cost), ratio(sum(cost), count()) AS cost_per_run"
+```
+
+⚠ **Undefined is not zero.** A zero denominator, or an absent numerator or denominator, yields
+**no value** — not `0`. *"0 errors out of 0 runs" is not a 0% error rate; it is no information*,
+and charting it as 0% would invent a data point that never existed. A measured zero over a
+non-zero denominator is still reported as `0`.
+
+Both operands must be selected in the same query, and a ratio cannot take another ratio as an
+operand.
+
+ⓘ **Not yet expressible:** a per-aggregate filter, e.g. `ratio(count where status:error, count)`
+for an error rate. The DSL's `where` is plan-level; a per-aggregate `where` is a separate decision
+(recorded in ADR-0236's implementation status).
+
+#### Filter scope over the capsule tree — `--scope` (ADR-0233, experimental)
+
+When a filter matches something inside a distributed run's capsule tree, there are three
+defensible answers, and `--scope` names them:
+
+| `--scope` | Returns | Answers |
+|---|---|---|
+| `node` *(default)* | the matching capsules | "which capsules failed?" |
+| `root` | root capsules whose tree contains a match | "which runs were affected?" |
+| `tree` | every capsule in any tree containing a match | "what was happening around the failure?" |
+
+```bash
+nova query --select 'count()' --where 'status = error' --scope root
+```
+
+Scope is part of the **query plan**, not a display option — so a dashboard view using it is
+reproducible from the CLI, and it round-trips through `--query-file`.
+
+⚠ **An incomplete tree is reported as incomplete.** The JSON result carries a `tree_scope` block:
+
+```json
+{"scope": "tree", "capsules_selected": 7, "expansion_truncated": false,
+ "complete": false,
+ "incomplete_reasons": ["parent2: 2 of 3 children have arrived, so this tree is still filling"]}
+```
+
+A tree that renders as whole while children are still in flight is a wrong answer presented
+confidently, so children still arriving, orphan placeholders, and capsules falling outside the
+query's time window are each named. Expansion is capped at 5,000 capsules; exceeding it sets
+`expansion_truncated` rather than silently dropping capsules.
+
+ⓘ Using `--scope` for the first time after upgrading rebuilds the query index — the indexer now
+extracts the parent/child fields the scopes need.
 
 ### nova view (experimental, ADR-0130)
 
@@ -8111,6 +8223,64 @@ Three research-grounded features for tamper-evident ex-post evidence. All additi
 opt-in; none is a third top-level format ([ADR-0034](./decisions.md)). The
 architecture note behind it is in the maintainers' private `design/` tree and is
 not published.
+
+### LlamaIndex adapter
+
+```python
+# Install the framework: pip install llama-index
+from novafabric.adapters.llamaindex import wrap_engine
+
+engine = wrap_engine(index.as_query_engine())
+response = engine.query("What changed in v2?")
+```
+
+Patches the entry-point method **in place** and returns the same object, so existing
+references keep working. LlamaIndex has no single entry point across its object types —
+a query engine exposes `query`, a chat engine `chat`, an agent `chat` or `run` — so the
+wrapper tries an explicit ordered list (`query`, `chat`, `run`) rather than guessing, and
+reports which one it patched. Override with `method=`.
+
+Optional: `run_name=` (defaults to the class name), `data_dir=`.
+
+Top-level alias: `from novafabric.adapters import wrap_llamaindex`
+
+### Pydantic AI adapter
+
+```python
+# Install the framework: pip install pydantic-ai
+from novafabric.adapters.pydantic_ai import wrap_agent
+
+agent = wrap_agent(agent, run_name="support-bot")
+result = agent.run_sync("Where is my order?")
+```
+
+Both `Agent.run` (async, the primary API) and `Agent.run_sync` are patched. Wrapping only
+`run_sync` would silently capture nothing for async callers; wrapping only `run` would
+**double-count**, because `run_sync` drives `run` internally. A re-entrancy guard is what
+keeps one `run_sync` call producing one capsule rather than two — without it the inner
+capsule also steals the wire hooks from the outer.
+
+Top-level alias: `from novafabric.adapters import wrap_pydantic_ai`
+
+### Haystack adapter
+
+```python
+# Install the framework: pip install haystack-ai
+from novafabric.adapters.haystack import wrap_pipeline
+
+pipe = wrap_pipeline(pipe, run_name="rag-qa")
+result = pipe.run({"retriever": {"query": "..."}})
+```
+
+Patches `run` in place and returns the same object. `AsyncPipeline.run_async` is patched
+too when present, because Haystack exposes the async variant as a separate method rather
+than as a coroutine returned by `run`.
+
+Top-level alias: `from novafabric.adapters import wrap_haystack`
+
+> All three frameworks are optional and are **not** NovaFabric extras — install the
+> framework package itself. Each module stays importable without its framework; the
+> `wrap_*` call raises `ImportError` naming the install command.
 
 ### nova energy probe
 

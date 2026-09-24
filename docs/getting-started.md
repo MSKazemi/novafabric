@@ -505,7 +505,7 @@ A few directions to explore:
 | Build a signed Evidence Bundle | [User guide: export-evidence](user-guide.md#nova-export-evidence) |
 | Register and lifecycle-manage AI assets (eval-gated promotion) | [User guide: asset registry](user-guide.md#asset-registry) |
 | Gate promotion with OPA/Rego policy and maker-checker approval | [User guide: nova promote](user-guide.md) |
-| Browse capsules in a local read-only web dashboard | [User guide: nova serve](user-guide.md#nova-serve-experimental) |
+| Browse capsules in a local web dashboard | [User guide: nova serve](user-guide.md#nova-serve-experimental) |
 | Hands-on tour of every capability (proxies, providers, KG, compliance) | [tutorials/feature-tour.md](tutorials/feature-tour.md) |
 | Prove supply-chain provenance & eval integrity (dataset cards, contamination checks, SLSA-for-ML, OTel export) | [feature tour §17](tutorials/feature-tour.md#17-prove-supply-chain-provenance--eval-integrity) |
 | Group runs into multi-turn sessions and replay them in order (experimental) | [CLI reference: nova session](cli-reference.md#nova-session-experimental-adr-0122) |

@@ -255,6 +255,10 @@ components:
           default: dashboard-issued
           title: Label
           type: string
+        scope:
+          default: admin
+          title: Scope
+          type: string
       title: IssueTokenRequest
       type: object
     MCPScanRequest:
@@ -453,6 +457,23 @@ openapi: 3.1.0
 paths:
   /:
     get:
+      parameters:
+      - in: query
+        name: token
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Token
+      - in: header
+        name: authorization
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
       responses:
         '200':
           content:
@@ -462,6 +483,12 @@ paths:
                 title: Response Serve No Dashboard  Get
                 type: object
           description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
       summary: Serve No Dashboard
       x-nova-contract: pending
   /api/adapters:
@@ -4086,6 +4113,23 @@ paths:
       x-nova-contract: pending
   /api/health:
     get:
+      parameters:
+      - in: query
+        name: token
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Token
+      - in: header
+        name: authorization
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
       responses:
         '200':
           content:
@@ -4095,6 +4139,12 @@ paths:
                 title: Response Health Api Health Get
                 type: object
           description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
       summary: Health
       x-nova-contract: pending
   /api/holds:
@@ -7438,9 +7488,15 @@ paths:
     get:
       description: "Return per-run token and cost totals from ClickHouse.\n\nResponse shape::\n\n    {\"\
         costs\": {\"<run_id>\": {\"input_tokens\": int, \"output_tokens\": int,\n                    \
-        \        \"cost_usd\": float, \"calls\": int}, ...}}\n\nWhen ``NOVA_CLICKHOUSE_URL`` is not set\
-        \ the response is\n``{\"costs\": {}}`` (200 OK, no error).  When ClickHouse is\nunreachable the\
-        \ response is ``{\"costs\": {}, \"error\": \"<msg>\"}``\n(also 200 OK — the UI degrades gracefully)."
+        \        \"cost_usd\": float, \"calls\": int}, ...}}\n\nADR-0234 D2 (the honest-degradation rule)\
+        \ governs the ``aggregate``\nblock. Three things this endpoint used to do silently now say so:\n\
+        \n* **Unavailable is not empty.** With ``NOVA_CLICKHOUSE_URL`` unset it\n  returned ``{\"costs\"\
+        : {}}`` and called it degrading gracefully. An empty\n  result is indistinguishable from *\"these\
+        \ runs cost nothing\"*.\n* **Truncation is reported.** The 100-id cap is a bound on the answer.\n\
+        * **Unpriced is not free.** ``_estimate_cost`` returns 0.0 for a model\n  with no catalog price,\
+        \ so ``sum(cost_usd)`` reported an unpriced run as\n  ``$0.00``. ``unpriced_calls`` says how many\
+        \ calls carry no established\n  price, and the aggregate refuses when *every* contributing call\
+        \ is one.\n\n``costs`` keeps its previous shape, so existing consumers are unchanged."
       parameters:
       - description: Comma-separated list of run IDs (max 100)
         in: query

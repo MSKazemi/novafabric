@@ -21,6 +21,7 @@ from novafabric.query.errors import QueryParseError
 from novafabric.query.model import (
     AGGREGATE_FUNCS,
     DEFAULT_LIMIT,
+    DERIVED_FUNCS,
     DIMENSIONS,
     LOG_LEVEL_ALIASES,
     LOG_LEVEL_RANKS,
@@ -32,11 +33,25 @@ from novafabric.query.model import (
     OrderBy,
     Predicate,
     QueryPlan,
+    Scope,
 )
 
 #: The only keys a query object may carry — no fifth clause, no raw SQL surface.
 _ALLOWED_QUERY_KEYS = frozenset(
-    {"schema_version", "select", "where", "group_by", "since", "until", "limit", "order_by"}
+    # ADR-0233 adds "scope". The list stays closed — no fifth clause, no raw SQL
+    # surface — which is what ADR-0235 D7 relies on when it validates a widget
+    # that arrived from somewhere untrusted.
+    {
+        "schema_version",
+        "select",
+        "where",
+        "group_by",
+        "since",
+        "until",
+        "limit",
+        "order_by",
+        "scope",
+    }
 )
 
 _SELECT_RE = re.compile(
@@ -47,6 +62,15 @@ _SELECT_RE = re.compile(
     r")\s*(?:AS\s+(?P<alias>[A-Za-z_][A-Za-z0-9_]*)\s*)?$"
 )
 _PERCENTILE_RE = re.compile(r"^p\d{1,2}$")
+#: ADR-0236 D3 — ``ratio(<operand>, <operand>) [AS alias]``. Operands are alias
+#: references (an aggregate's explicit alias, or its canonical expression text,
+#: which is its default alias) and are resolved against the same select list.
+_DERIVED_RE = re.compile(
+    r"^\s*(?P<func>[A-Za-z_][A-Za-z0-9_]*)\s*\(\s*"
+    r"(?P<num>[^,()]*(?:\([^()]*\))?[^,()]*)\s*,\s*"
+    r"(?P<den>[^,()]*(?:\([^()]*\))?[^,()]*)\s*\)"
+    r"\s*(?:AS\s+(?P<alias>[A-Za-z_][A-Za-z0-9_]*)\s*)?$"
+)
 _IN_PRED_RE = re.compile(r"^\s*(?P<field>[A-Za-z_][A-Za-z0-9_]*)\s+IN\s*\((?P<vals>.*)\)\s*$")
 _CMP_PRED_RE = re.compile(
     r"^\s*(?P<field>[A-Za-z_][A-Za-z0-9_]*)\s*(?P<op>!=|<=|>=|=|<|>)\s*(?P<value>.+?)\s*$"
@@ -67,6 +91,26 @@ def _unquote(value: str) -> str:
 
 def parse_select_item(text: str) -> Aggregate:
     """Parse one ``select`` item, e.g. ``avg(cost) AS avg_cost`` or ``count()``."""
+    derived = _DERIVED_RE.match(text)
+    if derived is not None:
+        func = derived.group("func")
+        if func not in DERIVED_FUNCS:
+            raise QueryParseError(
+                f"unknown derived function {func!r} in {text.strip()!r}; "
+                f"allowed: {', '.join(DERIVED_FUNCS)}"
+            )
+        numerator = derived.group("num").strip()
+        denominator = derived.group("den").strip()
+        alias = derived.group("alias") or f"{func}({numerator}, {denominator})"
+        return Aggregate(
+            func=func,
+            metric=None,
+            score_name=None,
+            alias=alias,
+            numerator=numerator,
+            denominator=denominator,
+        )
+
     match = _SELECT_RE.match(text)
     if match is None:
         raise QueryParseError(f"invalid select expression: {text!r}")
@@ -78,7 +122,8 @@ def parse_select_item(text: str) -> Aggregate:
     if func not in AGGREGATE_FUNCS and not _PERCENTILE_RE.match(func):
         raise QueryParseError(
             f"unknown aggregate function {func!r} in {text.strip()!r}; "
-            f"allowed: count, {', '.join(AGGREGATE_FUNCS)}, pXX"
+            f"allowed: count, {', '.join(AGGREGATE_FUNCS)}, pXX, "
+            f"{', '.join(DERIVED_FUNCS)}(<selected>, <selected>)"
         )
 
     metric = match.group("metric")
@@ -104,9 +149,35 @@ def parse_select_item(text: str) -> Aggregate:
     return Aggregate(func=func, metric=metric, score_name=score_name, alias=alias)
 
 
+def _split_top_level(text: str) -> list[str]:
+    """Split on commas that are **outside** parentheses.
+
+    A plain ``text.split(",")`` was correct while every select item was
+    ``func(metric)``, which contains no comma. ADR-0236's ``ratio(a, b)`` does,
+    and a naive split turns one item into two malformed halves. Depth-aware
+    splitting is strictly more permissive than the old behaviour — no existing
+    expression can contain a top-level comma — so no query changes meaning.
+    """
+    items: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for ch in text:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        if ch == "," and depth == 0:
+            items.append("".join(current))
+            current = []
+            continue
+        current.append(ch)
+    items.append("".join(current))
+    return items
+
+
 def parse_select(value: str | list[str]) -> tuple[Aggregate, ...]:
     """Parse the ``select`` clause — a comma-separated flag string or a list."""
-    items = list(value.split(",")) if isinstance(value, str) else list(value)
+    items = _split_top_level(value) if isinstance(value, str) else list(value)
     items = [s for s in (i.strip() for i in items) if s]
     if not items:
         raise QueryParseError("select requires at least one aggregate expression")
@@ -115,7 +186,37 @@ def parse_select(value: str | list[str]) -> tuple[Aggregate, ...]:
     duplicates = {a for a in aliases if aliases.count(a) > 1}
     if duplicates:
         raise QueryParseError(f"duplicate select alias: {', '.join(sorted(duplicates))}")
+    _validate_derived_operands(aggregates)
     return aggregates
+
+
+def _validate_derived_operands(aggregates: tuple[Aggregate, ...]) -> None:
+    """ADR-0236 D3: a derived function's operands must be selected in the same query.
+
+    Checked here rather than in :func:`parse_select_item` because an operand
+    reference is only meaningful against the *whole* select list — an item
+    cannot know, on its own, whether ``total`` was also selected.
+    """
+    base_aliases = {agg.alias for agg in aggregates if not agg.is_derived}
+    for agg in aggregates:
+        if not agg.is_derived:
+            continue
+        for role, operand in (("numerator", agg.numerator), ("denominator", agg.denominator)):
+            if operand in base_aliases:
+                continue
+            # A ratio over a ratio would need an evaluation order this design
+            # deliberately does not have: one pass, base aggregates first.
+            # Refusing is clearer than adding a topological sort for a case
+            # nobody has asked for.
+            derived_aliases = {a.alias for a in aggregates if a.is_derived}
+            hint = (
+                " (a derived expression cannot be an operand of another one)"
+                if operand in derived_aliases
+                else f"; selected: {', '.join(sorted(base_aliases)) or 'nothing'}"
+            )
+            raise QueryParseError(
+                f"{agg.func}() {role} {operand!r} is not selected in this query{hint}"
+            )
 
 
 def _normalize_log_level(value: str) -> str:
@@ -294,11 +395,13 @@ def build_plan(
     until: str | None = None,
     limit: int | None = None,
     order_by: str | dict[str, Any] | None = None,
+    scope: str | None = None,
 ) -> QueryPlan:
     """Compile clause values (flag strings or query-object fields) into a plan."""
     selects = parse_select(select)
     predicates = parse_where(where)
     dims = parse_group_by(group_by)
+    resolved_scope = parse_scope(scope)
     return QueryPlan(
         selects=selects,
         where=predicates,
@@ -307,7 +410,26 @@ def build_plan(
         until=validate_until(until),
         limit=_parse_limit(limit),
         order_by=_parse_order_by(order_by, selects, dims),
+        scope=resolved_scope,
     )
+
+
+def parse_scope(value: str | None) -> Scope:
+    """Parse the ``scope`` clause (ADR-0233 D1). ``None`` means ``node``.
+
+    Fails closed on an unknown value rather than silently falling back to
+    ``node``: a caller who typed ``--scope treee`` asked for a *different result
+    set*, and quietly giving them the default would answer a question they did
+    not ask, with no indication anything was wrong.
+    """
+    if value is None:
+        return Scope.NODE
+    try:
+        return Scope(str(value).strip().lower())
+    except ValueError as exc:
+        raise QueryParseError(
+            f"unknown scope {value!r}; allowed: {', '.join(s.value for s in Scope)}"
+        ) from exc
 
 
 def check_query_object_keys(obj: dict[str, Any], *, source: str = "query object") -> None:
@@ -378,6 +500,7 @@ def plan_from_query_object(
     until: str | None = None,
     limit: int | None = None,
     order_by: str | None = None,
+    scope: str | None = None,
 ) -> QueryPlan:
     """Build a plan from a query object, with CLI flags overriding file fields."""
     merged_select = select if select is not None else obj.get("select")
@@ -403,6 +526,9 @@ def plan_from_query_object(
     merged_until = until if until is not None else obj.get("until")
     if merged_until is not None and not isinstance(merged_until, str):
         raise QueryParseError(f"until must be a string, got {merged_until!r}")
+    merged_scope = scope if scope is not None else obj.get("scope")
+    if merged_scope is not None and not isinstance(merged_scope, str):
+        raise QueryParseError(f"scope must be a string, got {merged_scope!r}")
     return build_plan(
         select=merged_select,
         where=merged_where,
@@ -411,4 +537,5 @@ def plan_from_query_object(
         until=merged_until,
         limit=merged_limit,
         order_by=merged_order_by,
+        scope=merged_scope,
     )

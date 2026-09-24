@@ -82,6 +82,19 @@ def default_capsule_dir() -> Path:
     return Path(env) if env else nova_home() / "capsules"
 
 
+def dashboards_dir() -> Path:
+    """Directory holding ADR-0235 dashboard and widget JSON files.
+
+    Default: ``$NOVAFABRIC_HOME/dashboards``.
+
+    Deliberately **outside any capsule directory**. Capsules are signed
+    evidence and stay read-only — the same boundary ADR-0225 D2 drew for its
+    query index. Dashboards are user-authored, frequently rewritten, and must
+    never end up inside something whose digest is part of a proof.
+    """
+    return nova_home() / "dashboards"
+
+
 def daemon_run_dir() -> Path:
     """Directory holding the capture-daemon unix socket and pidfile.
 

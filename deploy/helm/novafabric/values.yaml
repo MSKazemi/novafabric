@@ -38,12 +38,23 @@ securityContext:
       - ALL
   readOnlyRootFilesystem: false
 
-# Deployment mode:
-#   dashboard (default) — `nova serve`, the experimental read-only dashboard
-#                         (HTTP + printed token; front with TLS at the ingress).
-#   server              — `nova server start`, the multi-user REST API with
-#                         OIDC/RBAC over Postgres. Auth is ON by default.
-mode: dashboard
+# Deployment mode (ADR-0230):
+#   server (default)  — `nova server start`, the multi-user REST API with
+#                       OIDC/RBAC over Postgres. Auth is ON by default.
+#   dashboard         — `nova serve`, the experimental dashboard. NOT read-only:
+#                       it exposes irreversible operations including
+#                       DELETE /api/runs/{id}, POST /api/compliance/pii/erase,
+#                       POST /api/seal/{id}/bypass and POST /api/admin/roles.
+#                       Since ADR-0228 every route carries a scope, so a narrower
+#                       credential can be minted — but the shared token still
+#                       holds `admin`. Requires TLS and authentication in front
+#                       of ANY non-loopback exposure.
+#
+# The default was `dashboard` with `serve.insecure: true` until v0.102.0. That
+# combination matched none of ADR-0042's four named, tested and supported
+# deployment tiers — it was an unsupported configuration, not merely a risky
+# one. To keep it, set `mode: dashboard` and the acknowledgement below.
+mode: server
 
 # Alembic revision the migration initContainer upgrades to. Default "head":
 # the server refuses to start when stamped behind head, so pinning below head
@@ -52,9 +63,19 @@ dbRevision: head
 
 serve:
   port: 4321
-  # nova serve is experimental/read-only; --insecure serves over HTTP with a
-  # printed access token (see `kubectl logs`). Front with TLS at the ingress.
-  insecure: true
+  # `--insecure` disables the non-loopback bind refusal, serving the dashboard
+  # over plain HTTP guarded only by a printed shared token (`kubectl logs`).
+  # That token grants `admin` scope: full, irreversible power over signed
+  # evidence. Default `false` since v0.102.0 (ADR-0230 D1).
+  #
+  # Setting it true makes `helm template`/`helm install` FAIL unless you also set
+  # `serve.acknowledgeInsecureExposure` (see below). The failure is deliberate:
+  # a NOTES.txt warning prints after the exposure already exists.
+  insecure: false
+  # Set to the exact string "i-accept-serving-evidence-over-plain-http" to allow
+  # `insecure: true`. Deliberately awkward — the unsafe path stays possible but
+  # effortful, and the choice is recorded in your own values file and in git.
+  acknowledgeInsecureExposure: ""
   topology: true
   tv5: true
   # Extra args appended verbatim to the `nova serve` command, e.g. ["--no-browser"].
@@ -133,3 +154,7 @@ extraEnv: []
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+# ADR-0230 D5: set once when upgrading across v0.102.0, after reading the
+# message the chart prints. A fresh install never needs it.
+upgradeAcknowledged: false

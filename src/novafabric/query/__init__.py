@@ -12,6 +12,12 @@ from novafabric.query.errors import (
     QueryParseError,
 )
 from novafabric.query.executor import run_query
+from novafabric.query.filterbar import (
+    MAX_SUGGESTIONS,
+    ObservedValues,
+    observed_values,
+    parse_filter_bar,
+)
 from novafabric.query.model import (
     DEFAULT_LIMIT,
     MAX_GROUPS,
@@ -31,6 +37,8 @@ from novafabric.query.parser import (
 
 __all__ = [
     "Aggregate",
+    "MAX_SUGGESTIONS",
+    "ObservedValues",
     "DEFAULT_LIMIT",
     "MAX_GROUPS",
     "MAX_LIMIT",
@@ -43,6 +51,8 @@ __all__ = [
     "QueryParseError",
     "QueryPlan",
     "build_plan",
+    "observed_values",
+    "parse_filter_bar",
     "load_query_file",
     "plan_from_query_object",
     "run_query",

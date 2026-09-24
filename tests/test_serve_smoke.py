@@ -4,6 +4,7 @@ hit /api/health, verify clean shutdown."""
 from __future__ import annotations
 
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -16,10 +17,31 @@ pytest.importorskip("fastapi")
 pytest.importorskip("uvicorn")
 
 
+# Single source for the startup budget. It was previously written as a literal in
+# the deadline and a *different*, stale literal in the failure message: the budget
+# went 8s -> 20s -> 60s while the message kept saying "8s", so a genuine failure
+# under-reported its own budget by 7.5x and sent the reader looking for a fast
+# timeout that no longer existed.
+STARTUP_BUDGET_S = 60
+
+
 @pytest.mark.timeout(90)
 def test_nova_serve_subprocess_starts_and_responds(tmp_path: Path) -> None:
-    # Pick a port unlikely to collide with the user's running services
-    port = 47312
+    # Ask the OS for a free port instead of hoping a fixed one is free.
+    #
+    # This was `port = 47312`, and a fixed port makes the test fail for a reason
+    # that has nothing to do with the code under test: anything already bound
+    # there -- a developer's own service, or a `nova serve` orphaned by a test run
+    # that was killed rather than allowed to reach its `finally` block -- makes the
+    # server fail to bind, and the client then gets ECONNREFUSED for the whole
+    # budget. That reads identically to "the server is slow to start", which is
+    # what the previous three timeout bumps were chasing.
+    #
+    # Binding port 0 and releasing it leaves a small race, but the window is
+    # microseconds against a fixed port's window of "until someone notices".
+    with socket.socket() as _s:
+        _s.bind(("127.0.0.1", 0))
+        port = _s.getsockname()[1]
     env = os.environ.copy()
     env["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent / "src")
     env["NOVAFABRIC_DB_PATH"] = str(tmp_path / "registry.db")
@@ -66,7 +88,7 @@ def test_nova_serve_subprocess_starts_and_responds(tmp_path: Path) -> None:
         # /api/health. It is not a startup-latency benchmark and must not fail
         # because the machine was busy.
         url = f"http://127.0.0.1:{port}/api/health"
-        deadline = time.time() + 60
+        deadline = time.time() + STARTUP_BUDGET_S
         last_err: Exception | None = None
         while time.time() < deadline:
             try:
@@ -83,7 +105,8 @@ def test_nova_serve_subprocess_starts_and_responds(tmp_path: Path) -> None:
         else:
             stdout, stderr = proc.communicate(timeout=2)
             raise AssertionError(
-                f"nova serve did not respond within 8s: {last_err}\n"
+                f"nova serve did not respond within {STARTUP_BUDGET_S}s "
+                f"on port {port}: {last_err}\n"
                 f"stdout: {stdout.decode(errors='replace')[:500]}\n"
                 f"stderr: {stderr.decode(errors='replace')[:500]}"
             )

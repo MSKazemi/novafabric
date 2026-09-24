@@ -97,6 +97,38 @@ class CostInterceptor:
         )
 
     @classmethod
+    def is_priced(cls, model: str) -> bool:
+        """Whether a price is actually known for *model* (ADR-0234 D2).
+
+        The companion to :meth:`_estimate_cost`, which returns **0.0 for unknown
+        models** — a deliberate choice, because pricing must never fail a
+        capture. The cost of that choice is that an unpriced call and a free call
+        are indistinguishable downstream, and a `sum()` over them reports an
+        unpriced run as **$0.00, read by an operator as free**. That contradicts
+        the Run Capsule schema's own invariant: absent per-call fields are
+        *"skipped, never counted as 0"*, and a null cost means unpriced, not free.
+
+        This does not change ``_estimate_cost``'s contract — it is on the capture
+        hot path and every caller depends on it returning a float. It lets an
+        **aggregate** tell the two apart and refuse or qualify accordingly.
+
+        Any catalog error answers ``False``: "we could not establish a price" is
+        the honest reading of a failed lookup, and over-reporting coverage is the
+        error that produces a wrong number rather than a visible gap.
+        """
+        try:
+            from novafabric.cost import (  # noqa: PLC0415 — avoid import cycle
+                pricing_catalog,
+            )
+
+            catalog = pricing_catalog.load_merged_catalog()
+            if pricing_catalog.resolve_entry(catalog, model) is not None:
+                return True
+        except Exception as exc:  # noqa: BLE001 — mirror _estimate_cost's tolerance
+            log.debug("pricing catalog unavailable while checking coverage: %s", exc)
+        return model in cls.PRICE_TABLE
+
+    @classmethod
     def extract_from_openai_response(cls, response: object, model: str) -> CostFacet:
         """Extract CostFacet from an OpenAI Chat Completion response object.
 

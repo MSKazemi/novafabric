@@ -127,10 +127,27 @@ def serve_cmd(
         ),
     ] = None,
 ) -> None:
-    """Start the read-only local dashboard.
+    """Start the local dashboard.
 
     Binds to 127.0.0.1 only. Requires --experimental and the
     'novafabric[serve]' extra (`pip install novafabric[serve]`).
+
+    Not read-only: Layer B mutations (register, promote, redact, export)
+    ship, and each is confirm-gated and audit-logged. The summary line said
+    "read-only" until v0.102.0, which stopped being true at v0.8.
+
+    Authorization (ADR-0228): every route carries a scope --- read, operate,
+    admin, or the orthogonal audit. The .serve-token holds admin, so a
+    single-user run is unchanged; mint a narrower credential through
+    POST /api/admin/tokens with {"scope": "read"} to grant a colleague
+    visibility without the power to erase evidence.
+
+    Tenancy (ADR-0229): single-tenant by default. Multi-tenant mode
+    (NOVAFABRIC_SERVE_TENANCY=multi) is refused while the runs index, the
+    knowledge graph or the lineage store cannot answer a tenant-scoped
+    question -- serving them would return one tenant's evidence to another.
+    Use `nova server` for multi-tenant deployments. `GET /api/doctor` reports
+    the posture of every store.
 
     Scope: run-time (long-running server process).
 
@@ -195,6 +212,26 @@ def serve_cmd(
             f"[yellow]warning:[/yellow] capsule directory does not exist: "
             f"{resolved_capsule_dir} — `/api/runs` will return an empty list."
         )
+
+    # ADR-0229 D2: refuse multi-tenant mode while any read-path store cannot
+    # answer a tenant-scoped question. Checked here, before the token is minted
+    # or a socket is bound, because the failure this prevents is silent —
+    # serving one tenant's evidence to another — and a server that has already
+    # started is one an operator will assume is correct.
+    from novafabric.serve.tenancy import (
+        MultiTenancyUnavailableError,
+        assert_multi_tenant_ready,
+    )
+
+    try:
+        assert_multi_tenant_ready()
+    except MultiTenancyUnavailableError as exc:
+        console.print(Panel(
+            str(exc),
+            title="multi-tenant mode is not available",
+            border_style="red",
+        ))
+        raise typer.Exit(code=2) from exc
 
     # Token + auth
     from novafabric.registry.store import get_db_path as _registry_db_path

@@ -294,6 +294,19 @@ evaluation, deployment). To add an eighth:
 1. Create `src/novafabric/cli/<command>.py` with a `<command>_cmd` function.
 2. Register it in `src/novafabric/cli/main.py` with `app.command(...)`.
 3. Add at least two CLI tests in `tests/test_cli.py`: a success path and an error path.
+   **Routine operational failures must not surface as tracebacks.** A full disk, a missing
+   optional extra, an unwritable directory or a bad permission is an *expected* condition on
+   the machines NovaFabric runs on. Raise a **named** exception from the library layer with a
+   message that says what was attempted, what failed, and the next move; catch it in the CLI
+   and print one line. See `CapsuleDirectoryError` (`capture/orchestrator.py`, defect B11) and
+   `_ALEMBIC_MISSING_HINT` (`metadata_store/cli.py`, defect B4) for the two shapes. Never let
+   a bare `OSError`/`FileNotFoundError` reach the user.
+
+   **Escape any literal `[` in a `help=` string as `r"\["`.** Typer renders help through Rich,
+   which parses `[...]` as markup, so a plain `s3://bucket[/prefix]` raises `MarkupError` and the
+   command answers `--help` with a traceback (defect B5). See `cli/verify.py` and `cli/_extras.py`
+   for the convention. `tests/cli/test_every_command_help_renders.py` renders every command's
+   help and will fail if you forget.
 4. Regenerate the dashboard command registry so the CommandsTab stays a complete
    mirror of the CLI:
    ```bash
@@ -418,12 +431,14 @@ shortcuts are per-tab, not positional, so reordering the sidebar is safe.
 ## Adding a new `nova serve` API endpoint
 
 Every serve endpoint mirrors an equivalent `nova` CLI command — the CLI + JSON surface
-is canonical, and the dashboard is a thin read-only view over it. All serve endpoints
-follow the same three-part pattern:
+is canonical, and the dashboard is a view over it. (It is **not** read-only: Layer B
+mutations ship, confirm-gated and audit-logged.) All serve endpoints follow the same
+four-part pattern:
 
 1. **Resolve the capsule** using `_resolve_capsule(run_id, capsule_dir)` — raises HTTP 404 if the directory doesn't exist.
 2. **Require auth** with `dependencies=[Depends(verify_token)]` on the route decorator.
-3. **Mirror a CLI command** — every endpoint should have an obvious CLI equivalent noted in its docstring.
+3. **Classify it** in `ROUTE_SCOPES` (`src/novafabric/serve/authz.py`). ⚠ **This step is not optional.** An unclassified route is **denied to everyone** — including the server token — because ADR-0228 D3 fails closed rather than defaulting to `read`. `tests/serve/test_authz_route_table.py` fails the moment you add a route without a line, so you will hit this in CI rather than in production.
+4. **Mirror a CLI command** — every endpoint should have an obvious CLI equivalent noted in its docstring.
 
 ```python
 @app.get("/api/example/{run_id}", dependencies=[Depends(verify_token)])
@@ -434,9 +449,130 @@ async def example_endpoint(run_id: str) -> dict[str, Any]:
     return {"run_id": run_id, "result": ...}
 ```
 
+```python
+# src/novafabric/serve/authz.py — one line, in path order
+("GET", "/api/example/{run_id}"): Scope.read,
+```
+
+**Pick the scope by what the handler does, not by its HTTP verb.** A `POST` that only
+computes and returns is `read` — `POST /api/query` and the whole
+`/api/compliance/export/*` family are classified that way, deliberately, so a read-only
+auditor is not locked out of the exports that are the point of the auditor persona. Use
+`operate` for a bounded reversible mutation, `admin` for anything irreversible,
+privilege-affecting, key-handling, or that spawns user code, and `audit` only when the
+response reveals *who did what*.
+
 Add tests in `tests/test_serve_app.py` using the `client` fixture — three tests minimum: auth required (no token → 401), unknown run → 404, happy path → expected shape.
 
 The matching dashboard panel goes in that tab's directory — `web/src/components/dashboard/tabs/<tab>/<Panel>.tsx` — and is rendered by the tab shell (see *Tab structure* above). Add a `Dashboard equivalent:` note in `docs/cli-reference.md` under the corresponding CLI command, and if the command now has a real panel, upgrade its `commandParity.json` entry from `builder-only` to `real-panel` with its `tab` and `api` (the guard checks the `api` string appears in **both** `web/src/lib/api.ts` and `src/novafabric/serve/`).
+
+## Extending the query surface (filter bar, widgets, anything user-facing)
+
+`novafabric.query`'s closed allow-list is a **security** property, not an ergonomic one: ADR-0235
+validates widgets that arrive from untrusted sources against it. So any new surface that lets a
+user express a query — a filter bar, a saved view, a widget field — must be **unable** to express
+more than `nova query` can.
+
+⚠ **Enforce that by delegation, never by duplicating the checks.** `query/filterbar.py` decides
+*syntax* only (which field, which operator, is it negated) and hands DSL predicate text to
+`parse_predicate`; the DSL answers every question of semantics. The first version of that module
+duplicated the validation and drifted immediately — it accepted `log_level:value`, which the DSL
+refuses because log levels are a closed set. Delegation removes the whole class, so a future
+closed-set dimension inherits the guard for free.
+
+⚠ **The ceiling means matching the DSL, not undercutting it.** An early version refused
+`status:>error` on the grounds that it looks odd — but `nova query --where 'status > error'` is
+accepted, so refusing it made the convenience unable to express something the CLI supports. Assert
+both directions.
+
+Two things the DSL genuinely cannot express today, worth knowing before designing a surface that
+implies otherwise:
+
+- **no glob / wildcard / `LIKE`** — the operators are exactly `= != < <= > >=` plus `IN`;
+- **no metric predicates** — `--where` filters the eight `DIMENSIONS` only. A metric is something
+  the DSL *aggregates*. `nova query --where 'cost > 0.5'` raises.
+
+## Changing what the query indexer extracts
+
+`src/novafabric/query/indexer.py` defines `CallRow`/`ScoreRow`, and
+`src/novafabric/query/cache.py` derives its stored columns **from those dataclasses**
+(`_CALL_FIELDS`). So adding a field is automatic for serialization — and that is exactly why the
+version matters:
+
+⚠ **If the indexer learns to read something new, bump `INDEXER_SCHEMA_VERSION` in the same
+change.** A row cached under the old version has fewer values and rehydrates with the new fields
+silently defaulted to `None`. When ADR-0233 added `parent_run_id`, an un-bumped cache would have
+made **every capsule look like a root**, and a `--scope root|tree` query would have answered
+confidently and wrongly from a warm cache — the wrong-but-fast outcome ADR-0225 D3 forbids.
+
+⚠ **The converse matters just as much: do not bump for a feature that extracts nothing new.**
+ADR-0236's `ratio()` is arithmetic over aggregates the indexer already produced; bumping for it
+would discard every user's query cache for no reason. The constant's own docstring states the
+test — *"whenever the **indexer** changes what it extracts"* — and that, not an ADR's
+instruction, is what decides it.
+
+Any new file the indexer opens must also be added to `INDEXED_FILENAMES`, which is what the
+cache's change signature is derived from; a file read but not listed there is a stale-answer
+defect, and `tests/query/test_indexer_signature_coupling.py` guards it.
+
+## Adding an aggregate
+
+Any surface that sums, counts, averages, or percentiles must return an ADR-0234 verdict from
+`src/novafabric/serve/aggregates.py` rather than a bare number:
+
+```python
+from novafabric.serve.aggregates import AggregateCondition, computable, refuse
+
+if store_is_unreachable:
+    return refuse(
+        AggregateCondition.SOURCE_UNAVAILABLE,
+        reason="the cost store did not answer, so no figure can be established",
+        remedy="check NOVA_CLICKHOUSE_URL; the capsule cost facet works offline",
+    )
+return computable(total, unpriced_calls=unpriced)
+```
+
+⚠ **A `remedy` is required and is checked at construction** — `refuse(..., remedy="")` raises.
+*"Unavailable"* is not a remedy. ADR-0234 names a bad refusal message as the entire risk of this
+design: users will meet refusals, and a refusal with nothing actionable in it is worse than the
+approximation it replaced.
+
+⚠ **A refusal carries no value.** Not zero, not null. The ADR rejects
+render-the-approximation-with-a-badge precisely because a number on screen is read as a number
+regardless of the badge beside it.
+
+⚠ **"Absent is not zero" — and the converse.** A missing measurement (an unpriced call, a usage
+component the provider never reported) must not be summed as `0`; the Run Capsule schema states
+this as a format invariant. But a **count of nothing is legitimately `0`**, and the `or 0`
+coercions over SQL counts are correct. Do not turn this rule into "zero is suspicious" — a rule
+that refuses to report good news gets switched off.
+
+## Adding a store to the `nova serve` read path
+
+Any new backing store must declare its tenancy in `STORE_TENANCY`
+(`src/novafabric/serve/tenancy.py`) as one of three classes:
+
+| Class | Means |
+|---|---|
+| `aware` | it can answer *"show me only tenant X's rows"* — it carries a real discriminator |
+| `agnostic` | it does not filter by tenant because the **deployment** supplies the isolation |
+| `unsafe` | it does not filter by tenant and nothing else does either |
+
+`agnostic` and `unsafe` both mean "does not filter by tenant" and have **opposite** safety
+consequences. Collapsing them is how the second gets mistaken for the first, which is why there
+are three values and not a boolean.
+
+⚠ **`aware` is a claim about the schema, and `tests/serve/test_tenancy_registry.py` checks it
+against the schema** — the module you name is read, and an `aware` store must really contain its
+discriminator while an `unsafe` one must contain none. Declaring `aware` without a discriminator
+fails; so does an `unsafe` store that has quietly grown a tenant column.
+
+⚠ **Mentioning "tenant" is not being tenant-aware.** `object_capsule_store` mentions it fourteen
+times and thirteen are per-tenant encryption keys (ADR-0243) — key material, which scopes no
+query. Give the `evidence` field the specific thing that makes the claim true.
+
+An `unsafe` store must carry a `reason` an operator can act on: it is what `nova serve` prints
+when it refuses to start in multi-tenant mode, and a refusal with no *why* is noise.
 
 ## Adding a capsule facet
 

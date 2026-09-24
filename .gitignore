@@ -17,6 +17,14 @@
 *.key
 .envrc
 credentials.json
+# Dashboard showcase fixture that embeds an Ed25519 private half. It is denied
+# in .dualgit/private.deny, but the `web/src/data` carve-out is emitted AFTER
+# the denies in .git/info/exclude and git's last-matching rule wins, so the deny
+# was silently overridden and `git add -A` staged the key into a public commit
+# (caught by `dualgit doctor`, never pushed). This rule sits in .gitignore
+# because .gitignore outranks .git/info/exclude, so no carve-out can re-expose
+# it. The private git already tracks the file, and an ignore rule never untracks.
+web/src/data/fixtures/evidence-bundle/demo-key.json
 secrets.yaml
 secrets.yml
 .streamlit/secrets.toml
@@ -186,6 +194,13 @@ design/publications/**/*.run.xml
 
 # Maintainer's private inbox/backlog (single entry point for ideas + tasks,
 # driven by the mska-note skill). Never published.
+#
+# ⚠ Do NOT add `!.note.md` negations here to let the PRIVATE git track these.
+# This file is shared by both gits AND outranks `.git/info/exclude`, so a
+# negation here punches straight through the public `/*` default-deny and the
+# three files appear as untracked in the PUBLIC git (verified 2026-09-24).
+# They are tracked privately via `git --git-dir=.git-private add -f` instead:
+# an ignore rule never applies to an already-tracked file.
 .note
 .note.*
 .mohsen.note

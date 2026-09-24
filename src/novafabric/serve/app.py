@@ -47,6 +47,7 @@ from novafabric.registry.runs_cache import (
 from novafabric.serve import audit, token_store
 from novafabric.serve import reports as _reports
 from novafabric.serve.auth import extract_bearer, is_localhost_host, token_matches
+from novafabric.serve.authz import build_authz_dependency
 from novafabric.serve.capsule_loader import (
     discover_capsule_dirs,
     discover_ingestable_dirs,
@@ -397,6 +398,9 @@ class ApproveRequest(BaseModel):
 class IssueTokenRequest(BaseModel):
     label: str = "dashboard-issued"
     confirmed: bool = False
+    #: ADR-0228 D5. Optional and defaulting to ``admin`` so an un-updated
+    #: client mints exactly the credential it minted before this field existed.
+    scope: str = "admin"
 
 
 class AssignRoleRequest(BaseModel):
@@ -763,6 +767,13 @@ def create_app(
         redoc_url=None,
         openapi_url="/api/openapi.json",
         lifespan=_lifespan,
+        # ADR-0228 D2: one app-level dependency enforces the scope table for
+        # every route, including routers included after this factory returns
+        # (TV-5). Declared here rather than per-route because ADR-0183 froze
+        # this module's inline-route count, and because a central table is the
+        # only form that can be tested for completeness. Default local posture
+        # is unchanged (D4): the .serve-token holds `admin`.
+        dependencies=[Depends(build_authz_dependency(token))],
     )
 
     # CORS: only same-origin and localhost dev servers (Astro at :4321 by default)
@@ -1174,18 +1185,52 @@ def create_app(
             {"costs": {"<run_id>": {"input_tokens": int, "output_tokens": int,
                                     "cost_usd": float, "calls": int}, ...}}
 
-        When ``NOVA_CLICKHOUSE_URL`` is not set the response is
-        ``{"costs": {}}`` (200 OK, no error).  When ClickHouse is
-        unreachable the response is ``{"costs": {}, "error": "<msg>"}``
-        (also 200 OK — the UI degrades gracefully).
+        ADR-0234 D2 (the honest-degradation rule) governs the ``aggregate``
+        block. Three things this endpoint used to do silently now say so:
+
+        * **Unavailable is not empty.** With ``NOVA_CLICKHOUSE_URL`` unset it
+          returned ``{"costs": {}}`` and called it degrading gracefully. An empty
+          result is indistinguishable from *"these runs cost nothing"*.
+        * **Truncation is reported.** The 100-id cap is a bound on the answer.
+        * **Unpriced is not free.** ``_estimate_cost`` returns 0.0 for a model
+          with no catalog price, so ``sum(cost_usd)`` reported an unpriced run as
+          ``$0.00``. ``unpriced_calls`` says how many calls carry no established
+          price, and the aggregate refuses when *every* contributing call is one.
+
+        ``costs`` keeps its previous shape, so existing consumers are unchanged.
         """
+        from novafabric.serve.aggregates import (  # noqa: PLC0415
+            AggregateCondition,
+            computable,
+            refuse,
+        )
+
         clickhouse_url = os.environ.get("NOVA_CLICKHOUSE_URL")
         if not clickhouse_url:
-            return {"costs": {}}
+            return {
+                "costs": {},
+                "aggregate": refuse(
+                    AggregateCondition.SOURCE_UNAVAILABLE,
+                    reason=(
+                        "cost aggregation needs the ClickHouse cost store, which is "
+                        "not configured; no cost figure can be established"
+                    ),
+                    remedy=(
+                        "set NOVA_CLICKHOUSE_URL to a reachable ClickHouse instance "
+                        "and run `nova cost ingest`, or read per-run cost from the "
+                        "capsule's cost facet instead"
+                    ),
+                ).as_dict(),
+            }
 
-        ids = [rid.strip() for rid in run_ids.split(",") if rid.strip()][:100]
+        requested = [rid.strip() for rid in run_ids.split(",") if rid.strip()]
+        ids = requested[:100]
+        truncated = len(requested) > len(ids)
         if not ids:
-            return {"costs": {}}
+            return {
+                "costs": {},
+                "aggregate": computable({}).as_dict(),
+            }
 
         def _query() -> dict[str, Any]:
             from urllib.parse import urlparse
@@ -1218,7 +1263,11 @@ def create_app(
                 " sum(input_tokens) AS input_tokens,"
                 " sum(output_tokens) AS output_tokens,"
                 " sum(cost_usd) AS cost_usd,"
-                " count() AS calls"
+                " count() AS calls,"
+                # ADR-0234 D2: a call whose model had no catalog price
+                # contributed 0.0 to the sum above. Counting them is what makes
+                # "unpriced" distinguishable from "free".
+                " countIf(priced = 0) AS unpriced_calls"
                 " FROM nova.cost_events"
                 f" WHERE run_id IN ({placeholders})"
                 " GROUP BY run_id"
@@ -1226,20 +1275,80 @@ def create_app(
             result = client.query(sql, parameters=params)
             costs: dict[str, Any] = {}
             for row in result.result_rows:
+                calls = int(row[4])
+                unpriced = int(row[5])
                 costs[row[0]] = {
                     "input_tokens": int(row[1]),
                     "output_tokens": int(row[2]),
                     "cost_usd": round(float(row[3]), 6),
-                    "calls": int(row[4]),
+                    "calls": calls,
+                    "unpriced_calls": unpriced,
+                    # Stated per run rather than left to the caller to derive:
+                    # a total built only from unpriced calls is 0.0 and means
+                    # "no price is known", never "this run was free".
+                    "cost_is_complete": unpriced == 0,
                 }
             return costs
 
         try:
             costs = await asyncio.get_event_loop().run_in_executor(None, _query)
-            return {"costs": costs}
         except Exception as exc:  # noqa: BLE001
             logger.warning("runs/cost-summary: ClickHouse query failed: %s", exc)
-            return {"costs": {}, "error": str(exc)}
+            return {
+                "costs": {},
+                "error": str(exc),
+                "aggregate": refuse(
+                    AggregateCondition.SOURCE_UNAVAILABLE,
+                    reason=(
+                        "the ClickHouse cost store is configured but did not answer, "
+                        "so no cost figure can be established"
+                    ),
+                    remedy=(
+                        "check NOVA_CLICKHOUSE_URL and that the instance is reachable; "
+                        "the capsule's cost facet is available offline in the meantime"
+                    ),
+                ).as_dict(),
+            }
+
+        unpriced_total = sum(int(c.get("unpriced_calls", 0)) for c in costs.values())
+        calls_total = sum(int(c.get("calls", 0)) for c in costs.values())
+        if truncated:
+            verdict = refuse(
+                AggregateCondition.TRUNCATED_SOURCE,
+                reason=(
+                    f"{len(requested)} run ids were requested and this endpoint "
+                    f"answers at most {len(ids)}; a total over the returned subset "
+                    "is not a total over what was asked"
+                ),
+                remedy=(
+                    f"request at most {len(ids)} run ids per call and combine the "
+                    "pages client-side, or use `nova cost report` for a whole-range total"
+                ),
+                requested=len(requested),
+                returned=len(ids),
+            )
+        elif calls_total and unpriced_total == calls_total:
+            verdict = refuse(
+                AggregateCondition.ABSENT_CONTRIBUTOR,
+                reason=(
+                    f"no catalog price is known for any of the {calls_total} model "
+                    "call(s) in this selection, so the cost sum is 0.00 because it is "
+                    "unpriced — not because the runs were free"
+                ),
+                remedy=(
+                    "add prices for these models with `nova cost pricing` (ADR-0133), "
+                    "then re-ingest; or read token counts, which are exact regardless"
+                ),
+                unpriced_calls=unpriced_total,
+                calls=calls_total,
+            )
+        else:
+            verdict = computable(
+                {"runs": len(costs)},
+                unpriced_calls=unpriced_total,
+                calls=calls_total,
+            )
+        return {"costs": costs, "aggregate": verdict.as_dict()}
 
     # ---------- B-1: cursor-based search endpoint ----------
 
@@ -3773,6 +3882,9 @@ def create_app(
                     "fingerprint": t.get("fingerprint", ""),
                     "created_at": t.get("created_at", ""),
                     "revoked": t.get("revoked", False),
+                    # A record predating ADR-0228 has no scope key and is
+                    # enforced as admin; report that rather than an empty cell.
+                    "scope": t.get("scope", "admin"),
                 })
             except Exception:  # noqa: BLE001
                 pass
@@ -3803,11 +3915,14 @@ def create_app(
         # ADR-0252: the store keeps a digest, not the token, and writes 0600. The
         # previous record held the secret verbatim in a 0664 file — while the list
         # endpoint two functions up takes care never to return it over the wire.
-        record = token_store.issue(body.label, new_token)
+        try:
+            record = token_store.issue(body.label, new_token, body.scope)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         fp = record["fingerprint"]
         audit.append(
             action="issue_token",
-            args={"label": body.label},
+            args={"label": body.label, "scope": record["scope"]},
             # There is no CLI that mints this kind of token. `nova server
             # issue-token` produces an unrelated offline ed25519 JWT (ADR-0018)
             # and has no --label flag; citing it made the audit trail name a
@@ -3822,10 +3937,12 @@ def create_app(
             "token": new_token,
             "fingerprint": fp,
             "label": body.label,
+            "scope": record["scope"],
             "warning": (
                 "Save this token — it is stored only as a digest and cannot be "
-                "shown again. It carries the same full access as the dashboard "
-                "token: nova serve authenticates, it does not authorize."
+                f"shown again. It carries the '{record['scope']}' scope "
+                "(ADR-0228); the default 'admin' scope grants the same full "
+                "access as the dashboard token."
             ),
         }
 
@@ -3905,13 +4022,23 @@ def create_app(
                 ),
             ) from e
 
+        # ADR-0231 D2: capture the state AT the mutation site, before and after.
+        # Re-reading after the fact races concurrent writers and would record a
+        # transition that never occurred. "alice was granted admin" is the fact
+        # an auditor needs; "someone asked for admin for alice" is what the
+        # request args alone record.
+        prior_roles = sorted(rbac_store.get_roles(body.subject))
         rbac_store.assign_role(body.subject, role_enum.value, f"local:{actor_fp}")
+        current_roles = sorted(rbac_store.get_roles(body.subject))
         audit.append(
             action="assign_role",
             args={"subject": body.subject, "role": role_enum.value},
             cli_equivalent=f"nova server assign-role {body.subject} {role_enum.value}",
             actor_token_fp=actor_fp,
             result="ok",
+            resource=f"role_assignment:{body.subject}",
+            prior={"roles": prior_roles},
+            current={"roles": current_roles},
         )
         return {
             "ok": True,
@@ -3930,6 +4057,7 @@ def create_app(
         from novafabric.server import rbac_store
         from novafabric.server.rbac_store import LastAdminError
 
+        prior_roles = sorted(rbac_store.get_roles(subject))
         try:
             deleted = rbac_store.revoke_role(subject, role)
         except LastAdminError as e:
@@ -3963,6 +4091,9 @@ def create_app(
             cli_equivalent=f"nova server revoke-role {subject} {role}",
             actor_token_fp=actor_fp,
             result="ok",
+            resource=f"role_assignment:{subject}",
+            prior={"roles": prior_roles},
+            current={"roles": sorted(rbac_store.get_roles(subject))},
         )
         return {"ok": True, "subject": subject, "role": role}
 
@@ -6406,6 +6537,33 @@ def create_app(
             "name": "python_version",
             "ok": sys.version_info >= (3, 10),
             "detail": sys.version,
+        })
+
+        # ADR-0229 D1: the tenancy posture of every store in the read path.
+        # Reported in single-tenant mode too, on purpose — that is the mode in
+        # which the unsafe stores are harmless and therefore invisible, and an
+        # operator deciding whether to deploy multi-tenant needs to read this
+        # *before* they try. `ok` tracks the mode being honourable, not the
+        # stores being scoped: single-tenant is a correct posture, and reporting
+        # it as a failure would train operators to ignore the check.
+        from novafabric.serve.tenancy import tenancy_posture  # noqa: PLC0415
+
+        _posture = tenancy_posture()
+        _blocking = _posture["blocking"]
+        checks.append({
+            "name": "tenancy_posture",
+            "ok": _posture["mode"] == "single" or not _blocking,
+            "detail": (
+                f"mode={_posture['mode']}; multi_tenant_ready="
+                f"{_posture['multi_tenant_ready']}"
+                + (
+                    f"; stores that cannot answer a tenant-scoped question: "
+                    f"{', '.join(_blocking)}"
+                    if _blocking
+                    else ""
+                )
+            ),
+            "tenancy": _posture,
         })
 
         # cap-003 (dual-object GDPR/WORM split, ADR-0066) compliance-posture

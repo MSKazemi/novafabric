@@ -222,7 +222,14 @@ def test_ocsf_export_dashboard_class(dashboard_path: Path) -> None:
     events = lines[1:]
     assert events[0]["class_uid"] == 6003
     assert events[1]["class_uid"] == 3002  # session.* → Authentication
-    assert events[0]["actor"]["user"]["name"] == "abcd1234"
+    # ADR-0231 D3: a dashboard record's `actor_token_fp` is an opaque credential
+    # id, so it rides in `uid` with `type_id: 0` (Unknown). It used to be placed
+    # in `user.name`, which a SIEM renders in a column headed *User* — reading as
+    # a person when, with one shared token, every record carries the same value.
+    assert events[0]["actor"]["user"]["uid"] == "abcd1234"
+    assert events[0]["actor"]["user"].get("name") is None
+    assert events[0]["actor"]["user"]["type_id"] == 0
+    assert events[0]["actor"]["nova_identity_source"] == "shared-token"
     assert events[0]["unmapped"]["cli_equivalent"] == "nova retention apply p1"
 
 

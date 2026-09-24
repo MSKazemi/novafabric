@@ -1,6 +1,6 @@
 apiVersion: v2
 name: novafabric
-description: NovaFabric — replayable AI infrastructure. Deploys the read-only dashboard + REST API (nova serve) backed by a metadata store.
+description: NovaFabric — replayable AI infrastructure. Deploys the multi-user REST API (nova server start) by default, or the experimental dashboard, backed by a metadata store.
 type: application
 # Chart version. The publish-chart.yml workflow overrides this with the git tag
 # at release time, so the chart version tracks the application version.

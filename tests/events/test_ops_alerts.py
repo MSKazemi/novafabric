@@ -619,8 +619,17 @@ class TestQuotaBreachWiring:
         assert record["severity"] == "critical"
         assert record["subject"] == {"kind": "ops", "ref": "quota:capsules", "digest": None}
         assert record["payload"] == {"kind": "capsules", "usage": 1, "limit": 1}
-        assert _wait_for(lambda: (tmp_path / "audit.jsonl").exists())
-        entries = AuditLog(tmp_path / "audit.jsonl").query()
+        # Wait for the entry, not for the file. `AuditLog.append` does
+        # `path.open("a")` — which *creates* the file — and only then writes the
+        # line, so there is a window in which `exists()` is already True and
+        # `query()` still returns []. The delivery runs on the dispatcher's
+        # background thread, so the window is real rather than theoretical: this
+        # failed once in a 13,180-test run on a contended machine, with
+        # `assert 0 == 1`. A wait on a proxy for the condition is not a wait on
+        # the condition.
+        audit_path = tmp_path / "audit.jsonl"
+        assert _wait_for(lambda: len(AuditLog(audit_path).query()) >= 1)
+        entries = AuditLog(audit_path).query()
         assert len(entries) == 1
         assert entries[0].details["outcome"] == "delivered"
 

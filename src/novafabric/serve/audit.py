@@ -9,6 +9,7 @@ is no rotation / no truncation; entries are tiny (few hundred bytes each).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import stat
 import threading
@@ -26,11 +27,90 @@ AUDIT_ENV: Final[str] = "NOVAFABRIC_DASHBOARD_AUDIT_FILE"
 #: typical few-hundred-byte audit records per seek.
 TAIL_BLOCK_SIZE: Final[int] = 64 * 1024
 
+logger = logging.getLogger(__name__)
+
 _lock = threading.Lock()
 
 
 def _path() -> Path:
     return dashboard_audit_path()
+
+
+#: How well the actor behind a record is actually known (ADR-0231 D3).
+#: ``shared-token`` is the honest answer for the one credential every operator
+#: pastes into a browser; ``credential`` is an ADR-0228 issued token, which has
+#: its own fingerprint and scope; ``federated`` is reserved for an external IdP.
+IDENTITY_SOURCES: Final[frozenset[str]] = frozenset(
+    {"shared-token", "credential", "federated"}
+)
+
+#: Keys the writer can emit. Every one of these must be present in
+#: ``audit.siem_export.DASHBOARD_FIELD_ALLOWLIST`` or on its deliberate-exclusion
+#: list, or the field is silently dropped from every SIEM export while the local
+#: file looks enriched — the exact divergence ADR-0231 D5 exists to prevent.
+#: ``tests/serve/test_audit_enrichment.py`` asserts the two agree.
+EMITTABLE_FIELDS: Final[frozenset[str]] = frozenset(
+    {
+        "audit_id",
+        "ts",
+        "action",
+        "args",
+        "cli_equivalent",
+        "actor_token_fp",
+        "actor",
+        "result",
+        "error",
+        "extra",
+        "resource",
+        "prior",
+        "current",
+        "redaction",
+        "required_scope",
+        "held_scope",
+    }
+)
+
+
+def _redaction_ruleset() -> str:
+    """The ADR-0187 ruleset version, read from the ruleset — never hardcoded.
+
+    A version string copied into a second file is a fact with no owner: it stays
+    right until the ruleset is revised, and then silently attests to a version
+    that no longer ran.
+    """
+    try:
+        from novafabric.support_bundle._redact import REDACTION_RULESET_VERSION
+
+        return f"adr0187-{REDACTION_RULESET_VERSION}"
+    except Exception:  # noqa: BLE001
+        return "adr0187-unknown"
+
+
+def _redact_state(value: Any) -> tuple[Any, list[str]]:
+    """Run the ADR-0187 ruleset over captured state. Returns (redacted, findings).
+
+    This is the sharp edge of ADR-0231 D2: adding before/after state capture to an
+    append-only, deliberately unrotated file is a direct route to writing secrets
+    to disk permanently. CLAUDE.md forbids logging *"secrets, tokens, prompts, or
+    env vars outside the redacted capsule"*, so reusing the shipped ruleset —
+    rather than hand-rolling a second one that drifts from it — is not optional.
+
+    A redaction failure returns ``None`` and a finding, never the raw value. The
+    one thing this must never do is fall back to writing what it could not check.
+    """
+    if value is None:
+        return None, []
+    try:
+        from novafabric.support_bundle._redact import redact_value
+
+        redacted = redact_value(value)
+    except Exception as exc:  # noqa: BLE001 — never write unchecked state
+        logger.exception("dashboard audit: state redaction failed; dropping the value")
+        return None, [f"redaction_failed:{type(exc).__name__}"]
+    findings: list[str] = []
+    if redacted != value:
+        findings.append("redacted")
+    return redacted, findings
 
 
 def append(
@@ -42,13 +122,43 @@ def append(
     result: str = "ok",
     error: str | None = None,
     extra: dict[str, Any] | None = None,
+    identity_source: str = "shared-token",
+    actor_id: str | None = None,
+    resource: str | None = None,
+    prior: Any = None,
+    current: Any = None,
+    required_scope: str | None = None,
+    held_scope: str | None = None,
 ) -> dict[str, Any]:
-    """Append one audit record. Returns the record (caller may include it in API response).
+    """Append one audit record. Returns the record (caller may include it in an API response).
 
-    `actor_token_fp` is a short fingerprint of the session token (first 8 chars), not
-    the full token. The token is the only identity we have on a localhost server,
-    so logging a short fingerprint helps correlate sessions without leaking the token.
+    ``actor_token_fp`` is a short fingerprint of the session token, never the token.
+
+    **ADR-0231 D3 — the record states how well it knows the actor rather than
+    implying it knows.** ``actor.identity_source`` is ``shared-token`` unless the
+    caller can do better, and ``actor.id`` is *omitted entirely* for a shared
+    token: a fingerprint sitting in a field called ``id`` is dishonestly strong
+    evidence, and this is the artifact an auditor relies on.
+
+    **D2 — ``prior``/``current`` are captured at the mutation site**, by the
+    caller, never by re-reading afterwards: a re-read races concurrent writers and
+    records a transition that never occurred. Both pass the ADR-0187 ruleset and
+    the record carries ``redaction`` as proof it ran.
     """
+    if identity_source not in IDENTITY_SOURCES:
+        logger.warning(
+            "dashboard audit: unknown identity_source %r; recording shared-token",
+            identity_source,
+        )
+        identity_source = "shared-token"
+
+    actor: dict[str, Any] = {"identity_source": identity_source}
+    # Deliberately absent, not null: a shared token has no actor id, and an
+    # explicit null still invites a SIEM to render an empty user column as if
+    # the field meant something.
+    if actor_id and identity_source != "shared-token":
+        actor["id"] = actor_id
+
     record: dict[str, Any] = {
         "audit_id": str(uuid.uuid4()),
         "ts": datetime.now(timezone.utc).isoformat(),
@@ -56,12 +166,29 @@ def append(
         "args": args,
         "cli_equivalent": cli_equivalent,
         "actor_token_fp": actor_token_fp,
+        "actor": actor,
         "result": result,
     }
     if error:
         record["error"] = error
     if extra:
         record["extra"] = extra
+    if resource is not None:
+        record["resource"] = resource
+    if required_scope is not None:
+        record["required_scope"] = required_scope
+    if held_scope is not None:
+        record["held_scope"] = held_scope
+    if prior is not None or current is not None:
+        prior_redacted, prior_findings = _redact_state(prior)
+        current_redacted, current_findings = _redact_state(current)
+        record["prior"] = prior_redacted
+        record["current"] = current_redacted
+        record["redaction"] = {
+            "applied": True,
+            "ruleset": _redaction_ruleset(),
+            "findings": sorted(set(prior_findings + current_findings)),
+        }
 
     p = _path()
     with _lock:

@@ -776,22 +776,54 @@ class TestReplays:
         # Cancel is a store-level transition now (ADR-0242): a non-terminal
         # job cancels; if the background thread already finished, 409 is the
         # correct (unchanged) contract. Force a deterministic non-terminal
-        # state by re-queueing the durable job when it already completed.
-        from novafabric.jobs import JobState
+        # state by re-queueing the durable job.
+        #
+        # ⚠ This used to re-queue only when the job was already SUCCEEDED or
+        # FAILED, which left a race: a job still RUNNING passed that check
+        # untouched, finished on its background thread, and the DELETE then saw
+        # `completed`. It passed in isolation and failed inside the file, where
+        # earlier tests leave the worker warm — `assert 'completed' ==
+        # 'cancelled'`.
+        #
+        # Waiting for a terminal state *first* and re-queueing unconditionally
+        # removes the race rather than narrowing it: after the wait there is no
+        # thread left to race with.
+        import time
+
+        from novafabric.jobs.models import TERMINAL_STATES
         from novafabric.server.routes import replays as replays_module
 
         store = replays_module._jobs()
-        if store.get(replay_id).state in (JobState.SUCCEEDED, JobState.FAILED):
-            import sqlite3
+        # ⚠ This bound is a SAFETY NET, not a performance assertion. The loop exits
+        # the moment the job is terminal, so a generous value costs nothing on a quiet
+        # machine and a tight one buys nothing but false failures. At 10.0 s it failed
+        # the 20-way parallel tier with `assert <JobState.RUNNING> in {…terminal…}` —
+        # the suite runs several times slower under contention (load 34-45 on 20 cores
+        # is normal here), so 10 s was sized against an idle machine this tree never is.
+        # 60 s is a fifth of the 300 s pytest-timeout cap, so a genuine hang still fails
+        # by name rather than hanging the suite. Do not tune this down to "what it
+        # usually takes" — that is the mis-sizing being fixed.
+        deadline = time.monotonic() + 60.0
+        while (
+            store.get(replay_id).state not in TERMINAL_STATES
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.02)
+        assert store.get(replay_id).state in TERMINAL_STATES, (
+            "the replay job never reached a terminal state; re-queueing it now "
+            "would still race the worker thread"
+        )
 
-            from novafabric.jobs.store import default_jobs_db_path
+        import sqlite3
 
-            with sqlite3.connect(default_jobs_db_path()) as conn:
-                conn.execute(
-                    "UPDATE jobs SET state='queued', finished_at=NULL,"
-                    " worker_id=NULL WHERE job_id=?",
-                    (replay_id,),
-                )
+        from novafabric.jobs.store import default_jobs_db_path
+
+        with sqlite3.connect(default_jobs_db_path()) as conn:
+            conn.execute(
+                "UPDATE jobs SET state='queued', finished_at=NULL,"
+                " worker_id=NULL WHERE job_id=?",
+                (replay_id,),
+            )
 
         cancel_resp = client.delete(f"/v0/replays/{replay_id}")
         assert cancel_resp.status_code == 200

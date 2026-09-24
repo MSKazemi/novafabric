@@ -87,6 +87,7 @@ def _fresh_database(admin_dsn: str) -> Iterator[str]:
             )
 
 
+@pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Pin every metadata_store test to one xdist worker (suite-health 2026-07-15).
 
@@ -96,6 +97,15 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     With ``--dist=loadgroup`` (the documented gate invocation) this single group
     runs on one worker and shares one container; under plain ``--dist=load`` the
     marker is inert.
+
+    ``tryfirst`` is load-bearing, not decoration. pytest-xdist reads the
+    ``xdist_group`` mark in its own ``pytest_collection_modifyitems`` (see
+    ``xdist/remote.py``) and encodes it into the item's nodeid; a conftest
+    implementation without ``tryfirst`` runs *after* that, so the mark this hook
+    adds was never seen and the grouping this docstring describes did not
+    actually happen. Measured 2026-09-09 on the sibling janusgraph fixture:
+    without ``tryfirst`` a single 10-test module started FOUR containers under
+    ``-n 4 --dist=loadgroup``; with it, one.
     """
     for item in items:
         if "tests/metadata_store" in str(item.path):

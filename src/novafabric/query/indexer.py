@@ -83,6 +83,16 @@ class CallRow:
     #: Currency of the recorded ``nova.cost`` block (additive, ADR-0131);
     #: ``None`` when no cost was recorded or the record carries no currency.
     cost_currency: str | None = None
+    #: ADR-0233 — the capsule tree, as indexed. ``parent_run_id`` is ``None`` for
+    #: a top-level capsule (which is what makes it a *root*), and
+    #: ``children_expected``/``children_arrived`` are what let a `tree`-scope
+    #: result say it is **incomplete** rather than quietly returning fewer
+    #: capsules than exist. Absent on a non-distributed capsule, which has no
+    #: tree and therefore nothing to be incomplete about.
+    parent_run_id: str | None = None
+    children_expected: int | None = None
+    children_arrived: int | None = None
+    orphan_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -101,6 +111,12 @@ class ScoreRow:
     model_id: str | None
     name: str
     value: float
+    #: ADR-0233 — the same tree fields CallRow carries, so a scope expansion
+    #: works identically whether the query aggregates model calls or scores.
+    parent_run_id: str | None = None
+    children_expected: int | None = None
+    children_arrived: int | None = None
+    orphan_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -128,6 +144,18 @@ def _opt_str(value: Any) -> str | None:
     if isinstance(value, str) and value:
         return value
     return None
+
+
+def _opt_int(value: Any) -> int | None:
+    """Non-negative integer or ``None``. A bool is not an int here.
+
+    ``children_arrived`` of 0 is meaningful — "the parent exists and no child has
+    landed yet" — so this must distinguish 0 from absent, which is why it returns
+    ``None`` rather than falling back to 0.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if value >= 0 else None
 
 
 def _opt_num(value: Any) -> float | None:
@@ -283,6 +311,14 @@ def scan_capsule(capsule_dir: Path) -> tuple[list[CallRow], list[ScoreRow]] | No
         ),
         "variant": _variant_of(manifest, metadata),
         "tag": _opt_str(metadata.get("tag")),
+        # ADR-0233. Read from the manifest, which is already in
+        # INDEXED_FILENAMES, so the cache's change signature covers them with no
+        # new file to sign for. A capsule that is not part of a distributed run
+        # simply has none of these, and is its own root.
+        "parent_run_id": _opt_str(manifest.get("parent_run_id")),
+        "children_expected": _opt_int(manifest.get("children_expected")),
+        "children_arrived": _opt_int(manifest.get("children_arrived")),
+        "orphan_reason": _opt_str(manifest.get("orphan_reason")),
     }
     return _model_call_rows(capsule_dir, dims), _score_rows(capsule_dir, dims)
 

@@ -237,10 +237,30 @@ class TestAzureKvSigningBackend:
         digest = hashlib.sha256(b"payload").digest()
 
         # Sign locally, then re-encode as raw r||s to mimic what Key Vault returns.
-        der_sig = key.sign(digest, _ec.ECDSA(_asym.Prehashed(hashes.SHA256())))
-        r, s_val = _asym.decode_dss_signature(der_sig)
-        p1363 = r.to_bytes(32, "big") + s_val.to_bytes(32, "big")
-        assert len(p1363) == 64 and p1363[:1] != b"\x30"
+        #
+        # The guard below (first byte must not be 0x30, the DER SEQUENCE tag) is
+        # what makes this test prove a *conversion* happened rather than a
+        # pass-through. But `r` is effectively a uniformly random 256-bit
+        # integer, so its first byte is 0x30 once in 256 signatures — a
+        # **0.39% false-failure rate per run**, which is why this test failed in
+        # a release-gate run with `assert (64 == 64 and b'0' != b'0')`.
+        #
+        # ECDSA is randomised, so re-signing draws a fresh `r`. Eight attempts
+        # leave a residual of (1/256)**8 ≈ 3e-20 — the same shape of fix the WAL
+        # cold-start flake needed: bound the draw and do the arithmetic, rather
+        # than accept a rate nobody computed.
+        p1363 = b""
+        for _ in range(8):
+            der_sig = key.sign(digest, _ec.ECDSA(_asym.Prehashed(hashes.SHA256())))
+            r, s_val = _asym.decode_dss_signature(der_sig)
+            candidate = r.to_bytes(32, "big") + s_val.to_bytes(32, "big")
+            if candidate[:1] != b"\x30":
+                p1363 = candidate
+                break
+        assert len(p1363) == 64 and p1363[:1] != b"\x30", (
+            "could not draw a signature whose first byte is not the DER tag in 8 "
+            "attempts (p ~ 3e-20) — suspect the signer, not the draw"
+        )
 
         pub_numbers = key.public_key().public_numbers()
 

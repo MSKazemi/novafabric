@@ -4,12 +4,752 @@ All notable changes are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Each entry below summarizes a release. Full release notes — including
-upgrade instructions, breaking changes (none so far), and try-it
+upgrade instructions, breaking changes, and try-it
 examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
+The first behaviour break is in **[Unreleased]**: the Kubernetes runner no
+longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`nightly-scale-gates.yml`'s `object-store-scale` job had been red every night since at least
+  2026-09-17 — Docker Hub discontinued the `minio/minio` image entirely.**
+
+  `docker pull minio/minio` (any tag) now returns `pull access denied ... repository does not
+  exist`, and Docker Hub's own API returns `object not found` for the repository — MinIO Inc.
+  removed free Docker Hub distribution, not a local or workflow misconfiguration. This is the
+  second such removal this job has hit: `bitnami/minio` was retired first (2026-08-05), the
+  workflow moved to the official `minio/minio` image, and that image is now gone too.
+
+  `postgres-scale` and `dashboard-scale` (the other two jobs in this workflow) were green
+  throughout — only the MinIO container-startup step failed, before any test ran.
+
+  Switched to `quay.io/minio/minio` — MinIO's own community-edition mirror, same image content
+  (verified: identical digest to what Docker Hub last served), same `server /data` command.
+  Proven red→green locally, reproducing the workflow's exact commands: `minio/minio:latest`
+  fails to pull with the identical error CI shows; `quay.io/minio/minio:latest` pulls, starts,
+  and passes its health check; the full `tests/object_capsule_store` suite then runs clean
+  (172 passed, 4 skipped, 1 xfailed) against it.
+
+- **The `--workers` guard refused SQLite for a reason it then permitted** (defect **B8**).
+
+  `nova server start --workers N` refuses unless `--backend postgres`, saying *"the SQLite
+  backend cannot be shared safely across worker processes"* — which reads as *postgres ⇒ no
+  shared SQLite*. That is false. `server/capsule_index.py::open_index` writes `registry.db` from
+  **every** worker on **every** upload whatever `--backend` says, so choosing postgres does not
+  remove the shared SQLite writer; it unlocks the multi-worker mode that makes it shared.
+
+  The message now names what is actually refused — the **metadata store** — and tells the
+  operator that the registry index is shared under either backend.
+
+  `open_index` also stops routing around `_sqlite_util`. **This part changes no behaviour
+  today** and is stated that way deliberately: Python's `sqlite3.connect` already applies a 5 s
+  busy timeout, so bare and helper opens are observably identical (`busy_timeout=5000`,
+  `journal_mode=delete`) — which is why campaign-2 drove 1,984 uploads at 64-way concurrency
+  against 4 workers with **zero** losses and **zero** lock errors. Going through the helper
+  matters only so the index inherits any future hardening applied there, which is the gap B8
+  named. Journal mode stays untouched: `PRAGMA journal_mode=WAL` is itself a write that ignores
+  the busy timeout under a concurrent open.
+
+- **A respawned server worker could delete another worker's in-flight upload** (follow-up to
+  defect **B9**).
+
+  The reaper that reclaims orphaned ingest temporaries decided ownership by one test: *is this
+  entry older than this process's start time?* Exact on one process — but
+  `cli/server.py::_launch_workers` runs uvicorn with `factory=True, workers=N`, so **every worker
+  runs the lifespan and its own reaper with its own start time**, and uvicorn respawns a worker
+  that dies. A worker respawned at T saw every sibling's in-flight spool as predating "the current
+  server" and deleted it: the streaming `.spool` file *and* the half-extracted
+  `<run_id>.<hex>` directory.
+
+  Measured: a reaper given a start time 50 ms after two in-flight entries removed both.
+
+  An entry is now reclaimed only when it is older than **both** the process start time and
+  `now - SPOOL_REAP_GRACE_S` (1 h — an upload is bounded by the ingest size cap and takes minutes
+  at most). The grace term is the half that holds in a multi-process deployment.
+
+  Same family as **B8**: an invariant stated for one process that does not survive
+  `--workers > 1`. Published capsules were never at risk — they leave the spool by atomic rename —
+  so the exposure was failed in-flight uploads, not corruption.
+
+- **`nova server issue-token` minted a token the server rejected, and the 401 blamed the wrong
+  credential** (defect **B6**).
+
+  Following the documented multi-node path produced a valid ed25519 JWT that the server answered
+  with `{"error":{"code":"unauthenticated","message":"Invalid local token"}}` — sending the
+  operator to check `$NOVAFABRIC_HOME/.server-token` for a credential they never presented.
+
+  Two faults behind one message. **B6a:** the server ignores offline JWTs entirely unless it was
+  started with `NOVAFABRIC_OFFLINE_KEY_PATH`, and nothing said so. **B6b:** `_verify_local_token`
+  is the fall-through for *every* credential class, so a JWT was reported as a bad *local* token.
+
+  The 401 now discriminates on the JWT shape the code already uses elsewhere
+  (`raw_token.count(".") != 2`) and names the real problem — including, when offline auth is
+  disabled, the env var that enables it. `issue-token` also prints the server-side requirement,
+  **on stderr**, so `TOK=$(nova server issue-token …)` still captures only the token.
+
+  The shape check runs strictly *after* the constant-time comparison, and a test asserts that
+  ordering so the branch can never become a timing side-channel.
+
+- **`nova capture` died with an 83-line traceback when the output directory was unwritable**
+  (defect **B11**).
+
+  A full disk, a read-only mount, a missing parent or a permission denial produced a raw
+  `OSError: [Errno 28] No space left on device` Rich traceback — before the workload ran. The
+  errno was the only information in it: not which directory NovaFabric chose, not that the
+  choice was NovaFabric's rather than the workload's, and not what to do next.
+
+  A full scratch filesystem mid-campaign is the ordinary case on the machines this runs on.
+  `CaptureOrchestrator` now raises the named `CapsuleDirectoryError`, and the CLI prints one
+  line and exits 1:
+
+  ```
+  Cannot start capture: cannot create the -o/--output directory /mnt/tinyfs/caps:
+  No space left on device (errno 28). The workload was not started. Free space, fix
+  the permissions, or choose another location with `-o <dir>`.
+  ```
+
+  83 lines → 4. The original `OSError` is chained as `__cause__`, so a caller that wants the
+  detail still has it. Same treatment B4 got for `nova db upgrade`.
+
+- **`--runner docker` recorded no model calls at all, and reported success** (defect **B3**).
+
+  Wire-level capture fires only if the workload's interpreter loads NovaFabric's hook loader at
+  startup, and NovaFabric ships no auto-loading `sitecustomize`/`.pth`. Each runner must
+  materialise the loader and put its directory on `PYTHONPATH`. `_docker.py` did **neither**, so
+  `model-calls.jsonl` and `tool-calls.jsonl` came back **empty regardless of what the workload
+  did**, while the capsule reported `status: success`, `exit_code: 0` and a complete,
+  internally-consistent digest manifest. Silent, total loss of the primary evidence.
+
+  A controlled comparison of one byte-identical agent making five real model calls measured:
+  `local` 5, `slurm` 5, `kubernetes` **0** — all three reporting success.
+
+  Found on SLURM and fixed there in v0.6.11, then propagated to `_pbs` and `_lsf` — and missed
+  for both container runners. The same "property re-implemented per runner holds at N-1 sites"
+  shape as ADR-0270, in the same package.
+  [`tests/test_runners_hook_injection.py`](tests/test_runners_hook_injection.py) now asserts it
+  across **every** runner at once.
+
+- ⚠ **`--runner kubernetes` still does not run wire-level capture — but it now says so**
+  (ADR-0272). Its capsule is an `emptyDir`, so neither the Docker bind-mount nor the SLURM
+  shared-filesystem mechanism transfers, and every remaining option changes a documented
+  contract (a ConfigMap needs RBAC beyond the documented `jobs`/`pods`/`pods-log`/`pods-exec`;
+  a shell wrapper assumes `/bin/sh` in the image). Pending that decision the runner **warns on
+  stderr** and sets `runner_metadata.wire_capture = "unavailable"`, so an operator is no longer
+  told `success` about a capsule missing every model call. Use `docker`, `slurm` or `local` if
+  you need model-call evidence today.
+
+- **`nova export-blob --help` crashed instead of printing help** (defect **B5**).
+
+  The `--dest` help string contained the literal text `s3://bucket[/prefix]`, and Rich parses
+  `[/prefix]` as a closing markup tag:
+
+  ```
+  MarkupError: closing tag '[/prefix]' at position 60 doesn't match any open tag
+  ```
+
+  A shipped, documented command answered `--help` with a traceback and exit 1. Fixed by escaping
+  the bracket as `r"s3://bucket\[/prefix]"` — the convention already used in `cli/verify.py` and
+  `cli/_extras.py`. The help now exits 0 and renders the bracket literally.
+
+  **The class is now guarded, not just the instance.**
+  [`tests/cli/test_every_command_help_renders.py`](tests/cli/test_every_command_help_renders.py)
+  walks the whole command tree and renders every node's `--help`. It shipped because
+  `test_help_shows_all_commands` renders only the **top-level** help and checks that command
+  *names* appear — the root help renders fine, so a subcommand whose own help crashes passed CI.
+  A scan at fix time found **1 failure across 398 command paths**.
+
+### Security
+
+- **The Kubernetes runner no longer ships your shell's environment into the cluster**
+  (ADR-0270, defect **B2** — disclosed 2026-08-28, fixed 2026-09-10).
+
+  `nova capture --runner kubernetes` wrote **every environment variable of the submitting
+  shell** into the Kubernetes `Job` object as a literal `value:` — readable by anyone with
+  `get job` in the namespace, and persisted in etcd. Any credential the submitting shell held
+  (`OPENAI_API_KEY`, `AWS_SECRET_ACCESS_KEY`, …) was disclosed to the cluster.
+
+  The pod now receives **only** `NOVAFABRIC_*` variables plus anything named explicitly in the
+  new `extra_env` runner option — the same default-deny the Docker runner already applied.
+
+  **The cause was structural.** Filtering was left to each runner rather than done once:
+  `docker` filtered, `slurm` filtered, `lsf`/`pbs` were safe by construction, and `kubernetes`
+  did not. *A safety property delegated to N call sites holds at N-1 of them.* The predicate now
+  lives once in `runners/_env.py`, and
+  [`tests/test_runners_env_forwarding.py`](tests/test_runners_env_forwarding.py) asserts it over
+  **every** runner at once — so a new runner that forgets to filter fails an existing test.
+
+  Two green suites had pinned opposite invariants and nothing compared them: the Docker suite
+  asserted the host environment must *not* be forwarded, while the Kubernetes suite asserted
+  arbitrary variables reaching the manifest were correct.
+
+### Changed — BREAKING (behaviour)
+
+- **`--runner kubernetes` no longer inherits the submitting environment.** A workload that
+  implicitly relied on a variable will now start without it.
+
+  **Migration:** name it explicitly —
+  `--runner-option extra_env='{"LOG_LEVEL":"debug"}'`. For anything secret, do **not** use
+  `extra_env` (its values land in the Job object); bind a `service_account` to a Kubernetes
+  `Secret` instead. See [`docs/operator-guide.md`](docs/operator-guide.md) §3.4.
+
+- **`--runner slurm` and `--runner docker` are unchanged in behaviour** — they already filtered.
+  Their open-coded filters were replaced by the shared helper so the three cannot drift apart.
+
 ### Added
+
+- **An Evidence Bundle can carry a capsule *set* — and the format already allowed it**
+  (ADR-0011 Amendment 1, experimental). Unblocks the ADR-0239 evidence cart's export.
+
+  `CapsuleSetBundleBuilder` produces **one** signed bundle over N capsules: `subject` becomes an
+  array, each capsule stages to `run-capsule/<run_id>/`, and attestations are namespaced
+  `attestations/<run_id>/…` so four envelopes per capsule do not collide onto four paths.
+
+  **No schema change was needed, in any of the three live copies.**
+  `evidence-bundle.schema.json` already defines
+  `subject` as `oneOf[Subject, array<Subject> minItems:2]`. Reading it rather than assuming
+  produced three findings:
+
+  - **`Subject.kind` is `const: "run-capsule"`** — set-ness is the *array*, not a new kind. An
+    earlier sketch proposed `kind: "capsule-set"`, which the schema the tests validate against
+    would have rejected.
+  - **`minItems: 2` means a one-capsule set is not a set** — it produces an ordinary
+    single-subject bundle, which is the right artifact for one capsule.
+  - ⚠ **`--include-runs` is a phantom.** The schema's own description cites a CLI flag that exists
+    **nowhere in `src/`**. The format has advertised this capability, unbuilt, since it was written.
+
+  **The shipped `nova verify` reads a set bundle unmodified** — it works off `artifacts[]` and
+  `manifest_hash` and never consults `subject`. That is the entire argument for one bundle over N,
+  so the test suite *runs the real verifier* against a set bundle rather than inspecting the
+  manifest: if the premise ever stops holding, it fails at that moment.
+
+  The alternative — N bundles bound by a new manifest — was rejected because it is *"a third
+  top-level format beyond Run Capsule and Evidence Bundle"*, an explicit anti-pattern here, and it
+  hands a recipient N artifacts to verify and cross-check by hand.
+
+  **The single-capsule bundle is unchanged**: same constructor, same object `subject`, same
+  `run-capsule/` layout, same attestation paths, all three production callers untouched. Its
+  shape-pinning test was written and passing *before* the shared staging and signing helpers were
+  parameterized, so a regression in that path surfaces in CI rather than in someone's verifier.
+
+  Every capsule is validated **before anything is written** — a refused export leaves no file,
+  because a half-written evidence bundle is a signed artifact whose contents do not match what was
+  asked for. An empty set and a duplicated capsule are both refused: a bundle of nothing still
+  carries a valid signature and reads as success, and a repeated subject over-counts the evidence a
+  recipient thinks they have.
+
+  ADR-0239 D5's curation record ships as `curation.json`, a bundle file listed in `artifacts[]` and
+  therefore covered by `manifest_hash` — it cannot be removed without verification reporting it.
+
+- **ADR-0237 is recorded as blocked on a calibration dataset, not on engineering** — and one of its
+  claims is corrected. `EvalCard` already *requires* a `JUDGE` card to carry `calibration`, and
+  `Calibration` requires **measured human agreement over n samples**. There is no such dataset in
+  the repo, so the first deliverable for an LLM judge is a labelled ground-truth set, not code —
+  and shipping without one would mean either a card the validator rejects or weakening the
+  validator that exists to stop an uncalibrated instrument emitting evidence-grade scores.
+
+  ⚠ The ADR described `nova.judge` as *"currently underused"*. **Nothing in `src/` writes it at
+  all** — it is unused. "Underused" reads as "a few callers exist, add more", when the first writer
+  has yet to be built. Corrected in both places it appeared.
+
+- **The public decisions index was under-claiming eleven shipped features.** `docs/decisions.md`
+  is generated from ADR frontmatter, and **ADRs 0240–0249 still read `status: proposed` after
+  their first slices shipped in the tagged release v0.101.0** — seven of them while the same
+  document already carried an *Implementation status* section describing the shipped code. The
+  public index therefore told every visitor that ten shipped features were merely proposed.
+  ADR-0255 was the eleventh: its campaign **ran** (Amendment 2, executed) before its funding basis
+  ended, so "proposed" is the one thing it is not.
+
+  Verified before correcting, in both directions: `v0.101.0` is a real tag, the ROADMAP row names
+  the ten slices, and each ADR's artifact exists in the tree (`jobs/store.py`,
+  `trust/tenant_keys.py`, `object_capsule_store/jurisdiction_router.py`, `docs/slo.md`,
+  `docs/support-policy.md`, `api/openapi-dashboard.yaml`, …). All eleven now read `accepted`; the
+  deferred slices each ADR records are unchanged and remain the honest boundary.
+
+  Guarded by `tests/docs/test_adr_status_matches_its_own_body.py`: an ADR carrying an
+  *Implementation status* section while declaring itself `proposed` is a document disagreeing with
+  itself, and now fails CI. CLAUDE.md warns this repo has *"repeatedly found docs both
+  overclaiming and underclaiming"* — this covers the under-claiming direction, which is the easier
+  one to miss, because nothing breaks and nobody complains.
+
+  ⚠ The guard needed fixing before it was trustworthy: it first scanned whole documents and
+  matched `status: success` inside a **capsule manifest example** in ADR-0256, which has no
+  frontmatter at all. It now parses the frontmatter block only. A guard that fires on legitimate
+  example content trains the reader to ignore it.
+
+- **The evidence cart — collect while investigating, resolve once** (ADR-0239 D1/D2/D5/D7/D8,
+  experimental). `novafabric.evidence.cart`. **No export ships; the reason is recorded below.**
+
+  **A cart holds references, never copies.** Copying at add-time would snapshot inconsistently —
+  twelve items captured at twelve moments during an investigation, silently mixing states if
+  anything changed between the first click and the last. Such a bundle attests to a state that
+  **never existed at any single instant**. Resolving once gives the result one coherent read
+  point, which is the only thing that can honestly be signed.
+
+  **The manifest says it is curated.** `evidence/completeness.py` covers exhaustive exports; a cart
+  is by construction an operator-assembled subset, so the manifest carries `operator_assembled:
+  true`, `exhaustive: false`, and a written disclosure — machine-readable and human-readable
+  together, because a flag alone gets ignored by a person and a sentence alone by a tool. A curated
+  bundle that does not say so invites being read as complete, and in an adversarial setting that is
+  the difference between evidence and a misleading exhibit.
+
+  ⚠ **`all_references_resolved` is not `exhaustive`**, and the manifest keeps them separate: the
+  first says every reference was readable, the second says the selection was complete. A
+  fully-resolved cart is still a curated one.
+
+  An unresolvable reference is **carried and marked**, never dropped — eleven items delivered for
+  twelve added, with no indication which vanished, is a quietly wrong exhibit. An active legal hold
+  travels with its item (D8), via the shipped `active_hold_ids` rather than a second reader of
+  `holds.jsonl`; and *"we could not establish a hold"* is recorded as such rather than as *"there
+  is no hold"*.
+
+  ⛔ **Export (D3) is blocked on an owner decision and was deliberately not resolved by
+  implementation accident.** D3 says export produces *a* real Evidence Bundle via
+  `EvidenceBundleBuilder` — but that builder takes a **single** `capsule_dir` and returns one ZIP,
+  while a cart is multi-item and heterogeneous. Either a new multi-capsule builder changes
+  ADR-0011's artifact shape, or N bundles are bound by a cart manifest reusing the shipped builder.
+  Choosing decides what a NovaFabric evidence export *is* to a recipient. `resolve()` produces the
+  manifest either shape needs and stops there.
+
+- **A filter-bar grammar whose power ceiling is enforced by the DSL itself** (ADR-0232 D1/D3,
+  experimental). `novafabric.query.parse_filter_bar` compiles `status:error -model:gpt-4` into the
+  same predicates `nova query --where` produces.
+
+  D1's rule is the point: *"No predicate is expressible in the bar that is not expressible in
+  `nova query`."* That is a **security** property — the DSL's closed allow-list is what ADR-0235
+  validates untrusted widgets against — so a bar that could express more would be a second,
+  unreviewed query surface.
+
+  **The ceiling is structural, not hand-maintained.** The parser decides *syntax* only and hands
+  DSL predicate text to `parse_predicate`; the DSL answers every question of semantics. The first
+  implementation duplicated those checks and drifted immediately — it accepted `log_level:value`,
+  which the DSL refuses because log levels are a closed set. Delegation removes the class, so a
+  future closed-set dimension inherits the guard for free. It also fixed an error in the other
+  direction: an early version refused `status:>error`, which `nova query` actually accepts — **the
+  ceiling means matching the DSL, not undercutting it**, and both directions are now asserted.
+
+  ⚠ **D1's own example contradicts D1's rule, twice.** It illustrates the grammar with
+  `status:error -model:gpt-4* cost:>0.5`, but there is **no glob operator anywhere in the DSL**,
+  and `parse_predicate` accepts only the eight dimensions — **a numeric metric cannot be filtered
+  on at all**; metrics are what the DSL aggregates. `nova query --where 'cost > 0.5'` raises today.
+  Only `status:error` survives. Both other forms are refused with a message that explains the
+  ceiling, because silently matching `gpt-4*` literally would return nothing and be read as "no
+  such model".
+
+  Suggestions (D3) are bounded by contract: `observed_values` reports `truncated` rather than
+  quietly returning a short list, since *"a silently truncated suggestion list teaches users that a
+  value does not exist"*. An unknown dimension raises instead of returning `[]` — empty means "no
+  values here", which is a different claim.
+
+  **Deferred:** D2's URL-serialized view state and D4's saved views (`web/`).
+
+- **`nova query --scope node|root|tree` — three answers to "a filter matched inside a hierarchy"**
+  (ADR-0233, experimental). **Additive; `node` is the default and unchanged.**
+
+  Given a distributed run — one parent, sixty-four children, `status:error` matching three — there
+  are three defensible answers, and the dashboard previously picked one silently:
+
+  | scope | returns | answers |
+  |---|---|---|
+  | `node` (default) | the matching capsules | "which capsules failed?" |
+  | `root` | root capsules whose tree contains a match | "which runs were affected?" |
+  | `tree` | every capsule in any tree containing a match | "what was happening around the failure?" |
+
+  Scope lives in the **plan**, not in a display toggle, so any dashboard view is reproducible by
+  the CLI — and an ADR-0235 widget can carry it and still pass the DSL's closed allow-list.
+
+  **An incomplete tree renders as incomplete.** The result carries
+  `tree_scope.incomplete_reasons` and `complete`: a parent with `children_arrived <
+  children_expected`, an `OrphanPlaceholder`, or capsules that fall outside the query's time
+  window are each named. A `tree` result that looks whole while children are still in flight is a
+  wrong answer presented confidently — the same principle as ADR-0234's honest-degradation rule.
+  Expansion is bounded at 5,000 capsules and breadth-first **per distinct root** rather than per
+  matching row, so a wide distributed run is not quadratic.
+
+  ⚠ **`INDEXER_SCHEMA_VERSION` is bumped (1 → 2), and this time the bump is load-bearing.**
+  `CallRow`/`ScoreRow` genuinely gained `parent_run_id` and the child counts, and `_CALL_FIELDS`
+  is derived from the dataclass — so a row cached at version 1 has fewer values and would
+  rehydrate with the new fields silently defaulted to `None`. **Every capsule would look like a
+  root**, and a `root`/`tree` query would answer confidently and wrongly from a warm cache.
+
+  Worth contrasting with ADR-0236's `ratio()` in the same release, which asks for the identical
+  bump and correctly does **not** get one: it is arithmetic over already-extracted aggregates. The
+  constant is documented as bumped *"whenever the indexer changes what it extracts"*, and that —
+  not the ADR's instruction — is the test.
+
+  ⓘ **One ADR correction:** D3 says expansion reuses `CapsuleTreeAssembler`'s `CyclicLineageError`
+  guard. It cannot — the query index is a **flat row set**, not an assembled tree, and can hold a
+  partially-written chain. `_root_of` therefore carries its own depth bound and cycle set, so a
+  malformed chain degrades that capsule's scope answer instead of hanging a query over thousands
+  of others.
+
+- **Three latent test flakes fixed, each with a cause rather than a retry.** None were caused by
+  the changes that surfaced them; each was verified against a stashed baseline or by reading the
+  actual assertion.
+
+  - **`test_converts_p1363_signature_to_der` had a 1-in-256 false-failure rate.** It signs
+    locally, re-encodes as raw `r||s` to mimic Key Vault, and guards
+    `p1363[:1] != b"\x30"` so the test proves a *conversion* happened rather than a
+    pass-through. But `r` is effectively a uniformly random 256-bit integer, so its first byte is
+    the DER `SEQUENCE` tag **once in 256 signatures** — `assert (64 == 64 and b'0' != b'0')` in a
+    release-gate run. ECDSA is randomised, so the draw is now bounded: re-sign up to 8 times,
+    leaving a residual of `(1/256)**8 ≈ 3e-20`, with the arithmetic in the comment. Same shape as
+    the WAL cold-start flake — **a probabilistic assertion has a computable false-failure rate,
+    and it is worth computing before blaming the environment.**
+
+  - **`test_session_replay_help_lists_flags` depended on the terminal width of whoever ran it.**
+    It asserted the truncated flag `--continue-past-refus`, but rich's truncation *point* moves
+    with the width: measured green at 80/100/120/200 columns and red at 60, where it renders
+    `--continue-pas…`. Now pins `COLUMNS=200` (the fix `test_server_api_keys.py` already applies
+    for this class), which makes it deterministic **and stronger** — nothing truncates at that
+    width, so the full flag name is asserted rather than a prefix.
+
+  - **`TestReplays::test_cancel` raced the worker thread.** It forced a non-terminal state by
+    re-queueing the job, but only when the job was already `SUCCEEDED`/`FAILED` — one still
+    `RUNNING` passed that check untouched, finished on its background thread, and the `DELETE`
+    then saw `completed`. It passed in isolation and failed inside its file, where earlier tests
+    leave the worker warm. Now waits for a terminal state **first** and re-queues unconditionally:
+    after the wait there is no thread left to race with.
+
+- **`ratio(a, b)` — a generic rate metric in the query DSL, where undefined is not zero**
+  (ADR-0236 D3/D4, experimental). Rate metrics stop being a schema-change queue and become a
+  composition.
+
+  ```
+  nova query --select "count(), sum(cost), ratio(sum(cost), count()) AS cost_per_run"
+  ```
+
+  Operands name other select items in the same query — by explicit alias, or by canonical
+  expression text, which is the default alias. That keeps the grammar flat: no nested-expression
+  parser, no new precedence rules in a DSL whose **closed allow-list is its security property**
+  and which ADR-0235's widget validation now depends on. Each operand is itself parsed and
+  allow-listed. `parse_select` also gained paren-aware splitting; strictly more permissive, since
+  no existing expression contains a top-level comma.
+
+  **Undefined is not zero, and zero is still zero.** A zero denominator, an absent numerator or
+  denominator, and a missing or non-numeric operand all yield **no value** — never `0`. *"0 errors
+  out of 0 runs" is not a 0% error rate; it is no information*, and charting it as 0% invents a
+  reassuring data point that never existed. But `0` over a non-zero denominator stays a real `0`:
+  a measured zero is a fact, and the guard against "absent is not zero" becoming "zero is
+  suspicious" is explicit. A ratio over a ratio is refused — that needs an evaluation order this
+  design deliberately does not have.
+
+  **Two corrections to the ADR, both found by checking it against the code:**
+
+  - **D3's motivating example is not expressible.** It gives `error_rate` as
+    `Ratio(count where status:error, count)`, but there is **no per-aggregate `where` clause
+    anywhere in the DSL** and this ADR does not add one. A literal implementation would have
+    shipped a ratio primitive that cannot express the single example justifying it. The general
+    primitive ships; `error_rate` needs a second, separate grammar decision.
+  - **`INDEXER_SCHEMA_VERSION` is deliberately NOT bumped**, contrary to D7. That constant is
+    documented as bumped "whenever the *indexer* changes what it extracts", and a ratio over
+    already-selected aggregates extracts nothing new. Bumping would discard every user's query
+    cache for no reason. A test pins the omission with its reasoning so nobody "fixes" it.
+
+- **`nova dashboard` — widgets and dashboards as portable, versioned JSON files** (ADR-0235,
+  experimental). New command group: `list`, `show`, `apply`, `export`, `validate`.
+
+  **Files are the storage, not an export format.** There is no database table of user dashboards:
+  creating one writes a file, editing writes the file, and `export` hands back the bytes already
+  on disk. That is what makes portability real rather than nominal — an export feature over a
+  database is a feature, whereas files *are* the thing — and it preserves the removability
+  property: delete `$NOVAFABRIC_HOME/dashboards` and nothing is left behind to migrate. Storage
+  sits deliberately outside any capsule directory; capsules are signed evidence and stay
+  read-only.
+
+  **A widget is untrusted input, and the answer is structural.** These files are *designed* to be
+  shared, so they will be shared by people who should not be trusted — the threat model is
+  "someone pastes a widget from the internet". A file is validated against its JSON Schema
+  **before any use**, and only then is the embedded query handed to
+  `novafabric.query.validate_query_object`, so it inherits ADR-0129's **closed allow-list**: a
+  widget cannot express a query `nova query` would itself refuse. No user-supplied code, no raw
+  SQL, no templating that reaches the filesystem. `id` is the one field that reaches a path, so
+  the schema constrains it — `../../etc/passwd`, `/abs` and `a/b` are refused at the schema layer,
+  before any code takes an interest in the value.
+
+  **Unknown fields round-trip.** A file carrying settings from a newer version exports unchanged,
+  because every write path serialises the raw document rather than re-rendering from parsed
+  attributes. Without that, a mixed-version team silently destroys each other's work through
+  ordinary use — one member opens and re-saves, another's newer settings are gone, and nothing
+  errors anywhere. A newer *format version* is refused rather than parsed, though: that promise is
+  about additive fields, not about a revision that may have redefined one, and a wrong chart is
+  worse than no chart.
+
+  `apply` is idempotent — re-applying an unchanged file does not churn its mtime — and validates
+  every document in a directory **before writing any of them**, so a bundle is never half applied
+  into a state matching neither the old definition nor the new.
+
+  **Deferred:** the UI write path and fork-on-edit-a-builtin (ADR-0235 D4/D5, `web/`), and chart
+  rendering (ADR-0236).
+
+- **⚠ A run on an unpriced model reported `$0.00`, and that reads as free** (ADR-0234 D2,
+  experimental). **Found by implementing the honest-degradation rule; fixed additively.**
+
+  The chain, across three files: `CostInterceptor._estimate_cost` returns **0.0 for unknown
+  models** (deliberate — pricing must never fail a capture); `clickhouse_store` writes that into
+  `cost_usd`, a **non-nullable** column; `GET /api/runs/cost-summary` does `sum(cost_usd)` and
+  returns it as *the* run cost. So a model with no catalog price contributed a real-looking zero,
+  and the dashboard showed a run as costing nothing.
+
+  This contradicts the Run Capsule schema's own invariant — *"absent per-call fields are skipped,
+  never counted as 0"* — and ADR-0234's *"a null cost means unpriced rather than free"*. The repo
+  already knew the shape of the problem: the same ingest function carries a comment explaining
+  exactly this for `cached_tokens`. **The reasoning had been applied to tokens and not to cost.**
+
+  Fixed without touching `_estimate_cost`'s hot-path contract: a new
+  `CostInterceptor.is_priced(model)` companion, an additive `priced UInt8 DEFAULT 1` column
+  (through the existing idempotent `ADD COLUMN IF NOT EXISTS` migration list), and
+  `countIf(priced = 0)` in the query. Each run now reports `unpriced_calls` and
+  `cost_is_complete`, and a selection in which **every** call is unpriced refuses outright rather
+  than reporting `0.00`. Existing rows default to `priced = 1` — the only safe backfill, since
+  whether those models were priced at write time is unrecoverable and defaulting to `0` would
+  fabricate an unpriced verdict.
+
+- **The honest-degradation rule, as a shared primitive** (ADR-0234 D2/D3, experimental).
+
+  > An aggregate that cannot be computed faithfully must refuse, and say why. It may not render an
+  > approximation, a partial result, or a zero in place of an unavailable one.
+
+  `serve/aggregates.py` makes that enforceable rather than per-panel judgement — the ADR's own
+  point being that *"inconsistent honesty is indistinguishable from dishonesty from the user's
+  side."* A refusal carries **no value at all** (a number beside `computable: false` is still a
+  number to render, which is why the ADR rejects the conventional approximation-with-a-badge), and
+  both a `reason` and a **remedy** are required at construction — `refuse(..., remedy="")` raises,
+  because *"unavailable"* is not actionable and a bad refusal message is the whole risk of this
+  design. Combining verdicts reports the **most fundamental** refusal rather than the first
+  encountered, so the message does not depend on evaluation order.
+
+  Two further violations closed in `cost-summary`: an unconfigured cost store returned
+  `{"costs": {}}` — indistinguishable from *"these runs cost nothing"*, and its docstring called
+  that *"degrades gracefully"* — and the 100-id cap was applied silently, so a caller could total
+  a truncated set. Both now refuse with a stated remedy. `costs` keeps its previous shape, so
+  existing consumers are unaffected.
+
+  ⚠ **The converse is guarded too:** "absent is not zero" must not become "zero is suspicious".
+  A count of nothing is a measured fact, the `or 0` coercions over SQL counts in
+  `serve/routers/analytics.py` are correct and were left alone, and a test asserts the condition
+  set never gains a member for "the number looked small".
+
+  **Deferred:** the aggregate strip itself, bucketing and drag-select (ADR-0234 D1, `web/`), D4,
+  and applying the primitive to report exports, KPI tiles and ADR-0236 charts.
+
+- **The dashboard audit log says who, what changed, and what was refused — and stops
+  overstating the first** (ADR-0231, experimental). **Completes ROADMAP Theme A (ADRs 0228–0231).**
+
+  ⚠ **A live honesty defect in the SIEM export is fixed.** `to_ocsf` mapped `actor_token_fp` —
+  the first eight characters of the **one shared token** every operator pastes into a browser —
+  straight into **`actor.user.name`**. A SIEM renders that in a column headed *User* and an
+  analyst reads it as a person. It is not: with a shared token every record carries the same
+  eight characters, so the log proves *something happened* and can never prove *who*.
+
+  A fingerprint now rides in `user.uid` (an opaque id, which it is) and never in `user.name` (a
+  human identity, which it is not); `type_id` is `0` (Unknown) for a shared token; and
+  `nova_identity_source` carries the record's own verdict so a SIEM rule can filter on evidence
+  strength instead of inferring it. `user.name` is set only when the record supplies an identity
+  that is genuinely more than the credential fingerprint — otherwise an issued token's own
+  fingerprint would be restated under a human-sounding key, which is the same overstatement more
+  quietly. The hash-chained `audit` source is untouched; its actor was always a real subject.
+
+  Records now carry `actor: {identity_source, id?}` (`shared-token` / `credential` / `federated`;
+  `id` is **absent**, not null, for a shared token, and an unrecognised source degrades to the
+  weakest rather than being trusted), `prior`/`current` state captured **at the mutation site**
+  (a re-read afterwards races concurrent writers and would record a transition that never
+  occurred), and — for an ADR-0228 403 — top-level `required_scope`, `held_scope` and `resource`
+  rather than values buried in a free-form payload.
+
+  Captured state passes the ADR-0187 redaction ruleset before it is written, and the record
+  carries `redaction: {applied, ruleset, findings}` as proof it ran; the ruleset **version is read
+  from the ruleset**, never copied, because a version string in a second file attests to a version
+  that may not have run. This matters more than it looks: adding state capture to an append-only,
+  deliberately unrotated file is a direct route to writing secrets to disk permanently.
+
+  **No new egress, format, or sink** — OCSF, CEF, JSONL, redaction, rotation and follow-mode are
+  ADR-0191's and stay ADR-0191's. Every new field was added to `DASHBOARD_FIELD_ALLOWLIST` in the
+  same change, because that list is deny-by-default: a field added to the writer and not to it is
+  dropped from every export while the local file looks enriched and nothing errors. A guard
+  AST-walks the writer and fails if the two ever diverge — derived from the source, not a
+  hand-written mirror, because a hand-maintained mirror of code is the thing that drifts.
+
+  **Deferred and enumerated:** `prior`/`current` are supplied by `assign_role` and `revoke_role`
+  only. A test AST-walks `serve/app.py` and fails if that set changes, so partial coverage cannot
+  read as complete.
+
+- **⚠ BREAKING (Helm chart): the deployed default is secure now** (ADR-0230, experimental).
+  **An upgrade refuses until you state your intent — see the migration below.**
+
+  The chart shipped `mode: dashboard` with `serve.insecure: true`. That produced
+  `nova serve --insecure` bound beyond loopback over plain HTTP, protected by one shared token
+  which — as ADR-0228 established — carries full, irreversible power over signed evidence:
+  `DELETE /api/runs/{id}`, `POST /api/compliance/pii/erase`, `POST /api/seal/{id}/bypass`,
+  `POST /api/admin/roles`.
+
+  The strongest objection is not that this was risky. **It matched none of ADR-0042's four
+  named, tested and supported deployment tiers** — it was an *unsupported* configuration under
+  an accepted ADR, and the chart README never mentioned tiers at all.
+
+  Now: `mode: server` (`nova server start`, with OIDC/RBAC) and `serve.insecure: false`.
+  `mode: dashboard` remains fully supported when chosen — the problem was the default, not the
+  option — and since ADR-0228 and ADR-0229 landed it is a defensible choice rather than an
+  unguarded one. That sequencing was deliberate: flipping a default is only responsible once
+  there is something safe to flip to.
+
+  Setting `insecure: true` now makes **`helm template` fail**, not warn. A `NOTES.txt` warning
+  prints after a successful install — after the exposure already exists, and nobody reads it
+  twice. To proceed anyway you must set `serve.acknowledgeInsecureExposure` to the exact string
+  `i-accept-serving-evidence-over-plain-http`. It is a fixed awkward value rather than a boolean
+  because `true` is precisely what a reflex sets; the unsafe path stays possible but effortful,
+  and the choice is recorded in your own values file and in git.
+
+  **Migration.** An upgrade across this release fails with a message carrying the exact values
+  that restore the previous behaviour. To keep the old defaults:
+
+  ```yaml
+  mode: dashboard
+  serve:
+    insecure: true
+    acknowledgeInsecureExposure: i-accept-serving-evidence-over-plain-http
+  upgradeAcknowledged: true
+  ```
+
+  To take the new defaults, confirm you have read this: `upgradeAcknowledged: true`.
+  A fresh install needs neither — it has no previous behaviour to lose.
+
+- **"The read-only dashboard" — a false claim that had outlived three sweeps — is fixed and
+  guarded** (ADR-0230 D4).
+
+  `nova serve` has not been read-only since v0.8. The claim sat in `values.yaml` **directly
+  beside the `insecure: true` default**, in the file an operator reads while deciding whether
+  that default is acceptable. The two defects were one defect: the plausible reason the unsafe
+  default survived review is that the line next to it said the thing behind it was safe.
+
+  ROADMAP's v0.98.1 pass recorded fixing this class of claim and left seven. ADR-0230 D4's own
+  sweep recorded eight instances and **never listed five that were live**. The 2026-09-06 fix
+  pass then missed two more — `docs/cli-reference.md` and `Chart.yaml` — which the new guard
+  caught **on its first run**. **Nine instances, three failed manual sweeps.**
+
+  `tests/deploy/test_secure_by_default_chart.py` now bans the whole-product phrasing. It
+  deliberately leaves the ~21 *true* per-endpoint uses alone ("read-only endpoint", "Read-only
+  inspection, no subprocess") and asserts both halves, because a guard that flags true statements
+  trains the reader to ignore it. `docs/releases/` is excluded and the exclusion is asserted:
+  a dated release note records what was said at the time, and amending it rewrites the record.
+
+- **`nova serve` now knows whose data it is reading — and refuses when it cannot tell**
+  (ADR-0229 first slice, experimental). **Additive; single-tenant is the default and unchanged.**
+
+  ADR-0228 answers *what may I do*; this answers *to whose data*. `serve` had neither:
+  `grep -rn "tenant"` across the whole module returned **one line**, a literal `tenant="default"`.
+
+  The hard part is that the dashboard does not read one store — it reads **eight**, and they do
+  not share a tenancy model. `serve/tenancy.py` makes each one declare `aware` / `agnostic` /
+  `unsafe`, and **the declaration is checked against the store's actual schema**, not against
+  itself: an `aware` store must really carry its discriminator, an `unsafe` store must really
+  carry none. Five mutations of that registry were each confirmed to turn the guard red, because
+  the ADR's own Consequences name declaration drift as the risk and a test that read the table
+  back would have been vacuous.
+
+  Measuring it corrected the design in both directions. **Four stores are tenant-aware, not the
+  one the ADR credited** — `cost.clickhouse_store` has a real `tenant_id` column, and
+  `object_capsule_store` puts the tenant in the object key
+  (`capsules/<tenant>/<sha256[0:4]>/<sha256>/data.zst`). And the near-miss that shaped the whole
+  approach: `object_capsule_store` mentions "tenant" fourteen times, **thirteen of them ADR-0243
+  per-tenant KEKs** — tenancy of *key material*, which scopes no query. Grepping for the word
+  would have classified it correct for entirely the wrong reason.
+
+  **The refusal is at startup, not per endpoint, and that is a deliberate deviation.** ADR-0229
+  D2 specifies a 503 for endpoints backed only by an unsafe store. Done literally today that
+  refuses the 18 `/api/kg/*` and 9 `/api/lineage*` routes — and keeps serving **`/api/runs`**,
+  the busiest surface, from the equally unsafe runs index. The operator would see some panels
+  honestly refuse and conclude the rest were scoped, which is the exact illusion D2 exists to
+  prevent. So `NOVAFABRIC_SERVE_TENANCY=multi` is refused while **any** read-path store is
+  unsafe, with every blocking store named and a reason an operator can act on. Per-endpoint 503
+  ships once the runs index is resolved (OQ-1), which is now the gating item rather than a
+  footnote.
+
+  `/api/doctor` reports the posture **in both modes** — single-tenant is precisely when the
+  unsafe stores are harmless and therefore invisible, so it is when an operator most needs to
+  read it before deploying multi-tenant.
+
+  **Deferred and named:** D3's `SET LOCAL` + FR-08 extension (needs a live Postgres; and with
+  the read path refused there is no scoped query to establish context for), OQ-1–OQ-4, and
+  binding a tenant set onto the ADR-0228 credential — `select_tenant` implements D4's
+  narrow-never-widen rule but has no production caller yet, and wiring an unexercised path is
+  how a tested-but-dead mechanism happens.
+
+- **A quota-alert test waited on the wrong condition and failed once in 13,180.**
+
+  `tests/events/test_ops_alerts.py::TestQuotaBreachWiring::test_hard_breach_emits_ops_alert`
+  waited for `audit.jsonl` to **exist**, then asserted on its **contents**.
+  `AuditLog.append` does `path.open("a")` — which creates the file — and only then writes the
+  line, and the delivery runs on the dispatcher's background thread, so there is a real window
+  in which `exists()` is already true and `query()` still returns `[]`. It surfaced as
+  `assert 0 == 1` on a contended machine (the same run took 15m46s against a 10m33s baseline).
+
+  Now waits for `len(AuditLog(path).query()) >= 1` — the condition it actually asserts.
+  `query()` returns `[]` for a missing file, so the predicate retries rather than raising.
+  20 sequential runs and the full `tests/events` tier at 8-way parallelism are clean.
+  **A wait on a proxy for the condition is not a wait on the condition.**
+
+- **`nova serve` authorizes now — the roles UI stopped lying** (ADR-0228 first slice,
+  experimental). **Additive; the default local posture is byte-identical.**
+
+  `serve` authenticated and did not authorize. Possession of the one shared bearer token
+  granted **every** endpoint, including `DELETE /api/runs/{run_id}`,
+  `POST /api/compliance/pii/erase`, `POST /api/seal/{capsule_id}/bypass`, and
+  `POST /api/admin/roles` — which writes the same `role_assignments` table `nova server start`
+  reads. On a deployment using workspace/org features, ADR-0178's fallback resolves those rows,
+  so a dashboard credential could mint a **server-mode** role. Modelled as `E-14`.
+
+  The roles UI made this worse than a plain gap: an operator could assign a role through the
+  dashboard, see it listed, and believe access was restricted. **Nothing in `serve/` ever read
+  an assignment** — verified by grep, hits only inside the three `/api/admin/roles` handlers.
+  Security theatre is worse than no security, because it is believed.
+
+  `serve/authz.py` adds four scopes and enforces them. `read` / `operate` / `admin` are
+  ADR-0027's Layer A/B/C capability tiers, already documented per endpoint; `audit` is the
+  `auditor` role `server/rbac.Role` already defines, kept **orthogonal** — it sees everything
+  `read` sees plus the audit trail, and can mutate nothing at any level. No new vocabulary was
+  invented, because a fourth taxonomy is what guarantees drift.
+
+  Enforcement is **one declarative table of 210 routes** consulted by **one** app-level
+  dependency — not 184 decorators inside the module ADR-0183 froze. A route missing from the
+  table is **denied to everyone**, including the server token: in an evidence tool a loud
+  failure beats a quiet disclosure, and defaulting to `read` would make a forgotten line a
+  silent leak. `tests/serve/test_authz_route_table.py` fails CI on the first unclassified
+  route, so that branch should never fire in a released build; it also fails on a *stale*
+  entry, because an unpruned allowlist drifts into describing an app that no longer exists and
+  then reads as proof of coverage it does not have.
+
+  **Verb is not capability.** A large group of `POST` routes change nothing and only compute —
+  `POST /api/query`, `POST /api/kg/blast-radius`, `POST /api/mcp/scan`, `POST /api/policy/check`
+  and the whole `/api/compliance/export/*` family (each builds inside a `TemporaryDirectory` and
+  returns the bytes). Each was **read** to confirm it, not classified by its verb. Getting that
+  wrong would have locked the auditor persona out of the exports that are the point of the
+  auditor persona.
+
+  Issued tokens carry a scope (`POST /api/admin/tokens` takes an optional `scope`), so a
+  read-only auditor is finally expressible — today that persona cannot be given access without
+  also being given the power to erase evidence. A record written before this slice has no
+  `scope` key and is read as **`admin`**: not a default chosen for convenience, but the only
+  truthful reading of what that credential could already do. The same rule covers the
+  `.serve-token`, which is why a laptop sees no change.
+
+  A **403** joins the dashboard audit log with subject, route, and required-vs-held scope; a
+  **401** writes nothing, because a 401 is usually a stale browser tab and logging the
+  credential that produced it would recreate the defect v0.98.0 closed. No record contains the
+  presented secret — only a fingerprint.
+
+  Two statements this change **falsified** were rewritten rather than left standing:
+  `token_store`'s docstring (*"No privilege differentiation … anything that implies a scoped or
+  lesser credential would be a false claim"*) and the mint endpoint's warning (*"nova serve
+  authenticates, it does not authorize"*), the latter pinned by a test whose whole subject was
+  that message being accurate.
+
+  **Deferred and named:** ADR-0228 D6's org/project override (arrives with ADR-0229 — `serve`
+  has no project axis yet); reading `rbac_store` assignments as scopes, so a `role_assignments`
+  row still grants nothing in `serve` — E2 is closed by making the *write* `admin`-scoped, not
+  by coupling the two vocabularies; and OQ-1/OQ-2/OQ-3 (content split, WebSocket scope,
+  `/metrics` as its own scope).
 
 - **The documentation landing page now opens with the product, not a wall of tables.**
 
@@ -1336,24 +2076,49 @@ examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
 
 ### Fixed
 
-- **`nightly-scale-gates.yml`'s `object-store-scale` job had been red every night since at least
-  2026-09-17 — Docker Hub discontinued the `minio/minio` image entirely.**
+- **CI's `unit` job was being killed by the machine, not by a test — and the mitigation that was
+  supposed to prevent it had never actually run.** Six of the last forty CI runs, spanning 2026-09-04 to 2026-09-09, ended
+  with `The runner has received a shutdown signal` at **exactly `[ 38%]`**, with **zero `FAILED`
+  lines** in any of them; successful runs of the same job take 25–28 minutes, so the kills at
+  9–13 minutes read as timeouts and the red `unit` check was habitually discounted.
 
-  `docker pull minio/minio` (any tag) now returns `pull access denied ... repository does not
-  exist`, and Docker Hub's own API returns `object not found` for the repository — MinIO Inc.
-  removed free Docker Hub distribution, not a local or workflow misconfiguration. This is the
-  second such removal this job has hit: `bitnami/minio` was retired first (2026-08-05), the
-  workflow moved to the official `minio/minio` image, and that image is now gone too.
+  38% is where the lineage container modules begin. CI's `unit` job runs the `container` tier in
+  full, and measurement there found the cause: **`-n 4 --dist=loadgroup` was starting three
+  simultaneous JanusGraph JVMs at 3.4–4.4 GiB each** — 12.1 GiB of a 13.38 GiB peak, with up to
+  nine containers alive at once, which does not fit on a 16 GB hosted runner alongside four pytest
+  workers. Memory exhaustion is an inference, not an observation — GitHub surfaces no OOM message,
+  and the runner is gone before anything can be read off it. What is measured is that the kill point
+  is invariant at the phase boundary and that the phase's footprint exceeds the runner.
 
-  `postgres-scale` and `dashboard-scale` (the other two jobs in this workflow) were green
-  throughout — only the MinIO container-startup step failed, before any test ran.
+  Container fixtures are module- or session-scoped, but **under xdist every worker has its own
+  session**, so a module whose tests scatter across N workers starts N copies of its container.
+  `tests/metadata_store/conftest.py` had documented and solved this for its Postgres — except that
+  **its fix was inert**: pytest-xdist reads the `xdist_group` mark in its *own*
+  `pytest_collection_modifyitems` (`xdist/remote.py`) and encodes it into the item's nodeid, so a
+  conftest implementation without `tryfirst` runs *after* that and the mark it adds is never seen.
+  The hook ran, the marks were added, and `--dist=loadgroup` ignored every one of them.
 
-  Switched to `quay.io/minio/minio` — MinIO's own community-edition mirror, same image content
-  (verified: identical digest to what Docker Hub last served), same `server /data` command.
-  Proven red→green locally, reproducing the workflow's exact commands: `minio/minio:latest`
-  fails to pull with the identical error CI shows; `quay.io/minio/minio:latest` pulls, starts,
-  and passes its health check; the full `tests/object_capsule_store` suite then runs clean
-  (172 passed, 4 skipped, 1 xfailed) against it.
+  `tests/conftest.py` now derives the group from the same fixture closure it already uses for the
+  `container` marker — one container per *fixture* instead of one per *(fixture × worker)* — and
+  both hooks are declared `@pytest.hookimpl(tryfirst=True)`. Measured over the container tier:
+
+  | | before | after |
+  |---|---|---|
+  | peak container memory | 13.38 GiB | **4.48 GiB** |
+  | concurrent JanusGraph JVMs | 3 | **1** |
+  | tier wall-clock | 317 s | **109 s** |
+
+  `tests/docs/test_container_tests_are_xdist_pinned.py` guards both halves: that every container
+  fixture gets a group and that same-fixture tests share it, *and* that both hooks keep `tryfirst`
+  — because every other assertion in that file passes whether or not the mark ever reaches xdist,
+  which is precisely how the first version of this fix looked correct while doing nothing.
+
+  The `unit` job now also records runner capacity up front and samples free memory every five
+  seconds, reporting the peak and uploading the trace with `if: always()`. A runner that dies
+  mid-job otherwise leaves **no evidence at all** — GitHub prints a shutdown signal, never an OOM
+  message, and the VM is destroyed before anything can be read off it — which is why six kills in
+  one week were only ever explicable by inference. The next one will be an observation.
+
 
 - **Withdrawn: the published claim that v0.38.0 meets the Scale-S4 latency criterion.**
 

@@ -314,8 +314,28 @@ supported — pick one termination point, not both.
 
 ## Scenario 5 — Kubernetes (Helm)
 
-**Status: experimental.** Deploys the read-only `nova serve` dashboard + REST API
-backed by Postgres. Harden the access model (TLS, auth) before exposing publicly.
+**Status: experimental.** Deploys `nova server start` (the multi-user REST API, with
+OIDC/RBAC) by default since v0.102.0, backed by Postgres.
+
+⚠ **The default changed in v0.102.0 (ADR-0230), and an upgrade will refuse until you say
+which side you want.** The chart previously shipped `mode: dashboard` with
+`serve.insecure: true` — the `nova serve` dashboard bound beyond loopback over plain HTTP,
+behind a single shared token that carries full, irreversible power over signed evidence. That
+pair matched **none** of [ADR-0042](../decisions.md)'s four named, tested and supported
+deployment tiers.
+
+| Values | Effect |
+|---|---|
+| *(stock)* | `nova server start`, no `--insecure`. Terminate TLS at the ingress. |
+| `mode: dashboard` | `nova serve`, still loopback-bound. Fully supported. |
+| `serve.insecure: true` | **`helm template` fails** unless `serve.acknowledgeInsecureExposure` is set to `i-accept-serving-evidence-over-plain-http`. |
+| upgrading from < v0.102.0 | **fails** until `upgradeAcknowledged: true`; the message carries the exact values that restore the old behaviour. |
+
+The dashboard is **not** read-only and has not been since v0.8 — it exposes
+`DELETE /api/runs/{id}`, `POST /api/compliance/pii/erase`, `POST /api/seal/{id}/bypass` and
+`POST /api/admin/roles`. Since [ADR-0228](../decisions.md) every route carries a scope, so a
+narrower credential can be minted, but the shared token still holds `admin`. Harden the access
+model (TLS, auth) before exposing publicly.
 
 ### Install distribution channels
 

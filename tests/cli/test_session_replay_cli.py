@@ -7,6 +7,7 @@ import shutil
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
@@ -126,10 +127,23 @@ def test_session_replay_empty_session_fails(tmp_path: Path) -> None:
     assert "nothing to replay" in result.output
 
 
-def test_session_replay_help_lists_flags() -> None:
+def test_session_replay_help_lists_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The flags are listed. Pinned to a wide terminal so the *width* is not the subject.
+
+    This previously asserted the truncated form ``--continue-past-refus`` with a
+    comment saying "rich truncates the long flag name with an ellipsis at narrow
+    widths". That is true, but the truncation *point* moves with the width: at
+    ``COLUMNS=60`` rich renders ``--continue-pas…``, and the assertion failed —
+    so the test's verdict depended on the terminal of whoever ran it, and it went
+    red in a hook run for a reason that had nothing to do with the code.
+
+    Pinning the width (the same fix ``test_server_api_keys.py`` already applies
+    for this class) makes it deterministic *and* stronger: at 200 columns nothing
+    is truncated, so the full flag name is asserted rather than a prefix.
+    """
+    monkeypatch.setenv("COLUMNS", "200")
     result = runner.invoke(app, ["session", "replay", "--help"])
     assert result.exit_code == 0
     assert_flag_in_help(result, "--mode")
     assert_flag_in_help(result, "--on-divergence")
-    # rich truncates the long flag name with an ellipsis at narrow widths
-    assert_flag_in_help(result, "--continue-past-refus")
+    assert_flag_in_help(result, "--continue-past-refusal")

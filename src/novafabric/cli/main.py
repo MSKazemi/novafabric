@@ -37,6 +37,7 @@ from novafabric.cli.cost_attribute import cost_attribute_cmd
 from novafabric.cli.cost_fairness import cost_fairness_cmd
 from novafabric.cli.cost_usage_breakdown import cost_usage_breakdown_cmd
 from novafabric.cli.daemon import app as daemon_app
+from novafabric.cli.dashboard import dashboard_app
 from novafabric.cli.dataset import dataset_app
 from novafabric.cli.diagnose import diagnose_cmd
 from novafabric.cli.diff import diff_cmd
@@ -200,6 +201,11 @@ app.add_typer(
 app.command("api-proxy")(api_proxy_cmd)
 app.command("verify-envelope")(verify_envelope_cmd)
 app.command("merkle-tree")(merkle_tree_cmd)
+app.add_typer(
+    dashboard_app,
+    name="dashboard",
+    help="Manage dashboards and widgets as portable JSON files (experimental, ADR-0235).",
+)
 app.add_typer(
     forensics_app,
     name="forensics",

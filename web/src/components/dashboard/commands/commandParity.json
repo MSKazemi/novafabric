@@ -1,4 +1,16 @@
 {
+  "nova a2a-card capture": {
+    "status": "builder-only"
+  },
+  "nova a2a-card verify": {
+    "status": "builder-only"
+  },
+  "nova a2a-objects map": {
+    "status": "builder-only"
+  },
+  "nova a2a-objects roundtrip": {
+    "status": "builder-only"
+  },
   "nova aibom generate": {
     "status": "real-panel",
     "tab": "compliance",
@@ -58,10 +70,31 @@
     "tab": "risk",
     "api": "/api/assure/"
   },
+  "nova assure-alarm check": {
+    "status": "builder-only"
+  },
+  "nova assure-baseline pin": {
+    "status": "builder-only"
+  },
+  "nova assure-baseline verify": {
+    "status": "builder-only"
+  },
+  "nova assure-canary record": {
+    "status": "builder-only"
+  },
   "nova assure-case": {
     "status": "builder-only"
   },
   "nova assure-coverage": {
+    "status": "builder-only"
+  },
+  "nova assure-impact report": {
+    "status": "builder-only"
+  },
+  "nova assure-run check": {
+    "status": "builder-only"
+  },
+  "nova assure-run record": {
     "status": "builder-only"
   },
   "nova audit bundle": {
@@ -114,6 +147,12 @@
   "nova capture": {
     "status": "cli-only",
     "reason": "Wraps and runs the user workload as a local process (ADR-0027 Layer C)."
+  },
+  "nova capture-ui show": {
+    "status": "builder-only"
+  },
+  "nova capture-ui verify": {
+    "status": "builder-only"
   },
   "nova classify from-capsule": {
     "status": "real-panel",
@@ -177,6 +216,21 @@
   "nova daemon stop": {
     "status": "cli-only",
     "reason": "Stops a local daemon process on the developer machine."
+  },
+  "nova dashboard apply": {
+    "status": "builder-only"
+  },
+  "nova dashboard export": {
+    "status": "builder-only"
+  },
+  "nova dashboard list": {
+    "status": "builder-only"
+  },
+  "nova dashboard show": {
+    "status": "builder-only"
+  },
+  "nova dashboard validate": {
+    "status": "builder-only"
   },
   "nova dataset provenance-card": {
     "status": "builder-only"
@@ -891,6 +945,21 @@
   "nova prompt tree": {
     "status": "builder-only"
   },
+  "nova provenance bind": {
+    "status": "builder-only"
+  },
+  "nova provenance output": {
+    "status": "builder-only"
+  },
+  "nova provenance show": {
+    "status": "builder-only"
+  },
+  "nova provenance verify": {
+    "status": "builder-only"
+  },
+  "nova provenance watermark show": {
+    "status": "builder-only"
+  },
   "nova query": {
     "status": "real-panel",
     "tab": "analytics",
@@ -915,6 +984,12 @@
     "status": "real-panel",
     "tab": "runs",
     "api": "/replay/forensic"
+  },
+  "nova replay-equivalence check": {
+    "status": "builder-only"
+  },
+  "nova replay-equivalence regime": {
+    "status": "builder-only"
   },
   "nova report": {
     "status": "real-panel",
@@ -1180,66 +1255,6 @@
     "status": "builder-only"
   },
   "nova view show": {
-    "status": "builder-only"
-  },
-  "nova assure-baseline pin": {
-    "status": "builder-only"
-  },
-  "nova assure-baseline verify": {
-    "status": "builder-only"
-  },
-  "nova a2a-card capture": {
-    "status": "builder-only"
-  },
-  "nova a2a-card verify": {
-    "status": "builder-only"
-  },
-  "nova a2a-objects map": {
-    "status": "builder-only"
-  },
-  "nova a2a-objects roundtrip": {
-    "status": "builder-only"
-  },
-  "nova assure-run record": {
-    "status": "builder-only"
-  },
-  "nova assure-run check": {
-    "status": "builder-only"
-  },
-  "nova replay-equivalence check": {
-    "status": "builder-only"
-  },
-  "nova assure-impact report": {
-    "status": "builder-only"
-  },
-  "nova assure-alarm check": {
-    "status": "builder-only"
-  },
-  "nova assure-canary record": {
-    "status": "builder-only"
-  },
-  "nova replay-equivalence regime": {
-    "status": "builder-only"
-  },
-  "nova provenance bind": {
-    "status": "builder-only"
-  },
-  "nova provenance output": {
-    "status": "builder-only"
-  },
-  "nova provenance show": {
-    "status": "builder-only"
-  },
-  "nova provenance verify": {
-    "status": "builder-only"
-  },
-  "nova provenance watermark show": {
-    "status": "builder-only"
-  },
-  "nova capture-ui show": {
-    "status": "builder-only"
-  },
-  "nova capture-ui verify": {
     "status": "builder-only"
   }
 }

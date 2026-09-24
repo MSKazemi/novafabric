@@ -27,9 +27,16 @@ This module is the fix. A record stores a **digest**, never the secret, the file
 is created 0600 and rewritten 0600, and ``find_active()`` gives ``verify_token``
 something to check against so an issued token works and a revoked one does not.
 
-**No privilege differentiation.** An issued token is exactly as powerful as the
-server token. `serve` authenticates; it does not authorize. Anything that implies
-a scoped or lesser credential would be a false claim.
+**Issued tokens carry a scope (ADR-0228 D5).** Until that ADR's first slice an
+issued token was exactly as powerful as the server token, and this docstring said
+so, because ``serve`` authenticated and did not authorize. It does now: a record
+carries a ``scope`` field, ``serve.authz`` enforces it per route, and
+``POST /api/admin/tokens`` can mint a ``read``-only credential.
+
+A record written **before** that slice has no ``scope`` key and is read as
+``admin`` — which is not a default chosen for convenience but the only truthful
+reading of what such a credential could already do. Narrowing it retroactively
+would silently revoke access an operator was granted.
 """
 
 from __future__ import annotations
@@ -97,15 +104,38 @@ def load() -> list[dict[str, Any]]:
     return records
 
 
-def issue(label: str, token: str) -> dict[str, Any]:
+def issue(label: str, token: str, scope: str = "admin") -> dict[str, Any]:
     """Append a hash-only record for *token* and return it.
 
     The returned record is what the API may echo: it carries no secret.
+
+    *scope* is one of ``read`` / ``operate`` / ``admin`` / ``audit``
+    (:class:`novafabric.serve.authz.Scope`) and defaults to ``admin`` so that a
+    caller that has not been updated mints exactly the credential it minted
+    before — the ADR-0228 D4 rule that the existing behaviour stays
+    byte-identical. An unrecognised value is rejected here, at the one place a
+    scope enters the store, rather than being quietly downgraded on every later
+    read.
     """
+    from novafabric.serve.authz import Scope, grantable_scopes
+
+    try:
+        parsed = Scope(scope)
+    except ValueError as exc:
+        raise ValueError(
+            f"unknown scope {scope!r}; expected one of "
+            f"{sorted(s.value for s in grantable_scopes())}"
+        ) from exc
+    if parsed not in grantable_scopes():
+        raise ValueError(
+            f"scope {scope!r} is a route classification, not a grantable scope; "
+            f"expected one of {sorted(s.value for s in grantable_scopes())}"
+        )
     record = {
         "label": label,
         "fingerprint": fingerprint(token),
         "token_digest": digest(token),
+        "scope": parsed.value,
         "created_at": datetime.now(tz=timezone.utc).isoformat(),
         "revoked": False,
     }

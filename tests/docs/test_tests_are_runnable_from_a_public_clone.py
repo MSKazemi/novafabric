@@ -43,6 +43,13 @@ _ALLOWED = {
     # Scans `design/` for phantom extras references when the tree exists, and
     # excludes `design/adr/` from that scan. A public clone simply scans less.
     "tests/docs/test_extras_references.py",
+    # Checks ADR frontmatter against each ADR's own body (an ADR that documents
+    # shipped code must not still say `proposed`). ADRs are private, so the whole
+    # module carries a `pytestmark = pytest.mark.skipif(not ADR_DIR.is_dir())`
+    # and reports *skipped*, never failed, in a public clone. The check is a
+    # maintainer-side docs-honesty guard; there is nothing for a contributor to
+    # run and nothing for them to break.
+    "tests/docs/test_adr_status_matches_its_own_body.py",
 }
 
 

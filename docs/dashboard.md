@@ -241,6 +241,55 @@ A short list, for completeness — the dashboard is not strictly a subset:
 
 - **Localhost only** by default. `--host 0.0.0.0` is rejected without `--insecure`. Even with `--insecure`, put TLS in front of it; the dashboard does not terminate TLS.
 - **Token authentication.** A cryptographically random URL-safe token (`secrets.token_urlsafe(32)`) is generated at start-up and written to `$NOVAFABRIC_HOME/.serve-token` (mode 0600); the start-up panel prints the resolved path. It is **not** rotated on every restart — an existing token file is reused so a restart does not invalidate open browser sessions, and the token therefore survives on disk after the server exits until something deletes it. The token must be passed on every `/api/*` request, either as an `Authorization: Bearer …` header or as `?token=…`. When both are present the `Bearer` header is authoritative. (Bearer support was added in v0.97.0; this paragraph previously stated that Bearer headers were rejected, which has not been accurate since.)
+- **Scope-based authorization** *(experimental, v0.102.0, ADR-0228).* Authentication alone used to grant every endpoint: one token, and `DELETE /api/runs/{run_id}`, `POST /api/compliance/pii/erase` and `POST /api/admin/roles` were all reachable with it. Each route now carries one of four scopes and a credential is checked against it:
+
+  | Scope | Covers | ADR-0027 layer |
+  |---|---|---|
+  | `read` | every read-only endpoint — runs, lineage, evidence, compliance reads, reports, exports, `/metrics` | Layer A |
+  | `operate` | bounded, reversible mutations — register, promote, score, hold, incident, ingest | Layer B |
+  | `admin` | irreversible or privilege-affecting — capsule/run deletion, PII erase, seal bypass, signing, key ratchet, role and token management, replay that spawns user code | Layer C |
+  | `audit` | everything `read` covers **plus** the audit trail and recorded policy decisions — and **never** `operate` or `admin`, at any level | orthogonal |
+
+  `admin` ⊇ `operate` ⊇ `read`, and `admin` also reaches `audit` (the same super-role rule `nova server`'s RBAC already applies). `audit` sits **outside** the chain on purpose: the persona must see more evidence than an ordinary reader — including who did what — while being structurally incapable of changing anything.
+
+  **Nothing changes on a laptop.** The `.serve-token` holds `admin`, and so does any token issued before this landed, so a single-user `nova serve` behaves exactly as it did. Authorization only bites once you deliberately mint a narrower credential:
+
+  ```bash
+  curl -X POST "http://127.0.0.1:4321/api/admin/tokens?token=$(cat "${NOVAFABRIC_HOME:-$HOME/.novafabric}/.serve-token")" \
+       -H 'content-type: application/json' \
+       -d '{"label": "auditor-laptop", "confirmed": true, "scope": "audit"}'
+  ```
+
+  The response carries the token **once** and reports the scope it minted; `GET /api/admin/tokens` lists the scope of every issued credential. Omit `scope` and you get `admin`, i.e. the previous behaviour.
+
+  **A route with no classification is denied to everyone**, including the server token. That is deliberate: a forgotten classification then breaks a feature loudly instead of disclosing evidence quietly. A CI guard fails on the first unclassified route, so you should never meet this in a release.
+
+  **Not yet:** roles assigned through `POST /api/admin/roles` are *not* read back as scopes — that surface is now `admin`-gated, which is what closes the cross-mode escalation, but per-request consultation of `role_assignments` arrives with tenant scoping (ADR-0229). WebSocket subscriptions (`/api/tv5/ws`, `/topology/stream`) still check host and token only, not scope.
+
+- **Tenancy posture** *(experimental, ADR-0229).* Authorization says what a credential may do; tenancy says whose data it may see. `nova serve` reads **eight** stores and they do not share a tenancy model:
+
+  | Store | Class | Why |
+  |---|---|---|
+  | metadata store · evidence fabric · cost store · object capsule store | **aware** | each carries a real tenant discriminator — RLS + `begin_tenant_context()`, a `tenant` column, a `tenant_id` column, and the `capsules/<tenant>/…` object key respectively |
+  | capsule directory | **agnostic** | isolation is supplied by the deployment via `--capsule-dir`, not by the store |
+  | runs index · knowledge graph · lineage store | **unsafe** | no tenant discriminator at all, so they cannot answer "show me only tenant X" |
+
+  Because three stores are unsafe — including the runs index behind `/api/runs` — **multi-tenant mode is refused rather than served**. Setting `NOVAFABRIC_SERVE_TENANCY=multi` makes `nova serve` exit before binding a socket, naming every blocking store and why:
+
+  ```
+  NOVAFABRIC_SERVE_TENANCY=multi was requested, but 3 store(s) in the serve read
+  path cannot answer a tenant-scoped question:
+    - knowledge_graph: KuzuDB has no RLS analogue and the graph schema carries no
+      tenant property; a tenancy model for it needs its own ADR (ADR-0229 OQ-2)
+    - lineage_store: the SQLite lineage schema carries no tenant column, …
+    - runs_cache: the runs index has no tenant column, so /api/runs and every list
+      built on it would return rows from every tenant (ADR-0229 OQ-1)
+  ```
+
+  This is deliberately blunter than ADR-0229 D2's per-endpoint 503: refusing only the KG and lineage panels would keep serving `/api/runs` unscoped, and an operator watching some panels refuse would reasonably conclude the rest were scoped. **For multi-tenant deployments today, use `nova server`** — the multi-user REST API, which enforces tenancy at the metadata store.
+
+  `GET /api/doctor` reports the posture in **both** modes under the `tenancy_posture` check. Single-tenant is a correct posture, so the check reports `ok`; read the `blocking` list, not the flag.
+
 - **DNS-rebinding defence.** `Host` header must be `127.0.0.1`, `localhost`, or `::1`. Other hosts return 403 even with a valid token.
 - **CORS allowlist.** Only `http://localhost:*` and `http://127.0.0.1:*` origins are accepted. Defence in depth — the token is the authoritative gate.
 - **Constant-time token compare.** `_consteq` compares bytes equally regardless of where the mismatch is.
@@ -257,9 +306,21 @@ Every Layer B mutation appends a JSONL record to `~/.novafabric/dashboard-audit.
 - `action` — e.g. `register_asset`, `eval_asset`, `promote_asset`, `forensic_replay`, `redact`, `export_evidence`
 - `args` — the action-specific arguments (no secrets — the YAML body of `register_asset` is recorded only as a length, not the content)
 - `cli_equivalent` — the `nova …` command a human could re-run
-- `actor_token_fp` — first 8 chars of the session token (NOT the full token)
-- `result` — `ok` or `error`
+- `actor_token_fp` — the acting subject: `local` for the server token, otherwise the issued token's fingerprint. Never the token itself
+- `result` — `ok`, `error`, or `denied`
 - `error` — present only on failures
+
+An authorization failure is itself an audited event: a **403** appends an `authz.denied` record with top-level `required_scope`, `held_scope` and `resource` (ADR-0231 D4 — a SIEM rule that has to reach into a free-form payload to find them breaks the next time that payload changes). A **401** appends nothing — a 401 is usually a stale browser tab, and recording the credential that produced it would put the bearer token back in a log that v0.98.0 took it out of.
+
+Records also carry, since ADR-0231:
+
+- `actor` — `{"identity_source": "shared-token" | "credential" | "federated", "id"?: …}`. **The log states how well it knows the actor rather than implying it knows.** With the shared `.serve-token` every record carries the same fingerprint, so `identity_source` is `shared-token` and `id` is **absent** — not null. An ADR-0228 issued token is `credential`.
+- `resource`, `prior`, `current` — before-and-after state for the mutation, captured **at the mutation site**. A re-read afterwards would race concurrent writers and record a transition that never happened. Supplied today by `assign_role` and `revoke_role`; the remaining handlers are deferred and enumerated in ADR-0231.
+- `redaction` — `{applied, ruleset, findings}`, proof that captured state passed the ADR-0187 ruleset. This log is append-only and deliberately unrotated, so unredacted state would sit on disk permanently.
+
+**Exporting to a SIEM is unchanged** (ADR-0191): `nova audit-log export --source dashboard --format ocsf|cef|jsonl`. ADR-0231 added no format and no sink; the same records simply carry more.
+
+⚠ In the OCSF projection a token fingerprint appears as `actor.user.uid` with `user.type_id: 0` (Unknown) and `actor.nova_identity_source`, **never** as `actor.user.name`. It used to be `user.name`, which a SIEM renders in a column headed *User* — reading as a person when it is one shared session credential.
 - `extra` — action-specific metadata (e.g. `asset_id`, `replay_id`, `size_bytes`, `key_autogenerated_at`)
 
 The file is append-only with mode 0600. To read it: `cat ~/.novafabric/dashboard-audit.jsonl | jq` or use the dashboard's **Audit** tab.

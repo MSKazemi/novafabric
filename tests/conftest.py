@@ -45,6 +45,7 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
+@pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
@@ -58,8 +59,46 @@ def pytest_collection_modifyitems(
     and nobody has to remember to decorate anything.
     """
     for item in items:
-        if CONTAINER_FIXTURES.intersection(getattr(item, "fixturenames", ())):
-            item.add_marker(pytest.mark.container)
+        needed = CONTAINER_FIXTURES.intersection(getattr(item, "fixturenames", ()))
+        if not needed:
+            continue
+        item.add_marker(pytest.mark.container)
+        # ...and pin it to an xdist group keyed by the container(s) it needs.
+        #
+        # Container fixtures here are module- or session-scoped, but under xdist
+        # every worker has its own session, so a module whose tests scatter across
+        # N workers starts N copies of the same container. tests/metadata_store
+        # already solved this for its Postgres (see that conftest's own hook); the
+        # reasoning was never extended to the heavier fixtures, and measurement on
+        # 2026-09-09 showed why it must be: `-n 4` over the container tier started
+        # THREE simultaneous janusgraph JVMs at 3.4-4.4 GiB each -- 12.1 GiB of a
+        # 12.8 GiB peak, plus up to 4 concurrent Postgres containers. A JVM sizes
+        # its default max heap to a fraction of host RAM, so this scales with the
+        # machine and is worst exactly where it hurts: CI's unit job runs this tier
+        # in full on a 16 GB hosted runner, and had been dying there -- six runs
+        # killed by a runner shutdown signal at exactly [ 38%], zero FAILED tests,
+        # which is where the lineage container modules begin.
+        #
+        # Keying the group on the fixture set means one container per fixture
+        # instead of one per (fixture x worker), and it follows what a test
+        # actually needs -- the same principle as the marker above, so a new
+        # container fixture is covered the moment it is added to CONTAINER_FIXTURES.
+        # An explicit xdist_group already on the item (tests/metadata_store,
+        # tests/jobs) is left alone: it is more specific than anything inferred here.
+        #
+        # `tryfirst` on this hook is load-bearing. pytest-xdist reads the
+        # `xdist_group` mark in its OWN pytest_collection_modifyitems
+        # (xdist/remote.py) and encodes it into the item's nodeid; a conftest
+        # implementation without `tryfirst` runs after that, so a mark added here
+        # would never be seen and this whole block would be inert while still
+        # looking correct. Measured on the janusgraph module, `-n 4
+        # --dist=loadgroup`: without `tryfirst` 4 containers and 119 s, with it
+        # 1 container and 53 s. Over the whole container tier the peak container
+        # footprint went 13.38 GiB -> 4.48 GiB and the tier 317 s -> 109 s.
+        if item.get_closest_marker("xdist_group") is None:
+            item.add_marker(
+                pytest.mark.xdist_group("container-" + "-".join(sorted(needed)))
+            )
 
 
 @pytest.fixture(autouse=True)

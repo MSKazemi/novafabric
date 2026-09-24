@@ -57,7 +57,11 @@ def query_cmd(
             "--select",
             help="Aggregates, comma-separated: count(), sum/avg/min/max/pXX over "
             "cost, total_tokens, prompt_tokens, completion_tokens, latency, "
-            "score[<name>]. E.g. 'avg(cost) AS avg_cost, count()'.",
+            "score[<name>]. E.g. 'avg(cost) AS avg_cost, count()'. "
+            "ratio(<selected>, <selected>) derives a rate from two aggregates "
+            "already selected here, e.g. "
+            "'sum(cost), count(), ratio(sum(cost), count()) AS cost_per_run' -- "
+            "a zero or absent denominator yields no value, never 0 (ADR-0236).",
         ),
     ] = None,
     where: Annotated[
@@ -97,6 +101,20 @@ def query_cmd(
         typer.Option(
             "--order-by",
             help="Sort rows: '<alias> [asc|desc]' (default: first select, descending).",
+        ),
+    ] = None,
+    scope: Annotated[
+        Optional[str],
+        typer.Option(
+            "--scope",
+            help=(
+                "Which capsules a match returns (ADR-0233): 'node' (default, the "
+                "matching capsules), 'root' (root capsules whose tree contains a "
+                "match -- 'which runs were affected?'), or 'tree' (every capsule in "
+                "any tree containing a match -- 'what was happening around it?'). "
+                "Expansion is bounded and truncation is reported; an incomplete "
+                "tree is reported as incomplete rather than looking whole."
+            ),
         ),
     ] = None,
     query_file: Annotated[
@@ -162,6 +180,7 @@ def query_cmd(
             until=until,
             limit=limit,
             order_by=order_by,
+            scope=scope,
         )
     except QueryParseError as exc:
         typer.echo(f"Query error: {exc}", err=True)

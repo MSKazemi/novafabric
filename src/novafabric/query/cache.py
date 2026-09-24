@@ -70,7 +70,20 @@ CACHE_SCHEMA_VERSION = 1
 #: Bumped whenever the *indexer* changes what it extracts. Stored alongside the
 #: schema version because a NovaFabric upgrade can change the meaning of a row
 #: without changing the table it lives in.
-INDEXER_SCHEMA_VERSION = 1
+#:
+#: ``2`` (ADR-0233): ``CallRow``/``ScoreRow`` gained ``parent_run_id`` and the
+#: child-count fields, which the tree scopes read. The bump is load-bearing
+#: rather than ceremonial: ``_CALL_FIELDS`` is derived from the dataclass, so a
+#: row cached at version 1 has fewer values and would rehydrate with the new
+#: fields silently defaulted to ``None`` — every capsule would then look like a
+#: root, and a ``root``/``tree`` query would answer confidently and wrongly from
+#: a warm cache. That is the wrong-but-fast outcome ADR-0225 D3 forbids.
+#:
+#: ⚠ Not every feature warrants this. ADR-0236's ``ratio()`` asks for a bump too,
+#: and does **not** get one: it is arithmetic over already-extracted aggregates
+#: and extracts nothing new, so bumping would discard every user's cache for no
+#: reason. The test decides it: *did the indexer learn to read something?*
+INDEXER_SCHEMA_VERSION = 2
 
 #: Files whose content the indexer reads. Any change to one of these changes the
 #: rows a capsule contributes, so each is part of the signature.

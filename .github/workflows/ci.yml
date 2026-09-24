@@ -83,6 +83,23 @@ jobs:
       - name: Lint (ruff)
         run: uv run ruff check src tests scripts
 
+      - name: Record runner capacity and start a memory sampler
+        # A runner that dies mid-job leaves NO evidence: GitHub surfaces
+        # `The runner has received a shutdown signal`, never an OOM message, and
+        # the VM is gone before anything can be read off it. Six kills in one week
+        # were therefore only ever explicable by inference. This makes the next
+        # one an observation instead: capacity up front, and a 5-second trace of
+        # free memory that is uploaded even when the job fails.
+        #
+        # Costs nothing measurable -- one `free` call per 5 s for the job's life.
+        run: |
+          echo "cpus=$(nproc)"
+          free -h
+          df -h / | tail -1
+          nohup bash -c 'while :; do echo "$(date +%s) $(free -m | awk "/^Mem:/{print \$3\" \"\$7}")"; sleep 5; done' \
+            > "$RUNNER_TEMP/mem-trace.txt" 2>/dev/null &
+          echo "sampler_pid=$!"
+
       - name: Run unit tests with coverage
         # Excludes tests/integration/ which requires optional external services.
         # --cov-fail-under=90 enforces the project's coverage floor at the
@@ -94,7 +111,38 @@ jobs:
         # is mandatory, not a tuning knob: tests/metadata_store/conftest.py pins
         # its testcontainers Postgres to a single xdist_group, and plain
         # --dist=load scatters that group across workers and makes the tier fail.
+        #
+        # This job runs the `container` tier in full, so its peak memory is the
+        # sum of the xdist workers AND every testcontainer alive at once. That is
+        # what killed it six times between 2026-09-04 and 2026-09-09: the grouping
+        # above was inert (a conftest hook without `tryfirst` adds its xdist_group
+        # mark after pytest-xdist has already read the marks), so a single module
+        # scattered across workers started one container per worker -- measured at
+        # three simultaneous JanusGraph JVMs, 3.4-4.4 GiB each. The runner died
+        # mid-run at exactly [ 38%] with zero FAILED tests, which reads as a
+        # timeout rather than the resource exhaustion it was.
         run: uv run pytest tests/ --ignore=tests/integration --benchmark-disable -n auto --dist=loadgroup --cov=novafabric --cov-report=term-missing --cov-fail-under=90
+
+      - name: Peak memory during the test run
+        # `always()` is the point: this matters most when the step above failed.
+        if: always()
+        run: |
+          if [ -s "$RUNNER_TEMP/mem-trace.txt" ]; then
+            awk '{if ($2+0 > peak) peak=$2+0; if (min=="" || $3+0 < min) min=$3+0}
+                 END {printf "peak used: %d MiB\nlowest available: %d MiB\nsamples: %d\n", peak, min, NR}' \
+              "$RUNNER_TEMP/mem-trace.txt"
+          else
+            echo "no trace captured"
+          fi
+
+      - name: Upload the memory trace
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-mem-trace
+          path: ${{ runner.temp }}/mem-trace.txt
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Smoke-test the CLI
         # Confirms the `nova` entry point installs cleanly and reports

@@ -9,7 +9,8 @@ PGPORT="${PGPORT:-5432}"
 PGUSER="${PGUSER:-nova}"
 
 # NOVA_MODE selects what this container runs:
-#   dashboard (default) — `nova serve`, the experimental read-only dashboard
+#   dashboard — `nova serve`, the experimental dashboard. NOT read-only: it
+#               exposes irreversible operations (ADR-0230).
 #                         (HTTP + printed token; front with TLS). Unchanged.
 #   server              — `nova server start`, the multi-user REST API with
 #                         OIDC/RBAC over Postgres. Auth is ON by default; set

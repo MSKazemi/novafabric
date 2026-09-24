@@ -206,13 +206,29 @@ DASHBOARD_FIELD_ALLOWLIST: Final[frozenset[str]] = frozenset(
         "result",
         "error",
         "extra",
+        # ADR-0231. Added in the same change that made the writer emit them:
+        # deny-by-default means a field added to the writer and not here is
+        # dropped from every export while the local file looks enriched, and
+        # nothing errors. `serve.audit.EMITTABLE_FIELDS` is the writer's side of
+        # this pair and a test asserts the two agree.
+        "actor",
+        "resource",
+        "prior",
+        "current",
+        "redaction",
+        "required_scope",
+        "held_scope",
     }
 )
 
 #: Free-form (writer-defined) fields that get the ADR-0187 ruleset applied
 #: on top of the record-level allowlist.
 _FREEFORM_FIELDS: Final[frozenset[str]] = frozenset(
-    {"details", "args", "extra", "error"}
+    # ADR-0231 D2 adds `prior`/`current`: arbitrary captured resource state, so
+    # exactly the shape this list exists for. The writer already redacts them at
+    # append time; applying the ruleset again on export is deliberate defence in
+    # depth — a record written by an older build has not been through it.
+    {"details", "args", "extra", "error", "prior", "current"}
 )
 
 _TIMESTAMP_FIELD: Final[dict[str, str]] = {"audit": "timestamp", "dashboard": "ts"}
@@ -362,6 +378,59 @@ def redact_record(record: dict[str, Any], source: str) -> dict[str, Any]:
 # --- OCSF rendering (ADR-0191 D2/D5) -----------------------------------------
 
 
+#: OCSF ``user.type_id``. 0 = Unknown is the honest value for a credential that
+#: identifies a *session* rather than a person.
+_OCSF_USER_UNKNOWN: Final[int] = 0
+_OCSF_USER_REGULAR: Final[int] = 1
+
+
+def _ocsf_actor(
+    record: dict[str, Any], actor_name: Any, *, source: str
+) -> dict[str, Any]:
+    """Render the actor without overstating how well it is known (ADR-0231 D3).
+
+    This function exists because the previous mapping put ``actor_token_fp`` —
+    the first 8 characters of the **one shared token** every operator pastes into
+    a browser — directly into ``actor.user.name``. A SIEM renders that in a
+    column headed *User*, and an analyst reads it as a person. It is not: with a
+    shared token every record carries the same fingerprint, so the log proves
+    *something happened* and can never prove *who*.
+
+    So a fingerprint goes in ``uid`` (an opaque identifier, which it is) and
+    never in ``name`` (a human identity, which it is not), and ``type_id`` is
+    ``Unknown`` unless the record says the actor came from an issued credential.
+    ``nova_identity_source`` carries the writer's own verdict verbatim, so a
+    SIEM rule can filter on evidence strength rather than infer it.
+
+    The ``audit`` source is untouched: its ``actor`` field is already a real
+    subject, not a token fingerprint.
+    """
+    if source == "audit":
+        return {"user": {"name": actor_name}}
+
+    actor_block = record.get("actor")
+    identity_source = "shared-token"
+    actor_id = None
+    if isinstance(actor_block, dict):
+        identity_source = str(actor_block.get("identity_source", "shared-token"))
+        actor_id = actor_block.get("id")
+
+    user: dict[str, Any] = {
+        "uid": actor_name,
+        "type_id": (
+            _OCSF_USER_REGULAR if identity_source != "shared-token" else _OCSF_USER_UNKNOWN
+        ),
+    }
+    # `name` is a human identity. It is set only when the record supplies an id
+    # that is genuinely *something other than the credential fingerprint* — a
+    # federated subject, say. An issued token's own fingerprint restated under
+    # `name` would be a quieter version of the same overstatement this function
+    # exists to remove: stronger than a shared token, still not a person.
+    if actor_id and identity_source != "shared-token" and actor_id != actor_name:
+        user["name"] = actor_id
+    return {"user": user, "nova_identity_source": identity_source}
+
+
 def to_ocsf(record: dict[str, Any], *, source: str) -> dict[str, Any]:
     """Render one (already-redacted) record as an OCSF event dict.
 
@@ -419,7 +488,7 @@ def to_ocsf(record: dict[str, Any], *, source: str) -> dict[str, Any]:
             "version": OCSF_VERSION,
             "product": {"name": "NovaFabric", "vendor_name": "NovaFabric"},
         },
-        "actor": {"user": {"name": actor_name}},
+        "actor": _ocsf_actor(record, actor_name, source=source),
         "api": {"operation": operation},
         "unmapped": unmapped,
     }

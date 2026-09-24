@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.dev/schemas/dashboard-widget-v1.schema.json",
+  "title": "NovaFabric dashboard widget (ADR-0235)",
+  "description": "A portable, self-describing chart definition: an ADR-0129 QueryPlan plus presentation. Recognisable when it arrives with no accompanying context - pasted into an issue, committed to a repo, mailed between organizations.",
+  "type": "object",
+  "required": ["$novafabricWidget", "version", "id", "title", "query", "presentation"],
+  "properties": {
+    "$novafabricWidget": {
+      "const": true,
+      "description": "Sentinel. Together with `version` this is what makes the file identifiable out of context."
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Widget format version. Explicit so an older reader can refuse rather than misparse."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+      "description": "Stable identifier. Also the filename stem, so it is constrained to safe path characters - a widget is untrusted input (D7) and an id is the one field that reaches the filesystem."
+    },
+    "title": {"type": "string", "minLength": 1, "maxLength": 200},
+    "description": {"type": "string", "maxLength": 2000},
+    "query": {
+      "type": "object",
+      "description": "An ADR-0129 query object. Validated a second time by the DSL itself, which enforces a closed allow-list - so a widget cannot express a query the CLI forbids.",
+      "minProperties": 1
+    },
+    "presentation": {
+      "type": "object",
+      "required": ["chart"],
+      "properties": {
+        "chart": {"enum": ["line", "bar", "area", "table", "stat"]},
+        "breakdown": {"type": "string", "maxLength": 100},
+        "unit": {"type": "string", "maxLength": 40},
+        "stacked": {"type": "boolean"}
+      }
+    }
+  }
+}

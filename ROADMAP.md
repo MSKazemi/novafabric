@@ -24,9 +24,19 @@ been stale for a month — re-derived 2026-09-04.)*
 
 ### Next — specified, unclaimed, ready to build
 
-| | Size | Issue |
-|---|---|---|
-| Capture adapters: LlamaIndex · Pydantic AI · Haystack | S each | [#1](https://github.com/MSKazemi/novafabric/issues/1) [#2](https://github.com/MSKazemi/novafabric/issues/2) [#3](https://github.com/MSKazemi/novafabric/issues/3) |
+*(Nothing currently listed. The three capture adapters that stood here —
+**LlamaIndex, Pydantic AI, Haystack**, issues
+[#1](https://github.com/MSKazemi/novafabric/issues/1)
+[#2](https://github.com/MSKazemi/novafabric/issues/2)
+[#3](https://github.com/MSKazemi/novafabric/issues/3) — are **implemented on `main`**:
+`src/novafabric/adapters/{llamaindex,pydantic_ai,haystack}.py`, exported as
+`wrap_llamaindex` / `wrap_pydantic_ai` / `wrap_haystack`, covered by
+`tests/adapters/test_new_framework_adapters.py` and
+`test_adapter_manifests_match_the_schema.py` (19 tests green). They now carry
+reference docs in [`docs/cli-reference.md`](docs/cli-reference.md) §Framework
+Adapters, which they had never had — the code shipped undocumented, which is part
+of why this row went stale. They appear under Shipped once in a tagged release,
+per this file's label rule. Re-derived 2026-09-10; the three issues can be closed.)*
 
 *(The task-scoped `EventRecorder` — ADR-0224 phase 2, issue #7 — previously listed
 here as unclaimed, is **implemented on `main`** (2026-08-29, ADR-0224 §D3
@@ -40,6 +50,13 @@ label rule. Re-derived 2026-09-04.)*
 and each one names the files, the test to add, and what "done" means.
 
 ### Later — decided, not scheduled
+
+**Kubernetes runner `secretKeyRef` passthrough** (follows ADR-0270). Today `extra_env`
+values become literal `value:` entries in the `Job` object, so the docs say "do not put
+credentials here" — guidance, not enforcement. A `secret_env` runner option that emits
+`valueFrom.secretKeyRef` would let the pod reference a Kubernetes `Secret` instead of
+carrying the value. Residual risk is recorded in the project's internal threat
+model (§Remote Runners) and summarised in [`SECURITY.md`](SECURITY.md).
 
 Broad federation · distributed identity · the 2027 programmes below. Each has accepted
 ADRs; none has a target version. See [the decisions index](docs/decisions.md).
@@ -804,16 +821,19 @@ So the escalation is **dormant in simple deployments and live in exactly the ent
 deployments using workspaces/orgs/service accounts**; an unauthorized cross-mode write to a
 security-relevant table (and to ADR-0060's `LastAdminError` lockout invariant) is a real
 defect either way. ADR-0060 had already documented and deferred this gap at v0.14.
-The Helm chart still defaults to `mode: dashboard`
-with `serve.insecure: true`. This is the v0.98.1 "advanced, not closed" audit finding, now
-specified rather than restated.
+**Closed 2026-09-06 (ADR-0230).** The chart defaulted to `mode: dashboard` with
+`serve.insecure: true` — a combination matching **none** of ADR-0042's four named, tested and
+supported deployment tiers. It now defaults to `mode: server`, `serve.insecure: false`;
+`insecure: true` makes `helm template` **fail** unless an awkward acknowledgement value is set,
+and an upgrade across the flip refuses until the operator states their intent. This was the
+v0.98.1 "advanced, not closed" audit finding; it is now closed.
 
 | Theme | ADRs | Scope | Status |
 |---|---|---|---|
-| **A — Enterprise access control** *(blocking)* | 0228–0231 | Scope model bound to ADR-0027's Layer A/B/C; tenant scoping via the shipped RLS + `begin_tenant_context()`; secure-by-default Helm posture; OCSF 1.7.0 audit events with before/after state | `planned` |
-| **B — Scale & navigation UX** | 0232–0234 | URL-serialized view state + filter grammar over the ADR-0129 DSL; three-way node/root/tree filter scope over parent/child capsules; bucketed aggregate strip + the **honest-degradation rule** | `planned` |
-| **C — Dashboards as code** | 0235–0236 | Widgets/dashboards as portable versioned JSON + a `nova dashboard` CLI group; chart-from-table promotion + a generic `Ratio` metric primitive | `planned` |
-| **D — Evidence-native differentiation** | 0237–0239 | Evaluator runs captured as Run Capsules (a replayable score); one comparison surface over `diff/_engine`; evidence cart → signed Evidence Bundle | `planned` |
+| **A — Enterprise access control** *(blocking)* | 0228–0231 | Scope model bound to ADR-0027's Layer A/B/C; tenant scoping via the shipped RLS + `begin_tenant_context()`; secure-by-default Helm posture; OCSF 1.7.0 audit events with before/after state *(as specified in 2026-08; the shipped emitter is OCSF 1.1.0 — see Status)* | **0228 first slice `experimental`** (2026-09-06): four scopes (`read`/`operate`/`admin` cumulative + orthogonal `audit`) enforced by one declarative 210-route table and one app-level dependency; an unclassified route denies; issued tokens carry a scope; a 403 is audited. The dashboard's role-assignment surface is `admin`-scoped, closing the conditional cross-mode escalation modelled as `E-14`. Local single-user behaviour is byte-identical. **Deferred:** reading `role_assignments` back as scopes and D6's project override (both land with 0229), WebSocket scope, a `read`/`read-content` split. **0229 first slice `experimental`** (2026-09-06): eight read-path stores each declare `aware`/`agnostic`/`unsafe`, **checked against real schema rather than restated**; multi-tenant mode (`NOVAFABRIC_SERVE_TENANCY=multi`) is **refused at startup** while any store is unsafe, naming each and why; `/api/doctor` reports the posture in both modes. Measuring it found **four** tenant-aware stores where the ADR credited one. ⚠ **Deviation:** the refusal is deployment-level, not the per-endpoint 503 D2 specifies — 503-ing only the KG and lineage panels would keep serving `/api/runs` unscoped and read as "the rest is fine"; per-endpoint 503 ships once the runs index is resolved (OQ-1). **0230 `experimental`** (2026-09-06): the chart now defaults to `mode: server` + `serve.insecure: false`; `insecure: true` **fails `helm template`** unless an awkward acknowledgement value is set, and an upgrade across the flip refuses until the operator states their intent. The old default matched **none** of ADR-0042's four supported tiers. The false "read-only dashboard" claim — **9 live instances that had outlived three manual sweeps** — is fixed and guarded. ⚠ **breaking for existing chart users**, with the restoring values in the failure message. **0231 `experimental`** (2026-09-06): dashboard audit records now carry `actor.identity_source` (`shared-token`/`credential`/`federated`, with the id **absent** for a shared token), `prior`/`current` state captured at the mutation site and passed through the ADR-0187 redaction ruleset with a proof block, and top-level `required_scope`/`held_scope` on every ADR-0228 denial — all on the **shipped ADR-0191 egress**, with no new format or sink. ⚠ Fixed a live honesty defect: the OCSF export presented a shared-token fingerprint as `actor.user.name`. ⓘ The OCSF schema version emitted is **1.1.0**, not 1.7.0 as this row previously implied; a bump is its own decision. **Theme A complete.** |
+| **B — Scale & navigation UX** | 0232–0234 | URL-serialized view state + filter grammar over the ADR-0129 DSL; three-way node/root/tree filter scope over parent/child capsules; bucketed aggregate strip + the **honest-degradation rule** | **0234 D2/D3 `experimental`** (2026-09-06): the honest-degradation rule ships as a shared primitive (`serve/aggregates.py`) — a refusal carries **no value**, and both a reason and an actionable **remedy** are required at construction. Implemented backend-first because D2 governs *every* aggregate, not just the strip. ⚠ **It immediately found a live defect: a run on a model with no catalog price reported `$0.00`, which reads as free** — `_estimate_cost` returns 0.0 for unknown models into a non-nullable column. Fixed additively (`is_priced`, a `priced` flag, `unpriced_calls`). Two more closed in `cost-summary`: an unconfigured store returned an empty result indistinguishable from "cost nothing", and the 100-id cap was silent. **0233 `experimental`** (2026-09-06): `nova query --scope node|root|tree` — three answers to "a filter matched inside a hierarchy", with scope in the **plan** so a dashboard view is CLI-reproducible. Expansion is bounded (5,000) and breadth-first per distinct root, not per matching row; **an incomplete tree renders as incomplete** (children still arriving, orphan placeholders, or capsules outside the time window are each named). `INDEXER_SCHEMA_VERSION` 1→2 — load-bearing here, since a v1 row would rehydrate with every capsule looking like a root. **0232 D1/D3 `experimental`** (2026-09-06): a filter-bar grammar (`status:error -model:gpt-4`) compiling to the same predicates `nova query --where` produces, with the **ceiling enforced structurally** — the bar decides syntax, the DSL decides semantics, so it can neither exceed nor undercut the CLI. Suggestions are bounded and report truncation. ⚠ **D1's own example contradicts D1's rule twice** — the DSL has no glob operator and cannot filter on a metric at all — so both forms are refused with a message explaining the ceiling. **0232's D2/D4 and 0234's D1 strip + D4 remain `planned`** (`web/`). |
+| **C — Dashboards as code** | 0235–0236 | Widgets/dashboards as portable versioned JSON + a `nova dashboard` CLI group; chart-from-table promotion + a generic `Ratio` metric primitive | **0235 `experimental`** (2026-09-06): widgets and dashboards are portable versioned JSON files under `$NOVAFABRIC_HOME/dashboards` — **files are the storage, not an export format** — with a `nova dashboard list|show|apply|export|validate` group. `apply` is idempotent and validates a whole directory before writing any of it. **A widget is untrusted input**: schema first, then ADR-0129's closed allow-list, so it cannot express a query the CLI forbids; `id` is path-constrained at the schema layer. Unknown fields round-trip, so a mixed-version team cannot silently destroy each other's work. **Deferred:** the UI write path and fork-on-edit (D4/D5, `web/`). **0236 D3/D4 `experimental`** (2026-09-06): `ratio(a, b)` joins the DSL as a derived aggregate over already-selected operands — rate metrics become a composition instead of a schema-change queue. **Undefined is not zero**: a zero or absent denominator yields no value, never `0%`; a measured zero still reports as zero. ⚠ **Two ADR corrections**: D3's own example (`Ratio(count where status:error, count)`) needs a per-aggregate `where` the DSL does not have and this ADR does not add; and `INDEXER_SCHEMA_VERSION` is deliberately **not** bumped, because a derived metric extracts nothing new and bumping would discard every user's query cache. **D1/D2/D6 (chart toggle, promotion, rendering) remain `planned`** (`web/`). |
+| **D — Evidence-native differentiation** | 0237–0239 | Evaluator runs captured as Run Capsules (a replayable score); one comparison surface over `diff/_engine`; evidence cart → signed Evidence Bundle | **0239 cart model `experimental`** (2026-09-06): a cart of **references**, resolved **once** at one coherent read point — a cart of copies attests to a state that never existed. The manifest discloses `operator_assembled` / `exhaustive: false`; an unresolvable reference is marked, never dropped; an active legal hold travels with its item. ✅ **Export unblocked 2026-09-06 (ADR-0011 Am.1)**: one bundle, `subject` as an array — which `evidence-bundle.schema.json` **already allowed**, so no format change was needed and the shipped `nova verify` reads a set bundle unmodified. N-bundles-plus-manifest was rejected as *"a third top-level format"*. ⚠ Found while reading: `--include-runs`, cited in the schema's own description, is a phantom flag that exists nowhere in `src/`. Not yet wired to a verb or route (D6's `admin` scope + audit apply when one lands). **0237 blocked on a calibration dataset, not engineering** — `EvalCard` requires a `JUDGE` card to carry `calibration`, i.e. **measured human agreement over n samples**, and no such dataset exists; nothing writes `nova.judge` at all (the ADR said "underused" — corrected to **unused**). **0238 remains `planned`** (`web/`). |
 
 **Every one of the twelve is an "extends", not a "net-new" subsystem** — the primitives all
 ship and are in several cases stronger than the comparators'; they are simply not reachable

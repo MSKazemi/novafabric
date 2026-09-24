@@ -1,7 +1,7 @@
 # NovaFabric Helm chart
 
 Deploys NovaFabric backed by a Postgres metadata store, in one of two modes:
-`nova serve` — the read-only dashboard (default) — or `nova server start`, the
+`nova server start` — the multi-user REST API (default) — or `nova serve`, the
 multi-user OIDC/RBAC REST API (`mode: server`, see below).
 
 > Status: **experimental.** The default `nova serve` dashboard is the
@@ -46,7 +46,10 @@ helm install nova deploy/helm/novafabric \
 
 ## Server mode (multi-user REST API)
 
-By default the chart runs `nova serve` — the experimental read-only dashboard.
+By default the chart runs `nova server start` — the multi-user REST API with
+OIDC/RBAC (ADR-0230). `mode: dashboard` runs `nova serve` instead; that dashboard
+is **not** read-only and has not been since v0.8 — it exposes irreversible
+operations including `DELETE /api/runs/{id}` and `POST /api/compliance/pii/erase`.
 Set `mode: server` to run `nova server start` instead: the multi-user REST API
 with OIDC/RBAC over Postgres. Auth is on by default (configure OIDC via env, or
 a local token is generated); probes use `/readyz` and `/livez`.

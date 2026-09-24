@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novafabric.dev/schemas/dashboard-v1.schema.json",
+  "title": "NovaFabric dashboard (ADR-0235)",
+  "description": "An ordered set of widget REFERENCES plus layout. It never inlines a widget: a dashboard that inlines its widgets cannot share one.",
+  "type": "object",
+  "required": ["$novafabricDashboard", "version", "id", "title", "widgets"],
+  "properties": {
+    "$novafabricDashboard": {"const": true},
+    "version": {"type": "integer", "minimum": 1},
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+    "title": {"type": "string", "minLength": 1, "maxLength": 200},
+    "description": {"type": "string", "maxLength": 2000},
+    "builtin": {
+      "type": "boolean",
+      "description": "A shipped dashboard. Read-only: the first edit forks a user-owned copy (ADR-0235 D5) rather than mutating a default, so an upgrade neither clobbers user work nor stops delivering improvements."
+    },
+    "widgets": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "required": ["widget"],
+        "properties": {
+          "widget": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+            "description": "The referenced widget's id. A reference, never an inline copy (D2)."
+          },
+          "position": {
+            "type": "object",
+            "properties": {
+              "x": {"type": "integer", "minimum": 0},
+              "y": {"type": "integer", "minimum": 0},
+              "w": {"type": "integer", "minimum": 1, "maximum": 12},
+              "h": {"type": "integer", "minimum": 1, "maximum": 24}
+            }
+          }
+        }
+      }
+    }
+  }
+}

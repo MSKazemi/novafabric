@@ -77,6 +77,13 @@ CREATE TABLE IF NOT EXISTS nova.cost_events (
     output_tokens UInt64,
     cached_tokens UInt64,
     cost_usd      Float64,
+    -- ADR-0234 D2. `cost_usd` is non-nullable and `_estimate_cost` returns 0.0
+    -- for a model with no catalog price, so without this flag an unpriced call
+    -- and a free call are the same row, and `sum(cost_usd)` reports an unpriced
+    -- run as $0.00 — which an operator reads as free. `priced = 0` marks a cost
+    -- that was never established, so an aggregate can say so instead of
+    -- contradicting the capsule schema's "skipped, never counted as 0".
+    priced        UInt8 DEFAULT 1,
     recorded_at   DateTime DEFAULT now()
 ) ENGINE = MergeTree()
 ORDER BY (tenant_id, recorded_at, run_id, model_call_id);
@@ -108,6 +115,12 @@ _DDL_STATEMENTS = [_DDL_DATABASE, _DDL_COST_EVENTS, _DDL_COST_MV]
 _MIGRATIONS: list[str] = [
     "ALTER TABLE nova.cost_events ADD COLUMN IF NOT EXISTS tenant_id String DEFAULT 'default';",
     "ALTER TABLE nova.cost_events ADD COLUMN IF NOT EXISTS capsule_id String DEFAULT '';",
+    # ADR-0234 D2. Existing rows default to 1 (priced). That is the only safe
+    # backfill: those rows were written before the flag existed, so whether the
+    # model was priced at the time is unrecoverable, and defaulting them to 0
+    # would fabricate an unpriced verdict for data that may well have been
+    # priced. Rows written from here on carry the truth.
+    "ALTER TABLE nova.cost_events ADD COLUMN IF NOT EXISTS priced UInt8 DEFAULT 1;",
 ]
 
 
@@ -200,10 +213,13 @@ def ingest_capsule(run_id: str, capsule_dir: Path, tenant_id: str = "default") -
                 raw_cached = nova_usage.get("cached_tokens")
                 if isinstance(raw_cached, int) and not isinstance(raw_cached, bool):
                     cached_tokens = max(raw_cached, 0)
-            # Compute estimated cost
+            # Compute estimated cost. ADR-0234 D2: record *whether* a price was
+            # known alongside the figure, because `_estimate_cost` answers 0.0
+            # for an unpriced model and 0.0 is also a legitimate cost.
             cost_usd = CostInterceptor._estimate_cost(
                 model, input_tokens, output_tokens
             )
+            priced = 1 if CostInterceptor.is_priced(model) else 0
             capsule_id: str = ev.get("capsule_id", run_id)
 
             rows.append(
@@ -218,6 +234,7 @@ def ingest_capsule(run_id: str, capsule_dir: Path, tenant_id: str = "default") -
                     output_tokens,
                     cached_tokens,
                     cost_usd,
+                    priced,
                 )
             )
 
@@ -238,6 +255,7 @@ def ingest_capsule(run_id: str, capsule_dir: Path, tenant_id: str = "default") -
             "output_tokens",
             "cached_tokens",
             "cost_usd",
+            "priced",
         ],
     )
     log.info("cost: ingested %d model-call rows for run %s", len(rows), run_id)

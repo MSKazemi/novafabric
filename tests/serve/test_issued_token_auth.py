@@ -69,7 +69,12 @@ class TestAnIssuedTokenWorks:
         assert client.get(f"/api/runs?token={issued}").status_code == 200
 
     def test_it_can_reach_a_mutating_endpoint_too(self, client):
-        """Authentication is all-or-nothing here; an issued token is not lesser."""
+        """A default-scoped issued token is not lesser than the server token.
+
+        ADR-0228 gave issued tokens a scope, but the default is still ``admin``
+        so that a caller that does not ask for one mints exactly what it minted
+        before. The narrowing case is covered in ``test_authz_enforcement.py``.
+        """
         issued, _ = _issue(client)
         response = client.post(
             "/api/admin/tokens",
@@ -78,15 +83,27 @@ class TestAnIssuedTokenWorks:
         )
         assert response.status_code == 200, response.text
 
-    def test_the_response_says_so_rather_than_implying_a_scope(self, client):
+    def test_the_response_states_the_scope_it_actually_minted(self, client):
+        """The warning must describe the credential, not a slogan about it.
+
+        Before ADR-0228 this asserted the warning said ``serve`` "does not
+        authorize" — true then, false the moment enforcement landed. A message
+        that survives its own subsystem becoming untrue is how a product ends up
+        telling operators something it no longer does.
+        """
         response = client.post(
             "/api/admin/tokens",
             json={"label": "ci-bot", "confirmed": True},
             headers=_auth(SERVER_TOKEN),
         )
-        warning = response.json()["warning"]
+        body = response.json()
+        assert body["scope"] == "admin"
+        warning = body["warning"]
+        assert "'admin' scope" in warning
         assert "same full access" in warning
-        assert "does not authorize" in warning
+        assert "does not authorize" not in warning, (
+            "serve authorizes now (ADR-0228); this claim must not come back"
+        )
 
 
 class TestOnlyRealTokensWork:

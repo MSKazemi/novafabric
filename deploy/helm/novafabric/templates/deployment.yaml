@@ -1,3 +1,5 @@
+{{- include "novafabric.assertSecurePosture" . -}}
+{{- include "novafabric.assertUpgradeAcknowledged" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
