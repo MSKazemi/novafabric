@@ -586,6 +586,12 @@ exclude = [
   # restructure. Excluded so the build guard stays green; whether it should be
   # tracked at all is a separate question.
   "/metrics.json",
+  # Maintainer's inbox/backlog, private-tracked 2026-09-24 so a cloud session
+  # inherits it. Named literally, not as `/.note.*` — the guard test matches
+  # exact top-level names.
+  "/.note.md",
+  "/.note.inbox.md",
+  "/.note.done.md",
 ]
 
 [tool.hatch.build.targets.wheel.force-include]
