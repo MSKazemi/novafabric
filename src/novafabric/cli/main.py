@@ -35,6 +35,7 @@ from novafabric.cli.comment import app as comment_app
 from novafabric.cli.cost import app as cost_app
 from novafabric.cli.cost_attribute import cost_attribute_cmd
 from novafabric.cli.cost_fairness import cost_fairness_cmd
+from novafabric.cli.cost_rollup import cost_rollup_cmd
 from novafabric.cli.cost_usage_breakdown import cost_usage_breakdown_cmd
 from novafabric.cli.daemon import app as daemon_app
 from novafabric.cli.dashboard import dashboard_app
@@ -53,6 +54,7 @@ from novafabric.cli.events import events_app
 from novafabric.cli.evidence import evidence_app
 from novafabric.cli.experiment import experiment_app
 from novafabric.cli.export_accessibility import export_accessibility_claim_cmd
+from novafabric.cli.export_adverse_action import export_adverse_action_cmd
 from novafabric.cli.export_blob import export_blob_cmd
 from novafabric.cli.export_c2pa import export_c2pa_cmd
 from novafabric.cli.export_citizen import export_citizen_explanation_cmd
@@ -87,6 +89,7 @@ from novafabric.cli.export_whistleblower import export_whistleblower_cmd
 from novafabric.cli.forensics import forensics_app
 from novafabric.cli.frontier_safety import safety_app as frontier_safety_app
 from novafabric.cli.graph import graph_app
+from novafabric.cli.hitl import app as hitl_app
 from novafabric.cli.hold import app as hold_app
 from novafabric.cli.import_blob import import_cmd
 from novafabric.cli.incident import incident_app
@@ -113,6 +116,7 @@ from novafabric.cli.migrate_schema import migrate_schema_cmd
 from novafabric.cli.passport import passport_app
 from novafabric.cli.pii_erase import app as pii_app
 from novafabric.cli.policy import app as policy_app
+from novafabric.cli.preservation import preservation_app
 from novafabric.cli.pricing import app as pricing_app
 from novafabric.cli.promote import promote_app
 from novafabric.cli.prompt import prompt_app
@@ -374,6 +378,7 @@ app.command("export-c2pa")(export_c2pa_cmd)
 app.command("export-model-risk")(export_model_risk_cmd)
 app.command("export-model-independence")(export_model_independence_cmd)
 app.command("export-retention")(export_retention_cmd)
+app.command("export-adverse-action")(export_adverse_action_cmd)
 app.command("export-public-annex-viii")(export_public_annex_viii_cmd)
 app.command("export-transparency-register")(export_transparency_register_cmd)
 app.command("export-public-disclosure")(export_public_disclosure_cmd)
@@ -479,6 +484,11 @@ app.add_typer(
     help="Place and release legal holds to prevent capsule deletion.",
 )
 app.add_typer(
+    hitl_app,
+    name="hitl",
+    help="Human-agent accountability evidence, read-only (experimental, ADR-0150).",
+)
+app.add_typer(
     retention_app,
     name="retention",
     help="Apply data-retention policy bindings: plan, apply, status, explain (ADR-0134).",
@@ -519,6 +529,12 @@ app.command("migrate-to-postgres")(migrate_to_postgres_cmd)
 app.command("migrate")(migrate_capsule_cmd)
 # NF-332 (ADR-0165 P2): record a format-migration hop in facets.preservation.
 app.command("migrate-format")(migrate_format_cmd)
+# NF-333/334 (ADR-0165 P3, record-only): crypto re-seal events + LTV renewal chain.
+app.add_typer(
+    preservation_app,
+    name="preservation",
+    help="Record/verify crypto re-seals and LTV timestamp renewals (ADR-0165, experimental).",
+)
 app.command("migrate-schema")(migrate_schema_cmd)
 
 app.add_typer(
@@ -551,7 +567,8 @@ app.add_typer(
 app.add_typer(
     frontier_safety_app,
     name="safety",
-    help="Frontier-safety evidence: control decisions, tripwires (experimental, ADR-0167).",
+    help="Frontier-safety evidence: control decisions, tripwires, alignment signals "
+    "(experimental, ADR-0167).",
 )
 app.add_typer(
     ledger_app,
@@ -581,6 +598,8 @@ app.add_typer(
 cost_app.command("fairness")(cost_fairness_cmd)
 # NF-148 (ADR-0146 D3): wasted/failure-spend attribution over captured run cost + status.
 cost_app.command("attribute")(cost_attribute_cmd)
+# NF-142 (ADR-0146 P2): acted-as delegation cost rollup — report-only, no facet written.
+cost_app.command("rollup")(cost_rollup_cmd)
 # ADR-0132 D3/D4: token usage-type composition over the manifest usage_totals aggregate.
 cost_app.command("usage-breakdown")(cost_usage_breakdown_cmd)
 app.add_typer(

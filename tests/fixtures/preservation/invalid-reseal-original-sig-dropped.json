@@ -1,0 +1,76 @@
+{
+  "schema_version": "0.1.0",
+  "preservation_id": "presv-2026-07-13-7f",
+  "original_root": "sha256:fbc02a3e8333408578602145ed9be1aec00e1d44006367d2dbc207ee66b93598",
+  "fixity": {
+    "alg": "sha256",
+    "digest": "sha256:fbc02a3e8333408578602145ed9be1aec00e1d44006367d2dbc207ee66b93598"
+  },
+  "provenance_events": [
+    {
+      "event": "sealed",
+      "at": "2026-07-13T09:00:00Z",
+      "agent_ref": "sha256:c346d3879a2150f06e5c7422521183b38ac21816186df92836f8dd14d3aea9a9"
+    },
+    {
+      "event": "ingested-to-worm",
+      "at": "2026-07-13T09:05:00Z",
+      "agent_ref": "https://archive.example.org/agents/ingest-1"
+    },
+    {
+      "event": "digital signature generation",
+      "at": "2029-06-01T00:00:00Z",
+      "agent_ref": "https://archive.example.org/agents/reseal-operator"
+    },
+    {
+      "event": "timestamp renewal",
+      "at": "2029-06-01T00:00:00Z"
+    },
+    {
+      "event": "timestamp renewal",
+      "at": "2034-03-01T00:00:00Z"
+    }
+  ],
+  "fixity_log": [
+    {
+      "checked_at": "2027-01-01T00:00:00Z",
+      "alg": "sha256",
+      "digest": "sha256:fbc02a3e8333408578602145ed9be1aec00e1d44006367d2dbc207ee66b93598",
+      "matches_original": true,
+      "agent_ref": "https://archive.example.org/agents/fixity-scanner"
+    }
+  ],
+  "bound_root": "sha256:fbc02a3e8333408578602145ed9be1aec00e1d44006367d2dbc207ee66b93598",
+  "crypto_migration": [
+    {
+      "from_alg": "ed25519",
+      "to_alg": "ml-dsa-65",
+      "resealed_at": "2029-06-01T00:00:00Z",
+      "upgrade_ref": "NF-192:upgrade-signature#op-1",
+      "original_sig_preserved": false,
+      "renewal_timestamp_ref": "sha256:08864605c051336226500532ef6929f9b5d91b01ab3fac553fbe1e3293611356"
+    }
+  ],
+  "ltv_renewal_chain": [
+    {
+      "renewal_type": "timestamp_renewal",
+      "covered_digest": "sha256:75187f69074c37386d3b54650b3d6d78a2fd38d27cc7769a9d26a5beea5104f0",
+      "new_timestamp_ref": "sha256:d6767380b7fe9ae6105b71fd2bb779353ee69987d6ddd420af0b99cb95f4a99a",
+      "new_hash_alg": "sha256",
+      "renewed_before": "2030-01-01",
+      "renewed_at": "2029-06-01T00:00:00Z",
+      "timestamp_expires_at": "2035-01-01",
+      "parent": null
+    },
+    {
+      "renewal_type": "hash_tree_renewal",
+      "covered_digest": "sha3-256:80201afce28f1ccc598264c8b8c48dc14bc6db7e723dfed8377eee94e4687db1",
+      "new_timestamp_ref": "sha3-256:14a184acb5aa087c979a768588415de2b55611fe8def58dd5c5c2fb980ae9332",
+      "new_hash_alg": "sha3-256",
+      "renewed_before": "2035-01-01",
+      "parent": "sha256:d6767380b7fe9ae6105b71fd2bb779353ee69987d6ddd420af0b99cb95f4a99a",
+      "renewed_at": "2034-03-01T00:00:00Z",
+      "timestamp_expires_at": "2045-01-01"
+    }
+  ]
+}

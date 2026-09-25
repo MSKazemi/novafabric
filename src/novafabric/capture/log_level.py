@@ -17,10 +17,15 @@ Contract (``the private design/spec/observation-log-levels-v0.md``):
 - When multiple capture-time sources disagree, the **most severe** level wins
   and ``log_level_source`` records the winning source
   (``framework`` > ``span-status`` > ``adapter`` > ``user`` on ties).
+- OTel interop (P4): :func:`to_otel_severity` projects a level onto the OTel
+  logs ``SeverityNumber`` scale; :func:`from_otel_severity` /
+  :func:`from_otel_severity_text` map it back (``None`` — never a guess — on
+  malformed input).
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel
@@ -197,6 +202,70 @@ def to_otel_severity(level: str) -> OtelSeverity:
     """
     text, number = _OTEL_SEVERITY[validate_log_level(level)]
     return OtelSeverity(text=text, number=number)
+
+
+#: Inbound OTel logs ``SeverityNumber`` ranges (spec §OTel mapping, ADR-0127 P4):
+#: inclusive ``(low, high, level)``. TRACE (1–4) collapses to ``debug`` and FATAL
+#: (21–24) to ``error`` — lossy-but-deterministic, the inverse of
+#: :func:`to_otel_severity` on every canonical number.
+_OTEL_SEVERITY_RANGES: tuple[tuple[int, int, str], ...] = (
+    (1, 4, "debug"),  # TRACE
+    (5, 8, "debug"),  # DEBUG
+    (9, 12, "info"),  # INFO
+    (13, 16, "warn"),  # WARN
+    (17, 20, "error"),  # ERROR
+    (21, 24, "error"),  # FATAL
+)
+
+#: OTel ``SeverityText`` short names with an optional ``2``–``4`` sub-level suffix
+#: (``WARN2``, ``FATAL4``) — the only suffixed spellings accepted inbound.
+_OTEL_SHORT_NAME_RE = re.compile(r"^(trace|debug|info|warn|error|fatal)[234]$")
+
+#: Longest ``SeverityText`` considered at all (bounded work on foreign input).
+_MAX_SEVERITY_TEXT_LEN = 32
+
+
+def from_otel_severity(number: Any) -> str | None:
+    """Map an OTel ``SeverityNumber`` back onto the canonical ``log_level``.
+
+    Inbound half of the spec's *OTel mapping* table (ADR-0127 P4): 1–4
+    (TRACE) and 5–8 (DEBUG) → ``debug``, 9–12 → ``info``, 13–16 → ``warn``,
+    17–20 (ERROR) and 21–24 (FATAL) → ``error``. The inverse of
+    :func:`to_otel_severity` on each canonical number.
+
+    Returns ``None`` — never a guess — for anything that is not an ``int`` in
+    ``1..24``: ``0`` (``SEVERITY_NUMBER_UNSPECIFIED``), out-of-range numbers,
+    ``bool``, ``float``, and numeric strings alike. Foreign OTLP input is data,
+    so this never raises.
+    """
+    if isinstance(number, bool) or not isinstance(number, int):
+        return None
+    for low, high, level in _OTEL_SEVERITY_RANGES:
+        if low <= number <= high:
+            return level
+    return None
+
+
+def from_otel_severity_text(text: Any) -> str | None:
+    """Map an OTel ``SeverityText`` onto the canonical ``log_level``, or ``None``.
+
+    Accepts the canonical names, the producer aliases of
+    :func:`normalize_log_level` (``WARNING``, ``CRITICAL``, ``FATAL``,
+    ``TRACE``; case-insensitive) and the OTel short names with a ``2``–``4``
+    sub-level suffix (``WARN2`` → ``warn``). Anything else — including
+    non-strings and over-long values — yields ``None``; it never raises.
+    Callers prefer ``SeverityNumber`` (the normalized OTel field) and use the
+    text only when no number is present.
+    """
+    if not isinstance(text, str) or not text or len(text) > _MAX_SEVERITY_TEXT_LEN:
+        return None
+    lowered = text.strip().lower()
+    if _OTEL_SHORT_NAME_RE.match(lowered):
+        lowered = lowered[:-1]
+    try:
+        return normalize_log_level(lowered)
+    except InvalidLogLevelError:
+        return None
 
 
 def validate_severity_fields(record: dict[str, Any]) -> None:

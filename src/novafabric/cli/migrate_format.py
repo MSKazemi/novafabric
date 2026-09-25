@@ -24,7 +24,9 @@ file); binding it into a sealed Evidence Bundle is later ADR-0165 work.
 Streams: the facet JSON (or the ``--check --json`` report) goes to stdout so it
 can be piped; human messages and the in-mission-boundary line go to stderr.
 
-Exit codes: 0 recorded / chain ok; 1 chain broken or hop refused; 2 bad input.
+Exit codes: 0 recorded / chain ok; 1 chain broken or hop refused (including a
+stored ``format_migration_chain`` that is malformed or tampered — the evidence
+is broken, not the command line); 2 bad input.
 """
 
 from __future__ import annotations
@@ -159,7 +161,15 @@ def _summary(verification: FormatMigrationVerification) -> str:
 
 
 def _check(facet: PreservationFacet, json_out: bool) -> int:
-    verification = verify_format_migration_chain(chain_from_facet(facet), facet.original_root)
+    try:
+        hops = chain_from_facet(facet)
+    except PreservationError as exc:
+        reason = f"stored chain is malformed: {exc}"
+        if json_out:
+            typer.echo(json.dumps({"malformed_record": reason, "ok": False}, sort_keys=True))
+        err_console.print(f"[red]Format-migration chain BROKEN:[/red] {reason}", highlight=False)
+        return EXIT_BROKEN
+    verification = verify_format_migration_chain(hops, facet.original_root)
     if json_out:
         payload = verification.model_dump(mode="json")
         payload["ok"] = verification.ok
@@ -226,7 +236,13 @@ def _run(
             return _check(facet, json_out)
         if to_version is None or tool is None:
             raise _InputError("--to and --tool are required unless --check is given")
-        existing = chain_from_facet(facet)
+        try:
+            existing = chain_from_facet(facet)
+        except PreservationError as exc:
+            err_console.print(
+                f"[red]Refused:[/red] stored chain is malformed: {exc}", highlight=False
+            )
+            return EXIT_BROKEN
         hop = plan_next_hop(
             facet,
             to_version=to_version,

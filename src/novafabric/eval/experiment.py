@@ -155,6 +155,11 @@ class MetricAggregate(BaseModel):
 class Experiment(BaseModel):
     """An immutable dataset-experiment record (ADR-0120 D1).
 
+    ``score_config_digest`` (ADR-0117 D4, optional) pins the ``ScoreConfig`` the
+    aggregate was computed under; ``score_config_ref`` then holds its resolved
+    ``name@version``. Two experiments over the same digest are directly
+    comparable; different digests are explicitly not.
+
     ``content_hash`` may be omitted while ``status`` is ``running``; a finalized
     record MUST carry ``finalized_at`` and a ``content_hash`` that equals the
     recomputed digest of its canonical body — a tampered record fails to parse.
@@ -171,6 +176,7 @@ class Experiment(BaseModel):
     status: Literal["running", "finalized"]
     created_at: str = Field(default_factory=_now_iso)
     score_config_ref: str | None = None
+    score_config_digest: str | None = None
     finalized_at: str | None = None
     content_hash: str | None = None
     baseline_experiment_id: str | None = None
@@ -186,6 +192,13 @@ class Experiment(BaseModel):
         ):
             raise ValueError(
                 f"baseline_experiment_id is not a valid ULID: {self.baseline_experiment_id!r}"
+            )
+        if self.score_config_digest is not None and not _SHA256_RE.match(
+            self.score_config_digest
+        ):
+            raise ValueError(
+                "score_config_digest must be a 'sha256:<64hex>' digest: "
+                f"{self.score_config_digest!r}"
             )
         if self.status == "running":
             if self.content_hash is not None or self.finalized_at is not None:

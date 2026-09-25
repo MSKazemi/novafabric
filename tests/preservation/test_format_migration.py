@@ -295,7 +295,15 @@ def test_every_finding_code_falsifies_some_verdict() -> None:
 
 
 @pytest.mark.parametrize(
-    "bad", ["run-capsule", "run-capsule@", "Run-Capsule@1", "run-capsule@1.0-rc1", "@1"]
+    "bad",
+    [
+        "run-capsule",
+        "run-capsule@",
+        "Run-Capsule@1",
+        "run-capsule@1.0-rc1",
+        "@1",
+        "run-capsule@1.0\n",  # `$` would accept a trailing newline; `\Z` does not
+    ],
 )
 def test_bad_format_version_rejected(bad: str) -> None:
     with pytest.raises(InvalidFormatVersionError):

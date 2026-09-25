@@ -115,6 +115,127 @@
     "created_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "score_config": {
+      "description": "ADR-0117 P4 comparability report keyed by ScoreConfig digest. comparable: true = same digest; false = different digests (explicitly not comparable); null = at least one side not pinned (never assumed). Optional; absent on records written before P4.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "comparable",
+        "status",
+        "message"
+      ],
+      "properties": {
+        "comparable": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "status": {
+          "enum": [
+            "same_digest",
+            "different_digest",
+            "not_pinned"
+          ]
+        },
+        "baseline_digest": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          ]
+        },
+        "candidate_digest": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          ]
+        },
+        "baseline_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "candidate_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "same_digest"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "comparable": {
+                "const": true
+              }
+            },
+            "required": [
+              "baseline_digest",
+              "candidate_digest"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "different_digest"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "comparable": {
+                "const": false
+              }
+            },
+            "required": [
+              "baseline_digest",
+              "candidate_digest"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "not_pinned"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "comparable": {
+                "const": null
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

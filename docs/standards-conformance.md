@@ -77,6 +77,7 @@ these instruments.
 | **OMB M-24-10** | Risk-tier vocabulary in classification | `nova classify list-vocabularies` | experimental |
 | **SR 26-2 / SR 11-7** | Model-risk evidence file; validation-independence evidence read from the maker-checker record (records independence, never assesses the validation) | `nova export-model-risk` · `nova export-model-independence` | experimental |
 | **SEC 17a-4 / MiFID II** | Retention-posture attestation over Evidence Bundles: retention policy, legal hold, WORM lock, per-bundle RFC 3161 timestamp, audit trail (attests posture, never compliance) | `nova export-retention` | experimental |
+| **ECOA / Reg B (12 CFR 1002.9)** | Credit-decision specific-reasons evidence pack from a sealed capsule: model call digests, digest-bound inputs, recorded feature-attribution reasons in recorded order (`missing` when no attribution facet — always, today, since `feature_attribution` is not yet a registered run-capsule facet; not a notice, no credit decision, no legal verdict) | `nova export-adverse-action` | experimental |
 
 ### Records-retention (WORM) conformance
 

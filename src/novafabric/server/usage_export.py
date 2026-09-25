@@ -39,8 +39,9 @@ import csv
 import io
 import json
 import re
+import sqlite3
 import unicodedata
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
 from typing import Final, Literal
 
@@ -65,7 +66,7 @@ COLUMNS: Final[tuple[str, ...]] = (
 #: keeps a mistyped range bounded.
 MAX_PERIODS: Final[int] = 120
 
-_PERIOD_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+_PERIOD_RE = re.compile(r"^[0-9]{4}-(0[1-9]|1[0-2])\Z")
 
 #: Leading characters a spreadsheet may interpret as a formula (checked
 #: after NFKC normalization, so full-width ``＝＋－＠`` are covered too).
@@ -78,6 +79,15 @@ class ChargebackExportError(Exception):
 
 class InvalidPeriodRangeError(ChargebackExportError):
     """A period is malformed, the range is inverted, or it is too wide."""
+
+
+class UsageStoreUnavailableError(ChargebackExportError):
+    """The registry exists but could not be read (locked, I/O error, corrupt).
+
+    Raised only on the read-only path: an empty export would be
+    indistinguishable from "no usage" and silently under-bill, so any SQLite
+    failure other than a missing DB file or missing usage table fails loudly.
+    """
 
 
 class ChargebackRow(BaseModel):
@@ -102,7 +112,7 @@ def periods_between(start: str, end: str) -> list[str]:
             than :data:`MAX_PERIODS` periods.
     """
     for value in (start, end):
-        if not _PERIOD_RE.match(value):
+        if not _PERIOD_RE.fullmatch(value):
             raise InvalidPeriodRangeError(f"invalid period {value!r}: expected YYYY-MM")
     if start > end:
         raise InvalidPeriodRangeError(f"period range is inverted: {start} > {end}")
@@ -117,6 +127,33 @@ def periods_between(start: str, end: str) -> list[str]:
     return [f"{i // 12:04d}-{i % 12 + 1:02d}" for i in range(first, last + 1)]
 
 
+def open_usage_db_read_only(db_path: Path | None = None) -> sqlite3.Connection | None:
+    """Open the registry DB strictly read-only (``mode=ro``), or ``None`` if absent.
+
+    Used by the HTTP export so a GET can never create the registry file, the
+    usage tables, or change pragmas. ``None`` means the DB file does not exist
+    (nothing was ever metered). ``sqlite3.Row`` rows; the caller closes it.
+    """
+    from novafabric.registry.store import get_db_path
+
+    resolved = (db_path or get_db_path()).resolve()
+    if not resolved.is_file():
+        return None
+    try:
+        conn = sqlite3.connect(resolved.as_uri() + "?mode=ro", uri=True)
+    except sqlite3.Error as exc:
+        if not resolved.is_file():  # removed between the check and the open
+            return None
+        raise UsageStoreUnavailableError(f"cannot open usage registry read-only: {exc}") from exc
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _is_missing_table(exc: sqlite3.Error) -> bool:
+    """True only for "the usage tables were never created" (metering never ran)."""
+    return "no such table" in str(exc)
+
+
 def chargeback_rows(
     start: str,
     end: str,
@@ -124,6 +161,7 @@ def chargeback_rows(
     db_path: Path | None = None,
     workspace: str | None = None,
     org: str | None = None,
+    read_only: bool = False,
 ) -> list[ChargebackRow]:
     """Usage rows for periods *start*..*end*, deterministically ordered.
 
@@ -132,10 +170,24 @@ def chargeback_rows(
     from ``usage_counters`` (``status='provisional'``, org denormalized from
     the most recent ledger row — ``'default'`` when none remains). Optional
     exact-match *workspace* / *org* filters.
+
+    With ``read_only=True`` (the HTTP export, ADR-0208 P3) the registry is
+    opened ``mode=ro`` via :func:`open_usage_db_read_only` — no DDL, no
+    pragma writes, no file creation — and a missing DB or missing usage
+    tables export as zero rows instead of being created. Any other SQLite
+    failure (locked, disk I/O, corrupt file) raises
+    :class:`UsageStoreUnavailableError` rather than exporting an empty — and
+    therefore silently wrong — billing file.
     """
     periods = periods_between(start, end)
     lo, hi = periods[0], periods[-1]
-    conn = usage.open_usage_db(db_path)
+    if read_only:
+        ro_conn = open_usage_db_read_only(db_path)
+        if ro_conn is None:
+            return []
+        conn = ro_conn
+    else:
+        conn = usage.open_usage_db(db_path)
     try:
         rows: list[ChargebackRow] = [
             ChargebackRow(
@@ -180,6 +232,14 @@ def chargeback_rows(
                 (lo, hi),
             )
         )
+    except sqlite3.Error as exc:
+        if not read_only:
+            raise
+        if not _is_missing_table(exc):
+            raise UsageStoreUnavailableError(f"cannot read usage registry: {exc}") from exc
+        # Usage tables never created on this registry (metering never ran):
+        # a read-only export reports "no usage", it does not create them.
+        rows = []
     finally:
         conn.close()
     if workspace is not None:
@@ -220,25 +280,44 @@ def _csv_record(row: ChargebackRow) -> list[str | int]:
     return record
 
 
+def _csv_line(record: Sequence[str | int]) -> str:
+    buf = io.StringIO(newline="")
+    csv.writer(buf, lineterminator="\r\n", quoting=csv.QUOTE_MINIMAL).writerow(record)
+    return buf.getvalue()
+
+
+def iter_csv(rows: Iterable[ChargebackRow]) -> Iterator[str]:
+    """Yield RFC 4180 CSV one CRLF-terminated line at a time (header first)."""
+    yield _csv_line(COLUMNS)
+    for row in rows:
+        yield _csv_line(_csv_record(row))
+
+
+def iter_ndjson(rows: Iterable[ChargebackRow]) -> Iterator[str]:
+    """Yield NDJSON one sorted-key JSON object (``\\n``-terminated) at a time."""
+    for row in rows:
+        yield json.dumps(row.model_dump(), sort_keys=True, separators=(",", ":")) + "\n"
+
+
+def iter_render(rows: Iterable[ChargebackRow], fmt: ExportFormat) -> Iterator[str]:
+    """Yield *rows* rendered in *fmt*, line by line (streaming form of :func:`render`).
+
+    ``"".join(iter_render(rows, fmt)) == render(rows, fmt)`` — the HTTP
+    export streams exactly the bytes the CLI writes.
+    """
+    return iter_csv(rows) if fmt == "csv" else iter_ndjson(rows)
+
+
 def to_csv(rows: Sequence[ChargebackRow]) -> str:
     """Render *rows* as RFC 4180 CSV (header + CRLF-terminated records)."""
-    buf = io.StringIO(newline="")
-    writer = csv.writer(buf, lineterminator="\r\n", quoting=csv.QUOTE_MINIMAL)
-    writer.writerow(COLUMNS)
-    for row in rows:
-        writer.writerow(_csv_record(row))
-    return buf.getvalue()
+    return "".join(iter_csv(rows))
 
 
 def to_ndjson(rows: Iterable[ChargebackRow]) -> str:
     """Render *rows* as NDJSON (one sorted-key JSON object per ``\\n`` line)."""
-    return "".join(
-        json.dumps(row.model_dump(), sort_keys=True, separators=(",", ":")) + "\n" for row in rows
-    )
+    return "".join(iter_ndjson(rows))
 
 
 def render(rows: Sequence[ChargebackRow], fmt: ExportFormat) -> str:
     """Render *rows* in *fmt* (``csv`` or ``ndjson``)."""
-    if fmt == "csv":
-        return to_csv(rows)
-    return to_ndjson(rows)
+    return "".join(iter_render(rows, fmt))

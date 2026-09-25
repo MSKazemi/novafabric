@@ -43,10 +43,12 @@ Five invariants from ADR-0167 / the NF-351-360 spec §3 shape every choice here:
 
 P1 is the facet, the NF-351 threshold-eval binding and the NF-353 commitment
 binding. P2 adds the AI-control-protocol decision (NF-352) and the tripwire
-trigger (NF-357), defined in :mod:`novafabric.frontier_safety.control` and
-carried here as additive, optional members. The alignment-risk objects
-(NF-354/355/356/358), the deployment gate (NF-359) and the safety-case leaves
-(NF-360) are P3/P4 and deliberately absent — the facet's ``extra="allow"``
+trigger (NF-357), defined in :mod:`novafabric.frontier_safety.control`. P3 adds
+the alignment-risk signals — deception signal (NF-354), sandbagging record
+(NF-355), autonomy attempt (NF-356) and elicitation record (NF-358) — defined
+in :mod:`novafabric.frontier_safety.alignment`. All are carried here as
+additive, optional members. The deployment gate (NF-359) and the safety-case
+leaves (NF-360) are P4 and deliberately absent — the facet's ``extra="allow"``
 config is what lets a later slice add them without a schema break.
 """
 
@@ -69,6 +71,12 @@ from novafabric.frontier_safety._common import (
     _validate_digest,
     _validate_ref,
     digest_ref,
+)
+from novafabric.frontier_safety.alignment import (
+    AutonomyAttempt,
+    DeceptionSignal,
+    ElicitationRecord,
+    SandbaggingRecord,
 )
 from novafabric.frontier_safety.control import ControlDecision, TripwireTrigger
 
@@ -247,6 +255,13 @@ class FrontierSafetyFacet(BaseModel):
     :meth:`all_tripwire_triggers`, which merge both shapes so no caller has to
     know which one a producer chose. Both are additive and optional
     (``extra="allow"`` is unchanged), so a P1 facet is still a valid P2 facet.
+
+    P3 follows the same singular + plural pattern for the four alignment-risk
+    objects (``deception_signal(s)``, ``sandbagging_record(s)``,
+    ``autonomy_attempt(s)``, ``elicitation_record(s)``). The singular members
+    are declared, not left to ``extra="allow"``, so a spec-shaped singular
+    object is validated — including the payload guard — rather than stored
+    unchecked. Read them through the ``all_*`` merge methods.
     """
 
     model_config = ConfigDict(extra="allow")
@@ -262,6 +277,18 @@ class FrontierSafetyFacet(BaseModel):
     tripwire_trigger: TripwireTrigger | None = None
     #: NF-357 — every further published indicator that fired.
     tripwire_triggers: list[TripwireTrigger] | None = None
+    #: NF-354 — external scheming / deception / eval-awareness signals.
+    deception_signal: DeceptionSignal | None = None
+    deception_signals: list[DeceptionSignal] | None = None
+    #: NF-355 — sandbagging / under-elicitation evidence.
+    sandbagging_record: SandbaggingRecord | None = None
+    sandbagging_records: list[SandbaggingRecord] | None = None
+    #: NF-356 — sandbox-escape / exfiltration / replication attempts (counts only).
+    autonomy_attempt: AutonomyAttempt | None = None
+    autonomy_attempts: list[AutonomyAttempt] | None = None
+    #: NF-358 — capability elicitation during deployment, as reported.
+    elicitation_record: ElicitationRecord | None = None
+    elicitation_records: list[ElicitationRecord] | None = None
     verified: VerificationFlags | None = None
 
     def all_control_decisions(self) -> tuple[ControlDecision, ...]:
@@ -273,6 +300,26 @@ class FrontierSafetyFacet(BaseModel):
         """Every recorded tripwire trigger, singular member first."""
         single = (self.tripwire_trigger,) if self.tripwire_trigger is not None else ()
         return single + tuple(self.tripwire_triggers or ())
+
+    def all_deception_signals(self) -> tuple[DeceptionSignal, ...]:
+        """Every recorded NF-354 deception signal, singular member first."""
+        single = (self.deception_signal,) if self.deception_signal is not None else ()
+        return single + tuple(self.deception_signals or ())
+
+    def all_sandbagging_records(self) -> tuple[SandbaggingRecord, ...]:
+        """Every recorded NF-355 sandbagging record, singular member first."""
+        single = (self.sandbagging_record,) if self.sandbagging_record is not None else ()
+        return single + tuple(self.sandbagging_records or ())
+
+    def all_autonomy_attempts(self) -> tuple[AutonomyAttempt, ...]:
+        """Every recorded NF-356 autonomy attempt, singular member first."""
+        single = (self.autonomy_attempt,) if self.autonomy_attempt is not None else ()
+        return single + tuple(self.autonomy_attempts or ())
+
+    def all_elicitation_records(self) -> tuple[ElicitationRecord, ...]:
+        """Every recorded NF-358 elicitation record, singular member first."""
+        single = (self.elicitation_record,) if self.elicitation_record is not None else ()
+        return single + tuple(self.elicitation_records or ())
 
     @property
     def has_material(self) -> bool:
@@ -289,6 +336,10 @@ class FrontierSafetyFacet(BaseModel):
             or self.commitment_binding is not None
             or self.all_control_decisions()
             or self.all_tripwire_triggers()
+            or self.all_deception_signals()
+            or self.all_sandbagging_records()
+            or self.all_autonomy_attempts()
+            or self.all_elicitation_records()
         )
 
 
@@ -301,13 +352,18 @@ def build_facet(
     commitment_binding: CommitmentBinding | None = None,
     control_decisions: list[ControlDecision] | None = None,
     tripwire_triggers: list[TripwireTrigger] | None = None,
+    deception_signals: list[DeceptionSignal] | None = None,
+    sandbagging_records: list[SandbaggingRecord] | None = None,
+    autonomy_attempts: list[AutonomyAttempt] | None = None,
+    elicitation_records: list[ElicitationRecord] | None = None,
     verified: VerificationFlags | None = None,
 ) -> FrontierSafetyFacet:
     """Assemble the frontier-safety facet from external safety references.
 
     Keyword-only: every member is optional and the objects are easy to
     transpose positionally, which would silently bind a run to the wrong
-    commitment. P2 decisions and triggers go into the plural lists; an empty
+    commitment. P2 decisions and triggers, and the P3 alignment-risk objects,
+    go into the plural lists; an empty
     list is normalised to absent so it cannot make an empty facet look like
     material (I-2).
     """
@@ -316,6 +372,10 @@ def build_facet(
         commitment_binding=commitment_binding,
         control_decisions=list(control_decisions) if control_decisions else None,
         tripwire_triggers=list(tripwire_triggers) if tripwire_triggers else None,
+        deception_signals=list(deception_signals) if deception_signals else None,
+        sandbagging_records=list(sandbagging_records) if sandbagging_records else None,
+        autonomy_attempts=list(autonomy_attempts) if autonomy_attempts else None,
+        elicitation_records=list(elicitation_records) if elicitation_records else None,
         verified=verified,
     )
 

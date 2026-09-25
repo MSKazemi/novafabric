@@ -2773,6 +2773,97 @@ paths:
       summary: Get Usage
       tags:
       - usage
+  /v0/usage/export:
+    get:
+      description: 'Chargeback export of per-workspace usage as CSV or NDJSON (ADR-0208
+        P3).
+
+
+        Same rows, ordering, formula-injection-safe cells and 120-period bound as
+
+        ``nova server usage export``: finalized periods from rollups (``final``),
+
+        others from live counters (``provisional``). Admin/auditor see every
+
+        workspace; any other principal only its ADR-0178 membership workspaces
+
+        (filtering, not 403). Read-only: the registry is opened ``mode=ro``.'
+      operationId: export_usage_v0_usage_export_get
+      parameters:
+      - description: 'First period YYYY-MM (default: current UTC period).'
+        in: query
+        name: from
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'First period YYYY-MM (default: current UTC period).'
+          title: From
+      - description: 'Last period YYYY-MM, inclusive (default: `from`). At most 120
+          periods.'
+        in: query
+        name: to
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'Last period YYYY-MM, inclusive (default: `from`). At most
+            120 periods.'
+          title: To
+      - description: '`csv` or `ndjson`.'
+        in: query
+        name: format
+        required: false
+        schema:
+          default: csv
+          description: '`csv` or `ndjson`.'
+          title: Format
+          type: string
+      - description: Only this workspace slug.
+        in: query
+        name: workspace
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Only this workspace slug.
+          title: Workspace
+      - description: Only this org slug.
+        in: query
+        name: org
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Only this org slug.
+          title: Org
+      responses:
+        '200':
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+            text/csv:
+              schema:
+                type: string
+          description: Chargeback rows as an attachment (RFC 4180 CSV or NDJSON).
+        '400':
+          description: Invalid period, period range or format (error envelope).
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+        '503':
+          description: Registry exists but could not be read, e.g. locked (error envelope).
+      summary: Export Usage
+      tags:
+      - usage
   /v0/version:
     get:
       operationId: version_v0_version_get

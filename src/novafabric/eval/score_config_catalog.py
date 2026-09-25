@@ -41,7 +41,7 @@ from novafabric.eval.score_config import (
     validate_score_against_config,
 )
 from novafabric.eval.scores import Score, ScoreValueType, append_score
-from novafabric.registry.store import get_connection
+from novafabric.registry.store import get_connection, get_db_path
 
 __all__ = [
     "ScoreConfigImmutabilityError",
@@ -54,6 +54,7 @@ __all__ = [
     "register_config",
     "register_config_record",
     "resolve_config_ref",
+    "resolve_config_ref_readonly",
 ]
 
 
@@ -243,6 +244,70 @@ def resolve_config_ref(ref: str, db_path: Path | None = None) -> ScoreConfig:
             )
         return get_config(name, version=int(suffix), db_path=db_path)
     return get_config(ref, db_path=db_path)
+
+
+def _split_ref(ref: str) -> tuple[str, int | None]:
+    """Split ``name`` / ``name@version`` into ``(name, version-or-None)``."""
+    if "@" not in ref:
+        return ref, None
+    name, _, suffix = ref.rpartition("@")
+    if not name or not suffix.isdigit():
+        raise ValueError(
+            f"invalid config ref {ref!r}: expected name, name@<int version>, or sha256:<hex>"
+        )
+    return name, int(suffix)
+
+
+def resolve_config_ref_readonly(ref: str, db_path: Path | None = None) -> ScoreConfig:
+    """Resolve *ref* like :func:`resolve_config_ref`, but **strictly read-only**.
+
+    Opens the registry with SQLite's ``mode=ro`` URI, so resolution never creates
+    the database file, the ``score_configs`` table, or a WAL — a missing registry
+    or table is simply "not found" (ADR-0117 P4: pinning an aggregate must not
+    mutate the catalog it pins against). A stored row whose body no longer matches
+    its digest fails to parse (C5) and is reported as an error, never trusted.
+    """
+    path = (db_path or get_db_path()).resolve()
+    if not path.is_file():
+        raise ScoreConfigNotFoundError(
+            f"no score config {ref!r}: registry database {path} does not exist"
+        )
+    by_digest = ref.startswith("sha256:")
+    name, version = (ref, None) if by_digest else _split_ref(ref)
+    try:
+        conn = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
+    except sqlite3.Error as exc:  # pragma: no cover - platform-specific open failure
+        raise ScoreConfigError(f"cannot open registry {path} read-only: {exc}") from exc
+    conn.row_factory = sqlite3.Row
+    try:
+        if by_digest:
+            sql = "SELECT config_json FROM score_configs WHERE content_digest = ?"
+            params: tuple[object, ...] = (ref,)
+        elif version is None:
+            sql = (
+                "SELECT config_json FROM score_configs WHERE name = ? "
+                "ORDER BY version DESC LIMIT 1"
+            )
+            params = (name,)
+        else:
+            sql = "SELECT config_json FROM score_configs WHERE name = ? AND version = ?"
+            params = (name, version)
+        try:
+            row = conn.execute(sql, params).fetchone()
+        except sqlite3.Error as exc:
+            if "no such table" not in str(exc):
+                raise ScoreConfigError(f"cannot read score configs from {path}: {exc}") from exc
+            row = None
+    finally:
+        conn.close()
+    if row is None:
+        raise ScoreConfigNotFoundError(f"no score config registered for {ref!r}")
+    try:
+        return _row_to_config(row)
+    except ValueError as exc:
+        raise ScoreConfigError(
+            f"stored score config for {ref!r} is corrupt or tampered: {exc}"
+        ) from exc
 
 
 def list_configs(

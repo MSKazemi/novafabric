@@ -1,0 +1,70 @@
+{
+  "facets": {
+    "cost_attribution": {
+      "by_agent": [
+        {
+          "agent_id": "executor",
+          "basis": "measured",
+          "calls": 4,
+          "cost": {
+            "amount_minor": 148,
+            "currency": "USD"
+          }
+        },
+        {
+          "agent_id": "planner",
+          "basis": "measured",
+          "calls": 6,
+          "cost": {
+            "amount_minor": 121,
+            "currency": "USD"
+          }
+        },
+        {
+          "agent_id": "retriever",
+          "basis": "measured",
+          "calls": 9,
+          "cost": {
+            "amount_minor": 104,
+            "currency": "USD"
+          }
+        },
+        {
+          "agent_id": "validator",
+          "basis": "measured",
+          "calls": 3,
+          "cost": {
+            "amount_minor": 39,
+            "currency": "USD"
+          }
+        }
+      ],
+      "conservation": [
+        {
+          "attributed": 412,
+          "dimension": "cost",
+          "ok": true,
+          "total": 412,
+          "unattributed": 0,
+          "unit": "USD minor units"
+        },
+        {
+          "attributed": 22,
+          "dimension": "calls",
+          "ok": true,
+          "total": 22,
+          "unattributed": 0,
+          "unit": "calls"
+        }
+      ],
+      "run_total": {
+        "calls": 22,
+        "cost": {
+          "amount_minor": 412,
+          "currency": "USD"
+        }
+      },
+      "schema_version": "0.1.0"
+    }
+  }
+}

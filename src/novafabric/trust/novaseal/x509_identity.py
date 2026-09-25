@@ -35,6 +35,10 @@ the embedded certificate when **either** anchor holds, checked in this order:
    validation performed by ``cryptography.x509.verification``, to a trust anchor in the
    operator-provided ``ca_bundle`` (see :func:`validate_certificate_chain`).
 
+Chain validation can optionally be followed by an **offline CRL revocation check**
+(*experimental*, ADR-0070 §3 / ADR-0055 OQ-55-3) against CRLs an operator syncs into a
+local directory — see :mod:`novafabric.trust.novaseal.crl`.
+
 Everything is offline and uses only the ``cryptography`` library's standard
 primitives — no hand-rolled crypto, no revocation (CRL/OCSP) fetch, no network. The
 Rekor inclusion-proof option remains deferred and layers on top of this without
@@ -65,6 +69,8 @@ from cryptography.x509.verification import (
     VerificationError,
 )
 from pydantic import BaseModel
+
+from novafabric.trust.novaseal.crl import CrlStore, RevocationCheckResult, check_chain_revocation
 
 _ALG_ECDSA_P256 = "ecdsa-p256-sha256"
 _ALG_RSA_PSS = "rsa-pss-sha256"
@@ -127,12 +133,16 @@ class ChainValidationResult:
             trust anchor last. Empty on failure.
         trust_anchor_fingerprint: ``sha256:``-prefixed fingerprint of the anchor
             the chain terminated at, or ``None`` on failure.
+        revocation: Offline CRL check outcome when a ``crl_store`` was supplied and
+            the path validated; ``None`` otherwise. Soft-fail warnings live here
+            even when ``valid`` is ``True``.
     """
 
     valid: bool
     reason: str
     chain_subjects: tuple[str, ...] = ()
     trust_anchor_fingerprint: str | None = None
+    revocation: RevocationCheckResult | None = None
 
 
 def _fingerprint(cert: Certificate) -> str:
@@ -249,6 +259,40 @@ def _end_entity_policy() -> ExtensionPolicy:
     )
 
 
+def _revocation_path(
+    chain: Sequence[Certificate], pool: Sequence[Certificate], max_extra: int
+) -> list[Certificate]:
+    """Extend a validated path past a non-self-issued anchor for revocation checks.
+
+    Path building stops at the first trust anchor it reaches. When an operator bundles
+    ``root + intermediate`` (the CLI must, since the envelope carries only the leaf),
+    the intermediate terminates the path and would never be revocation-checked. Walk
+    upward through ``pool`` while the top certificate is not self-issued and some pool
+    certificate both names it as subject and *directly signed* it, so the root's CRL
+    can revoke the intermediate. Bounded by ``max_extra`` hops; never raises.
+    """
+    path = list(chain)
+    for _ in range(max_extra):
+        top = path[-1]
+        if top.issuer == top.subject:
+            break
+        parent = next(
+            (c for c in pool if c.subject == top.issuer and _directly_issued(top, c)), None
+        )
+        if parent is None or parent in path:
+            break
+        path.append(parent)
+    return path
+
+
+def _directly_issued(cert: Certificate, issuer: Certificate) -> bool:
+    try:
+        cert.verify_directly_issued_by(issuer)
+    except (ValueError, TypeError, InvalidSignature):
+        return False
+    return True
+
+
 def validate_certificate_chain(
     leaf: Certificate,
     trust_anchors: Sequence[Certificate],
@@ -256,6 +300,8 @@ def validate_certificate_chain(
     intermediates: Iterable[Certificate] = (),
     validation_time: datetime.datetime | None = None,
     max_chain_depth: int = DEFAULT_MAX_CHAIN_DEPTH,
+    crl_store: CrlStore | None = None,
+    crl_strict: bool = False,
 ) -> ChainValidationResult:
     """Validate ``leaf`` against an operator CA bundle, fully offline (experimental).
 
@@ -263,7 +309,10 @@ def validate_certificate_chain(
     ``x509.verification`` RFC 5280 path builder: every certificate in the path must
     be within its validity window at ``validation_time``, each issuer signature must
     verify, CA certificates must satisfy the WebPKI CA extension profile, and the path
-    must end at one of ``trust_anchors``. No revocation (CRL/OCSP) check is made.
+    must end at one of ``trust_anchors``. Without ``crl_store`` no revocation check is
+    made (unchanged behaviour); with it, every non-anchor certificate on the validated
+    path is checked offline against the store (ADR-0070 §3): a revoked certificate
+    always fails, missing/stale/invalid CRLs fail only when ``crl_strict``.
 
     Args:
         leaf: The signer (end-entity) certificate.
@@ -273,6 +322,8 @@ def validate_certificate_chain(
         validation_time: Instant to validate at; defaults to now (UTC). A naive
             datetime is interpreted as UTC.
         max_chain_depth: Maximum intermediates on the path, 1-16 (bounded search).
+        crl_store: Optional CRLs from ``crl.load_crl_directory`` (experimental).
+        crl_strict: Treat ``no_crl`` / ``stale`` / ``invalid_crl`` as failures.
 
     Returns:
         A :class:`ChainValidationResult`. Never raises for an untrusted or malformed
@@ -284,6 +335,7 @@ def validate_certificate_chain(
             f"max_chain_depth must be between 1 and {_MAX_CHAIN_DEPTH_LIMIT}, got {max_chain_depth}"
         )
     anchors = list(trust_anchors)
+    untrusted = list(intermediates)
     if not anchors:
         return ChainValidationResult(valid=False, reason="CA bundle contains no trust anchors")
     when = validation_time or datetime.datetime.now(datetime.timezone.utc)
@@ -301,17 +353,38 @@ def validate_certificate_chain(
         .build_client_verifier()
     )
     try:
-        verified = verifier.verify(leaf, list(intermediates))
+        verified = verifier.verify(leaf, untrusted)
     except VerificationError as exc:
         return ChainValidationResult(
             valid=False, reason=f"certificate chain validation failed: {exc}"
         )
     chain = verified.chain
+    subjects = tuple(c.subject.rfc4514_string() for c in chain)
+    anchor = _fingerprint(chain[-1])
+    revocation = (
+        check_chain_revocation(
+            _revocation_path(chain, [*anchors, *untrusted], max_chain_depth),
+            crl_store,
+            validation_time=when,
+            strict=crl_strict,
+        )
+        if crl_store is not None
+        else None
+    )
+    if revocation is not None and not revocation.ok:
+        return ChainValidationResult(
+            valid=False,
+            reason=f"certificate revocation check failed: {revocation.summary}",
+            chain_subjects=subjects,
+            trust_anchor_fingerprint=anchor,
+            revocation=revocation,
+        )
     return ChainValidationResult(
         valid=True,
         reason="certificate chains to a trust anchor in the CA bundle",
-        chain_subjects=tuple(c.subject.rfc4514_string() for c in chain),
-        trust_anchor_fingerprint=_fingerprint(chain[-1]),
+        chain_subjects=subjects,
+        trust_anchor_fingerprint=anchor,
+        revocation=revocation,
     )
 
 
@@ -424,6 +497,8 @@ def verify_dsse_signer_chain(
     *,
     intermediates: Iterable[Certificate] = (),
     validation_time: datetime.datetime | None = None,
+    crl_store: CrlStore | None = None,
+    crl_strict: bool = False,
 ) -> ChainValidationResult:
     """Bind a DSSE signature to a CA-validated certificate (ADR-0055 steps 1+2).
 
@@ -434,14 +509,16 @@ def verify_dsse_signer_chain(
     self-contained and fail-closed: it passes only when **at least one** signature
     entry both (1) verifies over the DSSE PAE bytes under the public key of its own
     ``cert`` (any ``pubkey`` must match that key) and (2) that same certificate
-    chains to ``trust_anchors``.
+    chains to ``trust_anchors`` (and, with ``crl_store``, passes the offline CRL
+    revocation policy — see :func:`validate_certificate_chain`).
 
     Raises:
         X509ChainError: The envelope is not JSON or has no signatures.
 
     Returns:
         A :class:`ChainValidationResult`; on failure ``reason`` names every entry's
-        individual reason.
+        individual reason and ``revocation`` carries the first CRL check that ran
+        (so a revoked signer is reported per certificate, not just as a failure).
     """
     try:
         envelope = json.loads(dsse_bytes)
@@ -462,13 +539,19 @@ def verify_dsse_signer_chain(
     extra = list(intermediates)
 
     failures: list[str] = []
+    revocation: RevocationCheckResult | None = None
     for index, entry in enumerate(sigs):
         cert, why = _dsse_entry_bound_cert(entry, pae)
         if cert is None:
             failures.append(f"signatures[{index}]: {why}")
             continue
         outcome = validate_certificate_chain(
-            cert, trust_anchors, intermediates=extra, validation_time=validation_time
+            cert,
+            trust_anchors,
+            intermediates=extra,
+            validation_time=validation_time,
+            crl_store=crl_store,
+            crl_strict=crl_strict,
         )
         if outcome.valid:
             return ChainValidationResult(
@@ -479,11 +562,14 @@ def verify_dsse_signer_chain(
                 ),
                 chain_subjects=outcome.chain_subjects,
                 trust_anchor_fingerprint=outcome.trust_anchor_fingerprint,
+                revocation=outcome.revocation,
             )
         failures.append(f"signatures[{index}]: {outcome.reason}")
+        revocation = revocation or outcome.revocation
     return ChainValidationResult(
         valid=False,
         reason="no signature is bound to a CA-trusted certificate: " + "; ".join(failures),
+        revocation=revocation,
     )
 
 
@@ -522,6 +608,8 @@ def verify_x509_signature(
     ca_bundle: Sequence[Certificate] | None = None,
     intermediates: Iterable[Certificate] = (),
     validation_time: datetime.datetime | None = None,
+    crl_store: CrlStore | None = None,
+    crl_strict: bool = False,
 ) -> X509VerifyResult:
     """Verify an x509 signature against the operator's trust anchors.
 
@@ -539,6 +627,9 @@ def verify_x509_signature(
             disables chain validation, preserving pinned-only behaviour.
         intermediates: Untrusted intermediates available for path building.
         validation_time: Instant for chain validity checks; defaults to now (UTC).
+        crl_store: Optional offline CRLs checked on the CA-chain path only (a pinned
+            certificate is trusted by fingerprint, not revocation-checked).
+        crl_strict: Fail on ``no_crl`` / ``stale`` / ``invalid_crl`` too.
     """
     try:
         cert = load_pem_x509_certificate(signature.certificate_pem.encode("utf-8"))
@@ -558,6 +649,8 @@ def verify_x509_signature(
             ca_bundle,
             intermediates=intermediates,
             validation_time=validation_time,
+            crl_store=crl_store,
+            crl_strict=crl_strict,
         )
         if chain.valid:
             trust_basis = TRUST_BASIS_CA_CHAIN

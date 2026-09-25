@@ -199,6 +199,9 @@
     "tab": "cost",
     "api": "/api/cost/report"
   },
+  "nova cost rollup": {
+    "status": "builder-only"
+  },
   "nova cost usage-breakdown": {
     "status": "real-panel",
     "tab": "cost",
@@ -433,6 +436,9 @@
     "tab": "compliance",
     "api": "/api/compliance/export/"
   },
+  "nova export-adverse-action": {
+    "status": "builder-only"
+  },
   "nova export-aibom": {
     "status": "real-panel",
     "tab": "compliance",
@@ -588,6 +594,21 @@
     "api": "/forensics-timeline"
   },
   "nova graph agent": {
+    "status": "builder-only"
+  },
+  "nova hitl context show": {
+    "status": "builder-only"
+  },
+  "nova hitl context verify": {
+    "status": "builder-only"
+  },
+  "nova hitl override list": {
+    "status": "builder-only"
+  },
+  "nova hitl rationale show": {
+    "status": "builder-only"
+  },
+  "nova hitl thread show": {
     "status": "builder-only"
   },
   "nova hold create": {
@@ -913,6 +934,18 @@
     "tab": "policy",
     "api": "/api/policy/test"
   },
+  "nova preservation ltv append": {
+    "status": "builder-only"
+  },
+  "nova preservation ltv verify": {
+    "status": "builder-only"
+  },
+  "nova preservation reseal record": {
+    "status": "builder-only"
+  },
+  "nova preservation reseal verify": {
+    "status": "builder-only"
+  },
   "nova pricing add": {
     "status": "builder-only"
   },
@@ -1056,6 +1089,9 @@
     "api": "/validate-distributed"
   },
   "nova safety control show": {
+    "status": "builder-only"
+  },
+  "nova safety signal list": {
     "status": "builder-only"
   },
   "nova safety tripwire list": {

@@ -50,11 +50,20 @@ def _validator(schema_name: str) -> jsonschema.Draft202012Validator:
 
 def test_fixture_corpus_is_complete() -> None:
     names = [p.name for p in _FIXTURE_FILES]
-    assert len(names) == 14
-    assert sum(n.startswith("experiment-valid") for n in names) == 3
-    assert sum(n.startswith("experiment-invalid") for n in names) == 6
-    assert sum(n.startswith("comparison-valid") for n in names) == 2
-    assert sum(n.startswith("comparison-invalid") for n in names) == 3
+    assert len(names) == 21
+    assert sum(n.startswith("experiment-valid") for n in names) == 4
+    assert sum(n.startswith("experiment-invalid") for n in names) == 7
+    assert sum(n.startswith("comparison-valid") for n in names) == 5
+    assert sum(n.startswith("comparison-invalid") for n in names) == 5
+
+
+def test_score_config_pinned_fixture_parses_as_model() -> None:
+    """ADR-0117 P4: the pinned fixture carries a real content_hash over its pin."""
+    document = json.loads((_FIXTURES / "experiment-valid-score-config-pinned.json").read_text())
+    record = Experiment.model_validate(document)
+    assert record.score_config_ref == "task_pass@1"
+    assert record.score_config_digest is not None
+    assert record.score_config_digest.startswith("sha256:")
 
 
 @pytest.mark.parametrize("fixture", _FIXTURE_FILES, ids=lambda p: p.stem)

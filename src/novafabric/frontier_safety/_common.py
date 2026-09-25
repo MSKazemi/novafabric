@@ -278,10 +278,10 @@ class _ExternalVerdict(BaseModel):
 
 # ── Shape guards shared by the P2+ objects (I-5, C4 boundary) ─────────────
 
-#: Key names that mean "a payload was inlined here". Matched case-insensitively
-#: against every key an object carries beyond its declared fields — the
-#: ``extra="allow"`` surface is exactly where a producer would smuggle a monitor
-#: prompt or an exploit transcript, so that is where the check has to look.
+#: Known payload key spellings. Kept (and exported) as the documented examples
+#: of what I-5 forbids; the guard itself matches the broader
+#: :data:`PAYLOAD_KEY_MARKERS` on *normalised* keys, so every name here — and
+#: every camelCase / kebab-case / suffixed variant of it — is rejected.
 PAYLOAD_KEYS: frozenset[str] = frozenset(
     {
         "prompt",
@@ -304,10 +304,42 @@ PAYLOAD_KEYS: frozenset[str] = frozenset(
     }
 )
 
+#: Substring markers matched against every *normalised* extra key (lower-cased,
+#: non-alphanumerics stripped — see :func:`normalise_key`). An exact-match
+#: denylist is trivially evaded (``exploitSteps``, ``exploit-steps``,
+#: ``ExfiltratedData``); a substring match on the normalised form is not.
+#: Same approach as ``novafabric.hitl._records._PAYLOAD_KEY_MARKERS``, with a
+#: marker set tuned to this cluster: markers that would reject legitimate P2
+#: control-decision material (``command``, ``step``, ``shell``) are kept local
+#: to :class:`~novafabric.frontier_safety.alignment.AutonomyAttempt`.
+PAYLOAD_KEY_MARKERS: tuple[str, ...] = (
+    "prompt",
+    "transcript",
+    "payload",
+    "exploit",
+    "weights",
+    "activation",
+    "completion",
+    "responsetext",
+    "rawoutput",
+    "rawinput",
+    "stdout",
+    "stderr",
+    "exfil",
+)
+
+#: A key whose normalised form ends with one of these *and* whose value is a
+#: ``sha256:`` digest is a reference to the artifact, not the artifact —
+#: ``red_team_transcript_digest`` is exactly the I-5-compliant way to point at a
+#: transcript. Only a strict digest qualifies: a URI can carry arbitrary text
+#: in its path, so a URI-valued ``prompt_ref`` is still rejected.
+REFERENCE_KEY_SUFFIXES: tuple[str, ...] = ("ref", "digest", "sha256", "hash")
+
 #: Field names that only a C4 guardrail-decision object (ADR-0145,
 #: ``novafabric.safety.decisions.GuardrailDecision``) carries. Their presence
 #: on a frontier-safety object means the guardrail decision is being
-#: re-recorded rather than referenced (spec §3.15).
+#: re-recorded rather than referenced (spec §3.15). Matched on normalised keys
+#: (exact, not substring: ``guardrail_decision_ref`` is the sanctioned link).
 C4_INLINE_KEYS: frozenset[str] = frozenset(
     {
         "guardrail_decision",
@@ -324,9 +356,26 @@ C4_INLINE_KEYS: frozenset[str] = frozenset(
 #: rejected as a payload rather than walked.
 MAX_EXTRA_DEPTH = 8
 
+#: Upper bound on any free-form string value a P3 object carries (extra fields,
+#: at any nesting depth, plus ``schema_version`` and a string ``verdict``).
+#: Declared reference fields have their own :data:`MAX_REF_LENGTH` bound. A
+#: label or identifier fits comfortably; a transcript or script does not.
+MAX_FREE_STRING_LENGTH = 512
 
-def _iter_keys(value: object, *, depth: int = 0) -> list[str]:
-    """Return every mapping key nested inside ``value``, bounded by depth.
+_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
+
+
+def normalise_key(key: str) -> str:
+    """Return ``key`` lower-cased with every non-alphanumeric character removed.
+
+    ``exploitSteps``, ``exploit-steps`` and ``Exploit_Steps`` all normalise to
+    ``exploitsteps``, so one marker catches every spelling.
+    """
+    return _NON_ALNUM_RE.sub("", key.lower())
+
+
+def _iter_items(value: object, *, depth: int = 0) -> list[tuple[str, object]]:
+    """Return every ``(key, value)`` pair nested inside ``value``, depth-bounded.
 
     Raises:
         PayloadCaptureError: if the structure nests deeper than
@@ -338,19 +387,99 @@ def _iter_keys(value: object, *, depth: int = 0) -> list[str]:
             f"extra fields nest deeper than {MAX_EXTRA_DEPTH} levels; a "
             "frontier-safety record holds references, not documents (I-5)"
         )
-    keys: list[str] = []
+    items: list[tuple[str, object]] = []
     if isinstance(value, dict):
         for key, item in value.items():
-            keys.append(str(key))
-            keys.extend(_iter_keys(item, depth=depth + 1))
+            items.append((str(key), item))
+            items.extend(_iter_items(item, depth=depth + 1))
     elif isinstance(value, (list, tuple)):
         for item in value:
-            keys.extend(_iter_keys(item, depth=depth + 1))
-    return keys
+            items.extend(_iter_items(item, depth=depth + 1))
+    return items
+
+
+def _iter_keys(value: object, *, depth: int = 0) -> list[str]:
+    """Return every mapping key nested inside ``value``, bounded by depth."""
+    return [key for key, _ in _iter_items(value, depth=depth)]
+
+
+def _is_digest_reference(key: str, value: object) -> bool:
+    """True when ``key`` names a reference and ``value`` is a strict digest."""
+    return (
+        normalise_key(key).endswith(REFERENCE_KEY_SUFFIXES)
+        and isinstance(value, str)
+        and _DIGEST_RE.match(value) is not None
+    )
+
+
+def find_marker_keys(extra: dict[str, Any] | None, markers: tuple[str, ...]) -> list[str]:
+    """Return the (original-spelling) extra keys that contain any ``markers``.
+
+    Keys are normalised with :func:`normalise_key` before the substring test,
+    and the walk descends into nested mappings and lists (bounded by
+    :data:`MAX_EXTRA_DEPTH`). A digest-valued reference key
+    (:data:`REFERENCE_KEY_SUFFIXES`) is exempt: it points at the artifact
+    rather than holding it. Sorted and de-duplicated for a deterministic
+    error message.
+    """
+    if not extra:
+        return []
+    hits = {
+        key
+        for key, value in _iter_items(extra)
+        if any(marker in normalise_key(key) for marker in markers)
+        and not _is_digest_reference(key, value)
+    }
+    return sorted(hits)
+
+
+def _iter_strings(value: object, *, depth: int = 0) -> list[str]:
+    """Return every string (keys included) nested inside ``value``, bounded."""
+    if depth > MAX_EXTRA_DEPTH:
+        raise PayloadCaptureError(
+            f"extra fields nest deeper than {MAX_EXTRA_DEPTH} levels; a "
+            "frontier-safety record holds references, not documents (I-5)"
+        )
+    if isinstance(value, str):
+        return [value]
+    found: list[str] = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            found.append(str(key))
+            found.extend(_iter_strings(item, depth=depth + 1))
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            found.extend(_iter_strings(item, depth=depth + 1))
+    return found
+
+
+def check_string_lengths(
+    values: dict[str, Any],
+    *,
+    owner: str,
+    limit: int = MAX_FREE_STRING_LENGTH,
+) -> None:
+    """Reject any string in ``values`` (at any bounded depth) over ``limit``.
+
+    Raises:
+        PayloadCaptureError: naming the top-level field only — never the value,
+            which is exactly the text this check exists to keep out of logs.
+    """
+    for field, value in values.items():
+        if any(len(s) > limit for s in _iter_strings({field: value})):
+            raise PayloadCaptureError(
+                f"{owner}.{field} holds a string over the {limit}-char limit; "
+                "free-form values are labels, not documents — record a sha256 "
+                "digest of the content instead (ADR-0167 I-5)"
+            )
 
 
 def check_extra_fields(extra: dict[str, Any] | None, *, owner: str) -> None:
     """Reject payload-shaped or C4-duplicating keys in an object's extra fields.
+
+    Keys are normalised (:func:`normalise_key`) and matched against
+    :data:`PAYLOAD_KEY_MARKERS` by substring, so case, separators and
+    prefixes/suffixes do not evade the guard.
 
     Args:
         extra: the object's ``model_extra`` (undeclared fields kept by
@@ -358,15 +487,15 @@ def check_extra_fields(extra: dict[str, Any] | None, *, owner: str) -> None:
         owner: the object's class name, for the error message.
 
     Raises:
-        PayloadCaptureError: a key names a prompt, transcript, payload, weights
-            or activations (I-5, ADR-0009, ADR-0021 §4).
+        PayloadCaptureError: a key names a prompt, transcript, payload, weights,
+            activations, process output or exfiltrated data (I-5, ADR-0009,
+            ADR-0021 §4).
         GuardrailDuplicationError: a key belongs to a C4 guardrail-decision
             object; reference it via ``guardrail_decision_ref`` instead.
     """
     if not extra:
         return
-    keys = {k.lower() for k in _iter_keys(extra)}
-    payload = sorted(keys & PAYLOAD_KEYS)
+    payload = find_marker_keys(extra, PAYLOAD_KEY_MARKERS)
     if payload:
         raise PayloadCaptureError(
             f"{owner} carries payload-shaped field(s) {payload}; record a "
@@ -374,7 +503,8 @@ def check_extra_fields(extra: dict[str, Any] | None, *, owner: str) -> None:
             "exploit payloads, weights and activations never enter the capsule "
             "(ADR-0167 I-5)"
         )
-    c4 = sorted(keys & C4_INLINE_KEYS)
+    c4_normalised = {normalise_key(k) for k in C4_INLINE_KEYS}
+    c4 = sorted({k for k in _iter_keys(extra) if normalise_key(k) in c4_normalised})
     if c4:
         raise GuardrailDuplicationError(
             f"{owner} re-records C4 guardrail-decision field(s) {c4}; reference "

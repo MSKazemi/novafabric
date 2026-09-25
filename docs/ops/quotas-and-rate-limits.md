@@ -184,7 +184,7 @@ Other principals get a **filtered** response (their membership workspaces
 only) — filtering, not 403. Accounting is best-effort relative to the
 upload: a metering failure is logged + audited and never fails the write.
 
-### Reconciliation and chargeback export (ADR-0208 P2)
+### Reconciliation and chargeback export (ADR-0208 P2/P3)
 
 **Status: experimental.** Two admin CLI commands read the same registry DB
 the server meters into (`--db-path`, else the server config's `db_path`).
@@ -241,9 +241,37 @@ nova server usage export --from 2026-07 --to 2026-09 -o chargeback-q3.csv
 nova server usage export --from 2026-09 --format ndjson --workspace ml-platform
 ```
 
-Not yet shipped (**planned**, ADR-0208 remaining items): an HTTP export
-endpoint, per-org budget enforcement, and request-time enforcement of the
-API-key workspace binding.
+**HTTP export — `GET /v0/usage/export`** (**experimental**, ADR-0208 P3)
+serves the same rows and bytes over the `nova server` API, as an attachment:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" -OJ \
+  "https://nova.example.com/v0/usage/export?from=2026-07&to=2026-09&format=csv"
+# -> nova-usage-2026-07_2026-09.csv   (text/csv; charset=utf-8; header=present)
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://nova.example.com/v0/usage/export?from=2026-09&format=ndjson&workspace=ml-platform"
+# -> application/x-ndjson
+```
+
+Query parameters: `from`/`to` (`YYYY-MM`; `from` defaults to the current UTC
+period, `to` to `from`; at most 120 periods), `format` (`csv` default, or
+`ndjson`), optional exact-match `workspace` / `org`. Access follows
+`GET /v0/usage`: admin and auditor see every workspace; any other
+authenticated principal only its membership workspaces — filtering, not
+403, and a `workspace`/`org` filter never widens that view. A malformed
+period, inverted or over-wide range, or unknown format is a `400` error
+envelope (`invalid_period`, `invalid_period_range`, `invalid_format`). The
+registry is opened **read-only** (`mode=ro`): the request never creates the
+DB or the usage tables, and the membership lookup for non-privileged callers
+is read-only too. A missing DB or missing usage tables export as zero rows;
+any other registry failure (locked, I/O error) is a `503` error envelope
+(`usage_store_unavailable`) — never an empty billing file. Exports are not audited (neither is the CLI export
+nor `GET /v0/usage`); with metering on, the request itself still counts
+toward `api_requests` like any other. The rows are materialized and sorted
+in memory before streaming — bounded by 120 periods × workspaces × metrics.
+
+Not yet shipped (**planned**, ADR-0208 remaining items): per-org budget
+enforcement, and request-time enforcement of the API-key workspace binding.
 
 ### Per-workspace budgets
 

@@ -22,12 +22,21 @@ computes a safety verdict, and never enforces, blocks, or gates a workload.
 Shipped (experimental): P1 — the NF-351 threshold-eval and NF-353
 commitment bindings (:mod:`.facet`); P2 — the NF-352 control-protocol decision
 and NF-357 tripwire trigger (:mod:`.control`) with fail-open capture helpers
-(:mod:`.record`).
+(:mod:`.record`); P3 — the NF-354 deception signal, NF-355 sandbagging record,
+NF-356 autonomy attempt and NF-358 elicitation record (:mod:`.alignment`), each
+an external finding held by reference.
 """
 
 from novafabric.frontier_safety._common import (
     IN_MISSION_BOUNDARY,
     GuardrailDuplicationError,
+)
+from novafabric.frontier_safety.alignment import (
+    AutonomyAttempt,
+    DeceptionSignal,
+    ElicitationRecord,
+    SandbaggingRecord,
+    total_attempts,
 )
 from novafabric.frontier_safety.control import (
     ControlDecision,
@@ -60,7 +69,11 @@ from novafabric.frontier_safety.facet import (
     verify_eval_binding,
 )
 from novafabric.frontier_safety.record import (
+    record_autonomy_attempt,
     record_control_decision,
+    record_deception_signal,
+    record_elicitation_record,
+    record_sandbagging_record,
     record_tripwire_trigger,
 )
 
@@ -69,16 +82,20 @@ __all__ = [
     "IN_MISSION_BOUNDARY",
     "MAX_REF_LENGTH",
     "SCHEMA_VERSION",
+    "AutonomyAttempt",
     "CommitmentBinding",
     "ComputedVerdictError",
     "ControlDecision",
     "ControlOutcome",
     "ControlProtocol",
+    "DeceptionSignal",
+    "ElicitationRecord",
     "FrontierSafetyError",
     "FrontierSafetyFacet",
     "GuardrailDuplicationError",
     "InvalidReferenceError",
     "PayloadCaptureError",
+    "SandbaggingRecord",
     "ThresholdEval",
     "TripwireTrigger",
     "VerificationFlags",
@@ -88,8 +105,13 @@ __all__ = [
     "digest_ref",
     "facet_from_capsule",
     "guardrail_decision_digest",
+    "record_autonomy_attempt",
     "record_control_decision",
+    "record_deception_signal",
+    "record_elicitation_record",
+    "record_sandbagging_record",
     "record_tripwire_trigger",
+    "total_attempts",
     "verify_commitment_binding",
     "verify_eval_binding",
     "verify_governed_action",

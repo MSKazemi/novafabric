@@ -1,0 +1,9 @@
+{
+  "by_agent": [
+    {
+      "agent_id": "planner",
+      "basis": "guessed"
+    }
+  ],
+  "schema_version": "0.1.0"
+}

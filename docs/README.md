@@ -97,6 +97,7 @@ Task- and workflow-oriented references for day-to-day use.
 | [Drift detection](drift-gate.md) | `nova drift` (experimental) — collects samples from sealed capsules, then offline two-sample drift, silent-failure flags, root-cause correlation and behavioral fingerprints over them |
 | [Assurance cases](assurance-cases.md) | `nova assure-case` / `nova assure-coverage` (experimental) — machine-checkable argument graphs bound to sealed evidence |
 | [Frontier-safety evidence](frontier-safety.md) | `nova safety control show` / `nova safety tripwire list` (experimental) — external AI-control decisions and fired framework tripwires, recorded by reference, never enforced |
+| [Human-oversight evidence](human-oversight.md) | `nova hitl thread` / `context` / `override` / `rationale` (experimental) — what a human was shown when deciding, their overrides, and the agent's surfaced rationale, digest-only and record-only |
 | [For researchers](for-researchers.md) | Using NovaFabric for a reproducible, reviewable, citable paper artifact — and what it does not solve |
 | [Standards and specifications](standards-conformance.md) | Every specification implemented, how to verify each claim, and what is explicitly **not** claimed |
 | [Developer guide](developer-guide.md) | Local dev setup, extension points, adding asset types and commands |

@@ -72,6 +72,8 @@ def _capsule_diff(
     output_format: DiffOutputFormat,
     assert_no_regressions: bool,
     group_by: str | None = None,
+    graph_shape: bool = False,
+    assert_same_shape: bool = False,
 ) -> None:
     from novafabric.diff._engine import DiffEngine
     from novafabric.diff._format import format_github_annotations, format_json, format_text
@@ -95,6 +97,14 @@ def _capsule_diff(
 
     report = DiffEngine().compare(capsule_a, capsule_b)
 
+    # ADR-0124 P3: opt-in agent-graph shape pre-check. Absent both flags, nothing
+    # below changes — the default output stays byte-identical.
+    shape = None
+    if graph_shape or assert_same_shape:
+        from novafabric.diff.graph_shape import compare_graph_shapes
+
+        shape = compare_graph_shapes(capsule_a, capsule_b)
+
     if output_format == "json":
         # Machine-readable output must bypass Rich: console.print soft-wraps at
         # terminal width, inserting newlines inside long JSON string values
@@ -105,11 +115,21 @@ def _capsule_diff(
                 "cross_arm": len(set(groups.values())) > 1,
                 "diff": report.as_dict(),
             }
+            if shape is not None:
+                payload["graph_shape"] = shape.to_document()
             typer.echo(json.dumps(payload, indent=2))
+        elif shape is not None:
+            doc = report.as_dict()
+            doc["graph_shape"] = shape.to_document()
+            typer.echo(json.dumps(doc, indent=2))
         else:
             typer.echo(format_json(report))
     elif output_format == "github-annotation":
         typer.echo(format_github_annotations(report))
+        if shape is not None:
+            from novafabric.diff.graph_shape import format_graph_shape_annotations
+
+            typer.echo("\n".join(format_graph_shape_annotations(shape)))
     else:
         if groups is not None:
             group_a, group_b = groups[str(capsule_a)], groups[str(capsule_b)]
@@ -122,9 +142,18 @@ def _capsule_diff(
                 console.print(f"Cross-arm diff: {group_a} → {group_b}")
             console.print("")
         console.print(format_text(report))
+        if shape is not None:
+            from novafabric.diff.graph_shape import format_graph_shape_text
+
+            console.print("")
+            console.print(format_graph_shape_text(shape), markup=False, highlight=False)
 
     if assert_no_regressions and report.changed_count > 0:
         raise typer.Exit(code=1)
+    if assert_same_shape and shape is not None and not shape.same_shape:
+        # Fail closed: 1 = shapes differ; 2 = a graph could not be built, so
+        # "same shape" cannot be verified.
+        raise typer.Exit(code=2 if shape.status == "unavailable" else 1)
 
 
 def _resolve_scores(path: Path) -> Path:
@@ -234,6 +263,27 @@ def diff_cmd(
         int,
         typer.Option("--hamming", help="Near-duplicate distance for --perceptual."),
     ] = 10,
+    graph_shape: Annotated[
+        bool,
+        typer.Option(
+            "--graph-shape",
+            help=(
+                "Experimental (ADR-0124): add a graph_shape block — rebuild both "
+                "capsules' agent execution graphs and report 'same shape' or the "
+                "node/edge deltas. Capsule diffs only."
+            ),
+        ),
+    ] = False,
+    assert_same_shape: Annotated[
+        bool,
+        typer.Option(
+            "--assert-same-shape",
+            help=(
+                "Experimental (ADR-0124): implies --graph-shape; exit 1 if the "
+                "agent-graph shapes differ, 2 if either graph is unavailable."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Compare two asset versions or two run capsules.
 
@@ -259,10 +309,21 @@ def diff_cmd(
       # Fail CI if any difference is found
       nova diff --assert-no-regressions my-agent@v1.0 my-agent@v1.1
 
+      # Shape-change pre-check over the agent execution graphs (ADR-0124);
+      # exit 1 if the control-flow shape differs, 2 if a graph is unavailable
+      nova diff runs/run-01/ runs/run-02/ --graph-shape
+      nova diff runs/run-01/ runs/run-02/ --assert-same-shape
+
       # Compare the two runs' media parts by exact hash, then by pHash (NF-170)
       nova diff --media runs/run-01/ runs/run-02/
       nova diff --media --perceptual runs/run-01/ runs/run-02/ --json
     """
+    if (media or significance) and (graph_shape or assert_same_shape):
+        raise typer.BadParameter(
+            "--graph-shape/--assert-same-shape cannot be combined with --media or --significance",
+            param_hint="'--graph-shape'",
+        )
+
     # NF-170 media diff — capsule paths only, and a distinct output shape.
     if media:
         _run_media_diff(ref_a, ref_b, perceptual, hamming_threshold, sig_json)
@@ -293,8 +354,17 @@ def diff_cmd(
         _capsule_diff(
             Path(ref_a), Path(ref_b), output_format, assert_no_regressions,
             group_by=group_by,
+            graph_shape=graph_shape,
+            assert_same_shape=assert_same_shape,
         )
         return
+
+    if graph_shape or assert_same_shape:
+        raise typer.BadParameter(
+            "--graph-shape/--assert-same-shape apply to capsule diffs only "
+            "(asset refs carry no agent execution graph)",
+            param_hint="'--graph-shape'",
+        )
 
     if group_by is not None:
         raise typer.BadParameter(

@@ -38,6 +38,16 @@ Honesty rules (ADR-0021 §4, ADR-0009):
   native capture. Ingested text passes through the ADR-0009 secret scanner
   before the manifest is written.
 
+Log levels (ADR-0127): an ``ERROR`` span status records ``log_level: error``
+(``span-status``). Since ADR-0127 P4 (inbound half, experimental) the OTel logs
+``SeverityNumber`` is consumed too — from the emitter's
+``novafabric.severity_number``/``novafabric.severity_text`` span attributes and
+from a span event's ``severityNumber``/``severityText`` (log-record shape) or
+severity attributes — so a level survives an export→import round trip. The
+**most severe** of span status and severity wins; a severity-decided level records
+``log_level_source: adapter`` (the ingest adapter derived it). Malformed or
+out-of-range severity is ignored (never guessed) and stays under ``otlp.unmapped``.
+
 OTLP/**protobuf** ingest is also supported (ADR-0177) via
 :func:`parse_otlp_protobuf` / :func:`ingest_otlp_protobuf`, which decode the
 binary ``ExportTraceServiceRequest`` and reuse the JSON path — so both wire
@@ -52,7 +62,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from novafabric.otel.genai_emitter import MAPPING_VERSION
+from novafabric.capture.log_level import (
+    LogLevelSource,
+    from_otel_severity,
+    from_otel_severity_text,
+    most_severe,
+    resolve_log_level,
+)
+from novafabric.otel.genai_emitter import (
+    MAPPING_VERSION,
+    SEVERITY_NUMBER_ATTR,
+    SEVERITY_TEXT_ATTR,
+)
 from novafabric.otel.openinference import translate_attributes as translate_openinference
 
 #: capture-level label recorded on every ingested capsule (ADR-0021 §4).
@@ -117,6 +138,27 @@ _MARKER_KEYS = frozenset({
     "novafabric.semconv_maturity",
     "novafabric.content.truncated",
 })
+
+#: ``log_level_source`` recorded when an inbound OTel severity decided the level.
+#: The capsule record schemas' provenance enum is closed
+#: (``framework|span-status|adapter|user``); the OTLP ingest adapter is what
+#: derived the level, so ``adapter`` is reused rather than widening the enum.
+SEVERITY_LOG_LEVEL_SOURCE: LogLevelSource = "adapter"
+
+#: At most this many span events are inspected for a severity (bounded work).
+MAX_SEVERITY_EVENTS = 256
+
+#: OTLP ``SeverityNumber`` enum base values, for the protobuf-JSON enum-name
+#: spelling (``SEVERITY_NUMBER_WARN2``) that ``MessageToDict`` produces.
+_SEVERITY_ENUM_BASE: dict[str, int] = {
+    "TRACE": 1,
+    "DEBUG": 5,
+    "INFO": 9,
+    "WARN": 13,
+    "ERROR": 17,
+    "FATAL": 21,
+}
+_SEVERITY_ENUM_PREFIX = "SEVERITY_NUMBER_"
 
 _KNOWN_KEYS = _MODEL_KEYS | _CONTENT_KEYS | _TOOL_KEYS | _AGENT_KEYS | _MARKER_KEYS
 
@@ -194,12 +236,81 @@ def _is_error(status: Any) -> bool:
     return status.get("code") in (2, "2", "STATUS_CODE_ERROR")
 
 
+def _parse_events(raw: Any) -> list[dict[str, Any]]:
+    """Normalize a span's ``events`` for severity lookup (first :data:`MAX_SEVERITY_EVENTS`).
+
+    Keeps only what ADR-0127 P4 consumes: the log-record-shaped
+    ``severityNumber``/``severityText`` fields (when present) and the decoded
+    attributes. Non-object entries are skipped.
+    """
+    if not isinstance(raw, list):
+        return []
+    events: list[dict[str, Any]] = []
+    for entry in raw[:MAX_SEVERITY_EVENTS]:
+        if not isinstance(entry, dict):
+            continue
+        event: dict[str, Any] = {"attributes": _decode_attributes(entry.get("attributes"))}
+        for key in ("severityNumber", "severityText"):
+            if key in entry:
+                event[key] = entry[key]
+        events.append(event)
+    return events
+
+
+def _severity_number(value: Any) -> Any:
+    """Decode an OTLP ``SeverityNumber`` wire value for :func:`from_otel_severity`.
+
+    Ints pass through; the protobuf-JSON enum name (``SEVERITY_NUMBER_WARN2``)
+    maps to its number. Anything else is returned unchanged, so the strict
+    mapper rejects it — a numeric *string* is not an ``AnyValue`` int and is
+    never coerced.
+    """
+    if isinstance(value, str) and value.startswith(_SEVERITY_ENUM_PREFIX):
+        name = value[len(_SEVERITY_ENUM_PREFIX) :]
+        offset = 0
+        if name[-1:] in ("2", "3", "4"):
+            name, offset = name[:-1], int(name[-1]) - 1
+        base = _SEVERITY_ENUM_BASE.get(name)
+        if base is not None:
+            return base + offset
+    return value
+
+
+def _level_from_pair(fields: dict[str, Any], number_key: str, text_key: str) -> str | None:
+    """Canonical level from a ``SeverityNumber``/``SeverityText`` pair, or ``None``.
+
+    The number is authoritative: when present it alone decides (a malformed
+    number yields ``None`` — the text is not used to rescue a contradictory
+    pair). The text is consulted only when no number is present at all.
+    """
+    if number_key in fields:
+        return from_otel_severity(_severity_number(fields[number_key]))
+    if text_key in fields:
+        return from_otel_severity_text(fields[text_key])
+    return None
+
+
+def _span_attr_severity(attrs: dict[str, Any]) -> str | None:
+    """Level carried by the emitter's ``novafabric.severity_*`` span attributes."""
+    return _level_from_pair(attrs, SEVERITY_NUMBER_ATTR, SEVERITY_TEXT_ATTR)
+
+
+def _event_severity(events: list[dict[str, Any]]) -> str | None:
+    """Most severe level carried by any span event (log-record fields or attributes)."""
+    levels: list[str | None] = []
+    for event in events:
+        levels.append(_level_from_pair(event, "severityNumber", "severityText"))
+        levels.append(_span_attr_severity(event["attributes"]))
+    return most_severe(*levels)
+
+
 def parse_otlp_json(payload: Any) -> list[dict[str, Any]]:
     """Flatten an OTLP/HTTP JSON trace export into normalized span dicts.
 
     Pure function. Each returned dict has ``name``, ``trace_id``, ``span_id``,
     ``parent_span_id``, ``start_unix_nano``, ``end_unix_nano``, ``error``,
-    ``status_message`` and a decoded ``attributes`` mapping.
+    ``status_message``, a decoded ``attributes`` mapping and ``events`` (the
+    severity-bearing view of the span's events, see :func:`_parse_events`).
 
     Raises :class:`OTLPIngestError` when the payload is not
     ``ExportTraceServiceRequest``-shaped (``resourceSpans`` → ``scopeSpans`` →
@@ -240,6 +351,7 @@ def parse_otlp_json(payload: Any) -> list[dict[str, Any]]:
                         str(status.get("message", "")) if isinstance(status, dict) else ""
                     ),
                     "attributes": _decode_attributes(raw.get("attributes")),
+                    "events": _parse_events(raw.get("events")),
                 })
     return spans
 
@@ -274,7 +386,13 @@ class GenAIIngestResult:
         return len(self.model_calls) + len(self.tool_calls) + self.agent_span_count
 
 
-def _base_event(span: dict[str, Any]) -> dict[str, Any]:
+def _base_event(span: dict[str, Any], severity: str | None = None) -> dict[str, Any]:
+    """Common capsule-event fields for *span*.
+
+    *severity* is the canonical level decoded from inbound OTel severity
+    (ADR-0127 P4), if any. It competes with the span-status mapping: the most
+    severe wins, span status keeps a tie (spec §Provenance priority).
+    """
     event: dict[str, Any] = {}
     started = _iso(span["start_unix_nano"])
     finished = _iso(span["end_unix_nano"])
@@ -291,12 +409,18 @@ def _base_event(span: dict[str, Any]) -> dict[str, Any]:
             "message": span["status_message"] or "span reported STATUS_CODE_ERROR",
             "traceback_ref": None,
         }
-        # ADR-0127 inbound span-status mapping: an ERROR span records
-        # log_level=error (OK/UNSET set nothing from the span alone).
-        event["log_level"] = "error"
-        event["log_level_source"] = "span-status"
         if span["status_message"]:
             event["status_message"] = span["status_message"]
+    # ADR-0127 inbound mapping: an ERROR span maps to error (OK/UNSET set
+    # nothing from the span alone); an inbound OTel severity competes as the
+    # adapter source, most severe wins.
+    resolved = resolve_log_level(
+        span_status="ERROR" if span["error"] else None, adapter=severity
+    )
+    if resolved is not None:
+        event["log_level"] = resolved.value
+        # "adapter" here is SEVERITY_LOG_LEVEL_SOURCE (the severity decided it).
+        event["log_level_source"] = resolved.source
     event["novafabric.mapping_version"] = MAPPING_VERSION
     return event
 
@@ -371,7 +495,17 @@ def ingest_otlp_json(payload: Any) -> GenAIIngestResult:
             _split_unknown(attrs, result)
             continue
 
-        event = _base_event(span)
+        attr_severity = _span_attr_severity(attrs)
+        severity = most_severe(attr_severity, _event_severity(span["events"]))
+        if attr_severity is not None:
+            # Consumed (ADR-0127 P4): no longer "unknown". A malformed pair
+            # decides nothing and stays visible under otlp.unmapped.
+            attrs = {
+                k: v
+                for k, v in attrs.items()
+                if k not in (SEVERITY_NUMBER_ATTR, SEVERITY_TEXT_ATTR)
+            }
+        event = _base_event(span, severity)
         passthrough = _MODEL_KEYS | _CONTENT_KEYS if kind == "model" else _TOOL_KEYS
         for key in sorted(passthrough & attrs.keys()):
             # Content keys land here only when the span carried them (ADR-0021).

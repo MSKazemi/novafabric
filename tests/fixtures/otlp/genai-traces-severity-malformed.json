@@ -1,0 +1,45 @@
+{
+  "resourceSpans": [
+    {
+      "scopeSpans": [
+        {
+          "spans": [
+            {
+              "traceId": "5b8efff798038103d269b633813fc60c",
+              "spanId": "aaa19b7ec3c1b174",
+              "name": "chat out-of-range",
+              "attributes": [
+                {"key": "gen_ai.request.model", "value": {"stringValue": "m"}},
+                {"key": "novafabric.severity_number", "value": {"intValue": "99"}},
+                {"key": "novafabric.severity_text", "value": {"stringValue": "ERROR"}}
+              ]
+            },
+            {
+              "traceId": "5b8efff798038103d269b633813fc60c",
+              "spanId": "aaa19b7ec3c1b175",
+              "name": "chat string-number",
+              "attributes": [
+                {"key": "gen_ai.request.model", "value": {"stringValue": "m"}},
+                {"key": "novafabric.severity_number", "value": {"stringValue": "17"}}
+              ]
+            },
+            {
+              "traceId": "5b8efff798038103d269b633813fc60c",
+              "spanId": "aaa19b7ec3c1b176",
+              "name": "chat bad-text",
+              "attributes": [
+                {"key": "gen_ai.request.model", "value": {"stringValue": "m"}},
+                {"key": "novafabric.severity_text", "value": {"stringValue": "SEVERE"}}
+              ],
+              "events": [
+                {"name": "log", "severityNumber": 0},
+                {"name": "log", "severityNumber": "SEVERITY_NUMBER_BOGUS"},
+                "not-an-object"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

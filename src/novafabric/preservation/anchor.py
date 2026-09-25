@@ -70,12 +70,12 @@ SCHEMA_VERSION = "0.1.0"
 #: (lower-case hex, exact length) so a truncated or upper-cased digest fails
 #: loudly at construction rather than failing to match in 2035, during an audit,
 #: when nobody who wrote it is still around to explain it.
-_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}\Z")
 
 #: An agent or artifact may be named by locator rather than by content — a
 #: PREMIS Agent identifier, an https URL, an OCI ref. A URI *shape* is accepted;
 #: nothing here dereferences it (P1 is offline, no network).
-_URI_RE = re.compile(r"^[a-z][a-z0-9+.\-]*://\S+$")
+_URI_RE = re.compile(r"^[a-z][a-z0-9+.\-]*://\S+\Z")
 
 #: A reference is an identifier, never a document. Anything longer is
 #: overwhelmingly likely to be inlined content smuggled through a "ref" field,

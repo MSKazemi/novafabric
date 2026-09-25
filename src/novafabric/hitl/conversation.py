@@ -41,10 +41,15 @@ here:
   asserts that oversight occurred, was adequate, or was lawful; a missing
   attribution is *unknown*, never a verdict either way.
 
-P1 is the thread model and turn-ref resolution only. The decision-context
-receipt (NF-182), override (NF-187), rationale (NF-188) and handoff (NF-189)
-are later slices and deliberately absent — the models' ``extra="allow"`` config
-is what lets them extend a turn without a schema break.
+P1 is the thread model and turn-ref resolution. P2 adds the decision-context
+receipt (NF-182, :mod:`novafabric.hitl.decision_context`), override (NF-187,
+:mod:`novafabric.hitl.override`) and rationale (NF-188,
+:mod:`novafabric.hitl.rationale`) as lists stored *inside* this facet
+(``decision_context`` / ``override`` / ``rationale`` keys) — the facet's
+``extra="allow"`` config is what lets them extend it without a schema break,
+and every record's ``turn_ref`` must resolve via :func:`resolve_turn`. The
+handoff receipt (NF-189) and acted-on-behalf binding (NF-186) remain later
+slices and are deliberately absent here.
 """
 
 from __future__ import annotations
@@ -66,14 +71,14 @@ Role = Literal["human", "agent", "system"]
 #: (lower-case hex, exact length) so a truncated or upper-cased digest fails
 #: loudly here rather than failing to match at verify time, months later, in an
 #: audit.
-_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}\Z")
 
 #: An identity ref is scheme-prefixed and opaque: `human:did:…`,
 #: `human:fp:<sha256[:16]>`, `agent:spiffe://…`, `system:<component>`. The
 #: scheme is required because it is what makes the ref *recognisably* a
 #: pseudonym — a bare `alice` would sail through any shape check while being
 #: exactly the raw-identity capture I-2 forbids.
-_IDENTITY_RE = re.compile(r"^(?:human|agent|system):\S{3,}$")
+_IDENTITY_RE = re.compile(r"^(?:human|agent|system):\S{3,}\Z")
 
 #: An identity ref is an identifier, never a document. Anything longer is
 #: overwhelmingly likely to be inlined content someone routed through an
@@ -153,7 +158,7 @@ def _validate_identity_ref(value: object, *, field: str) -> str:
             "must be pseudonymous refs (ADR-0021 §4, ADR-0009 — no raw PII in "
             "the capsule). Use human:fp:<sha256[:16]> or a DID."
         )
-    if not _IDENTITY_RE.match(value):
+    if not _IDENTITY_RE.fullmatch(value):
         raise IdentityRefError(
             f"{field} must be a scheme-prefixed pseudonymous ref "
             f"('human:…', 'agent:…', 'system:…'), got {value!r}"
@@ -171,7 +176,7 @@ def _validate_content_digest(value: object, *, field: str) -> str:
         )
     if not isinstance(value, str):
         raise TurnContentError(f"{field} must be a 'sha256:<64 hex>' string")
-    if not _DIGEST_RE.match(value):
+    if not _DIGEST_RE.fullmatch(value):
         # Deliberately does not echo `value` back: if the caller passed the turn
         # text by mistake, echoing it would write the very content this field
         # exists to keep out into the log the exception lands in.

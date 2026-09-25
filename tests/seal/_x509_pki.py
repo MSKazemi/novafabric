@@ -1,7 +1,8 @@
 """In-test PKI builder for ADR-0055 CA-bundle chain-validation tests.
 
 Generates a root CA -> intermediate CA -> leaf hierarchy (ECDSA P-256) entirely in
-memory so no fixture certificate on disk can silently expire.
+memory so no fixture certificate on disk can silently expire, plus CRLs for the
+ADR-0070 §3 offline revocation tests (:func:`make_crl`).
 """
 
 from __future__ import annotations
@@ -49,8 +50,14 @@ def make_cert(
     ca: bool,
     not_before: datetime.datetime | None = None,
     not_after: datetime.datetime | None = None,
+    crl_sign: bool | None = None,
+    crl_urls: tuple[str, ...] = (),
 ) -> Node:
-    """Issue a certificate for a fresh P-256 key (self-signed when ``issuer`` is None)."""
+    """Issue a certificate for a fresh P-256 key (self-signed when ``issuer`` is None).
+
+    ``crl_sign`` overrides the keyUsage cRLSign bit (default: set for CAs);
+    ``crl_urls`` adds a CRLDistributionPoints extension.
+    """
     key = ec.generate_private_key(ec.SECP256R1())
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
     signer_key = issuer.key if issuer is not None else key
@@ -71,7 +78,7 @@ def make_cert(
                 data_encipherment=False,
                 key_agreement=False,
                 key_cert_sign=ca,
-                crl_sign=ca,
+                crl_sign=ca if crl_sign is None else crl_sign,
                 encipher_only=False,
                 decipher_only=False,
             ),
@@ -86,6 +93,20 @@ def make_cert(
     if not ca:
         builder = builder.add_extension(
             x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CODE_SIGNING]), critical=False
+        )
+    if crl_urls:
+        builder = builder.add_extension(
+            x509.CRLDistributionPoints(
+                [
+                    x509.DistributionPoint(
+                        full_name=[x509.UniformResourceIdentifier(u) for u in crl_urls],
+                        relative_name=None,
+                        reasons=None,
+                        crl_issuer=None,
+                    )
+                ]
+            ),
+            critical=False,
         )
     return Node(cert=builder.sign(signer_key, hashes.SHA256()), key=key)
 
@@ -151,3 +172,55 @@ def dsse_envelope(payload: bytes, entries: list[dict[str, str]]) -> bytes:
     return json.dumps(
         {"payloadType": DSSE_PAYLOAD_TYPE, "payload": _b64(payload), "signatures": entries}
     ).encode("utf-8")
+
+
+# ---------------------------------------------------------------------------
+# CRLs (ADR-0070 §3 offline revocation tests)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Revoked:
+    """A CRL entry: serial, revocation instant, optional CRLReason."""
+
+    serial: int
+    when: datetime.datetime
+    reason: x509.ReasonFlags | None = None
+
+
+def make_crl(
+    issuer: Node,
+    revoked: tuple[Revoked, ...] = (),
+    *,
+    this_update: datetime.datetime | None = None,
+    next_update: datetime.datetime | None = None,
+    signer_key: ec.EllipticCurvePrivateKey | None = None,
+    extensions: tuple[tuple[x509.ExtensionType, bool], ...] = (),
+) -> x509.CertificateRevocationList:
+    """Build a CRL naming ``issuer``, signed by ``signer_key`` (default: the issuer's)."""
+    builder = (
+        x509.CertificateRevocationListBuilder()
+        .issuer_name(issuer.cert.subject)
+        .last_update(this_update or NOW - datetime.timedelta(hours=1))
+        .next_update(next_update or NOW + datetime.timedelta(days=7))
+    )
+    for entry in revoked:
+        rb = (
+            x509.RevokedCertificateBuilder().serial_number(entry.serial).revocation_date(entry.when)
+        )
+        if entry.reason is not None:
+            rb = rb.add_extension(x509.CRLReason(entry.reason), critical=False)
+        builder = builder.add_revoked_certificate(rb.build())
+    for ext, critical in extensions:
+        builder = builder.add_extension(ext, critical=critical)
+    return builder.sign(signer_key or issuer.key, hashes.SHA256())
+
+
+def crl_der(crl: x509.CertificateRevocationList) -> bytes:
+    """DER encoding of ``crl``."""
+    return crl.public_bytes(Encoding.DER)
+
+
+def crl_pem(crl: x509.CertificateRevocationList) -> bytes:
+    """PEM encoding of ``crl``."""
+    return crl.public_bytes(Encoding.PEM)

@@ -52,6 +52,12 @@ All four profiles also accept an optional ``ca_bundle`` (ADR-0055, experimental)
 
 When set, ``nova verify`` additionally validates the DSSE signer certificate's
 chain against it, offline. Omit it to keep verification unchanged.
+
+With a ``ca_bundle``, the optional ``crl_dir`` / ``crl_strict`` keys (ADR-0070 §3,
+experimental) add an offline CRL revocation check of the validated path:
+
+    crl_dir: /var/lib/novaseal/crl     # CRLs (DER/PEM) synced by an operator cron job
+    crl_strict: false                  # true: missing/stale/invalid CRL also fails
 """
 
 from __future__ import annotations
@@ -114,6 +120,11 @@ class SigningProfile:
     # ADR-0055 (experimental): operator CA bundle for signer chain validation at
     # verify time. None = no chain validation (unchanged behaviour).
     ca_bundle: Optional[Path] = None
+    # ADR-0070 §3 (experimental): directory of operator-synced CRLs checked against
+    # the validated chain at verify time. None = no revocation check.
+    crl_dir: Optional[Path] = None
+    # crl_strict: a missing / stale / invalid CRL fails (default: visible warning).
+    crl_strict: bool = False
 
     def __post_init__(self) -> None:
         if not self.tsa_urls:
@@ -224,6 +235,14 @@ def _parse_profile(path: Path) -> SigningProfile:
             raise SealConfigError("novaseal.yaml tsa_urls, if given, must not be empty")
     tsa_urls = list(raw_tsa_urls) if raw_tsa_urls is not None else [tsa_url]
     ca_bundle = _parse_ca_bundle(raw)
+    crl_dir, crl_strict = _parse_crl_settings(raw)
+    if (crl_dir is not None or crl_strict) and ca_bundle is None:
+        # Revocation is only checked on the CA-bundle chain path; accepting the
+        # keys without a bundle would silently check nothing (ADR-0070 §3).
+        raise SealConfigError(
+            "novaseal.yaml crl_dir / crl_strict require ca_bundle: revocation is "
+            "checked only on the CA-bundle chain path"
+        )
 
     if profile == "local":
         key_path = Path(req("key_path")).expanduser()
@@ -242,6 +261,8 @@ def _parse_profile(path: Path) -> SigningProfile:
             tsa_urls=tsa_urls,
             merkle_db=merkle_db,
             ca_bundle=ca_bundle,
+            crl_dir=crl_dir,
+            crl_strict=crl_strict,
         )
 
     if profile == "aws_kms":
@@ -259,6 +280,8 @@ def _parse_profile(path: Path) -> SigningProfile:
             tsa_urls=tsa_urls,
             merkle_db=merkle_db,
             ca_bundle=ca_bundle,
+            crl_dir=crl_dir,
+            crl_strict=crl_strict,
         )
 
     if profile == "azure_kv":
@@ -276,6 +299,8 @@ def _parse_profile(path: Path) -> SigningProfile:
             tsa_urls=tsa_urls,
             merkle_db=merkle_db,
             ca_bundle=ca_bundle,
+            crl_dir=crl_dir,
+            crl_strict=crl_strict,
         )
 
     # profile == "gcp_kms"
@@ -291,6 +316,8 @@ def _parse_profile(path: Path) -> SigningProfile:
         tsa_urls=tsa_urls,
         merkle_db=merkle_db,
         ca_bundle=ca_bundle,
+        crl_dir=crl_dir,
+        crl_strict=crl_strict,
     )
 
 
@@ -309,6 +336,26 @@ def _parse_ca_bundle(raw: dict[str, object]) -> Optional[Path]:
     if not path.is_file():
         raise SealConfigError(f"NovaSeal ca_bundle not found: {path}")
     return path
+
+
+def _parse_crl_settings(raw: dict[str, object]) -> tuple[Optional[Path], bool]:
+    """Parse the optional ``crl_dir`` / ``crl_strict`` keys (ADR-0070 §3).
+
+    A configured-but-absent directory is a hard config error, never a silent
+    downgrade to "no revocation check".
+    """
+    strict = raw.get("crl_strict", False)
+    if not isinstance(strict, bool):
+        raise SealConfigError("novaseal.yaml crl_strict must be true or false")
+    value = raw.get("crl_dir")
+    if value is None:
+        return None, strict
+    if not isinstance(value, str) or not value.strip():
+        raise SealConfigError("novaseal.yaml crl_dir must be a non-empty path string")
+    path = Path(value).expanduser()
+    if not path.is_dir():
+        raise SealConfigError(f"NovaSeal crl_dir not found or not a directory: {path}")
+    return path, strict
 
 
 def build_signing_backend(profile: SigningProfile) -> "SigningBackend":

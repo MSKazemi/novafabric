@@ -173,7 +173,12 @@ gate as capture and size-bounded. A model/tool call that recorded a `log_level`
 (ADR-0127) also carries its OTel `SeverityNumber` projection as
 `novafabric.severity_number` / `novafabric.severity_text` (`debug`→5, `info`→9, `warn`→13,
 `error`→17; **experimental**); a call without a level gets neither attribute — no severity is
-fabricated:
+fabricated. The OTLP ingest endpoint (`POST /api/otlp/v1/traces`) reads the pair back
+(**experimental**, ADR-0127 P4 inbound): an exported span re-imported into a capsule keeps
+its `log_level` (recorded with `log_level_source: adapter`; an `ERROR` span status still
+wins when more severe). A span event's OTel `SeverityNumber` is consumed the same way
+(TRACE collapses to `debug`, FATAL to `error`); malformed values are ignored, never guessed.
+Standalone OTLP *logs* (`resourceLogs`) are not ingested (future design). Emit with:
 
 ```bash
 nova capture --emit-otel-genai python my_agent.py
@@ -1587,7 +1592,7 @@ may change between minor versions.
 
 Beyond the offline `nova cost estimate` and the ClickHouse-backed `nova cost
 report` (both covered in the [CLI reference](cli-reference.md#nova-cost-report)),
-three additional `nova cost` subcommands report **descriptive** cost evidence over
+four additional `nova cost` subcommands report **descriptive** cost evidence over
 records you already hold. Each is **experimental**, read-only, and never a verdict —
 none applies a threshold, quota, or pass/fail; whether a figure is acceptable is
 the operator's call. Each also takes `--json`.
@@ -1603,6 +1608,13 @@ the operator's call. Each also takes `--json`.
   composition of a capsule (each usage type's share, cached-read ratio, reasoning /
   multimodal flags). Composition only — no cost, no verdict; honours "absent !=
   zero".
+- **`nova cost rollup <delegation.json> <capsule|attribution.json>`** (ADR-0146,
+  NF-142) — rolls the per-agent `cost_attribution` facet (NF-141) **up** the
+  acted-as delegation chain (ADR-0106): each hop's own cost and subtree cost, plus a
+  conservation block (root subtree vs run total, exact `Decimal` equality) that
+  names unchained and unattributed cost. Cycles and broken chains are reported as
+  findings (`basis: partial`), never a crash. Report-only — nothing is written to
+  the capsule, and grant signatures are not re-verified.
 
 See the [CLI reference](cli-reference.md#nova-cost-attribute-experimental-adr-0146)
 for flags, input shapes, and exit codes.

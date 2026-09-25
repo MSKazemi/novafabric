@@ -196,8 +196,63 @@ bundle anchor can sign capsules that verify — a TLS server certificate from th
 same CA included. Put a **dedicated signing CA** (or a signing-only
 intermediate) in the bundle, not a general-purpose enterprise root.
 
-**Honest limits (experimental):** no revocation checking (CRL/OCSP — ADR-0055
-OQ-55-3 remains open), the CLI validates at the current time (a signer
+##### Offline CRL revocation check (ADR-0070 §3, ADR-0055 OQ-55-3) — experimental
+
+Air-gapped nodes cannot reach a CRL distribution point, so revocation is
+checked against CRLs an operator **syncs into a local directory** (a cron job
+on a connected host copying each CA's CRL, DER or PEM, into e.g.
+`/var/lib/novaseal/crl/`). NovaFabric **never fetches** a CRL.
+
+```bash
+nova verify --ca-bundle /etc/novaseal/ca-bundle.crt \
+    --crl-dir /var/lib/novaseal/crl [--crl-strict] path/to/capsule/
+```
+
+```python
+from novafabric.trust.novaseal.crl import load_crl_directory
+store = load_crl_directory(Path("/var/lib/novaseal/crl"))
+result = validate_certificate_chain(leaf, anchors, crl_store=store)  # crl_strict=False
+# result.revocation.certificates -> per-cert status, leaf first
+```
+
+Every certificate on the validated path below the terminating anchor (leaf
+and intermediates) is checked against the CRL **issued by its issuer**, and
+the CRL's signature must verify under that issuer's public key (the issuer
+must also permit `cRLSign` when it carries keyUsage). When you bundle
+`root + intermediate` (the CLI needs the intermediate in the bundle), path
+building stops at the intermediate; the check then walks one step further to
+a bundle certificate that directly signed it, so the **root's CRL can revoke
+the intermediate**. A self-signed root is never revocation-checked — remove it
+from the bundle to distrust it.
+
+| Status | Meaning | Default (soft-fail) | `--crl-strict` |
+|---|---|---|---|
+| `good` | a current, authentic CRL does not list the serial | pass | pass |
+| `revoked` | an authentic CRL lists it, revocation date ≤ validation time (reason shown) | **fail** | **fail** |
+| `no_crl` | no CRL from the issuer covers the certificate | warning | fail |
+| `stale` | only CRLs outside `thisUpdate ≤ now ≤ nextUpdate` | warning | fail |
+| `invalid_crl` | CRLs name the issuer but none verifies (forged/unsigned) | warning | fail |
+
+Warnings are always printed per certificate under `Revocation (CRL, offline,
+soft-fail)`. A forged CRL can neither revoke nor clear a certificate.
+Revocation is irreversible, so an authentic but stale CRL that lists the
+serial still yields `revoked` (a `certificateHold` counts only from the
+newest current CRL). The directory read is bounded: at most 256 candidate
+files (more fails closed — never a silently truncated set) and 16 MiB per
+file (larger is skipped with a finding); hidden files (e.g. a sync job's
+partial download) and sub-directories are ignored; non-CRL files, delta CRLs,
+indirect / reason-partitioned CRLs and CRLs with an unknown critical
+extension are skipped and reported as `skipped <file>: <why>`. CRLs whose
+IssuingDistributionPoint scope (user-only, CA-only, distribution-point name)
+does not cover a certificate are not used for it. `novaseal.yaml` accepts
+`crl_dir:` and `crl_strict:` equivalents.
+
+Limits: no OCSP (ADR-0070 §6), no delta-CRL merge, no indirect CRLs, CLI
+evaluates at the current time; the RFC 3161 TSA chain (ADR-0070 §1–2) does
+not yet use this directory.
+
+**Honest limits (experimental):** revocation is CRL-only and needs an
+operator sync job (above), the CLI validates at the current time (a signer
 certificate that has since expired fails; the library's `validation_time`
 lets a caller validate at signing time instead), the DSSE envelope carries
 only the leaf so any intermediate must be in the bundle for the CLI, and the

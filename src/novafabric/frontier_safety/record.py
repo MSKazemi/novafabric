@@ -12,16 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Fail-open capture helpers for P2 frontier-safety objects (ADR-0167 D6, I-2).
+"""Fail-open capture helpers for P2/P3 frontier-safety objects (ADR-0167 D6, I-2).
 
-The model constructors in :mod:`novafabric.frontier_safety.control` are
+The model constructors in :mod:`novafabric.frontier_safety.control` and
+:mod:`novafabric.frontier_safety.alignment` are
 *strict*: an invalid control decision raises, because a library caller building
 evidence deliberately wants to know. The capture path is the opposite: it runs
 next to the very workload the evidence observes, and ADR-0167 is explicit that
 safety evidence must **never block** that workload. So these helpers:
 
-- accept a constructed object or a raw mapping from an external protocol/
-  framework adapter;
+- accept a constructed object or a raw mapping from an external protocol,
+  framework or evaluator adapter;
 - on *any* invalid material (bad digest, payload-shaped field, inlined C4
   decision, computed verdict, malformed existing facet) log a structured
   warning naming only the error class and field names — never the values,
@@ -29,19 +30,26 @@ safety evidence must **never block** that workload. So these helpers:
   **unchanged**;
 - never raise, never retry, never do IO.
 
-Nothing here can pause, gate or refuse the run. A fired tripwire recorded here
-is only a record that it fired.
+Nothing here can pause, gate or refuse the run. A fired tripwire — or a
+reported successful sandbox escape — recorded here is only a record of what an
+external party reported.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, TypeVar
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from novafabric.frontier_safety._common import FrontierSafetyError
+from novafabric.frontier_safety.alignment import (
+    AutonomyAttempt,
+    DeceptionSignal,
+    ElicitationRecord,
+    SandbaggingRecord,
+)
 from novafabric.frontier_safety.control import ControlDecision, TripwireTrigger
 from novafabric.frontier_safety.facet import (
     FrontierSafetyFacet,
@@ -49,7 +57,14 @@ from novafabric.frontier_safety.facet import (
     facet_from_capsule,
 )
 
-__all__ = ["record_control_decision", "record_tripwire_trigger"]
+__all__ = [
+    "record_autonomy_attempt",
+    "record_control_decision",
+    "record_deception_signal",
+    "record_elicitation_record",
+    "record_sandbagging_record",
+    "record_tripwire_trigger",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +74,8 @@ logger = logging.getLogger(__name__)
 #: Deliberately not a bare ``Exception``, so an unrelated bug (say, a
 #: ``KeyError`` in this module) is not silently hidden from tests.
 _ABSORBED = (FrontierSafetyError, ValidationError, ValueError, TypeError)
+
+_M = TypeVar("_M", bound=BaseModel)
 
 
 def _existing_facet(capsule: Mapping[str, Any]) -> FrontierSafetyFacet:
@@ -93,18 +110,7 @@ def record_control_decision(
     never raises for bad safety material and never blocks the workload
     (ADR-0167 I-2).
     """
-    try:
-        record = (
-            decision
-            if isinstance(decision, ControlDecision)
-            else ControlDecision.model_validate(dict(decision))
-        )
-        facet = _existing_facet(capsule)
-        facet.control_decisions = [*(facet.control_decisions or []), record]
-        return attach_facet(capsule, facet)
-    except _ABSORBED as exc:
-        _log_dropped("control_decision", exc)
-        return capsule
+    return _append(capsule, decision, ControlDecision, "control_decisions", "control_decision")
 
 
 def record_tripwire_trigger(
@@ -118,15 +124,75 @@ def record_tripwire_trigger(
     input capsule is returned unchanged and a warning is logged (ADR-0167
     I-1, I-2).
     """
+    return _append(capsule, trigger, TripwireTrigger, "tripwire_triggers", "tripwire_trigger")
+
+
+def _append(
+    capsule: dict[str, Any],
+    material: BaseModel | Mapping[str, Any],
+    model: type[_M],
+    field: str,
+    kind: str,
+) -> dict[str, Any]:
+    """Validate ``material`` as ``model`` and append it to ``facet.<field>``.
+
+    The shared fail-open body of every ``record_*`` helper: any bad safety material is
+    logged value-free and the input capsule is returned unchanged.
+    """
     try:
-        record = (
-            trigger
-            if isinstance(trigger, TripwireTrigger)
-            else TripwireTrigger.model_validate(dict(trigger))
-        )
+        record = material if isinstance(material, model) else model.model_validate(dict(material))
         facet = _existing_facet(capsule)
-        facet.tripwire_triggers = [*(facet.tripwire_triggers or []), record]
+        setattr(facet, field, [*(getattr(facet, field) or []), record])
         return attach_facet(capsule, facet)
     except _ABSORBED as exc:
-        _log_dropped("tripwire_trigger", exc)
+        _log_dropped(kind, exc)
         return capsule
+
+
+def record_deception_signal(
+    capsule: dict[str, Any], signal: DeceptionSignal | Mapping[str, Any]
+) -> dict[str, Any]:
+    """Append an external NF-354 deception/scheming signal, fail-open.
+
+    Returns a new capsule dict with the signal appended to
+    ``facets.frontier_safety.deception_signals``. NovaFabric asserts no
+    scheming judgement of its own; on invalid material the input capsule is
+    returned unchanged and a warning is logged (ADR-0167 D3, I-2).
+    """
+    return _append(capsule, signal, DeceptionSignal, "deception_signals", "deception_signal")
+
+
+def record_sandbagging_record(
+    capsule: dict[str, Any], record: SandbaggingRecord | Mapping[str, Any]
+) -> dict[str, Any]:
+    """Append an external NF-355 sandbagging / under-elicitation record, fail-open.
+
+    Appends to ``facets.frontier_safety.sandbagging_records``. The ceiling and
+    the comparison are the external evaluator's; on invalid material the input
+    capsule is returned unchanged (ADR-0167 D3, I-2).
+    """
+    return _append(capsule, record, SandbaggingRecord, "sandbagging_records", "sandbagging_record")
+
+
+def record_autonomy_attempt(
+    capsule: dict[str, Any], attempt: AutonomyAttempt | Mapping[str, Any]
+) -> dict[str, Any]:
+    """Append an NF-356 autonomy-attempt record (counts + report digest), fail-open.
+
+    Appends to ``facets.frontier_safety.autonomy_attempts``. A payload-shaped
+    field drops the whole record — the payload never reaches the capsule or
+    the log — and the input capsule is returned unchanged (ADR-0167 I-2, I-5).
+    """
+    return _append(capsule, attempt, AutonomyAttempt, "autonomy_attempts", "autonomy_attempt")
+
+
+def record_elicitation_record(
+    capsule: dict[str, Any], record: ElicitationRecord | Mapping[str, Any]
+) -> dict[str, Any]:
+    """Append an NF-358 elicitation-during-deployment record, fail-open.
+
+    Appends to ``facets.frontier_safety.elicitation_records``; on invalid
+    material (including ``no_ceiling_computed: false``) the input capsule is
+    returned unchanged (ADR-0167 D3, I-2).
+    """
+    return _append(capsule, record, ElicitationRecord, "elicitation_records", "elicitation_record")

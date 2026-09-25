@@ -183,6 +183,18 @@
         "null"
       ]
     },
+    "score_config_digest": {
+      "description": "ADR-0117 D4 aggregation pin: sha256 content digest of the ScoreConfig the aggregate was computed under (score_config_ref then holds its resolved name@version). Optional; absent = not pinned.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      ]
+    },
     "finalized_at": {
       "type": [
         "string",

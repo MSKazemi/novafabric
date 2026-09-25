@@ -2181,6 +2181,26 @@ candidate *and* exits with the gate's code in one step. Comparing experiments ov
 different pinned datasets is a hard error — the dataset hash is part of the record,
 so an apples-to-oranges comparison cannot happen silently.
 
+**Pin the metric definition too (experimental, ADR-0117 P4).** The dataset is pinned,
+but *what `exact_match` means* can drift as well. Register it once and pass
+`--score-config` so each experiment records the config's content digest:
+
+```bash
+nova eval score config add --name exact_match --value-type boolean \
+    --description "stdout equals the expected answer exactly"
+nova experiment run --dataset capitals.jsonl --target capital-bot@2.0.0 \
+    --score-config exact_match@1 --runs-dir exp-runs -- python3 qa_agent.py "{input}"
+#   score config: exact_match@1 (sha256:…)
+
+nova experiment compare 01KXMZ8XCVKP… 01KXMZ97E78D… --require-comparable
+```
+
+Every comparison reports a `score_config` block: `comparable: true` when both runs pinned
+the same digest, `false` (both digests shown) when they differ, and `null` ("not pinned")
+when either side has no pin — comparability is never assumed. `--require-comparable`
+exits `2` unless it is `true`; an unknown or mismatched `--score-config` fails before any
+item runs.
+
 ---
 
 ## Summary and next steps

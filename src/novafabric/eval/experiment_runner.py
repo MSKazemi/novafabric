@@ -49,6 +49,8 @@ from novafabric.eval.experiment import (
     finalize_experiment,
 )
 from novafabric.eval.experiment_dataset import DatasetItem, LoadedDataset
+from novafabric.eval.score_config import ScoreConfig, validate_score_against_config
+from novafabric.eval.score_config_pin import pinned_ref, resolve_score_config_pin
 from novafabric.eval.scores import (
     SCORES_FILENAME,
     Score,
@@ -171,6 +173,7 @@ def run_experiment(
     labels: dict[str, str] | None = None,
     baseline_experiment_id: str | None = None,
     timeout_s: float | None = None,
+    score_config_db_path: Path | None = None,
 ) -> Experiment:
     """Run *command* across every dataset item; return a finalized record (D2).
 
@@ -178,8 +181,25 @@ def run_experiment(
     provenance facet is written into each capsule; items with an ``expected``
     value get a boolean exact-match ``code`` score appended to the capsule's
     ``scores.jsonl`` (ADR-0099, additive). Zero-token by construction.
+
+    *score_config_ref* (``name``, ``name@version``, or ``sha256:<hex>``) pins the
+    aggregate to an immutable ADR-0117 ``ScoreConfig`` (D4): it is resolved
+    read-only against the local catalog **before any item runs**, every emitted
+    score is validated against it, and the record stores the resolved
+    ``name@version`` plus its ``score_config_digest``. An unresolvable or
+    mismatched ref raises :class:`~novafabric.eval.score_config_pin.ScoreConfigPinError`
+    (never silently dropped). ``None`` ⇒ no pin, exactly the pre-P4 behavior.
     """
     from novafabric.capture.orchestrator import CaptureOrchestrator
+
+    pin: ScoreConfig | None = None
+    if score_config_ref is not None:
+        pin = resolve_score_config_pin(
+            score_config_ref,
+            metric=metric,
+            value_type=ScoreValueType.BOOLEAN,  # the built-in exact-match scorer
+            db_path=score_config_db_path,
+        )
 
     orchestrator = CaptureOrchestrator(base_dir=runs_dir)
     facet_base = DatasetProvenanceFacet(
@@ -222,6 +242,8 @@ def run_experiment(
         score_ids: list[str] = []
         if item.expected is not None:
             score = _score_exact_match(result.capsule_dir, result.run_id, item, metric)
+            if pin is not None:
+                validate_score_against_config(score, pin)
             append_score(result.capsule_dir / SCORES_FILENAME, score)
             collected.append(score)
             score_ids.append(score.score_id)
@@ -240,7 +262,8 @@ def run_experiment(
         runs=runs,
         aggregate=compute_aggregates(collected),
         status="running",
-        score_config_ref=score_config_ref,
+        score_config_ref=None if pin is None else pinned_ref(pin),
+        score_config_digest=None if pin is None else pin.content_digest,
         baseline_experiment_id=baseline_experiment_id,
         labels=labels or {},
     )

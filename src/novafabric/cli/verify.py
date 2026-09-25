@@ -106,6 +106,31 @@ def verify_cmd(
             dir_okay=False,
         ),
     ] = None,
+    crl_dir: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--crl-dir",
+            help=(
+                "Directory of operator-synced CRLs (DER or PEM) to revocation-check the "
+                "validated signer chain against, offline — never fetched (ADR-0070 §3, "
+                "experimental). Requires --ca-bundle (or ca_bundle in novaseal.yaml); "
+                "overrides crl_dir in novaseal.yaml. A revoked certificate always fails; "
+                "a missing/stale/invalid CRL is a visible warning unless --crl-strict."
+            ),
+            file_okay=False,
+        ),
+    ] = None,
+    crl_strict: Annotated[
+        bool,
+        typer.Option(
+            "--crl-strict",
+            help=(
+                "With --crl-dir: also fail when a chain certificate has no CRL, only a "
+                "stale CRL, or only CRLs whose signature does not verify "
+                "(ADR-0070 crl_strict). Also enabled by crl_strict: true in novaseal.yaml."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Verify a capsule's cryptographic seal, timestamp, and Merkle log inclusion.
 
@@ -133,6 +158,10 @@ def verify_cmd(
 
       # Also validate the signer certificate chain against an operator CA bundle
       nova verify --ca-bundle /etc/novaseal/ca-bundle.crt path/to/my-capsule/
+
+      # ... and revocation-check that chain against locally synced CRLs (offline)
+      nova verify --ca-bundle /etc/novaseal/ca-bundle.crt \\
+          --crl-dir /var/lib/novaseal/crl --crl-strict path/to/my-capsule/
 
       # Verify a redaction proof report seal independently
       nova verify --check-redaction path/to/report.seal.json path/to/my-capsule/
@@ -250,8 +279,18 @@ def verify_cmd(
     result = seal.verify(capsule_id=capsule_id, seal_dir=str(seal_dir))
     binding = _capsule_binding_report(capsule_dir, dsse_bytes)
     chain_bundle = ca_bundle if ca_bundle is not None else getattr(profile, "ca_bundle", None)
+    crl_directory = crl_dir if crl_dir is not None else getattr(profile, "crl_dir", None)
+    strict_crl = crl_strict or bool(getattr(profile, "crl_strict", False))
+    if crl_dir is not None and chain_bundle is None:
+        err_console.print(
+            "[red]Error:[/red] --crl-dir needs a CA bundle to build the chain it checks "
+            "(pass --ca-bundle or set ca_bundle in novaseal.yaml)."
+        )
+        raise typer.Exit(code=2)
     chain_check = (
-        _signer_chain_check(dsse_bytes, chain_bundle) if chain_bundle is not None else None
+        _signer_chain_check(dsse_bytes, chain_bundle, crl_dir=crl_directory, crl_strict=strict_crl)
+        if chain_bundle is not None
+        else None
     )
 
     # Print results
@@ -272,9 +311,11 @@ def verify_cmd(
     binding_ok = _print_capsule_binding(binding)
     chain_ok = True
     if chain_check is not None:
-        chain_ok, chain_detail = chain_check
+        chain_ok, chain_detail, revocation_lines = chain_check
         _print_check("Signer certificate chain (CA bundle)", chain_ok)
         console.print(f"    {chain_detail}")
+        for line in revocation_lines:
+            console.print(f"    {line}")
     if not capsule_id_ok:
         _print_check("Log-entry capsule_id matches the signed payload", False)
         console.print(
@@ -305,7 +346,13 @@ def verify_cmd(
         raise typer.Exit(code=1)
 
 
-def _signer_chain_check(dsse_bytes: bytes, bundle_path: Path) -> tuple[bool, str]:
+def _signer_chain_check(
+    dsse_bytes: bytes,
+    bundle_path: Path,
+    *,
+    crl_dir: Path | None = None,
+    crl_strict: bool = False,
+) -> tuple[bool, str, list[str]]:
     """Bind the DSSE signature to a CA-validated signer certificate (ADR-0055).
 
     Offline and fail-closed. Passes only when some signature entry verifies over the
@@ -313,9 +360,18 @@ def _signer_chain_check(dsse_bytes: bytes, bundle_path: Path) -> tuple[bool, str
     same certificate chains to the bundle — chain-validating ``signatures[0].cert``
     alone let a forged envelope pair a legitimate leaf with an attacker's ``pubkey``
     and signature. An unreadable bundle, an envelope without an embedded certificate,
-    or a chain that does not reach a bundle anchor all return ``(False, reason)``.
-    Returns ``(True, "chain: leaf <- ... <- anchor")`` on success.
+    or a chain that does not reach a bundle anchor all return ``(False, reason, …)``.
+    Returns ``(True, "chain: leaf <- ... <- anchor", …)`` on success.
+
+    With ``crl_dir`` (ADR-0070 §3), the validated path is also revocation-checked
+    against the locally synced CRLs — never fetched. An unusable CRL directory fails
+    closed. The third element holds the per-certificate revocation lines and any
+    skipped-file findings, printed so soft-fail warnings are always visible.
     """
+    from novafabric.trust.novaseal.crl import (  # noqa: PLC0415
+        CrlStoreError,
+        load_crl_directory,
+    )
     from novafabric.trust.novaseal.x509_identity import (  # noqa: PLC0415
         X509ChainError,
         load_ca_bundle,
@@ -324,14 +380,37 @@ def _signer_chain_check(dsse_bytes: bytes, bundle_path: Path) -> tuple[bool, str
 
     try:
         anchors = load_ca_bundle(bundle_path.read_bytes())
-        outcome = verify_dsse_signer_chain(dsse_bytes, anchors)
+        store = load_crl_directory(crl_dir) if crl_dir is not None else None
+        outcome = verify_dsse_signer_chain(
+            dsse_bytes, anchors, crl_store=store, crl_strict=crl_strict
+        )
     except OSError as exc:
-        return False, f"cannot read CA bundle {bundle_path}: {exc}"
-    except X509ChainError as exc:
-        return False, str(exc)
+        return False, f"cannot read CA bundle {bundle_path}: {exc}", []
+    except (X509ChainError, CrlStoreError) as exc:
+        return False, str(exc), []
+    lines = _revocation_lines(outcome.revocation)
     if not outcome.valid:
-        return False, outcome.reason
-    return True, "chain: " + " <- ".join(outcome.chain_subjects)
+        return False, outcome.reason, lines
+    return True, "chain: " + " <- ".join(outcome.chain_subjects), lines
+
+
+def _revocation_lines(revocation: Any) -> list[str]:
+    """Render a ``RevocationCheckResult`` as indented, colour-coded CLI lines."""
+    if revocation is None:
+        return []
+    mode = "strict" if revocation.strict else "soft-fail"
+    lines = [f"Revocation (CRL, offline, {mode}):"]
+    colours = {"good": "green", "revoked": "red"}
+    for cert in revocation.certificates:
+        status = cert.status.value
+        colour = colours.get(status, "red" if revocation.strict else "yellow")
+        label = status.upper() if status in colours else f"WARNING {status}"
+        if status not in colours and revocation.strict:
+            label = f"FAIL {status}"
+        lines.append(f"  [{colour}]{label}[/{colour}] {cert.subject}: {cert.detail}")
+    for finding in revocation.findings:
+        lines.append(f"  [yellow]skipped[/yellow] {finding.source}: {finding.message}")
+    return lines
 
 
 def _derive_capsule_id(dsse_bytes: bytes) -> str:

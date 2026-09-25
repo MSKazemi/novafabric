@@ -97,7 +97,7 @@ MIGRATION_EVENT = "migration"
 #: ``<format-family>@<dotted-numeric-version>`` — e.g. ``run-capsule@0.3.0`` or
 #: ``evidence-bundle@2``. Numeric-only on purpose: monotonicity has to be
 #: decidable offline in 2045 without knowing what a pre-release tag meant.
-_FORMAT_VERSION_RE = re.compile(r"^([a-z][a-z0-9-]{0,63})@(\d{1,9}(?:\.\d{1,9}){0,5})$")
+_FORMAT_VERSION_RE = re.compile(r"^([a-z][a-z0-9-]{0,63})@(\d{1,9}(?:\.\d{1,9}){0,5})\Z")
 
 #: A URI whose authority carries ``user[:password]@`` embeds a credential; a
 #: reference must never do that (I-2, ADR-0009).

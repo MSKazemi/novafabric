@@ -1,0 +1,24 @@
+# ADR-0159 NF-278 golden fixture: a facets.feature_attribution block for READER unit tests.
+# NOT a schema-valid run-capsule facet: feature_attribution is not in the closed
+# facet registry (ADR-0196 D2) — registering it needs its own ADR.
+# The reasons are deliberately NOT in rank order — the exporter must render them
+# in the recorded order with the recorded rank, never re-ranked.
+method: shap-tree
+producer: credit-underwriter-v4/explainer@1.2
+model_call_id: mc-001
+reasons:
+  - rank: 2
+    feature: delinquency_count_24m
+    reason_code: RC-07
+    description: Number of recent delinquencies
+    contribution: -0.18
+  - rank: 1
+    feature: debt_to_income
+    reason_code: RC-03
+    description: Debt-to-income ratio too high
+    contribution: -0.31
+  - rank: 3
+    feature: credit_history_months
+    reason_code: RC-11
+    description: Length of credit history insufficient
+    contribution: -0.07

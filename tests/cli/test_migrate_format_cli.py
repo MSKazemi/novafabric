@@ -338,13 +338,28 @@ def test_facet_file_must_be_object_and_valid(tmp_path: Path) -> None:
     assert result.exit_code == 2 and "facet is invalid" in result.stderr
 
 
-def test_malformed_stored_chain_exits_2(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "stored", ["not-a-list", [{"from_version": "run-capsule@0.2.0"}]], ids=["shape", "hop"]
+)
+def test_malformed_stored_chain_is_broken_not_bad_input(tmp_path: Path, stored: object) -> None:
+    """A tampered stored chain is broken evidence (exit 1), never a usage error (2)."""
     data = json.loads(ANCHOR.read_text())
-    data["format_migration_chain"] = "not-a-list"
+    data["format_migration_chain"] = stored
     f = tmp_path / "f.json"
     f.write_text(json.dumps(data))
     result = _invoke("--facet", str(f), "--check")
-    assert result.exit_code == 2 and "must be a list" in result.stderr
+    assert result.exit_code == 1, result.stderr
+    assert "BROKEN" in result.stderr and "malformed" in result.stderr
+    assert _boundary_printed(result)
+    as_json = _invoke("--facet", str(f), "--check", "--json")
+    assert as_json.exit_code == 1
+    payload = json.loads(as_json.stdout)
+    assert payload["ok"] is False and "malformed" in payload["malformed_record"]
+    append = _invoke(
+        "--facet", str(f), "--to", "run-capsule@0.3.0", "--tool", TOOL,
+        "--post-digest", D03, "--from", "run-capsule@0.2.0",
+    )  # fmt: skip
+    assert append.exit_code == 1 and "Refused" in append.stderr and append.stdout == ""
 
 
 def test_capsule_without_anchor_exits_2(tmp_path: Path) -> None:

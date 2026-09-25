@@ -545,7 +545,7 @@ When the server is running, the same route table is browsable interactively:
   a read-first (Layer A) dashboard over capsules on your own machine. The separate
   multi-tenant `nova server` API is specified in `api/openapi.yaml`.
 - **`api/openapi.yaml` is a hand-curated spec, not a generated one — but is now essentially
-  complete.** As of this pass it documents 75 operations, matching all 75 always-mounted
+  complete.** As of this pass it documents 76 operations, matching all 76 always-mounted
   `nova server` routes (the resource routers under `/v0` plus the `/scim/v2/*` surface;
   previously-noted gaps — `/v0/orgs`, `/v0/workspaces`, `/v0/service-accounts`,
   `/v0/admin/roles`, `/v0/runs/suggest-register`, `/v0/seal/*`, `/v0/auth/saml/*`, SCIM — are
@@ -556,6 +556,16 @@ When the server is running, the same route table is browsable interactively:
   when an operator opts in (`config.demo_device_grant`, default `False`; the HS256 tokens
   they issue are never honored by the real verifier) — but flagging it here rather than
   silently dropping it from this note.
+- **Usage chargeback export (experimental, ADR-0208 P3):** `GET /v0/usage/export?from=YYYY-MM&to=YYYY-MM&format=csv|ndjson`
+  (optional `workspace=` / `org=`) on the `nova server` API streams the same rows as
+  `nova server usage export` as an attachment — `text/csv; charset=utf-8; header=present`
+  (RFC 4180, formula-injection-safe cells) or `application/x-ndjson`, filename
+  `nova-usage-<from>_<to>.<ext>`. Admin/auditor see every workspace; any other principal only
+  its membership workspaces (filtered, not 403). Bad period/format or a range wider than 120
+  periods → `400` error envelope (`invalid_period` / `invalid_period_range` /
+  `invalid_format`). Read-only (registry opened `mode=ro`, membership lookup included); a
+  locked/unreadable registry → `503` (`usage_store_unavailable`), never an empty 200; not
+  audited.
 - Requests to `/api/*` require the **session token**, in either of two forms (v0.97.0):
   a `?token=<token>` query parameter, or an `Authorization: Bearer <token>` header —
   **when the header carries a Bearer credential it is authoritative** and the query

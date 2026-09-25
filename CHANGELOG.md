@@ -13,6 +13,15 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **Auditor-only tokens were refused by `GET /v0/usage` despite ADR-0208 D2.** `auditor` sits
+  outside the reader < writer < admin chain, so the route's `require_role(reader)` 403'd it
+  before the handler's admin/auditor branch ran. Both usage routes now admit admin/auditor or
+  a reader (`_require_usage_viewer`); regression test in `tests/test_server_usage_p3.py`.
+
+- **`nova graph agent` could crash with `RecursionError` on deeply nested spans.**
+  `agent_graph.builder._max_depth` recursed once per span level; it is now iterative with
+  memoisation and terminates on a malformed parent cycle (`tests/agent_graph/test_max_depth_iterative.py`).
+
 - **`nightly-scale-gates.yml`'s `object-store-scale` job had been red every night since at least
   2026-09-17 — Docker Hub discontinued the `minio/minio` image entirely.**
 
@@ -198,6 +207,109 @@ longer forwards the submitting shell's environment (ADR-0270).
   Their open-coded filters were replaced by the shared helper so the three cannot drift apart.
 
 ### Added
+
+- **A second batch of ten accepted-ADR slices landed (all experimental, 2026-09-25).** Listed
+  below; none changes `schemas/run-capsule.*` (new records ride existing `extra="allow"` facets).
+  An adversarial review before merge hardened them: every `^…$` validator now uses
+  `fullmatch`/`\Z` (a trailing newline no longer slips past digest/code/period checks, incl. a
+  header-splitting LF in the usage-export filename); the frontier-safety payload guard normalises
+  keys and matches by substring with a 512-char cap; every string the adverse-action pack renders
+  is secret-scanned and `rank`/`contribution` must be numeric; usage export fails 503 on a locked
+  or unreadable store instead of returning an empty bill, and membership lookups are read-only;
+  re-seal verify flags signature downgrades within a tier (`signature_alg_downgrade`); tampered
+  stored preservation / format-migration records exit 1 (broken), not 2; `crl_dir`/`crl_strict`
+  without `ca_bundle` is a config error.
+
+- **Human-oversight evidence: decision-context receipts, overrides and rationale (experimental,
+  ADR-0150 P2, NF-182/187/188).** `novafabric.hitl` now records what a human was shown when deciding
+  at a conversation turn — an ordered, digest-only `shown_context` with a SHA-256 Merkle
+  `context_root` — plus human overrides of agent actions and the agent's rationale surfaced to the
+  human, each anchored to a turn in `facets.conversation`. Recording is fail-open (never raises into
+  the workload); records hold only digests, short codes and pseudonymous `human:` refs. New read-only
+  `nova hitl thread show`, `context show|verify` (exit 0 ok / 1 defective / 2 nothing to check),
+  `override list` and `rationale show`. Record-only: NovaFabric does not adjudicate the decision.
+
+- **`nova diff --graph-shape` adds an agent-graph shape-change pre-check (experimental, ADR-0124
+  P3 diff half).** Both capsules' agent execution graphs are rebuilt and an additive `graph_shape`
+  block (text, `json`, `github-annotation`) reports `same shape`, `shape changed` with bounded,
+  deterministically ordered node/edge deltas by structural path, or `graph unavailable` with a
+  reason — never failing the diff. Verdict uses a new id/timing/capsule-independent `shape_digest`
+  (the per-side `graph_digest` is reported too). `--assert-same-shape` exits 1 on a shape change,
+  2 when a graph is unavailable. Default diff output is byte-identical without the flags.
+
+- **OTLP ingest now reads log levels back (ADR-0127 P4 inbound, experimental).** The OTel
+  GenAI trace import (`POST /api/otlp/v1/traces`, `novafabric.otel.genai_ingest`) consumes
+  the `novafabric.severity_number`/`novafabric.severity_text` span attributes written by
+  `nova capture --emit-otel-genai`, plus a span event's OTel `SeverityNumber`/`SeverityText`,
+  so a record's `log_level` survives an export→import round trip. New
+  `from_otel_severity()` maps 1–8→`debug`, 9–12→`info`, 13–16→`warn`, 17–24→`error`;
+  anything else is ignored, never guessed, and stays under `otlp.unmapped`. The most severe
+  of span status and severity wins; a severity-decided level records `log_level_source: adapter`.
+
+- **Usage chargeback export over HTTP — `GET /v0/usage/export` (experimental, ADR-0208 P3).**
+  The `nova server` API now serves the same per-`(period, org, workspace, metric)` rows as
+  `nova server usage export`, byte-identical, as a streamed attachment:
+  `?from=YYYY-MM&to=YYYY-MM&format=csv|ndjson` (+ optional `workspace`/`org`), RFC 4180 CSV with
+  formula-injection-safe cells (`text/csv; charset=utf-8; header=present`) or
+  `application/x-ndjson`. Admin/auditor see every workspace, other principals only their
+  membership workspaces (filtered, not 403); bad periods/format or >120-period ranges are a
+  `400` error envelope. Read-only: the registry is opened `mode=ro`. Also fixes pure-auditor
+  tokens being 403'd by `GET /v0/usage` despite ADR-0208 D2.
+
+- **`nova cost rollup` rolls per-agent cost up the acted-as delegation chain (ADR-0146 P2,
+  NF-142, experimental, report-only).** Reads a delegation document in the
+  `trust/delegation.py` grant shape plus the NF-141 `cost_attribution` facet (capsule dir, run
+  id, or JSON/YAML file) and reports per hop `self_cost`/`subtree_cost`/`grantees`, with an
+  exact-`Decimal` conservation block (root subtree vs run total, plus explicit unchained and
+  unattributed cost). Cycles, broken chains, self-grants and multi-granter principals are
+  findings (`basis: partial`), never crashes; input is bounded and output deterministic.
+  Nothing is written to the capsule — `cost_rollup` is not a registered facet.
+
+- **Score-config aggregation pin for dataset experiments (experimental, ADR-0117 P4).**
+  `nova experiment run --score-config NAME[@VERSION]|sha256:<hex>` resolves the ref read-only
+  against the local score-config catalog before any item runs and records the resolved
+  `score_config_ref` (`name@version`) plus a new optional `score_config_digest` on the experiment;
+  an unknown, mismatched-metric/type, or tampered ref exits 2 with nothing captured.
+  `nova experiment compare` now carries a `score_config` comparability block keyed by digest —
+  `true` on the same digest, `false` (both digests) on different ones, `null` when either side is
+  unpinned — and `--require-comparable` exits 2 unless it is `true`. Schemas extended additively.
+
+- **Frontier-safety alignment-risk signals (ADR-0167 P3, experimental).** The optional
+  `facets.frontier_safety` block now records four external findings by reference: NF-354
+  deception/scheming/eval-awareness signals (`verdict_source` fixed to `scheming_eval`), NF-355
+  sandbagging records (declared-ceiling digest + the evaluator's `observed_vs_declared`), NF-356
+  sandbox-escape/exfiltration/replication attempts (counts + report digest only — exploit steps,
+  commands and exfiltrated data are rejected), and NF-358 elicitation records
+  (`no_ceiling_computed: true`, literal). Fail-open `record_*` helpers never raise into the
+  workload; `nova safety signal list [--type …] [--json]` reads them and exits 0 whenever the
+  capsule is readable. NovaFabric runs no detector and computes no verdict or ceiling.
+
+- **Offline CRL revocation checking for NovaSeal CA-bundle signer chains (ADR-0070 §3, ADR-0055
+  OQ-55-3; experimental).** `nova verify --ca-bundle … --crl-dir DIR [--crl-strict]` (or
+  `crl_dir` / `crl_strict` in `novaseal.yaml`) checks every certificate of the validated signer
+  chain — leaf and intermediates, including a bundled intermediate against its root's CRL — against
+  operator-synced DER/PEM CRLs, never fetched. CRLs must verify under the issuer's key; per-cert
+  status is good / revoked / no_crl / stale / invalid_crl. Revoked always fails; the rest are
+  visible warnings unless strict. Bounded directory read (256 files fail-closed, 16 MiB per file);
+  delta/indirect/non-CRL files are skipped with a finding. New `novafabric.trust.novaseal.crl`.
+
+- **`nova export-adverse-action` renders an ECOA / Reg B specific-reasons evidence pack from a
+  sealed capsule (ADR-0159 D6 / NF-278, experimental).** Reads one Run Capsule read-only and
+  reports four `complete` / `partial` / `missing` rows: the recorded model call(s) as model ref
+  plus SHA-256 digests of the recorded request/response (never the prompt text), `inputs/` files
+  bound to the sealed `evidence_digests`, the recorded `facets.feature_attribution` principal
+  reasons in recorded order and rank (never re-ranked or computed; `missing` when absent — always, until
+  `feature_attribution` is registered as a run-capsule facet via its own ADR), and seal presence. Carries a CFPB honesty line — evidence, not a notice, no credit decision, no
+  verdict field. Exit 2 only on a forged digest or malformed sealed evidence.
+
+- **Crypto re-seal record and LTV timestamp-renewal chain (ADR-0165 P3, record-only half, NF-333/334,
+  experimental).** `nova preservation reseal record|verify` and `nova preservation ltv append|verify`
+  add append-only `crypto_migration` and `ltv_renewal_chain` lists to `facets.preservation` and check
+  them offline. `original_sig_preserved: true` is a required literal, so a re-seal that dropped the
+  original signature is refused (exit 1). The LTV check follows the `parent`/`covered_digest` chain
+  (RFC 4998), rejects hash downgrades under an explicit strength order (an unknown algorithm is a
+  finding), and requires `renewed_before` to be monotonic and no later than the prior timestamp's
+  expiry. Record-only: no key generation, no TSA call, no ML-DSA; a capsule is never rewritten.
 
 - **Ten accepted-but-unbuilt ADR slices landed together (all experimental, 2026-09-24).** Each
   is listed below; none changes `schemas/run-capsule.*`, and every new facet field rides an

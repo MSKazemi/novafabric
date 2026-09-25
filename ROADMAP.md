@@ -41,6 +41,23 @@ Ten accepted-but-unbuilt ADR slices, all **experimental**, none changing `schema
 | 0188 | Deprecation removal gate | `tests/test_deprecation_removal_gate.py`, "Removed in" register column | `/v0`→`/v1` N−2 window |
 | 0208 | Usage reconcile + chargeback export (P2) | `nova server usage reconcile\|export` | HTTP export endpoint, per-org budgets, API-key binding enforcement |
 
+### Landed — [Unreleased], second batch (2026-09-25)
+
+Ten more accepted-ADR slices, all **experimental**, none changing `schemas/run-capsule.*`:
+
+| ADR | Slice | Surface | Still open |
+|---|---|---|---|
+| 0070 (+0055 OQ-55-3) | Offline CRL revocation for the x509 CA-bundle chain | `nova verify --crl-dir [--crl-strict]`, `crl_dir`/`crl_strict` config | online CDP fetch + cache, TSA-chain use (§1/§5 not built), delta CRLs, OCSP |
+| 0117 P4 | Score-config aggregation pin | `nova experiment run --score-config`, compare `score_config` block, `--require-comparable` | pinning `nova query`/`nova trend` aggregates |
+| 0124 P3 (diff half) | Agent-graph shape pre-check | `nova diff --graph-shape`, `--assert-same-shape` | replay annotation, P4 cache/view |
+| 0127 P4 (inbound) | OTLP ingest reads severity back | `POST /api/otlp/v1/traces` | `resourceLogs` ingest |
+| 0146 P2 / NF-142 | Acted-as cost rollup (report-only) | `nova cost rollup` | facet persistence (P6) |
+| 0150 P2 | Decision-context receipts, overrides, rationale | `nova hitl thread\|context\|override\|rationale` | NF-183..186, 189, 190 |
+| 0159 NF-278 | ECOA / Reg B specific-reasons pack | `nova export-adverse-action` | ADR registering `feature_attribution`, then a producer |
+| 0165 P3 (record-only) | Crypto re-seal record + LTV renewal chain | `nova preservation reseal\|ltv` | re-seal execution, TSA, token-level verify |
+| 0167 P3 | Alignment-risk signals by reference | `nova safety signal list` | P4 gate / case leaves, P5 seal |
+| 0208 P3 | HTTP chargeback export | `GET /v0/usage/export` | per-org budgets, API-key binding enforcement |
+
 ### Next — specified, unclaimed, ready to build
 
 *(Nothing currently listed. The three capture adapters that stood here —

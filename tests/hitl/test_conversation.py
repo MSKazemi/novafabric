@@ -189,6 +189,18 @@ def test_unprefixed_identities_are_rejected(author: str) -> None:
         _turn(author=author)
 
 
+@pytest.mark.parametrize("author", ["human:fp:9f2c4a1b7e0d5638\n", "agent:bot\n"])
+def test_identity_with_trailing_newline_is_rejected(author: str) -> None:
+    """``$`` would match before a final ``\\n``; the anchor is end-of-string."""
+    with pytest.raises(IdentityRefError):
+        _turn(author=author)
+
+
+def test_content_digest_with_trailing_newline_is_rejected() -> None:
+    with pytest.raises(TurnContentError):
+        _turn(content_digest=digest_turn(UTTERANCE) + "\n")
+
+
 def test_email_shaped_author_is_rejected_by_name() -> None:
     """`human:alice@example.com` is well-formed by shape and is still raw PII."""
     with pytest.raises(IdentityRefError, match="email"):

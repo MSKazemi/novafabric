@@ -140,6 +140,7 @@ Commands grouped by primitive and task. Each entry links to its full section.
 | [`nova cost estimate`](#nova-cost-estimate-experimental-adr-0133) | Offline per-capsule cost: recorded vs catalog-estimated (experimental) |
 | [`nova cost attribute`](#nova-cost-attribute-experimental-adr-0146) | Attribute recorded spend to productive vs wasted outcomes — descriptive (experimental) |
 | [`nova cost fairness`](#nova-cost-fairness-experimental-adr-0146) | Per-agent cost/energy/calls fairness ledger: share, Gini, max/mean — descriptive (experimental) |
+| [`nova cost rollup`](#nova-cost-rollup-experimental-adr-0146) | Roll per-agent cost up the acted-as delegation chain: self/subtree cost + exact conservation — report-only (experimental) |
 | [`nova cost usage-breakdown`](#nova-cost-usage-breakdown-experimental-adr-0132) | Token usage-type composition of a capsule — descriptive (experimental) |
 | [`nova pricing`](#nova-pricing-listshowadd-experimental-adr-0133) | Local model-pricing catalog: list, show, add (experimental) |
 | [`nova drift`](#offline-drift-and-tool-schema-analysis-experimental-adr-01470148) | Collects samples from sealed capsules, then runs the offline drift, silent-failure, root-cause and behavioral-fingerprint detectors over them (experimental) |
@@ -186,6 +187,7 @@ Commands grouped by primitive and task. Each entry links to its full section.
 | [`nova assure-coverage`](#nova-assure-coverage-document-experimental-adr-0166) | Structural coverage of an assurance case — counts and gaps, never a grade (experimental) |
 | [`nova passport`](#nova-passport-issue--verify-experimental-adr-0149) | Portable agent passport: issue + offline verify (experimental) |
 | [`nova embodied`](#nova-embodied-odd-show--trajectory-verify-experimental-adr-0162) | Embodied-agent evidence: ODD record (verdict always null) + perception→actuation trajectory chain verify, offline (experimental) |
+| [`nova hitl`](#nova-hitl-thread--context--override--rationale-experimental-adr-0150) | Human-agent accountability: conversation thread, decision-context receipt re-check, overrides, surfaced rationale — read-only (experimental) |
 
 ### Registry, promotion, and evaluation
 
@@ -267,6 +269,7 @@ Status: **experimental**.
 | [`nova doctor`](#nova-doctor---check-extras---check-storage---check-scheduler---check-tokens) | Installation, storage, scheduler/env-var, and token-at-rest diagnostics |
 | [`nova migrate-to-postgres`](#nova-migrate-to-postgres) | Migrate the local SQLite registry to Postgres |
 | [`nova migrate-format`](#nova-migrate-format-experimental-adr-0165-nf-332) | Record a format-migration hop in a preservation facet; verify the chain offline (experimental) |
+| [`nova preservation`](#nova-preservation-experimental-adr-0165-nf-333334) | Record/verify crypto re-seal events and LTV timestamp-renewal chains in a preservation facet (experimental, record-only) |
 | [`nova backup`](#nova-backup-create-experimental-adr-0181) / [`nova restore`](#nova-restore-set-path-experimental-adr-0181--adr-0211) | Evidence-grade backup sets: create, verify offline, restore (local + automated pg restore, experimental) |
 | [`nova support-bundle`](#nova-support-bundle-experimental-adr-0187) | Secret-safe diagnostics tarball for support (experimental) |
 | [`nova audit-log`](#nova-audit-log-export-experimental-adr-0191) | Export local audit logs for SIEM ingestion (OCSF / CEF / native JSONL, experimental) |
@@ -389,7 +392,14 @@ byte-identical to today — old capsules stay valid and read identically, with a
 missing `log_level` read as `info` by filters (absence is preserved, never
 back-filled). The OTLP trace import (server `/api/otlp/v1/traces`) maps a span
 that reported `STATUS_CODE_ERROR` to `log_level: error` with
-`log_level_source: span-status`. Filter recorded levels offline with
+`log_level_source: span-status`, and (**experimental**, ADR-0127 P4 inbound) consumes the
+OTel `SeverityNumber` carried by `novafabric.severity_number`/`novafabric.severity_text`
+span attributes (as written by `--emit-otel-genai`) or by a span event's
+`severityNumber`/`severityText`: 1–8 → `debug`, 9–12 → `info`, 13–16 → `warn`, 17–24 →
+`error`, so a level survives an export→import round trip. The most severe of span status
+and severity wins (span status keeps a tie); a severity-decided level records
+`log_level_source: adapter`. Out-of-range or non-integer severity is ignored — never
+guessed — and stays under `otlp.unmapped`. Filter recorded levels offline with
 `nova query --where 'log_level >= warn'` (severity-ordered, ADR-0129). Python
 capture API: `novafabric.capture.log_level` (`normalize_log_level`,
 `resolve_log_level` — most-severe source wins, provenance recorded).
@@ -1112,12 +1122,30 @@ nova diff cap-a/ cap-b/ --output-format json
 nova diff cap-a/ cap-b/ --output-format github-annotation
 nova diff cap-a/ cap-b/ --assert-no-regressions
 nova diff --group-by variant runs/arm-a/ runs/arm-b/
+nova diff cap-a/ cap-b/ --graph-shape
+nova diff cap-a/ cap-b/ --assert-same-shape
 ```
 
 Options:
 - `--output-format {text,json,github-annotation}` — output format (default: `text`). Tab-completion available via `nova --install-completion`.
 - `--assert-no-regressions` — exit 1 if any structural changes detected; useful as CI gate
 - `--group-by variant` — **experimental** ([ADR-0116](./decisions.md)). Group the two capsules by their **recorded** A/B-variant attribution — the `(experiment_id, variant_id)` of the optional `variant` block — and label the diff as cross-arm (different groups) or within-arm (same group). A capsule without a `variant` block groups under `(no variant)`. Read-only over recorded facts: this never assigns variants and never mutates a capsule. Capsule paths only; `text`/`json` output only (`json` wraps the report in `{variant_groups, cross_arm, diff}`).
+
+- `--graph-shape` — **experimental** ([ADR-0124](./decisions.md) P3). Rebuild both capsules'
+  agent execution graphs (as `nova graph agent`) and append an additive `graph_shape` block:
+  `same shape`, `shape changed` (node/edge deltas by structural path, e.g.
+  `span:agent.turn[0]/tool_call:git[0]`, with record ids; capped at 50 per list with true
+  totals), or `graph unavailable` with a reason. Reports each side's `graph_digest` (equal only
+  for byte-identical graphs — it binds capsule id, record ids and timings) and an id/timing-
+  independent `shape_digest` that decides "same shape". In `json` the block is a top-level
+  `graph_shape` key; in `github-annotation` one `notice`/`error`/`warning` line. Never fails
+  the diff. Capsule diffs only; not combinable with `--media`/`--significance`.
+- `--assert-same-shape` — **experimental**. Implies `--graph-shape`; CI gate on the shape.
+
+Exit codes (capsule diff): `0` success; `1` a capsule ref did not resolve, `--assert-no-regressions`
+found changes (checked first), or `--assert-same-shape` found a shape change; `2` usage error, or
+`--assert-same-shape` could not build a graph for either capsule (fail closed). Without
+`--graph-shape`/`--assert-same-shape` the output is byte-identical to earlier releases.
 
 Diff sections: environment (Python, OS), model calls (aligned by span_id), tool calls
 (aligned by tool_name + arg hash), output files (by hash).
@@ -3144,7 +3172,9 @@ Options:
 - `--backend [local|sigstore]` — verification backend (default: `local`). Use `sigstore` to verify a Sigstore bundle stored alongside the capsule; requires `pip install novafabric[sigstore]`
 - `--capsule-id TEXT` — capsule ID for Sigstore bundle lookup (required when `--backend sigstore`)
 - `--home PATH` — `NOVAFABRIC_HOME` override (used for Sigstore bundle path)
-- `--ca-bundle PATH` — **experimental** (ADR-0055). Operator CA bundle (concatenated PEM). Adds a `Signer certificate chain (CA bundle)` check: the certificate embedded in the DSSE envelope must chain — RFC 5280 path validation via `cryptography`'s `x509.verification`, offline, validity checked at the current time — to a certificate in the bundle. Every bundle certificate is a trust anchor; the envelope carries only the leaf, so include the issuing intermediate in the bundle. No CRL/OCSP revocation check. Overrides the optional `ca_bundle` key in `novaseal.yaml`; when neither is set, the check is skipped and output is unchanged. Local backend only. Fails closed (exit 1) on an unreadable/malformed bundle, a bare-key envelope, or a chain that does not reach an anchor.
+- `--ca-bundle PATH` — **experimental** (ADR-0055). Operator CA bundle (concatenated PEM). Adds a `Signer certificate chain (CA bundle)` check: the certificate embedded in the DSSE envelope must chain — RFC 5280 path validation via `cryptography`'s `x509.verification`, offline, validity checked at the current time — to a certificate in the bundle. Every bundle certificate is a trust anchor; the envelope carries only the leaf, so include the issuing intermediate in the bundle. No OCSP; offline CRL revocation checking is opt-in via `--crl-dir` (below). Overrides the optional `ca_bundle` key in `novaseal.yaml`; when neither is set, the check is skipped and output is unchanged. Local backend only. Fails closed (exit 1) on an unreadable/malformed bundle, a bare-key envelope, or a chain that does not reach an anchor.
+- `--crl-dir DIR` — **experimental** (ADR-0070 §3, ADR-0055 OQ-55-3). Directory of CRLs (DER or PEM) an operator syncs locally; **never fetched**. Every certificate of the validated signer chain below a self-signed root (leaf, intermediates — including a bundled intermediate, checked against its root's CRL) is checked against the CRL issued by its issuer, authenticated with the issuer's key. Per-certificate lines are printed under `Revocation (CRL, offline, soft-fail|strict)`: `GOOD`, `REVOKED` (with reason/date — always exit 1), or `WARNING no_crl` / `stale` / `invalid_crl` (forged or unsigned CRL). Skipped files (non-CRL, oversize > 16 MiB, delta/indirect CRLs) are listed. More than 256 files fails closed. Requires `--ca-bundle` or `ca_bundle` in `novaseal.yaml` (otherwise exit 2); overrides `crl_dir` in `novaseal.yaml`.
+- `--crl-strict` — with `--crl-dir`: a missing, stale or invalid CRL also fails (exit 1). Also enabled by `crl_strict: true` in `novaseal.yaml`.
 
 Exit codes: `0` (all checks pass), `1` (any check fails or .seal/ missing).
 
@@ -3490,6 +3520,42 @@ with no ODD recorded exits `0` and says so.
 The other ADR-0162 surfaces (`nova embodied sensors|actuation|sim2real|teleop|verify`,
 `nova export-dssad`, `nova lineage embodied`) are **planned**, not shipped.
 
+### nova hitl thread | context | override | rationale (experimental, ADR-0150)
+
+Read-only views over the human-agent accountability records stored in a capsule's
+`facets.conversation` block (NF-181 thread, NF-182 decision-context receipt, NF-187
+override, NF-188 rationale). Nothing is written; `--capsule` takes a capsule directory
+or a run id; `--json` emits deterministic JSON (sorted keys) with a `notice` field.
+
+```bash
+nova hitl thread show     --capsule <dir|run-id> [--json]               # NF-181 turns in order, pseudonymous authors
+nova hitl context show    --capsule <dir|run-id> --turn t2 [--json]     # NF-182 what the human saw + offline root re-check
+nova hitl context verify  --capsule <dir|run-id> [--json]               # re-perform every receipt (fail-closed)
+nova hitl override list   --capsule <dir|run-id> [--json]               # NF-187 human corrections
+nova hitl rationale show  --capsule <dir|run-id> --turn t1 [--json]     # NF-188 agent's stated reason (digest)
+```
+
+`context verify` recomputes each receipt's `context_root` — an RFC 6962-style SHA-256
+Merkle root over the ordered `shown_context` items, same construction as the capsule
+Merkle root — and checks that its `turn_ref` resolves to exactly one turn.
+
+Exit codes: `context verify` — `0` every receipt re-performs; `1` any receipt (or the
+capsule) is defective: dangling `turn_ref`, root mismatch, two receipts for one turn,
+malformed entry, unreadable capsule; `2` nothing to check. `context show` /
+`rationale show` exit `1` when the turn does not resolve, nothing is recorded for it, or
+a stored record is defective. `override list` exits `1` on a dangling `turn_ref` or a
+malformed entry, `0` for an empty list. `thread show` exits `1` on a broken
+`parent_turn_id` or a repeated turn id, and `0` (saying so) when there is no conversation
+facet.
+
+Every output carries the record-only notice: NovaFabric records what was shown, decided,
+overridden and surfaced; it does not adjudicate the decision, grant or deny any right, or
+certify that oversight was adequate or lawful. Records hold digests, short codes and
+pseudonymous `human:` refs only — never prose or names. Records are written by the
+library (`novafabric.hitl.record_decision_context` / `record_override` /
+`record_rationale`, fail-open); there is no CLI writer. `nova hitl handoff list` and
+`nova hitl acted-as` (NF-189/NF-186) are **planned**, not shipped.
+
 ---
 
 ## Incident forensics and subject-rights commands (experimental, ADR-0155/0161)
@@ -3753,6 +3819,7 @@ conventions:
 | [`nova export-model-risk`](#nova-export-model-risk-evidence) | SR 26-2 / SR 11-7 model-risk evidence | ADR-0159 |
 | [`nova export-model-independence`](#nova-export-model-independence---model-id) | Model-validation independence (ADR-0058 maker-checker) | ADR-0159 |
 | [`nova export-retention`](#nova-export-retention---bundle-zip) | SEC 17a-4 / MiFID retention posture + RFC 3161 timestamp | ADR-0159 |
+| [`nova export-adverse-action`](#nova-export-adverse-action---run-id-id) | ECOA / Reg B specific-reasons evidence (not a notice) | ADR-0159 |
 | [`nova export-part11`](#nova-export-part11-document) | 21 CFR Part 11 electronic records | ADR-0160 |
 | [`nova export-rai-scorecard`](#nova-export-rai-scorecard-document) | Responsible-AI coverage scorecard | ADR-0158 |
 | [`nova export-public-annex-viii`](#nova-export-public-annex-viii-document) | EU AI Act Annex VIII public DB (DRAFT) | ADR-0169 |
@@ -3833,6 +3900,50 @@ nova export-retention --bundle a.zip --bundle b.zip --regime mifid --json
 - `--worm-db`, `--worm-receipts`, `--audit-log` — override the WORM DB, supply cloud WORM receipts, override the audit log
 
 Exit codes: `0` (rendered, including `missing` rows), `2` (unreadable/corrupt bundle, policy, hold ledger, WORM DB or receipts).
+
+---
+
+### nova export-adverse-action --run-id \<id\>
+
+**Experimental** (ADR-0159 D6 / NF-278). Reads one sealed Run Capsule (by run id,
+resolved in `$NOVAFABRIC_CAPSULE_DIR`, or by path) and renders the evidence a
+creditor's compliance team uses to author an ECOA / Reg B adverse-action notice:
+the recorded model call(s) — model ref plus SHA-256 digests of the recorded
+request messages and response choices (the prompt and response text are never
+copied out); the capsule's `inputs/` files, each checked against the capsule's
+sealed `evidence_digests`; the recorded `facets.feature_attribution` principal
+reasons **in the order and with the rank recorded — never re-ranked, re-scored or
+computed**; and whether the capsule carries a NovaSeal envelope (presence only —
+re-verify with `nova verify`). A capsule with no attribution facet reports
+`principal_reasons` as `missing` with the reason; NovaFabric does not infer
+reasons. **Today that row is always `missing` on schema-valid capsules:**
+`feature_attribution` is not yet in the closed run-capsule facet registry
+(ADR-0196 D2), and registering it is a schema change that needs its own ADR
+before any producer can write it. Every recorded string the pack renders — reason
+text, the attribution `method` / `producer` / `model_call_id`, and the model-call
+refs / status / timestamps — is length-capped (1024 chars) and scanned against the
+ADR-0009 secret rules; a match is suppressed (never rendered, listed in
+`suppressed_fields`) and its row marked `partial`. A reason's `rank` must be an
+integer and its `contribution` an integer or finite float; any other type (string,
+boolean, list) is corrupt evidence (exit 2), never rendered. **It is evidence of what was recorded — not an
+adverse-action notice, not a credit decision, and not a legal verdict**; the
+output carries the CFPB line that "the model decided" or a generic reason does not
+satisfy the specific-reasons duty. There is no notice text and no verdict field.
+
+```bash
+nova export-adverse-action --run-id 01KZ...
+nova export-adverse-action --run-id 01KZ... --json
+nova export-adverse-action --run-id 01KZ... --out aa-pack.json
+```
+
+- `--run-id` — run id or capsule directory path (required)
+- `--capsule-dir` — capsule store to resolve the run id in
+- `--json` — machine-readable pack on stdout
+- `--out` — also write the pack JSON to a file (refused inside the capsule)
+
+Exit codes: `0` (rendered, including `missing` rows), `2` (capsule not found; a
+sealed digest does not match the bytes on disk; malformed manifest, model-call
+line, or attribution facet; `--out` inside the capsule or unwritable).
 
 ---
 
@@ -5078,6 +5189,9 @@ inclusive `[min, max]`. Without the flag — or when no config governs the name 
 score is appended unchanged. Because a config is immutable and content-addressed, an
 aggregate ("avg `helpfulness` over 500 capsules") can pin the exact `content_digest` it
 was computed against, making cross-capsule comparability reproducible evidence.
+Today that pin is wired into dataset experiments: `nova experiment run --score-config`
+records the digest and `nova experiment compare` reports comparability keyed by it
+(experimental, ADR-0117 P4 — see the `nova experiment` section).
 
 ### nova eval contamination-check (experimental)
 
@@ -5280,7 +5394,24 @@ nova experiment compare <baseline_id> <candidate_id> --metric exact_match \
 # CI gate in one shot: run the candidate and compare against a stored baseline
 nova experiment run --dataset items.jsonl --target my-agent@1.3.0 \
     --baseline <baseline_id> -- python agent.py "{input}"
+
+# ADR-0117 D4 aggregation pin: record the score-config digest the aggregate was computed under
+nova experiment run --dataset items.jsonl --target my-agent@1.3.0 \
+    --score-config exact_match@1 -- python agent.py "{input}"
+nova experiment compare <baseline_id> <candidate_id> --require-comparable
 ```
+
+**Score-config pin (experimental, ADR-0117 P4).** `run --score-config NAME[@VERSION]|sha256:<hex>`
+resolves the ref **read-only** against the local score-config catalog (`nova eval score config`)
+*before any item runs*, and records the resolved `score_config_ref` (`name@version`) plus
+`score_config_digest` on the experiment. The config must govern the `--metric` name and be
+`boolean` (the built-in exact-match scorer); an unresolvable, mismatched, or tampered ref exits `2`
+with nothing captured — a requested pin is never silently dropped. Every comparison carries a
+`score_config` block keyed by digest: same digest ⇒ `comparable: true`; different digests ⇒
+`comparable: false` (both digests + a message — the aggregates are **not** directly comparable);
+either side unpinned ⇒ `comparable: null` ("not pinned" — never assumed). The block is reported,
+not gated: exit codes stay the ADR-0080 contract unless `--require-comparable` (on `compare`, or on
+`run --baseline`) is set, which exits `2` for anything but `comparable: true`.
 
 Records live under `./.novafabric/experiments/` (override: `--experiments-dir` /
 `NOVAFABRIC_EXPERIMENTS_DIR`); item capsules under `./.novafabric/runs/` (override: `--runs-dir`).
@@ -5984,15 +6115,79 @@ Options: `--capsule REF` or `--facet PATH` (exactly one) · `--to VERSION` · `-
 copied) · `--from VERSION` · `--migrated-at RFC3339` (default: now, UTC) ·
 `--output/-o PATH` · `--check` · `--json`.
 
-Exit codes: `0` = hop recorded / chain ok, `1` = chain broken or hop refused, `2` = bad
-input. Every run prints the in-mission-boundary line on stderr: NovaFabric records
+Exit codes: `0` = hop recorded / chain ok, `1` = chain broken or hop refused (including a
+stored `format_migration_chain` that is malformed or tampered; with `--check --json` the
+verdict is `{"ok": false, "malformed_record": "..."}`), `2` = bad input (flags, an
+unreadable or unparseable file, no anchor). Every run prints the in-mission-boundary line on stderr: NovaFabric records
 format-migration provenance only and makes no claim that a migration was faithful,
 authorized, or regulator-accepted.
 
-**Not yet implemented (future design, ADR-0165 P3–P5):** `nova preserve`, `nova reseal`,
-`nova fixity`, `nova export-preservation`, and sealing the updated facet into an Evidence
-Bundle. Implemented in `src/novafabric/cli/migrate_format.py` and
-`src/novafabric/preservation/format_migration.py`.
+**Not yet implemented (future design, ADR-0165 P3–P5):** `nova preserve`, `nova fixity`,
+`nova export-preservation`, and sealing the updated facet into an Evidence Bundle. (The
+record-only half of P3 shipped as `nova preservation` — below.) Implemented in
+`src/novafabric/cli/migrate_format.py` and `src/novafabric/preservation/format_migration.py`.
+
+---
+
+### nova preservation (experimental, ADR-0165 NF-333/334)
+
+**Experimental, record-only.** Records and verifies two evidence-longevity histories inside
+a capsule's preservation facet (`facets.preservation`):
+
+- **`crypto_migration`** (NF-333) — re-seal events `{from_alg, to_alg, resealed_at,
+  upgrade_ref, original_sig_preserved: true, renewal_timestamp_ref}`. `upgrade_ref` is an
+  opaque reference to the NF-192 `upgrade-signature` operation that did the signing.
+  `original_sig_preserved` is a **required literal `true`**: a re-seal that dropped or
+  overwrote the original signature is a replacement, not a migration, and is refused.
+- **`ltv_renewal_chain`** (NF-334, RFC 4998 semantics) — archive-timestamp renewals
+  `{renewal_type, covered_digest, new_timestamp_ref, new_hash_alg, renewed_before, parent,
+  renewed_at?, timestamp_expires_at?}`. `parent` (the previous renewal's
+  `new_timestamp_ref`) is derived, never typed in.
+
+It **generates no key, calls no Timestamp Authority, and performs no signature** (there is
+no ML-DSA code in NovaFabric); the operations are recorded by reference. `--capsule` is
+read-only — the updated facet is written as JSON to stdout or to a new `--output` file
+(an existing file is never overwritten).
+
+```bash
+# Record a re-seal (the original-signature assertion is mandatory)
+nova preservation reseal record --facet preservation.json \
+  --from-alg ed25519 --to-alg ml-dsa-65 \
+  --upgrade-ref NF-192:upgrade-signature#op-1 \
+  --renewal-timestamp-ref sha256:<tst-digest> --original-sig-preserved -o v2.json
+nova preservation reseal verify --facet v2.json --json
+
+# Append an LTV renewal; covered_digest defaults to the previous token for a timestamp_renewal
+nova preservation ltv append --capsule 01HX... --type timestamp_renewal \
+  --covered-digest sha256:<evidence+tst> --new-timestamp-ref sha256:<tst-2029> \
+  --new-hash-alg sha256 --renewed-before 2030-01-01 --expires-at 2035-01-01 -o v3.json
+nova preservation ltv verify --facet v3.json --json
+```
+
+`ltv verify` reports `covers_previous` (each renewal's `parent` is the previous token; a
+`timestamp_renewal` covers exactly that token; a `hash_tree_renewal` covers a fresh state
+under its own hash), `hash_algs_ok` (no downgrade in the explicit order sha224/sha3-224 <
+sha256/sha3-256 < sha384/sha3-384 < sha512/sha3-512; an unknown algorithm such as sha1 is a
+finding; a `timestamp_renewal` may not change the hash), and `renewed_in_time`
+(`renewed_before` never moves backwards and is no later than the previous timestamp's
+recorded expiry). `reseal verify` checks the original-signature assertion, algorithm
+continuity, no post-quantum→classic downgrade, no step down in signature strength
+(`signature_alg_downgrade` — ranked PQC above classic, then by NIST PQC security category
+for ML-DSA/SLH-DSA and by classical security bits per NIST SP 800-57 for RSA/ECDSA/EdDSA,
+e.g. `ml-dsa-87 → ml-dsa-44` or `ed25519 → rsa-pkcs1-2048`), known algorithm identifiers, monotonic time,
+and a fresh renewal timestamp per re-seal. `record`/`append` refuse to extend a record that
+already fails, or to add an entry that would break it; each accepted entry also appends a
+provenance event.
+
+Exit codes: `0` = recorded / ok, `1` = record broken or refused (including
+`--original-sig-dropped`, and a stored `crypto_migration` / `ltv_renewal_chain` that is
+malformed or tampered — with `verify --json` the verdict is `{"ok": false,
+"malformed_record": "..."}`), `2` = bad input (flags, an unreadable or unparseable file,
+no anchor). Every run prints the in-mission-boundary line
+on stderr. **Not verified offline:** timestamp tokens are not dereferenced and hash-tree
+digests are not recomputed — that is the NF-339 re-verification receipt (future design).
+Implemented in `src/novafabric/cli/preservation.py` and
+`src/novafabric/preservation/reseal.py`.
 
 ---
 
@@ -7815,6 +8010,45 @@ Exit codes: `0` rendered; `2` the input is missing or malformed. This is the CLI
 half of NF-150; a collector that derives the per-agent totals from a capsule is a
 documented follow-on.
 
+### nova cost rollup (experimental, ADR-0146)
+
+Read-only, **report-only** (NF-142). Rolls the per-agent spend of an NF-141
+`cost_attribution` facet **up** the acted-as delegation chain (ADR-0106 §NF-084)
+so each granter carries its grantees' spend.
+
+```bash
+nova cost rollup delegation.json ./my-capsule           # reads facets.cost_attribution
+nova cost rollup delegation.json 01KZ8Q... --json        # a run id works too
+nova cost rollup delegation.json attribution.json        # or a JSON/YAML facet file
+```
+
+- `<delegation.json>` — grants in the `novafabric.trust.delegation` shape:
+  `{grants: [...]}` (one ordered chain, root first) and/or
+  `{chains: [{grants: [...]}, ...]}` (one chain per root-to-leaf path; their union is
+  the tree). Only `granter_id` / `grantee_id` (and public keys, for linkage) are read.
+- `<capsule|attribution.json>` — a capsule directory or run id, or a file holding the
+  facet (bare, under `cost_attribution`, or under `facets.cost_attribution`).
+
+Per hop the report gives `self_cost` (`null` when nothing was attributed — absent is
+not zero), `subtree_cost`, `grantees`, `granter`, and `depth`. The `conservation`
+block reports `root_subtree_cost`, `run_total_cost`, `unchained_cost` (attributed
+agents in no grant), `unattributed_cost`, and `ok` (root subtree == run total,
+**exact `Decimal` equality**, no epsilon). Amounts are decimal strings in the run
+total's currency.
+
+Structural problems are **findings**, not crashes, and set `basis: partial`:
+`no_chain`, `broken_linkage` (the hop and the rest of that chain are dropped),
+`self_delegation`, `cycle` (grants inside the cycle are ignored), `multiple_granters`
+(rolled up under the smallest granter id only, so nothing is counted twice),
+`unchained_agent`, `no_run_total`, `attribution_not_conserved`. Grant **signatures
+are not re-verified** (`signatures_verified: false`) — the rollup reads identities
+only. Nothing is written to the capsule: `cost_rollup` is not a registered facet.
+Record-only — no threshold or budget verdict.
+
+Exit codes: `0` report rendered (findings included); `2` an input is missing,
+oversized (8 MiB / 10,000 grants / depth 256), or malformed (including a
+cross-currency facet).
+
 ### nova cost usage-breakdown (experimental, ADR-0132)
 
 Read-only. Reports the **composition** of a capsule's token volume — each usage
@@ -8811,9 +9045,33 @@ nova safety tripwire list --capsule 01KZ...
 nova safety tripwire list --capsule ./my-capsule --framework deepmind_fsf --json
 ```
 
-The rest of the ADR-0167 `nova safety …` surface (`threshold`, `commitment`, `signal`,
-`sandbagging`, `autonomy`, `gate`, `case`, `verify`) is **planned** (P1 ships as a library facet
-only; P3–P5 are future design).
+### nova safety signal list
+
+**experimental** (ADR-0167 P3, NF-354/355/356/358). Read-only: list the **external**
+alignment-risk evidence recorded in a capsule's `facets.frontier_safety` block — deception /
+scheming / eval-awareness signals (NF-354, `verdict_source: scheming_eval`), sandbagging /
+under-elicitation records (NF-355: elicitation regime, declared-ceiling digest, the evaluator's
+`observed_vs_declared`), sandbox-escape / self-exfiltration / autonomous-replication attempts
+(NF-356: attempt type, reported outcome, `attempt_count` and report digest — **never** the exploit
+payload), and elicitation-during-deployment records (NF-358: reported effort, with
+`no_ceiling_computed: true`). `--type deception|sandbagging|autonomy|elicitation` filters to one
+kind; `--json` emits machine-readable output (with `total_attempt_count` when autonomy attempts are
+included — a sum of reported counts, not a risk score).
+
+Every signal, comparison and outcome shown is an external evaluator's, held by reference.
+NovaFabric runs no scheming detector, no sandbox-escape test and no elicitation, and computes no
+capability ceiling. A reported *successful* escape is **reported, never acted on**: the command
+exits `0` whenever the capsule was read, and `2` only on input errors (missing/unreadable capsule,
+malformed facet, unknown `--type`). This one reader replaces the spec's separate `signal show`,
+`sandbagging show` and `autonomy list` verbs.
+
+```bash
+nova safety signal list --capsule 01KZ...
+nova safety signal list --capsule ./my-capsule --type autonomy --json
+```
+
+The rest of the ADR-0167 `nova safety …` surface (`threshold`, `commitment`, `gate`, `case`,
+`verify`) is **planned** (P1 ships as a library facet only; P4–P5 are future design).
 
 **Reference:** `src/novafabric/frontier_safety/`, `src/novafabric/cli/frontier_safety.py`,
 `design/adr/0167-runtime-safety-alignment-evidence.md` (private).

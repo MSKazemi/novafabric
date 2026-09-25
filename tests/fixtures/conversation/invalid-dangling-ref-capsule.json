@@ -1,0 +1,114 @@
+{
+  "schema_version": "1.0.0",
+  "run_id": "01HXAY7M5JZ8R7K4P9DPBYK2WX",
+  "created_at": "2026-07-15T10:00:00.000000Z",
+  "finished_at": "2026-07-15T10:00:01.000000Z",
+  "duration_ms": 1000,
+  "status": "success",
+  "command": [
+    "python",
+    "agent.py"
+  ],
+  "capture_mode": "cli-wrapper",
+  "novafabric_version": "0.59.0",
+  "working_directory": "~/project",
+  "host": {
+    "os": "linux",
+    "arch": "x86_64",
+    "python": "3.12.0",
+    "cpu_count": 8,
+    "memory_bytes": 16000000000,
+    "gpu": [],
+    "hostname_redacted": true
+  },
+  "environment_ref": "env.lock",
+  "replay_policy_ref": "replay.yaml",
+  "redaction_proof_ref": "redaction-proof.json",
+  "trace_ref": "trace.jsonl",
+  "trace_root_span_id": "a1b2c3d4e5f60718",
+  "model_calls_ref": "model-calls.jsonl",
+  "tool_calls_ref": "tool-calls.jsonl",
+  "assets_ref": "assets.jsonl",
+  "inputs": [],
+  "outputs": [],
+  "model_call_count": 0,
+  "tool_call_count": 0,
+  "mutating_tool_count": 0,
+  "exit_code": 0,
+  "facets": {
+    "conversation": {
+      "schema_version": "0.1.0",
+      "session_ref": "sha256:0977611414a622e51736a1f1d9cb6379391c47ed0c359567aaa93e8e932efdca",
+      "turns": [
+        {
+          "turn_id": "t0",
+          "author": "human:did:example:alice",
+          "role": "human",
+          "content_digest": "sha256:ebdae069a7a8c970ebc6063e9c1f511439d9e5efc1da8f3b643418f8c7fc7c1e",
+          "at": "2026-07-15T10:00:00Z"
+        },
+        {
+          "turn_id": "t1",
+          "author": "agent:spiffe://acme.example/ns/agents/sa/triager",
+          "role": "agent",
+          "content_digest": "sha256:d3461f7dfd4536cac59c6a842609ce4b118400acd3777c8a579308333652bd55",
+          "parent_turn_id": "t0",
+          "at": "2026-07-15T10:00:03Z"
+        },
+        {
+          "turn_id": "t2",
+          "author": "human:fp:9f2c4a1b7e0d5638",
+          "role": "human",
+          "content_digest": "sha256:50e36b3f27dd1fb217682ad2a634d905f62097fbce0bee1a52318448ba6a850b",
+          "parent_turn_id": "t1",
+          "at": "2026-07-15T10:00:31Z"
+        }
+      ],
+      "decision_context": [
+        {
+          "turn_ref": "t9",
+          "shown_context": [
+            {
+              "item_kind": "tool_output",
+              "item_digest": "sha256:a9ea6349d8b27466a7e7406c0c959cebe31ed962f0e5c692c53b1ca716a3de93",
+              "rendered_at": "2026-07-15T10:00:29Z"
+            },
+            {
+              "item_kind": "score",
+              "item_digest": "sha256:5c1a0df21b8af85f8ea7e1012dbd609ac50331eec20eac33db9fbafce3d2e817",
+              "rendered_at": "2026-07-15T10:00:29Z"
+            },
+            {
+              "item_kind": "warning",
+              "item_digest": "sha256:ff4712799c809c6b94d4c860b94fb2fbffb5e2571c43de60cb0ade787c4a9784",
+              "rendered_at": "2026-07-15T10:00:30Z"
+            }
+          ],
+          "decision": "approve",
+          "reason": "risk_within_tolerance",
+          "decided_by": "human:fp:9f2c4a1b7e0d5638",
+          "context_root": "sha256:31a2ebd31bc4135eafd6b7a8971d0501575962d034d19491b9a9e2fa85d21402",
+          "decided_at": "2026-07-15T10:00:31Z"
+        }
+      ],
+      "override": [
+        {
+          "turn_ref": "t9",
+          "overridden_action_digest": "sha256:6f810714d1501a7680f8ceb375781365c6c2e325550f6faaf16d4b583b7d2149",
+          "override_action_digest": "sha256:66ae80352f9eec4bd447e30ad17425a97ce2f9c696595e96ede854f85642cce2",
+          "overrider": "human:fp:9f2c4a1b7e0d5638",
+          "reason": "scope_too_broad",
+          "at": "2026-07-15T10:00:31Z"
+        }
+      ],
+      "rationale": [
+        {
+          "turn_ref": "t1",
+          "stated_reason_digest": "sha256:380faf258753bc277f724d621dd86b2593278419a3d4dce24f8a2d9cab105291",
+          "surfaced_at": "2026-07-15T10:00:03Z",
+          "model_ref": "acme/triager-v3"
+        }
+      ]
+    }
+  }
+}

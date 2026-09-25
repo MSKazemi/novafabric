@@ -31,6 +31,12 @@ and items without a score for the metric are reported ``unmatched`` (one side
 ``null``) and excluded from the SPRT sequences — the SPRT operates only on
 paired outcomes.
 
+Score-config comparability (ADR-0117 D4/P4): every comparison carries a
+``score_config`` block keyed by the recorded config digests — same digest ⇒
+``comparable: true``, different ⇒ ``false``, unpinned side ⇒ ``null``. It is
+reported, not gated: the ADR-0080 exit code is unchanged (the CLI's
+``--require-comparable`` turns anything but ``true`` into a usage error).
+
 Wire contract: ``schemas/experiment-comparison.schema.json``. For CI gating the
 comparison also renders a ``regression_report``-shaped dict
 (:meth:`ExperimentComparison.to_policy_regression_report`) that drops straight
@@ -59,6 +65,10 @@ from novafabric.eval.regression_diff import (
     DEFAULT_P0,
     DEFAULT_P1,
     significance_diff,
+)
+from novafabric.eval.score_config_pin import (
+    ScoreConfigComparability,
+    score_config_comparability,
 )
 from novafabric.eval.scores import SCORES_FILENAME, ScoreValueType, read_scores
 
@@ -98,7 +108,8 @@ class ExperimentComparison(BaseModel):
 
     ``significance`` is the ADR-0080 :class:`SignificanceDiff` embedded
     **verbatim** (as its JSON dump) — this record neither redefines nor extends
-    the statistics.
+    the statistics. ``score_config`` (ADR-0117 P4, optional) reports whether the
+    two aggregates were computed under the same pinned ``ScoreConfig`` digest.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -111,6 +122,7 @@ class ExperimentComparison(BaseModel):
     significance: dict[str, Any]
     exit_code: Literal[0, 3]
     created_at: str
+    score_config: ScoreConfigComparability | None = None
 
     def is_regression(self) -> bool:
         """True iff the embedded ADR-0080 verdict is a significant regression."""
@@ -138,6 +150,9 @@ class ExperimentComparison(BaseModel):
             "verdict": verdict,
             "comparison_of": self.comparison_of.model_dump(),
             "significance": self.significance,
+            "score_config": (
+                None if self.score_config is None else self.score_config.model_dump()
+            ),
         }
 
 
@@ -285,4 +300,5 @@ def compare_experiments(
         significance=diff.model_dump(mode="json"),
         exit_code=exit_code,
         created_at=_now_iso(),
+        score_config=score_config_comparability(baseline, candidate, metric=metric),
     )

@@ -8,7 +8,8 @@ metadata changed only). Two schemas:
 [`experiment-comparison.schema.json`](../../../../schemas/experiment-comparison.schema.json) (the
 `nova experiment compare` result, which embeds an ADR-0080 significance verdict verbatim).
 
-Last verified with `jsonschema` (MIT) + format checker: **14/14 behave as expected.** Fixtures
+Last verified with `jsonschema` (MIT) + format checker: **21/21 behave as expected** (7 added
+2026-09-24 for the ADR-0117 P4 score-config pin — experimental). Fixtures
 carry full `sha256:<64hex>` digests (real SHA-256 of a canonical string) and valid 26-char ULIDs,
 so they exercise the actual `pattern` constraints.
 
@@ -28,6 +29,13 @@ so they exercise the actual `pattern` constraints.
 | `comparison-invalid-bad-exit-code.json` | comparison | reject | `exit_code` outside `{0,3}` |
 | `comparison-invalid-bad-baseline-id.json` | comparison | reject | `comparison_of.baseline_experiment_id` not a ULID |
 | `comparison-invalid-unknown-key.json` | comparison | reject | unknown top-level key |
+| `experiment-valid-score-config-pinned.json` | experiment | valid | ADR-0117 P4 pin: resolved `score_config_ref` + real `score_config_digest`; real `content_hash` (also parses as the model) |
+| `experiment-invalid-bad-score-config-digest.json` | experiment | reject | `score_config_digest` not `sha256:<64hex>` |
+| `comparison-valid-score-config-comparable.json` | comparison | valid | `score_config`: same digest ⇒ `comparable: true` |
+| `comparison-valid-score-config-not-comparable.json` | comparison | valid | `score_config`: different digests ⇒ `comparable: false` + both digests |
+| `comparison-valid-score-config-not-pinned.json` | comparison | valid | `score_config`: baseline unpinned ⇒ `comparable: null` |
+| `comparison-invalid-score-config-status-mismatch.json` | comparison | reject | `different_digest` claiming `comparable: true` |
+| `comparison-invalid-score-config-assumed-comparable.json` | comparison | reject | `not_pinned` claiming `comparable: true` (never assumed) |
 
 **Note:** the immutability of a finalized record, the requirement that `compare` refuse a
 `dataset_ref` mismatch, per-item `unmatched`/`error` exclusion from the SPRT sequences, and the

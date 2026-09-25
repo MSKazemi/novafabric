@@ -1,0 +1,53 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {"attributes": [{"key": "service.name", "value": {"stringValue": "severity-fixture"}}]},
+      "scopeSpans": [
+        {
+          "scope": {"name": "novafabric.otel.genai"},
+          "spans": [
+            {
+              "traceId": "5b8efff798038103d269b633813fc60c",
+              "spanId": "eee19b7ec3c1b174",
+              "name": "chat gpt-4o",
+              "startTimeUnixNano": "1700000000000000000",
+              "endTimeUnixNano": "1700000001000000000",
+              "attributes": [
+                {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                {"key": "gen_ai.request.model", "value": {"stringValue": "gpt-4o"}},
+                {"key": "novafabric.severity_number", "value": {"intValue": "13"}},
+                {"key": "novafabric.severity_text", "value": {"stringValue": "WARN"}}
+              ]
+            },
+            {
+              "traceId": "5b8efff798038103d269b633813fc60c",
+              "spanId": "eee19b7ec3c1b175",
+              "name": "execute_tool web_search",
+              "startTimeUnixNano": "1700000001000000000",
+              "endTimeUnixNano": "1700000002000000000",
+              "attributes": [
+                {"key": "gen_ai.operation.name", "value": {"stringValue": "execute_tool"}},
+                {"key": "gen_ai.tool.name", "value": {"stringValue": "web_search"}}
+              ],
+              "events": [
+                {"name": "log", "timeUnixNano": "1700000001500000000", "severityNumber": 21, "severityText": "FATAL"}
+              ]
+            },
+            {
+              "traceId": "5b8efff798038103d269b633813fc60c",
+              "spanId": "eee19b7ec3c1b176",
+              "name": "chat gpt-4o",
+              "startTimeUnixNano": "1700000002000000000",
+              "endTimeUnixNano": "1700000003000000000",
+              "attributes": [
+                {"key": "gen_ai.request.model", "value": {"stringValue": "gpt-4o"}},
+                {"key": "novafabric.severity_number", "value": {"intValue": "5"}}
+              ],
+              "status": {"code": "STATUS_CODE_ERROR", "message": "upstream 503"}
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

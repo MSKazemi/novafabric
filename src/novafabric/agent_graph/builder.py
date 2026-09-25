@@ -368,19 +368,33 @@ def build_agent_graph(capsule_dir: Path) -> AgentExecutionGraph:
 
 
 def _max_depth(node_ids: set[str], parent_of: dict[str, str]) -> int:
-    """Node count of the longest ``span_parent`` chain (0 for an empty graph)."""
+    """Node count of the longest ``span_parent`` chain (0 for an empty graph).
+
+    Iterative with memoisation: a deep chain (thousands of nested spans) must
+    not hit Python's recursion limit, and a malformed ``parent_of`` cycle must
+    terminate — nodes on a cycle count each distinct node once.
+    """
     depth_of: dict[str, int] = {}
-
-    def depth(node_id: str) -> int:
-        cached = depth_of.get(node_id)
-        if cached is not None:
-            return cached
-        parent = parent_of.get(node_id)
-        value = 1 if parent is None else 1 + depth(parent)
-        depth_of[node_id] = value
-        return value
-
-    return max((depth(nid) for nid in node_ids), default=0)
+    for start in node_ids:
+        if start in depth_of:
+            continue
+        path: list[str] = []
+        on_path: set[str] = set()
+        node: str | None = start
+        base = 0
+        while node is not None:
+            cached = depth_of.get(node)
+            if cached is not None:
+                base = cached
+                break
+            if node in on_path:  # cycle: stop at the first repeated node
+                break
+            path.append(node)
+            on_path.add(node)
+            node = parent_of.get(node)
+        for offset, nid in enumerate(reversed(path), start=1):
+            depth_of[nid] = base + offset
+    return max((depth_of[nid] for nid in node_ids), default=0)
 
 
 def _max_fan_out(parent_of: dict[str, str]) -> int:

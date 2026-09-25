@@ -66,6 +66,10 @@ def _print_summary(experiment: Experiment) -> None:
         f"({experiment.dataset_ref.dataset_hash[:19]}…)"
     )
     console.print(f"  items: {ok}/{len(experiment.runs)} ok")
+    if experiment.score_config_digest is not None:
+        console.print(
+            f"  score config: {experiment.score_config_ref} ({experiment.score_config_digest})"
+        )
     for agg in experiment.aggregate:
         band = ""
         if agg.wilson is not None:
@@ -93,6 +97,21 @@ def _print_comparison(comparison: ExperimentComparison, as_json: bool) -> None:
         f"SPRT verdict: [{color}]{sprt.get('verdict')}[/{color}]  "
         f"llr={sprt.get('llr', 0.0):.2f}  (exit {comparison.exit_code})"
     )
+    pin = comparison.score_config
+    if pin is not None:
+        style = {True: "green", False: "red", None: "yellow"}[pin.comparable]
+        label = {True: "comparable", False: "NOT comparable", None: "not pinned"}[
+            pin.comparable
+        ]
+        console.print(f"score config: [{style}]{label}[/{style}] — {pin.message}")
+
+
+def _enforce_comparable(comparison: ExperimentComparison, require: bool) -> None:
+    """With ``--require-comparable``, anything but a shared pinned digest exits 2."""
+    pin = comparison.score_config
+    if require and (pin is None or pin.comparable is not True):
+        reason = "no score-config block" if pin is None else pin.message
+        _fail(f"--require-comparable: {reason}")
 
 
 @experiment_app.command(
@@ -150,6 +169,23 @@ def experiment_run_cmd(
     timeout_s: Annotated[
         Optional[float], typer.Option("--timeout", help="Per-item timeout in seconds.")
     ] = None,
+    score_config: Annotated[
+        Optional[str],
+        typer.Option(
+            "--score-config",
+            help="Pin the aggregate to a registered score config (ADR-0117 D4): "
+            "NAME, NAME@VERSION or sha256:<hex>. Resolved read-only before any item "
+            "runs; its digest is recorded. Unresolvable/mismatched => exit 2.",
+        ),
+    ] = None,
+    require_comparable: Annotated[
+        bool,
+        typer.Option(
+            "--require-comparable",
+            help="With --baseline: exit 2 unless both experiments share the same "
+            "pinned score-config digest.",
+        ),
+    ] = False,
 ) -> None:
     """Run a command across every dataset item; record an immutable Experiment.
 
@@ -168,6 +204,10 @@ def experiment_run_cmd(
       # CI gate against a stored baseline (exit 3 on significant regression)
       nova experiment run --dataset items.jsonl --target my-agent@1.3.0 \\
           --baseline 01JZ… -- python agent.py "{input}"
+
+      # Pin the aggregate to a registered score config (ADR-0117 D4)
+      nova experiment run --dataset items.jsonl --target my-agent@1.3.0 \\
+          --score-config exact_match@1 -- python agent.py "{input}"
     """
     from novafabric.eval.experiment import (
         ExperimentError,
@@ -178,6 +218,7 @@ def experiment_run_cmd(
     from novafabric.eval.experiment_compare import compare_experiments
     from novafabric.eval.experiment_dataset import DatasetError, load_dataset
     from novafabric.eval.experiment_runner import run_experiment
+    from novafabric.eval.score_config_pin import ScoreConfigPinError
 
     full_command = list(command) + list(ctx.args)
     try:
@@ -192,15 +233,19 @@ def experiment_run_cmd(
         except ExperimentError as exc:
             _fail(str(exc))
 
-    experiment = run_experiment(
-        loaded,
-        full_command,
-        target=ExperimentTarget(kind=target_kind, ref=target, label=target_label),
-        metric=metric,
-        runs_dir=runs_dir,
-        baseline_experiment_id=baseline_exp.experiment_id if baseline_exp else None,
-        timeout_s=timeout_s,
-    )
+    try:
+        experiment = run_experiment(
+            loaded,
+            full_command,
+            target=ExperimentTarget(kind=target_kind, ref=target, label=target_label),
+            metric=metric,
+            runs_dir=runs_dir,
+            score_config_ref=score_config,
+            baseline_experiment_id=baseline_exp.experiment_id if baseline_exp else None,
+            timeout_s=timeout_s,
+        )
+    except ScoreConfigPinError as exc:
+        _fail(str(exc))
     try:
         path = save_experiment(experiment, experiments_dir)
     except ExperimentError as exc:
@@ -220,6 +265,7 @@ def experiment_run_cmd(
         except ExperimentError as exc:
             _fail(str(exc))
         _print_comparison(comparison, as_json=False)
+        _enforce_comparable(comparison, require_comparable)
         if comparison.exit_code != 0:
             raise typer.Exit(code=comparison.exit_code)
 
@@ -297,16 +343,28 @@ def experiment_compare_cmd(
         typer.Option("--out", "-o", help="Write the comparison record to this path."),
     ] = None,
     as_json: Annotated[bool, typer.Option("--json", help="Emit the record as JSON.")] = False,
+    require_comparable: Annotated[
+        bool,
+        typer.Option(
+            "--require-comparable",
+            help="Exit 2 unless both experiments pinned the same score-config digest "
+            "(ADR-0117 D4); default reports comparability without gating on it.",
+        ),
+    ] = False,
 ) -> None:
     """Compare two experiments; exit 3 on a statistically significant regression.
 
     Per-item alignment by ``item_id``; the verdict is produced verbatim by the
     existing ADR-0080 significance gate. Comparing experiments over different
-    pinned datasets is a hard error.
+    pinned datasets is a hard error. The result's ``score_config`` block reports
+    whether both aggregates were computed under the same pinned score-config
+    digest (true), different digests (false — not directly comparable), or an
+    unpinned side (null — unknown, never assumed).
 
     \b
     Examples:
       nova experiment compare 01JX… 01JY… --metric exact_match
+      nova experiment compare 01JX… 01JY… --require-comparable
     """
     from novafabric.eval.experiment import ExperimentError, load_experiment
     from novafabric.eval.experiment_compare import compare_experiments
@@ -325,5 +383,6 @@ def experiment_compare_cmd(
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(comparison.model_dump_json(indent=2) + "\n", encoding="utf-8")
     _print_comparison(comparison, as_json)
+    _enforce_comparable(comparison, require_comparable)
     if comparison.exit_code != 0:
         raise typer.Exit(code=comparison.exit_code)

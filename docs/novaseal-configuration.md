@@ -105,8 +105,29 @@ to a certificate in the bundle (every bundle certificate is a trust anchor,
 so include the issuing intermediate). `nova verify --ca-bundle PATH`
 overrides the key for one run. A configured path that does not exist is a
 config error — it never silently disables the check. Omit the key and
-verification is unchanged. No CRL/OCSP revocation checking; validity is
-evaluated at the current time. Details: [NovaSeal Key Management
+verification is unchanged. Validity is evaluated at the current time; no OCSP.
+Details: [NovaSeal Key Management
+§2.3](novaseal-key-management.md#23-x509-cert-pinned-identity-adr-0055--works-today-library-api-only).
+
+### `crl_dir` / `crl_strict` — offline CRL revocation check (ADR-0070 §3)
+
+**Status:** experimental. Optional, all four profiles; only takes effect
+together with a CA bundle (`ca_bundle` here or `nova verify --ca-bundle`):
+
+```yaml
+crl_dir: /var/lib/novaseal/crl   # CRLs (DER or PEM) synced by an operator cron job
+crl_strict: false                # true: a missing / stale / invalid CRL also fails
+```
+
+`nova verify` then checks every certificate of the validated signer chain
+against the locally synced CRLs — nothing is ever fetched. A revoked
+certificate always fails; by default a missing, stale or unverifiable CRL is
+a visible warning (soft-fail, ADR-0070 §3), and `crl_strict: true` (or
+`--crl-strict`) turns those into failures. `--crl-dir DIR` overrides
+`crl_dir`; `--crl-strict` can only tighten the config value. A `crl_dir` that
+does not exist, an empty string, a non-boolean `crl_strict`, or `crl_dir` /
+`crl_strict` set without `ca_bundle` (which would check nothing) is a config
+error. Directory limits, statuses and scope rules: [NovaSeal Key Management
 §2.3](novaseal-key-management.md#23-x509-cert-pinned-identity-adr-0055--works-today-library-api-only).
 
 ---

@@ -572,3 +572,13 @@ def test_extra_fields_survive_so_later_slices_need_no_schema_break() -> None:
         }
     )
     assert facet.model_dump()["format_migration_chain"]
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["sha256:" + "a" * 64 + "\n", "https://tsa.example.org/tok\n"],
+)
+def test_digest_and_uri_refs_refuse_a_trailing_newline(value: str) -> None:
+    """``$`` matches before a final ``\\n``; the validators anchor with ``\\Z``."""
+    with pytest.raises(PreservationError):
+        scan_for_payloads([value])

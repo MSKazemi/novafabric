@@ -1,0 +1,8 @@
+# ADR-0159 NF-278 golden fixture: a malformed facets.feature_attribution block.
+# `reasons` must be a list of mappings; a sealed capsule carrying this is corrupt
+# evidence (exit 2), never silently rendered.
+method: shap-tree
+reasons:
+  - rank: 1
+    feature: debt_to_income
+  - "Debt-to-income ratio too high"
