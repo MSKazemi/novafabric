@@ -35,11 +35,13 @@ Four invariants from ADR-0164 / the NF-321-330 spec §3 shape every choice here:
   generates a hypothesis, runs an experiment, or asserts that a result is
   correct, novel, reproducible-in-fact, or true.
 
-P1 is the facet and the DAG only. The reproducibility receipt (NF-323), FAIR
-binding (NF-324), lab/instrument provenance (NF-322/329), research-integrity
-records (NF-326..330) and claim grounding (NF-325) are P2–P5 and deliberately
-absent — the facet's ``extra="allow"`` config is what lets a later slice add
-them without a schema break.
+P1 is the facet and the DAG only. P2 ships alongside it as separate modules:
+the reproducibility receipt (NF-323, :mod:`novafabric.science.reproducibility`)
+and the FAIR Workflow-Run-RO-Crate science profile (NF-324,
+:mod:`novafabric.science.fair_rocrate`) — both **experimental**, both riding the
+facet's ``extra="allow"`` config rather than a schema change. Lab/instrument
+provenance (NF-322/329), research-integrity records (NF-326..330) and claim
+grounding (NF-325) are P3–P5 and remain future design.
 """
 
 from __future__ import annotations

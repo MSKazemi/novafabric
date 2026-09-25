@@ -65,5 +65,5 @@ retroactively.
 ## Deprecations and API sunsets
 
 Interface (as opposed to version) lifecycle is separate and already mechanized:
-RFC 9745/8594 deprecation headers, a published register, and a drift gate — see the
+RFC 9745/8594 deprecation headers, a published register, a drift gate, and a removal gate — see the
 [API deprecation policy](decisions.md) (ADR-0188).

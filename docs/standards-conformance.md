@@ -75,6 +75,8 @@ these instruments.
 | **NIS2** | Incident report export | `nova export-nis2` | experimental |
 | **HIPAA** | Safe Harbor de-identification proof | `nova export-hipaa-proof` | experimental |
 | **OMB M-24-10** | Risk-tier vocabulary in classification | `nova classify list-vocabularies` | experimental |
+| **SR 26-2 / SR 11-7** | Model-risk evidence file; validation-independence evidence read from the maker-checker record (records independence, never assesses the validation) | `nova export-model-risk` · `nova export-model-independence` | experimental |
+| **SEC 17a-4 / MiFID II** | Retention-posture attestation over Evidence Bundles: retention policy, legal hold, WORM lock, per-bundle RFC 3161 timestamp, audit trail (attests posture, never compliance) | `nova export-retention` | experimental |
 
 ### Records-retention (WORM) conformance
 
@@ -91,6 +93,12 @@ nova-worm-conformance run --backend s3 --bucket my-capsule-store
 ```
 
 Also reachable in-tree as `nova storage validate`. **Maturity: experimental.**
+
+To attest the retention *posture* of a specific set of Evidence Bundles (not the backend),
+`nova export-retention --bundle <zip> --registry <name>` renders the policy window, legal-hold
+state, each run's WORM lock, the RFC 3161 timestamp each bundle actually carries, and the
+audit-trail entries — each `complete` / `partial` / `missing` with a reason. **Maturity:
+experimental.**
 
 ## 4. Identity and access (server mode only)
 

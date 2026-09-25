@@ -226,6 +226,10 @@ correct.
 - Keep PRs focused — one feature or fix per PR
 - Update `CHANGELOG.md` under `## Unreleased` for user-facing changes
 - Rebuild the dashboard bundle (`make bundle`) if `web/src/` changed
+- Never delete a `/v0` server endpoint outright: breaking changes go through the
+  deprecation register in `docs/api-reference.md` (ADR-0188); the removal gate
+  (`tests/test_deprecation_removal_gate.py`) rejects a removal before its
+  earliest-removal release or outside a minor (pre-1.0) / major (post-1.0) bump
 - Ensure the gates pass locally before pushing
 - For non-trivial changes, open an issue or Discussion first — it saves you from
   building something that was going to be declined

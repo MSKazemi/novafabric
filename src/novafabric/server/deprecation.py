@@ -15,7 +15,9 @@ can enumerate the current table via :func:`deprecation_register`.
 
 Policy (ADR-0188): a deprecated endpoint stays working for at least two
 minor releases; removal lands only in a minor bump pre-1.0 (major post-1.0);
-the ``serve/`` dashboard API is experimental/unversioned and exempt.
+the ``serve/`` dashboard API is experimental/unversioned and exempt. The
+removal gate (earliest-removal and bump-rule checks against the published
+register) lives in :mod:`novafabric.server.deprecation_gate`.
 
 **No endpoint is deprecated today** — the register starts empty; this module
 is the mechanism, not a deprecation. Usage, when the first deprecation lands::
@@ -27,6 +29,7 @@ is the mechanism, not a deprecation. Usage, when the first deprecation lands::
             link="https://…/docs/api-reference.md#api-deprecation-register",
             successor="/v0/new-endpoint",
             since="0.60.0",
+            earliest_removal="0.62.0",
         )],
     )
     async def old_endpoint() -> ...: ...
@@ -41,6 +44,8 @@ from email.utils import format_datetime
 
 from fastapi import Request, Response, params
 from fastapi.params import Depends as DependsParam
+
+from novafabric.server.deprecation_gate import DeprecationWindowError, validate_window
 
 
 class DeprecationConfigError(ValueError):
@@ -72,6 +77,15 @@ class DeprecationEntry:
 
     route: str | None = None
     """FastAPI route path (e.g. ``/v0/old``); bound on first request."""
+
+    earliest_removal: str | None = None
+    """Earliest release the endpoint may be removed in (e.g. ``"0.62.0"``).
+
+    Optional (additive); when set, ``since`` is set too and the pair satisfies
+    the two-minor window (validated by :func:`deprecated`). The removal gate
+    itself reads the published docs register — see
+    :mod:`novafabric.server.deprecation_gate`.
+    """
 
 
 #: Module-level register of all declared deprecations. Starts EMPTY —
@@ -134,6 +148,7 @@ def deprecated(
     *,
     since: str | None = None,
     deprecated_at: str | None = None,
+    earliest_removal: str | None = None,
 ) -> params.Depends:
     """Mark a route as deprecated per ADR-0188.
 
@@ -153,11 +168,26 @@ def deprecated(
         deprecated_at: Optional ISO 8601 moment the deprecation took
             effect; when given, ``Deprecation: @<unix-ts>`` is emitted
             instead of ``Deprecation: true``.
+        earliest_removal: Earliest release the endpoint may be removed in
+            (register column). Requires ``since``; must be at least two
+            minor releases after it (ADR-0188 minimum window).
 
     Raises:
         DeprecationConfigError: if ``sunset`` or ``deprecated_at`` cannot
-            be parsed (fails fast at declaration time, not per-request).
+            be parsed, or ``earliest_removal`` is given without ``since``,
+            malformed, or inside the two-minor window (fails fast at
+            declaration time, not per-request).
     """
+    if earliest_removal is not None:
+        if since is None:
+            raise DeprecationConfigError(
+                "earliest_removal requires since= (the deprecation release) so the "
+                "two-minor window can be checked (ADR-0188)."
+            )
+        try:
+            validate_window(since, earliest_removal)
+        except DeprecationWindowError as exc:
+            raise DeprecationConfigError(str(exc)) from exc
     sunset_http_date = format_datetime(_parse_timestamp(sunset, "sunset"), usegmt=True)
     if deprecated_at is not None:
         deprecation_value = f"@{int(_parse_timestamp(deprecated_at, 'deprecated_at').timestamp())}"
@@ -170,6 +200,7 @@ def deprecated(
         successor=successor,
         since=since,
         deprecation=deprecation_value,
+        earliest_removal=earliest_removal,
     )
     with _register_lock:
         DEPRECATION_REGISTER.append(entry)

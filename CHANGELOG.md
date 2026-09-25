@@ -199,6 +199,100 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Added
 
+- **Ten accepted-but-unbuilt ADR slices landed together (all experimental, 2026-09-24).** Each
+  is listed below; none changes `schemas/run-capsule.*`, and every new facet field rides an
+  existing `extra="allow"` facet.
+
+- **x509 signer certificate chain validation against an operator CA bundle** (ADR-0055
+  trust-resolution step 2, experimental). `trust/novaseal/x509_identity.py` adds
+  `validate_certificate_chain()` — offline RFC 5280 path validation via
+  `cryptography.x509.verification`, bounded depth, the signing leaf must not be a CA — and
+  `verify_x509_signature(..., ca_bundle=, intermediates=, validation_time=)`, making trust
+  "pinned OR chain" (pinned first; pinned-only behaviour unchanged when no bundle is given).
+  `nova verify --ca-bundle PATH` (or the new optional `ca_bundle:` key in `novaseal.yaml`) adds a
+  fail-closed "Signer certificate chain (CA bundle)" check on the DSSE-embedded signer
+  certificate. No CRL/OCSP revocation checking; the CLI validates at the current time.
+
+- **A preservation facet can record how a sealed capsule's format was migrated — and prove the
+  chain still reaches the original** (ADR-0165 P2 / NF-332, experimental).
+  `facets.preservation.format_migration_chain` is an ordered, append-only list of hops;
+  `verify_format_migration_chain` walks it offline and reports `chain_walk_ok`,
+  `reaches_original_root`, `acyclic` and `monotonic` with per-hop findings. New
+  `nova migrate-format` appends a hop (parent and pre-digest derived, never typed) or `--check`s a
+  chain. Record-only: it never runs a migrator and never rewrites a stored capsule.
+
+- **Embodied ODD conformance record and perception→actuation trajectory chain** (ADR-0162 P2,
+  NF-303/NF-310, experimental). `facets.embodied` gains an optional `odd` block (declared
+  `odd_ref`, time-ordered `excursions`, and a `verdict` that is structurally always `null`) and
+  an optional ordered `trajectory` of `{stage, input_digest, output_digest, parent, ts}` hops.
+  `nova embodied odd show` renders the record; `nova embodied trajectory verify` walks the chain
+  offline and names every broken, cyclic or out-of-order hop (exit 0 intact / 1 defective / 2
+  nothing to verify).
+
+- **Frontier-safety evidence records external AI-control decisions and fired framework
+  tripwires** (ADR-0167 P2, NF-352/NF-357, experimental). `ControlDecision` and
+  `TripwireTrigger` join `facets.frontier_safety`, with fail-open `record_control_decision` /
+  `record_tripwire_trigger` helpers that never raise into the workload, a C4
+  `guardrail_decision_ref` boundary (inlined guardrail fields are rejected), and rejection of
+  prompt/transcript-shaped fields. New read-only `nova safety control show` and
+  `nova safety tripwire list`; a fired tripwire still exits 0 — NovaFabric never blocks a run.
+
+- **Reproducibility receipt and FAIR Workflow-Run-RO-Crate science profile** (ADR-0164 P2,
+  NF-323/NF-324, experimental). `nova science receipt build|verify` binds environment, seed(s),
+  input-data, code and optional workflow digests plus a declared `determinism_class` under one
+  `bound_root`; anything not supplied is listed in `receipt_incomplete`, never invented, and
+  `verify` never re-executes. `nova export-rocrate-science` builds on the unchanged NF-040
+  RO-Crate carrier and emits a byte-deterministic Workflow Run Crate 0.5 profile plus a
+  `<run_id>.fair-binding.json` record. Provenance Run Crate remains planned.
+
+- **Emitted OTel GenAI spans carry the observation's severity** (ADR-0127 P4 emit half,
+  experimental). With `nova capture --emit-otel-genai`, a `chat` / `execute_tool` span whose call
+  recorded a `log_level` gains `novafabric.severity_number` / `novafabric.severity_text` (the OTel
+  logs `SeverityNumber` projection: debug 5, info 9, warn 13, error 17). A call with no recorded
+  level gets neither attribute — never defaulted. Inbound consumption remains future design.
+
+- **Policy gates can condition on the capsule's deployment environment** (ADR-0126 P3,
+  experimental). The ADR-0019 policy input gains optional
+  `input.resource.deployment_environment`, populated verbatim by the evidence-export gate —
+  `null` when none was recorded, never inferred. Tested example policy:
+  `tests/fixtures/policy-environment/production_export_gate.rego`. The replay-with-side-effects
+  gate is not yet wired (follow-up).
+
+- **API removal gate for deprecated endpoints** (ADR-0188, experimental).
+  `tests/test_deprecation_removal_gate.py` fails CI when a register-listed endpoint disappears
+  before its earliest-removal release, outside a minor (pre-1.0) / major (post-1.0) bump, or
+  without recording the removing release in the register's new additive **Removed in** column
+  (`docs/api-reference.md`). Pure rules live in `novafabric.server.deprecation_gate`;
+  `deprecated(...)` gains an optional, declaration-time-validated `earliest_removal=`.
+
+- **Session index, portable session bundle, and sub-range session replay** (ADR-0122 P3/P4,
+  ADR-0123 P5, experimental). `nova session list` reads a rebuildable SQLite cache
+  (`<sessions-root>/.session-index.sqlite`, separate from the registry) only while every stat
+  still matches disk, else falls back to the directory scan with identical output;
+  `nova session reindex` / `list --rebuild-index` rebuild it. `nova session export |
+  verify-bundle | import` move a session as one deterministic, digest-indexed ZIP (unsigned;
+  import rejects traversal, symlinks, duplicates and size bombs, and never overwrites).
+  `nova session replay` gains `--from/--to`, per-turn `--turn-mode SEQ=MODE` (additive optional
+  `turn_mode_policy` in `schemas/session-replay-result.schema.json`) and `--dry-run`.
+  **Behaviour change:** `nova session list` now skips session directories that are symlinks,
+  so the directory scan and the index enumerate exactly the same entries.
+
+- **Finance validation-independence and retention-posture exporters** (ADR-0159 NF-276/NF-277,
+  experimental). `nova export-model-independence --model <id>` reads the shipped ADR-0058
+  maker-checker record (registry `promotion_proposals`, NovaSeal bundles via `verify_sod`) and
+  reports whether validator and developer identities differ — a single-identity approval is
+  `missing`, never fabricated. `nova export-retention --bundle <zip>…` attests the ADR-0031
+  retention posture (policy window, legal holds, WORM lock, audit chain) and each bundle's
+  actual RFC 3161 timestamp. Read-only, offline, compliance-honesty banner on every artifact.
+
+- **`nova server usage reconcile` and `nova server usage export`** (ADR-0208 P2, experimental).
+  `reconcile` compares the metered ledger with the capsule store and reports drift (report-only
+  by default); `--apply` appends positive/negative adjustment rows for the `default` workspace
+  only (`attribution='reconciliation'`), never rewriting existing rows, and records every run as
+  a `usage.reconcile` entry in the hash-chained audit log (the ledger rows themselves carry no
+  keyed signature). `export` emits per-(period, org, workspace, metric) chargeback as RFC 4180
+  CSV with formula-injection-safe cells or NDJSON, marked `final` vs `provisional`.
+
 - **An Evidence Bundle can carry a capsule *set* — and the format already allowed it**
   (ADR-0011 Amendment 1, experimental). Unblocks the ADR-0239 evidence cart's export.
 

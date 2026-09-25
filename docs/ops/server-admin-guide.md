@@ -127,8 +127,9 @@ is **no** organization/workspace/team hierarchy yet — that is
   (**experimental**).
 - **Rate limiting/quotas:** **experimental, default off** — in-process rate
   limiting + storage quotas ([ADR-0179](../decisions.md)),
-  plus per-workspace usage metering, `GET /v0/usage` reporting, and
-  per-workspace budgets
+  plus per-workspace usage metering, `GET /v0/usage` reporting,
+  per-workspace budgets, and the `nova server usage reconcile|export`
+  drift-reconciliation / chargeback-export CLI
   ([ADR-0208](../decisions.md)).
   See [Quotas & rate limits](quotas-and-rate-limits.md); with the master
   switch off (the default), plan capacity accordingly.

@@ -120,7 +120,7 @@ Commands grouped by primitive and task. Each entry links to its full section.
 |---|---|
 | [`nova init`](#setup-v038) | Set up a local installation and signing keypair |
 | [`nova capture`](#nova-capture-cmd) | Wrap any command; record it as a Run Capsule |
-| [`nova session`](#nova-session-experimental-adr-0122) | Group N independent runs into one multi-turn session: new, add, list, show (experimental); replay them in order (experimental, ADR-0123) |
+| [`nova session`](#nova-session-experimental-adr-0122) | Group N independent runs into one multi-turn session: new, add, list, reindex, show, export/verify-bundle/import (experimental); replay them in order, whole or a `--from/--to` slice (experimental, ADR-0123) |
 | [`nova validate`](#nova-validate-path) | Validate a capsule or an asset spec |
 | [`nova api-proxy`](#nova-api-proxy-v064) | Transparent LLM API proxy for non-Python clients |
 | [`nova mcp-proxy`](#nova-mcp-proxy-experimental-v05x) | Transparent MCP stdio capture proxy |
@@ -185,6 +185,7 @@ Commands grouped by primitive and task. Each entry links to its full section.
 | [`nova assure-case`](#nova-assure-case-document-experimental-adr-0166) | Inspect an assurance-case document: validity, currency, conformance, defeaters (experimental) |
 | [`nova assure-coverage`](#nova-assure-coverage-document-experimental-adr-0166) | Structural coverage of an assurance case — counts and gaps, never a grade (experimental) |
 | [`nova passport`](#nova-passport-issue--verify-experimental-adr-0149) | Portable agent passport: issue + offline verify (experimental) |
+| [`nova embodied`](#nova-embodied-odd-show--trajectory-verify-experimental-adr-0162) | Embodied-agent evidence: ODD record (verdict always null) + perception→actuation trajectory chain verify, offline (experimental) |
 
 ### Registry, promotion, and evaluation
 
@@ -261,9 +262,11 @@ Status: **experimental**.
 | [`nova server scim-map-group`](#nova-server-scim-map-group-group-role-experimental-adr-0139-d3) | Declare IdP-group → RBAC-role mappings for SCIM provisioning (experimental) |
 | [`nova server list-scim-events`](#nova-server-list-scim-events-experimental-adr-0139-d5) | Read-only SCIM provisioning audit trail (experimental) |
 | [`nova server api-key`](#nova-server-api-key-create-experimental-adr-0193) | First-class API keys: create, list, revoke, rotate (experimental) |
+| [`nova server usage`](#nova-server-usage-reconcile-experimental-adr-0208) | Usage-ledger drift reconciliation and chargeback CSV/NDJSON export (experimental) |
 | [`nova login`](#nova-login) / [`nova logout`](#nova-logout) | Authenticate with a NovaFabric server |
 | [`nova doctor`](#nova-doctor---check-extras---check-storage---check-scheduler---check-tokens) | Installation, storage, scheduler/env-var, and token-at-rest diagnostics |
 | [`nova migrate-to-postgres`](#nova-migrate-to-postgres) | Migrate the local SQLite registry to Postgres |
+| [`nova migrate-format`](#nova-migrate-format-experimental-adr-0165-nf-332) | Record a format-migration hop in a preservation facet; verify the chain offline (experimental) |
 | [`nova backup`](#nova-backup-create-experimental-adr-0181) / [`nova restore`](#nova-restore-set-path-experimental-adr-0181--adr-0211) | Evidence-grade backup sets: create, verify offline, restore (local + automated pg restore, experimental) |
 | [`nova support-bundle`](#nova-support-bundle-experimental-adr-0187) | Secret-safe diagnostics tarball for support (experimental) |
 | [`nova audit-log`](#nova-audit-log-export-experimental-adr-0191) | Export local audit logs for SIEM ingestion (OCSF / CEF / native JSONL, experimental) |
@@ -339,7 +342,7 @@ Options:
 - `--mark-provenance` — write a C2PA synthetic-content provenance marker (`c2pa-manifest.json`, with the `c2pa.ai.generated: true` EU AI Act Art.50 disclosure) into the capsule when the run produces model output. The marker is written before NovaSeal so it is covered by the capsule signature (ADR-0074). Opt-in; non-blocking. Example: `nova capture --mark-provenance python agent.py`
 - `--fast-emit` — install capture hooks **lazily** in the workload subprocess (ADR-0092 slice B). The default path imports every present SDK (`openai`, `mcp`, `requests`, …) at startup purely to patch it — measured at ~717 ms for `openai`, ~340 ms for `mcp`, paid even if the workload never calls them. `--fast-emit` patches each SDK only if/when the workload itself imports it, so unused SDKs are never imported by capture. **Measured (warm-fs, orchestrator):** a compute-only workload **2068 ms → 464 ms (−78 %)**; an `import openai` workload **2223 ms → 1509 ms (−32 %)** — the saving scales inversely with SDK usage. Fidelity is unchanged. Runs in-process (not delegated to the warm daemon). Example: `nova capture --fast-emit python agent.py`
 - `--emit-spool` — **experimental** (ADR-0092 slice C). Also write run-boundary EventEnvelope v1 records (`run.start`, `capsule.finalize`) to the local event spool (`$NOVAFABRIC_SPOOL_DIR`, default `$NOVAFABRIC_HOME/spool`) so the resident `novafabric-spool-forwarder` can drain and forward them to the collector tier over NATS JetStream. Off by default; fail-open; **edge-keyless** — signing happens at the hub, not here (hub-sign default). Runs in-process (not delegated to the warm daemon). Example: `nova capture --emit-spool python agent.py`
-- `--emit-otel-genai` — **experimental** (NF-032, [ADR-0098](./decisions.md)). After capture, emit the run outward as OTel GenAI `gen_ai.*` spans (OTLP-shaped JSON) to `<capsule>/otel-genai-spans.json`: a root `invoke_agent` span plus a `chat` client span per model call and an `execute_tool` span per tool call. Every span carries `novafabric.mapping_version` and an honest `novafabric.semconv_maturity` (`stable` on LLM client spans, `development` on agent/tool spans — OTel GenAI agent spans are Development-status). Additive; runs in-process. Example: `nova capture --emit-otel-genai python agent.py`
+- `--emit-otel-genai` — **experimental** (NF-032, [ADR-0098](./decisions.md)). After capture, emit the run outward as OTel GenAI `gen_ai.*` spans (OTLP-shaped JSON) to `<capsule>/otel-genai-spans.json`: a root `invoke_agent` span plus a `chat` client span per model call and an `execute_tool` span per tool call. Every span carries `novafabric.mapping_version` and an honest `novafabric.semconv_maturity` (`stable` on LLM client spans, `development` on agent/tool spans — OTel GenAI agent spans are Development-status). **Severity projection (experimental, ADR-0127 P4):** a `chat`/`execute_tool` span whose record carries a `log_level` also gets `novafabric.severity_number` + `novafabric.severity_text` (OTel logs `SeverityNumber` scale: `debug`→5/`DEBUG`, `info`→9/`INFO`, `warn`→13/`WARN`, `error`→17/`ERROR`; vendor-namespaced because OTel defines no span-level severity attribute). No level recorded → neither attribute (never defaulted to `INFO`). Additive; runs in-process. Example: `nova capture --emit-otel-genai python agent.py`
 - `--capture-content` — **opt-in** (NF-033). With `--emit-otel-genai`, include request messages in the emitted spans, routed through the ADR-0009 secret-redaction gate and size-bounded (ADR-0021 span cap). Off by default — spans carry no message/choice content unless this is set.
 - `--capture-media` — **experimental, opt-in** ([ADR-0125](./decisions.md)). Store the bytes of multimodal message parts on model calls (inline base64 images/audio/documents — Anthropic `source.type: base64` blocks, OpenAI `image_url` data-URLs and `input_audio`) **content-addressed** in the capsule blob store at `outputs/<sha256>.<ext>` (deduplicated; bounded per part, default 10 MiB, `NOVAFABRIC_MEDIA_MAX_BYTES` override) and list each blob as an `Artifact` in the sealed manifest. **Off by default** (ADR-0021 §4 privacy-by-default): the part is always rewritten to a `media` reference block — IANA `media_type`, `sha256:<hex>` `content_hash` over the raw bytes, `byte_size` — and without this flag the bytes are discarded after hashing (`blob_ref: null`, reference-only). Inline base64 never lands in `model-calls.jsonl` either way; URL-referenced media is never fetched. `nova validate` re-hashes every captured blob against its recorded `content_hash` (tamper ⇒ validation fails); read back with `nova media list`. Example: `nova capture --capture-media -- python vision_agent.py`
 - `--masker NAME` — **experimental** ([ADR-0135](./decisions.md)). Enable a registered PII masker for this capture, by `novafabric.maskers` entry-point name or dotted import path (repeatable). Custom maskers run **after** the built-in ADR-0009 secret scanner — built-ins always run and can never be disabled by a plugin — and every mask is attributed in `redaction-proof.json` (`masker_findings[]`). Fail-closed: a crashing, hanging, or invalid masker redacts the field (recorded in `masker_errors[]`) and never blocks the workload; an unresolvable masker aborts capture *before* the workload runs. Example: `nova capture --masker novafabric-email python agent.py`
@@ -486,11 +489,19 @@ nova session add "$SID" "$NOVAFABRIC_HOME/capsules/<run-id-turn-0>"
 nova session add "$SID" "$NOVAFABRIC_HOME/capsules/<run-id-turn-1>"
 
 nova session list                 # all sessions: kind, member count, created
+nova session reindex              # (re)build the fast SQLite session index
 nova session show "$SID"          # ordered turns + aggregate stats
 nova session show "$SID" --json   # machine-readable: members + stats
 
 nova session replay "$SID"        # replay every turn in order (mocked)
 nova session replay "$SID" --mode forensic --json
+nova session replay "$SID" --from 1 --to 2 --turn-mode 2=forensic
+nova session replay "$SID" --dry-run   # plan only: nothing executed or written
+
+# Carry the session + its member capsules to another machine
+nova session export "$SID" -o session.zip
+nova session verify-bundle session.zip       # offline, exit 1 on any problem
+nova session import session.zip --session-dir /elsewhere/sessions
 ```
 
 Subcommands:
@@ -505,8 +516,49 @@ Subcommands:
   `started_at`. `--role TEXT` labels the member (e.g. `user-turn`). A finalized
   session refuses adds unless `--reopen` is passed. Adding the same run twice
   is rejected.
-- `nova session list [--json]` — enumerate sessions (directory scan of the
-  sessions root; the ADR-0122 P3 SQLite index is future design), newest first.
+- `nova session list [--json] [--rebuild-index]` — enumerate sessions, newest
+  first. **Experimental (ADR-0122 P3):** served from the local SQLite session
+  index (`<sessions-root>/.session-index.sqlite`) when it is fresh — every
+  indexed manifest's `(mtime, size, inode)` still matches disk, checked by
+  `stat` without parsing any manifest or touching any capsule directory. A
+  missing, stale, corrupt, or wrong-version index falls back to the
+  directory scan (identical output) and, for stale/corrupt, prints a hint on
+  stderr to rebuild. `--rebuild-index` rebuilds first. The index and the
+  scan use the same entry filter (a symlinked session directory is skipped
+  by both), and a listing opens the index read-only — it never creates it.
+- `nova session reindex [--json]` — **experimental (ADR-0122 P3).**
+  (Re)build the session index from the `session.json` manifests (a corrupt
+  or foreign-version file is discarded and recreated). The index is a
+  rebuildable cache — the manifests stay authoritative; `new`/`add`/`import`
+  refresh an existing index row write-through but never create an index.
+  WAL journal + busy timeout; safe to run concurrently.
+- `nova session export <session_id> -o PATH [--capsule-dir PATH] [--json]` —
+  **experimental (ADR-0122 P4).** Write the session and every member capsule
+  as one ZIP: `session.json` byte-for-byte, `capsules/<run_id>/…`, and a
+  digest index `session-bundle.json` (`artifacts[]` sha256 list +
+  `manifest_hash`, the same recipe as an Evidence Bundle; per-member
+  `capsule_hash` is the Evidence Bundle Merkle root). Deterministic: sorted
+  entries, pinned timestamps/permissions, no wall-clock field — the same
+  session gives byte-identical archives. Refuses an empty session, a
+  `missing`/`tampered` member, a symlink inside a capsule (re-checked when
+  each file is opened), or a non-ULID `run_id`; writes atomically (no partial file). **Unsigned** — for signed
+  evidence over the members use `nova evidence export`.
+- `nova session verify-bundle <bundle.zip> [--json]` — **experimental
+  (ADR-0122 P4).** Offline verification: every listed digest recomputed,
+  unlisted files rejected, `session.json` digest and ordering re-checked,
+  each member's `capsule.yaml` matched to its `capsule_ref` and its Merkle
+  root recomputed. Unsafe archive member names (`..`, absolute, backslash,
+  drive letter), symlink entries, duplicates, entries expanding more than
+  100x (when over 1 MiB — a zip-bomb guard), and entry-count / byte
+  ceilings are refused before extraction completes; extraction counts the
+  bytes actually inflated. A non-ULID `session_id` or a malformed
+  `capsule_ref` is reported as a problem. Exit 1 on any problem.
+- `nova session import <bundle.zip>` — **experimental (ADR-0122 P4).** Verify,
+  then place the session at `<sessions-root>/<session_id>/` with its members
+  under `capsules/`, where `show` and `replay` resolve them (still
+  digest-gated). Nothing is written unless verification passes; the
+  destination must be a direct child of the sessions root; never
+  overwrites an existing session.
 - `nova session show <session_id> [--json] [--capsule-dir PATH]` — the ordered
   turns with per-member integrity (`ok` / `missing` when the capsule was
   deleted or moved / `tampered` when `capsule.yaml` no longer matches the
@@ -517,8 +569,9 @@ Subcommands:
   base searched as `<dir>/<run_id>` for members whose recorded path moved.
 - `nova session replay <session_id> [--mode forensic|mocked|semantic|exact]
   [--on-divergence stop|continue] [--continue-past-refusal] [--json]
-  [--output-dir PATH] [--capsule-dir PATH]` — **experimental,
-  [ADR-0123](./decisions.md) P1.** Replay every member
+  [--output-dir PATH] [--capsule-dir PATH] [--from SEQ] [--to SEQ]
+  [--turn-mode SEQ=MODE]... [--dry-run]` — **experimental,
+  [ADR-0123](./decisions.md) P1 + P5.** Replay every member
   capsule in ascending `sequence` order by invoking the **existing**
   single-capsule replay engine (the four ADR-0005 modes; default `mocked`)
   once per turn — no new replay mode, no bypass of the inherited
@@ -536,9 +589,20 @@ Subcommands:
   `--on-divergence continue`; turns after a halt are absent from the record,
   never marked `skipped`; a session with sequence gaps, or an empty session,
   refuses outright. Exit code is 0 only when the whole-session verdict is
-  `reproduced`. *Still future design (planned): content-addressed state-seam
-  verification between turns (P2), the composed session attestation +
-  `--attest` (P4), sub-range `--from/--to` + `--dry-run` (P5), and the
+  `reproduced`. **P5 (experimental):** `--from`/`--to` (inclusive; one bound
+  extends to the session edge) replay one contiguous slice, recorded as the
+  optional `range` field so the verdict is read as covering a slice;
+  `--turn-mode SEQ=MODE` (repeatable) pins a per-turn mode (ADR-0123 D6),
+  recorded in each turn's `effective_mode` and in the optional
+  `turn_mode_policy` field — a pin for a turn that is absent or outside the
+  slice is refused, never silently ignored; `--dry-run` prints the plan
+  (turn order, per-turn effective mode, member integrity, and each turn's
+  recorded tool calls classified by the inherited per-capsule policy:
+  mock/allow/deny counts and how many are mutating) and executes and writes
+  nothing (`exact`-mode preconditions are only checked on execution).
+  *Still future design (planned): content-addressed state-seam verification
+  between turns (P2 — so a slice's first turn replays from its captured
+  inputs), the composed session attestation + `--attest` (P4), and the
   session-wide cost ceiling.*
 
 All commands are local-first (no server, no network for
@@ -3080,6 +3144,7 @@ Options:
 - `--backend [local|sigstore]` — verification backend (default: `local`). Use `sigstore` to verify a Sigstore bundle stored alongside the capsule; requires `pip install novafabric[sigstore]`
 - `--capsule-id TEXT` — capsule ID for Sigstore bundle lookup (required when `--backend sigstore`)
 - `--home PATH` — `NOVAFABRIC_HOME` override (used for Sigstore bundle path)
+- `--ca-bundle PATH` — **experimental** (ADR-0055). Operator CA bundle (concatenated PEM). Adds a `Signer certificate chain (CA bundle)` check: the certificate embedded in the DSSE envelope must chain — RFC 5280 path validation via `cryptography`'s `x509.verification`, offline, validity checked at the current time — to a certificate in the bundle. Every bundle certificate is a trust anchor; the envelope carries only the leaf, so include the issuing intermediate in the bundle. No CRL/OCSP revocation check. Overrides the optional `ca_bundle` key in `novaseal.yaml`; when neither is set, the check is skipped and output is unchanged. Local backend only. Fails closed (exit 1) on an unreadable/malformed bundle, a bare-key envelope, or a chain that does not reach an anchor.
 
 Exit codes: `0` (all checks pass), `1` (any check fails or .seal/ missing).
 
@@ -3385,6 +3450,48 @@ Exit codes: `issue` — `0` (rendered), `2` (malformed input). `verify` — `0` 
 
 ---
 
+### nova embodied odd show | trajectory verify (experimental, ADR-0162)
+
+**Experimental** (ADR-0162 P2, NF-303 / NF-310). Reads `facets.embodied` from a
+capsule's `capsule.yaml` offline — no robot, network, or control-plane contact.
+Record-only: NovaFabric never controls, drives, flies or actuates anything, and
+never decides whether an action was safe or in-ODD; every output prints that
+in-mission-boundary line.
+
+```bash
+nova embodied odd show --capsule ./capsules/run-01HX            # declared ODD + excursions
+nova embodied odd show --capsule 01HXAY7M5JZ8R7K4P9DPBYK2WX --json
+nova embodied trajectory verify --capsule ./capsules/run-01HX   # walk perception→…→actuation
+nova embodied trajectory verify --capsule 01HXAY7M5JZ8R7K4P9DPBYK2WX --json
+```
+
+Options (both): `--capsule` (required) — capsule directory or a bare run id
+resolved under `NOVAFABRIC_CAPSULE_DIR`; `--json` — machine-readable output.
+
+`odd show` prints `odd_ref`, each excursion (`condition`, `observed`, `ts`,
+always `in_odd: false`) in time order, and `verdict: null`. Zero excursions is
+reported as "none recorded", never as "stayed in-ODD". A block carrying a
+ruling — a non-null `verdict` or an `in_odd: true` excursion — is refused
+(`AdjudicationRefusedError`).
+
+`trajectory verify` walks the ordered hops and reports `acyclic`,
+`no_broken_parent`, `monotonic` and `complete` (an actuation hop whose ancestry
+reaches a perception root). Each defect is named by hop index: `broken_parent`,
+`missing_parent`, `self_reference`, `forward_reference`, `duplicate_output`,
+`ts_regression`, `empty_chain` (errors) and `stage_regression` (warning — a new
+`perception` after an `actuation` is a closed loop, not a regression).
+
+Exit codes: `0` — shown / chain intact; `1` — the recorded evidence is defective
+(broken chain, ruling in the ODD block, malformed hop, raw payload, non-digest
+ref); `2` — nothing could be checked (capsule not found/unreadable, or no
+trajectory recorded for `trajectory verify` — absent is not a pass). `odd show`
+with no ODD recorded exits `0` and says so.
+
+The other ADR-0162 surfaces (`nova embodied sensors|actuation|sim2real|teleop|verify`,
+`nova export-dssad`, `nova lineage embodied`) are **planned**, not shipped.
+
+---
+
 ## Incident forensics and subject-rights commands (experimental, ADR-0155/0161)
 
 Read-only reconstructions over already-sealed evidence supplied as a JSON
@@ -3644,6 +3751,8 @@ conventions:
 |---|---|---|
 | [`nova export-compliance`](#nova-export-compliance-subcommand) | EU AI Act / ISO 42001 / NIST GenAI + CSA exporters | ADR-0107 |
 | [`nova export-model-risk`](#nova-export-model-risk-evidence) | SR 26-2 / SR 11-7 model-risk evidence | ADR-0159 |
+| [`nova export-model-independence`](#nova-export-model-independence---model-id) | Model-validation independence (ADR-0058 maker-checker) | ADR-0159 |
+| [`nova export-retention`](#nova-export-retention---bundle-zip) | SEC 17a-4 / MiFID retention posture + RFC 3161 timestamp | ADR-0159 |
 | [`nova export-part11`](#nova-export-part11-document) | 21 CFR Part 11 electronic records | ADR-0160 |
 | [`nova export-rai-scorecard`](#nova-export-rai-scorecard-document) | Responsible-AI coverage scorecard | ADR-0158 |
 | [`nova export-public-annex-viii`](#nova-export-public-annex-viii-document) | EU AI Act Annex VIII public DB (DRAFT) | ADR-0169 |
@@ -3666,6 +3775,64 @@ nova export-model-risk evidence.json --json
 ```
 
 - `<evidence>` — JSON: `{model_id, development[], independent_validation[], ongoing_monitoring[], model_inventory[], partial[]}`
+
+---
+
+### nova export-model-independence --model \<id\>
+
+**Experimental** (ADR-0159 D2 / NF-276). Unlike the document-driven renderers
+above, this command *reads* the shipped ADR-0058 maker-checker records itself —
+the registry `promotion_proposals` rows written by `nova promote propose` /
+`nova promote approve` (opened read-only), plus, per `--capsule-id`, the NovaSeal
+DSSE bundles written by `nova seal propose` / `nova seal approve`, whose outcome is
+taken verbatim from the shipped `verify_sod` verifier. It renders whether the
+validator (checker) identity differs from the developer (maker) identity.
+**It asserts only that independence was recorded — never that validation was
+sufficient, and never a rating.** A single-identity approval is `missing` with
+reason `single-identity approval`; an open proposal, a bypass, or a record that
+failed SoD verification is `missing` with its reason. The single-sign-off
+`nova approve` table is not read (it records no developer identity).
+
+```bash
+nova export-model-independence --model credit-scorer@2.1
+nova export-model-independence --model credit-scorer --capsule-id <capsule-id> --json
+```
+
+- `--model` — asset id, `name` or `name@version` (required)
+- `--capsule-id` — also read the NovaSeal maker-checker bundle for this capsule (repeatable)
+- `--db` — registry database (default `$NOVAFABRIC_DB_PATH` or `$NOVAFABRIC_HOME/registry.db`)
+- `--data-dir`, `--policy-db` — NovaSeal bundle directory and policy DB (defaults as `nova seal`)
+- `--json` — machine-readable artifact
+
+Exit codes: `0` (rendered, including `missing` fields), `2` (unreadable registry or malformed model id).
+
+---
+
+### nova export-retention --bundle \<zip\>
+
+**Experimental** (ADR-0159 D5 / NF-277). Attests the retention *posture* over one
+or more Evidence Bundles — the registry `retention-policy.yaml` window and deletion
+mode, the `holds.jsonl` legal-hold state, each run's WORM lock (local adapter
+`worm.db`, reported `partial` because it is dev/test only, or an S3 / Azure / GCS
+`WormReceipt` supplied via `--worm-receipts`), the **RFC 3161 trusted timestamp as
+actually recorded in each bundle** by `nova export-evidence --timestamp` (reported
+`complete` when the TSR is present and bound to the manifest digest; `missing`
+with the reason only when none was obtained), and the hash-chained audit-log
+entries for the run. **It attests posture, never compliance, and makes nothing
+immutable.** The TSR's TSA signature is not re-verified here — use
+`openssl ts -verify` as the bundle README describes.
+
+```bash
+nova export-retention --bundle evidence.zip --registry prod
+nova export-retention --bundle a.zip --bundle b.zip --regime mifid --json
+```
+
+- `--bundle` — Evidence Bundle ZIP (repeatable, required)
+- `--regime` — `17a-4` (default; `17 CFR 240.17a-4 (2022 amendment)`) or `mifid` — a version-pinned tag, not a determination
+- `--registry` — read `.novafabric/registries/<name>/{retention-policy.yaml,holds.jsonl,worm.db}`
+- `--worm-db`, `--worm-receipts`, `--audit-log` — override the WORM DB, supply cloud WORM receipts, override the audit log
+
+Exit codes: `0` (rendered, including `missing` rows), `2` (unreadable/corrupt bundle, policy, hold ledger, WORM DB or receipts).
 
 ---
 
@@ -3973,6 +4140,63 @@ nova export-rocrate .novafabric/runs/01HX.../ --output ./out.rocrate.zip
 
 Options:
 - `--output, -o PATH` — output ZIP file path (default: `<capsule_dir>.rocrate.zip` next to the capsule dir)
+
+#### nova export-rocrate-science --capsule \<capsule\>
+
+Export a science capsule as a FAIR **Workflow-Run-RO-Crate science profile** (ADR-0164 NF-324).
+
+**experimental** — ADR-0164 P2. Composes over the `nova export-rocrate` carrier (NF-040): the
+carrier's RO-Crate 1.1 file set is kept, and the Workflow Run Crate 0.5 entities are added — a
+W3C-PROV-aligned `CreateAction`, the reproducibility-receipt digests and seeds as
+`PropertyValue`s, the hypothesis→claim DAG (with `isBasedOn` parent edges), and the sealed
+science root as an `identifier`. Byte-deterministic when the capsule carries a timestamp.
+
+```bash
+nova export-rocrate-science --capsule .novafabric/runs/01HX.../ --out ./crates
+nova export-rocrate-science --capsule 01HX... --orcid 0000-0002-1825-0097 --ror 03yrm5c26 --json
+```
+
+Writes `<run_id>.science.rocrate.zip` and `<run_id>.fair-binding.json` (the NF-324
+`fair_binding` record: profile URIs, `rocrate_digest`, `prov_alignment: "w3c-prov"`,
+`sealed_root`, `receipt_root`, persistent identifiers, `unbound`, `verdict: null`).
+
+Options:
+- `--capsule TEXT` — capsule directory or run id (required)
+- `--out PATH` — output directory (default: the capsule's parent directory)
+- `--profile process-run-crate|workflow-run-crate` — default: `workflow-run-crate` when the receipt declares a `workflow_digest`, else `process-run-crate`. `provenance-run-crate` is **planned**.
+- `--doi TEXT`, `--orcid TEXT` (repeatable), `--ror TEXT` (repeatable) — persistent-identifier references (ORCIDs become `contributor`, never `author`)
+- `--json` — print the `fair_binding` record
+
+Exit codes: `0` exported; `1` refused — no `science_provenance` facet, a tampered receipt, a
+workflow profile with no declared workflow, or a malformed DAG; `2` usage error.
+Every output carries the in-mission-boundary line: NovaFabric records and exports provenance;
+it never runs experiments or adjudicates scientific validity.
+
+#### nova science receipt build|verify --capsule \<capsule\>
+
+Computational-**reproducibility receipt** (ADR-0164 NF-323). **experimental** — ADR-0164 P2.
+
+`build` binds the environment digest, seed(s), input-data digest, code digest and optional
+workflow digest — plus the declared `determinism_class` and, when the science facet records
+one, the sealed capsule root — under one `bound_root`. Components not supplied are named in
+`receipt_incomplete`, never fabricated. `verify` recomputes the root offline and checks the
+declared incompleteness. Record-only: nothing is re-executed and `reproducible_in_fact` is
+always `null`.
+
+```bash
+nova science receipt build --capsule 01HX... --env sha256:<hex> --data sha256:<hex> \
+    --code sha256:<hex> --seed 1337 --seed 42 --determinism statistical --write
+nova science receipt verify --capsule 01HX... [--strict] [--json]
+```
+
+`build` options: `--env`, `--data`, `--code`, `--workflow` (each `sha256:<64 hex>`), `--seed INT`
+(repeatable, ordered), `--determinism bitwise|statistical|nondeterministic|undeclared`,
+`--write` (persist into `capsule.yaml` under `facets.science_provenance.reproducibility_receipt`),
+`--json`.
+
+Exit codes: `0` ok; `1` (`verify`) root mismatch, misreported incompleteness, malformed or
+absent receipt — or `--strict` with an incomplete receipt; `2` usage error (unknown capsule,
+malformed digest or seed).
 
 #### nova lineage export-prov \<capsule_dir\>
 
@@ -5719,6 +5943,59 @@ Implemented in `src/novafabric/cli/migrate_schema.py` (G-F track, v0.29.0).
 
 ---
 
+### nova migrate-format (experimental, ADR-0165 NF-332)
+
+**Experimental.** Records a *format-migration hop* in a capsule's preservation facet
+(`facets.preservation.format_migration_chain`) and walks the chain offline back to the
+facet's `original_root`. Each hop carries `from_version`, `to_version`, `migrated_at`,
+`tool_ref` (a `sha256:` digest or URI of the migrator — never the migrator itself),
+`pre_digest`, `post_digest`, and `parent` (the prior hop's `post_digest`, `null` for the
+first). `parent` and `pre_digest` are derived from the chain, never typed in.
+
+**Record-only.** It does not run the migrator and **never modifies a stored capsule** —
+rewriting `capsule.yaml` would change the bytes its seal covers. The updated facet is
+written as JSON to stdout or to a new `--output` file (an existing file is never
+overwritten). Unlike `nova migrate` / `nova migrate-schema`, which rewrite a capsule to the
+current schema, this command only records that a migration happened elsewhere.
+
+```bash
+# Record the first hop; from_version defaults to run-capsule@<schema_version>
+nova migrate-format --capsule 01HX... --to run-capsule@0.3.0 \
+  --tool sha256:<migrator-digest> --migrated-artifact migrated/capsule.yaml \
+  -o preservation.json
+
+# Extend a standalone facet document by one more hop
+nova migrate-format --facet preservation.json --to run-capsule@0.4.0 \
+  --tool https://tools.example.org/migrators/0.3-to-0.4 --post-digest sha256:<hex> \
+  -o preservation-v2.json
+
+# Only verify the existing chain (offline); JSON verdict on stdout
+nova migrate-format --facet preservation-v2.json --check --json
+```
+
+The walk reports `chain_walk_ok` (no broken/missing `parent`), `reaches_original_root`,
+`acyclic`, and `monotonic` (each hop moves the version strictly forward within one format
+family, hops are contiguous, time never runs backwards). A hop is refused if the existing
+chain is already broken or if the new hop would break it. Each accepted hop also appends a
+PREMIS `migration` event to `provenance_events`.
+
+Options: `--capsule REF` or `--facet PATH` (exactly one) · `--to VERSION` · `--tool REF` ·
+`--post-digest DIGEST` or `--migrated-artifact PATH` (exactly one; the file is hashed, not
+copied) · `--from VERSION` · `--migrated-at RFC3339` (default: now, UTC) ·
+`--output/-o PATH` · `--check` · `--json`.
+
+Exit codes: `0` = hop recorded / chain ok, `1` = chain broken or hop refused, `2` = bad
+input. Every run prints the in-mission-boundary line on stderr: NovaFabric records
+format-migration provenance only and makes no claim that a migration was faithful,
+authorized, or regulator-accepted.
+
+**Not yet implemented (future design, ADR-0165 P3–P5):** `nova preserve`, `nova reseal`,
+`nova fixity`, `nova export-preservation`, and sealing the updated facet into an Evidence
+Bundle. Implemented in `src/novafabric/cli/migrate_format.py` and
+`src/novafabric/preservation/format_migration.py`.
+
+---
+
 ### nova db (Phase 5 — MetadataStore management)
 
 MetadataStore management commands (ADR-0040, FR-05, FR-06). Requires `novafabric[server]` for Postgres operations.
@@ -6149,6 +6426,74 @@ The same lifecycle is also available over REST at the admin-gated
 `/v0/api-keys` resource (`POST` create, `GET` list, `DELETE {key_id}` revoke,
 `POST {key_id}/rotate`); the dashboard admin console reads it read-only via
 `GET /api/admin/api-keys`.
+
+---
+
+### nova server usage reconcile (experimental, ADR-0208)
+
+Compare the metered usage ledger with the capsule store and report the drift
+(derived minus metered). The metered side is the **lifetime** total — rollups
+pruned past `usage.rollup_retention_months` are carried forward — so it
+covers the same whole-history window as the store and a retention prune is
+never reported as drift (`GET /v0/usage`'s `drift` block still uses the
+rolling retention window). **Report-only by default.** With `--apply` and a non-zero drift,
+append one signed (±) adjustment row per drifting metric (`capsules_created`,
+`bytes_stored`) to the **`default` workspace only** — `attribution =
+'reconciliation'`, `ref = 'recon:<timestamp>'`. Existing rows and counters
+are never rewritten. Concurrent `--apply` runs are serialized by the SQLite
+write lock, so a drift is booked at most once. Every run appends a
+`usage.reconcile` entry to the hash-chained audit log.
+
+```bash
+nova server usage reconcile
+nova server usage reconcile --json
+nova server usage reconcile --apply --actor alice@example.com
+```
+
+Options:
+- `--apply` — append the adjustment rows (default: report only)
+- `--capsule-dir PATH` — capsule store to measure (default: the server's)
+- `--actor TEXT` — actor recorded on the ledger rows and audit entry (default: `cli`)
+- `--json` — emit the result as JSON
+- `--config PATH` — server YAML config (retention keys, `db_path`)
+- `--db-path PATH` — SQLite database path (overrides the config)
+
+Exit codes:
+- `0` — success (report printed; adjustment appended when `--apply`)
+- `1` — refused (a negative adjustment would take `default` below zero) or
+  the adjustment committed but its audit entry failed
+- `2` — invalid server config
+
+### nova server usage export (experimental, ADR-0208)
+
+Chargeback export: one row per `(period, org, workspace, metric)` for a range
+of `YYYY-MM` periods, deterministically sorted in that order. Finalized
+periods come from the monthly rollups (`status` `final`); not-yet-finalized
+periods, always including the current one, from the live counters
+(`provisional`). CSV is RFC 4180 (CRLF, header row) with formula-injection-safe
+text cells (leading `= + - @` TAB CR LF, checked after NFKC normalization and
+after leading whitespace, gets a `'` prefix); NDJSON is one sorted-key object per line. Read-only.
+
+```bash
+nova server usage export --from 2026-07 --to 2026-09
+nova server usage export --from 2026-09 --format ndjson --workspace ml-platform
+nova server usage export --from 2026-09 -o chargeback-2026-09.csv
+```
+
+Options:
+- `--from YYYY-MM` — first period (default: current UTC period)
+- `--to YYYY-MM` — last period, inclusive (default: `--from`; at most 120 periods)
+- `--format csv|ndjson` — output format (default: `csv`)
+- `--workspace SLUG` / `--org SLUG` — exact-match filters
+- `--output`, `-o PATH` — write to a file instead of stdout
+- `--config PATH` / `--db-path PATH` — as for `reconcile`
+
+Columns: `period, org, workspace, metric, total, status, finalized_at`.
+
+Exit codes:
+- `0` — success (an empty range prints the header only)
+- `2` — invalid `--format`, malformed / inverted / over-wide period range, or
+  invalid server config
 
 ---
 
@@ -6585,6 +6930,23 @@ never treated as zero: absent ceilings or absent data pass with an explicit
 ceiling with no recorded evidence. Spec: `design/spec/budget-gate-v0.md` (private).
 The `nova policy budget set|list|show` authoring commands and the budget-gate
 verdict record are **future design** (ADR-0136 P2/P3) — not yet implemented.
+
+**Environment-conditioned gates (experimental, ADR-0126 P3).** The evidence-export
+gate's input carries the capsule's recorded deployment environment as
+`input.resource.deployment_environment` (the value of `nova capture --environment` /
+`NOVAFABRIC_ENVIRONMENT`, verbatim; `null` when none was recorded — never inferred), so a
+custom policy can apply production-only requirements:
+
+```rego
+allow if {
+    input.resource.deployment_environment == "production"
+    input.resource.redaction_proof_present == true
+    input.resource.unsafe_skips == 0
+}
+```
+
+Asset-scoped gates (promotion, protected labels) carry `null`. The mutating-replay gate
+does not yet populate the field (**planned**); no built-in gate conditions on it.
 
 ---
 
@@ -8408,6 +8770,53 @@ nova evidence check-admissibility custody.json --timestamp-ok
 ```
 
 **Reference:** `src/novafabric/safetycase/`, `design/adr/0095-evidence-grounded-safety-case-and-admissible-evidence.md` (private).
+
+### nova safety control show
+
+**experimental** (ADR-0167 P2, NF-352). Read-only: list the **external** AI-control-protocol
+decisions (trusted/untrusted monitoring, Ctrl-Z resample, defer-to-trusted/human, interrogate)
+recorded in a capsule's `facets.frontier_safety` block. Each row shows the protocol, the decision it
+produced (`accept | edit | resample | defer | audit`), the governed action's digest, the monitor
+identity digest (never its prompt), the protocol's own `verdict_ref`, and — for a monitor that also
+acted as a C4 guardrail — the `guardrail_decision_ref` digest. `--action <sha256:…>` filters to one
+governed action; `--json` emits machine-readable output.
+
+Every output prints the in-mission-boundary line: NovaFabric **records** the decision; it never
+runs the protocol, computes a verdict, or blocks the workload. `nova safety` is a different
+command from `nova safety-case` (ADR-0095).
+
+```bash
+nova safety control show --capsule 01KZ...
+nova safety control show --capsule ./my-capsule --action sha256:aa11... --json
+```
+
+Exit codes: `0` whenever the capsule was read (including "no decisions recorded"); `2` for a
+missing/unreadable capsule or a malformed facet.
+
+### nova safety tripwire list
+
+**experimental** (ADR-0167 P2, NF-357). Read-only: list the **published** framework indicators
+(RSP/ASL, Preparedness, FSF) that fired on a run, each bound by `commitment_ref` to the NF-353
+commitment it implicates, with the digest of the observing event/eval. `--framework
+anthropic_rsp|openai_preparedness|deepmind_fsf|other` filters; `--json` emits machine-readable
+output. There is no `--fired` filter: a trigger object only exists when an indicator fired
+(`fired: false` is unrepresentable by design), so the filter would be a no-op.
+
+A fired tripwire is **reported, never acted on**: no safeguard is applied and the command still
+exits `0` (`2` only on input errors). Recording is fail-open — invalid safety material is dropped
+with a warning, never raised into the workload.
+
+```bash
+nova safety tripwire list --capsule 01KZ...
+nova safety tripwire list --capsule ./my-capsule --framework deepmind_fsf --json
+```
+
+The rest of the ADR-0167 `nova safety …` surface (`threshold`, `commitment`, `signal`,
+`sandbagging`, `autonomy`, `gate`, `case`, `verify`) is **planned** (P1 ships as a library facet
+only; P3–P5 are future design).
+
+**Reference:** `src/novafabric/frontier_safety/`, `src/novafabric/cli/frontier_safety.py`,
+`design/adr/0167-runtime-safety-alignment-evidence.md` (private).
 
 ### GET /api/runs/{id}/energy (dashboard API)
 

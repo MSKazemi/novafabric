@@ -147,9 +147,61 @@ the same procedures as §3/§4 — the trust anchor to update is your
 
 **Honest limits:** this is a working library primitive with passing tests
 (`tests/seal/test_x509_identity.py`), not yet wired into `novaseal.yaml` or
-any `nova seal`/`nova verify` CLI flag. Full CA-bundle chain validation and
-the Rekor inclusion-proof option (ADR-0055's remaining verification step) are
-**future design**.
+any `nova seal` signing flag. The Rekor inclusion-proof option is **future
+design**.
+
+#### CA-bundle chain validation (ADR-0055 trust step 2) — experimental
+
+As an alternative to pinning every leaf, the operator can trust a **CA
+bundle** (concatenated PEM). Trust is resolved "pinned OR chain", pinned
+first: a pinned certificate is accepted as before; otherwise the embedded
+certificate must chain to a bundle anchor via RFC 5280 path validation
+(`cryptography`'s `x509.verification`, fully offline).
+
+```python
+from novafabric.trust.novaseal.x509_identity import (
+    load_ca_bundle, verify_x509_signature,
+)
+
+anchors = load_ca_bundle(Path("/etc/novaseal/ca-bundle.crt").read_bytes())
+result = verify_x509_signature(
+    payload, sig,
+    ca_bundle=anchors,                 # every bundle cert is a trust anchor
+    intermediates=[intermediate_cert], # untrusted, for path building only
+    # validation_time=<datetime>,      # default: now (UTC)
+)
+# result.trust_basis == "ca_chain"; result.chain_subjects == [leaf, ..., anchor]
+```
+
+`validate_certificate_chain(leaf, anchors, ...)` is also exposed on its own.
+The same check runs on the CLI as `nova verify --ca-bundle <pem>` (or the
+optional `ca_bundle:` key in `novaseal.yaml`) against the certificate embedded
+in the capsule's DSSE envelope — see [CLI reference](cli-reference.md#nova-verify-capsule).
+On the CLI the chain check is **bound to the signature**
+(`verify_dsse_signer_chain`): it passes only when some DSSE signature entry
+verifies over the signed bytes under the public key of its *own* embedded
+certificate, and that same certificate chains to the bundle. An entry whose
+`pubkey` differs from its `cert`'s key, or that carries no `cert`, never
+counts — so a forged envelope cannot borrow a legitimately issued leaf.
+
+Policy: every certificate in the path must be inside its validity window at
+the validation time, issuer signatures must verify, CA certificates must meet
+the WebPKI CA extension profile (basicConstraints CA, keyCertSign, path
+length); the signing (leaf) certificate must **not** be a CA but needs no
+particular EKU or subjectAltName. Path search is bounded (8 intermediates by
+default, 16 max).
+
+Because no EKU is required, **any** end-entity certificate issued under a
+bundle anchor can sign capsules that verify — a TLS server certificate from the
+same CA included. Put a **dedicated signing CA** (or a signing-only
+intermediate) in the bundle, not a general-purpose enterprise root.
+
+**Honest limits (experimental):** no revocation checking (CRL/OCSP — ADR-0055
+OQ-55-3 remains open), the CLI validates at the current time (a signer
+certificate that has since expired fails; the library's `validation_time`
+lets a caller validate at signing time instead), the DSSE envelope carries
+only the leaf so any intermediate must be in the bundle for the CLI, and the
+mixed-mode `verify.trust_bundles` list from the ADR is not implemented.
 
 ### 2.4 Sigstore keyless (ADR-0071) — works today via `nova seal sign --backend sigstore`
 
@@ -315,7 +367,7 @@ Verifiers must pin the specific public key they trust — do not use a global
 - [AWS KMS multi-region keys](https://docs.aws.amazon.com/kms/latest/developerguide/multi-region-keys-overview.html)
 - ADR-0041: NovaSeal cryptographic core adoption
 - ADR-0055: Dual-Mode Signing Identity (x509 cert-pinned offline slice shipped;
-  sigstore profile + CA-bundle path validation remain future design)
+  CA-bundle chain validation experimental; sigstore profile remains future design)
 - ADR-0058: Maker-checker dual-approval with NovaSeal
 - ADR-0059: Linked-envelope chain maker-checker
 - ADR-0071: Sigstore keyless signing

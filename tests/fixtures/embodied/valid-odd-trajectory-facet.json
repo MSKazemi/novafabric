@@ -1,0 +1,89 @@
+{
+  "schema_version": "0.2.0",
+  "sensors": [
+    {
+      "sensor_id": "front-cam-0",
+      "modality": "camera",
+      "frame_count": 18240,
+      "stream_digest": "sha256:aa11bd2b4d3f9a5e6c7081924f5b0a3c8d6e2f4b7a90c1d3e5f7a9b1c3d5e7f9",
+      "clock_domain": "ptp-0",
+      "c2pa_manifest_ref": "sha256:bb2260a1c4e8f0b2d4a6c8e0f2b4d6a8c0e2f4b6d8a0c2e4f6b8d0a2c4e6f8b0"
+    },
+    {
+      "sensor_id": "lidar-top",
+      "modality": "lidar",
+      "frame_count": 3612,
+      "stream_digest": "sha256:cc3371b2d5f9a1c3e5b7d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1",
+      "clock_domain": "ptp-0"
+    }
+  ],
+  "actuation": [
+    {
+      "command_class": "motion",
+      "target_ref": "sha256:dd4482c3e6a0b2d4f6a8c0e2b4d6f8a0c2e4b6d8f0a2c4e6b8d0f2a4c6e8b0d2",
+      "count": 941,
+      "issued_by": "run:01HXAY7M5JZ8R7K4P9DPBYK2WX",
+      "action_receipt_ref": "sha256:ee5593d4f7b1c3e5a7b9d1f3c5e7a9b1d3f5c7e9a1b3d5f7c9e1a3b5d7f9c1e3",
+      "unbound": false
+    },
+    {
+      "command_class": "payload_release",
+      "target_ref": "sha256:ff66a4e5b8c2d4f6a8b0c2e4d6f8b0a2c4e6d8f0b2a4c6e8d0f2b4a6c8e0d2f4",
+      "count": 1,
+      "issued_by": "run:01HXAY7M5JZ8R7K4P9DPBYK2WX",
+      "unbound": true
+    }
+  ],
+  "verified": {
+    "no_raw_payload": true,
+    "odd_verdict_is_null": true
+  },
+  "odd": {
+    "odd_ref": "sha256:7a24f4baac1cb6a9def365e38e8da8f3ab73f85ead31a50f05f3477eade8c967",
+    "excursions": [
+      {
+        "condition": "fog",
+        "observed": "visibility<40m",
+        "ts": "2026-07-13T10:02:11Z",
+        "in_odd": false
+      },
+      {
+        "condition": "speed",
+        "observed": "road_speed>50kph",
+        "ts": "2026-07-13T10:04:37Z",
+        "in_odd": false
+      }
+    ],
+    "verdict": null
+  },
+  "trajectory": [
+    {
+      "stage": "perception",
+      "input_digest": "sha256:f55f74146cefb152dbd1b9e58f15bb66af4aee5cf0e5789604abf9918eb724b5",
+      "output_digest": "sha256:73f249647b15fba294e05e748375123e3c01e3559633586a0a5506b5fc0a1e45",
+      "parent": null,
+      "ts": "2026-07-13T10:02:11.100Z"
+    },
+    {
+      "stage": "world_model",
+      "input_digest": "sha256:73f249647b15fba294e05e748375123e3c01e3559633586a0a5506b5fc0a1e45",
+      "output_digest": "sha256:040f589f6a57f166cb34c69d2c38a1f7a5366bde5637e2988697753d5567b6da",
+      "parent": "sha256:73f249647b15fba294e05e748375123e3c01e3559633586a0a5506b5fc0a1e45",
+      "ts": "2026-07-13T10:02:11.140Z"
+    },
+    {
+      "stage": "decision",
+      "input_digest": "sha256:040f589f6a57f166cb34c69d2c38a1f7a5366bde5637e2988697753d5567b6da",
+      "output_digest": "sha256:ee85411883c0b7ef09ea780b6834e8ed688c0bd4160cfebda738dc221736d2a9",
+      "parent": "sha256:040f589f6a57f166cb34c69d2c38a1f7a5366bde5637e2988697753d5567b6da",
+      "ts": "2026-07-13T10:02:11.180Z"
+    },
+    {
+      "stage": "actuation",
+      "input_digest": "sha256:ee85411883c0b7ef09ea780b6834e8ed688c0bd4160cfebda738dc221736d2a9",
+      "output_digest": "sha256:0102b1e799b8b5154a4c64b4434102babf3bce3d67211d875cedfa9402a306d2",
+      "parent": "sha256:ee85411883c0b7ef09ea780b6834e8ed688c0bd4160cfebda738dc221736d2a9",
+      "ts": "2026-07-13T10:02:11.200Z"
+    }
+  ]
+}

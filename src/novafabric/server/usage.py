@@ -115,6 +115,15 @@ CREATE TABLE IF NOT EXISTS usage_rollups (
     finalized_at TEXT NOT NULL,
     PRIMARY KEY (workspace, period, metric)
 );
+
+CREATE TABLE IF NOT EXISTS usage_pruned_totals (
+    workspace    TEXT NOT NULL,
+    metric       TEXT NOT NULL,
+    total        INTEGER NOT NULL DEFAULT 0,
+    through      TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    PRIMARY KEY (workspace, metric)
+);
 """
 
 
@@ -198,6 +207,16 @@ def _get_conn(db_path: Path | None) -> sqlite3.Connection:
     return conn
 
 
+def open_usage_db(db_path: Path | None = None) -> sqlite3.Connection:
+    """Open the registry DB with the usage tables ensured (``sqlite3.Row`` rows).
+
+    Public entry point for the ADR-0208 P2 admin surfaces
+    (``usage_reconcile``, ``usage_export``). The caller owns the connection
+    and must close it.
+    """
+    return _get_conn(db_path)
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -241,9 +260,7 @@ class Attribution:
     source: str  # 'key' | 'membership' | 'default'
 
 
-def resolve_attribution(
-    auth: AuthContext | None, db_path: Path | None
-) -> Attribution:
+def resolve_attribution(auth: AuthContext | None, db_path: Path | None) -> Attribution:
     """Resolve the acting principal's workspace per the spec's normative order.
 
     1. API-key workspace binding (ADR-0193; stored-but-unenforced — metering
@@ -282,9 +299,7 @@ def resolve_attribution(
             # An unknown binding still attributes to the bound slug (visible,
             # not laundered); its org falls back to the default org.
             org = row["org"] if row is not None else DEFAULT_ORG_SLUG
-            return Attribution(
-                workspace=str(binding), org=org, source=ATTRIBUTION_KEY
-            )
+            return Attribution(workspace=str(binding), org=org, source=ATTRIBUTION_KEY)
         if auth is not None and auth.subject:
             rows = conn.execute(
                 "SELECT DISTINCT w.slug AS ws, o.slug AS org FROM memberships m"
@@ -347,6 +362,14 @@ def _finalize_and_prune(
     rollups past ``rollup_retention_months``; raw ledger rows of finalized
     periods past ``ledger_retention_months``; counter rows of finalized
     periods past ledger retention (rollups carry the totals).
+
+    Before a rollup is pruned its total is **carried** into
+    ``usage_pruned_totals`` (one running ``(workspace, metric)`` sum,
+    ``through`` = the newest carried period), so the lifetime metered figure
+    (:func:`lifetime_totals`, the reconciliation baseline — ADR-0208 P2)
+    survives retention. Counter rows of a carried period go with it (the
+    carry now holds their totals; only reachable when ledger retention is
+    configured longer than rollup retention).
     """
     # Finalize: counters from past periods, org denormalized from the most
     # recent ledger row of that (workspace, period) — 'default' as last resort
@@ -381,6 +404,26 @@ def _finalize_and_prune(
         "   AND r.period = usage_counters.period AND r.metric = usage_counters.metric)",
         (ledger_cutoff,),
     )
+    conn.execute(
+        """
+        INSERT INTO usage_pruned_totals (workspace, metric, total, through, updated_at)
+        SELECT workspace, metric, SUM(total), MAX(period), ?
+          FROM usage_rollups
+         WHERE period < ?
+         GROUP BY workspace, metric
+        ON CONFLICT(workspace, metric) DO UPDATE SET
+            total = total + excluded.total,
+            through = MAX(through, excluded.through),
+            updated_at = excluded.updated_at
+        """,
+        (now_iso, rollup_cutoff),
+    )
+    conn.execute(
+        "DELETE FROM usage_counters WHERE period < ? AND EXISTS"
+        " (SELECT 1 FROM usage_rollups r WHERE r.workspace = usage_counters.workspace"
+        "   AND r.period = usage_counters.period AND r.metric = usage_counters.metric)",
+        (rollup_cutoff,),
+    )
     conn.execute("DELETE FROM usage_rollups WHERE period < ?", (rollup_cutoff,))
 
 
@@ -404,53 +447,78 @@ def record_entries(
     """
     if not entries:
         return 0
+    conn = _get_conn(db_path)
+    try:
+        with conn:  # one transaction: rollups + ledger + counters
+            return record_entries_in_transaction(
+                conn,
+                entries,
+                now=now,
+                rollup_retention_months=rollup_retention_months,
+                ledger_retention_months=ledger_retention_months,
+            )
+    finally:
+        conn.close()
+
+
+def record_entries_in_transaction(
+    conn: sqlite3.Connection,
+    entries: list[LedgerEntry],
+    *,
+    now: datetime | None = None,
+    rollup_retention_months: int = 24,
+    ledger_retention_months: int = 3,
+) -> int:
+    """:func:`record_entries` inside a transaction the **caller** owns.
+
+    For callers that must read and write under one lock (the ADR-0208 P2
+    reconciliation: ``BEGIN IMMEDIATE`` → re-measure → append). Neither
+    begins nor commits; *conn* comes from :func:`open_usage_db`.
+    """
+    if not entries:
+        return 0
     now_dt = now or _utcnow()
     now_iso = now_dt.isoformat()
     period = period_for(now_dt)
-    conn = _get_conn(db_path)
-    try:
-        recorded = 0
-        with conn:  # one transaction: rollups + ledger + counters
-            _finalize_and_prune(
-                conn,
+    _finalize_and_prune(
+        conn,
+        period,
+        rollup_retention_months=rollup_retention_months,
+        ledger_retention_months=ledger_retention_months,
+        now_iso=now_iso,
+    )
+    recorded = 0
+    for e in entries:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO usage_ledger"
+            " (ledger_id, org, workspace, metric, amount, ref, period,"
+            "  attribution, actor, recorded_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(ULID()),
+                e.org,
+                e.workspace,
+                e.metric,
+                e.amount,
+                e.ref,
                 period,
-                rollup_retention_months=rollup_retention_months,
-                ledger_retention_months=ledger_retention_months,
-                now_iso=now_iso,
-            )
-            for e in entries:
-                cur = conn.execute(
-                    "INSERT OR IGNORE INTO usage_ledger"
-                    " (ledger_id, org, workspace, metric, amount, ref, period,"
-                    "  attribution, actor, recorded_at)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        str(ULID()),
-                        e.org,
-                        e.workspace,
-                        e.metric,
-                        e.amount,
-                        e.ref,
-                        period,
-                        e.attribution,
-                        e.actor,
-                        now_iso,
-                    ),
-                )
-                if cur.rowcount == 0:
-                    continue  # duplicate (metric, ref) — replay is a no-op
-                conn.execute(
-                    "INSERT INTO usage_counters (workspace, period, metric, total,"
-                    " updated_at) VALUES (?, ?, ?, ?, ?)"
-                    " ON CONFLICT(workspace, period, metric)"
-                    " DO UPDATE SET total = total + excluded.total, updated_at ="
-                    " excluded.updated_at",
-                    (e.workspace, period, e.metric, e.amount, now_iso),
-                )
-                recorded += 1
-        return recorded
-    finally:
-        conn.close()
+                e.attribution,
+                e.actor,
+                now_iso,
+            ),
+        )
+        if cur.rowcount == 0:
+            continue  # duplicate (metric, ref) — replay is a no-op
+        conn.execute(
+            "INSERT INTO usage_counters (workspace, period, metric, total,"
+            " updated_at) VALUES (?, ?, ?, ?, ?)"
+            " ON CONFLICT(workspace, period, metric)"
+            " DO UPDATE SET total = total + excluded.total, updated_at ="
+            " excluded.updated_at",
+            (e.workspace, period, e.metric, e.amount, now_iso),
+        )
+        recorded += 1
+    return recorded
 
 
 def record_capsule_upload(
@@ -558,9 +626,7 @@ def record_capsule_delete(
 # ---------------------------------------------------------------------------
 
 
-def usage_for_period(
-    period: str, *, db_path: Path | None = None
-) -> list[dict[str, Any]]:
+def usage_for_period(period: str, *, db_path: Path | None = None) -> list[dict[str, Any]]:
     """Per-workspace metric totals for *period*, org attached.
 
     Past periods serve from ``usage_rollups``; periods not (yet) finalized —
@@ -572,8 +638,7 @@ def usage_for_period(
     try:
         merged: dict[str, dict[str, Any]] = {}
         for row in conn.execute(
-            "SELECT org, workspace, metric, total FROM usage_rollups"
-            " WHERE period = ?",
+            "SELECT org, workspace, metric, total FROM usage_rollups WHERE period = ?",
             (period,),
         ):
             ws = merged.setdefault(
@@ -629,32 +694,70 @@ def all_time_totals(
     """
     conn = _get_conn(db_path)
     try:
-        totals: dict[str, dict[str, int]] = {}
-        clause = " AND workspace = ?" if workspace is not None else ""
+        return _all_time_totals(conn, workspace)
+    finally:
+        conn.close()
+
+
+def _all_time_totals(conn: sqlite3.Connection, workspace: str | None) -> dict[str, dict[str, int]]:
+    totals: dict[str, dict[str, int]] = {}
+    clause = " AND workspace = ?" if workspace is not None else ""
+    params: tuple[str, ...] = (workspace,) if workspace is not None else ()
+    for row in conn.execute(
+        f"SELECT workspace, metric, SUM(total) AS t FROM usage_rollups"
+        f" WHERE 1=1{clause} GROUP BY workspace, metric",  # noqa: S608
+        params,
+    ):
+        totals.setdefault(row["workspace"], {})[row["metric"]] = int(row["t"] or 0)
+    for row in conn.execute(
+        f"""
+        SELECT c.workspace AS workspace, c.metric AS metric, SUM(c.total) AS t
+          FROM usage_counters c
+         WHERE NOT EXISTS (SELECT 1 FROM usage_rollups r
+                            WHERE r.workspace = c.workspace
+                              AND r.period = c.period AND r.metric = c.metric)
+               {clause.replace("workspace", "c.workspace")}
+         GROUP BY c.workspace, c.metric
+        """,  # noqa: S608
+        params,
+    ):
+        ws = totals.setdefault(row["workspace"], {})
+        ws[row["metric"]] = ws.get(row["metric"], 0) + int(row["t"] or 0)
+    return totals
+
+
+def lifetime_totals(
+    *,
+    db_path: Path | None = None,
+    workspace: str | None = None,
+    conn: sqlite3.Connection | None = None,
+) -> dict[str, dict[str, int]]:
+    """Lifetime metered sums per workspace: :func:`all_time_totals` + pruned carry.
+
+    Unlike the rolling-window enforcement figure, rollups pruned past
+    ``rollup_retention_months`` still count here (their totals were carried
+    into ``usage_pruned_totals`` at prune time), so this figure covers the
+    same window as the capsule store — the whole history. It is the
+    reconciliation baseline (ADR-0208 P2). Honest bound: rollups pruned by a
+    build that predates the carry table are not recoverable. Pass *conn* to
+    read inside a caller-owned transaction.
+    """
+    own = conn is None
+    c = conn if conn is not None else _get_conn(db_path)
+    try:
+        totals = _all_time_totals(c, workspace)
+        clause = " WHERE workspace = ?" if workspace is not None else ""
         params: tuple[str, ...] = (workspace,) if workspace is not None else ()
-        for row in conn.execute(
-            f"SELECT workspace, metric, SUM(total) AS t FROM usage_rollups"
-            f" WHERE 1=1{clause} GROUP BY workspace, metric",  # noqa: S608
-            params,
-        ):
-            totals.setdefault(row["workspace"], {})[row["metric"]] = int(row["t"] or 0)
-        for row in conn.execute(
-            f"""
-            SELECT c.workspace AS workspace, c.metric AS metric, SUM(c.total) AS t
-              FROM usage_counters c
-             WHERE NOT EXISTS (SELECT 1 FROM usage_rollups r
-                                WHERE r.workspace = c.workspace
-                                  AND r.period = c.period AND r.metric = c.metric)
-                   {clause.replace("workspace", "c.workspace")}
-             GROUP BY c.workspace, c.metric
-            """,  # noqa: S608
+        for row in c.execute(
+            f"SELECT workspace, metric, total FROM usage_pruned_totals{clause}",  # noqa: S608
             params,
         ):
             ws = totals.setdefault(row["workspace"], {})
-            ws[row["metric"]] = ws.get(row["metric"], 0) + int(row["t"] or 0)
+            ws[row["metric"]] = ws.get(row["metric"], 0) + int(row["total"] or 0)
         return totals
     finally:
-        conn.close()
+        if own:
+            c.close()
 
 
 class WorkspaceUsageReader:
@@ -693,9 +796,7 @@ class WorkspaceUsageReader:
             hit = self._cache.get(workspace)
             if hit is not None and (now - hit[0]) < self.cache_ttl:
                 return hit[1]
-        totals = all_time_totals(db_path=self._db_path, workspace=workspace).get(
-            workspace, {}
-        )
+        totals = all_time_totals(db_path=self._db_path, workspace=workspace).get(workspace, {})
         value = (
             int(totals.get(METRIC_CAPSULES, 0)),
             int(totals.get(METRIC_BYTES, 0)),
@@ -786,7 +887,7 @@ class ApiRequestAccumulator:
                 amount=count,
                 ref=None,
                 workspace=ws,
-                org=_org_for_workspace(ws, db_path),
+                org=org_for_workspace(ws, db_path),
                 # Aggregated across principals — per-principal attribution is
                 # deliberately not preserved for api_requests (spec: coarse).
                 attribution=ATTRIBUTION_DEFAULT,
@@ -804,8 +905,12 @@ class ApiRequestAccumulator:
         )
 
 
-def _org_for_workspace(slug: str, db_path: Path | None) -> str:
-    """Org slug for a workspace slug (first match); 'default' when unknown."""
+def org_for_workspace(slug: str, db_path: Path | None) -> str:
+    """Org slug for a workspace slug (first match); 'default' when unknown.
+
+    Never raises: a missing workspace table (pre-ADR-0178 registry) or any
+    store error resolves to ``'default'``.
+    """
     try:
         conn = _get_conn(db_path)
         try:

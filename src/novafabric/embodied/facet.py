@@ -12,7 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Sensor provenance + actuation records — ADR-0162 P1 (NF-301/NF-302).
+"""The ``facets.embodied`` block — ADR-0162 P1 (NF-301/302) + P2 (NF-303/310).
+
+P2 adds two optional objects defined in sibling modules and carried here:
+the ODD conformance record (:mod:`novafabric.embodied.odd`, ``verdict`` always
+null) and the perception→actuation trajectory chain
+(:mod:`novafabric.embodied.trajectory`, walked offline, never re-derived). The
+I-2 reference-not-bytes boundary they share with P1 lives in
+:mod:`novafabric.embodied._boundary`.
+
+Sensor provenance + actuation records (P1):
 
 Records what an embodied agent's *body* did, as the run capsule already
 records what its brain did: which sensor streams it declared it consumed, and
@@ -57,15 +66,25 @@ collection process this module cannot make on the caller's behalf.
 
 from __future__ import annotations
 
-import hashlib
-import re
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from novafabric.embodied._boundary import (
+    InvalidReferenceError,
+    RawPayloadRejectedError,
+    _own_fields,
+    _validate_ref,
+    digest_stream,
+    reject_raw_payloads,
+    verify_receipt_binding,
+)
+from novafabric.embodied.odd import OddConformance
+from novafabric.embodied.trajectory import TrajectoryHop
+
 FACET_NAME = "embodied"
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 
 #: Sensor modalities enumerated by NF-301. Closed, unlike ``command_class``
 #: below, because the spec fixes this list normatively and provides ``other``
@@ -83,83 +102,6 @@ Modality = Literal[
     "other",
 ]
 
-#: A reference must be a ``sha256:<64 hex>`` digest.
-#:
-#: The spec's wider "reference (URI) **or** digest" shape is deferred to a
-#: later phase: P1's job is the *binding*, and only a digest binds. A URI names
-#: a place a stream was, which an offline verifier cannot check and which says
-#: nothing about the bytes — accepting one would let a sensor record claim a
-#: binding it does not have, and ``unbound`` would then never fire on an
-#: actuation receipt.
-_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
-
-#: Field names that name a payload rather than a reference to one.
-#:
-#: Anchored per-token so ``frame_count``, ``audio_stream_digest`` and
-#: ``point_cloud_ref`` — all legitimate — survive, while a bare ``frames``,
-#: ``image`` or ``point_cloud`` does not. A raw payload arriving under an
-#: innocuous name is caught by the value checks below instead; this catches the
-#: case where the value is a *string* the caller believed was harmless.
-_PAYLOAD_KEY_RE = re.compile(
-    r"^(raw|bytes|blob|payload|data|content|frame|frames|image|images|pixels|"
-    r"point_?cloud|pointcloud|pcd|scan|video|audio|samples|waveform|buffer)$"
-    r"|_(bytes|blob|payload|buffer|pixels)$",
-    re.IGNORECASE,
-)
-
-#: Base64 / hex alphabet, including the URL-safe variant.
-_B64_RE = re.compile(r"^[A-Za-z0-9+/_-]+={0,2}$")
-
-#: A base64-encoded ``data:`` URI, rejected at any length.
-_DATA_URI_RE = re.compile(r"^data:[^,;]*;base64,", re.IGNORECASE)
-
-#: Length above which a pure-base64 string is treated as an inlined payload.
-#:
-#: A judgement call the ADR does not settle. Below this bound an encoded blob
-#: and a legitimate opaque identifier are genuinely indistinguishable, and
-#: refusing short ones would reject real refs: the longest legitimate value
-#: here is a ``sha256:`` digest at 71 characters, so 256 leaves ~3.5x headroom
-#: for operator-chosen sensor ids and manifest refs. Above it, a string that is
-#: *entirely* base64 alphabet is overwhelmingly an encoded frame — no sensor id,
-#: URI, or clock domain looks like that. The check is deliberately one-sided:
-#: a long string that is not pure base64 (prose, a path, JSON) is left alone,
-#: because rejecting it would be this module policing content rather than
-#: enforcing the reference-not-bytes boundary.
-_INLINE_PAYLOAD_MAX_LEN = 256
-
-
-class RawPayloadRejectedError(Exception):
-    """Raised when sensor payload bytes are offered to the facet (I-2).
-
-    Deliberately **not** a ``ValueError``. Pydantic v2 catches ``ValueError``
-    inside a validator and folds it into a ``ValidationError`` alongside
-    ordinary shape complaints, destroying the named type. A caller who passed
-    a camera frame, a point cloud, or an audio buffer has made a *specific*
-    mistake with privacy and capsule-size consequences (ADR-0021 §4), and must
-    be told that, not handed a generic "input should be a valid string".
-
-    Names the field and the rule that fired — never the value, which is the
-    payload this exception exists to keep out of logs as well as capsules.
-    """
-
-    def __init__(self, path: str, rule: str) -> None:
-        super().__init__(
-            f"field {path or '<root>'!r} carries a raw sensor payload "
-            f"({rule}); facets.embodied records references, digests and counts "
-            "only — never frames, point clouds, video, audio, or control "
-            "credentials (ADR-0162 I-2, ADR-0125, ADR-0021 §4)"
-        )
-        self.path = path
-        self.rule = rule
-
-
-class InvalidReferenceError(Exception):
-    """Raised when a reference is not a ``sha256:`` digest.
-
-    Not a ``ValueError``, for the reason given on
-    :class:`RawPayloadRejectedError`.
-    """
-
 
 class MissingIssuerError(Exception):
     """Raised when an actuation record does not name who issued the command.
@@ -169,120 +111,6 @@ class MissingIssuerError(Exception):
     nothing (I-3). A record with no named issuer loses exactly that
     distinction, which is the one this object exists to preserve.
     """
-
-
-# ── The raw-payload boundary (I-2) ────────────────────────────────────────
-
-
-def _check_scalar(value: Any, path: str) -> None:
-    """Raise if a single value is (or plausibly encodes) a sensor payload."""
-    # Binary buffers, in every shape the stdlib hands a caller who read a frame.
-    if isinstance(value, (bytes, bytearray, memoryview)):
-        raise RawPayloadRejectedError(path, f"{type(value).__name__} buffer")
-
-    # Array-likes, duck-typed rather than isinstance-checked. A camera frame
-    # normally arrives as a numpy ndarray, a torch tensor, or a PIL image, and
-    # importing any of them merely to recognise one would add a heavyweight
-    # runtime dependency to a module that records digests (ADR-0024). Every one
-    # of them exposes `tobytes`, or `shape` + `dtype`, or the array interface —
-    # and no reference, count, or identifier this facet legitimately holds does.
-    if not isinstance(value, (str, int, float, bool, type(None))):
-        if hasattr(value, "__array_interface__") or hasattr(
-            value, "__cuda_array_interface__"
-        ):
-            raise RawPayloadRejectedError(path, "array-interface object")
-        if hasattr(value, "shape") and hasattr(value, "dtype"):
-            raise RawPayloadRejectedError(path, "array-like object")
-        if callable(getattr(value, "tobytes", None)):
-            raise RawPayloadRejectedError(path, "buffer-exporting object")
-
-    if isinstance(value, str):
-        if _DATA_URI_RE.match(value):
-            # Unambiguous at any length: a base64 data URI *is* an inlined
-            # payload, so no length bound applies.
-            raise RawPayloadRejectedError(path, "base64 data: URI")
-        if len(value) > _INLINE_PAYLOAD_MAX_LEN and _B64_RE.match(value):
-            raise RawPayloadRejectedError(
-                path, f"base64-shaped string of {len(value)} characters"
-            )
-
-
-def reject_raw_payloads(value: Any, *, path: str = "") -> None:
-    """Walk ``value`` and raise on the first raw sensor payload found (I-2).
-
-    Walks keys as well as values: a payload can arrive either as bytes under a
-    harmless name, or as an innocent-looking value under a name that announces
-    it is a payload (``{"frames": "<huge b64>"}`` trips both; ``{"image": ""}``
-    trips only the key rule, and should).
-
-    Raises:
-        RawPayloadRejectedError: naming the field and the rule, never the value.
-    """
-    if isinstance(value, Mapping):
-        for key, child in value.items():
-            name = str(key)
-            child_path = f"{path}.{name}" if path else name
-            if _PAYLOAD_KEY_RE.search(name):
-                raise RawPayloadRejectedError(child_path, "payload-named field")
-            reject_raw_payloads(child, path=child_path)
-        return
-    if isinstance(value, (list, tuple)):
-        for index, item in enumerate(value):
-            reject_raw_payloads(item, path=f"{path}[{index}]")
-        return
-    _check_scalar(value, path)
-
-
-def _own_fields(model: BaseModel) -> dict[str, Any]:
-    """Declared fields plus ``extra`` ones, with values un-serialised.
-
-    Used instead of ``model_dump()`` because dumping is exactly what must not
-    be attempted on an unrecognised object: pydantic would warn or coerce, and
-    the value we most need to inspect is the one it cannot serialise.
-    """
-    return {**model.__dict__, **(model.__pydantic_extra__ or {})}
-
-
-# ── References ────────────────────────────────────────────────────────────
-
-
-def digest_stream(content: str | bytes) -> str:
-    """Return the ``sha256:`` digest of a stream segment or receipt.
-
-    The **only** function here that accepts bytes, and it retains none of
-    them: it exists so a caller has a correct way to produce a ``stream_digest``
-    or an ``action_receipt_ref`` without inventing one — the alternative being
-    a caller who reaches for the frame itself. The form matches every other
-    digest in the capsule, so a verifier does not have to know which subsystem
-    wrote it.
-    """
-    raw = content.encode("utf-8") if isinstance(content, str) else content
-    return f"sha256:{hashlib.sha256(raw).hexdigest()}"
-
-
-def verify_receipt_binding(ref: str | None, artifact: str | bytes) -> bool:
-    """Re-verify a reference against the artifact it claims to bind.
-
-    Returns False for a missing reference. An unbound record is not
-    "trivially valid" — it is the case a verifier exists to surface, and
-    returning True would pass exactly the records with nothing to check.
-    """
-    if not ref:
-        return False
-    return ref == digest_stream(artifact)
-
-
-def _validate_ref(value: str | None) -> str | None:
-    if value is None:
-        return None
-    reject_raw_payloads(value)
-    if not _DIGEST_RE.match(value):
-        raise InvalidReferenceError(
-            f"reference {value!r} is not a 'sha256:<64 hex>' digest; sensor "
-            "streams and action receipts are bound by digest and held "
-            "elsewhere — the bytes are never stored here (ADR-0162 D1, I-2)"
-        )
-    return value
 
 
 # ── Models ────────────────────────────────────────────────────────────────
@@ -417,27 +245,40 @@ def is_confirmed(record: ActuationRecord) -> bool:
 class VerifiedBlock(BaseModel):
     """What construction of this facet structurally guarantees.
 
-    Only ``no_raw_payload`` is carried. The spec's ``sealed_into_root`` belongs
-    to the sealing phase (ADR-0162 P5): emitting it ``true`` here would claim a
-    seal that has not happened, and emitting it ``false`` would report a
-    finding nobody made. It is absent rather than stubbed.
+    ``no_raw_payload`` is always carried; ``odd_verdict_is_null`` is carried
+    when an ``odd`` block is (ADR-0162 P2) — both are true by construction,
+    because the models cannot represent the alternative. The spec's
+    ``sealed_into_root`` belongs to the sealing phase (ADR-0162 P5): emitting it
+    ``true`` here would claim a seal that has not happened, and emitting it
+    ``false`` would report a finding nobody made. It is absent rather than
+    stubbed. So are the NF-310 walk results (``trajectory_acyclic``,
+    ``no_broken_parent``): a broken chain is *recordable*, so those are
+    findings of :func:`novafabric.embodied.walk_trajectory`, recomputed by every
+    reader, never a stored self-attestation.
     """
 
     model_config = ConfigDict(extra="allow")
 
     #: Always True when present: the facet cannot be constructed otherwise.
     no_raw_payload: bool = True
+    #: True when an ``odd`` block is present (its ``verdict`` cannot be
+    #: anything but null); absent otherwise. Derived, never caller-set.
+    odd_verdict_is_null: bool | None = None
 
 
 class EmbodiedFacet(BaseModel):
     """The optional ``facets.embodied`` block (I-1).
 
-    P1 carries two of ADR-0162's ten objects. ODD conformance (NF-303),
-    sim-to-real (NF-304), teleop (NF-305), timing (NF-308), device identity
-    (NF-309) and the trajectory chain (NF-310) arrive in later phases and are
-    deliberately absent here rather than stubbed: an empty ``odd`` object in a
-    sealed root would read as "the safety envelope was checked and nothing was
-    found", which is a far worse error than a missing key.
+    Carries four of ADR-0162's ten objects: sensors (NF-301) and actuation
+    (NF-302) from P1, and — optional, ``None`` unless recorded — ODD
+    conformance (NF-303, :class:`~novafabric.embodied.odd.OddConformance`) and
+    the perception→actuation trajectory chain (NF-310,
+    :class:`~novafabric.embodied.trajectory.TrajectoryHop`) from P2.
+    Sim-to-real (NF-304), teleop (NF-305), timing (NF-308) and device identity
+    (NF-309) arrive in later phases and are deliberately absent rather than
+    stubbed. The same rule governs the P2 objects: an absent ``odd`` means no
+    ODD was recorded, never "the safety envelope was checked and nothing was
+    found" — so an ``odd`` key appears only when a declared ODD does.
     """
 
     model_config = ConfigDict(extra="allow")
@@ -445,6 +286,10 @@ class EmbodiedFacet(BaseModel):
     schema_version: str = SCHEMA_VERSION
     sensors: list[SensorStream] = Field(default_factory=list)
     actuation: list[ActuationRecord] = Field(default_factory=list)
+    #: NF-303 declared ODD + observed excursions, ``verdict: null`` (P2).
+    odd: OddConformance | None = None
+    #: NF-310 ordered perception→actuation hops (P2). Order is evidence.
+    trajectory: list[TrajectoryHop] | None = None
     verified: VerifiedBlock = Field(default_factory=VerifiedBlock)
 
     @model_validator(mode="after")
@@ -458,6 +303,9 @@ class EmbodiedFacet(BaseModel):
         backstop on the open part of the shape.
         """
         reject_raw_payloads(_own_fields(self))
+        # Derived from the model, never taken from the input: a caller cannot
+        # set it true without an odd block, nor false with one.
+        self.verified.odd_verdict_is_null = True if self.odd is not None else None
         return self
 
 
@@ -513,9 +361,7 @@ def build_actuation(
                 # unresolved rather than failing a physical workload's capsule
                 # over a lookup error.
                 artifact = None
-            unbound = artifact is None or not verify_receipt_binding(
-                action_receipt_ref, artifact
-            )
+            unbound = artifact is None or not verify_receipt_binding(action_receipt_ref, artifact)
     return ActuationRecord(
         command_class=command_class,
         target_ref=target_ref,
@@ -530,11 +376,13 @@ def build_facet(
     *,
     sensors: Iterable[SensorStream] = (),
     actuation: Iterable[ActuationRecord] = (),
+    odd: OddConformance | None = None,
+    trajectory: Iterable[TrajectoryHop] = (),
 ) -> EmbodiedFacet | None:
     """Build the embodied facet, or ``None`` when there is nothing to record.
 
-    Fail-open (I-3): a run with neither sensor streams nor declared commands
-    yields ``None``, not an exception and not an empty facet — see
+    Fail-open (I-3): a run with no sensor streams, declared commands, ODD
+    record, or trajectory hops yields ``None``, not an exception and not an empty facet — see
     :class:`EmbodiedFacet` on why an empty block is worse than no block, and
     the module docstring on absent-is-not-false.
 
@@ -542,18 +390,24 @@ def build_facet(
     that two captures of the same run produce the same bytes. The input order
     is a collection artefact, not evidence: the facet records *which* streams
     and commands existed, and NF-310's trajectory chain — not list position —
-    is where ADR-0162 puts ordering that means something.
+    is where ADR-0162 puts ordering that means something. The trajectory is
+    therefore kept in the order given, never sorted; ODD excursions are
+    already time-ordered by :func:`novafabric.embodied.build_odd`.
     """
     streams = sorted(sensors, key=lambda s: s.sensor_id)
     commands = sorted(actuation, key=lambda a: a.command_class)
-    if not streams and not commands:
+    hops = list(trajectory)
+    if not streams and not commands and odd is None and not hops:
         return None
-    return EmbodiedFacet(sensors=streams, actuation=commands)
+    return EmbodiedFacet(
+        sensors=streams,
+        actuation=commands,
+        odd=odd,
+        trajectory=hops or None,
+    )
 
 
-def attach_facet(
-    capsule: dict[str, Any], facet: EmbodiedFacet | None
-) -> dict[str, Any]:
+def attach_facet(capsule: dict[str, Any], facet: EmbodiedFacet | None) -> dict[str, Any]:
     """Attach the embodied facet to a capsule dict, additively.
 
     Writes nothing when there is no facet: a run with no embodied material

@@ -93,6 +93,19 @@ def verify_cmd(
             ),
         ),
     ] = None,
+    ca_bundle: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--ca-bundle",
+            help=(
+                "Operator CA bundle (concatenated PEM) to validate the DSSE signer "
+                "certificate chain against, offline (ADR-0055, experimental; local "
+                "backend only). Overrides ca_bundle in novaseal.yaml. A chain that "
+                "does not reach a bundle anchor fails verification."
+            ),
+            dir_okay=False,
+        ),
+    ] = None,
 ) -> None:
     """Verify a capsule's cryptographic seal, timestamp, and Merkle log inclusion.
 
@@ -117,6 +130,9 @@ def verify_cmd(
 
       # Use an explicit seal config path
       nova verify --seal-config ~/configs/novaseal.yaml path/to/my-capsule/
+
+      # Also validate the signer certificate chain against an operator CA bundle
+      nova verify --ca-bundle /etc/novaseal/ca-bundle.crt path/to/my-capsule/
 
       # Verify a redaction proof report seal independently
       nova verify --check-redaction path/to/report.seal.json path/to/my-capsule/
@@ -155,8 +171,7 @@ def verify_cmd(
 
     if backend not in ("local", "sigstore"):
         err_console.print(
-            f"[red]Error:[/red] Unknown backend {backend!r}. "
-            "Choose 'local' or 'sigstore'."
+            f"[red]Error:[/red] Unknown backend {backend!r}. Choose 'local' or 'sigstore'."
         )
         raise typer.Exit(code=1)
 
@@ -175,11 +190,13 @@ def verify_cmd(
 
     # Load signing profile for Merkle DB location
     import os
+
     if seal_config:
         os.environ["NOVAFABRIC_SEAL_CONFIG"] = seal_config
 
     try:
         from novafabric.trust.novaseal.config import SealConfigError, load_signing_profile
+
         profile = load_signing_profile()
     except SealConfigError as exc:
         console.print(f"[red]NovaSeal config error:[/red] {exc}")
@@ -208,6 +225,7 @@ def verify_cmd(
 
     # Read capsule_id from log-entry.json
     import json
+
     log_file = seal_dir / "log-entry.json"
     capsule_id = ""
     if log_file.exists():
@@ -231,6 +249,10 @@ def verify_cmd(
 
     result = seal.verify(capsule_id=capsule_id, seal_dir=str(seal_dir))
     binding = _capsule_binding_report(capsule_dir, dsse_bytes)
+    chain_bundle = ca_bundle if ca_bundle is not None else getattr(profile, "ca_bundle", None)
+    chain_check = (
+        _signer_chain_check(dsse_bytes, chain_bundle) if chain_bundle is not None else None
+    )
 
     # Print results
     console.print(f"\n[bold]NovaSeal verification:[/bold] {capsule_dir.name}")
@@ -248,6 +270,11 @@ def verify_cmd(
         _print_check("Timestamp (RFC 3161)", result.timestamp_ok)
     _print_check("Merkle log inclusion", result.log_integrity_ok)
     binding_ok = _print_capsule_binding(binding)
+    chain_ok = True
+    if chain_check is not None:
+        chain_ok, chain_detail = chain_check
+        _print_check("Signer certificate chain (CA bundle)", chain_ok)
+        console.print(f"    {chain_detail}")
     if not capsule_id_ok:
         _print_check("Log-entry capsule_id matches the signed payload", False)
         console.print(
@@ -263,7 +290,7 @@ def verify_cmd(
     console.print()
     console.print(str(result))
 
-    if not result.valid or not binding_ok or not capsule_id_ok:
+    if not result.valid or not binding_ok or not capsule_id_ok or not chain_ok:
         # ADR-0192 wired source: the evidence guarantee itself failed, so
         # this is `critical` — the run can no longer be proven.
         from novafabric.events.sources import (  # noqa: PLC0415
@@ -276,6 +303,35 @@ def verify_cmd(
             signature_ok=result.signature_ok,
         )
         raise typer.Exit(code=1)
+
+
+def _signer_chain_check(dsse_bytes: bytes, bundle_path: Path) -> tuple[bool, str]:
+    """Bind the DSSE signature to a CA-validated signer certificate (ADR-0055).
+
+    Offline and fail-closed. Passes only when some signature entry verifies over the
+    signed PAE bytes under the public key of its own embedded certificate *and* that
+    same certificate chains to the bundle — chain-validating ``signatures[0].cert``
+    alone let a forged envelope pair a legitimate leaf with an attacker's ``pubkey``
+    and signature. An unreadable bundle, an envelope without an embedded certificate,
+    or a chain that does not reach a bundle anchor all return ``(False, reason)``.
+    Returns ``(True, "chain: leaf <- ... <- anchor")`` on success.
+    """
+    from novafabric.trust.novaseal.x509_identity import (  # noqa: PLC0415
+        X509ChainError,
+        load_ca_bundle,
+        verify_dsse_signer_chain,
+    )
+
+    try:
+        anchors = load_ca_bundle(bundle_path.read_bytes())
+        outcome = verify_dsse_signer_chain(dsse_bytes, anchors)
+    except OSError as exc:
+        return False, f"cannot read CA bundle {bundle_path}: {exc}"
+    except X509ChainError as exc:
+        return False, str(exc)
+    if not outcome.valid:
+        return False, outcome.reason
+    return True, "chain: " + " <- ".join(outcome.chain_subjects)
 
 
 def _derive_capsule_id(dsse_bytes: bytes) -> str:
@@ -447,9 +503,7 @@ def _is_export_manifest(path: Path) -> bool:
         data = json.loads(path.read_text())
     except (OSError, ValueError):
         return False
-    return (
-        isinstance(data, dict) and "export_id" in data and "batch_digest" in data
-    )
+    return isinstance(data, dict) and "export_id" in data and "batch_digest" in data
 
 
 def _verify_export_manifest_cli(
@@ -482,9 +536,7 @@ def _verify_export_manifest_cli(
     )
     for problem in report.problems:
         console.print(f"  [red]✗[/red] {problem}")
-    color = {"VALID": "green", "INCOMPLETE": "yellow", "INVALID": "red"}[
-        report.status.value
-    ]
+    color = {"VALID": "green", "INCOMPLETE": "yellow", "INVALID": "red"}[report.status.value]
     console.print(f"\n[{color}]{report.status.value}[/{color}]")
     if report.status is not VerifyStatus.VALID:
         raise typer.Exit(code=1)
@@ -632,9 +684,7 @@ def _verify_evidence_bundle(bundle_path: Path) -> None:
 
         # Files present in the ZIP that the manifest never accounted for: an
         # addition is a modification too, so it must not pass silently.
-        unlisted = sorted(
-            names - {a.get("path", "") for a in artifacts} - {"manifest.json"}
-        )
+        unlisted = sorted(names - {a.get("path", "") for a in artifacts} - {"manifest.json"})
 
     _print_check(f"Artifact digests ({len(artifacts)} recomputed)", not mismatched)
     for rel in mismatched:
@@ -654,8 +704,7 @@ def _verify_evidence_bundle(bundle_path: Path) -> None:
 
     ok = not mismatched and not missing and not unlisted
     console.print(
-        f"\nartifacts_ok={not mismatched}, complete={not missing}, "
-        f"no_extras={not unlisted}"
+        f"\nartifacts_ok={not mismatched}, complete={not missing}, no_extras={not unlisted}"
     )
     if not ok:
         console.print("[red]Evidence Bundle verification FAILED[/red]")
@@ -678,6 +727,7 @@ def _verify_redaction_seal(seal_path: Path) -> None:
             extract_intent,
             verify_envelope,
         )
+
         seal_bytes = seal_path.read_bytes()
         verify_envelope(seal_bytes)
         intent = extract_intent(seal_bytes)

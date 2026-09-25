@@ -8,6 +8,8 @@ Subcommands:
   nova server flush-jwks-cache — Flush the JWKS cache on the running server.
   nova server saml-metadata  — Emit this SP's SAML metadata XML (ADR-0138, experimental).
   nova server api-key create|list|revoke|rotate — Manage first-class API keys (ADR-0193).
+  nova server usage reconcile|export — Usage drift reconciliation + chargeback export
+                             (ADR-0208 P2, experimental; see cli/server_usage.py).
 
 Install the [server] extra to use: pip install novafabric[server]
 """
@@ -877,6 +879,12 @@ api_key_app = typer.Typer(
     no_args_is_help=True,
 )
 server_app.add_typer(api_key_app)
+
+# `nova server usage reconcile|export` (ADR-0208 P2, experimental) lives in its
+# own module; registered here so the group sits under `nova server`.
+from novafabric.cli.server_usage import usage_app  # noqa: E402
+
+server_app.add_typer(usage_app)
 
 
 @api_key_app.command("create")

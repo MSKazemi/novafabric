@@ -19,10 +19,13 @@ ran, a custody hop occurred, a seal was renewed. It does not provide archival
 storage, run a Timestamp Authority, convert formats, generate keys, repair bit
 rot, or guarantee that any archive is durable, lawful, or regulator-accepted.
 
-P1 ships the NF-331 anchor and the NF-335 fixity log only. The format-migration
-chain (NF-332), crypto re-seal and LTV renewal (NF-333/334), conformance,
-obsolescence and custody (NF-336/337/338), and the whole-chain re-verification
-receipt (NF-339/340) are later slices.
+P1 ships the NF-331 anchor and the NF-335 fixity log; P2 ships the NF-332
+format-migration chain (``format_migration.py``, CLI ``nova migrate-format``),
+which records migration hops and walks them offline back to ``original_root``
+but never runs a migrator or rewrites a stored capsule. The crypto re-seal and
+LTV renewal (NF-333/334), conformance, obsolescence and custody
+(NF-336/337/338), and the whole-chain re-verification receipt (NF-339/340) are
+later slices.
 """
 
 from novafabric.preservation.anchor import (
@@ -53,32 +56,64 @@ from novafabric.preservation.anchor import (
     verify_anchor_binding,
     verify_append_only,
 )
+from novafabric.preservation.format_migration import (
+    CHAIN_FIELD,
+    MIGRATION_EVENT,
+    BrokenMigrationChainError,
+    ChainFinding,
+    ChainFindingCode,
+    FormatMigrationHop,
+    FormatMigrationRewriteError,
+    FormatMigrationVerification,
+    InvalidFormatVersionError,
+    append_format_migration,
+    chain_from_facet,
+    parse_format_version,
+    plan_next_hop,
+    verify_format_migration_chain,
+    verify_migration_append_only,
+)
 
 __all__ = [
+    "CHAIN_FIELD",
     "FACET_NAME",
     "MAX_REF_LENGTH",
+    "MIGRATION_EVENT",
     "SCHEMA_VERSION",
+    "BrokenMigrationChainError",
+    "ChainFinding",
+    "ChainFindingCode",
     "Fixity",
     "FixityAlg",
     "FixityCheck",
     "FixityLogRewriteError",
     "FixityStatus",
+    "FormatMigrationHop",
+    "FormatMigrationRewriteError",
+    "FormatMigrationVerification",
     "InvalidDigestError",
+    "InvalidFormatVersionError",
     "PayloadCaptureError",
     "PreservationError",
     "PreservationFacet",
     "ProvenanceEvent",
     "append_fixity_check",
+    "append_format_migration",
     "append_provenance_event",
     "attach_facet",
     "build_anchor",
+    "chain_from_facet",
     "check_fixity",
     "detected_bit_rot",
     "digest_artifact",
     "facet_from_capsule",
     "fixity_status",
+    "parse_format_version",
+    "plan_next_hop",
     "provenance_event",
     "scan_for_payloads",
     "verify_anchor_binding",
     "verify_append_only",
+    "verify_format_migration_chain",
+    "verify_migration_append_only",
 ]

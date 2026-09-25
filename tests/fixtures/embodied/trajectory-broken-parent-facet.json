@@ -1,0 +1,34 @@
+{
+  "_comment": "INVALID for verification by design (ADR-0162 NF-310). Every hop is well-formed, so the facet LOADS \u2014 a broken chain is recordable evidence \u2014 but hop 2 (decision) cites a parent that is no earlier hop's output. `walk_trajectory` must report broken_parent at hop 2 and `nova embodied trajectory verify` must exit 1 naming it.",
+  "schema_version": "0.2.0",
+  "trajectory": [
+    {
+      "stage": "perception",
+      "input_digest": "sha256:f55f74146cefb152dbd1b9e58f15bb66af4aee5cf0e5789604abf9918eb724b5",
+      "output_digest": "sha256:73f249647b15fba294e05e748375123e3c01e3559633586a0a5506b5fc0a1e45",
+      "parent": null,
+      "ts": "2026-07-13T10:02:11.100Z"
+    },
+    {
+      "stage": "world_model",
+      "input_digest": "sha256:73f249647b15fba294e05e748375123e3c01e3559633586a0a5506b5fc0a1e45",
+      "output_digest": "sha256:040f589f6a57f166cb34c69d2c38a1f7a5366bde5637e2988697753d5567b6da",
+      "parent": "sha256:73f249647b15fba294e05e748375123e3c01e3559633586a0a5506b5fc0a1e45",
+      "ts": "2026-07-13T10:02:11.140Z"
+    },
+    {
+      "stage": "decision",
+      "input_digest": "sha256:040f589f6a57f166cb34c69d2c38a1f7a5366bde5637e2988697753d5567b6da",
+      "output_digest": "sha256:ee85411883c0b7ef09ea780b6834e8ed688c0bd4160cfebda738dc221736d2a9",
+      "parent": "sha256:8b3253c7121402e669897824ce6f35518b5bfac3d7f7d52a111a369fb9d477b8",
+      "ts": "2026-07-13T10:02:11.180Z"
+    },
+    {
+      "stage": "actuation",
+      "input_digest": "sha256:ee85411883c0b7ef09ea780b6834e8ed688c0bd4160cfebda738dc221736d2a9",
+      "output_digest": "sha256:0102b1e799b8b5154a4c64b4434102babf3bce3d67211d875cedfa9402a306d2",
+      "parent": "sha256:ee85411883c0b7ef09ea780b6834e8ed688c0bd4160cfebda738dc221736d2a9",
+      "ts": "2026-07-13T10:02:11.200Z"
+    }
+  ]
+}

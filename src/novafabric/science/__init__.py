@@ -38,6 +38,16 @@ from novafabric.science.provenance import (
     verify_dag,
     verify_node_digest,
 )
+from novafabric.science.reproducibility import (
+    InvalidSeedError,
+    ReceiptVerification,
+    ReproducibilityReceipt,
+    ReproducibilityReceiptError,
+    attach_receipt,
+    build_receipt,
+    receipt_from_capsule,
+    verify_receipt,
+)
 
 __all__ = [
     "CyclicLineageError",
@@ -45,16 +55,24 @@ __all__ = [
     "DagVerification",
     "DuplicateNodeError",
     "InvalidNodeDigestError",
+    "InvalidSeedError",
     "PayloadCaptureError",
+    "ReceiptVerification",
+    "ReproducibilityReceipt",
+    "ReproducibilityReceiptError",
     "ScienceNode",
     "ScienceProvenanceError",
     "ScienceProvenanceFacet",
     "UnresolvedParentError",
     "attach_facet",
+    "attach_receipt",
     "build_dag",
     "build_facet",
+    "build_receipt",
     "digest_node",
     "facet_from_capsule",
+    "receipt_from_capsule",
     "verify_dag",
     "verify_node_digest",
+    "verify_receipt",
 ]

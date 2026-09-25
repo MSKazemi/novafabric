@@ -169,7 +169,11 @@ semconv attributes are already stored, `--emit-otel-genai` maps the finished cap
 span per model call, an `execute_tool` span per tool call) written to
 `<capsule>/otel-genai-spans.json`. Message content is **off by default** (ADR-0021); add
 `--capture-content` to include request messages, routed through the same secret-redaction
-gate as capture and size-bounded:
+gate as capture and size-bounded. A model/tool call that recorded a `log_level`
+(ADR-0127) also carries its OTel `SeverityNumber` projection as
+`novafabric.severity_number` / `novafabric.severity_text` (`debug`→5, `info`→9, `warn`→13,
+`error`→17; **experimental**); a call without a level gets neither attribute — no severity is
+fabricated:
 
 ```bash
 nova capture --emit-otel-genai python my_agent.py
@@ -1618,7 +1622,7 @@ not duplicate them; each is fully documented in the
 |---|---|
 | Prompt lifecycle | `nova prompt register/get/list/history/diff/compose/tree`, `nova label` (deployment labels + protected maker-checker moves) |
 | Evaluation & annotation | `nova eval score config`, `nova annotate`, `nova score submit` (+ `novafabric.scores.submit`), `nova comment`, `nova experiment run/compare` |
-| Capture completeness | `nova session new/add/list/show/replay`, `nova graph agent`, `nova capture --capture-media` + `nova media list`, `--environment`, variant attribution (`--experiment`/`--variant`), observation log levels, `nova validate --schemas` |
+| Capture completeness | `nova session new/add/list/reindex/show/replay/export/verify-bundle/import`, `nova graph agent`, `nova capture --capture-media` + `nova media list`, `--environment`, variant attribution (`--experiment`/`--variant`), observation log levels, `nova validate --schemas` |
 | Offline analytics | `nova query`, `nova view`, `nova trend`, per-usage-type token accounting, `nova pricing` + `nova cost estimate` |
 | Governance | `nova retention plan/apply/status/explain`, PII masking plugins (`--masker`), the budget promotion gate (Rego), `nova events` webhooks, SCIM 2.0 provisioning, partial SAML SSO (metadata + assertion-validation policy; live assertion consumption shipped opt-in in v0.73.0 and is off by default) |
 | Portability & interop | `nova export --html`, `nova export-blob` + manifest `nova verify`, OTLP GenAI-span ingest (`POST /api/otlp/v1/traces`), `nova eval import-inspect/export-inspect`, `nova diagnose --intervene`, `nova pii status` |
@@ -1643,6 +1647,7 @@ them yet, so build against the module, not a shipped command:
 | Portable agent-passport projection (ADR-0149) | **CLI**, experimental | `nova passport issue` / `nova passport verify` |
 | SAML SSO (ADR-0138) | **CLI**, experimental, partial | `nova server saml-metadata` emits SP metadata only; assertion-consumption is opt-in server config, not a CLI verb |
 | x509 certificate-pinned signing identity (ADR-0055) | Python API only | `trust/novaseal/x509_identity.py` |
+| x509 CA-bundle signer chain validation (ADR-0055 trust step 2) | **CLI**, experimental | `nova verify --ca-bundle <pem>` (or `ca_bundle:` in `novaseal.yaml`); library: `validate_certificate_chain()` in `trust/novaseal/x509_identity.py` |
 | Crypto-agility hybrid-signature envelope (ADR-0072) | Python API only | `trust/novaseal/hybrid_signature.py` |
 | `did:key` + Verifiable Credentials (ADR-0075) | Python API only | `trust/did.py` |
 | "Acted-as" delegation chains (ADR-0106) | Python API only | `trust/delegation.py` |

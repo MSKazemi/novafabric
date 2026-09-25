@@ -149,7 +149,10 @@ async def get_usage(
     }
     if privileged:
         derived = measure_capsule_store(capsule_dir)
-        all_time = usage.all_time_totals(db_path=db_path)
+        # Lifetime (pruned-carry included), not the rolling enforcement window:
+        # the store side counts every capsule ever kept, so the metered side
+        # must too, or each rollup prune would surface as spurious drift.
+        all_time = usage.lifetime_totals(db_path=db_path)
         metered_capsules = sum(
             t.get(usage.METRIC_CAPSULES, 0) for t in all_time.values()
         )

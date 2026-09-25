@@ -600,6 +600,34 @@ class TestUsageEndpoint:
         assert body["drift"]["bytes"] == expected_pre_bytes
         assert body["next_cursor"] is None
 
+    def test_drift_block_ignores_pruned_rollups(
+        self, db_path: Path, capsule_dir: Path
+    ) -> None:
+        # A capsule metered >24 months ago: its rollup is pruned on the next
+        # write. The store still holds it, so the drift block must compare
+        # against the lifetime figure (pruned carry included), not the rolling
+        # enforcement window — otherwise every prune reads as drift.
+        dest = capsule_dir / "r-ancient"
+        dest.mkdir()
+        (dest / "capsule.yaml").write_text("run_id: r-ancient\n")
+        usage.record_capsule_upload(
+            run_id="r-ancient",
+            size_bytes=usage.dir_size_bytes(dest),
+            attribution=_ATT,
+            actor="t",
+            db_path=db_path,
+            now=datetime(2020, 1, 15, tzinfo=timezone.utc),
+        )
+        client = _client(_config(db_path))
+        assert _upload(client, "r-now", payload_bytes=10).status_code == 201
+        window = usage.all_time_totals(db_path=db_path)["default"]
+        assert window[METRIC_CAPSULES] == 1  # the ancient rollup was pruned
+
+        body = client.get("/v0/usage").json()
+        assert body["global"]["capsules"] == 2
+        assert body["drift"]["capsules"] == 0
+        assert body["drift"]["bytes"] == 0
+
     def test_member_sees_only_membership_workspaces_no_global(
         self, db_path: Path, capsule_dir: Path
     ) -> None:

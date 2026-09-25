@@ -271,7 +271,9 @@ def capture_cmd(
                 "After capture, emit OTel GenAI gen_ai.* spans (OTLP-shaped JSON) "
                 "alongside the capsule at <capsule>/otel-genai-spans.json (NF-032, "
                 "ADR-0098). Portable, additive; message content is omitted unless "
-                "--capture-content is also set."
+                "--capture-content is also set. Calls that recorded a log_level "
+                "also carry its OTel SeverityNumber projection "
+                "(novafabric.severity_number/_text, ADR-0127, experimental)."
             ),
         ),
     ] = False,

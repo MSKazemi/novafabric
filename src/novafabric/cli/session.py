@@ -5,8 +5,15 @@ manifest referencing member Run Capsules in turn order; it copies no capsule
 data and never writes a member capsule. Distinct from the parent/child
 distributed-run hierarchy (ADR-0032/0039).
 
-``nova session replay`` (ADR-0123 P1, experimental) orchestrates the existing
-per-capsule replay engine over the session's members in sequence order.
+``nova session list`` reads the rebuildable SQLite session index when it is
+fresh and falls back to a directory scan otherwise; ``nova session reindex``
+(re)builds it (ADR-0122 P3). ``nova session export | verify-bundle | import``
+move a session and its member capsules as one verifiable ZIP (ADR-0122 P4).
+
+``nova session replay`` (ADR-0123 P1 + P5, experimental) orchestrates the
+existing per-capsule replay engine over the session's members in sequence
+order, optionally over a ``--from/--to`` slice with per-turn ``--turn-mode``
+pins, or prints the plan only with ``--dry-run``.
 """
 
 from __future__ import annotations
@@ -22,14 +29,21 @@ from rich.table import Table
 
 from novafabric.session import (
     SessionError,
+    SessionReplayMode,
+    SessionReplayPlan,
     add_member,
-    list_sessions,
+    export_session_bundle,
+    import_session_bundle,
+    list_sessions_fast,
     load_session,
     new_session,
+    plan_session_replay,
+    rebuild_index,
     replay_session,
     resolve_members,
     save_session,
     session_stats,
+    verify_session_bundle,
     write_session_replay_result,
 )
 
@@ -147,15 +161,12 @@ def add_cmd(
             capsule_dir = candidate
         else:
             console.print(
-                f"[red]Capsule not found:[/red] {capsule} "
-                f"(not a directory, and no {candidate})"
+                f"[red]Capsule not found:[/red] {capsule} (not a directory, and no {candidate})"
             )
             raise typer.Exit(code=1)
     try:
         manifest = load_session(session_id, root=session_dir)
-        member = add_member(
-            manifest, capsule_dir, root=session_dir, role=role, reopen=reopen
-        )
+        member = add_member(manifest, capsule_dir, root=session_dir, role=role, reopen=reopen)
         save_session(manifest, root=session_dir)
     except SessionError as exc:
         console.print(f"[red]Session error:[/red] {exc}")
@@ -174,9 +185,36 @@ def list_cmd(
     json_output: Annotated[
         bool, typer.Option("--json", help="Emit machine-readable JSON instead of a table.")
     ] = False,
+    rebuild_index_first: Annotated[
+        bool,
+        typer.Option(
+            "--rebuild-index",
+            help=(
+                "Rebuild the session index from the manifests before listing "
+                "(same as `nova session reindex`)."
+            ),
+        ),
+    ] = False,
 ) -> None:
-    """List known sessions (kind, member count, created time), newest first."""
-    manifests = list_sessions(root=session_dir)
+    """List known sessions (kind, member count, created time), newest first.
+
+    Served from the local SQLite session index when it is fresh; a missing,
+    stale, or corrupt index falls back to a directory scan of the sessions
+    root (same output), with a hint on stderr to run `nova session reindex`.
+    """
+    err = Console(stderr=True)
+    if rebuild_index_first:
+        try:
+            rebuild_index(root=session_dir)
+        except SessionError as exc:
+            err.print(f"[yellow]Session index not rebuilt:[/yellow] {exc}")
+    listing = list_sessions_fast(root=session_dir)
+    if listing.index_status in ("stale", "corrupt", "version_mismatch"):
+        err.print(
+            f"[dim]Session index {listing.index_status} ({listing.detail}); "
+            "listed by directory scan. Run `nova session reindex` to rebuild.[/dim]"
+        )
+    manifests = listing.manifests
     if json_output:
         console.print_json(json.dumps([m.to_json_dict() for m in manifests]))
         return
@@ -198,6 +236,145 @@ def list_cmd(
             m.finalized_at or "-",
         )
     console.print(table)
+
+
+@session_app.command("reindex")
+def reindex_cmd(
+    session_dir: Annotated[
+        Path | None, typer.Option("--session-dir", help=_SESSION_DIR_HELP)
+    ] = None,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit the rebuild report as JSON.")
+    ] = False,
+) -> None:
+    """(Re)build the local SQLite session index from the session manifests.
+
+    The index (<sessions-root>/.session-index.sqlite) is a rebuildable cache
+    for fast `nova session list`; the session.json manifests stay
+    authoritative. Safe to run at any time, including concurrently.
+    """
+    try:
+        report = rebuild_index(root=session_dir)
+    except SessionError as exc:
+        console.print(f"[red]Session index error:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+    if json_output:
+        console.print_json(report.model_dump_json())
+        return
+    console.print(
+        f"[green]✓[/green] Indexed {report.indexed} session(s)"
+        + (f", {report.unreadable} unreadable (skipped)" if report.unreadable else "")
+        + f" → {report.index_path}"
+    )
+
+
+@session_app.command("export")
+def export_cmd(
+    session_id: Annotated[str, typer.Argument(help="Session to bundle.")],
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Path of the bundle ZIP to write."),
+    ],
+    session_dir: Annotated[
+        Path | None, typer.Option("--session-dir", help=_SESSION_DIR_HELP)
+    ] = None,
+    capsule_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--capsule-dir",
+            help=(
+                "Extra base directory searched as <capsule-dir>/<run_id> for "
+                "members whose recorded path no longer resolves. Defaults to "
+                "the default capsule directory."
+            ),
+        ),
+    ] = None,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit the export report as JSON.")
+    ] = False,
+) -> None:
+    """Write a session plus all its member capsules as one verifiable ZIP.
+
+    Deterministic (sorted entries, pinned timestamps): the same session and
+    capsules give byte-identical bundles. Refuses an empty session, a missing
+    or tampered member, or a capsule containing a symlink. Unsigned — for
+    signed evidence over the members use `nova evidence export`.
+    """
+    if capsule_dir is None:
+        from novafabric._paths import default_capsule_dir
+
+        capsule_dir = default_capsule_dir()
+    try:
+        report = export_session_bundle(
+            session_id, output, root=session_dir, capsule_base=capsule_dir
+        )
+    except SessionError as exc:
+        console.print(f"[red]Session bundle error:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+    if json_output:
+        console.print_json(report.model_dump_json())
+        return
+    console.print(
+        f"[green]✓[/green] Bundled session {session_id}: {report.members} member(s), "
+        f"{report.files} file(s) → {report.path}"
+    )
+    console.print(f"[dim]archive {report.archive_sha256}[/dim]")
+
+
+@session_app.command("verify-bundle")
+def verify_bundle_cmd(
+    bundle: Annotated[Path, typer.Argument(help="Session bundle ZIP to verify.")],
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit the verification report as JSON.")
+    ] = False,
+) -> None:
+    """Verify a session bundle offline: every digest, member, and path.
+
+    Recomputes every file digest, rejects unlisted files and unsafe archive
+    paths, re-checks session.json ordering, and matches each member's
+    capsule.yaml to its content-addressed capsule_ref. Exit 1 on any problem.
+    """
+    report = verify_session_bundle(bundle)
+    if json_output:
+        console.print_json(report.model_dump_json())
+    else:
+        console.print(f"Session bundle verification: {bundle.name}")
+        console.print(
+            f"  session: {report.session_id or '-'}  members: {report.members}  "
+            f"files checked: {report.files_checked}"
+        )
+        for problem in report.problems:
+            console.print(f"    [red]✗[/red] {problem}")
+        if report.ok:
+            console.print("[green]Session bundle verification PASSED[/green]")
+        else:
+            console.print("[red]Session bundle verification FAILED[/red]")
+    if not report.ok:
+        raise typer.Exit(code=1)
+
+
+@session_app.command("import")
+def import_cmd(
+    bundle: Annotated[Path, typer.Argument(help="Session bundle ZIP to import.")],
+    session_dir: Annotated[
+        Path | None, typer.Option("--session-dir", help=_SESSION_DIR_HELP)
+    ] = None,
+) -> None:
+    """Verify a session bundle, then add it to the local sessions root.
+
+    Nothing is written unless verification passes. Members land under
+    <sessions-root>/<session_id>/capsules/, where `nova session show` and
+    `nova session replay` find them. Never overwrites an existing session.
+    """
+    try:
+        result = import_session_bundle(bundle, root=session_dir)
+    except SessionError as exc:
+        console.print(f"[red]Session import error:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+    console.print(
+        f"[green]✓[/green] Imported session {result.session_id} "
+        f"({result.members} member(s)) → {result.session_dir}"
+    )
 
 
 @session_app.command("show")
@@ -287,6 +464,67 @@ def show_cmd(
     )
 
 
+_VALID_MODES: tuple[SessionReplayMode, ...] = ("forensic", "mocked", "semantic", "exact")
+
+
+def _parse_turn_modes(raw: list[str]) -> dict[int, SessionReplayMode]:
+    """Parse repeatable ``SEQ=MODE`` pins; a malformed or repeated pin is fatal."""
+    pins: dict[int, SessionReplayMode] = {}
+    for item in raw:
+        seq_text, sep, mode_text = item.partition("=")
+        mode_value = mode_text.strip()
+        if not sep or not seq_text.strip().isdigit() or mode_value not in _VALID_MODES:
+            raise typer.BadParameter(
+                f"expected SEQ=MODE with MODE in {'|'.join(_VALID_MODES)}, got {item!r}",
+                param_hint="--turn-mode",
+            )
+        seq = int(seq_text.strip())
+        if seq in pins:
+            raise typer.BadParameter(
+                f"turn {seq} is pinned more than once", param_hint="--turn-mode"
+            )
+        pins[seq] = next(m for m in _VALID_MODES if m == mode_value)
+    return pins
+
+
+def _print_plan(plan: SessionReplayPlan, json_output: bool) -> None:
+    """Render a dry-run plan (nothing was executed)."""
+    if json_output:
+        console.print_json(json.dumps(plan.to_json_dict()))
+        return
+    scope = (
+        f"turns {plan.range[0]}..{plan.range[1]} of {plan.total_turns}"
+        if plan.range
+        else f"all {plan.total_turns} turn(s)"
+    )
+    table = Table(title=f"Session replay plan (dry run): {plan.session_id} — {scope}")
+    table.add_column("seq", justify="right")
+    table.add_column("source run", style="cyan", no_wrap=True)
+    table.add_column("mode")
+    table.add_column("integrity")
+    table.add_column("tool calls", justify="right")
+    table.add_column("mutating", justify="right")
+    table.add_column("tool decisions")
+    for turn in plan.turns:
+        exposure = turn.tool_exposure
+        table.add_row(
+            str(turn.sequence),
+            turn.source_capsule_id,
+            turn.effective_mode + (" (pinned)" if turn.mode_pinned else ""),
+            turn.integrity + (" → refuse" if turn.would_refuse else ""),
+            str(exposure.tool_calls) if exposure else "-",
+            str(exposure.mutating) if exposure else "-",
+            (", ".join(f"{k}={v}" for k, v in sorted(exposure.decisions.items())) or "-")
+            if exposure
+            else "-",
+        )
+    console.print(table)
+    console.print(
+        "[dim]Dry run: nothing executed, nothing written. Exact-mode "
+        "preconditions are checked only on execution.[/dim]"
+    )
+
+
 @session_app.command("replay")
 def replay_cmd(
     session_id: Annotated[str, typer.Argument(help="Session to replay, turn by turn.")],
@@ -351,6 +589,43 @@ def replay_cmd(
         bool,
         typer.Option("--json", help="Emit the SessionReplayResult JSON on stdout."),
     ] = False,
+    from_seq: Annotated[
+        Optional[int],
+        typer.Option(
+            "--from",
+            min=0,
+            help="First turn (sequence, inclusive) of a contiguous sub-range.",
+        ),
+    ] = None,
+    to_seq: Annotated[
+        Optional[int],
+        typer.Option(
+            "--to",
+            min=0,
+            help="Last turn (sequence, inclusive) of a contiguous sub-range.",
+        ),
+    ] = None,
+    turn_mode: Annotated[
+        Optional[list[str]],
+        typer.Option(
+            "--turn-mode",
+            help=(
+                "Pin one turn's mode as SEQ=MODE (repeatable), e.g. "
+                "--turn-mode 2=forensic. Other turns use --mode."
+            ),
+        ),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help=(
+                "Print the plan (turn order, per-turn effective mode, member "
+                "integrity, mutating-tool exposure) without executing or "
+                "writing anything."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Replay every turn of a session, in sequence order (experimental).
 
@@ -361,6 +636,10 @@ def replay_cmd(
     member is an honest per-turn refusal — never silently skipped. State-seam
     verification between turns (ADR-0123 P2) is future design.
 
+    --from/--to replay one contiguous slice (recorded as `range`);
+    --turn-mode pins a mode per turn (recorded as `turn_mode_policy`, and in
+    each turn's effective_mode); --dry-run prints the plan and exits 0.
+
     Exit code is 0 only when the whole-session verdict is 'reproduced'.
     """
     from novafabric._paths import default_capsule_dir
@@ -368,8 +647,23 @@ def replay_cmd(
 
     if capsule_dir is None:
         capsule_dir = default_capsule_dir()
+    pins = _parse_turn_modes(turn_mode or [])
     base = output_dir or (Path.cwd() / ".novafabric" / "replays")
     try:
+        if dry_run:
+            plan = plan_session_replay(
+                session_id,
+                mode=mode.value,
+                on_divergence=on_divergence.value,
+                continue_past_refusal=continue_past_refusal,
+                root=session_dir,
+                capsule_base=capsule_dir,
+                from_seq=from_seq,
+                to_seq=to_seq,
+                turn_modes=pins,
+            )
+            _print_plan(plan, json_output)
+            return
         result = replay_session(
             session_id,
             mode=mode.value,
@@ -378,14 +672,15 @@ def replay_cmd(
             root=session_dir,
             capsule_base=capsule_dir,
             base_dir=base,
+            from_seq=from_seq,
+            to_seq=to_seq,
+            turn_modes=pins,
         )
     except SessionError as exc:
         console.print(f"[red]Session replay error:[/red] {exc}")
         raise typer.Exit(code=1) from exc
 
-    result_path = write_session_replay_result(
-        result, base / f"session-replay-{new_ulid()}"
-    )
+    result_path = write_session_replay_result(result, base / f"session-replay-{new_ulid()}")
 
     if json_output:
         console.print_json(json.dumps(result.to_json_dict()))
@@ -415,10 +710,17 @@ def replay_cmd(
         console.print(table)
         replayed = len(result.turns)
         total = None
-        try:
-            total = len(load_session(session_id, root=session_dir).member_runs)
-        except SessionError:  # pragma: no cover - session read a moment ago
-            pass
+        if result.range is not None:
+            total = result.range[1] - result.range[0] + 1
+            console.print(
+                f"[dim]Sub-range: turns {result.range[0]}..{result.range[1]} "
+                "(verdict covers this slice only)[/dim]"
+            )
+        else:
+            try:
+                total = len(load_session(session_id, root=session_dir).member_runs)
+            except SessionError:  # pragma: no cover - session read a moment ago
+                pass
         if total is not None and replayed < total:
             console.print(
                 f"[yellow]Halted after turn {result.turns[-1].sequence}: "

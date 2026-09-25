@@ -29,6 +29,17 @@ carries:
 Message/choice **content** is omitted by default; only when ``capture_content=True`` is
 it routed through the ADR-0009 redaction gate by :mod:`novafabric.otel.content_bridge`.
 Nothing is invented: a span exists only for a recorded model/tool call.
+
+**Severity projection (ADR-0127 P4, experimental).** When a recorded model/tool call
+carries a canonical ``log_level``, its span gains the OTel logs ``SeverityNumber``
+projection as two additive attributes — :data:`SEVERITY_NUMBER_ATTR` and
+:data:`SEVERITY_TEXT_ATTR` (``debug``→5/``DEBUG``, ``info``→9/``INFO``,
+``warn``→13/``WARN``, ``error``→17/``ERROR``). OTel semantic conventions define no
+span-level severity attribute (``SeverityNumber``/``SeverityText`` are log-record
+fields), so per the OTel attribute-naming rules the pair is namespaced under the
+``novafabric.`` prefix and mirrors the OTLP log field names. A record without a level —
+or with an out-of-domain value — gets neither attribute: absence is never projected
+as ``INFO`` (no fabricated severity).
 """
 
 from __future__ import annotations
@@ -41,10 +52,16 @@ from typing import Any
 
 import yaml
 
+from novafabric.capture.log_level import InvalidLogLevelError, to_otel_severity
 from novafabric.otel.content_bridge import bridge_messages
 
 #: version of the capsule ↔ OTel GenAI mapping table (R3).
 MAPPING_VERSION = "1.0.0"
+
+#: Span attribute carrying the OTel ``SeverityNumber`` projection of ``log_level``.
+SEVERITY_NUMBER_ATTR = "novafabric.severity_number"
+#: Span attribute carrying the OTel ``SeverityText`` projection of ``log_level``.
+SEVERITY_TEXT_ATTR = "novafabric.severity_text"
 
 _MATURITY_STABLE = "stable"
 _MATURITY_DEV = "development"
@@ -77,6 +94,22 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
             except json.JSONDecodeError:
                 continue
     return out
+
+
+def _severity_attributes(record: dict[str, Any]) -> dict[str, Any]:
+    """OTel ``SeverityNumber``/``SeverityText`` span attributes for *record*.
+
+    Empty when the record carries no ``log_level`` or an out-of-domain one —
+    the emitter is fail-open and never fabricates a severity (ADR-0127 P4).
+    """
+    level = record.get("log_level")
+    if level is None:
+        return {}
+    try:
+        severity = to_otel_severity(level)
+    except InvalidLogLevelError:
+        return {}
+    return {SEVERITY_NUMBER_ATTR: severity.number, SEVERITY_TEXT_ATTR: severity.text}
 
 
 def _span(
@@ -116,6 +149,9 @@ def emit_spans(
     recorded model call and one ``execute_tool`` span per recorded tool call. With
     ``capture_content`` false (default) no message/choice content is attached (R7 of the
     content-opt-in gate); when true, content is redacted+bounded via the content bridge.
+    Model/tool spans whose record carries a ``log_level`` also get the OTel severity
+    projection (:data:`SEVERITY_NUMBER_ATTR`, :data:`SEVERITY_TEXT_ATTR`); absent level →
+    neither attribute.
     """
     capsule_dir = Path(capsule_dir)
     manifest: dict[str, Any] = {}
@@ -167,6 +203,7 @@ def emit_spans(
         }
         attrs.setdefault("gen_ai.operation.name", "chat")
         attrs["novafabric.semconv_maturity"] = _MATURITY_STABLE
+        attrs.update(_severity_attributes(rec))
         messages = bridge_messages(rec.get("gen_ai.request.messages"), enabled=capture_content)
         if messages is not None:
             attrs["gen_ai.request.messages"] = messages
@@ -200,6 +237,7 @@ def emit_spans(
                     "gen_ai.operation.name": "execute_tool",
                     "gen_ai.tool.name": tool_name,
                     "novafabric.semconv_maturity": _MATURITY_DEV,
+                    **_severity_attributes(rec),
                 },
             )
         )

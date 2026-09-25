@@ -96,8 +96,10 @@ Two distinct, composable ways of relating capsules exist — do not conflate the
   independent runs (e.g. the turns of a conversation or the stages of a
   workflow) referenced in order by a content-addressed `session.json` manifest
   (`nova session new/add/list/show`). Members are ordinary capsules, each with
-  its own writer; the session copies no capsule data. `nova session replay`
-  (experimental, ADR-0123) replays the members in sequence order.
+  its own writer; the session copies no capsule data. `nova session export`
+  packs a session with its members into one verifiable ZIP for another
+  machine (experimental). `nova session replay` (experimental, ADR-0123)
+  replays the members in sequence order, whole or as a `--from/--to` slice.
 - **Parent/child (prototype, ADR-0039).** A *physical, distributed-run*
   hierarchy: one logical execution fanned out across nodes (e.g. a Slurm DDP
   job) recorded as a PARENT capsule plus N WORKER capsules under a single
@@ -149,7 +151,7 @@ the portable Agent Card and the Task/Message/Artifact mapping (ADR-0149). The
 |---|---|---|---|
 | `novafabric.a2a` | `a2a_messages` | Multi-agent A2A messages & handoffs — the wire between agents. Distinct from the `novafabric.adapters.a2a` capture-time SDK adapter, which is a separate subsystem. | ADR-0142 |
 | `novafabric.settlement` | `settlement` | Agentic-commerce settlement provenance — mandate reconciliation, finality, and non-repudiation binding. Never processes payments or holds/moves funds. | ADR-0163 |
-| `novafabric.embodied` | `embodied` | Embodied / cyber-physical agent evidence — declared sensor streams and actuation records. Stores references, digests, and counts only (never frames, point clouds, audio, or control credentials); never in a control path. | ADR-0162 |
+| `novafabric.embodied` | `embodied` | Embodied / cyber-physical agent evidence — declared sensor streams and actuation records (P1), plus the declared ODD with observed excursions (`verdict` always null) and the perception→actuation trajectory chain, walked offline by `nova embodied trajectory verify` (P2, experimental). Stores references, digests, and counts only (never frames, point clouds, audio, or control credentials); never in a control path. | ADR-0162 |
 | `novafabric.science` | `science_provenance` | Scientific-reproducibility / research-integrity provenance as a verifiable DAG of research steps. Never runs experiments or adjudicates validity. | ADR-0164 |
 | `novafabric.memstore` | `memstore_mutation` | Persistent-knowledge / organisational-memory governance — an append-only ledger of who changed which shared-KB entry and when (store-external). Distinct from the [`nova memory`](cli-reference.md) capture feature. | ADR-0171 |
 | `novafabric.retrieval` | `fetch_provenance` (+ source pinning) | Retrieval-source authority & knowledge provenance — what an external retriever or the agent fetched, and whether a pinned source still matches. Never fetches, crawls, or ranks. | ADR-0153 |

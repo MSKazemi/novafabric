@@ -76,6 +76,30 @@ $ nova lineage provenance <artifact>     # what produced this
 $ nova lineage replay-chain <artifact>   # what must be re-run to regenerate it
 ```
 
+**6. Pin what a re-run must match, and export a FAIR research object** (**experimental**,
+ADR-0164 P2). A *reproducibility receipt* binds the environment digest, seed(s), input-data
+digest, code digest and optional workflow digest under one `bound_root`, plus your declared
+`determinism_class`. Anything you do not supply is listed in `receipt_incomplete` — it is
+never filled in for you:
+
+```console
+$ nova science receipt build --capsule <run-id> --env sha256:<lockfile> \
+    --data sha256:<inputs> --code sha256:<commit-tree> --seed 1337 \
+    --determinism statistical --write
+$ nova science receipt verify --capsule <run-id>
+$ nova export-rocrate-science --capsule <run-id> --out ./crates --orcid 0000-0002-1825-0097
+```
+
+`export-rocrate-science` needs a capsule carrying the science-provenance facet (the
+hypothesis→claim lineage, NF-321). It writes a Workflow Run Crate 0.5 profile over the
+RO-Crate 1.1 carrier `nova export-rocrate` already produces, plus a `<run-id>.fair-binding.json`
+record with the crate's metadata digest. The same capsule always produces the same bytes.
+
+The receipt says *what would have to match*; it never re-runs anything and never claims the
+run **is** reproducible (`reproducible_in_fact: null`). The workflow and code are referenced by
+digest, not included, so a strict Workflow RO-Crate validator will flag the workflow entity as
+contextual. The Provenance Run Crate profile (per-step records) is **planned**.
+
 ## Artifact-evaluation badges
 
 Most committees assess roughly the axes below (ACM's terminology; other venues differ in

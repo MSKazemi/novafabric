@@ -48,6 +48,18 @@ _LEVEL_ALIASES: dict[str, str] = {
 
 LogLevelSource = Literal["framework", "span-status", "adapter", "user"]
 
+#: Outbound OTel projection (spec §OTel mapping, ADR-0127 P4): canonical level →
+#: (``SeverityText``, canonical ``SeverityNumber``). Each number is the lowest
+#: value of the OTel logs data-model range for that severity (DEBUG 5–8,
+#: INFO 9–12, WARN 13–16, ERROR 17–20). Lossy-but-deterministic interop value;
+#: the four-value enum stays canonical in the stored capsule.
+_OTEL_SEVERITY: dict[str, tuple[str, int]] = {
+    "debug": ("DEBUG", 5),
+    "info": ("INFO", 9),
+    "warn": ("WARN", 13),
+    "error": ("ERROR", 17),
+}
+
 
 class InvalidLogLevelError(ValueError):
     """An ADR-0127 severity field carries an out-of-domain value.
@@ -163,6 +175,28 @@ def resolve_log_level(
         if _SEVERITY_RANK[cand_value] > _SEVERITY_RANK[value]:
             value, source = cand_value, cand_source
     return ResolvedLogLevel(value=value, source=source)
+
+
+class OtelSeverity(BaseModel):
+    """The OTel logs ``SeverityText`` / ``SeverityNumber`` pair for a level."""
+
+    text: str
+    number: int
+
+
+def to_otel_severity(level: str) -> OtelSeverity:
+    """Project a canonical ``log_level`` onto the OTel ``SeverityNumber`` scale.
+
+    Outbound half of the spec's *OTel mapping* table (ADR-0127 P4):
+    ``debug`` → ``DEBUG``/5, ``info`` → ``INFO``/9, ``warn`` → ``WARN``/13,
+    ``error`` → ``ERROR``/17 (the canonical — lowest — number of each range).
+    No normalization happens here: *level* must already be canonical.
+
+    Raises:
+        InvalidLogLevelError: *level* is not one of :data:`LOG_LEVELS`.
+    """
+    text, number = _OTEL_SEVERITY[validate_log_level(level)]
+    return OtelSeverity(text=text, number=number)
 
 
 def validate_severity_fields(record: dict[str, Any]) -> None:

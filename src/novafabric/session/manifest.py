@@ -172,13 +172,31 @@ def new_session(
 
 
 def save_session(manifest: SessionManifest, root: Path | None = None) -> Path:
-    """Write ``session.json`` (after re-checking ordering); returns its path."""
+    """Write ``session.json`` atomically (after re-checking ordering).
+
+    The manifest is written to a sibling temp file and ``os.replace``-d into
+    place, so a concurrent reader never sees a torn manifest. When a P3
+    session index already exists, its row for this session is refreshed
+    (best-effort — an index failure never fails the save; the index is a
+    rebuildable cache and a stale row is detected on the next listing).
+
+    Returns:
+        The path of the written ``session.json``.
+    """
     validate_ordering(manifest)
     path = session_manifest_path(manifest.session_id, root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(manifest.to_json_dict(), indent=2) + "\n", encoding="utf-8"
-    )
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(json.dumps(manifest.to_json_dict(), indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():  # pragma: no cover - only after a failed replace
+            tmp.unlink()
+    # Deferred import: the index module imports this one.
+    from novafabric.session.index import upsert_session
+
+    upsert_session(path.parent.name, root=root)
     return path
 
 
@@ -195,10 +213,16 @@ def load_session(session_id: str, root: Path | None = None) -> SessionManifest:
             f"unknown session {session_id!r}: no {SESSION_MANIFEST_FILENAME} "
             f"under {path.parent.parent}"
         )
-    return _load_manifest_file(path)
+    return load_manifest_file(path)
 
 
-def _load_manifest_file(path: Path) -> SessionManifest:
+def load_manifest_file(path: Path) -> SessionManifest:
+    """Parse and integrity-check one ``session.json`` file.
+
+    Raises:
+        SessionIntegrityError: Unreadable JSON, a schema violation, or an
+            ordering violation.
+    """
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
         manifest = SessionManifest.model_validate(raw)
@@ -208,23 +232,43 @@ def _load_manifest_file(path: Path) -> SessionManifest:
     return manifest
 
 
+def session_dir_entries(base: Path) -> list[tuple[str, Path]]:
+    """``(dir_name, manifest_path)`` for every session directory under *base*.
+
+    The single entry filter shared by the authoritative scan
+    (:func:`list_sessions`) and the index freshness check
+    (:mod:`novafabric.session.index`), so the two can never disagree about
+    which sessions exist. A candidate is a *real* directory (a symlinked
+    directory is skipped — it could alias another session or point outside
+    the root) holding a regular-file ``session.json``. Sorted by name.
+    """
+    if not base.is_dir():
+        return []
+    found: list[tuple[str, Path]] = []
+    with os.scandir(base) as entries:
+        for entry in entries:
+            if not entry.is_dir(follow_symlinks=False):
+                continue
+            path = Path(entry.path) / SESSION_MANIFEST_FILENAME
+            if path.is_file():
+                found.append((entry.name, path))
+    return sorted(found)
+
+
 def list_sessions(root: Path | None = None) -> list[SessionManifest]:
     """Enumerate sessions by scanning the sessions root (newest first).
 
-    A directory scan, not the ADR-0122 P3 SQLite index (still future design);
-    ULIDs are time-prefixed so lexicographic order is creation order.
-    Unreadable manifests are warned about and skipped, never fatal.
+    The authoritative directory scan; the ADR-0122 P3 SQLite index
+    (:func:`novafabric.session.index.list_sessions_fast`) is a cache over it
+    and falls back to this function whenever it is missing or stale. ULIDs
+    are time-prefixed so lexicographic order is creation order.
+    Unreadable manifests are warned about and skipped, never fatal;
+    symlinked session directories are skipped (:func:`session_dir_entries`).
     """
-    base = sessions_root(root)
-    if not base.is_dir():
-        return []
     manifests: list[SessionManifest] = []
-    for entry in sorted(base.iterdir(), reverse=True):
-        path = entry / SESSION_MANIFEST_FILENAME
-        if not path.is_file():
-            continue
+    for _name, path in reversed(session_dir_entries(sessions_root(root))):
         try:
-            manifests.append(_load_manifest_file(path))
+            manifests.append(load_manifest_file(path))
         except SessionIntegrityError as exc:
             logger.warning("Skipping unreadable session manifest: %s", exc)
     return manifests
@@ -314,11 +358,7 @@ def add_member(
     member = MemberRun(
         run_id=run_id,
         capsule_ref=f"{_relative_ref_path(capsule_dir, session_dir)}@{digest}",
-        sequence=(
-            max(m.sequence for m in manifest.member_runs) + 1
-            if manifest.member_runs
-            else 0
-        ),
+        sequence=(max(m.sequence for m in manifest.member_runs) + 1 if manifest.member_runs else 0),
         started_at=str(capsule.get("created_at", _now())),
         role=role,
     )

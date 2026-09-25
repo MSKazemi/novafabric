@@ -166,6 +166,9 @@ OCSF_CLASS_MAP: Final[dict[str, tuple[int, str, int]]] = {
     "webhook.delivery": (_API_ACTIVITY, "API Activity", 1),
     # Bounded-loss signal: dispatch queue overflowed (drop-with-audit).
     "webhook.queue.overflow": (_API_ACTIVITY, "API Activity", _ACTIVITY_OTHER),
+    # ADR-0208 P2: usage-ledger reconciliation run (admin CLI); an applied
+    # run appends an adjustment row — API Activity, Update.
+    "usage.reconcile": (_API_ACTIVITY, "API Activity", 3),  # Update
 }
 
 #: Conservative fallback for event types not (yet) in the map: API Activity,

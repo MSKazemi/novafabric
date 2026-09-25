@@ -8,6 +8,11 @@ warning). Holds the engine, models, and OPA/Rego integration
 rollup that feeds `PolicyResource.budget` for the ADR-0136 budget gate
 (`policies/novafabric/defaults/budget_gate.rego`).
 
+`_environment.py` — `deployment_environment_from_capsule()`, the capsule's recorded
+ADR-0126 deployment environment (verbatim, `None` when absent) that feeds
+`PolicyResource.deployment_environment` / `input.resource.deployment_environment` for
+environment-conditioned gates (experimental; wired into the evidence-export gate).
+
 **Not to be confused with [`novafabric.policies`](../policies/) — the policy
 *data* (capture-level definitions).** `policy` = the engine that evaluates;
 `policies` = the rules/levels it evaluates.

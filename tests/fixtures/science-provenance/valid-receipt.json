@@ -1,0 +1,14 @@
+{
+  "bound_root": "sha256:908a7f5cfc95a44963eaa1699a46c4acbd3f95ae0d532e5236d3c7d1b53c0fe7",
+  "code_digest": "sha256:55a098c0d5a61d2442536a5e71099fede1eca24c815cbdb5275d5a16e6cbbdad",
+  "data_digest": "sha256:b901ff9d9c411a4a25d71a415549acaf149a4ceb844b61354cfcaeafec9da4cd",
+  "determinism_class": "statistical",
+  "environment_digest": "sha256:f92c309244221059942615f254174c8026fd440727e24a15073dc12f02eb2dac",
+  "receipt_incomplete": [],
+  "schema_version": "0.1.0",
+  "seeds": [
+    1337,
+    42
+  ],
+  "workflow_digest": "sha256:cccf864807c27f8cf03f31fb4260825c4227efeb929becc0d2830b80a1e00e1c"
+}

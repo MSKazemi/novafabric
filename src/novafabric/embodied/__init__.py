@@ -15,7 +15,10 @@
 """Embodied & cyber-physical agent evidence (ADR-0162, experimental).
 
 Record-only: NovaFabric records which sensor streams an embodied agent
-declared it consumed and which commands it declared it issued. It does not
+declared it consumed and which commands it declared it issued (P1), the ODD
+it declared and the excursions observed outside it with a verdict that is
+always null, and the perception→actuation chain of artifact digests it
+declared (P2). It does not
 control a robot, drive, fly, actuate, fuse sensors for control, plan a path,
 gate a command, or decide whether an action was safe or in-ODD. It never sits
 in a control or actuation hot path, and it stores references, digests and
@@ -23,6 +26,8 @@ counts only — never frames, point clouds, video, audio, or control
 credentials.
 """
 
+from novafabric.embodied._boundary import IN_MISSION_BOUNDARY
+from novafabric.embodied._timestamps import InvalidTimestampError
 from novafabric.embodied.facet import (
     FACET_NAME,
     SCHEMA_VERSION,
@@ -42,23 +47,51 @@ from novafabric.embodied.facet import (
     reject_raw_payloads,
     verify_receipt_binding,
 )
+from novafabric.embodied.odd import (
+    AdjudicationRefusedError,
+    ExcursionOrderError,
+    OddConformance,
+    OddExcursion,
+    build_odd,
+)
+from novafabric.embodied.trajectory import (
+    FindingCode,
+    TrajectoryFinding,
+    TrajectoryHop,
+    TrajectoryReport,
+    TrajectoryStage,
+    walk_trajectory,
+)
 
 __all__ = [
     "FACET_NAME",
+    "IN_MISSION_BOUNDARY",
     "SCHEMA_VERSION",
     "ActuationRecord",
+    "AdjudicationRefusedError",
     "EmbodiedFacet",
+    "ExcursionOrderError",
+    "FindingCode",
     "InvalidReferenceError",
+    "InvalidTimestampError",
     "MissingIssuerError",
     "Modality",
+    "OddConformance",
+    "OddExcursion",
     "RawPayloadRejectedError",
     "SensorStream",
+    "TrajectoryFinding",
+    "TrajectoryHop",
+    "TrajectoryReport",
+    "TrajectoryStage",
     "VerifiedBlock",
     "attach_facet",
     "build_actuation",
     "build_facet",
+    "build_odd",
     "digest_stream",
     "is_confirmed",
     "reject_raw_payloads",
     "verify_receipt_binding",
+    "walk_trajectory",
 ]

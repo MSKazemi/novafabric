@@ -1,0 +1,61 @@
+{
+  "schema_version": "0.1.0",
+  "preservation_id": "presv-2026-07-13-7f",
+  "original_root": "sha256:fbc02a3e8333408578602145ed9be1aec00e1d44006367d2dbc207ee66b93598",
+  "fixity": {
+    "alg": "sha256",
+    "digest": "sha256:fbc02a3e8333408578602145ed9be1aec00e1d44006367d2dbc207ee66b93598"
+  },
+  "provenance_events": [
+    {
+      "event": "sealed",
+      "at": "2026-07-13T09:00:00Z",
+      "agent_ref": "sha256:c346d3879a2150f06e5c7422521183b38ac21816186df92836f8dd14d3aea9a9"
+    },
+    {
+      "event": "ingested-to-worm",
+      "at": "2026-07-13T09:05:00Z",
+      "agent_ref": "https://archive.example.org/agents/ingest-1"
+    },
+    {
+      "event": "migration",
+      "at": "2029-02-01T00:00:00Z",
+      "agent_ref": "sha256:f4d924b6a5124ba42c69f0d45a916bf2115157778dbc5354225decac72e99d51"
+    },
+    {
+      "event": "migration",
+      "at": "2033-05-01T00:00:00Z",
+      "agent_ref": "https://tools.example.org/migrators/run-capsule/0.3-to-0.4"
+    }
+  ],
+  "fixity_log": [
+    {
+      "checked_at": "2027-01-01T00:00:00Z",
+      "alg": "sha256",
+      "digest": "sha256:fbc02a3e8333408578602145ed9be1aec00e1d44006367d2dbc207ee66b93598",
+      "matches_original": true,
+      "agent_ref": "https://archive.example.org/agents/fixity-scanner"
+    }
+  ],
+  "bound_root": "sha256:fbc02a3e8333408578602145ed9be1aec00e1d44006367d2dbc207ee66b93598",
+  "format_migration_chain": [
+    {
+      "from_version": "run-capsule@0.2.0",
+      "to_version": "run-capsule@0.3.0",
+      "migrated_at": "2029-02-01T00:00:00Z",
+      "tool_ref": "sha256:f4d924b6a5124ba42c69f0d45a916bf2115157778dbc5354225decac72e99d51",
+      "pre_digest": "sha256:fbc02a3e8333408578602145ed9be1aec00e1d44006367d2dbc207ee66b93598",
+      "post_digest": "sha256:ee847ceab4ced9db4316e6ea373c54714257093f7d31141fa159696fea01dcdc",
+      "parent": null
+    },
+    {
+      "from_version": "run-capsule@0.3.0",
+      "to_version": "run-capsule@0.4.0",
+      "migrated_at": "2033-05-01T00:00:00Z",
+      "tool_ref": "https://tools.example.org/migrators/run-capsule/0.3-to-0.4",
+      "pre_digest": "sha256:ee847ceab4ced9db4316e6ea373c54714257093f7d31141fa159696fea01dcdc",
+      "post_digest": "sha256:825616b756a074e703c28fc9006ec7ebd21ac44760915aac7ba6a42cdc62058d",
+      "parent": "sha256:ee847ceab4ced9db4316e6ea373c54714257093f7d31141fa159696fea01dcdc"
+    }
+  ]
+}

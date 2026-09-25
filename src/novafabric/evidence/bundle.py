@@ -25,6 +25,7 @@ from novafabric.policy import (
     PolicyInput,
     PolicyResource,
     PolicySubject,
+    deployment_environment_from_capsule,
     get_policy_engine,
 )
 
@@ -199,6 +200,9 @@ class EvidenceBundleBuilder:
                 # the operator explicitly waived it (--allow-unsafe-skips); a
                 # waived export reports 0 so the default gate honors the waiver.
                 unsafe_skips=0 if self._allow_unsafe_skips else self._unsafe_skip_count,
+                # ADR-0126 P3: lets a gate condition on the recorded environment
+                # (e.g. production-only requirements); None when not recorded.
+                deployment_environment=deployment_environment_from_capsule(self._capsule_dir),
             ),
         )
         decision = engine.evaluate(inp)

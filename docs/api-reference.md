@@ -473,8 +473,8 @@ caller-supplied numbers isn't a mutating or boundary-crossing action).
 
 ## Deprecation register (ADR-0188)
 
-**Maturity:** mechanism works today (experimental); the register is empty and the CI
-drift gate is future design. Policy and machinery:
+**Maturity:** mechanism, CI drift gate and CI removal gate work today (experimental);
+the register is empty. Policy and machinery:
 [ADR-0188](./decisions.md).
 
 **Scope.** The lifecycle policy applies to the multi-user `nova server` API only
@@ -505,15 +505,32 @@ releases**. Removal lands only in a **minor** version bump pre-1.0 and only in a
 **major** bump post-1.0. No silent removals, ever. Every register row names the
 deprecating release, an earliest-removal release at least two minors later, and a
 replacement (or an explicit "none"); each row must match a `deprecated: true`
-operation in `api/openapi.yaml` (drift gate: future CI).
+operation in `api/openapi.yaml` (drift gate, `tests/test_deprecation_drift_gate.py`).
+
+**Removal gate (works today, experimental).** `tests/test_deprecation_removal_gate.py`
+fails CI when this register breaks the lifecycle rules (pure checks in
+`src/novafabric/server/deprecation_gate.py`):
+
+- every row names a deprecation release, an earliest-removal release at least two
+  minors later (`earliest ≥ major.(minor+2).0` of the deprecation release), and a
+  replacement or `none`;
+- a register-listed endpoint that is no longer served (neither mounted by the default
+  `nova server` app nor declared in `api/openapi.yaml`) must keep its row and record
+  the removing release in **Removed in**; that release must be ≥ the earliest-removal
+  release, ≤ the current package version (`novafabric.__version__`), and a legal
+  removal point — a minor `0.Y.0` pre-1.0, a major `X.0.0` post-1.0;
+- a row that records **Removed in** while the endpoint is still served fails.
+
+Removed rows stay in the table as the audit trail and are excluded from the drift
+gate (they no longer carry `deprecated: true` in `api/openapi.yaml`).
 
 ### Register
 
 *No endpoints are currently deprecated.*
 
-| Endpoint | Deprecated in | Earliest removal | Sunset date | Replacement |
-|---|---|---|---|---|
-| — | — | — | — | — |
+| Endpoint | Deprecated in | Earliest removal | Sunset date | Replacement | Removed in |
+|---|---|---|---|---|---|
+| — | — | — | — | — | — |
 
 ## Interactive API docs
 

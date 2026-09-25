@@ -13,6 +13,16 @@ the previous minor's code against the new schema is **blocked** until the
 migration is split. Rationale and the full posture (single-writer
 active-passive, fencing invariant): ADR-0180.
 
+## 0a. API removal rule (ADR-0188, deprecation register)
+
+A `/v0` endpoint listed in the deprecation register (`docs/api-reference.md`,
+"Deprecation register") may be removed only in a release that is ≥ its
+earliest-removal release and is a **minor** bump pre-1.0 (`0.Y.0`) / **major** bump
+post-1.0 (`X.0.0`). The removal lands in the same change that bumps `pyproject.toml`
+to that release, and its register row stays, recording the release in the
+**Removed in** column. `tests/test_deprecation_removal_gate.py` (part of the unit
+suite, so of every gate in step 1) fails the release otherwise.
+
 ## 1. Run tests
 
 ```bash

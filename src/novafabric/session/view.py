@@ -28,6 +28,10 @@ logger = logging.getLogger(__name__)
 
 MemberStatus = Literal["ok", "missing", "tampered"]
 
+#: Sub-directory of an imported session holding its bundled member capsules
+#: (``<session_dir>/capsules/<run_id>/``), searched last during resolution.
+BUNDLED_CAPSULES_DIRNAME = "capsules"
+
 
 class ResolvedMember(BaseModel):
     """One session member after locating (or failing to locate) its capsule."""
@@ -68,6 +72,9 @@ def _candidate_dirs(
         candidates.append(prefix if prefix.is_absolute() else session_dir / prefix)
     if capsule_base is not None:
         candidates.append(capsule_base / member.run_id)
+    # A session imported from a portable bundle (ADR-0122 P4) carries its
+    # members next to the manifest. The digest check below still gates it.
+    candidates.append(session_dir / BUNDLED_CAPSULES_DIRNAME / member.run_id)
     return candidates, digest
 
 
@@ -102,9 +109,7 @@ def _member_cost(capsule_dir: Path) -> dict[str, float]:
     return totals
 
 
-def _resolve_one(
-    member: MemberRun, session_dir: Path, capsule_base: Path | None
-) -> ResolvedMember:
+def _resolve_one(member: MemberRun, session_dir: Path, capsule_base: Path | None) -> ResolvedMember:
     candidates, digest = _candidate_dirs(member, session_dir, capsule_base)
     found: Path | None = None
     matched = False
@@ -118,9 +123,7 @@ def _resolve_one(
     if found is None:
         return ResolvedMember(member=member, status="missing")
     if not matched:
-        return ResolvedMember(
-            member=member, status="tampered", capsule_dir=str(found)
-        )
+        return ResolvedMember(member=member, status="tampered", capsule_dir=str(found))
 
     resolved = ResolvedMember(member=member, status="ok", capsule_dir=str(found))
     try:
@@ -157,7 +160,8 @@ def resolve_members(
 
     Each ``capsule_ref`` path prefix is resolved relative to the session's
     manifest directory; a bare-digest ref (or a moved capsule) is also looked
-    up as ``<capsule_base>/<run_id>``. Missing/tampered members are reported,
+    up as ``<capsule_base>/<run_id>``, and finally as the bundle-imported
+    ``<session_dir>/capsules/<run_id>``. Missing/tampered members are reported,
     never raised.
     """
     session_dir = session_manifest_path(manifest.session_id, root).parent

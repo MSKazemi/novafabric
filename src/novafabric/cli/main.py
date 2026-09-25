@@ -44,6 +44,7 @@ from novafabric.cli.diff import diff_cmd
 from novafabric.cli.doctor import doctor_cmd
 from novafabric.cli.drift import app as drift_app
 from novafabric.cli.dsar import dsar_app
+from novafabric.cli.embodied import embodied_app
 from novafabric.cli.energy import app as energy_app
 from novafabric.cli.erasure import app as erasure_app
 from novafabric.cli.euaiact import euaiact_app
@@ -71,16 +72,20 @@ from novafabric.cli.export_examiner import app as export_examiner_app
 from novafabric.cli.export_finance import export_model_risk_cmd
 from novafabric.cli.export_foia import export_foia_cmd
 from novafabric.cli.export_html import export_cmd
+from novafabric.cli.export_model_independence import export_model_independence_cmd
 from novafabric.cli.export_part11 import export_part11_cmd
 from novafabric.cli.export_public import export_public_annex_viii_cmd
 from novafabric.cli.export_public_disclosure import export_public_disclosure_cmd
 from novafabric.cli.export_public_incident import export_public_incident_cmd
 from novafabric.cli.export_rai import export_rai_scorecard_cmd
+from novafabric.cli.export_retention import export_retention_cmd
 from novafabric.cli.export_rocrate import export_rocrate_cmd
+from novafabric.cli.export_rocrate_science import export_rocrate_science_cmd
 from novafabric.cli.export_system_card import export_system_card_cmd
 from novafabric.cli.export_transparency_register import export_transparency_register_cmd
 from novafabric.cli.export_whistleblower import export_whistleblower_cmd
 from novafabric.cli.forensics import forensics_app
+from novafabric.cli.frontier_safety import safety_app as frontier_safety_app
 from novafabric.cli.graph import graph_app
 from novafabric.cli.hold import app as hold_app
 from novafabric.cli.import_blob import import_cmd
@@ -103,6 +108,7 @@ from novafabric.cli.memory import memory_app
 from novafabric.cli.merkle_tree import merkle_tree_cmd
 from novafabric.cli.migrate import migrate_to_postgres_cmd
 from novafabric.cli.migrate_capsule import migrate_capsule_cmd
+from novafabric.cli.migrate_format import migrate_format_cmd
 from novafabric.cli.migrate_schema import migrate_schema_cmd
 from novafabric.cli.passport import passport_app
 from novafabric.cli.pii_erase import app as pii_app
@@ -124,6 +130,7 @@ from novafabric.cli.rollback import rollback_cmd
 from novafabric.cli.safety_case import safety_case_app
 from novafabric.cli.scan_secrets import scan_secrets_cmd
 from novafabric.cli.schema import app as schema_app
+from novafabric.cli.science import app as science_app
 from novafabric.cli.score import score_app
 from novafabric.cli.seal_propose import seal_app
 from novafabric.cli.search import search_cmd
@@ -333,8 +340,8 @@ app.add_typer(
     name="session",
     help=(
         "Group N independent runs into one multi-turn session: new, add, "
-        "list, show (experimental, ADR-0122); replay them in order "
-        "(experimental, ADR-0123)."
+        "list, reindex, show, export, verify-bundle, import (experimental, "
+        "ADR-0122); replay them in order (experimental, ADR-0123)."
     ),
 )
 app.add_typer(
@@ -362,8 +369,11 @@ app.add_typer(
 app.command("export")(export_cmd)
 app.command("export-blob")(export_blob_cmd)
 app.command("export-rocrate")(export_rocrate_cmd)
+app.command("export-rocrate-science")(export_rocrate_science_cmd)
 app.command("export-c2pa")(export_c2pa_cmd)
 app.command("export-model-risk")(export_model_risk_cmd)
+app.command("export-model-independence")(export_model_independence_cmd)
+app.command("export-retention")(export_retention_cmd)
 app.command("export-public-annex-viii")(export_public_annex_viii_cmd)
 app.command("export-transparency-register")(export_transparency_register_cmd)
 app.command("export-public-disclosure")(export_public_disclosure_cmd)
@@ -507,6 +517,8 @@ app.command("login")(login_cmd)
 app.command("logout")(logout_cmd)
 app.command("migrate-to-postgres")(migrate_to_postgres_cmd)
 app.command("migrate")(migrate_capsule_cmd)
+# NF-332 (ADR-0165 P2): record a format-migration hop in facets.preservation.
+app.command("migrate-format")(migrate_format_cmd)
 app.command("migrate-schema")(migrate_schema_cmd)
 
 app.add_typer(
@@ -528,6 +540,18 @@ app.add_typer(
     safety_case_app,
     name="safety-case",
     help="Compile/verify/export an evidence-grounded safety case (ADR-0095).",
+)
+# ADR-0164 P2 (NF-323): agentic-science reproducibility receipt — record-only.
+app.add_typer(
+    science_app,
+    name="science",
+    help="Agentic-science provenance: reproducibility receipt (experimental, ADR-0164).",
+)
+# ADR-0167 P2 (NF-352/357): frontier-safety evidence readers — record-only.
+app.add_typer(
+    frontier_safety_app,
+    name="safety",
+    help="Frontier-safety evidence: control decisions, tripwires (experimental, ADR-0167).",
 )
 app.add_typer(
     ledger_app,
@@ -591,6 +615,8 @@ app.add_typer(
 )
 # NF-179 (ADR-0149): portable agent-passport projection — offline green/amber/red.
 app.add_typer(passport_app, name="passport")
+# ADR-0162 P2 (NF-303/NF-310): embodied ODD record + trajectory chain, offline.
+app.add_typer(embodied_app, name="embodied")
 
 # `nova policy capture-level get/set` — nested under existing policy typer
 policy_app.add_typer(

@@ -5,6 +5,7 @@ import warnings
 
 from ._budget import budget_block_from_capsule
 from ._engine import PolicyEngine
+from ._environment import deployment_environment_from_capsule
 from ._models import PolicyDecision, PolicyDeniedError, PolicyInput, PolicyResource, PolicySubject
 from ._noop_engine import NoopEngine
 from ._opa_engine import OpaEngine, OpaNotFoundError
@@ -38,5 +39,6 @@ __all__ = [
     "OpaEngine",
     "OpaNotFoundError",
     "budget_block_from_capsule",
+    "deployment_environment_from_capsule",
     "get_policy_engine",
 ]

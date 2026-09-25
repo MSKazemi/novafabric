@@ -91,6 +91,24 @@ fallback list, but there is no automated benchmark validating this against
 a specific deployment's real network conditions (e.g. an air-gapped site
 with a local relay TSA); that assessment is left to the operator.
 
+### `ca_bundle` — signer certificate chain validation (ADR-0055)
+
+**Status:** experimental. An optional key, accepted by all four profiles:
+
+```yaml
+ca_bundle: /etc/novaseal/ca-bundle.crt   # operator CA chain (PEM, concatenated)
+```
+
+When set, `nova verify` adds a `Signer certificate chain (CA bundle)` check:
+the certificate embedded in the capsule's DSSE envelope must chain, offline,
+to a certificate in the bundle (every bundle certificate is a trust anchor,
+so include the issuing intermediate). `nova verify --ca-bundle PATH`
+overrides the key for one run. A configured path that does not exist is a
+config error — it never silently disables the check. Omit the key and
+verification is unchanged. No CRL/OCSP revocation checking; validity is
+evaluated at the current time. Details: [NovaSeal Key Management
+§2.3](novaseal-key-management.md#23-x509-cert-pinned-identity-adr-0055--works-today-library-api-only).
+
 ---
 
 ## 2. Profiles

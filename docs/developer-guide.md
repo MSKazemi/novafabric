@@ -1147,7 +1147,7 @@ the change into `docs/user-guide.md`'s v0.75–v0.94 cohort table, and note it i
 
 | Module | ADR | What it does |
 |---|---|---|
-| `trust/novaseal/x509_identity.py` | 0055 | Offline signing identity pinned to an x509 cert's SHA-256 fingerprint (ECDSA-P256/RSA-PSS) — verification checks `fingerprint ∈ pinned` **and** the signature, deliberately skipping CA path-building so it stays a pure local check. |
+| `trust/novaseal/x509_identity.py` | 0055 | Offline signing identity pinned to an x509 cert's SHA-256 fingerprint (ECDSA-P256/RSA-PSS) — verification checks `fingerprint ∈ pinned` **and** the signature. Optional **experimental** CA-bundle chain validation (`ca_bundle=`, `validate_certificate_chain`, via `cryptography.x509.verification`, offline) makes trust "pinned OR chain"; `nova verify --ca-bundle` applies it to the DSSE signer cert. |
 | `trust/novaseal/hybrid_signature.py` | 0072 | Crypto-agility envelope over a pluggable algorithm registry — Ed25519 today, a post-quantum algorithm (ML-DSA) can register as a second signer later with no envelope format change ("either alone suffices"). |
 | `trust/did.py` | 0075 | Self-certifying `did:key` (Ed25519, base58btc + multicodec, no network lookup) plus Verifiable Credential issue/verify. |
 | `trust/delegation.py` | 0106 | Signed user → agent → sub-agent "acted-as" delegation chain (`issue_grant`, `verify_delegation_chain`) — scope only ever attenuates down the chain, never escalates. |

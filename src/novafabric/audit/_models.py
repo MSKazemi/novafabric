@@ -38,6 +38,8 @@ class AuditEventType(str, enum.Enum):
     WEBHOOK_REDELIVER = "webhook.redeliver"
     WEBHOOK_DELIVERY = "webhook.delivery"  # one entry per attempted delivery
     WEBHOOK_QUEUE_OVERFLOW = "webhook.queue.overflow"  # one per bounded window
+    # ADR-0208 P2: one entry per `nova server usage reconcile` run (report or apply)
+    USAGE_RECONCILE = "usage.reconcile"
 
 
 class AuditEntry(BaseModel):

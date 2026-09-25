@@ -45,6 +45,13 @@ novaseal.yaml schema (gcp_kms profile):
 All four profiles also accept the optional ``tsa_urls`` ordered fallback list
 shown in the local-profile example above (REG-ADR-007); it works identically
 regardless of signing profile since it only affects the timestamp request.
+
+All four profiles also accept an optional ``ca_bundle`` (ADR-0055, experimental):
+
+    ca_bundle: /etc/novaseal/ca-bundle.crt   # operator CA chain (PEM, concatenated)
+
+When set, ``nova verify`` additionally validates the DSSE signer certificate's
+chain against it, offline. Omit it to keep verification unchanged.
 """
 
 from __future__ import annotations
@@ -104,6 +111,9 @@ class SigningProfile:
     # callers can always read profile.tsa_urls without a None-check.
     tsa_urls: list[str] = field(default_factory=list)
     merkle_db: Path = field(default_factory=lambda: _DEFAULT_MERKLE_DB)
+    # ADR-0055 (experimental): operator CA bundle for signer chain validation at
+    # verify time. None = no chain validation (unchanged behaviour).
+    ca_bundle: Optional[Path] = None
 
     def __post_init__(self) -> None:
         if not self.tsa_urls:
@@ -213,6 +223,7 @@ def _parse_profile(path: Path) -> SigningProfile:
         if not raw_tsa_urls:
             raise SealConfigError("novaseal.yaml tsa_urls, if given, must not be empty")
     tsa_urls = list(raw_tsa_urls) if raw_tsa_urls is not None else [tsa_url]
+    ca_bundle = _parse_ca_bundle(raw)
 
     if profile == "local":
         key_path = Path(req("key_path")).expanduser()
@@ -230,6 +241,7 @@ def _parse_profile(path: Path) -> SigningProfile:
             tsa_url=tsa_url,
             tsa_urls=tsa_urls,
             merkle_db=merkle_db,
+            ca_bundle=ca_bundle,
         )
 
     if profile == "aws_kms":
@@ -246,6 +258,7 @@ def _parse_profile(path: Path) -> SigningProfile:
             tsa_url=tsa_url,
             tsa_urls=tsa_urls,
             merkle_db=merkle_db,
+            ca_bundle=ca_bundle,
         )
 
     if profile == "azure_kv":
@@ -262,6 +275,7 @@ def _parse_profile(path: Path) -> SigningProfile:
             tsa_url=tsa_url,
             tsa_urls=tsa_urls,
             merkle_db=merkle_db,
+            ca_bundle=ca_bundle,
         )
 
     # profile == "gcp_kms"
@@ -276,7 +290,25 @@ def _parse_profile(path: Path) -> SigningProfile:
         tsa_url=tsa_url,
         tsa_urls=tsa_urls,
         merkle_db=merkle_db,
+        ca_bundle=ca_bundle,
     )
+
+
+def _parse_ca_bundle(raw: dict[str, object]) -> Optional[Path]:
+    """Parse the optional ``ca_bundle`` key (ADR-0055); a set-but-missing path fails.
+
+    A configured-but-absent bundle is a hard config error rather than a silent
+    downgrade to "no chain validation".
+    """
+    value = raw.get("ca_bundle")
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise SealConfigError("novaseal.yaml ca_bundle must be a non-empty path string")
+    path = Path(value).expanduser()
+    if not path.is_file():
+        raise SealConfigError(f"NovaSeal ca_bundle not found: {path}")
+    return path
 
 
 def build_signing_backend(profile: SigningProfile) -> "SigningBackend":

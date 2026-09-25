@@ -1,0 +1,22 @@
+{
+  "_comment": "INVALID by design (ADR-0162 D2, I-4). An ODD block that carries a ruling. NovaFabric records declared bounds and observed excursions and never decides whether the system was safe or in-ODD; loading this must raise AdjudicationRefusedError, and `nova embodied odd show` must exit 1.",
+  "schema_version": "0.2.0",
+  "odd": {
+    "odd_ref": "sha256:7a24f4baac1cb6a9def365e38e8da8f3ab73f85ead31a50f05f3477eade8c967",
+    "excursions": [
+      {
+        "condition": "fog",
+        "observed": "visibility<40m",
+        "ts": "2026-07-13T10:02:11Z",
+        "in_odd": false
+      },
+      {
+        "condition": "speed",
+        "observed": "road_speed>50kph",
+        "ts": "2026-07-13T10:04:37Z",
+        "in_odd": false
+      }
+    ],
+    "verdict": "in_odd_safe"
+  }
+}

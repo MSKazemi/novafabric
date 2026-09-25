@@ -33,6 +33,10 @@ class PolicyResource(BaseModel):
     lineage: dict[str, Any] = {}
     regression_report: dict[str, Any] | None = None  # serialized RegressionReport via .model_dump()
     budget: dict[str, Any] | None = None  # recorded budget rollup (ADR-0136) — see _budget.py
+    # Recorded capsule deployment environment (ADR-0126 P3), verbatim — e.g.
+    # "production". None (Rego ``null``) when not recorded or not capsule-scoped;
+    # never inferred. See _environment.py.
+    deployment_environment: str | None = None
 
 
 class PolicyInput(BaseModel):

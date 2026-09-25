@@ -20,6 +20,7 @@ prefix, ``METHOD /path`` cells) but strict on content.
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -150,11 +151,14 @@ def _docs_register_rows() -> set[str]:
         stripped = line.strip()
         if not stripped.startswith("|"):
             continue
-        first_cell = stripped.strip("|").split("|", 1)[0].strip().strip("`").strip()
+        cells = [c.strip().strip("`").strip() for c in stripped.strip("|").split("|")]
+        first_cell = cells[0]
         if not first_cell or first_cell.lower() == "endpoint":
             continue  # header row
         if set(first_cell) <= _PLACEHOLDER_CHARS:
             continue  # separator or placeholder ("| — | — | …") row
+        if len(cells) >= 6 and not set(cells[5]) <= _PLACEHOLDER_CHARS:
+            continue  # "Removed in" set: audit-trail row, no longer deprecated (removal gate)
         path_match = re.search(r"(/[^\s`|]*)", first_cell)
         assert path_match, (
             f"unparseable endpoint cell in the docs register table: {first_cell!r}"
@@ -247,3 +251,21 @@ def test_synthetic_drift_fails_by_name() -> None:
             _assert_no_drift()
     finally:
         DEPRECATION_REGISTER[:] = saved
+
+
+def test_removed_rows_are_excluded_from_drift(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A row recording "Removed in" is the removal gate's audit trail, not a
+    live deprecation — the drift gate must not demand a runtime/openapi twin."""
+    doc = tmp_path / "api-reference.md"
+    doc.write_text(
+        "## Deprecation register (ADR-0188)\n\n### Register\n\n"
+        f"*{DOCS_SENTINEL}*\n\n"
+        "| Endpoint | Deprecated in | Earliest removal | Sunset date | Replacement | Removed in |\n"
+        "|---|---|---|---|---|---|\n"
+        "| `/v0/gone` | 0.50.0 | 0.52.0 | 2026-06-01 | none | 0.52.0 |\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys.modules[__name__], "DOCS_PATH", doc)
+    assert _docs_register_rows() == set()

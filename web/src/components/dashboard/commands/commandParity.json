@@ -280,6 +280,12 @@
   "nova dsar sla": {
     "status": "builder-only"
   },
+  "nova embodied odd show": {
+    "status": "builder-only"
+  },
+  "nova embodied trajectory verify": {
+    "status": "builder-only"
+  },
   "nova energy attest": {
     "status": "builder-only"
   },
@@ -502,6 +508,9 @@
     "tab": "compliance",
     "api": "/api/compliance/export/hipaa-proof"
   },
+  "nova export-model-independence": {
+    "status": "builder-only"
+  },
   "nova export-model-risk": {
     "status": "real-panel",
     "tab": "compliance",
@@ -542,10 +551,16 @@
     "tab": "compliance",
     "api": "/api/compliance/export/"
   },
+  "nova export-retention": {
+    "status": "builder-only"
+  },
   "nova export-rocrate": {
     "status": "real-panel",
     "tab": "compliance",
     "api": "/api/compliance/export/rocrate"
+  },
+  "nova export-rocrate-science": {
+    "status": "builder-only"
   },
   "nova export-ropa": {
     "status": "real-panel",
@@ -838,6 +853,9 @@
     "tab": "admin",
     "api": "/api/capsule-migrate"
   },
+  "nova migrate-format": {
+    "status": "builder-only"
+  },
   "nova migrate-schema": {
     "status": "cli-only",
     "reason": "Batch migration over local capsule directories on the filesystem."
@@ -1037,6 +1055,12 @@
     "tab": "runs",
     "api": "/validate-distributed"
   },
+  "nova safety control show": {
+    "status": "builder-only"
+  },
+  "nova safety tripwire list": {
+    "status": "builder-only"
+  },
   "nova safety-case build": {
     "status": "real-panel",
     "tab": "spine",
@@ -1057,6 +1081,12 @@
     "status": "real-panel",
     "tab": "schema",
     "api": "/api/schema/list"
+  },
+  "nova science receipt build": {
+    "status": "builder-only"
+  },
+  "nova science receipt verify": {
+    "status": "builder-only"
   },
   "nova score submit": {
     "status": "builder-only"
@@ -1165,7 +1195,19 @@
     "status": "cli-only",
     "reason": "Starts the server process; cannot be launched from the dashboard it serves."
   },
+  "nova server usage export": {
+    "status": "builder-only"
+  },
+  "nova server usage reconcile": {
+    "status": "builder-only"
+  },
   "nova session add": {
+    "status": "builder-only"
+  },
+  "nova session export": {
+    "status": "builder-only"
+  },
+  "nova session import": {
     "status": "builder-only"
   },
   "nova session list": {
@@ -1174,10 +1216,16 @@
   "nova session new": {
     "status": "builder-only"
   },
+  "nova session reindex": {
+    "status": "builder-only"
+  },
   "nova session replay": {
     "status": "builder-only"
   },
   "nova session show": {
+    "status": "builder-only"
+  },
+  "nova session verify-bundle": {
     "status": "builder-only"
   },
   "nova storage inspect": {

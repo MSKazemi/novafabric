@@ -1936,6 +1936,32 @@ missing or tampered member is an honest per-turn **refusal**, never a silent ski
 State-seam verification *between* turns (ADR-0123 P2) is **future design** — not
 implemented.
 
+**Experimental (ADR-0123 P5):** replay only a slice, pin a mode per turn, or
+preview the plan without running anything:
+
+```bash
+nova session replay $SID --from 1 --to 2 --turn-mode 2=forensic
+nova session replay $SID --dry-run     # order, per-turn mode, integrity, tool exposure
+```
+
+The slice is recorded as `range` in the result, and the pins as
+`turn_mode_policy`; `--dry-run` executes and writes nothing.
+
+### Carry a session to another machine (ADR-0122 P4, experimental)
+
+```bash
+nova session export $SID -o session.zip      # manifest + every member capsule
+nova session verify-bundle session.zip       # offline; exit 1 on any problem
+nova session import session.zip --session-dir /tmp/review/sessions
+nova session show $SID --session-dir /tmp/review/sessions   # all turns "ok"
+```
+
+The archive is deterministic (the same session gives the same bytes) and
+digest-indexed with the same recipe as an Evidence Bundle; it is **unsigned**, so
+for signed evidence use `nova evidence export` on the members. `nova session list`
+reads a rebuildable SQLite index when it is fresh (`nova session reindex` builds
+it) and falls back to scanning the manifests otherwise (ADR-0122 P3, experimental).
+
 ### Reconstruct one run's execution DAG (`nova graph agent`, ADR-0124)
 
 Any capsule — session member or not — can be projected into its execution graph,

@@ -61,7 +61,7 @@ def _validator() -> jsonschema.Draft202012Validator:
 
 
 # ---------------------------------------------------------------------------
-# Graduated schema: all 14 golden fixtures behave as their filename asserts
+# Graduated schema: all 16 golden fixtures behave as their filename asserts
 # ---------------------------------------------------------------------------
 
 
@@ -77,8 +77,9 @@ def test_golden_fixture_behaves_as_named(fixture: str) -> None:
 
 def test_fixture_count_matches_graduated_set() -> None:
     names = sorted(p.name for p in FIXTURE_DIR.glob("*.json"))
-    assert len(names) == 14
-    assert sum(1 for n in names if n.startswith("valid-")) == 5
+    # 14 graduated with P1 + 2 added with P5 (range + turn_mode_policy).
+    assert len(names) == 16
+    assert sum(1 for n in names if n.startswith("valid-")) == 6
 
 
 # ---------------------------------------------------------------------------

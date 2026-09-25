@@ -184,6 +184,67 @@ Other principals get a **filtered** response (their membership workspaces
 only) — filtering, not 403. Accounting is best-effort relative to the
 upload: a metering failure is logged + audited and never fails the write.
 
+### Reconciliation and chargeback export (ADR-0208 P2)
+
+**Status: experimental.** Two admin CLI commands read the same registry DB
+the server meters into (`--db-path`, else the server config's `db_path`).
+
+**`nova server usage reconcile`** compares the metered **lifetime** sums
+with `measure_capsule_store` and prints the drift (derived minus metered).
+Both sides cover the whole history: totals of rollups pruned past
+`usage.rollup_retention_months` are carried forward (not forgotten), so a
+retention prune never shows up as drift; the `drift` block of
+`GET /v0/usage` uses the same whole-history figure, so the two agree. Rollups pruned before this carry existed
+are not recoverable: the first reconcile after upgrading such a deployment
+may report that history once as drift — inspect before `--apply`. It is
+**report-only by default**. With `--apply` and a non-zero drift it **appends** one signed
+(positive or negative) adjustment row per drifting metric
+(`capsules_created`, `bytes_stored`) to the **`default` workspace only**,
+with `attribution = 'reconciliation'` and `ref = 'recon:<timestamp>'`.
+Existing ledger rows are never rewritten; the counters move only through the
+appended, visible row, and a second `--apply` finds zero drift and writes
+nothing. Concurrent `--apply` runs are serialized by the SQLite write
+lock (the metered side is read and the rows appended in one `BEGIN
+IMMEDIATE` transaction), so the same drift is never booked twice; an upload
+in flight during the store scan can still leave a ±1-capsule drift for the
+next run to report. Two refusals by design: there is no workspace selector (attributing
+unmetered bytes to a real workspace would be a guess), and a negative
+adjustment that would take the `default` workspace below zero is refused
+(exit `1`) — the over-count belongs to another workspace, typically after an
+out-of-band deletion. Every run appends a `usage.reconcile` entry to the
+hash-chained audit log (an *unkeyed* SHA-256 chain — tamper-evident, not a
+keyed signature). Note: adjustment rows count toward the `default`
+workspace's budget, if one is configured.
+
+```bash
+nova server usage reconcile                     # report only
+nova server usage reconcile --apply --actor alice@example.com
+```
+
+**`nova server usage export`** writes one row per
+`(period, org, workspace, metric)` for a `--from`/`--to` range of
+`YYYY-MM` periods, sorted in that order (deterministic: the same DB state
+gives byte-identical output). Finalized periods come from the monthly
+rollups (`status = final`); periods not yet finalized — always the current
+one — come from the live counters (`status = provisional`) and can still
+grow. `--format csv` (default) is RFC 4180 (CRLF, header row, quoted
+fields) with **formula-injection-safe** text cells (a leading `=`, `+`, `-`,
+`@`, TAB, CR or LF — checked after NFKC normalization, so full-width
+`＝＋－＠` count, and also after leading whitespace — gets a `'` prefix;
+integer totals are never rewritten);
+`--format ndjson` emits one sorted-key JSON object per line. Read-only.
+Periods older than `usage.rollup_retention_months` have been pruned and
+export empty.
+
+```bash
+nova server usage export --from 2026-07 --to 2026-09 -o chargeback-q3.csv
+nova server usage export --from 2026-09 --format ndjson --workspace ml-platform
+```
+
+Not yet shipped (**planned**, ADR-0208 remaining items): an HTTP export
+endpoint, per-org budget enforcement, and request-time enforcement of the
+API-key workspace binding.
+
 ### Per-workspace budgets
 
 An additive `workspaces` map inside the existing quota block; the global
