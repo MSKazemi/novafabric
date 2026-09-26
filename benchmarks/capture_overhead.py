@@ -21,8 +21,28 @@ import shutil
 import statistics
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import time
+
+
+def _find_script(name: str) -> str | None:
+    """Locate a novafabric console script, preferring the interpreter's own install.
+
+    The raw arm runs ``sys.executable``, so the capture arm must run the
+    ``nova``/``novacap`` installed alongside that same interpreter — not
+    whatever copy happens to be first on ``$PATH`` (or nothing, when the venv
+    was invoked by absolute path without being activated). Falls back to
+    ``$PATH`` for non-venv installs.
+    """
+    scripts_dir = sysconfig.get_path("scripts")
+    if scripts_dir:
+        for candidate in (name, f"{name}.exe"):
+            path = os.path.join(scripts_dir, candidate)
+            if os.path.isfile(path) and os.access(path, os.X_OK):
+                return path
+    return shutil.which(name)
+
 
 # ── Workloads (each is a short Python snippet) ───────────────────────────────
 
@@ -72,8 +92,8 @@ def _time_one_env(cmd: list[str], env: dict[str, str]) -> float:
 def _daemon_arm(workload_src: str, n: int, warmup: int) -> list[float] | None:
     """Measure ``novacap`` against a warm daemon. ADR-0092: this is the
     cold-start-eliminated path. Returns None if the scripts are unavailable."""
-    novacap_bin = shutil.which("novacap")
-    nova_bin = shutil.which("nova")
+    novacap_bin = _find_script("novacap")
+    nova_bin = _find_script("nova")
     if novacap_bin is None or nova_bin is None:
         return None
     with tempfile.TemporaryDirectory(prefix="nf_bench_daemon_") as home:
@@ -125,9 +145,10 @@ def main(argv: list[str] | None = None) -> int:
     workload_src = _WORKLOADS[args.workload]
     raw_cmd = [sys.executable, "-c", workload_src]
 
-    nova_bin = shutil.which("nova")
+    nova_bin = _find_script("nova")
     if nova_bin is None:
-        print("ERROR: `nova` not on PATH. Install novafabric (e.g. uv pip install -e .)",
+        print("ERROR: `nova` not found next to this interpreter or on PATH. "
+              "Install novafabric (e.g. uv pip install -e .)",
               file=sys.stderr)
         return 1
 

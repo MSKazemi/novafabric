@@ -38,8 +38,17 @@ def test_allows_home_and_project_and_tmp_paths(tmp_path: Path, monkeypatch) -> N
     assert _confine_path(tmp_path / "evidence" / "x.zip") == (
         tmp_path / "evidence" / "x.zip"
     ).resolve()
-    home = Path.home()
+    # A regular user's home (``/home/<user>``) is allowed. Pin HOME rather than
+    # use the ambient one: when the suite runs as root, HOME=/root, which is
+    # deliberately on the denylist (see test_rejects_system_paths).
+    home = Path("/home/nova-confine-test-user")
+    monkeypatch.setenv("HOME", str(home))
+    assert Path.home() == home
     assert _confine_path(home / ".novafabric" / "merkle.db") == (
+        home / ".novafabric" / "merkle.db"
+    ).resolve()
+    # ``~`` in a caller-supplied path expands against that home and is allowed.
+    assert _confine_path("~/.novafabric/merkle.db") == (
         home / ".novafabric" / "merkle.db"
     ).resolve()
 
