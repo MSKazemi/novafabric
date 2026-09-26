@@ -11,6 +11,16 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Added
+
+- **`nova capture` now tells a first-time user where the community is — once, as text.**
+
+  After the first capsule sealed in a directory, `nova capture` prints one dim line pointing at
+  GitHub Discussions; `nova --version` prints the same pointer to stderr. Both appear only on an
+  interactive terminal, so scripts, CI logs and `$(nova --version)` are unchanged. It is plain
+  text: no network call, no state file, no update check. Silence it with
+  `NOVAFABRIC_COMMUNITY_HINT=0`.
+
 ## [0.102.0] - 2026-09-27
 
 ### Fixed

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import sys
 from importlib.metadata import PackageNotFoundError, version
 from typing import Annotated
 
 import typer
 
 from novafabric.capsule.cli import capsule_phase3_app
+from novafabric.cli._community import VERSION_INVITE, hint_enabled
 from novafabric.cli.a2a_card import app as a2a_card_app
 from novafabric.cli.a2a_objects import app as a2a_objects_app
 from novafabric.cli.aibom import aibom_app
@@ -171,6 +173,9 @@ def _get_version() -> str:
 def _version_callback(value: bool) -> None:
     if value:
         typer.echo(f"novafabric {_get_version()}")
+        # stdout stays one line for scripts; the invitation is stderr, terminal only.
+        if sys.stderr.isatty() and hint_enabled():
+            typer.echo(VERSION_INVITE, err=True)
         raise typer.Exit()
 
 

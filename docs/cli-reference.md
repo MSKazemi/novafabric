@@ -5051,6 +5051,8 @@ capture first, then let NovaFabric propose what to register from observed eviden
 
 **Post-capture hint:** after every successful `nova capture`, a one-line hint is printed when
 unregistered assets are detected. Disable with `NOVAFABRIC_SUGGEST=0`.
+The first capsule written to a directory also gets a one-line pointer to GitHub Discussions
+(terminal only; disable with `NOVAFABRIC_COMMUNITY_HINT=0`).
 
 **Examples:**
 
@@ -7409,6 +7411,7 @@ failed).
 | `NOVA_S3_ENDPOINT_URL` | — | S3-compatible endpoint URL (e.g. `http://minio:9000` for MinIO). Defaults to AWS S3 when unset. |
 | `NOVAFABRIC_SPAN_ID` | — | Root span id injected into the subprocess |
 | `NOVAFABRIC_SUGGEST` | `1` | Set to `0` to disable the asset registration suggestion prompt after `nova capture`. |
+| `NOVAFABRIC_COMMUNITY_HINT` | `1` | Set to `0` to hide the one-line pointer to GitHub Discussions that `nova capture` prints after the first capsule in a directory, and that `nova --version` prints to stderr. Shown only on an interactive terminal; it is plain text, never a network call. |
 | `NOVAFABRIC_ENVIRONMENT` | — | Deployment-environment tag recorded on captured capsules as `deployment_environment` with `environment_source: env-var` (ADR-0126). Overridden by `nova capture --environment`; overrides the SDK `deployment_environment=` argument. Distinct from the `env.lock` technical environment. |
 | `NOVAFABRIC_VARIANT` | — | ADR-0116 (**experimental**, record-only): id of the externally assigned A/B variant (arm), recorded verbatim as `variant.variant_id`. Must be set together with `NOVAFABRIC_VARIANT_EXPERIMENT` and `NOVAFABRIC_VARIANT_SOURCE` (an incomplete set warns and is ignored). Overridden by the `nova capture --experiment/--variant/--variant-source` flags; overrides the SDK `variant=` argument. |
 | `NOVAFABRIC_VARIANT_EXPERIMENT` | — | ADR-0116: experiment id recorded verbatim as `variant.experiment_id`. |

@@ -20,6 +20,12 @@ from novafabric.capture.orchestrator import (
 )
 from novafabric.capture.session import InvalidSessionMembershipError
 from novafabric.capture.variant import InvalidVariantAttributionError
+from novafabric.cli._community import (
+    FIRST_CAPSULE_INVITE,
+    HINT_ENV,
+    hint_enabled,
+    is_first_capsule,
+)
 from novafabric.runners import (
     UnknownRunnerError,
     get_runner,
@@ -531,6 +537,8 @@ def capture_cmd(
 
     if result.exit_code == 0 and os.environ.get("NOVAFABRIC_SUGGEST", "1") != "0":
         _print_suggestion_hint(result.capsule_dir, registry_db_path)
+    if result.exit_code == 0:
+        _print_first_capsule_invite(result.capsule_dir)
     if result.exit_code != 0:
         raise typer.Exit(code=result.exit_code)
 
@@ -594,3 +602,11 @@ def _print_suggestion_hint(capsule_dir: Path, db_path: Path | None) -> None:
         console.print("[dim](Suppress with NOVAFABRIC_SUGGEST=0)[/dim]")
     except Exception:
         pass  # suggestion hint is best-effort; never block capture output
+
+
+def _print_first_capsule_invite(capsule_dir: Path) -> None:
+    """Point a first-time user at Discussions — once, on a terminal, no network."""
+    if not (console.is_terminal and hint_enabled() and is_first_capsule(capsule_dir)):
+        return
+    console.print(f"[dim]{FIRST_CAPSULE_INVITE}[/dim]")
+    console.print(f"[dim](Suppress with {HINT_ENV}=0)[/dim]")
