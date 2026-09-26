@@ -1,0 +1,10 @@
+{
+  "covered_event_kind": "erroneous_output",
+  "trigger_facts": [
+    "sha256:214a56f9ddd98a12992cfe40c8942fcc30af51653bc670eff6bd04d58904aa9b"
+  ],
+  "exclusion_set_ref": "sha256:4af95dbf5052d022590bd435e62e7e42ec240ac2c663e2bde9a3981604417e0a",
+  "matched_exclusions": [],
+  "policy_responds": true,
+  "payout_amount": "15000"
+}

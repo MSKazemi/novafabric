@@ -77,7 +77,7 @@ logger = logging.getLogger(__name__)
 # (evidence_dir / f"{bundle_id}.zip"). Constrain them to a strict allowlist so a
 # crafted id can never escape the evidence directory via traversal or encoded
 # separators, independent of FastAPI's own path-param decoding.
-_BUNDLE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_BUNDLE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+\Z")
 
 
 def _validate_bundle_id(bundle_id: str) -> None:

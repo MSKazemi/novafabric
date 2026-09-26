@@ -559,3 +559,99 @@ def test_extensionless_certificates_use_rfc5280_defaults() -> None:
     crl = make_crl(issuer, extensions=((_idp(only_contains_user_certs=True), True),))
     result = check_chain_revocation([leaf.cert, issuer.cert], _store(crl))
     assert result.certificates[0].status is CrlStatus.GOOD
+
+
+# ---------------------------------------------------------------------------
+# Retroactive revocation and point-in-time (freshness_time) checks
+# ---------------------------------------------------------------------------
+
+
+def _crl_with_invalidity(
+    pki: Pki, revoked_at: datetime.datetime, invalid_from: datetime.datetime
+) -> x509.CertificateRevocationList:
+    from cryptography.hazmat.primitives import hashes  # noqa: PLC0415
+
+    entry = (
+        x509.RevokedCertificateBuilder()
+        .serial_number(pki.leaf.cert.serial_number)
+        .revocation_date(revoked_at)
+        .add_extension(x509.InvalidityDate(invalid_from), critical=False)
+        .build()
+    )
+    return (
+        x509.CertificateRevocationListBuilder()
+        .issuer_name(pki.intermediate.cert.subject)
+        .last_update(NOW - DAY / 24)
+        .next_update(NOW + 7 * DAY)
+        .add_revoked_certificate(entry)
+        .sign(pki.intermediate.key, hashes.SHA256())
+    )
+
+
+def _as_of(pki: Pki, crl: x509.CertificateRevocationList, *, strict: bool = False) -> object:
+    """Evaluate as of two days ago, with CRL freshness judged now (TSA semantics)."""
+    store = CrlStore(
+        crls=(LoadedCrl("leaf.der", crl), LoadedCrl("root.der", make_crl(pki.root))),
+        freshness_time=NOW,
+    )
+    return check_chain_revocation(_chain(pki), store, validation_time=NOW - 2 * DAY, strict=strict)
+
+
+@pytest.mark.parametrize(
+    "reason", [x509.ReasonFlags.key_compromise, x509.ReasonFlags.ca_compromise]
+)
+def test_compromise_revocation_is_retroactive(pki: Pki, reason: x509.ReasonFlags) -> None:
+    crl = make_crl(pki.intermediate, (Revoked(pki.leaf.cert.serial_number, NOW - DAY, reason),))
+    result = _as_of(pki, crl)
+    assert not result.ok  # type: ignore[attr-defined]
+    leaf = result.certificates[0]  # type: ignore[attr-defined]
+    assert leaf.status is CrlStatus.REVOKED and leaf.reason == reason.name
+    assert "retroactive" in leaf.detail
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [None, x509.ReasonFlags.superseded, x509.ReasonFlags.cessation_of_operation],
+)
+def test_other_reasons_after_validation_time_do_not_revoke(
+    pki: Pki, reason: x509.ReasonFlags | None
+) -> None:
+    crl = make_crl(pki.intermediate, (Revoked(pki.leaf.cert.serial_number, NOW - DAY, reason),))
+    result = _as_of(pki, crl, strict=True)
+    assert result.ok, result.summary  # type: ignore[attr-defined]
+    assert _statuses(result) == [CrlStatus.GOOD, CrlStatus.GOOD]
+
+
+def test_invalidity_date_before_validation_time_revokes(pki: Pki) -> None:
+    early = _as_of(pki, _crl_with_invalidity(pki, NOW - DAY, NOW - 3 * DAY))
+    assert _statuses(early)[0] is CrlStatus.REVOKED
+    assert "invalidityDate" in early.certificates[0].detail  # type: ignore[attr-defined]
+    late = _as_of(pki, _crl_with_invalidity(pki, NOW - DAY, NOW - DAY))
+    assert _statuses(late)[0] is CrlStatus.GOOD
+
+
+def test_freshness_time_judges_currency_now_not_at_validation_time(pki: Pki) -> None:
+    # CRLs issued an hour ago: stale at a validation time two days back ...
+    without = check_chain_revocation(
+        _chain(pki), _good_store(pki), validation_time=NOW - 2 * DAY, strict=True
+    )
+    assert not without.ok and _statuses(without) == [CrlStatus.STALE, CrlStatus.STALE]
+    assert "validation time" in without.certificates[0].detail
+    # ... but current when freshness is judged at the verification instant.
+    fresh = CrlStore(crls=_good_store(pki).crls, freshness_time=NOW)
+    with_fresh = check_chain_revocation(
+        _chain(pki), fresh, validation_time=NOW - 2 * DAY, strict=True
+    )
+    assert with_fresh.ok and _statuses(with_fresh) == [CrlStatus.GOOD, CrlStatus.GOOD]
+
+
+def test_freshness_time_still_flags_a_crl_stale_now(pki: Pki) -> None:
+    old = make_crl(pki.intermediate, this_update=NOW - 10 * DAY, next_update=NOW - DAY)
+    store = CrlStore(
+        crls=(LoadedCrl("old.der", old), LoadedCrl("root.der", make_crl(pki.root))),
+        freshness_time=NOW,
+    )
+    result = check_chain_revocation(_chain(pki), store, validation_time=NOW - 5 * DAY, strict=True)
+    assert not result.ok
+    assert result.certificates[0].status is CrlStatus.STALE
+    assert "verification time" in result.certificates[0].detail

@@ -188,7 +188,7 @@ AUTONOMY_PAYLOAD_MARKERS: tuple[str, ...] = (
 #: (an evaluator id, a window label, a version) or be a ``sha256:`` digest.
 #: Whitespace and shell metacharacters (``| ; & $ ` > <``) are refused: that is
 #: the shape of a command line, not of a label.
-_AUTONOMY_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9._:/@+=\-]{1,128}$")
+_AUTONOMY_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9._:/@+=\-]{1,128}\Z")
 
 #: Known key spellings that would carry a capability ceiling NovaFabric
 #: computed. The *declared* ceiling is held only by digest

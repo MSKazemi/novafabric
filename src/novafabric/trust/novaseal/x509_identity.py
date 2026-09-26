@@ -302,6 +302,7 @@ def validate_certificate_chain(
     max_chain_depth: int = DEFAULT_MAX_CHAIN_DEPTH,
     crl_store: CrlStore | None = None,
     crl_strict: bool = False,
+    ca_policy: ExtensionPolicy | None = None,
 ) -> ChainValidationResult:
     """Validate ``leaf`` against an operator CA bundle, fully offline (experimental).
 
@@ -324,6 +325,9 @@ def validate_certificate_chain(
         max_chain_depth: Maximum intermediates on the path, 1-16 (bounded search).
         crl_store: Optional CRLs from ``crl.load_crl_directory`` (experimental).
         crl_strict: Treat ``no_crl`` / ``stale`` / ``invalid_crl`` as failures.
+        ca_policy: Extension policy for CA certificates on the path; defaults to
+            the WebPKI CA profile. The RFC 3161 TSA chain (ADR-0070 §1) passes a
+            profile that tolerates a non-critical basicConstraints on the CA.
 
     Returns:
         A :class:`ChainValidationResult`. Never raises for an untrusted or malformed
@@ -347,7 +351,7 @@ def validate_certificate_chain(
         .time(when)
         .max_chain_depth(max_chain_depth)
         .extension_policies(
-            ca_policy=ExtensionPolicy.webpki_defaults_ca(),
+            ca_policy=ca_policy or ExtensionPolicy.webpki_defaults_ca(),
             ee_policy=_end_entity_policy(),
         )
         .build_client_verifier()

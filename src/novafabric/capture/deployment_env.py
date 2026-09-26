@@ -31,7 +31,7 @@ ENVIRONMENT_ENV_VAR = "NOVAFABRIC_ENVIRONMENT"
 CONVENTIONAL_ENVIRONMENTS = frozenset({"production", "staging", "development", "test"})
 
 #: Normative value rule from capsule-environment-v0: non-empty, bounded, safe charset.
-ENVIRONMENT_VALUE_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
+ENVIRONMENT_VALUE_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,64}\Z")
 
 EnvironmentSource = Literal["cli-flag", "env-var", "sdk-arg"]
 

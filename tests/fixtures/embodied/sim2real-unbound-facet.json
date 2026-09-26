@@ -1,0 +1,9 @@
+{
+  "_comment": "VALID edge case (ADR-0162 D3). No sim_policy_ref was recorded, so the binding is unbound:true - recorded, not fatal. A claimed unbound:false is overridden on load; `nova embodied sim2real verify` exits 0 with an 'unbound' warning.",
+  "schema_version": "0.3.0",
+  "sim2real": {
+    "sim_env_ref": "sha256:da4fcce83917801ef79605c7b514dea528f0596aad7009087e05353fafd6f90d",
+    "deployment_run_id": "run:01HXAY7M5JZ8R7K4P9DPBYK2WX",
+    "unbound": false
+  }
+}

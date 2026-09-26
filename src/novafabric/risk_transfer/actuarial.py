@@ -65,6 +65,14 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from novafabric.risk_transfer._guard import (
+    InvalidReferenceError,
+    reject_determination_fields,
+    validate_ref,
+)
+from novafabric.risk_transfer.liability import LiabilityChain, LiabilityEdge
+from novafabric.risk_transfer.signals import CoverageTrigger, SlaBreach
+
 # The settlement facet's payment-secret scanner, reused as a *shared control*
 # rather than reimplemented. The facet shapes below are deliberately ADR-0170's
 # own (see `Money`), but a second, independently-drifting PAN/IBAN/credential
@@ -98,25 +106,13 @@ LossFeatureKind = Literal[
 #: — they differ only in who made them, not in their evidential weight.
 LossSource = Literal["declared", "observed", "estimated_by_third_party"]
 
-#: A reference must be a `sha256:<64 hex>` digest.
-#:
-#: The spec's wider "reference (URI) **or** digest" shape is deferred: P1's
-#: job is the *binding*, and only a digest binds. A URI names a place a DFIR
-#: bundle was, which an offline verifier cannot check and which says nothing
-#: about the bytes — accepting one would let an incident-loss record claim a
-#: binding it does not have, and `unbound` would then never fire.
-_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
-
-
-class InvalidReferenceError(Exception):
-    """Raised when a reference is not a ``sha256:`` digest.
-
-    Deliberately **not** a ``ValueError``. Pydantic v2 catches ``ValueError``
-    inside a validator and folds it into a ``ValidationError`` alongside
-    ordinary shape complaints, destroying the named type — and the most likely
-    bad reference here is an inlined DFIR excerpt or a claim number, which the
-    caller must be told about specifically.
-    """
+# A reference must be a `sha256:<64 hex>` digest (see `_guard.validate_ref`,
+# which uses `re.fullmatch` — the P1 `^…$` pattern accepted a trailing
+# newline). The spec's wider "reference (URI) **or** digest" shape is
+# deferred: P1's job is the *binding*, and only a digest binds. A URI names a
+# place a DFIR bundle was, which an offline verifier cannot check and which
+# says nothing about the bytes — accepting one would let an incident-loss
+# record claim a binding it does not have, and `unbound` would then never fire.
 
 
 class FloatAmountRejectedError(Exception):
@@ -181,15 +177,7 @@ def verify_ref_binding(ref: str | None, artifact: str | bytes) -> bool:
 
 
 def _validate_ref(value: str | None) -> str | None:
-    if value is None:
-        return None
-    if not _DIGEST_RE.match(value):
-        raise InvalidReferenceError(
-            f"reference {value!r} is not a 'sha256:<64 hex>' digest; DFIR "
-            "content, narrative text and URIs are never stored here "
-            "(ADR-0170 D2, I-2)"
-        )
-    return value
+    return validate_ref(value)
 
 
 # ── Models ────────────────────────────────────────────────────────────────
@@ -407,10 +395,14 @@ class IncidentLoss(BaseModel):
 class RiskTransferFacet(BaseModel):
     """The optional ``facets.risk_transfer`` block (I-3).
 
-    P1 carries two of ADR-0170's objects. The liability chain (NF-383),
-    coverage triggers (NF-386) and the rest arrive in later phases and are
-    deliberately absent here rather than stubbed: an empty object in the
-    sealed root would read as "recorded, nothing found".
+    P1 carries NF-381 ``actuarial`` and NF-382 ``incident_loss``; P2 adds
+    NF-383 ``liability_chain`` (:mod:`novafabric.risk_transfer.liability`),
+    NF-384 ``sla_breach`` and NF-386 ``coverage_trigger``
+    (:mod:`novafabric.risk_transfer.signals`). Each is optional and omitted
+    when there is nothing to record. The claim pack (NF-385), subrogation
+    (NF-388), risk pool (NF-389) and insurability (NF-390) arrive in later
+    phases and are deliberately absent rather than stubbed: an empty object
+    in the sealed root would read as "recorded, nothing found".
     """
 
     model_config = ConfigDict(extra="allow")
@@ -418,6 +410,9 @@ class RiskTransferFacet(BaseModel):
     schema_version: str = SCHEMA_VERSION
     actuarial: ActuarialBlock | None = None
     incident_loss: IncidentLoss | None = None
+    liability_chain: LiabilityChain | None = None
+    sla_breach: SlaBreach | None = None
+    coverage_trigger: CoverageTrigger | None = None
 
     @model_validator(mode="after")
     def _reject_secrets(self) -> RiskTransferFacet:
@@ -430,11 +425,16 @@ class RiskTransferFacet(BaseModel):
         mandated for these models, so the structural "digests and counts only"
         discipline needs this backstop on the open part of the shape.
 
+        Also refuses any determination-shaped key (fault, payout, claim or
+        coverage decision, remedy — ADR-0170 I-4) anywhere in the facet.
+
         Raises:
             PaymentSecretRejectedError: naming the field and the rule, never
                 the value.
+            DeterminationFieldRejectedError: naming the field and the marker.
         """
-        reject_payment_secrets(self.model_dump())
+        reject_payment_secrets(self.model_dump(mode="json"))
+        reject_determination_fields(self.model_dump(mode="json"))
         return self
 
 
@@ -583,16 +583,33 @@ def build_facet(
     *,
     actuarial: ActuarialBlock | None = None,
     incident_loss: IncidentLoss | None = None,
+    liability_chain: list[LiabilityEdge] | None = None,
+    sla_breach: SlaBreach | None = None,
+    coverage_trigger: CoverageTrigger | None = None,
 ) -> RiskTransferFacet | None:
     """Build the risk-transfer facet, or ``None`` when there is nothing to record.
 
-    Fail-open (I-3): a run with neither loss features nor an incident loss
-    yields ``None``, not an exception and not an empty facet — see
+    Fail-open (I-3): a run with no risk-transfer object at all yields
+    ``None``, not an exception and not an empty facet — see
     :class:`RiskTransferFacet` on why an empty block is worse than no block.
+    An empty ``liability_chain`` is treated as absent.
     """
-    if actuarial is None and incident_loss is None:
+    chain = liability_chain or None
+    if (
+        actuarial is None
+        and incident_loss is None
+        and chain is None
+        and sla_breach is None
+        and coverage_trigger is None
+    ):
         return None
-    return RiskTransferFacet(actuarial=actuarial, incident_loss=incident_loss)
+    return RiskTransferFacet(
+        actuarial=actuarial,
+        incident_loss=incident_loss,
+        liability_chain=chain,
+        sla_breach=sla_breach,
+        coverage_trigger=coverage_trigger,
+    )
 
 
 def attach_facet(
@@ -612,7 +629,9 @@ def attach_facet(
         return capsule
     out = dict(capsule)
     facets = dict(out.get("facets") or {})
-    facets[FACET_NAME] = facet.model_dump(exclude_none=True)
+    # `mode="json"` so Decimal thresholds serialise as exact strings and the
+    # capsule dict stays YAML/JSON-safe.
+    facets[FACET_NAME] = facet.model_dump(mode="json", exclude_none=True)
     out["facets"] = facets
     return out
 

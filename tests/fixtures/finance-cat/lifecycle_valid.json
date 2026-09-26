@@ -1,0 +1,65 @@
+{
+  "_comment": "ADR-0159 NF-280 golden fixture: one recorded record per source stream, deliberately written out of time order so the trail must order them. Reader fixture only.",
+  "manifest": {
+    "created_at": "2026-09-01T10:00:00Z",
+    "finished_at": "2026-09-01T10:00:09+00:00",
+    "status": "success"
+  },
+  "model-calls.jsonl": [
+    {
+      "model_call_id": "01MCDECIDE",
+      "started_at": "2026-09-01T10:00:01.250000Z",
+      "finished_at": "2026-09-01T10:00:02Z",
+      "gen_ai.system": "openai",
+      "gen_ai.request.model": "order-router-v2",
+      "gen_ai.response.model": "order-router-v2-2026-08",
+      "gen_ai.request.messages": [{"role": "user", "content": "Route order ACCT-0042 BUY 100 XYZ"}],
+      "gen_ai.response.choices": [{"message": {"content": "route to venue A"}}],
+      "status": "success"
+    }
+  ],
+  "tool-permission-events.jsonl": [
+    {
+      "entity_type": "tool_permission_event",
+      "capsule_id": "01RUNCAT",
+      "event_id": "perm-0001",
+      "tool_name": "submit_order",
+      "tool_id": "urn:tool:submit_order",
+      "policy_id": "desk-policy@3",
+      "permission_level": "execute",
+      "decision": "escalated_to_human",
+      "authorising_identity": "spiffe://firm.example/agent/router",
+      "human_approval_required": true,
+      "human_approval_obtained": true,
+      "approval_principal": "trader:jdoe",
+      "decision_latency_ms": 12,
+      "capsule_timestamp_utc": "2026-09-01T12:00:03+02:00"
+    }
+  ],
+  "human_approvals.jsonl": [
+    {
+      "event_id": "appr-0001",
+      "run_id": "01RUNCAT",
+      "capsule_id": "01RUNCAT",
+      "timestamp_utc": "2026-09-01T10:00:04Z",
+      "approver_id": "trader:jdoe",
+      "action": "approved",
+      "target_run_id": "01RUNCAT",
+      "rationale": "client ACCT-0042 limit ok",
+      "policy_version": "desk-policy@3"
+    }
+  ],
+  "tool-calls.jsonl": [
+    {
+      "tool_call_id": "01TCSUBMIT",
+      "agent_call_id": "01MCDECIDE",
+      "started_at": "2026-09-01T10:00:05Z",
+      "finished_at": "2026-09-01T10:00:06Z",
+      "tool_name": "submit_order",
+      "tool_provider": "internal-oms",
+      "arguments": {"account": "ACCT-0042", "qty": 100},
+      "result": {"order_id": "OMS-777"},
+      "status": "success"
+    }
+  ]
+}

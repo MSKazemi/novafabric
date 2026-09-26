@@ -1,0 +1,32 @@
+{
+  "anchors": [
+    {
+      "org": "orgA",
+      "public_key_spki_b64": "MCowBQYDK2VwAyEAwU/5cure00A5YZwxqJ6EgbK7sRt44OYtyHRZ1yI2SVg="
+    }
+  ],
+  "description": "A well-signed path rooted at an anchor the verifier never pinned.",
+  "expect": {
+    "broken_hop": 0,
+    "path_walk_ok": false,
+    "reason": "anchor_not_pinned"
+  },
+  "trust_path": [
+    {
+      "anchor_digest": "sha256:fa0d32f1e28765843db9dac2f6684ee9355189e59b4e3ea039269be3f6bc7dbc",
+      "from_org": "evil",
+      "signature": "L7FIwLA8Kqtj58g/11ACynIFmuj0w7Fq1s3fEk3h6+GDAZQ8NkVVd3/GyQgxVX4l/uBTpNHk2ITf/ii8PSVvDQ==",
+      "statement_digest": "sha256:0730d277ec53b00cf3110f58db854d06b5b1de9b4c27f267709cd2ff38740f1f",
+      "subject_public_key": "MCowBQYDK2VwAyEAXuBX/YaLdvLIWbmBHZkMn/Kf0pdprq0NeEKIwbKdiSE=",
+      "to_org": "orgB"
+    },
+    {
+      "anchor_digest": "sha256:fa0d32f1e28765843db9dac2f6684ee9355189e59b4e3ea039269be3f6bc7dbc",
+      "from_org": "orgB",
+      "signature": "tLkavQspyNhBNbqmNQfo5cLfnGpqjVcDXzSjBqpZQiyyL58aalKPCRInhNeVzLPJJ5U0kLxbAiVp58bWyoLnDA==",
+      "statement_digest": "sha256:8c674259edf125511d6b4eff30e3e510128a7bcd797d22b91e743359ddc78e44",
+      "subject_public_key": "MCowBQYDK2VwAyEAOilSCgUXiOUYdqqO6pIREnrGSoIu1yaYJfmvzdrtlNU=",
+      "to_org": "orgC"
+    }
+  ]
+}

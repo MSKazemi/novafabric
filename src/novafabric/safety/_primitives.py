@@ -34,7 +34,7 @@ import re
 from pydantic import BaseModel, ConfigDict
 
 #: The canonical digest form used everywhere in the capsule.
-DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}\Z")
 
 
 def digest_bytes(content: str | bytes) -> str:

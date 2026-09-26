@@ -53,7 +53,7 @@ CARD_SCHEMA_VERSION = "1.0.0"
 #: Asset type under which eval cards are stored in the v0.1 Asset Registry.
 EVAL_CARD_ASSET_TYPE = "eval-card"
 
-_SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+([-+].*)?$")
+_SEMVER_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+([-+].*)?\Z")
 
 
 class JudgeModel(BaseModel):

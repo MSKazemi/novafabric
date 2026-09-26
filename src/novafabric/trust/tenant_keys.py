@@ -27,7 +27,7 @@ from novafabric.trust.novaseal.signing_backend import (
     LocalSigningBackend,
 )
 
-_TENANT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_TENANT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 
 def tenant_from_object_key(key: str) -> str | None:

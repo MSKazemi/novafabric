@@ -58,7 +58,7 @@ PROMPT_COMPOSITION_SCHEMA_VERSION: Final = "0.1.0"
 #: (ADR-0021 §9) applied to composition, and the manifest schema's bound.
 MAX_COMPOSITION_DEPTH: Final = 8
 
-_CONTENT_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_CONTENT_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}\Z")
 
 #: Strict reference form: ``{{@prompt:<slug>@<selector>}}``.
 #: group(1) = the raw ref (braces stripped), group(2) = name, group(3) = selector.

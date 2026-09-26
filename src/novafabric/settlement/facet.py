@@ -98,7 +98,7 @@ Protocol = Literal[
 #: place a confirmation was, which an offline verifier cannot check and which
 #: says nothing about the bytes. Accepting one here would let a facet claim a
 #: binding it does not have.
-_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 # ── Secret shapes (I-2) ───────────────────────────────────────────────────
@@ -324,7 +324,10 @@ class Money(BaseModel):
     #: Minor units (cents, satang, …). Non-negative: a reversal is recorded
     #: as its own positively-signed hop in NF-320 reversal lineage (P4), not
     #: as a negative settlement, so a negative here means a caller bug.
-    amount_minor: int = Field(ge=0)
+    #: ``strict``: pydantic's lax mode would otherwise coerce ``5.0``,
+    #: ``True`` and ``"500"`` into an int, letting a float (or a bool) into a
+    #: field whose whole contract is "never a float".
+    amount_minor: int = Field(ge=0, strict=True)
     #: ISO-4217 alpha-3. Shape-validated only — pinning the full code list
     #: would mean shipping a table that goes stale every time a currency is
     #: redenominated, to reject a value NovaFabric only ever records (I-4).
@@ -614,7 +617,7 @@ class FinalityRecord(BaseModel):
     def _validate_confirmation_ref(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        if not _DIGEST_RE.match(value):
+        if not _DIGEST_RE.fullmatch(value):
             raise InvalidReferenceError(
                 f"confirmation_ref {value!r} is not a 'sha256:<64 hex>' digest "
                 "(ADR-0163 D1)"
@@ -715,7 +718,7 @@ class NonRepudiationBinding(BaseModel):
     def _validate_ref(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        if not _DIGEST_RE.match(value):
+        if not _DIGEST_RE.fullmatch(value):
             raise InvalidReferenceError(
                 f"reference {value!r} is not a 'sha256:<64 hex>' digest; the "
                 "signed artifact is bound by digest and held elsewhere "
@@ -865,7 +868,7 @@ class SettlementFacet(BaseModel):
     def _validate_ref(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        if not _DIGEST_RE.match(value):
+        if not _DIGEST_RE.fullmatch(value):
             raise InvalidReferenceError(
                 f"reference {value!r} is not a 'sha256:<64 hex>' digest; "
                 "artifact bytes, raw tokens and URIs are never stored here "
@@ -914,6 +917,11 @@ class SettlementFacet(BaseModel):
 
 # ── Facet assembly ────────────────────────────────────────────────────────
 
+#: Keys of the ADR-0163 P3 blocks stored in the facet's ``extra`` area. Kept as
+#: literals here (not imported) so this module never depends on the P3 modules,
+#: which depend on it.
+_P3_BLOCKS = ("a2a_payment_chain", "agreement", "invoice_receipt")
+
 
 def build_facet(
     *,
@@ -948,7 +956,11 @@ def build_facet(
         finality,
         non_repudiation,
     )
-    if all(item is None for item in material):
+    # The P3 blocks (NF-315/316/319) travel in ``extra`` — they are read back
+    # through ``settlement.chain`` / ``settlement.agreement`` — and a facet
+    # carrying only an A2A chain, an agreement or an invoice is still evidence.
+    p3_material = any((extra or {}).get(key) is not None for key in _P3_BLOCKS)
+    if all(item is None for item in material) and not p3_material:
         return None
     return SettlementFacet(
         protocol=protocol,

@@ -89,12 +89,12 @@ SCHEMA_VERSION = "0.1.0"
 #: The one digest form the rest of the capsule uses. Matched strictly (lower-case
 #: hex, exact length) so a truncated or upper-cased digest fails loudly here
 #: rather than failing to match at verify time, months later, in an audit.
-_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}\Z")
 
 #: A producer artifact may also be named by locator instead of by content —
 #: an OCI ref, an https URL, a file path published by the build. We accept a
 #: URI *shape* only; nothing here dereferences it (I-3: offline, no network).
-_URI_RE = re.compile(r"^[a-z][a-z0-9+.\-]*://\S+$")
+_URI_RE = re.compile(r"^[a-z][a-z0-9+.\-]*://\S+\Z")
 
 #: A reference is an identifier, never a document. Anything longer than this is
 #: overwhelmingly likely to be inlined content someone tried to smuggle through

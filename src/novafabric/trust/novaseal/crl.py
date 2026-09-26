@@ -23,18 +23,29 @@ Per-certificate outcome (:class:`CrlStatus`):
 
 * ``good`` — an authentic, current CRL from the issuer does not list the serial.
 * ``revoked`` — an authentic CRL from the issuer lists the serial with a revocation
-  date at or before the validation time. Revocation is irreversible, so an authentic
-  CRL counts even when stale (except ``certificateHold``, which only counts from the
-  newest current CRL).
+  date at or before the validation time — or with an ``invalidityDate`` at or before
+  it, or for reason ``keyCompromise`` / ``cACompromise`` whatever the dates (a
+  compromised key may have signed anything, so those revocations are retroactive).
+  Revocation is irreversible, so an authentic CRL counts even when stale (except
+  ``certificateHold``, which only counts from the newest current CRL).
 * ``no_crl`` — no CRL in the directory is issued by (and in scope for) the issuer.
-* ``stale`` — only CRLs outside ``thisUpdate <= validation_time <= nextUpdate`` (or
-  without ``nextUpdate``) are available.
+* ``stale`` — only CRLs outside ``thisUpdate <= t <= nextUpdate`` (or without
+  ``nextUpdate``) are available, where ``t`` is the validation time — or
+  :attr:`CrlStore.freshness_time` when set (point-in-time checks, below).
 * ``invalid_crl`` — CRLs name the issuer but none verifies under the issuer's public
   key (forged/unsigned), or the issuer certificate lacks the ``cRLSign`` key usage.
 
 Policy (:func:`check_chain_revocation`): ``revoked`` always fails; by default the
 other non-``good`` outcomes are **visible warnings** (soft-fail, ADR-0070 §3); with
 ``strict=True`` they fail too (``crl_strict``).
+
+Point-in-time checks (RFC 3161 TSA chain, ADR-0070 §3): a token is validated *as of*
+its ``genTime``, but any CRL synced today has ``thisUpdate`` after ``genTime``. Setting
+:attr:`CrlStore.freshness_time` to the verification instant judges CRL currency *now*
+while revocation entries are still evaluated as of the validation time — so a CRL
+that is current now answers "was this certificate revoked at ``genTime``?". Without
+it (the default, used by the signer chain, which is validated at "now" anyway) both
+are the same instant.
 
 Bounded input: at most :data:`DEFAULT_MAX_CRL_FILES` candidate files (more is a
 :class:`CrlStoreError` — fail closed rather than silently truncate) and
@@ -101,10 +112,20 @@ class LoadedCrl:
 
 @dataclass(frozen=True)
 class CrlStore:
-    """The usable CRLs of an operator directory plus findings for skipped files."""
+    """The usable CRLs of an operator directory plus findings for skipped files.
+
+    Attributes:
+        crls: Parsed, usable CRLs in file-name order.
+        findings: Files skipped while loading.
+        freshness_time: When set, the instant CRL currency (``thisUpdate <= t <=
+            nextUpdate``) is judged at, instead of the validation time; revocation
+            entries are still evaluated as of the validation time. Used for the
+            point-in-time TSA chain check (validation at ``genTime``, freshness now).
+    """
 
     crls: tuple[LoadedCrl, ...]
     findings: tuple[CrlFinding, ...] = ()
+    freshness_time: datetime.datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -321,6 +342,42 @@ def _entry_reason(entry: x509.RevokedCertificate) -> x509.ReasonFlags | None:
         return None
 
 
+#: Revocation reasons that date the compromise back to an unknown earlier instant:
+#: whoever holds the key could have signed anything before the revocation date.
+_RETROACTIVE_REASONS = frozenset({x509.ReasonFlags.key_compromise, x509.ReasonFlags.ca_compromise})
+
+
+def _invalidity_date(entry: x509.RevokedCertificate) -> datetime.datetime | None:
+    try:
+        return entry.extensions.get_extension_for_class(
+            x509.InvalidityDate
+        ).value.invalidity_date_utc
+    except x509.ExtensionNotFound:
+        return None
+
+
+def _effective_as_of(
+    entry: x509.RevokedCertificate,
+    reason: x509.ReasonFlags | None,
+    when: datetime.datetime,
+) -> str | None:
+    """Why ``entry`` revokes the certificate as of ``when``, or ``None`` if it does not.
+
+    ``revocationDate <= when`` always counts. A later revocation still counts when
+    its reason is ``keyCompromise`` / ``cACompromise`` (retroactive) or its
+    ``invalidityDate`` (RFC 5280 §5.3.2: when the key is known or suspected to have
+    been compromised) is at or before ``when``.
+    """
+    if entry.revocation_date_utc <= when:
+        return ""
+    if reason is not None and reason in _RETROACTIVE_REASONS:
+        return f"; {reason.name} is retroactive, so it applies to earlier use"
+    invalidity = _invalidity_date(entry)
+    if invalidity is not None and invalidity <= when:
+        return f"; invalidityDate {invalidity.isoformat()} precedes the validation time"
+    return None
+
+
 def _revoked_status(
     cert: Certificate,
     authentic: Sequence[LoadedCrl],
@@ -332,10 +389,13 @@ def _revoked_status(
     """Return a ``revoked`` status when an authentic CRL revokes ``cert`` by ``when``."""
     for loaded in authentic:
         entry = loaded.crl.get_revoked_certificate_by_serial_number(cert.serial_number)
-        if entry is None or entry.revocation_date_utc > when:
+        if entry is None:
             continue
         reason = _entry_reason(entry)
         if reason is x509.ReasonFlags.remove_from_crl:
+            continue
+        why = _effective_as_of(entry, reason, when)
+        if why is None:
             continue
         if reason is x509.ReasonFlags.certificate_hold and loaded is not newest_current:
             continue
@@ -348,6 +408,7 @@ def _revoked_status(
                 f"revoked on {entry.revocation_date_utc.isoformat()}"
                 + (f" ({reason_name})" if reason_name else "")
                 + f" per {loaded.source}"
+                + why
             ),
             crl_source=loaded.source,
             reason=reason_name,
@@ -388,7 +449,8 @@ def check_certificate_revocation(
             CrlStatus.INVALID_CRL,
             f"CRL signature does not verify under the issuer's public key ({sources})",
         )
-    current = [c for c in authentic if _is_current(c.crl, when)]
+    fresh_at = store.freshness_time or when
+    current = [c for c in authentic if _is_current(c.crl, fresh_at)]
     newest_current = max(current, key=lambda c: c.crl.last_update_utc) if current else None
     revoked = _revoked_status(cert, authentic, newest_current, when, subject, serial)
     if revoked is not None:
@@ -411,7 +473,9 @@ def check_certificate_revocation(
         subject,
         serial,
         CrlStatus.STALE,
-        f"CRL {freshest.source} is not current at the validation time ({window})",
+        f"CRL {freshest.source} is not current at the "
+        + ("verification time" if store.freshness_time is not None else "validation time")
+        + f" ({window})",
         crl_source=freshest.source,
     )
 

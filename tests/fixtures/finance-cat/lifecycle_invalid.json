@@ -1,0 +1,10 @@
+{
+  "_comment": "ADR-0159 NF-280 golden fixture: each entry is one corrupt recorded tool-call that must raise CorruptCapsuleError (exit 2), never render.",
+  "tool-calls.jsonl": {
+    "naive_timestamp": {"tool_call_id": "t1", "tool_name": "x", "started_at": "2026-09-01T10:00:05"},
+    "unparseable_timestamp": {"tool_call_id": "t1", "tool_name": "x", "started_at": "yesterday"},
+    "non_string_timestamp": {"tool_call_id": "t1", "tool_name": "x", "started_at": 1756720805},
+    "non_scalar_actor": {"tool_call_id": "t1", "tool_name": {"nested": "x"}, "started_at": "2026-09-01T10:00:05Z"},
+    "overlong_id": {"tool_call_id": "OVERLONG", "tool_name": "x", "started_at": "2026-09-01T10:00:05Z"}
+  }
+}

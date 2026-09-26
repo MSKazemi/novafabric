@@ -27,7 +27,7 @@ class AssetStatus(str, Enum):
 
 
 _SEMVER_RE = re.compile(
-    r"^v?\d+\.\d+(\.\d+)?(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?$"
+    r"^v?[0-9]+\.[0-9]+(\.[0-9]+)?(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?\Z"
 )
 
 

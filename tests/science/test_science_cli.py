@@ -75,8 +75,17 @@ def test_build_write_then_verify_round_trip(capsule_factory: Callable[..., Path]
         "--env", ENV, "--data", DATA, "--code", CODE,
         "--seed", "1337", "--seed", "42", "--determinism", "statistical", "--write",
     )  # fmt: skip
+    # The fixture capsule carries .seal/: --write refuses without --force-unseal.
+    assert code == 2, out
+    assert "--force-unseal" in _flat(out)
+    code, out = _invoke(
+        "science", "receipt", "build", "--capsule", str(capsule),
+        "--env", ENV, "--data", DATA, "--code", CODE,
+        "--seed", "1337", "--seed", "42", "--determinism", "statistical", "--write",
+        "--force-unseal",
+    )  # fmt: skip
     assert code == 0, out
-    assert "Wrote" in out
+    assert "Wrote" in out and "no longer matches" in _flat(out)
     manifest = yaml.safe_load((capsule / "capsule.yaml").read_text())
     receipt = manifest["facets"][FACET_NAME][RECEIPT_KEY]
     assert receipt["seeds"] == [1337, 42]

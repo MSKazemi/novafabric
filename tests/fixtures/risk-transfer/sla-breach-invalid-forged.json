@@ -1,0 +1,10 @@
+{
+  "sla_ref": "sha256:9dfbc63747c6ec4e8d43b376ea383efc51c41e08d7de1901151db85e1b487784",
+  "metric": "availability",
+  "operator": "gte",
+  "threshold": "99.9",
+  "observed_value": "99.2",
+  "breach": false,
+  "window": "2026-07",
+  "evidence_refs": []
+}

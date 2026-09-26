@@ -71,13 +71,13 @@ VerdictSource = Literal[
 #: from it: an auditor should see one digest form across all facets, and this
 #: cluster should not acquire a dependency on the model-provenance cluster to
 #: get it.
-_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}\Z")
 
 #: An external artifact may also be named by locator — an https URL, an
 #: evaluator's report URI. A URI *shape* only; nothing here dereferences it
 #: (offline by default, and I-2's fail-open rule forbids a network call on the
 #: capture path).
-_URI_RE = re.compile(r"^[a-z][a-z0-9+.\-]*://\S+$")
+_URI_RE = re.compile(r"^[a-z][a-z0-9+.\-]*://\S+\Z")
 
 #: A reference is an identifier, never a document. Anything longer is
 #: overwhelmingly likely to be inlined content someone tried to smuggle

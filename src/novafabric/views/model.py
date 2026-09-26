@@ -94,7 +94,7 @@ class SavedView(BaseModel):
 
 def is_valid_view_id(candidate: str) -> bool:
     """True when ``candidate`` matches the ``view_id`` slug pattern."""
-    return _VIEW_ID_RE.match(candidate) is not None
+    return _VIEW_ID_RE.fullmatch(candidate) is not None
 
 
 def view_hash(view: SavedView) -> str:

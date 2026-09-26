@@ -1,0 +1,15 @@
+{
+  "trigger_facts": [
+    {
+      "fact_ref": "sha256:214a56f9ddd98a12992cfe40c8942fcc30af51653bc670eff6bd04d58904aa9b",
+      "marker": "erroneous_output"
+    },
+    {
+      "fact_ref": "sha256:5511c7e5451687beaa5caecedb5bb5135c081cbdf51287efe11cfa52772ffd90",
+      "marker": "generative_ai_output"
+    }
+  ],
+  "observations": {
+    "error_rate": "0.07"
+  }
+}

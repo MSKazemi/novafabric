@@ -25,7 +25,7 @@ _CHUNK = 65536
 _PREFIX = "sha256:"
 
 #: A canonical prefixed digest: ``sha256:`` + exactly 64 lowercase hex characters.
-DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}\Z")
 
 
 class InvalidDigestError(ValueError):

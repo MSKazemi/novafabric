@@ -100,6 +100,42 @@ run **is** reproducible (`reproducible_in_fact: null`). The workflow and code ar
 digest, not included, so a strict Workflow RO-Crate validator will flag the workflow entity as
 contextual. The Provenance Run Crate profile (per-step records) is **planned**.
 
+**7. Bind a lab experiment and its instruments** (**experimental**, ADR-0164 P3). When the
+experiment ran in a self-driving lab, a cloud lab, by hand, or in simulation, record its
+*declared* provenance next to the lineage: the protocol digest, the lab's job id, whether it was
+`sim`, `real` or `hybrid`, the outcome digest, and one record per instrument (firmware digest,
+calibration-record digest and timestamp, manufacturer reference). The experiment names its
+instruments by their record digests, so swapping a firmware digest afterwards breaks the link:
+
+```python
+from novafabric.science.lab import attach_lab, build_instrument_record, build_lab_experiment
+
+hplc = build_instrument_record(
+    instrument_id="hplc-7", instrument_class="hplc",
+    firmware_digest="sha256:<fw>", calibration_ref="sha256:<calibration record>",
+    calibration_timestamp="2026-06-30T09:00:00Z", manufacturer_ref="https://ror.org/<id>",
+)
+experiment = build_lab_experiment(
+    lab_kind="self_driving", protocol_ref="sha256:<protocol>", run_id="sdl-job-001",
+    sim_to_real="real", outcome_digest="sha256:<outcome table>",
+    instrument_refs=[hplc.record_digest], started_at="2026-07-15T09:30:00Z",
+)
+capsule = attach_lab(capsule, experiment, [hplc])
+```
+
+```console
+$ nova science lab show --capsule <run-id>
+$ nova science lab verify --capsule <run-id>
+$ nova science instrument show --capsule <run-id>
+```
+
+`lab verify` fails when an instrument reference resolves to no record, an instrument was
+calibrated after the experiment started, a digest no longer re-derives, or the block names an
+unknown `lab_kind`. It checks that your declarations are *coherent*, not that the experiment
+was sound (`verdict: null`). NovaFabric never talks to the lab or the instrument, and the
+blocks refuse telemetry, raw readings, or credentials outright — record the digest of a
+calibration record or data stream, never its contents.
+
 ## Artifact-evaluation badges
 
 Most committees assess roughly the axes below (ACM's terminology; other venues differ in

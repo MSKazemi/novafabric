@@ -14,14 +14,18 @@
 
 """``nova science`` — agentic-science provenance evidence (ADR-0164, experimental).
 
-P2 ships the ``receipt`` sub-group (NF-323). Every output carries the
+P2 ships the ``receipt`` sub-group (NF-323); P3 ships ``lab show|verify``
+(NF-322) and ``instrument show`` (NF-329). Every output carries the
 in-mission-boundary line: NovaFabric records what would have to match to re-run a
-computation; it never re-executes it.
+computation and what a lab *declared*; it never re-executes a computation,
+dispatches to a lab, or reads instrument telemetry.
 
 **Exit codes.** ``0`` the command did its job. ``1`` ``verify`` found a receipt
 that does not re-derive its root, misreports its incompleteness, is malformed,
-or is absent — or ``--strict`` and the receipt is incomplete. ``2`` usage or
-input error (no such capsule, malformed digest).
+or is absent — or ``--strict`` and the receipt is incomplete; ``lab verify``
+found an unresolved instrument, a calibration after the experiment, a digest
+that does not re-derive, or a malformed / absent block; ``show`` found a
+malformed block. ``2`` usage or input error (no such capsule, malformed digest).
 """
 
 from __future__ import annotations
@@ -33,12 +37,16 @@ from typing import Annotated, Any
 import typer
 import yaml
 from rich.console import Console
+from rich.markup import escape
+
+from novafabric.capsule._manifest_write import FORCE_UNSEAL_FLAG, FORCE_UNSEAL_HELP
 
 app = typer.Typer(
     name="science",
     help=(
-        "Agentic-science provenance: reproducibility receipt (experimental, "
-        "ADR-0164 NF-323). Record-only — never re-executes."
+        "Agentic-science provenance: reproducibility receipt, lab experiment and "
+        "instrument provenance (experimental, ADR-0164 NF-322/323/329). Record-only — "
+        "never re-executes, never controls a lab, never reads telemetry."
     ),
     no_args_is_help=True,
 )
@@ -48,6 +56,18 @@ receipt_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(receipt_app, name="receipt")
+lab_app = typer.Typer(
+    name="lab",
+    help="Declared lab-experiment provenance (NF-322): show and verify, record-only.",
+    no_args_is_help=True,
+)
+app.add_typer(lab_app, name="lab")
+instrument_app = typer.Typer(
+    name="instrument",
+    help="Declared instrument / calibration provenance (NF-329): show, record-only.",
+    no_args_is_help=True,
+)
+app.add_typer(instrument_app, name="instrument")
 
 console = Console()
 err_console = Console(stderr=True)
@@ -65,6 +85,24 @@ def _capsule_dir(ref: str) -> Path:
     except CapsuleRefError as exc:
         err_console.print(f"[red]{exc}[/red]")
         raise typer.Exit(2) from exc
+
+
+def _write_manifest(capsule_dir: Path, updated: dict[str, Any], *, force_unseal: bool) -> None:
+    """Atomically replace capsule.yaml; a sealed capsule is refused (exit 2) unless forced."""
+    from novafabric.capsule._manifest_write import (
+        UNSEAL_WARNING,
+        ManifestWriteError,
+        write_capsule_manifest,
+    )
+
+    text = yaml.safe_dump(updated, sort_keys=False)
+    try:
+        result = write_capsule_manifest(capsule_dir, text, force_unseal=force_unseal)
+    except ManifestWriteError as exc:
+        err_console.print(f"[red]Refusing --write:[/red] {escape(str(exc))}", soft_wrap=True)
+        raise typer.Exit(2) from exc
+    if result.was_sealed:
+        err_console.print(f"[bold red]{escape(UNSEAL_WARNING)}[/bold red]", soft_wrap=True)
 
 
 def _read_manifest(capsule_dir: Path) -> dict[str, Any]:
@@ -116,6 +154,7 @@ def receipt_build(
     write: Annotated[
         bool, typer.Option("--write", help="Persist the receipt into capsule.yaml.")
     ] = False,
+    force_unseal: Annotated[bool, typer.Option(FORCE_UNSEAL_FLAG, help=FORCE_UNSEAL_HELP)] = False,
     json_out: Annotated[bool, typer.Option("--json", help="Emit the receipt as JSON.")] = False,
 ) -> None:
     """Build a reproducibility receipt (NF-323) — record-only, never re-executes.
@@ -123,6 +162,10 @@ def receipt_build(
     Binds every supplied digest and seed under one ``bound_root`` (plus the
     capsule's sealed science root when the facet records one). Components not
     supplied are named in ``receipt_incomplete`` — never fabricated.
+
+    ``--write`` replaces capsule.yaml atomically. A NovaSeal-sealed capsule is
+    refused (exit 2) unless ``--force-unseal`` is passed — the seal then no
+    longer verifies and must be re-issued. A symlinked capsule.yaml is refused.
 
     \b
     Examples:
@@ -153,10 +196,7 @@ def receipt_build(
         raise typer.Exit(2) from exc
 
     if write:
-        updated = attach_receipt(manifest, receipt)
-        (capsule_dir / _MANIFEST_NAME).write_text(
-            yaml.safe_dump(updated, sort_keys=False), encoding="utf-8"
-        )
+        _write_manifest(capsule_dir, attach_receipt(manifest, receipt), force_unseal=force_unseal)
 
     body = receipt.model_dump(mode="json", exclude_none=True)
     if json_out:
@@ -234,3 +274,187 @@ def receipt_verify(
     console.print("re_executed: false   reproducible_in_fact: null")
     _boundary()
     raise typer.Exit(1 if failed else 0)
+
+
+# ── lab / instrument (NF-322, NF-329) ─────────────────────────────────────
+
+
+def _lab_boundary() -> None:
+    from novafabric.science.lab import LAB_BOUNDARY
+
+    console.print(f"[dim]{LAB_BOUNDARY}[/dim]", soft_wrap=True)
+
+
+def _load_lab(manifest: dict[str, Any]) -> Any:
+    """Parse lab provenance, exiting 1 (with the boundary line) when malformed."""
+    from pydantic import ValidationError
+
+    from novafabric.science.lab import lab_from_capsule
+    from novafabric.science.provenance import ScienceProvenanceError
+
+    try:
+        return lab_from_capsule(manifest)
+    except (ValidationError, ScienceProvenanceError) as exc:
+        # The message names the field and rule, never a rejected value.
+        err_console.print(f"[red]Malformed lab / instrument provenance:[/red] {exc}")
+        _lab_boundary()
+        raise typer.Exit(1) from exc
+
+
+def _instrument_rows(lab: Any) -> list[dict[str, Any]]:
+    return [r.model_dump(mode="json", exclude_none=True) for r in lab.instruments]
+
+
+@lab_app.command("show")
+def lab_show(
+    capsule: Annotated[str, typer.Option("--capsule", help="Capsule directory or run id.")],
+    json_out: Annotated[bool, typer.Option("--json", help="Emit the blocks as JSON.")] = False,
+) -> None:
+    """Print a capsule's declared lab experiment and its instruments (NF-322).
+
+    Declarations only: NovaFabric never dispatched, scheduled or controlled the
+    experiment, and never read instrument telemetry.
+
+    \b
+    Examples:
+      nova science lab show --capsule runs/run_1
+      nova science lab show --capsule run_1 --json
+    """
+    lab = _load_lab(_read_manifest(_capsule_dir(capsule)))
+    if json_out:
+        body: dict[str, Any] = {
+            "lab_experiment": None,
+            "instrument_provenance": [],
+            "controls_lab": False,
+            "reads_telemetry": False,
+        }
+        if lab is not None:
+            if lab.experiment is not None:
+                body["lab_experiment"] = lab.experiment.model_dump(mode="json", exclude_none=True)
+            body["instrument_provenance"] = _instrument_rows(lab)
+        print(json.dumps(body, indent=2, sort_keys=True))
+        raise typer.Exit(0)
+    if lab is None or lab.experiment is None:
+        console.print("No lab_experiment in this capsule.")
+    else:
+        exp = lab.experiment
+        console.print(f"lab_kind: {exp.lab_kind}   sim_to_real: {exp.sim_to_real}")
+        console.print(f"run_id: {exp.run_id}", markup=False)
+        console.print(f"protocol_ref: {exp.protocol_ref}")
+        console.print(f"outcome_digest: {exp.outcome_digest}")
+        console.print(f"started_at: {exp.started_at or '(not declared)'}")
+        console.print(f"node_ref: {exp.node_ref or '(none)'}")
+        console.print(f"instrument_refs: {len(exp.instrument_refs)}")
+        console.print(f"experiment_digest: {exp.experiment_digest}")
+    if lab is not None and lab.instruments:
+        console.print(f"instruments recorded: {len(lab.instruments)}")
+    _lab_boundary()
+
+
+@lab_app.command("verify")
+def lab_verify(
+    capsule: Annotated[str, typer.Option("--capsule", help="Capsule directory or run id.")],
+    json_out: Annotated[
+        bool, typer.Option("--json", help="Emit the verification as JSON.")
+    ] = False,
+) -> None:
+    """Offline-verify a capsule's declared lab experiment (NF-322 / NF-329).
+
+    Fails (exit 1) when an instrument_ref resolves to no instrument record, an
+    instrument was calibrated after the experiment (or the experiment time is
+    unknown), a digest does not re-derive, a ``simulation`` is declared
+    ``real``, the ``node_ref`` names no experiment node, or the block is absent
+    or malformed (unknown ``lab_kind``, bad digest, telemetry-shaped field).
+    Checks coherence of declarations only: ``verdict: null``.
+
+    \b
+    Examples:
+      nova science lab verify --capsule runs/run_1
+      nova science lab verify --capsule run_1 --json
+    """
+    from novafabric.science.lab import verify_lab
+
+    manifest = _read_manifest(_capsule_dir(capsule))
+    lab = _load_lab(manifest)
+    if lab is None or lab.experiment is None:
+        if json_out:
+            print(json.dumps({"lab_experiment": None, "verdict": None}, indent=2))
+        else:
+            console.print("No lab_experiment in this capsule.")
+            _lab_boundary()
+        raise typer.Exit(1)
+
+    result = verify_lab(lab, capsule=manifest)
+    if json_out:
+        body = result.model_dump(mode="json")
+        body["ok"] = result.ok
+        print(json.dumps(body, indent=2, sort_keys=True))
+        raise typer.Exit(0 if result.ok else 1)
+
+    def _mark(flag: bool | None) -> str:
+        if flag is None:
+            return "[dim]not applicable[/dim]"
+        return "[green]ok[/green]" if flag else "[red]FAIL[/red]"
+
+    console.print(f"experiment_digest_ok: {_mark(result.experiment_digest_ok)}")
+    console.print(f"instrument_digests_ok: {_mark(result.instrument_digests_ok)}")
+    for name in result.tampered_instruments:
+        console.print(f"  tampered: {name}", markup=False)
+    console.print(f"instrument_refs_resolve: {_mark(result.instrument_refs_resolve)}")
+    for ref in result.unresolved_instrument_refs:
+        console.print(f"  unresolved: {ref}")
+    console.print(
+        f"calibration_not_after_experiment: {_mark(result.calibration_not_after_experiment)}"
+    )
+    console.print(
+        f"  experiment_time: {result.experiment_time or 'unknown'} "
+        f"({result.experiment_time_source or 'no started_at / created_at'})"
+    )
+    for name in result.calibrated_after_experiment:
+        console.print(f"  calibrated after experiment: {name}", markup=False)
+    console.print(f"sim_to_real_consistent: {_mark(result.sim_to_real_consistent)}")
+    console.print(f"lineage_node_resolves: {_mark(result.lineage_node_resolves)}")
+    if result.unreferenced_instruments:
+        console.print(
+            "unreferenced instruments (informational): "
+            + ", ".join(result.unreferenced_instruments),
+            markup=False,
+        )
+    console.print("controls_lab: false   reads_telemetry: false   verdict: null")
+    _lab_boundary()
+    raise typer.Exit(0 if result.ok else 1)
+
+
+@instrument_app.command("show")
+def instrument_show(
+    capsule: Annotated[str, typer.Option("--capsule", help="Capsule directory or run id.")],
+    json_out: Annotated[
+        bool, typer.Option("--json", help="Emit the instrument records as JSON.")
+    ] = False,
+) -> None:
+    """Print a capsule's declared instrument / calibration provenance (NF-329).
+
+    Firmware and calibration are *declared* digests and timestamps; NovaFabric
+    never contacts the instrument or reads its telemetry.
+
+    \b
+    Examples:
+      nova science instrument show --capsule runs/run_1
+      nova science instrument show --capsule run_1 --json
+    """
+    lab = _load_lab(_read_manifest(_capsule_dir(capsule)))
+    rows = _instrument_rows(lab) if lab is not None else []
+    if json_out:
+        body = {"instrument_provenance": rows, "reads_telemetry": False}
+        print(json.dumps(body, indent=2, sort_keys=True))
+        raise typer.Exit(0)
+    if not rows:
+        console.print("No instrument_provenance in this capsule.")
+    for row in rows:
+        console.print(f"{row['instrument_id']} ({row['instrument_class']})", markup=False)
+        console.print(f"  firmware_digest: {row['firmware_digest']}")
+        console.print(f"  calibration_ref: {row['calibration_ref']}")
+        console.print(f"  calibration_timestamp: {row['calibration_timestamp']}")
+        console.print(f"  manufacturer_ref: {row['manufacturer_ref']}", markup=False)
+        console.print(f"  record_digest: {row['record_digest']}")
+    _lab_boundary()

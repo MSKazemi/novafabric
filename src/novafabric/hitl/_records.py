@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar
@@ -68,6 +69,9 @@ MAX_TURN_REF_LENGTH = 256
 #: Extension (``extra``) values are bounded scalars — the same limit the
 #: conversation module applies to identity refs.
 MAX_EXTRA_VALUE_LENGTH = 512
+
+#: An ISO-8601 timestamp with nanoseconds and an offset is ~35 chars.
+MAX_TIMESTAMP_LENGTH = 64
 
 _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}\Z")
 
@@ -209,8 +213,24 @@ def check_timestamp(value: object, *, field_name: str) -> str:
     """Return ``value`` unchanged if it parses as an ISO-8601 timestamp."""
     if not isinstance(value, str):
         raise AccountabilityRecordError(f"{field_name} must be an ISO-8601 string")
+    if len(value) > MAX_TIMESTAMP_LENGTH:
+        # Checked before parsing so the parse error cannot echo a long value.
+        raise AccountabilityRecordError(
+            f"{field_name} is over {MAX_TIMESTAMP_LENGTH} chars; not a timestamp"
+        )
     _parse_at(value, field=field_name)
     return value
+
+
+def normalise_key(key: object) -> str:
+    """Fold an extension-field name to the form payload markers match against.
+
+    NFKC-normalised, case-folded, and stripped of every non-alphanumeric
+    character, so ``Reason-Text``, ``reason_text``, ``ＲＥＡＳＯＮ．ＴＥＸＴ`` and
+    ``reasonText`` all reduce to ``reasontext`` and hit the ``text`` marker.
+    """
+    folded = unicodedata.normalize("NFKC", str(key)).casefold()
+    return "".join(ch for ch in folded if ch.isalnum())
 
 
 def check_extras(data: Any, *, known: frozenset[str]) -> Any:
@@ -226,8 +246,7 @@ def check_extras(data: Any, *, known: frozenset[str]) -> Any:
     for key, value in data.items():
         if key in known:
             continue
-        lowered = str(key).lower()
-        if any(marker in lowered for marker in _PAYLOAD_KEY_MARKERS):
+        if any(marker in normalise_key(key) for marker in _PAYLOAD_KEY_MARKERS):
             raise RecordContentError(
                 f"extension field {key!r} is payload-shaped; accountability "
                 "records hold digests and codes only (ADR-0150 D7)"

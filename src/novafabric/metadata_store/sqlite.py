@@ -20,6 +20,12 @@ from typing import Any, Generator
 from uuid import UUID
 
 from novafabric.metadata_store.interface import BackendModeError, MetadataStore
+from novafabric.server.pagination import (
+    InvalidCursorError,
+    ParsedCursor,
+    encode_keyset_cursor,
+    parse_cursor,
+)
 
 _DEFAULT_DB_PATH = Path.home() / ".novafabric" / "metadata.db"
 
@@ -27,6 +33,72 @@ _DEV_WARNING = (
     "[novafabric] WARNING: SQLiteMetadataStore is a dev-only, single-process backend. "
     "For production deployments use --backend postgres."
 )
+
+# ADR-0206 P2: total order for keyset pagination. SQLite already sorts NULL
+# lowest (so last under DESC); the explicit ``NULLS LAST`` documents that and,
+# unlike an ``started_at IS NULL`` sort expression, keeps the order usable by
+# an index on ``(tenant_id, started_at DESC, run_id DESC)`` (see ADR-0206
+# "Implementation status" — that index is a recorded follow-up, not shipped).
+_RUNS_ORDER_BY = "started_at DESC NULLS LAST, run_id DESC"
+
+# SQLite OFFSET is a signed 64-bit integer; larger legacy offsets are garbage.
+_MAX_LEGACY_OFFSET = 2**63 - 1
+# A legacy bare-integer cursor never needs more digits than the max offset.
+_MAX_LEGACY_OFFSET_DIGITS = len(str(_MAX_LEGACY_OFFSET))
+
+
+def _parse_store_cursor(cursor: str | None) -> ParsedCursor:
+    """Parse a ``query_runs`` cursor, accepting the pre-P2 bare-integer form.
+
+    The bare-integer offset string (``"50"``) is what this backend emitted
+    before ADR-0206 P2; it is recognised first (a v1 cursor is base64 JSON
+    and always starts with ``eyJ``, so the forms cannot collide). Everything
+    else goes through the shared strict decoder in ``server.pagination`` —
+    one cursor format, not a fork.
+
+    Raises:
+        InvalidCursorError: undecodable, unknown-version, malformed, negative
+            or out-of-range cursor.
+    """
+    if cursor is not None and cursor.isascii() and cursor.isdigit():
+        if len(cursor) > _MAX_LEGACY_OFFSET_DIGITS or int(cursor) > _MAX_LEGACY_OFFSET:
+            raise InvalidCursorError("legacy offset cursor out of range")
+        return ParsedCursor(kind="offset", offset=int(cursor))
+    parsed = parse_cursor(cursor)
+    if parsed.kind == "offset" and parsed.offset > _MAX_LEGACY_OFFSET:
+        raise InvalidCursorError("legacy offset cursor out of range")
+    return parsed
+
+
+def _seek_predicate(key: tuple[str | None, str]) -> tuple[str, list[Any]]:
+    """Return the SQL predicate selecting rows strictly after *key*.
+
+    Under ``started_at DESC NULLS LAST, run_id DESC`` "after" means:
+
+    * cursor in the non-NULL region ``(s, r)``: an older timestamp, or the
+      same timestamp with a smaller ``run_id``, **or any NULL-``started_at``
+      row** (the whole NULL tail sorts after every non-NULL value);
+    * cursor in the NULL tail ``(None, r)``: a NULL-``started_at`` row with a
+      smaller ``run_id`` only — never a non-NULL row, which all sort earlier.
+
+    The comparisons are spelled out rather than using a row-value
+    ``(started_at, run_id) < (?, ?)``, whose NULL semantics would silently
+    drop the NULL tail.
+    """
+    started_at, run_id = key
+    if started_at is None:
+        return "(started_at IS NULL AND run_id < ?)", [run_id]
+    return (
+        "(started_at < ? OR (started_at = ? AND run_id < ?) OR started_at IS NULL)",
+        [started_at, started_at, run_id],
+    )
+
+
+def _started_at_key(value: Any) -> str | None:
+    """Normalise a stored ``started_at`` into the cursor's ``str | None`` slot."""
+    if value is None or isinstance(value, str):
+        return value
+    return str(value)
 
 
 class SQLiteMetadataStore(MetadataStore):
@@ -183,17 +255,55 @@ class SQLiteMetadataStore(MetadataStore):
         cursor: str | None = None,
         **filters: Any,
     ) -> tuple[list[dict[str, Any]], str | None]:
-        """Return (page, next_cursor) with integer-offset cursor pagination."""
-        offset = int(cursor) if cursor is not None else 0
-        with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM runs WHERE tenant_id = ? LIMIT ? OFFSET ?",
-                (str(tenant_id), limit + 1, offset),
-            ).fetchall()
+        """Return ``(page, next_cursor)`` using keyset (seek) pagination.
 
-        has_more = len(rows) > limit
-        page = [dict(r) for r in rows[:limit]]
-        next_cursor: str | None = str(offset + limit) if has_more else None
+        ADR-0206 P2 (experimental). Rows are ordered by
+        ``started_at DESC NULLS LAST, run_id DESC`` — the ``run_id`` tiebreak
+        makes the order total, so duplicate timestamps page deterministically.
+        ``next_cursor`` is a v1 keyset cursor (``server.pagination`` format,
+        ``{"v": 1, "k": [started_at, run_id]}``) naming the last row of the
+        page; the next page seeks strictly past it, so it costs O(page) and
+        rows inserted or deleted between pages cause neither duplicates nor
+        skips of surviving rows.
+
+        Legacy offset cursors — the bare-integer string this method emitted
+        before P2 (e.g. ``"50"``) and the base64 ``{"offset": N}`` v0 form —
+        are still honored for one deprecation cycle (ADR-0188): that page is
+        served by ``LIMIT/OFFSET`` over the same order and its ``next_cursor``
+        is a v1 keyset cursor, so an in-flight walk migrates after one page.
+
+        Raises:
+            InvalidCursorError: a non-empty cursor that is neither a valid v1
+                keyset cursor nor a legacy offset cursor (tampered or garbage
+                input fails loudly instead of restarting at page one).
+
+        ``filters`` are accepted for interface compatibility and ignored, as
+        before. No ``total`` is computed (the interface never returned one).
+        """
+        parsed = _parse_store_cursor(cursor)
+        page_size = max(1, limit)
+        sql = "SELECT * FROM runs WHERE tenant_id = ?"
+        params: list[Any] = [str(tenant_id)]
+        offset = 0
+        if parsed.kind == "keyset" and parsed.key is not None:
+            seek_sql, seek_params = _seek_predicate(parsed.key)
+            sql += f" AND {seek_sql}"
+            params.extend(seek_params)
+        elif parsed.kind == "offset":
+            offset = parsed.offset
+        sql += f" ORDER BY {_RUNS_ORDER_BY} LIMIT ? OFFSET ?"
+        params.extend([page_size + 1, offset])
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+
+        has_more = len(rows) > page_size
+        page = [dict(r) for r in rows[:page_size]]
+        next_cursor: str | None = None
+        if has_more:
+            last = page[-1]
+            next_cursor = encode_keyset_cursor(
+                _started_at_key(last["started_at"]), str(last["run_id"])
+            )
         return page, next_cursor
 
     @contextmanager

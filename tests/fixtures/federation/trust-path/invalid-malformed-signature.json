@@ -1,0 +1,32 @@
+{
+  "anchors": [
+    {
+      "org": "orgA",
+      "public_key_spki_b64": "MCowBQYDK2VwAyEAwU/5cure00A5YZwxqJ6EgbK7sRt44OYtyHRZ1yI2SVg="
+    }
+  ],
+  "description": "Hop 1's signature is well-formed base64 but not a signature.",
+  "expect": {
+    "broken_hop": 1,
+    "path_walk_ok": false,
+    "reason": "bad_signature"
+  },
+  "trust_path": [
+    {
+      "anchor_digest": "sha256:7dd119e706e8e0d8fc118f266430716190684ac95cb0197f96b21cfaca343526",
+      "from_org": "orgA",
+      "signature": "plgyDJnaLMBFWl00BUBzNr+9ic7Nk76O/eUIRh0YxXS+w0IGrhMpz5abqKJ+PiPzXG+87QqJDyaXqllzXgG6DA==",
+      "statement_digest": "sha256:264ba7ec4e2c449f49dc0ff5ffbd814af946d5c73273929a4babfc7f59bca27c",
+      "subject_public_key": "MCowBQYDK2VwAyEAXuBX/YaLdvLIWbmBHZkMn/Kf0pdprq0NeEKIwbKdiSE=",
+      "to_org": "orgB"
+    },
+    {
+      "anchor_digest": "sha256:7dd119e706e8e0d8fc118f266430716190684ac95cb0197f96b21cfaca343526",
+      "from_org": "orgB",
+      "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+      "statement_digest": "sha256:6af27faaefdb54513beba37d3c28612bf6f12728e333aa030cec2c5b79ab6d65",
+      "subject_public_key": "MCowBQYDK2VwAyEAOilSCgUXiOUYdqqO6pIREnrGSoIu1yaYJfmvzdrtlNU=",
+      "to_org": "orgC"
+    }
+  ]
+}

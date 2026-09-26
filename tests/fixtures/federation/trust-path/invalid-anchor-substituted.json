@@ -1,0 +1,32 @@
+{
+  "anchors": [
+    {
+      "org": "orgA",
+      "public_key_spki_b64": "MCowBQYDK2VwAyEAwU/5cure00A5YZwxqJ6EgbK7sRt44OYtyHRZ1yI2SVg="
+    }
+  ],
+  "description": "Hop 1 resolves toward a different anchor than hop 0.",
+  "expect": {
+    "broken_hop": 1,
+    "path_walk_ok": false,
+    "reason": "anchor_mismatch"
+  },
+  "trust_path": [
+    {
+      "anchor_digest": "sha256:7dd119e706e8e0d8fc118f266430716190684ac95cb0197f96b21cfaca343526",
+      "from_org": "orgA",
+      "signature": "plgyDJnaLMBFWl00BUBzNr+9ic7Nk76O/eUIRh0YxXS+w0IGrhMpz5abqKJ+PiPzXG+87QqJDyaXqllzXgG6DA==",
+      "statement_digest": "sha256:264ba7ec4e2c449f49dc0ff5ffbd814af946d5c73273929a4babfc7f59bca27c",
+      "subject_public_key": "MCowBQYDK2VwAyEAXuBX/YaLdvLIWbmBHZkMn/Kf0pdprq0NeEKIwbKdiSE=",
+      "to_org": "orgB"
+    },
+    {
+      "anchor_digest": "sha256:fa0d32f1e28765843db9dac2f6684ee9355189e59b4e3ea039269be3f6bc7dbc",
+      "from_org": "orgB",
+      "signature": "tLkavQspyNhBNbqmNQfo5cLfnGpqjVcDXzSjBqpZQiyyL58aalKPCRInhNeVzLPJJ5U0kLxbAiVp58bWyoLnDA==",
+      "statement_digest": "sha256:8c674259edf125511d6b4eff30e3e510128a7bcd797d22b91e743359ddc78e44",
+      "subject_public_key": "MCowBQYDK2VwAyEAOilSCgUXiOUYdqqO6pIREnrGSoIu1yaYJfmvzdrtlNU=",
+      "to_org": "orgC"
+    }
+  ]
+}

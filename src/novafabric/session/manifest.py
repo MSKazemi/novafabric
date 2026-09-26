@@ -33,8 +33,8 @@ logger = logging.getLogger(__name__)
 SESSION_MANIFEST_FILENAME = "session.json"
 SESSION_SCHEMA_VERSION = "0.1.0"
 
-_ULID_PATTERN = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
-_CAPSULE_REF_PATTERN = re.compile(r"^(?:(?P<path>.+)@)?sha256:(?P<digest>[0-9a-f]{64})$")
+_ULID_PATTERN = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}\Z")
+_CAPSULE_REF_PATTERN = re.compile(r"^(?:(?P<path>.+)@)?sha256:(?P<digest>[0-9a-f]{64})\Z")
 
 SessionKind = Literal["conversation", "workflow", "custom"]
 

@@ -55,8 +55,8 @@ DEFAULT_MEDIA_MAX_BYTES = 10 * 1024 * 1024
 #: Canonical MediaPart type domain (model-call-v1 ContentPart media kinds).
 MEDIA_TYPES: tuple[str, ...] = ("image", "audio", "video", "document")
 
-_ULID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
-_CONTENT_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_ULID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}\Z")
+_CONTENT_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}\Z")
 _DATA_URL_RE = re.compile(r"^data:([a-z]+/[A-Za-z0-9.+-]+);base64,(.*)$", re.DOTALL)
 
 #: media_type → blob filename extension (fallback: ``bin``).
@@ -85,7 +85,7 @@ _AUDIO_FORMAT_MEDIA_TYPE: dict[str, str] = {
     "pcm16": "audio/L16",
 }
 
-_MEDIA_TYPE_RE = re.compile(r"^[a-z]+/[A-Za-z0-9.+-]+$")
+_MEDIA_TYPE_RE = re.compile(r"^[a-z]+/[A-Za-z0-9.+-]+\Z")
 
 
 def media_capture_enabled() -> bool:

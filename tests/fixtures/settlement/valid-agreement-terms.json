@@ -1,0 +1,9 @@
+{
+  "item": "hotel-room",
+  "nights": 2,
+  "price": {
+    "amount_minor": 12000,
+    "currency": "EUR"
+  },
+  "refundable": false
+}

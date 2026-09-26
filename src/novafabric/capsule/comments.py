@@ -59,9 +59,9 @@ COMMENT_SCHEMA_VERSION = "0.1.0"
 COMMENTS_FILENAME = "comments.jsonl"
 
 # ── Shared identity patterns (reuse capsule/score conventions) ────────────────
-_ULID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
-_SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
-_ASSET_RE = re.compile(r"^asset://[^/]+/[^@]+@.+$")
+_ULID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}\Z")
+_SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}\Z")
+_ASSET_RE = re.compile(r"^asset://[^/]+/[^@]+@.+\Z")
 
 #: Safety bound for thread resolution (spec: "a thread resolver MUST bound recursion").
 _MAX_THREAD_DEPTH = 10_000

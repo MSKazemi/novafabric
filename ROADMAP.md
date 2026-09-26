@@ -41,6 +41,21 @@ Ten accepted-but-unbuilt ADR slices, all **experimental**, none changing `schema
 | 0188 | Deprecation removal gate | `tests/test_deprecation_removal_gate.py`, "Removed in" register column | `/v0`→`/v1` N−2 window |
 | 0208 | Usage reconcile + chargeback export (P2) | `nova server usage reconcile\|export` | HTTP export endpoint, per-org budgets, API-key binding enforcement |
 
+### Landed — [Unreleased], third batch (2026-09-25)
+
+| ADR | Slice | Surface | Still open |
+|---|---|---|---|
+| 0070 §1/§5 | Offline RFC 3161 TSA trust chain | `nova verify --tsa-ca-bundle`, `tsa_ca_certs:` | online CRL fetch/cache, PSS signatures |
+| 0150 P3 | Consent receipts, handoffs, acted-on-behalf | `nova consent`, `nova hitl handoff list`, `nova hitl acted-as` | `consent withdraw` CLI, in-toto binding |
+| 0159 NF-280 | CAT-style lifecycle trail | `nova export-cat` | trade lifecycle (needs NF-273 facet) |
+| 0162 P3 | Sim2real, teleop, timing | `nova embodied sim2real\|teleop\|timing` | NF-309 device identity |
+| 0163 P3 | A2A payment chain, agreement, invoice | `nova settlement chain` | bind/show/verify/reconcile/finality CLIs |
+| 0164 P3 | Lab experiment + instrument provenance | `nova science lab`, `nova science instrument show` | P4–P5 |
+| 0168 P2 | Transitive trust path | `nova trust-path show\|verify` | writer CLIs, P5 seal |
+| 0170 P2 | Liability chain, SLA breach, coverage trigger | `nova insurance liability\|sla\|coverage` | features/loss/subrogation/insurability |
+| 0171 P2 | Access ledger + cross-run derivation | `nova memstore access ledger\|derive\|provenance` | cross-run index |
+| 0206 P2 (SQLite) | Keyset pagination | `query_runs` | Postgres half, index migration |
+
 ### Landed — [Unreleased], second batch (2026-09-25)
 
 Ten more accepted-ADR slices, all **experimental**, none changing `schemas/run-capsule.*`:

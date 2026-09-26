@@ -144,9 +144,9 @@ _ACTION_STATUS = {
     "error": "http://schema.org/FailedActionStatus",
 }
 
-_DOI_RE = re.compile(r"^10\.\d{4,9}/[^\s]{1,256}$")
-_ORCID_RE = re.compile(r"^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$")
-_ROR_RE = re.compile(r"^0[a-z0-9]{6}\d{2}$")
+_DOI_RE = re.compile(r"^10\.[0-9]{4,9}/[^\s]{1,256}\Z")
+_ORCID_RE = re.compile(r"^[0-9]{4}-[0-9]{4}-[0-9]{4}-[0-9]{3}[0-9X]\Z")
+_ROR_RE = re.compile(r"^0[a-z0-9]{6}[0-9]{2}\Z")
 _MAX_PIDS = 256
 
 

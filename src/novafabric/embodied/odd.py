@@ -100,8 +100,8 @@ class OddExcursion(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    condition: str = Field(min_length=1)
-    observed: str = Field(min_length=1)
+    condition: str = Field(min_length=1, max_length=256)
+    observed: str = Field(min_length=1, max_length=256)
     #: Offset-aware ISO-8601 instant, stored as declared.
     ts: str
     in_odd: bool = False

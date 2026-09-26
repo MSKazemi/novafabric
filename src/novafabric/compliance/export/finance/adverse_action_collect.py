@@ -17,21 +17,24 @@ renders. Nothing is inferred, computed, or defaulted into existence:
 * ``inputs/`` — each regular file's SHA-256, checked against ``evidence_digests``;
 * ``.seal/manifest.dsse`` — presence only (signature re-verification is ``nova verify``'s job).
 
-Every file is opened for reading only; nothing under the capsule is created, modified, or deleted.
-Reads are bounded (manifest / model-call / facet sizes and counts are capped). A recorded digest
-that does not match the bytes on disk, a malformed manifest or model-call line, or a malformed
-attribution facet raises :class:`CorruptCapsuleError` (CLI exit 2). An *absent* source is a gap the
+Every file is opened for reading only, with ``O_NOFOLLOW`` (shared helper :mod:`._sealed_read`);
+nothing under the capsule is created, modified, or deleted. Reads are bounded (manifest /
+model-call / facet sizes and counts are capped). A symlinked ``capsule.yaml`` /
+``model-calls.jsonl``, a file whose digest ``evidence_digests`` records but which is absent, a
+symlink, or not a regular file (sealed evidence that vanished), a recorded digest that does not
+match the bytes on disk, a malformed manifest or model-call line, or a malformed attribution facet
+raises :class:`CorruptCapsuleError` (CLI exit 2). An *absent and unrecorded* source is a gap the
 renderer reports as ``missing`` — never an error.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 from pathlib import Path
 from typing import Any
 
+from ._sealed_read import CorruptCapsuleError, hash_regular_file, read_sealed, sha256_bytes
 from .adverse_action import (
     ATTRIBUTION_FACET_KEY,
     AttributionFacts,
@@ -62,47 +65,26 @@ MAX_FIELD_TEXT = 1024
 
 _REASON_TEXT_FIELDS = ("feature", "reason_code", "description")
 _ATTRIBUTION_TEXT_FIELDS = ("method", "producer", "model_call_id")
-_CHUNK = 1024 * 1024
-
-
-class CorruptCapsuleError(Exception):
-    """The capsule exists but its sealed evidence is unreadable, malformed, or mismatched."""
-
-
-def _sha256_bytes(data: bytes) -> str:
-    return "sha256:" + hashlib.sha256(data).hexdigest()
+_INPUTS_PREFIX = "inputs/"
 
 
 def _sha256_file(path: Path) -> tuple[str, int]:
-    h = hashlib.sha256()
-    size = 0
-    with path.open("rb") as fh:
-        while chunk := fh.read(_CHUNK):
-            h.update(chunk)
-            size += len(chunk)
-    return "sha256:" + h.hexdigest(), size
+    """Stream-hash one input file (no symlinks; ``CorruptCapsuleError`` when unreadable)."""
+    return hash_regular_file(path, "input file")
 
 
 def _canonical_digest(value: Any) -> str:
     """SHA-256 over canonical JSON (sorted keys, compact) of a recorded value."""
     data = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return _sha256_bytes(data.encode("utf-8"))
-
-
-def _read_bounded(path: Path, limit: int, what: str) -> bytes:
-    try:
-        size = path.stat().st_size
-        if size > limit:
-            raise CorruptCapsuleError(f"{what} {path} is {size} bytes (limit {limit})")
-        return path.read_bytes()
-    except OSError as exc:
-        raise CorruptCapsuleError(f"cannot read {what} {path}: {exc}") from exc
+    return sha256_bytes(data.encode("utf-8"))
 
 
 def _load_manifest(capsule_dir: Path) -> dict[str, Any]:
     import yaml
 
-    raw = _read_bounded(capsule_dir / "capsule.yaml", MANIFEST_MAX_BYTES, "manifest")
+    raw = read_sealed(capsule_dir, "capsule.yaml", MANIFEST_MAX_BYTES, "manifest", {})
+    if raw is None:
+        raise CorruptCapsuleError(f"no capsule.yaml in {capsule_dir}")
     try:
         data = yaml.safe_load(raw.decode("utf-8"))
     except (UnicodeDecodeError, yaml.YAMLError) as exc:
@@ -191,7 +173,7 @@ def _read_call(
         started_at=texts["started_at"],
         input_digest=None if messages is None else _canonical_digest(messages),
         output_digest=None if choices is None else _canonical_digest(choices),
-        record_sha256=_sha256_bytes(line),
+        record_sha256=sha256_bytes(line),
         suppressed_fields=suppressed,
     )
 
@@ -199,20 +181,17 @@ def _read_call(
 def _read_model_calls(
     capsule_dir: Path, digests: dict[str, str], rules_hit: list[str]
 ) -> tuple[list[ModelCallFacts], int, bool]:
-    """Return ``(calls, total, bound)`` for ``model-calls.jsonl`` (empty when absent).
+    """Return ``(calls, total, bound)`` for ``model-calls.jsonl`` (empty when absent+unrecorded).
 
     Secret-rule ids that fired on a rendered model-call string are appended to ``rules_hit``.
+    A stream sealed in ``digests`` that is absent / not a regular file, or any symlink, raises.
     """
-    path = capsule_dir / "model-calls.jsonl"
-    if not path.is_file() or path.is_symlink():
+    raw = read_sealed(
+        capsule_dir, "model-calls.jsonl", MODEL_CALLS_MAX_BYTES, "model-calls stream", digests
+    )
+    if raw is None:
         return [], 0, False
-    raw = _read_bounded(path, MODEL_CALLS_MAX_BYTES, "model-calls stream")
     recorded = digests.get("model-calls.jsonl")
-    if recorded is not None and recorded != _sha256_bytes(raw):
-        raise CorruptCapsuleError(
-            "model-calls.jsonl does not match its sealed evidence_digests entry "
-            f"(recorded {recorded})"
-        )
     calls: list[ModelCallFacts] = []
     total = 0
     for lineno, line in enumerate(raw.split(b"\n"), start=1):
@@ -232,12 +211,20 @@ def _read_model_calls(
 
 
 def _read_inputs(capsule_dir: Path, digests: dict[str, str]) -> tuple[list[InputFileFacts], int]:
-    """Hash the regular files under ``inputs/`` (symlinks and escapes are never followed)."""
+    """Hash the regular files under ``inputs/`` (symlinks and escapes are never followed).
+
+    Raises:
+        CorruptCapsuleError: an ``inputs/`` path sealed in ``digests`` is absent, a symlink, or
+            not a regular file; or a hashed file is unreadable / mismatches its recorded digest.
+    """
     inputs_dir = capsule_dir / "inputs"
+    sealed = sorted(rel for rel in digests if rel.startswith(_INPUTS_PREFIX))
     if not inputs_dir.is_dir() or inputs_dir.is_symlink():
+        _require_sealed_inputs_seen(sealed, set())
         return [], 0
     root = capsule_dir.resolve()
     facts: list[InputFileFacts] = []
+    seen: set[str] = set()
     total = 0
     for path in sorted(inputs_dir.rglob("*")):
         if path.is_symlink() or not path.is_file():
@@ -249,9 +236,10 @@ def _read_inputs(capsule_dir: Path, digests: dict[str, str]) -> tuple[list[Input
         if not resolved.is_relative_to(root):  # pragma: no cover - defensive (3.13+ rglob)
             continue  # a path reached through a symlinked directory is not capsule evidence
         total += 1
+        rel = path.relative_to(capsule_dir).as_posix()
+        seen.add(rel)
         if len(facts) >= MAX_INPUT_FILES:
             continue
-        rel = path.relative_to(capsule_dir).as_posix()
         try:
             digest, size = _sha256_file(path)
         except OSError as exc:
@@ -264,7 +252,18 @@ def _read_inputs(capsule_dir: Path, digests: dict[str, str]) -> tuple[list[Input
         facts.append(
             InputFileFacts(path=rel, sha256=digest, size_bytes=size, bound=recorded is not None)
         )
+    _require_sealed_inputs_seen(sealed, seen)
     return facts, total
+
+
+def _require_sealed_inputs_seen(sealed: list[str], seen: set[str]) -> None:
+    """Every ``inputs/`` path sealed in ``evidence_digests`` must still be a regular file."""
+    for rel in sealed:
+        if rel not in seen:
+            raise CorruptCapsuleError(
+                f"{rel} is sealed in evidence_digests but is absent from the capsule, "
+                "a symlink, or not a regular file"
+            )
 
 
 def _rank(value: Any, where: str) -> int | None:
@@ -360,14 +359,12 @@ def collect_capsule_facts(capsule_dir: Path) -> CapsuleFacts:
     """Read the NF-278 facts from ``capsule_dir`` (strictly read-only).
 
     Raises:
-        CorruptCapsuleError: the manifest is absent/unreadable/malformed, a sealed digest does
-            not match the bytes on disk, a model-call line is not a JSON object, or the
-            attribution facet is malformed.
+        CorruptCapsuleError: the manifest is absent/unreadable/malformed/a symlink, a file
+            sealed in ``evidence_digests`` is absent / a symlink / not a regular file, a stream
+            exceeds its read bound, a sealed digest does not match the bytes on disk, a
+            model-call line is not a JSON object, or the attribution facet is malformed.
     """
     capsule_ref = str(capsule_dir)
-    manifest_path = capsule_dir / "capsule.yaml"
-    if not manifest_path.is_file() or manifest_path.is_symlink():
-        raise CorruptCapsuleError(f"no capsule.yaml in {capsule_dir}")
     manifest = _load_manifest(capsule_dir)
     digests = _evidence_digests(manifest)
     call_rules_hit: list[str] = []

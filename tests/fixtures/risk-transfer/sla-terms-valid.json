@@ -1,0 +1,7 @@
+{
+  "metric": "availability",
+  "operator": "gte",
+  "threshold": "99.9",
+  "unit": "%",
+  "window": "2026-07"
+}

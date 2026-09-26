@@ -78,7 +78,7 @@ BUNDLE_INDEX_FILENAME = "session-bundle.json"
 #: Pinned ZIP timestamp (the earliest a ZIP can encode) for deterministic bytes.
 _ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
 _CHUNK = 1 << 16
-_ULID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
+_ULID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}\Z")
 
 VERIFIER_INSTRUCTIONS = (
     "Verification recipe (no NovaFabric required):\n"

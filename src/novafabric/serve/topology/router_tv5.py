@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from novafabric.serve.topology.snapshot_store_3d import SnapshotStore3D
 
 logger = logging.getLogger(__name__)
-WINDOW_ID_RE = re.compile(r"^[a-z0-9_-]+$")
+WINDOW_ID_RE = re.compile(r"^[a-z0-9_-]+\Z")
 
 
 def make_tv5_router(

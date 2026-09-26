@@ -45,8 +45,8 @@ from novafabric.spec.models import AssetStatus
 
 PROMPT_ASSET_SCHEMA_VERSION: Final = "0.1.0"
 
-_PROMPT_ID_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
-_CONTENT_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_PROMPT_ID_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?\Z")
+_CONTENT_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}\Z")
 # Placeholder tokens like {user_query}; informative only — NovaFabric does not
 # prescribe a templating syntax and never renders (spec §Template forms).
 _PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")

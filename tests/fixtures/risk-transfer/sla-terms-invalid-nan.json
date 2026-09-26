@@ -1,0 +1,7 @@
+{
+  "metric": "availability",
+  "operator": "gte",
+  "threshold": "NaN",
+  "unit": "%",
+  "window": "2026-07"
+}

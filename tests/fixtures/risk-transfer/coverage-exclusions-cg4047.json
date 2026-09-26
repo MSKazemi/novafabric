@@ -1,0 +1,29 @@
+{
+  "exclusions": [
+    {
+      "exclusion_id": "CG 40 47 (01 26)",
+      "fact_markers": [
+        "generative_ai_output"
+      ]
+    },
+    {
+      "exclusion_id": "CG 35 08 (01 26)",
+      "fact_markers": [
+        "data_breach"
+      ]
+    }
+  ],
+  "parametric_triggers": [
+    {
+      "metric": "error_rate",
+      "operator": "gte",
+      "threshold": "0.05"
+    },
+    {
+      "metric": "latency_p99_ms",
+      "operator": "gt",
+      "threshold": "2000",
+      "unit": "ms"
+    }
+  ]
+}

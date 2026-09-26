@@ -19,6 +19,20 @@ experiments, controls instruments, drives a self-driving lab, generates
 hypotheses, or adjudicates scientific validity.
 """
 
+from novafabric.science.lab import (
+    InstrumentRecord,
+    InstrumentTelemetryError,
+    LabExperiment,
+    LabProvenance,
+    LabProvenanceError,
+    LabVerification,
+    UnknownLabKindError,
+    attach_lab,
+    build_instrument_record,
+    build_lab_experiment,
+    lab_from_capsule,
+    verify_lab,
+)
 from novafabric.science.provenance import (
     CyclicLineageError,
     DagTooLargeError,
@@ -50,6 +64,18 @@ from novafabric.science.reproducibility import (
 )
 
 __all__ = [
+    "InstrumentRecord",
+    "InstrumentTelemetryError",
+    "LabExperiment",
+    "LabProvenance",
+    "LabProvenanceError",
+    "LabVerification",
+    "UnknownLabKindError",
+    "attach_lab",
+    "build_instrument_record",
+    "build_lab_experiment",
+    "lab_from_capsule",
+    "verify_lab",
     "CyclicLineageError",
     "DagTooLargeError",
     "DagVerification",

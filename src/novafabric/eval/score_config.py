@@ -46,8 +46,8 @@ from novafabric.eval.scores import Score, ScoreValueType
 
 SCORE_CONFIG_SCHEMA_VERSION = "0.1.0"
 
-_ULID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
-_SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_ULID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}\Z")
+_SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}\Z")
 
 #: Body fields excluded from the canonical (digested) definition body — these are
 #: envelope/derived, not part of the definition (spec §Data model).

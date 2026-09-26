@@ -32,6 +32,7 @@ from novafabric.cli.capture_ui import app as capture_ui_app
 from novafabric.cli.classify import app as classify_app
 from novafabric.cli.collector import collector_app
 from novafabric.cli.comment import app as comment_app
+from novafabric.cli.consent import app as consent_app
 from novafabric.cli.cost import app as cost_app
 from novafabric.cli.cost_attribute import cost_attribute_cmd
 from novafabric.cli.cost_fairness import cost_fairness_cmd
@@ -57,6 +58,7 @@ from novafabric.cli.export_accessibility import export_accessibility_claim_cmd
 from novafabric.cli.export_adverse_action import export_adverse_action_cmd
 from novafabric.cli.export_blob import export_blob_cmd
 from novafabric.cli.export_c2pa import export_c2pa_cmd
+from novafabric.cli.export_cat import export_cat_cmd
 from novafabric.cli.export_citizen import export_citizen_explanation_cmd
 from novafabric.cli.export_compliance import export_compliance_app
 from novafabric.cli.export_control_attestation import export_control_attestation_cmd
@@ -97,6 +99,7 @@ from novafabric.cli.ingest_capsule import ingest_capsule_cmd
 from novafabric.cli.init_ import init_cmd
 from novafabric.cli.insights import insights_cmd
 from novafabric.cli.inspect_ import inspect_cmd
+from novafabric.cli.insurance import app as insurance_app
 from novafabric.cli.kg import kg_app
 from novafabric.cli.label import label_app
 from novafabric.cli.ledger import ledger_app
@@ -108,6 +111,7 @@ from novafabric.cli.mcp_ import app as mcp_app
 from novafabric.cli.mcp_proxy import mcp_proxy_cmd
 from novafabric.cli.media import media_app
 from novafabric.cli.memory import memory_app
+from novafabric.cli.memstore import memstore_app
 from novafabric.cli.merkle_tree import merkle_tree_cmd
 from novafabric.cli.migrate import migrate_to_postgres_cmd
 from novafabric.cli.migrate_capsule import migrate_capsule_cmd
@@ -141,11 +145,13 @@ from novafabric.cli.search import search_cmd
 from novafabric.cli.serve import serve_cmd
 from novafabric.cli.server import server_app
 from novafabric.cli.session import session_app
+from novafabric.cli.settlement import settlement_app
 from novafabric.cli.storage_scale import app as storage_scale_app
 from novafabric.cli.suggest_register import suggest_register_cmd
 from novafabric.cli.support_bundle import support_bundle_cmd
 from novafabric.cli.toolschema import app as toolschema_app
 from novafabric.cli.trend import trend_cmd
+from novafabric.cli.trust_path import trust_path_app
 from novafabric.cli.trust_radar import trust_radar_cmd
 from novafabric.cli.unregister import unregister_cmd
 from novafabric.cli.validate import validate_cmd
@@ -379,6 +385,7 @@ app.command("export-model-risk")(export_model_risk_cmd)
 app.command("export-model-independence")(export_model_independence_cmd)
 app.command("export-retention")(export_retention_cmd)
 app.command("export-adverse-action")(export_adverse_action_cmd)
+app.command("export-cat")(export_cat_cmd)
 app.command("export-public-annex-viii")(export_public_annex_viii_cmd)
 app.command("export-transparency-register")(export_transparency_register_cmd)
 app.command("export-public-disclosure")(export_public_disclosure_cmd)
@@ -489,6 +496,11 @@ app.add_typer(
     help="Human-agent accountability evidence, read-only (experimental, ADR-0150).",
 )
 app.add_typer(
+    consent_app,
+    name="consent",
+    help="ISO/IEC TS 27560-shaped consent receipts: record, show, verify (experimental, ADR-0150).",
+)
+app.add_typer(
     retention_app,
     name="retention",
     help="Apply data-retention policy bindings: plan, apply, status, explain (ADR-0134).",
@@ -557,11 +569,28 @@ app.add_typer(
     name="safety-case",
     help="Compile/verify/export an evidence-grounded safety case (ADR-0095).",
 )
-# ADR-0164 P2 (NF-323): agentic-science reproducibility receipt — record-only.
+# ADR-0170 P2 (NF-383/384/386): risk-transfer evidence — records, never decides.
+app.add_typer(
+    insurance_app,
+    name="insurance",
+    help="Risk-transfer evidence: liability chain, SLA breach, coverage trigger "
+    "(experimental, ADR-0170). Never decides fault, coverage or a payout.",
+)
+# ADR-0164 P2 (NF-323) + P3 (NF-322/329): agentic-science provenance — record-only.
 app.add_typer(
     science_app,
     name="science",
-    help="Agentic-science provenance: reproducibility receipt (experimental, ADR-0164).",
+    help=(
+        "Agentic-science provenance: reproducibility receipt, lab experiment, "
+        "instrument provenance (experimental, ADR-0164)."
+    ),
+)
+# ADR-0163 P3 (NF-315): A2A payment-provenance chain walk — record-only.
+app.add_typer(
+    settlement_app,
+    name="settlement",
+    help="Settlement-provenance evidence: A2A payment-chain walk (experimental, "
+    "ADR-0163). Never moves money or decides a dispute.",
 )
 # ADR-0167 P2 (NF-352/357): frontier-safety evidence readers — record-only.
 app.add_typer(
@@ -569,6 +598,13 @@ app.add_typer(
     name="safety",
     help="Frontier-safety evidence: control decisions, tripwires, alignment signals "
     "(experimental, ADR-0167).",
+)
+# ADR-0168 P2 (NF-363): transitive cross-org trust path — show / offline verify.
+app.add_typer(
+    trust_path_app,
+    name="trust-path",
+    help="Transitive cross-org trust path: show / offline-verify against pinned "
+    "anchors (experimental, ADR-0168).",
 )
 app.add_typer(
     ledger_app,
@@ -636,6 +672,8 @@ app.add_typer(
 app.add_typer(passport_app, name="passport")
 # ADR-0162 P2 (NF-303/NF-310): embodied ODD record + trajectory chain, offline.
 app.add_typer(embodied_app, name="embodied")
+# ADR-0171 P2 (NF-392/395/396): shared-store access ledger + cross-run derivation.
+app.add_typer(memstore_app, name="memstore")
 
 # `nova policy capture-level get/set` — nested under existing policy typer
 policy_app.add_typer(

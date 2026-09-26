@@ -56,7 +56,7 @@ MAX_BUCKETS = 5000
 NO_ASSET_BUCKET = "(none)"
 
 #: Mirrors the ``metric`` pattern in ``schemas/trend-report.schema.json``.
-_METRIC_RE = re.compile(r"^(cost|latency|score:[A-Za-z0-9_.\-]+)$")
+_METRIC_RE = re.compile(r"^(cost|latency|score:[A-Za-z0-9_.\-]+)\Z")
 _STAT_FUNCS = {"p50": "p50", "p95": "p95", "p99": "p99", "mean": "avg"}
 
 

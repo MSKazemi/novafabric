@@ -17,6 +17,7 @@ Acceptance criteria covered:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,7 @@ from _adverse_action_capsule import FIXTURES, PROMPT, SECRET, make_capsule, vali
 from _adverse_action_capsule import call as _call
 from _adverse_action_capsule import sha as _sha
 
+from novafabric.compliance.export.finance import _sealed_read
 from novafabric.compliance.export.finance import adverse_action_collect as collect
 from novafabric.compliance.export.finance.adverse_action import (
     ADVERSE_ACTION_REGIME,
@@ -393,14 +395,14 @@ def test_oversize_manifest_is_corrupt(tmp_path: Path, monkeypatch: pytest.Monkey
 
 def test_unreadable_model_calls_is_corrupt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     cap = _full(tmp_path)
-    real = Path.read_bytes
+    real = os.open
 
-    def boom(self: Path) -> bytes:
-        if self.name == "model-calls.jsonl":
+    def boom(path: Any, flags: int, *args: Any) -> int:
+        if Path(path).name == "model-calls.jsonl":
             raise PermissionError("denied")
-        return real(self)
+        return real(path, flags, *args)
 
-    monkeypatch.setattr(Path, "read_bytes", boom)
+    monkeypatch.setattr(_sealed_read.os, "open", boom)
     with pytest.raises(CorruptCapsuleError, match="cannot read model-calls stream"):
         collect_capsule_facts(cap)
 
@@ -442,8 +444,107 @@ def test_symlinks_are_never_followed(tmp_path: Path) -> None:
     cap = make_capsule(tmp_path, facet=valid_facet(), seal=False, bind=False)
     (cap / "inputs" / "link.txt").symlink_to(outside / "secret.txt")
     (cap / "inputs" / "linkdir").symlink_to(outside, target_is_directory=True)
-    (cap / "model-calls.jsonl").symlink_to(outside / "calls.jsonl")
     (cap / ".seal").mkdir()
     (cap / ".seal" / "manifest.dsse").symlink_to(outside / "secret.txt")
     facts = collect_capsule_facts(cap)
     assert facts.inputs == [] and facts.model_calls == [] and facts.seal_ref is None
+
+
+# ----------------------------------------------------------- sealed evidence that vanished (exit 2)
+
+
+def test_symlinked_model_calls_is_corrupt_even_unsealed(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "calls.jsonl").write_text(json.dumps(_call("mc-x")) + "\n")
+    cap = make_capsule(tmp_path, facet=valid_facet(), bind=False)
+    (cap / "model-calls.jsonl").symlink_to(outside / "calls.jsonl")
+    with pytest.raises(CorruptCapsuleError, match="symlink"):
+        collect_capsule_facts(cap)
+
+
+def test_symlinked_manifest_is_corrupt(tmp_path: Path) -> None:
+    cap = _full(tmp_path)
+    real = tmp_path / "real.yaml"
+    real.write_bytes((cap / "capsule.yaml").read_bytes())
+    (cap / "capsule.yaml").unlink()
+    (cap / "capsule.yaml").symlink_to(real)
+    with pytest.raises(CorruptCapsuleError, match="symlink"):
+        collect_capsule_facts(cap)
+
+
+def _replace_with_symlink(path: Path, outside: Path) -> None:
+    outside.write_bytes(path.read_bytes())  # identical bytes: the digest would still match
+    path.unlink()
+    path.symlink_to(outside)
+
+
+def _replace_with_fifo(path: Path, outside: Path) -> None:
+    path.unlink()
+    os.mkfifo(path)
+
+
+def _replace_with_dir(path: Path, outside: Path) -> None:
+    path.unlink()
+    path.mkdir()
+
+
+@pytest.mark.parametrize(
+    ("mutate", "match"),
+    [
+        (lambda p, o: p.unlink(), "sealed in evidence_digests but absent"),
+        (_replace_with_symlink, "symlink"),
+        (_replace_with_fifo, "not a regular file"),
+        (_replace_with_dir, "not a regular file"),
+    ],
+    ids=["deleted", "symlink", "fifo", "directory"],
+)
+def test_sealed_model_calls_that_vanished_is_corrupt(
+    tmp_path: Path, mutate: Any, match: str
+) -> None:
+    cap = _full(tmp_path)
+    mutate(cap / "model-calls.jsonl", tmp_path / "outside.jsonl")
+    with pytest.raises(CorruptCapsuleError, match=match):
+        collect_capsule_facts(cap)
+
+
+@pytest.mark.parametrize(
+    "mutate", [lambda p, o: p.unlink(), _replace_with_symlink, _replace_with_fifo]
+)
+def test_sealed_input_that_vanished_is_corrupt(tmp_path: Path, mutate: Any) -> None:
+    cap = _full(tmp_path)
+    mutate(cap / "inputs" / "application.json", tmp_path / "outside.json")
+    with pytest.raises(CorruptCapsuleError, match="inputs/application.json is sealed"):
+        collect_capsule_facts(cap)
+
+
+def test_sealed_input_with_inputs_dir_gone_is_corrupt(tmp_path: Path) -> None:
+    cap = _full(tmp_path)
+    (cap / "inputs" / "application.json").unlink()
+    (cap / "inputs").rmdir()
+    with pytest.raises(CorruptCapsuleError, match="inputs/application.json is sealed"):
+        collect_capsule_facts(cap)
+
+
+def test_sealed_input_beyond_the_render_cap_is_still_checked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(collect, "MAX_INPUT_FILES", 1)
+    cap = make_capsule(tmp_path, inputs={"a.json": b"a", "b.json": b"b"})
+    facts = collect_capsule_facts(cap)
+    assert facts.total_inputs == 2 and len(facts.inputs) == 1
+
+
+def test_oversize_model_calls_is_corrupt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(collect, "MODEL_CALLS_MAX_BYTES", 10)
+    cap = _full(tmp_path)
+    with pytest.raises(CorruptCapsuleError, match="exceeds its read bound"):
+        collect_capsule_facts(cap)
+
+
+def test_unsealed_fifo_or_absent_model_calls_stays_absent(tmp_path: Path) -> None:
+    cap = make_capsule(tmp_path, facet=valid_facet(), bind=False)
+    assert collect_capsule_facts(cap).model_calls == []
+    os.mkfifo(cap / "model-calls.jsonl")
+    facts = collect_capsule_facts(cap)
+    assert facts.model_calls == [] and facts.total_model_calls == 0

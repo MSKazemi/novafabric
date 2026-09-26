@@ -1,0 +1,76 @@
+{
+  "schema_version": "0.3.0",
+  "sensors": [
+    {
+      "sensor_id": "front-cam-0",
+      "modality": "camera",
+      "frame_count": 18240,
+      "stream_digest": "sha256:aa11bd2b4d3f9a5e6c7081924f5b0a3c8d6e2f4b7a90c1d3e5f7a9b1c3d5e7f9",
+      "clock_domain": "ptp-0",
+      "c2pa_manifest_ref": "sha256:bb2260a1c4e8f0b2d4a6c8e0f2b4d6a8c0e2f4b6d8a0c2e4f6b8d0a2c4e6f8b0"
+    },
+    {
+      "sensor_id": "lidar-top",
+      "modality": "lidar",
+      "frame_count": 3612,
+      "stream_digest": "sha256:cc3371b2d5f9a1c3e5b7d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1",
+      "clock_domain": "ptp-0"
+    }
+  ],
+  "actuation": [
+    {
+      "command_class": "motion",
+      "target_ref": "sha256:dd4482c3e6a0b2d4f6a8c0e2b4d6f8a0c2e4b6d8f0a2c4e6b8d0f2a4c6e8b0d2",
+      "count": 941,
+      "issued_by": "run:01HXAY7M5JZ8R7K4P9DPBYK2WX",
+      "action_receipt_ref": "sha256:ee5593d4f7b1c3e5a7b9d1f3c5e7a9b1d3f5c7e9a1b3d5f7c9e1a3b5d7f9c1e3",
+      "unbound": false
+    },
+    {
+      "command_class": "payload_release",
+      "target_ref": "sha256:ff66a4e5b8c2d4f6a8b0c2e4d6f8b0a2c4e6d8f0b2a4c6e8d0f2b4a6c8e0d2f4",
+      "count": 1,
+      "issued_by": "run:01HXAY7M5JZ8R7K4P9DPBYK2WX",
+      "unbound": true
+    }
+  ],
+  "verified": {
+    "no_raw_payload": true
+  },
+  "sim2real": {
+    "sim_policy_ref": "sha256:6b1a35a89c1abbaf8e9fd3c362ef5f715966e021fbcdf6e71a565af97652cc12",
+    "sim_env_ref": "sha256:da4fcce83917801ef79605c7b514dea528f0596aad7009087e05353fafd6f90d",
+    "randomization_ref": "sha256:0b349981c10dd87d77324e0c63106467c1eb53fba249f2f731f1cfb1acc7be0c",
+    "deployment_run_id": "run:01HXAY7M5JZ8R7K4P9DPBYK2WX",
+    "unbound": false
+  },
+  "teleop": [
+    {
+      "direction": "autonomy_to_human",
+      "operator_ref": "operator:fp:3f9a1c2e7b4d8a06",
+      "trigger": "odd_exit",
+      "latency_ms": 412.5,
+      "ts": "2026-07-13T10:02:12Z"
+    },
+    {
+      "direction": "human_to_autonomy",
+      "operator_ref": "operator:fp:3f9a1c2e7b4d8a06",
+      "trigger": "operator_release",
+      "latency_ms": 180,
+      "ts": "2026-07-13T10:05:40Z"
+    }
+  ],
+  "timing": [
+    {
+      "clock_domain": "gps-0",
+      "source": "gps",
+      "max_observed_latency_ms": 25.0
+    },
+    {
+      "clock_domain": "ptp-0",
+      "source": "ptp",
+      "offset_ms": 0.012,
+      "max_observed_latency_ms": 3.4
+    }
+  ]
+}

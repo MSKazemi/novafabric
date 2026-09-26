@@ -64,7 +64,7 @@ _KNOWN_EXTENSIONS = frozenset(
 # Stash key in the envelope's ``extra`` block for foreign extensions.
 _FOREIGN_EXT_KEY = "cloudevents_extensions"
 
-_TRACEPARENT_RE = re.compile(r"^00-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$")
+_TRACEPARENT_RE = re.compile(r"^00-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}\Z")
 
 
 def to_cloudevents(envelope: EventEnvelope) -> dict[str, Any]:

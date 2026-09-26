@@ -1,0 +1,72 @@
+{
+  "created_at": "2026-07-15T10:00:00Z",
+  "facets": {
+    "science_provenance": {
+      "bound_root": "sha256:d9a850092a90d96e07d3673476d814b3d7431c46da94ef30bca3a5f67ae989ab",
+      "hypothesis_experiment_result": [
+        {
+          "kind": "hypothesis",
+          "node_digest": "sha256:8bf797aa02bd65b7cbd52155f6e010be77bb3d461320dac4c74c12d749d81066",
+          "node_id": "H1"
+        },
+        {
+          "kind": "experiment_design",
+          "node_digest": "sha256:33a123e5d474e8f3495a7c304f17184276715204ccb2887317f37bcb216b4681",
+          "node_id": "D1",
+          "parent": "sha256:8bf797aa02bd65b7cbd52155f6e010be77bb3d461320dac4c74c12d749d81066"
+        },
+        {
+          "kind": "experiment_run",
+          "node_digest": "sha256:a791366f6f6201254edcac9ec72017b12d8a69513b5e1e29a29a4048ffb16e27",
+          "node_id": "R1",
+          "parent": "sha256:33a123e5d474e8f3495a7c304f17184276715204ccb2887317f37bcb216b4681"
+        }
+      ],
+      "instrument_provenance": [
+        {
+          "calibration_ref": "sha256:ddfa571ee6675536aa376530ef78fe8c712dfc0223168cc84f428ed4ade622f8",
+          "calibration_timestamp": "2026-07-01T08:00:00+00:00",
+          "firmware_digest": "sha256:86effa030870e44c2f8620153a973e7d0cc0328885cb5996e64ff3df071bd03a",
+          "instrument_class": "x-ray-diffractometer",
+          "instrument_id": "xrd-2",
+          "manufacturer_ref": "vendor:example-instruments",
+          "record_digest": "sha256:10474ff03a6a40b2e73c781f3869b22d3f1c98e8160665ac331b9e2944bb5d8f",
+          "schema_version": "0.1.0"
+        },
+        {
+          "Raw-Telemetry": [
+            0.12,
+            0.13,
+            0.11
+          ],
+          "calibration_ref": "sha256:f5dcc5b78c8d22d06330d780f3d3cb324d072b42053fd6b46fbc4bba18f13486",
+          "calibration_timestamp": "2026-06-30T09:00:00Z",
+          "firmware_digest": "sha256:687e8debd36b2b39c825ee948f0a7f3f6dff04e5f50dc8f484479e3beb21ecf4",
+          "instrument_class": "hplc",
+          "instrument_id": "hplc-7",
+          "manufacturer_ref": "https://ror.org/000example1",
+          "record_digest": "sha256:5ae56ab656f177349f8dfbd328b56d20e4c560ae8979797452bf73a3c860b060",
+          "schema_version": "0.1.0"
+        }
+      ],
+      "lab_experiment": {
+        "capsule_root": "sha256:d9a850092a90d96e07d3673476d814b3d7431c46da94ef30bca3a5f67ae989ab",
+        "experiment_digest": "sha256:ce67a883cf39f181b7f535c9f355818e9eb9a2f951231a852f2c44b46a45bcef",
+        "instrument_refs": [
+          "sha256:5ae56ab656f177349f8dfbd328b56d20e4c560ae8979797452bf73a3c860b060",
+          "sha256:10474ff03a6a40b2e73c781f3869b22d3f1c98e8160665ac331b9e2944bb5d8f"
+        ],
+        "lab_kind": "self_driving",
+        "node_ref": "sha256:a791366f6f6201254edcac9ec72017b12d8a69513b5e1e29a29a4048ffb16e27",
+        "outcome_digest": "sha256:575d43d63ae7d52606f96fb3747691a195609b17226d1f88674fa04caa313caa",
+        "protocol_ref": "sha256:b7767f5b67533f52e18ccf0dadfc19f3d58230b47f06762539040a9eea704bb3",
+        "run_id": "sdl-job-2026-0715-001",
+        "schema_version": "0.1.0",
+        "sim_to_real": "real",
+        "started_at": "2026-07-15T09:30:00Z"
+      },
+      "schema_version": "0.1.0"
+    }
+  },
+  "run_id": "01HXSCIENCELAB000000000001"
+}

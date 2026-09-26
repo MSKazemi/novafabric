@@ -33,7 +33,7 @@ request_id_var: ContextVar[str] = ContextVar("request_id", default="")
 
 # Accept only short, safe inbound ids (defends the logs against injection /
 # unbounded values); anything else is replaced with a generated id.
-_SAFE_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+_SAFE_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}\Z")
 
 
 def new_request_id() -> str:

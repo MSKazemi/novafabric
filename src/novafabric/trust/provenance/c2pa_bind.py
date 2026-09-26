@@ -90,7 +90,7 @@ HARD_BINDING_LABEL = "c2pa.hash.data"
 #: it and a future verifier can introduce a second reason without breaking readers.
 NO_CERT_VERIFIER = "no_offline_cert_chain_verifier"
 
-_CONTENT_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_CONTENT_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}\Z")
 
 Direction = Literal["input", "output"]
 ManifestKind = Literal["c2pa", "content_credentials"]

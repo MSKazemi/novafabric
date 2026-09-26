@@ -61,7 +61,7 @@ _SELECT_RE = re.compile(
     r"(?:\[(?P<score_name>[A-Za-z0-9_.\-]+)\])?)\s*\)"
     r")\s*(?:AS\s+(?P<alias>[A-Za-z_][A-Za-z0-9_]*)\s*)?$"
 )
-_PERCENTILE_RE = re.compile(r"^p\d{1,2}$")
+_PERCENTILE_RE = re.compile(r"^p[0-9]{1,2}\Z")
 #: ADR-0236 D3 — ``ratio(<operand>, <operand>) [AS alias]``. Operands are alias
 #: references (an aggregate's explicit alias, or its canonical expression text,
 #: which is its default alias) and are resolved against the same select list.
@@ -75,10 +75,10 @@ _IN_PRED_RE = re.compile(r"^\s*(?P<field>[A-Za-z_][A-Za-z0-9_]*)\s+IN\s*\((?P<va
 _CMP_PRED_RE = re.compile(
     r"^\s*(?P<field>[A-Za-z_][A-Za-z0-9_]*)\s*(?P<op>!=|<=|>=|=|<|>)\s*(?P<value>.+?)\s*$"
 )
-_DURATION_RE = re.compile(r"^(?P<n>\d+)(?P<unit>[dhms])$")
+_DURATION_RE = re.compile(r"^(?P<n>[0-9]+)(?P<unit>[dhms])\Z")
 _ISO_DURATION_RE = re.compile(
-    r"^P(?:(?P<weeks>\d+)W)?(?:(?P<days>\d+)D)?"
-    r"(?:T(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?(?:(?P<seconds>\d+)S)?)?$"
+    r"^P(?:(?P<weeks>[0-9]+)W)?(?:(?P<days>[0-9]+)D)?"
+    r"(?:T(?:(?P<hours>[0-9]+)H)?(?:(?P<minutes>[0-9]+)M)?(?:(?P<seconds>[0-9]+)S)?)?\Z"
 )
 
 

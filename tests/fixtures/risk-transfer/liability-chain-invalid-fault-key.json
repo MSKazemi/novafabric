@@ -1,0 +1,33 @@
+{
+  "liability_chain": [
+    {
+      "role": "principal",
+      "party_ref": "sha256:89e7aee68d58c8d669b5e57affa7812f27c2655b84b1337f1a260c0c064a211c",
+      "acted_as_ref": null,
+      "basis_ref": "sha256:53cc6394ebc74eb97694648edd27e3c4d3df5730c4eef0d87c01d24b16afa14f",
+      "contribution_marker": "none"
+    },
+    {
+      "role": "deployer",
+      "party_ref": "sha256:61e4d0544bc12be0f778e718c0369ced00beab99a94e8940edb1e0f077b3c982",
+      "acted_as_ref": "sha256:89e7aee68d58c8d669b5e57affa7812f27c2655b84b1337f1a260c0c064a211c",
+      "basis_ref": "sha256:3f11112b21ea25792d91f496d923a14dd86f1d52690097cbf9188ec059ac9c4f",
+      "contribution_marker": "recorded",
+      "At-Fault": true
+    },
+    {
+      "role": "model_provider",
+      "party_ref": "sha256:47b0a196184b6deb001314ede143890ef09f734ac392d8632ed802e5b4a65072",
+      "acted_as_ref": null,
+      "basis_ref": "sha256:0ccdc7cb175b5f733d82a51766a35e9bd0bfdda97a9e60427bc579b0b95683ac",
+      "contribution_marker": "disputed"
+    },
+    {
+      "role": "agent",
+      "party_ref": "sha256:bfddf6d12ad26bcbc568a7d4a05374ef74c8a4a2798e266338f57828a2aa51de",
+      "acted_as_ref": "sha256:61e4d0544bc12be0f778e718c0369ced00beab99a94e8940edb1e0f077b3c982",
+      "basis_ref": null,
+      "contribution_marker": "none"
+    }
+  ]
+}

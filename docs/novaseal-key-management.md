@@ -228,7 +228,7 @@ from the bundle to distrust it.
 | Status | Meaning | Default (soft-fail) | `--crl-strict` |
 |---|---|---|---|
 | `good` | a current, authentic CRL does not list the serial | pass | pass |
-| `revoked` | an authentic CRL lists it, revocation date ≤ validation time (reason shown) | **fail** | **fail** |
+| `revoked` | an authentic CRL lists it with revocation date ≤ validation time — or reason `keyCompromise`/`cACompromise` (retroactive, any date), or `invalidityDate` ≤ validation time (reason shown) | **fail** | **fail** |
 | `no_crl` | no CRL from the issuer covers the certificate | warning | fail |
 | `stale` | only CRLs outside `thisUpdate ≤ now ≤ nextUpdate` | warning | fail |
 | `invalid_crl` | CRLs name the issuer but none verifies (forged/unsigned) | warning | fail |
@@ -248,8 +248,10 @@ does not cover a certificate are not used for it. `novaseal.yaml` accepts
 `crl_dir:` and `crl_strict:` equivalents.
 
 Limits: no OCSP (ADR-0070 §6), no delta-CRL merge, no indirect CRLs, CLI
-evaluates at the current time; the RFC 3161 TSA chain (ADR-0070 §1–2) does
-not yet use this directory.
+evaluates the signer chain at the current time. The RFC 3161 TSA chain
+(§2.5) uses the same directory: revocation is evaluated *as of* the token's
+`genTime`, but CRL freshness (`stale`) is judged at verification time — so a
+CRL synced today works with `--crl-strict`.
 
 **Honest limits (experimental):** revocation is CRL-only and needs an
 operator sync job (above), the CLI validates at the current time (a signer
@@ -271,6 +273,70 @@ Because there is no long-lived key, none of the rotation/compromise/
 multi-region guidance in §3–§5 applies to this path — the "key" is a fresh
 Fulcio certificate per signature, scoped to the signer's OIDC identity
 instead.
+
+### 2.5 RFC 3161 TSA trust chain (ADR-0070 §1) — experimental
+
+The timestamp check that `nova verify` has always run only proves the token's
+message imprint matches the DSSE envelope and that the embedded certificate's
+key produced the signature — a self-signed "TSA" certificate passes it. With
+an operator **TSA CA bundle**, the token is verified end to end, offline:
+
+```bash
+nova verify --tsa-ca-bundle /etc/novaseal/tsa/freetsa-cacert.pem path/to/capsule/
+# or tsa_ca_certs: [...] in novaseal.yaml; --crl-dir/--crl-strict also apply
+```
+
+With TSA anchors given or configured, a capsule **without** a token (or with an
+empty `manifest.dsse.tsr`) **fails** verification: the `.tsr` is not covered by
+the DSSE signature, so otherwise a key holder backdating a capsule could simply
+delete it. Without TSA anchors a missing token stays a soft `NOT PRESENT` notice.
+
+```python
+from novafabric.trust.novaseal.tsa_trust import verify_tsa_trust_chain
+
+result = verify_tsa_trust_chain(
+    tsr_bytes,                         # manifest.dsse.tsr (TimeStampResp or bare token)
+    Path("/etc/novaseal/tsa/ca.pem").read_bytes(),   # or a list of Certificates
+    crl_cache_dir=Path("/var/lib/novaseal/crl"),     # optional, never fetched
+    expected_digest=hashlib.sha256(dsse_bytes).digest(),
+)
+# result.valid, result.reason, result.gen_time, result.chain_subjects, result.revocation
+```
+
+Checks, in order, stopping at the first failure (fail closed):
+
+1. The token parses **strictly** (positional DER walk, no BER, bounded sizes:
+   1 MiB token, 32 certificates) and `PKIStatus` is granted.
+2. The certificate named by `SignerInfo.sid` is found (embedded in the token,
+   or passed as `untrusted_certs`), and the signed `signingCertificate`
+   (ESSCertID, SHA-1) or `signingCertificateV2` (ESSCertIDv2, RFC 5816) hash
+   matches it.
+3. Signed `contentType` is `id-ct-TSTInfo`; `messageDigest` equals the hash of
+   the `TSTInfo` (SHA-256/384/512 — SHA-1 is rejected).
+4. The CMS signature over the DER signed attributes verifies (RSA PKCS#1 v1.5,
+   ECDSA, Ed25519; RSASSA-PSS is rejected, not verified).
+5. `extendedKeyUsage` is present, **critical**, and contains only
+   `id-kp-timeStamping` (RFC 3161 §2.3); a `keyUsage`, if present, allows
+   digitalSignature or nonRepudiation.
+6. The message imprint equals the expected digest (when given), and its hash
+   algorithm is the expected one (SHA-256 by default) — matching octets under
+   another or an unknown algorithm OID fail.
+7. RFC 5280 path validation to the bundle **at `genTime`** (depth ≤ 10), then
+   the offline CRL check (§2.3): revocation status *as of* `genTime`, from CRLs
+   that are current *now*. A `keyCompromise` / `cACompromise` entry, or one
+   whose `invalidityDate` ≤ `genTime`, revokes even when dated after `genTime`. CA certificates get the
+   WebPKI CA profile except that a non-critical basicConstraints is tolerated
+   (`cA=TRUE` still required) — freetsa.org's root marks it non-critical.
+
+The real freetsa.org token in `tests/fixtures/rfc3161/` verifies against its
+own root this way. **Honest limits:** ESSCertID v1 is accepted unless
+`require_ess_cert_id_v2=True` (freetsa.org still emits v1, so ADR-0070 §4's
+v2 requirement is opt-in); a revocation dated after `genTime` for any other
+reason (e.g. `superseded`, `cessationOfOperation`) without an earlier
+`invalidityDate` does not invalidate earlier tokens — that relies on the CA
+recording `keyCompromise` when a key actually leaked; a CRL that has dropped an
+expired TSA certificate's entry cannot revoke it; the nonce is reported, not re-checked; no CRL fetching or
+`nextUpdate`-TTL cache (the operator's sync job owns freshness).
 
 ---
 

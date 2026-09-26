@@ -181,6 +181,15 @@
   "nova comment thread": {
     "status": "builder-only"
   },
+  "nova consent record": {
+    "status": "builder-only"
+  },
+  "nova consent show": {
+    "status": "builder-only"
+  },
+  "nova consent verify": {
+    "status": "builder-only"
+  },
   "nova cost attribute": {
     "status": "real-panel",
     "tab": "cost",
@@ -284,6 +293,18 @@
     "status": "builder-only"
   },
   "nova embodied odd show": {
+    "status": "builder-only"
+  },
+  "nova embodied sim2real show": {
+    "status": "builder-only"
+  },
+  "nova embodied sim2real verify": {
+    "status": "builder-only"
+  },
+  "nova embodied teleop list": {
+    "status": "builder-only"
+  },
+  "nova embodied timing show": {
     "status": "builder-only"
   },
   "nova embodied trajectory verify": {
@@ -457,6 +478,9 @@
     "tab": "compliance",
     "api": "/api/compliance/export/c2pa"
   },
+  "nova export-cat": {
+    "status": "builder-only"
+  },
   "nova export-citizen-explanation": {
     "status": "real-panel",
     "tab": "compliance",
@@ -596,10 +620,16 @@
   "nova graph agent": {
     "status": "builder-only"
   },
+  "nova hitl acted-as": {
+    "status": "builder-only"
+  },
   "nova hitl context show": {
     "status": "builder-only"
   },
   "nova hitl context verify": {
+    "status": "builder-only"
+  },
+  "nova hitl handoff list": {
     "status": "builder-only"
   },
   "nova hitl override list": {
@@ -665,6 +695,15 @@
     "status": "real-panel",
     "tab": "runs",
     "api": "/api/runs/"
+  },
+  "nova insurance coverage check": {
+    "status": "builder-only"
+  },
+  "nova insurance liability show": {
+    "status": "builder-only"
+  },
+  "nova insurance sla verify": {
+    "status": "builder-only"
   },
   "nova kg alias list": {
     "status": "real-panel",
@@ -864,6 +903,15 @@
     "status": "builder-only"
   },
   "nova memory trace": {
+    "status": "builder-only"
+  },
+  "nova memstore access ledger": {
+    "status": "builder-only"
+  },
+  "nova memstore derive": {
+    "status": "builder-only"
+  },
+  "nova memstore provenance": {
     "status": "builder-only"
   },
   "nova merkle-tree": {
@@ -1118,6 +1166,15 @@
     "tab": "schema",
     "api": "/api/schema/list"
   },
+  "nova science instrument show": {
+    "status": "builder-only"
+  },
+  "nova science lab show": {
+    "status": "builder-only"
+  },
+  "nova science lab verify": {
+    "status": "builder-only"
+  },
   "nova science receipt build": {
     "status": "builder-only"
   },
@@ -1264,6 +1321,9 @@
   "nova session verify-bundle": {
     "status": "builder-only"
   },
+  "nova settlement chain": {
+    "status": "builder-only"
+  },
   "nova storage inspect": {
     "status": "real-panel",
     "tab": "storage",
@@ -1301,6 +1361,12 @@
     "status": "builder-only"
   },
   "nova trend": {
+    "status": "builder-only"
+  },
+  "nova trust-path show": {
+    "status": "builder-only"
+  },
+  "nova trust-path verify": {
     "status": "builder-only"
   },
   "nova trust-radar": {

@@ -39,9 +39,11 @@ P1 is the facet and the DAG only. P2 ships alongside it as separate modules:
 the reproducibility receipt (NF-323, :mod:`novafabric.science.reproducibility`)
 and the FAIR Workflow-Run-RO-Crate science profile (NF-324,
 :mod:`novafabric.science.fair_rocrate`) — both **experimental**, both riding the
-facet's ``extra="allow"`` config rather than a schema change. Lab/instrument
-provenance (NF-322/329), research-integrity records (NF-326..330) and claim
-grounding (NF-325) are P3–P5 and remain future design.
+facet's ``extra="allow"`` config rather than a schema change. P3 adds declared
+lab-experiment and instrument provenance (NF-322/329,
+:mod:`novafabric.science.lab`, **experimental**) the same way. Research-integrity
+records (NF-326..330) and claim grounding (NF-325) are P4–P5 and remain future
+design.
 """
 
 from __future__ import annotations
@@ -71,7 +73,7 @@ NodeKind = Literal[
 #: The one digest form the rest of the capsule uses. Matched strictly (lower-case
 #: hex, exact length) so a truncated or upper-cased digest fails loudly here
 #: rather than failing to resolve at verify time, months later, in an audit.
-_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}\Z")
 
 #: An identifier is a label, never a document. Anything longer is overwhelmingly
 #: likely to be inlined research content someone tried to smuggle through an

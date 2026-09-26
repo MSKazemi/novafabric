@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 from collections.abc import Mapping
 from typing import Any
 
@@ -48,7 +49,10 @@ IN_MISSION_BOUNDARY = (
 #: nothing about the bytes — accepting one would let a sensor record claim a
 #: binding it does not have, and ``unbound`` would then never fire on an
 #: actuation receipt.
-_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+#: Always applied with :meth:`re.Pattern.fullmatch` — ``$`` alone would admit
+#: a trailing newline (``"sha256:…\n"``), which is a different string from the
+#: digest it imitates and must not bind anything.
+_DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
 #: Field names that name a payload rather than a reference to one.
 #:
@@ -57,18 +61,36 @@ _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 #: ``image`` or ``point_cloud`` does not. A raw payload arriving under an
 #: innocuous name is caught by the value checks below instead; this catches the
 #: case where the value is a *string* the caller believed was harmless.
+#: Matched against the *normalised* key (see :func:`_normalise_key`), so
+#: ``Frames``, ``" frames "``, ``rawBytes`` and ``image-data`` cannot slip past
+#: on spelling alone. Beyond the exact names, two substring markers fire: a
+#: ``raw_`` prefix (``raw_frame``, ``raw_scan``) and a payload-noun suffix
+#: (``image_data``, ``lidar_frames``, ``cabin_audio``) — while the
+#: reference-shaped names this facet legitimately carries (``frame_count``,
+#: ``audio_stream_digest``, ``point_cloud_ref``) still survive, because they
+#: end in a count/digest/ref noun rather than a payload one.
+#: Applied with :meth:`re.Pattern.fullmatch` to a key that
+#: :func:`_normalise_key` has already stripped of whitespace.
 _PAYLOAD_KEY_RE = re.compile(
-    r"^(raw|bytes|blob|payload|data|content|frame|frames|image|images|pixels|"
-    r"point_?cloud|pointcloud|pcd|scan|video|audio|samples|waveform|buffer)$"
-    r"|_(bytes|blob|payload|buffer|pixels)$",
-    re.IGNORECASE,
+    r"(?:raw|bytes|blob|payload|data|content|frame|frames|image|images|pixels|"
+    r"point_?cloud|pointcloud|pcd|scan|video|audio|samples|waveform|buffer)"
+    r"|raw_.*"
+    r"|.*_(?:bytes|blob|payload|buffer|pixels|data|frames|image|images|video|audio|"
+    r"samples|waveform|point_?cloud|pcd)",
+    re.DOTALL,
 )
 
+_CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_KEY_SEPARATORS_RE = re.compile(r"[\s\-.]+")
+
 #: Base64 / hex alphabet, including the URL-safe variant.
-_B64_RE = re.compile(r"^[A-Za-z0-9+/_-]+={0,2}$")
+#: Line breaks are admitted so MIME-wrapped (76-column) base64 cannot slip
+#: past by carrying a newline; spaces are not, so long prose is left alone.
+#: One flat character class — no nested quantifier, so matching is linear.
+_B64_RE = re.compile(r"[A-Za-z0-9+/_\r\n-]+={0,2}\s*")
 
 #: A base64-encoded ``data:`` URI, rejected at any length.
-_DATA_URI_RE = re.compile(r"^data:[^,;]*;base64,", re.IGNORECASE)
+_DATA_URI_RE = re.compile(r"data:[^,;]*;base64,", re.IGNORECASE)
 
 #: Length above which a pure-base64 string is treated as an inlined payload.
 #:
@@ -142,12 +164,23 @@ def _check_scalar(value: Any, path: str) -> None:
             raise RawPayloadRejectedError(path, "buffer-exporting object")
 
     if isinstance(value, str):
-        if _DATA_URI_RE.match(value):
+        if _DATA_URI_RE.match(value.lstrip()):
             # Unambiguous at any length: a base64 data URI *is* an inlined
             # payload, so no length bound applies.
             raise RawPayloadRejectedError(path, "base64 data: URI")
-        if len(value) > _INLINE_PAYLOAD_MAX_LEN and _B64_RE.match(value):
+        if len(value) > _INLINE_PAYLOAD_MAX_LEN and _B64_RE.fullmatch(value):
             raise RawPayloadRejectedError(path, f"base64-shaped string of {len(value)} characters")
+
+
+def _normalise_key(key: str) -> str:
+    """Fold a field name to ``snake_case`` for the payload-name check.
+
+    NFKC-folds (so full-width or ligature look-alikes collapse), splits
+    camelCase, maps whitespace/``-``/``.`` to ``_`` and lower-cases.
+    """
+    folded = unicodedata.normalize("NFKC", key).strip()
+    snake = _CAMEL_RE.sub("_", folded)
+    return _KEY_SEPARATORS_RE.sub("_", snake).strip("_").lower()
 
 
 def reject_raw_payloads(value: Any, *, path: str = "") -> None:
@@ -165,7 +198,7 @@ def reject_raw_payloads(value: Any, *, path: str = "") -> None:
         for key, child in value.items():
             name = str(key)
             child_path = f"{path}.{name}" if path else name
-            if _PAYLOAD_KEY_RE.search(name):
+            if _PAYLOAD_KEY_RE.fullmatch(_normalise_key(name)):
                 raise RawPayloadRejectedError(child_path, "payload-named field")
             reject_raw_payloads(child, path=child_path)
         return
@@ -219,7 +252,7 @@ def _validate_ref(value: str | None) -> str | None:
     if value is None:
         return None
     reject_raw_payloads(value)
-    if not _DIGEST_RE.match(value):
+    if not _DIGEST_RE.fullmatch(value):
         raise InvalidReferenceError(
             f"reference {value!r} is not a 'sha256:<64 hex>' digest; sensor "
             "streams and action receipts are bound by digest and held "

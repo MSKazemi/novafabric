@@ -38,7 +38,7 @@ SESSION_ID_ENV_VAR = "NOVAFABRIC_SESSION_ID"
 SESSION_SEQUENCE_ENV_VAR = "NOVAFABRIC_SESSION_SEQUENCE"
 
 #: Canonical 26-char Crockford base32 ULID (same rule as the capsule schema).
-ULID_PATTERN = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
+ULID_PATTERN = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}\Z")
 
 SessionMembershipSource = Literal["cli-flag", "env-var", "sdk-arg"]
 

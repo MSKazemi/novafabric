@@ -1,0 +1,40 @@
+{
+  "anchors": [
+    {
+      "org": "orgA",
+      "public_key_spki_b64": "MCowBQYDK2VwAyEAwU/5cure00A5YZwxqJ6EgbK7sRt44OYtyHRZ1yI2SVg="
+    }
+  ],
+  "description": "A -> B -> C -> B: C re-vouches for B's key.",
+  "expect": {
+    "broken_hop": 2,
+    "path_walk_ok": false,
+    "reason": "cycle"
+  },
+  "trust_path": [
+    {
+      "anchor_digest": "sha256:7dd119e706e8e0d8fc118f266430716190684ac95cb0197f96b21cfaca343526",
+      "from_org": "orgA",
+      "signature": "plgyDJnaLMBFWl00BUBzNr+9ic7Nk76O/eUIRh0YxXS+w0IGrhMpz5abqKJ+PiPzXG+87QqJDyaXqllzXgG6DA==",
+      "statement_digest": "sha256:264ba7ec4e2c449f49dc0ff5ffbd814af946d5c73273929a4babfc7f59bca27c",
+      "subject_public_key": "MCowBQYDK2VwAyEAXuBX/YaLdvLIWbmBHZkMn/Kf0pdprq0NeEKIwbKdiSE=",
+      "to_org": "orgB"
+    },
+    {
+      "anchor_digest": "sha256:7dd119e706e8e0d8fc118f266430716190684ac95cb0197f96b21cfaca343526",
+      "from_org": "orgB",
+      "signature": "2EO0YNKFJs0+E0X34/9xR3AV3jJ4wQH2T428c/pyoIPUAnG5OHzGTk0gSH/kGQaPypZBLv9iVtmfEnHyFsNPBw==",
+      "statement_digest": "sha256:6af27faaefdb54513beba37d3c28612bf6f12728e333aa030cec2c5b79ab6d65",
+      "subject_public_key": "MCowBQYDK2VwAyEAOilSCgUXiOUYdqqO6pIREnrGSoIu1yaYJfmvzdrtlNU=",
+      "to_org": "orgC"
+    },
+    {
+      "anchor_digest": "sha256:7dd119e706e8e0d8fc118f266430716190684ac95cb0197f96b21cfaca343526",
+      "from_org": "orgC",
+      "signature": "gaHHe18Lyt8wlhLFtMMzvPdKzk/xb6A2LOAdgMTgyKzDlY4jtgRqcUciMRWlq6SzykhgJYNG5vl7YcbczY9dAA==",
+      "statement_digest": "sha256:84dff9c8b8506064972a25f1e8e312dbe90f1c9bd4ff81a9a5d1e3287a0006d4",
+      "subject_public_key": "MCowBQYDK2VwAyEAXuBX/YaLdvLIWbmBHZkMn/Kf0pdprq0NeEKIwbKdiSE=",
+      "to_org": "orgB"
+    }
+  ]
+}

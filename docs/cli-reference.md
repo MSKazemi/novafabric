@@ -182,12 +182,15 @@ Commands grouped by primitive and task. Each entry links to its full section.
 | [`nova score submit`](#nova-score-submit-experimental-adr-0119) | Submit an externally-computed score into a capsule's append-only scores.jsonl |
 | [`nova merkle-tree`](#nova-merkle-tree-document-experimental-adr-0172) | Render an Evidence Provenance Merkle proof tree from a sealed capsule's hashes (experimental) |
 | [`nova trust-radar`](#nova-trust-radar-verification-experimental-adr-0173) | Trust Attestation Radar over a capsule's verification output (experimental) |
+| [`nova trust-path`](#nova-trust-path-show--verify-experimental-adr-0168) | Show / offline-verify a transitive cross-org trust path against anchors you pin (experimental, NF-363) |
 | [`nova redaction-xray`](#nova-redaction-xray-document-experimental-adr-0174) | Redaction / secret-scan X-Ray of a capsule's protection metadata (experimental) |
 | [`nova assure-case`](#nova-assure-case-document-experimental-adr-0166) | Inspect an assurance-case document: validity, currency, conformance, defeaters (experimental) |
 | [`nova assure-coverage`](#nova-assure-coverage-document-experimental-adr-0166) | Structural coverage of an assurance case — counts and gaps, never a grade (experimental) |
 | [`nova passport`](#nova-passport-issue--verify-experimental-adr-0149) | Portable agent passport: issue + offline verify (experimental) |
-| [`nova embodied`](#nova-embodied-odd-show--trajectory-verify-experimental-adr-0162) | Embodied-agent evidence: ODD record (verdict always null) + perception→actuation trajectory chain verify, offline (experimental) |
-| [`nova hitl`](#nova-hitl-thread--context--override--rationale-experimental-adr-0150) | Human-agent accountability: conversation thread, decision-context receipt re-check, overrides, surfaced rationale — read-only (experimental) |
+| [`nova embodied`](#nova-embodied-odd-show--trajectory-verify-experimental-adr-0162) | Embodied-agent evidence: ODD record (verdict always null) + perception→actuation trajectory chain verify, offline (experimental); sim2real show/verify, teleop list, timing show ([P3](#nova-embodied-sim2real-show--verify--teleop-list--timing-show-experimental-adr-0162-p3)) |
+| [`nova hitl`](#nova-hitl-thread--context--override--rationale-experimental-adr-0150) | Human-agent accountability: conversation thread, decision-context receipt re-check, overrides, surfaced rationale; [handoffs and acted-on-behalf bindings](#nova-hitl-handoff-list--acted-as-experimental-adr-0150-p3) — read-only (experimental) |
+| [`nova consent`](#nova-consent-record--show--verify-experimental-adr-0150-p3) | ISO/IEC TS 27560-shaped consent receipts: record into a capsule, show, offline re-check — never asserts legal validity (experimental) |
+| [`nova memstore`](#nova-memstore-access-ledger--derive--provenance-experimental-adr-0171) | Shared-store governance evidence: access ledger (`contained:false` = evidence, not enforcement), cross-run read → seeding-write back-trace, source → write → runs fan-out — offline over explicit capsules (experimental) |
 
 ### Registry, promotion, and evaluation
 
@@ -270,6 +273,7 @@ Status: **experimental**.
 | [`nova migrate-to-postgres`](#nova-migrate-to-postgres) | Migrate the local SQLite registry to Postgres |
 | [`nova migrate-format`](#nova-migrate-format-experimental-adr-0165-nf-332) | Record a format-migration hop in a preservation facet; verify the chain offline (experimental) |
 | [`nova preservation`](#nova-preservation-experimental-adr-0165-nf-333334) | Record/verify crypto re-seal events and LTV timestamp-renewal chains in a preservation facet (experimental, record-only) |
+| [`nova settlement`](#nova-settlement-experimental-adr-0163-nf-315) | Walk the A2A payment-provenance chain in a settlement facet offline (experimental, record-only; moves no money) |
 | [`nova backup`](#nova-backup-create-experimental-adr-0181) / [`nova restore`](#nova-restore-set-path-experimental-adr-0181--adr-0211) | Evidence-grade backup sets: create, verify offline, restore (local + automated pg restore, experimental) |
 | [`nova support-bundle`](#nova-support-bundle-experimental-adr-0187) | Secret-safe diagnostics tarball for support (experimental) |
 | [`nova audit-log`](#nova-audit-log-export-experimental-adr-0191) | Export local audit logs for SIEM ingestion (OCSF / CEF / native JSONL, experimental) |
@@ -1054,6 +1058,46 @@ A read may carry `origin_run_id` — what the reading agent believed it was
 reading. That is recorded as a *claim* on the edge, not as the edge's source:
 the answer to "who really wrote this" comes from the `wrote_memory` edges, not
 from the reader's own assertion.
+
+### nova memstore access ledger | derive | provenance (experimental, ADR-0171)
+
+**Experimental** (ADR-0171 P2, NF-392 / NF-395 / NF-396). Governance evidence about a
+long-lived, **shared, at-rest** store across runs — distinct from `nova memory`, which is the
+per-run view. Reads `facets.memstore_mutation` (its `records_in_this_run`, and the `access`
+block) from an **explicit list of capsules**; there is no cross-run index. Read-only: nothing
+is written. Every output ends with the in-mission-boundary line: NovaFabric records evidence
+about the store; it never hosts, serves, manages, or gates it.
+
+```bash
+# NF-392: who read/wrote which entry, and was it in the agent's declared scope?
+nova memstore access ledger --capsule runs/A --capsule runs/B --store org-kb/support [--agent triage-agent] [--uncontained] [--json]
+# NF-395: back-trace a read in run C to the store-write that seeded it, then upstream
+nova memstore derive --entry bl-7 --run run_C --capsule runs/A --capsule runs/B --capsule runs/C --store org-kb/support [--namespace billing] [--ledger ledger.json] [--max-depth 8] [--max-nodes 500] [--json]
+# NF-396: source → store-write → later runs for one entry
+nova memstore provenance --entry pb-4471 --capsule runs/A --capsule runs/B --capsule runs/C --store org-kb/support [--namespace playbooks] [--ledger ledger.json] [--json]
+```
+
+- **`contained: false` is evidence, never enforcement.** It is computed from `allowed_scope`
+  (`*`, `<namespace>`, or `<namespace>/<entry-glob>`, comma-separated; the namespace part is
+  never a glob) and re-verified here, so a forged flag makes the command exit 1.
+- **Binding is by content identity:** a read binds to the most recent recorded write of the
+  same entry whose post-op `value_digest` equals the digest the read observed (a write provably
+  after the read is excluded). A contradicting reader claim is `claim_mismatch`; a read of a
+  value no supplied capsule recorded writing is `unresolved` — never invented.
+- **Upstream hops** (`derive`) follow the origin run's reads made before its write:
+  run-level co-occurrence, not proven causation. Cycle-safe and bounded (`--max-depth` 0–64,
+  `--max-nodes` 1–10000); hitting a cap reports `truncated`.
+- A capsule set that omits a run yields a partial mutation chain, reported as
+  `ledger_chain_ok: false` (a warning; not repaired). `--ledger` takes the sealed sidecar
+  (JSON list or `{"ledger": [...]}`) instead of re-assembling.
+- **Exit codes:** `0` reported (out-of-scope rows do not fail); `1` defective evidence (broken
+  access chain, forged `contained`, malformed block, broken `--ledger` chain) or, for `derive`,
+  a root read that binds to no recorded write; `2` nothing could be checked (unreadable/oversize
+  capsule or ledger, no read/write of the entry to trace).
+
+The other ADR-0171 surfaces (`nova memstore mutation show|verify`, `retention verify`,
+`poisoning list`, `stale`, `conflicts`, `purpose`, `snapshot log`, `nova lineage memstore`) are
+**planned**, not shipped.
 
 ---
 
@@ -3175,6 +3219,7 @@ Options:
 - `--ca-bundle PATH` — **experimental** (ADR-0055). Operator CA bundle (concatenated PEM). Adds a `Signer certificate chain (CA bundle)` check: the certificate embedded in the DSSE envelope must chain — RFC 5280 path validation via `cryptography`'s `x509.verification`, offline, validity checked at the current time — to a certificate in the bundle. Every bundle certificate is a trust anchor; the envelope carries only the leaf, so include the issuing intermediate in the bundle. No OCSP; offline CRL revocation checking is opt-in via `--crl-dir` (below). Overrides the optional `ca_bundle` key in `novaseal.yaml`; when neither is set, the check is skipped and output is unchanged. Local backend only. Fails closed (exit 1) on an unreadable/malformed bundle, a bare-key envelope, or a chain that does not reach an anchor.
 - `--crl-dir DIR` — **experimental** (ADR-0070 §3, ADR-0055 OQ-55-3). Directory of CRLs (DER or PEM) an operator syncs locally; **never fetched**. Every certificate of the validated signer chain below a self-signed root (leaf, intermediates — including a bundled intermediate, checked against its root's CRL) is checked against the CRL issued by its issuer, authenticated with the issuer's key. Per-certificate lines are printed under `Revocation (CRL, offline, soft-fail|strict)`: `GOOD`, `REVOKED` (with reason/date — always exit 1), or `WARNING no_crl` / `stale` / `invalid_crl` (forged or unsigned CRL). Skipped files (non-CRL, oversize > 16 MiB, delta/indirect CRLs) are listed. More than 256 files fails closed. Requires `--ca-bundle` or `ca_bundle` in `novaseal.yaml` (otherwise exit 2); overrides `crl_dir` in `novaseal.yaml`.
 - `--crl-strict` — with `--crl-dir`: a missing, stale or invalid CRL also fails (exit 1). Also enabled by `crl_strict: true` in `novaseal.yaml`.
+- `--tsa-ca-bundle PATH` — **experimental** (ADR-0070 §1). Operator TSA CA bundle (concatenated PEM). When the capsule's `.seal/manifest.dsse.tsr` (or an Evidence Bundle ZIP's `manifest.dsse.tsr`) holds an RFC 3161 token, adds a `TSA certificate chain (RFC 3161, TSA CA bundle)` check, fully offline and fail-closed: the CMS signature over the signed attributes verifies under the TSA signer certificate, `messageDigest` matches the `TSTInfo`, the `signingCertificate`/`signingCertificateV2` (ESSCertID) hash binds that certificate, the certificate's `extendedKeyUsage` is **critical** and only `id-kp-timeStamping`, the message imprint equals SHA-256 of the DSSE envelope (ZIP: of `attestations/run.intoto.json`), and the certificate chains to the bundle **at the token's genTime** (depth ≤ 10). `--crl-dir` / `--crl-strict` also revocation-check this chain as of genTime, with CRL freshness judged at verification time so a CRL synced today works under `--crl-strict`; `keyCompromise`/`cACompromise` entries (or an `invalidityDate` ≤ genTime) revoke even when dated after genTime (and `--crl-dir` is then accepted without `--ca-bundle`). Overrides `tsa_ca_certs` in `novaseal.yaml`; when neither is set the check is skipped and output is unchanged. With TSA anchors set, a missing or empty token **fails** (exit 1) — the `.tsr` is not covered by the DSSE signature, so a deleted token must not pass. The message imprint's hash algorithm must be SHA-256. RSASSA-PSS and SHA-1 message digests are rejected.
 
 Exit codes: `0` (all checks pass), `1` (any check fails or .seal/ missing).
 
@@ -3382,6 +3427,53 @@ Exit codes: `0` (attested / partial / unsealed — informational), `1` (critical
 
 ---
 
+### nova trust-path show | verify (experimental, ADR-0168)
+
+**experimental** (ADR-0168 P2, NF-363). Read / verify the **transitive cross-org trust path**
+recorded in a capsule's `facets.federation.trust_path`: an ordered, anchor-first chain of signed
+delegation statements (OpenID-Federation trust-chain shape), each hop `{from_org, to_org,
+statement_digest, anchor_digest, signature, subject_public_key[, max_path_length]}` — "A trusts C's
+evidence via B" as a verifiable path, not an assertion.
+
+- `nova trust-path show --capsule <run_id|dir> [--json]` — print the hops **unverified** (no
+  signature is checked). Exit `0` whenever the capsule was read, including "no path recorded";
+  `2` on a missing/unreadable capsule or a malformed path.
+- `nova trust-path verify --capsule <run_id|dir> --anchor ORG=PUBKEY.pem [--anchor …]
+  [--max-depth N] [--revoked SUBJECT …] [--strict-depth] [--json]` — walk the path **offline**. Hop 0 must verify
+  under an anchor **you** pin with `--anchor` (Ed25519 or ECDSA P-256 PEM public key); the
+  capsule's own `trust_anchor` pin is never used. Every later hop must be signed by the key the
+  previous hop vouched for, link `from_org` to the previous `to_org`, carry the same
+  `anchor_digest`, and have a recomputable `statement_digest`. Passes only when the path is
+  `acyclic`, has `no_broken_hop`, `terminates_at_anchor`, and touches no `--revoked` org id / key
+  digest. A signed `max_path_length` or `--max-depth` overrun is flagged
+  `delegation_depth_exceeded` — **not fatal** by default; the report separates
+  `signed_depth_flags` from `policy_depth_exceeded`. `--strict-depth` makes a **signed**
+  `max_path_length` overrun fatal (exit `1`, reason `signed_depth_exceeded`, OpenID Federation
+  semantics); `--max-depth` stays a flag either way.
+
+Exit codes for `verify`: `0` path verified; `1` walk failed — the first broken hop and a reason
+code are printed (`anchor_not_pinned`, `anchor_org_mismatch`, `anchor_mismatch`, `broken_linkage`,
+`statement_digest_mismatch`, `bad_signature`, `bad_subject_key`, `cycle`, `path_touches_revoked`,
+`signed_depth_exceeded` (only with `--strict-depth`), `malformed_path`, `no_trust_path`); `2` usage/input error (capsule not found, bad or private-key
+`--anchor` file). Paths are capped at 16 hops.
+
+Every output, JSON included, carries the in-mission-boundary line: NovaFabric **walks** paths other
+orgs signed; it is never the anchor, CA or trust authority, and a valid path proves the delegation
+chain composes — **not** that the foreign evidence is correct. Revocation input is
+verifier-supplied until the NF-369 record lands (future design); `nova federate` and
+`nova trust-anchor add` remain **planned**.
+
+```bash
+nova trust-path show --capsule 01KZ...
+nova trust-path verify --capsule 01KZ... --anchor orgA=./orgA-root.pub.pem
+nova trust-path verify --capsule ./my-capsule --anchor orgA=./orgA-root.pub.pem \
+  --max-depth 3 --revoked sha256:9f2c... --json
+```
+
+**Reference:** `src/novafabric/federation/trust_path.py`, `src/novafabric/cli/trust_path.py`.
+
+---
+
 ### nova redaction-xray \<document\> | --capsule \<dir\> (experimental, ADR-0174)
 
 Render a Redaction / Secret-scan X-Ray from a capsule's protection metadata: a
@@ -3517,8 +3609,55 @@ ref); `2` — nothing could be checked (capsule not found/unreadable, or no
 trajectory recorded for `trajectory verify` — absent is not a pass). `odd show`
 with no ODD recorded exits `0` and says so.
 
-The other ADR-0162 surfaces (`nova embodied sensors|actuation|sim2real|teleop|verify`,
-`nova export-dssad`, `nova lineage embodied`) are **planned**, not shipped.
+The other ADR-0162 surfaces (`nova embodied sensors|actuation|verify`,
+`nova export-dssad`, `nova lineage embodied`) are **planned**, not shipped; the
+P3 subcommands below are shipped `experimental`.
+
+### nova embodied sim2real show | verify · teleop list · timing show (experimental, ADR-0162 P3)
+
+**Experimental** (ADR-0162 P3, NF-304 / NF-305 / NF-308). Same offline,
+record-only contract and in-mission-boundary line as `odd show` above; each
+subcommand validates only the object it reports on.
+
+```bash
+nova embodied sim2real show   --capsule ./capsules/run-01HX              # NF-304 sim policy → real deployment
+nova embodied sim2real verify --capsule 01HXAY --policy ./policy.ckpt    # re-hash local artifacts vs recorded digests
+nova embodied teleop list     --capsule 01HXAY --direction autonomy_to_human --json   # NF-305 handoffs
+nova embodied timing show     --capsule ./capsules/run-01HX              # NF-308 per-clock-domain evidence
+```
+
+Options: `--capsule` (required), `--json` (all four). `sim2real verify` also takes
+`--policy`, `--env`, `--randomization` — local files to stream-hash (regular files
+only, capped at 64 GiB) and compare with `sim_policy_ref` / `sim_env_ref` /
+`randomization_ref`. `teleop list` takes `--direction autonomy_to_human|human_to_autonomy`.
+
+- `sim2real show` prints the four refs and `unbound`. An absent or unresolvable
+  `sim_policy_ref` is recorded as `unbound: true` — shown, never an error.
+- `sim2real verify` checks that `deployment_run_id` names this capsule's `run_id`
+  (a `run:` prefix is ignored), notes when `sim_policy_ref` appears in this capsule's
+  NF-202 `facets.model_provenance.checkpoint_chain`, and compares any supplied local
+  artifact. Errors: `artifact_mismatch`, `deployment_mismatch`. Warnings (never
+  fatal): `unbound`, `deployment_unchecked` (no `run_id`), `artifact_unreferenced`.
+- `teleop list` prints each handoff (`ts`, `direction`, pseudonymous `operator_ref`,
+  `trigger` code, `latency_ms`) in time order. A PII-shaped operator ref (e-mail,
+  whitespace, bare phone-like digit run) is refused (`OperatorIdentityError`)
+  without echoing it. Two consecutive handoffs in the same direction are a
+  `direction_repeat` warning.
+- `timing show` prints each clock domain's `source`, `offset_ms` (or
+  "unrecorded") and `max_observed_latency_ms`, and warns
+  (`undeclared_clock_domain`) for each sensor stream stamped against a domain the
+  block does not describe. NovaFabric synchronizes, steers or corrects no clock.
+  `timing show` is not named in the ADR-0162 spec's CLI list (NF-308 has no CLI
+  there); it is attached to the existing `nova embodied` group as the read-only
+  counterpart of the other `show` commands.
+
+Exit codes: `0` — shown (including "none recorded") / nothing contradicts the
+record; `1` — the recorded evidence is defective or contradicted (malformed block,
+PII-shaped operator, prose trigger, out-of-order `ts`, duplicate clock domain,
+non-finite or out-of-range milliseconds, digest or deployment mismatch); `2` —
+nothing could be checked (capsule not found/unreadable or over the 64 MiB manifest
+cap, a named artifact unreadable, an unknown `--direction`, or no `sim2real`
+recorded for `sim2real verify` — absent is not a pass).
 
 ### nova hitl thread | context | override | rationale (experimental, ADR-0150)
 
@@ -3553,8 +3692,74 @@ overridden and surfaced; it does not adjudicate the decision, grant or deny any 
 certify that oversight was adequate or lawful. Records hold digests, short codes and
 pseudonymous `human:` refs only — never prose or names. Records are written by the
 library (`novafabric.hitl.record_decision_context` / `record_override` /
-`record_rationale`, fail-open); there is no CLI writer. `nova hitl handoff list` and
-`nova hitl acted-as` (NF-189/NF-186) are **planned**, not shipped.
+`record_rationale`, fail-open); there is no CLI writer for these three. P3 adds
+`nova hitl handoff list` / `nova hitl acted-as` and `nova consent` (below).
+
+### nova hitl handoff list | acted-as (experimental, ADR-0150 P3)
+
+Read-only views over the NF-189 accountability handoff receipts and the NF-186
+acted-on-behalf bindings stored in `facets.conversation` (`handoff`, `acted_on_behalf`).
+
+```bash
+nova hitl handoff list --capsule <dir|run-id> [--json]                                # NF-189 responsibility transfers
+nova hitl acted-as     --capsule <dir|run-id> --turn t1 [--delegation <nf084.json>] [--json]  # NF-186 turn -> NF-084 hop
+```
+
+`handoff list` checks each receipt offline. `from_party` must differ from `to_party`
+(compared after NFKC + case-fold, and two `fp:` refs where one hex is a prefix of the other
+are the same party; a self-handoff is a defect; an `fp:` ref needs 16..64 hex). An `ed25519:` `sig` is
+verified over the canonical record with the embedded `signer_key`; when the signer ref is
+fingerprint-shaped (`human:fp:<hex>`) the key is also checked against that fingerprint
+(`key_binding: fingerprint_match`), otherwise the key is reported `unbound` — the
+key-to-party binding is not established. A `sha256:` `sig` is a reference to an external
+signature envelope and is reported `reference_only`, never as verified. Exits `1` on a
+malformed or self-handoff record, a dangling `turn_ref`, an invalid signature, or a
+fingerprint mismatch; `0` otherwise (including an empty list).
+
+`acted-as` looks up each binding's `delegation_hop_ref` among the `grant_ref` values of an
+NF-084 delegation document (`schemas/features/delegation-chain-v0.schema.json`, given with
+`--delegation`, or `facets.delegation` when a capsule carries one) and surfaces the state
+recorded in that document: `established`, `broken` (with `broken_hop` verbatim),
+`unverified`, `absent`, `ambiguous` or `malformed`, labelled "as recorded by the NF-084
+document, not re-verified" (`reverified: false` in `--json`). The binding's `principal_ref`
+must match the hop's `granter` or the chain root's `granter` (NFKC + case-fold; `user:` in
+the document equals `human:`), else the state is `principal_mismatch`. It never re-verifies
+the chain. `--delegation` is capped at 4 MiB. Exits `0` only when the turn resolves, has a
+binding, and every bound hop is `established`; `1` otherwise (including
+`principal_mismatch`).
+
+### nova consent record | show | verify (experimental, ADR-0150 P3)
+
+NF-183 consent receipts in an ISO/IEC TS 27560 / W3C DPV-shaped structure (`consent_id`,
+`subject_ref`, `purpose`, `action`, `given_at`, `expiry`, `withdrawable`, `withdrawn_at`,
+`receipt_digest`), stored in `facets.conversation.consent`.
+
+```bash
+nova consent record --capsule <dir|run-id> --subject human:fp:<hex> --purpose dpv:ServiceProvision \
+    --scope dpv:Store [--scope …] [--expiry <iso>] [--given-at <iso>] [--consent-id <id>] \
+    [--turn <turn_id>] [--not-withdrawable] [--dry-run] [--force-unseal] [--json]
+nova consent show   --capsule <dir|run-id> [--json]
+nova consent verify --capsule <dir|run-id> [--json]
+```
+
+`record` builds the receipt, binds `receipt_digest` (SHA-256 over the canonical receipt,
+extension fields included, `withdrawn_at` excluded) and atomically rewrites `capsule.yaml`.
+That changes the capsule Merkle root, so any seal or signature issued over the capsule
+earlier must be re-issued. It exits `1` when the receipt is refused (non-`human:` or
+email-shaped subject, prose in a concept field, `expiry` not after `given_at`, a `--turn`
+that does not resolve, a duplicate `consent_id`). `--dry-run` prints without writing.
+A NovaSeal-sealed capsule (`.seal/` present) is **refused** (exit `1`, `capsule.yaml`
+untouched, `nova verify` still passes) unless `--force-unseal` is passed; the write then
+proceeds with a loud warning that the existing seal no longer verifies and must be
+re-issued. A symlinked `capsule.yaml` or capsule directory is always refused.
+
+`verify` recomputes every `receipt_digest`, resolves any `turn_ref`, flags a duplicate
+`consent_id`, and prints the `capsule.yaml` digest the receipts bind through (the binding
+to the capsule root is transitive; there is no dedicated attestation entry). Exit `0`
+intact, `1` defective, `2` nothing to check. `show` exits `1` on a malformed entry.
+
+Every output carries the notice that NovaFabric records the receipt and does not assert the
+consent was freely given, informed, specific, lawful, or otherwise legally valid.
 
 ---
 
@@ -3820,6 +4025,7 @@ conventions:
 | [`nova export-model-independence`](#nova-export-model-independence---model-id) | Model-validation independence (ADR-0058 maker-checker) | ADR-0159 |
 | [`nova export-retention`](#nova-export-retention---bundle-zip) | SEC 17a-4 / MiFID retention posture + RFC 3161 timestamp | ADR-0159 |
 | [`nova export-adverse-action`](#nova-export-adverse-action---run-id-id) | ECOA / Reg B specific-reasons evidence (not a notice) | ADR-0159 |
+| [`nova export-cat`](#nova-export-cat---run-id-id) | CAT-style lifecycle agent-event trail (SEC Rule 613 pattern; not a CAT submission) | ADR-0159 |
 | [`nova export-part11`](#nova-export-part11-document) | 21 CFR Part 11 electronic records | ADR-0160 |
 | [`nova export-rai-scorecard`](#nova-export-rai-scorecard-document) | Responsible-AI coverage scorecard | ADR-0158 |
 | [`nova export-public-annex-viii`](#nova-export-public-annex-viii-document) | EU AI Act Annex VIII public DB (DRAFT) | ADR-0169 |
@@ -3832,6 +4038,7 @@ conventions:
 | [`nova export-election-disclosure`](#nova-export-election-disclosure-document) | Election / civic content-provenance disclosure | ADR-0169 |
 | [`nova export-accessibility-claim`](#nova-export-accessibility-claim-document) | Declared accessibility-conformance claim | ADR-0169 |
 | [`nova export-control-attestation`](#nova-export-control-attestation-document) | Governance-control attestation pack | ADR-0170 |
+| [`nova insurance`](#nova-insurance) | Liability chain / SLA breach / coverage trigger evidence (experimental) | ADR-0170 |
 
 ### nova export-model-risk \<evidence\>
 
@@ -3942,8 +4149,58 @@ nova export-adverse-action --run-id 01KZ... --out aa-pack.json
 - `--out` — also write the pack JSON to a file (refused inside the capsule)
 
 Exit codes: `0` (rendered, including `missing` rows), `2` (capsule not found; a
-sealed digest does not match the bytes on disk; malformed manifest, model-call
-line, or attribution facet; `--out` inside the capsule or unwritable).
+symlinked `capsule.yaml` / `model-calls.jsonl`; a file recorded in `evidence_digests`
+that is absent, a symlink, or not a regular file; a sealed digest that does not match
+the bytes on disk; malformed manifest, model-call line, or attribution facet; `--out`
+inside the capsule or unwritable).
+
+---
+
+### nova export-cat --run-id \<id\>
+
+**Experimental** (ADR-0159 D6 / NF-280). Reads one sealed Run Capsule (by run id,
+resolved in `$NOVAFABRIC_CAPSULE_DIR`, or by path) and renders a lifecycle-ordered,
+self-contained agent-event trail — lifecycle stage, recorded actor identity ref and
+recorded timestamps per event — as a **firm-owned, self-hosted** artifact modelled on
+the SEC Rule 613 (17 CFR 242.613) Consolidated Audit Trail event lifecycle. The stage
+mapping is explicit and nothing else is read:
+
+| Stage | Capsule source | Actor identity ref |
+|---|---|---|
+| `origination` | `capsule.yaml` `created_at` | none recorded at run level |
+| `decision` | `model-calls.jsonl` | response (else request) model ref |
+| `authorization` (optional) | `tool-permission-events.jsonl`, `human_approvals.jsonl` | `authorising_identity` (+ `approval_principal`) / `approver_id` |
+| `action` | `tool-calls.jsonl` | `tool_name` (+ `agent_call_id` link) |
+| `disposition` | `capsule.yaml` `finished_at` + `status` | none recorded at run level |
+
+Events are ordered by UTC-normalised recorded timestamp, ties broken by stage, stream
+and line; an event without a timestamp is kept (never given a guessed time), placed
+last, and its stage marked `partial`. A **missing required stage makes the trail
+`partial`**; `authorization` is reported but optional (a run whose policy needed no
+decision records none). No event is ever synthesised; prompt/response text, tool
+arguments/results and approval rationales never reach the trail. Every rendered
+recorded string is capped (1024 chars) and scanned against the ADR-0009 secret
+rules — a match is suppressed and the stage marked `partial`. **It is not a CAT
+submission**: no CAT technical-specification format, reporter id or event-type code;
+it never connects to the CAT central repository or a plan processor and transmits
+nothing.
+
+```bash
+nova export-cat --run-id 01KZ...
+nova export-cat --run-id 01KZ... --json
+nova export-cat --run-id 01KZ... --out cat-events.json
+```
+
+- `--run-id` — run id or capsule directory path (required)
+- `--capsule-dir` — capsule store to resolve the run id in
+- `--json` — machine-readable trail on stdout
+- `--out` — also write the trail JSON to a file (refused inside the capsule)
+
+Exit codes: `0` (rendered, including `missing` / `partial` stages), `2` (capsule not
+found; a symlinked capsule file; a stream recorded in `evidence_digests` that is
+absent or not a regular file; a sealed digest that does not match the bytes on
+disk; a malformed manifest or event line; an over-long field; an unparseable or
+offset-less timestamp; `--out` inside the capsule or unwritable).
 
 ---
 
@@ -4108,6 +4365,74 @@ nova export-control-attestation ctrl.json --json
 ```
 
 - `<document>` — JSON: `{capsule_root, catalog: [{control_id, evidence_kind?}], present_evidence{}, declared[]}`
+
+---
+
+### nova insurance
+
+Risk-transfer evidence over `facets.risk_transfer` (ADR-0170 P2). **experimental.** Records
+evidence — it **never** assigns fault, decides coverage, adjudicates a claim, or pays out. Every
+output (rich or `--json`) carries the in-mission-boundary line: *evidence supports, never
+determines, an insurance or legal outcome*. Read-only unless `--write` is passed, which merges the
+recorded object into `capsule.yaml` after validating the whole facet (atomic replace; a
+symlinked `capsule.yaml` or capsule directory is refused). A NovaSeal-sealed capsule (`.seal/`
+present) is refused with exit `2` unless `--force-unseal` is also passed, which writes anyway
+and warns that the existing seal no longer verifies and must be re-issued. The other sub-commands
+ADR-0170 names (`features`, `loss bind`, `subrogation`, `insurability`) are **planned** — not yet
+implemented.
+
+#### nova insurance liability show --capsule \<capsule\>
+
+NF-383 liability-attribution chain: ordered `{role, party_ref, acted_as_ref, basis_ref,
+contribution_marker}` — records **who was attributed**, never who is at fault. `role` ∈ principal |
+deployer | operator | vendor | model_provider | integrator | agent | third_party;
+`contribution_marker` ∈ recorded | disputed | none (`recorded`/`disputed` must name a
+`basis_ref`). References are `sha256:` digests; `acted_as_ref` must name another chain member (no
+dangling, self or cyclic edges); fault/verdict/payout-shaped keys are rejected.
+
+```bash
+nova insurance liability show --capsule 01HX...                          # read the recorded chain
+nova insurance liability show --capsule 01HX... --chain chain.json --write
+```
+
+Options: `--chain PATH` (declared chain JSON — a list or `{liability_chain: [...]}`), `--write`
+(requires `--chain`), `--json`.
+
+#### nova insurance sla verify --capsule \<capsule\> --sla \<terms.json\> --observed \<decimal\>
+
+NF-384 SLA/warranty breach: compares the observed value to the **declared** commitment
+`{metric, operator (lt|lte|gt|gte|eq), threshold, window, unit?}` and records `breach` (the
+commitment did not hold) with both figures as exact decimals. `sla_ref` is the sha256 of the terms
+file. Numeric condition only — no remedy, service credit or damages; distinct from ADR-0146 cost
+showback.
+
+```bash
+nova insurance sla verify --capsule 01HX... --sla sla.json --observed 99.2 --evidence-ref sha256:<hex>
+```
+
+Options: `--evidence-ref` (repeatable `sha256:` digest), `--write`, `--json`.
+
+#### nova insurance coverage check --capsule \<capsule\> --exclusions \<set.json\> --facts \<facts.json\> --event-kind \<kind\>
+
+NF-386 exclusion-aware coverage trigger: records `covered_event_kind`, `trigger_facts` (digests),
+`exclusion_set_ref` (sha256 of the declared set, e.g. ISO CG 40 47), `matched_exclusions` (declared
+exclusions whose declared fact markers are present among the observed facts — possibly empty), and
+optional `parametric_conditions` (observed value vs declared parametric threshold; unobserved terms
+are recorded as *not observed*). It **never** decides whether the policy responds.
+
+```bash
+nova insurance coverage check --capsule 01HX... --exclusions cg4047.json --facts facts.json \
+    --event-kind erroneous_output --json
+```
+
+`--exclusions`: `{exclusions: [{exclusion_id, fact_markers[]}], parametric_triggers?: [{metric,
+operator, threshold, unit?}]}`. `--facts`: `{trigger_facts: [{fact_ref, marker}], observations?:
+{metric: value}}`.
+
+Exit codes (all three): `0` recorded — a breach or a matched exclusion is a recorded fact, not a
+failure; `2` input error — unknown capsule, unreadable/oversize (1 MiB cap)/malformed input, a non-finite
+figure (NaN/inf), a non-digest reference, or a determination-shaped
+field. JSON numbers in the input files are parsed as exact decimals.
 
 ---
 
@@ -4302,12 +4627,52 @@ nova science receipt verify --capsule 01HX... [--strict] [--json]
 
 `build` options: `--env`, `--data`, `--code`, `--workflow` (each `sha256:<64 hex>`), `--seed INT`
 (repeatable, ordered), `--determinism bitwise|statistical|nondeterministic|undeclared`,
-`--write` (persist into `capsule.yaml` under `facets.science_provenance.reproducibility_receipt`),
-`--json`.
+`--write` (persist into `capsule.yaml` under `facets.science_provenance.reproducibility_receipt`;
+atomic replace, symlinked `capsule.yaml` refused), `--force-unseal` (with `--write`: rewrite a
+NovaSeal-sealed capsule — refused with exit `2` otherwise — and warn that its seal no longer
+verifies and must be re-issued), `--json`.
 
 Exit codes: `0` ok; `1` (`verify`) root mismatch, misreported incompleteness, malformed or
 absent receipt — or `--strict` with an incomplete receipt; `2` usage error (unknown capsule,
 malformed digest or seed).
+
+#### nova science lab show|verify --capsule \<capsule\>
+
+Declared **lab-experiment provenance** (ADR-0164 NF-322). **experimental** — ADR-0164 P3.
+
+`nova science lab show` prints `facets.science_provenance.lab_experiment` — `lab_kind`
+(`self_driving | cloud_lab | manual | simulation`), `protocol_ref`, `instrument_refs`, `run_id`,
+`sim_to_real` (`sim | real | hybrid`), `outcome_digest`, optional `started_at` / `node_ref` — and
+how many instrument records the capsule carries. `nova science lab verify` checks offline, and
+fails closed, that: every `instrument_ref` resolves to an instrument record; no referenced
+instrument was calibrated after the experiment (experiment time is `started_at`, else the
+capsule's `created_at`; unknown fails); the experiment and instrument digests re-derive; a
+`simulation` is not declared `real`; and an optional `node_ref` names an `experiment_design` /
+`experiment_run` node of the NF-321 lineage. Declarations only — NovaFabric never dispatches to
+or controls a lab and never reads instrument telemetry (`controls_lab: false`,
+`reads_telemetry: false`, `verdict: null`).
+
+```bash
+nova science lab show --capsule 01HX... [--json]
+nova science lab verify --capsule 01HX... [--json]
+```
+
+The blocks are written by the library API (`novafabric.science.lab.build_lab_experiment`,
+`build_instrument_record`, `attach_lab`); there is no `build` subcommand.
+
+Exit codes: `0` ok; `1` (`verify`) a failed check or an absent block — and for every
+subcommand a malformed block (unknown `lab_kind`, malformed digest, a telemetry / raw-data /
+credential-shaped field); `2` usage error (unknown capsule).
+
+#### nova science instrument show --capsule \<capsule\>
+
+Declared **instrument / calibration provenance** (ADR-0164 NF-329). **experimental** — ADR-0164 P3.
+
+Prints each `facets.science_provenance.instrument_provenance[]` record — `instrument_id`,
+`instrument_class`, `firmware_digest`, `calibration_ref` (digest of the calibration record,
+never the record), `calibration_timestamp`, `manufacturer_ref`, and the `record_digest` a lab
+experiment's `instrument_refs` point at. Add `--json` for machine output. Exit `0` shown (or
+none recorded); `1` malformed block; `2` unknown capsule.
 
 #### nova lineage export-prov \<capsule_dir\>
 
@@ -6188,6 +6553,41 @@ on stderr. **Not verified offline:** timestamp tokens are not dereferenced and h
 digests are not recomputed — that is the NF-339 re-verification receipt (future design).
 Implemented in `src/novafabric/cli/preservation.py` and
 `src/novafabric/preservation/reseal.py`.
+
+---
+
+### nova settlement (experimental, ADR-0163 NF-315)
+
+**Experimental, record-only.** `nova settlement chain` walks the agent-to-agent payment
+provenance chain stored in a capsule's settlement facet (`facets.settlement.a2a_payment_chain`)
+offline. Each hop is `{hop_index, payer_agent_ref, payee_agent_ref, amount: {amount_minor,
+currency}, settlement_ref, parent_hop}` — amounts are integer minor units (never a float),
+`settlement_ref` is a `sha256:` digest, and `parent_hop` is `null` on the first hop and must
+name an **earlier** hop otherwise. NovaFabric **moves no value**, holds no funds, contacts no
+payment network, and decides no dispute; `moved_value: false` is on every verdict.
+
+```bash
+nova settlement chain --capsule 01HX...                 # read-only
+nova settlement chain --facet settlement.json --depth 3 --json
+```
+
+The walk (one linear pass, at most 1024 hops) reports `ordered` (`hop_index` equals the
+recorded position, no duplicates), `no_broken_parent` (first hop has no parent; every other
+hop's parent resolves to an earlier hop), `acyclic` (no parent points at itself or a later
+hop), `linear` (no hop is the parent of two hops — the chain does not fork), `continuous`
+(each payer is its parent hop's payee) and `currency_consistent` (no FX between hops — a
+rate would have to be chosen, which is adjudication). `--depth N` limits the hops *shown*
+(newest first, following `parent_hop` back); the verdict always covers the whole chain. A
+card number, IBAN or credential anywhere in the facet is refused and never echoed.
+
+Exit codes: `0` = the walk passed, `1` = the evidence is broken or absent (a failing walk,
+no settlement facet or no chain, a malformed or secret-bearing facet — fail-closed), `2` =
+bad input (flags, an unreadable, oversized or unparseable file, no such capsule). Every run
+prints the in-mission-boundary line on stderr. The negotiated-agreement (NF-316) and
+invoice/receipt (NF-319) records ship as library APIs only (`novafabric.settlement`);
+`nova settlement bind|show|verify|reconcile|finality|reversals`, `nova dispute` and
+`nova export-settlement` remain **planned**. Implemented in
+`src/novafabric/cli/settlement.py` and `src/novafabric/settlement/chain.py`.
 
 ---
 

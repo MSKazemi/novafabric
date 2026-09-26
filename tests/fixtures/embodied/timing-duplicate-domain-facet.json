@@ -1,0 +1,18 @@
+{
+  "_comment": "INVALID by design (ADR-0162 NF-308). Two timing entries for the same clock domain give an offline reader two answers to 'how far off was this clock'. Loading this must raise ClockDomainConflictError, and `nova embodied timing show` must exit 1.",
+  "schema_version": "0.3.0",
+  "timing": [
+    {
+      "clock_domain": "ptp-0",
+      "source": "ptp",
+      "offset_ms": 0.012,
+      "max_observed_latency_ms": 3.4
+    },
+    {
+      "clock_domain": "ptp-0",
+      "source": "declared",
+      "offset_ms": -4.0,
+      "max_observed_latency_ms": 9.0
+    }
+  ]
+}

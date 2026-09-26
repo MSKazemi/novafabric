@@ -82,13 +82,18 @@ SCHEMA_VERSION = "0.1.0"
 #: The one digest form the rest of the capsule uses. Matched strictly
 #: (lower-case hex, exact length) so a truncated or upper-cased digest fails at
 #: construction rather than failing to match years later, during an audit of a
-#: store whose history nobody present still remembers writing.
-_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+#: store whose history nobody present still remembers writing. Always applied
+#: with ``fullmatch``: ``$`` would also accept a trailing newline.
+_DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
 #: An identifier, never a document. Anything longer is overwhelmingly likely to
 #: be store content smuggled through an id field — exactly what I-2 exists to
 #: stop. Namespaces and entry ids in real stores are short.
 MAX_ID_LENGTH = 512
+
+#: A timestamp is an ISO-8601 string; 64 chars covers every legitimate form
+#: (with nanoseconds and an offset) with room to spare.
+MAX_TIMESTAMP_LENGTH = 64
 
 #: The mutation vocabulary, fixed by ADR-0171 D1. Closed on purpose: an
 #: unrecognised op would be a mutation whose *meaning* no later verifier can
@@ -169,7 +174,7 @@ def _validate_digest(value: object, *, field: str) -> str:
     _reject_content(value, field=field)
     if not isinstance(value, str):
         raise InvalidDigestError(f"{field} must be a string digest")
-    if not _DIGEST_RE.match(value):
+    if not _DIGEST_RE.fullmatch(value):
         raise InvalidDigestError(f"{field} must be 'sha256:<64 hex>', got {value!r}")
     return value
 
@@ -303,6 +308,11 @@ class MutationRecord(BaseModel):
             raise ValueError(
                 "at must be non-empty; a mutation with no time answers only two "
                 "of the three questions the ledger exists to answer (NF-391)"
+            )
+        if len(v) > MAX_TIMESTAMP_LENGTH:
+            raise ValueError(
+                f"at is {len(v)} chars, over the {MAX_TIMESTAMP_LENGTH}-char "
+                "timestamp limit; a timestamp is never a free-text field (I-2)"
             )
         return v
 

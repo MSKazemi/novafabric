@@ -47,9 +47,13 @@ receipt (NF-182, :mod:`novafabric.hitl.decision_context`), override (NF-187,
 :mod:`novafabric.hitl.rationale`) as lists stored *inside* this facet
 (``decision_context`` / ``override`` / ``rationale`` keys) — the facet's
 ``extra="allow"`` config is what lets them extend it without a schema break,
-and every record's ``turn_ref`` must resolve via :func:`resolve_turn`. The
-handoff receipt (NF-189) and acted-on-behalf binding (NF-186) remain later
-slices and are deliberately absent here.
+and every record's ``turn_ref`` must resolve via :func:`resolve_turn`. P3 adds
+the consent receipt (NF-183, :mod:`novafabric.hitl.consent`, key ``consent`` —
+the one record whose ``turn_ref`` is optional), the accountability handoff
+(NF-189, :mod:`novafabric.hitl.handoff`, key ``handoff``) and the
+acted-on-behalf binding (NF-186, :mod:`novafabric.hitl.acted_as`, key
+``acted_on_behalf``), which references an NF-084 delegation hop by digest and
+never re-derives its authority.
 """
 
 from __future__ import annotations

@@ -77,7 +77,7 @@ _FORBIDDEN_EXTRA_KEYS = frozenset(
 #: PEM armour for private-key material of any flavour.
 _PRIVATE_KEY_MARKER = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
 
-_SHA256_REF = re.compile(r"^sha256:[0-9a-f]{64}$")
+_SHA256_REF = re.compile(r"^sha256:[0-9a-f]{64}\Z")
 
 
 # Deliberately NOT subclasses of ValueError. Pydantic v2 converts ValueError

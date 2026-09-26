@@ -15,7 +15,7 @@ from novafabric.capture.secrets import redact_secrets_in_text
 
 # A labeled content digest ("sha256:<hex>") is a ref, not a credential —
 # exempt it so digests are never mangled by hex-string credential rules.
-_DIGEST_RE = re.compile(r"^(sha256|sha384|sha512|blake3):[0-9a-fA-F]+$")
+_DIGEST_RE = re.compile(r"^(sha256|sha384|sha512|blake3):[0-9a-fA-F]+\Z")
 
 
 def _sanitize_value(value: Any) -> Any:

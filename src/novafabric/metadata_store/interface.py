@@ -55,7 +55,13 @@ class MetadataStore(abc.ABC):
         cursor: str | None = None,
         **filters: Any,
     ) -> tuple[list[dict[str, Any]], str | None]:
-        """Return (page, next_cursor). Caller must be inside begin_tenant_context()."""
+        """Return (page, next_cursor). Caller must be inside begin_tenant_context().
+
+        ``cursor`` is opaque: pass back the previous ``next_cursor`` verbatim.
+        ADR-0206 P2 (experimental): the SQLite backend emits v1 keyset cursors
+        (``server.pagination`` format) over ``started_at DESC NULLS LAST,
+        run_id DESC``; the Postgres backend still uses integer offsets (planned).
+        """
 
     @abc.abstractmethod
     def begin_tenant_context(self, tenant_id: UUID) -> AbstractContextManager["MetadataStore"]:

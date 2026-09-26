@@ -1,0 +1,34 @@
+{
+  "anchors": [
+    {
+      "org": "orgA",
+      "public_key_spki_b64": "MCowBQYDK2VwAyEAwU/5cure00A5YZwxqJ6EgbK7sRt44OYtyHRZ1yI2SVg="
+    }
+  ],
+  "description": "Hop 0 signs max_path_length=0 but a second hop follows: flagged delegation_depth_exceeded, not fatal.",
+  "expect": {
+    "broken_hop": null,
+    "delegation_depth_exceeded": true,
+    "path_walk_ok": true,
+    "reason": null
+  },
+  "trust_path": [
+    {
+      "anchor_digest": "sha256:7dd119e706e8e0d8fc118f266430716190684ac95cb0197f96b21cfaca343526",
+      "from_org": "orgA",
+      "max_path_length": 0,
+      "signature": "xcxEgWXUsrIFz9spwjzsm0yFr1sm2ZoGE+32DwNYVQbCVovFIalNIKqhfO9V6V4qdB12gwQz0vJwlIERRTOaCg==",
+      "statement_digest": "sha256:e620ddf479268f83d937eef804a0dd687676a66bbaf5d91d14dfbd059ae4e41d",
+      "subject_public_key": "MCowBQYDK2VwAyEAXuBX/YaLdvLIWbmBHZkMn/Kf0pdprq0NeEKIwbKdiSE=",
+      "to_org": "orgB"
+    },
+    {
+      "anchor_digest": "sha256:7dd119e706e8e0d8fc118f266430716190684ac95cb0197f96b21cfaca343526",
+      "from_org": "orgB",
+      "signature": "2EO0YNKFJs0+E0X34/9xR3AV3jJ4wQH2T428c/pyoIPUAnG5OHzGTk0gSH/kGQaPypZBLv9iVtmfEnHyFsNPBw==",
+      "statement_digest": "sha256:6af27faaefdb54513beba37d3c28612bf6f12728e333aa030cec2c5b79ab6d65",
+      "subject_public_key": "MCowBQYDK2VwAyEAOilSCgUXiOUYdqqO6pIREnrGSoIu1yaYJfmvzdrtlNU=",
+      "to_org": "orgC"
+    }
+  ]
+}

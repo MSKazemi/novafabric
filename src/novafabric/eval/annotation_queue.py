@@ -51,8 +51,8 @@ from novafabric.capture._ulid import new_ulid
 
 ANNOTATION_QUEUE_SCHEMA_VERSION = "0.1.0"
 
-_ULID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
-_SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_ULID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}\Z")
+_SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}\Z")
 
 
 def _now_iso() -> str:

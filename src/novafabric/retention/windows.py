@@ -26,11 +26,11 @@ import re
 from datetime import date, datetime, timedelta, timezone
 
 _DURATION_RE = re.compile(
-    r"^P(?!$)(?:(?P<years>\d+)Y)?(?:(?P<months>\d+)M)?(?:(?P<weeks>\d+)W)?"
-    r"(?:(?P<days>\d+)D)?"
-    r"(?:T(?!$)(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?(?:(?P<seconds>\d+)S)?)?$"
+    r"^P(?!\Z)(?:(?P<years>[0-9]+)Y)?(?:(?P<months>[0-9]+)M)?(?:(?P<weeks>[0-9]+)W)?"
+    r"(?:(?P<days>[0-9]+)D)?"
+    r"(?:T(?!\Z)(?:(?P<hours>[0-9]+)H)?(?:(?P<minutes>[0-9]+)M)?(?:(?P<seconds>[0-9]+)S)?)?\Z"
 )
-_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
 
 
 class WindowParseError(ValueError):

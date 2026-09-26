@@ -13,6 +13,13 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **The capture-overhead benchmark could time a different `nova` than the Python it runs under.**
+  `benchmarks/capture_overhead.py` found `nova`/`novacap` only via `PATH`, so the capture timing
+  could run another install than the `sys.executable` raw timing, and the harness exited 1 when
+  `.venv/bin` was not on `PATH`. It now resolves both from the interpreter's scripts directory first.
+  `test_path_confinement` also no longer assumes the running user's `HOME` is outside the serve
+  denylist (it sets its own).
+
 - **Auditor-only tokens were refused by `GET /v0/usage` despite ADR-0208 D2.** `auditor` sits
   outside the reader < writer < admin chain, so the route's `require_role(reader)` 403'd it
   before the handler's admin/auditor branch ran. Both usage routes now admit admin/auditor or
@@ -171,6 +178,30 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Security
 
+- **Anchored input validators no longer accept a value with one trailing newline.** In Python a
+  `$`-anchored regex matched via `.match`/`.search` accepts `value + "\n"`; across ~40 modules
+  (digests, ULIDs/UUIDs, trace/span ids, asset and capsule refs, labels, tenant/bundle/window/view
+  ids, DOI/ORCID/ROR, semvers, ISO dates and durations, the request-id header, the SCIM member
+  path) this let a newline-suffixed value pass a check — e.g. an override identical to the action
+  it overrode, a reused renewal timestamp, a header-splitting LF. Now `\Z` / `fullmatch`, and
+  id/period/version validators accept ASCII digits only. Regression:
+  `tests/test_validator_trailing_newline.py`. ⚠ JSON Schema `pattern` checks (160 patterns in
+  `schemas/`) have the same property under `jsonschema`'s `re.search`; not changed here (shared
+  schemas are ADR-first).
+
+- **Batch-3 hardening from an adversarial review.** Annotation writes (`nova consent record`,
+  `nova insurance … --write`, `nova science receipt build --write`) refuse sealed capsules unless
+  `--force-unseal`, refuse symlinked manifests and write atomically — before, an honest annotation
+  made `nova verify` report tampering, and two paths wrote through symlinks. A sealed stream that
+  is deleted/symlinked/non-regular now makes `nova export-cat` / `export-adverse-action` exit 2
+  instead of rendering `complete`/`missing`. With TSA anchors configured, a missing RFC 3161
+  token fails; `keyCompromise`/`cACompromise` and `invalidityDate` revoke retroactively; strict
+  CRL mode judges freshness now and entries at genTime; the token parser rejects non-minimal DER
+  lengths and a mismatched imprint algorithm. Handoff separation of duties treats fingerprint
+  prefixes as one party; `nova hitl acted-as` reports `principal_mismatch`. The memstore access
+  guard caps extras, scans values for secrets and requires ASCII keys; `nova trust-path verify`
+  gains `--strict-depth`.
+
 - **The Kubernetes runner no longer ships your shell's environment into the cluster**
   (ADR-0270, defect **B2** — disclosed 2026-08-28, fixed 2026-09-10).
 
@@ -207,6 +238,104 @@ longer forwards the submitting shell's environment (ADR-0270).
   Their open-coded filters were replaced by the shared helper so the three cannot drift apart.
 
 ### Added
+
+- **A third batch of accepted-ADR slices landed (all experimental, 2026-09-25).** Listed below;
+  none changes `schemas/run-capsule.*` (new records ride existing `extra="allow"` facets).
+
+- **RFC 3161 TSA trust-chain verification, offline (ADR-0070 §1/§2/§5, experimental).**
+  `verify_tsa_trust_chain` verifies a stored `manifest.dsse.tsr` end to end without a
+  network or new dependency: strict DER parse, signer certificate bound by the signed
+  ESSCertID/ESSCertIDv2 hash, `messageDigest` over the TSTInfo, the CMS signature (RSA,
+  ECDSA, Ed25519), a critical `id-kp-timeStamping`-only EKU, the message imprint, and the
+  RFC 5280 chain to an operator TSA CA **at the token's genTime**, plus the offline CRL
+  directory check. `nova verify --tsa-ca-bundle PATH` (capsules and Evidence Bundle ZIPs)
+  and `tsa_ca_certs:` in `novaseal.yaml`; default output unchanged; fails closed.
+
+- **Human-oversight evidence: consent receipts, accountability handoffs and acted-on-behalf
+  bindings (experimental, ADR-0150 P3, NF-183/189/186).** `novafabric.hitl` now records an
+  ISO/IEC TS 27560-shaped consent receipt with a re-checkable `receipt_digest`, a handoff receipt
+  when responsibility passes between two distinct parties (self-handoffs refused after Unicode
+  case-folding; `ed25519:` signatures verified offline, fingerprint-bound where the signer ref is a
+  key fingerprint; `sha256:` envelope references reported, never claimed verified), and a binding
+  from a conversation turn to an NF-084 delegation hop that surfaces NF-084's recorded state
+  (including `broken_hop`) without re-deriving authority. New `nova consent record|show|verify`,
+  `nova hitl handoff list` and `nova hitl acted-as`. Record-only: no legal-validity claim.
+
+- **`nova export-cat` renders a CAT-style, lifecycle-ordered agent-event trail from a sealed
+  capsule (ADR-0159 D6 / NF-280, experimental).** Maps recorded facts onto five lifecycle stages —
+  origination, decision (model calls), authorization (tool-permission decisions, human approvals),
+  action (tool calls), disposition — each event with its recorded actor identity ref and
+  timestamps, ordered by UTC-normalised time; a missing required stage makes the trail `partial`.
+  Read-only, offline, bounded, symlinks never followed, every rendered string secret-scanned;
+  version-pinned SEC Rule 613 / CAT NMS Plan regime text. A firm-owned file modelled on the CAT
+  event lifecycle — not a CAT submission; never connects to the CAT central repository.
+
+- **Embodied evidence P3 — sim-to-real lineage, teleop handoffs and clock/latency evidence
+  (ADR-0162, NF-304/NF-305/NF-308, experimental).** `facets.embodied` gains optional `sim2real`
+  (policy/env/randomization digests + `deployment_run_id`; an absent or unresolvable policy is
+  recorded as `unbound: true`, never fatal), `teleop` (time-ordered autonomy↔human handoffs with a
+  pseudonymous `operator_ref` — e-mail/name/phone shapes refused — a machine-code `trigger` and
+  bounded `latency_ms`) and `timing` (one entry per clock domain: source, offset, max latency).
+  New `nova embodied sim2real show|verify` (re-hashes local artifacts, fail-closed on digest or
+  deployment mismatch), `nova embodied teleop list` and `nova embodied timing show`. Record-only;
+  digests/identifiers only; NF-309 device identity remains future design.
+
+- **Agentic-commerce settlement evidence, P3: A2A payment chain, agreement and invoice binding
+  (ADR-0163 NF-315/316/319, experimental).** `nova settlement chain --capsule|--facet [--depth N]
+  [--json]` walks `facets.settlement.a2a_payment_chain` offline in one bounded pass (≤1024 hops):
+  each `parent_hop` must resolve to an *earlier* hop, so cycles, forks, dangling parents, payer
+  discontinuity and cross-hop currency changes are reported as named findings (exit 1,
+  fail-closed). `AgreementRecord` binds `agreement_ref`/`terms_digest`/`parties` by digest (canonical
+  terms JSON refuses floats); `InvoiceReceipt` records a three-valued `matches_settlement` against the
+  NF-313 finality record and degrades an unresolvable document to `unbound: true`. Amounts are
+  strict integer minor units. Record-only: NovaFabric moves no money and decides no dispute.
+
+- **Lab-experiment and instrument provenance for agentic science (ADR-0164 P3, NF-322/NF-329,
+  experimental).** `facets.science_provenance` can now carry a declared `lab_experiment`
+  (`lab_kind` self_driving|cloud_lab|manual|simulation, protocol/outcome digests, lab run id,
+  `sim_to_real`, `instrument_refs`) and `instrument_provenance` records (firmware digest,
+  calibration-record digest + timestamp, manufacturer ref), bound by content digest.
+  `nova science lab verify` fails closed on an unresolved instrument, a calibration after the
+  experiment, a non-re-deriving digest or an unknown `lab_kind`; `nova science lab show` and
+  `nova science instrument show` print them. Record-only: telemetry, raw data and credentials are
+  refused (normalised-key markers, value caps, ADR-0009 scan); no schema change.
+
+- **Transitive cross-org trust path — `nova trust-path show|verify` (experimental, ADR-0168 P2,
+  NF-363).** `novafabric.federation.trust_path` records an anchor-first chain of signed delegation
+  statements under `facets.federation.trust_path` and walks it offline against anchors the
+  verifier pins (`--anchor ORG=PUBKEY.pem`) — never an anchor the capsule or path asserts. Each hop
+  must verify (Ed25519 / ECDSA P-256) under the key the previous hop vouched for; broken,
+  reordered, cyclic, anchor-substituted or unpinned paths fail closed naming the hop, while signed
+  `max_path_length` / `--max-depth` overruns are flagged `delegation_depth_exceeded`, not fatal.
+  Also hardens the federation digest validator against a trailing newline.
+
+- **Risk-transfer liability chain, SLA-breach and coverage-trigger evidence (ADR-0170 P2,
+  NF-383/384/386, experimental).** `facets.risk_transfer` gains an ordered `liability_chain`
+  (`role`, `party_ref`, `acted_as_ref`, `basis_ref`, `contribution_marker ∈ recorded|disputed|none`)
+  that records who was *attributed*, never who is at fault — verdict-shaped keys are rejected after
+  key normalisation, and dangling/cyclic `acted_as` edges are refused — plus `sla_breach` and
+  `coverage_trigger`, which compare observed values with *declared* thresholds and exclusion sets
+  as exact decimals and record the comparison (re-derived on validation) without deciding a remedy,
+  coverage, claim or payout. Surfaced by `nova insurance liability show | sla verify | coverage check`.
+
+- **Shared-store access ledger and cross-run memory derivation (ADR-0171 P2, NF-392/395/396,
+  experimental).** `novafabric.memstore.access` records which agent read or wrote which
+  shared-store entry, with `contained` computed from the agent's declared `allowed_scope` and
+  re-verified offline — `contained: false` is evidence of an out-of-scope access, never
+  enforcement. `novafabric.memstore.derivation` traces each read to the store-write that seeded
+  it (`origin_mutation_ref` + `origin_run`, bound by observed `value_digest`) in a bounded,
+  cycle-safe walk, and fans an entry out source → write → later runs. New `nova memstore access
+  ledger | derive | provenance` work read-only over an explicit `--capsule` list; both blocks
+  live inside the existing `facets.memstore_mutation` facet (no schema change).
+
+- **`SQLiteMetadataStore.query_runs` now pages by keyset instead of LIMIT/OFFSET (ADR-0206 P2,
+  experimental).** Rows are ordered `started_at DESC NULLS LAST, run_id DESC` (the id tiebreak
+  makes duplicate timestamps page deterministically) and `next_cursor` is the shared v1 cursor
+  from `server/pagination.py`, so inserts/deletes between pages no longer duplicate or skip rows.
+  Rows with a NULL `started_at` page correctly in their own tail. Legacy bare-integer and
+  `{"offset": N}` cursors are still served for one deprecation cycle and hand back a keyset
+  cursor; tampered or garbage cursors raise `InvalidCursorError` instead of a bare `ValueError`.
+  The interface signature is unchanged; the Postgres backend is not yet converted.
 
 - **A second batch of ten accepted-ADR slices landed (all experimental, 2026-09-25).** Listed
   below; none changes `schemas/run-capsule.*` (new records ride existing `extra="allow"` facets).
@@ -1744,6 +1873,10 @@ longer forwards the submitting shell's environment (ADR-0270).
   CLI, four for routes) are replaced by two tested modules.
 
 ### Changed
+
+- **`settlement.Money.amount_minor` is now strict.** Values like `5.0`, `True` or `"500"` were
+  silently coerced to integers despite the module's "never a float" rule; they are now refused
+  (ADR-0163). Embodied P1/P2 free-text fields are now capped at 256 characters (ADR-0162).
 
 - **The dev-loop test tiers are now load-aware and polite** (dev tooling only; no
   runtime or CLI change). `-n auto` used to claim every core per run; concurrent

@@ -554,7 +554,7 @@ async def delete_user(user_id: str, actor: _Actor) -> Response:
 # ---------------------------------------------------------------------------
 
 # RFC 7644 §3.5.2 remove path: members[value eq "<id>"]
-_MEMBER_PATH_RE = re.compile(r'^members\[value eq "(?P<value>[^"]+)"\]$')
+_MEMBER_PATH_RE = re.compile(r'^members\[value eq "(?P<value>[^"]+)"\]\Z')
 
 
 def _parse_group_payload(payload: Any) -> dict[str, Any]:

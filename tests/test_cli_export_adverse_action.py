@@ -8,6 +8,7 @@ inside the capsule. The CFPB honesty line and the finance banner are always prin
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ from typer.testing import CliRunner
 
 from novafabric.cli import export_adverse_action as mod
 from novafabric.cli.main import app
+from novafabric.compliance.export.finance import adverse_action_collect as collect
 from novafabric.compliance.export.finance.adverse_action import CFPB_HONESTY_LINE
 
 runner = CliRunner()
@@ -112,6 +114,35 @@ def test_corrupt_capsule_exits_two(tmp_path: Path) -> None:
     (cap / "model-calls.jsonl").write_text("tampered\n")
     res = runner.invoke(app, ["export-adverse-action", "--run-id", str(cap), "--json"])
     assert res.exit_code == 2
+    assert "Corrupt" in res.output
+
+
+def _vanish(path: Path, how: str) -> None:
+    if how == "symlink":
+        outside = path.parent.parent / f"outside-{path.name}"
+        outside.write_bytes(path.read_bytes())
+        path.unlink()
+        path.symlink_to(outside)
+        return
+    path.unlink()
+    if how == "fifo":
+        os.mkfifo(path)
+
+
+@pytest.mark.parametrize("how", ["deleted", "symlink", "fifo"])
+def test_sealed_model_calls_that_vanished_exits_two(tmp_path: Path, how: str) -> None:
+    cap = make_capsule(tmp_path, calls=[_call("mc-001")], facet=valid_facet())
+    _vanish(cap / "model-calls.jsonl", how)
+    res = runner.invoke(app, ["export-adverse-action", "--run-id", str(cap), "--json"])
+    assert res.exit_code == 2, res.output
+    assert "Corrupt" in res.output
+
+
+def test_oversize_model_calls_exits_two(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(collect, "MODEL_CALLS_MAX_BYTES", 10)
+    cap = make_capsule(tmp_path, calls=[_call("mc-001")], facet=valid_facet())
+    res = runner.invoke(app, ["export-adverse-action", "--run-id", str(cap), "--json"])
+    assert res.exit_code == 2, res.output
     assert "Corrupt" in res.output
 
 

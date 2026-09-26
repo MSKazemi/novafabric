@@ -58,16 +58,18 @@ had checked B's bytes:
   them at construction, so foreign run data cannot arrive by accident and then
   be mistaken for something this node validated.
 
-No path walk in P1
-------------------
-D2 pins **one** foreign anchor. The transitive A→B→C path (D2's second half,
-NF-363) is P2 and is deliberately absent: there is no ``trust_path`` field, no
-hop model, and no walker. This matters more than a missing feature usually
-does, because the failure mode is silent — a caller who could ask "is org C
-trusted?" of a facet that pins only org B would get an answer composed from
-nothing. :func:`anchor_state` therefore answers only about the exact domain
-pinned; every other domain is ``unknown``, and ``unknown`` never widens into
-an inference about a third org.
+The path walk lives elsewhere, on purpose
+-----------------------------------------
+D2 pins **one** foreign anchor here. The transitive A→B→C path (D2's second
+half, NF-363, P2) is :mod:`novafabric.federation.trust_path`: it is carried as
+``facets.federation.trust_path`` (an ``extra="allow"`` key on
+:class:`FederationFacet`, parsed and validated only by that module) and walked
+by :func:`~novafabric.federation.trust_path.verify_trust_path` against anchors
+the **verifier** pins — never against this facet's own ``trust_anchor``, which
+the capsule under verification asserts about itself. :func:`anchor_state`
+therefore still answers only about the exact domain pinned; every other domain
+is ``unknown``, and ``unknown`` never widens into an inference about a third
+org. Reaching C via B requires the explicit, signature-checked walk.
 
 Hash construction — no tree
 ---------------------------
@@ -105,7 +107,9 @@ SCHEMA_VERSION = "0.1.0"
 #: (lower-case hex, exact length) so a truncated or upper-cased digest fails at
 #: construction rather than silently failing to match a foreign artifact years
 #: later, during an audit of an exchange nobody present still remembers.
-_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+#: Always applied with ``fullmatch`` — ``^…$`` with ``match`` would accept a
+#: trailing newline, a digest that no foreign artifact's digest ever equals.
+_DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
 #: An identifier or reference, never a document. Anything longer is
 #: overwhelmingly likely to be foreign run payload smuggled through a ref
@@ -215,7 +219,7 @@ def _validate_digest(value: object, *, field: str) -> str:
     _reject_payload(value, field=field)
     if not isinstance(value, str):
         raise InvalidReferenceError(f"{field} must be a string digest")
-    if not _DIGEST_RE.match(value):
+    if not _DIGEST_RE.fullmatch(value):
         raise InvalidReferenceError(f"{field} must be 'sha256:<64 hex>', got {value!r}")
     return value
 
@@ -372,8 +376,8 @@ class TrustAnchorPin(BaseModel):
     never issues, hosts, or vouches for the roots (I-1).
 
     Note what this object does not have: a parent, a successor, or a delegated
-    child. It is a single pin, not a link in a chain — P1 has no path (see the
-    module docstring).
+    child. It is a single pin, not a link in a chain — chains are NF-363's
+    ``trust_path`` (see the module docstring).
     """
 
     model_config = ConfigDict(extra="allow")
@@ -449,8 +453,10 @@ class FederationFacet(BaseModel):
     """The optional ``facets.federation`` block — ADR-0168 P1 (I-3).
 
     Carries at most one exchange manifest and at most one trust-anchor pin.
-    Singular on purpose in P1: a *list* of anchors is the shape from which a
-    caller starts composing a path, and P1 composes nothing.
+    Singular on purpose: a *list* of anchors is the shape from which a caller
+    starts composing a path, and paths compose only through the signed NF-363
+    ``trust_path`` (an extra key here, owned by
+    :mod:`novafabric.federation.trust_path`).
     """
 
     model_config = ConfigDict(extra="allow")
@@ -502,9 +508,10 @@ def anchor_state(facet: FederationFacet, trust_domain: str) -> AnchorState:
     because B and C are in the same consortium, or for any other reason a
     human might find persuasive — the answer is ``unknown``. Establishing
     that A can reach C *via* B requires walking a chain of signed delegation
-    statements to a common anchor, which is NF-363/P2 and does not exist yet.
-    Until it does, there is no input from which this function could honestly
-    return anything else, and returning ``pinned`` on a suffix, subdomain, or
+    statements to a verifier-pinned anchor — NF-363,
+    :func:`novafabric.federation.trust_path.verify_trust_path` — never this
+    function. There is no input here from which it could honestly return
+    anything else, and returning ``pinned`` on a suffix, subdomain, or
     consortium-membership heuristic would be a transitive-trust conclusion
     drawn from no evidence at all.
 

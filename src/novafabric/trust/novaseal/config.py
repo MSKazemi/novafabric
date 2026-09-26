@@ -58,6 +58,15 @@ experimental) add an offline CRL revocation check of the validated path:
 
     crl_dir: /var/lib/novaseal/crl     # CRLs (DER/PEM) synced by an operator cron job
     crl_strict: false                  # true: missing/stale/invalid CRL also fails
+
+The optional ``tsa_ca_certs`` key (ADR-0070 §1/§5, experimental) lists PEM files of
+operator-trusted TSA CA certificates. When set, ``nova verify`` also verifies the
+RFC 3161 token's CMS signature, the TSA certificate's critical id-kp-timeStamping
+EKU and its chain to these anchors at the token's genTime, offline. ``crl_dir`` /
+``crl_strict`` then apply to the TSA chain as well:
+
+    tsa_ca_certs:
+      - /etc/novaseal/tsa/freetsa-cacert.pem
 """
 
 from __future__ import annotations
@@ -80,6 +89,7 @@ _DEFAULT_MERKLE_DB = Path.home() / ".novafabric" / "novaseal-merkle.db"
 _DEFAULT_CONFIG_PATH = Path.home() / ".novafabric" / "novaseal.yaml"
 
 _SUPPORTED_PROFILES = frozenset({"local", "aws_kms", "azure_kv", "gcp_kms"})
+_MAX_TSA_CA_CERTS = 32
 
 
 @dataclass
@@ -125,6 +135,9 @@ class SigningProfile:
     crl_dir: Optional[Path] = None
     # crl_strict: a missing / stale / invalid CRL fails (default: visible warning).
     crl_strict: bool = False
+    # ADR-0070 §5 (experimental): PEM files of operator-trusted TSA CA certificates
+    # for RFC 3161 token trust-chain verification. Empty = no TSA chain check.
+    tsa_ca_certs: list[Path] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.tsa_urls:
@@ -236,12 +249,14 @@ def _parse_profile(path: Path) -> SigningProfile:
     tsa_urls = list(raw_tsa_urls) if raw_tsa_urls is not None else [tsa_url]
     ca_bundle = _parse_ca_bundle(raw)
     crl_dir, crl_strict = _parse_crl_settings(raw)
-    if (crl_dir is not None or crl_strict) and ca_bundle is None:
-        # Revocation is only checked on the CA-bundle chain path; accepting the
-        # keys without a bundle would silently check nothing (ADR-0070 §3).
+    tsa_ca_certs = _parse_tsa_ca_certs(raw)
+    if (crl_dir is not None or crl_strict) and ca_bundle is None and not tsa_ca_certs:
+        # Revocation is only checked on a validated chain (the signer's CA-bundle
+        # chain or the TSA chain); accepting the keys without either would
+        # silently check nothing (ADR-0070 §3).
         raise SealConfigError(
-            "novaseal.yaml crl_dir / crl_strict require ca_bundle: revocation is "
-            "checked only on the CA-bundle chain path"
+            "novaseal.yaml crl_dir / crl_strict require ca_bundle or tsa_ca_certs: "
+            "revocation is checked only on a validated certificate chain"
         )
 
     if profile == "local":
@@ -263,6 +278,7 @@ def _parse_profile(path: Path) -> SigningProfile:
             ca_bundle=ca_bundle,
             crl_dir=crl_dir,
             crl_strict=crl_strict,
+            tsa_ca_certs=tsa_ca_certs,
         )
 
     if profile == "aws_kms":
@@ -282,6 +298,7 @@ def _parse_profile(path: Path) -> SigningProfile:
             ca_bundle=ca_bundle,
             crl_dir=crl_dir,
             crl_strict=crl_strict,
+            tsa_ca_certs=tsa_ca_certs,
         )
 
     if profile == "azure_kv":
@@ -301,6 +318,7 @@ def _parse_profile(path: Path) -> SigningProfile:
             ca_bundle=ca_bundle,
             crl_dir=crl_dir,
             crl_strict=crl_strict,
+            tsa_ca_certs=tsa_ca_certs,
         )
 
     # profile == "gcp_kms"
@@ -318,6 +336,7 @@ def _parse_profile(path: Path) -> SigningProfile:
         ca_bundle=ca_bundle,
         crl_dir=crl_dir,
         crl_strict=crl_strict,
+        tsa_ca_certs=tsa_ca_certs,
     )
 
 
@@ -356,6 +375,34 @@ def _parse_crl_settings(raw: dict[str, object]) -> tuple[Optional[Path], bool]:
     if not path.is_dir():
         raise SealConfigError(f"NovaSeal crl_dir not found or not a directory: {path}")
     return path, strict
+
+
+def _parse_tsa_ca_certs(raw: dict[str, object]) -> list[Path]:
+    """Parse the optional ``tsa_ca_certs`` list of PEM paths (ADR-0070 §5).
+
+    Every listed file must exist: a configured-but-absent anchor is a hard config
+    error, never a silent downgrade to "no TSA chain check". Bounded to 32 entries.
+    """
+    value = raw.get("tsa_ca_certs")
+    if value is None:
+        return []
+    if (
+        not isinstance(value, list)
+        or not value
+        or not all(isinstance(v, str) and v.strip() for v in value)
+    ):
+        raise SealConfigError(
+            "novaseal.yaml tsa_ca_certs must be a non-empty list of path strings"
+        )
+    if len(value) > _MAX_TSA_CA_CERTS:
+        raise SealConfigError(
+            f"novaseal.yaml tsa_ca_certs lists more than {_MAX_TSA_CA_CERTS} files"
+        )
+    paths = [Path(v).expanduser() for v in value]
+    for path in paths:
+        if not path.is_file():
+            raise SealConfigError(f"NovaSeal tsa_ca_certs file not found: {path}")
+    return paths
 
 
 def build_signing_backend(profile: SigningProfile) -> "SigningBackend":

@@ -131,6 +131,23 @@ def verify_cmd(
             ),
         ),
     ] = False,
+    tsa_ca_bundle: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--tsa-ca-bundle",
+            help=(
+                "Operator TSA CA bundle (concatenated PEM). When the capsule or Evidence "
+                "Bundle carries an RFC 3161 token (manifest.dsse.tsr), also verify its "
+                "CMS signature, the TSA certificate's critical id-kp-timeStamping EKU, "
+                "the message imprint, and the chain to this bundle at the token's "
+                "genTime, offline (ADR-0070 §1, experimental). With TSA anchors set, a "
+                "missing or empty token FAILS (it is not covered by the DSSE signature). "
+                "Overrides tsa_ca_certs in novaseal.yaml; --crl-dir/--crl-strict also "
+                "apply to this chain (revocation as of genTime, CRL freshness judged now)."
+            ),
+            dir_okay=False,
+        ),
+    ] = None,
 ) -> None:
     """Verify a capsule's cryptographic seal, timestamp, and Merkle log inclusion.
 
@@ -163,6 +180,9 @@ def verify_cmd(
       nova verify --ca-bundle /etc/novaseal/ca-bundle.crt \\
           --crl-dir /var/lib/novaseal/crl --crl-strict path/to/my-capsule/
 
+      # Verify the RFC 3161 token's TSA chain against an operator TSA CA (offline)
+      nova verify --tsa-ca-bundle /etc/novaseal/tsa-ca.pem path/to/my-capsule/
+
       # Verify a redaction proof report seal independently
       nova verify --check-redaction path/to/report.seal.json path/to/my-capsule/
 
@@ -185,7 +205,9 @@ def verify_cmd(
         if not capsule_dir.is_file():
             console.print(f"[red]Error:[/red] bundle not found: {capsule_dir}")
             raise typer.Exit(code=1)
-        _verify_evidence_bundle(capsule_dir)
+        _verify_evidence_bundle(
+            capsule_dir, tsa_ca_bundle=tsa_ca_bundle, crl_dir=crl_dir, crl_strict=crl_strict
+        )
         return
 
     # Batch export manifest (ADR-0141): a JSON file, not a capsule directory.
@@ -281,15 +303,36 @@ def verify_cmd(
     chain_bundle = ca_bundle if ca_bundle is not None else getattr(profile, "ca_bundle", None)
     crl_directory = crl_dir if crl_dir is not None else getattr(profile, "crl_dir", None)
     strict_crl = crl_strict or bool(getattr(profile, "crl_strict", False))
-    if crl_dir is not None and chain_bundle is None:
+    configured_tsa = getattr(profile, "tsa_ca_certs", None)
+    tsa_anchor_paths: list[Path] = (
+        [tsa_ca_bundle]
+        if tsa_ca_bundle is not None
+        else list(configured_tsa)
+        if isinstance(configured_tsa, list)
+        else []
+    )
+    if crl_dir is not None and chain_bundle is None and not tsa_anchor_paths:
         err_console.print(
             "[red]Error:[/red] --crl-dir needs a CA bundle to build the chain it checks "
-            "(pass --ca-bundle or set ca_bundle in novaseal.yaml)."
+            "(pass --ca-bundle / --tsa-ca-bundle or set ca_bundle / tsa_ca_certs in "
+            "novaseal.yaml)."
         )
         raise typer.Exit(code=2)
     chain_check = (
         _signer_chain_check(dsse_bytes, chain_bundle, crl_dir=crl_directory, crl_strict=strict_crl)
         if chain_bundle is not None
+        else None
+    )
+
+    tsa_check = (
+        _tsa_chain_check(
+            _read_capsule_tsr(seal_dir / "manifest.dsse.tsr"),
+            hashlib.sha256(dsse_bytes).digest(),
+            tsa_anchor_paths,
+            crl_dir=crl_directory,
+            crl_strict=strict_crl,
+        )
+        if tsa_anchor_paths
         else None
     )
 
@@ -316,6 +359,7 @@ def verify_cmd(
         console.print(f"    {chain_detail}")
         for line in revocation_lines:
             console.print(f"    {line}")
+    tsa_ok = _print_tsa_check(tsa_check)
     if not capsule_id_ok:
         _print_check("Log-entry capsule_id matches the signed payload", False)
         console.print(
@@ -331,7 +375,7 @@ def verify_cmd(
     console.print()
     console.print(str(result))
 
-    if not result.valid or not binding_ok or not capsule_id_ok or not chain_ok:
+    if not result.valid or not binding_ok or not capsule_id_ok or not chain_ok or not tsa_ok:
         # ADR-0192 wired source: the evidence guarantee itself failed, so
         # this is `critical` — the run can no longer be proven.
         from novafabric.events.sources import (  # noqa: PLC0415
@@ -392,6 +436,95 @@ def _signer_chain_check(
     if not outcome.valid:
         return False, outcome.reason, lines
     return True, "chain: " + " <- ".join(outcome.chain_subjects), lines
+
+
+def _read_capsule_tsr(tsr_path: Path) -> bytes | None:
+    """Read ``manifest.dsse.tsr`` bounded to one byte past the token size limit.
+
+    Returns ``None`` when the file is absent. An oversize file is returned truncated
+    to ``MAX_TOKEN_BYTES + 1`` bytes, which the parser then rejects (fail closed).
+    """
+    from novafabric.trust.novaseal.tsa_token import MAX_TOKEN_BYTES  # noqa: PLC0415
+
+    if not tsr_path.is_file():
+        return None
+    with tsr_path.open("rb") as handle:
+        return handle.read(MAX_TOKEN_BYTES + 1)
+
+
+def _tsa_chain_check(
+    token: bytes | None,
+    expected_digest: bytes,
+    anchor_paths: list[Path],
+    *,
+    crl_dir: Path | None = None,
+    crl_strict: bool = False,
+) -> tuple[bool, str, list[str]]:
+    """Verify an RFC 3161 token's TSA signature, EKU and chain (ADR-0070 §1).
+
+    Offline and fail-closed. Only called when TSA anchors were given
+    (``--tsa-ca-bundle``) or configured (``tsa_ca_certs``): the operator then asked
+    for a TSA-attested time, so an absent or empty token *fails* — the ``.tsr`` is
+    not covered by the DSSE signature, and a key holder backdating a capsule could
+    otherwise just delete it. Returns ``(False, reason, lines)`` on any failure — an
+    unreadable anchor file, a missing token or a bad token — and
+    ``(True, summary, lines)`` when the token verifies. ``lines`` carry the
+    genTime / chain / revocation details to print.
+    """
+    from novafabric.trust.novaseal.tsa_trust import verify_tsa_trust_chain  # noqa: PLC0415
+
+    try:
+        anchors_pem = b"\n".join(p.read_bytes() for p in anchor_paths)
+    except OSError as exc:
+        return False, f"cannot read TSA CA bundle: {exc}", []
+    if token is None:
+        return (
+            False,
+            "no RFC 3161 token (manifest.dsse.tsr) although TSA trust anchors are "
+            "configured; the token is not covered by the DSSE signature, so a missing "
+            "one cannot be told apart from a deleted one",
+            [],
+        )
+    if not token:
+        return (
+            False,
+            "timestamp token (manifest.dsse.tsr) is empty although TSA trust anchors "
+            "are configured",
+            [],
+        )
+    outcome = verify_tsa_trust_chain(
+        token,
+        anchors_pem,
+        crl_dir,
+        crl_strict=crl_strict,
+        expected_digest=expected_digest,
+    )
+    lines: list[str] = []
+    if outcome.gen_time is not None:
+        lines.append(f"genTime: {outcome.gen_time.isoformat()}")
+    if outcome.signer_subject is not None:
+        lines.append(f"TSA signer: {outcome.signer_subject}")
+    if outcome.chain_subjects:
+        lines.append("chain: " + " <- ".join(outcome.chain_subjects))
+    lines.extend(_revocation_lines(outcome.revocation))
+    return outcome.valid, outcome.reason, lines
+
+
+def _print_tsa_check(check: tuple[bool, str, list[str]] | None) -> bool:
+    """Print the TSA trust-chain block; return ``False`` only on a failed check.
+
+    ``None`` means no TSA anchors were given or configured: nothing is printed (the
+    soft ``Timestamp (RFC 3161): NOT PRESENT`` line already covers a missing token).
+    """
+    if check is None:
+        return True
+    ok, reason, lines = check
+    label = "TSA certificate chain (RFC 3161, TSA CA bundle)"
+    _print_check(label, ok)
+    console.print(f"    {reason}")
+    for line in lines:
+        console.print(f"    {line}")
+    return ok
 
 
 def _revocation_lines(revocation: Any) -> list[str]:
@@ -711,8 +844,19 @@ def _verify_sigstore(
         raise typer.Exit(code=1)
 
 
-def _verify_evidence_bundle(bundle_path: Path) -> None:
+def _verify_evidence_bundle(
+    bundle_path: Path,
+    *,
+    tsa_ca_bundle: Path | None = None,
+    crl_dir: Path | None = None,
+    crl_strict: bool = False,
+) -> None:
     """Recompute every artifact digest recorded in an Evidence Bundle manifest.
+
+    With ``tsa_ca_bundle`` (ADR-0070 §1, experimental) the bundle's
+    ``manifest.dsse.tsr`` is also verified against that TSA CA — signature, EKU,
+    chain at genTime, and a message imprint equal to SHA-256 of
+    ``attestations/run.intoto.json`` (what ``nova export evidence`` timestamps).
 
     ``manifest.json`` lists each packaged file with its ``sha256``, and the
     manifest itself carries a ``manifest_hash`` over the artifact list. Checking
@@ -764,6 +908,11 @@ def _verify_evidence_bundle(bundle_path: Path) -> None:
         # Files present in the ZIP that the manifest never accounted for: an
         # addition is a modification too, so it must not pass silently.
         unlisted = sorted(names - {a.get("path", "") for a in artifacts} - {"manifest.json"})
+        tsa_check = (
+            _bundle_tsa_check(zf, names, tsa_ca_bundle, crl_dir=crl_dir, crl_strict=crl_strict)
+            if tsa_ca_bundle is not None
+            else None
+        )
 
     _print_check(f"Artifact digests ({len(artifacts)} recomputed)", not mismatched)
     for rel in mismatched:
@@ -781,7 +930,8 @@ def _verify_evidence_bundle(bundle_path: Path) -> None:
     else:
         _print_check("No unlisted files", True)
 
-    ok = not mismatched and not missing and not unlisted
+    tsa_ok = _print_tsa_check(tsa_check)
+    ok = not mismatched and not missing and not unlisted and tsa_ok
     console.print(
         f"\nartifacts_ok={not mismatched}, complete={not missing}, no_extras={not unlisted}"
     )
@@ -789,6 +939,36 @@ def _verify_evidence_bundle(bundle_path: Path) -> None:
         console.print("[red]Evidence Bundle verification FAILED[/red]")
         raise typer.Exit(code=1)
     console.print("[green]Evidence Bundle verification PASSED[/green]")
+
+
+def _bundle_tsa_check(
+    zf: Any,
+    names: set[str],
+    tsa_ca_bundle: Path,
+    *,
+    crl_dir: Path | None,
+    crl_strict: bool,
+) -> tuple[bool, str, list[str]]:
+    """TSA trust-chain check for an Evidence Bundle ZIP's ``manifest.dsse.tsr``.
+
+    The token timestamps ``attestations/run.intoto.json`` (ADR-0030), so its
+    message imprint must equal that entry's SHA-256. Reads are size-bounded.
+    """
+    from novafabric.trust.novaseal.tsa_token import MAX_TOKEN_BYTES  # noqa: PLC0415
+
+    if "manifest.dsse.tsr" not in names:
+        return _tsa_chain_check(None, b"", [tsa_ca_bundle])
+    if "attestations/run.intoto.json" not in names:
+        return False, "bundle has a timestamp token but no attestations/run.intoto.json", []
+    with zf.open("manifest.dsse.tsr") as handle:
+        token = handle.read(MAX_TOKEN_BYTES + 1)
+    digest = hashlib.sha256()
+    with zf.open("attestations/run.intoto.json") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return _tsa_chain_check(
+        token, digest.digest(), [tsa_ca_bundle], crl_dir=crl_dir, crl_strict=crl_strict
+    )
 
 
 def _verify_redaction_seal(seal_path: Path) -> None:

@@ -51,9 +51,9 @@ ASSET_LABELS_SCHEMA_VERSION: Final = "0.1.0"
 #: The registry-maintained, read-only-to-the-user label (ADR-0113 D1).
 RESERVED_LABEL_LATEST: Final = "latest"
 
-LABEL_RE: Final = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
-_CONTENT_HASH_RE: Final = re.compile(r"^sha256:[0-9a-f]{64}$")
-_ULID_RE: Final = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
+LABEL_RE: Final = re.compile(r"^[a-z0-9][a-z0-9._-]*\Z")
+_CONTENT_HASH_RE: Final = re.compile(r"^sha256:[0-9a-f]{64}\Z")
+_ULID_RE: Final = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}\Z")
 
 
 def validate_label_name(label: str) -> str:

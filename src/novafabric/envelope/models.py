@@ -8,15 +8,15 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-_ULID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
+_ULID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}\Z")
 _UUID_V7_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z"
 )
-_TRACE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
-_SPAN_ID_RE = re.compile(r"^[0-9a-f]{16}$")
-_PAYLOAD_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
-_AGENT_ID_RE = re.compile(r"^[^\s\x00-\x1F]+$")
-_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_TRACE_ID_RE = re.compile(r"^[0-9a-f]{32}\Z")
+_SPAN_ID_RE = re.compile(r"^[0-9a-f]{16}\Z")
+_PAYLOAD_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}\Z")
+_AGENT_ID_RE = re.compile(r"^[^\s\x00-\x1F]+\Z")
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 
 _ALL_ZEROS_TRACE = "0" * 32
 _ALL_ZEROS_SPAN = "0" * 16

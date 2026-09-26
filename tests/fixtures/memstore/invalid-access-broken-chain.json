@@ -1,0 +1,49 @@
+{
+  "block": {
+    "schema_version": "0.1.0",
+    "store_id": "org-kb/support-playbooks",
+    "ledger_ref": "sha256:9c8672e420826fc3395070def17542d8dbdf680b8c57fa6db9e5dab471fe3b24",
+    "accesses": [
+      {
+        "schema_version": "0.1.0",
+        "agent": "triage-agent",
+        "store_id": "org-kb/support-playbooks",
+        "namespace": "billing",
+        "entry_id": "bl-7",
+        "access": "write",
+        "allowed_scope": "playbooks/*",
+        "contained": false,
+        "run": "run_8f3bd21e",
+        "at": "2026-07-13T09:14:02Z",
+        "value_digest": "sha256:3b548e359a892cae4a05b0c62309dbcf743547c92014272075ef5d69dd77f3f1",
+        "prev_record_hash": "sha256:611bfb67adfea5a34771573233c6618b84349a43b0971c5c5d9cece8b00bc77a"
+      },
+      {
+        "schema_version": "0.1.0",
+        "agent": "triage-agent",
+        "store_id": "org-kb/support-playbooks",
+        "namespace": "playbooks",
+        "entry_id": "pb-4471",
+        "access": "read",
+        "allowed_scope": "playbooks/*",
+        "contained": true,
+        "run": "run_8f3bd21e",
+        "at": "2026-07-13T09:10:00Z",
+        "value_digest": "sha256:7b2d4b0807e2b05c8f6f0cdec41a6f936e01eae1f3eae4f5c2bbbb287cbbd73a"
+      },
+      {
+        "schema_version": "0.1.0",
+        "agent": "triage-agent",
+        "store_id": "org-kb/support-playbooks",
+        "namespace": "playbooks",
+        "entry_id": "pb-4470",
+        "access": "read",
+        "allowed_scope": "playbooks/*",
+        "contained": true,
+        "run": "run_8f3bd21e",
+        "at": "2026-07-13T09:15:00Z",
+        "prev_record_hash": "sha256:679fb36290f1eb699592e031eea43108a8a77ed677662fa5a6c4a8cc5cbd25da"
+      }
+    ]
+  }
+}

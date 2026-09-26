@@ -46,7 +46,7 @@ import re
 #: (lower-case hex, exact length) so a truncated or upper-cased digest fails at
 #: construction rather than silently failing to match a chunk years later,
 #: during an audit of a run nobody present still remembers.
-DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}\Z")
 
 #: An identifier, never a document. A span id or document id in the wild is a
 #: short opaque token; anything longer is overwhelmingly likely to be context

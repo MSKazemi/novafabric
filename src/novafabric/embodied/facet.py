@@ -12,7 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The ``facets.embodied`` block — ADR-0162 P1 (NF-301/302) + P2 (NF-303/310).
+"""The ``facets.embodied`` block — ADR-0162 P1 (NF-301/302), P2 (NF-303/310), P3 (NF-304/305/308).
+
+P3 adds three more optional objects, each in its own sibling module: the
+sim-to-real lineage binding (:mod:`novafabric.embodied.sim2real`, an
+unresolvable policy ref recorded as ``unbound: true``), the teleoperation
+handoff list (:mod:`novafabric.embodied.teleop`, pseudonymous operator refs,
+time-ordered), and per-clock-domain timing evidence
+(:mod:`novafabric.embodied.timing`, one entry per domain). All three are
+record-only and digest/identifier-only, like everything else here.
 
 P2 adds two optional objects defined in sibling modules and carried here:
 the ODD conformance record (:mod:`novafabric.embodied.odd`, ``verdict`` always
@@ -81,10 +89,18 @@ from novafabric.embodied._boundary import (
     verify_receipt_binding,
 )
 from novafabric.embodied.odd import OddConformance
+from novafabric.embodied.sim2real import Sim2RealLineage
+from novafabric.embodied.teleop import TeleopHandoff, build_teleop, check_handoff_sequence
+from novafabric.embodied.timing import ClockTiming, build_timing, check_timing_sequence
 from novafabric.embodied.trajectory import TrajectoryHop
 
 FACET_NAME = "embodied"
-SCHEMA_VERSION = "0.2.0"
+SCHEMA_VERSION = "0.3.0"
+
+#: Cap on operator-chosen free strings (sensor ids, clock domains, command
+#: classes, issuers). Generous for an identifier; small enough that no field
+#: can smuggle a document past the base64-only payload check.
+MAX_FREE_STRING_LEN = 256
 
 #: Sensor modalities enumerated by NF-301. Closed, unlike ``command_class``
 #: below, because the spec fixes this list normatively and provides ``other``
@@ -126,7 +142,7 @@ class SensorStream(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    sensor_id: str
+    sensor_id: str = Field(min_length=1, max_length=MAX_FREE_STRING_LEN)
     modality: Modality
     #: Frames/samples in the referenced segment. Required with **no default**:
     #: defaulting to 0 would write "no frames observed" for a stream nobody
@@ -138,7 +154,7 @@ class SensorStream(BaseModel):
     stream_digest: str
     #: Which clock the frames are timestamped against. Recorded, never
     #: disciplined: NovaFabric steers no clock (NF-308).
-    clock_domain: str
+    clock_domain: str = Field(min_length=1, max_length=MAX_FREE_STRING_LEN)
     #: Digest of a sensor-signed C2PA manifest, when the sensor signs at
     #: capture. Optional because most sensors do not — and marking its absence
     #: as a finding would report on the hardware, not on the evidence.
@@ -178,14 +194,14 @@ class ActuationRecord(BaseModel):
     #: bucket — a worse evidential outcome than an unfamiliar label the
     #: consumer can map. Never drive-by-wire bytes; the payload walk enforces
     #: that structurally rather than by convention.
-    command_class: str
+    command_class: str = Field(min_length=1, max_length=MAX_FREE_STRING_LEN)
     #: ``sha256:`` identity of the actuated subsystem.
     target_ref: str
     #: Commands of this class issued. ``0`` is a *recorded zero* — meaningfully
     #: different from the record being absent.
     count: int = Field(ge=0)
     #: The run/agent that declared it issued the command. Required (I-4).
-    issued_by: str
+    issued_by: str = Field(max_length=MAX_FREE_STRING_LEN)
     #: ADR-0093 action-receipt digest. Optional: a declared command with no
     #: receipt is a real and revealing state of the evidence.
     action_receipt_ref: str | None = None
@@ -274,22 +290,36 @@ class EmbodiedFacet(BaseModel):
     conformance (NF-303, :class:`~novafabric.embodied.odd.OddConformance`) and
     the perception→actuation trajectory chain (NF-310,
     :class:`~novafabric.embodied.trajectory.TrajectoryHop`) from P2.
-    Sim-to-real (NF-304), teleop (NF-305), timing (NF-308) and device identity
-    (NF-309) arrive in later phases and are deliberately absent rather than
-    stubbed. The same rule governs the P2 objects: an absent ``odd`` means no
-    ODD was recorded, never "the safety envelope was checked and nothing was
-    found" — so an ``odd`` key appears only when a declared ODD does.
+    P3 adds sim-to-real lineage (NF-304,
+    :class:`~novafabric.embodied.sim2real.Sim2RealLineage`), teleop handoffs
+    (NF-305, :class:`~novafabric.embodied.teleop.TeleopHandoff`) and
+    per-clock-domain timing (NF-308,
+    :class:`~novafabric.embodied.timing.ClockTiming`), each optional and
+    ``None`` unless recorded. Device identity (NF-309) is **not** here: it was
+    deferred out of the P3 slice (it must reuse, not re-specify, the
+    ADR-0157 device-identity object) and stays future design — deliberately
+    absent rather than stubbed. The same rule governs every optional object: an absent ``odd``
+    means no ODD was recorded, never "the safety envelope was checked and
+    nothing was found"; an absent ``teleop`` means no handoff was recorded,
+    never "no human ever took over" — so each key appears only when its
+    evidence does.
     """
 
     model_config = ConfigDict(extra="allow")
 
-    schema_version: str = SCHEMA_VERSION
+    schema_version: str = Field(default=SCHEMA_VERSION, max_length=32)
     sensors: list[SensorStream] = Field(default_factory=list)
     actuation: list[ActuationRecord] = Field(default_factory=list)
     #: NF-303 declared ODD + observed excursions, ``verdict: null`` (P2).
     odd: OddConformance | None = None
     #: NF-310 ordered perception→actuation hops (P2). Order is evidence.
     trajectory: list[TrajectoryHop] | None = None
+    #: NF-304 sim policy → real deployment binding (P3).
+    sim2real: Sim2RealLineage | None = None
+    #: NF-305 autonomy↔human handoffs, time-ordered (P3).
+    teleop: list[TeleopHandoff] | None = None
+    #: NF-308 per-clock-domain timing evidence, one entry per domain (P3).
+    timing: list[ClockTiming] | None = None
     verified: VerifiedBlock = Field(default_factory=VerifiedBlock)
 
     @model_validator(mode="after")
@@ -303,6 +333,10 @@ class EmbodiedFacet(BaseModel):
         backstop on the open part of the shape.
         """
         reject_raw_payloads(_own_fields(self))
+        if self.teleop is not None:
+            check_handoff_sequence(self.teleop)
+        if self.timing is not None:
+            check_timing_sequence(self.timing)
         # Derived from the model, never taken from the input: a caller cannot
         # set it true without an odd block, nor false with one.
         self.verified.odd_verdict_is_null = True if self.odd is not None else None
@@ -378,11 +412,15 @@ def build_facet(
     actuation: Iterable[ActuationRecord] = (),
     odd: OddConformance | None = None,
     trajectory: Iterable[TrajectoryHop] = (),
+    sim2real: Sim2RealLineage | None = None,
+    teleop: Iterable[TeleopHandoff] = (),
+    timing: Iterable[ClockTiming] = (),
 ) -> EmbodiedFacet | None:
     """Build the embodied facet, or ``None`` when there is nothing to record.
 
     Fail-open (I-3): a run with no sensor streams, declared commands, ODD
-    record, or trajectory hops yields ``None``, not an exception and not an empty facet — see
+    record, trajectory hops, sim-to-real binding, teleop handoffs or timing
+    entries yields ``None``, not an exception and not an empty facet — see
     :class:`EmbodiedFacet` on why an empty block is worse than no block, and
     the module docstring on absent-is-not-false.
 
@@ -392,18 +430,37 @@ def build_facet(
     and commands existed, and NF-310's trajectory chain — not list position —
     is where ADR-0162 puts ordering that means something. The trajectory is
     therefore kept in the order given, never sorted; ODD excursions are
-    already time-ordered by :func:`novafabric.embodied.build_odd`.
+    already time-ordered by :func:`novafabric.embodied.build_odd`. Teleop
+    handoffs are sorted stably by instant (order is evidence there too) and
+    timing entries by clock domain.
+
+    Raises:
+        HandoffOrderError: over the teleop cap.
+        ClockDomainConflictError: on a duplicate clock domain or over the cap.
     """
     streams = sorted(sensors, key=lambda s: s.sensor_id)
     commands = sorted(actuation, key=lambda a: a.command_class)
     hops = list(trajectory)
-    if not streams and not commands and odd is None and not hops:
+    handoffs = build_teleop(teleop)
+    clocks = build_timing(timing)
+    if (
+        not streams
+        and not commands
+        and odd is None
+        and not hops
+        and sim2real is None
+        and not handoffs
+        and not clocks
+    ):
         return None
     return EmbodiedFacet(
         sensors=streams,
         actuation=commands,
         odd=odd,
         trajectory=hops or None,
+        sim2real=sim2real,
+        teleop=handoffs or None,
+        timing=clocks or None,
     )
 
 

@@ -1,0 +1,13 @@
+{
+  "_comment": "INVALID by design (ADR-0162 NF-305, ADR-0009). A teleop handoff whose operator_ref is an e-mail address - raw PII, not a pseudonymous ref. Loading this must raise OperatorIdentityError (without echoing the address), and `nova embodied teleop list` must exit 1.",
+  "schema_version": "0.3.0",
+  "teleop": [
+    {
+      "direction": "autonomy_to_human",
+      "operator_ref": "operator:jane.doe@example.com",
+      "trigger": "odd_exit",
+      "latency_ms": 412.5,
+      "ts": "2026-07-13T10:02:12Z"
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+{
+  "schema_version": "0.1.0",
+  "protocol": "x402",
+  "protocol_version": "1.0",
+  "settlement_ref": "sha256:fd0df4da150dea8492828b5a2086e3e9c436dbefb56a938b931479d6953a71a9",
+  "bound_root": "sha256:8d0fc485abb2f9c96ae137f4d8fcfa7b98693a8b78b9871dea2e2ac5651aa667",
+  "amount": {
+    "amount_minor": 12000,
+    "currency": "EUR"
+  },
+  "finality": {
+    "state": "settled",
+    "finality_source": "onchain_confirmation",
+    "confirmation_ref": "sha256:fd0df4da150dea8492828b5a2086e3e9c436dbefb56a938b931479d6953a71a9",
+    "observed_at": "2026-07-13T10:02:11Z"
+  },
+  "a2a_payment_chain": [
+    {
+      "hop_index": 0,
+      "payer_agent_ref": "agent:acme-buyer",
+      "payee_agent_ref": "agent:travel-broker",
+      "amount": {
+        "amount_minor": 12000,
+        "currency": "EUR"
+      },
+      "settlement_ref": "sha256:fd0df4da150dea8492828b5a2086e3e9c436dbefb56a938b931479d6953a71a9",
+      "parent_hop": null
+    },
+    {
+      "hop_index": 1,
+      "payer_agent_ref": "agent:travel-broker",
+      "payee_agent_ref": "spiffe://hotels.example/agent/booking",
+      "amount": {
+        "amount_minor": 9000,
+        "currency": "EUR"
+      },
+      "settlement_ref": "sha256:ff007b99fddee19a66281147cd0136d31c4236cbf4b45b71a2954361b25363e0",
+      "parent_hop": 2
+    },
+    {
+      "hop_index": 2,
+      "payer_agent_ref": "spiffe://hotels.example/agent/booking",
+      "payee_agent_ref": "did:web:cleaning.example",
+      "amount": {
+        "amount_minor": 1500,
+        "currency": "EUR"
+      },
+      "settlement_ref": "sha256:0817e469a87b8abf852b0816814ce0b210edd0b519c43e8d7aae0bba6e83bd01",
+      "parent_hop": 1
+    }
+  ],
+  "agreement": {
+    "agreement_ref": "sha256:bd8c62846ab196aece420887da6cdef18b05b65ef18b7cd4c7db95f9035625d0",
+    "terms_digest": "sha256:8253d6cfb0627c2e8e387269251d47e605dea7e4a83f429ab8d5027f97f4f8e9",
+    "parties": [
+      "agent:acme-buyer",
+      "agent:travel-broker"
+    ],
+    "negotiation_transcript_ref": "sha256:9867b8493f0e00ad9623faa63fffb4b4ee557ad4064d952f2962e45ce1ec63c3",
+    "agreed_at": "2026-07-13T09:58:00Z"
+  },
+  "invoice_receipt": {
+    "document_ref": "sha256:a76532866e92041615da308d19e4cad6961f4600a6ee25b58f35a6794d36bbd7",
+    "document_type": "invoice",
+    "issuer_ref": "agent:travel-broker",
+    "total_amount": {
+      "amount_minor": 12000,
+      "currency": "EUR"
+    },
+    "matches_settlement": true,
+    "mismatches": [],
+    "unbound": false
+  }
+}

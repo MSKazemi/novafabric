@@ -1,0 +1,242 @@
+{
+  "store_id": "org-kb/support-playbooks",
+  "ledger": [
+    {
+      "schema_version": "0.1.0",
+      "store_id": "org-kb/support-playbooks",
+      "namespace": "playbooks",
+      "entry_id": "pb-4471",
+      "op": "create",
+      "value_digest": "sha256:7b2d4b0807e2b05c8f6f0cdec41a6f936e01eae1f3eae4f5c2bbbb287cbbd73a",
+      "by": {
+        "agent": "ingest-agent",
+        "run": "run_A"
+      },
+      "at": "2026-07-13T09:00:00Z",
+      "source_ref": "sha256:dd57f4b2fcf3363bc901082f94c0f50e04d812428eda46a8287a37ecebf5b95b"
+    },
+    {
+      "schema_version": "0.1.0",
+      "store_id": "org-kb/support-playbooks",
+      "namespace": "faq",
+      "entry_id": "faq-9",
+      "op": "create",
+      "value_digest": "sha256:63fec55505eb18fde0cbebce189f2c9c02a997c4017d1d062e2dd22a449b1e63",
+      "by": {
+        "agent": "ingest-agent",
+        "run": "run_A"
+      },
+      "at": "2026-07-13T09:01:00Z",
+      "prev_record_hash": "sha256:8495434487531199569edcc96bc522f9b1a26998ec30b286d081feab97783ef0"
+    },
+    {
+      "schema_version": "0.1.0",
+      "store_id": "org-kb/support-playbooks",
+      "namespace": "billing",
+      "entry_id": "bl-7",
+      "op": "create",
+      "value_digest": "sha256:3b548e359a892cae4a05b0c62309dbcf743547c92014272075ef5d69dd77f3f1",
+      "by": {
+        "agent": "triage-agent",
+        "run": "run_B"
+      },
+      "at": "2026-07-13T09:14:02Z",
+      "prev_record_hash": "sha256:ada3926182518fe23fb481fd393bb20bb58a654f72ebfcac3b1b8b5c0cc72717"
+    }
+  ],
+  "capsules": [
+    {
+      "run_id": "run_A",
+      "facets": {
+        "memstore_mutation": {
+          "schema_version": "0.1.0",
+          "store_id": "org-kb/support-playbooks",
+          "ledger_ref": "sha256:ada3926182518fe23fb481fd393bb20bb58a654f72ebfcac3b1b8b5c0cc72717",
+          "records_in_this_run": [
+            {
+              "schema_version": "0.1.0",
+              "store_id": "org-kb/support-playbooks",
+              "namespace": "playbooks",
+              "entry_id": "pb-4471",
+              "op": "create",
+              "value_digest": "sha256:7b2d4b0807e2b05c8f6f0cdec41a6f936e01eae1f3eae4f5c2bbbb287cbbd73a",
+              "by": {
+                "agent": "ingest-agent",
+                "run": "run_A"
+              },
+              "at": "2026-07-13T09:00:00Z",
+              "source_ref": "sha256:dd57f4b2fcf3363bc901082f94c0f50e04d812428eda46a8287a37ecebf5b95b"
+            },
+            {
+              "schema_version": "0.1.0",
+              "store_id": "org-kb/support-playbooks",
+              "namespace": "faq",
+              "entry_id": "faq-9",
+              "op": "create",
+              "value_digest": "sha256:63fec55505eb18fde0cbebce189f2c9c02a997c4017d1d062e2dd22a449b1e63",
+              "by": {
+                "agent": "ingest-agent",
+                "run": "run_A"
+              },
+              "at": "2026-07-13T09:01:00Z",
+              "prev_record_hash": "sha256:8495434487531199569edcc96bc522f9b1a26998ec30b286d081feab97783ef0"
+            }
+          ],
+          "access": {
+            "schema_version": "0.1.0",
+            "store_id": "org-kb/support-playbooks",
+            "ledger_ref": "sha256:fb968673a957de9317b7f25c91c7bfce00871f5a031d7cbdd12ec561d14cd6ce",
+            "accesses": [
+              {
+                "schema_version": "0.1.0",
+                "agent": "ingest-agent",
+                "store_id": "org-kb/support-playbooks",
+                "namespace": "playbooks",
+                "entry_id": "pb-4471",
+                "access": "write",
+                "allowed_scope": "*",
+                "contained": true,
+                "run": "run_A",
+                "at": "2026-07-13T09:00:00Z",
+                "value_digest": "sha256:7b2d4b0807e2b05c8f6f0cdec41a6f936e01eae1f3eae4f5c2bbbb287cbbd73a",
+                "mutation_ref": "sha256:8495434487531199569edcc96bc522f9b1a26998ec30b286d081feab97783ef0"
+              }
+            ],
+            "verified": {
+              "chain_ok": true,
+              "scope_flags_ok": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "run_id": "run_B",
+      "facets": {
+        "memstore_mutation": {
+          "schema_version": "0.1.0",
+          "store_id": "org-kb/support-playbooks",
+          "ledger_ref": "sha256:722ce5c83b1ea531b7f0fc9d6a2331970032f6334cc60a6590ade0a008a18fd5",
+          "records_in_this_run": [
+            {
+              "schema_version": "0.1.0",
+              "store_id": "org-kb/support-playbooks",
+              "namespace": "billing",
+              "entry_id": "bl-7",
+              "op": "create",
+              "value_digest": "sha256:3b548e359a892cae4a05b0c62309dbcf743547c92014272075ef5d69dd77f3f1",
+              "by": {
+                "agent": "triage-agent",
+                "run": "run_B"
+              },
+              "at": "2026-07-13T09:14:02Z",
+              "prev_record_hash": "sha256:ada3926182518fe23fb481fd393bb20bb58a654f72ebfcac3b1b8b5c0cc72717"
+            }
+          ],
+          "access": {
+            "schema_version": "0.1.0",
+            "store_id": "org-kb/support-playbooks",
+            "ledger_ref": "sha256:cd68f3283b53462de8aab377cd2321753f5044048c6488648e2868e0122fd5d0",
+            "accesses": [
+              {
+                "schema_version": "0.1.0",
+                "agent": "triage-agent",
+                "store_id": "org-kb/support-playbooks",
+                "namespace": "playbooks",
+                "entry_id": "pb-4471",
+                "access": "read",
+                "allowed_scope": "playbooks/*",
+                "contained": true,
+                "run": "run_B",
+                "at": "2026-07-13T09:10:00Z",
+                "value_digest": "sha256:7b2d4b0807e2b05c8f6f0cdec41a6f936e01eae1f3eae4f5c2bbbb287cbbd73a"
+              },
+              {
+                "schema_version": "0.1.0",
+                "agent": "triage-agent",
+                "store_id": "org-kb/support-playbooks",
+                "namespace": "billing",
+                "entry_id": "bl-7",
+                "access": "write",
+                "allowed_scope": "playbooks/*",
+                "contained": false,
+                "run": "run_B",
+                "at": "2026-07-13T09:14:02Z",
+                "value_digest": "sha256:3b548e359a892cae4a05b0c62309dbcf743547c92014272075ef5d69dd77f3f1",
+                "mutation_ref": "sha256:722ce5c83b1ea531b7f0fc9d6a2331970032f6334cc60a6590ade0a008a18fd5",
+                "prev_record_hash": "sha256:1c9d884bc17757d010f6f8f789ead327a353afb7cb235d3b4004ecae6d91d9bc"
+              }
+            ],
+            "verified": {
+              "chain_ok": true,
+              "scope_flags_ok": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "run_id": "run_C",
+      "facets": {
+        "memstore_mutation": {
+          "schema_version": "0.1.0",
+          "store_id": "org-kb/support-playbooks",
+          "access": {
+            "schema_version": "0.1.0",
+            "store_id": "org-kb/support-playbooks",
+            "ledger_ref": "sha256:9bab4c90fa080aee5439512a4e757deec177c2b8c7940a1dd260295571f2e541",
+            "accesses": [
+              {
+                "schema_version": "0.1.0",
+                "agent": "support-agent",
+                "store_id": "org-kb/support-playbooks",
+                "namespace": "billing",
+                "entry_id": "bl-7",
+                "access": "read",
+                "allowed_scope": "billing,playbooks/*",
+                "contained": true,
+                "run": "run_C",
+                "at": "2026-07-14T08:00:00Z",
+                "value_digest": "sha256:3b548e359a892cae4a05b0c62309dbcf743547c92014272075ef5d69dd77f3f1"
+              },
+              {
+                "schema_version": "0.1.0",
+                "agent": "support-agent",
+                "store_id": "org-kb/support-playbooks",
+                "namespace": "playbooks",
+                "entry_id": "pb-4471",
+                "access": "read",
+                "allowed_scope": "billing,playbooks/*",
+                "contained": true,
+                "run": "run_C",
+                "at": "2026-07-14T08:00:01Z",
+                "value_digest": "sha256:7b2d4b0807e2b05c8f6f0cdec41a6f936e01eae1f3eae4f5c2bbbb287cbbd73a",
+                "prev_record_hash": "sha256:d59decbb462f8f5a544bf2384967d012fc6d2dfb3b23c90273241ff7076889c4"
+              }
+            ],
+            "verified": {
+              "chain_ok": true,
+              "scope_flags_ok": true
+            }
+          }
+        }
+      }
+    }
+  ],
+  "expect": {
+    "derive_bl7_in_run_C": {
+      "origin_mutation_ref": "sha256:722ce5c83b1ea531b7f0fc9d6a2331970032f6334cc60a6590ade0a008a18fd5",
+      "origin_run": "run_B",
+      "upstream_origin_mutation_ref": "sha256:8495434487531199569edcc96bc522f9b1a26998ec30b286d081feab97783ef0",
+      "upstream_origin_run": "run_A"
+    },
+    "provenance_pb4471": {
+      "seeded_by_mutation_ref": "sha256:8495434487531199569edcc96bc522f9b1a26998ec30b286d081feab97783ef0",
+      "source_ref": "sha256:dd57f4b2fcf3363bc901082f94c0f50e04d812428eda46a8287a37ecebf5b95b",
+      "read_by_runs": [
+        "run_B",
+        "run_C"
+      ]
+    }
+  }
+}

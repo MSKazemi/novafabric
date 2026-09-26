@@ -127,8 +127,38 @@ a visible warning (soft-fail, ADR-0070 §3), and `crl_strict: true` (or
 `crl_dir`; `--crl-strict` can only tighten the config value. A `crl_dir` that
 does not exist, an empty string, a non-boolean `crl_strict`, or `crl_dir` /
 `crl_strict` set without `ca_bundle` (which would check nothing) is a config
-error. Directory limits, statuses and scope rules: [NovaSeal Key Management
+error (unless `tsa_ca_certs` is set — the CRLs then apply to the TSA
+chain). Directory limits, statuses and scope rules: [NovaSeal Key Management
 §2.3](novaseal-key-management.md#23-x509-cert-pinned-identity-adr-0055--works-today-library-api-only).
+
+### `tsa_ca_certs` — RFC 3161 TSA trust chain (ADR-0070 §1/§5)
+
+**Status:** experimental. Optional, all four profiles — a list of PEM files
+holding the TSA CA certificates the operator trusts (NIST SP 800-89:
+pre-provisioned anchors; no public bundle is shipped or downloaded):
+
+```yaml
+tsa_ca_certs:
+  - /etc/novaseal/tsa/freetsa-cacert.pem   # e.g. https://freetsa.org/files/cacert.pem
+```
+
+When set and a capsule carries `manifest.dsse.tsr`, `nova verify` adds a
+`TSA certificate chain (RFC 3161, TSA CA bundle)` check: the token's CMS
+signature, the TSA certificate's critical `id-kp-timeStamping`-only EKU, the
+ESSCertID binding, the message imprint (SHA-256 of the DSSE envelope) and
+the chain to these anchors at the token's `genTime`, all offline. A capsule
+with no (or an empty) token then **fails** — the token is outside the DSSE
+signature, so its absence cannot be told apart from its deletion. `crl_dir` /
+`crl_strict` also apply to this chain (revocation as of `genTime`, CRL
+freshness judged at verification time). `nova verify --tsa-ca-bundle PATH`
+overrides the key for one run. A listed file that does not exist, an empty
+list, a non-list value, or more than 32 entries is a config error. Omit the
+key and verification is unchanged. Details: [NovaSeal Key Management
+§2.5](novaseal-key-management.md#25-rfc-3161-tsa-trust-chain-adr-0070-1--experimental).
+
+The ADR's `crl_cache_dir` key is served by the existing `crl_dir` (one
+operator-synced directory for both chains); it has no default path — an
+unset `crl_dir` means no revocation check, never a silently empty one.
 
 ---
 

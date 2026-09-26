@@ -69,7 +69,7 @@ _UNIT_DIVISOR: dict[str, float] = {
     "per_image": 1.0,
 }
 
-_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 
 #: Candidate catalog filenames per discovery directory (first found wins).
 _CATALOG_FILENAMES: tuple[str, ...] = ("pricing.yaml", "pricing.yml", "pricing.json")

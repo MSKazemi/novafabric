@@ -1,0 +1,37 @@
+{
+  "root_intent_digest": "sha256:da402ba9ba332e7308844a8302398a013c28e72254e5d14461cd39ea497b11b0",
+  "chain": [
+    {
+      "hop": 0,
+      "granter": "user:did:example:alice",
+      "grantee": "spiffe://acme.example/ns/agents/sa/planner",
+      "scope": [
+        "read:tickets",
+        "spend:usd<=100"
+      ],
+      "grant_type": "w3c_vc",
+      "grant_ref": "sha256:99aced78220d554191bb41b815203c744d8603d79fa1e409f4d873d703e61511",
+      "not_after": "2027-01-01T00:00:00Z",
+      "sig": "c2lnbmF0dXJlLXBsYWNlaG9sZGVy"
+    },
+    {
+      "hop": 1,
+      "granter": "spiffe://acme.example/ns/agents/sa/planner",
+      "grantee": "spiffe://acme.example/ns/agents/sa/triager",
+      "scope": [
+        "spend:usd<=100"
+      ],
+      "grant_type": "w3c_vc",
+      "grant_ref": "sha256:cc80b925039e77ebd1f6fafddc63a9a5032a166e8d21a204d0279b4dd7b94ec3",
+      "not_after": "2027-01-01T00:00:00Z",
+      "sig": "c2lnbmF0dXJlLXBsYWNlaG9sZGVy"
+    }
+  ],
+  "verified": {
+    "walk_ok": false,
+    "all_signatures_ok": true,
+    "scope_monotonic": true,
+    "no_expired_hop": false,
+    "broken_hop": 1
+  }
+}

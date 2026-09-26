@@ -194,7 +194,7 @@ def test_refs_resolvable_is_not_named_refs_verified() -> None:
     assert "refs_verified" not in FederationVerification.model_fields
 
 
-# ── No path walk in P1 (NF-363 is P2) ─────────────────────────────────────
+# ── A pin never composes; only the NF-363 walk does ───────────────────────
 
 
 def test_a_pin_naming_org_b_yields_no_conclusion_about_org_c() -> None:
@@ -236,8 +236,9 @@ def test_a_lookalike_domain_is_never_pinned(lookalike: str) -> None:
     assert anchor_state(facet, lookalike) == "unknown"
 
 
-def test_the_facet_carries_no_path_or_hop_surface() -> None:
-    """P2's shape must be absent, not merely unpopulated."""
+def test_the_p1_facet_model_carries_no_typed_path_surface() -> None:
+    """The NF-363 path is owned by ``federation.trust_path`` (an extra key),
+    never a typed field on the P1 model a caller could read without walking."""
     assert "trust_path" not in FederationFacet.model_fields
     assert "hops" not in FederationFacet.model_fields
     # `trust_anchor` is singular: a list is the shape from which a caller
@@ -246,14 +247,20 @@ def test_the_facet_carries_no_path_or_hop_surface() -> None:
     assert "list" not in annotation.lower()
 
 
-def test_the_package_exports_no_path_walker() -> None:
+def test_the_only_path_entry_point_requires_verifier_pinned_anchors() -> None:
+    """NF-363 (P2) ships exactly one walker, and it cannot be called without
+    anchors the verifier supplies — no path can vouch for its own root."""
+    import inspect
+
     import novafabric.federation as federation
 
     lowered = {name.lower() for name in federation.__all__}
-    for fragment in ("walk", "transitive", "path", "chain", "delegat"):
-        assert not any(fragment in name for name in lowered), (
-            f"no {fragment!r} entry point until NF-363/P2 (ADR-0168)"
-        )
+    walkers = {name for name in lowered if "walk" in name or "transitive" in name}
+    assert walkers == set()
+    assert "verify_trust_path" in lowered
+    params = inspect.signature(federation.verify_trust_path).parameters
+    assert params["pinned_anchors"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert params["pinned_anchors"].default is inspect.Parameter.empty
 
 
 # ── I-1: record-only ──────────────────────────────────────────────────────
