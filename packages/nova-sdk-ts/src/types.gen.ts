@@ -927,6 +927,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v0/usage/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Usage
+         * @description Chargeback export of per-workspace usage as CSV or NDJSON (ADR-0208 P3).
+         *
+         *     Same rows, ordering, formula-injection-safe cells and 120-period bound as
+         *     ``nova server usage export``: finalized periods from rollups (``final``),
+         *     others from live counters (``provisional``). Admin/auditor see every
+         *     workspace; any other principal only its ADR-0178 membership workspaces
+         *     (filtering, not 403). Read-only: the registry is opened ``mode=ro``.
+         */
+        get: operations["export_usage_v0_usage_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v0/version": {
         parameters: {
             query?: never;
@@ -3773,6 +3799,61 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    export_usage_v0_usage_export_get: {
+        parameters: {
+            query?: {
+                /** @description First period YYYY-MM (default: current UTC period). */
+                from?: string | null;
+                /** @description Last period YYYY-MM, inclusive (default: `from`). At most 120 periods. */
+                to?: string | null;
+                /** @description `csv` or `ndjson`. */
+                format?: string;
+                /** @description Only this workspace slug. */
+                workspace?: string | null;
+                /** @description Only this org slug. */
+                org?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Chargeback rows as an attachment (RFC 4180 CSV or NDJSON). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-ndjson": string;
+                    "text/csv": string;
+                };
+            };
+            /** @description Invalid period, period range or format (error envelope). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Registry exists but could not be read, e.g. locked (error envelope). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
