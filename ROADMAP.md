@@ -22,10 +22,10 @@ the cause of a red `unit` job, was **accepted 2026-08-06** and implemented in
 migration `v004` / ADR-0226; issue #23 is closed and its tests pass. This row had
 been stale for a month — re-derived 2026-09-04.)*
 
-### Landed — [Unreleased], awaiting the next tag (2026-09-24)
+### Landed — v0.102.0, first batch (2026-09-24)
 
 Ten accepted-but-unbuilt ADR slices, all **experimental**, none changing `schemas/run-capsule.*`
-(detail: CHANGELOG `[Unreleased]` → Added; rows in the private `design/architecture/implementation-status.md`):
+(detail: CHANGELOG `[0.102.0]` → Added; rows in the private `design/architecture/implementation-status.md`):
 
 | ADR | Slice | Surface | Still open |
 |---|---|---|---|
@@ -41,7 +41,7 @@ Ten accepted-but-unbuilt ADR slices, all **experimental**, none changing `schema
 | 0188 | Deprecation removal gate | `tests/test_deprecation_removal_gate.py`, "Removed in" register column | `/v0`→`/v1` N−2 window |
 | 0208 | Usage reconcile + chargeback export (P2) | `nova server usage reconcile\|export` | HTTP export endpoint, per-org budgets, API-key binding enforcement |
 
-### Landed — [Unreleased], third batch (2026-09-25)
+### Landed — v0.102.0, third batch (2026-09-25)
 
 | ADR | Slice | Surface | Still open |
 |---|---|---|---|
@@ -56,7 +56,7 @@ Ten accepted-but-unbuilt ADR slices, all **experimental**, none changing `schema
 | 0171 P2 | Access ledger + cross-run derivation | `nova memstore access ledger\|derive\|provenance` | cross-run index |
 | 0206 P2 (SQLite) | Keyset pagination | `query_runs` | Postgres half, index migration |
 
-### Landed — [Unreleased], second batch (2026-09-25)
+### Landed — v0.102.0, second batch (2026-09-25)
 
 Ten more accepted-ADR slices, all **experimental**, none changing `schemas/run-capsule.*`:
 

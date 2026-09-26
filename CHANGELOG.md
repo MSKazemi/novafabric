@@ -6,10 +6,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Each entry below summarizes a release. Full release notes — including
 upgrade instructions, breaking changes, and try-it
 examples — live alongside in [`docs/releases/v*.md`](docs/releases/).
-The first behaviour break is in **[Unreleased]**: the Kubernetes runner no
+The first behaviour break is in **[0.102.0]**: the Kubernetes runner no
 longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
+
+## [0.102.0] - 2026-09-27
 
 ### Fixed
 
