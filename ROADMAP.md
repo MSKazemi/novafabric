@@ -25,7 +25,7 @@ been stale for a month — re-derived 2026-09-04.)*
 ### Landed — [Unreleased], awaiting the next tag (2026-09-24)
 
 Ten accepted-but-unbuilt ADR slices, all **experimental**, none changing `schemas/run-capsule.*`
-(detail: CHANGELOG `[Unreleased]` → Added; rows in `design/architecture/implementation-status.md`):
+(detail: CHANGELOG `[Unreleased]` → Added; rows in the private `design/architecture/implementation-status.md`):
 
 | ADR | Slice | Surface | Still open |
 |---|---|---|---|
