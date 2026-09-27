@@ -2,7 +2,7 @@
 # Deploys `nova serve` (dashboard + REST API). See deploy/helm/novafabric/README.md.
 
 image:
-  repository: ghcr.io/novafabric/novafabric
+  repository: ghcr.io/mskazemi/novafabric
   # Defaults to .Chart.AppVersion when empty.
   tag: ""
   pullPolicy: IfNotPresent

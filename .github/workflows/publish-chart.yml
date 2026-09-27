@@ -1,11 +1,18 @@
 name: Publish Helm chart
 
 # Lints, packages, and pushes the NovaFabric Helm chart as an OCI artifact to
-# GHCR (oci://ghcr.io/novafabric/charts). One registry + one auth model for
-# both the container image (publish-image.yml) and the chart.
+# GHCR, under THIS repository's owner namespace. One registry + one auth model
+# for both the container image (publish-image.yml) and the chart.
+#
+# The namespace is derived from `github.repository_owner`, never hardcoded:
+# publish-image.yml already resolves `ghcr.io/${{ github.repository }}`, and a
+# hardcoded org path silently diverged from it when the repository moved —
+# v0.102.0's chart push failed with "unexpected status from HEAD request"
+# because a repo-scoped GITHUB_TOKEN cannot write another owner's package.
+# GHCR namespaces are lowercase, so the owner is lowercased before use.
 #
 # Install from the published chart with:
-#   helm install nova oci://ghcr.io/novafabric/charts/novafabric --version X.Y.Z
+#   helm install nova oci://ghcr.io/<owner>/charts/novafabric --version X.Y.Z
 #
 # Fires when a v* tag is pushed. Chart version and appVersion are derived from
 # the tag (v0.57.0 -> 0.57.0), so the chart always pins the matching image tag.
@@ -59,4 +66,6 @@ jobs:
             helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Push chart
-        run: helm push "${{ steps.package.outputs.path }}" oci://ghcr.io/novafabric/charts
+        run: |
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          helm push "${{ steps.package.outputs.path }}" "oci://ghcr.io/$owner/charts"

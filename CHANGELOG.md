@@ -11,6 +11,32 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Every documented container and chart path pointed at a namespace that no longer
+  serves them, and v0.102.0's chart never published at all.**
+
+  After the repository moved to `MSKazemi`, `publish-image.yml` kept working because it
+  resolves `ghcr.io/${{ github.repository }}`, but `publish-chart.yml` hardcoded
+  `oci://ghcr.io/novafabric/charts`. A repo-scoped `GITHUB_TOKEN` cannot write another
+  owner's package, so the v0.102.0 chart push failed with "unexpected status from HEAD
+  request" while the image published normally.
+
+  The documentation had drifted the same way: 18 live references across `docs/ops/`,
+  `deploy/helm/` and `deploy/k8s/` still named the old namespace — including the chart's
+  own default `image.repository`, so a plain `helm install` produced ImagePullBackOff and
+  every documented `docker pull` returned 401. Verified anonymously:
+  `ghcr.io/novafabric/novafabric` is unauthorized, `ghcr.io/mskazemi/novafabric` serves
+  `0.102.0` and `latest`.
+
+  The chart workflow now derives its namespace from `github.repository_owner`, lowercased
+  for GHCR, and the live paths were corrected. Release notes under `docs/releases/` were
+  deliberately left alone: they record what was true when each version shipped.
+
+  Guard: `tests/docs/test_registry_namespace_matches_ci.py` asserts that no workflow
+  hardcodes a GHCR namespace and that live documentation names the owner of the public
+  remote, so this cannot drift apart again. Both halves proven red before green.
+
 ### Added
 
 - **`nova capture` now tells a first-time user where the community is — once, as text.**

@@ -5,7 +5,7 @@ This directory contains manifests for deploying the NovaFabric collector tier on
 ## Status
 
 **planned** — The Kubernetes collector profile is Phase 2 of the NovaFabric cluster-scale
-roadmap. The `ghcr.io/novafabric/novafabric-collector:latest` image is not yet published;
+roadmap. The `ghcr.io/mskazemi/novafabric-collector:latest` image is not yet published;
 see `collector/` for the Go module build target.
 
 ---

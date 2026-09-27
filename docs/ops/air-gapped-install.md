@@ -98,7 +98,7 @@ Tier-A/B licensing per ADR-0024):
 > e.g. `pip download 'novafabric[server,serve,query]'` — over `[all]`.
 
 Container images and the Helm chart ship from GHCR
-(`ghcr.io/novafabric/novafabric`, `oci://ghcr.io/novafabric/charts/novafabric`
+(`ghcr.io/mskazemi/novafabric`, `oci://ghcr.io/mskazemi/charts/novafabric`
 — [Server Deployment Guide](server-deployment.md)); mirror them into your
 private registry (`docker pull` → `docker push registry.internal/...`) —
 nothing in the chart requires the public registry at runtime.

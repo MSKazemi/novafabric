@@ -13,7 +13,7 @@ multi-user OIDC/RBAC REST API (`mode: server`, see below).
 From the published OCI chart (pushed to GHCR by the release workflow):
 
 ```bash
-helm install nova oci://ghcr.io/novafabric/charts/novafabric --version <X.Y.Z>
+helm install nova oci://ghcr.io/mskazemi/charts/novafabric --version <X.Y.Z>
 ```
 
 From a checkout of the repo:
@@ -71,7 +71,7 @@ processes). Provide OIDC settings through `extraEnv`.
 
 | Key | Default | Description |
 |---|---|---|
-| `image.repository` | `ghcr.io/novafabric/novafabric` | Container image |
+| `image.repository` | `ghcr.io/mskazemi/novafabric` | Container image |
 | `image.tag` | `""` (chart appVersion) | Image tag |
 | `mode` | `dashboard` | `dashboard` (`nova serve`) or `server` (`nova server start`) |
 | `dbRevision` | `head` | Alembic revision the init container migrates to |

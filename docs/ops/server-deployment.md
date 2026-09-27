@@ -344,8 +344,8 @@ NovaFabric ships to three channels from the public repository, each on a `v*` ta
 | Channel | Location | Pull |
 |---|---|---|
 | **PyPI** | `pypi.org/project/novafabric` | `pip install novafabric` |
-| **Container image (GHCR)** | `ghcr.io/novafabric/novafabric` | `docker pull ghcr.io/novafabric/novafabric:<X.Y.Z>` |
-| **Helm chart (GHCR OCI)** | `oci://ghcr.io/novafabric/charts/novafabric` | `helm install … oci://ghcr.io/novafabric/charts/novafabric` |
+| **Container image (GHCR)** | `ghcr.io/mskazemi/novafabric` | `docker pull ghcr.io/mskazemi/novafabric:<X.Y.Z>` |
+| **Helm chart (GHCR OCI)** | `oci://ghcr.io/mskazemi/charts/novafabric` | `helm install … oci://ghcr.io/mskazemi/charts/novafabric` |
 
 Images are multi-arch (`linux/amd64`, `linux/arm64`). Docker Hub is an optional
 mirror, populated only when a `DOCKERHUB_TOKEN` secret is configured on the repo.
@@ -357,14 +357,14 @@ provenance — the provenance platform attesting its own supply chain.
 
 ```bash
 # Image: keyless cosign signature (Sigstore/Fulcio + Rekor transparency log)
-cosign verify ghcr.io/novafabric/novafabric:<X.Y.Z> \
+cosign verify ghcr.io/mskazemi/novafabric:<X.Y.Z> \
   --certificate-identity-regexp '^https://github.com/MSKazemi/novafabric/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
 # Image: SLSA build provenance + SBOM (attached as OCI referrers)
-gh attestation verify oci://ghcr.io/novafabric/novafabric:<X.Y.Z> \
+gh attestation verify oci://ghcr.io/mskazemi/novafabric:<X.Y.Z> \
   --repo MSKazemi/novafabric
-cosign download sbom ghcr.io/novafabric/novafabric:<X.Y.Z>
+cosign download sbom ghcr.io/mskazemi/novafabric:<X.Y.Z>
 
 # Wheel: SLSA provenance for the PyPI distribution
 gh attestation verify novafabric-<X.Y.Z>-py3-none-any.whl --repo MSKazemi/novafabric
@@ -373,7 +373,7 @@ gh attestation verify novafabric-<X.Y.Z>-py3-none-any.whl --repo MSKazemi/novafa
 ### Quick start (bundled Postgres, evaluation only)
 
 ```bash
-helm install nova oci://ghcr.io/novafabric/charts/novafabric --version <X.Y.Z>
+helm install nova oci://ghcr.io/mskazemi/charts/novafabric --version <X.Y.Z>
 kubectl rollout status deploy/nova-novafabric
 kubectl port-forward svc/nova-novafabric 4321:4321
 # open http://localhost:4321/dashboard  (access token printed in `kubectl logs`)
@@ -382,7 +382,7 @@ kubectl port-forward svc/nova-novafabric 4321:4321
 ### Production (external managed Postgres)
 
 ```bash
-helm install nova oci://ghcr.io/novafabric/charts/novafabric --version <X.Y.Z> \
+helm install nova oci://ghcr.io/mskazemi/charts/novafabric --version <X.Y.Z> \
   --set postgres.enabled=false \
   --set externalDatabase.host=my-pg.example.com \
   --set externalDatabase.existingSecret=nova-db \
@@ -422,7 +422,7 @@ and, with `NOVA_WORKERS>1`, runs that many uvicorn workers (requires Postgres):
 docker run -e NOVA_MODE=server \
   -e NOVAFABRIC_POSTGRES_DSN=postgresql://nova:***@my-pg:5432/nova \
   -e NOVA_WORKERS=4 \
-  -p 7433:7433 ghcr.io/novafabric/novafabric:<X.Y.Z>
+  -p 7433:7433 ghcr.io/mskazemi/novafabric:<X.Y.Z>
 ```
 
 Extra env for OIDC: `NOVAFABRIC_SERVER_OIDC_ISSUER_URL`,
@@ -431,7 +431,7 @@ Extra env for OIDC: `NOVAFABRIC_SERVER_OIDC_ISSUER_URL`,
 ### Helm
 
 ```bash
-helm install nova oci://ghcr.io/novafabric/charts/novafabric --version <X.Y.Z> \
+helm install nova oci://ghcr.io/mskazemi/charts/novafabric --version <X.Y.Z> \
   --set mode=server \
   --set server.port=7433 \
   --set server.workers=4 \
