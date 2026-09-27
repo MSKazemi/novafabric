@@ -11,7 +11,22 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+## [0.102.1] - 2026-09-27
+
 ### Fixed
+
+- **Two daemon cancel-watcher tests failed under `make test-par`, blaming the wrong thing.**
+
+  `Thread.join(timeout=3)` does not raise when it times out — it simply returns. Under the
+  release tier's 20 workers the watcher thread was not scheduled within the budget, so the
+  assertions then ran against an empty list and reported `assert 2 in []`, which reads as a
+  wrong signal rather than a thread that never finished. The clean-exit case was worse: it
+  asserts `killed == []`, so a watcher that never ran at all would have passed **vacuously**.
+
+  All three joins now go through a helper that asserts the thread finished, and the budget is
+  30s — generous on purpose, because `join` returns the moment the thread ends, so a large
+  budget costs nothing when passing. Proven by forcing a timeout: the failure now names the
+  unfinished watcher instead of the signal.
 
 - **Nine CLI tests asserted flags against colourised help and turned CI red.**
 
