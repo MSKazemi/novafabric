@@ -428,7 +428,8 @@ def test_no_decision_log_is_an_honest_noop(backup_set: Path, tmp_path: Path) -> 
 def test_cli_restore_help() -> None:
     result = runner.invoke(app, ["restore", "--help"])
     assert result.exit_code == 0
-    assert_flag_in_help(result, "--home") and "--force" in result.output
+    assert_flag_in_help(result, "--home")
+    assert_flag_in_help(result, "--force")
 
 
 def test_cli_restore_round_trip(backup_set: Path, tmp_path: Path) -> None:

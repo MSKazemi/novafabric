@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 import yaml
+from _help_assert import strip_ansi
 from rich.console import Console
 from typer.testing import CliRunner
 
@@ -45,7 +46,10 @@ def _invoke(*args: str) -> Any:
 
 
 def _squash(text: str) -> str:
-    return " ".join(text.split())
+    # strip_ansi first: Rich emits escape sequences INSIDE option names when
+    # colour is on (CI enables it), so collapsing whitespace alone leaves
+    # "--flag" unmatchable. See tests/_help_assert.py / issue #21.
+    return " ".join(strip_ansi(text).split())
 
 
 def _has_boundary(result: Any) -> bool:

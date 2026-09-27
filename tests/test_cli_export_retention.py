@@ -12,6 +12,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from _help_assert import assert_flag_in_help, strip_ansi
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -63,7 +64,7 @@ def _args(tmp_path: Path, bundle: Path, *extra: str) -> list[str]:
 def test_renders_posture_with_timestamp(tmp_path: Path, registry: Path) -> None:
     result = runner.invoke(app, _args(tmp_path, _bundle(tmp_path, tsr=True), "--registry", "prod"))
     assert result.exit_code == 0, result.output
-    out = " ".join(result.output.split())
+    out = " ".join(strip_ansi(result.output).split())
     assert "17 CFR 240.17a-4" in out
     assert "trusted_timestamp complete" in out
     assert "retention_policy complete" in out
@@ -101,7 +102,8 @@ def test_corrupt_policy_exits_two(tmp_path: Path, registry: Path) -> None:
 def test_help_lists_options() -> None:
     result = runner.invoke(app, ["export-retention", "--help"])
     assert result.exit_code == 0
-    assert "--bundle" in result.output and "--regime" in result.output
+    assert_flag_in_help(result, "--bundle")
+    assert_flag_in_help(result, "--regime")
 
 
 def test_oversize_manifest_exits_two(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

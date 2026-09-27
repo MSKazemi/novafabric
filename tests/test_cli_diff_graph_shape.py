@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from _help_assert import assert_flag_in_help, strip_ansi
 from rich.console import Console
 from typer.testing import CliRunner
 
@@ -74,7 +75,10 @@ def _wide_console(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _squash(text: str) -> str:
-    return " ".join(text.split())
+    # strip_ansi first: Rich emits escape sequences INSIDE option names when
+    # colour is on (CI enables it), so collapsing whitespace alone leaves
+    # "--flag" unmatchable. See tests/_help_assert.py / issue #21.
+    return " ".join(strip_ansi(text).split())
 
 
 # --- default output is byte-identical without the flags ---------------------------------
@@ -99,8 +103,11 @@ def test_default_output_byte_identical_without_flags(
         "json": format_json(report),
         "github-annotation": format_github_annotations(report),
     }[fmt]
-    assert result.output == expected + "\n"
-    assert "graph_shape" not in result.output and "Graph shape" not in result.output
+    # compare the rendered text a user sees: Rich colourises when FORCE_COLOR is
+    # set (as in CI), and escape sequences are not part of the byte-identity claim
+    rendered = strip_ansi(result.output)
+    assert rendered == expected + "\n"
+    assert "graph_shape" not in rendered and "Graph shape" not in rendered
 
 
 def test_flag_only_appends_block(pair: tuple[Path, Path, Path]) -> None:
@@ -240,4 +247,5 @@ def test_rejected_with_other_modes(pair: tuple[Path, Path, Path], mode: str) -> 
 def test_help_lists_flags() -> None:
     result = runner.invoke(app, ["diff", "--help"], terminal_width=200)
     assert result.exit_code == 0
-    assert "--graph-shape" in result.output and "--assert-same-shape" in result.output
+    assert_flag_in_help(result, "--graph-shape")
+    assert_flag_in_help(result, "--assert-same-shape")

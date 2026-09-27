@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _help_assert import assert_flag_in_help, strip_ansi
 from typer.testing import CliRunner, Result
 
 from novafabric.cli.main import app
@@ -37,7 +38,10 @@ def registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _squash(text: str) -> str:
-    return " ".join(text.split())
+    # strip_ansi first: Rich emits escape sequences INSIDE option names when
+    # colour is on (CI enables it), so collapsing whitespace alone leaves
+    # "--flag" unmatchable. See tests/_help_assert.py / issue #21.
+    return " ".join(strip_ansi(text).split())
 
 
 def _dataset(tmp_path: Path) -> Path:
@@ -184,6 +188,6 @@ def test_unresolvable_score_config_exits_2_before_running(
 
 def test_help_lists_new_flags() -> None:
     run_help = runner.invoke(app, ["experiment", "run", "--help"])
-    assert "--score-config" in run_help.output
+    assert_flag_in_help(run_help, "--score-config")
     compare_help = runner.invoke(app, ["experiment", "compare", "--help"])
-    assert "--require-comparable" in compare_help.output
+    assert_flag_in_help(compare_help, "--require-comparable")

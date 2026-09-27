@@ -74,4 +74,5 @@ def test_storage_validate_generic_error_exits_1() -> None:
 def test_storage_validate_help() -> None:
     result = runner.invoke(app, ["storage", "validate", "--help"])
     assert result.exit_code == 0
-    assert_flag_in_help(result, "--endpoint") or "--bucket" in result.output
+    assert_flag_in_help(result, "--endpoint")
+    assert_flag_in_help(result, "--bucket")

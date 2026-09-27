@@ -13,6 +13,36 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **Nine CLI tests asserted flags against colourised help and turned CI red.**
+
+  The `unit` job failed on v0.102.0's follow-up push with 8 failures (9 reproducible
+  locally under `FORCE_COLOR=1`). Rich emits ANSI escape sequences *inside* option names
+  when colour is enabled, so `"--flag" in result.output` is False even though the flag is
+  plainly visible. CI enables colour; pytest's capture makes Rich disable it locally, so
+  these passed everywhere except CI.
+
+  `tests/_help_assert.py` has existed since 2026-08-05 (issue #21) for exactly this and
+  documents the diagnosis, but nothing required its use, so the accepted-ADR slice batches
+  reintroduced the class. The failing assertions now go through `assert_flag_in_help` /
+  `strip_ansi`, and the four local `_squash` helpers strip ANSI before collapsing
+  whitespace — which is what "squash" was always meant to mean.
+
+  Two of the assertions found along the way were **vacuous**:
+  `assert_flag_in_help(result, "--home") and "--force" in result.output` has no `assert`
+  keyword, so the helper returns `None`, the `and` short-circuits, and the `--force` check
+  never ran. The `or` variant discarded its result the same way. Both now assert for real,
+  and both flags do exist.
+
+  Guard: `tests/docs/test_help_assertions_strip_ansi.py` rejects a `--flag` assertion
+  against unsanitised output inside any test that invokes `--help`. It was narrowed after
+  a first version flagged 12 working assertions, then hardened twice against its own
+  bypasses — output bound to a local variable, and `for flag in (...)` loops — each proven
+  red before green.
+
+  ⚠ Not closed by this: the local gate runs with `FORCE_COLOR` unset while CI enables
+  colour, so this class is invisible to `make test-par` at runtime. The guard catches it
+  statically; true runtime parity is a separate decision.
+
 - **The private mirror was running the entire CI suite again, on billable minutes.**
 
   CI and every other action belong to the public repository, but `.github/` is part of

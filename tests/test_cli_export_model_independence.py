@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from _help_assert import assert_flag_in_help, strip_ansi
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -64,9 +65,11 @@ def _args(tmp_path: Path, db: Path, *extra: str) -> list[str]:
 def test_independent_renders_complete(tmp_path: Path) -> None:
     result = runner.invoke(app, _args(tmp_path, _db(tmp_path, "bob")))
     assert result.exit_code == 0, result.output
-    assert "independence" in result.output and "complete" in result.output
-    assert "maker=alice checker=bob" in result.output
-    assert "does not guarantee" in " ".join(result.output.split())  # honesty banner
+    # Rich colourises when FORCE_COLOR is set (CI); assert the rendered text
+    rendered = strip_ansi(result.output)
+    assert "independence" in rendered and "complete" in rendered
+    assert "maker=alice checker=bob" in rendered
+    assert "does not guarantee" in " ".join(rendered.split())  # honesty banner
 
 
 def test_single_identity_json_exit_zero(tmp_path: Path) -> None:
@@ -105,4 +108,4 @@ def test_corrupt_registry_exits_two(tmp_path: Path) -> None:
 def test_help_lists_command() -> None:
     result = runner.invoke(app, ["export-model-independence", "--help"])
     assert result.exit_code == 0
-    assert "--model" in result.output
+    assert_flag_in_help(result, "--model")
