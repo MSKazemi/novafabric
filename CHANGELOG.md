@@ -13,6 +13,28 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **v0.102.0's container image shipped unsigned, and the CRITICAL-vulnerability gate
+  could not have resolved its image either.**
+
+  An OCI repository name must be lowercase; `github.repository` preserves the owner's
+  case (`MSKazemi/novafabric`). `docker/metadata-action` lowercases its own `images:`
+  input, so the build and push succeeded — but the raw expression passed to cosign did
+  not, and the signing step failed with
+
+      Error: signing [ghcr.io/MSKazemi/novafabric@sha256:...]:
+             parsing reference: could not parse reference
+
+  The image is therefore published but unsigned, so the `cosign verify` command in
+  `docs/ops/server-deployment.md` cannot succeed for that release. The same raw form fed
+  both trivy steps, including the ADR-0186 gate that is supposed to block a release on
+  fixable CRITICAL findings.
+
+  The reference is now resolved once, lowercased, into a step output that signing,
+  attestation and both scans consume. Guard extended:
+  `test_no_workflow_builds_an_oci_ref_without_lowercasing`, proven red before green.
+  `images:` inputs to `docker/metadata-action` stay exempt because the action lowercases
+  them itself.
+
 - **Every documented container and chart path pointed at a namespace that no longer
   serves them, and v0.102.0's chart never published at all.**
 

@@ -75,6 +75,11 @@ def test_no_workflow_hardcodes_a_ghcr_namespace() -> None:
     for rel in _tracked(".github/workflows"):
         text = (REPO_ROOT / rel).read_text(encoding="utf-8", errors="ignore")
         for line_no, line in enumerate(text.splitlines(), start=1):
+            # A comment cannot push anything. Workflow prose legitimately quotes
+            # the broken reference this guard exists to prevent, and a guard that
+            # fails on an accurate explanation is one people learn to suppress.
+            if line.strip().startswith("#"):
+                continue
             for match in GHCR_PATH.finditer(line):
                 ns = match.group(1)
                 if ns in THIRD_PARTY or ns.startswith("$"):
@@ -108,6 +113,45 @@ def test_live_docs_name_the_namespace_ci_publishes_to() -> None:
         f"live documentation names a GHCR namespace other than {expected!r}, the "
         "owner of the public remote. Readers get 401 on `docker pull` and "
         "ImagePullBackOff on `helm install`:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_no_workflow_builds_an_oci_ref_without_lowercasing() -> None:
+    """An OCI repository name must be lowercase; ``github.repository`` is not.
+
+    v0.102.0's image published but shipped UNSIGNED: the push tags come from
+    docker/metadata-action, which lowercases its ``images:`` input, but the raw
+    expression handed to cosign did not, and the step died on
+
+        Error: signing [ghcr.io/MSKazemi/novafabric@sha256:...]:
+               parsing reference: could not parse reference
+
+    The same raw form also fed the trivy CRITICAL-vulnerability release gate, so
+    that gate could not have resolved its image either. A ``images:`` input to
+    metadata-action is exempt because the action lowercases it itself.
+    """
+    offenders: list[str] = []
+    for rel in _tracked(".github/workflows"):
+        text = (REPO_ROOT / rel).read_text(encoding="utf-8", errors="ignore")
+        for line_no, line in enumerate(text.splitlines(), start=1):
+            if "github.repository }}" not in line or "ghcr.io/" not in line:
+                continue
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue  # prose about this very defect
+            if "[:lower:]" in line:
+                continue  # the line doing the lowercasing
+            if stripped.startswith("images:") or stripped.startswith("- ghcr.io/"):
+                continue  # metadata-action lowercases its own input
+            if re.match(r"^ghcr\.io/\$\{\{ github\.repository \}\}$", stripped):
+                continue  # bare metadata-action `images:` list item
+            offenders.append(f"{rel}:{line_no}  {stripped[:90]}")
+
+    assert not offenders, (
+        "a workflow builds an OCI reference from `github.repository` without "
+        "lowercasing it. OCI repository names must be lowercase, and this owner "
+        "is not — cosign and trivy cannot parse the result:\n  "
+        + "\n  ".join(offenders)
     )
 
 

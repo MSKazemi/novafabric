@@ -109,18 +109,31 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@v4.1.2
 
+      - name: Resolve the lowercase image reference
+        # An OCI repository name MUST be lowercase, but `github.repository`
+        # preserves the owner's case ("MSKazemi/novafabric"). docker/metadata-action
+        # lowercases it for the build tags, which is why the push succeeds — but the
+        # raw expression does not, and v0.102.0's signing step died on it:
+        #   Error: signing [ghcr.io/MSKazemi/novafabric@sha256:...]:
+        #          parsing reference: could not parse reference
+        # The image shipped unsigned as a result. Resolve it once, here, and let
+        # every downstream step consume the same value.
+        id: image
+        run: |
+          echo "ref=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
       - name: Sign the image (keyless, Sigstore/Fulcio + Rekor)
         # Signs the immutable digest, not the mutable tag. Keyless: the identity
         # is this workflow's OIDC token, logged transparently to Rekor.
         env:
           COSIGN_YES: "true"
           DIGEST: ${{ steps.build.outputs.digest }}
-        run: cosign sign "ghcr.io/${{ github.repository }}@${DIGEST}"
+        run: cosign sign "${{ steps.image.outputs.ref }}@${DIGEST}"
 
       - name: Attest build provenance (SLSA, GitHub-native)
         uses: actions/attest-build-provenance@v4
         with:
-          subject-name: ghcr.io/${{ github.repository }}
+          subject-name: ${{ steps.image.outputs.ref }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
@@ -130,7 +143,7 @@ jobs:
         # blocks by itself; the gate is the next step.
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}
+          image-ref: ${{ steps.image.outputs.ref }}:${{ steps.meta.outputs.version }}
           format: table
           output: trivy-report.txt
           exit-code: "0"
@@ -150,7 +163,7 @@ jobs:
         # base-image lag; if they persist they enter the waiver discipline.
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}
+          image-ref: ${{ steps.image.outputs.ref }}:${{ steps.meta.outputs.version }}
           severity: CRITICAL
           ignore-unfixed: true
           exit-code: "1"
