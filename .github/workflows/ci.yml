@@ -27,6 +27,10 @@ jobs:
   # --------------------------------------------------------------------------
   unit:
     runs-on: ubuntu-latest
+    # CI and every other action belong to the PUBLIC repository. The private
+    # mirror carries the same .github/ tree, so without this it runs the whole
+    # suite again on billable minutes and leaves that repo permanently red.
+    if: github.repository == 'MSKazemi/novafabric'
     # 15 minutes was not enough and had not been for weeks. This job hit the cap
     # at ~15m15s on EVERY run from 2026-07-31 to 2026-08-05 — GitHub reports a
     # timeout as `cancelled`, which reads like an interrupted run rather than a
@@ -167,6 +171,10 @@ jobs:
   # --------------------------------------------------------------------------
   typecheck:
     runs-on: ubuntu-latest
+    # CI and every other action belong to the PUBLIC repository. The private
+    # mirror carries the same .github/ tree, so without this it runs the whole
+    # suite again on billable minutes and leaves that repo permanently red.
+    if: github.repository == 'MSKazemi/novafabric'
     timeout-minutes: 15
 
     steps:
@@ -199,6 +207,10 @@ jobs:
   # --------------------------------------------------------------------------
   seal-latency-gate:
     runs-on: ubuntu-latest
+    # CI and every other action belong to the PUBLIC repository. The private
+    # mirror carries the same .github/ tree, so without this it runs the whole
+    # suite again on billable minutes and leaves that repo permanently red.
+    if: github.repository == 'MSKazemi/novafabric'
     timeout-minutes: 5
 
     steps:
@@ -246,6 +258,10 @@ jobs:
   # --------------------------------------------------------------------------
   capture-overhead-gate:
     runs-on: ubuntu-latest
+    # CI and every other action belong to the PUBLIC repository. The private
+    # mirror carries the same .github/ tree, so without this it runs the whole
+    # suite again on billable minutes and leaves that repo permanently red.
+    if: github.repository == 'MSKazemi/novafabric'
     timeout-minutes: 10
 
     steps:
@@ -291,6 +307,10 @@ jobs:
   # --------------------------------------------------------------------------
   web:
     runs-on: ubuntu-latest
+    # CI and every other action belong to the PUBLIC repository. The private
+    # mirror carries the same .github/ tree, so without this it runs the whole
+    # suite again on billable minutes and leaves that repo permanently red.
+    if: github.repository == 'MSKazemi/novafabric'
     timeout-minutes: 10
 
     steps:
@@ -340,6 +360,10 @@ jobs:
   # --------------------------------------------------------------------------
   integration:
     runs-on: ubuntu-latest
+    # CI and every other action belong to the PUBLIC repository. The private
+    # mirror carries the same .github/ tree, so without this it runs the whole
+    # suite again on billable minutes and leaves that repo permanently red.
+    if: github.repository == 'MSKazemi/novafabric'
     timeout-minutes: 20
 
     services:

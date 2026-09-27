@@ -13,6 +13,29 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **The private mirror was running the entire CI suite again, on billable minutes.**
+
+  CI and every other action belong to the public repository, but `.github/` is part of
+  the shared tree, so the mirror carried the same workflows. Only the four publish
+  workflows were guarded — which is what kept a tag pushed to the mirror from publishing
+  images — while the other 29 jobs ran on both repositories.
+
+  On the mirror that meant `CI` five times, every one a failure, one for 40m27s, plus
+  `OpenSSF Scorecard` (which only works on public repositories) and `docs`, also failing.
+  Public Actions minutes are free; private ones are not. A permanently red Actions tab is
+  also how a real failure hides — v0.102.0's three failed publish jobs sat in that noise.
+
+  All 35 jobs now carry `github.repository == 'MSKazemi/novafabric'`. Two needed their
+  existing condition combined rather than replaced: `always()` in `capture-action.yml`,
+  and the CLA trigger, which is an `||` and therefore parenthesised — GitHub binds
+  `A || B && guard` as `A || (B && guard)`, leaving the mirror running.
+
+  Guard: `tests/docs/test_workflows_run_only_on_the_public_repo.py`. It checks both that
+  the guard is present and that it is *effective*: an attack on the first version proved
+  a text-only check still passed the unparenthesised-`||` case, so it now strips balanced
+  brackets and rejects any top-level `||`. Dependabot's own graph runs are untouched —
+  they are GitHub-generated, not workflow files, so the private alert signal is preserved.
+
 - **Nothing tied the version declarations together, so a missed bump was silent.**
 
   `pyproject.toml` and `CITATION.cff` each carry the version and were kept in step by

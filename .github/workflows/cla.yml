@@ -26,7 +26,10 @@ jobs:
     #
     # issue_comment carries no pull_request payload, so it is admitted here and
     # filtered by the step condition below.
-    if: github.event_name == 'issue_comment' || github.event.pull_request.user.type != 'Bot'
+    # The trigger test is an OR, so it is parenthesised: without the brackets
+    # `A || B && guard` binds as `A || (B && guard)` and the mirror still runs.
+    if: github.repository == 'MSKazemi/novafabric' &&
+      (github.event_name == 'issue_comment' || github.event.pull_request.user.type != 'Bot')
     runs-on: ubuntu-latest
     steps:
       - name: Check or record CLA signature

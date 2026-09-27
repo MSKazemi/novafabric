@@ -22,6 +22,10 @@ permissions:
 jobs:
   postgres-scale:
     runs-on: ubuntu-latest
+    # CI and every other action belong to the PUBLIC repository. The private
+    # mirror carries the same .github/ tree, so without this it runs the whole
+    # suite again on billable minutes and leaves that repo permanently red.
+    if: github.repository == 'MSKazemi/novafabric'
     timeout-minutes: 40
 
     services:
@@ -80,6 +84,10 @@ jobs:
 
   object-store-scale:
     runs-on: ubuntu-latest
+    # CI and every other action belong to the PUBLIC repository. The private
+    # mirror carries the same .github/ tree, so without this it runs the whole
+    # suite again on billable minutes and leaves that repo permanently red.
+    if: github.repository == 'MSKazemi/novafabric'
     timeout-minutes: 45
 
     # MinIO runs as an explicit step rather than a `services:` container.
@@ -175,6 +183,10 @@ jobs:
   # docs/ops/dashboard-scale.md.
   dashboard-scale:
     runs-on: ubuntu-latest
+    # CI and every other action belong to the PUBLIC repository. The private
+    # mirror carries the same .github/ tree, so without this it runs the whole
+    # suite again on billable minutes and leaves that repo permanently red.
+    if: github.repository == 'MSKazemi/novafabric'
     timeout-minutes: 20
 
     steps:

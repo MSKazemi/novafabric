@@ -70,6 +70,10 @@ jobs:
   image-toolchain:
     name: Image build toolchain (no push)
     runs-on: ubuntu-latest
+    # CI and every other action belong to the PUBLIC repository. The private
+    # mirror carries the same .github/ tree, so without this it runs the whole
+    # suite again on billable minutes and leaves that repo permanently red.
+    if: github.repository == 'MSKazemi/novafabric'
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -136,6 +140,10 @@ jobs:
   chart-toolchain:
     name: Helm chart toolchain (no push)
     runs-on: ubuntu-latest
+    # CI and every other action belong to the PUBLIC repository. The private
+    # mirror carries the same .github/ tree, so without this it runs the whole
+    # suite again on billable minutes and leaves that repo permanently red.
+    if: github.repository == 'MSKazemi/novafabric'
     timeout-minutes: 10
     steps:
       - name: Checkout
