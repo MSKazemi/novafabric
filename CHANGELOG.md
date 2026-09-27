@@ -13,6 +13,23 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **Nothing tied the version declarations together, so a missed bump was silent.**
+
+  `pyproject.toml` and `CITATION.cff` each carry the version and were kept in step by
+  hand; v0.94.0 already shipped once with a missed `pyproject.toml` bump. The release
+  notes had a second gap: `docs/releases/v0.102.0.md` existed on disk but was not yet
+  tracked by the public git, so README's link to it was dead for every reader of the
+  published repository.
+
+  Guard: `tests/docs/test_release_metadata_is_consistent.py` asserts that
+  `CITATION.cff` matches `pyproject.toml`, that CHANGELOG's newest release heading
+  matches it too, and that `docs/releases/v<version>.md` both exists and is publicly
+  tracked. All three proven red before green.
+
+  `deploy/helm/novafabric/Chart.yaml` is deliberately exempt: its own comments record
+  that `publish-chart.yml` overrides `version` and `appVersion` from the git tag, so
+  those values are placeholders by design rather than drift.
+
 - **v0.102.0's container image shipped unsigned, and the CRITICAL-vulnerability gate
   could not have resolved its image either.**
 
