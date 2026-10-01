@@ -52,6 +52,27 @@ if TYPE_CHECKING:
 #: standard way to manage a PII object, silently applying to no object at all.
 
 
+#: Environment flag gating the cap-003 dual-object split.
+CAP003_ENV = "NOVA_CAP003_ENABLED"
+#: Default when the flag is unset — **false**, the mandatory safety gate
+#: (SCALE-ADR-003 / ADR-0066 / ADR-0062) until EU-GDPR legal counsel reviews
+#: cap-003's OQ-01. ADR-0069's "default becomes true" line was a mis-citation
+#: (it resolves cap-001's OQ-01, not cap-003's) and is corrected in the ADR.
+CAP003_DEFAULT = False
+
+
+def cap003_enabled() -> bool:
+    """True only when an operator explicitly sets ``NOVA_CAP003_ENABLED=true``.
+
+    Single source of truth for the flag's parsing and default; any value other
+    than ``true`` (case-insensitive), including unset, means disabled.
+    """
+    raw = os.getenv(CAP003_ENV)
+    if raw is None:
+        return CAP003_DEFAULT
+    return raw.lower() == "true"
+
+
 def s3_audit_key(run_id: str) -> str:
     """S3 object key of the audit (no-PII) record for *run_id*."""
     return f"audit/{run_id}/audit.json"
@@ -103,7 +124,7 @@ class DualObjectStore:
     )
 
     def __init__(self) -> None:
-        self.enabled = os.getenv("NOVA_CAP003_ENABLED", "false").lower() == "true"
+        self.enabled = cap003_enabled()
         if self.enabled:
             logging.getLogger(__name__).warning(
                 "cap-003 dual-object GDPR/WORM split ENABLED — this bypasses the "

@@ -40,13 +40,14 @@ def storage_inspect_cmd(
     import json
 
     from novafabric.storage.dual_object_store import (
+        cap003_enabled,
         local_audit_filename,
         local_pii_filename,
         s3_audit_key,
         s3_pii_key,
     )
 
-    cap003 = os.getenv("NOVA_CAP003_ENABLED", "false").lower() == "true"
+    cap003 = cap003_enabled()
     s3 = _s3_configured()
 
     audit = s3_audit_key(run_id) if s3 else local_audit_filename(run_id)

@@ -229,6 +229,21 @@ longer forwards the submitting shell's environment (ADR-0270).
   `InsecureModeAuditError`. Secure starts are unaffected. Tests:
   `tests/test_server_insecure_audit.py`.
 
+### Fixed
+
+- **`NOVA_CAP003_ENABLED` defaults to `false`, and that is now pinned on every surface
+  (ADR-0069 / ADR-0062).**
+
+  ADR-0069 stated the cap-003 flag's default "becomes `true`"; the code has defaulted to
+  `false` since 2026-07-30, and `false` is the correct side — the dual-object GDPR/WORM split
+  stays gated until EU-GDPR legal counsel reviews its own open question (ADR-0066's mandatory
+  safety gate), and ADR-0069 resolved a different capability's question. The ADR text is
+  corrected; in code, `novafabric.storage.dual_object_store.cap003_enabled()` is now the single
+  parser (used by the writer and `nova storage inspect`), and
+  `tests/scale_architecture/test_cap003_default.py` pins the default on the writer and the CLI
+  and scans the source so any module still reading the variable inline must default to
+  `"false"`. No behaviour change.
+
 
 ## [0.102.1] - 2026-09-27
 
