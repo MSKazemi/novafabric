@@ -51,6 +51,15 @@ longer forwards the submitting shell's environment (ADR-0270).
   capsule; `json` output adds `environment_filter`. Capsule paths only. `nova list` is
   deliberately unchanged: it lists registry assets, which carry no deployment environment —
   list capsules by environment with `nova query --where 'deployment_environment = …'`.
+- **`nova consent withdraw --capsule … --consent-id …`** (ADR-0150 P3 remainder,
+  **experimental**). Records that a stored consent receipt was withdrawn by setting its
+  `withdrawn_at` (default now, UTC; `--withdrawn-at` to backfill) and atomically rewriting
+  `capsule.yaml` under the same sealed-capsule / `--force-unseal` rules as `consent record`.
+  The receipt is kept and still verifies (the digest excludes `withdrawn_at`). Refused (exit
+  1) for an unknown or duplicated id, a malformed or digest-failing stored receipt, a
+  non-withdrawable or already-withdrawn receipt, and a time before `given_at` or in the
+  future. Library: `novafabric.hitl.withdraw_recorded_consent` (pure; raises
+  `ConsentWithdrawalError`).
 
 
 ### Fixed

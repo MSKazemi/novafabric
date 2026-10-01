@@ -16,12 +16,13 @@
 
 ``record`` builds a receipt and writes it into the capsule's
 ``facets.conversation.consent`` list (atomic replace of ``capsule.yaml``);
+``withdraw`` sets ``withdrawn_at`` on one stored receipt the same way;
 ``show`` and ``verify`` are read-only. Every output carries the record-only
 notice: NovaFabric does not assert the consent was legally valid.
 
 ``verify`` exit codes: 0 every receipt is intact, 1 at least one is defective
 (digest mismatch, dangling turn_ref, duplicate consent_id, malformed), 2
-nothing to check. ``record`` exits 1 when the receipt is refused.
+nothing to check. ``record`` and ``withdraw`` exit 1 when refused.
 """
 
 from __future__ import annotations
@@ -47,10 +48,12 @@ from novafabric.cli.hitl import CapsuleLoadError, Manifest, read_manifest
 from novafabric.hitl._records import AccountabilityRecordError
 from novafabric.hitl.consent import (
     CONSENT_NOTICE,
+    ConsentWithdrawalError,
     build_consent_receipt,
     load_consents,
     record_consent,
     verify_consents,
+    withdraw_recorded_consent,
 )
 from novafabric.hitl.conversation import ConversationError
 
@@ -73,7 +76,7 @@ _JSON_HELP = "Emit deterministic JSON instead of text."
 app = typer.Typer(
     help=(
         "Consent receipts (ISO/IEC TS 27560-shaped) bound into a capsule — record, "
-        "show, verify (experimental, ADR-0150 NF-183). Record-only: never asserts "
+        "withdraw, show, verify (experimental, ADR-0150 NF-183). Record-only: never asserts "
         "legal validity."
     ),
     no_args_is_help=True,
@@ -198,6 +201,77 @@ def consent_record(
             highlight=False,
         )
         console.print(f"  receipt_digest {receipt.receipt_digest}", highlight=False)
+        if not dry_run:
+            console.print(
+                "  capsule.yaml rewritten: re-issue any seal or signature over this capsule.",
+                highlight=False,
+            )
+        _notice()
+    raise typer.Exit(EXIT_OK)
+
+
+@app.command("withdraw")
+def consent_withdraw(
+    capsule: str = typer.Option(..., "--capsule", help=_CAPSULE_HELP),
+    consent_id: str = typer.Option(
+        ..., "--consent-id", help="consent_id of the stored receipt to withdraw."
+    ),
+    withdrawn_at: str | None = typer.Option(
+        None,
+        "--withdrawn-at",
+        help="ISO-8601 time consent was withdrawn (default: now, UTC). Never in the future.",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show the withdrawn receipt; do not write the capsule."
+    ),
+    force_unseal: bool = typer.Option(False, FORCE_UNSEAL_FLAG, help=FORCE_UNSEAL_HELP),
+    as_json: bool = typer.Option(False, "--json", help=_JSON_HELP),
+) -> None:
+    """Record that a stored consent was withdrawn (sets withdrawn_at; experimental).
+
+    The receipt stays in place — a withdrawal is recorded, never a deletion —
+    and its receipt_digest still verifies (the digest excludes withdrawn_at).
+    Rewrites capsule.yaml atomically like ``record``: a NovaSeal-sealed capsule
+    is refused unless --force-unseal, and any earlier seal must be re-issued.
+    Exits 1 when refused: unknown or duplicated consent id, a malformed or
+    tampered stored receipt, a non-withdrawable or already-withdrawn receipt,
+    or a withdrawn_at that is not ISO-8601, precedes given_at, or is in the
+    future.
+
+    \b
+    Examples:
+      nova consent withdraw --capsule 01KZ... --consent-id consent-0001
+      nova consent withdraw --capsule 01KZ... --consent-id consent-0001 \\
+          --withdrawn-at 2026-09-30T12:00:00Z --dry-run --json
+    """
+    manifest = _load(capsule)
+    when = withdrawn_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        outcome = withdraw_recorded_consent(manifest.data, consent_id, withdrawn_at=when)
+    except ConsentWithdrawalError as exc:
+        raise _fail(f"consent withdrawal refused: {exc}") from exc
+    if not dry_run:
+        _write_manifest(manifest, outcome.capsule, force_unseal=force_unseal)
+    receipt = outcome.receipt
+    if as_json:
+        _emit_json(
+            {
+                "receipt": receipt.model_dump(exclude_none=True),
+                "index": outcome.index,
+                "written": not dry_run,
+            }
+        )
+    else:
+        verb = "Would withdraw" if dry_run else "Withdrew"
+        console.print(
+            f"{verb} consent {escape(receipt.consent_id)} for {escape(receipt.subject_ref)} "
+            f"at {receipt.withdrawn_at}",
+            highlight=False,
+        )
+        console.print(
+            f"  receipt_digest {receipt.receipt_digest} (unchanged; excludes withdrawn_at)",
+            highlight=False,
+        )
         if not dry_run:
             console.print(
                 "  capsule.yaml rewritten: re-issue any seal or signature over this capsule.",

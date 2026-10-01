@@ -32,12 +32,14 @@ from novafabric.hitl.consent import (
     ConsentReceiptError,
     ConsentVerdict,
     ConsentVerification,
+    ConsentWithdrawalError,
     build_consent_receipt,
     compute_receipt_digest,
     load_consents,
     record_consent,
     verify_consents,
     withdraw_consent,
+    withdraw_recorded_consent,
 )
 from novafabric.hitl.conversation import (
     ConversationError,
@@ -154,4 +156,6 @@ __all__ = [
     "verify_decision_contexts",
     "verify_turn_binding",
     "withdraw_consent",
+    "ConsentWithdrawalError",
+    "withdraw_recorded_consent",
 ]

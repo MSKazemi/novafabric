@@ -189,7 +189,7 @@ Commands grouped by primitive and task. Each entry links to its full section.
 | [`nova passport`](#nova-passport-issue--verify-experimental-adr-0149) | Portable agent passport: issue + offline verify (experimental) |
 | [`nova embodied`](#nova-embodied-odd-show--trajectory-verify-experimental-adr-0162) | Embodied-agent evidence: ODD record (verdict always null) + perception→actuation trajectory chain verify, offline (experimental); sim2real show/verify, teleop list, timing show ([P3](#nova-embodied-sim2real-show--verify--teleop-list--timing-show-experimental-adr-0162-p3)) |
 | [`nova hitl`](#nova-hitl-thread--context--override--rationale-experimental-adr-0150) | Human-agent accountability: conversation thread, decision-context receipt re-check, overrides, surfaced rationale; [handoffs and acted-on-behalf bindings](#nova-hitl-handoff-list--acted-as-experimental-adr-0150-p3) — read-only (experimental) |
-| [`nova consent`](#nova-consent-record--show--verify-experimental-adr-0150-p3) | ISO/IEC TS 27560-shaped consent receipts: record into a capsule, show, offline re-check — never asserts legal validity (experimental) |
+| [`nova consent`](#nova-consent-record--withdraw--show--verify-experimental-adr-0150-p3) | ISO/IEC TS 27560-shaped consent receipts: record into a capsule, record a withdrawal, show, offline re-check — never asserts legal validity (experimental) |
 | [`nova memstore`](#nova-memstore-access-ledger--derive--provenance-experimental-adr-0171) | Shared-store governance evidence: access ledger (`contained:false` = evidence, not enforcement), cross-run read → seeding-write back-trace, source → write → runs fan-out — offline over explicit capsules (experimental) |
 
 ### Registry, promotion, and evaluation
@@ -3732,7 +3732,7 @@ the chain. `--delegation` is capped at 4 MiB. Exits `0` only when the turn resol
 binding, and every bound hop is `established`; `1` otherwise (including
 `principal_mismatch`).
 
-### nova consent record | show | verify (experimental, ADR-0150 P3)
+### nova consent record | withdraw | show | verify (experimental, ADR-0150 P3)
 
 NF-183 consent receipts in an ISO/IEC TS 27560 / W3C DPV-shaped structure (`consent_id`,
 `subject_ref`, `purpose`, `action`, `given_at`, `expiry`, `withdrawable`, `withdrawn_at`,
@@ -3742,6 +3742,8 @@ NF-183 consent receipts in an ISO/IEC TS 27560 / W3C DPV-shaped structure (`cons
 nova consent record --capsule <dir|run-id> --subject human:fp:<hex> --purpose dpv:ServiceProvision \
     --scope dpv:Store [--scope …] [--expiry <iso>] [--given-at <iso>] [--consent-id <id>] \
     [--turn <turn_id>] [--not-withdrawable] [--dry-run] [--force-unseal] [--json]
+nova consent withdraw --capsule <dir|run-id> --consent-id <id> [--withdrawn-at <iso>] \
+    [--dry-run] [--force-unseal] [--json]
 nova consent show   --capsule <dir|run-id> [--json]
 nova consent verify --capsule <dir|run-id> [--json]
 ```
@@ -3756,6 +3758,17 @@ A NovaSeal-sealed capsule (`.seal/` present) is **refused** (exit `1`, `capsule.
 untouched, `nova verify` still passes) unless `--force-unseal` is passed; the write then
 proceeds with a loud warning that the existing seal no longer verifies and must be
 re-issued. A symlinked `capsule.yaml` or capsule directory is always refused.
+
+`withdraw` (**experimental**) records that a stored consent was withdrawn: it sets
+`withdrawn_at` (default: now, UTC) on the one receipt with `--consent-id` and atomically
+rewrites `capsule.yaml` under the same sealed-capsule / `--force-unseal` / symlink rules as
+`record`. The receipt is never deleted, and its `receipt_digest` still verifies because the
+digest excludes `withdrawn_at`. It exits `1` when refused: unknown or duplicated
+`consent_id`, a stored receipt that is malformed or **fails its digest check** (withdrawing
+would launder a tampered record), a receipt recorded `withdrawable: false`, one already
+withdrawn (a withdrawal is recorded once and never moved), or a `--withdrawn-at` that is not
+ISO-8601, precedes `given_at`, or lies more than 5 minutes in the future. `--json` emits
+`{receipt, index, written, notice}`.
 
 `verify` recomputes every `receipt_digest`, resolves any `turn_ref`, flags a duplicate
 `consent_id`, and prints the `capsule.yaml` digest the receipts bind through (the binding

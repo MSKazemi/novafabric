@@ -56,6 +56,7 @@ import logging
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
@@ -78,6 +79,7 @@ from novafabric.hitl._records import (
 from novafabric.hitl.conversation import (
     FACET_NAME,
     SCHEMA_VERSION,
+    ConversationError,
     _parse_at,
     facet_from_capsule,
     resolve_turn,
@@ -323,6 +325,117 @@ def withdraw_consent(receipt: ConsentReceipt, *, withdrawn_at: str) -> ConsentRe
     data = receipt.model_dump(exclude_none=True)
     data["withdrawn_at"] = withdrawn_at
     return ConsentReceipt.model_validate(data)
+
+
+#: Clock skew tolerated when refusing a withdrawal time in the future.
+WITHDRAWAL_CLOCK_SKEW = timedelta(minutes=5)
+
+
+class ConsentWithdrawalError(ConsentReceiptError):
+    """A recorded consent receipt cannot be withdrawn as requested.
+
+    Raised for an unknown or ambiguous ``consent_id``, a malformed or
+    tampered stored receipt, a future ``withdrawn_at``, and every refusal
+    :func:`withdraw_consent` makes (not withdrawable, already withdrawn,
+    earlier than ``given_at``).
+    """
+
+
+@dataclass(frozen=True)
+class ConsentWithdrawal:
+    """A capsule copy with one receipt's ``withdrawn_at`` set (nothing written)."""
+
+    capsule: dict[str, Any]
+    receipt: ConsentReceipt
+    index: int
+
+
+def withdraw_recorded_consent(
+    capsule: Mapping[str, Any],
+    consent_id: str,
+    *,
+    withdrawn_at: str,
+    now: datetime | None = None,
+) -> ConsentWithdrawal:
+    """Set ``withdrawn_at`` on the stored receipt ``consent_id``; strict, pure.
+
+    The receipt digest excludes ``withdrawn_at``, so the withdrawn receipt still
+    verifies. Only the one entry changes; every other receipt, and every other
+    capsule field, is carried over untouched. The caller writes the result.
+
+    Raises:
+        ConsentWithdrawalError: no receipt or several receipts carry
+            ``consent_id``; the stored receipt is malformed or its digest does
+            not match its body (withdrawing would launder a tampered record);
+            ``withdrawn_at`` is not ISO-8601, is in the future, or
+            :func:`withdraw_consent` refuses it.
+    """
+    block = conversation_block(capsule) or {}
+    entries = block.get(RECORD_KEY) if isinstance(block, Mapping) else None
+    if not isinstance(entries, list):
+        raise ConsentWithdrawalError("capsule records no consent receipts")
+    matches = [
+        i
+        for i, item in enumerate(entries)
+        if isinstance(item, Mapping) and item.get("consent_id") == consent_id
+    ]
+    if not matches:
+        raise ConsentWithdrawalError(f"no consent receipt with consent_id {consent_id!r}")
+    if len(matches) > 1:
+        raise ConsentWithdrawalError(
+            f"consent_id {consent_id!r} is recorded {len(matches)} times; "
+            "refusing an ambiguous withdrawal"
+        )
+    index = matches[0]
+    try:
+        stored = ConsentReceipt.model_validate(entries[index])
+    except (ConversationError, ValueError) as exc:  # record error or ValidationError
+        raise ConsentWithdrawalError(
+            f"stored consent receipt {consent_id!r} is malformed ({type(exc).__name__})"
+        ) from exc
+    if not receipt_digest_matches(stored):
+        raise ConsentWithdrawalError(
+            f"stored consent receipt {consent_id!r} fails its digest check; "
+            "refusing to withdraw a tampered receipt"
+        )
+    try:
+        when = _parse_at(
+            check_timestamp(withdrawn_at, field_name="withdrawn_at"), field="withdrawn_at"
+        )
+    except ConversationError as exc:
+        raise ConsentWithdrawalError(str(exc)) from exc
+    current = now if now is not None else datetime.now(timezone.utc)
+    if when > current + WITHDRAWAL_CLOCK_SKEW:
+        raise ConsentWithdrawalError(
+            "withdrawn_at is in the future; a withdrawal is recorded after it happens"
+        )
+    try:
+        withdrawn = withdraw_consent(stored, withdrawn_at=withdrawn_at)
+    except ConsentReceiptError as exc:
+        raise ConsentWithdrawalError(str(exc)) from exc
+    except ValueError as exc:  # pydantic wraps validator errors
+        raise ConsentWithdrawalError(_validation_reason(exc)) from exc
+    new_entries = list(entries)
+    new_entries[index] = withdrawn.model_dump(exclude_none=True)
+    new_block = dict(block)
+    new_block[RECORD_KEY] = new_entries
+    facets = dict(capsule.get("facets") or {})
+    facets[FACET_NAME] = new_block
+    out = dict(capsule)
+    out["facets"] = facets
+    return ConsentWithdrawal(out, withdrawn, index)
+
+
+def _validation_reason(exc: ValueError) -> str:
+    """The first validator message from a pydantic error, never the input value."""
+    errors = getattr(exc, "errors", None)
+    if callable(errors):
+        for err in errors():
+            ctx = err.get("ctx") or {}
+            inner = ctx.get("error")
+            if isinstance(inner, AccountabilityRecordError):
+                return str(inner)
+    return type(exc).__name__
 
 
 # ── Storage ───────────────────────────────────────────────────────────────
