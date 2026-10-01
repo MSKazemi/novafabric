@@ -190,7 +190,7 @@ The `--benchmark-disable` flag skips the 100-round NovaSeal latency benchmark so
 normal runs stay quick. To run it and enforce the p99 gate:
 
 ```bash
-make benchmark   # asserts NovaSeal.seal() p99 < 200 ms over 100 rounds
+make benchmark   # asserts NovaSeal.seal() median < 50 ms over 100 rounds (p99 >= 200 ms warns)
 ```
 
 This also runs as a separate `seal-latency-gate` job in CI on every PR.

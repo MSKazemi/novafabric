@@ -31,7 +31,7 @@ uv run pytest --benchmark-disable --cov=novafabric --cov-report=term-missing
 
 Required: all tests pass, coverage ≥ 90%.
 
-## 1a. Run the NovaSeal p99 latency gate
+## 1a. Run the NovaSeal latency gate (median gate + NovaSeal p99 tail alarm)
 
 ```bash
 make benchmark
@@ -39,7 +39,11 @@ make benchmark
 uv run pytest tests/seal/test_benchmark.py -v --benchmark-json=.benchmark-results/seal_latency.json
 ```
 
-Required: `NovaSeal.seal()` p99 < 200 ms over 100 rounds.
+Required: `NovaSeal.seal()` median < 50 ms over 100 rounds (`seal.seal-call.median` in
+[`docs/slo.md`](slo.md)). A p99 ≥ 200 ms (`seal.seal-call.p99`) is a **non-blocking tail
+alarm** — a `SealTailLatencyAlarm` warning and a `::warning::` annotation in CI. One alarm
+on a shared runner is scheduler noise; the same alarm on consecutive runs is a regression
+to investigate before tagging.
 
 ## 1b. Verify the remaining CI gates are green
 

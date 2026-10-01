@@ -72,6 +72,26 @@ longer forwards the submitting shell's environment (ADR-0270).
   reports `installed-contended`. The new marker value is additive. No schema, CLI or adapter
   signature changed.
 
+- **Two CI gates flaked for reasons unrelated to the change under test (BL-061).**
+
+  *KG Prometheus tests.* `tests/kg/test_kg.py` read before/after deltas from the
+  process-wide collectors on the default `REGISTRY`, which every `KGStore` in the xdist
+  worker shares — including stores other tests leave running on background threads — so
+  a stray increment between the two reads failed the assertion. `KGStore` now takes an
+  optional keyword `metrics=KGMetrics(...)`; `KGMetrics.for_registry(CollectorRegistry())`
+  binds a store to private collectors, and the metric tests use it, so each delta depends
+  only on that test's writes. Default behaviour (no `metrics=`) is unchanged: the store
+  reports to the process-wide collectors that `/metrics` scrapes. **experimental** API.
+
+  *`seal-latency-gate`.* The gate asserted a 100-round p99 < 200 ms, and with 100 rounds the
+  nearest-rank p99 is the second-slowest sample. Across 55 runs on shared GitHub runners
+  (2026-09-08 → 09-29) per-run medians were 0.53–9.2 ms, but 3 runs carried a >200 ms
+  scheduler stall and 8 a >100 ms one. The gate now fails on **median ≥ 50 ms**
+  (`seal.seal-call.median`, 5.4× the worst observed median) and treats **p99 ≥ 200 ms** as a
+  non-blocking tail alarm (`SealTailLatencyAlarm` warning + a `::warning::` annotation +
+  `tail_alarm` in the benchmark JSON). `seal.seal-call.p99` moves from `gated` to `target`
+  in `docs/slo.md`. The test is renamed `test_seal_latency_gate`.
+
 ### Added
 
 - **Dashboard filter bar over HTTP (ADR-0232 D1/D3, ADR-0233, ADR-0234 D2) — experimental.**

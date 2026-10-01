@@ -29,14 +29,22 @@ tier = "ci:capture-overhead-gate"
 # --- gated: seal ----------------------------------------------------------
 
 [[entry]]
-id = "seal.seal-call.p99"
-title = "NovaSeal.seal() single-envelope latency, p99"
+id = "seal.seal-call.median"
+title = "NovaSeal.seal() single-envelope latency, median"
 status = "gated"
+value = 0.050
+unit = "s"
+workload = "100 rounds, in-process, SQLite Merkle log. 55 shared-runner CI runs (2026-09-08..29) measured per-run medians of 0.53-9.2 ms; the budget is 5.4x the worst."
+gate = "tests/seal/test_benchmark.py::test_seal_latency_gate"
+tier = "ci:seal-latency-gate"
+
+[[entry]]
+id = "seal.seal-call.p99"
+title = "NovaSeal.seal() single-envelope latency, p99 (tail alarm, non-blocking)"
+status = "target"
 value = 0.200
 unit = "s"
-workload = "100 rounds, in-process, SQLite Merkle log"
-gate = "tests/seal/test_benchmark.py::test_seal_p99_latency_gate"
-tier = "ci:seal-latency-gate"
+workload = "same 100 rounds; a p99 at or above this raises a CI warning, not a failure. On a shared runner the 100-round p99 is the second-slowest sample: 3 of 55 runs carried a >200 ms scheduler stall while their medians stayed under 10 ms."
 
 # --- gated: dashboard at 100K rows (nightly) ------------------------------
 # All eight run in-process against TestClient (network excluded), 30 rounds,

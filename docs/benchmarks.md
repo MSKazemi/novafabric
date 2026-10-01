@@ -65,7 +65,10 @@ Over 100 rounds of `NovaSeal.seal()`:
 | Max | 13.30 |
 | Throughput | ~133 seals/sec |
 
-**CI gate: p99 < 200 ms** (ADR-0041), enforced on every pull request.
+**CI gate: median < 50 ms**, enforced on every pull request, plus a **non-blocking
+p99 ≥ 200 ms tail alarm** (see [`slo.md`](slo.md)). The p99 used to be the gate; on
+shared CI runners it is decided by scheduler stalls (3 of 55 runs carried a >200 ms
+sample while their medians stayed under 10 ms), so it now warns instead of failing.
 
 This is Ed25519 over a Merkle root, so it is dominated by hashing the capsule
 rather than by the signature itself — expect it to scale with capsule size, not
