@@ -43,6 +43,8 @@ from novafabric.metadata_store.postgres import PostgresMetadataStore
 from novafabric.server.pagination import InvalidCursorError, encode_keyset_cursor
 
 T0 = datetime(2026, 5, 13, 0, 0, tzinfo=timezone.utc)
+# Fixed, not uuid4(): parametrize ids must be identical on every xdist worker.
+_FIXED_ID = "6f1c2a9e-0b7d-4c3e-9a51-2d8e4f7b1c30"
 
 
 def _decode(cursor: str) -> dict[str, Any]:
@@ -79,9 +81,9 @@ def test_seek_predicate_postgres_text_binds_and_casts() -> None:
 @pytest.mark.parametrize(
     ("key", "message"),
     [
-        (("infinity", str(uuid4())), "not an ISO-8601"),
-        (("now", str(uuid4())), "not an ISO-8601"),
-        (("2026-01-01T00:00:00", str(uuid4())), "no UTC offset"),
+        (("infinity", _FIXED_ID), "not an ISO-8601"),
+        (("now", _FIXED_ID), "not an ISO-8601"),
+        (("2026-01-01T00:00:00", _FIXED_ID), "no UTC offset"),
         (("2026-01-01T00:00:00Z", "not-a-uuid"), "not a UUID"),
     ],
 )
@@ -191,7 +193,7 @@ def test_legacy_bare_integer_cursor_uses_offset_then_migrates() -> None:
     "cursor",
     [
         "garbage!!",
-        encode_keyset_cursor("infinity", str(uuid4())),
+        encode_keyset_cursor("infinity", _FIXED_ID),
         encode_keyset_cursor("2026-05-13T00:00:00Z", "1; DROP TABLE runs"),
         "-5",
     ],
