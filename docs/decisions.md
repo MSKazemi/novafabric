@@ -29,44 +29,44 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | **rejected** | Considered and declined; kept as provenance. |
 
 
-**272 decisions recorded** — **244** accepted · **12** proposed · **3** superseded · **13** unknown.
+**274 decisions recorded** — **257** accepted · **14** proposed · **3** superseded.
 
 | ADR | Title | Status | Date |
 |---|---|---|---|
-| `ADR-0001` | Local first registry | accepted | 2026-05-06 |
-| `ADR-0002` | Ai asset specification | accepted | 2026-05-06 |
-| `ADR-0003` | Eval gated agent promotion | accepted | 2026-05-06 |
-| `ADR-0004` | Capsule layout | accepted | 2026-05-07 |
-| `ADR-0005` | Replay modes | accepted | 2026-05-07 |
-| `ADR-0006` | Capture mechanism | accepted | 2026-05-07 |
-| `ADR-0007` | Environment lock | accepted | 2026-05-07 |
-| `ADR-0008` | Tool call serialization | accepted | 2026-05-07 |
-| `ADR-0009` | Secret scanning | accepted | 2026-05-07 |
-| `ADR-0010` | External resource handling | accepted | 2026-05-07 |
-| `ADR-0011` | Evidence bundle | accepted | 2026-05-07 |
-| `ADR-0012` | Replay safety | accepted | 2026-05-07 |
-| `ADR-0013` | Lineage graph storage | accepted | 2026-05-07 |
-| `ADR-0014` | Otel genai semconv | accepted | 2026-05-07 |
-| `ADR-0015` | Mcp integration | accepted | 2026-05-07 |
-| `ADR-0016` | Storage backend evolution | accepted | 2026-05-07 |
-| `ADR-0017` | Server api protocol | accepted | 2026-05-07 |
-| `ADR-0018` | Auth model | accepted | 2026-05-07 |
-| `ADR-0019` | Policy engine | accepted | 2026-05-07 |
-| `ADR-0020` | Cluster scale low overhead capture | accepted | 2026-05-08 |
-| `ADR-0021` | Ai factory design intent | proposed | 2026-05-08 |
-| `ADR-0022` | Polyglot persistence and object storage | accepted | 2026-05-08 |
-| `ADR-0023` | Cache architecture | proposed | 2026-05-08 |
-| `ADR-0024` | Dependency license policy | accepted | 2026-05-08 |
-| `ADR-0025` | Runner spec interface | accepted | — |
-| `ADR-0026` | Api proxy promotion | accepted | — |
-| `ADR-0027` | Nova serve experimental dashboard | accepted | 2026-05-10 |
-| `ADR-0028` | Itwinai interlink integration | proposed | — |
-| `ADR-0029` | Server config schema | accepted | — |
-| `ADR-0030` | Rfc3161 trusted timestamps | accepted | 2026-05-10 |
-| `ADR-0031` | Worm retention policy | accepted | 2026-05-10 |
-| `ADR-0032` | Parent child capsule | superseded | 2026-05-10 |
-| `ADR-0033` | Eval runner design | accepted | 2026-05-11 |
-| `ADR-0034` | V1 spec stability policy | accepted | 2026-05-11 |
+| `ADR-0001` | Self-Contained Registry | accepted | 2026-05-06 |
+| `ADR-0002` | YAML AI Asset Specification | accepted | 2026-05-06 |
+| `ADR-0003` | Eval-Gated Agent Promotion | accepted | 2026-05-06 |
+| `ADR-0004` | Run Capsule Directory Layout and File Inventory | accepted | 2026-05-07 |
+| `ADR-0005` | Replay Modes Taxonomy and Contract | accepted | 2026-05-07 |
+| `ADR-0006` | Capture Mechanism: CLI Wrapper, SDK Decorator, and OTel Import | accepted | 2026-05-07 |
+| `ADR-0007` | Environment Lock Format: uv.lock, OCI Digest, and OS Fingerprint | accepted | 2026-05-07 |
+| `ADR-0008` | Tool Call Serialization and MCP Alignment | accepted | 2026-05-07 |
+| `ADR-0009` | Secret Scanning, Redaction Defaults, and Proof-of-Redaction | accepted | 2026-05-07 |
+| `ADR-0010` | External Resource Handling: Snapshot, Reference, and Hash | accepted | 2026-05-07 |
+| `ADR-0011` | Evidence Bundle Format: in-toto Attestation and Sigstore Signing | accepted | 2026-05-07 |
+| `ADR-0012` | Replay Safety: Dry-Run, Mock-Tools, Allow-Readonly, Allow-Mutating | accepted | 2026-05-07 |
+| `ADR-0013` | Lineage Graph Storage: SQLite Recursive CTEs to KuzuDB | accepted | 2026-05-07 |
+| `ADR-0014` | OTel GenAI Semconv Adoption and Nova.* Extensions | accepted | 2026-05-07 |
+| `ADR-0015` | MCP Integration: NovaFabric as MCP Transcript Recorder | accepted | 2026-05-07 |
+| `ADR-0016` | Storage Backend Evolution: SQLite to Postgres Migration Plan | accepted | 2026-05-07 |
+| `ADR-0017` | Server API Protocol: REST + OpenAPI 3.1 (gRPC Deferred to v1.x) | accepted | 2026-05-07 |
+| `ADR-0018` | Auth Model: OIDC + RBAC Scopes; Offline-Token Mode for Airgapped | accepted | 2026-05-07 |
+| `ADR-0019` | Policy Engine: OPA/Rego (Cedar Evaluated and Rejected) | accepted | 2026-05-07 |
+| `ADR-0020` | Self-contained core with cluster-scale low-overhead capture architecture | accepted | 2026-05-08 |
+| `ADR-0021` | AI-factory design intent (reliability, federation, schema, governance) | proposed | 2026-05-08 |
+| `ADR-0022` | Polyglot persistence and object storage as raw-capsule source-of-truth | accepted | 2026-05-08 |
+| `ADR-0023` | Hierarchical content-addressed cache architecture | proposed | 2026-05-08 |
+| `ADR-0024` | Project-wide dependency license policy | accepted | 2026-05-08 |
+| `ADR-0025` | `RunnerSpec` interface for multi-target capture | accepted | — |
+| `ADR-0026` | Promote Path A `nova api-proxy` from research to v0.6.x track | accepted | — |
+| `ADR-0027` | `nova serve` experimental dashboard pulled forward to v0.x | accepted | 2026-05-10 |
+| `ADR-0028` | itwinai / interLink integration for K8s ↔ HPC bridging | proposed | — |
+| `ADR-0029` | Server Config File Schema: YAML, Location, Env-var Overrides, Secrets | accepted | — |
+| `ADR-0030` | RFC 3161 Trusted Timestamps for the Evidence Bundle | accepted | 2026-05-10 |
+| `ADR-0031` | WORM Storage Adapter and Retention-Policy Engine | accepted | 2026-05-10 |
+| `ADR-0032` | Parent/Child Capsule Hierarchy for Distributed Runs | superseded | 2026-05-10 |
+| `ADR-0033` | Eval Runner Design: Container-Deterministic Benchmark Suites for v0.9 | accepted | 2026-05-11 |
+| `ADR-0034` | Open Agent Specification v1.0: Spec Stability Policy | accepted | 2026-05-11 |
 | `ADR-0035` | Agent Identity Attribution in Capsule Records | accepted | 2026-05-11 |
 | `ADR-0036` | Cross-Run Comparison UX in the Experimental Dashboard | accepted | 2026-05-12 |
 | `ADR-0037` | Evidence Tab Native Dashboard Implementation | accepted | 2026-05-12 |
@@ -74,14 +74,14 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | `ADR-0039` | Parent/Child Capsule Hierarchy v2 | superseded | 2026-05-12 |
 | `ADR-0040` | Production MetadataStore Interface | superseded | 2026-05-12 |
 | `ADR-0041` | NovaSeal Cryptographic Core Adoption | accepted | 2026-05-12 |
-| `ADR-0042` | Deployment tier invariants | accepted | 2026-05-12 |
-| `ADR-0043` | Collector v01 implementation | accepted | 2026-05-12 |
+| `ADR-0042` | Deployment Tier Invariants: Bi-Directional Scalability Guarantee | accepted | 2026-05-12 |
+| `ADR-0043` | Collector v0.1 Implementation | accepted | 2026-05-12 |
 | `ADR-0044` | Typed lineage edge vocabulary | accepted | 2026-05-12 |
 | `ADR-0045` | Fail open out of order arrival | accepted | 2026-05-12 |
 | `ADR-0046` | Two phase capsule lifecycle | accepted | 2026-05-12 |
-| `ADR-0047` | Capsule manifest chain | accepted | 2026-05-12 |
-| `ADR-0048` | Novaseal sync write contract | accepted | 2026-05-12 |
-| `ADR-0049` | Worm conformance suite | accepted | 2026-05-12 |
+| `ADR-0047` | Capsule Manifest Chain | accepted | 2026-05-12 |
+| `ADR-0048` | NovaSeal Synchronous Write Contract | accepted | 2026-05-12 |
+| `ADR-0049` | WORM Conformance Suite | accepted | 2026-05-12 |
 | `ADR-0050` | MetadataStore ABC with SET LOCAL tenant isolation | accepted | 2026-05-13 |
 | `ADR-0051` | Partition key for the `runs` table | accepted | 2026-05-13 |
 | `ADR-0052` | pgBouncer transaction mode + two-role split for MetadataStore | accepted | 2026-05-13 |
@@ -112,19 +112,19 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | `ADR-0077` | Multi-Region Log Sovereignty for Jurisdictional Data Residency | accepted | 2026-05-19 |
 | `ADR-0078` | Ecosystem Framework Adapters: OpenAI Agents SDK, Google ADK, Bedrock AgentCore, A2A | accepted | 2026-05-19 |
 | `ADR-0079` | Production Capsule Storage: Hybrid Three-Tier Model (Filesystem → OCS → MetadataStore) | accepted | 2026-05-20 |
-| `ADR-0080` | Statistical significance eval gate | accepted | 2026-06-11 |
+| `ADR-0080` | Statistical-significance layer for regression / eval gating | accepted | 2026-06-11 |
 | `ADR-0081` | CloudEvents v1.0 Envelope Interop (structured-mode round-trip) | accepted | 2026-06-11 |
 | `ADR-0082` | Extended Span Taxonomy (gap-011) | accepted | 2026-06-11 |
-| `ADR-0083` | Hot lineage impact index | accepted | 2026-06-11 |
-| `ADR-0084` | Failure attribution | accepted | — |
-| `ADR-0085` | Sealed system card and eval pinning | accepted | — |
-| `ADR-0086` | Intervention replay | accepted | 2026-06-12 |
-| `ADR-0087` | Evidence completeness binding attestation | accepted | 2026-06-12 |
-| `ADR-0088` | Incident deadline clock | accepted | 2026-06-12 |
+| `ADR-0083` | Hot in-memory lineage impact index | accepted | 2026-06-11 |
+| `ADR-0084` | Failure Attribution over the Lineage / Causal Graph | accepted | — |
+| `ADR-0085` | Sealed system/audit card and versioned eval provenance | accepted | — |
+| `ADR-0086` | Intervention (Counterfactual) Replay and Replay-Time Check-Functions | accepted | 2026-06-12 |
+| `ADR-0087` | Evidence completeness, criterion→evidence binding, and re-performance attestation | accepted | 2026-06-12 |
+| `ADR-0088` | First-class Incident object with Art. 73 deadline clock and replay attestation | accepted | 2026-06-12 |
 | `ADR-0089` | Forward-Secure Per-Node Signing Key Ratchet | accepted | 2026-06-12 |
-| `ADR-0090` | Fine grained verifiable lineage | accepted | 2026-06-12 |
-| `ADR-0091` | Ebpf agentless capture | proposed | 2026-06-12 |
-| `ADR-0092` | Warm capture daemon | accepted | 2026-06-14 |
+| `ADR-0090` | Fine-grained (column-level) and verifiable lineage | accepted | 2026-06-12 |
+| `ADR-0091` | eBPF agentless capture tier for non-Python and black-box agents | proposed | 2026-06-12 |
+| `ADR-0092` | Warm capture daemon (prefork resident emitter) | accepted | 2026-06-14 |
 | `ADR-0093` | Energy-Anchored Action Receipts | accepted | 2026-06-19 |
 | `ADR-0094` | Adversary-Anchored Accountability Ledger + Deterministic Replay Attestation | accepted | 2026-06-19 |
 | `ADR-0095` | Evidence-Grounded Safety-Case Compiler + Court-Admissible Evidence Binding | accepted | 2026-06-19 |
@@ -288,20 +288,22 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | `ADR-0253` | DSSE envelopes go on the wire as standard base64, and are read back tolerantly | accepted | 2026-08-28 |
 | `ADR-0254` | Test tiering: fix state leakage before buying speed | accepted | 2026-08-28 |
 | `ADR-0255` | Experiment campaign design — what the papers claim, and what proves it | accepted | 2026-08-28 |
-| `ADR-0256` | Prov json exports the run itself | unknown | — |
-| `ADR-0257` | Create app owns its mutable state | unknown | — |
-| `ADR-0258` | Audit write ordering | unknown | — |
-| `ADR-0259` | Sdist must not carry the private tree | unknown | — |
-| `ADR-0260` | Ingest must preserve nested capsule paths | unknown | — |
-| `ADR-0261` | Redaction guards and truthful replay counters | unknown | — |
-| `ADR-0262` | Ingest must not block the worker event loop | unknown | — |
-| `ADR-0263` | Local token lifecycle and emission | unknown | — |
-| `ADR-0264` | Papers portfolio and layout | unknown | — |
-| `ADR-0265` | Multicluster scheduler campaign | unknown | — |
-| `ADR-0266` | Kuzu lineage storage format | unknown | — |
-| `ADR-0267` | Automated test tiers and hooks | unknown | — |
-| `ADR-0268` | Merkle verification cost vs guarantee | unknown | — |
+| `ADR-0256` | PROV-JSON export must include the run's own provenance | accepted | 2026-08-28 |
+| `ADR-0257` | `create_app()` owns its mutable state | accepted | 2026-08-28 |
+| `ADR-0258` | When the audit entry goes before the write, and when it does not | accepted | 2026-08-28 |
+| `ADR-0259` | The sdist must not be able to carry the private tree | accepted | 2026-08-28 |
+| `ADR-0260` | Ingest must preserve nested capsule paths | accepted | 2026-08-28 |
+| `ADR-0261` | Redaction must not destroy digests, and replay counters must not overclaim | accepted | 2026-08-29 |
+| `ADR-0262` | Capsule ingest must not block the worker event loop | accepted | 2026-08-29 |
+| `ADR-0263` | The local bearer token is durable, and must be emitted as such | accepted | 2026-08-29 |
+| `ADR-0264` | Papers portfolio and layout | accepted | 2026-08-29 |
+| `ADR-0265` | The multi-cluster scheduler campaign (campaign 2) | accepted | 2026-08-29 |
+| `ADR-0266` | Kuzu lineage storage format: one generic node table | accepted | 2026-09-01 |
+| `ADR-0267` | Automated test tiers: the harness runs the tests, not the developer | accepted | 2026-09-02 |
+| `ADR-0268` | Merkle log verification: the 200 ms target costs a guarantee, not an optimisation | proposed | 2026-09-04 |
 | `ADR-0269` | A replay that never finished must not attest disagreement | proposed | 2026-09-04 |
 | `ADR-0270` | A runner forwards an allowlist, never the submitting environment | accepted | 2026-09-10 |
 | `ADR-0271` | The server never indexes a run: MetadataStore.register_run has no reachable caller | proposed | 2026-09-10 |
 | `ADR-0272` | How the capture hooks reach a Kubernetes pod | proposed | 2026-09-10 |
+| `ADR-0273` | Commercial model: the core stays Apache-2.0 | proposed | 2026-09-24 |
+| `ADR-0290` | Envelope v2: bind encrypted objects to their identity via AEAD associated data; refuse plaintext reads | accepted | 2026-10-01 |

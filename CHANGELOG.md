@@ -245,6 +245,19 @@ longer forwards the submitting shell's environment (ADR-0270).
   `"false"`. No behaviour change.
 
 
+- **The public decisions index listed 13 ADRs as `unknown` and was missing ADR-0273.**
+
+  `scripts/gen_decisions_index.py` did not recognise the bullet-list header
+  (`- **Status:** Accepted`, `- **Date:** …`) used by ADRs 0256–0268, nor the
+  `# ADR 0256 — Title` heading form, so [`docs/decisions.md`](docs/decisions.md) showed
+  `unknown` status and slug titles for them. The parser now reads all three header
+  generations (which also restores the real titles of older ADRs that use the spaced heading),
+  gains `--adr-dir` for regenerating from another checkout, and honours an optional
+  `index_title` frontmatter key so an ADR can publish a shorter title than its internal one.
+  The index is regenerated: 274 decisions, none `unknown`. Regression test:
+  `tests/docs/test_decisions_index_parser.py`.
+
+
 ## [0.102.1] - 2026-09-27
 
 ### Fixed

@@ -14,6 +14,11 @@ Usage::
 
     uv run python scripts/gen_decisions_index.py            # write docs/decisions.md
     uv run python scripts/gen_decisions_index.py --check     # fail if out of date
+    uv run python scripts/gen_decisions_index.py --adr-dir <private ADR dir>  # from a worktree
+
+Frontmatter key ``index_title`` (optional) overrides ``title`` for this public
+index only — for an ADR whose full title carries reasoning that is not
+published (the index states the decision, not the deliberation).
 """
 
 from __future__ import annotations
@@ -31,12 +36,16 @@ OUTPUT = REPO_ROOT / "docs" / "decisions.md"
 _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
 _ADR_FILENAME = re.compile(r"\A(\d{4})-(.+)\.md\Z")
 
-# Two ADR generations coexist: the newer ones carry YAML frontmatter, the older
-# ones only an HTML comment header plus a bolded `**Status:**` line in the body.
-# Read both rather than reporting the older half as "unknown".
-_BODY_STATUS = re.compile(r"^(?:\*\*Status:\*\*|-\s+Status:)\s*(.+?)$", re.MULTILINE)
-_BODY_DATE = re.compile(r"^\*\*Date:\*\*\s*(\d{4}-\d{2}-\d{2})", re.MULTILINE)
-_BODY_TITLE = re.compile(r"^#\s+ADR-\d{4}\s*[—-]\s*(.+?)\s*$", re.MULTILINE)
+# Three ADR generations coexist: the newer ones carry YAML frontmatter, the older
+# ones only an HTML comment header plus a bolded `**Status:**` line in the body,
+# and a third (0256–0268) a bullet list — `- **Status:** Accepted`,
+# `- **Date:** 2026-08-28` — under a `# ADR 0256 — Title` heading (space, not
+# hyphen). Read all three rather than reporting any of them as "unknown".
+_BODY_STATUS = re.compile(
+    r"^(?:\*\*Status:\*\*|-\s+\*\*Status:\*\*|-\s+Status:)\s*(.+?)$", re.MULTILINE
+)
+_BODY_DATE = re.compile(r"^(?:-\s+)?\*\*Date:\*\*\s*(\d{4}-\d{2}-\d{2})", re.MULTILINE)
+_BODY_TITLE = re.compile(r"^#\s+ADR[- ]\d{4}\s*[—-]\s*(.+?)\s*$", re.MULTILINE)
 _ISO_DATE = re.compile(r"(\d{4}-\d{2}-\d{2})")
 
 KNOWN_STATUSES = ("superseded", "rejected", "withdrawn", "accepted", "proposed", "draft")
@@ -138,7 +147,11 @@ def collect(adr_dir: Path = ADR_DIR) -> list[Adr]:
         status = _normalize_status(raw_status)
 
         body_title = _BODY_TITLE.search(text)
-        raw_title = _scalar(frontmatter, "title") or (body_title.group(1) if body_title else "")
+        raw_title = (
+            _scalar(frontmatter, "index_title")
+            or _scalar(frontmatter, "title")
+            or (body_title.group(1) if body_title else "")
+        )
         title = raw_title or _title_from_slug(slug)
 
         created_at = _scalar(frontmatter, "created_at")
@@ -186,17 +199,24 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="exit non-zero if docs/decisions.md is out of date instead of writing it",
     )
+    parser.add_argument(
+        "--adr-dir",
+        type=Path,
+        default=ADR_DIR,
+        help="ADR source directory (default: the private ADR tree of this checkout)",
+    )
     args = parser.parse_args(argv)
+    adr_dir: Path = args.adr_dir
 
-    if not ADR_DIR.is_dir():
+    if not adr_dir.is_dir():
         # Public clone: the design tree is not present. The generated index is
         # committed, so there is nothing to do and nothing is wrong.
-        print(f"{ADR_DIR} not present — skipping (generated index is committed)")
+        print(f"{adr_dir} not present — skipping (generated index is committed)")
         return 0
 
-    adrs = collect()
+    adrs = collect(adr_dir)
     if not adrs:
-        print(f"no ADRs found in {ADR_DIR}", file=sys.stderr)
+        print(f"no ADRs found in {adr_dir}", file=sys.stderr)
         return 1
 
     rendered = render(adrs)
