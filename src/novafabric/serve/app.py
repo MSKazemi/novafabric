@@ -2606,6 +2606,12 @@ def create_app(
             "unmapped_attribute_keys": result.unmapped_keys,
         }
 
+    # POST /api/otlp/v1/logs — span-less log records go to the sidecar store,
+    # never into a capsule (ADR-0293, experimental).
+    from novafabric.otel.logs_ingest import register_otlp_logs_route  # noqa: PLC0415
+
+    register_otlp_logs_route(app, capsule_dir=capsule_dir, verify_token=verify_token)
+
     @app.get("/api/diff", dependencies=[Depends(verify_token)])
     async def diff_runs(
         run_a: str = Query(...),

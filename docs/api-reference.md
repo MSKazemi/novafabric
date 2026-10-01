@@ -104,6 +104,7 @@ fails on the first unclassified route, so this should never be reachable in a re
 |---|---|---|
 | `POST` | `/api/capsule-migrate` | Migrate a v0.1.x capsule directory to v1.0.0 format (ADR-0034 §6). |
 | `POST` | `/api/otlp/v1/traces` | Ingest OTLP OTel GenAI spans into a run capsule (NF-034, experimental). |
+| `POST` | `/api/otlp/v1/logs` | Ingest OTLP log records into the sidecar log store, never into a capsule (ADR-0293, experimental). |
 | `GET` | `/api/runs` | list runs |
 | `GET` | `/api/runs/cost-summary` | Return per-run token and cost totals from ClickHouse. |
 | `GET` | `/api/runs/search` | Cursor-based run listing. True keyset paging: the cursor seeks the index directly — O(page), no cursor-to-offset conversion (ADR-0199 B2). |

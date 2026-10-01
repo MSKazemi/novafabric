@@ -29,7 +29,7 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | **rejected** | Considered and declined; kept as provenance. |
 
 
-**275 decisions recorded** — **258** accepted · **14** proposed · **3** superseded.
+**280 decisions recorded** — **263** accepted · **14** proposed · **3** superseded.
 
 | ADR | Title | Status | Date |
 |---|---|---|---|
@@ -308,3 +308,8 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | `ADR-0273` | Commercial model: the core stays Apache-2.0 | proposed | 2026-09-24 |
 | `ADR-0276` | seal-latency-gate fails on the median and alarms on the p99 | accepted | 2026-10-01 |
 | `ADR-0290` | Envelope v2: bind encrypted objects to their identity via AEAD associated data; refuse plaintext reads | accepted | 2026-10-01 |
+| `ADR-0292` | NovaSeal RFC 3161 timestamping is opt-in — no default TSA, no implicit network call | accepted | 2026-10-02 |
+| `ADR-0293` | OTLP logs ingest: span-less log records land in an append-only sidecar log store outside every capsule | accepted | 2026-10-02 |
+| `ADR-0294` | Per-org usage budgets and request-time enforcement of the API-key workspace binding (ADR-0208 / ADR-0193 remainder) | accepted | 2026-10-02 |
+| `ADR-0295` | Envelope strict mode and a digest-pinned legacy-object inventory (ADR-0290 open items 1 and 2) | accepted | 2026-10-02 |
+| `ADR-0297` | NovaSeal verification correctness: DSSE v1 PAE, self-contained Merkle inclusion, bound RFC 3161 tokens | accepted | 2026-10-02 |

@@ -190,6 +190,9 @@
   "nova consent verify": {
     "status": "builder-only"
   },
+  "nova consent withdraw": {
+    "status": "builder-only"
+  },
   "nova cost attribute": {
     "status": "real-panel",
     "tab": "cost",

@@ -545,6 +545,22 @@ def register_otlp_logs_route(app: Any, *, capsule_dir: Path, verify_token: Any) 
     Token-guarded like ``/api/otlp/v1/traces``.
     """
     from fastapi import Depends, HTTPException, Request
+    from pydantic import BaseModel, Field
+
+    class OTLPLogsIngestResponse(BaseModel):
+        """Declared (not bound) body of ``POST /api/otlp/v1/logs`` — see ``to_response``."""
+
+        records_seen: int
+        records_stored: int
+        linked_runs: list[str]
+        linked_traces: int
+        unlinked: int
+        sealed_runs: list[str]
+        redacted_fields: int
+        store_body: bool
+        capsule_amended: bool
+        storage: str
+        partialSuccess: dict[str, Any] = Field(default_factory=dict)  # noqa: N815 — OTLP wire name
 
     async def otlp_ingest_logs(request: Request) -> dict[str, Any]:
         """Ingest an OTLP logs export into the sidecar log store (ADR-0293, experimental)."""
@@ -566,6 +582,9 @@ def register_otlp_logs_route(app: Any, *, capsule_dir: Path, verify_token: Any) 
         otlp_ingest_logs,
         methods=["POST"],
         dependencies=[Depends(verify_token)],
+        operation_id="dashboardIngestOtlpLogs",
+        responses={200: {"model": OTLPLogsIngestResponse}},
+        response_model=None,
     )
 
 

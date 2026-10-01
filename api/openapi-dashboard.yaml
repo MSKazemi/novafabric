@@ -379,6 +379,60 @@ components:
       - manifest
       title: MCPScanRequest
       type: object
+    OTLPLogsIngestResponse:
+      description: Declared (not bound) body of ``POST /api/otlp/v1/logs`` — see ``to_response``.
+      properties:
+        capsule_amended:
+          title: Capsule Amended
+          type: boolean
+        linked_runs:
+          items:
+            type: string
+          title: Linked Runs
+          type: array
+        linked_traces:
+          title: Linked Traces
+          type: integer
+        partialSuccess:
+          additionalProperties: true
+          title: Partialsuccess
+          type: object
+        records_seen:
+          title: Records Seen
+          type: integer
+        records_stored:
+          title: Records Stored
+          type: integer
+        redacted_fields:
+          title: Redacted Fields
+          type: integer
+        sealed_runs:
+          items:
+            type: string
+          title: Sealed Runs
+          type: array
+        storage:
+          title: Storage
+          type: string
+        store_body:
+          title: Store Body
+          type: boolean
+        unlinked:
+          title: Unlinked
+          type: integer
+      required:
+      - records_seen
+      - records_stored
+      - linked_runs
+      - linked_traces
+      - unlinked
+      - sealed_runs
+      - redacted_fields
+      - store_body
+      - capsule_amended
+      - storage
+      title: OTLPLogsIngestResponse
+      type: object
     PlaceHoldRequest:
       properties:
         duration_days:
@@ -6251,6 +6305,41 @@ paths:
           description: Validation Error
       summary: Api Daemon Status
       x-nova-contract: pending
+  /api/otlp/v1/logs:
+    post:
+      description: Ingest an OTLP logs export into the sidecar log store (ADR-0293, experimental).
+      operationId: dashboardIngestOtlpLogs
+      parameters:
+      - in: query
+        name: token
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Token
+      - in: header
+        name: authorization
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OTLPLogsIngestResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Otlp Ingest Logs
   /api/otlp/v1/traces:
     post:
       description: 'Ingest OTLP OTel GenAI spans into a run capsule (NF-034, experimental).

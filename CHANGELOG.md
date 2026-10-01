@@ -54,7 +54,8 @@ longer forwards the submitting shell's environment (ADR-0270).
   pass through the secret redactor first. Requests are capped at 16 MiB and 10 000 records,
   and each stream file at 64 MiB. Records over the file cap are reported as OTLP
   `partialSuccess`. `read_log_records()` reads one run's or one trace's records with a
-  `min_level` filter.
+  `min_level` filter. `nova serve` mounts the route with the same bearer-token guard as
+  `/api/otlp/v1/traces` and classifies it `operate` in the ADR-0228 route table.
 - **Per-org usage budgets and API-key workspace-binding enforcement** (ADR-0208 remainder,
   ADR-0294, **experimental**, both off by default). `server.rate_limits.quota.orgs` sets
   soft/hard capsule and byte budgets per organization. They are checked against the sum of
@@ -1573,7 +1574,7 @@ longer forwards the submitting shell's environment (ADR-0270).
   `read` sees plus the audit trail, and can mutate nothing at any level. No new vocabulary was
   invented, because a fourth taxonomy is what guarantees drift.
 
-  Enforcement is **one declarative table of 213 routes** consulted by **one** app-level
+  Enforcement is **one declarative table of 214 routes** consulted by **one** app-level
   dependency — not 184 decorators inside the module ADR-0183 froze. A route missing from the
   table is **denied to everyone**, including the server token: in an evidence tool a loud
   failure beats a quiet disclosure, and defaulting to `read` would make a forgotten line a
