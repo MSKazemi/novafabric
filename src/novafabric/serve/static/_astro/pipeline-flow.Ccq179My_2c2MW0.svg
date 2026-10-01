@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 360" width="980" height="360" role="img" aria-labelledby="t d">
+<title id="t">NovaFabric pipeline: capture, seal, replay, diff, audit</title>
+<desc id="d">Five stages left to right. Capture (nova capture) installs hooks, runs the workload and redacts secrets, writing a Run Capsule directory. Seal runs automatically at the end of capture when NovaSeal is configured, writing a DSSE signature, an RFC 3161 timestamp and a Merkle log entry into .seal/. Replay (nova replay) re-runs the captured command with recorded LLM responses (mocked mode, the default) or analyses the capsule in four other modes, writing a replay_result.yaml. Diff (nova diff) compares two capsules. Diff can fail a CI job. Audit verifies the seal offline (nova verify), exports a signed Evidence Bundle (nova export-evidence) and maps evidence to controls (nova audit). A band underneath states that the capsule on disk is the source of truth.</desc>
+<style>
+svg{--bg:#111114;--card:#1c1c22;--card2:#24242c;--stroke:#3a3a44;--fg:#ececf1;--muted:#a8a8b3;--line:#6b6b78;--cap:#7dd3fc;--seal:#c4b5fd;--rep:#5eead4;--diff:#fcd34d;--aud:#c4f0a8;--warn:#fda4af}
+@media (prefers-color-scheme:light){svg{--bg:#fafaf9;--card:#ffffff;--card2:#f1f1f3;--stroke:#d4d4d8;--fg:#18181b;--muted:#52525b;--line:#a1a1aa;--cap:#0369a1;--seal:#6d28d9;--rep:#0f766e;--diff:#a16207;--aud:#3f6212;--warn:#be123c}}
+.bg{fill:var(--bg)}
+.card{fill:var(--card);stroke:var(--stroke);stroke-width:1.2}
+.card2{fill:var(--card2);stroke:var(--stroke);stroke-width:1}
+text{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;fill:var(--fg)}
+.mono{font-family:ui-monospace,'JetBrains Mono','DejaVu Sans Mono',Menlo,monospace}
+.h{font-size:15px;font-weight:650}
+.t{font-size:12.5px}
+.s{font-size:11px;fill:var(--muted)}
+.title{font-size:17px;font-weight:700}
+.wire{fill:none;stroke:var(--line);stroke-width:1.6}
+.flow{fill:none;stroke-width:2;stroke-dasharray:6 8;animation:flow 1.6s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-28}}
+.c-cap{stroke:var(--cap)}.f-cap{fill:var(--cap)}
+.c-seal{stroke:var(--seal)}.f-seal{fill:var(--seal)}
+.c-rep{stroke:var(--rep)}.f-rep{fill:var(--rep)}
+.c-diff{stroke:var(--diff)}.f-diff{fill:var(--diff)}
+.c-aud{stroke:var(--aud)}.f-aud{fill:var(--aud)}
+.c-warn{stroke:var(--warn)}.f-warn{fill:var(--warn)}
+.c-muted{stroke:var(--line)}.f-muted{fill:var(--muted)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}.motion{display:none}.flow{stroke-dasharray:none}}
+@keyframes ring{0%{opacity:0}4%{opacity:1}16%{opacity:1}22%{opacity:0}100%{opacity:0}}
+.ring0{opacity:0;animation:ring 10.0s ease-in-out 0.00s infinite}
+.ring1{opacity:0;animation:ring 10.0s ease-in-out 2.00s infinite}
+.ring2{opacity:0;animation:ring 10.0s ease-in-out 4.00s infinite}
+.ring3{opacity:0;animation:ring 10.0s ease-in-out 6.00s infinite}
+.ring4{opacity:0;animation:ring 10.0s ease-in-out 8.00s infinite}
+@media (prefers-reduced-motion:reduce){[class^=ring]{opacity:0}}
+</style>
+<rect class="bg" x="0" y="0" width="980" height="360" rx="14"/>
+<text class="title" x="22" y="38" text-anchor="start">Capture → Seal → Replay → Diff → Audit</text>
+<text class="s" x="22" y="58" text-anchor="start">The NovaFabric verb chain, as implemented by the nova CLI</text>
+<rect class="ring0 c-cap" x="18" y="66" width="184" height="186" rx="13" fill="none" stroke-width="2.5"/>
+<rect class="card" x="22" y="70" width="176" height="178" rx="10"/><rect class="f-cap" x="22" y="70" width="176" height="4" rx="2"/>
+<text class="h" x="36" y="100" text-anchor="start">1 · Capture</text>
+<text class="s mono" x="36" y="120" text-anchor="start">nova capture</text>
+<circle class="f-cap" cx="40" cy="146" r="2.6"/>
+<text class="t" x="50" y="150" text-anchor="start">sitecustomize hooks</text>
+<circle class="f-cap" cx="40" cy="168" r="2.6"/>
+<text class="t" x="50" y="172" text-anchor="start">runner runs workload</text>
+<circle class="f-cap" cx="40" cy="190" r="2.6"/>
+<text class="t" x="50" y="194" text-anchor="start">secret scan + redact</text>
+<rect class="card2" x="34" y="210" width="152" height="26" rx="6"/>
+<text class="s mono" x="110.0" y="227" text-anchor="middle">Run Capsule dir</text>
+<path class="wire" d="M200 159 h7"/>
+<path class="f-muted" d="M207 159 l-6 -4 v8z"/>
+<rect class="ring1 c-seal" x="207" y="66" width="184" height="186" rx="13" fill="none" stroke-width="2.5"/>
+<rect class="card" x="211" y="70" width="176" height="178" rx="10"/><rect class="f-seal" x="211" y="70" width="176" height="4" rx="2"/>
+<text class="h" x="225" y="100" text-anchor="start">2 · Seal</text>
+<text class="s mono" x="225" y="120" text-anchor="start">auto, if configured</text>
+<circle class="f-seal" cx="229" cy="146" r="2.6"/>
+<text class="t" x="239" y="150" text-anchor="start">DSSE signature</text>
+<circle class="f-seal" cx="229" cy="168" r="2.6"/>
+<text class="t" x="239" y="172" text-anchor="start">RFC 3161 timestamp</text>
+<circle class="f-seal" cx="229" cy="190" r="2.6"/>
+<text class="t" x="239" y="194" text-anchor="start">Merkle log entry</text>
+<rect class="card2" x="223" y="210" width="152" height="26" rx="6"/>
+<text class="s mono" x="299.0" y="227" text-anchor="middle">.seal/</text>
+<path class="wire" d="M389 159 h7"/>
+<path class="f-muted" d="M396 159 l-6 -4 v8z"/>
+<rect class="ring2 c-rep" x="396" y="66" width="184" height="186" rx="13" fill="none" stroke-width="2.5"/>
+<rect class="card" x="400" y="70" width="176" height="178" rx="10"/><rect class="f-rep" x="400" y="70" width="176" height="4" rx="2"/>
+<text class="h" x="414" y="100" text-anchor="start">3 · Replay</text>
+<text class="s mono" x="414" y="120" text-anchor="start">nova replay --mode</text>
+<circle class="f-rep" cx="418" cy="146" r="2.6"/>
+<text class="t" x="428" y="150" text-anchor="start">re-run; LLM answers</text>
+<circle class="f-rep" cx="418" cy="168" r="2.6"/>
+<text class="t" x="428" y="172" text-anchor="start">served from record</text>
+<circle class="f-rep" cx="418" cy="190" r="2.6"/>
+<text class="t" x="428" y="194" text-anchor="start">+ 4 analysis modes</text>
+<rect class="card2" x="412" y="210" width="152" height="26" rx="6"/>
+<text class="s mono" x="488.0" y="227" text-anchor="middle">replay_result.yaml</text>
+<path class="wire" d="M578 159 h7"/>
+<path class="f-muted" d="M585 159 l-6 -4 v8z"/>
+<rect class="ring3 c-diff" x="585" y="66" width="184" height="186" rx="13" fill="none" stroke-width="2.5"/>
+<rect class="card" x="589" y="70" width="176" height="178" rx="10"/><rect class="f-diff" x="589" y="70" width="176" height="4" rx="2"/>
+<text class="h" x="603" y="100" text-anchor="start">4 · Diff</text>
+<text class="s mono" x="603" y="120" text-anchor="start">nova diff A B</text>
+<circle class="f-diff" cx="607" cy="146" r="2.6"/>
+<text class="t" x="617" y="150" text-anchor="start">env · model calls</text>
+<circle class="f-diff" cx="607" cy="168" r="2.6"/>
+<text class="t" x="617" y="172" text-anchor="start">tool calls · outputs</text>
+<circle class="f-diff" cx="607" cy="190" r="2.6"/>
+<text class="t" x="617" y="194" text-anchor="start">CI gate: exit 1</text>
+<rect class="card2" x="601" y="210" width="152" height="26" rx="6"/>
+<text class="s mono" x="677.0" y="227" text-anchor="middle">text · json · gh</text>
+<path class="wire" d="M767 159 h7"/>
+<path class="f-muted" d="M774 159 l-6 -4 v8z"/>
+<rect class="ring4 c-aud" x="774" y="66" width="184" height="186" rx="13" fill="none" stroke-width="2.5"/>
+<rect class="card" x="778" y="70" width="176" height="178" rx="10"/><rect class="f-aud" x="778" y="70" width="176" height="4" rx="2"/>
+<text class="h" x="792" y="100" text-anchor="start">5 · Audit</text>
+<text class="s mono" x="792" y="120" text-anchor="start">nova verify</text>
+<circle class="f-aud" cx="796" cy="146" r="2.6"/>
+<text class="t" x="806" y="150" text-anchor="start">offline seal check</text>
+<circle class="f-aud" cx="796" cy="168" r="2.6"/>
+<text class="t" x="806" y="172" text-anchor="start">nova export-evidence</text>
+<circle class="f-aud" cx="796" cy="190" r="2.6"/>
+<text class="t" x="806" y="194" text-anchor="start">nova audit map</text>
+<rect class="card2" x="790" y="210" width="152" height="26" rx="6"/>
+<text class="s mono" x="866.0" y="227" text-anchor="middle">Evidence Bundle</text>
+<path class="wire" d="M110.0 266 H866.0" stroke-dasharray="2 5"/>
+<circle class="card2" cx="110.0" cy="266" r="4"/>
+<circle class="card2" cx="299.0" cy="266" r="4"/>
+<circle class="card2" cx="488.0" cy="266" r="4"/>
+<circle class="card2" cx="677.0" cy="266" r="4"/>
+<circle class="card2" cx="866.0" cy="266" r="4"/>
+<g class="motion"><circle r="6" class="f-aud"><animateMotion dur="10s" repeatCount="indefinite" path="M110.0 266 H866.0" keyPoints="0;0;0.25;0.25;0.5;0.5;0.75;0.75;1;1" keyTimes="0;0.12;0.2;0.32;0.4;0.52;0.6;0.72;0.8;1" calcMode="linear"/></circle></g>
+<rect class="card2" x="22" y="286" width="936" height="54" rx="10"/>
+<path class="flow c-aud" d="M40 313 H940"/>
+<rect class="card" x="130.0" y="297" width="720" height="32" rx="8"/>
+<text class="t" x="490.0" y="318" text-anchor="middle">The capsule directory is the source of truth — registry, lineage and metadata DB are rebuildable indexes</text>
+</svg>

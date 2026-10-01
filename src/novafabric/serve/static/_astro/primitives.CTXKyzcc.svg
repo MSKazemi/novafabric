@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 420" width="980" height="420" role="img" aria-labelledby="t d">
+<title id="t">The five NovaFabric primitives</title>
+<desc id="d">The Run Capsule sits in the centre. Around it: the Asset Registry (SQLite, name@version assets, linked through assets.jsonl consumed edges), Replay (five modes, writes replay_result.yaml), Lineage (a provenance graph indexed from each capsule's lineage.jsonl) and the Evidence Bundle (a signed offline-verifiable ZIP built by nova export-evidence). Sealing is a trust layer, not a sixth primitive.</desc>
+<style>
+svg{--bg:#111114;--card:#1c1c22;--card2:#24242c;--stroke:#3a3a44;--fg:#ececf1;--muted:#a8a8b3;--line:#6b6b78;--cap:#7dd3fc;--seal:#c4b5fd;--rep:#5eead4;--diff:#fcd34d;--aud:#c4f0a8;--warn:#fda4af}
+@media (prefers-color-scheme:light){svg{--bg:#fafaf9;--card:#ffffff;--card2:#f1f1f3;--stroke:#d4d4d8;--fg:#18181b;--muted:#52525b;--line:#a1a1aa;--cap:#0369a1;--seal:#6d28d9;--rep:#0f766e;--diff:#a16207;--aud:#3f6212;--warn:#be123c}}
+.bg{fill:var(--bg)}
+.card{fill:var(--card);stroke:var(--stroke);stroke-width:1.2}
+.card2{fill:var(--card2);stroke:var(--stroke);stroke-width:1}
+text{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;fill:var(--fg)}
+.mono{font-family:ui-monospace,'JetBrains Mono','DejaVu Sans Mono',Menlo,monospace}
+.h{font-size:15px;font-weight:650}
+.t{font-size:12.5px}
+.s{font-size:11px;fill:var(--muted)}
+.title{font-size:17px;font-weight:700}
+.wire{fill:none;stroke:var(--line);stroke-width:1.6}
+.flow{fill:none;stroke-width:2;stroke-dasharray:6 8;animation:flow 1.6s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-28}}
+.c-cap{stroke:var(--cap)}.f-cap{fill:var(--cap)}
+.c-seal{stroke:var(--seal)}.f-seal{fill:var(--seal)}
+.c-rep{stroke:var(--rep)}.f-rep{fill:var(--rep)}
+.c-diff{stroke:var(--diff)}.f-diff{fill:var(--diff)}
+.c-aud{stroke:var(--aud)}.f-aud{fill:var(--aud)}
+.c-warn{stroke:var(--warn)}.f-warn{fill:var(--warn)}
+.c-muted{stroke:var(--line)}.f-muted{fill:var(--muted)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}.motion{display:none}.flow{stroke-dasharray:none}}
+@keyframes ring{0%{opacity:0}4%{opacity:1}16%{opacity:1}22%{opacity:0}100%{opacity:0}}
+.ring0{opacity:0;animation:ring 10.0s ease-in-out 0.00s infinite}
+.ring1{opacity:0;animation:ring 10.0s ease-in-out 2.00s infinite}
+.ring2{opacity:0;animation:ring 10.0s ease-in-out 4.00s infinite}
+.ring3{opacity:0;animation:ring 10.0s ease-in-out 6.00s infinite}
+.ring4{opacity:0;animation:ring 10.0s ease-in-out 8.00s infinite}
+@media (prefers-reduced-motion:reduce){[class^=ring]{opacity:0}}
+</style>
+<rect class="bg" x="0" y="0" width="980" height="420" rx="14"/>
+<text class="title" x="22" y="38" text-anchor="start">The five primitives</text>
+<text class="s" x="22" y="58" text-anchor="start">One source of truth (the Run Capsule); everything else references it or is derived from it</text>
+<rect class="ring0 c-cap" x="366.0" y="182" width="248" height="108" rx="14" fill="none" stroke-width="2.5"/>
+<rect class="card" x="370.0" y="186" width="240" height="100" rx="12"/><rect class="f-cap" x="370.0" y="186" width="240" height="4" rx="2"/>
+<text class="h" x="490.0" y="218" text-anchor="middle">Run Capsule</text>
+<text class="t" x="490.0" y="238" text-anchor="middle">ULID-named directory</text>
+<text class="s mono" x="490.0" y="258" text-anchor="middle">capture/orchestrator.py</text>
+<rect class="ring1 c-seal" x="26" y="86" width="228" height="88" rx="13" fill="none" stroke-width="2.5"/>
+<path class="flow c-seal" d="M250 130 C310.0 130 310.0 210 370.0 210"/>
+<text class="s mono" x="362.0" y="200" text-anchor="end">assets.jsonl → consumed</text>
+<rect class="card" x="30" y="90" width="220" height="80" rx="12"/><rect class="f-seal" x="30" y="90" width="220" height="4" rx="2"/>
+<text class="h" x="140" y="118" text-anchor="middle">Asset Registry</text>
+<text class="t" x="140" y="137" text-anchor="middle">name@version · lifecycle</text>
+<text class="s mono" x="140" y="156" text-anchor="middle">registry/  (SQLite)</text>
+<rect class="ring2 c-rep" x="26" y="298" width="228" height="88" rx="13" fill="none" stroke-width="2.5"/>
+<path class="flow c-rep" d="M250 342 C310.0 342 310.0 262 370.0 262"/>
+<text class="s mono" x="362.0" y="280" text-anchor="end">replay_result.yaml</text>
+<rect class="card" x="30" y="302" width="220" height="80" rx="12"/><rect class="f-rep" x="30" y="302" width="220" height="4" rx="2"/>
+<text class="h" x="140" y="330" text-anchor="middle">Replay</text>
+<text class="t" x="140" y="349" text-anchor="middle">five modes</text>
+<text class="s mono" x="140" y="368" text-anchor="middle">replay/_engine.py</text>
+<rect class="ring3 c-diff" x="726" y="86" width="228" height="88" rx="13" fill="none" stroke-width="2.5"/>
+<path class="flow c-diff" d="M730 130 C670.0 130 670.0 210 610.0 210"/>
+<text class="s mono" x="618.0" y="200" text-anchor="start">lineage.jsonl → index</text>
+<rect class="card" x="730" y="90" width="220" height="80" rx="12"/><rect class="f-diff" x="730" y="90" width="220" height="4" rx="2"/>
+<text class="h" x="840" y="118" text-anchor="middle">Lineage</text>
+<text class="t" x="840" y="137" text-anchor="middle">provenance graph</text>
+<text class="s mono" x="840" y="156" text-anchor="middle">lineage/_store.py</text>
+<rect class="ring4 c-aud" x="726" y="298" width="228" height="88" rx="13" fill="none" stroke-width="2.5"/>
+<path class="flow c-aud" d="M730 342 C670.0 342 670.0 262 610.0 262"/>
+<text class="s mono" x="618.0" y="280" text-anchor="start">nova export-evidence</text>
+<rect class="card" x="730" y="302" width="220" height="80" rx="12"/><rect class="f-aud" x="730" y="302" width="220" height="4" rx="2"/>
+<text class="h" x="840" y="330" text-anchor="middle">Evidence Bundle</text>
+<text class="t" x="840" y="349" text-anchor="middle">signed offline ZIP</text>
+<text class="s mono" x="840" y="368" text-anchor="middle">evidence/bundle.py</text>
+<text class="s" x="490.0" y="402" text-anchor="middle">Cryptographic sealing (NovaSeal, trust/novaseal/) protects capsules and bundles — it is a layer, not a sixth primitive.</text>
+</svg>

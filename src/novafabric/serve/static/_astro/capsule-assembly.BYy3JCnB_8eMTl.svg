@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 540" width="980" height="540" role="img" aria-labelledby="t d">
+<title id="t">How a Run Capsule is assembled</title>
+<desc id="d">Left: the workload runs as a subprocess with the sitecustomize hook loader injected by the runner; hooks record model calls, tool calls and HTTP traffic, and the runner captures stdout and stderr. After the workload exits the orchestrator writes env.lock, runs the secret scanner and maskers, writes replay.yaml, the capsule.yaml manifest, lineage.jsonl, per-file SHA-256 evidence digests, and finally the .seal/ files when NovaSeal is configured. Right: the resulting capsule directory, one row per file, highlighted in write order.</desc>
+<style>
+svg{--bg:#111114;--card:#1c1c22;--card2:#24242c;--stroke:#3a3a44;--fg:#ececf1;--muted:#a8a8b3;--line:#6b6b78;--cap:#7dd3fc;--seal:#c4b5fd;--rep:#5eead4;--diff:#fcd34d;--aud:#c4f0a8;--warn:#fda4af}
+@media (prefers-color-scheme:light){svg{--bg:#fafaf9;--card:#ffffff;--card2:#f1f1f3;--stroke:#d4d4d8;--fg:#18181b;--muted:#52525b;--line:#a1a1aa;--cap:#0369a1;--seal:#6d28d9;--rep:#0f766e;--diff:#a16207;--aud:#3f6212;--warn:#be123c}}
+.bg{fill:var(--bg)}
+.card{fill:var(--card);stroke:var(--stroke);stroke-width:1.2}
+.card2{fill:var(--card2);stroke:var(--stroke);stroke-width:1}
+text{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;fill:var(--fg)}
+.mono{font-family:ui-monospace,'JetBrains Mono','DejaVu Sans Mono',Menlo,monospace}
+.h{font-size:15px;font-weight:650}
+.t{font-size:12.5px}
+.s{font-size:11px;fill:var(--muted)}
+.title{font-size:17px;font-weight:700}
+.wire{fill:none;stroke:var(--line);stroke-width:1.6}
+.flow{fill:none;stroke-width:2;stroke-dasharray:6 8;animation:flow 1.6s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-28}}
+.c-cap{stroke:var(--cap)}.f-cap{fill:var(--cap)}
+.c-seal{stroke:var(--seal)}.f-seal{fill:var(--seal)}
+.c-rep{stroke:var(--rep)}.f-rep{fill:var(--rep)}
+.c-diff{stroke:var(--diff)}.f-diff{fill:var(--diff)}
+.c-aud{stroke:var(--aud)}.f-aud{fill:var(--aud)}
+.c-warn{stroke:var(--warn)}.f-warn{fill:var(--warn)}
+.c-muted{stroke:var(--line)}.f-muted{fill:var(--muted)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}.motion{display:none}.flow{stroke-dasharray:none}}
+@keyframes row{0%{opacity:0}2%{opacity:1}9%{opacity:1}14%{opacity:0}100%{opacity:0}}
+.row0{opacity:0;animation:row 13.0s ease-in-out 0.00s infinite}
+.row1{opacity:0;animation:row 13.0s ease-in-out 1.00s infinite}
+.row2{opacity:0;animation:row 13.0s ease-in-out 2.00s infinite}
+.row3{opacity:0;animation:row 13.0s ease-in-out 3.00s infinite}
+.row4{opacity:0;animation:row 13.0s ease-in-out 4.00s infinite}
+.row5{opacity:0;animation:row 13.0s ease-in-out 5.00s infinite}
+.row6{opacity:0;animation:row 13.0s ease-in-out 6.00s infinite}
+.row7{opacity:0;animation:row 13.0s ease-in-out 7.00s infinite}
+.row8{opacity:0;animation:row 13.0s ease-in-out 8.00s infinite}
+.row9{opacity:0;animation:row 13.0s ease-in-out 9.00s infinite}
+.row10{opacity:0;animation:row 13.0s ease-in-out 10.00s infinite}
+.row11{opacity:0;animation:row 13.0s ease-in-out 11.00s infinite}
+.row12{opacity:0;animation:row 13.0s ease-in-out 12.00s infinite}
+@media (prefers-reduced-motion:reduce){[class^=row]{opacity:0}}
+</style>
+<rect class="bg" x="0" y="0" width="980" height="540" rx="14"/>
+<text class="title" x="22" y="38" text-anchor="start">Run Capsule assembly</text>
+<text class="s" x="22" y="58" text-anchor="start">What CaptureOrchestrator.run writes, in order (capture/orchestrator.py)</text>
+<rect class="card" x="22" y="84" width="300" height="196" rx="10"/><rect class="f-cap" x="22" y="84" width="300" height="4" rx="2"/>
+<text class="h" x="38" y="112" text-anchor="start">Your workload (subprocess)</text>
+<text class="s" x="38" y="132" text-anchor="start">runners/_sitecustomize.py injects the hook loader</text>
+<rect class="card2" x="38" y="156" width="268" height="24" rx="6"/>
+<circle class="f-cap" cx="50" cy="168" r="3"/>
+<text class="t" x="60" y="172" text-anchor="start">model calls</text>
+<text class="s mono" x="298" y="172" text-anchor="end">hooks/_openai.py …</text>
+<rect class="card2" x="38" y="186" width="268" height="24" rx="6"/>
+<circle class="f-cap" cx="50" cy="198" r="3"/>
+<text class="t" x="60" y="202" text-anchor="start">tool calls</text>
+<text class="s mono" x="298" y="202" text-anchor="end">hooks/_mcp.py …</text>
+<rect class="card2" x="38" y="216" width="268" height="24" rx="6"/>
+<circle class="f-cap" cx="50" cy="228" r="3"/>
+<text class="t" x="60" y="232" text-anchor="start">HTTP wire</text>
+<text class="s mono" x="298" y="232" text-anchor="end">hooks/_httpx.py …</text>
+<rect class="card2" x="38" y="246" width="268" height="24" rx="6"/>
+<circle class="f-cap" cx="50" cy="258" r="3"/>
+<text class="t" x="60" y="262" text-anchor="start">stdout / stderr</text>
+<text class="s mono" x="298" y="262" text-anchor="end">runner pipes</text>
+<rect class="card" x="22" y="296" width="300" height="222" rx="10"/><rect class="f-seal" x="22" y="296" width="300" height="4" rx="2"/>
+<text class="h" x="38" y="324" text-anchor="start">After the workload exits</text>
+<circle class="f-seal" cx="44" cy="346" r="3"/>
+<text class="t" x="56" y="350" text-anchor="start">env snapshot → env.lock</text>
+<circle class="f-seal" cx="44" cy="370" r="3"/>
+<text class="t" x="56" y="374" text-anchor="start">SecretScannerV0 + maskers</text>
+<circle class="f-seal" cx="44" cy="394" r="3"/>
+<text class="t" x="56" y="398" text-anchor="start">replay policy → replay.yaml</text>
+<circle class="f-seal" cx="44" cy="418" r="3"/>
+<text class="t" x="56" y="422" text-anchor="start">manifest → capsule.yaml</text>
+<circle class="f-seal" cx="44" cy="442" r="3"/>
+<text class="t" x="56" y="446" text-anchor="start">LineageWriter → lineage.jsonl</text>
+<circle class="f-seal" cx="44" cy="466" r="3"/>
+<text class="t" x="56" y="470" text-anchor="start">evidence_digests (SHA-256/file)</text>
+<circle class="f-seal" cx="44" cy="490" r="3"/>
+<text class="t" x="56" y="494" text-anchor="start">NovaSeal → .seal/ (if configured)</text>
+<rect class="card" x="380" y="84" width="578" height="434" rx="10"/><rect class="f-aud" x="380" y="84" width="578" height="4" rx="2"/>
+<text class="h mono" x="398" y="114" text-anchor="start">~/.novafabric/capsules/01J…ULID/</text>
+<rect class="row0 card2" x="390" y="132" width="558" height="27" rx="6"/>
+<rect class="f-cap" x="398" y="139" width="4" height="13" rx="2"/>
+<text class="t mono" x="412" y="150" text-anchor="start">inputs/</text>
+<text class="s" x="940" y="150" text-anchor="end">created when the capsule opens</text>
+<rect class="row1 card2" x="390" y="161" width="558" height="27" rx="6"/>
+<rect class="f-cap" x="398" y="168" width="4" height="13" rx="2"/>
+<text class="t mono" x="412" y="179" text-anchor="start">model-calls.jsonl</text>
+<text class="s" x="940" y="179" text-anchor="end">LLM calls (OTel GenAI keys)</text>
+<rect class="row2 card2" x="390" y="190" width="558" height="27" rx="6"/>
+<rect class="f-cap" x="398" y="197" width="4" height="13" rx="2"/>
+<text class="t mono" x="412" y="208" text-anchor="start">tool-calls.jsonl</text>
+<text class="s" x="940" y="208" text-anchor="end">tool invocations</text>
+<rect class="row3 card2" x="390" y="219" width="558" height="27" rx="6"/>
+<rect class="f-cap" x="398" y="226" width="4" height="13" rx="2"/>
+<text class="t mono" x="412" y="237" text-anchor="start">trace.jsonl</text>
+<text class="s" x="940" y="237" text-anchor="end">execution spans</text>
+<rect class="row4 card2" x="390" y="248" width="558" height="27" rx="6"/>
+<rect class="f-cap" x="398" y="255" width="4" height="13" rx="2"/>
+<text class="t mono" x="412" y="266" text-anchor="start">assets.jsonl</text>
+<text class="s" x="940" y="266" text-anchor="end">asset references</text>
+<rect class="row5 card2" x="390" y="277" width="558" height="27" rx="6"/>
+<rect class="f-cap" x="398" y="284" width="4" height="13" rx="2"/>
+<text class="t mono" x="412" y="295" text-anchor="start">outputs/stdout.txt, stderr.txt</text>
+<text class="s" x="940" y="295" text-anchor="end">process output</text>
+<rect class="row6 card2" x="390" y="306" width="558" height="27" rx="6"/>
+<rect class="f-seal" x="398" y="313" width="4" height="13" rx="2"/>
+<text class="t mono" x="412" y="324" text-anchor="start">env.lock</text>
+<text class="s" x="940" y="324" text-anchor="end">environment snapshot</text>
+<rect class="row7 card2" x="390" y="335" width="558" height="27" rx="6"/>
+<rect class="f-warn" x="398" y="342" width="4" height="13" rx="2"/>
+<text class="t mono" x="412" y="353" text-anchor="start">redaction-proof.json</text>
+<text class="s" x="940" y="353" text-anchor="end">secret-scan proof, pre/post hashes</text>
+<rect class="row8 card2" x="390" y="364" width="558" height="27" rx="6"/>
+<rect class="f-rep" x="398" y="371" width="4" height="13" rx="2"/>
+<text class="t mono" x="412" y="382" text-anchor="start">replay.yaml</text>
+<text class="s" x="940" y="382" text-anchor="end">replay constraints</text>
+<rect class="row9 card2" x="390" y="393" width="558" height="27" rx="6"/>
+<rect class="f-aud" x="398" y="400" width="4" height="13" rx="2"/>
+<text class="t mono" x="412" y="411" text-anchor="start">capsule.yaml</text>
+<text class="s" x="940" y="411" text-anchor="end">run manifest (+ evidence_digests)</text>
+<rect class="row10 card2" x="390" y="422" width="558" height="27" rx="6"/>
+<rect class="f-diff" x="398" y="429" width="4" height="13" rx="2"/>
+<text class="t mono" x="412" y="440" text-anchor="start">lineage.jsonl</text>
+<text class="s" x="940" y="440" text-anchor="end">lineage edges</text>
+<rect class="row11 card2" x="390" y="451" width="558" height="27" rx="6"/>
+<rect class="f-muted" x="398" y="458" width="4" height="13" rx="2"/>
+<text class="t mono" x="412" y="469" text-anchor="start">*_events.jsonl, capture-health.json</text>
+<text class="s" x="940" y="469" text-anchor="end">only when non-empty / events dropped</text>
+<rect class="row12 card2" x="390" y="480" width="558" height="27" rx="6"/>
+<rect class="f-seal" x="398" y="487" width="4" height="13" rx="2"/>
+<text class="t mono" x="412" y="498" text-anchor="start">.seal/manifest.dsse  .tsr  log-entry.json</text>
+<text class="s" x="940" y="498" text-anchor="end">seal files — when NovaSeal is configured</text>
+<g class="motion"><circle r="4" class="f-cap"><animateMotion dur="2.6s" repeatCount="indefinite" path="M306 168 C344 168 344 146 390 146"/></circle></g>
+<g class="motion"><circle r="4" class="f-cap"><animateMotion dur="2.9s" repeatCount="indefinite" path="M306 198 C344 198 344 175 390 175"/></circle></g>
+<g class="motion"><circle r="4" class="f-cap"><animateMotion dur="3.2s" repeatCount="indefinite" path="M306 228 C344 228 344 204 390 204"/></circle></g>
+<g class="motion"><circle r="4" class="f-cap"><animateMotion dur="3.5s" repeatCount="indefinite" path="M306 258 C344 258 344 233 390 233"/></circle></g>
+</svg>

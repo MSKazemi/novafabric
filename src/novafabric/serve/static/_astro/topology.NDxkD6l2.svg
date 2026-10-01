@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 560" width="980" height="560" role="img" aria-labelledby="t d">
+<title id="t">Deployment topologies from local to cluster</title>
+<desc id="d">Three columns. Local (works today): nova capture writes capsule directories under ~/.novafabric/capsules, a SQLite registry.db holds assets and the lineage index, nova serve is an experimental local dashboard, and runners cover local, Docker, SLURM, Kubernetes, LSF and PBS. Server (experimental): nova server start runs a FastAPI app with OIDC or local-token auth, SQLite or Postgres metadata with row-level security, and stores capsule bytes in a filesystem directory fed by POST /v0/capsules; the S3-compatible object store is a library not wired to the server. Cluster-scale (experimental, partial): nova capture --emit-spool writes to a node spool, a Go spool forwarder ships events to NATS JetStream, and consumers index lineage and evidence; hub signing is planned and multi-cluster federation is future design.</desc>
+<style>
+svg{--bg:#111114;--card:#1c1c22;--card2:#24242c;--stroke:#3a3a44;--fg:#ececf1;--muted:#a8a8b3;--line:#6b6b78;--cap:#7dd3fc;--seal:#c4b5fd;--rep:#5eead4;--diff:#fcd34d;--aud:#c4f0a8;--warn:#fda4af}
+@media (prefers-color-scheme:light){svg{--bg:#fafaf9;--card:#ffffff;--card2:#f1f1f3;--stroke:#d4d4d8;--fg:#18181b;--muted:#52525b;--line:#a1a1aa;--cap:#0369a1;--seal:#6d28d9;--rep:#0f766e;--diff:#a16207;--aud:#3f6212;--warn:#be123c}}
+.bg{fill:var(--bg)}
+.card{fill:var(--card);stroke:var(--stroke);stroke-width:1.2}
+.card2{fill:var(--card2);stroke:var(--stroke);stroke-width:1}
+text{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;fill:var(--fg)}
+.mono{font-family:ui-monospace,'JetBrains Mono','DejaVu Sans Mono',Menlo,monospace}
+.h{font-size:15px;font-weight:650}
+.t{font-size:12.5px}
+.s{font-size:11px;fill:var(--muted)}
+.title{font-size:17px;font-weight:700}
+.wire{fill:none;stroke:var(--line);stroke-width:1.6}
+.flow{fill:none;stroke-width:2;stroke-dasharray:6 8;animation:flow 1.6s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-28}}
+.c-cap{stroke:var(--cap)}.f-cap{fill:var(--cap)}
+.c-seal{stroke:var(--seal)}.f-seal{fill:var(--seal)}
+.c-rep{stroke:var(--rep)}.f-rep{fill:var(--rep)}
+.c-diff{stroke:var(--diff)}.f-diff{fill:var(--diff)}
+.c-aud{stroke:var(--aud)}.f-aud{fill:var(--aud)}
+.c-warn{stroke:var(--warn)}.f-warn{fill:var(--warn)}
+.c-muted{stroke:var(--line)}.f-muted{fill:var(--muted)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}.motion{display:none}.flow{stroke-dasharray:none}}
+@keyframes rg{0%{opacity:0}4%{opacity:1}16%{opacity:1}22%{opacity:0}100%{opacity:0}}
+.rg0{opacity:0;animation:rg 12.0s ease-in-out 0.00s infinite}
+.rg1{opacity:0;animation:rg 12.0s ease-in-out 1.50s infinite}
+.rg2{opacity:0;animation:rg 12.0s ease-in-out 3.00s infinite}
+.rg3{opacity:0;animation:rg 12.0s ease-in-out 4.50s infinite}
+.rg4{opacity:0;animation:rg 12.0s ease-in-out 6.00s infinite}
+.rg5{opacity:0;animation:rg 12.0s ease-in-out 7.50s infinite}
+.rg6{opacity:0;animation:rg 12.0s ease-in-out 9.00s infinite}
+.rg7{opacity:0;animation:rg 12.0s ease-in-out 10.50s infinite}
+@media (prefers-reduced-motion:reduce){[class^=rg]{opacity:0}}
+</style>
+<rect class="bg" x="0" y="0" width="980" height="560" rx="14"/>
+<text class="title" x="22" y="38" text-anchor="start">Deployment topologies: local → server → cluster</text>
+<text class="s" x="22" y="58" text-anchor="start">Every tier reads the same capsule format. Solid = works today / experimental · dashed = planned or future design</text>
+<rect class="card" x="22" y="78" width="296" height="460" rx="12"/><rect class="f-aud" x="22" y="78" width="296" height="4" rx="2"/>
+<text class="h" x="38" y="106" text-anchor="start">Local</text>
+<rect x="208.8" y="92" width="93" height="18" rx="9" fill="none" class="c-aud" stroke-width="1.2"/><text class="s f-aud" x="255.4" y="105" text-anchor="middle" style="font-weight:600">works today</text>
+<rect class="card" x="342" y="78" width="296" height="460" rx="12"/><rect class="f-rep" x="342" y="78" width="296" height="4" rx="2"/>
+<text class="h" x="358" y="106" text-anchor="start">Server</text>
+<rect x="521.6" y="92" width="100" height="18" rx="9" fill="none" class="c-rep" stroke-width="1.2"/><text class="s f-rep" x="571.8000000000001" y="105" text-anchor="middle" style="font-weight:600">experimental</text>
+<rect class="card" x="662" y="78" width="296" height="460" rx="12"/><rect class="f-diff" x="662" y="78" width="296" height="4" rx="2"/>
+<text class="h" x="678" y="106" text-anchor="start">Cluster-scale</text>
+<rect x="841.6" y="92" width="100" height="18" rx="9" fill="none" class="c-diff" stroke-width="1.2"/><text class="s f-diff" x="891.8000000000001" y="105" text-anchor="middle" style="font-weight:600">experimental</text>
+<rect class="rg0 c-aud" x="35" y="121" width="270" height="52" rx="10" fill="none" stroke-width="2.2"/><rect class="card2" x="38" y="124" width="264" height="46" rx="8"/><text class="t" x="48" y="143" text-anchor="start" style="font-weight:600">nova capture &lt;cmd&gt;</text><text class="s mono" x="48" y="160" text-anchor="start">in-process sitecustomize hooks</text>
+<rect class="rg1 c-aud" x="35" y="193" width="270" height="52" rx="10" fill="none" stroke-width="2.2"/><rect class="card2" x="38" y="196" width="264" height="46" rx="8"/><text class="t" x="48" y="215" text-anchor="start" style="font-weight:600">capsule directories</text><text class="s mono" x="48" y="232" text-anchor="start">~/.novafabric/capsules/&lt;ULID&gt;/</text>
+<rect class="card2" x="38" y="268" width="264" height="46" rx="8"/><text class="t" x="48" y="287" text-anchor="start" style="font-weight:600">registry.db (SQLite, WAL)</text><text class="s mono" x="48" y="304" text-anchor="start">assets + lineage index</text>
+<rect class="card2" x="38" y="340" width="264" height="46" rx="8"/><text class="t" x="48" y="359" text-anchor="start" style="font-weight:600">nova serve  (experimental)</text><text class="s mono" x="48" y="376" text-anchor="start">dashboard · 127.0.0.1:4321</text>
+<rect class="card2" x="38" y="412" width="264" height="46" rx="8"/><text class="t" x="48" y="431" text-anchor="start" style="font-weight:600">runners: local · docker</text><text class="s mono" x="48" y="448" text-anchor="start">slurm · kubernetes · lsf · pbs</text>
+<text class="s" x="38" y="486" text-anchor="start">No server, account or database daemon.</text>
+<text class="s" x="38" y="504" text-anchor="start">SLURM / Kubernetes runners: works today;</text>
+<text class="s" x="38" y="520" text-anchor="start">LSF / PBS runners: experimental.</text>
+<path class="wire" d="M170.0 170.0 L170.0 189.0"/><path class="f-muted" d="M170.0 196.0 L166.0 189.0 L174.0 189.0z"/>
+<path class="wire" d="M170.0 242.0 L170.0 261.0"/><path class="f-muted" d="M170.0 268.0 L166.0 261.0 L174.0 261.0z"/>
+<rect class="rg2 c-rep" x="355" y="121" width="270" height="52" rx="10" fill="none" stroke-width="2.2"/><rect class="card2" x="358" y="124" width="264" height="46" rx="8"/><text class="t" x="368" y="143" text-anchor="start" style="font-weight:600">nova server start</text><text class="s mono" x="368" y="160" text-anchor="start">FastAPI · 127.0.0.1:7433 · /v0</text>
+<rect class="card2" x="358" y="196" width="264" height="46" rx="8"/><text class="t" x="368" y="215" text-anchor="start" style="font-weight:600">auth: OIDC / local token</text><text class="s mono" x="368" y="232" text-anchor="start">RBAC · API keys · SCIM</text>
+<rect class="rg3 c-rep" x="355" y="265" width="270" height="52" rx="10" fill="none" stroke-width="2.2"/><rect class="card2" x="358" y="268" width="264" height="46" rx="8"/><text class="t" x="368" y="287" text-anchor="start" style="font-weight:600">metadata: SQLite or Postgres</text><text class="s mono" x="368" y="304" text-anchor="start">Postgres row-level security</text>
+<rect class="card2" x="358" y="340" width="264" height="46" rx="8"/><text class="t" x="368" y="359" text-anchor="start" style="font-weight:600">capsule bytes: filesystem dir</text><text class="s mono" x="368" y="376" text-anchor="start">POST /v0/capsules ingest</text>
+<rect class="card2" x="358" y="412" width="264" height="46" rx="8" stroke-dasharray="5 4"/><text class="t f-muted" x="368" y="431" text-anchor="start" style="font-weight:600">object store (S3-compatible)</text><text class="s mono" x="368" y="448" text-anchor="start">library; not wired to server</text>
+<text class="s" x="358" y="486" text-anchor="start">Single-tenant-safe today: more than one</text>
+<text class="s" x="358" y="504" text-anchor="start">organization is refused unless explicitly</text>
+<text class="s" x="358" y="520" text-anchor="start">accepted. deploy/docker, deploy/helm: experimental.</text>
+<path class="wire" d="M490.0 170.0 L490.0 189.0"/><path class="f-muted" d="M490.0 196.0 L486.0 189.0 L494.0 189.0z"/>
+<path class="wire" d="M490.0 242.0 L490.0 261.0"/><path class="f-muted" d="M490.0 268.0 L486.0 261.0 L494.0 261.0z"/>
+<path class="wire" d="M490.0 314.0 L490.0 333.0"/><path class="f-muted" d="M490.0 340.0 L486.0 333.0 L494.0 333.0z"/>
+<rect class="rg4 c-diff" x="675" y="121" width="270" height="52" rx="10" fill="none" stroke-width="2.2"/><rect class="card2" x="678" y="124" width="264" height="46" rx="8"/><text class="t" x="688" y="143" text-anchor="start" style="font-weight:600">compute node: nova capture</text><text class="s mono" x="688" y="160" text-anchor="start">--emit-spool (opt-in)</text>
+<rect class="rg5 c-diff" x="675" y="193" width="270" height="52" rx="10" fill="none" stroke-width="2.2"/><rect class="card2" x="678" y="196" width="264" height="46" rx="8"/><text class="t" x="688" y="215" text-anchor="start" style="font-weight:600">node spool</text><text class="s mono" x="688" y="232" text-anchor="start">$NOVAFABRIC_HOME/spool</text>
+<rect class="rg6 c-diff" x="675" y="265" width="270" height="52" rx="10" fill="none" stroke-width="2.2"/><rect class="card2" x="678" y="268" width="264" height="46" rx="8"/><text class="t" x="688" y="287" text-anchor="start" style="font-weight:600">novafabric-spool-forwarder (Go)</text><text class="s mono" x="688" y="304" text-anchor="start">→ NATS JetStream NOVA_EVIDENCE</text>
+<rect class="rg7 c-diff" x="675" y="337" width="270" height="52" rx="10" fill="none" stroke-width="2.2"/><rect class="card2" x="678" y="340" width="264" height="46" rx="8"/><text class="t" x="688" y="359" text-anchor="start" style="font-weight:600">consumers</text><text class="s mono" x="688" y="376" text-anchor="start">lineage consume · evidence fabric</text>
+<rect class="card2" x="678" y="412" width="264" height="46" rx="8" stroke-dasharray="5 4"/><text class="t f-muted" x="688" y="431" text-anchor="start" style="font-weight:600">HPC hub signing</text><text class="s mono" x="688" y="448" text-anchor="start">planned (binary is a stub)</text>
+<text class="s" x="678" y="486" text-anchor="start">Multi-cluster federation: future design.</text>
+<text class="s" x="678" y="504" text-anchor="start">Compute nodes never write to a database;</text>
+<text class="s" x="678" y="520" text-anchor="start">they write to the local spool.</text>
+<path class="wire" d="M810.0 170.0 L810.0 189.0"/><path class="f-muted" d="M810.0 196.0 L806.0 189.0 L814.0 189.0z"/>
+<path class="wire" d="M810.0 242.0 L810.0 261.0"/><path class="f-muted" d="M810.0 268.0 L806.0 261.0 L814.0 261.0z"/>
+<path class="wire" d="M810.0 314.0 L810.0 333.0"/><path class="f-muted" d="M810.0 340.0 L806.0 333.0 L814.0 333.0z"/>
+<g class="motion"><circle r="5" class="f-diff"><animateMotion dur="3.2s" repeatCount="indefinite" path="M810 147 V363"/></circle></g>
+<g class="motion"><circle r="5" class="f-aud"><animateMotion dur="2.4s" repeatCount="indefinite" path="M170 147 V219"/></circle></g>
+<path class="flow c-rep" d="M302 219 C330 219 330 363 358 363"/>
+</svg>
