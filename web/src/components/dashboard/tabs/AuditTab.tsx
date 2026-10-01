@@ -147,7 +147,7 @@ export default function AuditTab({
         const okay = result === 'ok';
         const orphaned = isOrphaned(e);
         const dotColor = orphaned
-          ? 'bg-amber-400'
+          ? 'bg-[var(--color-status-pending)]'
           : okay
           ? 'bg-[var(--color-status-success)]'
           : 'bg-[var(--color-status-failure)]';
@@ -161,7 +161,7 @@ export default function AuditTab({
               </span>
             )}
             {orphaned && (
-              <span className="border border-amber-500 text-amber-500 px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider shrink-0">
+              <span className="border border-[var(--color-status-pending)] text-[var(--color-status-pending)] px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider shrink-0">
                 never completed
               </span>
             )}

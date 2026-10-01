@@ -33,11 +33,11 @@ function HoldRow({
 
   return (
     <li className="px-4 py-3 flex items-start gap-3">
-      <span className="mt-1.5 w-2 h-2 rounded-full shrink-0 bg-amber-400" aria-hidden="true" />
+      <span className="mt-1.5 w-2 h-2 rounded-full shrink-0 bg-[var(--color-status-pending)]" aria-hidden="true" />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2 flex-wrap">
           <code className="font-mono text-sm text-[var(--color-text)]">{hold.hold_id}</code>
-          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-amber-500 text-amber-500 uppercase tracking-wider">
+          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-[var(--color-status-pending)] text-[var(--color-status-pending)] uppercase tracking-wider">
             {duration}
           </span>
           <span className="text-[10px] text-[var(--color-text-faint)] font-mono">{created}</span>
@@ -144,7 +144,7 @@ function PlaceHoldForm({ onCreated, registryNames }: { onCreated: () => void; re
             'text-xs font-mono px-3 py-1.5 rounded border',
             submitting || !registry.trim() || !reason.trim()
               ? 'border-[var(--color-border)] text-[var(--color-text-faint)] cursor-not-allowed'
-              : 'border-amber-500 text-amber-500 hover:bg-amber-500 hover:text-white',
+              : 'border-[var(--color-status-pending)] text-[var(--color-status-pending)] hover:bg-[var(--color-status-pending)] hover:text-[var(--color-bg)]',
           )}
         >
           {submitting ? 'placing…' : 'place hold'}

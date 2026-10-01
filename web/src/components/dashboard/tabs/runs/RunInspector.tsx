@@ -95,7 +95,7 @@ export default function RunInspector({
       {selected && capsule && (
         <div>
           {capsule.capsule_available === false && (
-            <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-[var(--color-text-muted)]">
+            <div className="mb-3 rounded-lg border border-[color-mix(in_oklab,var(--color-status-pending)_40%,transparent)] bg-[var(--color-pending-tint)] p-3 text-sm text-[var(--color-text-muted)]">
               Capsule files are unavailable on disk for this run — showing indexed
               metadata only (status, command, timings). Sub-file sections will be empty.
             </div>

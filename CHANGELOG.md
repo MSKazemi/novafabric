@@ -118,6 +118,16 @@ longer forwards the submitting shell's environment (ADR-0270).
   switcher is now a WAI-ARIA tablist with arrow-key navigation, and the view is
   deep-linkable (`?view=integrity`).
 
+### Changed
+
+- **Dashboard accessibility and theme polish.** Every tab's loading state is now a polite
+  status region and every error box an alert, so screen readers announce both. Warning and
+  pending colours in the Runs, Holds, Policy and Audit tabs use the theme's
+  `--color-status-pending` token instead of raw `amber-500`, which measured about 2:1 on the
+  light theme; a unit-test ratchet keeps raw amber status classes out of the dashboard.
+  Runs-list controls gained accessible names (search, sort, date inputs, status chips with
+  `aria-pressed`).
+
 
 ## [0.102.1] - 2026-09-27
 

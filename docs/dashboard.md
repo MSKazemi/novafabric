@@ -23,12 +23,83 @@ stale `?sub=` when you leave the hub), so any view you reach by keyboard is shar
 survives a reload. Tab ids have not changed since before the v0.97.0 regrouping, so existing
 links still resolve.
 
+**Runs view state in the URL** *(experimental, Unreleased — ADR-0232 D2)*. The whole Runs
+view is in the URL, so a pasted link reproduces exactly what you were looking at:
+
+| Key | Meaning | Example |
+|---|---|---|
+| `q` | free-text search on run id / command | `q=agent.py` |
+| `status` | status chip | `status=error` |
+| `sort` | list order | `sort=longest` |
+| `since` / `until` | date window (`YYYY-MM-DD`, `until` inclusive) | `since=2026-09-01` |
+| `f` | filter-bar text (below) | `f=status:error%20-model:gpt-4o` |
+| `scope` | ADR-0233 scope for `f`: `node` · `root` · `tree` | `scope=tree` |
+| `run` | the selected run — opens the inspector even if the run is not in the loaded page | `run=01J…` |
+| `view` | inspector view: `inspect` · `trace` · `integrity` · `lineage` · `secrets` · `forensics` · `children` | `view=integrity` |
+
+Applying a filter, changing scope, status or dates adds a browser-history entry, so **Back
+undoes it**; typing and keyboard selection do not. Unknown values fall back to the default
+rather than rendering a state the UI cannot show. Switching to another tab drops these keys.
+What is deliberately *not* in the URL: the half-finished Compare selection (ADR-0036),
+checkboxes, unsubmitted filter text, and the *Replay result* view (it shows a result
+produced in your session, so a link to it would open on nothing).
+
+### Filter bar *(experimental, Unreleased — ADR-0232 D1/D3, ADR-0233)*
+
+Under the Runs search box. Type terms, press **Enter** to apply:
+
+```text
+status:error                      # dimension = value
+-model:gpt-4o                     # exclude
+status:error asset:"my agent"     # terms are ANDed; quote values with spaces
+```
+
+- **It is `nova query --where`, not a second query language.** The server parses with the
+  DSL's own parser, so the filterable fields are exactly the DSL's dimensions — `asset`,
+  `deployment_environment`, `variant`, `log_level`, `model`, `model_id`, `status`, `tag`.
+  Metrics (`cost:>0.5`) and wildcards (`model:gpt-4*`) are **rejected with an explanation**,
+  because `nova query` cannot filter by them either. The equivalent `nova query` command is
+  shown under the results with a copy button.
+- **Suggestions are observed values.** After `model:` the bar lists models actually present
+  in the last 30 days (↑/↓ to move, Enter to complete). When more than 100 exist the list
+  says it is **partial** rather than implying the value does not exist.
+- **Scope** (ADR-0233): `node` lists the matching runs; `root` lists the root run of every
+  capsule tree containing a match; `tree` lists every capsule in those trees, siblings
+  included.
+- **Honest results** (ADR-0234 D2): at most 200 runs are listed; the header says
+  "N of M" and *truncated* when there are more, and a tree that is still filling or a
+  capsule that could not be read is listed as a reason the result may be incomplete.
+- While a filter is applied it owns the list: free-text search and the status chips are
+  disabled (use `status:` in the bar). The date window still applies.
+- Saved views now include the filter and scope. They are still stored in your browser;
+  saving a view as a NovaFabric saved view (`nova view`, ADR-0232 D4) is **planned**.
+
+API (all `read` scope, token required): `GET /api/filter/parse?f=`,
+`GET /api/filter/runs?f=&scope=&since=&until=&limit=`, `GET /api/filter/suggest?dimension=&since=`.
+
+### Capsule explorer *(experimental, Unreleased)*
+
+Selecting a run opens the inspector with a **summary strip** — status, start time,
+duration, exit code, model/tool call counts (mutating tools called out), the command — and
+the run's actions: **Replay dry-run**, **Forensic replay**, **Export evidence** (each through
+the usual confirm dialog with its CLI equivalent) and **Copy link**. The view switcher is a
+keyboard tablist (←/→, Home/End):
+
+- **Inspect / Trace** — manifest, model and tool calls, waterfall (unchanged).
+- **Integrity** — runs `nova verify` on demand. Four outcomes are kept distinct: *not
+  sealed* (nothing to verify — not a failure), *sealed but not verifiable here* (NovaSeal
+  is not configured on this server), *verified*, and *failed* with each failing check
+  (signature, RFC 3161 timestamp, Merkle log inclusion) named.
+- **Lineage** — the run's spool-lineage edges as neighbours in both directions; click one
+  to open it (even if it is not in the loaded list) or **Compare** it with this run.
+- **Secrets / Forensics / Children** — unchanged.
+
 | Tab | Group | Since | What it does |
 |---|---|---|---|
 | Home | Overview | v0.8 | Journey cards, status bar, resume session |
 | Analytics | Overview | v0.62.0 | Time-bucketed run analytics from the runs index: volume + failure stacked bars, duration p50/p95 lines, stat tiles, 7/30/90-day ranges, chart/table toggle (`/api/analytics/summary`) |
 | Alerts | Platform | v0.63.0 | Operational alerts feed (quota/rate-limit/policy/drift/seal/backup) + delivery outcomes from the audit log; severity badges, stat tiles, live refresh (`/api/alerts/recent`, ADR-0192) |
-| Runs | Runs & Debug | v0.7 | Run list, search/filter, inspect capsule, validate, replay, verify; capsule tree, run lineage edges, secret scan (v0.46.0); **v0.64.0:** per-run **Forensics** timeline view (`/api/runs/{id}/forensics-timeline`, P5) + saved filter presets (E2) |
+| Runs | Runs & Debug | v0.7 | Run list, search/filter, inspect capsule, validate, replay, verify; capsule tree, run lineage edges, secret scan (v0.46.0); **v0.64.0:** per-run **Forensics** timeline view (`/api/runs/{id}/forensics-timeline`, P5) + saved filter presets (E2); **Unreleased (experimental):** filter bar (`/api/filter/*`, ADR-0232/0233), full view state in the URL, capsule explorer with summary strip + **Integrity** and **Lineage** views — see [Runs view state](#dashboard-tabs-complete-inventory) |
 | Diff | Runs & Debug | v0.7 | N-run comparison (2–5), word-level diff, mutation badges |
 | Registry | Govern & Promote | v0.7 | Asset lifecycle: eval, promote, rollback, register, suggest-register, unregister |
 | Governance | Govern & Promote | v0.16.0 | Classify (EU AI Act/NIST/OMB), audit (6 profiles), export-examiner, policy sign |

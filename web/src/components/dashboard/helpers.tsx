@@ -7,7 +7,7 @@ export function StatusDot({ status }: { status: string | null }) {
 
 export function ErrorBox({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
-    <div className="rounded border border-[color-mix(in_oklab,var(--color-status-failure)_30%,transparent)] bg-[var(--color-danger-tint)] p-4 text-sm text-[var(--color-status-failure)]">
+    <div role="alert" className="rounded border border-[color-mix(in_oklab,var(--color-status-failure)_30%,transparent)] bg-[var(--color-danger-tint)] p-4 text-sm text-[var(--color-status-failure)]">
       <p>Error: {message}</p>
       {onRetry && (
         <Button variant="danger" size="sm" className="mt-2" onClick={onRetry}>
@@ -19,7 +19,9 @@ export function ErrorBox({ message, onRetry }: { message: string; onRetry?: () =
 }
 
 export function Loading() {
-  return <p className="p-6 text-sm text-[var(--color-text-muted)]">Loading…</p>;
+  // role=status + aria-live: screen readers hear that content is on its way,
+  // and again when it is replaced, instead of silence.
+  return <p role="status" aria-live="polite" className="p-6 text-sm text-[var(--color-text-muted)]">Loading…</p>;
 }
 
 export function SectionHeader({

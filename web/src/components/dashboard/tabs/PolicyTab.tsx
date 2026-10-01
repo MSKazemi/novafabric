@@ -380,8 +380,8 @@ export default function PolicyTab() {
 
       {/* OPA not found warning */}
       {opaNotFound && decision && (
-        <div className="rounded border border-amber-500 bg-[color-mix(in_oklab,#f59e0b_10%,transparent)] p-4 space-y-1">
-          <p className="text-xs font-semibold text-amber-500 uppercase tracking-wider">OPA not installed</p>
+        <div className="rounded border border-[var(--color-status-pending)] bg-[var(--color-pending-tint)] p-4 space-y-1">
+          <p className="text-xs font-semibold text-[var(--color-status-pending)] uppercase tracking-wider">OPA not installed</p>
           <p className="text-xs text-[var(--color-text-muted)]">{decision.reason}</p>
           <p className="text-xs text-[var(--color-text-faint)] font-mono mt-1">
             Install: <a

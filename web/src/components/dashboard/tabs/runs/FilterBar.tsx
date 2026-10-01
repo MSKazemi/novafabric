@@ -208,7 +208,7 @@ export default function FilterBar({
             {result.truncated && ' — list truncated, narrow the filter to see the rest'}
           </p>
           {!result.complete && result.incomplete_reasons.length > 0 && (
-            <div role="note" className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[10px] text-[var(--color-text-muted)]">
+            <div role="note" className="rounded border border-[color-mix(in_oklab,var(--color-status-pending)_40%,transparent)] bg-[var(--color-pending-tint)] px-2 py-1 text-[10px] text-[var(--color-text-muted)]">
               <p className="font-medium">This result may be incomplete:</p>
               <ul className="list-disc pl-4">
                 {result.incomplete_reasons.slice(0, 5).map(r => <li key={r}>{r}</li>)}
