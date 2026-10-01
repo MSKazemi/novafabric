@@ -11196,7 +11196,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "rule",
         "label": "--rule",
         "type": "text",
-        "hint": "Canonicalization rule (repeatable). Known: reorder_commutable, normalize_arguments, collapse_idempotent_retries (repeatable — add more in your terminal)",
+        "hint": "Canonicalization rule (repeatable). Known: collapse_idempotent_retries, normalize_arguments, reorder_commutable (repeatable — add more in your terminal)",
         "flag": "--rule"
       },
       {
