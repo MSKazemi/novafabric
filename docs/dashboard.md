@@ -94,6 +94,43 @@ keyboard tablist (←/→, Home/End):
   to open it (even if it is not in the loaded list) or **Compare** it with this run.
 - **Secrets / Forensics / Children** — unchanged.
 
+### Evidence cart *(experimental, Unreleased — ADR-0239)*
+
+Collect runs while you investigate, then export them as **one** signed Evidence Bundle.
+
+- **Add**: the **+ cart** button on a run's action row, or tick several runs and press
+  **+ cart** in the selection banner. The cart bar appears above the Runs view only once it
+  holds something.
+- **What the cart holds**: references (`run` + id), each stamped with when it was added and
+  the view URL it was added from. Nothing is copied at add time — every reference is read
+  **once, at export**, so the bundle reflects one point in time. The cart lives in this
+  browser session (`sessionStorage`) and is never stored on the server; closing the session
+  clears it.
+- **Export cart** needs an **`admin`** credential and asks for confirmation. The server
+  resolves every reference, writes the bundle to `~/.novafabric/evidence/cart-<id>-<time>.zip`
+  (or `$NOVAFABRIC_EVIDENCE_DIR`), and shows its path, SHA-256 and the command that checks
+  it: `nova verify <bundle>`. The bundle carries a `curation.json` (covered by the manifest
+  hash) stating it is an **operator-curated subset**, never an exhaustive one, with each
+  item's provenance.
+- **Unresolvable references stop the export.** A run that no longer exists is listed with
+  the reason, and nothing is written. **Export anyway and record the omissions** proceeds and
+  records the missing items in `curation.json`; there is no path that silently produces a
+  smaller bundle. Cart kinds other than `run`/`capsule` (charts, diffs, lineage queries) have
+  no resolver yet and are reported as unresolved (**planned**).
+- **Legal holds**: held runs export, and the bundle says so (`contains_held_evidence`, hold
+  ids per item). The export never places, releases or changes a hold.
+- **Audited, or not exported**: each export appends an `evidence.export` entry to the
+  hash-chained audit log (`~/.local/share/novafabric/audit.jsonl`, or
+  `$NOVAFABRIC_AUDIT_LOG_PATH`) naming the actor, the items and the bundle digest, plus a
+  dashboard audit record. If the chained entry cannot be written, the bundle is deleted and
+  the export answers **503**.
+- **Bounds**: at most **50 items** and **256 MiB** of capsule content per export, one export
+  at a time per server (**429** otherwise). A cart that resolves to a single run is refused
+  — use the run's own **Export evidence** action (`nova export-evidence`).
+
+API: `POST /api/evidence/cart/export` (`admin` scope) with
+`{items: [{kind, ref, added_at, added_from?, note?}], confirmed: true, accept_unresolved?}`.
+
 | Tab | Group | Since | What it does |
 |---|---|---|---|
 | Home | Overview | v0.8 | Journey cards, status bar, resume session |

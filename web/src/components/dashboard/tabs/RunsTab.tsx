@@ -11,6 +11,8 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { api } from '../../../lib/api';
 import type { RunSummary, FullCapsule } from '../../../lib/api';
 import ConfirmDialog from '../ConfirmDialog';
+import EvidenceCartPanel from '../EvidenceCartPanel';
+import { useEvidenceCart } from '../../../lib/evidenceCart';
 import { ErrorBox, Loading } from '../helpers';
 import type { Tab } from '../Sidebar';
 import type { DetailView, RunAction, RunSort, StatusFilter, ValidationState, ReplayResult } from './runs/types';
@@ -84,6 +86,8 @@ export default function RunsTab({
     if (LINKABLE_VIEWS.includes(v)) { setTransientView(null); setViewParam(v); }
     else setTransientView(v);
   }, [setViewParam]);
+  // ADR-0239 — session evidence cart (references only; resolved at export).
+  const cart = useEvidenceCart();
   const [replayResult, setReplayResult] = useState<{ runId: string; result: ReplayResult } | null>(null);
   const filterActive = filterText.trim() !== '';
   const filtered = useFilteredRuns({ filter: filterText.trim(), scope, since, until, refreshTick });
@@ -303,6 +307,7 @@ export default function RunsTab({
 
   return (
     <div className="grid lg:grid-cols-[320px_1fr] gap-4 h-full">
+      <EvidenceCartPanel onFlash={onFlash} />
       {/* Run list panel */}
       <aside className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] overflow-hidden flex flex-col" style={{ maxHeight: 'calc(100vh - 3rem)' }}>
         <RunFilters
@@ -356,6 +361,8 @@ export default function RunsTab({
           hasMore={filterActive ? false : hasMore}
           loadingMore={loadingMore}
           loadMore={loadMore}
+          onAddToCart={ids => ids.forEach(id => cart.add('run', id))}
+          inCart={id => cart.has('run', id)}
         />
       </aside>
 

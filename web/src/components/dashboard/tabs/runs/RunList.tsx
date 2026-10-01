@@ -40,6 +40,9 @@ export interface RunListProps {
   hasMore: boolean;
   loadingMore: boolean;
   loadMore: () => void;
+  /** ADR-0239: add a run reference to the session evidence cart. */
+  onAddToCart?: (runIds: string[]) => void;
+  inCart?: (runId: string) => boolean;
 }
 
 function ValidationErrorBadge({ errors }: { errors: string[] }) {
@@ -85,6 +88,8 @@ export default function RunList({
   hasMore,
   loadingMore,
   loadMore,
+  onAddToCart,
+  inCart,
 }: RunListProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -117,6 +122,16 @@ export default function RunList({
           >
             Compare selected ⊕
           </button>
+          {onAddToCart && (
+            <button
+              type="button"
+              onClick={() => { onAddToCart(checkedIds); setCheckedIds([]); }}
+              title="Add the selected runs to the evidence cart (ADR-0239)"
+              className="shrink-0 px-2.5 py-1 text-[10px] rounded font-medium border border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[color-mix(in_oklab,var(--color-accent)_10%,transparent)] transition-colors"
+            >
+              + cart
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setCheckedIds([])}
@@ -340,10 +355,20 @@ export default function RunList({
                       </button>
                     );
                   })()}
+                  {onAddToCart && (
+                    <button
+                      type="button"
+                      onClick={() => onAddToCart([r.run_id])}
+                      disabled={inCart?.(r.run_id) === true}
+                      title={inCart?.(r.run_id) ? 'Already in the evidence cart' : 'Add to the evidence cart (ADR-0239)'}
+                      aria-label={`Add run ${r.run_id} to the evidence cart`}
+                      className="ml-auto px-1.5 py-0.5 text-2xs rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent)] uppercase tracking-wider font-medium disabled:opacity-50 disabled:cursor-default"
+                    >{inCart?.(r.run_id) ? 'in cart' : '+ cart'}</button>
+                  )}
                   <button
                     onClick={() => onAction(r, 'export')}
                     title="Export signed evidence bundle"
-                    className="ml-auto px-1.5 py-0.5 text-2xs rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent)] uppercase tracking-wider font-medium"
+                    className={clsx(!onAddToCart && 'ml-auto', 'px-1.5 py-0.5 text-2xs rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent)] uppercase tracking-wider font-medium')}
                   >export ↗</button>
                 </div>
                 {/* Data ops row: validate + redact + secrets */}

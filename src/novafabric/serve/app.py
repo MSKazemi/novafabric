@@ -64,6 +64,7 @@ from novafabric.serve.routers.analytics import build_analytics_router
 from novafabric.serve.routers.backup_status import build_backup_status_router
 from novafabric.serve.routers.compliance_exports import build_compliance_exports_router
 from novafabric.serve.routers.cost_trio import build_cost_trio_router
+from novafabric.serve.routers.evidence_cart import build_evidence_cart_router
 from novafabric.serve.routers.filter_bar import build_filter_bar_router
 from novafabric.serve.routers.forensics import build_forensics_router
 from novafabric.serve.routers.holds import build_holds_router
@@ -2716,6 +2717,19 @@ def create_app(
     app.include_router(
         build_trust_surfaces_router(
             verify_token, capsule_dir=capsule_dir, resolve_capsule=_resolve_capsule
+        )
+    )
+
+    # ---------- evidence-cart export (ADR-0239 D3/D6, experimental) ----------
+    # admin-scoped (serve.authz), audited twice (hash-chained + Layer B), and
+    # bounded; wires evidence/cart.py's resolve() to CapsuleSetBundleBuilder.
+    app.include_router(
+        build_evidence_cart_router(
+            verify_token,
+            capsule_dir=capsule_dir,
+            resolve_capsule=_resolve_capsule,
+            server_token_fp=token[:8],
+            audit_append=audit.append,
         )
     )
 

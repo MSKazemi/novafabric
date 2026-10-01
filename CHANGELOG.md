@@ -79,6 +79,21 @@ longer forwards the submitting shell's environment (ADR-0270).
   `false`. Behaviour changes: items are ordered by `node_id` (previously insertion order), and
   a malformed or foreign cursor is a 400 `invalid_cursor` (previously a silent restart at
   page one).
+
+- **Evidence-cart export in the dashboard** (ADR-0239 D3/D6/D8, **experimental**). Runs can be
+  added to a session-scoped cart (**+ cart**) and exported as **one** signed Evidence Bundle
+  through `POST /api/evidence/cart/export`, which wires `evidence/cart.py`'s single-read-point
+  resolution to `CapsuleSetBundleBuilder` — no new format; the shipped `nova verify` checks
+  the result. The route is `admin`-scoped, bounded (50 items, 256 MiB of capsule content, one
+  export at a time), and audited twice: a hash-chained `evidence.export` entry naming the
+  actor, items and bundle digest — appended **before** the bundle is moved into place, so an
+  export the chain cannot record is deleted and answered with 503 — and a dashboard audit
+  record. Unresolvable references stop the export with a per-item 409 unless the operator
+  accepts recording them as omissions; held runs export with `contains_held_evidence` and the
+  hold ids, and the hold is never touched. The bundle's `curation.json` states it is an
+  operator-curated subset. Only `run`/`capsule` references resolve today; a one-run cart is
+  refused (use the per-run export). The ADR-0228 route table grows to 214 entries.
+
 - **`nova diff --environment ENV` and `nova diff --group-by environment`** (ADR-0126 P2
   remainder, **experimental**). Both read the typed `deployment_environment` a capsule
   recorded at capture, with the same record-only reader the policy input uses — a missing or

@@ -52,6 +52,118 @@ components:
       - runs
       title: AttributeRequest
       type: object
+    CartExportRequest:
+      properties:
+        accept_unresolved:
+          default: false
+          title: Accept Unresolved
+          type: boolean
+        cart_id:
+          anyOf:
+          - maxLength: 64
+            type: string
+          - type: 'null'
+          title: Cart Id
+        confirmed:
+          default: false
+          title: Confirmed
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/CartItemIn'
+          title: Items
+          type: array
+      title: CartExportRequest
+      type: object
+    CartExportResponse:
+      properties:
+        audit_entry_hash:
+          title: Audit Entry Hash
+          type: string
+        bundle_path:
+          title: Bundle Path
+          type: string
+        bundle_sha256:
+          title: Bundle Sha256
+          type: string
+        capsule_count:
+          title: Capsule Count
+          type: integer
+        cli_verify:
+          title: Cli Verify
+          type: string
+        contains_held_evidence:
+          title: Contains Held Evidence
+          type: boolean
+        item_count:
+          title: Item Count
+          type: integer
+        ok:
+          title: Ok
+          type: boolean
+        size_bytes:
+          title: Size Bytes
+          type: integer
+        unresolved:
+          items:
+            additionalProperties: true
+            type: object
+          title: Unresolved
+          type: array
+      required:
+      - ok
+      - bundle_path
+      - bundle_sha256
+      - size_bytes
+      - item_count
+      - capsule_count
+      - unresolved
+      - contains_held_evidence
+      - audit_entry_hash
+      - cli_verify
+      title: CartExportResponse
+      type: object
+    CartItemIn:
+      description: One cart reference as the browser holds it (spec §1).
+      properties:
+        added_at:
+          maxLength: 64
+          minLength: 1
+          title: Added At
+          type: string
+        added_by:
+          anyOf:
+          - maxLength: 256
+            type: string
+          - type: 'null'
+          title: Added By
+        added_from:
+          anyOf:
+          - maxLength: 2048
+            type: string
+          - type: 'null'
+          title: Added From
+        kind:
+          maxLength: 32
+          title: Kind
+          type: string
+        note:
+          anyOf:
+          - maxLength: 2000
+            type: string
+          - type: 'null'
+          title: Note
+        ref:
+          maxLength: 512
+          minLength: 1
+          title: Ref
+          type: string
+      required:
+      - kind
+      - ref
+      - added_at
+      title: CartItemIn
+      type: object
     DryRunReplayRequest:
       properties:
         confirmed:
@@ -3868,6 +3980,49 @@ paths:
           description: Validation Error
       summary: List Evidence Endpoint
       x-nova-contract: pending
+  /api/evidence/cart/export:
+    post:
+      description: Export the session cart as one signed Evidence Bundle (ADR-0239). Experimental.
+      operationId: dashboardExportEvidenceCart
+      parameters:
+      - in: query
+        name: token
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Token
+      - in: header
+        name: authorization
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CartExportRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CartExportResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Export Cart
+      tags:
+      - evidence-cart
   /api/evidence/completeness/{run_id}:
     get:
       description: Compute the completeness assertion for a capsule.

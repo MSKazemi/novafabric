@@ -166,8 +166,8 @@ def satisfies(held: Scope, required: Scope) -> bool:
 #
 # Every HTTP route this app can mount, keyed by ``(method, path_template)`` —
 # the template exactly as FastAPI reports it on ``request.scope["route"].path``,
-# router prefixes included. 214 entries at the time of writing: 144 ``read``,
-# 29 ``admin``, 29 ``operate``, 7 ``public``, 5 ``audit``.
+# router prefixes included. 215 entries at the time of writing: 144 ``read``,
+# 30 ``admin``, 29 ``operate``, 7 ``public``, 5 ``audit``.
 #
 # How a route earned its classification, so the next person can apply the same
 # rule instead of guessing:
@@ -336,6 +336,7 @@ ROUTE_SCOPES: Final[dict[tuple[str, str], Scope]] = {
     ("POST", "/api/policy/sign"): Scope.admin,
     ("POST", "/api/policy/test"): Scope.read,
     ("POST", "/api/query"): Scope.read,
+    ("POST", "/api/evidence/cart/export"): Scope.admin,
     ("GET", "/api/filter/parse"): Scope.read,
     ("GET", "/api/filter/runs"): Scope.read,
     ("GET", "/api/filter/suggest"): Scope.read,
