@@ -73,7 +73,12 @@ def build_report_export_router(
     *,
     capsule_dir: Path,
     db_path: Path | None,
+    aggregate_guard: Callable[[str], Any] | None = None,
 ) -> APIRouter:
+    """``aggregate_guard(report_id)`` returns an ADR-0234 refusal verdict (or
+    ``None``) for reports whose totals depend on index coverage; a refused
+    report is answered 409 with the verdict instead of being rendered into an
+    artifact that would carry the numbers without the refusal."""
     router = APIRouter(dependencies=[Depends(verify_token)], tags=["reports"])
 
     @router.get("/api/reports/catalog")
@@ -130,6 +135,10 @@ def build_report_export_router(
                 status_code=422, detail="format must be 'html' or 'pdf'"
             )
         filters = _whitelisted_filters(spec, request)
+        if aggregate_guard is not None:
+            verdict = await asyncio.to_thread(aggregate_guard, report_id)
+            if verdict is not None:
+                return JSONResponse(status_code=409, content={"aggregate": verdict.as_dict()})
         columns, rows = await asyncio.to_thread(spec.run, capsule_dir, db_path, filters)
         chart_svg = spec.chart.render(rows, filters) if spec.chart else None
         html = render_report_html(

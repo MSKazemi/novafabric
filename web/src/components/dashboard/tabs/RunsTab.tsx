@@ -23,6 +23,7 @@ import RunList from './runs/RunList';
 import RunInspector, { type SecretsState, type ChildrenState, type ForensicsState } from './runs/RunInspector';
 import { CapsuleTreePanel, RunSpoolLineagePanel, ScanSecretsPanel } from './runs/ParityPanels';
 import FilterBar from './runs/FilterBar';
+import AggregateStrip from './runs/AggregateStrip';
 import { useFilteredRuns } from './runs/useFilteredRuns';
 import { useUrlState } from '../../../lib/useUrlState';
 import {
@@ -341,6 +342,14 @@ export default function RunsTab({
               error={filtered.error}
             />
           }
+        />
+        <AggregateStrip
+          since={since}
+          until={until}
+          filterText={filterText}
+          statusFilter={statusFilter}
+          search={search}
+          refreshTick={refreshTick}
         />
         <RunList
           visibleRuns={visibleRuns}

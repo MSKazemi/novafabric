@@ -120,3 +120,88 @@ def test_empty_index_returns_empty_shape(tmp_path: Path) -> None:
     data = r.json()
     assert data["buckets"] == []
     assert data["totals"]["run_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# ADR-0234 D2 — the aggregate verdict
+# ---------------------------------------------------------------------------
+
+
+def _get(c: TestClient, **params: str) -> dict:
+    r = c.get("/api/analytics/summary", params={"token": TOKEN, **params}, headers=H)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_a_complete_index_is_computable_and_flags_small_samples(client: TestClient) -> None:
+    data = _get(client)
+    agg = data["aggregate"]
+    assert agg["computable"] is True
+    assert agg["value"] == data["totals"]
+    assert agg["notes"]["source"] == "runs_cache"
+    # Three runs over two days: every bucket's p95 rests on fewer than 20 runs.
+    assert agg["notes"]["small_sample_buckets"] == ["2026-07-14", "2026-07-15"]
+    assert [b["duration_samples"] for b in data["buckets"]] == [2, 1]
+
+
+@pytest.mark.parametrize(
+    ("params", "named"),
+    [({"f": "status:error"}, "filter"), ({"status": "error"}, "status"), ({"q": "abc"}, "search")],
+)
+def test_an_unpushable_view_refuses_without_numbers(
+    client: TestClient, params: dict, named: str
+) -> None:
+    data = _get(client, **params)
+    agg = data["aggregate"]
+    assert agg["computable"] is False
+    assert agg["condition"] == "unpushable_filter"
+    assert "value" not in agg
+    assert named in agg["reason"] and agg["remedy"]
+    assert data["totals"] is None and data["buckets"] == []
+
+
+def test_the_all_status_chip_is_not_a_filter(client: TestClient) -> None:
+    assert _get(client, status="all")["aggregate"]["computable"] is True
+
+
+def test_a_partial_index_refuses_as_truncated(tmp_path: Path) -> None:
+    base = tmp_path / "capsules"
+    base.mkdir()
+    for i in range(5):  # five capsules on disk, three in the index
+        (base / f"cap{i}").mkdir()
+        (base / f"cap{i}" / "capsule.yaml").write_text("run_id: x\n")
+    db = tmp_path / "registry.db"
+    _seed(db)
+    c = TestClient(create_app(token=TOKEN, capsule_dir=base, db_path=db, static_dir=None))
+    data = _get(c)
+    agg = data["aggregate"]
+    assert agg["condition"] == "truncated_source"
+    assert agg["notes"] == {"indexed": 3, "on_disk": 5}
+    assert data["totals"] is None
+
+
+def test_a_missing_index_refuses_only_when_capsules_exist(tmp_path: Path) -> None:
+    from fastapi import FastAPI
+
+    from novafabric.serve.routers.analytics import build_analytics_router
+
+    base = tmp_path / "capsules"
+    base.mkdir()
+
+    def _ok() -> str:
+        return "ok"
+
+    app = FastAPI()
+    app.include_router(
+        build_analytics_router(_ok, db_path=tmp_path / "absent.db", capsule_dir=base)
+    )
+    c = TestClient(app)
+    empty = _get(c)
+    assert empty["aggregate"]["computable"] is True
+    assert empty["totals"]["run_count"] == 0
+
+    (base / "cap").mkdir()
+    (base / "cap" / "capsule.yaml").write_text("run_id: x\n")
+    data = _get(c)
+    assert data["aggregate"]["condition"] == "source_unavailable"
+    assert data["totals"] is None

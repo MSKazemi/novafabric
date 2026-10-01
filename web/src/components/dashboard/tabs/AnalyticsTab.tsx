@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, type AnalyticsBucket, type AnalyticsSummary, type QueryPanelResult } from '../../../lib/api';
+import AggregateRefusal from '../AggregateRefusal';
 import TabShell from './TabShell';
 import ChartCard from '../../ui/ChartCard';
 import DataTable, { type Column } from '../../ui/DataTable';
@@ -402,7 +403,7 @@ export default function AnalyticsTab() {
   }, [load]);
 
   const overall = useMemo(() => {
-    if (!data || data.totals.run_count === 0) return null;
+    if (!data || !data.totals || data.totals.run_count === 0) return null;
     const failRate = (data.totals.failed_count / data.totals.run_count) * 100;
     const p95s = data.buckets.map((b) => b.duration_ms_p95).filter((v): v is number => v != null);
     return {
@@ -444,12 +445,15 @@ export default function AnalyticsTab() {
       {error && (
         <p className="text-[11px] font-mono text-[var(--color-status-failure)]">{error}</p>
       )}
-      {data && data.buckets.length === 0 && !error && (
+      {data?.aggregate && !data.aggregate.computable && (
+        <AggregateRefusal verdict={data.aggregate} testId="analytics-refusal" />
+      )}
+      {data && data.totals && data.buckets.length === 0 && !error && (
         <p className="text-[11px] font-mono text-[var(--color-text-faint)]">
           No runs in the selected window. Capture a run with `nova capture` and it will appear here.
         </p>
       )}
-      {data && data.buckets.length > 0 && (
+      {data && data.totals && data.buckets.length > 0 && (
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <StatTile label="runs" value={String(data.totals.run_count)} sub={`last ${days} days`} />

@@ -94,6 +94,18 @@ longer forwards the submitting shell's environment (ADR-0270).
   operator-curated subset. Only `run`/`capsule` references resolve today; a one-run cart is
   refused (use the per-run export). The ADR-0228 route table grows to 214 entries.
 
+- **The honest-degradation rule now covers every run aggregate** (ADR-0234 D2, **experimental**).
+  `/api/analytics/summary`, `/api/stats`, `/api/cost/report` and the cost-burn, throughput and
+  executive-summary reports carry an `aggregate` verdict and **refuse** — with a reason and a
+  remedy — when the runs index is behind the capsules on disk, when no index exists, when a
+  view filter cannot be pushed into the aggregate, or when every call in a cost window is
+  unpriced. ⚠ Refused figures are now `null` instead of `0`: `totals` in the analytics summary
+  and cost report, the run counts in `/api/stats`, and `cost_usd` for an all-unpriced window;
+  the executive summary's success rate over zero runs is `null` rather than `0.0`. CSV and
+  HTML/PDF exports of a refused report answer 409. A **Runs aggregate strip** (runs / failed /
+  p95 per day) sits above the run list and shows the refusal, with its toggles disabled and the
+  reason attached, whenever the list is filtered in a way the aggregate cannot follow.
+
 - **`nova diff --environment ENV` and `nova diff --group-by environment`** (ADR-0126 P2
   remainder, **experimental**). Both read the typed `deployment_environment` a capsule
   recorded at capture, with the same record-only reader the policy input uses — a missing or
@@ -202,6 +214,7 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 
 ### Fixed
+
 
 - **A compliance test expired on 2026-10-01.** `test_recent_capsule_within_retention` used a
   fixed "recent" date of 2026-04-01 against a six-month EU AI Act retention window, so it began

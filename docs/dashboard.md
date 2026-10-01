@@ -131,6 +131,39 @@ Collect runs while you investigate, then export them as **one** signed Evidence 
 API: `POST /api/evidence/cart/export` (`admin` scope) with
 `{items: [{kind, ref, added_at, added_from?, note?}], confirmed: true, accept_unresolved?}`.
 
+### Honest aggregates and the Runs aggregate strip *(experimental, Unreleased — ADR-0234)*
+
+Every run aggregate the dashboard serves now carries an `aggregate` verdict. When the number
+cannot be computed faithfully, the endpoint **refuses** — it says why and what would make it
+computable — instead of returning a zero or a partial total.
+
+| Endpoint | Refuses when | What the response holds then |
+|---|---|---|
+| `GET /api/analytics/summary` | no runs index while capsules exist (`source_unavailable`); the index holds fewer runs than the capsules on disk (`truncated_source`); the caller passes a filter-bar text `f`, a status other than `all`, or a search `q` it cannot apply (`unpushable_filter`) | `totals: null`, no buckets |
+| `GET /api/stats` | the runs index is behind the disk (`truncated_source`) | `run_count`, `failed_run_count`, `passed_run_count`: `null` (asset counts unaffected) |
+| `GET /api/cost/report` | the store did not answer (`source_unavailable`); **every** call in the window is unpriced (`absent_contributor`) | `totals: null`, or `cost_usd: null` with the exact token counts kept |
+| `GET /api/reports/{cost-burn,throughput,executive-summary}` and their `/export` artifacts | the runs index is behind the disk (`truncated_source`) | JSON: no rows; CSV and HTML/PDF export: **409** with the verdict, so no downloaded file carries the numbers without the refusal |
+| `GET /api/runs/cost-summary` | (unchanged — the first consumer of the rule) | |
+
+- **A measured zero stays zero.** An empty window over a complete index is a computable `0`;
+  there is no refusal for "the number is small".
+- **Partly unpriced cost is a stated lower bound**: computable, with `unpriced_models`,
+  `unpriced_calls` and `cost_is_lower_bound: true` in the verdict's notes.
+- **Small samples are flagged, not refused.** Each analytics bucket carries
+  `duration_samples`; buckets whose p95 rests on fewer than 20 runs are listed in
+  `notes.small_sample_buckets`.
+- **A success rate over zero runs is `null`** (undefined) in the executive summary, not `0.0`.
+- The ClickHouse branch of `/api/cost/report` does not read pricing coverage
+  (`pricing_coverage_checked: false` in the notes); `/api/runs/cost-summary` does.
+
+**The Runs aggregate strip** sits above the run list: one bar per day over the current date
+window, with a runs / failed / p95 toggle and the window's totals. It sends the Runs view
+state to the server, so with a filter, status chip or search applied the strip shows the
+refusal — *the run aggregate can only be narrowed by date…* — and its toggles are disabled
+with that reason as their tooltip, rather than charting a different set of runs than the
+list. Analytics, Home and Reports render refusals the same way. Clicking or dragging across
+bars to filter (ADR-0234 D1 navigation) is **planned**.
+
 | Tab | Group | Since | What it does |
 |---|---|---|---|
 | Home | Overview | v0.8 | Journey cards, status bar, resume session |

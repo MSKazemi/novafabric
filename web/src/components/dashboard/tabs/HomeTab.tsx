@@ -27,9 +27,11 @@ interface ResumeItem {
 }
 
 interface HomeCounts {
-  totalRuns: number;
-  failedRuns: number;
-  passedRuns: number;
+  /** `null` when the server refused the run aggregate (ADR-0234 D2). */
+  totalRuns: number | null;
+  failedRuns: number | null;
+  passedRuns: number | null;
+  runsRefusal: string | null;
   totalAssets: number;
   pendingEval: number;
   productionAssets: number;
@@ -254,7 +256,7 @@ export default function HomeTab({ onNavigate }: { onNavigate: (tab: Tab) => void
   const [error, setError] = useState<string | null>(null);
   const [evidenceCount, setEvidenceCount] = useState<{ total: number; verified: number } | null>(null);
   const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null);
-  const [costSummary, setCostSummary] = useState<{ cost_usd: number; calls: number; available: boolean } | null>(null);
+  const [costSummary, setCostSummary] = useState<{ cost_usd: number | null; calls: number; available: boolean; refusal: string | null } | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -267,6 +269,9 @@ export default function HomeTab({ onNavigate }: { onNavigate: (tab: Tab) => void
         totalRuns: statsRes.run_count,
         failedRuns: statsRes.failed_run_count,
         passedRuns: statsRes.passed_run_count,
+        runsRefusal: statsRes.aggregate && !statsRes.aggregate.computable
+          ? `${statsRes.aggregate.reason ?? 'run counts unavailable'} — ${statsRes.aggregate.remedy ?? ''}`
+          : null,
         totalAssets: statsRes.asset_count,
         pendingEval: statsRes.pending_eval_count,
         productionAssets: statsRes.production_asset_count,
@@ -301,10 +306,17 @@ export default function HomeTab({ onNavigate }: { onNavigate: (tab: Tab) => void
     if (!token) return;
     fetch(`${base}/api/cost/report?days=7&token=${encodeURIComponent(token)}`)
       .then(r => r.ok ? r.json() : Promise.reject())
-      .then((data: { ok?: boolean; totals?: { cost_usd: number }; by_model?: Array<{ calls: number }> }) => {
+      .then((data: { ok?: boolean; totals?: { cost_usd: number | null } | null; by_model?: Array<{ calls: number }>; aggregate?: { computable: boolean; reason?: string } }) => {
         if (data.ok) {
           const calls = (data.by_model ?? []).reduce((s, m) => s + (m.calls ?? 0), 0);
-          setCostSummary({ cost_usd: data.totals?.cost_usd ?? 0, calls, available: true });
+          // ADR-0234 D2: an unpriced or unavailable cost is not $0 — keep it null.
+          const refused = data.aggregate ? !data.aggregate.computable : false;
+          setCostSummary({
+            cost_usd: refused ? null : (data.totals?.cost_usd ?? null),
+            calls,
+            available: true,
+            refusal: refused ? (data.aggregate?.reason ?? 'cost not computable') : null,
+          });
         }
       })
       .catch(() => { /* ClickHouse not configured — leave null */ });
@@ -328,7 +340,13 @@ export default function HomeTab({ onNavigate }: { onNavigate: (tab: Tab) => void
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 px-1 py-2 text-xs border-b border-[var(--color-border)]">
         {counts ? (
           <>
-            <StatusPill ok={counts.failedRuns === 0} label={counts.failedRuns === 0 ? 'All runs passing' : `${counts.failedRuns} failed run${counts.failedRuns === 1 ? '' : 's'}`} />
+            {counts.failedRuns === null ? (
+              <span title={counts.runsRefusal ?? undefined} data-testid="home-runs-refusal">
+                <StatusPill ok={false} label="Run counts withheld — index incomplete" />
+              </span>
+            ) : (
+              <StatusPill ok={counts.failedRuns === 0} label={counts.failedRuns === 0 ? 'All runs passing' : `${counts.failedRuns} failed run${counts.failedRuns === 1 ? '' : 's'}`} />
+            )}
             <StatusPill ok={counts.pendingEval === 0} label={counts.pendingEval === 0 ? 'No pending evals' : `${counts.pendingEval} pending eval`} />
             <StatusPill ok label="Registry OK" />
           </>
@@ -389,7 +407,7 @@ export default function HomeTab({ onNavigate }: { onNavigate: (tab: Tab) => void
             description="LLM token spend, model call counts, and per-run cost breakdown — last 7 days."
             stats={[
               { value: costSummary.calls, label: 'model calls' },
-              { value: `$${costSummary.cost_usd.toFixed(4)}`, label: '7d spend' },
+              { value: costSummary.cost_usd == null ? '—' : `$${costSummary.cost_usd.toFixed(4)}`, label: costSummary.refusal ? `7d spend — ${costSummary.refusal}` : '7d spend' },
             ]}
             cta="Go to Cost"
             onClick={() => onNavigate('cost')}

@@ -183,7 +183,8 @@ function DashboardInner() {
     ]).then(([stats, holds, incidents]) => {
       setCounts(prev => ({
         ...prev,
-        runs: stats?.run_count,
+        // A refused run count (ADR-0234 D2) shows no badge rather than a wrong one.
+        runs: stats?.run_count ?? undefined,
         registry: stats?.asset_count,
         holds: holds?.total_active ?? undefined,
         incidents: incidents?.incidents?.filter(i => i.status !== 'closed').length,

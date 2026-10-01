@@ -369,10 +369,12 @@ def report_executive_summary(
             "tool_calls": sum(int(r.get("tool_call_count") or 0) for r in rows),
         }
     period = f"{from_ts or 'all'} – {to_ts or 'now'}"
-    rate = (
+    # ADR-0234 D2: a success rate over zero runs has no denominator. It is
+    # undefined (null), not 0% — "0% success" would read as "everything failed".
+    rate: float | None = (
         round(totals["successes"] / totals["total_runs"] * 100, 1)
         if totals["total_runs"]
-        else 0.0
+        else None
     )
     out: list[dict[str, Any]] = [{
         "period": period,

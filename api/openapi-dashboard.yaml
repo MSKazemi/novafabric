@@ -1452,6 +1452,40 @@ paths:
           - type: 'null'
           description: ISO date upper bound on created_at
           title: Until
+      - description: 'The caller''s filter-bar text. Not pushable into this aggregate: when non-empty
+          the response refuses (ADR-0234 D2) rather than summarize a different population than the caller''s
+          table.'
+        in: query
+        name: f
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'The caller''s filter-bar text. Not pushable into this aggregate: when non-empty
+            the response refuses (ADR-0234 D2) rather than summarize a different population than the caller''s
+            table.'
+          title: F
+      - description: The caller's status chip; not pushable (see f).
+        in: query
+        name: status
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: The caller's status chip; not pushable (see f).
+          title: Status
+      - description: The caller's free-text search; not pushable (see f).
+        in: query
+        name: q
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: The caller's free-text search; not pushable (see f).
+          title: Q
       - in: query
         name: token
         required: false

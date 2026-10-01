@@ -46,6 +46,7 @@ from novafabric.registry.runs_cache import (
 )
 from novafabric.serve import audit, token_store
 from novafabric.serve import reports as _reports
+from novafabric.serve.aggregates import AggregateCondition, computable, refuse
 from novafabric.serve.auth import extract_bearer, is_localhost_host, token_matches
 from novafabric.serve.authz import build_authz_dependency
 from novafabric.serve.capsule_loader import (
@@ -74,6 +75,11 @@ from novafabric.serve.routers.report_export import build_report_export_router
 from novafabric.serve.routers.trust_surfaces import build_trust_surfaces_router
 
 logger = logging.getLogger(__name__)
+
+#: Reports whose figures are sums over the runs index (ADR-0234 D2 applies).
+_RUN_AGGREGATE_REPORTS: frozenset[str] = frozenset(
+    {"cost-burn", "throughput", "executive-summary"}
+)
 
 # Evidence-bundle identifiers are used to build a filesystem path
 # (evidence_dir / f"{bundle_id}.zip"). Constrain them to a strict allowlist so a
@@ -921,22 +927,50 @@ def create_app(
         """Compute fresh aggregate stats. May be called from background thread."""
         from novafabric.registry.runs_cache import count_cached_runs  # noqa: PLC0415
         from novafabric.registry.store import get_connection, init_schema  # noqa: PLC0415
+        from novafabric.serve.aggregates import (  # noqa: PLC0415
+            AggregateCondition,
+            computable,
+            refuse,
+        )
 
         conn = get_connection(db_path)
         init_schema(conn)
         try:
             cached = count_cached_runs(conn)
+            run_count: int | None
+            failed_count: int | None
             if cached > 0:
                 # Fast path: query the index (O(1) SQL).
                 run_count = conn.execute("SELECT COUNT(*) FROM runs_cache").fetchone()[0]
                 failed_count = conn.execute(
                     "SELECT COUNT(*) FROM runs_cache WHERE status != 'success'"
                 ).fetchone()[0]
+                # ADR-0234 D2: an index behind the disk undercounts. A directory
+                # listing (no manifest parsing) is enough to tell.
+                on_disk = len(discover_capsule_dirs(capsule_dir))
+                if on_disk > int(run_count or 0):
+                    verdict = refuse(
+                        AggregateCondition.TRUNCATED_SOURCE,
+                        reason=(
+                            f"the runs index holds {run_count} of the {on_disk} capsules "
+                            "on disk, so run counts from it would undercount"
+                        ),
+                        remedy=(
+                            "wait for the index to catch up after a capture, or rebuild "
+                            "it: Infra → Maintenance → reindex runs"
+                        ),
+                        indexed=run_count,
+                        on_disk=on_disk,
+                    )
+                    run_count = failed_count = None
+                else:
+                    verdict = computable(run_count, source="runs_cache")
             else:
                 # Fallback: disk scan (first startup before index is built).
                 summaries = list_run_summaries(capsule_dir)
                 run_count = len(summaries)
                 failed_count = sum(1 for s in summaries if s.get("status") != "success")
+                verdict = computable(run_count, source="capsule_scan")
 
             asset_count = conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
             pending_count = conn.execute(
@@ -949,9 +983,15 @@ def create_app(
             conn.close()
 
         return {
+            # ``None`` (never 0) when the verdict refuses — absent is not zero.
             "run_count": run_count,
             "failed_run_count": failed_count,
-            "passed_run_count": run_count - failed_count,
+            "passed_run_count": (
+                run_count - failed_count
+                if run_count is not None and failed_count is not None
+                else None
+            ),
+            "aggregate": verdict.as_dict(),
             "asset_count": asset_count,
             "pending_eval_count": pending_count,
             "production_asset_count": production_count,
@@ -2660,7 +2700,9 @@ def create_app(
 
     # ---------- analytics summary (dashboard analytics slice) ----------
     # New route group per the ADR-0183 freeze: lands as a router, not inline.
-    app.include_router(build_analytics_router(verify_token, db_path=db_path))
+    app.include_router(
+        build_analytics_router(verify_token, db_path=db_path, capsule_dir=capsule_dir)
+    )
 
     # ---------- recent operational alerts (ADR-0192 D6 read surface) ----------
     app.include_router(build_alerts_router(verify_token, db_path=db_path))
@@ -2707,7 +2749,14 @@ def create_app(
     # 501 + install hint when the optional WeasyPrint extra is absent.
     app.include_router(
         build_report_export_router(
-            verify_token, capsule_dir=capsule_dir, db_path=db_path
+            verify_token,
+            capsule_dir=capsule_dir,
+            db_path=db_path,
+            # ADR-0234 D2 for the run-aggregate artifacts; the closure resolves
+            # _runs_index_refusal (defined with the report routes) at call time.
+            aggregate_guard=lambda rid: (
+                _runs_index_refusal() if rid in _RUN_AGGREGATE_REPORTS else None
+            ),
         )
     )
 
@@ -5520,9 +5569,22 @@ def create_app(
                     cost_report as _ch_report,  # noqa: PLC0415
                 )
 
-                return await asyncio.get_event_loop().run_in_executor(
+                ch = await asyncio.get_event_loop().run_in_executor(
                     None, lambda: _ch_report(run_id=run_id, days=days)
                 )
+                ch_notes: dict[str, Any] = {
+                    "backend": "clickhouse",
+                    # This query does not read `priced`, so an unpriced call's
+                    # 0.0 cannot be told apart here; /api/runs/cost-summary can.
+                    "pricing_coverage_checked": False,
+                }
+                if len(ch.get("by_model") or []) >= 50:
+                    # The per-model list is LIMIT 50; the totals are not.
+                    ch_notes["by_model_truncated_at"] = 50
+                ch["aggregate"] = computable(
+                    (ch.get("totals") or {}).get("cost_usd"), **ch_notes
+                ).as_dict()
+                return ch
             except Exception as exc:
                 return {
                     "ok": False,
@@ -5530,8 +5592,17 @@ def create_app(
                     "error": str(exc),
                     "run_id": run_id,
                     "days": days,
-                    "totals": {"input_tokens": 0, "completion_tokens": 0, "cost_usd": 0.0},
+                    # ADR-0234 D2: unavailable is not zero.
+                    "totals": None,
                     "by_model": [],
+                    "aggregate": refuse(
+                        AggregateCondition.SOURCE_UNAVAILABLE,
+                        reason="the ClickHouse cost store is configured but did not answer",
+                        remedy=(
+                            "check NOVA_CLICKHOUSE_URL and that the instance is reachable, "
+                            "or unset it to report from the local capsules"
+                        ),
+                    ).as_dict(),
                 }
 
         # Self-contained fallback: query the DuckDB accumulator, then the
@@ -5585,12 +5656,14 @@ def create_app(
                     "error": str(exc),
                     "run_id": run_id,
                     "days": days,
-                    "totals": {
-                        "input_tokens": 0,
-                        "completion_tokens": 0,
-                        "cost_usd": 0.0,
-                    },
+                    # ADR-0234 D2: a failed read is not a zero-cost window.
+                    "totals": None,
                     "by_model": [],
+                    "aggregate": refuse(
+                        AggregateCondition.SOURCE_UNAVAILABLE,
+                        reason="the capsules could not be read for a cost report",
+                        remedy="check the capsule directory is readable, then retry",
+                    ).as_dict(),
                 }
 
         by_model = [
@@ -5609,6 +5682,35 @@ def create_app(
         total_input = sum(v["tokens_in"] for v in _by_model_raw.values())
         total_output = sum(v["tokens_out"] for v in _by_model_raw.values())
         total_cost = sum(v["cost_usd"] for v in _by_model_raw.values())
+        priced_calls = sum(int(r["calls"]) for r in by_model if r["priced"])
+        unpriced_calls = sum(int(r["calls"]) for r in by_model if not r["priced"])
+        # ADR-0234 D2: an unpriced call contributed 0.0 because no price is
+        # known. If *every* call is unpriced the total is not a cost at all, so
+        # it is refused (and null), never shown as $0.00. A partial total is
+        # computable with the unpriced share stated.
+        if unpriced_calls and not priced_calls:
+            cost_total: float | None = None
+            verdict = refuse(
+                AggregateCondition.ABSENT_CONTRIBUTOR,
+                reason=(
+                    f"none of the {unpriced_calls} model call(s) in this window has a "
+                    f"catalog price ({', '.join(unpriced)}), so no cost can be stated"
+                ),
+                remedy=(
+                    "add the model(s) to the price table, or read token counts — "
+                    "which are exact — instead of cost"
+                ),
+                unpriced_models=unpriced,
+                backend=_backend,
+            )
+        else:
+            cost_total = round(total_cost, 6)
+            notes: dict[str, Any] = {"backend": _backend}
+            if unpriced_calls:
+                notes["unpriced_models"] = unpriced
+                notes["unpriced_calls"] = unpriced_calls
+                notes["cost_is_lower_bound"] = True
+            verdict = computable(cost_total, **notes)
         return {
             "ok": True,
             "backend": _backend,
@@ -5617,10 +5719,11 @@ def create_app(
             "totals": {
                 "input_tokens": total_input,
                 "completion_tokens": total_output,
-                "cost_usd": round(total_cost, 6),
+                "cost_usd": cost_total,
             },
             "by_model": sorted(by_model, key=lambda r: r["cost_usd"], reverse=True),
             "unpriced_models": unpriced,
+            "aggregate": verdict.as_dict(),
         }
 
     # ---------- DB-SCH-1: Schema inspection route (v0.19.0, cap-001) ----------
@@ -8899,16 +9002,80 @@ def create_app(
             ),
         }
 
+    def _runs_index_refusal() -> Any:
+        """ADR-0234 D2 for the run-aggregate reports.
+
+        The reports read ``runs_cache`` when it holds anything and the capsules
+        otherwise — both complete. The one unfaithful case is a *partial* index
+        (fewer rows than capsules on disk), where every sum undercounts. A
+        directory listing is enough to tell; ``None`` means faithful.
+        """
+        from novafabric.registry.store import get_connection, init_schema  # noqa: PLC0415
+
+        if db_path is None or not Path(db_path).exists():
+            return None  # reports fall back to the (complete) capsule scan
+        conn = get_connection(db_path)
+        try:
+            init_schema(conn)
+            indexed = count_cached_runs(conn)
+        finally:
+            conn.close()
+        if indexed == 0:
+            return None  # capsule scan, complete
+        on_disk = len(discover_capsule_dirs(capsule_dir))
+        if indexed >= on_disk:
+            return None
+        return refuse(
+            AggregateCondition.TRUNCATED_SOURCE,
+            reason=(
+                f"the runs index holds {indexed} of the {on_disk} capsules on disk, "
+                "so this report's totals would undercount"
+            ),
+            remedy=(
+                "wait for the index to catch up after a capture, or rebuild it: "
+                "Infra → Maintenance → reindex runs"
+            ),
+            indexed=indexed,
+            on_disk=on_disk,
+        )
+
+    def _aggregate_report(
+        build: Callable[[], tuple[list[str], list[dict[str, Any]]]],
+        fmt: str,
+        filename: str,
+    ) -> Any:
+        """Run an aggregate report under the honest-degradation rule.
+
+        JSON gains an ``aggregate`` verdict. A refused report returns no rows,
+        and as CSV it is a 409 with the reason — a downloaded CSV of a refused
+        aggregate would be a file of numbers with the refusal stripped off.
+        """
+        verdict = _runs_index_refusal()
+        if verdict is not None:
+            if fmt == "csv":
+                return JSONResponse(status_code=409, content={"aggregate": verdict.as_dict()})
+            return {"columns": [], "rows": [], "count": 0, "aggregate": verdict.as_dict()}
+        cols, rows = build()
+        if fmt == "csv":
+            return _csv_response(cols, rows, filename)
+        return {
+            "columns": cols,
+            "rows": rows,
+            "count": len(rows),
+            "aggregate": computable(len(rows), unit="rows").as_dict(),
+        }
+
     @app.get("/api/reports/cost-burn", dependencies=[Depends(verify_token)])
     async def report_cost_burn(
         from_ts: str | None = Query(default=None, alias="from"),
         to_ts: str | None = Query(default=None, alias="to"),
         format: str = Query(default="json"),
     ) -> Any:
-        cols, rows = _reports.report_cost_burn(capsule_dir, from_ts, to_ts, db_path=db_path)
-        if format == "csv":
-            return _csv_response(cols, rows, "cost-burn.csv")
-        return {"columns": cols, "rows": rows, "count": len(rows)}
+        return _aggregate_report(
+            lambda: _reports.report_cost_burn(capsule_dir, from_ts, to_ts, db_path=db_path),
+            format,
+            "cost-burn.csv",
+        )
 
     @app.get("/api/reports/throughput", dependencies=[Depends(verify_token)])
     async def report_throughput(
@@ -8917,12 +9084,13 @@ def create_app(
         resolution: str = Query(default="1d"),
         format: str = Query(default="json"),
     ) -> Any:
-        cols, rows = _reports.report_throughput(
-            capsule_dir, from_ts, to_ts, resolution, db_path=db_path
+        return _aggregate_report(
+            lambda: _reports.report_throughput(
+                capsule_dir, from_ts, to_ts, resolution, db_path=db_path
+            ),
+            format,
+            "throughput.csv",
         )
-        if format == "csv":
-            return _csv_response(cols, rows, "throughput.csv")
-        return {"columns": cols, "rows": rows, "count": len(rows)}
 
     @app.get("/api/reports/executive-summary", dependencies=[Depends(verify_token)])
     async def report_executive_summary(
@@ -8930,12 +9098,13 @@ def create_app(
         to_ts: str | None = Query(default=None, alias="to"),
         format: str = Query(default="json"),
     ) -> Any:
-        cols, rows = _reports.report_executive_summary(
-            capsule_dir, from_ts, to_ts, db_path=db_path
+        return _aggregate_report(
+            lambda: _reports.report_executive_summary(
+                capsule_dir, from_ts, to_ts, db_path=db_path
+            ),
+            format,
+            "executive-summary.csv",
         )
-        if format == "csv":
-            return _csv_response(cols, rows, "executive-summary.csv")
-        return {"columns": cols, "rows": rows, "count": len(rows)}
 
     @app.get("/api/reports/evidence-inventory", dependencies=[Depends(verify_token)])
     async def report_evidence_inventory(

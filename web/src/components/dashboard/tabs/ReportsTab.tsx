@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { clsx } from 'clsx';
-import { api } from '../../../lib/api';
+import { api, type AggregateVerdict } from '../../../lib/api';
+import AggregateRefusal from '../AggregateRefusal';
 import ReportChart, { type ReportChartSpec } from '../ReportChart';
 import '../../../styles/reports-print.css';
 
@@ -142,6 +143,8 @@ export default function ReportsTab() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [chartSpecs, setChartSpecs] = useState<Record<string, ReportChartSpec | null>>({});
+  // ADR-0234 D2 — a refused aggregate report is shown as its reason, not as "no data".
+  const [verdict, setVerdict] = useState<AggregateVerdict | null>(null);
 
   // Chart specs come from the server-side report registry — single source of
   // truth for which reports genuinely have a series (ADR-0200/0201).
@@ -169,6 +172,7 @@ export default function ReportsTab() {
     setRows(null);
     setColumns([]);
     setError(null);
+    setVerdict(null);
   }, []);
 
   const runReport = useCallback(async (def: ReportDef, filters: Record<string, string>) => {
@@ -179,9 +183,11 @@ export default function ReportsTab() {
         columns: string[];
         rows: Record<string, unknown>[];
         count: number;
+        aggregate?: AggregateVerdict;
       };
       setColumns(result.columns);
       setRows(result.rows);
+      setVerdict(result.aggregate ?? null);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -359,7 +365,10 @@ export default function ReportsTab() {
           {loading && (
             <p className="text-xs text-[var(--color-text-faint)]">Loading…</p>
           )}
-          {!loading && rows !== null && rows.length === 0 && (
+          {!loading && verdict && !verdict.computable && (
+            <AggregateRefusal verdict={verdict} testId="report-refusal" />
+          )}
+          {!loading && rows !== null && rows.length === 0 && !(verdict && !verdict.computable) && (
             <p className="text-xs text-[var(--color-text-faint)]">No data matches the current filters.</p>
           )}
           {!loading && rows !== null && rows.length > 0 && (

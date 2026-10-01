@@ -13,6 +13,19 @@
 const TOKEN_KEY = 'novafabric.serve-token';
 const BASE_KEY = 'novafabric.serve-base';
 
+/**
+ * ADR-0234 D2 verdict, as every aggregate endpoint sends it. A refusal carries
+ * no `value` at all — render `reason` and `remedy`, never a number.
+ */
+export interface AggregateVerdict {
+  computable: boolean;
+  value?: unknown;
+  condition?: 'source_unavailable' | 'tenant_unsafe_store' | 'truncated_source' | 'unpushable_filter' | 'absent_contributor' | null;
+  reason?: string;
+  remedy?: string;
+  notes?: Record<string, unknown>;
+}
+
 export interface AnalyticsBucket {
   bucket: string;
   run_count: number;
@@ -22,18 +35,22 @@ export interface AnalyticsBucket {
   duration_ms_p50: number | null;
   duration_ms_p95: number | null;
   duration_ms_max: number | null;
+  /** How many runs the percentiles rest on (absent durations are skipped). */
+  duration_samples?: number;
 }
 
 export interface AnalyticsSummary {
   buckets: AnalyticsBucket[];
+  /** `null` when `aggregate` refuses — absent is not zero (ADR-0234 D2). */
   totals: {
     run_count: number;
     failed_count: number;
     model_call_count: number;
     tool_call_count: number;
-  };
+  } | null;
   since: string | null;
   until: string | null;
+  aggregate?: AggregateVerdict;
 }
 
 // P4 dashboard query panel — POST /api/query (ADR-0129 read surface).
@@ -696,9 +713,11 @@ export interface RunSearchPage {
 // ---------- B-4: stats with approximate flag ----------
 
 export interface StatsResult {
-  run_count: number;
-  failed_run_count: number;
-  passed_run_count: number;
+  /** Run counts are `null` when `aggregate` refuses (a partial runs index). */
+  run_count: number | null;
+  failed_run_count: number | null;
+  passed_run_count: number | null;
+  aggregate?: AggregateVerdict;
   asset_count: number;
   pending_eval_count: number;
   production_asset_count: number;
@@ -1022,10 +1041,17 @@ export const api = {
     request<FilterSuggestResult>('/api/filter/suggest', { dimension }),
 
   // Analytics summary — pre-aggregated day buckets from the runs index.
-  analyticsSummary: (q: { since?: string; until?: string } = {}) => {
+  analyticsSummary: (
+    q: { since?: string; until?: string; f?: string; status?: string; q?: string } = {},
+  ) => {
     const params: Record<string, unknown> = {};
     if (q.since) params.since = q.since;
     if (q.until) params.until = q.until;
+    // The caller's view state, so the server can refuse an aggregate that
+    // would describe a different population than the caller's table.
+    if (q.f) params.f = q.f;
+    if (q.status && q.status !== 'all') params.status = q.status;
+    if (q.q) params.q = q.q;
     return request<AnalyticsSummary>('/api/analytics/summary', params);
   },
   // P4 — custom query panel: POST /api/query, {q, engine?} where q is a
