@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 500" width="980" height="500" role="img" aria-labelledby="t d">
+<title id="t">The five replay modes</title>
+<desc id="d">A Run Capsule on the left feeds five lanes. mocked (default) re-runs the command in a subprocess and serves OpenAI and Anthropic responses from the record. forensic executes nothing and reports counts, environment warnings and schema drift. semantic executes nothing and scores text similarity across the recorded responses. exact executes nothing and checks eligibility for a byte-exact re-run: deterministic env.lock, a seed on every call and no schema drift. intervention (experimental) substitutes one recorded event, re-runs downstream under mocked semantics and writes a counterfactual capsule. Every mode writes replay_result.yaml.</desc>
+<style>
+svg{--bg:#111114;--card:#1c1c22;--card2:#24242c;--stroke:#3a3a44;--fg:#ececf1;--muted:#a8a8b3;--line:#6b6b78;--cap:#7dd3fc;--seal:#c4b5fd;--rep:#5eead4;--diff:#fcd34d;--aud:#c4f0a8;--warn:#fda4af}
+@media (prefers-color-scheme:light){svg{--bg:#fafaf9;--card:#ffffff;--card2:#f1f1f3;--stroke:#d4d4d8;--fg:#18181b;--muted:#52525b;--line:#a1a1aa;--cap:#0369a1;--seal:#6d28d9;--rep:#0f766e;--diff:#a16207;--aud:#3f6212;--warn:#be123c}}
+.bg{fill:var(--bg)}
+.card{fill:var(--card);stroke:var(--stroke);stroke-width:1.2}
+.card2{fill:var(--card2);stroke:var(--stroke);stroke-width:1}
+text{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;fill:var(--fg)}
+.mono{font-family:ui-monospace,'JetBrains Mono','DejaVu Sans Mono',Menlo,monospace}
+.h{font-size:15px;font-weight:650}
+.t{font-size:12.5px}
+.s{font-size:11px;fill:var(--muted)}
+.title{font-size:17px;font-weight:700}
+.wire{fill:none;stroke:var(--line);stroke-width:1.6}
+.flow{fill:none;stroke-width:2;stroke-dasharray:6 8;animation:flow 1.6s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-28}}
+.c-cap{stroke:var(--cap)}.f-cap{fill:var(--cap)}
+.c-seal{stroke:var(--seal)}.f-seal{fill:var(--seal)}
+.c-rep{stroke:var(--rep)}.f-rep{fill:var(--rep)}
+.c-diff{stroke:var(--diff)}.f-diff{fill:var(--diff)}
+.c-aud{stroke:var(--aud)}.f-aud{fill:var(--aud)}
+.c-warn{stroke:var(--warn)}.f-warn{fill:var(--warn)}
+.c-muted{stroke:var(--line)}.f-muted{fill:var(--muted)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}.motion{display:none}.flow{stroke-dasharray:none}}
+@keyframes ring{0%{opacity:0}4%{opacity:1}16%{opacity:1}22%{opacity:0}100%{opacity:0}}
+.ring0{opacity:0;animation:ring 10.0s ease-in-out 0.00s infinite}
+.ring1{opacity:0;animation:ring 10.0s ease-in-out 2.00s infinite}
+.ring2{opacity:0;animation:ring 10.0s ease-in-out 4.00s infinite}
+.ring3{opacity:0;animation:ring 10.0s ease-in-out 6.00s infinite}
+.ring4{opacity:0;animation:ring 10.0s ease-in-out 8.00s infinite}
+@media (prefers-reduced-motion:reduce){[class^=ring]{opacity:0}}
+</style>
+<rect class="bg" x="0" y="0" width="980" height="500" rx="14"/>
+<text class="title" x="22" y="38" text-anchor="start">Replay modes, as built</text>
+<text class="s" x="22" y="58" text-anchor="start">nova replay &lt;capsule&gt; --mode …  ·  replay/_engine.py:ReplayEngine.run  ·  every mode writes .novafabric/replays/&lt;ulid&gt;/replay_result.yaml</text>
+<rect class="card" x="22" y="84" width="170" height="392" rx="10"/><rect class="f-cap" x="22" y="84" width="170" height="4" rx="2"/>
+<text class="h" x="107" y="112" text-anchor="middle">Run Capsule</text>
+<rect class="card2" x="34" y="128" width="146" height="24" rx="6"/>
+<text class="s mono" x="107" y="144" text-anchor="middle">capsule.yaml</text>
+<rect class="card2" x="34" y="158" width="146" height="24" rx="6"/>
+<text class="s mono" x="107" y="174" text-anchor="middle">model-calls.jsonl</text>
+<rect class="card2" x="34" y="188" width="146" height="24" rx="6"/>
+<text class="s mono" x="107" y="204" text-anchor="middle">tool-calls.jsonl</text>
+<rect class="card2" x="34" y="218" width="146" height="24" rx="6"/>
+<text class="s mono" x="107" y="234" text-anchor="middle">env.lock</text>
+<rect class="card2" x="34" y="248" width="146" height="24" rx="6"/>
+<text class="s mono" x="107" y="264" text-anchor="middle">replay.yaml</text>
+<text class="s" x="107" y="300" text-anchor="middle">always checked:</text>
+<text class="t" x="107" y="318" text-anchor="middle">env drift</text>
+<text class="t" x="107" y="336" text-anchor="middle">tool-schema drift</text>
+<text class="s" x="107" y="354" text-anchor="middle">(ADR-0128)</text>
+<rect class="ring0 c-rep" x="232" y="80" width="726" height="78" rx="13" fill="none" stroke-width="2.5"/>
+<rect class="card" x="236" y="84" width="718" height="70" rx="10"/><rect class="f-rep" x="236" y="84" width="718" height="4" rx="2"/>
+<text class="h mono" x="252" y="114" text-anchor="start">mocked</text>
+<text class="s" x="252" y="134" text-anchor="start">default</text>
+<text class="t" x="386" y="114" text-anchor="start">re-runs the command in a subprocess;</text>
+<text class="t" x="386" y="134" text-anchor="start">OpenAI / Anthropic responses served from the record</text>
+<rect x="830" y="98" width="86" height="18" rx="9" fill="none" class="c-rep" stroke-width="1.2"/><text class="s f-rep" x="873.0" y="111" text-anchor="middle" style="font-weight:600">subprocess</text>
+<text class="s" x="840" y="138" text-anchor="start">works today</text>
+<path class="wire" d="M192 119 H236"/>
+<g class="motion"><circle r="4" class="f-rep"><animateMotion dur="1.8s" repeatCount="indefinite" path="M192 119 H236"/></circle></g>
+<rect class="ring1 c-seal" x="232" y="160" width="726" height="78" rx="13" fill="none" stroke-width="2.5"/>
+<rect class="card" x="236" y="164" width="718" height="70" rx="10"/><rect class="f-seal" x="236" y="164" width="718" height="4" rx="2"/>
+<text class="h mono" x="252" y="194" text-anchor="start">forensic</text>
+<text class="t" x="386" y="194" text-anchor="start">nothing executes; counts, env warnings</text>
+<text class="t" x="386" y="214" text-anchor="start">and schema drift are reported</text>
+<rect x="830" y="178" width="79" height="18" rx="9" fill="none" class="c-seal" stroke-width="1.2"/><text class="s f-seal" x="869.4" y="191" text-anchor="middle" style="font-weight:600">read-only</text>
+<text class="s" x="840" y="218" text-anchor="start">works today</text>
+<path class="wire" d="M192 199 H236"/>
+<g class="motion"><circle r="4" class="f-seal"><animateMotion dur="1.8s" repeatCount="indefinite" path="M192 199 H236"/></circle></g>
+<rect class="ring2 c-diff" x="232" y="240" width="726" height="78" rx="13" fill="none" stroke-width="2.5"/>
+<rect class="card" x="236" y="244" width="718" height="70" rx="10"/><rect class="f-diff" x="236" y="244" width="718" height="4" rx="2"/>
+<text class="h mono" x="252" y="274" text-anchor="start">semantic</text>
+<text class="t" x="386" y="274" text-anchor="start">nothing executes; text similarity across</text>
+<text class="t" x="386" y="294" text-anchor="start">recorded responses (difflib ratio, 0–1)</text>
+<rect x="830" y="258" width="79" height="18" rx="9" fill="none" class="c-diff" stroke-width="1.2"/><text class="s f-diff" x="869.4" y="271" text-anchor="middle" style="font-weight:600">read-only</text>
+<text class="s" x="840" y="298" text-anchor="start">works today</text>
+<path class="wire" d="M192 279 H236"/>
+<g class="motion"><circle r="4" class="f-diff"><animateMotion dur="1.8s" repeatCount="indefinite" path="M192 279 H236"/></circle></g>
+<rect class="ring3 c-aud" x="232" y="320" width="726" height="78" rx="13" fill="none" stroke-width="2.5"/>
+<rect class="card" x="236" y="324" width="718" height="70" rx="10"/><rect class="f-aud" x="236" y="324" width="718" height="4" rx="2"/>
+<text class="h mono" x="252" y="354" text-anchor="start">exact</text>
+<text class="t" x="386" y="354" text-anchor="start">eligibility check: deterministic env.lock,</text>
+<text class="t" x="386" y="374" text-anchor="start">a seed on every call, no schema drift</text>
+<rect x="830" y="338" width="79" height="18" rx="9" fill="none" class="c-aud" stroke-width="1.2"/><text class="s f-aud" x="869.4" y="351" text-anchor="middle" style="font-weight:600">read-only</text>
+<text class="s" x="840" y="378" text-anchor="start">works today</text>
+<path class="wire" d="M192 359 H236"/>
+<g class="motion"><circle r="4" class="f-aud"><animateMotion dur="1.8s" repeatCount="indefinite" path="M192 359 H236"/></circle></g>
+<rect class="ring4 c-warn" x="232" y="400" width="726" height="78" rx="13" fill="none" stroke-width="2.5"/>
+<rect class="card" x="236" y="404" width="718" height="70" rx="10"/><rect class="f-warn" x="236" y="404" width="718" height="4" rx="2"/>
+<text class="h mono" x="252" y="434" text-anchor="start">intervention</text>
+<text class="t" x="386" y="434" text-anchor="start">substitute one event, re-run downstream under</text>
+<text class="t" x="386" y="454" text-anchor="start">mocked semantics, write a counterfactual capsule</text>
+<rect x="830" y="418" width="86" height="18" rx="9" fill="none" class="c-warn" stroke-width="1.2"/><text class="s f-warn" x="873.0" y="431" text-anchor="middle" style="font-weight:600">subprocess</text>
+<text class="s" x="840" y="458" text-anchor="start">experimental</text>
+<path class="wire" d="M192 439 H236"/>
+<g class="motion"><circle r="4" class="f-warn"><animateMotion dur="1.8s" repeatCount="indefinite" path="M192 439 H236"/></circle></g>
+</svg>

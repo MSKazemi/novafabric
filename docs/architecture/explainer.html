@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NovaFabric Run Walkthrough</title>
+<meta name="description" content="Interactive, offline walkthrough of one NovaFabric run: capture, seal, replay and verify, as implemented in src/novafabric.">
+<style>
+:root{
+  --bg:#fafaf9;--panel:#ffffff;--panel2:#f1f1f3;--stroke:#d4d4d8;--fg:#18181b;--muted:#52525b;
+  --cap:#0369a1;--seal:#6d28d9;--rep:#0f766e;--ver:#3f6212;--warn:#be123c;--focus:#2563eb;
+  --term:#111114;--termfg:#e4e4e7;--termmuted:#a1a1aa;--lime:#c4f0a8;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0b0b0d;--panel:#151519;--panel2:#1f1f25;--stroke:#34343c;--fg:#ececf1;--muted:#a8a8b3;
+    --cap:#7dd3fc;--seal:#c4b5fd;--rep:#5eead4;--ver:#c4f0a8;--warn:#fda4af;--focus:#93c5fd;
+    --term:#050506;color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0b0b0d;--panel:#151519;--panel2:#1f1f25;--stroke:#34343c;--fg:#ececf1;--muted:#a8a8b3;
+  --cap:#7dd3fc;--seal:#c4b5fd;--rep:#5eead4;--ver:#c4f0a8;--warn:#fda4af;--focus:#93c5fd;
+  --term:#050506;color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg)}
+body{font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;padding:20px 16px 40px}
+.mono,code,kbd{font-family:ui-monospace,"JetBrains Mono","DejaVu Sans Mono",Menlo,monospace}
+code{font-size:.88em;background:var(--panel2);border:1px solid var(--stroke);border-radius:5px;padding:0 .3em}
+main{max-width:1180px;margin:0 auto}
+header{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:14px}
+h1{font-size:1.45rem;margin:0 0 2px}
+.sub{color:var(--muted);margin:0;font-size:.92rem}
+button{font:inherit;color:var(--fg);background:var(--panel);border:1px solid var(--stroke);border-radius:8px;padding:6px 12px;cursor:pointer;min-height:36px}
+button:hover{background:var(--panel2)}
+button:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+button[aria-pressed="true"]{border-color:var(--fg)}
+.phases{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:0 0 12px;padding:0;list-style:none}
+.phases li button{width:100%;text-align:left;border-top:4px solid var(--c);padding:8px 12px}
+.phases li button .n{display:block;font-weight:650}
+.phases li button .d{display:block;color:var(--muted);font-size:.8rem}
+.phases li button[aria-current="step"]{background:var(--panel2);border-color:var(--c);box-shadow:inset 0 0 0 1px var(--c)}
+.grid{display:grid;grid-template-columns:1fr 1.25fr 1fr;gap:12px}
+@media (max-width:900px){.grid{grid-template-columns:1fr}.phases{grid-template-columns:repeat(2,1fr)}}
+.panel{background:var(--panel);border:1px solid var(--stroke);border-radius:12px;padding:14px;position:relative;min-width:0}
+.panel h2{font-size:.95rem;margin:0 0 10px;display:flex;justify-content:space-between;gap:8px;align-items:center}
+.panel h2 small{font-weight:400;color:var(--muted);font-size:.78rem}
+.box{border:1px solid var(--stroke);background:var(--panel2);border-radius:8px;padding:8px 10px;margin:6px 0;transition:border-color .3s,background .3s,opacity .3s}
+.box .t{font-weight:600;font-size:.9rem}
+.box .s{color:var(--muted);font-size:.78rem}
+.on{border-color:var(--c,var(--fg));box-shadow:inset 3px 0 0 var(--c,var(--fg))}
+.dim{opacity:.45}
+.tree{list-style:none;margin:0;padding:0;font-size:.84rem}
+.tree li{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:5px 8px;border-radius:6px;border:1px solid transparent;transition:background .35s,border-color .35s,opacity .35s}
+.tree li .f{font-family:ui-monospace,"JetBrains Mono",Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tree li .tag{font-size:.72rem;color:var(--muted);white-space:nowrap}
+.tree li.hidden{opacity:0;height:0;padding:0 8px;overflow:hidden;border:0}
+.tree li.new{background:var(--panel2);border-color:var(--c);animation:pop .5s ease-out}
+.tree li.hashed .tag::before{content:"sha256 ✓ ";color:var(--seal)}
+.tree li.tampered{border-color:var(--warn);background:color-mix(in srgb,var(--warn) 12%,transparent)}
+.tree li.tampered .tag{color:var(--warn)}
+.tree li.tampered .tag::before{content:"sha256 ✗ ";color:var(--warn)}
+@keyframes pop{from{transform:translateX(-8px);opacity:.2}to{transform:none;opacity:1}}
+.checks{list-style:none;margin:0;padding:0}
+.checks li{display:flex;gap:10px;align-items:center;padding:6px 4px;font-size:.88rem}
+.dot{width:20px;height:20px;border-radius:50%;border:2px solid var(--stroke);display:inline-grid;place-items:center;font-size:12px;flex:none;font-weight:700}
+.pass .dot{background:var(--ver);border-color:var(--ver);color:var(--bg)}
+.fail .dot{background:var(--warn);border-color:var(--warn);color:var(--bg)}
+.term{grid-column:1/-1;background:var(--term);color:var(--termfg);border-radius:12px;padding:12px 14px;font:13px/1.55 ui-monospace,"JetBrains Mono",Menlo,monospace;min-height:150px;overflow-x:auto}
+.term .p{color:var(--lime)}
+.term .c{color:var(--termmuted)}
+.term .bad{color:#fda4af}
+.term .ok{color:var(--lime)}
+.term .lbl{float:right;color:var(--termmuted);font-size:11px}
+.explain{grid-column:1/-1;display:grid;grid-template-columns:1fr auto;gap:12px;align-items:start}
+.explain h3{margin:0 0 4px;font-size:1.1rem}
+.explain p{margin:.3em 0}
+.explain .ref{font-size:.82rem;color:var(--muted)}
+.mat{display:inline-block;font-size:.72rem;border:1px solid currentColor;border-radius:999px;padding:0 8px;margin-left:6px;vertical-align:2px}
+.controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:14px 0 6px}
+.progress{flex:1;min-width:160px;height:8px;background:var(--panel2);border:1px solid var(--stroke);border-radius:999px;overflow:hidden}
+.progress span{display:block;height:100%;width:0;background:var(--fg);transition:width .4s}
+.count{font-variant-numeric:tabular-nums;color:var(--muted);font-size:.88rem;min-width:70px;text-align:right}
+.help{color:var(--muted);font-size:.82rem;margin:4px 0 0}
+kbd{border:1px solid var(--stroke);border-bottom-width:2px;border-radius:4px;padding:0 5px;font-size:.8em;background:var(--panel)}
+.packet{position:absolute;width:12px;height:12px;border-radius:50%;background:var(--c);right:-8px;top:50%;opacity:0}
+.flowing .packet{animation:fly 1.4s ease-in-out infinite}
+@keyframes fly{0%{transform:translateX(-30px);opacity:0}30%{opacity:1}100%{transform:translateX(22px);opacity:0}}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+footer{margin-top:22px;color:var(--muted);font-size:.82rem}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <div>
+    <h1>One run, end to end</h1>
+    <p class="sub">An offline walkthrough of capture → seal → replay → verify, as implemented in <code>src/novafabric/</code>.</p>
+  </div>
+  <button id="theme" type="button" aria-label="Toggle colour theme">Theme: auto</button>
+</header>
+
+<ol class="phases" id="phases" aria-label="Phases"></ol>
+
+<div class="controls" role="group" aria-label="Playback controls">
+  <button id="first" type="button" aria-label="First step (Home)">⏮</button>
+  <button id="prev" type="button" aria-label="Previous step (Left arrow)">◀ Prev</button>
+  <button id="play" type="button" aria-pressed="false" aria-label="Play (Space)">▶ Play</button>
+  <button id="next" type="button" aria-label="Next step (Right arrow)">Next ▶</button>
+  <button id="last" type="button" aria-label="Last step (End)">⏭</button>
+  <div class="progress" aria-hidden="true"><span id="bar"></span></div>
+  <span class="count" id="count" aria-hidden="true"></span>
+</div>
+<p class="help">Keys: <kbd>Space</kbd> play/pause · <kbd>←</kbd> <kbd>→</kbd> step · <kbd>Home</kbd> <kbd>End</kbd> first/last · <kbd>1</kbd>–<kbd>4</kbd> jump to a phase · link to a step with <code>#step-N</code>.</p>
+
+<section class="explain panel" aria-live="polite" aria-atomic="true" id="explain">
+  <div>
+    <h3 id="title"></h3>
+    <div id="body"></div>
+    <p class="ref" id="ref"></p>
+  </div>
+</section>
+
+<div class="grid" style="margin-top:12px">
+  <section class="panel" aria-labelledby="h-work" id="workPanel">
+    <h2 id="h-work">Workload <small>subprocess</small></h2>
+    <div class="box" id="b-cmd" style="--c:var(--cap)"><div class="t mono">python agent.py</div><div class="s">started by the runner (<code>runners/</code>)</div></div>
+    <div class="box" id="b-hooks" style="--c:var(--cap)"><div class="t">sitecustomize hooks</div><div class="s">OpenAI · Anthropic · httpx · requests · MCP</div></div>
+    <div class="box" id="b-llm" style="--c:var(--cap)"><div class="t">LLM call</div><div class="s" id="s-llm">response recorded to model-calls.jsonl</div></div>
+    <div class="box" id="b-tool" style="--c:var(--cap)"><div class="t">Tool call</div><div class="s" id="s-tool">recorded to tool-calls.jsonl</div></div>
+    <div class="box" id="b-scan" style="--c:var(--warn)"><div class="t">SecretScannerV0 + maskers</div><div class="s">redacts in place, writes the proof</div></div>
+    <span class="packet" style="--c:var(--cap)"></span>
+  </section>
+
+  <section class="panel" aria-labelledby="h-caps">
+    <h2 id="h-caps"><span>Run Capsule</span> <small class="mono">~/.novafabric/capsules/01J9…/</small></h2>
+    <ul class="tree" id="tree" aria-label="Files in the capsule directory"></ul>
+  </section>
+
+  <section class="panel" aria-labelledby="h-trust">
+    <h2 id="h-trust">Trust <small>NovaSeal · nova verify</small></h2>
+    <div class="box" id="b-dsse" style="--c:var(--seal)"><div class="t">DSSE envelope</div><div class="s">ECDSA P-256 over canonical manifest JSON</div></div>
+    <div class="box" id="b-tsa" style="--c:var(--seal)"><div class="t">RFC 3161 token</div><div class="s">from the configured TSA (best effort)</div></div>
+    <div class="box" id="b-log" style="--c:var(--seal)"><div class="t">Merkle log</div><div class="s">leaf = H(0x00‖entry) · local log DB</div></div>
+    <ul class="checks" id="checks" aria-label="nova verify checks"></ul>
+  </section>
+
+  <pre class="term" id="term" aria-label="Terminal (illustrative output)"></pre>
+</div>
+
+<footer>
+  Terminal lines are illustrative. Run IDs, hashes and wording are shortened.
+  Behaviour follows <code>capture/orchestrator.py</code>, <code>trust/novaseal/</code>,
+  <code>replay/_engine.py</code> and <code>cli/verify.py</code>. Read the full pages in
+  <a href="README.md">docs/architecture/</a>.
+</footer>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  var PHASES = [
+    { key: "capture", name: "1 · Capture", desc: "nova capture", color: "var(--cap)" },
+    { key: "seal", name: "2 · Seal", desc: "automatic, if configured", color: "var(--seal)" },
+    { key: "replay", name: "3 · Replay", desc: "nova replay", color: "var(--rep)" },
+    { key: "verify", name: "4 · Verify", desc: "nova verify", color: "var(--ver)" }
+  ];
+
+  // Files in write order (capture/orchestrator.py). `at` = step index that creates it.
+  var FILES = [
+    { f: "inputs/  outputs/", tag: "dirs", at: 1, c: "cap" },
+    { f: "model-calls.jsonl", tag: "LLM calls", at: 1, c: "cap" },
+    { f: "tool-calls.jsonl", tag: "tool calls", at: 1, c: "cap" },
+    { f: "trace.jsonl", tag: "spans", at: 1, c: "cap" },
+    { f: "assets.jsonl", tag: "asset refs", at: 1, c: "cap" },
+    { f: "outputs/stdout.txt", tag: "process output", at: 3, c: "cap", id: "stdout" },
+    { f: "env.lock", tag: "environment", at: 3, c: "cap" },
+    { f: "redaction-proof.json", tag: "secret-scan proof", at: 4, c: "warn" },
+    { f: "replay.yaml", tag: "replay policy", at: 5, c: "rep" },
+    { f: "capsule.yaml", tag: "manifest", at: 5, c: "ver", id: "manifest" },
+    { f: "lineage.jsonl", tag: "lineage edges", at: 5, c: "rep" },
+    { f: ".seal/manifest.dsse", tag: "signature", at: 7, c: "seal" },
+    { f: ".seal/manifest.dsse.tsr", tag: "timestamp", at: 8, c: "seal" },
+    { f: ".seal/log-entry.json", tag: "log entry", at: 8, c: "seal" }
+  ];
+
+  var CHECKS = ["DSSE signature", "RFC 3161 token", "Merkle inclusion", "Manifest binding", "Per-file digests"];
+
+  // Each step: phase, title, html body, code reference, maturity, scene state, terminal lines.
+  var STEPS = [
+    { p: 0, title: "Start a capture", mat: "works today",
+      body: "<p><code>nova capture</code> wraps any command. Before anything is written, the orchestrator runs its pre-flight gates: required asset status, deployment environment, A/B variant and session membership.</p>",
+      ref: "cli/capture.py:capture_cmd → capture/orchestrator.py:CaptureOrchestrator.run",
+      on: ["b-cmd"], term: [["p", "$ nova capture -- python agent.py"]] },
+    { p: 0, title: "Open the capsule directory", mat: "works today",
+      body: "<p>A new 26-character ULID names the run. <code>CapsuleWriter.open()</code> creates the directory with <code>inputs/</code>, <code>outputs/</code> and empty call streams. The environment snapshot starts on a background thread.</p>",
+      ref: "capture/_ulid.py · capture/capsule.py:CapsuleWriter.open · capture/env.py",
+      on: [], term: [["c", "  run_id 01J9Z… · capsule opened"]] },
+    { p: 0, title: "Run the workload with hooks", mat: "works today",
+      body: "<p>The runner puts a <code>sitecustomize.py</code> hook loader on the child's <code>PYTHONPATH</code>. Inside the workload, <code>install_all()</code> patches the supported SDKs and HTTP clients. Every LLM call, tool call and span is appended to its stream. Your code is unchanged.</p>",
+      ref: "runners/_sitecustomize.py · capture/hooks/__init__.py:install_all",
+      on: ["b-cmd", "b-hooks", "b-llm", "b-tool"], flow: true, term: [["c", "  [agent] calling model… calling tool search_docs…"]] },
+    { p: 0, title: "Workload exits", mat: "works today",
+      body: "<p>The orchestrator writes stdout and stderr to <code>outputs/</code> and joins the environment snapshot into <code>env.lock</code>. A failing workload still produces a complete capsule, with <code>status: failure</code> and an <code>error</code> block.</p>",
+      ref: "capture/orchestrator.py · capture/env.py:capture_environment",
+      on: ["b-cmd"], term: [["c", "  exit 0 · 2 model calls · 1 tool call"]] },
+    { p: 0, title: "Scan and redact secrets", mat: "works today",
+      body: "<p>The built-in scanner always runs, followed by any configured maskers. Secrets in the call streams are redacted in place. <code>redaction-proof.json</code> records the hashes before and after redaction, the rule IDs and the hash of each match, never the secret itself.</p>",
+      ref: "capture/secrets.py:SecretScannerV0.scan_and_redact · masking/",
+      on: ["b-scan"], term: [["c", "  redaction: 1 finding (rule api-key) · proof written"]] },
+    { p: 0, title: "Write the manifest and lineage", mat: "works today",
+      body: "<p>The orchestrator writes <code>replay.yaml</code> and the run manifest <code>capsule.yaml</code>. Then <code>LineageWriter</code> writes typed edges (<code>consumed</code>, <code>produced_by</code>, <code>replayed_from</code>) to <code>lineage.jsonl</code> and indexes them into SQLite.</p>",
+      ref: "capture/replay.py · lineage/_writer.py:LineageWriter · lineage/_importer.py",
+      on: [], term: [["c", "  manifest + lineage written"]] },
+    { p: 1, title: "Digest every evidence file", mat: "works today",
+      body: "<p>Every file except <code>capsule.yaml</code> and <code>.seal/</code> is hashed (SHA-256 plus size) into <code>evidence_digests</code>, and <code>capsule.yaml</code> is rewritten. The manifest now commits to the whole directory, including the redaction proof.</p>",
+      ref: "capture/orchestrator.py:_evidence_digests",
+      on: [], hashed: true, term: [["c", "  evidence_digests: 11 files"]] },
+    { p: 1, title: "Sign a DSSE envelope", mat: "experimental",
+      body: "<p>Only when NovaSeal is configured (<code>NOVAFABRIC_SEAL_CONFIG</code> or <code>~/.novafabric/novaseal.yaml</code>). The manifest is serialised as canonical JSON, its SHA-256 becomes the <code>capsule_id</code>, and it is signed (ECDSA P-256, or Ed25519 with a local key) into <code>.seal/manifest.dsse</code>. A sealing failure only warns. It never fails the capture.</p>",
+      ref: "capture/orchestrator.py:_seal_capsule → trust/novaseal/__init__.py:NovaSeal.seal · envelope.py",
+      on: ["b-dsse"], hashed: true, term: [["c", "  sealed: capsule_id 3f9a…"]] },
+    { p: 1, title: "Timestamp and log the seal", mat: "experimental",
+      body: "<p>An RFC 3161 token is requested for the envelope (default TSA <code>freetsa.org</code>; <code>tsa_url: \"\"</code> disables it, and an unreachable TSA leaves an empty token). The seal is then appended to a domain-separated SHA-256 Merkle log. <code>log-entry.json</code> records its leaf index and the root.</p>",
+      ref: "trust/novaseal/timestamp.py · trust/_rfc3161.py · trust/novaseal/merkle.py",
+      on: ["b-tsa", "b-log"], hashed: true, term: [["ok", "✓ capsule written  ~/.novafabric/capsules/01J9Z…/"]] },
+    { p: 2, title: "Replay in mocked mode", mat: "works today",
+      body: "<p><code>nova replay</code> defaults to <code>mocked</code>. It re-runs the captured command in a subprocess, and <code>MockModelDispatcher</code> serves the recorded OpenAI and Anthropic responses in order, so the LLM spends no tokens. <strong>Tool calls are not substituted:</strong> the workload's tools run as usual, so replay in a sandbox.</p>",
+      ref: "cli/replay.py → replay/_engine.py:ReplayEngine.run · replay/_dispatcher.py",
+      on: ["b-cmd", "b-llm", "b-tool"], llm: "served from the record (MockModelDispatcher)", tool: "runs live — not substituted", flow: true, hashed: true,
+      term: [["p", "$ nova replay 01J9Z…"], ["c", "  mode mocked · 2 model calls served from record"]] },
+    { p: 2, title: "Read the replay result", mat: "works today",
+      body: "<p>Every mode writes <code>.novafabric/replays/&lt;ulid&gt;/replay_result.yaml</code>: status, exit code, environment warnings and tool-schema drift. <code>forensic</code>, <code>semantic</code> and <code>exact</code> read the capsule without executing anything. <code>intervention</code> (experimental) re-runs with one event substituted and writes a counterfactual capsule.</p>",
+      ref: "replay/_result.py:write_replay_result · schemas/replay-result.schema.json",
+      on: [], hashed: true, term: [["ok", "✓ replay success · replay_result.yaml written"]] },
+    { p: 3, title: "Verify the seal", mat: "experimental",
+      body: "<p><code>nova verify</code> checks five layers in order: the DSSE signature, the RFC 3161 token, Merkle inclusion against the configured log, that <code>capsule.yaml</code> equals the signed payload, and every per-file digest. It exits <code>0</code> only if all of them pass.</p>",
+      ref: "cli/verify.py:verify_cmd",
+      on: ["b-dsse", "b-tsa", "b-log"], hashed: true, checks: [1, 1, 1, 1, 1],
+      term: [["p", "$ nova verify ~/.novafabric/capsules/01J9Z…/"], ["ok", "✓ signature  ✓ timestamp  ✓ log  ✓ binding  ✓ digests"], ["c", "  exit 0"]] },
+    { p: 3, title: "Tamper with one byte", mat: "works today",
+      body: "<p>Edit <code>outputs/stdout.txt</code> after sealing and its SHA-256 no longer matches <code>evidence_digests</code>. The signature is still valid, because the manifest is untouched, but check 5 fails and <code>nova verify</code> exits <code>1</code>. Editing <code>capsule.yaml</code> instead would break the binding check.</p>",
+      ref: "cli/verify.py · capture/orchestrator.py:_evidence_digests",
+      on: ["b-dsse"], hashed: true, tamper: true, checks: [1, 1, 1, 1, 0],
+      term: [["p", "$ echo x >> outputs/stdout.txt && nova verify …"], ["bad", "✗ digests: outputs/stdout.txt modified"], ["c", "  exit 1"]] },
+    { p: 3, title: "Hand evidence to a third party", mat: "works today",
+      body: "<p><code>nova export-evidence</code> builds an Evidence Bundle ZIP: the capsule, a lineage subgraph and Ed25519-signed in-toto attestations (run, redaction, lineage), whose subject is the capsule's Merkle root. Its <code>manifest.json</code> carries a verification recipe that needs only a SHA-256 tool and an Ed25519 verifier.</p>",
+      ref: "cli/export_evidence.py → evidence/bundle.py:EvidenceBundleBuilder · evidence/intoto.py",
+      on: ["b-dsse"], hashed: true, checks: [1, 1, 1, 1, 1],
+      term: [["p", "$ nova export-evidence 01J9Z… -o bundle.zip"], ["ok", "✓ bundle.zip  (manifest.json · attestations/*.intoto.json · run-capsule/)"]] }
+  ];
+
+  var $ = function (id) { return document.getElementById(id); };
+  var i = 0, timer = null, DWELL = 4200;
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // Phase buttons
+  var phases = $("phases");
+  PHASES.forEach(function (ph, k) {
+    var li = document.createElement("li");
+    var b = document.createElement("button");
+    b.type = "button";
+    b.style.setProperty("--c", ph.color);
+    b.innerHTML = '<span class="n">' + ph.name + '</span><span class="d">' + ph.desc + "</span>";
+    b.setAttribute("aria-label", ph.name.replace("·", "") + ": jump to phase (key " + (k + 1) + ")");
+    b.addEventListener("click", function () { go(firstOf(k)); stop(); });
+    li.appendChild(b);
+    phases.appendChild(li);
+  });
+  function firstOf(k) { for (var s = 0; s < STEPS.length; s++) if (STEPS[s].p === k) return s; return 0; }
+
+  // File tree
+  var tree = $("tree");
+  FILES.forEach(function (fl) {
+    var li = document.createElement("li");
+    li.style.setProperty("--c", "var(--" + fl.c + ")");
+    li.innerHTML = '<span class="f">' + fl.f + '</span><span class="tag">' + fl.tag + "</span>";
+    fl.el = li;
+    tree.appendChild(li);
+  });
+
+  // Checks
+  var checks = $("checks");
+  CHECKS.forEach(function (c, k) {
+    var li = document.createElement("li");
+    li.innerHTML = '<span class="dot" aria-hidden="true"></span><span>' + (k + 1) + ". " + c + '</span><span class="sr"></span>';
+    checks.appendChild(li);
+  });
+
+  function render() {
+    var st = STEPS[i];
+    // explanation
+    $("title").innerHTML = st.title + ' <span class="mat">' + st.mat + "</span>";
+    $("body").innerHTML = st.body;
+    $("ref").innerHTML = "Code: <code>" + st.ref + "</code>";
+    // phases
+    Array.prototype.forEach.call(phases.querySelectorAll("button"), function (b, k) {
+      if (k === st.p) b.setAttribute("aria-current", "step"); else b.removeAttribute("aria-current");
+    });
+    // workload / trust boxes
+    ["b-cmd", "b-hooks", "b-llm", "b-tool", "b-scan", "b-dsse", "b-tsa", "b-log"].forEach(function (id) {
+      var el = $(id);
+      var on = st.on.indexOf(id) >= 0;
+      el.classList.toggle("on", on);
+      el.classList.toggle("dim", !on);
+    });
+    $("s-llm").textContent = st.llm || "response recorded to model-calls.jsonl";
+    $("s-tool").textContent = st.tool || "recorded to tool-calls.jsonl";
+    $("workPanel").classList.toggle("flowing", !!st.flow && !reduce);
+    // files
+    FILES.forEach(function (fl) {
+      var el = fl.el;
+      var exists = i >= fl.at;
+      el.classList.toggle("hidden", !exists);
+      el.classList.toggle("new", i === fl.at);
+      el.classList.toggle("hashed", !!st.hashed && exists && fl.f.indexOf(".seal/") !== 0 && fl.id !== "manifest" && fl.tag !== "dirs");
+      el.classList.toggle("tampered", !!st.tamper && fl.id === "stdout");
+      el.setAttribute("aria-hidden", exists ? "false" : "true");
+    });
+    // checks
+    Array.prototype.forEach.call(checks.children, function (li, k) {
+      var v = st.checks ? st.checks[k] : null;
+      li.classList.toggle("pass", v === 1);
+      li.classList.toggle("fail", v === 0);
+      li.querySelector(".dot").textContent = v === 1 ? "✓" : v === 0 ? "✗" : "";
+      li.querySelector(".sr").textContent = v === 1 ? " passed" : v === 0 ? " failed" : " not run";
+    });
+    // terminal: cumulative within the phase
+    var lines = [];
+    for (var s = 0; s <= i; s++) if (STEPS[s].p === st.p) lines = lines.concat(STEPS[s].term || []);
+    var term = $("term");
+    term.innerHTML = '<span class="lbl">illustrative output</span>' + lines.map(function (l) {
+      return '<span class="' + l[0] + '">' + l[1].replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</span>";
+    }).join("\n");
+    // progress
+    $("bar").style.width = ((i + 1) / STEPS.length * 100) + "%";
+    $("count").textContent = (i + 1) + " / " + STEPS.length;
+    $("prev").disabled = i === 0; $("first").disabled = i === 0;
+    $("next").disabled = i === STEPS.length - 1; $("last").disabled = i === STEPS.length - 1;
+  }
+
+  function go(n) { i = Math.max(0, Math.min(STEPS.length - 1, n)); render(); }
+  function play() {
+    if (timer) return;
+    if (i === STEPS.length - 1) go(0);
+    $("play").setAttribute("aria-pressed", "true");
+    $("play").textContent = "❚❚ Pause";
+    $("play").setAttribute("aria-label", "Pause (Space)");
+    timer = setInterval(function () {
+      if (i >= STEPS.length - 1) { stop(); return; }
+      go(i + 1);
+    }, DWELL);
+  }
+  function stop() {
+    if (timer) clearInterval(timer);
+    timer = null;
+    $("play").setAttribute("aria-pressed", "false");
+    $("play").textContent = "▶ Play";
+    $("play").setAttribute("aria-label", "Play (Space)");
+  }
+  function toggle() { if (timer) stop(); else play(); }
+
+  $("play").addEventListener("click", toggle);
+  $("next").addEventListener("click", function () { stop(); go(i + 1); });
+  $("prev").addEventListener("click", function () { stop(); go(i - 1); });
+  $("first").addEventListener("click", function () { stop(); go(0); });
+  $("last").addEventListener("click", function () { stop(); go(STEPS.length - 1); });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    var tag = (e.target && e.target.tagName) || "";
+    var onButton = tag === "BUTTON";
+    switch (e.key) {
+      case "ArrowRight": stop(); go(i + 1); e.preventDefault(); break;
+      case "ArrowLeft": stop(); go(i - 1); e.preventDefault(); break;
+      case "Home": stop(); go(0); e.preventDefault(); break;
+      case "End": stop(); go(STEPS.length - 1); e.preventDefault(); break;
+      case " ": if (!onButton) { toggle(); e.preventDefault(); } break;
+      case "1": case "2": case "3": case "4": stop(); go(firstOf(+e.key - 1)); break;
+    }
+  });
+
+  // Theme toggle: auto → light → dark → auto (per-viewer convenience only).
+  var modes = ["auto", "light", "dark"], m = 0;
+  try { var saved = localStorage.getItem("nf-explainer-theme"); if (saved) m = Math.max(0, modes.indexOf(saved)); } catch (err) { /* storage unavailable */ }
+  function applyTheme() {
+    if (modes[m] === "auto") document.documentElement.removeAttribute("data-theme");
+    else document.documentElement.setAttribute("data-theme", modes[m]);
+    $("theme").textContent = "Theme: " + modes[m];
+    try { localStorage.setItem("nf-explainer-theme", modes[m]); } catch (err) { /* ignore */ }
+  }
+  $("theme").addEventListener("click", function () { m = (m + 1) % modes.length; applyTheme(); });
+  applyTheme();
+
+  // Deep link: explainer.html#step-7 opens on step 7.
+  var mh = /^#step-(\d+)$/.exec(window.location.hash || "");
+  if (mh) i = Math.max(0, Math.min(STEPS.length - 1, parseInt(mh[1], 10) - 1));
+  render();
+})();
+</script>
+</body>
+</html>

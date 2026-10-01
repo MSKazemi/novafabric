@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 430" width="980" height="430" role="img" aria-labelledby="t d">
+<title id="t">The lineage graph</title>
+<desc id="d">Five nodes: an asset summarizer@v3, a captured run A, a replay run B, and two artifacts. Run A has a consumed edge (observed) to the asset; each artifact has a produced_by edge (inferred) to run A; run B has a replayed_from edge (declared) to run A. Provenance follows edges forward, from an artifact to its run to the assets it consumed; blast-radius walks them backwards from an asset to everything that depends on it.</desc>
+<style>
+svg{--bg:#111114;--card:#1c1c22;--card2:#24242c;--stroke:#3a3a44;--fg:#ececf1;--muted:#a8a8b3;--line:#6b6b78;--cap:#7dd3fc;--seal:#c4b5fd;--rep:#5eead4;--diff:#fcd34d;--aud:#c4f0a8;--warn:#fda4af}
+@media (prefers-color-scheme:light){svg{--bg:#fafaf9;--card:#ffffff;--card2:#f1f1f3;--stroke:#d4d4d8;--fg:#18181b;--muted:#52525b;--line:#a1a1aa;--cap:#0369a1;--seal:#6d28d9;--rep:#0f766e;--diff:#a16207;--aud:#3f6212;--warn:#be123c}}
+.bg{fill:var(--bg)}
+.card{fill:var(--card);stroke:var(--stroke);stroke-width:1.2}
+.card2{fill:var(--card2);stroke:var(--stroke);stroke-width:1}
+text{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;fill:var(--fg)}
+.mono{font-family:ui-monospace,'JetBrains Mono','DejaVu Sans Mono',Menlo,monospace}
+.h{font-size:15px;font-weight:650}
+.t{font-size:12.5px}
+.s{font-size:11px;fill:var(--muted)}
+.title{font-size:17px;font-weight:700}
+.wire{fill:none;stroke:var(--line);stroke-width:1.6}
+.flow{fill:none;stroke-width:2;stroke-dasharray:6 8;animation:flow 1.6s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-28}}
+.c-cap{stroke:var(--cap)}.f-cap{fill:var(--cap)}
+.c-seal{stroke:var(--seal)}.f-seal{fill:var(--seal)}
+.c-rep{stroke:var(--rep)}.f-rep{fill:var(--rep)}
+.c-diff{stroke:var(--diff)}.f-diff{fill:var(--diff)}
+.c-aud{stroke:var(--aud)}.f-aud{fill:var(--aud)}
+.c-warn{stroke:var(--warn)}.f-warn{fill:var(--warn)}
+.c-muted{stroke:var(--line)}.f-muted{fill:var(--muted)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}.motion{display:none}.flow{stroke-dasharray:none}}
+@keyframes pv{0%,6%{opacity:0}10%,44%{opacity:1}50%,100%{opacity:0}}
+@keyframes br{0%,50%{opacity:0}56%,94%{opacity:1}100%{opacity:0}}
+.pv0,.pv1,.pv2{opacity:0;animation:pv 9s ease-in-out infinite}
+.pv1{animation-delay:.5s}.pv0{animation-delay:1s}
+.br0,.br1{opacity:0;animation:br 9s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){.pv0,.pv1,.pv2,.br0,.br1{opacity:0}}
+</style>
+<rect class="bg" x="0" y="0" width="980" height="430" rx="14"/>
+<text class="title" x="22" y="38" text-anchor="start">Lineage graph</text>
+<text class="s" x="22" y="58" text-anchor="start">Edges written by lineage/_writer.py at capture; indexed into lineage_nodes / lineage_edges (SQLite, WAL) in registry.db</text>
+<path class="wire" d="M340.0 210.0 L257.0 210.0"/><path class="f-muted" d="M250.0 210.0 L257.0 206.0 L257.0 214.0z"/>
+<text class="t mono" x="295.0" y="200" text-anchor="middle">consumed</text>
+<text class="s" x="295.0" y="228" text-anchor="middle">observed</text>
+<path class="wire" d="M660.0 140.0 L546.3 195.0"/><path class="f-muted" d="M540.0 198.0 L544.6 191.4 L548.0 198.6z"/>
+<text class="s mono" x="584.0" y="159.0" text-anchor="middle">produced_by · inferred</text>
+<path class="wire" d="M660.0 290.0 L546.1 225.5"/><path class="f-muted" d="M540.0 222.0 L548.1 222.0 L544.1 228.9z"/>
+<text class="s mono" x="584.0" y="276.0" text-anchor="middle">produced_by · inferred</text>
+<path class="wire" d="M440.0 320.0 L440.0 247.0"/><path class="f-muted" d="M440.0 240.0 L444.0 247.0 L436.0 247.0z"/>
+<text class="t mono" x="430" y="284.0" text-anchor="end">replayed_from</text>
+<text class="s" x="430" y="300.0" text-anchor="end">declared</text>
+<rect class="pv0 c-seal" x="46" y="176" width="208" height="68" rx="13" fill="none" stroke-width="2.5"/><rect class="card" x="50" y="180" width="200" height="60" rx="10"/><rect class="f-seal" x="50" y="180" width="200" height="4" rx="2"/><text class="s" x="150" y="204" text-anchor="middle">asset</text><text class="t mono" x="150" y="224" text-anchor="middle">summarizer@v3</text>
+<rect class="pv1 c-cap" x="336" y="176" width="208" height="68" rx="13" fill="none" stroke-width="2.5"/><rect class="card" x="340" y="180" width="200" height="60" rx="10"/><rect class="f-cap" x="340" y="180" width="200" height="4" rx="2"/><text class="s" x="440" y="204" text-anchor="middle">run</text><text class="t mono" x="440" y="224" text-anchor="middle">01J…A (capture)</text>
+<rect class="pv2 c-diff" x="656" y="106" width="208" height="68" rx="13" fill="none" stroke-width="2.5"/><rect class="card" x="660" y="110" width="200" height="60" rx="10"/><rect class="f-diff" x="660" y="110" width="200" height="4" rx="2"/><text class="s" x="760" y="134" text-anchor="middle">artifact</text><text class="t mono" x="760" y="154" text-anchor="middle">outputs/report.md</text>
+<rect class="br0 c-rep" x="336" y="316" width="208" height="68" rx="13" fill="none" stroke-width="2.5"/><rect class="card" x="340" y="320" width="200" height="60" rx="10"/><rect class="f-rep" x="340" y="320" width="200" height="4" rx="2"/><text class="s" x="440" y="344" text-anchor="middle">run</text><text class="t mono" x="440" y="364" text-anchor="middle">01J…B (replay_of A)</text>
+<rect class="br1 c-diff" x="656" y="256" width="208" height="68" rx="13" fill="none" stroke-width="2.5"/><rect class="card" x="660" y="260" width="200" height="60" rx="10"/><rect class="f-diff" x="660" y="260" width="200" height="4" rx="2"/><text class="s" x="760" y="284" text-anchor="middle">artifact</text><text class="t mono" x="760" y="304" text-anchor="middle">outputs/stdout.txt</text>
+<rect class="card" x="22" y="84" width="250" height="74" rx="10"/><rect class="f-aud" x="22" y="84" width="250" height="4" rx="2"/>
+<text class="t" x="36" y="108" text-anchor="start">provenance  (follows edges →)</text>
+<text class="t" x="36" y="128" text-anchor="start">blast-radius (walks edges ←)</text>
+<text class="s" x="36" y="148" text-anchor="start">replay-chain · time-travel</text>
+</svg>
