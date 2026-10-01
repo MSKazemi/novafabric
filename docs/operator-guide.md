@@ -992,6 +992,7 @@ Disabled by default. This is the only path that leaves the trust boundary.
 | Variable | Default | Effect |
 |---|---|---|
 | `NOVAFABRIC_SERVER_USAGE_METERING_ENABLED` | `true` | Master switch |
+| `NOVAFABRIC_SERVER_API_KEYS_ENFORCE_WORKSPACE_BINDING` | `false` | Experimental (ADR-0294): refuse (403) a workspace-bound API key whose workspace does not exist or whose request names another workspace ([quotas §per-workspace](ops/quotas-and-rate-limits.md)) |
 | `NOVAFABRIC_SERVER_USAGE_FLUSH_INTERVAL_S` | `60.0` | How often the in-memory accumulator is flushed |
 | `NOVAFABRIC_SERVER_USAGE_ACCUMULATOR_MAX_ENTRIES` | `10000` | Bound on the accumulator between flushes |
 | `NOVAFABRIC_SERVER_USAGE_ROLLUP_RETENTION_MONTHS` | `24` | Aggregated rollups |
