@@ -175,8 +175,13 @@ for the full list of what is and is not claimed.
 
 ## Citing NovaFabric
 
+The system and its evaluation are described in the paper
+[*NovaFabric: Tamper-Evident, Replayable Evidence for Autonomous AI Agent Runs*](https://arxiv.org/abs/2609.12582)
+(arXiv:2609.12582, 2026) — cite it for the design and the measured results.
+
 The repository carries a [`CITATION.cff`](../CITATION.cff), so GitHub's "Cite this
-repository" button produces BibTeX and APA directly. Please cite the **version you used** —
+repository" button produces BibTeX and APA directly. When you used the software, also cite the
+**version you used** —
 behaviour changes between releases, and a citation without a version is not reproducible
 either.
 

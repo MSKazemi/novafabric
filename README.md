@@ -879,15 +879,30 @@ certify or guarantee compliance.
 
 ## Citation
 
-If you use NovaFabric in your research or tooling, please cite it. Citation metadata
-lives in [`CITATION.cff`](CITATION.cff); a BibTeX entry:
+If you use NovaFabric in your research or tooling, please cite the paper,
+[arXiv:2609.12582](https://arxiv.org/abs/2609.12582). Citation metadata lives in
+[`CITATION.cff`](CITATION.cff).
+
+```bibtex
+@misc{seyedkazemi2026novafabric,
+  author        = {Seyedkazemi Ardebili, Mohsen},
+  title         = {{NovaFabric}: Tamper-Evident, Replayable Evidence for Autonomous {AI} Agent Runs},
+  year          = {2026},
+  eprint        = {2609.12582},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.DC},
+  url           = {https://arxiv.org/abs/2609.12582}
+}
+```
+
+To cite a specific software release instead:
 
 ```bibtex
 @software{novafabric,
   author  = {Seyedkazemi Ardebili, Mohsen},
-  title   = {{NovaFabric}: Replayable AI Infrastructure},
-  url      = {https://github.com/MSKazemi/novafabric},
-  version = {0.98.0},
+  title   = {{NovaFabric}: portable, verifiable execution evidence for {AI} and {HPC} runs},
+  url     = {https://github.com/MSKazemi/novafabric},
+  version = {0.102.1},
   license = {Apache-2.0}
 }
 ```

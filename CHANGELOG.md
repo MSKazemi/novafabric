@@ -11,6 +11,22 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Documentation
+
+- **The paper is citable: [arXiv:2609.12582](https://arxiv.org/abs/2609.12582).** *NovaFabric:
+  Tamper-Evident, Replayable Evidence for Autonomous AI Agent Runs* (2026) is now the
+  `preferred-citation` in `CITATION.cff`, so GitHub's "Cite this repository" button cites it.
+  The README's BibTeX block cites the paper and the current release, replacing a stale
+  `0.98.0` software entry. `docs/for-researchers.md` and `llms.txt` link the paper;
+  `llms.txt` reported the version as `0.101.0` and now says `0.102.1`.
+
+### Fixed
+
+- **A compliance test expired on 2026-10-01.** `test_recent_capsule_within_retention` used a
+  fixed "recent" date of 2026-04-01 against a six-month EU AI Act retention window, so it began
+  failing exactly six months later. The date is now relative to the current time. Test-only;
+  `is_within_retention` itself was correct.
+
 ## [0.102.1] - 2026-09-27
 
 ### Fixed

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -153,7 +153,8 @@ class TestEuAiActExporter:
 
 class TestIsWithinRetention:
     def test_recent_capsule_within_retention(self) -> None:
-        recent = datetime(2026, 4, 1, tzinfo=timezone.utc)  # ~7 weeks before 2026-05-20
+        # Relative to now: a fixed date here expired on 2026-10-01, six months after it.
+        recent = datetime.now(tz=timezone.utc) - timedelta(weeks=7)
         assert is_within_retention(recent, 6) is True
 
     def test_old_capsule_outside_retention(self) -> None:

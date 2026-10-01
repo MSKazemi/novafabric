@@ -37,6 +37,20 @@ date-released: 2026-09-27
 #   - type: doi
 #     value: "10.5281/zenodo.XXXXXXX"
 #     description: "Concept DOI — resolves to the latest release"
+preferred-citation:
+  type: article
+  title: "NovaFabric: Tamper-Evident, Replayable Evidence for Autonomous AI Agent Runs"
+  authors:
+    - family-names: "Seyedkazemi Ardebili"
+      given-names: "Mohsen"
+      orcid: "https://orcid.org/0000-0002-1166-6559"
+  year: 2026
+  journal: "arXiv preprint"
+  identifiers:
+    - type: other
+      value: "arXiv:2609.12582"
+      description: "arXiv identifier"
+  url: "https://arxiv.org/abs/2609.12582"
 keywords:
   - ai-agents
   - llm
