@@ -249,3 +249,18 @@ def test_x509_signer_binding_accepts_spec_envelopes(
         envelope["signatures"][0], _dsse_pae(envelope["payloadType"], b"{}")
     )
     assert cert is not None, why
+
+
+def test_evidence_bundle_pae_is_the_spec_pae() -> None:
+    """Evidence Bundles sign through evidence/intoto.py — pin it to the spec too.
+
+    Paper A states Evidence Bundles verify with stock tooling; this is the PAE half
+    of that claim, checked against the spec transcription rather than against itself.
+    """
+    from novafabric.evidence.intoto import DSSE_PAYLOAD_TYPE, dsse_pae
+
+    for payload_type, body in [
+        ("http://example.com/HelloWorld", b"hello world"),
+        (DSSE_PAYLOAD_TYPE, b'{"_type":"https://in-toto.io/Statement/v1"}'),
+    ]:
+        assert dsse_pae(payload_type, body) == reference_pae(payload_type, body)
