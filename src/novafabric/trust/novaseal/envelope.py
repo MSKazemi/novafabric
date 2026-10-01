@@ -61,17 +61,62 @@ class EnvelopeError(Exception):
 
 
 # ---------------------------------------------------------------------------
-# PAE — Pre-Authentication Encoding (DSSE spec §2.1)
+# PAE — Pre-Authentication Encoding
+#
+# DSSE v1 (protocol.md):
+#     PAE(type, body) = "DSSEv1" SP LEN(type) SP type SP LEN(body) SP body
+# with LEN(s) the ASCII decimal byte length of s.  That is what ``_pae`` computes
+# and what every new envelope is signed over, so in-toto, cosign, Rekor's ``dsse``
+# entry type and any DSSE library verify a NovaSeal envelope unchanged.
+#
+# Through v0.102.x NovaSeal signed a non-standard hybrid instead —
+# ``b"DSSEv1"`` followed by 8-byte little-endian length prefixes, no separators
+# (the pre-v1 signing-spec length encoding under the v1 tag).  No stock verifier
+# computes it, so those envelopes verified only with NovaFabric.  They must keep
+# verifying forever, so verification falls back to ``_pae_legacy`` and reports
+# which encoding matched (``PAE_LEGACY``) instead of silently accepting it.
+#
+# Accepting both is safe: the two encodings can never produce the same bytes.
+# Byte 7 of a DSSE v1 PAE is an ASCII digit (the first digit of LEN(type));
+# byte 7 of the legacy PAE is the second byte of a little-endian 64-bit length,
+# which is 0x00 for every payloadType shorter than 256 bytes — and NovaFabric only
+# verifies the fixed types it defines.  A signature over one encoding is therefore
+# never a signature over a different (type, body) pair in the other.
 # ---------------------------------------------------------------------------
 
-def _sp(s: bytes) -> bytes:
-    """Encode with 8-byte little-endian length prefix."""
-    return struct.pack("<Q", len(s)) + s
+#: Envelope signed over the DSSE v1 PAE (every envelope created from v0.103 on).
+PAE_DSSE_V1 = "dsse-v1"
+#: Envelope signed over the pre-spec little-endian PAE (sealed through v0.102.x).
+PAE_LEGACY = "legacy-le64"
 
 
 def _pae(payload_type: str, payload: bytes) -> bytes:
-    """Compute DSSE Pre-Authentication Encoding."""
-    return b"DSSEv1" + _sp(payload_type.encode("utf-8")) + _sp(payload)
+    """DSSE v1 Pre-Authentication Encoding — the bytes every new signature covers."""
+    type_bytes = payload_type.encode("utf-8")
+    return b"DSSEv1 %d %b %d %b" % (len(type_bytes), type_bytes, len(payload), payload)
+
+
+def _pae_legacy(payload_type: str, payload: bytes) -> bytes:
+    """Pre-spec PAE used through v0.102.x (verification only — never signed again)."""
+    type_bytes = payload_type.encode("utf-8")
+    return (
+        b"DSSEv1"
+        + struct.pack("<Q", len(type_bytes))
+        + type_bytes
+        + struct.pack("<Q", len(payload))
+        + payload
+    )
+
+
+def pae_candidates(payload_type: str, payload: bytes) -> list[tuple[str, bytes]]:
+    """The PAE byte strings a signature may cover, spec form first.
+
+    Callers verifying a signature try each in order and record which one matched.
+    """
+    return [
+        (PAE_DSSE_V1, _pae(payload_type, payload)),
+        (PAE_LEGACY, _pae_legacy(payload_type, payload)),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +377,27 @@ def _verify_signature_entry(sig_entry: dict[str, Any], pae: bytes) -> None:
     )
 
 
+def _verify_signature_entry_any_pae(
+    sig_entry: dict[str, Any], candidates: list[tuple[str, bytes]]
+) -> str:
+    """Verify one entry over the spec PAE, else the legacy PAE; return which matched.
+
+    Raises the spec-PAE error when neither matches, so a failing envelope reports
+    exactly the message it always did.
+    """
+    first_error: EnvelopeError | None = None
+    for encoding, pae in candidates:
+        try:
+            _verify_signature_entry(sig_entry, pae)
+        except EnvelopeError as exc:
+            if first_error is None:
+                first_error = exc
+            continue
+        return encoding
+    assert first_error is not None  # candidates is never empty
+    raise first_error
+
+
 def verify_envelope(
     envelope_bytes: bytes,
     expected_payload: bytes | None = None,
@@ -345,6 +411,10 @@ def verify_envelope(
     forged — was neither honoured nor detected. That was the recorded blocker for
     ADR-0151 NF-191 (hybrid post-quantum signing), because a hybrid envelope
     carries a classic and a post-quantum signature side by side.
+
+    Each signature is checked over the DSSE v1 PAE and, failing that, over the
+    legacy PAE envelopes were signed with through v0.102.x (see ``_pae``). Use
+    :func:`verify_envelope_encoding` to learn which one matched.
 
     Args:
         envelope_bytes:    JSON bytes of the DSSE envelope.
@@ -373,6 +443,17 @@ def verify_envelope(
             signature index and its individual reason, because reporting only the
             first would hide which of a hybrid pair actually broke.
     """
+    _verify_envelope(envelope_bytes, expected_payload, require=require)
+    return True
+
+
+def _verify_envelope(
+    envelope_bytes: bytes,
+    expected_payload: bytes | None = None,
+    *,
+    require: str = "any",
+) -> str:
+    """Shared body of the two public verifiers; returns the matched PAE encoding."""
     if require not in ("any", "all"):
         raise EnvelopeError(
             f"Unknown verification policy {require!r}; expected 'any' or 'all'"
@@ -398,17 +479,16 @@ def verify_envelope(
     if expected_payload is not None and payload != expected_payload:
         raise EnvelopeError("Envelope payload does not match expected bytes")
 
-    pae = _pae(payload_type, payload)
+    candidates = pae_candidates(payload_type, payload)
 
     failures: list[str] = []
-    verified = 0
+    encodings: list[str] = []
     for index, sig_entry in enumerate(sigs):
         try:
-            _verify_signature_entry(sig_entry, pae)
+            encodings.append(_verify_signature_entry_any_pae(sig_entry, candidates))
         except EnvelopeError as exc:
             failures.append(f"signatures[{index}]: {exc}")
-        else:
-            verified += 1
+    verified = len(encodings)
 
     if require == "all" and failures:
         raise EnvelopeError(
@@ -424,7 +504,24 @@ def verify_envelope(
             f"No signature verified ({len(sigs)} tried): " + "; ".join(failures)
         )
 
-    return True
+    # Any verified signature over the legacy PAE makes the envelope legacy: a stock
+    # verifier would not accept that signature.
+    return PAE_LEGACY if PAE_LEGACY in encodings else PAE_DSSE_V1
+
+
+def verify_envelope_encoding(
+    envelope_bytes: bytes,
+    expected_payload: bytes | None = None,
+    *,
+    require: str = "any",
+) -> str:
+    """Verify like :func:`verify_envelope` and return the PAE encoding that matched.
+
+    Returns :data:`PAE_DSSE_V1` for a spec envelope (verifiable with stock DSSE
+    tooling) or :data:`PAE_LEGACY` for one sealed through v0.102.x (verifiable with
+    NovaFabric only). Raises :class:`EnvelopeError` exactly as ``verify_envelope``.
+    """
+    return _verify_envelope(envelope_bytes, expected_payload, require=require)
 
 
 def extract_intent(envelope_bytes: bytes) -> Optional[SigningIntent]:

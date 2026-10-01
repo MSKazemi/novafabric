@@ -1077,7 +1077,12 @@ add any new vendored schema to that list.
 > 3. **`cli/verify_envelope.py` (`nova verify-envelope`)** — the *outer* envelopes above
 >    (`…bundle+json`, in-toto, SLSA), verifying the signature only via `evidence/intoto.py::dsse_verify`.
 >
-> They share the DSSE *PAE* encoding but carry different payload types and check different things.
+> All three sign over the DSSE v1 *PAE* (`"DSSEv1" SP LEN(type) SP type SP LEN(body) SP body`),
+> so stock DSSE tooling verifies them. Paths (1) and (2) also *accept* — on verification only —
+> the non-standard little-endian PAE that capsule seals and promote envelopes were signed with
+> through v0.102.x, and `nova verify` flags such a capsule as a **legacy envelope**. Never sign
+> over `_pae_legacy`; never add a third PAE. They carry different payload types and check
+> different things.
 > Pick by artifact: capsule seal → (1); promote bundle → (2); standard outer envelope → (3).
 
 **Adding a new outer envelope type:** add an emitter module under `envelopes/` that builds the

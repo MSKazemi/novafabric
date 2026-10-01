@@ -11,7 +11,6 @@ import base64
 import hashlib
 import importlib.resources
 import json
-import struct
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -28,7 +27,12 @@ from novafabric.promote.exceptions import PredicateValidationError
 # Base64 helpers — one definition, shared with NovaSeal.  This module used to
 # carry its own byte-identical copy of the URL-safe, unpadded pair, so the DSSE
 # interop defect fixed in ``trust.novaseal.envelope`` existed here twice.
-from novafabric.trust.novaseal.envelope import _b64_decode, _b64_encode
+from novafabric.trust.novaseal.envelope import (
+    _b64_decode,
+    _b64_encode,
+    _pae,
+    pae_candidates,
+)
 
 # ---------------------------------------------------------------------------
 # Payload type constants
@@ -48,16 +52,10 @@ class EnvelopeError(Exception):
     """Raised on DSSE creation or verification failures in promote subsystem."""
 
 
-# ---------------------------------------------------------------------------
-# PAE — Pre-Authentication Encoding (DSSE spec §2.1)
-# ---------------------------------------------------------------------------
-
-def _sp(s: bytes) -> bytes:
-    return struct.pack("<Q", len(s)) + s
-
-
-def _pae(payload_type: str, payload: bytes) -> bytes:
-    return b"DSSEv1" + _sp(payload_type.encode("utf-8")) + _sp(payload)
+# PAE — Pre-Authentication Encoding: defined once, in
+# ``trust/novaseal/envelope.py`` (DSSE v1 for signing; the pre-v0.103 legacy form is
+# accepted on verification only). This module used to carry a byte-identical copy of
+# the non-standard legacy encoder.
 
 
 
@@ -205,14 +203,17 @@ def verify_promote_envelope(
     if not isinstance(public_key, ec.EllipticCurvePublicKey):  # pragma: no cover
         raise EnvelopeError("Cert key is not an EC public key")
 
-    pae = _pae(payload_type, payload)
-
-    try:
-        public_key.verify(sig_bytes, pae, ec.ECDSA(hashes.SHA256()))
-    except InvalidSignature:
+    # DSSE v1 PAE first; envelopes signed through v0.102.x used the legacy PAE.
+    for _encoding, pae in pae_candidates(payload_type, payload):
+        try:
+            public_key.verify(sig_bytes, pae, ec.ECDSA(hashes.SHA256()))
+        except InvalidSignature:
+            continue
+        except Exception as exc:  # pragma: no cover
+            raise EnvelopeError(f"DSSE signature verification error: {exc}") from exc
+        break
+    else:
         raise EnvelopeError("DSSE signature verification failed: signature mismatch")
-    except Exception as exc:  # pragma: no cover
-        raise EnvelopeError(f"DSSE signature verification error: {exc}") from exc
 
     subject = _cert_subject(cert)
     return payload, subject

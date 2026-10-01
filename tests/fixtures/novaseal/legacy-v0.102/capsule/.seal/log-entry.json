@@ -1,0 +1,11 @@
+{
+  "leaf_index": 2,
+  "leaf_hash": "1bd9a9e5c23d1b7004cdb6eded450aaec8ced5bc8f0c55edb6d62d08d322a1b7",
+  "root_hash": "e2b46e9247d5d465bd0ff8659a16a3e39ff7a08b39b255b7978986ae2bb28b5f",
+  "tree_size": 3,
+  "entry": {
+    "capsule_id": "0d567adeedccf59e4de3934f2b0db058243dd7caff038f680cdddcab7258a4a1",
+    "keyid": "2a5d4126c1df38e13e0547629cfa24177999b417c6db1a15abd7a8d789d596d0",
+    "has_tsr": false
+  }
+}

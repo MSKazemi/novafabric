@@ -17,6 +17,7 @@ from novafabric.trust.novaseal.envelope import (
     _b64_decode,
     _b64_encode,
     _pae,
+    _pae_legacy,
     create_envelope,
     extract_payload,
     verify_envelope,
@@ -76,10 +77,16 @@ class TestPAE:
         pae = _pae("text/plain", b"hello")
         assert pae.startswith(b"DSSEv1")
 
-    def test_length_prefix_little_endian(self):
+    def test_spec_format(self):
+        # DSSE v1: "DSSEv1" SP LEN(type) SP type SP LEN(body) SP body
+        assert _pae("text/plain", b"hello") == b"DSSEv1 10 text/plain 5 hello"
+
+    def test_legacy_length_prefix_little_endian(self):
+        # The pre-spec encoding envelopes were signed with through v0.102.x. It is
+        # never signed again but must stay byte-exact so those envelopes verify.
         payload_type = "text/plain"
         payload = b"hello"
-        pae = _pae(payload_type, payload)
+        pae = _pae_legacy(payload_type, payload)
         # After b"DSSEv1": 8 bytes LE length of payload_type, then payload_type bytes,
         # then 8 bytes LE length of payload, then payload bytes
         offset = len(b"DSSEv1")

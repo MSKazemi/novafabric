@@ -180,6 +180,51 @@ longer forwards the submitting shell's environment (ADR-0270).
   `tail_alarm` in the benchmark JSON). `seal.seal-call.p99` moves from `gated` to `target`
   in `docs/slo.md`. The test is renamed `test_seal_latency_gate`.
 
+
+- **`NOVA_CAP003_ENABLED` defaults to `false`, and that is now pinned on every surface
+  (ADR-0069 / ADR-0062).**
+
+  ADR-0069 stated the cap-003 flag's default "becomes `true`"; the code has defaulted to
+  `false` since 2026-07-30, and `false` is the correct side — the dual-object GDPR/WORM split
+  stays gated until EU-GDPR legal counsel reviews its own open question (ADR-0066's mandatory
+  safety gate), and ADR-0069 resolved a different capability's question. The ADR text is
+  corrected; in code, `novafabric.storage.dual_object_store.cap003_enabled()` is now the single
+  parser (used by the writer and `nova storage inspect`), and
+  `tests/scale_architecture/test_cap003_default.py` pins the default on the writer and the CLI
+  and scans the source so any module still reading the variable inline must default to
+  `"false"`. No behaviour change.
+
+
+- **The public decisions index listed 13 ADRs as `unknown` and was missing ADR-0273.**
+
+  `scripts/gen_decisions_index.py` did not recognise the bullet-list header
+  (`- **Status:** Accepted`, `- **Date:** …`) used by ADRs 0256–0268, nor the
+  `# ADR 0256 — Title` heading form, so [`docs/decisions.md`](docs/decisions.md) showed
+  `unknown` status and slug titles for them. The parser now reads all three header
+  generations (which also restores the real titles of older ADRs that use the spaced heading),
+  gains `--adr-dir` for regenerating from another checkout, and honours an optional
+  `index_title` frontmatter key so an ADR can publish a shorter title than its internal one.
+  The index is regenerated: 274 decisions, none `unknown`. Regression test:
+  `tests/docs/test_decisions_index_parser.py`.
+
+- **NovaSeal capsule seals and promote envelopes were not verifiable with stock DSSE tooling.**
+
+  `trust/novaseal/envelope.py::_pae` (and a byte-identical copy in `promote/predicates.py`)
+  signed `"DSSEv1"` followed by 8-byte little-endian lengths with no separators — not the
+  DSSE v1 pre-authentication encoding (`"DSSEv1" SP LEN(type) SP type SP LEN(body) SP body`).
+  A reference PAE written in the test suite from the spec text (and checked against the
+  spec's own test vector) rejected every capsule seal, so in-toto, cosign, Rekor's `dsse`
+  entry type or a customer's DSSE library could not verify one. Evidence Bundles were not
+  affected: they already signed through `evidence/intoto.py::dsse_pae`, which is spec-correct.
+
+  New seals and promote envelopes are signed over the DSSE v1 PAE. **Every envelope sealed
+  by v0.102.x and earlier still verifies** — verification falls back to the legacy encoding
+  (pinned by golden fixtures under `tests/fixtures/novaseal/legacy-v0.102/`), and
+  `nova verify` prints a *legacy envelope* warning naming it. The two encodings can never
+  produce the same bytes (byte 7 is an ASCII digit in one and `0x00` in the other), so a
+  signature is only ever accepted over the PAE it was made over. `VerificationResult`
+  gains an optional `pae_encoding` field (`dsse-v1` / `legacy-le64`).
+
 ### Changed
 
 - **Dashboard accessibility and theme polish.** Every tab's loading state is now a polite
@@ -228,34 +273,6 @@ longer forwards the submitting shell's environment (ADR-0270).
   nothing. **Fails closed:** if the entry cannot be written, the insecure start is refused with
   `InsecureModeAuditError`. Secure starts are unaffected. Tests:
   `tests/test_server_insecure_audit.py`.
-
-### Fixed
-
-- **`NOVA_CAP003_ENABLED` defaults to `false`, and that is now pinned on every surface
-  (ADR-0069 / ADR-0062).**
-
-  ADR-0069 stated the cap-003 flag's default "becomes `true`"; the code has defaulted to
-  `false` since 2026-07-30, and `false` is the correct side — the dual-object GDPR/WORM split
-  stays gated until EU-GDPR legal counsel reviews its own open question (ADR-0066's mandatory
-  safety gate), and ADR-0069 resolved a different capability's question. The ADR text is
-  corrected; in code, `novafabric.storage.dual_object_store.cap003_enabled()` is now the single
-  parser (used by the writer and `nova storage inspect`), and
-  `tests/scale_architecture/test_cap003_default.py` pins the default on the writer and the CLI
-  and scans the source so any module still reading the variable inline must default to
-  `"false"`. No behaviour change.
-
-
-- **The public decisions index listed 13 ADRs as `unknown` and was missing ADR-0273.**
-
-  `scripts/gen_decisions_index.py` did not recognise the bullet-list header
-  (`- **Status:** Accepted`, `- **Date:** …`) used by ADRs 0256–0268, nor the
-  `# ADR 0256 — Title` heading form, so [`docs/decisions.md`](docs/decisions.md) showed
-  `unknown` status and slug titles for them. The parser now reads all three header
-  generations (which also restores the real titles of older ADRs that use the spaced heading),
-  gains `--adr-dir` for regenerating from another checkout, and honours an optional
-  `index_title` frontmatter key so an ADR can publish a shorter title than its internal one.
-  The index is regenerated: 274 decisions, none `unknown`. Regression test:
-  `tests/docs/test_decisions_index_parser.py`.
 
 
 ## [0.102.1] - 2026-09-27

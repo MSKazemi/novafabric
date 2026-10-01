@@ -10,7 +10,6 @@ from __future__ import annotations
 import base64
 import datetime
 import json
-import struct
 from dataclasses import dataclass
 
 from cryptography import x509
@@ -140,9 +139,9 @@ def _b64(raw: bytes) -> str:
 
 
 def dsse_pae(payload: bytes, payload_type: str = DSSE_PAYLOAD_TYPE) -> bytes:
-    """DSSE PAE bytes (spec §2.1)."""
+    """DSSE v1 PAE bytes: "DSSEv1" SP LEN(type) SP type SP LEN(body) SP body."""
     t = payload_type.encode("utf-8")
-    return b"DSSEv1" + struct.pack("<Q", len(t)) + t + struct.pack("<Q", len(payload)) + payload
+    return b"DSSEv1 %d %b %d %b" % (len(t), t, len(payload), payload)
 
 
 def ecdsa_entry(node: Node, payload: bytes, *, cert: bool = True) -> dict[str, str]:

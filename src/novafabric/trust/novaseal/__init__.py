@@ -38,7 +38,7 @@ from novafabric.trust.novaseal.envelope import (
     SigningIntent,
     create_envelope,
     extract_intent,
-    verify_envelope,
+    verify_envelope_encoding,
 )
 from novafabric.trust.novaseal.merkle import MerkleError, MerkleLog, open_merkle_log  # noqa: F401
 from novafabric.trust.novaseal.nonce_store import NonceStore
@@ -95,6 +95,10 @@ class VerificationResult:
     # reporting a bare "Timestamp: OK" for a capsule that carries no token
     # overstates the evidence.
     timestamp_present: bool = False
+    # Which DSSE PAE the signature verified over: ``"dsse-v1"`` (spec; verifiable
+    # with stock DSSE tooling) or ``"legacy-le64"`` (sealed through v0.102.x;
+    # verifiable with NovaFabric only). None when the signature did not verify.
+    pae_encoding: str | None = None
 
     def __str__(self) -> str:
         parts = [
@@ -252,6 +256,7 @@ class NovaSeal:
 
         # --- Signature ---
         signature_ok = False
+        pae_encoding: str | None = None
         signing_intent: SigningIntent | None = None
         dsse_bytes = b""
         dsse_file = seal_path / "manifest.dsse"
@@ -260,7 +265,7 @@ class NovaSeal:
         else:
             dsse_bytes = dsse_file.read_bytes()
             try:
-                verify_envelope(dsse_bytes)
+                pae_encoding = verify_envelope_encoding(dsse_bytes)
                 signature_ok = True
                 signing_intent = extract_intent(dsse_bytes)
             except EnvelopeError as exc:
@@ -320,6 +325,7 @@ class NovaSeal:
             signing_intent=signing_intent,
             ca_chain_ok=ca_chain_ok,
             ca_chain_errors=ca_chain_errors,
+            pae_encoding=pae_encoding,
         )
 
     def rotate_key(self, new_key_config: KeyConfig) -> RotationReceipt:

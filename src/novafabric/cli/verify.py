@@ -339,6 +339,14 @@ def verify_cmd(
     # Print results
     console.print(f"\n[bold]NovaSeal verification:[/bold] {capsule_dir.name}")
     _print_check("Signature (DSSE ECDSA P-256)", result.signature_ok)
+    if result.pae_encoding == "legacy-le64":
+        # Sealed through v0.102.x over a non-standard PAE: still valid evidence,
+        # but a stock DSSE verifier (in-toto, cosign, Rekor) will reject it.
+        console.print(
+            "    [yellow]⚠ legacy envelope:[/yellow] signed over the pre-spec PAE "
+            "(NovaFabric ≤ v0.102.x) — verifies with NovaFabric, not with stock "
+            "DSSE tooling. Re-seal to obtain a DSSE v1 envelope."
+        )
     if result.signing_intent is not None:
         console.print(f"    Intent: {result.signing_intent.value}")
     if result.timestamp_ok and not result.timestamp_present:

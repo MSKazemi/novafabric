@@ -431,15 +431,17 @@ def _b64_any(value: str) -> bytes:
 
 
 def _dsse_pae(payload_type: str, payload: bytes) -> bytes:
-    """DSSE Pre-Authentication Encoding (spec §2.1), identical to ``envelope._pae``."""
-    type_bytes = payload_type.encode("utf-8")
-    return (
-        b"DSSEv1"
-        + len(type_bytes).to_bytes(8, "little")
-        + type_bytes
-        + len(payload).to_bytes(8, "little")
-        + payload
-    )
+    """DSSE v1 Pre-Authentication Encoding — delegates to ``envelope._pae``."""
+    from novafabric.trust.novaseal.envelope import _pae  # noqa: PLC0415
+
+    return _pae(payload_type, payload)
+
+
+def _dsse_pae_candidates(payload_type: str, payload: bytes) -> list[bytes]:
+    """Spec PAE, then the legacy PAE envelopes were signed with through v0.102.x."""
+    from novafabric.trust.novaseal.envelope import pae_candidates  # noqa: PLC0415
+
+    return [pae for _encoding, pae in pae_candidates(payload_type, payload)]
 
 
 def _spki(key: object) -> bytes:
@@ -539,13 +541,16 @@ def verify_dsse_signer_chain(
         payload = _b64_any(payload_b64)
     except (binascii.Error, ValueError) as exc:
         raise X509ChainError(f"DSSE payload is unparseable: {exc}") from exc
-    pae = _dsse_pae(payload_type, payload)
+    paes = _dsse_pae_candidates(payload_type, payload)
     extra = list(intermediates)
 
     failures: list[str] = []
     revocation: RevocationCheckResult | None = None
     for index, entry in enumerate(sigs):
-        cert, why = _dsse_entry_bound_cert(entry, pae)
+        cert, why = _dsse_entry_bound_cert(entry, paes[0])
+        if cert is None:
+            legacy_cert, _ = _dsse_entry_bound_cert(entry, paes[1])
+            cert = legacy_cert
         if cert is None:
             failures.append(f"signatures[{index}]: {why}")
             continue
