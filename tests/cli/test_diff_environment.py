@@ -26,6 +26,7 @@ from typing import Any
 
 import pytest
 import yaml
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -209,6 +210,6 @@ def test_help_lists_environment_flag() -> None:
     from novafabric.cli.diff import GROUP_BY_DIMENSIONS
 
     assert GROUP_BY_DIMENSIONS == ("variant", "environment")
-    result = runner.invoke(app, ["diff", "--help"], env={"NO_COLOR": "1", "COLUMNS": "200"})
+    result = runner.invoke(app, ["diff", "--help"], env={"COLUMNS": "200"})
     assert result.exit_code == 0
-    assert "--environment" in result.output
+    assert_flag_in_help(result, "--environment")
