@@ -194,6 +194,23 @@ def verify_inclusion_proof(
     return current == expected_root
 
 
+def inclusion_proof_length(tree_size: int) -> int:
+    """Number of sibling hashes in an inclusion proof for a tree of *tree_size* leaves.
+
+    Under the duplicate-padding construction every level halves (rounding up) until
+    one node remains, so every leaf's proof has exactly this many entries. A carried
+    proof of any other length is malformed.
+    """
+    if tree_size <= 0:
+        raise MerkleError("tree_size must be positive")
+    depth = 0
+    nodes = tree_size
+    while nodes > 1:
+        nodes = (nodes + 1) // 2
+        depth += 1
+    return depth
+
+
 # ---------------------------------------------------------------------------
 # Consistency proof (ADR-0041 v0.2, gap-001)
 #
@@ -420,6 +437,7 @@ class MerkleLog:
                 "INSERT OR REPLACE INTO tree_heads (tree_size, root_hash) VALUES (?, ?)",
                 (tree_size, root_hash),
             )
+            inclusion_proof = _compute_inclusion_proof(leaf_index, all_hashes)
 
         return {
             "leaf_index": leaf_index,
@@ -427,6 +445,9 @@ class MerkleLog:
             "root_hash": root_hash,
             "tree_size": tree_size,
             "entry": dict(entry),
+            # Additive (v0.103): the audit path to root_hash at tree_size, so a
+            # verifier without this log can still check inclusion offline.
+            "inclusion_proof": inclusion_proof,
         }
 
     # ------------------------------------------------------------------
@@ -453,6 +474,13 @@ class MerkleLog:
             return None
         result: dict[str, object] = json.loads(row[0])
         return result
+
+    def find_leaf_index(self, leaf_hash: str) -> int | None:
+        """Return the lowest leaf_index whose leaf_hash is *leaf_hash*, or None."""
+        row = self._conn.execute(
+            "SELECT MIN(leaf_index) FROM leaves WHERE leaf_hash = ?", (leaf_hash,)
+        ).fetchone()
+        return None if row is None or row[0] is None else int(row[0])
 
     def get_inclusion_proof(self, leaf_index: int) -> list[str]:
         """Return the inclusion proof (list of sibling hashes) for *leaf_index*."""
@@ -671,13 +699,19 @@ class PostgresMerkleLog:
                     (tree_size, root_hash),
                 )
 
-        return {
+        result: dict[str, object] = {
             "leaf_index": leaf_index,
             "leaf_hash": leaf_hash,
             "root_hash": root_hash,
             "tree_size": tree_size,
             "entry": dict(entry),
         }
+        # A BIGSERIAL can leave gaps (rolled-back inserts), in which case the leaf's
+        # position differs from leaf_index and a proof would not verify against it —
+        # carry the proof only when the two agree.
+        if all_hashes and all_hashes[-1] == leaf_hash and leaf_index == tree_size - 1:
+            result["inclusion_proof"] = _compute_inclusion_proof(leaf_index, all_hashes)
+        return result
 
     # ------------------------------------------------------------------
     # Read
@@ -724,6 +758,17 @@ class PostgresMerkleLog:
         if row is None:
             raise MerkleError(f"leaf_index {leaf_index} not found")
         return str(row[0])
+
+    def find_leaf_index(self, leaf_hash: str) -> int | None:
+        """Return the lowest leaf_index whose leaf_hash is *leaf_hash*, or None."""
+        self._ensure_connected()
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT MIN(leaf_index) FROM nova_seal_leaves WHERE leaf_hash = %s",
+                (leaf_hash,),
+            )
+            row = cur.fetchone()
+        return None if row is None or row[0] is None else int(row[0])
 
     def get_inclusion_proof(self, leaf_index: int) -> list[str]:
         self._ensure_connected()

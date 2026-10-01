@@ -207,6 +207,28 @@ longer forwards the submitting shell's environment (ADR-0270).
   The index is regenerated: 274 decisions, none `unknown`. Regression test:
   `tests/docs/test_decisions_index_parser.py`.
 
+- **`nova verify` needed the sealer's own Merkle log, so an independent auditor could not verify a capsule.**
+
+  With no `novaseal.yaml` the command stopped at "NovaSeal is not configured" (exit 1); with
+  a config but a fresh log it reported "Merkle inclusion proof failed" (exit 1) — for
+  capsules whose signature was valid. On the sealer's machine the check was also weaker
+  than its name: it confirmed that *whatever leaf* sat at `log-entry.json`'s `leaf_index`
+  was consistent with the log's root, so pointing `leaf_index` at another capsule's leaf
+  passed (reproduced against a golden v0.102.1 capsule).
+
+  Verification is now self-contained (`trust/novaseal.verify_seal_dir`). New seals carry
+  their **inclusion proof** in `log-entry.json` (additive `inclusion_proof` field), which
+  verifies with no log at all. The entry must hash to its `leaf_hash` and name the signed
+  payload's capsule id; a local log, when present, must hold that exact leaf at the
+  recorded index. A capsule sealed by v0.102.x verified away from the sealer's log prints
+  `⊘ Merkle log inclusion: NOT CHECKED — log not available` and exits 0. `nova verify`
+  never creates a log file. `VerificationResult` gains `log_inclusion`
+  (`local-log` / `carried-proof` / `not-checked` / `failed`) and `log_notes`;
+  `log_integrity_ok` is True only when inclusion was actually checked. The carried proof's
+  tree head is not independently anchored (not signed or witnessed) — that remains the job
+  of `nova seal log verify` and ADR-0097 witnessing.
+
+
 - **NovaSeal capsule seals and promote envelopes were not verifiable with stock DSSE tooling.**
 
   `trust/novaseal/envelope.py::_pae` (and a byte-identical copy in `promote/predicates.py`)

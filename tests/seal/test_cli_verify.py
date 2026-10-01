@@ -111,7 +111,12 @@ class TestVerifyCommand:
         assert result.exit_code == 1
         assert ".seal" in result.output
 
-    def test_verify_no_config_exits_1(self, tmp_path, monkeypatch):
+    def test_verify_no_config_verifies_offline_and_fails_an_empty_seal(
+        self, tmp_path, monkeypatch
+    ):
+        # Without a novaseal.yaml, verification runs from the capsule alone (an
+        # independent auditor's machine — audit finding S2). An empty .seal/ has
+        # nothing to verify, so it still fails.
         monkeypatch.delenv("NOVAFABRIC_SEAL_CONFIG", raising=False)
         capsule_dir = tmp_path / "cap"
         capsule_dir.mkdir()
@@ -124,7 +129,8 @@ class TestVerifyCommand:
         )
         result = runner.invoke(app, ["verify", str(capsule_dir)])
         assert result.exit_code == 1
-        assert "not configured" in result.output.lower()
+        assert "verifying from the capsule alone" in result.output.lower()
+        assert "signature_ok=False" in result.output
 
     def test_verify_shows_command_in_help(self):
         result = runner.invoke(app, ["--help"])

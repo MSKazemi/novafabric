@@ -732,7 +732,8 @@ seal = NovaSeal(
 bundle = seal.seal(capsule_manifest)
 # bundle.dsse_envelope  → bytes  (DSSE JSON)
 # bundle.tsr            → bytes  (RFC 3161 DER; b"" if TSA skipped/unavailable)
-# bundle.log_entry      → dict   (leaf_index, root_hash, tree_size, …)
+# bundle.log_entry      → dict   (leaf_index, leaf_hash, root_hash, tree_size,
+#                                  inclusion_proof, entry)
 # bundle.capsule_id     → str    (SHA-256 hex of the signed payload)
 ```
 
@@ -750,11 +751,23 @@ result = seal.verify(
 # result.valid            → bool
 # result.signature_ok     → bool
 # result.timestamp_ok     → bool
-# result.log_integrity_ok → bool
+# result.log_integrity_ok → bool  (True only when inclusion was actually checked)
+# result.log_inclusion    → "local-log" | "carried-proof" | "not-checked" | "failed"
+# result.pae_encoding     → "dsse-v1" | "legacy-le64" (sealed through v0.102.x)
 # result.ca_chain_ok      → bool
 # result.errors           → list[str]
 assert result.valid, str(result)
+
+# Independent verification — no key, no config, no Merkle log needed:
+from novafabric.trust.novaseal import verify_seal_dir
+
+result = verify_seal_dir(".novafabric/runs/01HX.../.seal")  # merkle_log=None
 ```
+
+`log_inclusion` is `not-checked` (and `valid` stays True) when the capsule carries no
+inclusion proof and no log holding its entry was supplied — a capsule sealed by v0.102.x
+or earlier, verified away from the sealer's log. Any inconsistency (an entry that names
+another capsule, a proof that does not recompute its root) is `failed`.
 
 `verify()` reads `manifest.dsse`, an optional `manifest.dsse.tsr`, and
 `log-entry.json` from the `.seal/` directory. An **absent or empty** TSR is

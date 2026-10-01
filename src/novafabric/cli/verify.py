@@ -154,14 +154,17 @@ def verify_cmd(
     Checks three layers of integrity in the .seal/ directory (local backend):
       • ECDSA P-256 DSSE signature
       • RFC 3161 timestamp (structural hash)
-      • Merkle log inclusion proof
+      • Merkle log inclusion (proof carried in the capsule, and/or the local log)
 
     With ``--backend sigstore``, verifies the Sigstore bundle stored under
     ``<home>/sigstore/<capsule_id>.bundle.json``.
 
-    Exits 0 if all checks pass, 1 otherwise.
-    Requires NovaSeal config (novaseal.yaml or NOVAFABRIC_SEAL_CONFIG env var)
-    for the local backend.
+    Exits 0 if all checks pass, 1 otherwise. Needs only the capsule: no NovaSeal
+    config and no Merkle log are required (an independent auditor can verify on a
+    fresh machine). With novaseal.yaml (or NOVAFABRIC_SEAL_CONFIG) the entry is also
+    checked against the sealer's own Merkle log. A capsule that carries no
+    inclusion proof (sealed by <= v0.102.x) and is not in a local log prints
+    "Merkle log inclusion: NOT CHECKED" and does not fail.
 
     Scope: single capsule.
 
@@ -253,26 +256,16 @@ def verify_cmd(
         console.print(f"[red]NovaSeal config error:[/red] {exc}")
         raise typer.Exit(code=1)
 
+    # Verification is self-contained (audit finding S2): the signature, the
+    # timestamp and a carried inclusion proof need nothing but the capsule. The
+    # sealer's Merkle log, when this machine has one, is an extra check — never a
+    # prerequisite, or an independent auditor could not verify at all.
+    merkle_log = _open_existing_merkle_log(profile)
     if profile is None:
         console.print(
-            "[yellow]NovaSeal is not configured.[/yellow]\n"
-            "Create ~/.novafabric/novaseal.yaml or set NOVAFABRIC_SEAL_CONFIG "
-            "to enable cryptographic verification."
+            "[dim]No NovaSeal config on this machine — verifying from the capsule "
+            "alone (no local Merkle log).[/dim]"
         )
-        raise typer.Exit(code=1)
-
-    from novafabric.trust.novaseal import KeyConfig, NovaSeal
-
-    config = KeyConfig(
-        profile=profile.profile,
-        key_path=str(profile.key_path),
-        cert_path=str(profile.cert_path),
-    )
-    seal = NovaSeal(
-        config=config,
-        tsa_url=profile.tsa_url,
-        db_path=str(profile.merkle_db),
-    )
 
     # Read capsule_id from log-entry.json
     import json
@@ -298,7 +291,13 @@ def verify_cmd(
     if derived_capsule_id and capsule_id and derived_capsule_id != capsule_id:
         capsule_id_ok = False
 
-    result = seal.verify(capsule_id=capsule_id, seal_dir=str(seal_dir))
+    from novafabric.trust.novaseal import verify_seal_dir  # noqa: PLC0415
+
+    try:
+        result = verify_seal_dir(seal_dir, merkle_log=merkle_log)
+    finally:
+        if merkle_log is not None:
+            merkle_log.close()
     binding = _capsule_binding_report(capsule_dir, dsse_bytes)
     chain_bundle = ca_bundle if ca_bundle is not None else getattr(profile, "ca_bundle", None)
     crl_directory = crl_dir if crl_dir is not None else getattr(profile, "crl_dir", None)
@@ -358,7 +357,7 @@ def verify_cmd(
         )
     else:
         _print_check("Timestamp (RFC 3161)", result.timestamp_ok)
-    _print_check("Merkle log inclusion", result.log_integrity_ok)
+    _print_log_inclusion(result.log_inclusion, result.log_notes)
     binding_ok = _print_capsule_binding(binding)
     chain_ok = True
     if chain_check is not None:
@@ -766,6 +765,50 @@ def _print_check(label: str, ok: bool) -> None:
     icon = "[green]✓[/green]" if ok else "[red]✗[/red]"
     status = "[green]OK[/green]" if ok else "[red]FAIL[/red]"
     console.print(f"  {icon} {label}: {status}")
+
+
+def _open_existing_merkle_log(profile: Any) -> Any:
+    """Open the configured Merkle log only if it already exists; else None.
+
+    Verification must never *create* a log (an empty one proves nothing and would
+    litter an auditor's machine), and a missing log is not an error.
+    """
+    if profile is None:
+        return None
+    from novafabric.trust.novaseal.merkle import open_merkle_log  # noqa: PLC0415
+
+    location = str(profile.merkle_db)
+    if location.startswith(("postgres://", "postgresql://", "postgresql:/", "postgres:/")):
+        return open_merkle_log(location)
+    path = Path(location).expanduser()
+    if not path.is_file():
+        return None
+    return open_merkle_log(path)
+
+
+def _print_log_inclusion(status: str, notes: list[str]) -> None:
+    """Print the Merkle inclusion outcome (see ``verify_seal_dir``)."""
+    if status == "local-log":
+        _print_check("Merkle log inclusion", True)
+        console.print("    checked against the local (sealer's) Merkle log")
+    elif status == "carried-proof":
+        _print_check("Merkle log inclusion", True)
+        console.print(
+            "    inclusion proof carried in the capsule; the tree head it proves against "
+            "is not independently anchored"
+        )
+    elif status == "not-checked":
+        console.print(
+            "  [yellow]⊘[/yellow] Merkle log inclusion: [yellow]NOT CHECKED[/yellow] — "
+            "log not available, inclusion not checked"
+        )
+        console.print(
+            "    this capsule carries no inclusion proof (sealed by NovaFabric ≤ v0.102.x) "
+            "and its entry is not in a local Merkle log; verify with the sealer's log "
+            "(--seal-config) for this check"
+        )
+    else:
+        _print_check("Merkle log inclusion", False)
 
 
 def _verify_sigstore(

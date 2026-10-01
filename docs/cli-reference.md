@@ -3191,7 +3191,9 @@ Without `--certify`/`--anchor`, `attest-replay` behavior is unchanged (including
 ### nova verify \<capsule\>
 
 Verify a capsule's cryptographic seal — and that the capsule on disk is the one that was
-sealed. Requires NovaSeal configuration ([ADR-0041](./decisions.md)). **experimental** —
+sealed. Needs **only the capsule**: no NovaSeal configuration and no Merkle log are
+required, so an independent auditor can verify on a fresh machine; a configured
+`novaseal.yaml` adds a check against the sealer's own log. **experimental** —
 shipped v0.10; see [v0.10.0 release notes](releases/v0.10.0.md).
 
 ```bash
@@ -3200,13 +3202,13 @@ nova verify <capsule> --seal-config ~/.novafabric/novaseal.yaml
 NOVAFABRIC_SEAL_CONFIG=./novaseal.yaml nova verify <capsule>
 ```
 
-Checks (all must pass for exit 0):
+Checks (all must pass for exit 0; a check that could not run is printed `⊘ … NOT CHECKED/NOT PRESENT` and does not fail):
 
 | Check | What is verified |
 |---|---|
 | Signature | DSSE envelope signature — ECDSA P-256 against the certificate embedded in the envelope |
 | Timestamp | RFC 3161 TSR integrity — SHA-256 of the DSSE bytes matches the messageImprint in the TSR |
-| Merkle log | Inclusion proof — leaf hash at the stored index recomputes the Merkle root |
+| Merkle log | `log-entry.json`'s entry must hash to its `leaf_hash` and name the signed payload's capsule id; then inclusion is checked by every means available — the **inclusion proof carried in `log-entry.json`** (seals from v0.103) must recompute the recorded `root_hash`, and when the local (sealer's) log holds the entry it must sit at the recorded index under the log's root. A capsule with neither (sealed by ≤ v0.102.x, verified away from the sealer's log) prints `⊘ Merkle log inclusion: NOT CHECKED — log not available` and does **not** fail. The carried proof's tree head is not independently anchored (not signed or witnessed) |
 | Manifest binding | `capsule.yaml` on disk matches the signed DSSE payload, and `capsule_id` is recomputed from that payload rather than read from `log-entry.json` (ADR-0251) |
 | Evidence binding | every file listed in the manifest's `evidence_digests` still hashes to the value that was signed (ADR-0251) |
 

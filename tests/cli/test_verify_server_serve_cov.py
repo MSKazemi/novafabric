@@ -146,7 +146,7 @@ class TestVerifyBranches:
         assert result.exit_code == 1
         assert ".seal" in result.output
 
-    def test_local_profile_none_exits_1(self, tmp_path, monkeypatch):
+    def test_local_profile_none_verifies_offline_and_fails_empty_seal(self, tmp_path, monkeypatch):
         cap = tmp_path / "cap"
         cap.mkdir()
         (cap / ".seal").mkdir()
@@ -156,7 +156,7 @@ class TestVerifyBranches:
         )
         result = runner.invoke(app, ["verify", str(cap)])
         assert result.exit_code == 1
-        assert "not configured" in result.output.lower()
+        assert "verifying from the capsule alone" in result.output.lower()
 
     def test_unknown_backend_exits_1(self, tmp_path):
         cap = tmp_path / "cap"
