@@ -62,8 +62,12 @@ class TestVerifyTimestamp:
     def test_invalid_der_returns_false(self):
         assert verify_timestamp(b"not der", b"anything") is False
 
-    def test_granted_status_with_matching_hash(self):
-        """Synthesize a minimal TSR with PKIStatus=0 and matching hash."""
+    def test_granted_status_with_bare_hash_is_rejected(self):
+        """A granted status plus the hash as a bare OCTET STRING is not a timestamp.
+
+        No TSA signed anything here. Until v0.103 this verified (the check looked for
+        the hash anywhere in the response) — audit finding S3, 2026-10-01.
+        """
         dsse_bytes = b"dsse-envelope-content"
         expected_hash = hashlib.sha256(dsse_bytes).digest()
 
@@ -85,7 +89,7 @@ class TestVerifyTimestamp:
         hash_octet = der_octet_string(expected_hash)    # hash embedded
         tsr = der_sequence(pki_status_info + hash_octet)
 
-        assert verify_timestamp(tsr, dsse_bytes) is True
+        assert verify_timestamp(tsr, dsse_bytes) is False
 
     def test_wrong_hash_returns_false(self):
         """TSR with mismatched hash should fail."""

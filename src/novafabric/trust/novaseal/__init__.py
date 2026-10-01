@@ -53,6 +53,7 @@ from novafabric.trust.novaseal.merkle import (  # noqa: F401
 from novafabric.trust.novaseal.nonce_store import NonceStore
 from novafabric.trust.novaseal.timestamp import (
     TSAUnavailableError,
+    check_timestamp,
     request_timestamp,
     verify_timestamp,
 )
@@ -122,6 +123,10 @@ class VerificationResult:
     # with stock DSSE tooling) or ``"legacy-le64"`` (sealed through v0.102.x;
     # verifiable with NovaFabric only). None when the signature did not verify.
     pae_encoding: str | None = None
+    # True when a present token passed the strict checks (positional imprint,
+    # messageDigest == H(TSTInfo), CMS signature, ESSCertID). False with
+    # ``timestamp_ok`` True means only the legacy structural check could run.
+    timestamp_strict: bool = False
     # How Merkle inclusion was established — see ``verify_seal_dir``. One of
     # LOG_INCLUSION_LOCAL / _PROOF / _NOT_CHECKED / _FAILED. ``log_integrity_ok``
     # is True only for the first two; ``not-checked`` does not invalidate.
@@ -361,6 +366,7 @@ def verify_seal_dir(
     # --- Timestamp ---
     timestamp_ok = False
     timestamp_present = False
+    timestamp_strict = False
     tsr_file = seal_path / "manifest.dsse.tsr"
     if not tsr_file.exists():
         # TSA may have been skipped — treat as ok if TSR file absent
@@ -372,9 +378,11 @@ def verify_seal_dir(
             timestamp_ok = True
         elif dsse_bytes:
             timestamp_present = True
-            timestamp_ok = verify_timestamp(tsr_bytes, dsse_bytes)
+            ts_check = check_timestamp(tsr_bytes, dsse_bytes)
+            timestamp_ok = ts_check.ok
+            timestamp_strict = ts_check.strict
             if not timestamp_ok:
-                errors.append("TSR verification failed: hash mismatch or invalid DER")
+                errors.append(f"TSR verification failed: {ts_check.reason}")
         else:
             errors.append("Cannot verify TSR: DSSE envelope missing")
 
@@ -397,6 +405,7 @@ def verify_seal_dir(
         signature_ok=signature_ok,
         timestamp_ok=timestamp_ok,
         timestamp_present=timestamp_present,
+        timestamp_strict=timestamp_strict,
         log_integrity_ok=log_integrity_ok,
         errors=errors,
         signing_intent=signing_intent,

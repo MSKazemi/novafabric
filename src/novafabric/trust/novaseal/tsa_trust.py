@@ -84,6 +84,7 @@ from novafabric.trust.novaseal.x509_identity import (
 __all__ = [
     "TSA_MAX_CHAIN_DEPTH",
     "TsaTrustChainResult",
+    "verify_tsa_token_integrity",
     "verify_tsa_trust_chain",
 ]
 
@@ -454,4 +455,64 @@ def verify_tsa_trust_chain(
         chain_subjects=chain.chain_subjects,
         trust_anchor_fingerprint=chain.trust_anchor_fingerprint,
         revocation=chain.revocation,
+    )
+
+
+def verify_tsa_token_integrity(
+    token_bytes: bytes,
+    expected_digest: bytes,
+    *,
+    expected_digest_algorithm: str = _OID_SHA256,
+) -> TsaTrustChainResult:
+    """Anchor-free check that an RFC 3161 token is intact and timestamps *expected_digest*.
+
+    Everything :func:`verify_tsa_trust_chain` checks about the token itself — the
+    signer certificate named by ``SignerInfo.sid`` is embedded, the ESSCertID binds
+    it, ``contentType`` is id-ct-TSTInfo, ``messageDigest`` equals the hash of the
+    ``TSTInfo`` actually present, the CMS signature over the signed attributes
+    verifies, and ``messageImprint`` (read positionally, algorithm included) equals
+    *expected_digest* — but **not** who the TSA is: no trust anchor, no EKU, no
+    chain, no revocation. A self-made "TSA" passes this; only
+    :func:`verify_tsa_trust_chain` with operator anchors says the time is trustworthy.
+
+    This is what a token is checked against when no TSA CA bundle is configured, so
+    that the token at least provably belongs to these bytes and was not edited.
+
+    Raises:
+        TsaTokenError: the token is not strictly parseable DER. The caller decides
+            whether that is fatal (it is not reported as a verification result
+            because a structurally unusual token is not the same as a forged one).
+    """
+    if expected_digest_algorithm not in _HASHES:
+        raise ValueError(f"unsupported expected_digest_algorithm {expected_digest_algorithm}")
+    token = parse_timestamp_token(token_bytes)
+    tst = token.tst_info
+    result = TsaTrustChainResult(
+        valid=False,
+        reason="",
+        gen_time=tst.gen_time,
+        policy=tst.policy,
+        serial_number=tst.serial_number,
+        nonce=tst.nonce,
+        imprint_algorithm=tst.message_imprint.hash_algorithm.oid,
+        imprint_digest_hex=tst.message_imprint.hashed_message.hex(),
+    )
+    try:
+        signer_cert, _pool = _find_signer(token, ())
+        result = replace(result, signer_subject=signer_cert.subject.rfc4514_string())
+        result = replace(
+            result, ess_cert_id_version=_check_ess_cert_id(token, signer_cert, False)
+        )
+        digest_alg = _check_signed_attrs(token)
+        _check_signature(token.signer, signer_cert, digest_alg)
+        _check_imprint(token, expected_digest, expected_digest_algorithm)
+    except _Fail as exc:
+        return replace(result, reason=str(exc))
+    return replace(
+        result,
+        valid=True,
+        reason=(
+            f"token intact and timestamps these bytes at {tst.gen_time.isoformat()} "
+            "(TSA identity not checked: no TSA trust anchor)"
+        ),
     )

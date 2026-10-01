@@ -9,14 +9,22 @@ Wraps the existing novafabric.trust._rfc3161 module and adds:
 - Nonce replay protection: per-request nonces backed by SQLite (ADR-0070)
 - Cert-chain depth validation via verify_tsa_cert_chain() (ADR-0070)
 
-What is verified in v0.2 (timestamp_ok=True):
-  1. TSR is valid DER with PKIStatus granted (0) or grantedWithMods (1).
-  2. The messageImprint hash in the TSR equals SHA-256(dsse_bytes).
-  3. The TSA's CMS digital signature over the TSTInfo is cryptographically
-     valid, checked against the certificate embedded in the TSR.
-  4. (New) Nonce in the TSR matches the nonce sent in the request, and the
-     nonce has not been seen before (replay protection).
-  5. (New) Certificate chain depth does not exceed tsa_cert_max_depth.
+What the token covers (ADR-0030): SHA-256 of the serialised DSSE envelope,
+signature included. The token is computed *over* the signature, so it is
+outside the signature by construction — that is by design, not a gap.
+
+What is verified at verification time (``check_timestamp``; timestamp_ok=True):
+  1. TSR is DER with PKIStatus granted (0) or grantedWithMods (1) and carries a
+     TimeStampToken (a bare status is rejected — no TSA signed anything).
+  2. Strictly parsed, positionally: the embedded TSA signer certificate is bound
+     by ESSCertID, ``messageDigest`` equals the hash of the TSTInfo present, the
+     CMS signature over the signed attributes verifies, and the TSTInfo
+     ``messageImprint`` (algorithm included) equals SHA-256(dsse_bytes).
+  3. Who the TSA is (trust anchor, critical id-kp-timeStamping EKU, chain at
+     genTime, CRLs) only with operator anchors — ``tsa_trust.verify_tsa_trust_chain``
+     (``nova verify --tsa-ca-bundle``).
+
+At request time additionally: nonce replay protection and a chain-depth bound.
 
 Production TSA configuration (ADR-0070):
   - Default TSA URL: https://freetsa.org/tsr
@@ -25,11 +33,13 @@ Production TSA configuration (ADR-0070):
   - offline_mode=True skips nonce store writes and network calls (HPC air-gap)
 
 Degraded mode:
-  When check 3 cannot proceed (e.g. the TSR has no TimeStampToken, the CMS
-  structure uses an unsupported encoding, or the signature algorithm OID is
-  not yet mapped), a DEBUG log is emitted and the result is determined by
-  checks 1 and 2 alone.  This preserves backwards compatibility with
-  synthetic / mock TSRs used in tests and unusual TSA deployments.
+  A token the strict parser rejects (BER encodings, unusual structures) falls
+  back to the pre-v0.103 structural check — the hash appears in the token and
+  any CMS signature found verifies — and is reported with ``strict=False``
+  (``nova verify`` prints "structural check only"), never as a plain OK. Until
+  v0.103 *every* token took that path, which accepted a genuine token whose
+  TSTInfo imprint had been swapped and a response with no TSA signature at all
+  (audit finding S3, 2026-10-01).
 """
 
 from __future__ import annotations
@@ -37,6 +47,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import secrets
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -202,56 +213,101 @@ def _check_cert_chain(tsr_bytes: bytes, max_depth: int) -> None:
         )
 
 
-def verify_timestamp(tsr_bytes: bytes, dsse_bytes: bytes) -> bool:
-    """Structural and cryptographic verification of an RFC 3161 TSR.
+@dataclass(frozen=True)
+class TimestampCheck:
+    """Outcome of :func:`check_timestamp`.
 
-    Checks (in order):
-    1. TSR is parseable DER with PKIStatus granted (0) or grantedWithMods (1).
-    2. The messageImprint hash embedded in the TSR equals SHA-256(*dsse_bytes*).
-    3. The TSA's CMS digital signature over the TSTInfo is cryptographically
-       valid, verified against the certificate embedded in the TSR's
-       TimeStampToken CMS SignedData.
+    Attributes:
+        ok: The token is accepted as a timestamp of the given bytes.
+        strict: The token was parsed positionally and every binding was checked
+            (see :func:`check_timestamp`). ``ok and not strict`` means the token
+            could not be parsed strictly and only the legacy structural check ran —
+            report it as such, never as a plain "OK".
+        reason: One line saying why.
+    """
 
-    Deferred to v0.2:
-    - Trust anchor / chain-of-trust (configurable root-CA trust store).
-    - Certificate revocation (CRL / OCSP).
-    - Nonce replay protection.
+    ok: bool
+    strict: bool
+    reason: str
 
-    Degraded mode:
-        If the CMS SignerInfo cannot be extracted (synthetic TSR, unusual TSA
-        encoding, or unsupported signature algorithm), a DEBUG log is emitted
-        and only checks 1 and 2 are enforced.  Operators who require strict
-        signature verification should upgrade to v0.2.
 
-    Returns:
-        True if all applicable checks pass.
-        False if *any* check fails, including an invalid TSA signature.
+def check_timestamp(tsr_bytes: bytes, dsse_bytes: bytes) -> TimestampCheck:
+    """Verify that an RFC 3161 response timestamps *dsse_bytes*, without a TSA anchor.
+
+    What the token covers (ADR-0030): the SHA-256 of the serialised DSSE envelope,
+    **signature included**. The token is therefore necessarily outside the DSSE
+    signature — it is computed over it — and that is by design; what must hold is
+    that the token is bound to exactly these envelope bytes.
+
+    Strict path (any token a real TSA issues): parse the token positionally
+    (:mod:`tsa_token`) and require — via
+    :func:`~novafabric.trust.novaseal.tsa_trust.verify_tsa_token_integrity` —
+    PKIStatus granted, the embedded signer certificate bound by ESSCertID,
+    ``messageDigest`` equal to the hash of the ``TSTInfo`` present, a valid CMS
+    signature, and ``messageImprint`` equal to SHA-256(*dsse_bytes*).
+
+    Without TSA trust anchors this proves the token is intact and belongs to these
+    bytes; it does not prove *who* the TSA is. ``nova verify --tsa-ca-bundle``
+    (``verify_tsa_trust_chain``) adds that.
+
+    Degraded path: a response that carries a TimeStampToken the strict parser
+    rejects (BER encodings, unusual structures) falls back to the pre-v0.103
+    structural check and is returned with ``strict=False``. A response with no
+    TimeStampToken at all is rejected: it carries no TSA signature.
     """
     if not tsr_bytes:
-        return False
-
+        return TimestampCheck(False, False, "empty timestamp response")
     try:
         pki_status = _parse_pki_status(tsr_bytes)
-    except TimestampError:
-        return False
-
+    except TimestampError as exc:
+        return TimestampCheck(False, False, f"not a TimeStampResp: {exc}")
     if pki_status not in (0, 1):
-        return False
+        return TimestampCheck(False, False, f"PKIStatus {pki_status} is not granted")
+    token_raw = _extract_token_raw(tsr_bytes)
+    if token_raw is None or token_raw[:1] != b"\x30":  # ContentInfo is a SEQUENCE
+        return TimestampCheck(
+            False, False, "response carries no TimeStampToken (nothing was signed by a TSA)"
+        )
+
+    from novafabric.trust.novaseal.tsa_token import TsaTokenError  # noqa: PLC0415
+    from novafabric.trust.novaseal.tsa_trust import (  # noqa: PLC0415
+        verify_tsa_token_integrity,
+    )
 
     expected_hash = hashlib.sha256(dsse_bytes).digest()
+    try:
+        integrity = verify_tsa_token_integrity(tsr_bytes, expected_hash)
+    except TsaTokenError as exc:
+        legacy_ok = _legacy_structural_check(tsr_bytes, expected_hash)
+        return TimestampCheck(
+            legacy_ok,
+            False,
+            f"token not strictly parseable ({exc}); structural check only "
+            f"({'imprint found' if legacy_ok else 'failed'})",
+        )
+    return TimestampCheck(integrity.valid, True, integrity.reason)
+
+
+def _legacy_structural_check(tsr_bytes: bytes, expected_hash: bytes) -> bool:
+    """Pre-v0.103 best-effort check, kept only for tokens the strict parser rejects."""
     if not _extract_message_imprint(tsr_bytes, expected_hash):
         return False
-
-    # Check 3: CMS signature using embedded TSA certificate.
     sig_ok = _verify_tsa_signature(tsr_bytes)
-    if sig_ok is False:
-        return False
     if sig_ok is None:
         logger.debug(
             "verify_timestamp: CMS SignerInfo extraction failed; "
             "falling back to structural + hash checks only"
         )
-    return True
+    return sig_ok is not False
+
+
+def verify_timestamp(tsr_bytes: bytes, dsse_bytes: bytes) -> bool:
+    """Return True if *tsr_bytes* is a valid timestamp of *dsse_bytes*.
+
+    Boolean view of :func:`check_timestamp` — see there for exactly what is
+    checked. Use ``check_timestamp`` to learn whether the strict checks ran.
+    """
+    return check_timestamp(tsr_bytes, dsse_bytes).ok
 
 
 # ---------------------------------------------------------------------------

@@ -207,6 +207,29 @@ longer forwards the submitting shell's environment (ADR-0270).
   The index is regenerated: 274 decisions, none `unknown`. Regression test:
   `tests/docs/test_decisions_index_parser.py`.
 
+- **An RFC 3161 token was accepted without being bound to the envelope it claimed to timestamp.**
+
+  The audit question "is the timestamp covered by the signature?" has a by-design answer:
+  no, and it cannot be — ADR-0030 timestamps SHA-256 of the whole DSSE envelope, signature
+  included, so the token is computed *over* the signature. The real gap was in how a token
+  was checked without TSA trust anchors: `verify_timestamp` accepted it when *any* OCTET
+  STRING in it equalled the envelope hash and never checked the CMS `messageDigest` against
+  the `TSTInfo`. A genuine token for one envelope with its imprint swapped for another's
+  verified as a timestamp of the other, and a "token" with no TSA signature at all — a
+  granted status plus the hash — printed `Timestamp (RFC 3161): OK`.
+
+  Tokens are now parsed positionally (the strict `tsa_token` parser already used by
+  `--tsa-ca-bundle`) and must satisfy: TSTInfo `messageImprint` (algorithm included) equals
+  the envelope hash, `messageDigest` equals the hash of that TSTInfo, the CMS signature
+  verifies under the embedded TSA certificate bound by ESSCertID
+  (`tsa_trust.verify_tsa_token_integrity`). A response without a TimeStampToken fails. A token
+  the strict parser cannot read falls back to the old structural check and is reported as
+  `structural check only` (`VerificationResult.timestamp_strict = False`), never as a plain
+  OK. Real TSA tokens (the freetsa.org fixture included) take the strict path, so every
+  timestamped capsule sealed by a released version still verifies. Without
+  `--tsa-ca-bundle`, `nova verify` now says the TSA's *identity* was not checked.
+
+
 - **`nova verify` needed the sealer's own Merkle log, so an independent auditor could not verify a capsule.**
 
   With no `novaseal.yaml` the command stopped at "NovaSeal is not configured" (exit 1); with

@@ -357,6 +357,17 @@ def verify_cmd(
         )
     else:
         _print_check("Timestamp (RFC 3161)", result.timestamp_ok)
+        if result.timestamp_ok and not result.timestamp_strict:
+            console.print(
+                "    [yellow]⚠ structural check only:[/yellow] the token could not be "
+                "parsed strictly, so its TSA signature and imprint binding were not fully "
+                "verified"
+            )
+        elif result.timestamp_ok and not tsa_anchor_paths:
+            console.print(
+                "    token intact and bound to this envelope; TSA identity not checked "
+                "(pass --tsa-ca-bundle)"
+            )
     _print_log_inclusion(result.log_inclusion, result.log_notes)
     binding_ok = _print_capsule_binding(binding)
     chain_ok = True

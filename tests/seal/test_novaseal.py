@@ -265,8 +265,16 @@ class TestVerifyEdgeCases:
         assert result.timestamp_ok is True
 
     def test_tsr_present_with_valid_bytes(self, signing_materials, tmp_path):
-        """Present non-empty TSR that actually matches DSSE hash → timestamp_ok=True."""
+        """A TSA-signed token over SHA256(dsse_bytes) → timestamp_ok=True.
+
+        Until v0.103 this test used a hand-built "TSR" of a granted status plus the
+        hash as a bare OCTET STRING — no TSA signature at all — and that verified.
+        It no longer does (audit finding S3); a real token is required.
+        """
         import hashlib
+
+        from ._tsa_pki import TokenSpec, make_tsa_cert, make_tsr
+        from ._x509_pki import make_cert
 
         key_path, cert_path, mat_tmp = signing_materials
         config = KeyConfig(profile="local", key_path=str(key_path), cert_path=str(cert_path))
@@ -274,12 +282,8 @@ class TestVerifyEdgeCases:
         manifest = {"run_id": "tsr-valid"}
         bundle = seal.seal(manifest)
 
-        # Build a minimal TSR that contains SHA256(dsse_bytes)
-        expected_hash = hashlib.sha256(bundle.dsse_envelope).digest()
-        def der_seq(c: bytes) -> bytes: return bytes([0x30, len(c)]) + c
-        def der_int(n: int) -> bytes: return bytes([0x02, 0x01, n])
-        def der_oct(d: bytes) -> bytes: return bytes([0x04, len(d)]) + d
-        tsr = der_seq(der_seq(der_int(0)) + der_oct(expected_hash))
+        tsa = make_tsa_cert(make_cert("tsr-valid-root", issuer=None, ca=True))
+        tsr = make_tsr(tsa, TokenSpec(digest=hashlib.sha256(bundle.dsse_envelope).digest()))
 
         capsule_dir = tmp_path / "cap-tsr-valid"
         capsule_dir.mkdir()

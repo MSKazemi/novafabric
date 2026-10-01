@@ -225,12 +225,14 @@ class TestTimestampPresenceIsReportedHonestly:
 
         seen: list[bytes] = []
 
-        def _fake_verify_timestamp(tsr_bytes, dsse_bytes):
+        from novafabric.trust.novaseal.timestamp import TimestampCheck
+
+        def _fake_check_timestamp(tsr_bytes, dsse_bytes):
             seen.append(tsr_bytes)
-            return True
+            return TimestampCheck(ok=True, strict=True, reason="faked")
 
         monkeypatch.setattr(
-            "novafabric.trust.novaseal.verify_timestamp", _fake_verify_timestamp
+            "novafabric.trust.novaseal.check_timestamp", _fake_check_timestamp
         )
         seal = NovaSeal(
             config=_local_config(config_path.parent),
