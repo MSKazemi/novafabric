@@ -72,6 +72,24 @@ longer forwards the submitting shell's environment (ADR-0270).
   reports `installed-contended`. The new marker value is additive. No schema, CLI or adapter
   signature changed.
 
+### Added
+
+- **Dashboard filter bar over HTTP (ADR-0232 D1/D3, ADR-0233, ADR-0234 D2) — experimental.**
+
+  Three read-only `nova serve` routes expose the filter grammar that already shipped in
+  `novafabric.query.filterbar`: `GET /api/filter/parse` compiles `status:error -model:gpt-4o`
+  to the DSL's own predicates (a 422 names the vocabulary), `GET /api/filter/runs` returns
+  the runs those predicates select — widened to an ADR-0233 `node`/`root`/`tree` scope,
+  newest first, capped at 200 — and `GET /api/filter/suggest` lists observed values for
+  one dimension inside a time window (default 30 days), capped at 100 with a `truncated`
+  flag. No new grammar: parsing delegates to the DSL parser and selection uses the same
+  index and scope expansion as `nova query` (`query.select_run_ids`), and every response
+  carries the `nova query` invocation over the same predicates. A truncated selection, a
+  scope expansion that hit its bound, or a tree still filling is reported in
+  `complete`/`incomplete_reasons`, never rendered as the whole answer. All three are
+  classified `read` in the ADR-0228 table (now 213 routes) and annotated in
+  `api/openapi-dashboard.yaml`.
+
 
 ## [0.102.1] - 2026-09-27
 
@@ -1253,7 +1271,7 @@ longer forwards the submitting shell's environment (ADR-0270).
   `read` sees plus the audit trail, and can mutate nothing at any level. No new vocabulary was
   invented, because a fourth taxonomy is what guarantees drift.
 
-  Enforcement is **one declarative table of 210 routes** consulted by **one** app-level
+  Enforcement is **one declarative table of 213 routes** consulted by **one** app-level
   dependency — not 184 decorators inside the module ADR-0183 froze. A route missing from the
   table is **denied to everyone**, including the server token: in an evidence tool a loud
   failure beats a quiet disclosure, and defaulting to `read` would make a forgotten line a

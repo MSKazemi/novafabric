@@ -64,6 +64,7 @@ from novafabric.serve.routers.analytics import build_analytics_router
 from novafabric.serve.routers.backup_status import build_backup_status_router
 from novafabric.serve.routers.compliance_exports import build_compliance_exports_router
 from novafabric.serve.routers.cost_trio import build_cost_trio_router
+from novafabric.serve.routers.filter_bar import build_filter_bar_router
 from novafabric.serve.routers.forensics import build_forensics_router
 from novafabric.serve.routers.holds import build_holds_router
 from novafabric.serve.routers.maintenance import build_maintenance_router
@@ -2665,6 +2666,8 @@ def create_app(
     # ---------- dashboard query panel (P4, CLI-parity program Phase C) ----------
     # Wraps the ADR-0129 query DSL's own execution path; no new grammar.
     app.include_router(build_query_panel_router(verify_token, capsule_dir=capsule_dir))
+    # ADR-0232 D1/D3 + ADR-0233: the Runs view's filter bar (read-only).
+    app.include_router(build_filter_bar_router(verify_token, capsule_dir=capsule_dir))
 
     # ---------- forensics timeline (P5, CLI-parity program Phase C) ----------
     # Wraps forensics/timeline.py::merge_timeline over the run's own sealed

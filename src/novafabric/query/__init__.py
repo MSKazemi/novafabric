@@ -11,7 +11,7 @@ from novafabric.query.errors import (
     QueryIndexError,
     QueryParseError,
 )
-from novafabric.query.executor import run_query
+from novafabric.query.executor import RunSelection, run_query, select_run_ids
 from novafabric.query.filterbar import (
     MAX_SUGGESTIONS,
     ObservedValues,
@@ -50,11 +50,13 @@ __all__ = [
     "QueryIndexError",
     "QueryParseError",
     "QueryPlan",
+    "RunSelection",
     "build_plan",
     "observed_values",
     "parse_filter_bar",
     "load_query_file",
     "plan_from_query_object",
     "run_query",
+    "select_run_ids",
     "validate_query_object",
 ]

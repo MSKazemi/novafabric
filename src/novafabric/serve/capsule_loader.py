@@ -70,6 +70,24 @@ def load_jsonl(capsule_dir: Path, filename: str) -> list[dict[str, Any]]:
     return out
 
 
+def summarize_manifest(capsule_dir: Path, m: dict[str, Any]) -> dict[str, Any]:
+    """The one-line run summary the dashboard list renders, from one manifest."""
+    return {
+        "run_id": m.get("run_id", capsule_dir.name),
+        "status": m.get("status"),
+        "created_at": m.get("created_at"),
+        "finished_at": m.get("finished_at"),
+        "duration_ms": m.get("duration_ms"),
+        "exit_code": m.get("exit_code"),
+        "model_call_count": m.get("model_call_count", 0),
+        "tool_call_count": m.get("tool_call_count", 0),
+        "mutating_tool_count": m.get("mutating_tool_count", 0),
+        "command": m.get("command", []),
+        "novafabric_version": m.get("novafabric_version"),
+        "capsule_path": str(capsule_dir.resolve()),
+    }
+
+
 def list_run_summaries(base: Path) -> list[dict[str, Any]]:
     """Compact one-line-per-run summary for the dashboard list view."""
     summaries: list[dict[str, Any]] = []
@@ -78,23 +96,31 @@ def list_run_summaries(base: Path) -> list[dict[str, Any]]:
             m = load_capsule_manifest(d)
         except (FileNotFoundError, yaml.YAMLError):
             continue
-        summaries.append({
-            "run_id": m.get("run_id", d.name),
-            "status": m.get("status"),
-            "created_at": m.get("created_at"),
-            "finished_at": m.get("finished_at"),
-            "duration_ms": m.get("duration_ms"),
-            "exit_code": m.get("exit_code"),
-            "model_call_count": m.get("model_call_count", 0),
-            "tool_call_count": m.get("tool_call_count", 0),
-            "mutating_tool_count": m.get("mutating_tool_count", 0),
-            "command": m.get("command", []),
-            "novafabric_version": m.get("novafabric_version"),
-            "capsule_path": str(d.resolve()),
-        })
+        summaries.append(summarize_manifest(d, m))
     # Newest first
     summaries.sort(key=lambda s: s.get("created_at") or "", reverse=True)
     return summaries
+
+
+def run_summaries_for(base: Path, run_ids: list[str]) -> list[dict[str, Any]]:
+    """Summaries for exactly *run_ids*, in the order given, in one directory pass.
+
+    A run id with no readable capsule is omitted rather than invented — the
+    caller reports how many it asked for, so a gap is visible, not papered over.
+    """
+    wanted = set(run_ids)
+    found: dict[str, dict[str, Any]] = {}
+    for d in discover_capsule_dirs(base):
+        if len(found) == len(wanted):
+            break
+        try:
+            m = load_capsule_manifest(d)
+        except (FileNotFoundError, yaml.YAMLError):
+            continue
+        rid = str(m.get("run_id") or d.name)
+        if rid in wanted and rid not in found:
+            found[rid] = summarize_manifest(d, m)
+    return [found[r] for r in run_ids if r in found]
 
 
 def _list_dir_files(capsule_dir: Path, subdir: str) -> list[dict[str, Any]]:

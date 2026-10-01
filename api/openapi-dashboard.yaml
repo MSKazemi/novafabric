@@ -138,6 +138,110 @@ components:
       - totals
       title: FairnessRequest
       type: object
+    FilterParseResponse:
+      properties:
+        cli_equivalent:
+          title: Cli Equivalent
+          type: string
+        filter:
+          title: Filter
+          type: string
+        predicates:
+          items:
+            type: string
+          title: Predicates
+          type: array
+        where:
+          title: Where
+          type: string
+      required:
+      - filter
+      - predicates
+      - where
+      - cli_equivalent
+      title: FilterParseResponse
+      type: object
+    FilterRunsResponse:
+      properties:
+        cli_equivalent:
+          title: Cli Equivalent
+          type: string
+        complete:
+          title: Complete
+          type: boolean
+        filter:
+          title: Filter
+          type: string
+        incomplete_reasons:
+          items:
+            type: string
+          title: Incomplete Reasons
+          type: array
+        items:
+          items:
+            additionalProperties: true
+            type: object
+          title: Items
+          type: array
+        matched:
+          title: Matched
+          type: integer
+        scope:
+          title: Scope
+          type: string
+        since:
+          title: Since
+          type: string
+        truncated:
+          title: Truncated
+          type: boolean
+        until:
+          title: Until
+          type: string
+        where:
+          title: Where
+          type: string
+      required:
+      - filter
+      - scope
+      - where
+      - cli_equivalent
+      - matched
+      - truncated
+      - complete
+      - incomplete_reasons
+      - since
+      - until
+      - items
+      title: FilterRunsResponse
+      type: object
+    FilterSuggestResponse:
+      properties:
+        dimension:
+          title: Dimension
+          type: string
+        since:
+          title: Since
+          type: string
+        truncated:
+          title: Truncated
+          type: boolean
+        until:
+          title: Until
+          type: string
+        values:
+          items:
+            type: string
+          title: Values
+          type: array
+      required:
+      - dimension
+      - values
+      - truncated
+      - since
+      - until
+      title: FilterSuggestResponse
+      type: object
     ForensicReplayRequest:
       properties:
         confirmed:
@@ -3979,6 +4083,198 @@ paths:
           description: Validation Error
       summary: Api Evidence Bind
       x-nova-contract: pending
+  /api/filter/parse:
+    get:
+      operationId: dashboardParseFilter
+      parameters:
+      - description: Filter-bar text, e.g. status:error -model:gpt-4
+        in: query
+        name: f
+        required: false
+        schema:
+          default: ''
+          description: Filter-bar text, e.g. status:error -model:gpt-4
+          title: F
+          type: string
+      - in: query
+        name: token
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Token
+      - in: header
+        name: authorization
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FilterParseResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Parse Filter
+      tags:
+      - filter
+  /api/filter/runs:
+    get:
+      operationId: dashboardFilterRuns
+      parameters:
+      - description: Filter-bar text
+        in: query
+        name: f
+        required: false
+        schema:
+          default: ''
+          description: Filter-bar text
+          title: F
+          type: string
+      - description: 'ADR-0233 scope: node | root | tree'
+        in: query
+        name: scope
+        required: false
+        schema:
+          default: node
+          description: 'ADR-0233 scope: node | root | tree'
+          title: Scope
+          type: string
+      - in: query
+        name: since
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Since
+      - in: query
+        name: until
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Until
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 100
+          maximum: 200
+          minimum: 1
+          title: Limit
+          type: integer
+      - in: query
+        name: token
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Token
+      - in: header
+        name: authorization
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FilterRunsResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Filter Runs
+      tags:
+      - filter
+  /api/filter/suggest:
+    get:
+      operationId: dashboardSuggestFilterValues
+      parameters:
+      - description: One of the DSL's filterable dimensions
+        in: query
+        name: dimension
+        required: true
+        schema:
+          description: One of the DSL's filterable dimensions
+          title: Dimension
+          type: string
+      - in: query
+        name: since
+        required: false
+        schema:
+          default: 30d
+          title: Since
+          type: string
+      - in: query
+        name: until
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Until
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 100
+          maximum: 100
+          minimum: 1
+          title: Limit
+          type: integer
+      - in: query
+        name: token
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Token
+      - in: header
+        name: authorization
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FilterSuggestResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Suggest Values
+      tags:
+      - filter
   /api/governance/classify:
     get:
       description: Classify an AI system risk tier inferred from a Run Capsule.

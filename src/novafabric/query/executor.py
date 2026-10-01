@@ -30,12 +30,13 @@ from typing import Any, Final
 from novafabric.query.cache import scan_capsule_dir_cached
 from novafabric.query.engine import QueryIndex
 from novafabric.query.errors import QueryExecutionError
-from novafabric.query.indexer import scan_capsule_dir
+from novafabric.query.indexer import CallRow, ScoreRow, scan_capsule_dir
 from novafabric.query.model import (
     MAX_GROUPS,
     MAX_SCOPE_EXPANSION,
     QUERY_SCHEMA_VERSION,
     Aggregate,
+    Predicate,
     QueryPlan,
     Scope,
 )
@@ -275,15 +276,15 @@ def _root_of(run_id: str, parent_of: dict[str, str | None]) -> str:
     return current
 
 
-def _expand_scope(plan: QueryPlan, all_rows: Iterable[Any], matched: set[str]) -> ScopeExpansion:
-    """Widen a set of matching run ids to the plan's scope (ADR-0233 D1/D3/D4)."""
-    if plan.scope is Scope.NODE or not matched:
+def _expand_scope(scope: Scope, all_rows: Iterable[Any], matched: set[str]) -> ScopeExpansion:
+    """Widen a set of matching run ids to *scope* (ADR-0233 D1/D3/D4)."""
+    if scope is Scope.NODE or not matched:
         return ScopeExpansion(frozenset(matched), truncated=False, incomplete_reasons=())
 
     parent_of, children_of, completeness = _tree_maps(all_rows)
     roots = {_root_of(run_id, parent_of) for run_id in matched}
 
-    if plan.scope is Scope.ROOT:
+    if scope is Scope.ROOT:
         selected = set(roots)
     else:
         # Breadth-first from each root, bounded. Expanding per *matching row*
@@ -366,7 +367,7 @@ def run_query(
             matched_ids = {str(r["run_id"]) for r in call_rows} | {
                 str(r["run_id"]) for r in score_rows
             }
-            expansion = _expand_scope(plan, [*rows.calls, *rows.scores], matched_ids)
+            expansion = _expand_scope(plan.scope, [*rows.calls, *rows.scores], matched_ids)
             unfiltered_calls = index.fetch_calls((), since_epoch, until_epoch)
             call_rows = [r for r in unfiltered_calls if r["run_id"] in expansion.run_ids]
             if score_aggs:
@@ -441,3 +442,77 @@ def run_query(
             "capsule_count": index.info.capsule_count,
         },
     }
+
+
+@dataclass(frozen=True)
+class RunSelection:
+    """The run ids a filter selects — the run-list analogue of :func:`run_query`.
+
+    ADR-0232 D1 + ADR-0233: the dashboard's filter bar narrows a *list of runs*,
+    not an aggregate, so it needs the matching capsules themselves. This is the
+    same index, the same predicates and the same scope expansion ``run_query``
+    uses — only the projection differs — so the bar cannot select a run that
+    ``nova query --where`` with the same predicates would not have counted.
+    """
+
+    #: Newest first, at most ``limit`` long.
+    run_ids: tuple[str, ...]
+    #: How many capsules the filter + scope selected before ``limit`` applied.
+    matched: int
+    #: ``matched > limit`` **or** the scope expansion hit its bound. Either way
+    #: the list is not the whole answer, and ADR-0234 D2 forbids implying it is.
+    truncated: bool
+    scope: Scope
+    incomplete_reasons: tuple[str, ...]
+    since_iso: str
+    until_iso: str
+
+
+def select_run_ids(
+    predicates: tuple[Predicate, ...],
+    capsule_dir: str | Path,
+    *,
+    scope: Scope = Scope.NODE,
+    since: str | None = None,
+    until: str | None = None,
+    limit: int = 100,
+    engine: str | None = None,
+    now: datetime | None = None,
+    use_cache: bool = True,
+) -> RunSelection:
+    """Run ids matching *predicates* inside the time window, widened to *scope*.
+
+    Read-only, offline and bounded: ``limit`` caps the returned ids and the
+    scope expansion is capped by ``MAX_SCOPE_EXPANSION`` exactly as in
+    :func:`run_query`. Ordering is newest ``created_at`` first.
+    """
+    if limit < 1:
+        raise QueryExecutionError("limit must be at least 1")
+    now = now or datetime.now(timezone.utc)
+    since_epoch, until_epoch, since_iso, until_iso = resolve_time_window(since, until, now)
+    rows = scan_capsule_dir_cached(capsule_dir) if use_cache else scan_capsule_dir(capsule_dir)
+    index = QueryIndex.build(rows, engine=engine)
+    try:
+        matched_rows = index.fetch_calls(predicates, since_epoch, until_epoch)
+        matched_rows += index.fetch_scores(predicates, since_epoch, until_epoch)
+    finally:
+        index.close()
+
+    matched_ids = {str(r["run_id"]) for r in matched_rows}
+    all_rows: list[CallRow | ScoreRow] = [*rows.calls, *rows.scores]
+    expansion = _expand_scope(scope, all_rows, matched_ids)
+
+    created: dict[str, float] = {}
+    for row in all_rows:
+        if row.run_id in expansion.run_ids:
+            created[row.run_id] = max(created.get(row.run_id, 0.0), float(row.created_at))
+    ordered = sorted(expansion.run_ids, key=lambda rid: (-created.get(rid, 0.0), rid))
+    return RunSelection(
+        run_ids=tuple(ordered[:limit]),
+        matched=len(ordered),
+        truncated=len(ordered) > limit or expansion.truncated,
+        scope=scope,
+        incomplete_reasons=expansion.incomplete_reasons,
+        since_iso=since_iso,
+        until_iso=until_iso,
+    )
