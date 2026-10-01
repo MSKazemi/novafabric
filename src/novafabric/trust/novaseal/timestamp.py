@@ -27,7 +27,8 @@ What is verified at verification time (``check_timestamp``; timestamp_ok=True):
 At request time additionally: nonce replay protection and a chain-depth bound.
 
 Production TSA configuration (ADR-0070):
-  - Default TSA URL: https://freetsa.org/tsr
+  - No default TSA URL: timestamping is opt-in (ADR-0292); callers pass the
+    operator-configured URL. https://freetsa.org/tsr is a development example only.
   - Nonce store: $NOVAFABRIC_HOME/tsa_nonces.db (auto-derived)
   - Cert chain depth limit: 4
   - offline_mode=True skips nonce store writes and network calls (HPC air-gap)
@@ -62,10 +63,9 @@ from novafabric.trust.novaseal.trust_chain import verify_tsa_cert_chain  # noqa:
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Production TSA defaults (ADR-0070)
+# Production TSA defaults (ADR-0070; no default URL — ADR-0292)
 # ---------------------------------------------------------------------------
 
-_DEFAULT_TSA_URL: str = "https://freetsa.org/tsr"
 _DEFAULT_TSA_CERT_MAX_DEPTH: int = 4
 
 

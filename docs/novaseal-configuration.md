@@ -48,17 +48,29 @@ use with a file-based ECDSA P-256 key:
 profile: local
 key_path: ~/.novafabric/seal.key     # ECDSA P-256 private key (PEM, PKCS#8)
 cert_path: ~/.novafabric/seal.crt    # X.509 certificate for the key
-tsa_url: https://freetsa.org/tsr     # RFC 3161 timestamp authority (optional)
 merkle_db: ~/.novafabric/novaseal-merkle.db  # SQLite Merkle log (optional)
+# tsa_url: https://tsa.example.org/tsr  # RFC 3161 timestamp authority — opt-in
 ```
 
 All path values are expanded with `~` resolution. All fields except
 `profile`, `key_path`, and `cert_path` are optional.
 
+**RFC 3161 timestamping is opt-in** (since v0.103, ADR-0292). With no `tsa_url`
+(or `tsa_urls`) NovaSeal signs and logs every capsule but requests **no**
+timestamp and makes **no** network call; it logs one warning per process saying
+so, and `nova verify` reports `Timestamp (RFC 3161): NOT PRESENT`. To timestamp,
+name a TSA explicitly — your organisation's or a QTSP's. The public FreeTSA
+service (`https://freetsa.org/tsr`) works for development and demos; it is
+rate-limited, not eIDAS-qualified, and never contacted unless you configure it.
+
+> **Behaviour change in v0.103.** Through v0.102.x an omitted `tsa_url` silently
+> meant `https://freetsa.org/tsr`. To keep timestamping exactly as before, add
+> `tsa_url: https://freetsa.org/tsr` to `novaseal.yaml`.
+
 ### 1.1 TSA fallback list (`tsa_urls`)
 
-**Status:** Works today (REG-ADR-007). By default `tsa_url` is the only TSA
-tried. For production and EU-regulated deployments where a single TSA being
+**Status:** Works today (REG-ADR-007). When only `tsa_url` is set it is the
+only TSA tried; a `tsa_urls` list on its own also opts in to timestamping. For production and EU-regulated deployments where a single TSA being
 unreachable should not block sealing, configure an ordered fallback list
 instead:
 
@@ -69,7 +81,7 @@ key_path: ~/.novafabric/seal.key
 cert_path: ~/.novafabric/seal.crt
 tsa_urls:                                    # tried in order; first success wins
   - https://tsa.your-qtsp.example/tsr        # primary — e.g. a QTSP for eIDAS Art. 41(2)
-  - https://freetsa.org/tsr                  # fallback — public, non-qualified
+  - https://freetsa.org/tsr                  # fallback — public, non-qualified (example)
 merkle_db: ~/.novafabric/novaseal-merkle.db
 ```
 
@@ -181,7 +193,7 @@ disk, optionally encrypted by the OS keychain or a secrets manager.
 profile: local
 key_path: /path/to/seal.pem      # required — PKCS#8 PEM, ECDSA P-256
 cert_path: /path/to/seal.crt     # required — PEM certificate
-tsa_url: https://freetsa.org/tsr # optional; omit to skip RFC 3161 timestamps
+tsa_url: https://tsa.example.org/tsr  # optional, opt-in; omitted = no timestamp, no network call
 merkle_db: /path/to/merkle.db    # optional; see §3
 ```
 
@@ -206,7 +218,7 @@ profile: aws_kms
 kms_key_id: arn:aws:kms:us-east-1:123456789012:key/mrk-abc123  # required
 aws_region: us-east-1             # optional; default us-east-1
 cert_path: /path/to/cert.pem      # required — certificate for the KMS public key
-tsa_url: https://freetsa.org/tsr  # optional
+tsa_url: https://tsa.example.org/tsr  # optional, opt-in (no default TSA)
 merkle_db: /path/to/merkle.db     # optional; see §3
 ```
 
@@ -219,7 +231,7 @@ profile: azure_kv
 vault_url: https://myvault.vault.azure.net/  # required
 key_name: my-ec-key                          # required
 cert_path: /path/to/cert.pem                 # required
-tsa_url: https://freetsa.org/tsr             # optional
+tsa_url: https://tsa.example.org/tsr         # optional, opt-in
 merkle_db: /path/to/merkle.db               # optional; see §3
 ```
 
@@ -231,7 +243,7 @@ Uses a GCP Cloud KMS EC P-256 asymmetric signing key. Requires `[seal-gcp]`.
 profile: gcp_kms
 key_version_name: projects/P/locations/L/keyRings/R/cryptoKeys/K/cryptoKeyVersions/1
 cert_path: /path/to/cert.pem  # required
-tsa_url: https://freetsa.org/tsr  # optional
+tsa_url: https://tsa.example.org/tsr  # optional, opt-in
 merkle_db: /path/to/merkle.db    # optional; see §3
 ```
 
@@ -401,10 +413,12 @@ no stale `NOVAFABRIC_SEAL_DB_PATH` env var is set in one shell but not another.
 
 ### TSA timeout or `tsa_url` errors
 
-The default `https://freetsa.org/tsr` is a free public TSA with rate limits.
-For production, use an organizational or commercial TSA. Set `tsa_url:` in
-`novaseal.yaml`. To disable RFC 3161 timestamps entirely, omit the field —
-NovaSeal still signs with ECDSA but without a timestamp token. If a single
+There is no default TSA (ADR-0292): NovaSeal contacts only the `tsa_url` /
+`tsa_urls` you configure. If you configured the public `https://freetsa.org/tsr`,
+note it is a free service with rate limits — for production use an
+organizational or commercial TSA. To disable RFC 3161 timestamps entirely, omit
+the field (or leave it empty) — NovaSeal still signs with ECDSA, without a
+timestamp token and without any network call. If a single
 TSA being occasionally unreachable is the actual problem, configure a
 fallback list instead of (or as well as) switching providers — see
 [§1.1 TSA fallback list](#11-tsa-fallback-list-tsa_urls).

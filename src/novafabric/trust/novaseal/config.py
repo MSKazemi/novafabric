@@ -10,10 +10,17 @@ novaseal.yaml schema (local profile):
     profile: local
     key_path: /path/to/ecdsa-p256.pem
     cert_path: /path/to/cert.pem
-    tsa_url: https://freetsa.org/tsr   # optional; omit to skip timestamps
+    tsa_url: https://tsa.example.org/tsr  # optional; omit (or leave empty) for
+                                          # no RFC 3161 timestamp and no network call
     tsa_urls:                          # optional (REG-ADR-007); ordered TSA
       - https://tsa.example-primary.com/tsr    # fallback list. Defaults to
-      - https://freetsa.org/tsr                # [tsa_url] when omitted.
+      - https://tsa.example-backup.com/tsr     # [tsa_url] when omitted; on its own
+                                               # it also opts in (tsa_url = [0]).
+
+Timestamping is **opt-in** (ADR-0292): there is no default TSA. NovaFabric never
+contacts a timestamp authority unless ``tsa_url`` or ``tsa_urls`` names one. The
+public FreeTSA service (``https://freetsa.org/tsr``) is a usable example for
+development; it is not eIDAS-qualified and not a default.
     merkle_db: /path/to/merkle.db      # optional; defaults to ~/.novafabric/merkle.db
 
 novaseal.yaml schema (aws_kms profile):
@@ -22,7 +29,7 @@ novaseal.yaml schema (aws_kms profile):
     kms_key_id: arn:aws:kms:us-east-1:123456789012:key/mrk-...
     aws_region: us-east-1              # optional; default us-east-1
     cert_path: /path/to/cert.pem       # cert exported for the KMS key
-    tsa_url: https://freetsa.org/tsr   # optional
+    tsa_url: https://tsa.example.org/tsr  # optional (opt-in)
     merkle_db: /path/to/merkle.db      # optional
 
 novaseal.yaml schema (azure_kv profile):
@@ -31,7 +38,7 @@ novaseal.yaml schema (azure_kv profile):
     vault_url: https://myvault.vault.azure.net/
     key_name: my-ec-key
     cert_path: /path/to/cert.pem
-    tsa_url: https://freetsa.org/tsr   # optional
+    tsa_url: https://tsa.example.org/tsr  # optional (opt-in)
     merkle_db: /path/to/merkle.db      # optional
 
 novaseal.yaml schema (gcp_kms profile):
@@ -39,7 +46,7 @@ novaseal.yaml schema (gcp_kms profile):
     profile: gcp_kms
     key_version_name: projects/P/locations/L/keyRings/R/cryptoKeys/K/cryptoKeyVersions/1
     cert_path: /path/to/cert.pem
-    tsa_url: https://freetsa.org/tsr   # optional
+    tsa_url: https://tsa.example.org/tsr  # optional (opt-in)
     merkle_db: /path/to/merkle.db      # optional
 
 All four profiles also accept the optional ``tsa_urls`` ordered fallback list
@@ -84,7 +91,10 @@ try:
 except ImportError:  # pragma: no cover
     yaml = None  # type: ignore[assignment]
 
-_DEFAULT_TSA_URL = "https://freetsa.org/tsr"
+# ADR-0292: no default TSA. Until v0.102.x an omitted tsa_url meant
+# "https://freetsa.org/tsr" — an outbound call to a third party on every sealed
+# capture, from a local-mode core path. Empty means "do not timestamp".
+_DEFAULT_TSA_URL = ""
 _DEFAULT_MERKLE_DB = Path.home() / ".novafabric" / "novaseal-merkle.db"
 _DEFAULT_CONFIG_PATH = Path.home() / ".novafabric" / "novaseal.yaml"
 
@@ -122,9 +132,9 @@ class SigningProfile:
 
     # ---- shared fields ----
     tsa_url: str = _DEFAULT_TSA_URL
-    # REG-ADR-007: ordered TSA fallback list. Always populated — defaults to
-    # [tsa_url] when novaseal.yaml doesn't set tsa_urls explicitly, so
-    # callers can always read profile.tsa_urls without a None-check.
+    # REG-ADR-007: ordered TSA fallback list — defaults to [tsa_url] when
+    # novaseal.yaml doesn't set tsa_urls explicitly, and is empty when no TSA is
+    # configured (ADR-0292: timestamping is opt-in). Never None.
     tsa_urls: list[str] = field(default_factory=list)
     merkle_db: Path = field(default_factory=lambda: _DEFAULT_MERKLE_DB)
     # ADR-0055 (experimental): operator CA bundle for signer chain validation at
@@ -141,7 +151,9 @@ class SigningProfile:
 
     def __post_init__(self) -> None:
         if not self.tsa_urls:
-            self.tsa_urls = [self.tsa_url]
+            self.tsa_urls = [self.tsa_url] if self.tsa_url else []
+        elif not self.tsa_url:
+            self.tsa_url = self.tsa_urls[0]
 
 
 class SealConfigError(Exception):
@@ -230,7 +242,10 @@ def _parse_profile(path: Path) -> SigningProfile:
             f"(supported: {sorted(_SUPPORTED_PROFILES)})"
         )
 
-    tsa_url = str(raw.get("tsa_url", _DEFAULT_TSA_URL))
+    # YAML ``tsa_url:`` with no value is None — it must mean "no TSA", never the
+    # literal string "None" (which was then used as a URL until v0.102.x).
+    raw_tsa_url = raw.get("tsa_url")
+    tsa_url = "" if raw_tsa_url is None else str(raw_tsa_url).strip()
     merkle_db = Path(raw.get("merkle_db", str(_DEFAULT_MERKLE_DB))).expanduser()
     merkle_db.parent.mkdir(parents=True, exist_ok=True)
 
@@ -246,7 +261,11 @@ def _parse_profile(path: Path) -> SigningProfile:
             raise SealConfigError("novaseal.yaml tsa_urls must be a list of strings")
         if not raw_tsa_urls:
             raise SealConfigError("novaseal.yaml tsa_urls, if given, must not be empty")
-    tsa_urls = list(raw_tsa_urls) if raw_tsa_urls is not None else [tsa_url]
+    if raw_tsa_urls is not None:
+        tsa_urls = list(raw_tsa_urls)
+        tsa_url = tsa_url or tsa_urls[0]  # tsa_urls alone is an explicit opt-in
+    else:
+        tsa_urls = [tsa_url] if tsa_url else []
     ca_bundle = _parse_ca_bundle(raw)
     crl_dir, crl_strict = _parse_crl_settings(raw)
     tsa_ca_certs = _parse_tsa_ca_certs(raw)

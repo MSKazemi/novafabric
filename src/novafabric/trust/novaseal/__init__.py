@@ -1,8 +1,9 @@
 """NovaSeal v0.1 — Cryptographic signing core for NovaFabric capsules.
 
 Implements ADR-0041 (local-key mode only in v0.1):
-- DSSE envelope with ECDSA P-256 / SHA-256 (ADR-001)
-- RFC 3161 trusted timestamps via FreeTSA (ADR-007)
+- DSSE envelope with ECDSA P-256 / SHA-256 (ADR-001), DSSE v1 PAE
+- RFC 3161 trusted timestamps from an operator-chosen TSA — opt-in, no default
+  TSA and no network call unless ``tsa_url`` is set (ADR-0030, ADR-0292)
 - SQLite-backed append-only Merkle log (ADR-003)
 
 Usage:
@@ -16,7 +17,7 @@ Usage:
     )
     seal = NovaSeal(
         config=config,
-        tsa_url="https://freetsa.org/tsr",
+        tsa_url="https://tsa.example.org/tsr",  # "" (the default) = no timestamp
         db_path="/path/to/merkle.db",
     )
     bundle = seal.seal(capsule_manifest)
@@ -63,6 +64,22 @@ if TYPE_CHECKING:  # pragma: no cover — typing only
     from novafabric.trust.novaseal.signing_backend import SigningBackend
 
 log = logging.getLogger(__name__)
+
+# Emit the "no timestamp" note once per process, not once per sealed capsule.
+_NO_TSA_NOTE_EMITTED = False
+
+
+def _note_sealing_without_timestamp() -> None:
+    """Say — once per process — that seals carry no RFC 3161 timestamp (ADR-0292)."""
+    global _NO_TSA_NOTE_EMITTED
+    if _NO_TSA_NOTE_EMITTED:
+        return
+    _NO_TSA_NOTE_EMITTED = True
+    log.warning(
+        "NovaSeal: sealing without an RFC 3161 timestamp — no tsa_url is configured "
+        "(timestamping is opt-in since v0.103, ADR-0292). The signature and Merkle log "
+        "entry are unaffected; set tsa_url in novaseal.yaml to add a trusted time."
+    )
 
 #: Merkle inclusion established against the verifier's local (sealer's) log.
 LOG_INCLUSION_LOCAL = "local-log"
@@ -173,7 +190,7 @@ class NovaSeal:
 
     Args:
         config:    KeyConfig with profile and key/cert paths.
-        tsa_url:   RFC 3161 TSA URL (use "" to disable timestamping).
+        tsa_url:   RFC 3161 TSA URL; "" disables timestamping (no network call).
         db_path:   Path to the SQLite Merkle log database.
         tsa_urls:  Optional ordered fallback list of TSA URLs (REG-ADR-007).
                    When it has more than one entry, each is tried in order
@@ -205,7 +222,9 @@ class NovaSeal:
             else Path()
         )
         self._cert_path = Path(config.cert_path)
-        self._tsa_url = tsa_url
+        # ADR-0292: timestamping is opt-in. An empty tsa_url with a non-empty
+        # tsa_urls list still opts in (the list names the TSAs explicitly).
+        self._tsa_url = tsa_url or (tsa_urls[0] if tsa_urls else "")
         self._tsa_urls = tsa_urls
         self._merkle = open_merkle_log(db_path)
 
@@ -245,9 +264,12 @@ class NovaSeal:
         except EnvelopeError as exc:
             raise SealError(f"DSSE signing failed: {exc}") from exc
 
-        # 2. RFC 3161 timestamp (best-effort; warns but does not fail if TSA is down)
+        # 2. RFC 3161 timestamp — opt-in (ADR-0292); best-effort when configured:
+        #    warns but does not fail if the TSA is down.
         tsr_bytes = b""
-        if self._tsa_url:
+        if not self._tsa_url:
+            _note_sealing_without_timestamp()
+        else:
             try:
                 tsr_bytes = request_timestamp(
                     dsse_bytes, self._tsa_url, tsa_urls=self._tsa_urls

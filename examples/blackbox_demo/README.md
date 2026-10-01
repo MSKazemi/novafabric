@@ -51,13 +51,14 @@ cat > ~/.novafabric/novaseal.yaml <<'EOF'
 profile: local
 key_path: ~/.novafabric/seal.key
 cert_path: ~/.novafabric/seal.crt
-tsa_url: https://freetsa.org/tsr
+tsa_url: https://freetsa.org/tsr   # opt-in; omit for an offline demo
 merkle_db: ~/.novafabric/novaseal-merkle.db
 EOF
 ```
 
-> `nova verify` uses FreeTSA for RFC 3161 timestamps — requires internet.
-> Set `SKIP_VERIFY=1` to skip that step in airgapped environments.
+> With `tsa_url` set, *sealing* (during capture) requests an RFC 3161 timestamp from
+> FreeTSA and needs internet; omit `tsa_url` for a fully offline demo. `nova verify`
+> itself is offline. Set `SKIP_VERIFY=1` to skip the verify step.
 
 ### Run the automated demo
 

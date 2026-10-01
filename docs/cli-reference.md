@@ -3279,7 +3279,7 @@ See [`nova export-blob`](#nova-export-blob---dest-uri) (experimental, ADR-0141).
 profile: local        # "local" | "aws_kms" | "azure_kv" | "gcp_kms"
 key_path: ~/.novafabric/seal.key    # ECDSA P-256 PEM private key
 cert_path: ~/.novafabric/seal.crt   # X.509 PEM certificate
-tsa_url: https://freetsa.org/tsr    # FreeTSA for dev; QTSP for EU regulated
+tsa_url: https://freetsa.org/tsr    # opt-in, no default (ADR-0292); FreeTSA for dev, QTSP for EU regulated
 merkle_db: ~/.novafabric/novaseal-merkle.db  # SQLite Merkle log (default)
 ```
 

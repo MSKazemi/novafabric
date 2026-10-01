@@ -1,7 +1,8 @@
 #!/bin/sh
 # run_demo.sh — end-to-end blackbox recorder demo (POSIX sh, no bash-isms)
 # All 8 steps: capture bad run, validate, scan-secrets, replay, capture fixed
-# run, diff, lineage, and verify (verify requires internet — FreeTSA).
+# run, diff, lineage, and verify (offline; sealing contacts a TSA only if
+# novaseal.yaml sets tsa_url).
 #
 # Usage:
 #   cd /path/to/novafabric
@@ -80,12 +81,12 @@ step "7" "Lineage — provenance of the bad run"
 BAD_RUN_ID=$(basename "$BAD_RUN")
 "$NOVA" lineage provenance "$BAD_RUN_ID"
 
-# ── step 8: verify (requires internet — FreeTSA) ──────────────────────────
+# ── step 8: verify (offline) ───────────────────────────────────────────────
 if [ "${SKIP_VERIFY:-0}" = "1" ]; then
-    step "8" "SKIPPED — nova verify (set SKIP_VERIFY=0 to enable; needs FreeTSA)"
+    step "8" "SKIPPED — nova verify (set SKIP_VERIFY=0 to enable)"
 else
-    step "8" "Verify cryptographic seal (DSSE + RFC 3161 — needs internet)"
-    "$NOVA" verify "$BAD_RUN" || printf 'NOTE: verify needs NovaSeal config; see prerequisites in README\n'
+    step "8" "Verify cryptographic seal (DSSE + RFC 3161 + Merkle, offline)"
+    "$NOVA" verify "$BAD_RUN" || printf 'NOTE: verify needs a sealed capsule (NovaSeal configured at capture); see README\n'
 fi
 
 sep

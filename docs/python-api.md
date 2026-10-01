@@ -724,7 +724,7 @@ config = KeyConfig(
 )
 seal = NovaSeal(
     config=config,
-    tsa_url="https://freetsa.org/tsr",  # "" to skip timestamping
+    tsa_url="",  # "" = no RFC 3161 timestamp, no network call; or your TSA's URL
     db_path="~/.novafabric/novaseal-merkle.db",
 )
 

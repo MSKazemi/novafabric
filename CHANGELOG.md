@@ -127,6 +127,27 @@ longer forwards the submitting shell's environment (ADR-0270).
   switcher is now a WAI-ARIA tablist with arrow-key navigation, and the view is
   deep-linkable (`?view=integrity`).
 
+### Changed
+
+- **Behaviour change — NovaSeal RFC 3161 timestamping is now opt-in (ADR-0292).**
+
+  Through v0.102.x, once `novaseal.yaml` existed, an omitted `tsa_url` silently meant
+  `https://freetsa.org/tsr`: every sealed capture made an outbound HTTPS request to a third
+  party from a local-mode core path — while the configuration docs said "omit to skip
+  timestamps". An empty `tsa_url:` was worse: YAML null became the string `"None"`, which
+  was then requested as a URL. There is now **no default TSA**: with no `tsa_url` (or
+  `tsa_urls`) NovaSeal signs and logs the capsule, requests no timestamp, makes no network
+  call, and logs one warning per process saying so; `nova verify` reports the timestamp as
+  `NOT PRESENT`. A `tsa_urls` list on its own also opts in. FreeTSA remains in the docs as a
+  development example only.
+
+  **Migration:** to keep timestamping exactly as before, add
+  `tsa_url: https://freetsa.org/tsr` (or, better, your organisation's or a QTSP's TSA) to
+  `novaseal.yaml`. Configs that already set `tsa_url` or `tsa_urls` are unaffected.
+  Capsules sealed earlier verify unchanged. `nova export-evidence --timestamp` is
+  unchanged: it is an explicit per-command opt-in and prints the TSA it contacts.
+
+
 ### Fixed
 
 - **A compliance test expired on 2026-10-01.** `test_recent_capsule_within_retention` used a

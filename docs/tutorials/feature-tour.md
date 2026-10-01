@@ -492,7 +492,7 @@ openssl req -new -x509 -key ~/.novafabric/seal.key -days 365 \
 profile: local
 key_path: ~/.novafabric/seal.key
 cert_path: ~/.novafabric/seal.crt
-tsa_url: https://freetsa.org/tsr
+tsa_url: https://freetsa.org/tsr   # opt-in; omit for no timestamp and no network call
 merkle_db: ~/.novafabric/novaseal-merkle.db
 ```
 
