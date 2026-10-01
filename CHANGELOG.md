@@ -91,6 +91,20 @@ longer forwards the submitting shell's environment (ADR-0270).
   `api/openapi-dashboard.yaml`.
 
 
+- **Runs view: filter bar and URL view state (ADR-0232 D1–D3, ADR-0233) — experimental.**
+
+  The dashboard's Runs tab gains a filter bar (`status:error -model:gpt-4o`, Enter to apply)
+  with a `node`/`root`/`tree` scope switch, observed-value suggestions after `dim:` (a
+  partial list says so), the parse error announced inline, and the equivalent `nova query`
+  shown with a copy button. A truncated or still-filling result is stated, not hidden.
+  The whole Runs view — search, status, sort, date window, filter, scope, selected run and
+  inspector view — now lives in the URL (`?f=&scope=&run=&view=…`), so a pasted link
+  reproduces it and Back undoes a committed filter, scope, status or date change. Values
+  are validated on read; switching tabs drops the Runs keys. Saved views now capture the
+  filter and scope too (still browser-local; ADR-0232 D4's NovaFabric-side saved views
+  remain **planned**).
+
+
 ## [0.102.1] - 2026-09-27
 
 ### Fixed

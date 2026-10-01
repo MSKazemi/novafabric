@@ -14,6 +14,7 @@ import ErrorBoundary from '../ui/ErrorBoundary';
 import CommandPalette, { type Command } from '../ui/CommandPalette';
 import Icon from '../ui/primitives/Icon';
 import { COMPLIANCE_GROUPS } from './tabs/compliance/groups';
+import { stripRunsViewParams } from './tabs/runs/viewState';
 import { Loading } from './helpers';
 import { usePolling } from '../../lib/usePolling';
 import { ToastProvider, useToast } from '../../lib/ToastContext';
@@ -64,6 +65,9 @@ function writeTabParam(t: Tab): void {
     // Sub-navigation belongs to the tab that opened it — carrying ?sub= across
     // a tab switch would deep-link a group the new tab does not have.
     p.delete('sub');
+    // Same rule for the Runs view's state (ADR-0232 D2): it describes the Runs
+    // tab, and a link to another tab must not carry it along.
+    if (t !== 'runs') stripRunsViewParams(p);
     const qs = p.toString();
     window.history.replaceState({}, '', `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash}`);
   } catch { /* ignore */ }

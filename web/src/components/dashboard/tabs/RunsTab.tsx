@@ -20,6 +20,21 @@ import RunFilters from './runs/RunFilters';
 import RunList from './runs/RunList';
 import RunInspector, { type SecretsState, type ChildrenState, type ForensicsState } from './runs/RunInspector';
 import { CapsuleTreePanel, RunSpoolLineagePanel, ScanSecretsPanel } from './runs/ParityPanels';
+import FilterBar from './runs/FilterBar';
+import { useFilteredRuns } from './runs/useFilteredRuns';
+import { useUrlState } from '../../../lib/useUrlState';
+import {
+  LINKABLE_VIEWS, parseDate, parseScope, parseSort, parseStatus, parseView, type FilterScope,
+} from './runs/viewState';
+
+/** A run known only by id (deep link) until the list or detail fetch fills it in. */
+function stubRun(run_id: string): RunSummary {
+  return {
+    run_id, status: null, created_at: null, finished_at: null, duration_ms: null,
+    exit_code: null, model_call_count: 0, tool_call_count: 0, mutating_tool_count: 0,
+    command: [], novafabric_version: null, capsule_path: '',
+  };
+}
 
 export default function RunsTab({
   onFlash,
@@ -34,18 +49,44 @@ export default function RunsTab({
   onNavigate?: (tab: Tab) => void;
   onCompareTo?: (ids: string[]) => void;
 }) {
-  const [selected, setSelected] = useState<RunSummary | null>(null);
+  // ADR-0232 D2 — view state lives in the URL: a pasted link reproduces the
+  // view, and committed changes (filter, scope, status) are Back-undoable.
+  const [runParam, setRunParam] = useUrlState('run', '');
+  const [selected, setSelectedState] = useState<RunSummary | null>(() => (runParam ? stubRun(runParam) : null));
+  const setSelected = useCallback((r: RunSummary | null) => {
+    setSelectedState(r);
+    setRunParam(r?.run_id ?? '');
+  }, [setRunParam]);
   const [capsule, setCapsule] = useState<FullCapsule | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [actionTarget, setActionTarget] = useState<{ run: RunSummary; action: RunAction } | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [sort, setSort] = useState<RunSort>('newest');
-  const [detailView, setDetailView] = useState<DetailView>('inspect');
+  const [search, setSearch] = useUrlState('q', '');
+  const [rawStatus, setRawStatus] = useUrlState('status', 'all', { push: true });
+  const statusFilter: StatusFilter = parseStatus(rawStatus);
+  const setStatusFilter = setRawStatus as (v: StatusFilter) => void;
+  const [rawSort, setRawSort] = useUrlState('sort', 'newest');
+  const sort: RunSort = parseSort(rawSort);
+  const setSort = setRawSort as (v: RunSort) => void;
+  const [rawSince, setSince] = useUrlState('since', '', { push: true });
+  const [rawUntil, setUntil] = useUrlState('until', '', { push: true });
+  const since = parseDate(rawSince);
+  const until = parseDate(rawUntil);
+  const [filterText, setFilterText] = useUrlState('f', '', { push: true });
+  const [rawScope, setRawScope] = useUrlState('scope', 'node', { push: true });
+  const scope: FilterScope = parseScope(rawScope);
+  // The inspector view: linkable views go to the URL; `replay` shows a result
+  // produced in this session, so it stays component state (ADR-0232 D2 carve-out).
+  const [viewParam, setViewParam] = useUrlState('view', 'inspect');
+  const [transientView, setTransientView] = useState<DetailView | null>(null);
+  const detailView: DetailView = transientView ?? parseView(viewParam);
+  const setDetailView = useCallback((v: DetailView) => {
+    if (LINKABLE_VIEWS.includes(v)) { setTransientView(null); setViewParam(v); }
+    else setTransientView(v);
+  }, [setViewParam]);
   const [replayResult, setReplayResult] = useState<{ runId: string; result: ReplayResult } | null>(null);
-  const [since, setSince] = useState('');
-  const [until, setUntil] = useState('');
+  const filterActive = filterText.trim() !== '';
+  const filtered = useFilteredRuns({ filter: filterText.trim(), scope, since, until, refreshTick });
 
   // A run can only have children if it's a distributed (parent/worker) capsule.
   // For ordinary single-process runs the "Children" tab is meaningless and
@@ -76,14 +117,32 @@ export default function RunsTab({
     costMap, refresh, loadMore,
   } = useRunSearch({ search, statusFilter, since, until, refreshTick, onCountChange });
 
+  const selectedId = selected?.run_id ?? null;
   useEffect(() => {
-    if (!selected) { setCapsule(null); setDetailError(null); return; }
+    if (!selectedId) { setCapsule(null); setDetailError(null); return; }
+    let cancelled = false;
     setCapsule(null);
     setDetailError(null);
-    api.getRun(selected.run_id)
-      .then(setCapsule)
-      .catch(e => setDetailError((e as Error).message));
-  }, [selected]);
+    api.getRun(selectedId)
+      .then(c => { if (!cancelled) setCapsule(c); })
+      .catch(e => { if (!cancelled) setDetailError((e as Error).message); });
+    return () => { cancelled = true; };
+  }, [selectedId]);
+
+  // Back/forward (or a pasted link) moved `?run=`: follow it.
+  useEffect(() => {
+    if (runParam === (selected?.run_id ?? '')) return;
+    setSelectedState(runParam ? (runs?.find(r => r.run_id === runParam) ?? stubRun(runParam)) : null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runParam]);
+
+  // A deep-linked run starts as a stub; swap in the real summary once listed.
+  useEffect(() => {
+    if (!selected || selected.capsule_path) return;
+    const pool = [...(runs ?? []), ...(filtered.result?.items ?? [])];
+    const full = pool.find(r => r.run_id === selected.run_id);
+    if (full) setSelectedState(full);
+  }, [runs, filtered.result, selected]);
 
   // Keyboard: j/k to move selection in the run list
   useEffect(() => {
@@ -224,15 +283,18 @@ export default function RunsTab({
   }, []);
 
   // Must be declared before early returns to satisfy React's Rules of Hooks
+  // With a filter applied the list is the filter's selection (ADR-0232 D1),
+  // otherwise the cursor-paginated search.
+  const listRuns = filterActive ? (filtered.result?.items ?? []) : runs;
   const visibleRuns = useMemo(() => {
-    if (!runs) return [];
-    return runs.slice().sort((a, b) => {
+    if (!listRuns) return [];
+    return listRuns.slice().sort((a, b) => {
       if (sort === 'newest') return (b.created_at ?? '').localeCompare(a.created_at ?? '');
       if (sort === 'oldest') return (a.created_at ?? '').localeCompare(b.created_at ?? '');
       if (sort === 'longest') return (b.duration_ms ?? 0) - (a.duration_ms ?? 0);
       return (a.duration_ms ?? 0) - (b.duration_ms ?? 0);
     });
-  }, [runs, sort]);
+  }, [listRuns, sort]);
 
   if (error && runs === null) return <ErrorBox message={error} onRetry={refresh} />;
   if (runs === null) return <Loading />;
@@ -245,7 +307,7 @@ export default function RunsTab({
       <aside className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] overflow-hidden flex flex-col" style={{ maxHeight: 'calc(100vh - 3rem)' }}>
         <RunFilters
           visibleCount={visibleRuns.length}
-          totalApprox={totalApprox}
+          totalApprox={filterActive ? (filtered.result?.matched ?? 0) : totalApprox}
           liveConnected={liveConnected}
           onNavigate={onNavigate}
           refresh={refresh}
@@ -259,11 +321,26 @@ export default function RunsTab({
           setSince={setSince}
           until={until}
           setUntil={setUntil}
+          filterActive={filterActive}
+          filterText={filterText}
+          filterScope={scope}
+          applyFilter={(f, sc) => { setFilterText(f); setRawScope(parseScope(sc)); }}
+          filterBar={
+            <FilterBar
+              value={filterText}
+              onApply={setFilterText}
+              scope={scope}
+              onScopeChange={s => setRawScope(s)}
+              result={filtered.result}
+              loading={filtered.loading}
+              error={filtered.error}
+            />
+          }
         />
         <RunList
           visibleRuns={visibleRuns}
           loadedCount={runs.length}
-          totalApprox={totalApprox}
+          totalApprox={filterActive ? (filtered.result?.matched ?? 0) : totalApprox}
           selected={selected}
           onSelect={setSelected}
           checkedIds={checkedIds}
@@ -276,7 +353,7 @@ export default function RunsTab({
           onValidate={handleValidate}
           onAction={(run, action) => setActionTarget({ run, action })}
           onShowSecrets={(r) => { setSelected(r); setDetailView('secrets'); }}
-          hasMore={hasMore}
+          hasMore={filterActive ? false : hasMore}
           loadingMore={loadingMore}
           loadMore={loadMore}
         />

@@ -3,6 +3,7 @@
  * date range, and the E2 saved-views preset bar.
  * Extracted verbatim from the former RunsTab monolith — behavior frozen.
  */
+import type { ReactNode } from 'react';
 import { clsx } from 'clsx';
 import SavedViewsBar from '../../SavedViewsBar';
 import type { Tab } from '../../Sidebar';
@@ -24,6 +25,14 @@ export interface RunFiltersProps {
   setSince: (v: string) => void;
   until: string;
   setUntil: (v: string) => void;
+  /** ADR-0232 filter bar, rendered under the search box. */
+  filterBar?: ReactNode;
+  /** When a filter-bar filter is applied it owns the list: search + status yield to it. */
+  filterActive?: boolean;
+  /** Applied filter + scope, so a saved view captures the whole view state. */
+  filterText?: string;
+  filterScope?: string;
+  applyFilter?: (text: string, scope: string) => void;
 }
 
 export default function RunFilters({
@@ -42,6 +51,11 @@ export default function RunFilters({
   setSince,
   until,
   setUntil,
+  filterBar,
+  filterActive = false,
+  filterText = '',
+  filterScope = 'node',
+  applyFilter,
 }: RunFiltersProps) {
   return (
     <header className="px-3 py-2 border-b border-[var(--color-border)] space-y-2 shrink-0">
@@ -75,20 +89,27 @@ export default function RunFilters({
       </div>
       <input
         type="search"
+        aria-label="Search run_id or command"
+        disabled={filterActive}
+        title={filterActive ? 'The filter bar is applied — clear it to use free-text search' : undefined}
         value={search}
         onChange={e => setSearch(e.target.value)}
         onKeyDown={e => e.key === 'Enter' && refresh()}
         placeholder="Search run_id or command… (Enter to search)"
-        className="w-full text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2 py-1.5 font-mono focus:border-[var(--color-accent)] focus:outline-none"
+        className="w-full text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2 py-1.5 font-mono focus:border-[var(--color-accent)] focus:outline-none disabled:opacity-50"
       />
-      <div className="flex gap-2 flex-wrap">
+      {filterBar}
+      <div className="flex gap-2 flex-wrap" role="group" aria-label="Run status">
         {(['all', 'running', 'success', 'failure', 'error'] as StatusFilter[]).map(s => (
           <button
             key={s}
             type="button"
+            aria-pressed={statusFilter === s}
+            disabled={filterActive}
+            title={filterActive ? `Use status:${s === 'all' ? '<value>' : s} in the filter bar` : undefined}
             onClick={() => { setStatusFilter(s); }}
             className={clsx(
-              'px-2 py-0.5 rounded border text-[10px] uppercase tracking-wider font-medium transition-colors',
+              'px-2 py-0.5 rounded border text-[10px] uppercase tracking-wider font-medium transition-colors disabled:opacity-50',
               statusFilter === s
                 ? 'bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-[var(--color-accent)]'
                 : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
@@ -99,7 +120,7 @@ export default function RunFilters({
         ))}
       </div>
       <div className="flex items-center gap-2 text-[10px]">
-        <select value={sort} onChange={e => setSort(e.target.value as RunSort)}
+        <select aria-label="Sort runs" value={sort} onChange={e => setSort(e.target.value as RunSort)}
           className="w-full rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-1.5 py-1 font-mono">
           <option value="newest">newest first</option>
           <option value="oldest">oldest first</option>
@@ -109,15 +130,17 @@ export default function RunFilters({
       </div>
       {/* Date filter */}
       <div className="flex gap-1.5 items-center flex-wrap text-[10px]">
-        <label className="text-[var(--color-text-faint)]">From</label>
+        <label htmlFor="runs-since" className="text-[var(--color-text-faint)]">From</label>
         <input
+          id="runs-since"
           type="date"
           value={since}
           onChange={e => setSince(e.target.value)}
           className="rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-1 py-0.5 font-mono"
         />
-        <label className="text-[var(--color-text-faint)]">To</label>
+        <label htmlFor="runs-until" className="text-[var(--color-text-faint)]">To</label>
         <input
+          id="runs-until"
           type="date"
           value={until}
           onChange={e => setUntil(e.target.value)}
@@ -135,13 +158,15 @@ export default function RunFilters({
       {/* E2 — saved views: persist the current filter set as a named preset */}
       <SavedViewsBar
         namespace="runs"
-        current={{ search, statusFilter, sort, since, until }}
+        current={{ search, statusFilter, sort, since, until, filter: filterText, scope: filterScope }}
         onApply={(v) => {
           setSearch(v.search);
           setStatusFilter(v.statusFilter);
           setSort(v.sort);
           setSince(v.since);
           setUntil(v.until);
+          // Views saved before the filter bar existed carry no filter: clear it.
+          applyFilter?.(v.filter ?? '', v.scope ?? 'node');
         }}
       />
     </header>

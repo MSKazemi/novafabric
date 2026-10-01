@@ -112,6 +112,45 @@ export interface RunSummary {
   capsule_path: string;
 }
 
+// ---------- filter bar (ADR-0232 D1/D3, ADR-0233) ----------
+
+export interface FilterParseResult {
+  filter: string;
+  predicates: string[];
+  where: string;
+  cli_equivalent: string;
+}
+
+export interface FilterRunsResult {
+  filter: string;
+  scope: 'node' | 'root' | 'tree';
+  where: string;
+  cli_equivalent: string;
+  /** Capsules the filter + scope selected before `limit` applied. */
+  matched: number;
+  truncated: boolean;
+  /** False whenever the list is not the whole answer (ADR-0234 D2). */
+  complete: boolean;
+  incomplete_reasons: string[];
+  since: string;
+  until: string;
+  items: RunSummary[];
+}
+
+export interface FilterSuggestResult {
+  dimension: string;
+  values: string[];
+  /** True when more values exist than were returned — the list is partial. */
+  truncated: boolean;
+  since: string;
+  until: string;
+}
+
+/** The DSL's filterable dimensions (query/model.py DIMENSIONS). */
+export const FILTER_DIMENSIONS = [
+  'asset', 'deployment_environment', 'variant', 'log_level', 'model', 'model_id', 'status', 'tag',
+] as const;
+
 export interface CapsuleFileMeta {
   name: string;
   size_bytes: number;
@@ -907,6 +946,19 @@ export const api = {
   },
 
   getRun: (run_id: string) => request<FullCapsule>(`/api/runs/${encodeURIComponent(run_id)}`),
+
+  // Filter bar (ADR-0232 D1/D3, ADR-0233) — same predicates as `nova query --where`.
+  parseFilter: (f: string) => request<FilterParseResult>('/api/filter/parse', { f }),
+  filterRuns: (q: { f: string; scope?: string; since?: string; until?: string; limit?: number }) => {
+    const params: Record<string, unknown> = { f: q.f };
+    if (q.scope && q.scope !== 'node') params.scope = q.scope;
+    if (q.since) params.since = q.since;
+    if (q.until) params.until = q.until;
+    if (q.limit) params.limit = q.limit;
+    return request<FilterRunsResult>('/api/filter/runs', params);
+  },
+  suggestFilterValues: (dimension: string) =>
+    request<FilterSuggestResult>('/api/filter/suggest', { dimension }),
 
   // Analytics summary — pre-aggregated day buckets from the runs index.
   analyticsSummary: (q: { since?: string; until?: string } = {}) => {
