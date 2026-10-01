@@ -1064,6 +1064,8 @@ request.
 |---|---|---|
 | `NOVAFABRIC_CAPTURE_SOCKET` | — | Capture daemon socket path override |
 | `NOVAFABRIC_FAST_EMIT` | off unless `1` | Fast-emit mode inside the captured process |
+| `NOVAFABRIC_OTLP_LOG_DIR` | `$NOVAFABRIC_HOME/otlp-logs` | Experimental (ADR-0293): sidecar store for `POST /api/otlp/v1/logs`; outside every capsule, not sealed evidence — back it up separately |
+| `NOVAFABRIC_OTLP_LOGS_STORE_BODY` | off | Experimental: also store OTLP log body text and attribute values (secret-redacted, truncated); default stores metadata and a body SHA-256 only |
 
 ### Other
 

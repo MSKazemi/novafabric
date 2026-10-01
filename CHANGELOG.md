@@ -41,6 +41,20 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Added
 
+- **OTLP logs ingest** (ADR-0127's remaining ingest item, ADR-0293, **experimental**).
+  `novafabric.otel.logs_ingest` accepts OTLP `ExportLogsServiceRequest` payloads (JSON, or
+  protobuf with the `otlp` extra) for `POST /api/otlp/v1/logs`. Log records are appended to a
+  sidecar store outside every capsule (`$NOVAFABRIC_OTLP_LOG_DIR`, default
+  `$NOVAFABRIC_HOME/otlp-logs`), one JSONL stream per `novafabric.run_id`, else per trace id,
+  else per UTC day. Capsules are never modified: each record notes whether the linked capsule
+  was sealed when the log arrived, and every response reports `capsule_amended: false`.
+  `SeverityNumber`/`SeverityText` map to the ADR-0127 `log_level`. By default only metadata
+  is stored (times, ids, severity, attribute keys, and the body's length and SHA-256); body
+  text and attribute values are kept only with `NOVAFABRIC_OTLP_LOGS_STORE_BODY=1`, and then
+  pass through the secret redactor first. Requests are capped at 16 MiB and 10 000 records,
+  and each stream file at 64 MiB. Records over the file cap are reported as OTLP
+  `partialSuccess`. `read_log_records()` reads one run's or one trace's records with a
+  `min_level` filter.
 - **Per-org usage budgets and API-key workspace-binding enforcement** (ADR-0208 remainder,
   ADR-0294, **experimental**, both off by default). `server.rate_limits.quota.orgs` sets
   soft/hard capsule and byte budgets per organization. They are checked against the sum of

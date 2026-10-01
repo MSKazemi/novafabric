@@ -178,7 +178,19 @@ fabricated. The OTLP ingest endpoint (`POST /api/otlp/v1/traces`) reads the pair
 its `log_level` (recorded with `log_level_source: adapter`; an `ERROR` span status still
 wins when more severe). A span event's OTel `SeverityNumber` is consumed the same way
 (TRACE collapses to `debug`, FATAL to `error`); malformed values are ignored, never guessed.
-Standalone OTLP *logs* (`resourceLogs`) are not ingested (future design). Emit with:
+Standalone OTLP *logs* (`resourceLogs`) are ingested by `POST /api/otlp/v1/logs`
+(**experimental**, ADR-0293; OTLP/JSON, or OTLP/protobuf with the `otlp` extra). They are
+**not** written into any capsule — a sealed capsule is never amended — but appended to a
+separate sidecar store, `$NOVAFABRIC_OTLP_LOG_DIR` (default `$NOVAFABRIC_HOME/otlp-logs`), one
+JSONL stream per run (`novafabric.run_id` attribute), else per trace id, else per UTC day.
+Each record notes whether its run's capsule was `sealed`, `unsealed` or `absent` when the
+log arrived. The sidecar is correlation data, not sealed evidence. By default only
+metadata is kept: times, severity (mapped to `log_level` exactly as above), ids,
+`service.name`, attribute keys, and the body's type, length and SHA-256. Set
+`NOVAFABRIC_OTLP_LOGS_STORE_BODY=1` to also keep body text and attribute values, redacted
+with the capture secret rules and truncated. Bounds: 16 MiB per request, 10 000 records per
+request, 64 MiB per stream file; records over the file cap come back as OTLP
+`partialSuccess.rejectedLogRecords`. Emit with:
 
 ```bash
 nova capture --emit-otel-genai python my_agent.py

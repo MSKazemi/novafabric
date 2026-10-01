@@ -1,0 +1,57 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "agent-svc"}},
+          {"key": "novafabric.run_id", "value": {"stringValue": "01RUNRESOURCE0000000000001"}}
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": {"name": "app"},
+          "logRecords": [
+            {
+              "timeUnixNano": "1790000000000000000",
+              "observedTimeUnixNano": "1790000000500000000",
+              "severityNumber": 13,
+              "severityText": "WARN",
+              "body": {"stringValue": "retry 3/3 exhausted for tool search"},
+              "attributes": [{"key": "tool.name", "value": {"stringValue": "search"}}],
+              "traceId": "5b8efff798038103d269b633813fc60c",
+              "spanId": "eee19b7ec3c1b174"
+            },
+            {
+              "timeUnixNano": "1790000001000000000",
+              "severityNumber": "SEVERITY_NUMBER_ERROR",
+              "body": {"stringValue": "model call failed"},
+              "attributes": [
+                {"key": "novafabric.run_id", "value": {"stringValue": "01RUNRECORD00000000000002"}}
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "resource": {"attributes": [{"key": "service.name", "value": {"stringValue": "worker"}}]},
+      "scopeLogs": [
+        {
+          "logRecords": [
+            {
+              "timeUnixNano": "1790000002000000000",
+              "severityText": "debug",
+              "body": {"kvlistValue": {"values": [{"key": "k", "value": {"intValue": "1"}}]}},
+              "traceId": "0af7651916cd43dd8448eb211c80319c",
+              "spanId": "b7ad6b7169203331"
+            },
+            {
+              "observedTimeUnixNano": "1790000003000000000",
+              "body": {"stringValue": "no ids at all"}
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
