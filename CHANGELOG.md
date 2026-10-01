@@ -41,6 +41,15 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Added
 
+- **Keyset pagination on `GET /v0/lineage/nodes`** (ADR-0206 P2 remainder, **experimental**).
+  The route now seeks in SQL (`ORDER BY node_id ASC LIMIT n+1`) instead of loading every node
+  and slicing a list, and emits the shared v1 cursor (`server/pagination.py`, `k = [null,
+  node_id]`). `total` is returned on the first page only, as on `/v0/capsules` and
+  `/v0/assets`. Legacy `{"offset": N}` cursors are still served for one deprecation cycle
+  with `Deprecation: true` and are refused once `server.pagination.legacy_offset_cursors` is
+  `false`. Behaviour changes: items are ordered by `node_id` (previously insertion order), and
+  a malformed or foreign cursor is a 400 `invalid_cursor` (previously a silent restart at
+  page one).
 - **`nova diff --environment ENV` and `nova diff --group-by environment`** (ADR-0126 P2
   remainder, **experimental**). Both read the typed `deployment_environment` a capsule
   recorded at capture, with the same record-only reader the policy input uses — a missing or

@@ -173,7 +173,19 @@ first page only, 400 `invalid_cursor` on garbage (previously a silent restart
 at page one), legacy `{"offset": N}` cursors served with `Deprecation: true`
 until `legacy_offset_cursors: false`. Cursors are not bound to the
 `asset_type`/`status` filters — reuse a cursor only with the filters it was
-issued under. `GET /v0/lineage/nodes` still uses offset cursors (planned).
+issued under.
+
+**Keyset pagination on `GET /v0/lineage/nodes`** (experimental, ADR-0206 P2)
+— order `node_id ASC` (the primary key, so the seek needs no new index), the
+same v1 cursor with `k = [null, node_id]`; a cursor from another listing is a
+400 `invalid_cursor`. `total` on the first page only (and on legacy pages),
+legacy `{"offset": N}` cursors served with `Deprecation: true` until
+`legacy_offset_cursors: false`. Behaviour change: items used to come back in
+insertion order and a garbage cursor silently restarted at page one. Cursors
+are not bound to the `kind` filter — reuse a cursor only with the filter it
+was issued under. With `kind=`, SQLite walks the primary key and filters; a
+`(kind, node_id)` index would make that seek O(page) (planned — registry
+schema change).
 
 **Governed deletion (`admin` role only — writer/reader/auditor get 403):**
 

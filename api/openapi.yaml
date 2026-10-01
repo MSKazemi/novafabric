@@ -2269,6 +2269,11 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
       summary: List Lineage Nodes
+      description: 'Keyset (seek) pagination, ADR-0206 P2 (experimental): order
+        `node_id ASC`; `next_cursor` is the shared v1 cursor with `k = [null, node_id]`;
+        `total` is present on the first page (and legacy offset pages) only; a malformed
+        or foreign cursor is a 400 `invalid_cursor`; legacy `{"offset": N}` cursors carry
+        `Deprecation: true`.'
       tags:
       - lineage
   /v0/lineage/provenance:
