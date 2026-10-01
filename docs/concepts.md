@@ -341,7 +341,7 @@ new capsule, so you can diff a replay against the original run.
 > remote endpoint that can change under you. Neither `exact` nor `semantic`
 > re-executes anything today: `exact` reports *whether* a byte-exact re-run is
 > possible, and `semantic` scores the recorded responses — a live re-run judged
-> on meaning is **planned**, not implemented.
+> on meaning is **future design** (no implementation, not yet roadmapped).
 
 ### `forensic` mode
 
@@ -359,7 +359,7 @@ intercepted and served from the capsule cache in order
 command's tools run live, exactly as the command calls them. A
 `MockToolDispatcher` exists but is never installed, so `tool_calls_mocked` is
 always 0 and the capsule's count is reported as `tool_calls_available`
-(ADR-0261). Serving tool results from the capsule is **planned**.
+(ADR-0261). Serving tool results from the capsule is **future design**.
 
 ### Safety ladder (mocked replay)
 
@@ -367,7 +367,7 @@ The safety ladder classifies the capsule's recorded tool calls by side-effect
 level. **As built it does not intercept tool calls at run time** — it drives the
 `--dry-run` report (which recorded calls each rung would permit) and
 `--allow-mutating` triggers a policy-engine gate (an audited allow/deny) before a
-mutating replay starts. Per-call enforcement during the subprocess is **planned**,
+mutating replay starts. Per-call enforcement during the subprocess is **future design**,
 together with tool-result substitution. The rungs:
 
 ```
@@ -392,7 +392,7 @@ model responses and returns `similarity_score` — the mean pairwise text
 similarity (`difflib`, 0.0–1.0) between those responses, i.e. how consistent the
 recorded run was with itself (1.0 when there are fewer than two responses). The
 intended mode — re-run against live models and judge the new outputs against
-the recording on *meaning* — is **planned**, not implemented.
+the recording on *meaning* — is **future design**, not implemented.
 
 ### `exact` mode
 
@@ -400,7 +400,7 @@ the recording on *meaning* — is **planned**, not implemented.
 the `env.lock` must be `mode: deterministic`, every model call must carry a seed,
 and no stored tool result may have drifted from its declared schema (ADR-0128).
 It answers *whether* a byte-exact re-run of a local / on-prem model is possible;
-performing and hash-verifying that re-run is **planned**.
+performing and hash-verifying that re-run is **future design**.
 
 ### `intervention` mode (experimental)
 
