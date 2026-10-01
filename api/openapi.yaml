@@ -1248,6 +1248,25 @@ paths:
       - api-keys
   /v0/assets:
     get:
+      description: 'List assets — keyset (seek) pagination, ADR-0206 P2 (experimental).
+
+
+        Order is pinned to ``created_at DESC, id DESC``; ``next_cursor`` is an
+
+        opaque v1 keyset cursor naming the page''s last asset, so registrations
+
+        between pages neither repeat nor skip a surviving asset. A non-empty
+
+        cursor that fails strict decoding is a 400 ``invalid_cursor`` (it used to
+
+        restart silently at page one). Legacy ``{"offset": N}`` cursors are served
+
+        by the old path for one deprecation cycle (ADR-0188) with a
+
+        ``Deprecation: true`` header. Cursors are not bound to the filters: reuse
+        a
+
+        cursor only with the ``asset_type``/``status`` it was issued under.'
       operationId: listAssets
       parameters:
       - in: query
@@ -1289,7 +1308,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AssetListResponse'
-          description: A page of assets.
+          description: A page of assets. `total` is present on the first page only
+            — keyset pages omit it by design (ADR-0206).
         '400':
           content:
             application/json:

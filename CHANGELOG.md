@@ -72,6 +72,14 @@ longer forwards the submitting shell's environment (ADR-0270).
   Legacy integer cursors are still served for one deprecation cycle (ADR-0188) and migrate to
   v1 after one page; `limit < 1` is clamped to 1. The supporting
   `(tenant_id, started_at DESC, run_id DESC)` index is not shipped (migration follow-up).
+- **`GET /v0/assets` keyset pagination** (ADR-0206 P2, **experimental**). The assets list
+  used to load every asset (with its `spec_json`) and slice by offset; it now seeks in SQL
+  (`created_at DESC, id DESC`, `spec_json` not selected) behind the same opaque v1 cursor as
+  `GET /v0/capsules`. `total` is returned on the first page only. **Behaviour change:** a
+  garbage or tampered cursor is now a 400 `invalid_cursor` instead of a silent restart at
+  page one. Legacy `{"offset": N}` cursors are still served for one deprecation cycle with
+  `Deprecation: true` (refused when `server.pagination.legacy_offset_cursors` is false).
+  New registry helper `list_assets_keyset`.
 
 
 ### Fixed

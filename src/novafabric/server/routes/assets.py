@@ -1,7 +1,7 @@
 """Assets resource — /v0/assets.
 
 Implements:
-  GET  /v0/assets           list (cursor pagination)
+  GET  /v0/assets           list (keyset cursor pagination, ADR-0206 P2)
   POST /v0/assets           register from YAML spec
   GET  /v0/assets/{id}      get by asset UUID
   PUT  /v0/assets/{id}/promote
@@ -13,10 +13,11 @@ import tempfile
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 
 from novafabric.server.auth import AuthContext
-from novafabric.server.deps import get_db_path
+from novafabric.server.config import ServerConfig
+from novafabric.server.deps import get_config, get_db_path
 from novafabric.server.errors import (
     BadRequestError,
     ConflictError,
@@ -24,7 +25,13 @@ from novafabric.server.errors import (
     PreconditionFailedError,
     ValidationError,
 )
-from novafabric.server.pagination import clamp_limit, decode_cursor, paginate
+from novafabric.server.pagination import (
+    InvalidCursorError,
+    clamp_limit,
+    encode_keyset_cursor,
+    paginate,
+    parse_cursor,
+)
 from novafabric.server.rbac import Role, require_role
 from novafabric.server.schemas import (
     AssetDetail,
@@ -44,32 +51,81 @@ router = APIRouter(prefix="/assets", tags=["assets"])
     operation_id="listAssets",
     summary="List assets",
     responses={
-        200: {"model": AssetListResponse, "description": "A page of assets."},
+        200: {
+            "model": AssetListResponse,
+            "description": (
+                "A page of assets. `total` is present on the first page only — "
+                "keyset pages omit it by design (ADR-0206)."
+            ),
+        },
         **error_responses(400, 401, 403),
     },
 )
 async def list_assets(
+    response: Response,
     limit: int = Query(default=50, ge=1, le=500),
     cursor: str | None = Query(default=None),
     asset_type: str | None = Query(default=None),
     status: str | None = Query(default=None),
     db_path: Annotated[Path | None, Depends(get_db_path)] = None,
+    config: Annotated[ServerConfig, Depends(get_config)] = None,  # type: ignore[assignment]
     _auth: Annotated[AuthContext, Depends(require_role(Role.reader))] = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
-    from novafabric.registry.service import list_assets as _list_assets
+    """List assets — keyset (seek) pagination, ADR-0206 P2 (experimental).
 
-    rows = _list_assets(asset_type, status, db_path=db_path)
-    summaries = [_to_summary(r) for r in rows]
+    Order is pinned to ``created_at DESC, id DESC``; ``next_cursor`` is an
+    opaque v1 keyset cursor naming the page's last asset, so registrations
+    between pages neither repeat nor skip a surviving asset. A non-empty
+    cursor that fails strict decoding is a 400 ``invalid_cursor`` (it used to
+    restart silently at page one). Legacy ``{"offset": N}`` cursors are served
+    by the old path for one deprecation cycle (ADR-0188) with a
+    ``Deprecation: true`` header. Cursors are not bound to the filters: reuse a
+    cursor only with the ``asset_type``/``status`` it was issued under.
+    """
+    from novafabric.registry.service import list_assets_keyset
 
-    offset = decode_cursor(cursor)
     limit = clamp_limit(limit)
-    page, next_cursor = paginate(summaries, limit, offset)
+    try:
+        parsed = parse_cursor(cursor)
+    except InvalidCursorError as exc:
+        raise BadRequestError(str(exc), code="invalid_cursor")
 
-    return {
-        "items": page,
-        "next_cursor": next_cursor,
-        "total": len(summaries),
+    if parsed.kind == "offset":
+        if not config.pagination.legacy_offset_cursors:
+            raise BadRequestError(
+                "legacy offset cursors are sunset (ADR-0188); restart the "
+                "listing without a cursor to receive keyset cursors",
+                code="invalid_cursor",
+            )
+        from novafabric.registry.service import list_assets as _list_assets
+
+        summaries = [_to_summary(r) for r in _list_assets(asset_type, status, db_path=db_path)]
+        page, next_cursor = paginate(summaries, limit, parsed.offset)
+        response.headers["Deprecation"] = "true"
+        return {"items": page, "next_cursor": next_cursor, "total": len(summaries)}
+
+    first = parsed.kind == "first"
+    rows, total = list_assets_keyset(
+        asset_type,
+        status,
+        limit=limit + 1,
+        after=parsed.key,
+        with_total=first,
+        db_path=db_path,
+    )
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    body: dict[str, Any] = {
+        "items": [_to_summary(r) for r in rows],
+        "next_cursor": (
+            encode_keyset_cursor(rows[-1].get("created_at"), str(rows[-1]["id"]))
+            if has_more
+            else None
+        ),
     }
+    if first:
+        body["total"] = total
+    return body
 
 
 # ---------- create ----------

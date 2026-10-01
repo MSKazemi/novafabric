@@ -289,6 +289,68 @@ def list_assets_paginated(
         conn.close()
 
 
+#: ADR-0206 P2: total order for keyset paging of assets. ``id`` (the primary
+#: key) breaks ``created_at`` ties, so equal timestamps page deterministically.
+ASSET_KEYSET_ORDER = "created_at DESC, id DESC"
+
+
+def list_assets_keyset(
+    asset_type: str | None,
+    status: str | None,
+    *,
+    limit: int,
+    after: tuple[str | None, str] | None = None,
+    with_total: bool = False,
+    db_path: Path | None = None,
+) -> tuple[list[dict[str, Any]], int | None]:
+    """Return ``(rows, total)`` — one keyset page of list-view asset rows.
+
+    ADR-0206 P2 (experimental). Rows are ordered ``created_at DESC, id DESC``
+    and, when ``after = (created_at, id)`` names the last row of the previous
+    page, only rows strictly after it are read — O(page), and stable when
+    assets are registered or removed between pages. ``created_at`` is
+    ``NOT NULL`` in the schema, so a ``None`` key admits nothing.
+
+    At most ``limit`` rows are returned; callers ask for ``page + 1`` to learn
+    whether another page exists. ``total`` is a ``COUNT(*)`` over the same
+    filters only when ``with_total`` (the first page), else ``None``.
+    ``spec_json`` is not selected.
+    """
+    conn = get_connection(db_path)
+    init_schema(conn)
+    try:
+        where = "WHERE 1=1"
+        params: list[Any] = []
+        if asset_type:
+            where += " AND asset_type = ?"
+            params.append(asset_type)
+        if status:
+            where += " AND status = ?"
+            params.append(status)
+        total: int | None = None
+        if with_total:
+            total = int(
+                conn.execute(f"SELECT COUNT(*) FROM assets {where}", params).fetchone()[0]
+            )
+        seek = ""
+        seek_params: list[Any] = []
+        if after is not None:
+            created_at, asset_id = after
+            if created_at is None:
+                return [], total
+            seek = " AND (created_at < ? OR (created_at = ? AND id < ?))"
+            seek_params = [created_at, created_at, asset_id]
+        rows = conn.execute(
+            "SELECT id, name, version, asset_type, status, created_at, "
+            f"promoted_at, git_commit_sha FROM assets {where}{seek} "
+            f"ORDER BY {ASSET_KEYSET_ORDER} LIMIT ?",
+            [*params, *seek_params, max(1, limit)],
+        ).fetchall()
+        return [{k: r[k] for k in r.keys()} for r in rows], total
+    finally:
+        conn.close()
+
+
 def _normalize_version(version: str) -> str:
     """Normalize a semver string: v1 → v1.0.0, 1.0 → 1.0.0."""
     prefix = "v" if version.startswith("v") else ""

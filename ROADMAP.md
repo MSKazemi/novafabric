@@ -54,7 +54,7 @@ Ten accepted-but-unbuilt ADR slices, all **experimental**, none changing `schema
 | 0168 P2 | Transitive trust path | `nova trust-path show\|verify` | writer CLIs, P5 seal |
 | 0170 P2 | Liability chain, SLA breach, coverage trigger | `nova insurance liability\|sla\|coverage` | features/loss/subrogation/insurability |
 | 0171 P2 | Access ledger + cross-run derivation | `nova memstore access ledger\|derive\|provenance` | cross-run index |
-| 0206 P2 (SQLite; Postgres Unreleased) | Keyset pagination, one shared cursor format across both backends | `query_runs` | `(tenant_id, started_at DESC, run_id DESC)` index migration; `/v0/assets` + `/v0/lineage/nodes` seek; `delete_run` |
+| 0206 P2 (SQLite; Postgres + `/v0/assets` Unreleased) | Keyset pagination, one shared cursor format across both backends and the assets list | `query_runs`, `GET /v0/assets` | `(tenant_id, started_at DESC, run_id DESC)` index migration; `/v0/lineage/nodes` seek; `delete_run` |
 
 ### Landed — v0.102.0, second batch (2026-09-25)
 

@@ -123,8 +123,8 @@ is **no** organization/workspace/team hierarchy yet — that is
   policy is proposed in [ADR-0188](../decisions.md)
   (`future design`).
 - **Pagination:** cursor-based, default 50 / max 500 per page (**works
-  today**). `GET /v0/capsules` now serves **keyset** cursors — see 6a
-  (**experimental**).
+  today**). `GET /v0/capsules` and `GET /v0/assets` now serve **keyset**
+  cursors — see 6a (**experimental**).
 - **Rate limiting/quotas:** **experimental, default off** — in-process rate
   limiting + storage quotas ([ADR-0179](../decisions.md)),
   plus per-workspace usage metering, `GET /v0/usage` reporting,
@@ -161,6 +161,15 @@ specified in the maintainers' private `design/` tree and is not published.
   `server.pagination.legacy_offset_cursors: false`
   (`NOVAFABRIC_SERVER_PAGINATION_LEGACY_OFFSET_CURSORS=false`) to refuse
   them early.
+
+**Keyset pagination on `GET /v0/assets`** (experimental, ADR-0206 P2) — same
+cursor format and rules as above: order `created_at DESC, id DESC`, seek in
+the registry SQL (`spec_json` is never read for a list page), `total` on the
+first page only, 400 `invalid_cursor` on garbage (previously a silent restart
+at page one), legacy `{"offset": N}` cursors served with `Deprecation: true`
+until `legacy_offset_cursors: false`. Cursors are not bound to the
+`asset_type`/`status` filters — reuse a cursor only with the filters it was
+issued under. `GET /v0/lineage/nodes` still uses offset cursors (planned).
 
 **Governed deletion (`admin` role only — writer/reader/auditor get 403):**
 
