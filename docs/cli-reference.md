@@ -6956,7 +6956,7 @@ modes.
 Options:
 - `--owner TEXT` (required) — owning principal (user or `svc:<name>`)
 - `--roles TEXT` — comma-separated roles (default: `reader`)
-- `--workspace TEXT` — optional workspace scope (ADR-0178; stored, not yet enforced)
+- `--workspace TEXT` — optional workspace scope (ADR-0178). Used for usage attribution; enforced at request time only when the server sets `api_keys.enforce_workspace_binding` (ADR-0294, experimental)
 - `--expires-in TEXT` — optional lifetime, e.g. `90d` (default: no expiry)
 - `--created-by TEXT` — actor recorded in the audit log (default: `cli`)
 - `--db-path PATH` — SQLite database path (overrides default)

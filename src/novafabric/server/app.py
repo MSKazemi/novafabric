@@ -210,6 +210,15 @@ def create_app(config: ServerConfig) -> FastAPI:
                     f"create them first (POST /v0/workspaces) or fix the "
                     f"config (ADR-0208)."
                 )
+        # ADR-0294 D1: same rule for per-org budgets.
+        if rl.enabled and rl.quota is not None and rl.quota.orgs:
+            known_orgs = {o["slug"] for o in workspace_store.list_orgs(db_path=db_path)}
+            unknown_orgs = sorted(set(rl.quota.orgs) - known_orgs)
+            if unknown_orgs:
+                raise ValueError(
+                    f"quota.orgs names unknown organization(s) {unknown_orgs}; "
+                    f"create them first (POST /v0/orgs) or fix the config (ADR-0294)."
+                )
 
         # ADR-0178 (2026-07-18): the capsule store is shared across orgs, so
         # a genuinely multi-org deployment has no capsule isolation. Refuse
@@ -298,6 +307,12 @@ def create_app(config: ServerConfig) -> FastAPI:
     # Auth exception handlers
     app.add_exception_handler(_Unauthenticated, unauthenticated_handler)  # type: ignore[arg-type]
     app.add_exception_handler(_Forbidden, forbidden_handler)  # type: ignore[arg-type]
+    from novafabric.server.key_binding import (
+        WorkspaceBindingError,
+        workspace_binding_handler,
+    )
+
+    app.add_exception_handler(WorkspaceBindingError, workspace_binding_handler)  # type: ignore[arg-type]
     # SCIM error envelope (RFC 7644 §3.12) — ADR-0139
     app.add_exception_handler(_ScimError, scim_error_handler)  # type: ignore[arg-type]
 

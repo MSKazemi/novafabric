@@ -41,6 +41,20 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Added
 
+- **Per-org usage budgets and API-key workspace-binding enforcement** (ADR-0208 remainder,
+  ADR-0294, **experimental**, both off by default). `server.rate_limits.quota.orgs` sets
+  soft/hard capsule and byte budgets per organization. They are checked against the sum of
+  the org's workspaces' metered counters, using the same warn-then-reject ladder as workspace
+  budgets: the warning header gains an `org:<org>/<kind> u/l` part, a hard limit returns
+  `429 quota_exceeded` with an additive `details.org`, and `ops.quota.breached` alerts use
+  `quota:org:<org>:<kind>` subjects. Unknown org slugs are refused at startup.
+  `server.api_keys.enforce_workspace_binding` (env
+  `NOVAFABRIC_SERVER_API_KEYS_ENFORCE_WORKSPACE_BINDING`) makes a bound API key fail with
+  `403 workspace_binding_invalid` when its workspace does not exist, and with
+  `403 workspace_binding_mismatch` when the request names another workspace through the new
+  `X-NovaFabric-Workspace` header or the `workspace` query parameter. Each refusal is audited
+  as `api_key.binding_refused`, at most once per subject, reason and workspace per minute.
+  See `docs/ops/quotas-and-rate-limits.md`.
 - **Keyset pagination on `GET /v0/lineage/nodes`** (ADR-0206 P2 remainder, **experimental**).
   The route now seeks in SQL (`ORDER BY node_id ASC LIMIT n+1`) instead of loading every node
   and slicing a list, and emits the shared v1 cursor (`server/pagination.py`, `k = [null,

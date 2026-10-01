@@ -149,6 +149,9 @@ def _record_usage_capsule_created(
         ws_checker = getattr(request.app.state, "workspace_quota_checker", None)
         if ws_checker is not None:
             ws_checker.invalidate(attribution.workspace)
+        org_checker = getattr(request.app.state, "org_quota_checker", None)
+        if org_checker is not None:  # ADR-0294 D1
+            org_checker.invalidate(attribution.org)
     except Exception:  # noqa: BLE001 — metering must never fail the upload
         _audit_metering_failure("capsule_upload_metering_failed", run_id)
 
@@ -181,6 +184,9 @@ def _record_usage_capsule_deleted(request: Request, run_id: str, actor: str) -> 
             )
             if ws_checker is not None:
                 ws_checker.invalidate(workspace)
+            org_checker = getattr(request.app.state, "org_quota_checker", None)
+            if org_checker is not None:  # ADR-0294 D1: org of the row unknown here
+                org_checker.invalidate(None)
     except Exception:  # noqa: BLE001 — metering must never fail the delete
         _audit_metering_failure("capsule_delete_metering_failed", run_id)
 

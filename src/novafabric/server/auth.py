@@ -39,9 +39,9 @@ class AuthContext:
     roles:     list of role strings from the token (e.g. ["reader", "writer"])
     workspace: optional ADR-0178 workspace binding carried by the credential
                (today: only ADR-0193 API keys set it). Additive (ADR-0208):
-               consumed as usage-metering *attribution* — it is NOT
-               enforcement; the binding remains unenforced at request time
-               per the private design/spec/api-keys-v0.md "Deferred".
+               consumed as usage-metering *attribution*; enforced at request
+               time only when ``server.api_keys.enforce_workspace_binding``
+               is on (ADR-0294 D2, experimental — ``server.key_binding``).
     """
 
     subject: str
@@ -230,6 +230,11 @@ def _try_api_key(request: Request) -> AuthContext | None:
     ctx = verify_key(raw_token)
     if ctx is None:
         raise _unauthenticated("Invalid, revoked, or expired API key")
+    # ADR-0294 D2 (experimental, opt-in): a bound key used outside its
+    # workspace is refused with 403 before any route runs. No-op by default.
+    from novafabric.server.key_binding import enforce_key_binding
+
+    enforce_key_binding(request, ctx)
     request.state.auth = ctx
     return ctx
 

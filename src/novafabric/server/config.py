@@ -138,6 +138,27 @@ class WorkspaceQuotaConfig(BaseModel):
         )
 
 
+class OrgQuotaConfig(WorkspaceQuotaConfig):
+    """One organization's budget inside ``quota.orgs`` (ADR-0294 D1, experimental).
+
+    Same four keys and semantics as :class:`WorkspaceQuotaConfig`
+    (``0`` = unlimited), enforced against the sum of the org's workspaces'
+    metered counters.
+    """
+
+    @model_validator(mode="after")
+    def _hard_at_least_soft(self) -> "OrgQuotaConfig":
+        for kind in ("capsules", "bytes"):
+            soft = getattr(self, f"max_{kind}_soft")
+            hard = getattr(self, f"max_{kind}_hard")
+            if soft and hard and hard < soft:
+                raise ValueError(
+                    f"quota.orgs.<slug>.max_{kind}_hard ({hard}) must be"
+                    f" >= max_{kind}_soft ({soft})"
+                )
+        return self
+
+
 class QuotaConfig(BaseModel):
     """Storage quotas (ADR-0179 second slice, experimental).
 
@@ -155,6 +176,9 @@ class QuotaConfig(BaseModel):
     max_bytes_soft: int = Field(default=0, ge=0)
     max_bytes_hard: int = Field(default=0, ge=0)
     workspaces: dict[str, WorkspaceQuotaConfig] = Field(default_factory=dict)
+    #: ADR-0294 D1 (experimental): per-org budgets over the sum of the org's
+    #: workspaces' metered counters. Absent/empty ⇒ byte-identical behavior.
+    orgs: dict[str, OrgQuotaConfig] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _hard_at_least_soft(self) -> "QuotaConfig":
@@ -187,6 +211,19 @@ class UsageConfig(BaseModel):
     rollup_retention_months: int = Field(default=24, ge=1)
     #: Raw ledger retention after a period is finalized.
     ledger_retention_months: int = Field(default=3, ge=1)
+
+
+class ApiKeysConfig(BaseModel):
+    """``server.api_keys`` block (ADR-0294 D2, experimental).
+
+    ``enforce_workspace_binding`` — when true, a request authenticated by an
+    ADR-0193 API key that carries a workspace binding is refused (403) if the
+    bound workspace does not exist, or if the request declares a different
+    workspace (``X-NovaFabric-Workspace`` header or ``workspace`` query
+    parameter). Default false: the binding stays attribution-only.
+    """
+
+    enforce_workspace_binding: bool = False
 
 
 class IngestConfig(BaseModel):
@@ -440,6 +477,8 @@ class ServerConfig(BaseModel):
     # Usage metering (ADR-0208, experimental) — inert unless
     # rate_limits.enabled; metering_enabled is the accounting kill-switch.
     usage: UsageConfig = Field(default_factory=UsageConfig)
+    # API-key policy (ADR-0294 D2, experimental) — binding enforcement off by default.
+    api_keys: ApiKeysConfig = Field(default_factory=ApiKeysConfig)
     # Keyset-pagination cursor policy (ADR-0206, experimental).
     pagination: PaginationConfig = Field(default_factory=PaginationConfig)
 
@@ -558,6 +597,11 @@ class ServerConfig(BaseModel):
             self.usage.rollup_retention_months = int(val)
         if val := os.environ.get("NOVAFABRIC_SERVER_USAGE_LEDGER_RETENTION_MONTHS"):
             self.usage.ledger_retention_months = int(val)
+        # ADR-0294 D2: API-key workspace-binding enforcement
+        if val := os.environ.get("NOVAFABRIC_SERVER_API_KEYS_ENFORCE_WORKSPACE_BINDING"):
+            self.api_keys.enforce_workspace_binding = val.lower() in (
+                "1", "true", "yes", "on",
+            )
         # ADR-0206 bulk-ops / pagination overrides
         if val := os.environ.get("NOVAFABRIC_SERVER_BULK_MAX_ITEMS"):
             # Route through the model so the 1–1000 bound holds for env too.

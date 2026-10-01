@@ -145,6 +145,17 @@ class QuotaViolation:
     limit: int
     severity: Severity
     workspace: str | None = None
+    #: ADR-0294 D1 (additive): set only for per-org budget violations.
+    org: str | None = None
+
+    @property
+    def scope_label(self) -> str:
+        """Header/log prefix: ``<ws>/``, ``org:<org>/``, or ``""`` (global)."""
+        if self.org is not None:
+            return f"org:{self.org}/"
+        if self.workspace:
+            return f"{self.workspace}/"
+        return ""
 
 
 @dataclass(frozen=True)
@@ -159,10 +170,11 @@ class QuotaDecision:
         """``X-NovaFabric-Quota-Warning`` value: ``<kind> <usage>/<limit>``.
 
         Workspace violations render ``<workspace>/<kind> <usage>/<limit>``
-        (ADR-0208 D3); mixed decisions comma-join, global parts first.
+        (ADR-0208 D3), org violations ``org:<org>/<kind> <usage>/<limit>``
+        (ADR-0294 D1); mixed decisions comma-join, global parts first.
         """
         return ", ".join(
-            (f"{v.workspace}/" if v.workspace else "") + f"{v.kind} {v.usage}/{v.limit}"
+            f"{v.scope_label}{v.kind} {v.usage}/{v.limit}"
             for v in self.violations
             if v.severity == "soft"
         )
@@ -384,19 +396,9 @@ class WorkspaceQuotaChecker:
             (KIND_BYTES, total_bytes, budget.max_bytes_soft, budget.max_bytes_hard),
         ):
             if hard and used >= hard:
-                violations.append(
-                    QuotaViolation(
-                        kind=kind, usage=used, limit=hard,
-                        severity="hard", workspace=workspace,
-                    )
-                )
+                violations.append(self._violation(kind, used, hard, "hard", workspace))
             elif soft and used >= soft:
-                violations.append(
-                    QuotaViolation(
-                        kind=kind, usage=used, limit=soft,
-                        severity="soft", workspace=workspace,
-                    )
-                )
+                violations.append(self._violation(kind, used, soft, "soft", workspace))
         if not violations:
             return QuotaDecision(outcome="ok")
         outcome: Outcome = (
@@ -406,10 +408,17 @@ class WorkspaceQuotaChecker:
             self._maybe_audit(violation)
         return QuotaDecision(outcome=outcome, violations=tuple(violations))
 
+    def _violation(
+        self, kind: str, used: int, limit: int, severity: Severity, name: str
+    ) -> QuotaViolation:
+        return QuotaViolation(
+            kind=kind, usage=used, limit=limit, severity=severity, workspace=name
+        )
+
     def _maybe_audit(self, violation: QuotaViolation) -> None:
         """One audit event (+ one alert) per (severity, workspace, kind) window."""
         event = EVENT_HARD if violation.severity == "hard" else EVENT_SOFT
-        key = (event, violation.workspace or "", violation.kind)
+        key = (event, violation.scope_label, violation.kind)
         now = self._clock()
         with self._lock:
             window = self._audit_windows.get(key)
@@ -427,6 +436,8 @@ class WorkspaceQuotaChecker:
             "window_start": window_start_utc,
             "emitted_at": datetime.now(timezone.utc).isoformat(),
         }
+        if violation.org is not None:
+            payload["org"] = violation.org  # ADR-0294 D1, additive
         try:
             self._audit_hook(payload)
         except Exception:  # noqa: BLE001 — auditing must never break requests
@@ -436,6 +447,60 @@ class WorkspaceQuotaChecker:
             hook(violation)
         except Exception:  # noqa: BLE001 — alerting must never break requests
             logger.warning("workspace quota alert emission failed", exc_info=True)
+
+
+class OrgQuotaChecker(WorkspaceQuotaChecker):
+    """Per-org warn-then-reject checks (ADR-0294 D1, experimental).
+
+    Same ladder, bounding and contract as :class:`WorkspaceQuotaChecker`, keyed
+    by org slug; usage is the sum of the org's workspaces' all-time metered
+    counters (``usage.OrgUsageReader``). Violations carry ``org`` (and no
+    ``workspace``); alerts use ``quota:org:{org}:{kind}`` subjects so an org
+    breach never deduplicates against a same-named workspace.
+    """
+
+    def __init__(
+        self,
+        budgets: dict[str, Any],
+        usage_reader: Callable[[str], tuple[int, int]],
+        **kwargs: Any,
+    ) -> None:
+        kwargs.setdefault("alert_hook", _emit_org_breach_alert)
+        kwargs.setdefault("soft_alert_hook", _emit_org_soft_alert)
+        super().__init__(budgets, usage_reader, **kwargs)
+
+    def _violation(
+        self, kind: str, used: int, limit: int, severity: Severity, name: str
+    ) -> QuotaViolation:
+        return QuotaViolation(kind=kind, usage=used, limit=limit, severity=severity, org=name)
+
+
+def _emit_org_alert(violation: QuotaViolation, *, severity: str, suffix: str) -> None:
+    from novafabric.events.alerts import emit_ops_alert  # noqa: PLC0415
+
+    emit_ops_alert(
+        event_type="ops.quota.breached",
+        severity=severity,
+        subject_ref=f"quota:org:{violation.org}:{violation.kind}{suffix}",
+        payload={
+            "org": violation.org,
+            "kind": violation.kind,
+            "usage": violation.usage,
+            "limit": violation.limit,
+        },
+        source="nova server",
+        background=True,
+    )
+
+
+def _emit_org_breach_alert(violation: QuotaViolation) -> None:
+    """`ops.quota.breached` (critical) for one org hard rejection (ADR-0294)."""
+    _emit_org_alert(violation, severity="critical", suffix="")
+
+
+def _emit_org_soft_alert(violation: QuotaViolation) -> None:
+    """`ops.quota.breached` (warning) when an org soft threshold crosses."""
+    _emit_org_alert(violation, severity="warning", suffix=":soft")
 
 
 def _emit_workspace_breach_alert(violation: QuotaViolation) -> None:
@@ -568,6 +633,8 @@ async def quota_exceeded_handler(
         # Additive field (ADR-0208 D3): workspace budget rejections name the
         # workspace; global rejections keep the exact pre-0208 details shape.
         details["workspace"] = v.workspace
+    if v.org is not None:
+        details["org"] = v.org  # ADR-0294 D1, additive
     return error_response(429, "quota_exceeded", str(exc), details)
 
 
@@ -584,10 +651,13 @@ async def enforce_storage_quota(request: Request, response: Response) -> None:
     ws_checker: WorkspaceQuotaChecker | None = getattr(
         request.app.state, "workspace_quota_checker", None
     )
+    org_checker: OrgQuotaChecker | None = getattr(
+        request.app.state, "org_quota_checker", None
+    )
     decisions: list[QuotaDecision] = []
     if checker is not None:
         decisions.append(checker.check())
-    if ws_checker is not None:
+    if ws_checker is not None or org_checker is not None:
         # Attribution rides the auth context resolved earlier in the
         # dependency chain (require_role precedes this dependency).
         from novafabric.server import usage as usage_mod  # noqa: PLC0415
@@ -597,7 +667,10 @@ async def enforce_storage_quota(request: Request, response: Response) -> None:
             getattr(request.state, "auth", None),
             Path(config.db_path) if config.db_path else None,
         )
-        decisions.append(ws_checker.check(attribution.workspace))
+        if ws_checker is not None:
+            decisions.append(ws_checker.check(attribution.workspace))
+        if org_checker is not None:
+            decisions.append(org_checker.check(attribution.org))
     if not decisions:
         return
     for decision in decisions:
@@ -655,4 +728,20 @@ def install_quota_enforcement(app: FastAPI, config: ServerConfig) -> None:
                 "per-workspace quota budgets enabled (ADR-0208, experimental):"
                 " %d workspace(s)",
                 len(rl.quota.workspaces),
+            )
+    if rl.quota.orgs:
+        from novafabric.server.usage import OrgUsageReader  # noqa: PLC0415
+
+        org_reader = OrgUsageReader(Path(config.db_path) if config.db_path else None)
+        org_checker = OrgQuotaChecker(
+            dict(rl.quota.orgs),
+            org_reader.get,
+            audit_window_seconds=rl.audit_window_seconds,
+            invalidate_hook=org_reader.invalidate,
+        )
+        if org_checker.enabled:
+            app.state.org_quota_checker = org_checker
+            logger.info(
+                "per-org quota budgets enabled (ADR-0294, experimental): %d org(s)",
+                len(rl.quota.orgs),
             )

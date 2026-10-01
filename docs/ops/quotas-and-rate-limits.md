@@ -270,8 +270,8 @@ nor `GET /v0/usage`); with metering on, the request itself still counts
 toward `api_requests` like any other. The rows are materialized and sorted
 in memory before streaming — bounded by 120 periods × workspaces × metrics.
 
-Not yet shipped (**planned**, ADR-0208 remaining items): per-org budget
-enforcement, and request-time enforcement of the API-key workspace binding.
+Per-org budgets and request-time enforcement of the API-key workspace
+binding shipped as **experimental** (ADR-0294, below).
 
 ### Per-workspace budgets
 
@@ -302,14 +302,64 @@ per-workspace dedup); the first soft crossing per window fires the same
 event at `warning` severity (subject suffixed `:soft`). Both are no-ops
 unless `NOVA_ALERTS_*` is configured.
 
+### Per-org budgets (experimental, ADR-0294)
+
+An additive `orgs` map beside `workspaces`, with the same four keys:
+
+```yaml
+rate_limits:
+  enabled: true
+  quota:
+    orgs:                    # ADR-0294; absent => byte-identical behavior
+      acme:
+        max_capsules_soft: 5000
+        max_capsules_hard: 8000
+        max_bytes_hard: 0    # 0 = unlimited
+```
+
+Org usage is the sum of the all-time metered counters of every workspace in
+the org (workspace → org resolved the same way attribution resolves it;
+unknown workspaces count toward `default`). Global, workspace and org checks
+all run and the strictest wins. Soft ⇒ the warning header gains an
+`org:<org>/<kind> <usage>/<limit>` part; hard ⇒ `429 quota_exceeded` with
+an additive `org` field in `details`. Alerts use the subjects
+`quota:org:<org>:<kind>` (critical) and `…:soft` (warning), so an org breach
+never deduplicates against a workspace with the same slug. An unknown org
+slug in config is refused at startup. Limit: counters are keyed by workspace
+slug and slugs are unique only within an org, so two orgs that share a
+workspace slug share one counter (assigned to the first org by slug).
+
+### API-key workspace-binding enforcement (experimental, ADR-0294)
+
+```yaml
+api_keys:
+  enforce_workspace_binding: true   # env NOVAFABRIC_SERVER_API_KEYS_ENFORCE_WORKSPACE_BINDING
+```
+
+Off by default. When on, a request authenticated by an API key **with** a
+workspace binding gets `403`:
+
+- `workspace_binding_invalid` — the bound workspace does not exist (or the
+  workspace store cannot be read: fail closed);
+- `workspace_binding_mismatch` — the request declares another workspace via
+  the `X-NovaFabric-Workspace` header or the `workspace` query parameter
+  (`details: {binding, requested, source}`).
+
+Unbound keys and non-key credentials are unaffected. Each refusal is written
+to the audit log as `api_key.binding_refused` (refs only, never the key),
+at most once per (subject, reason, requested workspace) per 60 s. List
+results are **not** narrowed to the bound workspace — the capsule store is
+not partitioned (ADR-0178).
+
 Env overrides: `NOVAFABRIC_SERVER_USAGE_{METERING_ENABLED,FLUSH_INTERVAL_S,`
 `ACCUMULATOR_MAX_ENTRIES,ROLLUP_RETENTION_MONTHS,LEDGER_RETENTION_MONTHS}`.
 `usage.metering_enabled: false` keeps rate limits on while switching
 accounting off.
 
 **Honest limits:** attribution consumes the ADR-0193 API-key workspace
-binding, which is *stored but not enforced* at request time — metering
-inherits that gap; this feature meters and scopes, it does **not** isolate
+binding, which is enforced at request time only when
+`api_keys.enforce_workspace_binding` is on — with it off, metering inherits
+that gap; this feature meters and scopes, it does **not** isolate
 the capsule store (ADR-0178 gap unchanged); `api_requests` counts are
 deliberately coarse (bounded accumulator, crash loses at most one interval).
 

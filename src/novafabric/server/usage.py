@@ -806,6 +806,65 @@ class WorkspaceUsageReader:
         return value
 
 
+def workspace_org_map(db_path: Path | None) -> dict[str, str]:
+    """``{workspace slug: org slug}`` under the attribution rule (first org by slug).
+
+    Mirrors :func:`org_for_workspace` for every workspace at once. A missing
+    workspace table (pre-ADR-0178 registry) yields ``{}``; callers map unknown
+    slugs to ``'default'``.
+    """
+    conn = _get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT w.slug AS ws, MIN(o.slug) AS org FROM workspaces w"
+            " JOIN organizations o ON o.id = w.org_id GROUP BY w.slug"
+        ).fetchall()
+        return {str(r["ws"]): str(r["org"]) for r in rows}
+    except sqlite3.OperationalError:
+        return {}
+    finally:
+        conn.close()
+
+
+def org_all_time_totals(org: str, *, db_path: Path | None = None) -> tuple[int, int]:
+    """All-time metered ``(capsules_created, bytes_stored)`` for *org* (ADR-0294 D1).
+
+    The sum over every workspace slug whose org — resolved exactly as
+    attribution resolves it — is *org*; slugs absent from the workspace table
+    count toward ``'default'``. Honest bound: counters are keyed by workspace
+    slug, and slugs are unique only within an org, so a slug shared by two
+    orgs is one counter assigned to the first org by slug.
+    """
+    from novafabric.server.workspace_store import DEFAULT_ORG_SLUG
+
+    mapping = workspace_org_map(db_path)
+    capsules = 0
+    total_bytes = 0
+    for ws, metrics in all_time_totals(db_path=db_path).items():
+        if mapping.get(ws, DEFAULT_ORG_SLUG) != org:
+            continue
+        capsules += int(metrics.get(METRIC_CAPSULES, 0))
+        total_bytes += int(metrics.get(METRIC_BYTES, 0))
+    return capsules, total_bytes
+
+
+class OrgUsageReader(WorkspaceUsageReader):
+    """TTL-cached org-scope reader for ADR-0294 org budgets (same 5 s bound)."""
+
+    def get(self, workspace: str) -> tuple[int, int]:
+        """All-time metered ``(capsules, bytes)`` for the org slug *workspace*."""
+        org = workspace
+        now = self._clock()
+        with self._lock:
+            hit = self._cache.get(org)
+            if hit is not None and (now - hit[0]) < self.cache_ttl:
+                return hit[1]
+        value = org_all_time_totals(org, db_path=self._db_path)
+        with self._lock:
+            self._cache[org] = (now, value)
+        return value
+
+
 # ---------------------------------------------------------------------------
 # api_requests accumulator (hot-path bound — spec: never a per-request write)
 # ---------------------------------------------------------------------------
