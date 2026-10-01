@@ -145,7 +145,8 @@ def test_a2a_adapter_capsule_passes_the_real_validator(tmp_path: Path) -> None:
     # ADR-0224: the capsule must say whether its wire stream is complete.
     # Asserted on REAL adapter output, not just grepped for in the source.
     assert manifest["metadata"]["wire_capture"] in {
-        "installed", "installed-contended", "scoped-concurrent", "skipped-concurrent"
+        "installed", "installed-contended", "scoped-concurrent", "scoped-truncated",
+        "skipped-concurrent",
     }, manifest["metadata"]
     assert manifest["metadata"]["agent"] == "agent-a"
     assert (
@@ -257,36 +258,59 @@ def test_every_adapter_records_whether_wire_capture_was_active() -> None:
     )
 
 
-def test_wire_capture_state_covers_all_four_outcomes() -> None:
+def test_wire_capture_state_covers_all_five_outcomes(tmp_path: Path) -> None:
     """The marker is only useful if it distinguishes every case.
 
-    ADR-0224 phase 2 added the fourth: a capture that owns no hooks but bound
-    its own recorder and writer, so its own events reached its own capsule
-    through the owner's single patch layer. Before phase 2 that capture recorded
-    nothing and said ``skipped-concurrent``; conflating the two would tell a
-    reader a complete stream was absent.
+    ADR-0224 phase 2 added ``scoped-concurrent``: a capture that owns no hooks
+    but bound its own recorder and writer, so its own events reached its own
+    capsule through the owner's single patch layer. Amendment 3 added
+    ``scoped-truncated``: the same, but the owner removed the patch layer while
+    it was still running, so its stream has a gap. And a participant token that
+    holds no binding now reads ``skipped-concurrent`` — it installed nothing and
+    bound nothing, so claiming a scoped stream would be false.
     """
     from novafabric.capture import hooks
 
+    class _W:
+        def __init__(self, name: str) -> None:
+            self.capsule_dir = tmp_path / name
+            self.capsule_dir.mkdir()
+
+    hooks.uninstall_all()
+    hooks._contended_owners.clear()
     assert hooks.wire_capture_state("") == "skipped-concurrent"
-    assert hooks.wire_capture_state(hooks._PARTICIPANT_PREFIX + "abc") == (
-        "scoped-concurrent"
+    assert hooks.wire_capture_state(hooks._PARTICIPANT_PREFIX + "unbound") == (
+        "skipped-concurrent"
     )
 
-    hooks._contended_owners.clear()
-    token = hooks._OWNER_PREFIX + "uncontended"
-    hooks._hook_owner = token
+    owner = hooks.install_all(writer=_W("a"), parent_span_id="a")  # type: ignore[arg-type]
     try:
-        assert hooks.wire_capture_state(token) == "installed"
-        hooks._contended_owners.add(token)
-        assert hooks.wire_capture_state(token) == "installed-contended"
+        assert hooks.wire_capture_state(owner) == "installed"
+        part = hooks.install_all(writer=_W("b"), parent_span_id="b")  # type: ignore[arg-type]
+        assert hooks.wire_capture_state(part) == "scoped-concurrent"
+        assert hooks.wire_capture_state(owner) == "installed-contended"
+        states = {
+            hooks.wire_capture_state(""),
+            hooks.wire_capture_state(owner),
+            hooks.wire_capture_state(part),
+        }
+        hooks.uninstall_all(owner)
+        assert hooks.wire_capture_state(part) == "scoped-truncated"
+        states.add(hooks.wire_capture_state(part))
+        hooks.uninstall_all(part)
     finally:
-        hooks._hook_owner = None
+        hooks.uninstall_all()
         hooks._contended_owners.clear()
+    assert hooks.wire_capture_state(hooks._OWNER_PREFIX + "never-contended") == (
+        "installed"
+    )
+    states.add("installed")
 
-    # All four are distinct — a marker that collapses two states is not a marker.
-    assert len({
-        hooks.wire_capture_state(""),
-        hooks.wire_capture_state(hooks._PARTICIPANT_PREFIX + "x"),
-        hooks.wire_capture_state(hooks._OWNER_PREFIX + "y"),
-    }) == 3
+    # All five are distinct — a marker that collapses two states is not a marker.
+    assert states == {
+        "installed",
+        "installed-contended",
+        "scoped-concurrent",
+        "scoped-truncated",
+        "skipped-concurrent",
+    }

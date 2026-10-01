@@ -176,7 +176,10 @@ def _isolated_capture_recorder() -> Iterator[None]:
 
     def _reset() -> None:
         _er._current_recorder = None
-        _er._recorder_var.set(None)
+        # Revokes every capture scope in every context, then empties this one.
+        _er.unbind_all_captures()
+        _hooks._scope_bindings.clear()
+        _hooks._truncated_participants.clear()
         # Only these two. ``_installed`` is deliberately NOT cleared: it holds live
         # hook objects whose ``uninstall()`` is the only way to undo them, so emptying
         # the list would strand installed hooks — a worse failure than the leak. The

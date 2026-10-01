@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import logging
 import threading
 import uuid
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from novafabric.capture.capsule import CapsuleWriter
+
+_log = logging.getLogger(__name__)
 
 _installed: list[object] = []
 
@@ -33,11 +36,11 @@ _recorder_set_by_install: object | None = None
 #   3. whichever capture finished first ran uninstall_all() and tore down
 #      *both*, leaving the still-running capture with no hooks and no recorder.
 #
-# Until the recorder becomes task-scoped (ADR-0224 phase 2), exactly one
-# capture owns the hooks at a time. A concurrent second capture still gets its
-# own capsule and its own adapter-level record — it simply does not install a
-# second, conflicting set of wire hooks, and says so rather than leaving a
-# silently short stream to be misread as "no network activity".
+# Exactly one capture owns the patch layer at a time. A concurrent capture
+# installs no second, conflicting layer; since ADR-0224 phase 2 it binds its own
+# task-scoped recorder and writer instead, so its events reach its own capsule
+# through the owner's layer — and every outcome is stamped into the capsule
+# (wire_capture_state) rather than left to be inferred from a short stream.
 _HOOK_OWNER_LOCK = threading.Lock()
 _hook_owner: str | None = None
 
@@ -55,11 +58,21 @@ _hook_owner: str | None = None
 _OWNER_PREFIX = "own:"
 _PARTICIPANT_PREFIX = "par:"
 
-#: Capture-scope binding handles held by participant tokens, so uninstall_all()
-#: can release a binding it did not create in the same task. Bounded by the
-#: number of concurrent captures (single digits); every entry is removed by the
-#: uninstall that pairs with its install.
-_participant_bindings: dict[str, str] = {}
+#: Capture-scope binding handles by token — the owner's **and** every
+#: participant's (ADR-0224 D3 ▸ Amendment 3) — so uninstall_all() can release a
+#: binding from whatever context it is called in. Every entry is removed by the
+#: uninstall that pairs with its install; the legacy ``uninstall_all()`` clears
+#: them all. Capped so a caller that never hands its token back cannot grow it
+#: without bound: past the cap a capture simply does not bind, and its marker
+#: says so (``skipped-concurrent``) rather than claiming a scoped stream.
+_scope_bindings: dict[str, str] = {}
+_MAX_LIVE_SCOPES = 256
+
+#: Participant tokens whose owner tore its patch layer down while they were
+#: still running. Their binding is kept — revoking it would send the rest of
+#: their events to whichever capture installs hooks next — but their wire stream
+#: has a gap, and ``wire_capture_state`` must say so. Bounded like the above.
+_truncated_participants: set[str] = set()
 
 #: Owner tokens that were live while another capture tried to claim the hooks.
 #:
@@ -88,6 +101,11 @@ def _claim_hook_ownership() -> str:
     with _HOOK_OWNER_LOCK:
         if _hook_owner is None:
             _hook_owner = _OWNER_PREFIX + uuid.uuid4().hex
+            # A participant that outlived the previous owner is still running
+            # and still bound. Its bare-thread events will fall back to *this*
+            # owner's writer, so this owner is contended from the start.
+            if any(t.startswith(_PARTICIPANT_PREFIX) for t in _scope_bindings):
+                _contended_owners.add(_hook_owner)
             return _hook_owner
         # Someone already owns them: record that the owner's capsule may now
         # contain this capture's wire events (see wire_capture_state).
@@ -98,8 +116,8 @@ def _claim_hook_ownership() -> str:
 def _release_hook_ownership(token: str) -> bool:
     """Give up ownership if *token* holds it. True if the caller should tear down.
 
-    An empty token never matches, so the capture that lost the race is a no-op
-    here even though it faithfully passes back what ``install_all`` gave it.
+    Only an ``own:`` token that is still the live owner matches; an empty token,
+    a participant token, or an owner token already released is a no-op here.
     """
     global _hook_owner
     with _HOOK_OWNER_LOCK:
@@ -128,7 +146,7 @@ def current_hook_owner() -> str | None:
 def wire_capture_state(token: str) -> str:
     """The honest ``metadata.wire_capture`` value for a capture holding *token*.
 
-    Four states, because "the stream is short" has four different causes and a
+    Five states, because "the stream is short" has five different causes and a
     reader must not have to guess which:
 
     - ``"installed"`` — this capture owned the hooks for its whole life and
@@ -143,10 +161,15 @@ def wire_capture_state(token: str) -> str:
       **in its own task** were filed into its own capsule through the owner's
       single patch layer. This is what ADR-0224 phase 2 added: the stream is this
       run's, and complete for everything the run did in its own context.
+    - ``"scoped-truncated"`` — as ``scoped-concurrent``, but the owner finished
+      first and removed the patch layer while this capture was still running.
+      Everything up to that moment is this run's and complete; events after it
+      were not captured unless another capture installed hooks again. The stream
+      is this run's but **has a gap** (ADR-0224 D3 ▸ Amendment 3).
     - ``"skipped-concurrent"`` — no wire-level hooks and no binding. The
       adapter-level record is still complete; the wire stream is absent, not
       empty. Phase 1's outcome for the race loser, kept for callers that pass an
-      empty token.
+      empty token, and for a participant that could not bind.
 
     ``"installed-contended"`` deliberately still warns after phase 2. The
     narrowing is real but partial: a task-bound concurrent capture no longer
@@ -160,7 +183,13 @@ def wire_capture_state(token: str) -> str:
     if not token:
         return "skipped-concurrent"
     if token.startswith(_PARTICIPANT_PREFIX):
-        return "scoped-concurrent"
+        with _HOOK_OWNER_LOCK:
+            bound = token in _scope_bindings
+            truncated = token in _truncated_participants
+        if not bound:
+            # Installed nothing and bound nothing: say absent, not scoped.
+            return "skipped-concurrent"
+        return "scoped-truncated" if truncated else "scoped-concurrent"
     return "installed-contended" if owner_was_contended(token) else "installed"
 
 
@@ -242,10 +271,13 @@ def _ensure_recorder(writer: "CapsuleWriter") -> None:
     try:
         from novafabric.capture.event_recorder import (
             EventRecorder,
-            get_current_recorder,
+            get_process_recorder,
             set_current_recorder,
         )
-        if get_current_recorder() is None:
+        # The singleton, not the task-resolved recorder: a binding in the
+        # calling task says nothing about what a bare thread will resolve, and
+        # a stale one used to suppress the singleton entirely.
+        if get_process_recorder() is None:
             _cap_dir = writer.capsule_dir
             _rec = EventRecorder(
                 capsule_dir=_cap_dir,
@@ -255,59 +287,62 @@ def _ensure_recorder(writer: "CapsuleWriter") -> None:
             set_current_recorder(_rec)
             _recorder_set_by_install = _rec
     except Exception:
-        pass  # fail-open: recorder is best-effort; never block capture
+        _log.debug("capture: could not set the recorder singleton", exc_info=True)
 
 
-def _bind_participant_scope(token: str, writer: "CapsuleWriter") -> None:
-    """Give a race-losing capture its own task-scoped recorder and writer.
+def _bind_scope(token: str, writer: "CapsuleWriter", *, own_recorder: bool) -> bool:
+    """Bind *token*'s capture scope — recorder and writer — to the calling task.
 
-    Fail-open, like every other hook-installation path: a capture that cannot
-    bind degrades to phase-1 behaviour (its wire events go to the owner) rather
-    than failing the run it is trying to observe.
+    Both kinds of capture bind (ADR-0224 D3 ▸ Amendment 3). A **participant**
+    must, or its events would reach the owner's capsule. The **owner** must too:
+    a capture that wins the race inside a task where another capture is still
+    bound — one nested in a participant that outlived the previous owner — would
+    otherwise resolve that outer capture and file its events there.
+
+    A participant gets a fresh recorder on its own capsule; the owner binds the
+    process recorder ``_ensure_recorder`` just settled, so that the owner's own
+    task and a bare thread resolve the same object.
+
+    Returns True if a binding was made. Fail-open, like every other installation
+    path: a capture that cannot bind degrades rather than failing the run it is
+    observing, and ``wire_capture_state`` reports the degraded state honestly.
     """
     try:
-        from novafabric.capture.event_recorder import EventRecorder, bind_capture
-
-        cap_dir = writer.capsule_dir
-        recorder = EventRecorder(
-            capsule_dir=cap_dir, run_id=cap_dir.name, capsule_id=cap_dir.name
+        from novafabric.capture.event_recorder import (
+            EventRecorder,
+            bind_capture,
+            get_process_recorder,
         )
+
+        with _HOOK_OWNER_LOCK:
+            if len(_scope_bindings) >= _MAX_LIVE_SCOPES:
+                _log.warning(
+                    "capture: %d capture scopes are live; not binding another — "
+                    "a caller is not handing its install_all() token back",
+                    len(_scope_bindings),
+                )
+                return False
+        if own_recorder:
+            cap_dir = writer.capsule_dir
+            recorder: EventRecorder | None = EventRecorder(
+                capsule_dir=cap_dir, run_id=cap_dir.name, capsule_id=cap_dir.name
+            )
+        else:
+            recorder = get_process_recorder()
         handle = bind_capture(recorder=recorder, writer=writer)
         with _HOOK_OWNER_LOCK:
-            _participant_bindings[token] = handle
+            _scope_bindings[token] = handle
+        return True
     except Exception:
-        pass  # fail-open: never block a capture on its own bookkeeping
+        _log.debug("capture: could not bind a capture scope", exc_info=True)
+        return False
 
 
-def _release_all_participant_scopes() -> int:
-    """Release every outstanding participant binding. Returns how many.
-
-    Called when the hooks themselves go away. A participant's binding exists to
-    redirect events raised through the **owner's** patch layer; once that layer
-    is gone the binding cannot serve its purpose, and leaving it set would
-    misdirect the next capture that runs in the same task. Teardown of the
-    hooks is therefore the outer bound on a binding's lifetime, independent of
-    whether each participant remembered to hand its token back.
-    """
+def _release_scope(token: str) -> bool:
+    """Release *token*'s capture scope from any context. True if one was live."""
     with _HOOK_OWNER_LOCK:
-        handles = list(_participant_bindings.values())
-        _participant_bindings.clear()
-    if not handles:
-        return 0
-    try:
-        from novafabric.capture.event_recorder import unbind_capture
-
-        for handle in handles:
-            unbind_capture(handle)
-    except Exception:
-        pass
-    return len(handles)
-
-
-def _release_participant_scope(token: str) -> bool:
-    """Release a participant's binding. True if one was live."""
-    with _HOOK_OWNER_LOCK:
-        handle = _participant_bindings.pop(token, None)
+        handle = _scope_bindings.pop(token, None)
+        _truncated_participants.discard(token)
     if handle is None:
         return False
     try:
@@ -315,8 +350,37 @@ def _release_participant_scope(token: str) -> bool:
 
         unbind_capture(handle)
     except Exception:
-        pass
+        _log.debug("capture: could not release a capture scope", exc_info=True)
     return True
+
+
+def _mark_live_participants_truncated() -> int:
+    """The patch layer is going while participants still run. Returns how many.
+
+    Their bindings are deliberately **kept**. Revoking them — what phase 2 first
+    did — would not stop their events, only redirect them: the next capture to
+    install hooks would receive them through its own writer. Kept, a participant
+    keeps filing into its own capsule whenever a patch layer exists, and its
+    marker records the gap (``scoped-truncated``).
+    """
+    with _HOOK_OWNER_LOCK:
+        live = [t for t in _scope_bindings if t.startswith(_PARTICIPANT_PREFIX)]
+        _truncated_participants.update(live)
+    return len(live)
+
+
+def _release_every_scope() -> int:
+    """Process reset: revoke every capture binding, in every context."""
+    with _HOOK_OWNER_LOCK:
+        _scope_bindings.clear()
+        _truncated_participants.clear()
+    try:
+        from novafabric.capture.event_recorder import unbind_all_captures
+
+        return unbind_all_captures()
+    except Exception:
+        _log.debug("capture: could not release capture scopes", exc_info=True)
+        return 0
 
 
 def _install_plugins(writer: "CapsuleWriter", parent_span_id: str) -> None:
@@ -337,18 +401,19 @@ def _install_plugins(writer: "CapsuleWriter", parent_span_id: str) -> None:
 def install_all(writer: "CapsuleWriter", parent_span_id: str) -> str:
     """Install every built-in hook whose target SDK is importable.
 
-    Returns an **owner token**: a non-empty string when this call installed the
-    hooks, or ``""`` when another capture already owns them (nothing is
-    installed). Truthiness answers "did I get wire capture?", which callers use
-    to record an honest ``wire_capture`` marker.
+    Returns an opaque, always non-empty **token**: an owner token when this call
+    installed the hooks, or a participant token when another capture already
+    owns them (nothing is installed, but this capture's own recorder and writer
+    are bound to the calling task — ADR-0224 D3). Pass it to
+    :func:`wire_capture_state` for the honest ``wire_capture`` marker, then
+    straight back to :func:`uninstall_all`.
 
-    Always hand the returned value straight back to :func:`uninstall_all`.
-    That is safe in both cases *by construction*: the empty token can never own
-    the hooks, so a capture that lost the race cannot tear down the one that
-    won. Returning ``None`` for the loser would have been the obvious API and
-    is a trap — ``uninstall_all(None)`` is the legacy unconditional teardown,
-    so handing back the return value would have caused exactly the bug this
-    guard exists to prevent.
+    That hand-back is safe in every case *by construction*: only the live owner
+    token can tear the hooks down, so a capture that lost the race cannot tear
+    down the one that won. Returning ``None`` for the loser would have been the
+    obvious API and is a trap — ``uninstall_all(None)`` is the legacy
+    unconditional teardown, so handing back the return value would have caused
+    exactly the bug this guard exists to prevent.
 
     Hooks for absent SDKs are skipped entirely — the hook module is
     not even imported. The performance impact is small (see
@@ -372,9 +437,10 @@ def install_all(writer: "CapsuleWriter", parent_span_id: str) -> str:
         # recorder and writer to the calling task. The owner's single patch
         # layer resolves both when an event *fires*, so events raised in this
         # capture's context are filed into this capture's capsule.
-        _bind_participant_scope(token, writer)
+        _bind_scope(token, writer, own_recorder=True)
         return token
     _ensure_recorder(writer)
+    _bind_scope(token, writer, own_recorder=False)
 
     for sdk_module, hook_module_path, hook_class_name in _BUILT_IN_HOOKS:
         if not _is_sdk_available(sdk_module):
@@ -454,13 +520,19 @@ def uninstall_all(token: str | None = None) -> bool:
     correct **only** where exactly one capture exists per process: the
     subprocess sitecustomize loader and the orchestrator. Every in-process
     caller (SDK wrapper, framework adapters) must pass its token.
+
+    Every token's capture scope is released here, from whatever context this
+    runs in — the release is visible in the binding context too
+    (ADR-0224 D3 ▸ Amendment 3). The legacy ``token=None`` path releases every
+    scope in the process.
     """
     global _recorder_set_by_install
+    if token:
+        # A participant installed nothing, so it tears nothing down — but both
+        # kinds bound a capture scope, and it must be released or a finished
+        # capture's writer stays bound for the rest of its task.
+        _release_scope(token)
     if token is not None and token.startswith(_PARTICIPANT_PREFIX):
-        # A participant installed nothing, so it tears nothing down — but it did
-        # bind a capture scope, and that must be released or the ContextVar keeps
-        # a finished capture's writer alive for the rest of the task.
-        _release_participant_scope(token)
         return False
     if token is not None and not _release_hook_ownership(token):
         return False
@@ -468,13 +540,14 @@ def uninstall_all(token: str | None = None) -> bool:
         # Bounded: the contention record exists so the owner can mark its own
         # capsule, and that read has happened by now (see wire_capture_state).
         _forget_contention(token)
+        # The patch layer is going while participants may still run: record
+        # their gap, keep their bindings (see the function for why).
+        _mark_live_participants_truncated()
     if token is None:
         # Legacy unconditional path: drop any live ownership so the next
-        # capture in this process can claim the hooks.
+        # capture in this process can claim the hooks, and every binding with it.
         _release_hook_ownership(current_hook_owner() or "")
-    # The patch layer is about to go. No participant binding can outlive it —
-    # see _release_all_participant_scopes for why that bound is the right one.
-    _release_all_participant_scopes()
+        _release_every_scope()
     for hook in _installed:
         try:
             hook.uninstall()  # type: ignore[attr-defined]

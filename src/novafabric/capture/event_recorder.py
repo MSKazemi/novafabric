@@ -93,40 +93,92 @@ def _is_ai_api(url: str) -> bool:
 _current_recorder: EventRecorder | None = None
 _singleton_lock = threading.Lock()
 
-#: Per-task recorder (ADR-0224 D3). Overrides the process-wide singleton for
-#: the task that bound it, so two concurrent in-process captures each record
-#: into their own capsule through **one** set of installed hooks — the hooks
-#: resolve the recorder when an event fires, not when they are installed, so
-#: nothing about their signatures changes.
-_recorder_var: ContextVar[EventRecorder | None] = ContextVar(
-    "novafabric_current_recorder", default=None
+#: Upper bound on how far a lookup walks a scope chain. Each link is a capture
+#: nested inside another in the same task, so real depth is single digits; the
+#: cap exists so a pathological caller cannot turn an event-time lookup into an
+#: unbounded walk.
+_MAX_SCOPE_DEPTH = 64
+
+
+class _CaptureScope:
+    """One capture's binding: its recorder, its writer, and whether it is live.
+
+    ADR-0224 D3 ▸ Amendment 3 (BL-039, 2026-10-01). The context variable holds
+    this object rather than the recorder and writer themselves, because a
+    :class:`~contextvars.ContextVar` can only be *changed* in the context that
+    holds it. Before this, :func:`unbind_capture` called from any other context —
+    the hook owner's teardown sweeping a participant, or ``bedrock_agentcore``
+    releasing from a later-consumed generator — removed the registry entry but
+    left the variable set in the binding context. The capture was reported as
+    released while its writer stayed bound, and the next capture to run in that
+    thread filed its events into the finished capture's capsule.
+
+    Flipping ``live`` is visible from every context at once, so a release means
+    the same thing wherever it is made. ``parent`` is the live scope that was
+    bound when this one was, so releasing a nested capture restores the outer
+    one instead of blanking the slot.
+    """
+
+    __slots__ = ("handle", "recorder", "writer", "parent", "live")
+
+    def __init__(
+        self,
+        handle: str,
+        recorder: EventRecorder | None,
+        writer: Any | None,
+        parent: _CaptureScope | None,
+    ) -> None:
+        self.handle = handle
+        self.recorder = recorder
+        self.writer = writer
+        self.parent = parent
+        self.live = True
+
+
+#: The innermost capture scope bound in this context (ADR-0224 D3). It overrides
+#: the process-wide recorder singleton and the hook's own writer for the task
+#: that bound it, so concurrent in-process captures each record into their own
+#: capsule through **one** installed patch layer — the hooks resolve both when an
+#: event fires, not when they are installed, so no hook signature changes.
+#:
+#: History, kept because each step was a measured correction: the recorder alone
+#: was task-scoped on 2026-08-06; the writer joined it on 2026-08-29 when model
+#: calls were found to bypass the recorder; both moved behind a revocable scope
+#: on 2026-10-01 when a cross-context release was found not to release.
+_scope_var: ContextVar[_CaptureScope | None] = ContextVar(
+    "novafabric_capture_scope", default=None
 )
 
-#: Per-task capsule writer (ADR-0224 D3, phase 2 — 2026-08-29).
-#:
-#: The recorder ContextVar above was landed on 2026-08-06 on the conclusion that
-#: it alone gave concurrent captures their own capsules. Measuring that on
-#: 2026-08-29 showed it covers ``NetworkEvent`` and nothing else: every wire hook
-#: writes its **model call** — the richest record it produces — through the
-#: ``self._writer`` it was constructed with, which belongs to whichever capture
-#: won the hook race. So a second capture's model calls were still filed into the
-#: first capture's capsule.
-#:
-#: Resolving the writer per task too closes that, and (like the recorder) needs no
-#: hook signature to change, because the hooks resolve it when an event *fires*.
-_writer_var: ContextVar[Any | None] = ContextVar(
-    "novafabric_current_writer", default=None
-)
-
-#: Live bindings by handle. Exists so a binding can be released from a task
+#: Live scopes by handle. Exists so a binding can be released from a task
 #: *other* than the one that created it — see :func:`unbind_capture`. Bounded
 #: by the number of concurrent captures in the process (single digits), and
-#: every entry is removed by the ``finally`` that pairs with its bind.
-#:
-#: Each entry holds the recorder **and** the writer, so the two can never drift
-#: apart: one call binds a whole capture, one call releases it.
-_bindings: dict[str, tuple[EventRecorder | None, Any | None]] = {}
+#: every entry is removed by the release that pairs with its bind.
+_bindings: dict[str, _CaptureScope] = {}
 _binding_lock = threading.Lock()
+
+
+def _first_live(scope: _CaptureScope | None) -> _CaptureScope | None:
+    depth = 0
+    while scope is not None and depth < _MAX_SCOPE_DEPTH:
+        if scope.live:
+            return scope
+        scope = scope.parent
+        depth += 1
+    return None
+
+
+def _resolve(attr: str) -> Any | None:
+    """The innermost live scope's non-None *attr*, walking outwards."""
+    scope = _scope_var.get()
+    depth = 0
+    while scope is not None and depth < _MAX_SCOPE_DEPTH:
+        if scope.live:
+            value = getattr(scope, attr)
+            if value is not None:
+                return value
+        scope = scope.parent
+        depth += 1
+    return None
 
 
 def get_current_recorder() -> EventRecorder | None:
@@ -139,8 +191,18 @@ def get_current_recorder() -> EventRecorder | None:
     **threads do not inherit context** (ADR-0224 D3), so a thread that binds
     nothing sees the singleton rather than nothing at all.
     """
-    bound = _recorder_var.get()
+    bound: EventRecorder | None = _resolve("recorder")
     return bound if bound is not None else _current_recorder
+
+
+def get_process_recorder() -> EventRecorder | None:
+    """The process-wide singleton only, ignoring any task-scoped binding.
+
+    ``capture.hooks`` asks this rather than :func:`get_current_recorder` when it
+    decides whether the singleton still needs setting: a binding in the calling
+    task says nothing about what a bare thread will resolve.
+    """
+    return _current_recorder
 
 
 def set_current_recorder(recorder: EventRecorder | None) -> None:
@@ -209,41 +271,64 @@ def bind_capture(
     Binding both halves together is the point: a capture whose recorder is
     task-scoped but whose writer is not files its network events correctly and
     its model calls into somebody else's capsule, which is precisely the defect
-    this function was added to close.
+    this function was added to close. A half passed as ``None`` resolves to the
+    enclosing binding's, exactly as if this capture had not bound it.
     """
     handle = secrets.token_urlsafe(16)
+    scope = _CaptureScope(
+        handle=handle,
+        recorder=recorder,
+        writer=writer,
+        # Link only to a live ancestor, so released scopes are not retained by
+        # the chain and its length is bounded by live nesting depth.
+        parent=_first_live(_scope_var.get()),
+    )
     with _binding_lock:
-        _bindings[handle] = (recorder, writer)
-    if recorder is not None:
-        _recorder_var.set(recorder)
-    if writer is not None:
-        _writer_var.set(writer)
+        _bindings[handle] = scope
+    _scope_var.set(scope)
     return handle
 
 
 def unbind_capture(handle: str) -> bool:
     """Release a binding made by :func:`bind_capture`.
 
-    Returns True if *handle* was live. Safe to call from any task, more than
-    once, and after the binding task has finished: an unknown handle is a no-op
-    rather than an error, because a teardown path must never raise into the
-    workload it is capturing.
+    Returns True if *handle* was live. Safe to call from any task or thread,
+    more than once, and after the binding task has finished: an unknown handle
+    is a no-op rather than an error, because a teardown path must never raise
+    into the workload it is capturing.
 
-    Each slot is cleared only if it still holds *this* binding's object, so a
-    nested capture that bound after this one cannot be blanked by this release.
-    Clearing a context variable only has an effect in the task that holds it;
-    other tasks' contexts are discarded with the task, so nothing leaks.
+    The release takes effect **in every context at once**: the scope is marked
+    dead and every lookup skips dead scopes, so releasing from a context other
+    than the binding one cannot leave the capture silently bound there
+    (ADR-0224 D3 ▸ Amendment 3). A nested capture that bound after this one is
+    unaffected, and releasing a nested capture restores the one it was nested in.
     """
     with _binding_lock:
-        entry = _bindings.pop(handle, None)
-    if entry is None:
+        scope = _bindings.pop(handle, None)
+    if scope is None:
         return False
-    recorder, writer = entry
-    if recorder is not None and _recorder_var.get() is recorder:
-        _recorder_var.set(None)
-    if writer is not None and _writer_var.get() is writer:
-        _writer_var.set(None)
+    scope.live = False
+    # Tidy the caller's own slot when it is the binding context; any other
+    # context skips the dead scope on lookup and drops it with the context.
+    if _scope_var.get() is scope:
+        _scope_var.set(_first_live(scope.parent))
     return True
+
+
+def unbind_all_captures() -> int:
+    """Release every live binding in the process. Returns how many were live.
+
+    The process-reset form of :func:`unbind_capture`, used by the legacy
+    unconditional ``capture.hooks.uninstall_all()`` path and by test isolation.
+    """
+    with _binding_lock:
+        scopes = list(_bindings.values())
+        _bindings.clear()
+    for scope in scopes:
+        scope.live = False
+    if _scope_var.get() is not None:
+        _scope_var.set(None)
+    return len(scopes)
 
 
 def get_current_writer(default: Any = None) -> Any:
@@ -260,7 +345,7 @@ def get_current_writer(default: Any = None) -> Any:
     narrowing that matters — *never None when the caller passed a writer* — is
     guaranteed by the fallback, not by the annotation.
     """
-    bound = _writer_var.get()
+    bound = _resolve("writer")
     return bound if bound is not None else default
 
 

@@ -890,11 +890,18 @@ class TestA2AInterceptor:
         def _fake_install(**kw: object) -> str:
             installs.append(str(kw["parent_span_id"]))
             if _owner:
-                return hooks_mod._PARTICIPANT_PREFIX + str(kw["parent_span_id"])
+                # The real participant binds its own capture scope, and
+                # wire_capture_state reports `scoped-concurrent` only for a
+                # participant that did — so the fake binds through the real path.
+                tok = hooks_mod._PARTICIPANT_PREFIX + str(kw["parent_span_id"])
+                hooks_mod._bind_scope(tok, kw["writer"], own_recorder=True)  # type: ignore[arg-type]
+                return tok
             _owner.append(hooks_mod._OWNER_PREFIX + str(kw["parent_span_id"]))
             return _owner[0]
 
         def _fake_uninstall(token: str | None = None) -> bool:
+            if token:
+                hooks_mod._release_scope(token)
             if token and _owner and token == _owner[0]:
                 _owner.clear()
                 uninstalls.append(token)

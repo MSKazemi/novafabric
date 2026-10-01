@@ -27,6 +27,32 @@ longer forwards the submitting shell's environment (ADR-0270).
   failing exactly six months later. The date is now relative to the current time. Test-only;
   `is_within_retention` itself was correct.
 
+- **A concurrent in-process capture could file its events into a capture that had already
+  finished** (ADR-0224 D3, BL-039). Applies to the experimental concurrent-capture path, used
+  when two in-process captures — SDK `capture()` or any framework adapter — overlap.
+
+  When the capture that owned the hooks finished *before* a concurrent one, its teardown
+  "released" the other capture's task-scoped binding from the wrong thread. A `ContextVar` can
+  only be changed in the context that holds it, so the binding was reported as released but
+  stayed set. The next capture to run in that thread then resolved the finished capture's
+  writer and recorder, and its model calls and network events were filed into the wrong
+  capsule. Reproduced with threads and with asyncio, and the new tests fail when the fix is
+  reverted (`tests/capture/test_concurrent_capture_scopes.py`).
+
+  A release now takes effect in every context at once: a binding is a revocable scope that
+  every lookup checks. Releasing a nested capture restores the one around it instead of
+  blanking it. The owner also binds its own scope, so an owner started inside a capture that
+  is still bound files into its own capsule. Lookups are bounded in depth and live bindings
+  are capped.
+
+- **`metadata.wire_capture` overstated a concurrent capture's stream in two cases.** A capture
+  whose owner removed the hooks while it was still running now reports the new value
+  **`scoped-truncated`** (its own stream, with a gap), not `scoped-concurrent` (its own
+  stream, complete). A capture that lost the hook race but could not bind its own scope now
+  reports `skipped-concurrent`. An owner that starts while another capture is still bound now
+  reports `installed-contended`. The new marker value is additive. No schema, CLI or adapter
+  signature changed.
+
 ## [0.102.1] - 2026-09-27
 
 ### Fixed
