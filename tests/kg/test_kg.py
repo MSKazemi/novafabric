@@ -1020,26 +1020,38 @@ def test_kg_query_cli_mcp_servers(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_kg_prometheus_node_merge_total(kg_store: Any) -> None:
+@pytest.fixture()
+def isolated_kg(tmp_path: Path) -> tuple[Any, Any]:
+    """KGStore whose metrics live in a private ``CollectorRegistry`` (BL-061).
+
+    The process-wide collectors are shared by every KGStore in the worker,
+    including stores other tests left running on background threads, so a
+    before/after delta read from them flakes under xdist. A per-test registry
+    makes each delta depend only on this test's own writes.
+    """
+    pytest.importorskip("kuzu")
+    prometheus_client = pytest.importorskip("prometheus_client")
+    from novafabric.kg.store import KGMetrics, KGStore
+
+    metrics = KGMetrics.for_registry(prometheus_client.CollectorRegistry())
+    store = KGStore(tmp_path / "isolated_kg.kuzu", metrics=metrics)
+    store.init_schema()
+    return store, metrics
+
+
+def test_kg_prometheus_node_merge_total(isolated_kg: tuple[Any, Any]) -> None:
     """novafabric_kg_node_merge_total increments on each node upsert."""
-    pytest.importorskip("prometheus_client")
-    from novafabric.kg import store as _store
-
-    assert _store._kg_node_merge_total is not None, "Counter should be initialised"
-    before = _store._kg_node_merge_total.labels(node_type="Agent")._value.get()
-    kg_store.merge_agent("prom-agent-1", "PrometheusTestAgent")
-    after = _store._kg_node_merge_total.labels(node_type="Agent")._value.get()
-    assert after == before + 1
+    store, metrics = isolated_kg
+    store.merge_agent("prom-agent-1", "PrometheusTestAgent")
+    assert metrics.node_merge_total.labels(node_type="Agent")._value.get() == 1
+    store.merge_agent("prom-agent-1", "PrometheusTestAgent")
+    assert metrics.node_merge_total.labels(node_type="Agent")._value.get() == 2
 
 
-def test_kg_prometheus_edge_upsert_total(kg_store: Any) -> None:
+def test_kg_prometheus_edge_upsert_total(isolated_kg: tuple[Any, Any]) -> None:
     """novafabric_kg_edge_upsert_total increments on each edge upsert."""
-    pytest.importorskip("prometheus_client")
-    from novafabric.kg import store as _store
-
-    assert _store._kg_edge_upsert_total is not None
-    before = _store._kg_edge_upsert_total.labels(edge_type="CALLS")._value.get()
-    kg_store.upsert_calls_edge(
+    store, metrics = isolated_kg
+    store.upsert_calls_edge(
         agent_id="prom-agent-2",
         model_id="prom-model-2",
         call_count=1,
@@ -1047,18 +1059,13 @@ def test_kg_prometheus_edge_upsert_total(kg_store: Any) -> None:
         confidence=0.5,
         capsule_id="cap-prom-1",
     )
-    after = _store._kg_edge_upsert_total.labels(edge_type="CALLS")._value.get()
-    assert after == before + 1
+    assert metrics.edge_upsert_total.labels(edge_type="CALLS")._value.get() == 1
 
 
-def test_kg_prometheus_crdt_merge_total_new_edge(kg_store: Any) -> None:
+def test_kg_prometheus_crdt_merge_total_new_edge(isolated_kg: tuple[Any, Any]) -> None:
     """novafabric_kg_crdt_merge_total does NOT increment for a brand-new edge."""
-    pytest.importorskip("prometheus_client")
-    from novafabric.kg import store as _store
-
-    assert _store._kg_crdt_merge_total is not None
-    before = _store._kg_crdt_merge_total.labels(edge_type="CALLS")._value.get()
-    kg_store.upsert_calls_edge(
+    store, metrics = isolated_kg
+    store.upsert_calls_edge(
         agent_id="prom-agent-3-new",
         model_id="prom-model-3-new",
         call_count=1,
@@ -1066,45 +1073,75 @@ def test_kg_prometheus_crdt_merge_total_new_edge(kg_store: Any) -> None:
         confidence=1.0,
         capsule_id="cap-prom-new",
     )
-    after = _store._kg_crdt_merge_total.labels(edge_type="CALLS")._value.get()
-    assert after == before, "No CRDT merge counter for a brand-new edge"
+    assert metrics.crdt_merge_total.labels(edge_type="CALLS")._value.get() == 0
 
 
-def test_kg_prometheus_crdt_merge_total_existing_edge(kg_store: Any) -> None:
+def test_kg_prometheus_crdt_merge_total_existing_edge(isolated_kg: tuple[Any, Any]) -> None:
     """novafabric_kg_crdt_merge_total increments when updating an existing edge."""
-    pytest.importorskip("prometheus_client")
-    from novafabric.kg import store as _store
-
-    assert _store._kg_crdt_merge_total is not None
-    kg_store.upsert_calls_edge(
-        agent_id="prom-agent-4",
-        model_id="prom-model-4",
-        call_count=1,
-        verified_count=0,
-        confidence=0.5,
-        capsule_id="cap-prom-4a",
+    store, metrics = isolated_kg
+    for suffix in ("a", "b"):
+        store.upsert_calls_edge(
+            agent_id="prom-agent-4",
+            model_id="prom-model-4",
+            call_count=1,
+            verified_count=1,
+            confidence=1.0,
+            capsule_id=f"cap-prom-4{suffix}",
+        )
+    assert metrics.crdt_merge_total.labels(edge_type="CALLS")._value.get() == 1, (
+        "CRDT merge counter must fire on second write to same edge only"
     )
-    before = _store._kg_crdt_merge_total.labels(edge_type="CALLS")._value.get()
-    kg_store.upsert_calls_edge(
-        agent_id="prom-agent-4",
-        model_id="prom-model-4",
-        call_count=1,
-        verified_count=1,
-        confidence=1.0,
-        capsule_id="cap-prom-4b",
-    )
-    after = _store._kg_crdt_merge_total.labels(edge_type="CALLS")._value.get()
-    assert after == before + 1, "CRDT merge counter must fire on second write to same edge"
 
 
-def test_kg_prometheus_node_count_gauge(kg_store: Any) -> None:
+def test_kg_prometheus_node_count_gauge(isolated_kg: tuple[Any, Any]) -> None:
     """novafabric_kg_node_count gauge is updated by get_node_counts()."""
-    pytest.importorskip("prometheus_client")
-    from novafabric.kg import store as _store
-
-    assert _store._kg_node_count is not None
-    kg_store.merge_agent("prom-gauge-agent", "GaugeAgent")
-    counts = kg_store.get_node_counts()
-    gauge_val = _store._kg_node_count._value.get()
+    store, metrics = isolated_kg
+    store.merge_agent("prom-gauge-agent", "GaugeAgent")
+    counts = store.get_node_counts()
+    gauge_val = metrics.node_count._value.get()
     assert gauge_val == sum(counts.values())
     assert gauge_val >= 1
+
+
+def test_kg_isolated_metrics_ignore_other_stores(
+    isolated_kg: tuple[Any, Any], kg_store: Any
+) -> None:
+    """A store on the process registry cannot move an isolated store's counters."""
+    _, metrics = isolated_kg
+    kg_store.merge_agent("noise-agent", "Noise")
+    kg_store.get_node_counts()
+    assert metrics.node_merge_total.labels(node_type="Agent")._value.get() == 0
+    assert metrics.node_count._value.get() == 0
+
+
+def test_kg_default_store_reports_to_process_registry(kg_store: Any) -> None:
+    """Without ``metrics=`` a store still feeds the default-REGISTRY collectors."""
+    pytest.importorskip("prometheus_client")
+    from novafabric.kg import store as _store
+
+    assert kg_store._metrics.node_merge_total is _store._kg_node_merge_total
+    assert kg_store._metrics.node_count is _store._kg_node_count
+    assert _store._kg_node_merge_total is not None
+
+
+def test_kg_metrics_for_registry_rejects_duplicate_names() -> None:
+    """Binding two metric sets to one registry fails loudly, not silently."""
+    prometheus_client = pytest.importorskip("prometheus_client")
+    from novafabric.kg.store import KGMetrics
+
+    registry = prometheus_client.CollectorRegistry()
+    KGMetrics.for_registry(registry)
+    with pytest.raises(ValueError):
+        KGMetrics.for_registry(registry)
+
+
+def test_kg_store_with_disabled_metrics(tmp_path: Path) -> None:
+    """An all-``None`` KGMetrics records nothing and never raises."""
+    pytest.importorskip("kuzu")
+    from novafabric.kg.store import KGMetrics, KGStore
+
+    store = KGStore(tmp_path / "nometrics.kuzu", metrics=KGMetrics())
+    store.init_schema()
+    store.merge_agent("a", "A")
+    store.upsert_calls_edge("a", "m", 1, 0, 0.5, "c")
+    assert store.get_node_counts()["Agent"] == 1

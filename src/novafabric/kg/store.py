@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +79,70 @@ except ImportError:  # prometheus_client not installed — metrics are optional
     _kg_edge_upsert_total = None
     _kg_crdt_merge_total = None
     _kg_node_count = None
+
+@dataclass(frozen=True)
+class KGMetrics:
+    """The four Prometheus collectors one :class:`KGStore` reports to.
+
+    Every field is optional: ``None`` means "do not record". A store built
+    without an explicit ``metrics`` argument reports to the process-wide
+    collectors registered at import time (the ``/metrics`` scrape surface).
+    Passing :meth:`for_registry` instead binds a store to a private
+    ``CollectorRegistry`` so its counters cannot be moved by any other store
+    in the process — the isolation the KG metric tests rely on (BL-061).
+    """
+
+    node_merge_total: Any = None
+    edge_upsert_total: Any = None
+    crdt_merge_total: Any = None
+    node_count: Any = None
+
+    @classmethod
+    def process_default(cls) -> KGMetrics:
+        """Collectors registered on the default ``REGISTRY`` at import time."""
+        return cls(
+            node_merge_total=_kg_node_merge_total,
+            edge_upsert_total=_kg_edge_upsert_total,
+            crdt_merge_total=_kg_crdt_merge_total,
+            node_count=_kg_node_count,
+        )
+
+    @classmethod
+    def for_registry(cls, registry: Any) -> KGMetrics:
+        """Fresh collectors registered on ``registry`` (a ``CollectorRegistry``).
+
+        Raises:
+            ImportError: ``prometheus_client`` is not installed.
+            ValueError: ``registry`` already holds collectors with these names.
+        """
+        from prometheus_client import Counter, Gauge  # noqa: PLC0415
+
+        return cls(
+            node_merge_total=Counter(
+                "novafabric_kg_node_merge_total",
+                "Total KG node MERGE upserts by node type",
+                ["node_type"],
+                registry=registry,
+            ),
+            edge_upsert_total=Counter(
+                "novafabric_kg_edge_upsert_total",
+                "Total KG edge upserts (CRDT G-counter writes) by edge type",
+                ["edge_type"],
+                registry=registry,
+            ),
+            crdt_merge_total=Counter(
+                "novafabric_kg_crdt_merge_total",
+                "KG CRDT merges where an existing edge call_count was incremented",
+                ["edge_type"],
+                registry=registry,
+            ),
+            node_count=Gauge(
+                "novafabric_kg_node_count",
+                "Current total KG node count across all node types",
+                registry=registry,
+            ),
+        )
+
 
 SCHEMA_DDL: list[str] = [
     (
@@ -159,7 +224,7 @@ class KGStore:
     lock is already held by the caller.
     """
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(self, db_path: str | Path, *, metrics: KGMetrics | None = None) -> None:
         try:
             import kuzu as _kuzu
         except ImportError as exc:
@@ -175,6 +240,7 @@ class KGStore:
         self._conn = _kuzu.Connection(self._db)
         self._write_lock = threading.Lock()
         self._initialized = False
+        self._metrics = metrics if metrics is not None else KGMetrics.process_default()
 
     # ------------------------------------------------------------------
     # Schema
@@ -200,8 +266,8 @@ class KGStore:
             "ON CREATE SET a.name = $name, a.last_seen = current_timestamp()",
             {"id": agent_id, "name": name},
         )
-        if _kg_node_merge_total is not None:
-            _kg_node_merge_total.labels(node_type="Agent").inc()
+        if self._metrics.node_merge_total is not None:
+            self._metrics.node_merge_total.labels(node_type="Agent").inc()
 
     def _merge_model(
         self, model_id: str, provider: str = "", canonical_name: str = ""
@@ -214,8 +280,8 @@ class KGStore:
             "m.last_seen = current_timestamp()",
             {"id": model_id, "provider": provider, "canonical": canonical_name},
         )
-        if _kg_node_merge_total is not None:
-            _kg_node_merge_total.labels(node_type="Model").inc()
+        if self._metrics.node_merge_total is not None:
+            self._metrics.node_merge_total.labels(node_type="Model").inc()
 
     def _merge_tool(self, tool_id: str, name: str = "") -> None:
         """MERGE Tool node — caller must hold _write_lock."""
@@ -225,8 +291,8 @@ class KGStore:
             "ON CREATE SET t.name = $name, t.last_seen = current_timestamp()",
             {"id": tool_id, "name": name},
         )
-        if _kg_node_merge_total is not None:
-            _kg_node_merge_total.labels(node_type="Tool").inc()
+        if self._metrics.node_merge_total is not None:
+            self._metrics.node_merge_total.labels(node_type="Tool").inc()
 
     def _merge_endpoint(self, endpoint_id: str, url: str = "") -> None:
         """MERGE InferenceEndpoint node — caller must hold _write_lock."""
@@ -236,8 +302,8 @@ class KGStore:
             "ON CREATE SET e.url = $url, e.last_seen = current_timestamp()",
             {"id": endpoint_id, "url": url},
         )
-        if _kg_node_merge_total is not None:
-            _kg_node_merge_total.labels(node_type="InferenceEndpoint").inc()
+        if self._metrics.node_merge_total is not None:
+            self._metrics.node_merge_total.labels(node_type="InferenceEndpoint").inc()
 
     def _merge_mcp_server(self, server_id: str, name: str = "") -> None:
         """MERGE MCPServer node — caller must hold _write_lock."""
@@ -247,8 +313,8 @@ class KGStore:
             "ON CREATE SET s.name = $name, s.last_seen = current_timestamp()",
             {"id": server_id, "name": name or server_id},
         )
-        if _kg_node_merge_total is not None:
-            _kg_node_merge_total.labels(node_type="MCPServer").inc()
+        if self._metrics.node_merge_total is not None:
+            self._metrics.node_merge_total.labels(node_type="MCPServer").inc()
 
     # ------------------------------------------------------------------
     # Public node merge helpers (acquire lock internally)
@@ -356,10 +422,10 @@ class KGStore:
                 "cids": new_ids,
             },
         )
-        if _kg_edge_upsert_total is not None:
-            _kg_edge_upsert_total.labels(edge_type=rel_table).inc()
-        if is_existing_edge and _kg_crdt_merge_total is not None:
-            _kg_crdt_merge_total.labels(edge_type=rel_table).inc()
+        if self._metrics.edge_upsert_total is not None:
+            self._metrics.edge_upsert_total.labels(edge_type=rel_table).inc()
+        if is_existing_edge and self._metrics.crdt_merge_total is not None:
+            self._metrics.crdt_merge_total.labels(edge_type=rel_table).inc()
 
     # ------------------------------------------------------------------
     # Edge upserts (acquire lock, call internal helpers inside same lock)
@@ -556,8 +622,8 @@ class KGStore:
                 counts[label] = int(result.get_next()[0])
             except Exception:  # noqa: BLE001
                 counts[label] = 0
-        if _kg_node_count is not None:
-            _kg_node_count.set(sum(counts.values()))
+        if self._metrics.node_count is not None:
+            self._metrics.node_count.set(sum(counts.values()))
         return counts
 
     def get_status(self) -> dict[str, Any]:
