@@ -38,6 +38,12 @@ with ADR-0185 application-layer envelope encryption:
   access to the inner store".  Mixed stores holding pre-encryption objects
   opt in explicitly with ``allow_plaintext_reads=True``
   (``NOVA_OBJECT_STORE_ALLOW_PLAINTEXT_READS=1``); every such read is logged.
+  The narrower alternative (ADR-0295) is a digest-pinned legacy-object
+  inventory: only objects listed at cut-over, with unchanged stored bytes,
+  are admitted.
+- **strict mode (ADR-0295):** ``refuse_legacy_envelopes=True``
+  (``NOVA_OBJECT_STORE_REFUSE_V1_ENVELOPES=1``) refuses unbound v1 envelopes
+  that the inventory does not pin — closing the v1-swap gap ADR-0290 left.
 - **chain-log objects** (``put_log_object*``, the ``_capsule_log/``
   namespace) are integrity metadata, not capsule payloads — they pass through
   unencrypted, exactly as ADR-0031 excludes them from WORM.
@@ -67,11 +73,17 @@ from novafabric.trust.envelope_encryption import (
 from novafabric.trust.novaseal.signing_backend import KeyWrappingBackend
 
 if TYPE_CHECKING:
+    from novafabric.object_capsule_store.legacy_inventory import LegacyInventory
     from novafabric.trust.tenant_keys import TenantKeyRegistry
 
 log = logging.getLogger(__name__)
 
-__all__ = ["CHAIN_LOG_PREFIX", "EncryptingAdapter", "PlaintextObjectRefusedError"]
+__all__ = [
+    "CHAIN_LOG_PREFIX",
+    "EncryptingAdapter",
+    "LegacyEnvelopeRefusedError",
+    "PlaintextObjectRefusedError",
+]
 
 #: Key namespace of chain-log / checkpoint objects (``manifest_chain``,
 #: ``checkpoint``). Written via ``put_log_object*`` and never encrypted.
@@ -94,7 +106,26 @@ class PlaintextObjectRefusedError(EnvelopeEncryptionError):
             "configured for envelope encryption; refusing to return unauthenticated "
             "plaintext (ADR-0290). If this store holds objects written before "
             "encryption was enabled, set NOVA_OBJECT_STORE_ALLOW_PLAINTEXT_READS=1 "
-            "for the migration window."
+            "for the migration window, or admit them individually with a "
+            "digest-pinned legacy-object inventory (ADR-0295)."
+        )
+
+
+class LegacyEnvelopeRefusedError(EnvelopeEncryptionError):
+    """A v1 (unbound) envelope was read under strict mode (ADR-0295 D2).
+
+    Raised before any key unwrap. A v1 envelope is not bound to its object
+    key, so it could have been copied from another object; strict mode admits
+    only v1 envelopes pinned in the legacy-object inventory taken at cut-over.
+    """
+
+    def __init__(self, key: str) -> None:
+        self.key = key
+        super().__init__(
+            f"object {key!r} is a legacy unbound (v1) envelope and strict mode "
+            "(NOVA_OBJECT_STORE_REFUSE_V1_ENVELOPES) is on; it is not pinned in the "
+            "legacy-object inventory, so it may have been copied from another object "
+            "(ADR-0295). Re-ingest it to write a bound v2 envelope."
         )
 
 # Marker fields that identify a stored object as a serialized EncryptedBlob
@@ -118,6 +149,13 @@ class EncryptingAdapter(WormAdapter):
         allow_plaintext_reads: Legacy-migration opt-in (ADR-0290). ``False``
                  (default) refuses non-envelope objects outside the chain-log
                  namespace with :class:`PlaintextObjectRefusedError`.
+        legacy_inventory: Optional ADR-0295 digest-pinned inventory of objects
+                 that existed at cut-over. A listed key whose stored bytes
+                 still match the pinned SHA-256 is admitted as plaintext (and,
+                 under strict mode, as a v1 envelope).
+        refuse_legacy_envelopes: ADR-0295 strict mode. ``True`` refuses v1
+                 envelopes not admitted by *legacy_inventory* with
+                 :class:`LegacyEnvelopeRefusedError`. Default ``False``.
     """
 
     def __init__(
@@ -127,14 +165,22 @@ class EncryptingAdapter(WormAdapter):
         tenant_keys: "TenantKeyRegistry | None" = None,
         *,
         allow_plaintext_reads: bool = False,
+        legacy_inventory: "LegacyInventory | None" = None,
+        refuse_legacy_envelopes: bool = False,
     ) -> None:
         self._inner = inner
         self._backend = backend
         self._allow_plaintext_reads = allow_plaintext_reads
+        self._legacy_inventory = legacy_inventory
+        self._refuse_legacy_envelopes = refuse_legacy_envelopes
         #: Count of legacy unbound (v1) envelopes decrypted by this adapter.
         self.legacy_envelope_reads = 0
-        #: Count of non-envelope objects returned under the legacy opt-in.
+        #: Count of non-envelope objects returned (global opt-in or inventory).
         self.plaintext_reads = 0
+        #: Count of legacy objects admitted by the ADR-0295 inventory.
+        self.inventory_reads = 0
+        #: Count of legacy objects refused (plaintext or strict-mode v1).
+        self.legacy_refusals = 0
         # ADR-0243 slice 1: optional per-tenant KEK resolution. None keeps the
         # flat single-backend behavior byte-for-byte.
         self._tenant_keys = tenant_keys
@@ -245,15 +291,28 @@ class EncryptingAdapter(WormAdapter):
         if blob is None:
             if key.startswith(CHAIN_LOG_PREFIX):
                 return raw
-            if not self._allow_plaintext_reads:
-                raise PlaintextObjectRefusedError(key)
-            self.plaintext_reads += 1
-            log.warning(
-                "returning non-envelope object %r from an encrypted store under the "
-                "legacy plaintext-read opt-in (ADR-0290); re-ingest it to encrypt it",
-                key,
-            )
-            return raw
+            if self._allow_plaintext_reads:
+                self.plaintext_reads += 1
+                log.warning(
+                    "returning non-envelope object %r from an encrypted store under the "
+                    "legacy plaintext-read opt-in (ADR-0290); re-ingest it to encrypt it",
+                    key,
+                )
+                return raw
+            if self._inventory_admits(key, raw):
+                self.plaintext_reads += 1
+                log.info(
+                    "returning pre-encryption object %r admitted by the legacy-object "
+                    "inventory (ADR-0295; digest verified)",
+                    key,
+                )
+                return raw
+            self.legacy_refusals += 1
+            raise PlaintextObjectRefusedError(key)
+        if not blob.is_bound and self._refuse_legacy_envelopes:
+            if not self._inventory_admits(key, raw):
+                self.legacy_refusals += 1
+                raise LegacyEnvelopeRefusedError(key)
         backend = (
             self._tenant_keys.backend_for_read(blob)
             if self._tenant_keys is not None
@@ -268,6 +327,28 @@ class EncryptingAdapter(WormAdapter):
                 key,
             )
         return plaintext
+
+    def _inventory_admits(self, key: str, raw: bytes) -> bool:
+        """True when the ADR-0295 inventory pins *key* to exactly these bytes."""
+        inventory = self._legacy_inventory
+        if inventory is None or not inventory.admits(key, raw):
+            return False
+        self.inventory_reads += 1
+        return True
+
+    def read_counters(self) -> dict[str, int]:
+        """Snapshot of the in-process read counters (ADR-0290/0295).
+
+        In-process only by decision (ADR-0295 D4): a persistent counter would
+        put a durable write on every legacy read. Exporters (e.g. ``/metrics``)
+        read this snapshot.
+        """
+        return {
+            "legacy_envelope_reads": self.legacy_envelope_reads,
+            "plaintext_reads": self.plaintext_reads,
+            "inventory_reads": self.inventory_reads,
+            "legacy_refusals": self.legacy_refusals,
+        }
 
     # -----------------------------------------------------------------------
     # Chain-log + namespace operations — pass-through (never encrypted)

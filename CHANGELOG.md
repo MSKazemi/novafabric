@@ -312,6 +312,21 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Security
 
+- **Encrypted object store: digest-pinned legacy-object inventory and a strict mode for v1
+  envelopes** (ADR-0290 follow-ups, **experimental**, off by default). An encrypted store can
+  now admit pre-encryption objects one by one instead of all at once.
+  `NOVA_OBJECT_STORE_LEGACY_INVENTORY` names an inventory, built at cut-over with
+  `build_legacy_inventory()`, that pins each legacy object's key to the SHA-256 of its stored
+  bytes. A listed, unchanged object is readable. A listed object whose bytes changed, and any
+  unlisted plaintext, raise `PlaintextObjectRefusedError`. The optional
+  `NOVA_OBJECT_STORE_LEGACY_INVENTORY_SHA256` pins the file itself, and a missing, malformed or
+  mismatched inventory refuses to start. `NOVA_OBJECT_STORE_REFUSE_V1_ENVELOPES=1` refuses
+  unbound v1 envelopes that the inventory does not pin (`LegacyEnvelopeRefusedError`), which
+  closes the v1-swap gap ADR-0290 left open. `NOVA_OBJECT_STORE_ALLOW_PLAINTEXT_READS` keeps
+  its exact meaning and still takes precedence. A timestamp watermark was rejected because
+  inner-store modification times are writable by the storage operator. Read counters stay
+  in-process (`EncryptingAdapter.read_counters()`). See `docs/ops/encryption-at-rest.md`
+  §2.1.1–2.1.2.
 - **Encrypted object-store envelopes are now bound to their object, and plaintext reads fail
   closed (ADR-0290, experimental feature).**
 

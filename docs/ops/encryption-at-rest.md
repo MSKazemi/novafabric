@@ -106,6 +106,56 @@ every pre-encryption object has been re-ingested (or has aged out of
 retention) — while it is set, plaintext substitution by a storage operator
 goes undetected by the read path.
 
+#### 2.1.1 Narrower alternative: a digest-pinned legacy inventory (experimental, ADR-0295)
+
+Instead of admitting *every* non-envelope object, record the objects that
+existed when you enabled encryption and admit only those, byte-for-byte. Build
+the inventory once, at the cut-over, over the **bare** (unencrypted) adapter:
+
+```python
+from novafabric.object_capsule_store.legacy_inventory import build_legacy_inventory
+
+# inner_adapter: your WormAdapter built WITHOUT the encryption env vars set
+inv = build_legacy_inventory(inner_adapter, prefixes=["capsules/"])
+open("/secure/legacy-inventory.json", "w").write(inv.to_json())
+```
+
+```bash
+export NOVA_OBJECT_STORE_LEGACY_INVENTORY=/secure/legacy-inventory.json
+export NOVA_OBJECT_STORE_LEGACY_INVENTORY_SHA256=$(sha256sum /secure/legacy-inventory.json | cut -d' ' -f1)  # optional pin
+```
+
+Each listed key is pinned to the SHA-256 of its stored bytes. A listed object
+whose bytes still match is returned; a listed object whose bytes changed
+(substitution) and any unlisted plaintext are refused with
+`PlaintextObjectRefusedError`. A missing, malformed or pin-mismatched
+inventory **refuses to start**. Keep the file with the KEK, never in the
+object store. If `NOVA_OBJECT_STORE_ALLOW_PLAINTEXT_READS` is also set it
+still wins (startup warning) — unset it to let the inventory decide.
+
+Why not a timestamp watermark ("objects written before date X are allowed")?
+The only per-object time the reader can see is the store's own
+`LastModified`/mtime, and whoever can write to the store can set it, so a time
+rule is one the attacker satisfies by backdating.
+
+**Limit:** an inventory built *after* someone substituted objects pins the
+substitutes. Build it at the cut-over, from a store you trust. Memory is
+O(listed objects); for very large legacy stores, re-ingest instead.
+
+#### 2.1.2 Strict mode for unbound v1 envelopes (experimental, ADR-0295)
+
+```bash
+export NOVA_OBJECT_STORE_REFUSE_V1_ENVELOPES=1
+```
+
+Refuses every pre-ADR-0290 (v1, unbound) envelope with
+`LegacyEnvelopeRefusedError` before any key unwrap, unless the legacy
+inventory pins it. This closes the gap ADR-0290 left open: an old v1 envelope
+copied onto a new key. Default off. Read counters
+(`EncryptingAdapter.read_counters()`: `legacy_envelope_reads`,
+`plaintext_reads`, `inventory_reads`, `legacy_refusals`) are in-process only;
+they reset on restart.
+
 ### Per-tenant KEKs (ADR-0243, experimental)
 
 Optionally, each tenant's capsules can wrap their DEKs under that tenant's

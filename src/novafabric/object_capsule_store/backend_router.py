@@ -50,6 +50,12 @@ ENV_TENANT_KEK_DIR = "NOVA_OBJECT_STORE_TENANT_KEK_DIR"
 # ADR-0290 legacy-migration opt-in: return non-envelope objects from an
 # encrypted store (default: refuse them, fail closed).
 ENV_ALLOW_PLAINTEXT_READS = "NOVA_OBJECT_STORE_ALLOW_PLAINTEXT_READS"
+# ADR-0295 (experimental): digest-pinned legacy-object inventory (the
+# enumerated enablement watermark), its optional file-digest pin, and the
+# strict mode that refuses unbound v1 envelopes not pinned in it.
+ENV_LEGACY_INVENTORY = "NOVA_OBJECT_STORE_LEGACY_INVENTORY"
+ENV_LEGACY_INVENTORY_SHA256 = "NOVA_OBJECT_STORE_LEGACY_INVENTORY_SHA256"
+ENV_REFUSE_V1_ENVELOPES = "NOVA_OBJECT_STORE_REFUSE_V1_ENVELOPES"
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 
@@ -115,11 +121,48 @@ def _maybe_wrap_encryption(adapter: WormAdapter) -> WormAdapter:
             "it once every pre-encryption object has been re-ingested.",
             ENV_ALLOW_PLAINTEXT_READS,
         )
+    legacy_inventory = None
+    inventory_value = os.environ.get(ENV_LEGACY_INVENTORY, "").strip()
+    pin_value = os.environ.get(ENV_LEGACY_INVENTORY_SHA256, "").strip() or None
+    if pin_value and not inventory_value:
+        raise ValueError(
+            f"{ENV_LEGACY_INVENTORY_SHA256} is set but {ENV_LEGACY_INVENTORY} is not: "
+            "a digest pin without an inventory is a misconfiguration (ADR-0295)."
+        )
+    if inventory_value:
+        from novafabric.object_capsule_store.legacy_inventory import load_legacy_inventory
+
+        # LegacyInventoryError is a ValueError: a bad inventory refuses startup (I2).
+        legacy_inventory = load_legacy_inventory(
+            Path(inventory_value), expected_sha256=pin_value
+        )
+        log.info(
+            "legacy-object inventory loaded (ADR-0295, experimental): %d object(s)%s",
+            len(legacy_inventory),
+            ", digest-pinned" if pin_value else "",
+        )
+        if allow_plaintext:
+            log.warning(
+                "%s overrides the legacy-object inventory for plaintext reads: every "
+                "non-envelope object is returned unauthenticated. Unset it to let the "
+                "inventory's digest pins decide (ADR-0295 D3).",
+                ENV_ALLOW_PLAINTEXT_READS,
+            )
+    refuse_v1 = (
+        os.environ.get(ENV_REFUSE_V1_ENVELOPES, "").strip().lower() in _TRUTHY
+    )
+    if refuse_v1:
+        log.info(
+            "strict envelope mode (ADR-0295): unbound v1 envelopes are refused unless "
+            "pinned in the legacy-object inventory"
+        )
     return EncryptingAdapter(
         adapter,
         backend,
         tenant_keys=tenant_keys,
         allow_plaintext_reads=allow_plaintext,
+        legacy_inventory=legacy_inventory,
+        refuse_legacy_envelopes=refuse_v1,
     )
 
 

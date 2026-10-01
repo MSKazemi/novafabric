@@ -1050,6 +1050,9 @@ request.
 | `NOVA_S3_GOVERNANCE_BUCKET` / `NOVA_S3_COMPLIANCE_BUCKET` | — | Buckets for the dual object store |
 | `NOVA_OBJECT_STORE_ENCRYPTION` | off unless `1` | Enables backup object encryption |
 | `NOVA_OBJECT_STORE_ALLOW_PLAINTEXT_READS` | off | Legacy-migration opt-in: an encrypted object store returns non-envelope (pre-encryption) objects instead of refusing them with `PlaintextObjectRefusedError` ([encryption-at-rest §2.1](ops/encryption-at-rest.md#21-migrating-a-store-that-already-holds-plaintext)) |
+| `NOVA_OBJECT_STORE_LEGACY_INVENTORY` | — | Experimental (ADR-0295): path to a digest-pinned legacy-object inventory; only listed pre-encryption objects whose stored bytes are unchanged are returned ([encryption-at-rest §2.1.1](ops/encryption-at-rest.md#211-narrower-alternative-a-digest-pinned-legacy-inventory-experimental-adr-0295)) |
+| `NOVA_OBJECT_STORE_LEGACY_INVENTORY_SHA256` | — | Optional SHA-256 pin of the inventory file; a mismatch refuses startup |
+| `NOVA_OBJECT_STORE_REFUSE_V1_ENVELOPES` | off | Experimental strict mode (ADR-0295): refuse unbound v1 envelopes not pinned in the inventory (`LegacyEnvelopeRefusedError`) |
 | `NOVAFABRIC_BACKEND` | `sqlite` | Storage backend selector |
 | `NOVAFABRIC_JOBS_DB` | — | Jobs database path override |
 | `NOVAFABRIC_LOG_DIR` | — | Log directory the support bundle collects from |
