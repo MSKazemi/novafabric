@@ -1166,6 +1166,8 @@ nova diff cap-a/ cap-b/ --output-format json
 nova diff cap-a/ cap-b/ --output-format github-annotation
 nova diff cap-a/ cap-b/ --assert-no-regressions
 nova diff --group-by variant runs/arm-a/ runs/arm-b/
+nova diff --group-by environment runs/prod-01/ runs/staging-01/
+nova diff --environment production cap-a/ cap-b/
 nova diff cap-a/ cap-b/ --graph-shape
 nova diff cap-a/ cap-b/ --assert-same-shape
 ```
@@ -1174,6 +1176,8 @@ Options:
 - `--output-format {text,json,github-annotation}` — output format (default: `text`). Tab-completion available via `nova --install-completion`.
 - `--assert-no-regressions` — exit 1 if any structural changes detected; useful as CI gate
 - `--group-by variant` — **experimental** ([ADR-0116](./decisions.md)). Group the two capsules by their **recorded** A/B-variant attribution — the `(experiment_id, variant_id)` of the optional `variant` block — and label the diff as cross-arm (different groups) or within-arm (same group). A capsule without a `variant` block groups under `(no variant)`. Read-only over recorded facts: this never assigns variants and never mutates a capsule. Capsule paths only; `text`/`json` output only (`json` wraps the report in `{variant_groups, cross_arm, diff}`).
+- `--group-by environment` — **experimental** ([ADR-0126](./decisions.md) P2). Group the two capsules by their **recorded** `deployment_environment` (the typed top-level field set by `nova capture --environment` / `NOVAFABRIC_ENVIRONMENT`) and label the diff cross-environment or within-environment. A capsule with no value — or one violating the `^[A-Za-z0-9._:-]{1,64}$` rule — groups under `(no environment)`; nothing is inferred. `json` wraps the report in `{environment_groups, cross_environment, diff}`. Same restrictions as `--group-by variant`.
+- `--environment ENV` — **experimental** ([ADR-0126](./decisions.md) P2). Only compare capsules that both recorded `deployment_environment == ENV` (verbatim, case-sensitive). Fails closed: **exit 2** naming each capsule that recorded another value or none. An `ENV` outside the value rule is a usage error. Capsule paths only; not combinable with `--media`/`--significance`. `json` output adds `environment_filter`. To *list* capsules by environment use `nova query --where 'deployment_environment = production'` — `nova list` lists registry assets, which carry no deployment environment.
 
 - `--graph-shape` — **experimental** ([ADR-0124](./decisions.md) P3). Rebuild both capsules'
   agent execution graphs (as `nova graph agent`) and append an additive `graph_shape` block:

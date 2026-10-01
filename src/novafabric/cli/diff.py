@@ -41,6 +41,56 @@ def _flatten(d: dict[str, Any], prefix: str = "") -> dict[str, Any]:
 
 #: Group label for a capsule that recorded no ADR-0116 variant block.
 _NO_VARIANT_GROUP = "(no variant)"
+#: Group label for a capsule that recorded no (valid) ADR-0126 deployment_environment.
+_NO_ENVIRONMENT_GROUP = "(no environment)"
+#: Recorded dimensions ``--group-by`` can partition a capsule diff by.
+GROUP_BY_DIMENSIONS: tuple[str, ...] = ("variant", "environment")
+#: Exit code when ``--environment`` excludes a capsule: the requested comparison
+#: cannot be made, which is not the same as "changes found" (exit 1).
+EXIT_ENVIRONMENT_MISMATCH = 2
+
+
+def _recorded_environment(capsule: Path) -> str | None:
+    """ADR-0126 typed ``deployment_environment`` recorded in ``capsule.yaml``.
+
+    Read-only and record-only: the same reader the policy input uses, so a
+    missing, malformed, or rule-violating value is ``None`` — never inferred.
+    """
+    from novafabric.policy._environment import (  # noqa: PLC0415
+        deployment_environment_from_capsule,
+    )
+
+    return deployment_environment_from_capsule(capsule)
+
+
+def _environment_group(capsule: Path) -> str:
+    """Group key for ``--group-by environment``: the recorded value or a placeholder."""
+    return _recorded_environment(capsule) or _NO_ENVIRONMENT_GROUP
+
+
+def _validate_environment_filter(environment: str) -> str:
+    """Reject a ``--environment`` value no capsule could ever have recorded."""
+    from novafabric.capture.deployment_env import ENVIRONMENT_VALUE_PATTERN  # noqa: PLC0415
+
+    if not ENVIRONMENT_VALUE_PATTERN.match(environment):
+        raise typer.BadParameter(
+            f"invalid environment {environment!r}: must match "
+            f"{ENVIRONMENT_VALUE_PATTERN.pattern} (ADR-0126 value rule)",
+            param_hint="'--environment'",
+        )
+    return environment
+
+
+def _environment_exclusions(
+    environment: str, capsules: tuple[Path, Path]
+) -> list[tuple[Path, str | None]]:
+    """Capsules (with what they recorded) that did NOT record ``environment``."""
+    excluded: list[tuple[Path, str | None]] = []
+    for capsule in capsules:
+        recorded = _recorded_environment(capsule)
+        if recorded != environment:
+            excluded.append((capsule, recorded))
+    return excluded
 
 
 def _variant_group(capsule: Path) -> str:
@@ -74,6 +124,7 @@ def _capsule_diff(
     group_by: str | None = None,
     graph_shape: bool = False,
     assert_same_shape: bool = False,
+    environment: str | None = None,
 ) -> None:
     from novafabric.diff._engine import DiffEngine
     from novafabric.diff._format import format_github_annotations, format_json, format_text
@@ -87,13 +138,37 @@ def _capsule_diff(
             raise typer.Exit(code=1) from exc
     capsule_a, capsule_b = resolved
 
-    # ADR-0116: read-only grouping by recorded (experiment_id, variant_id).
+    # ADR-0126 P2: --environment admits only capsules that recorded that value.
+    # Fail closed — a capsule with no recorded environment is excluded too.
+    if environment is not None:
+        excluded = _environment_exclusions(environment, (capsule_a, capsule_b))
+        for capsule, recorded in excluded:
+            shown = repr(recorded) if recorded is not None else "no deployment_environment"
+            typer.echo(
+                f"--environment {environment}: {capsule} recorded {shown}; "
+                "both capsules must have recorded it",
+                err=True,
+            )
+        if excluded:
+            raise typer.Exit(code=EXIT_ENVIRONMENT_MISMATCH)
+
+    # ADR-0116 / ADR-0126: read-only grouping by a recorded dimension.
     groups: dict[str, str] | None = None
     if group_by == "variant":
         groups = {
             str(capsule_a): _variant_group(capsule_a),
             str(capsule_b): _variant_group(capsule_b),
         }
+    elif group_by == "environment":
+        groups = {
+            str(capsule_a): _environment_group(capsule_a),
+            str(capsule_b): _environment_group(capsule_b),
+        }
+    groups_key, cross_key = (
+        ("environment_groups", "cross_environment")
+        if group_by == "environment"
+        else ("variant_groups", "cross_arm")
+    )
 
     report = DiffEngine().compare(capsule_a, capsule_b)
 
@@ -110,17 +185,22 @@ def _capsule_diff(
         # terminal width, inserting newlines inside long JSON string values
         # (e.g. absolute capsule paths) and corrupting the document.
         if groups is not None:
-            payload = {
-                "variant_groups": groups,
-                "cross_arm": len(set(groups.values())) > 1,
+            payload: dict[str, Any] = {
+                groups_key: groups,
+                cross_key: len(set(groups.values())) > 1,
                 "diff": report.as_dict(),
             }
             if shape is not None:
                 payload["graph_shape"] = shape.to_document()
+            if environment is not None:
+                payload["environment_filter"] = environment
             typer.echo(json.dumps(payload, indent=2))
-        elif shape is not None:
+        elif shape is not None or environment is not None:
             doc = report.as_dict()
-            doc["graph_shape"] = shape.to_document()
+            if shape is not None:
+                doc["graph_shape"] = shape.to_document()
+            if environment is not None:
+                doc["environment_filter"] = environment
             typer.echo(json.dumps(doc, indent=2))
         else:
             typer.echo(format_json(report))
@@ -131,15 +211,26 @@ def _capsule_diff(
 
             typer.echo("\n".join(format_graph_shape_annotations(shape)))
     else:
+        if environment is not None:
+            console.print(
+                f"Environment filter: both capsules recorded {environment} (ADR-0126)",
+                markup=False,
+            )
         if groups is not None:
             group_a, group_b = groups[str(capsule_a)], groups[str(capsule_b)]
-            console.print("Variant groups (ADR-0116, recorded attribution):")
-            console.print(f"  {group_a}: {capsule_a}")
-            console.print(f"  {group_b}: {capsule_b}")
-            if group_a == group_b:
-                console.print(f"Within-arm diff (both capsules in group {group_a}):")
+            if group_by == "environment":
+                title = "Environment groups (ADR-0126, recorded deployment_environment):"
+                within, cross = "Within-environment diff", "Cross-environment diff"
             else:
-                console.print(f"Cross-arm diff: {group_a} → {group_b}")
+                title = "Variant groups (ADR-0116, recorded attribution):"
+                within, cross = "Within-arm diff", "Cross-arm diff"
+            console.print(title, markup=False)
+            console.print(f"  {group_a}: {capsule_a}", markup=False)
+            console.print(f"  {group_b}: {capsule_b}", markup=False)
+            if group_a == group_b:
+                console.print(f"{within} (both capsules in group {group_a}):", markup=False)
+            else:
+                console.print(f"{cross}: {group_a} → {group_b}", markup=False)
             console.print("")
         console.print(format_text(report))
         if shape is not None:
@@ -229,10 +320,22 @@ def diff_cmd(
             "--group-by",
             help=(
                 "Group the capsules under comparison by a recorded dimension "
-                "before diffing. Only 'variant' is supported (ADR-0116): groups "
-                "by the capsule's recorded (experiment_id, variant_id) and "
-                "labels the diff as cross-arm or within-arm. Read-only; "
-                "capsule paths only; text/json output only."
+                "before diffing: 'variant' (ADR-0116, recorded experiment_id/"
+                "variant_id; labels cross-arm or within-arm) or 'environment' "
+                "(ADR-0126, experimental; recorded deployment_environment; labels "
+                "cross-environment or within-environment). Read-only; capsule "
+                "paths only; text/json output only."
+            ),
+        ),
+    ] = None,
+    environment: Annotated[
+        str | None,
+        typer.Option(
+            "--environment",
+            help=(
+                "Experimental (ADR-0126): only compare capsules that recorded this "
+                "deployment_environment (e.g. production). Exit 2 if either capsule "
+                "recorded another value or none. Capsule paths only."
             ),
         ),
     ] = None,
@@ -306,6 +409,12 @@ def diff_cmd(
       # Group two capsules by their recorded A/B variant (ADR-0116, record-only)
       nova diff --group-by variant runs/arm-a/ runs/arm-b/
 
+      # Production vs staging, labelled by recorded environment (ADR-0126)
+      nova diff --group-by environment runs/prod-01/ runs/staging-01/
+
+      # Only diff if both capsules were recorded in production (exit 2 otherwise)
+      nova diff --environment production runs/run-01/ runs/run-02/
+
       # Fail CI if any difference is found
       nova diff --assert-no-regressions my-agent@v1.0 my-agent@v1.1
 
@@ -318,6 +427,13 @@ def diff_cmd(
       nova diff --media runs/run-01/ runs/run-02/
       nova diff --media --perceptual runs/run-01/ runs/run-02/ --json
     """
+    if environment is not None:
+        environment = _validate_environment_filter(environment)
+        if media or significance:
+            raise typer.BadParameter(
+                "--environment cannot be combined with --media or --significance",
+                param_hint="'--environment'",
+            )
     if (media or significance) and (graph_shape or assert_same_shape):
         raise typer.BadParameter(
             "--graph-shape/--assert-same-shape cannot be combined with --media or --significance",
@@ -337,9 +453,10 @@ def diff_cmd(
         raise typer.BadParameter("provide two refs to compare, or use --significance")
 
     # ADR-0116: --group-by is a read-only convenience over recorded attribution.
-    if group_by is not None and group_by != "variant":
+    if group_by is not None and group_by not in GROUP_BY_DIMENSIONS:
         raise typer.BadParameter(
-            f"unsupported --group-by dimension {group_by!r}: only 'variant' is supported",
+            f"unsupported --group-by dimension {group_by!r}: "
+            f"supported: {', '.join(GROUP_BY_DIMENSIONS)}",
             param_hint="'--group-by'",
         )
     if group_by is not None and output_format == DiffOutputFormat.github_annotation:
@@ -356,6 +473,7 @@ def diff_cmd(
             group_by=group_by,
             graph_shape=graph_shape,
             assert_same_shape=assert_same_shape,
+            environment=environment,
         )
         return
 
@@ -369,8 +487,14 @@ def diff_cmd(
     if group_by is not None:
         raise typer.BadParameter(
             "--group-by applies to capsule diffs only (asset refs carry no "
-            "variant attribution)",
+            "variant attribution or deployment environment)",
             param_hint="'--group-by'",
+        )
+    if environment is not None:
+        raise typer.BadParameter(
+            "--environment applies to capsule diffs only (an asset has no "
+            "deployment environment)",
+            param_hint="'--environment'",
         )
 
     def parse_ref(ref: str) -> tuple[str, str]:

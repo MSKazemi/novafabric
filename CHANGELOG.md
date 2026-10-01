@@ -39,6 +39,20 @@ longer forwards the submitting shell's environment (ADR-0270).
   analyse the capsule without re-executing anything, and `mocked` mode serves recorded
   OpenAI and Anthropic responses but does not substitute tool calls.
 
+### Added
+
+- **`nova diff --environment ENV` and `nova diff --group-by environment`** (ADR-0126 P2
+  remainder, **experimental**). Both read the typed `deployment_environment` a capsule
+  recorded at capture, with the same record-only reader the policy input uses — a missing or
+  rule-violating value is never inferred. `--group-by environment` labels a capsule diff
+  cross-environment or within-environment (`json`: `{environment_groups, cross_environment,
+  diff}`; unrecorded → `(no environment)`). `--environment ENV` admits only capsules that both
+  recorded `ENV` verbatim and **fails closed with exit 2** otherwise, naming each excluded
+  capsule; `json` output adds `environment_filter`. Capsule paths only. `nova list` is
+  deliberately unchanged: it lists registry assets, which carry no deployment environment —
+  list capsules by environment with `nova query --where 'deployment_environment = …'`.
+
+
 ### Fixed
 
 - **A compliance test expired on 2026-10-01.** `test_recent_capsule_within_retention` used a

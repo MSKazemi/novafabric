@@ -128,7 +128,7 @@ def test_unsupported_dimension_rejected(tmp_path: Path) -> None:
     b = _make_capsule(tmp_path, "run-2", None)
     result = runner.invoke(app, ["diff", "--group-by", "model", str(a), str(b)])
     assert result.exit_code != 0
-    assert "only 'variant'" in result.output
+    assert "supported: variant, environment" in result.output
 
 
 def test_group_by_rejected_for_asset_refs() -> None:
