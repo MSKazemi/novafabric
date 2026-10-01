@@ -39,7 +39,11 @@ Postgres backend and migration from SQLite.
 > `NOVAFABRIC_SERVER_TOKEN`). The old anonymous-admin behavior needs the
 > explicit `--insecure-no-auth` opt-out and refuses non-loopback binds
 > without `--i-know-this-is-public`
-> ([ADR-0184](../decisions.md)).
+> ([ADR-0184](../decisions.md)). Each insecure start logs a warning **and**
+> appends a `server.insecure_no_auth` entry (bind host, port, loopback,
+> public-bind confirmation) to the hash-chained audit log at
+> `NOVAFABRIC_AUDIT_LOG_PATH` (default `~/.local/share/novafabric/audit.jsonl`).
+> If the entry cannot be written the server refuses to start in insecure mode.
 
 ## 2. Identity backends
 

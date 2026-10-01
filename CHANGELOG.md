@@ -216,6 +216,20 @@ longer forwards the submitting shell's environment (ADR-0270).
   one tenant). Tests: `tests/object_capsule_store/test_envelope_binding.py`.
 
 
+- **`nova server start --insecure-no-auth` now leaves an audit entry, not only a warning
+  (ADR-0184 D3).**
+
+  ADR-0184 promised that anonymous-admin mode "writes an audit log event"; it only logged a
+  warning. Each insecure start now appends one `server.insecure_no_auth` entry (actor
+  `system:nova-server`; bind host, port, loopback, public-bind confirmation) to the
+  hash-chained audit log at `NOVAFABRIC_AUDIT_LOG_PATH` (default
+  `~/.local/share/novafabric/audit.jsonl`), and SIEM export maps it to OCSF Application
+  Lifecycle. The entry is written after every start-refusing guard, so a refused start records
+  nothing. **Fails closed:** if the entry cannot be written, the insecure start is refused with
+  `InsecureModeAuditError`. Secure starts are unaffected. Tests:
+  `tests/test_server_insecure_audit.py`.
+
+
 ## [0.102.1] - 2026-09-27
 
 ### Fixed

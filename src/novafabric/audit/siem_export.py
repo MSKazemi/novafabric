@@ -169,6 +169,9 @@ OCSF_CLASS_MAP: Final[dict[str, tuple[int, str, int]]] = {
     # ADR-0208 P2: usage-ledger reconciliation run (admin CLI); an applied
     # run appends an adjustment row — API Activity, Update.
     "usage.reconcile": (_API_ACTIVITY, "API Activity", 3),  # Update
+    # ADR-0184 D3: the server started with authentication disabled
+    # (anonymous admin) — an application-lifecycle event, not an API call.
+    "server.insecure_no_auth": (_APP_LIFECYCLE, "Application Lifecycle", _ACTIVITY_OTHER),
 }
 
 #: Conservative fallback for event types not (yet) in the map: API Activity,

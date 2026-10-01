@@ -40,6 +40,8 @@ class AuditEventType(str, enum.Enum):
     WEBHOOK_QUEUE_OVERFLOW = "webhook.queue.overflow"  # one per bounded window
     # ADR-0208 P2: one entry per `nova server usage reconcile` run (report or apply)
     USAGE_RECONCILE = "usage.reconcile"
+    # ADR-0184 D3: one entry per server start in anonymous-admin (insecure) mode
+    SERVER_INSECURE_NO_AUTH = "server.insecure_no_auth"
 
 
 class AuditEntry(BaseModel):

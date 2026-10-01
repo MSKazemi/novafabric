@@ -221,6 +221,14 @@ def create_app(config: ServerConfig) -> FastAPI:
             config, len(workspace_store.list_orgs(db_path=db_path))
         )
 
+        # ADR-0184 D3: anonymous-admin mode leaves a hash-chained audit entry,
+        # not only the warning logged by create_app. Written after every
+        # start-refusing guard (so a refused start records nothing) and before
+        # any worker thread starts. Fails closed: no audit entry, no start.
+        from novafabric.server.insecure_audit import record_insecure_start
+
+        record_insecure_start(config)
+
         # ADR-0205 (experimental): webhook delivery dispatcher — started ONLY
         # when server.webhooks.enabled; otherwise no worker thread exists and
         # behavior is byte-identical (spec: master switch off ⇒ inert).

@@ -6725,7 +6725,7 @@ Options:
 - `--backend TEXT` — `sqlite` (default) or `postgres`
 - `--host TEXT` — bind address (default from config or `127.0.0.1`)
 - `--port, -p INTEGER` — bind port (default from config or `7433`)
-- `--insecure-no-auth` — disable local-token auth; anonymous admin (ADR-0184). Loopback only unless also passing `--i-know-this-is-public`
+- `--insecure-no-auth` — disable local-token auth; anonymous admin (ADR-0184). Loopback only unless also passing `--i-know-this-is-public`. Every such start appends a `server.insecure_no_auth` entry to the hash-chained audit log (`NOVAFABRIC_AUDIT_LOG_PATH`); if that entry cannot be written, the server refuses to start
 - `--i-know-this-is-public` — second confirmation required to combine `--insecure-no-auth` with a non-loopback `--host`
 - `--i-accept-shared-capsule-store` — acknowledge the unpartitioned capsule store and run multiple organizations anyway. Env: `NOVAFABRIC_SERVER_I_ACCEPT_SHARED_CAPSULE_STORE`
 - `--workers, -w INTEGER` — uvicorn worker processes for horizontal scaling (default `1`, **experimental**, v0.98.0). Values `>1` require `--backend postgres` — multiple processes cannot safely share a SQLite file — and launch the app through an import-string factory (`server/factory.py`) so each worker reconstructs its config from the config file and environment
