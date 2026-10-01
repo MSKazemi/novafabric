@@ -70,10 +70,13 @@ def replay_cmd(
     """Re-run a captured run against recorded or mocked LLM responses.
 
     Five modes control how outbound calls are handled:
-      mocked       — all calls intercepted; responses served from the capsule record
-      forensic     — calls execute live but nothing is written (read-only observation)
-      semantic     — LLM outputs regenerated live; structural behaviour preserved
-      exact        — strict bit-for-bit replay with hash verification
+      mocked       — re-runs the command; LLM responses served from the capsule
+                     record. Tool calls are NOT substituted: they run live
+      forensic     — read-only: inspects the capsule, runs nothing
+      semantic     — does not re-run: scores how similar the recorded LLM
+                     responses are to each other (0.0-1.0)
+      exact        — does not re-run: reports whether a byte-exact re-run is
+                     possible (deterministic env.lock, seeds, no schema drift)
       intervention — experimental: substitute one captured event per an
                      InterventionSpec, re-execute downstream under mocked
                      semantics, emit a diffable counterfactual capsule

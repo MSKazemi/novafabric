@@ -330,16 +330,18 @@ new capsule, so you can diff a replay against the original run.
 | Mode | Spawns subprocess? | Network? | Best for |
 |---|---|---|---|
 | **`forensic`** | No | No | Audit / post-incident inspection |
-| **`mocked`** | Yes | LLM served from cache; tools gated by safety ladder | CI / regression |
-| **`semantic`** | Yes | Yes (re-executes) | Drifting remote LLMs — judges *meaning*, not tokens |
-| **`exact`** | Yes | Controlled | Local / on-prem / compliance byte-exact re-run |
+| **`mocked`** | Yes | LLM served from cache; **tool calls run live** (not substituted) | CI / regression |
+| **`semantic`** | No | No | Consistency score over the capsule's *recorded* model responses — does **not** re-execute |
+| **`exact`** | No | No | Eligibility check for a byte-exact re-run — does **not** re-execute |
 | **`intervention`** (experimental, ADR-0086) | Yes, under mocked semantics | No | Counterfactual root-cause: substitute one captured event per an `InterventionSpec`, re-execute downstream, and record whether the outcome flips |
 
 > **Honesty note.** NovaFabric explicitly does **not** claim byte-exact replay of
 > remote LLM calls. `exact` mode requires a deterministic environment and a
 > per-call seed, which is realistic for local/on-prem models but not for a
-> remote endpoint that can change under you. For remote LLMs that drift, use
-> `semantic` mode, which scores similarity of meaning on a 0.0–1.0 scale.
+> remote endpoint that can change under you. Neither `exact` nor `semantic`
+> re-executes anything today: `exact` reports *whether* a byte-exact re-run is
+> possible, and `semantic` scores the recorded responses — a live re-run judged
+> on meaning is **planned**, not implemented.
 
 ### `forensic` mode
 
@@ -353,14 +355,20 @@ Use forensic mode to inspect what happened without any risk of side effects.
 
 The original command is re-spawned as a subprocess. All LLM calls are
 intercepted and served from the capsule cache in order
-(`MockModelDispatcher`). Tool calls are mocked or denied according to the
-**safety ladder** below.
+(`MockModelDispatcher`). **Tool calls are not substituted:** the replayed
+command's tools run live, exactly as the command calls them. A
+`MockToolDispatcher` exists but is never installed, so `tool_calls_mocked` is
+always 0 and the capsule's count is reported as `tool_calls_available`
+(ADR-0261). Serving tool results from the capsule is **planned**.
 
 ### Safety ladder (mocked replay)
 
-Mocked replay gates tool call re-execution behind explicit flags. By default,
-**every tool call is denied** — you opt in, rung by rung, to exactly the level of
-side effect you are willing to allow:
+The safety ladder classifies the capsule's recorded tool calls by side-effect
+level. **As built it does not intercept tool calls at run time** — it drives the
+`--dry-run` report (which recorded calls each rung would permit) and
+`--allow-mutating` triggers a policy-engine gate (an audited allow/deny) before a
+mutating replay starts. Per-call enforcement during the subprocess is **planned**,
+together with tool-result substitution. The rungs:
 
 ```
 (none)               — deny all tool calls
@@ -379,16 +387,20 @@ Per-tool overrides can be specified in `replay.yaml`.
 
 ### `semantic` mode
 
-Re-executes the command against live models and **judges meaning rather than
-tokens**, returning a 0.0–1.0 similarity score. This is the honest answer to the
-reality that remote LLMs drift: two runs weeks apart may produce different tokens
-yet mean the same thing.
+**Does not re-execute and calls no model.** It reads the capsule's recorded
+model responses and returns `similarity_score` — the mean pairwise text
+similarity (`difflib`, 0.0–1.0) between those responses, i.e. how consistent the
+recorded run was with itself (1.0 when there are fewer than two responses). The
+intended mode — re-run against live models and judge the new outputs against
+the recording on *meaning* — is **planned**, not implemented.
 
 ### `exact` mode
 
-Byte-exact eligibility requiring a deterministic environment and a per-call seed.
-This is the compliance-grade mode for local and on-prem models where determinism
-is achievable.
+**Does not re-execute.** Reports `exact_eligible` and the reasons it is not:
+the `env.lock` must be `mode: deterministic`, every model call must carry a seed,
+and no stored tool result may have drifted from its declared schema (ADR-0128).
+It answers *whether* a byte-exact re-run of a local / on-prem model is possible;
+performing and hash-verifying that re-run is **planned**.
 
 ### `intervention` mode (experimental)
 
@@ -890,7 +902,7 @@ You now have the vocabulary NovaFabric is built on:
   execution, written on success and failure.
 - **Capture** — zero-code-change instrumentation via a `sitecustomize.py`
   loader, per-SDK hooks, and a wire-level safety net down to `urllib3`.
-- **Replay** — four honest modes (`forensic`, `mocked`, `semantic`, `exact`),
+- **Replay** — four honest modes (`forensic`, `mocked`, `semantic`, `exact`; only `mocked` and `intervention` re-execute),
   each with a clear promise and each producing a diffable capsule, plus a
   fifth, experimental `intervention` mode for counterfactual replay.
 - **Diff** — field-by-field structural comparison, wireable as a CI regression

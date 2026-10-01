@@ -176,9 +176,9 @@ matches what you're trying to establish:
 | Mode | What it does | Use it for |
 |---|---|---|
 | `forensic` | Read-only inspection, no subprocess, no network | Audit / post-incident |
-| `mocked` | Re-spawns the command; LLM calls served from the capsule cache; tool calls gated by a safety ladder | CI / regression |
-| `semantic` | Re-executes and judges *meaning*, not tokens (0.0–1.0 similarity) | Drifting remote LLMs |
-| `exact` | Byte-exact, requires a deterministic env and per-call seed | Local / on-prem / compliance |
+| `mocked` | Re-spawns the command; LLM calls served from the capsule cache. **Tool calls are not substituted** — they run live (`tool_calls_mocked` is always 0, ADR-0261); the `--allow-*` flags drive the dry-run report and the `--allow-mutating` policy gate, not per-call interception | CI / regression |
+| `semantic` | **Does not re-execute.** Scores how similar the capsule's *recorded* model responses are to each other (mean pairwise text similarity, 0.0–1.0); no live model is called | Consistency check of recorded responses |
+| `exact` | **Does not re-execute.** Eligibility check for byte-exact replay (`exact_eligible` + reasons): deterministic env.lock, per-call seed, no tool-schema drift | Local / on-prem / compliance |
 
 For the incident above, start read-only:
 
