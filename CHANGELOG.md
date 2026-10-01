@@ -215,6 +215,15 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **REST GDPR erasure no longer refuses on the cap-003 flag** (ADR-0210 / ADR-0069,
+  **experimental**). `POST /api/compliance/erasure/request` answered 409 `cap003_disabled`
+  whenever `NOVA_CAP003_ENABLED` was off — its pinned default — although the route performs
+  ADR-0069 DEK crypto-shredding (cap-001), the same call `nova pii erase` makes without that
+  flag. cap-003 is the separate dual-object split. The route is now gated on crypto-shredding's
+  own prerequisite: if the DEK store cannot be loaded it answers 409
+  `{error: "crypto_shred_unavailable", reason}` and touches nothing; otherwise it executes.
+  Responses and `/status` report `crypto_shred_available`; `cap003_enabled` stays as
+  information only.
 
 - **A compliance test expired on 2026-10-01.** `test_recent_capsule_within_retention` used a
   fixed "recent" date of 2026-04-01 against a six-month EU AI Act retention window, so it began

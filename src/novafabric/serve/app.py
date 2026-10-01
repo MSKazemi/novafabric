@@ -5326,6 +5326,24 @@ def create_app(
         # mis-citation.
         return os.environ.get("NOVA_CAP003_ENABLED", "false").lower() == "true"
 
+    def _crypto_shred_unavailable() -> str | None:
+        """Why ADR-0069 crypto-shredding cannot run here, or ``None`` if it can.
+
+        Crypto-shredding (cap-001) and the dual-object split (cap-003) are
+        **separate capabilities**. This route destroys a subject's DEK through
+        ``DEKStore.erase_subject`` — the same call as ``nova pii erase``, which
+        has never consulted ``NOVA_CAP003_ENABLED`` — so its gate is the DEK
+        store's own prerequisite (the module and its imports), not cap-003's
+        legal-review flag. Gating it on cap-003 (ADR-0210 D6 as first written)
+        made the REST surface refuse an erasure the CLI performs, on a flag
+        whose default is pinned to false.
+        """
+        try:
+            import novafabric.pii.dek.store  # noqa: F401, PLC0415
+        except ImportError as exc:
+            return f"the DEK store (novafabric.pii.dek.store) cannot be imported: {exc}"
+        return None
+
     @app.post("/api/compliance/erasure/request")
     async def erasure_request_endpoint(
         body: ErasureRequestBody = Body(...),
@@ -5349,12 +5367,18 @@ def create_app(
                 status_code=400,
                 detail="confirmation required (set confirmed=true)",
             )
-        if not _cap003_enabled():
-            # Fail-closed (ADR-0210 D6): a disabled compliance surface is a
-            # structured 409, never a success envelope.
+        unavailable = _crypto_shred_unavailable()
+        if unavailable is not None:
+            # Fail-closed (ADR-0210 D6): an unavailable compliance surface is a
+            # structured 409, never a success envelope. The gate is crypto-
+            # shredding's own prerequisite — not cap-003 (see the helper).
             return JSONResponse(
                 status_code=409,
-                content={"error": "cap003_disabled", "cap003_enabled": False},
+                content={
+                    "error": "crypto_shred_unavailable",
+                    "crypto_shred_available": False,
+                    "reason": unavailable,
+                },
             )
         if not body.subject_id.strip():
             raise HTTPException(
@@ -5420,7 +5444,10 @@ def create_app(
             logger.warning("erasure audit-log append failed (non-fatal): %s", exc)
         return {
             "ok": True,
-            "cap003_enabled": True,
+            # Informational: cap-003 (dual-object split) is a separate capability
+            # and does not gate this crypto-shred erasure.
+            "cap003_enabled": _cap003_enabled(),
+            "crypto_shred_available": True,
             "reattached": reattached,
             "request": record.api_view(),
         }
@@ -5436,7 +5463,11 @@ def create_app(
         db_path = eq.erasure_db_path()
         if not db_path.exists():
             # Honest empty: the queue has never been created. Never a 500.
-            return {"cap003_enabled": _cap003_enabled(), "requests": []}
+            return {
+                "cap003_enabled": _cap003_enabled(),
+                "crypto_shred_available": _crypto_shred_unavailable() is None,
+                "requests": [],
+            }
         queue = eq.ErasureQueue(db_path)
         try:
             rows = queue.list_requests(subject_id=subject_id, limit=limit)
@@ -5444,6 +5475,7 @@ def create_app(
             queue.close()
         return {
             "cap003_enabled": _cap003_enabled(),
+            "crypto_shred_available": _crypto_shred_unavailable() is None,
             "requests": [r.api_view() for r in rows],
         }
 

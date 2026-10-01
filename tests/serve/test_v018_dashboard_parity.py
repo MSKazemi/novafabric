@@ -235,19 +235,22 @@ class TestErasureRoutes:
         assert res.status_code == 400
         assert "confirmation required" in res.json()["detail"]
 
-    def test_request_flagged_off_is_409_fail_closed(
+    def test_cap003_off_does_not_409_a_crypto_shred_request(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # ADR-0210 D6: previously 200 + FEATURE_FLAG_OFF (a success envelope
-        # on a disabled compliance surface); now a structured 409.
+        # cap-003 (dual-object split) is not crypto-shredding's prerequisite;
+        # the erasure runs and reaches a terminal state (here: no DEK for the
+        # subject, so FAILED subject_not_found — ADR-0210 D3), never a
+        # cap003_disabled 409.
         monkeypatch.setenv("NOVA_CAP003_ENABLED", "false")
         res = client.post(
             f"/api/compliance/erasure/request?{TOKEN_Q}",
             json={"subject_id": "subject-001", "confirmed": True},
             headers=AUTH,
         )
-        assert res.status_code == 409
-        assert res.json()["error"] == "cap003_disabled"
+        assert res.status_code == 200, res.text
+        assert res.json()["request"]["state"] in {"FAILED", "COMPLETED", "DEFERRED"}
+        assert res.json().get("error") != "cap003_disabled"
 
     def test_request_missing_subject_returns_422(self, client: TestClient) -> None:
         res = client.post(

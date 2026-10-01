@@ -68,15 +68,15 @@ def _isolated_audit_log(
 
 
 @pytest.fixture(autouse=True)
-def _cap003_operator_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
-    """These tests exercise the erasure EXECUTION path, which requires cap-003.
+def _cap003_at_its_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run the erasure EXECUTION path with cap-003 at its pinned default (off).
 
-    Since the SCALE-ADR-003 correction (2026-07-30) NOVA_CAP003_ENABLED
-    defaults to false (safe until the EU-GDPR legal-counsel review), so the
-    suite simulates an operator's explicit opt-in.  The fail-closed test
-    overrides this back to false.
+    Crypto-shredding (ADR-0069) does not depend on cap-003; until 2026-10-02
+    this route was gated on NOVA_CAP003_ENABLED and the suite had to simulate
+    an operator opt-in to reach it. Leaving the flag at its default is what
+    proves the two capabilities are separate.
     """
-    monkeypatch.setenv("NOVA_CAP003_ENABLED", "true")
+    monkeypatch.delenv("NOVA_CAP003_ENABLED", raising=False)
 
 
 @pytest.fixture
@@ -212,19 +212,48 @@ def test_unconfirmed_request_is_400_and_mutates_nothing(
     assert _status(client)["requests"] == []
 
 
-def test_cap003_disabled_is_fail_closed_409(
+def test_cap003_off_does_not_gate_crypto_shredding(
     client: TestClient, nova_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """cap-003 (dual-object split) and crypto-shredding (ADR-0069 DEK store) are
+    separate capabilities. With cap-003 at its pinned default (off) the erasure
+    still executes — exactly as `nova pii erase` always has."""
     monkeypatch.setenv("NOVA_CAP003_ENABLED", "false")
+    monkeypatch.setenv("NOVA_AI_ACT_RETENTION_MONTHS", "0")
     _seed_dek(nova_home)
     res = _post(client, {"subject_id": SUBJECT, "confirmed": True})
-    assert res.status_code == 409
-    assert res.json() == {"error": "cap003_disabled", "cap003_enabled": False}
-    assert _dek_exists(nova_home)
-    # /status remains readable with the flag surfaced.
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["request"]["state"] == eq.STATE_COMPLETED
+    assert body["cap003_enabled"] is False  # reported, not consulted
+    assert body["crypto_shred_available"] is True
+    assert not _dek_exists(nova_home)
     status = _status(client)
     assert status["cap003_enabled"] is False
-    assert status["requests"] == []
+    assert status["crypto_shred_available"] is True
+
+
+def test_crypto_shred_unavailable_is_fail_closed_409(
+    client: TestClient, nova_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fail-closed on crypto-shredding's *own* prerequisite: when the DEK store
+    cannot be loaded the route answers a structured 409 and touches nothing —
+    whatever cap-003 says."""
+    import sys
+
+    _seed_dek(nova_home)
+    monkeypatch.setenv("NOVA_CAP003_ENABLED", "true")
+    monkeypatch.setitem(sys.modules, "novafabric.pii.dek.store", None)
+    res = _post(client, {"subject_id": SUBJECT, "confirmed": True})
+    assert res.status_code == 409
+    body = res.json()
+    assert body["error"] == "crypto_shred_unavailable"
+    assert body["crypto_shred_available"] is False
+    assert "novafabric.pii.dek.store" in body["reason"]
+    assert not (nova_home / "erasure.db").exists()
+    monkeypatch.delitem(sys.modules, "novafabric.pii.dek.store")
+    assert _dek_exists(nova_home)
+    assert _status(client)["crypto_shred_available"] is True
 
 
 def test_empty_subject_id_is_422(client: TestClient) -> None:

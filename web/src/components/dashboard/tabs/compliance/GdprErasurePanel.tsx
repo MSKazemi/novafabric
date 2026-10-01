@@ -16,7 +16,7 @@ export default function GdprErasurePanel({ runIds }: { runIds: string[] }) {
 
   const [statusSubjectId, setStatusSubjectId] = useState('');
   const [statusLoading, setStatusLoading] = useState(false);
-  const [statusResult, setStatusResult] = useState<{ cap003_enabled: boolean; requests: Array<Record<string, unknown>> } | null>(null);
+  const [statusResult, setStatusResult] = useState<{ cap003_enabled: boolean; crypto_shred_available?: boolean; requests: Array<Record<string, unknown>> } | null>(null);
 
   const checkStatus = useCallback(async () => {
     setStatusLoading(true);
@@ -116,11 +116,6 @@ export default function GdprErasurePanel({ runIds }: { runIds: string[] }) {
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-mono uppercase tracking-wider text-[var(--color-text-faint)]">state</span>
             <span className={clsx('text-xs font-mono font-bold', stateColor[result.state] ?? 'text-[var(--color-text)]')}>{result.state}</span>
-            {!result.cap003_enabled && (
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-[color-mix(in_oklab,var(--color-status-pending)_35%,transparent)] text-[var(--color-status-pending)]">
-                NOVA_CAP003_ENABLED=false
-              </span>
-            )}
           </div>
           <p className="text-[10px] text-[var(--color-text-muted)]">{result.note}</p>
         </div>
@@ -153,7 +148,8 @@ export default function GdprErasurePanel({ runIds }: { runIds: string[] }) {
         </div>
         {statusResult && (
           <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-3 py-2 text-xs font-mono space-y-1">
-            <div>cap003: {statusResult.cap003_enabled ? 'enabled' : 'disabled'}</div>
+            <div>crypto-shred: {statusResult.crypto_shred_available === false ? 'unavailable (DEK store cannot be loaded)' : 'available'}</div>
+            <div className="text-[var(--color-text-faint)]">cap-003 dual-object split (separate capability, does not gate erasure): {statusResult.cap003_enabled ? 'enabled' : 'disabled'}</div>
             <div>Requests: {statusResult.requests.length}</div>
             {statusResult.requests.length > 0 && (
               <div className="space-y-0.5 mt-1">
