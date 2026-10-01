@@ -29,7 +29,7 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | **rejected** | Considered and declined; kept as provenance. |
 
 
-**274 decisions recorded** — **257** accepted · **14** proposed · **3** superseded.
+**275 decisions recorded** — **258** accepted · **14** proposed · **3** superseded.
 
 | ADR | Title | Status | Date |
 |---|---|---|---|
@@ -306,4 +306,5 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | `ADR-0271` | The server never indexes a run: MetadataStore.register_run has no reachable caller | proposed | 2026-09-10 |
 | `ADR-0272` | How the capture hooks reach a Kubernetes pod | proposed | 2026-09-10 |
 | `ADR-0273` | Commercial model: the core stays Apache-2.0 | proposed | 2026-09-24 |
+| `ADR-0276` | seal-latency-gate fails on the median and alarms on the p99 | accepted | 2026-10-01 |
 | `ADR-0290` | Envelope v2: bind encrypted objects to their identity via AEAD associated data; refuse plaintext reads | accepted | 2026-10-01 |
