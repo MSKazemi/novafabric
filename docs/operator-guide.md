@@ -1049,6 +1049,7 @@ request.
 | `NOVA_S3_ACCESS_KEY` / `NOVA_S3_SECRET_KEY` | — | ⚠ **Credentials.** Prefer an instance role or a mounted secret; a value here is visible to anything that can read the process environment |
 | `NOVA_S3_GOVERNANCE_BUCKET` / `NOVA_S3_COMPLIANCE_BUCKET` | — | Buckets for the dual object store |
 | `NOVA_OBJECT_STORE_ENCRYPTION` | off unless `1` | Enables backup object encryption |
+| `NOVA_OBJECT_STORE_ALLOW_PLAINTEXT_READS` | off | Legacy-migration opt-in: an encrypted object store returns non-envelope (pre-encryption) objects instead of refusing them with `PlaintextObjectRefusedError` ([encryption-at-rest §2.1](ops/encryption-at-rest.md#21-migrating-a-store-that-already-holds-plaintext)) |
 | `NOVAFABRIC_BACKEND` | `sqlite` | Storage backend selector |
 | `NOVAFABRIC_JOBS_DB` | — | Jobs database path override |
 | `NOVAFABRIC_LOG_DIR` | — | Log directory the support bundle collects from |

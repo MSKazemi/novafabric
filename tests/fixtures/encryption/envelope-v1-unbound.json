@@ -1,0 +1,9 @@
+{
+  "algo": "AES-256-GCM",
+  "nonce_b64": "SSgHnmvodbcZl7Xs",
+  "ciphertext_b64": "ZCOhHbjvxIFf3lF8DDv0HWza43m0QWONxrlN79kfdkKoWUc4IYSFPOQyq0s=",
+  "wrapped_dek_b64": "dfWQbTVNidr2G6UzWG7ZPcIEmfHpB5ChtMbhZECpgbSHgzfrvJqgMDPo+wyShUo0JHaLje6vpgCUdJ4W",
+  "kek_ref": "mock-kms:630dcd2966c43366",
+  "content_sha256": "1def17034c622c98027865c3642423b79662e14e4a072983e34800468f1716e9",
+  "shredded": false
+}

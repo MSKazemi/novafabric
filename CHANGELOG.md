@@ -82,6 +82,51 @@ longer forwards the submitting shell's environment (ADR-0270).
   New registry helper `list_assets_keyset`.
 
 
+
+- **Dashboard filter bar over HTTP (ADR-0232 D1/D3, ADR-0233, ADR-0234 D2) — experimental.**
+
+  Three read-only `nova serve` routes expose the filter grammar that already shipped in
+  `novafabric.query.filterbar`: `GET /api/filter/parse` compiles `status:error -model:gpt-4o`
+  to the DSL's own predicates (a 422 names the vocabulary), `GET /api/filter/runs` returns
+  the runs those predicates select — widened to an ADR-0233 `node`/`root`/`tree` scope,
+  newest first, capped at 200 — and `GET /api/filter/suggest` lists observed values for
+  one dimension inside a time window (default 30 days), capped at 100 with a `truncated`
+  flag. No new grammar: parsing delegates to the DSL parser and selection uses the same
+  index and scope expansion as `nova query` (`query.select_run_ids`), and every response
+  carries the `nova query` invocation over the same predicates. A truncated selection, a
+  scope expansion that hit its bound, or a tree still filling is reported in
+  `complete`/`incomplete_reasons`, never rendered as the whole answer. All three are
+  classified `read` in the ADR-0228 table (now 213 routes) and annotated in
+  `api/openapi-dashboard.yaml`.
+
+
+- **Runs view: filter bar and URL view state (ADR-0232 D1–D3, ADR-0233) — experimental.**
+
+  The dashboard's Runs tab gains a filter bar (`status:error -model:gpt-4o`, Enter to apply)
+  with a `node`/`root`/`tree` scope switch, observed-value suggestions after `dim:` (a
+  partial list says so), the parse error announced inline, and the equivalent `nova query`
+  shown with a copy button. A truncated or still-filling result is stated, not hidden.
+  The whole Runs view — search, status, sort, date window, filter, scope, selected run and
+  inspector view — now lives in the URL (`?f=&scope=&run=&view=…`), so a pasted link
+  reproduces it and Back undoes a committed filter, scope, status or date change. Values
+  are validated on read; switching tabs drops the Runs keys. Saved views now capture the
+  filter and scope too (still browser-local; ADR-0232 D4's NovaFabric-side saved views
+  remain **planned**).
+
+
+- **Runs inspector becomes a capsule explorer — experimental.**
+
+  Selecting a run now opens a summary strip (status, start, duration, exit code, model and
+  tool call counts, the command) with Replay dry-run, Forensic replay, Export evidence and
+  Copy link actions — all through the existing confirm dialog. Two new views join
+  Inspect/Trace/Secrets/Forensics: **Integrity** runs `nova verify` on demand and reports
+  four distinct outcomes — *not sealed*, *sealed but not verifiable here*, *verified*, or
+  *failed* with the failing check named — so an unsealed capsule never reads as a pass or
+  a failure; **Lineage** lists the run's spool-lineage neighbours in both directions, opens
+  any of them by id (even when not in the loaded list) and offers Compare. The view
+  switcher is now a WAI-ARIA tablist with arrow-key navigation, and the view is
+  deep-linkable (`?view=integrity`).
+
 ### Fixed
 
 - **A compliance test expired on 2026-10-01.** `test_recent_capsule_within_retention` used a
@@ -135,52 +180,6 @@ longer forwards the submitting shell's environment (ADR-0270).
   `tail_alarm` in the benchmark JSON). `seal.seal-call.p99` moves from `gated` to `target`
   in `docs/slo.md`. The test is renamed `test_seal_latency_gate`.
 
-### Added
-
-- **Dashboard filter bar over HTTP (ADR-0232 D1/D3, ADR-0233, ADR-0234 D2) — experimental.**
-
-  Three read-only `nova serve` routes expose the filter grammar that already shipped in
-  `novafabric.query.filterbar`: `GET /api/filter/parse` compiles `status:error -model:gpt-4o`
-  to the DSL's own predicates (a 422 names the vocabulary), `GET /api/filter/runs` returns
-  the runs those predicates select — widened to an ADR-0233 `node`/`root`/`tree` scope,
-  newest first, capped at 200 — and `GET /api/filter/suggest` lists observed values for
-  one dimension inside a time window (default 30 days), capped at 100 with a `truncated`
-  flag. No new grammar: parsing delegates to the DSL parser and selection uses the same
-  index and scope expansion as `nova query` (`query.select_run_ids`), and every response
-  carries the `nova query` invocation over the same predicates. A truncated selection, a
-  scope expansion that hit its bound, or a tree still filling is reported in
-  `complete`/`incomplete_reasons`, never rendered as the whole answer. All three are
-  classified `read` in the ADR-0228 table (now 213 routes) and annotated in
-  `api/openapi-dashboard.yaml`.
-
-
-- **Runs view: filter bar and URL view state (ADR-0232 D1–D3, ADR-0233) — experimental.**
-
-  The dashboard's Runs tab gains a filter bar (`status:error -model:gpt-4o`, Enter to apply)
-  with a `node`/`root`/`tree` scope switch, observed-value suggestions after `dim:` (a
-  partial list says so), the parse error announced inline, and the equivalent `nova query`
-  shown with a copy button. A truncated or still-filling result is stated, not hidden.
-  The whole Runs view — search, status, sort, date window, filter, scope, selected run and
-  inspector view — now lives in the URL (`?f=&scope=&run=&view=…`), so a pasted link
-  reproduces it and Back undoes a committed filter, scope, status or date change. Values
-  are validated on read; switching tabs drops the Runs keys. Saved views now capture the
-  filter and scope too (still browser-local; ADR-0232 D4's NovaFabric-side saved views
-  remain **planned**).
-
-
-- **Runs inspector becomes a capsule explorer — experimental.**
-
-  Selecting a run now opens a summary strip (status, start, duration, exit code, model and
-  tool call counts, the command) with Replay dry-run, Forensic replay, Export evidence and
-  Copy link actions — all through the existing confirm dialog. Two new views join
-  Inspect/Trace/Secrets/Forensics: **Integrity** runs `nova verify` on demand and reports
-  four distinct outcomes — *not sealed*, *sealed but not verifiable here*, *verified*, or
-  *failed* with the failing check named — so an unsealed capsule never reads as a pass or
-  a failure; **Lineage** lists the run's spool-lineage neighbours in both directions, opens
-  any of them by id (even when not in the loaded list) and offers Compare. The view
-  switcher is now a WAI-ARIA tablist with arrow-key navigation, and the view is
-  deep-linkable (`?view=integrity`).
-
 ### Changed
 
 - **Dashboard accessibility and theme polish.** Every tab's loading state is now a polite
@@ -190,6 +189,31 @@ longer forwards the submitting shell's environment (ADR-0270).
   light theme; a unit-test ratchet keeps raw amber status classes out of the dashboard.
   Runs-list controls gained accessible names (search, sort, date inputs, status chips with
   `aria-pressed`).
+
+### Security
+
+- **Encrypted object-store envelopes are now bound to their object, and plaintext reads fail
+  closed (ADR-0290, experimental feature).**
+
+  Envelope encryption at rest (ADR-0185) ran AES-GCM with no associated data, so anyone with
+  write access to the bucket could copy one object's envelope onto another key and it would
+  decrypt. New envelopes are **v2**: the object-store key is authenticated as AAD and the
+  envelope records `"envelope_version": 2`; a moved, tampered, or v2→v1-relabelled envelope
+  raises `BlobAuthenticationError`. The AAD binds the key only — not `kek_ref` — so a future
+  KEK re-wrap stays metadata-only. **v1 envelopes still decrypt** (golden fixture
+  `tests/fixtures/encryption/envelope-v1-unbound.json`); each read logs a warning and is
+  counted on `EncryptingAdapter.legacy_envelope_reads`.
+
+  Reads of a **non-envelope** object from an encrypted store no longer pass the bytes through
+  silently: they raise `PlaintextObjectRefusedError`, because a reader cannot tell a
+  pre-encryption object from substituted plaintext. Chain-log objects (`_capsule_log/`) are
+  unaffected. **Upgrade note:** a store that already held plaintext objects when encryption
+  was enabled must set `NOVA_OBJECT_STORE_ALLOW_PLAINTEXT_READS=1` for the migration window
+  (see `docs/ops/encryption-at-rest.md` §2.1). Unencrypted deployments are unaffected.
+
+  The docs now state plainly that `shred()` cannot reach an envelope already inside its WORM
+  window; erasing stored objects requires destroying the KEK (per-tenant KEKs bound that to
+  one tenant). Tests: `tests/object_capsule_store/test_envelope_binding.py`.
 
 
 ## [0.102.1] - 2026-09-27

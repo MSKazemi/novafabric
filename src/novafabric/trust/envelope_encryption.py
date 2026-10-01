@@ -25,8 +25,23 @@ Per-object envelope scheme:
   encrypt-before-WORM invariant): integrity verification — hashes, Merkle
   leaves, WORM conformance — never requires decryption or KMS access.
 - :func:`shred` implements single-key-deletion crypto-shred semantics
-  (ADR-0134 synergy): removing the wrapped DEK renders the ciphertext
-  permanently unrecoverable while leaving it intact inside its WORM window.
+  (ADR-0134 synergy) **on the model**: it returns a copy without the wrapped
+  DEK.  It cannot reach an envelope already stored inside its WORM retention
+  window — the wrapped DEK is part of those immutable bytes — so erasing a
+  *stored* object requires destroying the KEK that wrapped it (ADR-0243
+  tenant-KEK revocation), not calling :func:`shred`.
+
+Envelope versions (ADR-0290):
+
+- **v2** (written whenever an ``object_id`` is supplied — always, from the
+  object-capsule store) authenticates the object identity as AES-GCM
+  *associated data*: an envelope copied to a different object key fails
+  authentication.  The AAD binds the object key only — never ``kek_ref`` or
+  ``tenant_key_id`` — so a future KEK re-wrap or KEK-hierarchy rotation
+  (``kek-rotation-v0`` Track B) stays a metadata-only change.
+- **v1** (no ``envelope_version`` field; ``aad=None``) is every envelope
+  written before ADR-0290.  It still decrypts, but it is *unbound*:
+  :attr:`EncryptedBlob.is_bound` is ``False`` and callers flag it.
 
 This module is the crypto layer only and is **not the default**.  Opt-in
 store wiring exists via
@@ -49,19 +64,32 @@ from pydantic import BaseModel, Field
 from novafabric.trust.novaseal.signing_backend import KeyWrappingBackend
 
 __all__ = [
+    "ENVELOPE_VERSION_BOUND",
+    "ENVELOPE_VERSION_LEGACY",
     "BlobAuthenticationError",
     "CiphertextIntegrityError",
     "DekUnwrapError",
     "EncryptedBlob",
+    "EnvelopeBindingError",
     "EnvelopeEncryptionError",
     "ShreddedBlobError",
     "decrypt_blob",
     "encrypt_blob",
+    "envelope_aad",
     "shred",
     "verify_ciphertext_hash",
 ]
 
 _ALGO: Literal["AES-256-GCM"] = "AES-256-GCM"
+
+#: Envelope written before ADR-0290: no associated data, not bound to its object.
+ENVELOPE_VERSION_LEGACY: Literal[1] = 1
+#: ADR-0290 envelope: the object identity is authenticated as AES-GCM AAD.
+ENVELOPE_VERSION_BOUND: Literal[2] = 2
+
+# Domain separator for the v2 AAD. Versioned so a future binding scheme can
+# never be confused with this one.
+_AAD_DOMAIN_V2 = b"novafabric/envelope-aad/v2\x00"
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +115,10 @@ class DekUnwrapError(EnvelopeEncryptionError):
 
 class CiphertextIntegrityError(EnvelopeEncryptionError):
     """The ciphertext does not match the recorded ``content_sha256``."""
+
+
+class EnvelopeBindingError(EnvelopeEncryptionError):
+    """A bound (v2) envelope was decrypted without the object identity it is bound to."""
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +160,21 @@ class EncryptedBlob(BaseModel):
         ),
     )
 
+    envelope_version: Literal[1, 2] = Field(
+        default=ENVELOPE_VERSION_LEGACY,
+        description=(
+            "Envelope format version (ADR-0290). 1 = legacy, no AAD (every "
+            "pre-0290 envelope, which lacks this field); 2 = the object "
+            "identity is authenticated as AES-GCM associated data."
+        ),
+    )
+
     model_config = {"frozen": True}
+
+    @property
+    def is_bound(self) -> bool:
+        """True when the envelope is bound to its object identity (v2, ADR-0290)."""
+        return self.envelope_version >= ENVELOPE_VERSION_BOUND
 
     @property
     def nonce(self) -> bytes:
@@ -173,6 +219,26 @@ def _require_wrap_capable(backend: object) -> KeyWrappingBackend:
 
 
 # ---------------------------------------------------------------------------
+# Associated data (ADR-0290)
+# ---------------------------------------------------------------------------
+
+
+def envelope_aad(object_id: str) -> bytes:
+    """The AES-GCM associated data binding a v2 envelope to *object_id*.
+
+    ``domain separator || UTF-8(object_id)``.  Deliberately excludes
+    ``kek_ref`` and ``tenant_key_id`` so re-wrapping a DEK under another KEK
+    never requires re-encrypting the payload.
+
+    Raises:
+        EnvelopeBindingError: when *object_id* is empty.
+    """
+    if not object_id:
+        raise EnvelopeBindingError("object_id must be a non-empty string (ADR-0290)")
+    return _AAD_DOMAIN_V2 + object_id.encode("utf-8")
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -182,6 +248,7 @@ def encrypt_blob(
     *,
     backend: KeyWrappingBackend,
     tenant_key_id: str | None = None,
+    object_id: str | None = None,
 ) -> EncryptedBlob:
     """Encrypt *plaintext* under a fresh per-object DEK wrapped by *backend*.
 
@@ -192,6 +259,11 @@ def encrypt_blob(
     Args:
         plaintext: Raw payload bytes to protect.
         backend:   A backend implementing the ``KeyWrappingBackend`` capability.
+        tenant_key_id: Tenant whose KEK wraps the DEK (ADR-0243), recorded only.
+        object_id: Identity of the object this envelope will be stored as
+                   (the object-store key).  When given, a **v2 bound**
+                   envelope is produced (ADR-0290); when omitted, a legacy
+                   unbound v1 envelope — kept only for API compatibility.
 
     Raises:
         NotImplementedError: if *backend* lacks the wrap capability.
@@ -201,7 +273,8 @@ def encrypt_blob(
     kms = _require_wrap_capable(backend)
     dek = os.urandom(32)
     nonce = os.urandom(12)
-    ciphertext = AESGCM(dek).encrypt(nonce, plaintext, None)
+    aad = envelope_aad(object_id) if object_id is not None else None
+    ciphertext = AESGCM(dek).encrypt(nonce, plaintext, aad)
     wrapped_dek = kms.wrap_key(dek)
     return EncryptedBlob(
         algo=_ALGO,
@@ -212,13 +285,29 @@ def encrypt_blob(
         content_sha256=hashlib.sha256(ciphertext).hexdigest(),
         shredded=False,
         tenant_key_id=tenant_key_id,
+        envelope_version=(
+            ENVELOPE_VERSION_BOUND if aad is not None else ENVELOPE_VERSION_LEGACY
+        ),
     )
 
 
-def decrypt_blob(blob: EncryptedBlob, *, backend: KeyWrappingBackend) -> bytes:
+def decrypt_blob(
+    blob: EncryptedBlob,
+    *,
+    backend: KeyWrappingBackend,
+    object_id: str | None = None,
+) -> bytes:
     """Unwrap the blob's DEK via *backend* and return the decrypted plaintext.
 
+    A v2 (bound) envelope authenticates *object_id* as associated data: the
+    caller must pass the identity it read the envelope from, and an envelope
+    moved to another object fails with :class:`BlobAuthenticationError`.  A
+    v1 (legacy) envelope ignores *object_id*.  Rewriting
+    ``envelope_version`` from 2 to 1 does not help an attacker: the
+    ciphertext was sealed with the AAD and fails authentication without it.
+
     Raises:
+        EnvelopeBindingError:     a v2 envelope was decrypted without ``object_id``.
         ShreddedBlobError:        the blob was crypto-shredded (no wrapped DEK).
         CiphertextIntegrityError: ciphertext does not match ``content_sha256``.
         DekUnwrapError:           the backend failed to unwrap the DEK.
@@ -229,6 +318,14 @@ def decrypt_blob(blob: EncryptedBlob, *, backend: KeyWrappingBackend) -> bytes:
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
     kms = _require_wrap_capable(backend)
+    aad: bytes | None = None
+    if blob.is_bound:
+        if object_id is None:
+            raise EnvelopeBindingError(
+                "Envelope is bound to its object identity (v2, ADR-0290); "
+                "decrypt_blob() needs the object_id it was read from."
+            )
+        aad = envelope_aad(object_id)
     wrapped_dek = blob.wrapped_dek
     if blob.shredded or wrapped_dek is None:
         raise ShreddedBlobError(
@@ -259,11 +356,16 @@ def decrypt_blob(blob: EncryptedBlob, *, backend: KeyWrappingBackend) -> bytes:
             "KMS backend rejected/could not complete the unwrap."
         ) from exc
     try:
-        return AESGCM(dek).decrypt(blob.nonce, ciphertext, None)
+        return AESGCM(dek).decrypt(blob.nonce, ciphertext, aad)
     except InvalidTag as exc:
         raise BlobAuthenticationError(
             "AES-256-GCM authentication failed: ciphertext or nonce was tampered with, "
-            "or the unwrapped DEK does not match."
+            "the unwrapped DEK does not match"
+            + (
+                ", or the envelope was moved from another object (ADR-0290 binding)."
+                if aad is not None
+                else "."
+            )
         ) from exc
 
 
@@ -271,9 +373,16 @@ def shred(blob: EncryptedBlob) -> EncryptedBlob:
     """Return a crypto-shredded copy of *blob*: wrapped DEK removed, ciphertext intact.
 
     Single-key-deletion semantics per ADR-0134 synergy: deleting the one
-    wrapped DEK erases the object while the ciphertext stays untouched inside
-    its WORM retention window and still verifies via ``content_sha256``.
+    wrapped DEK erases the object while the ciphertext stays untouched and
+    still verifies via ``content_sha256``.
     Idempotent: shredding an already-shredded blob returns an equal copy.
+
+    **Limitation (ADR-0290 §WORM):** this is a model operation.  It does not
+    and cannot alter an envelope already written inside its WORM retention
+    window — the stored bytes, wrapped DEK included, are immutable.  Erasing
+    a stored object therefore means destroying the KEK that wrapped its DEK
+    (ADR-0243 tenant-KEK revocation), which erases every object under that
+    KEK.  Per-object erasure of stored capsules is **not** provided.
     """
     return blob.model_copy(update={"wrapped_dek_b64": None, "shredded": True})
 

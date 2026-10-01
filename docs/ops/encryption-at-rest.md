@@ -40,10 +40,24 @@ Per-object envelope scheme (`src/novafabric/trust/envelope_encryption.py`):
    encrypted bytes**. `content_sha256` inside the envelope is likewise
    computed over the ciphertext — so integrity verification (hashes, Merkle
    leaves, WORM conformance) **never requires decryption or KMS access**.
-4. **Reads are transparent.** The store detects the envelope by its schema
-   marker fields and decrypts; objects written *before* encryption was
-   enabled pass through unchanged, so mixed stores keep working.
-5. **Chain-log objects are never encrypted.** They are integrity metadata,
+4. **Envelopes are bound to their object (v2, ADR-0290).** Every new
+   envelope authenticates its object-store key as AES-GCM *associated data*
+   and records `"envelope_version": 2`. An envelope copied to a different
+   key — by anyone with write access to the bucket — fails authentication
+   with `BlobAuthenticationError` instead of decrypting to another object's
+   content. The binding covers the object key only, never the KEK reference,
+   so re-wrapping a DEK under a new KEK does not require re-encryption.
+   Envelopes written before ADR-0290 (no `envelope_version` field, "v1")
+   still decrypt; each such read logs a warning, because a v1 envelope is not
+   bound and could have been moved.
+5. **Reads fail closed on plaintext.** The store detects the envelope by its
+   schema marker fields and decrypts. A stored object that is **not** an
+   envelope raises `PlaintextObjectRefusedError`: the reader cannot tell
+   "written before encryption was enabled" from "plaintext substituted by
+   someone with write access to the store". See
+   [§2.1](#21-migrating-a-store-that-already-holds-plaintext) for stores that
+   genuinely hold pre-encryption objects.
+6. **Chain-log objects are never encrypted.** They are integrity metadata,
    not capsule payloads — exactly as ADR-0031 excludes them from WORM.
 
 Tampering is loud, with named exceptions: a ciphertext that fails its
@@ -73,6 +87,24 @@ that configuration, behavior is **byte-for-byte unchanged**.
 The local-file KEK path uses the NovaSeal `LocalSigningBackend` wrap
 capability — suitable for dev/test parity and self-managed deployments where
 you control the file's lifecycle.
+
+### 2.1 Migrating a store that already holds plaintext
+
+Since ADR-0290, a read of a non-envelope object from an encrypted store
+fails closed (`PlaintextObjectRefusedError`) — chain-log objects under
+`_capsule_log/` excepted, as they are never encrypted. If you enabled
+encryption on a store that already holds capsules, opt in explicitly for the
+migration window:
+
+```bash
+export NOVA_OBJECT_STORE_ALLOW_PLAINTEXT_READS=1   # legacy plaintext reads
+```
+
+The process logs a warning at startup and on every plaintext object it
+returns. New writes are still encrypted and bound. Unset the variable once
+every pre-encryption object has been re-ingested (or has aged out of
+retention) — while it is set, plaintext substitution by a storage operator
+goes undetected by the read path.
 
 ### Per-tenant KEKs (ADR-0243, experimental)
 
@@ -109,6 +141,16 @@ A shredded envelope is permanently unrecoverable; reads raise the named
 Today `shred()` is a Python API
 (`novafabric.trust.envelope_encryption.shred`); there is no CLI command for
 it yet.
+
+> **Limitation — `shred()` cannot reach a stored object.** `shred()` returns
+> a *new* envelope without the wrapped DEK. An envelope already written
+> inside its WORM retention window is immutable — its wrapped DEK is part of
+> those locked bytes — so `shred()` cannot remove it, and NovaFabric does
+> **not** provide per-object erasure of stored capsules. Erasing stored data
+> today means destroying the KEK that wrapped it: with per-tenant KEKs
+> (below §2), deleting `<tenant>.kek` makes every object of that tenant
+> unreadable (fail closed, named error); with a single shared KEK it erases
+> the whole store. Plan erasure granularity before choosing a KEK layout.
 
 ## 4. Honest limits — read before production
 
@@ -162,6 +204,8 @@ it yet.
 - [ ] Both env vars set in the service unit / container spec of every process
       that writes to or reads from the object store (a reader without the KEK
       gets `NotImplementedError`/unwrap failures, not plaintext).
+- [ ] `NOVA_OBJECT_STORE_ALLOW_PLAINTEXT_READS` unset in steady state (set
+      only for a documented migration window, see §2.1).
 - [ ] Documented owner for the KEK lifecycle (rotation is manual today —
       new writes use the new KEK; old envelopes still need the old KEK).
 

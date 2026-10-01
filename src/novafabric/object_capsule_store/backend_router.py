@@ -47,6 +47,9 @@ _BACKENDS = ("s3", "minio", "ceph_rgw", "azure_blob", "local")
 ENV_ENCRYPTION = "NOVA_OBJECT_STORE_ENCRYPTION"
 ENV_KEK_PATH = "NOVA_OBJECT_STORE_KEK_PATH"
 ENV_TENANT_KEK_DIR = "NOVA_OBJECT_STORE_TENANT_KEK_DIR"
+# ADR-0290 legacy-migration opt-in: return non-envelope objects from an
+# encrypted store (default: refuse them, fail closed).
+ENV_ALLOW_PLAINTEXT_READS = "NOVA_OBJECT_STORE_ALLOW_PLAINTEXT_READS"
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 
@@ -96,13 +99,28 @@ def _maybe_wrap_encryption(adapter: WormAdapter) -> WormAdapter:
             )
         tenant_keys = TenantKeyRegistry(backend, tenant_dir)
 
+    allow_plaintext = (
+        os.environ.get(ENV_ALLOW_PLAINTEXT_READS, "").strip().lower() in _TRUTHY
+    )
     log.info(
         "object-capsule-store envelope encryption enabled (ADR-0185, experimental): "
         "wrapping %s with EncryptingAdapter (local KEK%s)",
         type(adapter).__name__,
         ", per-tenant KEK dir" if tenant_keys is not None else "",
     )
-    return EncryptingAdapter(adapter, backend, tenant_keys=tenant_keys)
+    if allow_plaintext:
+        log.warning(
+            "%s is set: non-envelope objects will be returned from the encrypted "
+            "store without authentication (ADR-0290 legacy-migration mode). Unset "
+            "it once every pre-encryption object has been re-ingested.",
+            ENV_ALLOW_PLAINTEXT_READS,
+        )
+    return EncryptingAdapter(
+        adapter,
+        backend,
+        tenant_keys=tenant_keys,
+        allow_plaintext_reads=allow_plaintext,
+    )
 
 
 def make_adapter(backend: str, **kwargs: Any) -> WormAdapter:

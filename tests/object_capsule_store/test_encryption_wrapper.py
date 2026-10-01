@@ -176,20 +176,29 @@ class TestCiphertextAtRest:
 
 
 class TestMixedStore:
+    """Pre-encryption objects read only under the ADR-0290 legacy opt-in."""
+
+    @pytest.fixture
+    def legacy_wrapper(
+        self, inner: InMemoryWormAdapter, kms: MockKmsBackend
+    ) -> EncryptingAdapter:
+        return EncryptingAdapter(inner, kms, allow_plaintext_reads=True)
+
     def test_preexisting_raw_object_reads_unchanged(
-        self, wrapper: EncryptingAdapter, inner: InMemoryWormAdapter
+        self, legacy_wrapper: EncryptingAdapter, inner: InMemoryWormAdapter
     ) -> None:
         raw = b"legacy plaintext capsule bytes \x00\xff"
         inner.put_object("old-key", raw, compute_sha256(raw), retention_days=365)
-        assert wrapper.get_object("old-key") == raw
+        assert legacy_wrapper.get_object("old-key") == raw
+        assert legacy_wrapper.plaintext_reads == 1
 
     def test_preexisting_json_without_envelope_marker_reads_unchanged(
-        self, wrapper: EncryptingAdapter, inner: InMemoryWormAdapter
+        self, legacy_wrapper: EncryptingAdapter, inner: InMemoryWormAdapter
     ) -> None:
         """JSON that is not an EncryptedBlob envelope must not be 'decrypted'."""
         raw = json.dumps({"algo": "AES-256-GCM", "not_an": "envelope"}).encode()
         inner.put_log_object("old-json", raw)
-        assert wrapper.get_object("old-json") == raw
+        assert legacy_wrapper.get_object("old-json") == raw
 
     def test_namespace_ops_delegate(
         self, wrapper: EncryptingAdapter, inner: InMemoryWormAdapter
