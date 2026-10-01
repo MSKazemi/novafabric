@@ -46,8 +46,8 @@ This is the default and needs no setup beyond installing the package.
 | Dashboard | `nova serve --experimental` binds to `127.0.0.1:4321`, requires a session token on every route, and is single-tenant | experimental; `serve/app.py`, see [dashboard.md](../dashboard.md) |
 
 Local mode makes no network calls for core features. The one network
-dependency is the RFC 3161 timestamp, and only when sealing is configured: it
-calls a TSA unless `tsa_url: ""` is set (see
+dependency is the RFC 3161 timestamp, and only when you opt in: a TSA is
+contacted only if `tsa_url` or `tsa_urls` is configured (see
 [Sealing and verification](sealing-and-verification.md#rfc-3161-timestamp)).
 
 ## Server mode (experimental)

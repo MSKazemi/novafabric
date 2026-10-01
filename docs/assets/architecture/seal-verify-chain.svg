@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 500" width="980" height="500" role="img" aria-labelledby="t d">
 <title id="t">NovaSeal: how a capsule is sealed and verified</title>
-<desc id="d">Top row: every capsule file except .seal/ and capsule.yaml is hashed with SHA-256 into evidence_digests inside capsule.yaml; the manifest is serialised as canonical JSON, whose SHA-256 is the capsule_id, and signed into a DSSE envelope (.seal/manifest.dsse) with ECDSA P-256 or Ed25519. From the envelope, an RFC 3161 timestamp token is requested (default TSA freetsa.org; empty token if unreachable) and an entry is appended to a domain-separated SHA-256 Merkle log (.seal/log-entry.json, root kept in a local log database). The redaction proof is one of the digested files. Bottom: nova verify checks the DSSE signature, the timestamp token, Merkle inclusion, that capsule.yaml equals the signed payload, and every per-file digest, exiting 0 only when all pass.</desc>
+<desc id="d">Top row: every capsule file except .seal/ and capsule.yaml is hashed with SHA-256 into evidence_digests inside capsule.yaml; the manifest is serialised as canonical JSON, whose SHA-256 is the capsule_id, and signed into a DSSE envelope (.seal/manifest.dsse) with ECDSA P-256 or Ed25519. From the envelope, an RFC 3161 timestamp token is requested if a TSA is configured (opt-in, no default) and an entry is appended to a domain-separated SHA-256 Merkle log (.seal/log-entry.json, root kept in a local log database). The redaction proof is one of the digested files. Bottom: nova verify checks the DSSE signature, the timestamp token, Merkle inclusion, that capsule.yaml equals the signed payload, and every per-file digest, exiting 0 only when all pass.</desc>
 <style>
 svg{--bg:#111114;--card:#1c1c22;--card2:#24242c;--stroke:#3a3a44;--fg:#ececf1;--muted:#a8a8b3;--line:#6b6b78;--cap:#7dd3fc;--seal:#c4b5fd;--rep:#5eead4;--diff:#fcd34d;--aud:#c4f0a8;--warn:#fda4af}
 @media (prefers-color-scheme:light){svg{--bg:#fafaf9;--card:#ffffff;--card2:#f1f1f3;--stroke:#d4d4d8;--fg:#18181b;--muted:#52525b;--line:#a1a1aa;--cap:#0369a1;--seal:#6d28d9;--rep:#0f766e;--diff:#a16207;--aud:#3f6212;--warn:#be123c}}
@@ -68,7 +68,7 @@ text{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvet
 <rect class="ring4 c-seal" x="502" y="218" width="222" height="104" rx="13" fill="none" stroke-width="2.5"/>
 <rect class="card" x="506" y="222" width="214" height="96" rx="10"/><rect class="f-seal" x="506" y="222" width="214" height="4" rx="2"/>
 <text class="h" x="520" y="250" text-anchor="start">RFC 3161 timestamp</text>
-<text class="s mono" x="520" y="270" text-anchor="start">default TSA: freetsa.org</text>
+<text class="s mono" x="520" y="270" text-anchor="start">opt-in: tsa_url (no default)</text>
 <text class="t mono" x="520" y="290" text-anchor="start">.seal/manifest.dsse.tsr</text>
 <text class="s" x="520" y="308" text-anchor="start">empty if TSA unreachable</text>
 <rect class="ring5 c-seal" x="744" y="218" width="222" height="104" rx="13" fill="none" stroke-width="2.5"/>

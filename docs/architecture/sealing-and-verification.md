@@ -61,7 +61,11 @@ backend, so the private key never leaves the KMS. See
    payload with **ECDSA P-256 / SHA-256**. A local Ed25519 PEM key is also
    accepted. The payload type is `application/vnd.novafabric.capsule+json`, and
    each signature carries a `keyid` (SHA-256 of the signer certificate) and the
-   certificate itself. The envelope is written to `.seal/manifest.dsse`.
+   certificate itself. The envelope is written to `.seal/manifest.dsse`. The
+   signature is computed over the standard DSSE v1 pre-authentication encoding,
+   so stock DSSE verifiers accept it. Seals made by v0.102.x and earlier used a
+   non-standard encoding; `nova verify` still accepts them and labels them
+   **legacy envelope**.
 
 Because `redaction-proof.json` is one of the digested files, the signature
 covers the redaction proof. A capsule cannot be re-redacted after sealing without
@@ -73,15 +77,19 @@ breaking verification.
 over the envelope from a Time Stamping Authority and write it to
 `.seal/manifest.dsse.tsr`.
 
+Timestamping is **opt-in** (ADR-0292). There is no default TSA.
+
 | Setting | Behaviour |
 |---|---|
-| `tsa_url` omitted | The default TSA, `https://freetsa.org/tsr`, is used |
+| `tsa_url` / `tsa_urls` omitted or empty | No timestamp and no network call; one warning per process |
+| `tsa_url: <url>` | That TSA, and only that one, is contacted |
 | `tsa_urls: [...]` | An ordered fallback list |
-| `tsa_url: ""` | Timestamping is disabled |
 | TSA unreachable | The seal still succeeds, with an empty `.tsr` and a warning |
 
-To seal on a machine with no network, set `tsa_url: ""` or point it at an
-internal TSA.
+Through v0.102.x an omitted `tsa_url` meant `https://freetsa.org/tsr`; to keep
+that behaviour, set it explicitly. The timestamp covers the signed envelope,
+signature included, so it sits outside the signature by design; `nova verify`
+checks that the token's message imprint matches this envelope.
 
 ## The Merkle log
 
@@ -96,7 +104,8 @@ not a tree over the files of one capsule.
   `~/.novafabric/novaseal-merkle.db` (set with `merkle_db`). A Postgres backend
   is experimental.
 - `.seal/log-entry.json` records `leaf_index`, `leaf_hash`, `root_hash`,
-  `tree_size` and `entry` for this capsule.
+  `tree_size` and `entry` for this capsule. New seals also carry the Merkle
+  inclusion proof in this file, and the entry is bound to the signed capsule.
 - `nova seal log verify` checks the log, and `--consistency N` checks a
   consistency proof between tree sizes.
 
@@ -113,8 +122,8 @@ in turn:
 | # | Check | Passes when |
 |---|---|---|
 | 1 | DSSE signature | The envelope signature verifies against the embedded certificate |
-| 2 | RFC 3161 token | The token's status and message imprint match the envelope. If no token is present, the output says `NOT PRESENT` and the check passes, unless a TSA CA bundle is supplied. |
-| 3 | Merkle inclusion | The entry in `log-entry.json` is included in the Merkle log database named by the configuration |
+| 2 | RFC 3161 token | The token parses strictly, its status is granted and its message imprint matches this envelope. If no token is present, the output says `NOT PRESENT` and the check passes, unless a TSA CA bundle is supplied. A token that cannot be parsed strictly is reported as a structural check only, never as OK. |
+| 3 | Merkle inclusion | The proof carried in `log-entry.json` reproduces its root and the entry names this capsule. If a local log is configured, it is checked as well. |
 | 4 | Manifest binding | `capsule.yaml` on disk equals the signed payload, and `capsule_id` matches |
 | 5 | Per-file digests | Every file listed in `evidence_digests` exists and matches its SHA-256. Extra files are listed but do not fail the check. |
 
@@ -128,11 +137,11 @@ hardening flags are experimental:
 `nova verify` also accepts an Evidence Bundle `.zip` and recomputes every
 artifact digest, and an `export-manifest.json` from a batch export.
 
-**Where verification can run.** Checks 1, 2, 4 and 5 use only the capsule.
-Check 3 needs the Merkle log database that recorded the seal, so a full
-`nova verify` runs where that database is available: the sealing host, or a
-host that shares the configured log. To give a capsule to a party that has no
-access to that log, export an Evidence Bundle.
+**Where verification can run.** Every check uses only the capsule, so
+`nova verify` runs anywhere and never creates a log. The carried proof's root is
+not independently anchored, and the output says so. For a capsule sealed by
+v0.102.x or earlier, verified away from the sealer's log, check 3 prints
+`NOT CHECKED — log not available` and does not fail.
 
 ## Maker-checker signing (experimental)
 

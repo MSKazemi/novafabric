@@ -144,7 +144,7 @@ footer{margin-top:22px;color:var(--muted);font-size:.82rem}
     <h2 id="h-trust">Trust <small>NovaSeal · nova verify</small></h2>
     <div class="box" id="b-dsse" style="--c:var(--seal)"><div class="t">DSSE envelope</div><div class="s">ECDSA P-256 over canonical manifest JSON</div></div>
     <div class="box" id="b-tsa" style="--c:var(--seal)"><div class="t">RFC 3161 token</div><div class="s">from the configured TSA (best effort)</div></div>
-    <div class="box" id="b-log" style="--c:var(--seal)"><div class="t">Merkle log</div><div class="s">leaf = H(0x00‖entry) · local log DB</div></div>
+    <div class="box" id="b-log" style="--c:var(--seal)"><div class="t">Merkle log</div><div class="s">leaf = H(0x00‖entry) · proof carried in log-entry.json</div></div>
     <ul class="checks" id="checks" aria-label="nova verify checks"></ul>
   </section>
 
@@ -225,7 +225,7 @@ footer{margin-top:22px;color:var(--muted);font-size:.82rem}
       ref: "capture/orchestrator.py:_seal_capsule → trust/novaseal/__init__.py:NovaSeal.seal · envelope.py",
       on: ["b-dsse"], hashed: true, term: [["c", "  sealed: capsule_id 3f9a…"]] },
     { p: 1, title: "Timestamp and log the seal", mat: "experimental",
-      body: "<p>An RFC 3161 token is requested for the envelope (default TSA <code>freetsa.org</code>; <code>tsa_url: \"\"</code> disables it, and an unreachable TSA leaves an empty token). The seal is then appended to a domain-separated SHA-256 Merkle log. <code>log-entry.json</code> records its leaf index and the root.</p>",
+      body: "<p>An RFC 3161 token is requested for the envelope (opt-in: only the <code>tsa_url</code> you configure is contacted; with none, no timestamp and no network call). The seal is then appended to a domain-separated SHA-256 Merkle log. <code>log-entry.json</code> records its leaf index, the root and the inclusion proof, so verification needs nothing but the capsule.</p>",
       ref: "trust/novaseal/timestamp.py · trust/_rfc3161.py · trust/novaseal/merkle.py",
       on: ["b-tsa", "b-log"], hashed: true, term: [["ok", "✓ capsule written  ~/.novafabric/capsules/01J9Z…/"]] },
     { p: 2, title: "Replay in mocked mode", mat: "works today",
