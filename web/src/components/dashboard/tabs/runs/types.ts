@@ -3,7 +3,7 @@
  * Extracted verbatim from the former RunsTab monolith — behavior frozen.
  */
 
-export type DetailView = 'inspect' | 'trace' | 'replay' | 'secrets' | 'children' | 'forensics';
+export type DetailView = 'inspect' | 'trace' | 'integrity' | 'lineage' | 'replay' | 'secrets' | 'children' | 'forensics';
 
 export interface RunCostEntry {
   input_tokens: number;

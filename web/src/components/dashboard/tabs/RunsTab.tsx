@@ -373,6 +373,9 @@ export default function RunsTab({
         childrenState={childrenState}
         forensicsState={forensicsState}
         onSelect={setSelected}
+        onSelectId={id => setSelected(
+          [...(runs ?? []), ...(filtered.result?.items ?? [])].find(r => r.run_id === id) ?? stubRun(id),
+        )}
         onAction={(run, action) => setActionTarget({ run, action })}
         onCompareTo={onCompareTo}
       />

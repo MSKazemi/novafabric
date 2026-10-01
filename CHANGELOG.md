@@ -105,6 +105,20 @@ longer forwards the submitting shell's environment (ADR-0270).
   remain **planned**).
 
 
+- **Runs inspector becomes a capsule explorer — experimental.**
+
+  Selecting a run now opens a summary strip (status, start, duration, exit code, model and
+  tool call counts, the command) with Replay dry-run, Forensic replay, Export evidence and
+  Copy link actions — all through the existing confirm dialog. Two new views join
+  Inspect/Trace/Secrets/Forensics: **Integrity** runs `nova verify` on demand and reports
+  four distinct outcomes — *not sealed*, *sealed but not verifiable here*, *verified*, or
+  *failed* with the failing check named — so an unsealed capsule never reads as a pass or
+  a failure; **Lineage** lists the run's spool-lineage neighbours in both directions, opens
+  any of them by id (even when not in the loaded list) and offers Compare. The view
+  switcher is now a WAI-ARIA tablist with arrow-key navigation, and the view is
+  deep-linkable (`?view=integrity`).
+
+
 ## [0.102.1] - 2026-09-27
 
 ### Fixed

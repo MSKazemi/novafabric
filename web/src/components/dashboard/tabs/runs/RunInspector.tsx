@@ -13,6 +13,8 @@ import TraceView from '../../../capsule/TraceView';
 import ForensicsTimelinePanel from '../../../capsule/ForensicsTimelinePanel';
 import { Loading } from '../../helpers';
 import SecretScanPanel from './SecretScanPanel';
+import SegmentedControl from '../../../ui/primitives/SegmentedControl';
+import { CapsuleSummary, IntegrityPanel, LineageNeighbours } from './ExplorerPanels';
 import { ForensicResultPane, SemanticResultPane, ExactResultPane } from './ReplayResultPanes';
 import type { DetailView, ReplayResult, RunAction } from './types';
 
@@ -50,6 +52,8 @@ export interface RunInspectorProps {
   childrenState: ChildrenState | null;
   forensicsState: ForensicsState | null;
   onSelect: (r: RunSummary) => void;
+  /** Open a run by id (lineage neighbour, deep link) even if it is not listed. */
+  onSelectId?: (runId: string) => void;
   onAction: (run: RunSummary, action: RunAction) => void;
   onCompareTo?: (ids: string[]) => void;
 }
@@ -67,6 +71,7 @@ export default function RunInspector({
   childrenState,
   forensicsState,
   onSelect,
+  onSelectId,
   onAction,
   onCompareTo,
 }: RunInspectorProps) {
@@ -81,7 +86,7 @@ export default function RunInspector({
       )}
       {selected && !capsule && !detailError && <Loading />}
       {selected && !capsule && detailError && (
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-8 text-center h-full flex items-center justify-center">
+        <div role="alert" className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-8 text-center h-full flex items-center justify-center">
           <p className="text-sm text-[var(--color-text-muted)]">
             Could not load run detail: {detailError}
           </p>
@@ -142,72 +147,32 @@ export default function RunInspector({
               <code className="font-mono text-sm text-[var(--color-text)] break-all">{capsule.run_id}</code>
               <p className="text-[10px] text-[var(--color-text-faint)] mt-0.5 font-mono break-all">{capsule.capsule_path}</p>
             </div>
-            {/* View switcher */}
-            <div className="inline-flex rounded-md border border-[var(--color-border)] overflow-hidden text-xs">
-              {(['inspect', 'trace'] as DetailView[]).map(v => (
-                <button
-                  key={v}
-                  onClick={() => setDetailView(v)}
-                  className={[
-                    'px-3 py-1 capitalize font-medium transition-colors',
-                    detailView === v
-                      ? 'bg-[var(--color-accent)] text-[var(--color-accent-fg)]'
-                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-sunken)]',
-                  ].join(' ')}
-                >
-                  {v === 'trace' ? 'Trace' : 'Inspect'}
-                </button>
-              ))}
-              <button
-                onClick={() => setDetailView('secrets')}
-                className={[
-                  'px-3 py-1 font-medium transition-colors border-l border-[var(--color-border)]',
-                  detailView === 'secrets'
-                    ? 'bg-[var(--color-accent)] text-[var(--color-accent-fg)]'
-                    : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-sunken)]',
-                ].join(' ')}
-              >
-                Secrets
-              </button>
-              <button
-                onClick={() => setDetailView('forensics')}
-                className={[
-                  'px-3 py-1 font-medium transition-colors border-l border-[var(--color-border)]',
-                  detailView === 'forensics'
-                    ? 'bg-[var(--color-accent)] text-[var(--color-accent-fg)]'
-                    : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-sunken)]',
-                ].join(' ')}
-              >
-                Forensics
-              </button>
-              {isDistributed && (
-                <button
-                  onClick={() => setDetailView('children')}
-                  className={[
-                    'px-3 py-1 font-medium transition-colors border-l border-[var(--color-border)]',
-                    detailView === 'children'
-                      ? 'bg-[var(--color-accent)] text-[var(--color-accent-fg)]'
-                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-sunken)]',
-                  ].join(' ')}
-                >
-                  Children
-                </button>
-              )}
-              {replayResult?.runId === selected.run_id && (
-                <button
-                  onClick={() => setDetailView('replay')}
-                  className={[
-                    'px-3 py-1 font-medium transition-colors border-l border-[var(--color-border)]',
-                    detailView === 'replay'
-                      ? 'bg-[var(--color-accent)] text-[var(--color-accent-fg)]'
-                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-sunken)]',
-                  ].join(' ')}
-                >
-                  Replay result
-                </button>
-              )}
-            </div>
+            {/* View switcher — WAI-ARIA tabs with arrow-key navigation */}
+            <SegmentedControl<DetailView>
+              aria-label="Run detail view"
+              value={detailView}
+              onChange={setDetailView}
+              segments={[
+                { value: 'inspect', label: 'Inspect' },
+                { value: 'trace', label: 'Trace' },
+                { value: 'integrity', label: 'Integrity' },
+                { value: 'lineage', label: 'Lineage' },
+                { value: 'secrets', label: 'Secrets' },
+                { value: 'forensics', label: 'Forensics' },
+                ...(isDistributed ? [{ value: 'children' as DetailView, label: 'Children' }] : []),
+                ...(replayResult?.runId === selected.run_id ? [{ value: 'replay' as DetailView, label: 'Replay result' }] : []),
+              ]}
+            />
           </header>
+          <CapsuleSummary run={selected} capsule={capsule} onAction={onAction} />
+          {detailView === 'integrity' && <IntegrityPanel runId={selected.run_id} />}
+          {detailView === 'lineage' && (
+            <LineageNeighbours
+              runId={selected.run_id}
+              onOpen={id => (onSelectId ? onSelectId(id) : undefined)}
+              onCompareTo={onCompareTo}
+            />
+          )}
           {detailView === 'inspect' && (
             <CapsuleInspector
               capsuleData={{

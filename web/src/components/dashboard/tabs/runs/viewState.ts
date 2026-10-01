@@ -31,7 +31,7 @@ export const FILTER_SCOPES: readonly FilterScope[] = ['node', 'root', 'tree'];
  * it would open on nothing.
  */
 export const LINKABLE_VIEWS: readonly DetailView[] = [
-  'inspect', 'trace', 'secrets', 'forensics', 'children',
+  'inspect', 'trace', 'integrity', 'lineage', 'secrets', 'forensics', 'children',
 ];
 
 function oneOf<T extends string>(allowed: readonly T[], raw: string, fallback: T): T {
