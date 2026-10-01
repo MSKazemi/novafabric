@@ -4,6 +4,16 @@ A contributor's map of the codebase: what the subsystems are, where they live,
 and which invariants you must not break. For the *conceptual* model — what a Run
 Capsule is, how replay modes differ — read [concepts.md](concepts.md) first.
 
+> **Illustrated, as-built deep dives** — animated diagrams, code-path citations
+> and maturity labels for every subsystem — live in
+> [`docs/architecture/`](architecture/README.md): [overview & the five
+> primitives](architecture/overview.md) · [the pipeline](architecture/pipeline.md)
+> · [Run Capsule anatomy](architecture/run-capsule.md) · [sealing &
+> verification](architecture/sealing-and-verification.md) · [replay
+> modes](architecture/replay-modes.md) · [lineage graph](architecture/lineage-graph.md)
+> · [deployment topologies](architecture/deployment-topologies.md) · and an
+> offline [interactive explainer](architecture/explainer.html).
+
 > **New here?** The fastest orientation is: read
 > [Concepts](concepts.md) → skim [the subsystem map](#subsystem-map) below →
 > pick a [good first issue](https://github.com/MSKazemi/novafabric/labels/good%20first%20issue).
@@ -205,11 +215,13 @@ because each one is load-bearing for a promise the project makes to users.
 | Mode | What runs | Storage | When |
 |---|---|---|---|
 | **Local** | The CLI only | Filesystem + SQLite | A laptop, a workstation, an HPC login node. The default. |
-| **Server** | `nova server` | Postgres + object store | A team sharing capsules, with auth and tenancy. |
-| **Cluster-scale** | Collector + node spools | Postgres + object store + a graph backend | Many nodes producing capsules concurrently. |
+| **Server** (experimental) | `nova server start` | SQLite or Postgres metadata + a capsule directory on the server | A team sharing capsules, with auth. Single-tenant today. |
+| **Cluster-scale** (experimental, partial) | Node spools + spool forwarder + NATS consumers | Local capsules + off-node indexes | Many nodes producing capsules concurrently. |
 
 Every mode reads the same capsule format. Moving up a tier is a deployment
-change, not a migration.
+change, not a migration. Component-by-component maturity — including what is
+not implemented yet, such as hub signing (planned) and serving capsules from
+object storage in server mode — is in [Deployment topologies](architecture/deployment-topologies.md).
 
 ---
 

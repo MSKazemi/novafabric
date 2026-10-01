@@ -20,6 +20,25 @@ longer forwards the submitting shell's environment (ADR-0270).
   `0.98.0` software entry. `docs/for-researchers.md` and `llms.txt` link the paper;
   `llms.txt` reported the version as `0.101.0` and now says `0.102.1`.
 
+- **An illustrated, as-built architecture set in [`docs/architecture/`](docs/architecture/README.md).**
+  Seven pages cover the five primitives, the capture → seal → replay → diff → audit pipeline,
+  Run Capsule anatomy, sealing and verification, replay modes, the lineage graph, and
+  deployment topologies from local to cluster. Every claim cites the module it was checked
+  against, and every capability carries a maturity label: works today, experimental,
+  planned, or future design.
+
+  Each page has an animated SVG diagram in `docs/assets/architecture/` and a static Mermaid
+  diagram that diffs cleanly in review. The SVGs are self-contained, honour
+  `prefers-reduced-motion`, and stay legible on light and dark backgrounds.
+  `docs/architecture/explainer.html` is a self-contained, offline, keyboard-accessible
+  walkthrough of one run: capture → seal → replay → verify, with play, pause and step
+  controls. `docs/architecture.md` links to the set, and its deployment-modes table now
+  matches the server and cluster tiers as built.
+
+  The new pages describe replay as the engine actually runs it. `semantic` and `exact` mode
+  analyse the capsule without re-executing anything, and `mocked` mode serves recorded
+  OpenAI and Anthropic responses but does not substitute tool calls.
+
 ### Fixed
 
 - **A compliance test expired on 2026-10-01.** `test_recent_capsule_within_retention` used a
@@ -52,6 +71,7 @@ longer forwards the submitting shell's environment (ADR-0270).
   reports `skipped-concurrent`. An owner that starts while another capture is still bound now
   reports `installed-contended`. The new marker value is additive. No schema, CLI or adapter
   signature changed.
+
 
 ## [0.102.1] - 2026-09-27
 
