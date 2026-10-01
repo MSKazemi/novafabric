@@ -39,7 +39,7 @@ Ten accepted-but-unbuilt ADR slices, all **experimental**, none changing `schema
 | 0165 | NF-332 format-migration chain (P2) | `nova migrate-format` | P3 crypto re-seal (NF-333), LTV renewal (NF-334) |
 | 0167 | NF-352 control decisions, NF-357 tripwire triggers (P2) | `nova safety control show`, `nova safety tripwire list` | P3–P5 |
 | 0188 | Deprecation removal gate | `tests/test_deprecation_removal_gate.py`, "Removed in" register column | `/v0`→`/v1` N−2 window |
-| 0208 | Usage reconcile + chargeback export (P2) | `nova server usage reconcile\|export` | HTTP export endpoint, per-org budgets, API-key binding enforcement |
+| 0208 | Usage reconcile + chargeback export (P2) | `nova server usage reconcile\|export` | per-org budgets, API-key binding enforcement (the HTTP export endpoint landed as P3, `GET /v0/usage/export` — second batch below) |
 
 ### Landed — v0.102.0, third batch (2026-09-25)
 
@@ -54,7 +54,7 @@ Ten accepted-but-unbuilt ADR slices, all **experimental**, none changing `schema
 | 0168 P2 | Transitive trust path | `nova trust-path show\|verify` | writer CLIs, P5 seal |
 | 0170 P2 | Liability chain, SLA breach, coverage trigger | `nova insurance liability\|sla\|coverage` | features/loss/subrogation/insurability |
 | 0171 P2 | Access ledger + cross-run derivation | `nova memstore access ledger\|derive\|provenance` | cross-run index |
-| 0206 P2 (SQLite) | Keyset pagination | `query_runs` | Postgres half, index migration |
+| 0206 P2 (SQLite; Postgres Unreleased) | Keyset pagination, one shared cursor format across both backends | `query_runs` | `(tenant_id, started_at DESC, run_id DESC)` index migration; `/v0/assets` + `/v0/lineage/nodes` seek; `delete_run` |
 
 ### Landed — v0.102.0, second batch (2026-09-25)
 

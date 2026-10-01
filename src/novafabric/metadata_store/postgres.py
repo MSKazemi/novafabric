@@ -29,7 +29,15 @@ from uuid import UUID
 import psycopg
 import psycopg.rows
 
+from novafabric.metadata_store._keyset import (
+    RUNS_ORDER_BY,
+    parse_store_cursor,
+    seek_predicate,
+    timestamp_key,
+    validate_typed_key,
+)
 from novafabric.metadata_store.interface import MetadataStore, RLSContextMissing
+from novafabric.server.pagination import encode_keyset_cursor
 
 # Module-level ContextVar so each asyncio task / thread gets its own active connection.
 # Using an instance attribute would break under concurrent request handling.
@@ -350,25 +358,61 @@ class PostgresMetadataStore(MetadataStore):
         cursor: str | None = None,
         **filters: Any,
     ) -> tuple[list[dict[str, Any]], str | None]:
-        """Return (page, next_cursor) with integer-offset cursor pagination.
+        """Return ``(page, next_cursor)`` using keyset (seek) pagination.
 
-        Rows are ordered by ``started_at DESC NULLS LAST``.
+        ADR-0206 P2 (experimental) — the Postgres half, sharing its cursor
+        format, seek predicate and order with ``SQLiteMetadataStore`` via
+        ``metadata_store._keyset``. Rows are ordered by
+        ``started_at DESC NULLS LAST, run_id DESC``; the ``run_id`` tiebreak
+        makes the order total (before P2 there was none, so duplicate
+        timestamps could repeat or skip rows across pages). ``next_cursor`` is
+        a v1 keyset cursor ``{"v": 1, "k": [started_at, run_id]}`` naming the
+        page's last row; the next page seeks strictly past it — O(page), and
+        stable under concurrent inserts and deletes.
+
+        Legacy offset cursors — the bare-integer string this method emitted
+        before P2 and the base64 ``{"offset": N}`` v0 form — are served by
+        ``LIMIT/OFFSET`` over the same order for one deprecation cycle
+        (ADR-0188); that page returns a v1 cursor, so a walk migrates.
+
+        Raises:
+            InvalidCursorError: a non-empty cursor that is neither a valid v1
+                keyset cursor (with an ISO-8601 ``started_at`` and a UUID
+                ``run_id``) nor a legacy offset cursor.
+            RLSContextMissing: called outside ``begin_tenant_context``.
+
+        ``filters`` are accepted for interface compatibility and ignored.
+        ``limit < 1`` is clamped to 1.
         """
+        parsed = parse_store_cursor(cursor)
+        page_size = max(1, limit)
+        sql = "SELECT * FROM runs WHERE tenant_id = %s"
+        params: list[Any] = [str(tenant_id)]
+        offset = 0
+        if parsed.kind == "keyset" and parsed.key is not None:
+            seek_sql, seek_params = seek_predicate(
+                validate_typed_key(parsed.key),
+                placeholder="%s",
+                started_at_cast="::timestamptz",
+                run_id_cast="::uuid",
+            )
+            sql += f" AND {seek_sql}"
+            params.extend(seek_params)
+        elif parsed.kind == "offset":
+            offset = parsed.offset
+        sql += f" ORDER BY {RUNS_ORDER_BY} LIMIT %s OFFSET %s"
+        params.extend([page_size + 1, offset])
         conn = self._conn()
-        offset = int(cursor) if cursor is not None else 0
-        rows: list[dict[str, Any]] = conn.execute(
-            """
-            SELECT * FROM runs
-            WHERE tenant_id = %s
-            ORDER BY started_at DESC NULLS LAST
-            LIMIT %s OFFSET %s
-            """,
-            (str(tenant_id), limit + 1, offset),
-        ).fetchall()
+        rows: list[dict[str, Any]] = conn.execute(sql, params).fetchall()
 
-        has_more = len(rows) > limit
-        page = rows[:limit]
-        next_cursor: str | None = str(offset + limit) if has_more else None
+        has_more = len(rows) > page_size
+        page = rows[:page_size]
+        next_cursor: str | None = None
+        if has_more:
+            last = page[-1]
+            next_cursor = encode_keyset_cursor(
+                timestamp_key(last["started_at"]), str(last["run_id"])
+            )
         return page, next_cursor
 
     def record_signature(

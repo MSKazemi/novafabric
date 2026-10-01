@@ -60,6 +60,18 @@ longer forwards the submitting shell's environment (ADR-0270).
   non-withdrawable or already-withdrawn receipt, and a time before `given_at` or in the
   future. Library: `novafabric.hitl.withdraw_recorded_consent` (pure; raises
   `ConsentWithdrawalError`).
+- **Postgres keyset pagination for `MetadataStore.query_runs`** (ADR-0206 P2, Postgres half,
+  **experimental**). `PostgresMetadataStore.query_runs` now seeks instead of
+  `LIMIT/OFFSET`, under the same total order (`started_at DESC NULLS LAST, run_id DESC`) and
+  the same v1 cursor as the SQLite store — the parser and seek predicate moved to a shared
+  `metadata_store._keyset` module, so the two backends' cursors are interchangeable (before,
+  Postgres rejected SQLite's cursors with a bare `ValueError`). Previously Postgres had no
+  `run_id` tiebreak, so runs with equal `started_at` could repeat or vanish across pages.
+  Cursor keys are validated against the typed columns before reaching SQL (ISO-8601 with a UTC
+  offset, UUID) — a tampered key raises `InvalidCursorError` instead of a database cast error.
+  Legacy integer cursors are still served for one deprecation cycle (ADR-0188) and migrate to
+  v1 after one page; `limit < 1` is clamped to 1. The supporting
+  `(tenant_id, started_at DESC, run_id DESC)` index is not shipped (migration follow-up).
 
 
 ### Fixed

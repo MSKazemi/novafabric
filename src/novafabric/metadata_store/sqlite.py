@@ -19,13 +19,13 @@ from pathlib import Path
 from typing import Any, Generator
 from uuid import UUID
 
-from novafabric.metadata_store.interface import BackendModeError, MetadataStore
-from novafabric.server.pagination import (
-    InvalidCursorError,
-    ParsedCursor,
-    encode_keyset_cursor,
-    parse_cursor,
+from novafabric.metadata_store._keyset import (
+    RUNS_ORDER_BY,
+    parse_store_cursor,
+    seek_predicate,
 )
+from novafabric.metadata_store.interface import BackendModeError, MetadataStore
+from novafabric.server.pagination import encode_keyset_cursor
 
 _DEFAULT_DB_PATH = Path.home() / ".novafabric" / "metadata.db"
 
@@ -34,64 +34,15 @@ _DEV_WARNING = (
     "For production deployments use --backend postgres."
 )
 
-# ADR-0206 P2: total order for keyset pagination. SQLite already sorts NULL
-# lowest (so last under DESC); the explicit ``NULLS LAST`` documents that and,
-# unlike an ``started_at IS NULL`` sort expression, keeps the order usable by
-# an index on ``(tenant_id, started_at DESC, run_id DESC)`` (see ADR-0206
-# "Implementation status" — that index is a recorded follow-up, not shipped).
-_RUNS_ORDER_BY = "started_at DESC NULLS LAST, run_id DESC"
-
-# SQLite OFFSET is a signed 64-bit integer; larger legacy offsets are garbage.
-_MAX_LEGACY_OFFSET = 2**63 - 1
-# A legacy bare-integer cursor never needs more digits than the max offset.
-_MAX_LEGACY_OFFSET_DIGITS = len(str(_MAX_LEGACY_OFFSET))
-
-
-def _parse_store_cursor(cursor: str | None) -> ParsedCursor:
-    """Parse a ``query_runs`` cursor, accepting the pre-P2 bare-integer form.
-
-    The bare-integer offset string (``"50"``) is what this backend emitted
-    before ADR-0206 P2; it is recognised first (a v1 cursor is base64 JSON
-    and always starts with ``eyJ``, so the forms cannot collide). Everything
-    else goes through the shared strict decoder in ``server.pagination`` —
-    one cursor format, not a fork.
-
-    Raises:
-        InvalidCursorError: undecodable, unknown-version, malformed, negative
-            or out-of-range cursor.
-    """
-    if cursor is not None and cursor.isascii() and cursor.isdigit():
-        if len(cursor) > _MAX_LEGACY_OFFSET_DIGITS or int(cursor) > _MAX_LEGACY_OFFSET:
-            raise InvalidCursorError("legacy offset cursor out of range")
-        return ParsedCursor(kind="offset", offset=int(cursor))
-    parsed = parse_cursor(cursor)
-    if parsed.kind == "offset" and parsed.offset > _MAX_LEGACY_OFFSET:
-        raise InvalidCursorError("legacy offset cursor out of range")
-    return parsed
-
-
-def _seek_predicate(key: tuple[str | None, str]) -> tuple[str, list[Any]]:
-    """Return the SQL predicate selecting rows strictly after *key*.
-
-    Under ``started_at DESC NULLS LAST, run_id DESC`` "after" means:
-
-    * cursor in the non-NULL region ``(s, r)``: an older timestamp, or the
-      same timestamp with a smaller ``run_id``, **or any NULL-``started_at``
-      row** (the whole NULL tail sorts after every non-NULL value);
-    * cursor in the NULL tail ``(None, r)``: a NULL-``started_at`` row with a
-      smaller ``run_id`` only — never a non-NULL row, which all sort earlier.
-
-    The comparisons are spelled out rather than using a row-value
-    ``(started_at, run_id) < (?, ?)``, whose NULL semantics would silently
-    drop the NULL tail.
-    """
-    started_at, run_id = key
-    if started_at is None:
-        return "(started_at IS NULL AND run_id < ?)", [run_id]
-    return (
-        "(started_at < ? OR (started_at = ? AND run_id < ?) OR started_at IS NULL)",
-        [started_at, started_at, run_id],
-    )
+# ADR-0206 P2: the cursor parser, seek predicate and total order are shared with
+# the Postgres store (``metadata_store._keyset``) so both backends' cursors mean
+# the same thing. SQLite already sorts NULL lowest (so last under DESC); the
+# explicit ``NULLS LAST`` documents that and, unlike a ``started_at IS NULL``
+# sort expression, keeps the order usable by an index on
+# ``(tenant_id, started_at DESC, run_id DESC)`` (a recorded follow-up).
+_RUNS_ORDER_BY = RUNS_ORDER_BY
+_parse_store_cursor = parse_store_cursor
+_seek_predicate = seek_predicate
 
 
 def _started_at_key(value: Any) -> str | None:
