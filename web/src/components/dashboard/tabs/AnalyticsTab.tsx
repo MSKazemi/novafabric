@@ -333,6 +333,7 @@ function CustomQueryPanel() {
       <div className="flex items-center justify-between">
         <span className={labelClass}>Custom query (ADR-0129 DSL — JSON or YAML)</span>
         <input
+          aria-label="Query engine"
           value={engine}
           onChange={(e) => setEngine(e.target.value)}
           placeholder="engine (auto)"
@@ -340,6 +341,7 @@ function CustomQueryPanel() {
         />
       </div>
       <textarea
+        aria-label="Custom query (ADR-0129 DSL, JSON or YAML)"
         value={text}
         onChange={(e) => setText(e.target.value)}
         rows={6}

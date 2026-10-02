@@ -67,6 +67,7 @@ function CaptureLevelPanel() {
             <div className="space-y-1">
               <label className="text-[10px] font-mono uppercase tracking-wider text-[var(--color-text-faint)]">Change to</label>
               <select
+                aria-label="Change capture level to"
                 value={selected}
                 onChange={(e) => setSelected(e.target.value)}
                 className="text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2 py-1.5 font-mono w-full"
@@ -238,6 +239,7 @@ export default function PolicyTab() {
         <div className="space-y-1">
           <label className={labelClass}>Action</label>
           <select
+            aria-label="Action"
             value={action}
             onChange={e => setAction(e.target.value)}
             className={inputClass}
@@ -253,6 +255,7 @@ export default function PolicyTab() {
           <div className="space-y-1">
             <label className={labelClass}>Subject — user</label>
             <input
+              aria-label="Subject user"
               type="text"
               value={user}
               onChange={e => setUser(e.target.value)}
@@ -263,6 +266,7 @@ export default function PolicyTab() {
           <div className="space-y-1">
             <label className={labelClass}>Subject — roles (comma-separated)</label>
             <input
+              aria-label="Subject roles (comma-separated)"
               type="text"
               value={roles}
               onChange={e => setRoles(e.target.value)}
@@ -277,6 +281,7 @@ export default function PolicyTab() {
           <div className="space-y-1">
             <label className={labelClass}>Resource kind</label>
             <select
+              aria-label="Resource kind"
               value={resourceKind}
               onChange={e => setResourceKind(e.target.value)}
               className={inputClass}
@@ -289,6 +294,7 @@ export default function PolicyTab() {
           <div className="space-y-1">
             <label className={labelClass}>Resource ref</label>
             <SuggestInput
+              aria-label="Resource ref"
               value={resourceRef}
               onChange={setResourceRef}
               suggestions={resourceKind === 'asset' ? assetRefs : runIds}
@@ -304,6 +310,7 @@ export default function PolicyTab() {
             <div className="space-y-1">
               <label className={labelClass}>Eval score (0–1, optional)</label>
               <input
+                aria-label="Eval score (0 to 1, optional)"
                 type="number"
                 min={0}
                 max={1}
@@ -317,6 +324,7 @@ export default function PolicyTab() {
             <div className="space-y-1">
               <label className={labelClass}>Unsafe skips (optional)</label>
               <input
+                aria-label="Unsafe skips (optional)"
                 type="number"
                 min={0}
                 value={unsafeSkips}
@@ -332,6 +340,7 @@ export default function PolicyTab() {
         <div className="space-y-1">
           <label className={labelClass}>Rego source (optional — evaluated when provided; uses bundled policy if empty)</label>
           <textarea
+            aria-label="Rego source (optional)"
             value={policySource}
             onChange={e => setPolicySource(e.target.value)}
             rows={6}
@@ -499,6 +508,7 @@ function PolicyTestPanel() {
       </div>
       <div className="flex gap-2">
         <input
+          aria-label="Policy bundle path (optional)"
           type="text"
           value={bundlePath}
           onChange={e => setBundlePath(e.target.value)}
@@ -582,6 +592,7 @@ function PolicyExplainPanel() {
       </div>
       <div className="flex gap-2">
         <SuggestInput
+          aria-label="Decision ID"
           value={decisionId}
           onChange={setDecisionId}
           onEnter={lookup}
@@ -653,6 +664,7 @@ function PolicyInventoryPanel() {
       </div>
       <div className="flex gap-2">
         <input
+          aria-label="Policy namespace filter (optional)"
           type="text"
           value={namespace}
           onChange={e => setNamespace(e.target.value)}
@@ -775,6 +787,7 @@ function PolicySignPanel() {
         <div className="space-y-1">
           <label className={labelClass}>Key path</label>
           <input
+            aria-label="Signing key path"
             type="text"
             value={keyPath}
             onChange={e => setKeyPath(e.target.value)}
@@ -785,6 +798,7 @@ function PolicySignPanel() {
         <div className="space-y-1">
           <label className={labelClass}>Cert path</label>
           <input
+            aria-label="Certificate path"
             type="text"
             value={certPath}
             onChange={e => setCertPath(e.target.value)}
@@ -797,6 +811,7 @@ function PolicySignPanel() {
         <div className="space-y-1">
           <label className={labelClass}>Proposer subjects (comma-separated)</label>
           <input
+            aria-label="Proposer subjects (comma-separated)"
             type="text"
             value={proposers}
             onChange={e => setProposers(e.target.value)}
@@ -807,6 +822,7 @@ function PolicySignPanel() {
         <div className="space-y-1">
           <label className={labelClass}>Approver subjects (comma-separated)</label>
           <input
+            aria-label="Approver subjects (comma-separated)"
             type="text"
             value={approvers}
             onChange={e => setApprovers(e.target.value)}
@@ -819,6 +835,7 @@ function PolicySignPanel() {
         <div className="space-y-1">
           <label className={labelClass}>Bypass valid hours</label>
           <input
+            aria-label="Bypass valid hours"
             type="number"
             min={1}
             max={168}

@@ -106,6 +106,7 @@ export default function RedactionXrayPanel({ runIds }: { runIds: string[] }) {
       cli={`nova redaction-xray ${runId || '<run_id>'}`}
       form={
         <SuggestInput
+          aria-label="Run ID for the redaction X-ray"
           value={runId}
           onChange={setRunId}
           suggestions={runIds}

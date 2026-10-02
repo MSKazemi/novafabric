@@ -70,6 +70,7 @@ export default function ManualClassifyPanel() {
             Name
           </label>
           <input
+            aria-label="System name"
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -82,6 +83,7 @@ export default function ManualClassifyPanel() {
             Use case domain
           </label>
           <input
+            aria-label="Use case domain"
             type="text"
             value={useCaseDomain}
             onChange={(e) => setUseCaseDomain(e.target.value)}
@@ -96,6 +98,7 @@ export default function ManualClassifyPanel() {
           Description
         </label>
         <textarea
+          aria-label="System description"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="What the system does, who uses it, and how decisions affect people."
@@ -108,6 +111,7 @@ export default function ManualClassifyPanel() {
           Deployment context
         </label>
         <input
+          aria-label="Deployment context"
           type="text"
           value={deploymentContext}
           onChange={(e) => setDeploymentContext(e.target.value)}

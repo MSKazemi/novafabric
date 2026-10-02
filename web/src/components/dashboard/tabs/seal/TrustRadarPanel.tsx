@@ -50,6 +50,7 @@ export default function TrustRadarPanel({ runIds }: { runIds: string[] }) {
       cli={`nova trust-radar ${runId || '<run_id>'}`}
       form={
         <SuggestInput
+          aria-label="Run ID for the trust radar"
           value={runId}
           onChange={setRunId}
           suggestions={runIds}

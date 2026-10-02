@@ -193,6 +193,7 @@ export default function AuditTab({
       </div>
       <div className="flex items-center gap-2">
         <input
+          aria-label="Search audit entries by action or CLI equivalent"
           type="search"
           value={search}
           onChange={e => setSearch(e.target.value)}
@@ -200,6 +201,7 @@ export default function AuditTab({
           className="flex-1 text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2 py-1.5 font-mono focus:border-[var(--color-accent)] focus:outline-none"
         />
         <select
+          aria-label="Filter audit entries by action"
           value={actionFilter}
           onChange={e => setActionFilter(e.target.value)}
           className="px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-xs text-[var(--color-text-muted)] focus:border-[var(--color-accent)] focus:outline-none"
@@ -209,6 +211,7 @@ export default function AuditTab({
           ))}
         </select>
         <select
+          aria-label="Filter audit entries by result"
           value={resultFilter}
           onChange={e => setResultFilter(e.target.value as typeof resultFilter)}
           className="rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-1.5 py-1.5 font-mono text-xs"

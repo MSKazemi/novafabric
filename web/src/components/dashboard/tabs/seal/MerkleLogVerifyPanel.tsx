@@ -56,6 +56,7 @@ export default function MerkleLogVerifyPanel({ runIds }: { runIds: string[] }) {
             Capsule ID (optional)
           </label>
           <SuggestInput
+            aria-label="Capsule ID (optional)"
             value={capsuleId}
             onChange={setCapsuleId}
             suggestions={runIds}

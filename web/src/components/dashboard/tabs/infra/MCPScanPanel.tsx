@@ -49,6 +49,7 @@ export default function MCPScanPanel() {
         <span className="text-2xs font-mono text-[var(--color-text-faint)] uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)]">E-9</span>
       </div>
       <textarea
+        aria-label="MCP manifest JSON"
         value={manifestJson}
         onChange={e => setManifestJson(e.target.value)}
         rows={6}

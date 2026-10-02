@@ -66,6 +66,7 @@ export default function BypassSodPanel({ runIds }: { runIds: string[] }) {
             Capsule ID
           </label>
           <SuggestInput
+            aria-label="Capsule ID"
             value={capsuleId}
             onChange={setCapsuleId}
             suggestions={runIds}
@@ -78,6 +79,7 @@ export default function BypassSodPanel({ runIds }: { runIds: string[] }) {
             Duration (hours, max 168)
           </label>
           <input
+            aria-label="Bypass duration in hours (max 168)"
             type="number"
             min={1}
             max={168}
@@ -96,6 +98,7 @@ export default function BypassSodPanel({ runIds }: { runIds: string[] }) {
           </span>
         </label>
         <textarea
+          aria-label="Bypass reason (minimum 50 characters)"
           value={reason}
           onChange={(e) => setReason(e.target.value)}
           rows={3}
@@ -109,6 +112,7 @@ export default function BypassSodPanel({ runIds }: { runIds: string[] }) {
           Target Environment
         </label>
         <select
+          aria-label="Target environment"
           value={targetEnv}
           onChange={(e) => setTargetEnv(e.target.value)}
           className={inputClass}
@@ -125,6 +129,7 @@ export default function BypassSodPanel({ runIds }: { runIds: string[] }) {
             Private Key PEM (ECDSA P-256)
           </label>
           <textarea
+            aria-label="Private key PEM (ECDSA P-256)"
             value={keyPem}
             onChange={(e) => setKeyPem(e.target.value)}
             rows={5}
@@ -138,6 +143,7 @@ export default function BypassSodPanel({ runIds }: { runIds: string[] }) {
             Certificate PEM (X.509)
           </label>
           <textarea
+            aria-label="Certificate PEM (X.509)"
             value={certPem}
             onChange={(e) => setCertPem(e.target.value)}
             rows={5}

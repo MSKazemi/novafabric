@@ -45,6 +45,7 @@ export default function EuAiActExportPanel() {
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-[var(--color-text-faint)]">From (ISO 8601, optional)</label>
           <input
+            aria-label="From (ISO 8601, optional)"
             type="text"
             placeholder="2026-01-01T00:00:00Z"
             value={fromDate}
@@ -55,6 +56,7 @@ export default function EuAiActExportPanel() {
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-[var(--color-text-faint)]">To (ISO 8601, optional)</label>
           <input
+            aria-label="To (ISO 8601, optional)"
             type="text"
             placeholder="2026-12-31T23:59:59Z"
             value={toDate}

@@ -67,6 +67,7 @@ export default function CapsuleVerifyPanel({ runIds }: { runIds: string[] }) {
             Run ID
           </label>
           <SuggestInput
+            aria-label="Run ID"
             value={runId}
             onChange={setRunId}
             suggestions={runIds}

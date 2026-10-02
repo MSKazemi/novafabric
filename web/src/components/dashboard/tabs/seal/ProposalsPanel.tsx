@@ -229,6 +229,7 @@ export default function ProposalsPanel({ runIds }: { runIds: string[] }) {
             Capsule ID
           </label>
           <SuggestInput
+            aria-label="Capsule ID"
             value={capsuleId}
             onChange={setCapsuleId}
             suggestions={runIds}

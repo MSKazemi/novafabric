@@ -213,6 +213,7 @@ export default function CostTab() {
           <div className="space-y-1 col-span-2">
             <label className={labelClass}>run_id (optional — empty = all runs)</label>
             <SuggestInput
+              aria-label="Run ID (optional, empty means all runs)"
               value={runId}
               onChange={setRunId}
               suggestions={runIds}
@@ -224,6 +225,7 @@ export default function CostTab() {
           <div className="space-y-1">
             <label className={labelClass}>window (days)</label>
             <input
+              aria-label="Window in days"
               type="number"
               min={1}
               max={365}

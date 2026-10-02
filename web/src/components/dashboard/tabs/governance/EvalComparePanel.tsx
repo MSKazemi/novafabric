@@ -74,6 +74,7 @@ export default function EvalComparePanel() {
             Baseline EvalResult JSON
           </label>
           <textarea
+            aria-label="Baseline EvalResult JSON"
             value={baselineJson}
             onChange={(e) => setBaselineJson(e.target.value)}
             placeholder={'{\n  "suite_id": "smoke-v1",\n  ...\n}'}
@@ -85,6 +86,7 @@ export default function EvalComparePanel() {
             Candidate EvalResult JSON
           </label>
           <textarea
+            aria-label="Candidate EvalResult JSON"
             value={candidateJson}
             onChange={(e) => setCandidateJson(e.target.value)}
             placeholder={'{\n  "suite_id": "smoke-v1",\n  ...\n}'}
@@ -98,6 +100,7 @@ export default function EvalComparePanel() {
         <div className="flex items-center gap-2">
           <label className="text-[10px] font-mono uppercase tracking-wider text-[var(--color-text-faint)]">Alpha</label>
           <input
+            aria-label="Alpha"
             type="number"
             step="0.01"
             min="0.001"
@@ -110,6 +113,7 @@ export default function EvalComparePanel() {
         <div className="flex items-center gap-2">
           <label className="text-[10px] font-mono uppercase tracking-wider text-[var(--color-text-faint)]">Min samples</label>
           <input
+            aria-label="Minimum samples"
             type="number"
             min="1"
             max="1000"

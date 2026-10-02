@@ -61,6 +61,7 @@ export default function SigstoreVerifyPanel({ runIds }: { runIds: string[] }) {
             Capsule ID
           </label>
           <SuggestInput
+            aria-label="Capsule ID to verify"
             value={capsuleId}
             onChange={setCapsuleId}
             suggestions={runIds}

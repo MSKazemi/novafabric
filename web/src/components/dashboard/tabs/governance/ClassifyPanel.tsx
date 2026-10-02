@@ -155,6 +155,7 @@ export default function ClassifyPanel({ runIds }: { runIds: string[] }) {
             Capsule run ID
           </label>
           <SuggestInput
+            aria-label="Capsule run ID"
             value={runId}
             onChange={setRunId}
             suggestions={runIds}
@@ -168,6 +169,7 @@ export default function ClassifyPanel({ runIds }: { runIds: string[] }) {
             Vocabulary
           </label>
           <select
+            aria-label="Vocabulary"
             value={vocabulary}
             onChange={(e) => setVocabulary(e.target.value)}
             className={inputClass + ' w-full'}

@@ -61,6 +61,7 @@ export default function SigstoreSignPanel({ runIds }: { runIds: string[] }) {
             Capsule ID
           </label>
           <SuggestInput
+            aria-label="Capsule ID to sign"
             value={capsuleId}
             onChange={setCapsuleId}
             suggestions={runIds}

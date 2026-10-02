@@ -46,6 +46,7 @@ export default function LineageStoreProfilePanel() {
       </div>
       <div className="grid grid-cols-2 gap-2">
         <select
+          aria-label="Lineage store target"
           value={target}
           onChange={e => setTarget(e.target.value)}
           className="text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2 py-1.5 font-mono"
@@ -55,6 +56,7 @@ export default function LineageStoreProfilePanel() {
         </select>
         {target === 'kuzudb-vertical' ? (
           <input
+            aria-label="Node size (resource profile)"
             value={nodeSize}
             onChange={(e) => setNodeSize(e.target.value)}
             placeholder="16g-ram-500g-nvme"
@@ -62,6 +64,7 @@ export default function LineageStoreProfilePanel() {
           />
         ) : (
           <input
+            aria-label="Node count"
             type="number"
             min={1}
             value={rf}
@@ -71,6 +74,7 @@ export default function LineageStoreProfilePanel() {
           />
         )}
         <input
+          aria-label="Image tag"
           value={imageTag}
           onChange={(e) => setImageTag(e.target.value)}
           placeholder="latest"

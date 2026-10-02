@@ -64,12 +64,14 @@ export default function StorageOpsCard({ runIds }: { runIds: string[] }) {
         <p className="text-[10px] font-mono uppercase tracking-wider text-[var(--color-text-faint)]">Validate S3 Object Lock</p>
         <div className="grid grid-cols-2 gap-2">
           <input
+            aria-label="S3 endpoint URL (optional)"
             value={endpoint}
             onChange={(e) => setEndpoint(e.target.value)}
             placeholder="https://s3.amazonaws.com (optional)"
             className="text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2 py-1.5 font-mono"
           />
           <input
+            aria-label="S3 bucket name"
             value={bucket}
             onChange={(e) => setBucket(e.target.value)}
             placeholder="nova-capsules"
@@ -100,6 +102,7 @@ export default function StorageOpsCard({ runIds }: { runIds: string[] }) {
         <p className="text-[10px] font-mono uppercase tracking-wider text-[var(--color-text-faint)]">Inspect dual-object split for run</p>
         <div className="flex gap-2">
           <SuggestInput
+            aria-label="Run ID to inspect the dual-object split"
             value={runId}
             onChange={setRunId}
             suggestions={runIds}

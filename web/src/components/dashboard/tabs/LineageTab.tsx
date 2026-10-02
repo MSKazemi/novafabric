@@ -140,6 +140,7 @@ function QueryPanel({ onClose, assets, runIds, edgeTypeFilter }: { onClose: () =
       {/* Input row */}
       <div className="flex gap-2">
         <SuggestInput
+          aria-label={`Lineage reference (${modeLabel[mode]})`}
           value={ref}
           onChange={v => setRef(v)}
           suggestions={suggestions}
@@ -172,6 +173,7 @@ function QueryPanel({ onClose, assets, runIds, edgeTypeFilter }: { onClose: () =
         <div className="flex items-center gap-2">
           <label className="text-[10px] text-[var(--color-text-faint)] shrink-0">At:</label>
           <input
+            aria-label="Time-travel point in time"
             type="datetime-local"
             value={at}
             onChange={e => setAt(e.target.value)}
@@ -286,6 +288,7 @@ function LineageImportPanel({ runIds }: { runIds: string[] }) {
           Capsule path or run ID
         </label>
         <SuggestInput
+          aria-label="Capsule path or run ID"
           value={capsulePath}
           onChange={setCapsulePath}
           suggestions={runIds}
@@ -414,6 +417,7 @@ function OpenLineageExportPanel({ runIds }: { runIds: string[] }) {
           Run ID
         </label>
         <SuggestInput
+          aria-label="Run ID"
           value={runId}
           onChange={setRunId}
           suggestions={runIds}
@@ -514,6 +518,7 @@ function ProvJsonExportPanel({ runIds }: { runIds: string[] }) {
       <div className="flex gap-2 items-end">
         <div className="flex-1">
           <SuggestInput
+            aria-label="Run ID to export as PROV-JSON"
             value={runId}
             onChange={setRunId}
             suggestions={runIds}
@@ -690,6 +695,7 @@ export default function LineageTab({ refreshTick, onCountChange }: { refreshTick
       {/* Filter row */}
       <div className="flex items-center gap-2">
         <input
+          aria-label="Search lineage nodes by name"
           type="search"
           value={nodeSearch}
           onChange={e => setNodeSearch(e.target.value)}
@@ -697,6 +703,7 @@ export default function LineageTab({ refreshTick, onCountChange }: { refreshTick
           className="flex-1 text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2 py-1.5 font-mono focus:border-[var(--color-accent)] focus:outline-none"
         />
         <select
+          aria-label="Filter lineage edges by type"
           value={edgeTypeFilter}
           onChange={e => setEdgeTypeFilter(e.target.value)}
           className="rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-1.5 py-1.5 font-mono text-xs"
