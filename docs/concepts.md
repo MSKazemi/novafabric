@@ -2,7 +2,7 @@
 
 This page is the conceptual reference for NovaFabric. It explains the nouns you
 will meet everywhere else in the docs and on the `nova` command line — what a
-Run Capsule is, how capture works without touching your code, the four replay
+Run Capsule is, how capture works without touching your code, the five replay
 modes, structural diff, lineage, the Asset Registry and its lifecycle, and how
 signed evidence is produced.
 
@@ -15,8 +15,8 @@ signed evidence is produced.
   truth (everything else is a rebuildable index).
 - How **zero-code-change capture** works via a `sitecustomize.py` loader and
   per-SDK plus wire-level hooks.
-- The **four replay modes** — `forensic`, `mocked`, `semantic`, `exact` — and
-  what each one honestly promises.
+- The **five replay modes** — `forensic`, `mocked`, `semantic`, `exact`, and experimental
+  `intervention` — and what each one honestly promises.
 - How **structural diff** becomes a CI regression gate, and how **lineage**
   answers provenance and blast-radius questions.
 - How the **Asset Registry lifecycle** works and why promotion is governance
@@ -41,7 +41,7 @@ not a sixth primitive.
 |---|---|---|---|
 | 1 | **Asset Registry** | Local SQLite registry of versioned AI assets (`name@version`), pinned to a git SHA, with a six-state lifecycle | v0.1 |
 | 2 | **Run Capsule** | The fundamental unit of capture: a ULID-named directory holding every observable fact of one execution | v0.2 |
-| 3 | **Replay** | Re-execute or inspect a capsule with external calls controlled, in four honest modes | v0.3 |
+| 3 | **Replay** | Re-execute or inspect a capsule with external calls controlled, in five explicit modes | v0.3 |
 | 4 | **Lineage** | A directed provenance graph (SQLite cache) with mechanical edge types and OpenLineage emission | v0.4 |
 | 5 | **Evidence Bundle** | A signed, self-contained ZIP an auditor can verify offline with only `sha256sum` + an ed25519 verifier | v0.4 |
 
@@ -890,9 +890,8 @@ You now have the vocabulary NovaFabric is built on:
   execution, written on success and failure.
 - **Capture** — zero-code-change instrumentation via a `sitecustomize.py`
   loader, per-SDK hooks, and a wire-level safety net down to `urllib3`.
-- **Replay** — four honest modes (`forensic`, `mocked`, `semantic`, `exact`),
-  each with a clear promise and each producing a diffable capsule, plus a
-  fifth, experimental `intervention` mode for counterfactual replay.
+- **Replay** — five explicit modes (`forensic`, `mocked`, `semantic`, `exact`,
+  `intervention`); `intervention` remains experimental and is used for counterfactual replay.
 - **Diff** — field-by-field structural comparison, wireable as a CI regression
   gate with `--assert-no-regressions`.
 - **Diagnose** — structural (no-LLM) causal-graph attribution over a failed
