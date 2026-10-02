@@ -11,6 +11,15 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Governed capsule delete: two residual gaps closed (ADR-0206 P2).** The tombstone reaper no
+  longer removes an old plain tombstone while its run still has a runs-cache or MetadataStore row
+  or an unfinished-delete audit entry, and keeps the bytes when either cannot be read (the case
+  where both the `.inconsistent` marking rename and the rollback rename fail). `nova serve`'s
+  `DELETE /api/runs/{id}` now returns the `delete_inconsistent_pending` 409 naming the tombstone
+  instead of a bare 404 on retry. See [server admin guide](docs/ops/server-admin-guide.md).
+
 ### Documentation
 
 - **User docs catch up with the last two days of features.** The Dashboards tab (`g 4`), Runs

@@ -208,8 +208,12 @@ schema change).
   directory yourself once you are sure the capsule is meant to be gone. Until
   then a retry of the same delete is refused (409 / `delete_inconsistent_pending`,
   per-item `error` in bulk) instead of returning a bare 404 or creating a second
-  tombstone. Limit: if even the marking rename fails, the reported path is a
-  plain tombstone that the reaper removes after an hour — restore it at once.
+  tombstone. `nova serve`'s `DELETE /api/runs/{id}` gives the same 409. If even
+  the marking rename fails, the reported path is a plain tombstone; the reaper
+  still keeps it (whatever its age) while the run has a runs-cache or
+  MetadataStore row or an unfinished-delete audit entry (`capsule_delete_failed`
+  with no later `capsule_delete`), or if either source cannot be read. Only
+  orphans whose index rows are gone are reaped after an hour.
 - `POST /v0/capsules/bulk-delete` — body
   `{"run_ids": [...], "dry_run": false}`; per-item outcomes
   (`deleted | held | not_found | invalid_id | duplicate | error`) plus

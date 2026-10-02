@@ -639,3 +639,143 @@ def test_serve_delete_refuses_sealed_and_worm(
             assert r.status_code == 409, r.text
             assert (capsule_dir / rid).is_dir()
     assert _event_types(chain) == ["run.index_delete_refused"] * 2
+
+
+# ---- residual gaps (ADR-0206 P2): plain tombstone safety + serve 409 ----
+
+
+def _plain_tombstone(capsule_dir: Path, run_id: str, *, age_s: float = 7200) -> Path:
+    """A plain (reapable-by-name) tombstone: marking AND rollback both failed."""
+    base = capsule_dir.parent / capsule_delete.TOMBSTONE_DIRNAME
+    base.mkdir(exist_ok=True)
+    tomb = base / f"{run_id}.{int(time.time() - age_s)}.cafef00d"
+    tomb.mkdir()
+    (tomb / "capsule.yaml").write_text("run_id: x\n")
+    return tomb
+
+
+def _write_audit(path: Path, *entries: tuple[str, str]) -> None:
+    path.write_text(
+        "".join(json.dumps({"action": a, "args": {"run_id": r}}) + "\n" for a, r in entries)
+    )
+
+
+def test_double_rename_failure_end_to_end_plain_tombstone_survives_reaper(
+    capsule_dir: Path, db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_capsule(capsule_dir, "r1")
+    conn = capsule_index.open_index(db_path)
+    capsule_index.upsert_capsule(conn, capsule_dir, "r1", {"status": "success"})
+    real_rename = os.rename
+
+    def rename(src: Any, dst: Any) -> None:
+        if str(dst).endswith(capsule_delete.INCONSISTENT_SUFFIX) or Path(dst) == capsule_dir / "r1":
+            raise OSError("disk gone")
+        real_rename(src, dst)
+
+    def bad_remove(c: Any, rid: str) -> None:
+        raise RuntimeError("index down")
+
+    with monkeypatch.context() as m:
+        m.setattr(os, "rename", rename)
+        m.setattr(capsule_index, "remove_run", bad_remove)
+        with pytest.raises(capsule_delete.DeleteFailedError) as ei:
+            capsule_delete.execute_delete(capsule_dir, "r1", conn)
+    tomb = Path(str(ei.value.details["tombstone"]))
+    assert not tomb.name.endswith(".inconsistent")
+    far = time.time() + 365 * 86400
+    assert capsule_delete.reap_tombstones(capsule_dir, now=far, conn=conn) == 0
+    conn.close()
+    assert (tomb / "capsule.yaml").exists(), "reaper destroyed the only copy"
+
+
+def test_reaper_keeps_old_tombstone_with_runs_cache_row(capsule_dir: Path, db_path: Path) -> None:
+    _write_capsule(capsule_dir, "r1")
+    conn = capsule_index.open_index(db_path)
+    capsule_index.upsert_capsule(conn, capsule_dir, "r1", {"status": "success"})
+    tomb = _plain_tombstone(capsule_dir, "r1")
+    assert capsule_delete.reap_tombstones(capsule_dir, conn=conn) == 0
+    assert tomb.is_dir()
+    capsule_index.remove_run(conn, "r1")  # row gone: now a genuine orphan
+    conn.commit()
+    assert capsule_delete.reap_tombstones(capsule_dir, conn=conn) == 1
+    conn.close()
+    assert not tomb.exists()
+
+
+def test_reaper_keeps_old_tombstone_with_metadata_store_row(
+    capsule_dir: Path, store: SQLiteMetadataStore
+) -> None:
+    rid = str(uuid4())
+    store.register_run(UUID(rid), TENANT, event_type="run.started")
+    tomb = _plain_tombstone(capsule_dir, rid)
+    assert capsule_delete.reap_tombstones(capsule_dir, store=store, tenant_id=TENANT) == 0
+    assert tomb.is_dir()
+    store.delete_run(UUID(rid), TENANT)
+    assert capsule_delete.reap_tombstones(capsule_dir, store=store, tenant_id=TENANT) == 1
+
+
+def test_reaper_keeps_tombstone_with_unfinished_delete_audit_entry(
+    capsule_dir: Path, tmp_path: Path
+) -> None:
+    audit = tmp_path / "audit.jsonl"
+    tomb = _plain_tombstone(capsule_dir, "r1")
+    done = _plain_tombstone(capsule_dir, "r2")
+    _write_audit(
+        audit,
+        ("capsule_delete_failed", "r1"),  # never finished
+        ("capsule_delete_failed", "r2"),
+        ("capsule_delete", "r2"),  # failed, then retried successfully
+    )
+    assert capsule_delete.reap_tombstones(capsule_dir, audit_path=audit) == 1
+    assert tomb.is_dir() and not done.exists()
+
+
+def test_reaper_fails_safe_on_unreadable_index_or_audit(
+    capsule_dir: Path, db_path: Path, tmp_path: Path
+) -> None:
+    tomb = _plain_tombstone(capsule_dir, "r1")
+    conn = capsule_index.open_index(db_path)
+    conn.close()  # every query now raises
+    assert capsule_delete.reap_tombstones(capsule_dir, conn=conn) == 0
+    assert tomb.is_dir()
+    bad = tmp_path / "bad-audit.jsonl"
+    bad.write_text("{not json\n")
+    assert capsule_delete.reap_tombstones(capsule_dir, audit_path=bad) == 0
+    assert tomb.is_dir()
+
+
+def test_reaper_leaves_young_tombstone_untouched(capsule_dir: Path, db_path: Path) -> None:
+    tomb = _plain_tombstone(capsule_dir, "r1", age_s=5)
+    conn = capsule_index.open_index(db_path)
+    assert capsule_delete.reap_tombstones(capsule_dir, conn=conn) == 0
+    conn.close()
+    assert tomb.is_dir()
+
+
+def test_serve_retry_with_inconsistent_tombstone_is_409_not_404(
+    tmp_path: Path, capsule_dir: Path, chain: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_capsule(capsule_dir, "srvi")
+    real_rename = os.rename
+
+    def rename(src: Any, dst: Any) -> None:
+        if Path(dst) == capsule_dir / "srvi":
+            raise OSError("disk gone")
+        real_rename(src, dst)
+
+    def bad_remove(c: Any, rid: str) -> None:
+        raise RuntimeError("index down")
+
+    with _serve_client(tmp_path, capsule_dir) as tc:
+        with monkeypatch.context() as m:
+            m.setattr(os, "rename", rename)
+            m.setattr(capsule_index, "remove_run", bad_remove)
+            first = tc.delete("/api/runs/srvi", params={"token": VALID_TOKEN}, headers=H)
+        assert first.status_code == 500, first.text
+        tomb = capsule_delete.inconsistent_tombstones(capsule_dir, "srvi")[0]
+        again = tc.delete("/api/runs/srvi", params={"token": VALID_TOKEN}, headers=H)
+        assert again.status_code == 409, again.text
+        assert "delete_inconsistent_pending" in again.text and str(tomb) in again.text
+        missing = tc.delete("/api/runs/nope", params={"token": VALID_TOKEN}, headers=H)
+        assert missing.status_code == 404

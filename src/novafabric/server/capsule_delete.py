@@ -278,7 +278,74 @@ def inconsistent_tombstones(capsule_dir: Path, run_id: str) -> list[Path]:
     return found
 
 
-def reap_tombstones(capsule_dir: Path, *, now: float | None = None) -> int:
+def unfinished_delete_run_ids(audit_path: Path | None = None) -> set[str] | None:
+    """Run ids with a ``capsule_delete_failed`` audit entry and no later ``capsule_delete``.
+
+    Reads the dashboard mutation audit log in order. A missing file means no
+    failures were ever recorded (empty set). ``None`` means *cannot tell*
+    (unreadable file or a malformed line) -- callers must then fail safe.
+    """
+    from novafabric._paths import dashboard_audit_path  # noqa: PLC0415
+
+    path = audit_path if audit_path is not None else dashboard_audit_path()
+    pending: set[str] = set()
+    try:
+        with path.open(encoding="utf-8") as fh:
+            for raw in fh:
+                if not raw.strip():
+                    continue
+                entry = json.loads(raw)
+                action = entry.get("action")
+                rid = (entry.get("args") or {}).get("run_id")
+                if not isinstance(rid, str):
+                    continue
+                if action == "capsule_delete_failed":
+                    pending.add(rid)
+                elif action == "capsule_delete":
+                    pending.discard(rid)
+    except FileNotFoundError:
+        return set()
+    except (OSError, ValueError, AttributeError, TypeError):
+        return None
+    return pending
+
+
+def _run_still_referenced(
+    run_id: str,
+    conn: sqlite3.Connection | None,
+    store: MetadataStore | None,
+    tenant_id: UUID | None,
+) -> bool | None:
+    """True/False when the run has (no) index row; ``None`` when it cannot be told."""
+    try:
+        if conn is not None:
+            row = conn.execute(
+                "SELECT 1 FROM runs_cache WHERE run_id = ? LIMIT 1", (run_id,)
+            ).fetchone()
+            if row is not None:
+                return True
+        if store is not None and tenant_id is not None:
+            try:
+                rid = UUID(run_id)
+            except ValueError:
+                return False  # not a UUID run: the store cannot hold it
+            with store.begin_tenant_context(tenant_id) as ctx:
+                if ctx.lookup_run(rid, tenant_id) is not None:
+                    return True
+    except Exception:  # noqa: BLE001 - unreadable index: fail safe
+        return None
+    return False
+
+
+def reap_tombstones(
+    capsule_dir: Path,
+    *,
+    now: float | None = None,
+    conn: sqlite3.Connection | None = None,
+    store: MetadataStore | None = None,
+    tenant_id: UUID | None = None,
+    audit_path: Path | None = None,
+) -> int:
     """Remove residue of crashed deletes older than the grace period.
 
     Tombstones are named ``<run_id>.<epoch>.<hex>``; only the epoch in the name
@@ -286,7 +353,14 @@ def reap_tombstones(capsule_dir: Path, *, now: float | None = None) -> int:
     live sibling worker that can still roll back, so it is left alone.
     ``*.inconsistent`` tombstones (see :data:`INCONSISTENT_SUFFIX`) hold the only
     copy of a capsule and are **never** reaped, whatever their age.
-    Fail-open; returns the number removed.
+
+    An old plain tombstone is also kept while its run is still referenced: a
+    runs-cache row (*conn*), a MetadataStore row (*store* + *tenant_id*), or an
+    unfinished-delete audit entry (:func:`unfinished_delete_run_ids`) means the
+    delete never completed and the tombstone may be the only copy (the marking
+    and rollback renames both failed). If either source cannot be read the
+    bytes are kept. Only orphans whose index rows are gone are reaped.
+    Fail-open on the directory scan; returns the number removed.
     """
     base = capsule_dir.parent / TOMBSTONE_DIRNAME
     cutoff = (time.time() if now is None else now) - TOMBSTONE_REAP_AFTER_S
@@ -295,16 +369,27 @@ def reap_tombstones(capsule_dir: Path, *, now: float | None = None) -> int:
         entries = list(base.iterdir())
     except OSError:
         return 0
+    unfinished: set[str] | None = None
+    unfinished_loaded = False
     for entry in entries:
         if entry.name.endswith(INCONSISTENT_SUFFIX):
             continue
         try:
-            epoch = float(entry.name.rsplit(".", 2)[1])
+            parts = entry.name.rsplit(".", 2)
+            epoch = float(parts[1])
+            run_id = parts[0]
         except (IndexError, ValueError):
             continue
-        if epoch < cutoff and entry.is_dir():
-            shutil.rmtree(entry, ignore_errors=True)
-            removed += not entry.exists()
+        if not (epoch < cutoff and entry.is_dir()):
+            continue
+        if not unfinished_loaded:
+            unfinished, unfinished_loaded = unfinished_delete_run_ids(audit_path), True
+        if unfinished is None or run_id in unfinished:
+            continue  # unfinished delete (or audit unreadable): keep the bytes
+        if _run_still_referenced(run_id, conn, store, tenant_id) is not False:
+            continue  # indexed, or index unreadable: keep the bytes
+        shutil.rmtree(entry, ignore_errors=True)
+        removed += not entry.exists()
     return removed
 
 
@@ -338,8 +423,10 @@ def execute_delete(
        ``<tombstone>.inconsistent`` (invisible to the reaper) **before** the
        rename-back is attempted, so there is no window in which the only copy
        is a reapable name. A crash after that leaves a safe, operator-visible
-       ``.inconsistent`` tombstone. Residual risk: if that marking rename itself
-       fails *and* the rename-back fails, the plain tombstone is reported.
+       ``.inconsistent`` tombstone. If that marking rename itself fails *and*
+       the rename-back fails, the plain tombstone is reported, and
+       :func:`reap_tombstones` still refuses to remove it while the run has an
+       index row or an unfinished-delete audit entry.
        While an ``.inconsistent`` tombstone exists for the run id, a new delete
        is refused (``delete_inconsistent_pending``) rather than adding a second.
     3. **purge** — ``rmtree`` the tombstone. The delete has already happened
@@ -350,7 +437,7 @@ def execute_delete(
     One ``run.index_delete`` audit entry is written when MetadataStore rows
     were actually removed.
     """
-    reap_tombstones(capsule_dir)
+    reap_tombstones(capsule_dir, conn=conn, store=store, tenant_id=tenant_id)
     pending = inconsistent_tombstones(capsule_dir, run_id)
     if pending:
         raise DeleteFailedError(

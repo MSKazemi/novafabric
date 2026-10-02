@@ -6623,14 +6623,27 @@ def create_app(
         if not run_id or ".." in run_id or "/" in run_id:
             raise HTTPException(status_code=400, detail="invalid run_id")
 
-        cap_dir = capsule_dir / run_id
-        if not cap_dir.is_dir():
-            raise HTTPException(status_code=404, detail=f"Capsule not found: {run_id}")
-
         # ADR-0206 P2: the governed pipeline shared with ``DELETE /v0/capsules``
         # — holds (always win, even with force), WORM, NovaSeal seal, then a
         # recoverable capsule + runs-cache delete (see capsule_delete.execute_delete).
         from novafabric.server import capsule_delete, capsule_index  # noqa: PLC0415
+
+        cap_dir = capsule_dir / run_id
+        if not cap_dir.is_dir():
+            stranded = capsule_delete.inconsistent_tombstones(capsule_dir, run_id)
+            if stranded:
+                # Same signal as DELETE /v0/capsules: a failed delete's rollback
+                # failed, so the only copy is a never-reaped tombstone -- not 404.
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"delete_inconsistent_pending: capsule '{run_id}' is absent from "
+                        f"the store but a failed delete left its only copy at "
+                        f"{stranded[0]}; restore it by renaming it back to "
+                        f"'{capsule_dir / run_id}'."
+                    ),
+                )
+            raise HTTPException(status_code=404, detail=f"Capsule not found: {run_id}")
 
         try:
             capsule_delete.check_deletable(capsule_dir, run_id)
