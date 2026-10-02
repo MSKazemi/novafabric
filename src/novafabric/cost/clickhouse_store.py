@@ -310,7 +310,9 @@ def cost_report(
             sum(input_tokens)  AS total_input,
             sum(output_tokens) AS total_output,
             sum(cached_tokens) AS total_cached,
-            sum(cost_usd)      AS total_cost
+            sum(cost_usd)      AS total_cost,
+            count()            AS total_calls,
+            countIf(priced = 0) AS unpriced_calls
         FROM nova.cost_events
         WHERE {base_filter}
     """
@@ -332,8 +334,31 @@ def cost_report(
 
     totals_res = client.query(totals_sql, parameters=params)
     totals_row = (
-        totals_res.result_rows[0] if totals_res.result_rows else (0, 0, 0, 0.0)
+        totals_res.result_rows[0] if totals_res.result_rows else (0, 0, 0, 0.0, 0, 0)
     )
+    # ADR-0234 D2: an unpriced call contributed cost_usd = 0.0 because no price
+    # is known, not because it was free. Read per-call coverage so the report can
+    # say so. A row too short to carry the counts is an unchecked answer, never
+    # an assumption that everything was priced.
+    coverage_checked = len(totals_row) >= 6
+    total_calls = int(totals_row[4]) if coverage_checked else 0
+    unpriced_calls = int(totals_row[5]) if coverage_checked else 0
+    priced_calls = total_calls - unpriced_calls
+    unpriced_models: list[str] = []
+    if coverage_checked and unpriced_calls:
+        # Its own query: unpriced models cost 0, so they sort last and the
+        # by-model LIMIT 50 below would drop exactly the rows that matter.
+        unpriced_res = client.query(
+            f"""
+            SELECT model_id, count() AS calls
+            FROM nova.cost_events
+            WHERE {base_filter} AND priced = 0
+            GROUP BY model_id
+            ORDER BY model_id
+            """,
+            parameters=params,
+        )
+        unpriced_models = sorted(str(r[0]) for r in unpriced_res.result_rows)
 
     by_model_res = client.query(by_model_sql, parameters=params)
     by_model = [
@@ -349,9 +374,18 @@ def cost_report(
         for row in by_model_res.result_rows
     ]
 
+    # With nothing priced, the sum is not a cost: null, never $0.00.
+    cost_usd: float | None = round(float(totals_row[3]), 6)
+    if coverage_checked and unpriced_calls and not priced_calls:
+        cost_usd = None
+
     return {
         "ok": True,
         "backend": "clickhouse",
+        "pricing_coverage_checked": coverage_checked,
+        "priced_calls": priced_calls,
+        "unpriced_calls": unpriced_calls,
+        "unpriced_models": unpriced_models,
         "run_id": run_id,
         "days": days,
         "totals": {
@@ -361,7 +395,7 @@ def cost_report(
             # ClickHouse stores unknown as 0 (non-nullable column); the capsule
             # nova.usage / usage_totals blocks remain the absent-vs-zero truth.
             "cached_tokens": int(totals_row[2]),
-            "cost_usd": round(float(totals_row[3]), 6),
+            "cost_usd": cost_usd,
         },
         "by_model": by_model,
     }

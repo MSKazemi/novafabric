@@ -5604,18 +5604,38 @@ def create_app(
                 ch = await asyncio.get_event_loop().run_in_executor(
                     None, lambda: _ch_report(run_id=run_id, days=days)
                 )
-                ch_notes: dict[str, Any] = {
-                    "backend": "clickhouse",
-                    # This query does not read `priced`, so an unpriced call's
-                    # 0.0 cannot be told apart here; /api/runs/cost-summary can.
-                    "pricing_coverage_checked": False,
-                }
+                ch_notes: dict[str, Any] = {"backend": "clickhouse"}
+                checked = bool(ch.get("pricing_coverage_checked"))
+                ch_notes["pricing_coverage_checked"] = checked
                 if len(ch.get("by_model") or []) >= 50:
                     # The per-model list is LIMIT 50; the totals are not.
                     ch_notes["by_model_truncated_at"] = 50
-                ch["aggregate"] = computable(
-                    (ch.get("totals") or {}).get("cost_usd"), **ch_notes
-                ).as_dict()
+                ch_unpriced = list(ch.get("unpriced_models") or [])
+                ch_unpriced_calls = int(ch.get("unpriced_calls") or 0)
+                if checked and ch_unpriced_calls and not ch.get("priced_calls"):
+                    # ADR-0234 D2: nothing priced => no cost can be stated.
+                    ch["aggregate"] = refuse(
+                        AggregateCondition.ABSENT_CONTRIBUTOR,
+                        reason=(
+                            f"none of the {ch_unpriced_calls} model call(s) in this "
+                            f"window has a catalog price ({', '.join(ch_unpriced)}), "
+                            "so no cost can be stated"
+                        ),
+                        remedy=(
+                            "add the model(s) to the price table, or read token "
+                            "counts — which are exact — instead of cost"
+                        ),
+                        unpriced_models=ch_unpriced,
+                        backend="clickhouse",
+                    ).as_dict()
+                else:
+                    if ch_unpriced_calls:
+                        ch_notes["unpriced_models"] = ch_unpriced
+                        ch_notes["unpriced_calls"] = ch_unpriced_calls
+                        ch_notes["cost_is_lower_bound"] = True
+                    ch["aggregate"] = computable(
+                        (ch.get("totals") or {}).get("cost_usd"), **ch_notes
+                    ).as_dict()
                 return ch
             except Exception as exc:
                 return {

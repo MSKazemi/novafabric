@@ -235,6 +235,14 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **`/api/cost/report` on ClickHouse no longer reads an unpriced model as $0.00** (ADR-0234 D2,
+  **works today**). The ClickHouse branch summed `cost_usd` without reading the per-call `priced`
+  flag and stamped `pricing_coverage_checked: false`. It now counts priced/unpriced calls (and
+  names unpriced models in a separate query, so the per-model `LIMIT 50` cannot drop them) and
+  applies the same rule as the capsule path: nothing priced refuses (`absent_contributor`,
+  `totals.cost_usd: null`); a mix is computable with `cost_is_lower_bound`. Additive response
+  fields: `pricing_coverage_checked`, `priced_calls`, `unpriced_calls`, `unpriced_models`.
+
 - **REST GDPR erasure no longer refuses on the cap-003 flag** (ADR-0210 / ADR-0069,
   **experimental**). `POST /api/compliance/erasure/request` answered 409 `cap003_disabled`
   whenever `NOVA_CAP003_ENABLED` was off — its pinned default — although the route performs
