@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "novafabric"
 version = "0.102.1"
-description = "Self-hosted replayable execution and evidence infrastructure for AI and HPC systems"
+description = "Self-hosted replay and evidence infrastructure for AI agents and agentic systems"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 authors = [
