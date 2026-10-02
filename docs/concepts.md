@@ -323,7 +323,7 @@ audit artifact.
 ## Replay Modes
 
 A replay re-executes or inspects a capsule with all external calls controlled by
-NovaFabric. There are **four honest, falsifiable modes**, plus a fifth,
+NovaFabric. There are **five explicit, falsifiable modes**; `intervention` is the
 **experimental** counterfactual mode. A replay is itself a
 new capsule, so you can diff a replay against the original run.
 
