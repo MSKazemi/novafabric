@@ -73,7 +73,7 @@ button[aria-pressed="true"]{border-color:var(--fg)}
 .term .c{color:var(--termmuted)}
 .term .bad{color:#fda4af}
 .term .ok{color:var(--lime)}
-.term .lbl{float:right;color:var(--termmuted);font-size:11px}
+.term .lbl{display:block;text-align:right;color:var(--termmuted);font-size:11px}
 .explain{grid-column:1/-1;display:grid;grid-template-columns:1fr auto;gap:12px;align-items:start}
 .explain h3{margin:0 0 4px;font-size:1.1rem}
 .explain p{margin:.3em 0}
@@ -99,6 +99,9 @@ footer{margin-top:22px;color:var(--muted);font-size:.82rem}
 .fexplain{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:18px;align-items:start}
 @media (max-width:900px){.fexplain{grid-template-columns:1fr}}
 .fsvg{width:100%;height:auto;display:block}
+.fscroll{overflow-x:auto}
+@media (max-width:700px){.fsvg{min-width:700px}}
+.fsteps li:focus-visible{outline:2px solid var(--fg);outline-offset:1px}
 .fx-card{fill:var(--panel);stroke:var(--stroke);stroke-width:1.2}
 .fx-store{stroke-dasharray:5 4}
 .fx-warnbox{stroke:var(--warn)}
@@ -195,7 +198,9 @@ footer{margin-top:22px;color:var(--muted);font-size:.82rem}
     <div class="panel">
       <h3 id="ftitle" style="margin:0 0 2px;font-size:1.05rem"></h3>
       <p class="ref" id="fsummary" style="margin:0 0 8px"></p>
+      <div class="fscroll" tabindex="0" role="region" aria-label="Flow diagram (scrolls sideways on narrow screens)">
       <svg class="fsvg" id="fsvg" role="img" aria-labelledby="fsvg-t" viewBox="0 0 980 480"><title id="fsvg-t">Flow diagram</title></svg>
+      </div>
     </div>
     <div class="panel fexplain" id="fexplain">
       <div>
@@ -2219,7 +2224,11 @@ footer{margin-top:22px;color:var(--muted);font-size:.82rem}
       li.style.setProperty("--c", color(s.color));
       li.innerHTML = '<span class="n" aria-hidden="true">' + (i + 1) + "</span><span></span>";
       li.lastChild.textContent = s.caption;
+      li.tabIndex = 0;
       li.addEventListener("click", function () { stop(); show(cur, i); });
+      li.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") { stop(); show(cur, i); e.preventDefault(); e.stopPropagation(); }
+      });
       ol.appendChild(li);
     });
     $("ftitle").textContent = f.title;
@@ -2312,14 +2321,18 @@ footer{margin-top:22px;color:var(--muted);font-size:.82rem}
   });
 
   // Deep link: explainer.html#flow-otlp-ingest-3 opens that flow on step 3.
-  var start = 0, at = 0;
-  var mh = /^#flow-([a-z-]+?)(?:-(\d+))?$/.exec(window.location.hash || "");
-  if (mh) {
-    FLOWS.forEach(function (f, k) { if (f.id === mh[1]) start = k; });
-    at = mh[2] ? parseInt(mh[2], 10) - 1 : 0;
+  function fromHash() {
+    var mh = /^#flow-([a-z-]+?)(?:-(\d+))?$/.exec(window.location.hash || "");
+    if (!mh) return false;
+    var k = 0;
+    FLOWS.forEach(function (f, j) { if (f.id === mh[1]) k = j; });
+    stop();
+    show(k, mh[2] ? parseInt(mh[2], 10) - 1 : 0);
+    return true;
   }
-  show(start, at);
-  if (mh) $("flows").scrollIntoView();
+  // Following a #flow-<id>-N link while the page is open (or Back/Forward) re-targets the player.
+  window.addEventListener("hashchange", function () { if (fromHash()) $("flows").scrollIntoView(); });
+  if (fromHash()) $("flows").scrollIntoView(); else show(0, 0);
 })();
 </script>
 </body>
