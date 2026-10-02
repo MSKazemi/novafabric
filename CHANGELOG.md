@@ -235,6 +235,15 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **A curated one-capsule evidence bundle is now schema-valid, so a one-run cart exports**
+  (ADR-0011 Am.1 / ADR-0239, **works today**). `CapsuleSetBundleBuilder` with a curation record
+  and one capsule wrote `subject` as a one-element array; `evidence-bundle.schema.json` allows
+  `oneOf[Subject, array minItems:2]`, so it matched neither arm, yet `nova verify` (which never
+  reads `subject`) passed and the defect shipped silently. One capsule now takes the
+  single-object form; two or more are unchanged. The cart export route no longer answers 422
+  to a one-run cart (a cart resolving to no capsule is still refused). Bundles with N>=2 are
+  byte-for-byte as before and `nova verify` accepts every size.
+
 - **`evidence.cart.capsule_holds` no longer fails open on a per-run directory** (D8, **works
   today**). Legal holds are registry-global under `<capsule base>/../registries`; handed a per-run
   directory the function looked under `<base>/registries`, found nothing, and reported "no holds"

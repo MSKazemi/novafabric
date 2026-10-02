@@ -58,11 +58,10 @@ reported as unresolved with that reason, so the operator sees exactly what the
 bundle does not contain. D4 (a chart carries its view state and query) is
 **planned**.
 
-⚠ **A single-capsule cart is refused (422).** ``CapsuleSetBundleBuilder`` with a
-curation record and one capsule writes ``subject`` as a one-element array,
-which ``evidence-bundle.schema.json`` (``minItems: 2``) rejects. Until the
-builder emits the object form for that case, a one-run export goes through the
-ordinary per-run ``Export evidence`` action instead.
+A **one-run cart is exported** like any other: ``CapsuleSetBundleBuilder`` writes
+``subject`` as the single-object form the schema allows (the array form needs
+two or more), so the bundle validates and verifies. A cart that resolves to
+*no* capsule is still refused (422).
 """
 
 from __future__ import annotations
@@ -321,13 +320,12 @@ def build_evidence_cart_router(
         for d in capsule_dirs:
             if d.resolve() not in {u.resolve() for u in unique_dirs}:
                 unique_dirs.append(d)
-        if len(unique_dirs) < 2:
+        if not unique_dirs:
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    f"the cart resolves to {len(unique_dirs)} capsule(s); a cart export "
-                    "needs at least two. For one run use the per-run 'Export evidence' "
-                    "action (`nova export-evidence <capsule>`)."
+                    "the cart resolves to no capsule; there is nothing to export. "
+                    "Add at least one run or capsule reference."
                 ),
             )
 

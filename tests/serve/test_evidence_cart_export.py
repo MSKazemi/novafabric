@@ -318,13 +318,53 @@ def test_capsule_bytes_are_bounded(
     assert "bounded at 10 bytes" in r.json()["detail"]
 
 
-def test_a_single_capsule_cart_is_refused_with_the_alternative(
+def test_a_one_run_cart_exports_a_schema_valid_bundle_that_verifies(
+    client: TestClient, capsules: Path
+) -> None:
+    """Was a 422: the builder wrote ``subject`` as a 1-element array (schema needs >=2)."""
+    import jsonschema
+    import typer
+
+    from novafabric.cli.verify import _verify_evidence_bundle
+
+    a = _run(capsules)
+    r = _export(client, [_item(a)])
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["capsule_count"] == 1
+    bundle = Path(body["bundle_path"])
+    with zipfile.ZipFile(bundle) as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+    schema = json.loads(
+        (Path(__file__).parents[2] / "src/novafabric/schemas/evidence-bundle.schema.json").read_text()
+    )
+    jsonschema.validate(manifest, schema)
+    assert isinstance(manifest["subject"], dict)
+    assert _curation(bundle)["completeness"]["claim"] == "curated"
+    try:
+        _verify_evidence_bundle(bundle)
+    except typer.Exit as exc:  # pragma: no cover - failure path
+        raise AssertionError(f"shipped verifier rejected the one-run bundle: {exc}") from exc
+
+
+def test_a_one_run_cart_still_requires_admin_scope(
     client: TestClient, capsules: Path
 ) -> None:
     a = _run(capsules)
-    r = _export(client, [_item(a)])
+    secret = "issued-operate-token-abcdefghijklmnop"
+    token_store.issue("test-operate-one", secret, "operate")
+    r = client.post(
+        f"/api/evidence/cart/export?token={secret}",
+        json={"items": [_item(a)], "confirmed": True},
+        headers=HEADERS,
+    )
+    assert r.status_code == 403, r.text
+
+
+def test_a_cart_resolving_to_no_capsule_is_refused(client: TestClient) -> None:
+    r = _export(client, [_item("does-not-exist")], accept_unresolved=True)
     assert r.status_code == 422
-    assert "nova export-evidence" in r.json()["detail"]
+    assert "no capsule" in r.json()["detail"]
 
 
 def test_confirmation_is_required(client: TestClient, capsules: Path) -> None:

@@ -666,9 +666,11 @@ class CapsuleSetBundleBuilder(EvidenceBundleBuilder):
             "bundle_id": new_ulid(),
             "created_at": _now_iso(),
             "created_by": {"name": "novafabric", "version": NF_VERSION},
-            # The array form. `minItems: 2` in the schema is why a one-capsule
-            # set never reaches here.
-            "subject": subjects,
+            # `subject` is oneOf[Subject, array minItems:2]: two or more take the
+            # array form; a curated ONE-capsule bundle (the curation record makes
+            # it reach here) takes the single-object form. A 1-element array
+            # matches neither arm of the schema.
+            "subject": subjects if len(subjects) >= 2 else subjects[0],
             "bundle_format": "zip",
             "artifacts": artifacts,
             "attestations": attestations,
