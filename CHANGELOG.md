@@ -61,6 +61,18 @@ longer forwards the submitting shell's environment (ADR-0270).
   captures are unaffected. This is the one deliberate exception to capture's fail-open rule, and
   only when requested.
 
+- **`nova replay --environment ENV` and the recorded environment in the mutating-replay gate**
+  (ADR-0126 replay-gate wiring, **experimental**). `--environment` is opt-in: without it
+  replay is unchanged. With it, the replay is refused **before anything runs** (no policy
+  call, no replay directory) and exits 2 unless the capsule recorded `ENV` as its typed
+  `deployment_environment` — the same exact, case-sensitive, record-only rule as
+  `nova diff --environment`; an unrecorded environment is refused, never admitted. SDK callers
+  set `ReplayFlags(required_environment=...)` and get `ReplayEnvironmentMismatchError`. The
+  `replay_mutating` policy input now carries `input.resource.deployment_environment` (the
+  recorded value verbatim, `null` when absent), so a Rego gate can condition mutating replay on
+  it. The built-in default `replay_mutating` policy does not use it.
+
+
 - **OTLP logs ingest** (ADR-0127's remaining ingest item, ADR-0293, **experimental**).
   `novafabric.otel.logs_ingest` accepts OTLP `ExportLogsServiceRequest` payloads (JSON, or
   protobuf with the `otlp` extra) for `POST /api/otlp/v1/logs`. Log records are appended to a

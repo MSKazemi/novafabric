@@ -30,6 +30,8 @@ class ReplayFlags:
     output_dir: Path | None = None
     # ADR-0086 — intervention mode spec file (experimental)
     intervention_file: Path | None = None
+    # ADR-0126 — opt-in: refuse unless the capsule recorded this deployment_environment
+    required_environment: str | None = None
 
     def permits(self, mutation_class: str) -> bool:
         if self.allow_unknown_mutation:

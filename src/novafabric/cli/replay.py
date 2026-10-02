@@ -11,6 +11,11 @@ from novafabric.cli._capsule_ref import CapsuleRefError, resolve_capsule_ref
 from novafabric.replay._engine import ReplayEngine
 from novafabric.replay._flags import ReplayFlags
 from novafabric.replay._intervention import InterventionError
+from novafabric.replay.environment_gate import (
+    EXIT_ENVIRONMENT_MISMATCH,
+    ReplayEnvironmentMismatchError,
+    validate_environment_value,
+)
 
 
 class ReplayMode(str, Enum):
@@ -66,6 +71,17 @@ def replay_cmd(
             ),
         ),
     ] = None,
+    environment: Annotated[
+        str | None,
+        typer.Option(
+            "--environment",
+            help=(
+                "Experimental (ADR-0126): only replay a capsule that recorded this "
+                "deployment_environment (e.g. staging). Exit 2, before anything "
+                "runs, if it recorded another value or none."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Re-run a captured run against recorded or mocked LLM responses.
 
@@ -97,9 +113,17 @@ def replay_cmd(
       # Dry-run: show what would execute
       nova replay --dry-run path/to/my-capsule/
 
+      # CI gate: only replay capsules recorded in staging (exit 2 otherwise)
+      nova replay --environment staging --dry-run 01HXAY7M5JZ8R7K4P9DPBYK2WX
+
       # Counterfactual: what if the model had answered differently?
       nova replay --mode intervention --intervention-file spec.yaml path/to/my-capsule/
     """
+    if environment is not None:
+        try:
+            validate_environment_value(environment)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="'--environment'") from exc
     try:
         capsule = resolve_capsule_ref(capsule)
     except CapsuleRefError as exc:
@@ -125,12 +149,16 @@ def replay_cmd(
         allow_unknown_mutation=allow_unknown_mutation,
         output_dir=output_dir,
         intervention_file=intervention_file,
+        required_environment=environment,
     )
 
     base = output_dir or (Path.cwd() / ".novafabric" / "replays")
     engine = ReplayEngine(capsule_dir=capsule, flags=flags, base_dir=base)
     try:
         result = engine.run()
+    except ReplayEnvironmentMismatchError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=EXIT_ENVIRONMENT_MISMATCH) from exc
     except InterventionError as exc:
         console.print(f"[red]✗ Intervention error:[/red] {exc}")
         raise typer.Exit(code=1) from exc

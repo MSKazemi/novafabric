@@ -1131,6 +1131,7 @@ Options:
 - `--allow-external-side-effects` — permit re-invocation of `external-side-effect` tools
 - `--allow-unknown-mutation` — permit re-invocation of tools with `unknown` mutation class
 - `--output-dir, -o PATH` — base directory for replay output (default: `.novafabric/replays/`)
+- `--environment ENV` — experimental (ADR-0126): only replay a capsule that recorded `ENV` as its `deployment_environment` (exact match, case-sensitive). Otherwise exit 2 before anything runs; a capsule with no recorded environment is refused. Usable as a CI gate, e.g. `nova replay --environment staging --dry-run <run-id>`. The `replay_mutating` policy input also carries the recorded value as `input.resource.deployment_environment` (`null` when absent).
 - `--intervention-file PATH` — InterventionSpec YAML for `--mode intervention` (experimental, ADR-0086): one target selector (`event_index` or `span_id`) + exactly one substitution (`replace_model_response` / `replace_tool_result` / `mutate_payload`) + optional named check-functions (`fatal: true` aborts). The output capsule is diffable against the baseline with `nova diff`.
 
 **Mode contracts:**

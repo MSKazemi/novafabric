@@ -21,6 +21,7 @@ from novafabric.policy import (
     PolicyInput,
     PolicyResource,
     PolicySubject,
+    deployment_environment_from_capsule,
     get_policy_engine,
 )
 from novafabric.replay._env_check import EnvironmentResolver
@@ -102,6 +103,12 @@ class ReplayEngine:
 
     def run(self) -> ReplayResult:
         manifest = _load_capsule(self._capsule_dir)
+        # ADR-0126 opt-in gate: refuse before anything runs (no policy call,
+        # no replay directory) unless the capsule recorded the environment.
+        if self._flags.required_environment is not None:
+            from novafabric.replay.environment_gate import check_replay_environment
+
+            check_replay_environment(self._capsule_dir, self._flags.required_environment)
         replay_policy = _load_replay_policy(self._capsule_dir)
         env_lock = _load_env_lock(self._capsule_dir)
         model_calls = _read_jsonl(self._capsule_dir / "model-calls.jsonl")
@@ -128,6 +135,10 @@ class ReplayEngine:
                 resource=PolicyResource(
                     kind="capsule",
                     ref=run_id,
+                    # ADR-0126: recorded value verbatim; null when absent.
+                    deployment_environment=deployment_environment_from_capsule(
+                        self._capsule_dir
+                    ),
                 ),
             )
             decision = engine.evaluate(inp)
