@@ -80,7 +80,7 @@ Learning-oriented, read in any order. Full index: [tutorials/README.md](tutorial
 | [How capture works](tutorials/how-capture-works.md) | How NovaFabric intercepts LLM calls at the HTTP layer, the URL registry, and all capture modes |
 | [Multi-agent capture](tutorials/multi-agent-capture.md) | Same-process vs separate-process topologies, MCP sub-agents, parent/child linking |
 | [Cluster scale — 1,000,000 agents](tutorials/cluster-scale.md) | Where the shipped single-cluster design ends and the cluster-scale *design intent* begins |
-| [Architecture, as built](architecture/README.md) | Illustrated deep dives — pipeline, capsule anatomy, sealing, replay modes, lineage, deployment topologies — with animated diagrams, code-path citations, and an offline [interactive explainer](architecture/explainer.html) |
+| [Architecture, as built](architecture/README.md) | Illustrated deep dives — pipeline, capsule anatomy, sealing, replay modes, lineage, deployment topologies, OTLP ingest, the `nova serve` request path, encryption at rest, the server data plane — with animated diagrams, code-path citations, and an offline [interactive explainer](architecture/explainer.html) |
 | [NovaFabric vs Langfuse](tutorials/novafabric-vs-langfuse.md) | Honest comparison: monitoring vs reproducibility, and why they are complementary |
 
 ## Use (guides)
