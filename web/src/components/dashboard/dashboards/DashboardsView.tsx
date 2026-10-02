@@ -1,10 +1,12 @@
 /**
  * Dashboards view — ADR-0235 portable widget files, ADR-0236 ratio() metrics.
  *
- * Read-only over `$NOVAFABRIC_HOME/dashboards`: the same files
- * `nova dashboard list|show|export` manage. Installing or editing stays in
- * the CLI (`nova dashboard apply`), which validates a whole directory before
- * writing any of it.
+ * Over `$NOVAFABRIC_HOME/dashboards`: the same files `nova dashboard
+ * list|show|export` manage. Adding or editing one goes through the editor
+ * (DashboardEditor): the server validates with the CLI's own loaders, shows a
+ * diff, and writes atomically with an audit record (operate scope). Bulk
+ * installs of a directory stay in `nova dashboard apply`, which validates the
+ * whole set before writing any of it.
  *
  * Honesty rules this view keeps:
  * - a refused file is listed by name with the validator's reason, never
@@ -23,6 +25,7 @@ import Button from '../../ui/primitives/Button';
 import EmptyState from '../../ui/EmptyState';
 import { SkeletonRows } from '../../ui/Skeleton';
 import { ErrorBox, Loading } from '../helpers';
+import DashboardEditor from './DashboardEditor';
 import WidgetCard, { UnavailableWidget } from './WidgetCard';
 import { downloadBlob, orderedRefs, spanOf } from './model';
 
@@ -63,7 +66,15 @@ function NavButton({
   );
 }
 
-function DashboardDetail({ id, refreshTick }: { id: string; refreshTick: number }) {
+function DashboardDetail({
+  id,
+  refreshTick,
+  onEdit,
+}: {
+  id: string;
+  refreshTick: number;
+  onEdit: (kind: 'dashboard' | 'widget', id: string) => void;
+}) {
   const { toast } = useToast();
   const [downloading, setDownloading] = useState(false);
   const q = useQuery(() => api.getDashboard(id), [id, refreshTick]);
@@ -99,9 +110,16 @@ function DashboardDetail({ id, refreshTick }: { id: string; refreshTick: number 
           )}
           <p className="mt-1 text-2xs font-mono text-[var(--color-text-faint)]">$ {q.data.cli_equivalent}</p>
         </div>
-        <Button icon="export" pending={downloading} onClick={download} aria-label={`Download ${dashboard.title} dashboard JSON`}>
-          Download JSON
-        </Button>
+        <div className="flex items-center gap-2">
+          {!dashboard.builtin && (
+            <Button onClick={() => onEdit('dashboard', id)} aria-label={`Edit ${dashboard.title} dashboard JSON`}>
+              Edit JSON
+            </Button>
+          )}
+          <Button icon="export" pending={downloading} onClick={download} aria-label={`Download ${dashboard.title} dashboard JSON`}>
+            Download JSON
+          </Button>
+        </div>
       </div>
 
       {problems > 0 && (
@@ -137,10 +155,23 @@ function DashboardDetail({ id, refreshTick }: { id: string; refreshTick: number 
   );
 }
 
-function StandaloneWidget({ summary, refreshTick }: { summary: WidgetSummary; refreshTick: number }) {
+function StandaloneWidget({
+  summary,
+  refreshTick,
+  onEdit,
+}: {
+  summary: WidgetSummary;
+  refreshTick: number;
+  onEdit: (kind: 'dashboard' | 'widget', id: string) => void;
+}) {
   return (
     <div className="space-y-2">
-      <p className="text-2xs font-mono text-[var(--color-text-faint)]">$ nova dashboard show {summary.id}</p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-2xs font-mono text-[var(--color-text-faint)]">$ nova dashboard show {summary.id}</p>
+        <Button onClick={() => onEdit('widget', summary.id)} aria-label={`Edit ${summary.title} widget JSON`}>
+          Edit JSON
+        </Button>
+      </div>
       <WidgetCard
         refreshTick={refreshTick}
         widget={{
@@ -157,9 +188,24 @@ function StandaloneWidget({ summary, refreshTick }: { summary: WidgetSummary; re
   );
 }
 
-export default function DashboardsView({ refreshTick = 0 }: { refreshTick?: number }) {
+export default function DashboardsView({ refreshTick: externalTick = 0 }: { refreshTick?: number }) {
+  const { toast } = useToast();
+  // A successful write bumps this so the list and the open dashboard re-read.
+  const [writes, setWrites] = useState(0);
+  const refreshTick = externalTick + writes;
   const list = useQuery(() => api.listDashboards(), [refreshTick]);
   const [selection, setSelection] = useState<Selection>(null);
+  const [editor, setEditor] = useState<{ initialText: string } | null>(null);
+
+  async function openEditor(kind?: 'dashboard' | 'widget', id?: string) {
+    if (!kind || !id) return setEditor({ initialText: '' });
+    try {
+      // The stored bytes, verbatim — unknown fields survive an edit (ADR-0235 D6).
+      setEditor({ initialText: await (await api.exportDashboardDocument(kind, id)).text() });
+    } catch (e) {
+      toast('error', e instanceof Error ? e.message : String(e));
+    }
+  }
 
   // Select the first dashboard (else widget) once the list arrives, and drop a
   // selection whose file disappeared on refresh.
@@ -193,6 +239,9 @@ export default function DashboardsView({ refreshTick = 0 }: { refreshTick?: numb
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[16rem_minmax(0,1fr)] gap-4">
       <nav aria-label="Dashboards and widgets" className="space-y-4 min-w-0">
+        <Button variant="primary" onClick={() => void openEditor()} aria-haspopup="dialog">
+          Add or import…
+        </Button>
         {dashboards.length > 0 && (
           <div>
             <h3 className={sectionLabel}>Dashboards ({dashboards.length})</h3>
@@ -259,19 +308,30 @@ export default function DashboardsView({ refreshTick = 0 }: { refreshTick?: numb
             hint={
               <>
                 Widgets are portable JSON files under <code className="font-mono">$NOVAFABRIC_HOME/dashboards</code>.
-                Install one with <code className="font-mono">nova dashboard apply ./my.widget.json</code>.
+                Add one with &ldquo;Add or import&rdquo;, or install a file with{' '}
+                <code className="font-mono">nova dashboard apply ./my.widget.json</code>.
               </>
             }
           />
         ) : selection?.kind === 'dashboard' ? (
-          <DashboardDetail key={selection.id} id={selection.id} refreshTick={refreshTick} />
+          <DashboardDetail key={selection.id} id={selection.id} refreshTick={refreshTick} onEdit={(k, i) => void openEditor(k, i)} />
         ) : selection?.kind === 'widget' ? (
           (() => {
             const w = widgets.find((x) => x.id === selection.id);
-            return w ? <StandaloneWidget key={w.id} summary={w} refreshTick={refreshTick} /> : null;
+            return w ? (
+              <StandaloneWidget key={w.id} summary={w} refreshTick={refreshTick} onEdit={(k, i) => void openEditor(k, i)} />
+            ) : null;
           })()
         ) : null}
       </div>
+      {editor && (
+        <DashboardEditor
+          key={editor.initialText}
+          initialText={editor.initialText}
+          onClose={() => setEditor(null)}
+          onSaved={() => setWrites((n) => n + 1)}
+        />
+      )}
     </div>
   );
 }

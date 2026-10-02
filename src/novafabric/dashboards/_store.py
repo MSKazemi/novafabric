@@ -20,8 +20,10 @@ removes every user dashboard with nothing left behind to migrate.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -125,12 +127,29 @@ def _read_json(path: Path) -> Any:
 
 
 def _write_if_changed(path: Path, content: str) -> tuple[Path, bool]:
+    """Write *content* atomically, and only when it differs from what is on disk.
+
+    The bytes go to a uniquely named temp file in the *same directory* (so
+    ``os.replace`` is a same-filesystem rename), are flushed to disk, and then
+    replace the target. A failure at any point removes the temp file and leaves
+    the old target untouched: a reader sees the old document or the new one,
+    never a partial one, and a failed write leaves nothing behind.
+    """
     if path.is_file() and path.read_text(encoding="utf-8") == content:
         return path, False
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    os.replace(tmp, path)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp_name, 0o644)  # mkstemp is 0600; these are shareable documents
+        os.replace(tmp_name, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
     return path, True
 
 

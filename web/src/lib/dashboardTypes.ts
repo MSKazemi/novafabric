@@ -6,6 +6,46 @@
 
 export type WidgetChart = 'line' | 'bar' | 'area' | 'table' | 'stat';
 
+/** Body of `POST /api/dashboards/validate` and `/apply` — send `text` or `document`. */
+export interface DashboardWriteRequest {
+  text?: string;
+  document?: unknown;
+  kind?: 'widget' | 'dashboard';
+  /** apply only: the `current_sha256` the preview showed; `""` = "expected no file". */
+  base_sha256?: string;
+}
+
+export type DashboardWriteAction = 'create' | 'update' | 'unchanged';
+
+/** The dry-run verdict. `ok: false` carries the validator's own reason in `error`. */
+export interface DashboardValidateResponse {
+  ok: boolean;
+  error?: string | null;
+  kind?: 'widget' | 'dashboard' | null;
+  id?: string | null;
+  title?: string | null;
+  action?: DashboardWriteAction | null;
+  /** The exact bytes that would be stored. */
+  normalized?: string | null;
+  /** The bytes on disk now, or null when there is no file. */
+  existing?: string | null;
+  proposed_sha256?: string | null;
+  current_sha256?: string | null;
+  warnings: string[];
+  cli_equivalent?: string | null;
+}
+
+export interface DashboardApplyResponse {
+  ok: boolean;
+  kind: 'widget' | 'dashboard';
+  id: string;
+  file: string;
+  changed: boolean;
+  sha256: string;
+  warnings: string[];
+  cli_equivalent: string;
+}
+
 export interface DashboardSummary {
   id: string;
   title: string;

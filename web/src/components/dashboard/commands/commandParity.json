@@ -239,7 +239,9 @@
     "reason": "Stops a local daemon process on the developer machine."
   },
   "nova dashboard apply": {
-    "status": "builder-only"
+    "status": "real-panel",
+    "tab": "dashboards",
+    "api": "/api/dashboards/apply"
   },
   "nova dashboard export": {
     "status": "real-panel",
@@ -257,7 +259,9 @@
     "api": "/api/dashboards"
   },
   "nova dashboard validate": {
-    "status": "builder-only"
+    "status": "real-panel",
+    "tab": "dashboards",
+    "api": "/api/dashboards/validate"
   },
   "nova dataset provenance-card": {
     "status": "builder-only"

@@ -21,6 +21,11 @@ nova dashboard show run-throughput               # print one as JSON
 nova dashboard export run-throughput -o ./out.widget.json
 ```
 
+The web dashboard's **Dashboards** view offers the same two steps for one document at a time
+(experimental): *Validate* is a dry run through the same loaders, and *Save* stores exactly the
+previewed bytes atomically, needs `operate` scope, and is audited. It refuses `builtin`
+documents, symlinked targets and bodies over 256 KiB. Directory installs stay with `apply`.
+
 A minimal widget:
 
 ```json

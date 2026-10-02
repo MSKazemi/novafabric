@@ -11,8 +11,11 @@
  */
 
 import type {
+  DashboardApplyResponse,
   DashboardDetailResponse,
   DashboardListResponse,
+  DashboardValidateResponse,
+  DashboardWriteRequest,
   WidgetDataResponse,
 } from './dashboardTypes';
 
@@ -1102,6 +1105,12 @@ export const api = {
   listDashboards: () => request<DashboardListResponse>('/api/dashboards'),
   getDashboard: (id: string) =>
     request<DashboardDetailResponse>(`/api/dashboards/${encodeURIComponent(id)}`),
+  /** Dry run (ADR-0235 D7 validation, nothing written): the server's verdict + diff inputs. */
+  validateDashboardDocument: (body: DashboardWriteRequest) =>
+    postJson<DashboardValidateResponse>('/api/dashboards/validate', body),
+  /** Validate then store atomically (operate scope, audited). A refusal is a ServeApiError carrying the reason. */
+  applyDashboardDocument: (body: DashboardWriteRequest) =>
+    postJson<DashboardApplyResponse>('/api/dashboards/apply', body),
   getWidgetData: (id: string) =>
     request<WidgetDataResponse>(`/api/dashboard-widgets/${encodeURIComponent(id)}/data`),
   /** The stored file's bytes, verbatim (ADR-0235 D6) — unknown fields survive. */

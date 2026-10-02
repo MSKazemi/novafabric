@@ -2720,7 +2720,11 @@ def create_app(
     # ADR-0232 D1/D3 + ADR-0233: the Runs view's filter bar (read-only).
     app.include_router(build_filter_bar_router(verify_token, capsule_dir=capsule_dir))
     # ADR-0235/0236: the Dashboards view — portable widget files, read-only.
-    app.include_router(build_dashboards_router(verify_token, capsule_dir=capsule_dir))
+    app.include_router(
+        build_dashboards_router(
+            verify_token, capsule_dir=capsule_dir, audit_append=audit.append
+        )
+    )
 
     # ---------- forensics timeline (P5, CLI-parity program Phase C) ----------
     # Wraps forensics/timeline.py::merge_timeline over the run's own sealed

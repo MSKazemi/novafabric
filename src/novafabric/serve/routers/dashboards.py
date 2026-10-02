@@ -29,22 +29,46 @@ answer ADR-0234 exists to prevent.
 ``to_json()`` of the stored ``raw`` document, so fields this build does not
 recognise survive a download exactly as they survive ``nova dashboard export``.
 
-Writes (``nova dashboard apply``) are deliberately not exposed: a write path
-needs an ``operate`` classification and an audit record, and is its own slice.
+Two POST routes are the write path (experimental) — the UI's equivalent of
+``nova dashboard validate`` / ``nova dashboard apply``:
 
-Read-only end to end (no writes — a missing dashboards directory is reported
-as empty, never created); guarded by the router-level auth dependency and
-classified ``read`` in :data:`novafabric.serve.authz.ROUTE_SCOPES`.
+- ``POST /api/dashboards/validate`` — the dry run. Runs the CLI's own loaders and
+  returns the verdict, the bytes that *would* be stored and the bytes on disk now
+  (for a diff). Never writes — not even the directory. Scope ``read``: it
+  computes and returns, like ``POST /api/query``.
+- ``POST /api/dashboards/apply`` — validate, then store through
+  :class:`~novafabric.dashboards.DashboardStore` (atomic temp-file + rename, no-op
+  when the bytes already match). Scope ``operate`` (project files, not evidence;
+  the saved-views and holds precedent) and **every outcome is audited** —
+  written, unchanged, refused, failed — with the id, size and digest but never
+  the document body.
+
+**No second validator.** The schema and the ADR-0129 DSL allow-list decide
+(ADR-0235 D7) via ``load_widget`` / ``load_dashboard``; this module adds only
+what a *network* caller needs that a local file does not: a body size cap checked
+while streaming (413 before anything is parsed), an id re-checked against the path
+pattern and contained to the directory, a refusal to follow a symlink, a refusal
+to write ``builtin`` documents (ADR-0235 D5: the first edit forks a user-owned
+copy), and an optional ``base_sha256`` so a preview that went stale is a 409
+rather than a silent overwrite (``""`` means "I expected no file").
+
+The reads stay read-only: a missing dashboards directory is reported as empty,
+never created, and is guarded by the router-level auth dependency and classified
+``read`` in :data:`novafabric.serve.authz.ROUTE_SCOPES`.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
+import re
+import threading
 from collections.abc import Callable
 from pathlib import Path as FsPath
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -70,6 +94,12 @@ from novafabric.serve.routers.query_panel import ROW_CAP, _cli_equivalent
 #: Same constraint the schemas put on ``id`` (the one field that reaches a
 #: path). Enforced here too so a bad id is a 422 before the store sees it.
 ID_PATTERN = r"^[a-z0-9][a-z0-9._-]{0,63}$"
+_ID_RE = re.compile(ID_PATTERN)
+
+#: Largest request body the write routes will read. Real widgets are a few KB;
+#: this is generous for a hand-written dashboard and small enough that a paste
+#: of the wrong file is refused rather than parsed.
+MAX_BODY_BYTES = 256 * 1024
 
 
 class DashboardSummary(BaseModel):
@@ -212,10 +242,165 @@ def _export_response(payload: str, filename: str) -> Response:
     )
 
 
+class DashboardWriteResponse(BaseModel):
+    ok: bool
+    kind: str
+    id: str
+    file: str
+    changed: bool
+    sha256: str
+    warnings: list[str]
+    cli_equivalent: str
+
+
+class DashboardValidateResponse(BaseModel):
+    ok: bool
+    error: str | None = None
+    kind: str | None = None
+    id: str | None = None
+    title: str | None = None
+    action: str | None = None
+    normalized: str | None = None
+    existing: str | None = None
+    proposed_sha256: str | None = None
+    current_sha256: str | None = None
+    warnings: list[str] = []
+    cli_equivalent: str | None = None
+
+
+_WRITE_RESPONSES: dict[int | str, dict[str, Any]] = {
+    200: {"model": DashboardWriteResponse},
+    409: {"description": "base_sha256 no longer matches the file on disk (stale preview)."},
+    413: {"description": f"Body larger than {MAX_BODY_BYTES} bytes; nothing was parsed."},
+    422: {"description": "Refused (schema, DSL, id, built-in, symlink). Nothing written."},
+    500: {"description": "The write failed; no partial or temporary file is left."},
+}
+
+
+class _Refusal(Exception):
+    """A document the write path will not store, with the HTTP status to answer."""
+
+    def __init__(self, reason: str, status: int = 422) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.status = status
+
+
+def _sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+async def _read_capped(request: Request) -> bytes:
+    """Read the body, refusing as soon as it passes the cap (never buffers more)."""
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+        raise _Refusal(f"body is {declared} bytes; the limit is {MAX_BODY_BYTES}", 413)
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > MAX_BODY_BYTES:
+            raise _Refusal(f"body exceeds the {MAX_BODY_BYTES}-byte limit", 413)
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _parse_request(raw: bytes) -> tuple[Any, str | None, str | None]:
+    """``(document, kind, base_sha256)`` from the request body, or a refusal."""
+    try:
+        body = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise _Refusal(f"request body is not valid JSON: {exc}") from exc
+    if not isinstance(body, dict):
+        raise _Refusal("request body must be a JSON object")
+    text, document = body.get("text"), body.get("document")
+    if (text is None) == (document is None):
+        raise _Refusal("send exactly one of `text` (raw JSON) or `document`")
+    if text is not None:
+        if not isinstance(text, str):
+            raise _Refusal("`text` must be a string")
+        try:
+            document = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise _Refusal(f"document is not valid JSON: {exc}") from exc
+    kind = body.get("kind")
+    if kind not in (None, "widget", "dashboard"):
+        raise _Refusal("`kind` must be 'widget' or 'dashboard'")
+    base = body.get("base_sha256")
+    if base is not None and not isinstance(base, str):
+        raise _Refusal("`base_sha256` must be a string")
+    return document, kind, base
+
+
+def _evaluate(store: DashboardStore, document: Any, kind: str | None) -> dict[str, Any]:
+    """Validate with the CLI's own loaders and compare with the file on disk.
+
+    Reads only. Raises :class:`_Refusal` with the validator's message.
+    """
+    if kind is None:
+        # Same rule as `apply_path`: the marker decides, else it is a widget.
+        marked = isinstance(document, dict) and document.get("$novafabricDashboard")
+        kind = "dashboard" if marked else "widget"
+    try:
+        item: Widget | Dashboard = (
+            load_dashboard(document) if kind == "dashboard" else load_widget(document)
+        )
+    except DashboardError as exc:
+        raise _Refusal(str(exc)) from exc
+    if not _ID_RE.fullmatch(item.id):  # defence in depth: the schema already says so
+        raise _Refusal(f"id {item.id!r} does not match {ID_PATTERN}")
+    path = store.dashboard_path(item.id) if kind == "dashboard" else store.widget_path(item.id)
+    if path.parent != store.root:  # pragma: no cover - unreachable for a matching id
+        raise _Refusal("id would resolve outside the dashboards directory")
+    if item.raw.get("builtin"):
+        raise _Refusal(
+            f"{item.id!r} is marked built-in, which is read-only (ADR-0235 D5); "
+            "remove `builtin` to save a user-owned copy"
+        )
+    existing: str | None = None
+    if path.is_symlink():
+        raise _Refusal(f"{path.name} is a symlink; refusing to write through it")
+    if path.is_file():
+        existing = path.read_text(encoding="utf-8", errors="replace")
+        try:
+            on_disk = json.loads(existing)
+        except json.JSONDecodeError:
+            on_disk = None  # a corrupt file may be overwritten; that is how it is fixed
+        if isinstance(on_disk, dict) and on_disk.get("builtin"):
+            raise _Refusal(f"{path.name} is a built-in document and is read-only (ADR-0235 D5)")
+    normalized = item.to_json()
+    warnings: list[str] = []
+    if isinstance(item, Dashboard):
+        missing = store.unresolved_widget_ids(item)
+        if missing:
+            warnings.append(
+                "references widgets with no file yet: "
+                + ", ".join(missing)
+                + " (saved anyway, as `nova dashboard apply` does; the view marks them missing)"
+            )
+    return {
+        "ok": True,
+        "kind": kind,
+        "id": item.id,
+        "title": item.title,
+        "action": "create"
+        if existing is None
+        else ("unchanged" if existing == normalized else "update"),
+        "normalized": normalized,
+        "existing": existing,
+        "proposed_sha256": _sha256(normalized),
+        "current_sha256": None if existing is None else _sha256(existing),
+        "warnings": warnings,
+        "cli_equivalent": f"nova dashboard show {item.id}",
+        "_item": item,
+    }
+
+
 def build_dashboards_router(
     verify_token: Callable[..., Any],
     *,
     capsule_dir: FsPath,
+    audit_append: Callable[..., dict[str, Any]],
     dashboards_root: Callable[[], FsPath] = dashboards_dir,
 ) -> APIRouter:
     """Build the dashboards router.
@@ -225,6 +410,7 @@ def build_dashboards_router(
     widget execution like every other ``serve`` read.
     """
     router = APIRouter(dependencies=[Depends(verify_token)], tags=["dashboards"])
+    write_lock = threading.Lock()  # one writer at a time; the temp-file swap is per file
 
     def _store() -> DashboardStore:
         # No mkdir: a read must not create state. A missing root lists empty.
@@ -389,5 +575,115 @@ def build_dashboards_router(
             }
 
         return await asyncio.to_thread(_run)
+
+    @router.post(
+        "/api/dashboards/validate",
+        operation_id="dashboardValidateDocument",
+        responses={
+            200: {"model": DashboardValidateResponse},
+            413: _WRITE_RESPONSES[413],
+        },
+        response_model=None,
+    )
+    async def validate_document(request: Request) -> dict[str, Any]:
+        """Dry run: the verdict and the diff inputs. Never writes."""
+        try:
+            document, kind, _ = _parse_request(await _read_capped(request))
+        except _Refusal as exc:
+            if exc.status == 413:
+                raise HTTPException(status_code=413, detail=exc.reason) from exc
+            return {"ok": False, "error": exc.reason, "warnings": []}
+        try:
+            verdict = await asyncio.to_thread(_evaluate, _store(), document, kind)
+        except _Refusal as exc:
+            return {"ok": False, "error": exc.reason, "warnings": []}
+        verdict.pop("_item")
+        return verdict
+
+    @router.post(
+        "/api/dashboards/apply",
+        operation_id="dashboardApplyDocument",
+        responses=_WRITE_RESPONSES,
+        response_model=None,
+    )
+    async def apply_document(
+        request: Request,
+        actor_fp: str = Depends(verify_token),
+    ) -> dict[str, Any]:
+        """Validate, then store atomically. Audited whatever the outcome."""
+        size = 0
+        ident: dict[str, Any] = {}
+
+        def _audit(result: str, error: str | None = None, **args: Any) -> None:
+            known = "id" in ident
+            audit_append(
+                action="dashboard_apply",
+                args={**ident, "bytes": size, **args},
+                cli_equivalent=f"nova dashboard show {ident['id']}"
+                if known
+                else "nova dashboard apply",
+                actor_token_fp=actor_fp,
+                result=result,
+                error=error[:500] if error else None,
+                resource=f"{ident['kind']}:{ident['id']}" if known else None,
+            )
+
+        def _refuse(exc: _Refusal) -> HTTPException:
+            _audit("refused", exc.reason)
+            return HTTPException(status_code=exc.status, detail=exc.reason)
+
+        try:
+            raw = await _read_capped(request)
+            size = len(raw)
+            document, kind, base = _parse_request(raw)
+        except _Refusal as exc:
+            raise _refuse(exc) from exc
+        if isinstance(document, dict) and isinstance(document.get("id"), str):
+            ident["id"] = document["id"][:80]
+            ident["kind"] = kind or (
+                "dashboard" if document.get("$novafabricDashboard") else "widget"
+            )
+
+        def _write() -> dict[str, Any]:
+            store = _store()
+            with write_lock:
+                verdict = _evaluate(store, document, kind)
+                if base is not None and base != (verdict["current_sha256"] or ""):
+                    raise _Refusal(
+                        "the file changed since this preview was taken; review it again "
+                        "(nothing was written)",
+                        409,
+                    )
+                item = verdict["_item"]
+                if verdict["kind"] == "dashboard":
+                    written, changed = store.save_dashboard(item)
+                else:
+                    written, changed = store.save_widget(item)
+            return {**verdict, "file": written.name, "changed": changed}
+
+        try:
+            result = await asyncio.to_thread(_write)
+        except _Refusal as exc:
+            raise _refuse(exc) from exc
+        except OSError as exc:
+            _audit("error", f"write failed: {exc}")
+            raise HTTPException(status_code=500, detail=f"write failed: {exc}") from exc
+        ident.update(kind=result["kind"], id=result["id"])
+        _audit(
+            "ok",
+            changed=result["changed"],
+            action=result["action"],
+            sha256=result["proposed_sha256"],
+        )
+        return {
+            "ok": True,
+            "kind": result["kind"],
+            "id": result["id"],
+            "file": result["file"],
+            "changed": result["changed"],
+            "sha256": result["proposed_sha256"],
+            "warnings": result["warnings"],
+            "cli_equivalent": result["cli_equivalent"],
+        }
 
     return router

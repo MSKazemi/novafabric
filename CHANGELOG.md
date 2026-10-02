@@ -11,17 +11,6 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
-### Fixed
-
-- **Strict capture refusal now leaves nothing on disk.** With
-  `NOVAFABRIC_CAPTURE_STRICT=1` (or `install_all(..., strict=True)`), a refused
-  overlapping capture used to leave an empty, opened capsule directory behind in
-  every framework adapter (CrewAI, AutoGen, DSPy, LangGraph, Haystack, LlamaIndex,
-  Pydantic AI, A2A, OpenAI Agents, Bedrock AgentCore, Google ADK). Adapters now call
-  the shared `capture.hooks.install_all_or_discard`, which removes the just-opened
-  capsule directory (only if it is still the untouched skeleton) and re-raises
-  `ConcurrentCaptureRefused`. Non-strict behaviour is unchanged.
-
 ### Documentation
 
 - **Architecture, as built: four server-side pages with step-by-step animated diagrams.**
@@ -76,6 +65,27 @@ longer forwards the submitting shell's environment (ADR-0270).
   restores the capsule so index and files agree (500 `delete_failed`, per-item `error`
   in bulk), and a purge failure leaves hidden residue reaped after an hour. No new routes.
   `serve`'s delete also gains the WORM check and runs-cache cleanup it lacked.
+
+- **Dashboards write path: validate, preview, save from the UI (ADR-0235, experimental).**
+  The Dashboards view can now add or edit one widget or dashboard — paste or upload JSON, or
+  fill in a guided widget form — without leaving the browser. **Validate** asks the server
+  (`POST /api/dashboards/validate`, scope `read`, writes nothing — not even the directory) and
+  shows the server's own verdict: the schema and the ADR-0129 DSL allow-list decide, through
+  the same loaders `nova dashboard validate|apply` call, so the UI cannot accept what the CLI
+  refuses. A refusal is shown with its reason. An accepted document is previewed as a diff
+  against the stored bytes; **Save** is offered only for a document the server accepted *as
+  typed*, and `POST /api/dashboards/apply` (scope `operate`) stores exactly those bytes. The
+  write is atomic (unique temp file in the same directory, fsync, rename; a failure leaves
+  neither a partial nor a temp file — this also hardens `nova dashboard apply`, which shares the
+  store), a no-op when the bytes already match, and refused for: an id outside the path
+  pattern, a symlinked target, a `builtin` document (the first edit forks, D5, is not built
+  yet), and a body over 256 KiB (413, refused while streaming, before parsing). Saving sends
+  the digest of the file the preview showed, so a file changed meanwhile is a 409 instead of a
+  silent overwrite. Every `apply` outcome — written, unchanged, refused, failed — is an
+  audit record (`dashboard_apply`, id/size/digest, never the body). Route table: 225 entries
+  (151 `read`, 30 `admin`, 32 `operate`, 7 `public`, 5 `audit`). Bulk directory installs stay
+  with `nova dashboard apply`; deleting from the UI is not built.
+
 
 - **A Dashboards view in the web dashboard for ADR-0235 widgets and ADR-0236 `ratio()`
   (experimental, read-only).** It lists the dashboards and widgets under
@@ -353,6 +363,15 @@ longer forwards the submitting shell's environment (ADR-0270).
   `aria-pressed`).
 
 ### Fixed
+
+- **Strict capture refusal now leaves nothing on disk.** With
+  `NOVAFABRIC_CAPTURE_STRICT=1` (or `install_all(..., strict=True)`), a refused
+  overlapping capture used to leave an empty, opened capsule directory behind in
+  every framework adapter (CrewAI, AutoGen, DSPy, LangGraph, Haystack, LlamaIndex,
+  Pydantic AI, A2A, OpenAI Agents, Bedrock AgentCore, Google ADK). Adapters now call
+  the shared `capture.hooks.install_all_or_discard`, which removes the just-opened
+  capsule directory (only if it is still the untouched skeleton) and re-raises
+  `ConcurrentCaptureRefused`. Non-strict behaviour is unchanged.
 
 - **A curated one-capsule evidence bundle is now schema-valid, so a one-run cart exports**
   (ADR-0011 Am.1 / ADR-0239, **works today**). `CapsuleSetBundleBuilder` with a curation record
@@ -1786,7 +1805,7 @@ longer forwards the submitting shell's environment (ADR-0270).
   `read` sees plus the audit trail, and can mutate nothing at any level. No new vocabulary was
   invented, because a fourth taxonomy is what guarantees drift.
 
-  Enforcement is **one declarative table of 223 routes** consulted by **one** app-level
+  Enforcement is **one declarative table of 225 routes** consulted by **one** app-level
   dependency — not 184 decorators inside the module ADR-0183 froze. A route missing from the
   table is **denied to everyone**, including the server token: in an evidence tool a loud
   failure beats a quiet disclosure, and defaulting to `read` would make a forgotten line a
