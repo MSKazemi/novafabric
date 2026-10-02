@@ -40,6 +40,12 @@ const failures = [];
 let checked = 0;
 
 for (const file of htmlFiles) {
+  // Astro emits a flat 404.html whose canonical href is /404/. That canonical
+  // deliberately describes the error document, not a normal route that should
+  // resolve to dist/404/index.html. Exclude the error document itself while
+  // keeping every ordinary generated page under the same strict link gate.
+  if (pageUrl(file) === '/404.html') continue;
+
   const html = fs.readFileSync(file, 'utf8');
   const base = new URL(pageUrl(file), ORIGIN);
   const re = /href\s*=\s*["']([^"'<>]+)["']/gi;
