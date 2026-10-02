@@ -82,6 +82,24 @@ class MetadataStore(abc.ABC):
     ) -> None:
         """Index a NovaSeal signature for a run. Idempotent on (run_id, signature_hash)."""
 
+    def delete_run(self, run_id: UUID, tenant_id: UUID) -> int:
+        """Remove one run's rows from the derived index; return runs rows removed (0 or 1).
+
+        ADR-0206 P2 (experimental). **Index-only**: deletes the run's rows from the
+        ``runs``, ``capsules`` and ``signatures`` tables for ``tenant_id`` in one
+        transaction and never touches a capsule on disk (the index is derived and
+        rebuildable, ADR-0022). Idempotent: an unindexed run returns 0.
+
+        This is the *mechanism*, not the *policy*: it does not check legal holds,
+        WORM locks or seals and writes no audit entry. Callers outside tests must go
+        through :func:`novafabric.metadata_store.run_delete.delete_runs`, which does.
+
+        Optional (non-abstract) so existing third-party stores keep working; a store
+        that does not implement it raises :class:`NotImplementedError`. Caller must be
+        inside ``begin_tenant_context()``.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not implement delete_run")
+
     @abc.abstractmethod
     def bootstrap(self) -> None:
         """Create schema and run migrations. Idempotent — safe to call on every startup."""

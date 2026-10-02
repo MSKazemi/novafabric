@@ -415,6 +415,23 @@ class PostgresMetadataStore(MetadataStore):
             )
         return page, next_cursor
 
+    def delete_run(self, run_id: UUID, tenant_id: UUID) -> int:
+        """Remove one run's index rows (runs, capsules, signatures) in the open transaction.
+
+        ADR-0206 P2 (experimental). Index-only and idempotent; see
+        :meth:`MetadataStore.delete_run`. Atomic with the enclosing
+        ``begin_tenant_context()`` transaction, so deleting several runs inside one
+        context is all-or-nothing. RLS scopes every statement to the tenant; the explicit
+        ``tenant_id`` predicate is defence in depth. Returns ``runs`` rows removed.
+        """
+        conn = self._conn()
+        rid, tid = str(run_id), str(tenant_id)
+        cur = conn.execute("DELETE FROM runs WHERE run_id = %s AND tenant_id = %s", (rid, tid))
+        removed = cur.rowcount
+        conn.execute("DELETE FROM capsules WHERE run_id = %s AND tenant_id = %s", (rid, tid))
+        conn.execute("DELETE FROM signatures WHERE run_id = %s AND tenant_id = %s", (rid, tid))
+        return int(removed)
+
     def record_signature(
         self,
         run_id: UUID,

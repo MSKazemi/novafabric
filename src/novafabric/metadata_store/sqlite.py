@@ -257,6 +257,21 @@ class SQLiteMetadataStore(MetadataStore):
             )
         return page, next_cursor
 
+    def delete_run(self, run_id: UUID, tenant_id: UUID) -> int:
+        """Remove one run's index rows (runs, capsules, signatures) atomically.
+
+        ADR-0206 P2 (experimental). Index-only and idempotent; see
+        :meth:`MetadataStore.delete_run`. Returns the number of ``runs`` rows removed.
+        """
+        rid, tid = str(run_id), str(tenant_id)
+        with self._connect() as conn:  # one transaction: commit on success, roll back on error
+            removed = conn.execute(
+                "DELETE FROM runs WHERE run_id = ? AND tenant_id = ?", (rid, tid)
+            ).rowcount
+            conn.execute("DELETE FROM capsules WHERE run_id = ? AND tenant_id = ?", (rid, tid))
+            conn.execute("DELETE FROM signatures WHERE run_id = ? AND tenant_id = ?", (rid, tid))
+        return int(removed)
+
     @contextmanager
     def begin_tenant_context(self, tenant_id: UUID) -> Generator["SQLiteMetadataStore", None, None]:
         """No-op pass-through — SQLite is single-tenant dev only.

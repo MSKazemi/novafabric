@@ -130,6 +130,9 @@ OCSF_CLASS_MAP: Final[dict[str, tuple[int, str, int]]] = {
     "hold.create": (_API_ACTIVITY, "API Activity", 1),  # Create
     "hold.release": (_API_ACTIVITY, "API Activity", _ACTIVITY_OTHER),
     "capsule.delete": (_API_ACTIVITY, "API Activity", 4),  # Delete
+    # ADR-0206 P2: governed metadata-index run deletion (index-only) and its refusal.
+    "run.index_delete": (_API_ACTIVITY, "API Activity", 4),  # Delete
+    "run.index_delete_refused": (_API_ACTIVITY, "API Activity", _ACTIVITY_OTHER),
     "evidence.export": (_API_ACTIVITY, "API Activity", 2),  # Read
     "rollback": (_APP_LIFECYCLE, "Application Lifecycle", _ACTIVITY_OTHER),
     "unregister": (_APP_LIFECYCLE, "Application Lifecycle", 2),  # Remove

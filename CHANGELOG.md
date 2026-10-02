@@ -61,6 +61,23 @@ longer forwards the submitting shell's environment (ADR-0270).
   captures are unaffected. This is the one deliberate exception to capture's fail-open rule, and
   only when requested.
 
+- **`MetadataStore.delete_run` and governed `delete_runs`** (ADR-0206 P2, **experimental**,
+  library only — no new CLI command or route). `delete_run` removes one run's rows from the
+  derived metadata index (`runs`, `capsules`, `signatures`) for one tenant, atomically,
+  idempotently; implemented for SQLite and Postgres (the base class default raises
+  `NotImplementedError`, so third-party stores keep working). It is **index-only**: it never
+  touches a capsule on disk. `metadata_store.run_delete.delete_runs(store, tenant, run_ids,
+  capsule_dir=…, actor=…)` is the policy front door for one or many runs and **refuses rather
+  than skips**: an unreleased legal hold (any registry — holds are registry-global today; an
+  unreadable hold line counts as a hold), an unexpired WORM lock, or a sealed capsule
+  (`.seal/` present; opt in with `allow_sealed=True` to drop only the index row) blocks the
+  *whole* request, deletes nothing, and raises `RunDeleteRefusedError` naming every blocked run.
+  Holds also win over `allow_sealed`. Invalid or oversized (>1000) requests fail before any
+  effect; `dry_run=True` previews. New chained-audit events `run.index_delete` (one per run,
+  plus a batch summary) and `run.index_delete_refused`, both mapped in the OCSF SIEM export.
+  The Postgres tests need `NOVA_TEST_POSTGRES_DSN` or Docker.
+
+
 - **`nova consent attest` / `nova consent verify-attestation`: an in-toto binding for consent
   receipts and withdrawals** (ADR-0150 P3 remainder, **experimental**). `attest` signs an
   in-toto Statement v1 in a DSSE envelope (the shared `evidence/intoto.py` writer) committing
