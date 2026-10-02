@@ -23,6 +23,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import yaml
+from _help_assert import assert_flag_in_help
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -213,4 +214,4 @@ def test_cli_invalid_environment_value_is_usage_error(tmp_path: Path) -> None:
 def test_cli_help_lists_flag() -> None:
     result = runner.invoke(app, ["replay", "--help"], env={"COLUMNS": "200"})
     assert result.exit_code == 0
-    assert "--environment" in result.output
+    assert_flag_in_help(result, "--environment")
