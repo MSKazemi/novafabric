@@ -82,7 +82,7 @@ class NovaA2AInterceptor:
 
         from novafabric.capture._ulid import new_span_id, new_ulid
         from novafabric.capture.capsule import CapsuleWriter
-        from novafabric.capture.hooks import install_all
+        from novafabric.capture.hooks import install_all_or_discard
 
         run_id = new_ulid()
         span_id = new_span_id()
@@ -97,7 +97,7 @@ class NovaA2AInterceptor:
         # in-process caller gets the same guarantee rather than each adapter
         # reimplementing it. An empty token means another capture owns the
         # hooks; it is safe to hand straight back to uninstall_all().
-        hook_token = install_all(writer=writer, parent_span_id=span_id)
+        hook_token = install_all_or_discard(writer=writer, parent_span_id=span_id)
 
         # Write A2A task input
         task_log = writer.capsule_dir / "a2a-tasks.jsonl"

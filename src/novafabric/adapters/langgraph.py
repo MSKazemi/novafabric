@@ -181,10 +181,14 @@ class _WrappedGraph:
         return writer, run_id, root_span_id, cap_dir
 
     def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
-        from novafabric.capture.hooks import install_all, uninstall_all, wire_capture_state
+        from novafabric.capture.hooks import (
+            install_all_or_discard,
+            uninstall_all,
+            wire_capture_state,
+        )
 
         writer, run_id, root_span_id, cap_dir = self._make_writer()
-        _hook_token = install_all(writer=writer, parent_span_id=root_span_id)
+        _hook_token = install_all_or_discard(writer=writer, parent_span_id=root_span_id)
         created_at = _now()
         t0 = time.monotonic()
         exit_code = 0
@@ -234,10 +238,14 @@ class _WrappedGraph:
     def stream(
         self, input: Any, config: Any = None, **kwargs: Any
     ) -> Generator[Any, None, None]:
-        from novafabric.capture.hooks import install_all, uninstall_all, wire_capture_state
+        from novafabric.capture.hooks import (
+            install_all_or_discard,
+            uninstall_all,
+            wire_capture_state,
+        )
 
         writer, run_id, root_span_id, cap_dir = self._make_writer()
-        _hook_token = install_all(writer=writer, parent_span_id=root_span_id)
+        _hook_token = install_all_or_discard(writer=writer, parent_span_id=root_span_id)
         created_at = _now()
         t0 = time.monotonic()
         exit_code = 0

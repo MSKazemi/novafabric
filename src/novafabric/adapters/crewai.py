@@ -172,7 +172,11 @@ def wrap_crew(
     def wrapped_kickoff(**kwargs: Any) -> Any:
         from novafabric.capture._ulid import new_span_id, new_ulid
         from novafabric.capture.capsule import CapsuleWriter
-        from novafabric.capture.hooks import install_all, uninstall_all, wire_capture_state
+        from novafabric.capture.hooks import (
+            install_all_or_discard,
+            uninstall_all,
+            wire_capture_state,
+        )
 
         run_id = new_ulid()
         root_span_id = new_span_id()
@@ -182,7 +186,7 @@ def wrap_crew(
         writer.open()
         cap_dir = writer.capsule_dir
 
-        _hook_token = install_all(writer=writer, parent_span_id=root_span_id)
+        _hook_token = install_all_or_discard(writer=writer, parent_span_id=root_span_id)
         created_at = _now()
         t0 = time.monotonic()
         exit_code = 0

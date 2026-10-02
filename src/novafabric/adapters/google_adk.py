@@ -104,7 +104,7 @@ class NovaAdkPlugin:
     def _begin(self, key: str) -> None:
         from novafabric.capture._ulid import new_span_id, new_ulid
         from novafabric.capture.capsule import CapsuleWriter
-        from novafabric.capture.hooks import install_all
+        from novafabric.capture.hooks import install_all_or_discard
 
         with self._lock:
             if key in self._runs or len(self._runs) >= _MAX_LIVE_INVOCATIONS:
@@ -117,7 +117,7 @@ class NovaAdkPlugin:
             writer = CapsuleWriter(run_id=run_id, base_dir=self._data_dir)
             writer.open()
             created_at, t0 = _now(), time.monotonic()
-            token = install_all(writer=writer, parent_span_id=span_id)
+            token = install_all_or_discard(writer=writer, parent_span_id=span_id)
             run = _Run(writer, run_id, span_id, created_at, t0, token)
         except BaseException:
             with self._lock:

@@ -171,7 +171,7 @@ def begin_capture(
     """Open a capsule and claim the wire hooks for one framework invocation."""
     from novafabric.capture._ulid import new_span_id, new_ulid
     from novafabric.capture.capsule import CapsuleWriter
-    from novafabric.capture.hooks import install_all
+    from novafabric.capture.hooks import install_all_or_discard
 
     resolved = resolve_data_dir(data_dir)
     resolved.mkdir(parents=True, exist_ok=True)
@@ -188,7 +188,7 @@ def begin_capture(
         run_id=run_id,
         root_span_id=root_span_id,
         writer=writer,
-        hook_token=install_all(writer=writer, parent_span_id=root_span_id),
+        hook_token=install_all_or_discard(writer=writer, parent_span_id=root_span_id),
         created_at=_now(),
         t0=time.monotonic(),
     )

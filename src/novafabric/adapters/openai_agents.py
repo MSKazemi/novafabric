@@ -50,7 +50,7 @@ class NovaCapsuleTracingProcessor(_TracingProcessor):
     def on_trace_start(self, trace: Any) -> None:
         from novafabric.capture._ulid import new_span_id, new_ulid
         from novafabric.capture.capsule import CapsuleWriter
-        from novafabric.capture.hooks import install_all
+        from novafabric.capture.hooks import install_all_or_discard
 
         run_id = new_ulid()
         span_id = new_span_id()
@@ -59,7 +59,7 @@ class NovaCapsuleTracingProcessor(_TracingProcessor):
         writer.open()
         created_at = _now()
         t0 = time.monotonic()
-        hook_token = install_all(writer=writer, parent_span_id=span_id)
+        hook_token = install_all_or_discard(writer=writer, parent_span_id=span_id)
         # Keyed per trace: this processor handles concurrent traces, so the
         # ownership token must travel with the trace, not with the processor.
         self._active[trace.trace_id] = (writer, run_id, span_id, created_at, t0, hook_token)

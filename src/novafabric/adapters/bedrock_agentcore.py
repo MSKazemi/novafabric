@@ -52,7 +52,11 @@ class _WrappedBedrockClient:
     def invoke_agent(self, **kwargs: Any) -> dict[str, Any]:
         from novafabric.capture._ulid import new_span_id, new_ulid
         from novafabric.capture.capsule import CapsuleWriter
-        from novafabric.capture.hooks import install_all, uninstall_all, wire_capture_state
+        from novafabric.capture.hooks import (
+            install_all_or_discard,
+            uninstall_all,
+            wire_capture_state,
+        )
         from novafabric.capture.replay import minimal_replay_policy
 
         run_id = new_ulid()
@@ -62,7 +66,7 @@ class _WrappedBedrockClient:
         writer.open()
         created_at = _now()
         t0 = time.monotonic()
-        _hook_token = install_all(writer=writer, parent_span_id=span_id)
+        _hook_token = install_all_or_discard(writer=writer, parent_span_id=span_id)
 
         try:
             response = self._inner.invoke_agent(**kwargs)

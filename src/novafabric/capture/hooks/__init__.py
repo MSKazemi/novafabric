@@ -522,6 +522,56 @@ def _install_thread_propagation() -> None:
         _log.debug("capture: thread scope propagation not installed", exc_info=True)
 
 
+#: What ``CapsuleWriter.open()`` creates and nothing else has touched yet.
+_FRESH_CAPSULE_ENTRIES = frozenset(
+    {"inputs", "outputs", "model-calls.jsonl", "tool-calls.jsonl", "trace.jsonl", "assets.jsonl"}
+)
+
+
+def _discard_unwritten_capsule(writer: "CapsuleWriter") -> None:
+    """Remove a capsule directory that was opened but never written to.
+
+    Only the exact skeleton ``CapsuleWriter.open()`` creates, with every file
+    empty, is removed — anything else is left alone (capsules are append-only;
+    this undoes our own just-made, empty directory, never evidence).
+    """
+    import shutil
+
+    try:
+        d = writer.capsule_dir
+        entries = {p.name: p for p in d.iterdir()}
+        if not set(entries) <= _FRESH_CAPSULE_ENTRIES:
+            return
+        for p in entries.values():
+            if p.is_dir():
+                if any(p.iterdir()):
+                    return
+            elif p.stat().st_size:
+                return
+        shutil.rmtree(d)
+    except Exception:  # noqa: BLE001 — cleanup must not mask the refusal
+        _log.debug("capture: could not discard the refused capsule", exc_info=True)
+
+
+def install_all_or_discard(
+    writer: "CapsuleWriter", parent_span_id: str, *, strict: bool | None = None
+) -> str:
+    """:func:`install_all` for adapters that have already opened *writer*.
+
+    Identical, except that a strict-mode :class:`ConcurrentCaptureRefused` also
+    removes the empty capsule directory the caller just opened, so a refused
+    capture leaves no trace on disk (as well as no hook state — the refusal is
+    raised before anything is installed). The refusal is re-raised unchanged.
+    """
+    try:
+        if strict is None:
+            return install_all(writer=writer, parent_span_id=parent_span_id)
+        return install_all(writer=writer, parent_span_id=parent_span_id, strict=strict)
+    except ConcurrentCaptureRefused:
+        _discard_unwritten_capsule(writer)
+        raise
+
+
 def install_all_deferred(writer: "CapsuleWriter", parent_span_id: str) -> None:
     """Install built-in hooks *lazily*, triggered by the workload's own imports.
 

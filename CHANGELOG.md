@@ -11,6 +11,17 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Strict capture refusal now leaves nothing on disk.** With
+  `NOVAFABRIC_CAPTURE_STRICT=1` (or `install_all(..., strict=True)`), a refused
+  overlapping capture used to leave an empty, opened capsule directory behind in
+  every framework adapter (CrewAI, AutoGen, DSPy, LangGraph, Haystack, LlamaIndex,
+  Pydantic AI, A2A, OpenAI Agents, Bedrock AgentCore, Google ADK). Adapters now call
+  the shared `capture.hooks.install_all_or_discard`, which removes the just-opened
+  capsule directory (only if it is still the untouched skeleton) and re-raises
+  `ConcurrentCaptureRefused`. Non-strict behaviour is unchanged.
+
 ### Documentation
 
 - **Architecture, as built: four server-side pages with step-by-step animated diagrams.**
