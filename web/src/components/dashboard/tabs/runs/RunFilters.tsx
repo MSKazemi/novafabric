@@ -5,7 +5,7 @@
  */
 import type { ReactNode } from 'react';
 import { clsx } from 'clsx';
-import SavedViewsBar from '../../SavedViewsBar';
+import RunsSavedViewsBar from './RunsSavedViewsBar';
 import type { Tab } from '../../Sidebar';
 import type { StatusFilter, RunSort } from './types';
 
@@ -156,8 +156,7 @@ export default function RunFilters({
         )}
       </div>
       {/* E2 — saved views: persist the current filter set as a named preset */}
-      <SavedViewsBar
-        namespace="runs"
+      <RunsSavedViewsBar
         current={{ search, statusFilter, sort, since, until, filter: filterText, scope: filterScope }}
         onApply={(v) => {
           setSearch(v.search);

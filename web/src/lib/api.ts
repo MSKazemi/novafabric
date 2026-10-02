@@ -73,6 +73,31 @@ export interface QueryPanelResult {
   cli_equivalent: string;
 }
 
+// ADR-0232 D4 — Runs saved views are ADR-0130 `nova view` files.
+export interface RunsViewState {
+  f: string;
+  scope: 'node' | 'root' | 'tree';
+  since: string;
+  until: string;
+  status: string;
+  sort: 'newest' | 'oldest' | 'longest' | 'shortest';
+}
+
+export interface ServerSavedView {
+  view_id: string;
+  name: string;
+  description: string | null;
+  tags: string[];
+  query: Record<string, unknown>;
+  created_at: string;
+  updated_at: string | null;
+  view_hash: string;
+  /** The Runs-view state this view reproduces, or null (see the reason). */
+  dashboard: RunsViewState | null;
+  dashboard_unavailable_reason: string | null;
+  cli_equivalent: string;
+}
+
 // ADR-0192 operational alerts (read model for the dashboard).
 export type AlertOutcome =
   | 'emitted'
@@ -1064,6 +1089,14 @@ export const api = {
   // Capsule Query DSL JSON/YAML document (same shape as `nova query --query-file`).
   runQuery: (q: string, engine?: string) =>
     postJson<QueryPanelResult>('/api/query', engine ? { q, engine } : { q }),
+
+  // ADR-0232 D4 saved views (nova view files).
+  listSavedViews: () =>
+    request<{ views_dir: string; views: ServerSavedView[]; warnings: string[] }>('/api/views'),
+  saveView: (name: string, state: RunsViewState, overwrite = false) =>
+    postJson<{ ok: boolean; path: string; view: ServerSavedView }>('/api/views', { name, ...state, overwrite }),
+  deleteView: (viewId: string) =>
+    deleteRequest<{ ok: boolean; deleted: string }>(`/api/views/${encodeURIComponent(viewId)}`),
 
   // ADR-0235/0236 Dashboards view (read-only). Types: ./dashboardTypes.ts.
   listDashboards: () => request<DashboardListResponse>('/api/dashboards'),

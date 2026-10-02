@@ -166,8 +166,8 @@ def satisfies(held: Scope, required: Scope) -> bool:
 #
 # Every HTTP route this app can mount, keyed by ``(method, path_template)`` —
 # the template exactly as FastAPI reports it on ``request.scope["route"].path``,
-# router prefixes included. 220 entries at the time of writing: 149 ``read``,
-# 30 ``admin``, 29 ``operate``, 7 ``public``, 5 ``audit``.
+# router prefixes included. 223 entries at the time of writing: 150 ``read``,
+# 30 ``admin``, 31 ``operate``, 7 ``public``, 5 ``audit``.
 #
 # How a route earned its classification, so the next person can apply the same
 # rule instead of guessing:
@@ -338,6 +338,11 @@ ROUTE_SCOPES: Final[dict[tuple[str, str], Scope]] = {
     ("POST", "/api/query"): Scope.read,
     # ADR-0235/0236 Dashboards view: list/show/export the user's own widget
     # files and run a widget's stored, DSL-validated query. Nothing is written.
+    # ADR-0232 D4: saved views are the ADR-0130 `nova view` files. Writes change
+    # project files (not evidence), so they are `operate` and audited.
+    ("GET", "/api/views"): Scope.read,
+    ("POST", "/api/views"): Scope.operate,
+    ("DELETE", "/api/views/{view_id}"): Scope.operate,
     ("GET", "/api/dashboards"): Scope.read,
     ("GET", "/api/dashboards/{dashboard_id}"): Scope.read,
     ("GET", "/api/dashboards/{dashboard_id}/export"): Scope.read,

@@ -70,6 +70,36 @@ longer forwards the submitting shell's environment (ADR-0270).
   `/api/dashboards/{id}/export`, `/api/dashboard-widgets/{id}/data` and
   `/api/dashboard-widgets/{id}/export`. The widget data route runs only the query stored in
   the widget file through the existing DSL; the request carries no query text. The route
+  table now has 223 entries (with the saved-views routes).
+
+- **Runs saved views are now ADR-0130 `nova view` files (ADR-0232 D4, experimental).** The Runs
+  view's "save current as" writes a view that `nova view show` and `nova view run` read, from
+  the same views directory, validated by the same fail-closed parser; there is no second
+  store. The saved query is the filter bar's own predicates (the status chip becomes a
+  `status` predicate), the scope and the date window; sort is advisory display preference.
+  Free-text search is not saved, because `nova query` cannot express it, and the bar says so.
+  Views saved from the CLI are offered back when the bar can express them, and listed
+  disabled with the reason when it cannot (an `IN` or comparison predicate), never
+  approximated. When the server routes are unavailable the bar falls back to browser-local
+  views and says so. New routes: `GET /api/views` (`read`), `POST /api/views` and
+  `DELETE /api/views/{view_id}` (`operate`, audited).
+
+- **A Dashboards view in the web dashboard for ADR-0235 widgets and ADR-0236 `ratio()`
+  (experimental, read-only).** It lists the dashboards and widgets under
+  `$NOVAFABRIC_HOME/dashboards` and renders every schema chart type (`line`, `bar`, `area`,
+  `table`, `stat`). A refused file is listed by name with the validator's reason, so one bad
+  paste cannot blank the page or vanish. A dashboard that references a missing or refused
+  widget still shows that panel, says why, and is flagged incomplete. Absent or undefined
+  values read "no value" and a chart draws them as a gap, never as `0`; a measured `0` stays
+  `0` (ADR-0234 D2). A ratio is always shown with its numerator and denominator, and an
+  undefined one says why (zero denominator, absent operand). Each widget and dashboard can be
+  downloaded as its stored JSON, byte-for-byte, so unknown fields survive. Installing or
+  editing files stays with `nova dashboard apply`; the view writes nothing.
+
+  Five new `read`-scoped routes back it: `GET /api/dashboards`, `/api/dashboards/{id}`,
+  `/api/dashboards/{id}/export`, `/api/dashboard-widgets/{id}/data` and
+  `/api/dashboard-widgets/{id}/export`. The widget data route runs only the query stored in
+  the widget file through the existing DSL; the request carries no query text. The route
   table now has 220 entries.
 
 - **Strict capture mode** (ADR-0224 OQ-2, **works today**, opt-in, default unchanged).
@@ -1736,6 +1766,8 @@ longer forwards the submitting shell's environment (ADR-0270).
   Enforcement is **one declarative table of 215 routes** consulted by **one** app-level
 
   Enforcement is **one declarative table of 220 routes** consulted by **one** app-level
+
+  Enforcement is **one declarative table of 223 routes** consulted by **one** app-level
 
   dependency — not 184 decorators inside the module ADR-0183 froze. A route missing from the
   table is **denied to everyone**, including the server token: in an evidence tool a loud

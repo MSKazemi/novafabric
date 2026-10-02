@@ -73,6 +73,7 @@ from novafabric.serve.routers.holds import build_holds_router
 from novafabric.serve.routers.maintenance import build_maintenance_router
 from novafabric.serve.routers.query_panel import build_query_panel_router
 from novafabric.serve.routers.report_export import build_report_export_router
+from novafabric.serve.routers.saved_views import build_saved_views_router
 from novafabric.serve.routers.trust_surfaces import build_trust_surfaces_router
 
 logger = logging.getLogger(__name__)
@@ -2784,6 +2785,9 @@ def create_app(
             audit_append=audit.append,
         )
     )
+
+    # ---------- Runs saved views = ADR-0130 `nova view` (ADR-0232 D4, experimental) ----------
+    app.include_router(build_saved_views_router(verify_token, audit_append=audit.append))
 
     # ---------- Layer B mutations (per ADR-0027 §1) ----------
     # Safe mutations only: registry writes, eval runs, evidence exports.
