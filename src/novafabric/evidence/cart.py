@@ -70,6 +70,7 @@ __all__ = [
     "CartItem",
     "CartItemKind",
     "EvidenceCart",
+    "HoldLookupError",
     "ResolvedCart",
     "ResolvedItem",
 ]
@@ -305,8 +306,23 @@ class EvidenceCart:
         )
 
 
+class HoldLookupError(RuntimeError):
+    """The legal-hold registry location could not be determined.
+
+    Raised instead of returning ``()``: "we could not look" must never read as
+    "there is no hold" on a legal-hold check.
+    """
+
+
 def capsule_holds(capsule_dir: Path) -> tuple[str, ...]:
-    """Active legal holds on a capsule directory (D8).
+    """Active legal holds for the capsule base that ``capsule_dir`` names (D8).
+
+    Holds are registry-global at ``<capsule base>/../registries/*/holds.jsonl``,
+    so the lookup needs the capsule *base*. A per-run directory (one that holds
+    a ``capsule.yaml``) is resolved to its parent base, because reading
+    ``<run>/../registries`` -- inside the base, where none exists -- used to
+    report "no holds" for a held capsule. A path that is not a directory cannot
+    name a registry location and raises :class:`HoldLookupError`.
 
     Thin wrapper over the shipped `server.capsule_delete.active_hold_ids` rather
     than a second reader of `holds.jsonl`: two readers of one file drift, and the
@@ -314,7 +330,13 @@ def capsule_holds(capsule_dir: Path) -> tuple[str, ...]:
     """
     from novafabric.server.capsule_delete import active_hold_ids
 
-    return tuple(active_hold_ids(capsule_dir))
+    if not capsule_dir.is_dir():
+        raise HoldLookupError(
+            f"cannot determine the legal-hold registry location from {capsule_dir!s}: "
+            "not an existing directory"
+        )
+    base = capsule_dir.parent if (capsule_dir / "capsule.yaml").is_file() else capsule_dir
+    return tuple(active_hold_ids(base))
 
 
 def items_from_run_ids(

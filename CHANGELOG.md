@@ -235,6 +235,14 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **`evidence.cart.capsule_holds` no longer fails open on a per-run directory** (D8, **works
+  today**). Legal holds are registry-global under `<capsule base>/../registries`; handed a per-run
+  directory the function looked under `<base>/registries`, found nothing, and reported "no holds"
+  for a held capsule. A directory containing `capsule.yaml` now resolves to its parent base, and a
+  path that is not a directory raises the new `HoldLookupError` (the cart already records a
+  raising hold lookup as "legal-hold status could not be established"). The only shipped caller
+  passes the base and is unchanged.
+
 - **`/api/cost/report` on ClickHouse no longer reads an unpriced model as $0.00** (ADR-0234 D2,
   **works today**). The ClickHouse branch summed `cost_usd` without reading the per-call `priced`
   flag and stamped `pricing_coverage_checked: false`. It now counts priced/unpriced calls (and
