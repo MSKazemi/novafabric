@@ -248,8 +248,11 @@ class TestErasureRoutes:
             json={"subject_id": "subject-001", "confirmed": True},
             headers=AUTH,
         )
-        assert res.status_code == 200, res.text
-        assert res.json()["request"]["state"] in {"FAILED", "COMPLETED", "DEFERRED"}
+        # FAILED is now an honest 404 (ok:false); the others stay 200.
+        state = res.json()["request"]["state"]
+        assert state in {"FAILED", "COMPLETED", "DEFERRED"}, res.text
+        assert res.status_code == (404 if state == "FAILED" else 200), res.text
+        assert res.json()["ok"] is (state != "FAILED")
         assert res.json().get("error") != "cap003_disabled"
 
     def test_request_missing_subject_returns_422(self, client: TestClient) -> None:

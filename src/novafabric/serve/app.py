@@ -5453,14 +5453,41 @@ def create_app(
         except Exception as exc:  # noqa: BLE001 — the erasure already happened;
             # the queue row is the durable record. Never 500 after a real erase.
             logger.warning("erasure audit-log append failed (non-fatal): %s", exc)
+        view = record.api_view()
+        if record.state == eq.STATE_FAILED:
+            # A GDPR erasure that did not happen must never read as success.
+            # Unknown subject -> 404 (nothing to erase); any other failure of
+            # the shredding machinery -> 500. The row is persisted either way
+            # and the FAILED view rides along. ``detail`` is the string the
+            # dashboard client surfaces.
+            reason = view.get("error_detail") or "no detail recorded"
+            return JSONResponse(
+                status_code=404 if record.error_class == "subject_not_found" else 500,
+                content={
+                    "ok": False,
+                    "error": "erasure_failed",
+                    "erased": False,
+                    "detail": (
+                        f"erasure request {record.request_id} FAILED "
+                        f"({record.error_class}): {reason}"
+                    ),
+                    "cap003_enabled": _cap003_enabled(),
+                    "crypto_shred_available": True,
+                    "reattached": reattached,
+                    "request": view,
+                },
+            )
         return {
             "ok": True,
+            # True only when the DEK was actually destroyed (or already was).
+            # DEFERRED (retention window) is accepted but erases nothing yet.
+            "erased": record.state == eq.STATE_COMPLETED,
             # Informational: cap-003 (dual-object split) is a separate capability
             # and does not gate this crypto-shred erasure.
             "cap003_enabled": _cap003_enabled(),
             "crypto_shred_available": True,
             "reattached": reattached,
-            "request": record.api_view(),
+            "request": view,
         }
 
     @app.get("/api/compliance/erasure/status", dependencies=[Depends(verify_token)])

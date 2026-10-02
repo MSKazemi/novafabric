@@ -11,7 +11,7 @@ export default function GdprErasurePanel({ runIds }: { runIds: string[] }) {
   const [reason, setReason] = useState('gdpr_art_17');
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [result, setResult] = useState<{ state: string; cap003_enabled: boolean; note: string } | null>(null);
+  const [result, setResult] = useState<{ state: string; erased: boolean; cap003_enabled: boolean; note: string } | null>(null);
   const [erasureSuggestions, pushErasureSubject] = useLocalMru('nova-erasure-subjects');
 
   const [statusSubjectId, setStatusSubjectId] = useState('');
@@ -34,6 +34,7 @@ export default function GdprErasurePanel({ runIds }: { runIds: string[] }) {
       const r = await api.erasureRequest(id, reason);
       setResult({
         state: r.request.state,
+        erased: r.erased,
         cap003_enabled: r.cap003_enabled,
         note: r.request.receipt_sha256
           ? `receipt_sha256: ${r.request.receipt_sha256}`
@@ -117,6 +118,9 @@ export default function GdprErasurePanel({ runIds }: { runIds: string[] }) {
             <span className="text-[10px] font-mono uppercase tracking-wider text-[var(--color-text-faint)]">state</span>
             <span className={clsx('text-xs font-mono font-bold', stateColor[result.state] ?? 'text-[var(--color-text)]')}>{result.state}</span>
           </div>
+          {!result.erased && (
+            <p className="text-[10px] text-[var(--color-status-pending)]">Not erased yet — the request is {result.state}.</p>
+          )}
           <p className="text-[10px] text-[var(--color-text-muted)]">{result.note}</p>
         </div>
       )}

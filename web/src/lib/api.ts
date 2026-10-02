@@ -1486,7 +1486,10 @@ export const api = {
 
   // ---------- DB-ERA-1: GDPR erasure (real execution per ADR-0210 — experimental) ----------
   erasureRequest: (subject_id: string, reason: string = 'gdpr_art_17', confirmed = true) =>
-    postJson<{ ok: boolean; cap003_enabled: boolean; crypto_shred_available?: boolean; reattached: boolean; request: { request_id: string; subject_sha256: string; state: string; reason: string; requested_at: string; executed_at: string | null; capsule_ids: string[]; receipt: Record<string, unknown> | null; receipt_sha256: string | null; error_class: string | null; error_detail: string | null } }>(
+    // A FAILED erasure is an HTTP 404/500 with ok:false and a `detail` string, so postJson throws
+    // ServeApiError (shown by GdprErasurePanel). A resolved value is therefore ok:true; `erased` is true
+    // only for COMPLETED (a DEFERRED retention-window request erases nothing yet).
+    postJson<{ ok: true; erased: boolean; cap003_enabled: boolean; crypto_shred_available?: boolean; reattached: boolean; request: { request_id: string; subject_sha256: string; state: string; reason: string; requested_at: string; executed_at: string | null; capsule_ids: string[]; receipt: Record<string, unknown> | null; receipt_sha256: string | null; error_class: string | null; error_detail: string | null } }>(
       '/api/compliance/erasure/request', { subject_id, reason, confirmed }
     ),
   erasureStatus: (subject_id?: string) =>

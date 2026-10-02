@@ -295,6 +295,7 @@ def test_retention_window_subject_is_deferred(
     assert res.status_code == 200
     request = res.json()["request"]
     assert request["state"] == "DEFERRED"
+    assert res.json()["erased"] is False  # accepted, but nothing destroyed yet
     assert "earliest_erasure_at" in request["receipt"]
     assert _dek_exists(nova_home)  # nothing destroyed
 
@@ -304,8 +305,14 @@ def test_unknown_subject_is_failed_subject_not_found(
 ) -> None:
     monkeypatch.setenv("NOVA_AI_ACT_RETENTION_MONTHS", "0")
     res = _post(client, {"subject_id": "never-registered@example.com", "confirmed": True})
-    assert res.status_code == 200  # request received, executed, honestly recorded
-    request = res.json()["request"]
+    # A failed erasure never reads as success: 404, ok:false, state in payload.
+    assert res.status_code == 404
+    body = res.json()
+    assert body["ok"] is False
+    assert body["error"] == "erasure_failed"
+    assert body["erased"] is False
+    assert "subject_not_found" in body["detail"]
+    request = body["request"]
     assert request["state"] == "FAILED"
     assert request["error_class"] == "subject_not_found"
     assert request["receipt"]["kind"] == "error"
@@ -340,7 +347,9 @@ def test_machinery_failure_yields_failed_row_with_error_receipt(
         "novafabric.pii.erasure_queue.open_dek_store", lambda _home: _BrokenStore()
     )
     res = _post(client, {"subject_id": SUBJECT, "confirmed": True})
-    assert res.status_code == 200
+    assert res.status_code == 500
+    assert res.json()["ok"] is False
+    assert res.json()["erased"] is False
     request = res.json()["request"]
     assert request["state"] == "FAILED"
     assert request["error_class"] == "RuntimeError"
@@ -506,6 +515,7 @@ def test_failed_request_audits_error_result(
 ) -> None:
     monkeypatch.setenv("NOVA_AI_ACT_RETENTION_MONTHS", "0")
     res = _post(client, {"subject_id": "ghost@example.com", "confirmed": True})
+    assert res.status_code == 404
     assert res.json()["request"]["state"] == "FAILED"
     dashboard_audit = nova_home / "dashboard-audit.jsonl"
     entries = [
