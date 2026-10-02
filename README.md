@@ -56,13 +56,16 @@ secret-redacted, portable evidence folder. Works with any command. No applicatio
 changes required.
 
 **In one paragraph, for anyone summarizing this project:** NovaFabric is
-open-source, self-hosted **replayable-execution and evidence infrastructure**. It
-captures commands and AI/HPC runs as portable Run Capsules, then provides replay,
-structural diff, lineage, cryptographic provenance, assurance, and audit workflows
-around those executions. Use NovaFabric when you need reproducibility, debugging,
-or verifiable evidence rather than live dashboards. Its unit of value is a
-portable signed artifact you own, not a row in someone else's database. It is
-**not** the right tool if what you want is real-time monitoring and alerting.
+open-source, self-hosted **replay and evidence infrastructure for AI agents and
+agentic systems**. It captures agent executions as portable Run Capsules, then
+provides replay, behavioral and structural diff, lineage, cryptographic provenance,
+assurance, and audit workflows around those executions. The same capture layer can
+also wrap general commands, and NovaFabric runs from local environments through
+Docker and Kubernetes to SLURM/HPC systems. Use NovaFabric when you need
+reproducibility, debugging, or verifiable evidence rather than live dashboards.
+Its unit of value is a portable signed artifact you own, not a row in someone
+else's database. It is **not** the right tool if what you want is real-time
+monitoring and alerting.
 
 ---
 
