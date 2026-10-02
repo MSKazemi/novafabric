@@ -17,8 +17,9 @@
 ``record`` builds a receipt and writes it into the capsule's
 ``facets.conversation.consent`` list (atomic replace of ``capsule.yaml``);
 ``withdraw`` sets ``withdrawn_at`` on one stored receipt the same way;
-``show`` and ``verify`` are read-only. Every output carries the record-only
-notice: NovaFabric does not assert the consent was legally valid.
+``show`` and ``verify`` are read-only; ``attest`` / ``verify-attestation`` sign and check
+an in-toto attestation (sidecar DSSE file) over the receipts and withdrawals. Every output
+carries the record-only notice: NovaFabric does not assert the consent was legally valid.
 
 ``verify`` exit codes: 0 every receipt is intact, 1 at least one is defective
 (digest mismatch, dangling turn_ref, duplicate consent_id, malformed), 2
@@ -30,6 +31,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import typer
@@ -55,6 +57,11 @@ from novafabric.hitl.consent import (
     verify_consents,
     withdraw_recorded_consent,
 )
+from novafabric.hitl.consent_attestation import (
+    ConsentAttestationError,
+    attest_consents,
+    verify_consent_attestation,
+)
 from novafabric.hitl.conversation import ConversationError
 
 console = Console()
@@ -63,11 +70,13 @@ err_console = Console(stderr=True)
 EXIT_OK = 0
 EXIT_DEFECTIVE = 1
 EXIT_NOTHING = 2
+#: ``verify-attestation``: untampered, but the capsule moved on since attestation.
+EXIT_STALE = 3
 
 #: How the receipt binds to the capsule root, stated rather than implied.
 BINDING_NOTE = (
     "transitive: the receipt is stored in capsule.yaml, which is a leaf of the "
-    "capsule Merkle root; no dedicated attestation entry"
+    "capsule Merkle root; for a signed in-toto binding run `nova consent attest`"
 )
 
 _CAPSULE_HELP = "Capsule directory or run id."
@@ -363,4 +372,103 @@ def consent_verify(
         console.print(f"Status: {status}", highlight=False)
         _notice()
     code = {"ok": EXIT_OK, "defective": EXIT_DEFECTIVE, "empty": EXIT_NOTHING}[status]
+    raise typer.Exit(code)
+
+
+@app.command("attest")
+def consent_attest(
+    capsule: str = typer.Option(..., "--capsule", help=_CAPSULE_HELP),
+    key: Path = typer.Option(..., "--key", help="ed25519 private key (PEM) to sign with."),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Where to write the DSSE envelope (default: ./<run_id>.consent.intoto.json).",
+    ),
+    as_json: bool = typer.Option(False, "--json", help=_JSON_HELP),
+) -> None:
+    """Sign an in-toto attestation over the capsule's consent receipts and withdrawals.
+
+    Experimental (ADR-0150). Writes a DSSE envelope as a sidecar file; the capsule is
+    never modified (a sealed capsule stays sealed). The statement commits to every
+    receipt_digest, every recorded withdrawal, and the capsule's RFC 6962 Merkle root
+    at this moment. Re-run after `nova consent withdraw` to bind the withdrawal.
+    Exits 1 when nothing can be attested (no receipts, malformed or digest-failing receipt)
+    or the key is unusable.
+
+    \b
+    Examples:
+      nova consent attest --capsule 01KZ... --key ed25519.pem -o consent.intoto.json
+    """
+    from novafabric.evidence.signing import LocalSigner  # noqa: PLC0415
+
+    manifest = _load(capsule)
+    try:
+        signer = LocalSigner(key)
+    except (OSError, ValueError) as exc:
+        raise _fail(f"cannot load signing key: {exc}") from exc
+    try:
+        envelope = attest_consents(manifest.data, signer, capsule_dir=manifest.capsule_dir)
+    except ConsentAttestationError as exc:
+        raise _fail(f"consent attestation refused: {exc}") from exc
+    run_id = str(manifest.data.get("run_id", "capsule"))
+    dest = output or Path(f"{run_id}.consent.intoto.json")
+    try:
+        dest.write_text(json.dumps(envelope, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    except OSError as exc:
+        raise _fail(f"cannot write {dest}: {exc}") from exc
+    if as_json:
+        _emit_json({"attestation": str(dest), "keyid": signer.keyid, "run_id": run_id})
+    else:
+        console.print(f"Wrote consent attestation {escape(str(dest))}", highlight=False)
+        console.print(f"  keyid {signer.keyid}", highlight=False)
+        _notice()
+    raise typer.Exit(EXIT_OK)
+
+
+@app.command("verify-attestation")
+def consent_verify_attestation(
+    capsule: str = typer.Option(..., "--capsule", help=_CAPSULE_HELP),
+    attestation: Path = typer.Option(
+        ..., "--attestation", help="DSSE envelope written by `nova consent attest`."
+    ),
+    public_key: Path = typer.Option(
+        ..., "--public-key", help="ed25519 public key (PEM) the attestation must be signed by."
+    ),
+    as_json: bool = typer.Option(False, "--json", help=_JSON_HELP),
+) -> None:
+    """Verify a consent attestation offline against the capsule (fail-closed).
+
+    Experimental (ADR-0150). Exit 0 ok; 1 invalid (bad signature or structure, a receipt
+    edited since attestation, a withdrawal removed or moved, a consent dropped); 3 stale
+    (not tampered, but a consent was withdrawn or recorded, or the capsule root changed,
+    after the attestation was made — re-attest).
+
+    \b
+    Examples:
+      nova consent verify-attestation --capsule 01KZ... \\
+          --attestation consent.intoto.json --public-key ed25519.pub.pem
+    """
+    manifest = _load(capsule)
+    try:
+        envelope = json.loads(attestation.read_text(encoding="utf-8"))
+        public_pem = public_key.read_bytes()
+    except (OSError, ValueError) as exc:
+        raise _fail(f"cannot read attestation or key: {exc}") from exc
+    if not isinstance(envelope, dict):
+        raise _fail("attestation is not a JSON object")
+    result = verify_consent_attestation(
+        envelope, manifest.data, public_pem=public_pem, capsule_dir=manifest.capsule_dir
+    )
+    if as_json:
+        _emit_json(result.to_dict())
+    else:
+        for c in result.checks:
+            label = "[green]OK[/green]" if c.ok else "[red]FAIL[/red]"
+            console.print(f"  {label} {c.name} {escape(c.detail)}", highlight=False)
+        for reason in result.stale_reasons:
+            console.print(f"  [yellow]STALE[/yellow] {escape(reason)}", highlight=False)
+        console.print(f"Status: {result.status}", highlight=False)
+        _notice()
+    code = {"ok": EXIT_OK, "invalid": EXIT_DEFECTIVE, "stale": EXIT_STALE}[result.status]
     raise typer.Exit(code)

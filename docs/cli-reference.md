@@ -3735,7 +3735,7 @@ the chain. `--delegation` is capped at 4 MiB. Exits `0` only when the turn resol
 binding, and every bound hop is `established`; `1` otherwise (including
 `principal_mismatch`).
 
-### nova consent record | withdraw | show | verify (experimental, ADR-0150 P3)
+### nova consent record | withdraw | show | verify | attest | verify-attestation (experimental, ADR-0150 P3)
 
 NF-183 consent receipts in an ISO/IEC TS 27560 / W3C DPV-shaped structure (`consent_id`,
 `subject_ref`, `purpose`, `action`, `given_at`, `expiry`, `withdrawable`, `withdrawn_at`,
@@ -3749,6 +3749,9 @@ nova consent withdraw --capsule <dir|run-id> --consent-id <id> [--withdrawn-at <
     [--dry-run] [--force-unseal] [--json]
 nova consent show   --capsule <dir|run-id> [--json]
 nova consent verify --capsule <dir|run-id> [--json]
+nova consent attest --capsule <dir|run-id> --key <ed25519.pem> [-o <file>] [--json]
+nova consent verify-attestation --capsule <dir|run-id> --attestation <file> \
+    --public-key <ed25519.pub.pem> [--json]
 ```
 
 `record` builds the receipt, binds `receipt_digest` (SHA-256 over the canonical receipt,
@@ -3775,8 +3778,28 @@ ISO-8601, precedes `given_at`, or lies more than 5 minutes in the future. `--jso
 
 `verify` recomputes every `receipt_digest`, resolves any `turn_ref`, flags a duplicate
 `consent_id`, and prints the `capsule.yaml` digest the receipts bind through (the binding
-to the capsule root is transitive; there is no dedicated attestation entry). Exit `0`
+to the capsule root is transitive; for a signed binding use `attest`). Exit `0`
 intact, `1` defective, `2` nothing to check. `show` exits `1` on a malformed entry.
+
+`attest` (**experimental**) signs an in-toto Statement v1 (DSSE, the shared writer in
+`evidence/intoto.py`, ed25519 `LocalSigner`) with predicate type
+`https://novafabric.io/consent-attestation/v0`. It has one subject per receipt
+(`consent/<consent_id>` with its `receipt_digest`) and a predicate carrying each receipt's
+`receipt_digest`, `withdrawn_at` and a `withdrawal_digest` binding the withdrawal event, a
+`consent_set_digest`, and the capsule's RFC 6962 Merkle root (the Evidence Bundle
+construction; the NovaSeal pairwise root is not used). It writes a **sidecar file** (default
+`./<run_id>.consent.intoto.json`) and never touches the capsule, so a sealed capsule stays
+sealed. Re-run it after `withdraw` to bind the withdrawal. It exits `1` when nothing can be
+attested (no receipts, a malformed or digest-failing receipt, an unusable key).
+
+`verify-attestation` (**experimental**) checks, offline, the DSSE signature against the
+supplied public key (the envelope `keyid` must name it), the statement framing, the
+predicate's own digests, and every attested receipt against the capsule. Exit `0` ok; `1`
+invalid (bad signature or structure, a receipt edited since attestation, a withdrawal removed
+or moved, a consent dropped); `3` stale (not tampered, but a consent was withdrawn or recorded
+or the capsule root changed after attestation — re-attest). Not yet included in `nova
+evidence export` bundles: store the sidecar next to the bundle. The signing key's trust
+(who holds it) is outside this check.
 
 Every output carries the notice that NovaFabric records the receipt and does not assert the
 consent was freely given, informed, specific, lawful, or otherwise legally valid.

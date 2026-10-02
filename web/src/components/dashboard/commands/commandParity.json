@@ -181,6 +181,9 @@
   "nova comment thread": {
     "status": "builder-only"
   },
+  "nova consent attest": {
+    "status": "builder-only"
+  },
   "nova consent record": {
     "status": "builder-only"
   },
@@ -191,6 +194,9 @@
     "status": "builder-only"
   },
   "nova consent withdraw": {
+    "status": "builder-only"
+  },
+  "nova consent verify-attestation": {
     "status": "builder-only"
   },
   "nova cost attribute": {

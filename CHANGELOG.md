@@ -61,6 +61,18 @@ longer forwards the submitting shell's environment (ADR-0270).
   captures are unaffected. This is the one deliberate exception to capture's fail-open rule, and
   only when requested.
 
+- **`nova consent attest` / `nova consent verify-attestation`: an in-toto binding for consent
+  receipts and withdrawals** (ADR-0150 P3 remainder, **experimental**). `attest` signs an
+  in-toto Statement v1 in a DSSE envelope (the shared `evidence/intoto.py` writer) committing
+  to every `receipt_digest`, every recorded withdrawal (`withdrawal_digest`) and the capsule's
+  RFC 6962 Merkle root, as a sidecar file — the capsule is never modified. `verify-attestation`
+  is offline and fail-closed: exit 1 on a bad signature/key, an edited receipt (even one with
+  a re-computed digest), a removed or moved withdrawal, or a dropped consent; exit 3 (stale)
+  when the capsule legitimately moved on (a later withdrawal or new receipt) and needs
+  re-attesting. Not yet wired into `nova evidence export` bundles. Record-only: it proves what
+  was recorded, not that a consent was legally valid.
+
+
 - **`nova replay --environment ENV` and the recorded environment in the mutating-replay gate**
   (ADR-0126 replay-gate wiring, **experimental**). `--environment` is opt-in: without it
   replay is unchanged. With it, the replay is refused **before anything runs** (no policy

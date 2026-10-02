@@ -46,7 +46,7 @@ Ten accepted-but-unbuilt ADR slices, all **experimental**, none changing `schema
 | ADR | Slice | Surface | Still open |
 |---|---|---|---|
 | 0070 §1/§5 | Offline RFC 3161 TSA trust chain | `nova verify --tsa-ca-bundle`, `tsa_ca_certs:` | online CRL fetch/cache, PSS signatures |
-| 0150 P3 | Consent receipts, handoffs, acted-on-behalf; `nova consent withdraw` (Unreleased) | `nova consent record\|withdraw\|show\|verify`, `nova hitl handoff list`, `nova hitl acted-as` | in-toto binding |
+| 0150 P3 | Consent receipts, handoffs, acted-on-behalf; `nova consent withdraw` (Unreleased) | `nova consent record\|withdraw\|show\|verify\|attest\|verify-attestation`, `nova hitl handoff list`, `nova hitl acted-as` | inclusion of the consent attestation in `nova evidence export` bundles (the sidecar `nova consent attest\|verify-attestation` itself is Unreleased, experimental) |
 | 0159 NF-280 | CAT-style lifecycle trail | `nova export-cat` | trade lifecycle (needs NF-273 facet) |
 | 0162 P3 | Sim2real, teleop, timing | `nova embodied sim2real\|teleop\|timing` | NF-309 device identity |
 | 0163 P3 | A2A payment chain, agreement, invoice | `nova settlement chain` | bind/show/verify/reconcile/finality CLIs |
