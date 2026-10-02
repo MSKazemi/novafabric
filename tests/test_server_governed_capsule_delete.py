@@ -378,7 +378,7 @@ def test_rollback_failure_is_inconsistent_and_names_tombstone(
 
     def rename(src: Any, dst: Any) -> None:
         calls["n"] += 1
-        if calls["n"] == 2:  # the rename-back
+        if Path(dst) == capsule_dir / "r1":  # the rename-back
             raise OSError("disk gone")
         real_rename(src, dst)
 
@@ -394,6 +394,121 @@ def test_rollback_failure_is_inconsistent_and_names_tombstone(
     tomb = Path(str(ei.value.details["tombstone"]))
     assert (tomb / "capsule.yaml").exists()  # bytes preserved for an operator
     assert not (capsule_dir / "r1").exists()
+
+
+def _make_inconsistent(
+    capsule_dir: Path, db_path: Path, monkeypatch: pytest.MonkeyPatch, run_id: str = "r1"
+) -> capsule_delete.DeleteFailedError:
+    """Drive a delete whose index step AND rollback both fail."""
+    conn = capsule_index.open_index(db_path)
+    real_rename = os.rename
+
+    def rename(src: Any, dst: Any) -> None:
+        if Path(dst) == capsule_dir / run_id:
+            raise OSError("disk gone")
+        real_rename(src, dst)
+
+    def bad_remove(c: Any, rid: str) -> None:
+        raise RuntimeError("index down")
+
+    with monkeypatch.context() as m:
+        m.setattr(os, "rename", rename)
+        m.setattr(capsule_index, "remove_run", bad_remove)
+        with pytest.raises(capsule_delete.DeleteFailedError) as ei:
+            capsule_delete.execute_delete(capsule_dir, run_id, conn)
+    conn.close()
+    return ei.value
+
+
+def test_inconsistent_tombstone_is_never_reaped(
+    capsule_dir: Path, db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The tombstone is the capsule's ONLY copy: age must never make it reapable."""
+    _write_capsule(capsule_dir, "r1")
+    err = _make_inconsistent(capsule_dir, db_path, monkeypatch)
+    tomb = Path(str(err.details["tombstone"]))
+    far = time.time() + 365 * 86400
+    capsule_delete.reap_tombstones(capsule_dir, now=far)
+    assert (tomb / "capsule.yaml").exists(), "reaper destroyed the only copy"
+    assert tomb.name.endswith(".inconsistent")
+    assert str(tomb) in str(err)  # operator text names the FINAL path
+    # a later delete of ANOTHER capsule (which reaps first) leaves it too
+    _write_capsule(capsule_dir, "r2")
+    capsule_delete.execute_delete(capsule_dir, "r2", None)
+    assert (tomb / "capsule.yaml").exists()
+
+
+def test_reaper_still_reaps_old_orphans_but_spares_inconsistent_beside_them(
+    capsule_dir: Path, db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_capsule(capsule_dir, "r1")
+    err = _make_inconsistent(capsule_dir, db_path, monkeypatch)
+    tomb = Path(str(err.details["tombstone"]))
+    base = tomb.parent
+    old = base / f"orphan.{int(time.time()) - 7200}.deadbeef"
+    young = base / f"orphan2.{int(time.time())}.deadbeef"
+    old.mkdir()
+    young.mkdir()
+    assert capsule_delete.reap_tombstones(capsule_dir) == 1  # only the old orphan
+    assert not old.exists() and young.is_dir() and tomb.is_dir()
+
+
+def test_retry_while_inconsistent_tombstone_exists_is_refused(
+    capsule_dir: Path, db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_capsule(capsule_dir, "r1")
+    err = _make_inconsistent(capsule_dir, db_path, monkeypatch)
+    tomb = Path(str(err.details["tombstone"]))
+    # a visible copy reappears (e.g. partially restored); a retry must not
+    # create a second tombstone or mask the first
+    _write_capsule(capsule_dir, "r1")
+    conn = capsule_index.open_index(db_path)
+    with pytest.raises(capsule_delete.DeleteFailedError) as ei:
+        capsule_delete.execute_delete(capsule_dir, "r1", conn)
+    conn.close()
+    assert ei.value.code == "delete_inconsistent_pending"
+    assert str(tomb) in str(ei.value)
+    assert (capsule_dir / "r1" / "capsule.yaml").exists()
+    assert sorted(p.name for p in tomb.parent.iterdir()) == [tomb.name]
+
+
+def test_inconsistent_http_audit_names_final_path_and_retry_is_not_404(
+    client: TestClient,
+    store: SQLiteMetadataStore,
+    capsule_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from novafabric._paths import dashboard_audit_path
+
+    rid = _seed(client, store, capsule_dir)
+    real_rename = os.rename
+
+    def rename(src: Any, dst: Any) -> None:
+        if Path(dst) == capsule_dir / rid:
+            raise OSError("disk gone")
+        real_rename(src, dst)
+
+    with monkeypatch.context() as m:
+        m.setattr(os, "rename", rename)
+        m.setattr(
+            SQLiteMetadataStore,
+            "delete_run",
+            lambda self, a, b: (_ for _ in ()).throw(RuntimeError("x")),
+        )
+        resp = client.delete(f"/v0/capsules/{rid}")
+    assert resp.status_code == 500
+    entries = [
+        json.loads(x) for x in dashboard_audit_path().read_text().splitlines() if x.strip()
+    ]
+    failed = [e for e in entries if e["action"] == "capsule_delete_failed"]
+    assert failed[0]["args"]["code"] == "delete_inconsistent"
+    tomb = Path(failed[0]["args"]["tombstone"])
+    assert tomb.name.endswith(".inconsistent")
+    assert (tomb / "capsule.yaml").exists()
+    # retry: not a bare 404 that hides the stranded bytes
+    again = client.delete(f"/v0/capsules/{rid}")
+    assert again.status_code == 409
+    assert str(tomb) in again.text
 
 
 def test_tombstone_rename_failure_changes_nothing(

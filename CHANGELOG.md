@@ -11,6 +11,19 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A governed capsule delete could destroy the only copy of a capsule it had just told the
+  operator to restore.** When the index step failed and the rollback also failed
+  (`delete_inconsistent`), the tombstone in `.deleting/` kept a plain
+  `<run_id>.<epoch>.<hex>` name, so the next delete after the one-hour grace period reaped it.
+  The tombstone is now renamed to `<run_id>.<epoch>.<hex>.inconsistent` *before* the rollback is
+  attempted (no crash window with a reapable name); the reaper never removes `*.inconsistent`;
+  the error text, `details.tombstone` and audit entry name that final path; and a retry for the
+  same run id is refused (`delete_inconsistent_pending`, HTTP 409) rather than 404ing or adding a
+  second tombstone. Restore steps: [server admin guide](docs/ops/server-admin-guide.md).
+  `nova serve`'s `DELETE /api/runs/{id}` still answers a bare 404 on retry (open item).
+
 ### Documentation
 
 - **User docs catch up with the last two days of features.** The Dashboards tab (`g 4`), Runs

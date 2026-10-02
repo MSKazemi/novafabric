@@ -591,6 +591,14 @@ async def delete_capsule(
     if not capsule_delete.is_valid_run_id(run_id):
         raise BadRequestError("invalid run_id")
     if not capsule_delete.capsule_exists(capsule_dir, run_id):
+        stranded = capsule_delete.inconsistent_tombstones(capsule_dir, run_id)
+        if stranded:
+            raise ConflictError(
+                f"Capsule '{run_id}' is absent from the store but a failed delete left "
+                f"its only copy at {stranded[0]}; restore it by hand.",
+                code="delete_inconsistent_pending",
+                details={"tombstone": str(stranded[0])},
+            )
         raise NotFoundError(f"Capsule '{run_id}' not found.")
     try:
         capsule_delete.check_deletable(capsule_dir, run_id)
@@ -705,6 +713,15 @@ async def bulk_delete_capsules(
                 counts["invalid_id"] += 1
                 continue
             if not capsule_delete.capsule_exists(capsule_dir, run_id):
+                stranded = capsule_delete.inconsistent_tombstones(capsule_dir, run_id)
+                if stranded:
+                    results.append({
+                        "run_id": run_id, "outcome": "error",
+                        "code": "delete_inconsistent_pending",
+                        "message": f"only copy stranded at {stranded[0]}",
+                    })
+                    counts["errors"] += 1
+                    continue
                 results.append({"run_id": run_id, "outcome": "not_found"})
                 counts["not_found"] += 1
                 continue

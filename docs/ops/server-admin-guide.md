@@ -198,6 +198,18 @@ schema change).
   files and index never silently disagree, and a purge failure leaves hidden
   residue that is reaped after an hour. Also served by `nova serve`'s
   `DELETE /api/runs/{id}`.
+  **If the rollback also fails** the response is 500 `delete_inconsistent`: the
+  tombstone then holds the capsule's *only* copy. It is renamed to
+  `<data>/.deleting/<run_id>.<epoch>.<hex>.inconsistent` (the exact path is in
+  the error text, the `details.tombstone` field and the audit entry) and is
+  **never reaped, whatever its age**. Restore it with
+  `mv <data>/.deleting/<run_id>.<epoch>.<hex>.inconsistent <data>/capsules/<run_id>`,
+  then the next list request re-syncs the runs-cache; or remove the
+  directory yourself once you are sure the capsule is meant to be gone. Until
+  then a retry of the same delete is refused (409 / `delete_inconsistent_pending`,
+  per-item `error` in bulk) instead of returning a bare 404 or creating a second
+  tombstone. Limit: if even the marking rename fails, the reported path is a
+  plain tombstone that the reaper removes after an hour — restore it at once.
 - `POST /v0/capsules/bulk-delete` — body
   `{"run_ids": [...], "dry_run": false}`; per-item outcomes
   (`deleted | held | not_found | invalid_id | duplicate | error`) plus

@@ -64,6 +64,12 @@ TOMBSTONE_DIRNAME = ".deleting"
 #: A tombstone older than this is residue of a crashed delete, safe to reap.
 TOMBSTONE_REAP_AFTER_S = 3600.0
 
+#: Suffix of a tombstone whose delete failed AND whose rollback failed. Such a
+#: tombstone holds the capsule's only copy: the reaper never touches it (its
+#: name no longer parses as ``<run_id>.<epoch>.<hex>``) and only an operator
+#: removes or restores it.
+INCONSISTENT_SUFFIX = ".inconsistent"
+
 
 class DeleteBlockedError(Exception):
     """Deletion refused by a legal hold or WORM lock (→ 409 per item)."""
@@ -79,7 +85,9 @@ class DeleteFailedError(Exception):
 
     ``delete_failed`` — nothing observable changed (rolled back);
     ``delete_inconsistent`` — rollback itself failed; ``details`` names the
-    tombstone holding the capsule bytes so an operator can restore it.
+    tombstone (``*.inconsistent``, never reaped) holding the capsule bytes so
+    an operator can restore it; ``delete_inconsistent_pending`` — a retry was
+    refused because such a tombstone already exists for the run id.
     """
 
     def __init__(self, message: str, code: str, details: dict[str, object]) -> None:
@@ -253,12 +261,31 @@ def check_deletable(
         )
 
 
+def inconsistent_tombstones(capsule_dir: Path, run_id: str) -> list[Path]:
+    """Never-reaped ``<run_id>.<epoch>.<hex>.inconsistent`` tombstones for *run_id*."""
+    base = capsule_dir.parent / TOMBSTONE_DIRNAME
+    try:
+        entries = sorted(base.iterdir())
+    except OSError:
+        return []
+    found: list[Path] = []
+    for entry in entries:
+        if not entry.name.endswith(INCONSISTENT_SUFFIX):
+            continue
+        parts = entry.name[: -len(INCONSISTENT_SUFFIX)].rsplit(".", 2)
+        if len(parts) == 3 and parts[0] == run_id:
+            found.append(entry)
+    return found
+
+
 def reap_tombstones(capsule_dir: Path, *, now: float | None = None) -> int:
     """Remove residue of crashed deletes older than the grace period.
 
     Tombstones are named ``<run_id>.<epoch>.<hex>``; only the epoch in the name
     is trusted (a rename does not touch mtime), and a young one may belong to a
     live sibling worker that can still roll back, so it is left alone.
+    ``*.inconsistent`` tombstones (see :data:`INCONSISTENT_SUFFIX`) hold the only
+    copy of a capsule and are **never** reaped, whatever their age.
     Fail-open; returns the number removed.
     """
     base = capsule_dir.parent / TOMBSTONE_DIRNAME
@@ -269,6 +296,8 @@ def reap_tombstones(capsule_dir: Path, *, now: float | None = None) -> int:
     except OSError:
         return 0
     for entry in entries:
+        if entry.name.endswith(INCONSISTENT_SUFFIX):
+            continue
         try:
             epoch = float(entry.name.rsplit(".", 2)[1])
         except (IndexError, ValueError):
@@ -304,7 +333,15 @@ def execute_delete(
     2. **index rows** — runs-cache, then MetadataStore. On any failure the
        tombstone is renamed back and the runs-cache re-synced, so capsule and
        index agree again (``delete_failed``); if the rename-back itself fails
-       the error is ``delete_inconsistent`` and names the tombstone.
+       the error is ``delete_inconsistent`` and names the tombstone. To stay
+       correct if the process dies mid-failure, the tombstone is renamed to
+       ``<tombstone>.inconsistent`` (invisible to the reaper) **before** the
+       rename-back is attempted, so there is no window in which the only copy
+       is a reapable name. A crash after that leaves a safe, operator-visible
+       ``.inconsistent`` tombstone. Residual risk: if that marking rename itself
+       fails *and* the rename-back fails, the plain tombstone is reported.
+       While an ``.inconsistent`` tombstone exists for the run id, a new delete
+       is refused (``delete_inconsistent_pending``) rather than adding a second.
     3. **purge** — ``rmtree`` the tombstone. The delete has already happened
        logically; a failure leaves a hidden, unindexed residue (reported in
        :class:`DeleteOutcome`, reaped by :func:`reap_tombstones` later), never a
@@ -314,6 +351,16 @@ def execute_delete(
     were actually removed.
     """
     reap_tombstones(capsule_dir)
+    pending = inconsistent_tombstones(capsule_dir, run_id)
+    if pending:
+        raise DeleteFailedError(
+            f"refusing to delete '{run_id}': a previous delete failed and its rollback "
+            f"failed; the capsule bytes are at {pending[0]} (never reaped). Restore "
+            f"them (rename back to '{capsule_dir / run_id}') or remove that directory "
+            f"by hand, then retry",
+            code="delete_inconsistent_pending",
+            details={"stage": "pending", "tombstone": str(pending[0])},
+        )
     src = capsule_dir / run_id
     tomb_dir = capsule_dir.parent / TOMBSTONE_DIRNAME
     tomb = tomb_dir / f"{run_id}.{int(time.time())}.{secrets.token_hex(4)}"
@@ -345,15 +392,28 @@ def execute_delete(
                 with store.begin_tenant_context(tenant_id) as ctx:
                     removed_rows = int(ctx.delete_run(rid, tenant_id))
     except Exception as exc:
+        # Mark first (see "Ordering" above): the name must be un-reapable before
+        # any step that can fail leaves it as the only copy.
+        marked = tomb.with_name(tomb.name + INCONSISTENT_SUFFIX)
         try:
-            os.rename(tomb, src)
+            os.rename(tomb, marked)
+            held = marked
+        except OSError:
+            held = tomb  # marking failed; fall through to the plain rollback
+        try:
+            os.rename(held, src)
         except OSError as rb_exc:
-            logger.error("rollback of %s failed; bytes remain at %s", run_id, tomb)
+            logger.error("rollback of %s failed; bytes remain at %s", run_id, held)
             raise DeleteFailedError(
                 f"index delete failed ({exc}) and rollback failed ({rb_exc}); "
-                f"capsule bytes are at {tomb}",
+                f"capsule bytes are at {held}"
+                + (
+                    f" (never reaped; restore by renaming it back to '{src}')"
+                    if held == marked
+                    else " (NOT protected from reaping: restore it within an hour)"
+                ),
                 code="delete_inconsistent",
-                details={"stage": "rollback", "tombstone": str(tomb)},
+                details={"stage": "rollback", "tombstone": str(held)},
             ) from exc
         if conn is not None:
             try:
