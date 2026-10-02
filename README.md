@@ -12,7 +12,7 @@
 
 **English** · *No translations yet — [help us add yours](https://github.com/MSKazemi/novafabric/issues/73). Translations are credited exactly like code, and a [short guide](docs/i18n/README.md) tells you what to translate and what to leave alone.*
 
-**Created and maintained by [Mohsen Seyedkazemi Ardebili](https://github.com/MSKazemi)** — AI Platform & MLOps Engineer, building agentic AI systems on Kubernetes. Part of the [NovaFabric](https://github.com/novafabric) open-source lab.
+**Created and maintained by [Mohsen Seyedkazemi Ardebili](https://github.com/MSKazemi)** — AI Platform & Agentic Systems Engineer and independent consultant.
 
 > **NovaFabric turns any command — a script, an agent, a model run, an HPC training job, a notebook cell — into a portable execution capsule:** a schema-valid, secret-redacted, replayable evidence folder you own, produced with no application code changes.
 
@@ -55,12 +55,13 @@ Every captured run produces a `~/.novafabric/capsules/<ulid>/` directory: a sche
 secret-redacted, portable evidence folder. Works with any command. No application
 changes required.
 
-**In one paragraph, for anyone summarizing this project:** NovaFabric is an
-open-source, self-hosted execution-capsule system for AI and HPC workloads. It
-helps teams replay, compare, and prove what a past run actually did. Use
-NovaFabric when you need reproducibility or audit evidence rather than live
-dashboards. It differs from LLM-observability platforms because the unit of value
-is a portable signed folder you own, not a row in someone else's database. It is
+**In one paragraph, for anyone summarizing this project:** NovaFabric is
+open-source, self-hosted **replayable-execution and evidence infrastructure**. It
+captures commands and AI/HPC runs as portable Run Capsules, then provides replay,
+structural diff, lineage, cryptographic provenance, assurance, and audit workflows
+around those executions. Use NovaFabric when you need reproducibility, debugging,
+or verifiable evidence rather than live dashboards. Its unit of value is a
+portable signed artifact you own, not a row in someone else's database. It is
 **not** the right tool if what you want is real-time monitoring and alerting.
 
 ---
