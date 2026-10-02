@@ -221,6 +221,27 @@ schema change).
   the very hold that must block the delete. Symptom: deletion refuses with
   `legal_hold_active` and no hold is visible in `nova hold list` — repair or
   remove the damaged line before retrying.
+- **Order of checks and a runnable probe** (experimental, ADR-0206 P2): hold, then WORM, then
+  seal. The same function backs `DELETE /v0/capsules/{id}`, bulk delete and `nova serve`'s
+  `DELETE /api/runs/{id}`. Against a throwaway directory (no server needed):
+
+  ```python
+  from novafabric.server.capsule_delete import check_deletable, DeleteBlockedError
+  # base/run-1/.seal/ exists, NOVAFABRIC_ALLOW_SEALED_DELETE unset
+  try:
+      check_deletable(base, "run-1")
+  except DeleteBlockedError as e:
+      print(e.code, "|", e)
+  ```
+
+  ```text
+  sealed_capsule | Deletion blocked: 'run-1' is NovaSeal-sealed.
+  ```
+
+  With `NOVAFABRIC_ALLOW_SEALED_DELETE=1` (exactly `1`; any other value is off) the same call
+  returns without raising. **Behaviour change:** before this release a sealed capsule could be
+  deleted through these routes; it is now refused unless you opt out. The refusal `details`
+  name the env var.
 - Audit actions: `capsule_delete` (per deletion, `via: api|bulk`),
   `capsule_delete_refused` (single-delete 409s), `capsule_bulk_delete`
   (one summary per bulk request, dry runs included).

@@ -156,6 +156,53 @@ the orchestrator's capsule, alongside the orchestrator's own LLM calls.
 
 ---
 
+## Several captures in one process: scope and strict mode
+
+*Status: **works today** for thread-scope propagation (a bug fix, on by default); strict mode
+is **works today**, opt-in, default off (ADR-0224).*
+
+The capture hooks are process-global. When two captures overlap in one Python process (for
+example two framework-adapter runs on different asyncio tasks), the first owns the hooks and
+the second is a *participant*: its own events are bound to its task and filed in its own
+capsule, and the marker says `installed-contended` so a reader knows the pair overlapped.
+
+- **Threads follow their capture.** While the owner's hooks are installed, `Thread.start`
+  (including `Timer` and `Thread` subclasses) and `ThreadPoolExecutor.submit` (so `map` and
+  `run_in_executor` too) carry the scope of the capture that handed the work off. A pool item
+  runs under its submitter's scope, not the scope of whichever capture created the worker.
+  Before this fix a thread started inside a participant filed its model calls in the
+  *owner's* capsule. Not covered: threads started before the capture bound its scope, threads
+  started by native code, and pools other than `ThreadPoolExecutor`; those still fall back to
+  the owner's capsule, which is why `installed-contended` still warns.
+- **Strict mode refuses overlap instead of degrading.** If a contended capsule is worse for
+  you than no capsule, set `NOVAFABRIC_CAPTURE_STRICT=1` (or pass `strict=True` to
+  `novafabric.capture.hooks.install_all`). An overlapping capture then raises
+  `ConcurrentCaptureRefused` before anything is installed, and the framework adapters remove
+  the capsule directory they had just opened. Sequential captures are unaffected. This is the
+  one deliberate exception to capture's fail-open rule, and only when you ask for it.
+
+Output of a run against a temp directory (first capture A holds the hooks; B asks for strict):
+
+```text
+refused: ConcurrentCaptureRefused
+non-strict second capture token kind: par:
+```
+
+```python
+from novafabric.capture import hooks
+
+owner = hooks.install_all(writer=writer_a, parent_span_id="a" * 16)
+try:
+    hooks.install_all(writer=writer_b, parent_span_id="b" * 16, strict=True)
+except hooks.ConcurrentCaptureRefused:
+    ...  # run B after A finishes, or drop strict
+```
+
+The default (no flag) is unchanged: B participates, with its own scoped capsule.
+See also the [environment variable table](../cli-reference.md#environment-variables).
+
+---
+
 ## What works today vs what's coming
 
 | Topology | Capture today | What you get |

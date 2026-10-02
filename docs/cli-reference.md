@@ -1178,6 +1178,25 @@ nova diff cap-a/ cap-b/ --graph-shape
 nova diff cap-a/ cap-b/ --assert-same-shape
 ```
 
+Environment gating, as run against a temporary `NOVAFABRIC_HOME` (capsule A captured with
+`--environment production`, B with `--environment staging`):
+
+```text
+$ nova replay <A> --environment staging
+replay refused: --environment staging required, but .../<A> recorded 'production'
+$ echo $?
+2
+$ nova diff --group-by environment <A> <B>
+Environment groups (ADR-0126, recorded deployment_environment):
+  production: .../<A>
+  staging: .../<B>
+Cross-environment diff: production → staging
+$ nova diff --environment production <A> <B>      # B recorded 'staging'
+--environment production: .../<B> recorded 'staging'; both capsules must have ...
+$ echo $?
+2
+```
+
 Options:
 - `--output-format {text,json,github-annotation}` — output format (default: `text`). Tab-completion available via `nova --install-completion`.
 - `--assert-no-regressions` — exit 1 if any structural changes detected; useful as CI gate
@@ -3808,6 +3827,27 @@ evidence export` bundles: store the sidecar next to the bundle. The signing key'
 
 Every output carries the notice that NovaFabric records the receipt and does not assert the
 consent was freely given, informed, specific, lawful, or otherwise legally valid.
+
+Worked example (temporary `NOVAFABRIC_HOME`; key made with `openssl genpkey -algorithm
+ed25519 -out k.pem`, public half with `openssl pkey -in k.pem -pubout -out k.pub.pem`). The
+attestation verifies, then a withdrawal makes it **stale** (exit `3`), not invalid:
+
+```text
+$ nova consent record --capsule $RID --subject human:fp:aaaaaaaaaaaaaaaa \
+      --purpose dpv:ServiceProvision --scope dpv:Store --consent-id c1        # exit 0
+$ nova consent attest --capsule $RID --key k.pem -o att.json
+Wrote consent attestation att.json
+$ nova consent verify-attestation --capsule $RID --attestation att.json --public-key k.pub.pem
+  OK signature DSSE signature verifies against the supplied key
+  ...
+  OK receipts every attested receipt matches the capsule
+Status: ok                                                                       # exit 0
+$ nova consent withdraw --capsule $RID --consent-id c1
+$ nova consent verify-attestation --capsule $RID --attestation att.json --public-key k.pub.pem
+  STALE c1: withdrawn after attestation (at 2026-10-02T10:47:26Z)
+  STALE capsule Merkle root changed since attestation
+Status: stale                                                                    # exit 3
+```
 
 ---
 
@@ -7461,6 +7501,7 @@ failed).
 | `NOVAFABRIC_SUGGEST` | `1` | Set to `0` to disable the asset registration suggestion prompt after `nova capture`. |
 | `NOVAFABRIC_COMMUNITY_HINT` | `1` | Set to `0` to hide the one-line pointer to GitHub Discussions that `nova capture` prints after the first capsule in a directory, and that `nova --version` prints to stderr. Shown only on an interactive terminal; it is plain text, never a network call. |
 | `NOVAFABRIC_ENVIRONMENT` | — | Deployment-environment tag recorded on captured capsules as `deployment_environment` with `environment_source: env-var` (ADR-0126). Overridden by `nova capture --environment`; overrides the SDK `deployment_environment=` argument. Distinct from the `env.lock` technical environment. |
+| `NOVAFABRIC_CAPTURE_STRICT` | off | Truthy (`1`/`true`/`yes`/`on`) makes a capture that would overlap another in the same process raise `ConcurrentCaptureRefused` instead of degrading to a scoped, contended capsule (ADR-0224 OQ-2; **works today**, opt-in). Equivalent to `install_all(..., strict=True)`. See [multi-agent capture](tutorials/multi-agent-capture.md#several-captures-in-one-process-scope-and-strict-mode). |
 | `NOVAFABRIC_VARIANT` | — | ADR-0116 (**experimental**, record-only): id of the externally assigned A/B variant (arm), recorded verbatim as `variant.variant_id`. Must be set together with `NOVAFABRIC_VARIANT_EXPERIMENT` and `NOVAFABRIC_VARIANT_SOURCE` (an incomplete set warns and is ignored). Overridden by the `nova capture --experiment/--variant/--variant-source` flags; overrides the SDK `variant=` argument. |
 | `NOVAFABRIC_VARIANT_EXPERIMENT` | — | ADR-0116: experiment id recorded verbatim as `variant.experiment_id`. |
 | `NOVAFABRIC_VARIANT_SOURCE` | — | ADR-0116: the **external** system that assigned the arm (e.g. `launchdarkly`, `statsig`), recorded verbatim as `variant.assignment_source`. Never defaulted — NovaFabric never allocates variants. |

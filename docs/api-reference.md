@@ -2,7 +2,7 @@
 
 **Status:** works today (v0.98.0). Generated from the live `nova serve` FastAPI route table (`src/novafabric/serve/app.py`).
 
-The `nova serve` dashboard server exposes **207 REST endpoints**. All require a valid auth token except the unauthenticated probes `GET /api/health`, `GET /livez`, and `GET /readyz`. The multi-tenant `nova server` API is specified separately in `api/openapi.yaml`.
+The `nova serve` dashboard server exposes **207 REST endpoints** in the generated tables below, plus the 14 experimental routes in the next section that the generator has not yet been re-run for (the authorization table classifies 225 routes in all, three of them the conditional TV-5 routes). All require a valid auth token except the unauthenticated probes `GET /api/health`, `GET /livez`, and `GET /readyz`. The multi-tenant `nova server` API is specified separately in `api/openapi.yaml`.
 
 ## Authorization (ADR-0228, experimental)
 
@@ -83,6 +83,29 @@ fails on the first unclassified route, so this should never be reachable in a re
 > a WS connect. Previously this router was mounted with no auth at all; a custom TV-5 client
 > that connected without a token must now supply one.
 
+
+## Dashboards, saved views, filter bar and evidence cart (experimental)
+
+*Status: **experimental**. Hand-maintained until the generator is re-run; the authority is the
+route table in `src/novafabric/serve/authz.py`.* User-facing behaviour is in
+[dashboard.md](dashboard.md).
+
+| Method | Path | Scope | Summary |
+|---|---|---|---|
+| `GET` | `/api/filter/parse` | `read` | Parse a filter-bar string with the `nova query` DSL parser (ADR-0232). |
+| `GET` | `/api/filter/runs` | `read` | Runs matching a filter, with `scope` node, root or tree (ADR-0233); reports "N of M" and truncation. |
+| `GET` | `/api/filter/suggest` | `read` | Observed values for one filterable dimension. |
+| `GET` | `/api/views` | `read` | List `nova view` files, each with its Runs-view form or the reason it has none (ADR-0232 D4). |
+| `POST` | `/api/views` | `operate` | Save the Runs view state as a `nova view` file; audited. |
+| `DELETE` | `/api/views/{view_id}` | `operate` | Remove one saved view; audited. |
+| `GET` | `/api/dashboards` | `read` | List dashboards and widgets under `$NOVAFABRIC_HOME/dashboards`; refused files are listed with the reason (ADR-0235). |
+| `GET` | `/api/dashboards/{dashboard_id}` | `read` | One dashboard (422 with the reason if the stored file is refused). |
+| `GET` | `/api/dashboards/{dashboard_id}/export` | `read` | The stored JSON, byte for byte. |
+| `GET` | `/api/dashboard-widgets/{widget_id}/data` | `read` | Run only the query stored in the widget file; the request carries no query text (ADR-0236 `ratio()` included). |
+| `GET` | `/api/dashboard-widgets/{widget_id}/export` | `read` | The stored widget JSON, byte for byte. |
+| `POST` | `/api/dashboards/validate` | `read` | Dry run: the verdict and diff inputs; writes nothing. Body over 256 KiB is a 413. |
+| `POST` | `/api/dashboards/apply` | `operate` | Validate then store atomically; 409 if the file changed since the preview digest; refuses `builtin`, symlinked targets and bad ids; audited as `dashboard_apply`. |
+| `POST` | `/api/evidence/cart/export` | `admin` | Resolve a cart once and write one signed Evidence Bundle (ADR-0239); one export at a time (429). |
 
 ## Health & meta  (9)
 

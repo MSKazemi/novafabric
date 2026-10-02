@@ -178,6 +178,12 @@ fabricated. The OTLP ingest endpoint (`POST /api/otlp/v1/traces`) reads the pair
 its `log_level` (recorded with `log_level_source: adapter`; an `ERROR` span status still
 wins when more severe). A span event's OTel `SeverityNumber` is consumed the same way
 (TRACE collapses to `debug`, FATAL to `error`); malformed values are ignored, never guessed.
+Emit with:
+
+```bash
+nova capture --emit-otel-genai python my_agent.py
+```
+
 Standalone OTLP *logs* (`resourceLogs`) are ingested by `POST /api/otlp/v1/logs`
 (**experimental**, ADR-0293; OTLP/JSON, or OTLP/protobuf with the `otlp` extra). They are
 **not** written into any capsule — a sealed capsule is never amended — but appended to a
@@ -190,11 +196,23 @@ metadata is kept: times, severity (mapped to `log_level` exactly as above), ids,
 `NOVAFABRIC_OTLP_LOGS_STORE_BODY=1` to also keep body text and attribute values, redacted
 with the capture secret rules and truncated. Bounds: 16 MiB per request, 10 000 records per
 request, 64 MiB per stream file; records over the file cap come back as OTLP
-`partialSuccess.rejectedLogRecords`. Emit with:
+`partialSuccess.rejectedLogRecords`.
 
-```bash
-nova capture --emit-otel-genai python my_agent.py
+Example (the ingest function the route calls, run against a temporary directory; a record
+carrying a `novafabric.run_id` resource attribute lands in that run's stream, metadata only):
+
+```text
+runs/01RUNEXAMPLE00000000000001.jsonl
+{"schema": "novafabric/otlp-log-record/v0", "run_id": "01RUNEXAMPLE00000000000001",
+ "service_name": "agent-svc", "severity_number": 17, "log_level": "error",
+ "time": "2026-09-21T14:13:20.000000Z", "attribute_keys": [],
+ "body": {"type": "string", "bytes": 17, "sha256": "b84afc0d..."}, ...}
 ```
+
+The body text itself is absent (only its length and SHA-256) until you set
+`NOVAFABRIC_OTLP_LOGS_STORE_BODY=1`. Operator settings are in the
+[operator guide](operator-guide.md#capture); the route is in the
+[API reference](api-reference.md).
 
 **Secrets are redacted before the capsule is finalized.** A secret scanner
 rewrites matches in place as `[REDACTED:rule-id]` and writes
@@ -1007,10 +1025,15 @@ evidence.zip
 > v1.0 schema freeze.**
 >
 > The **NovaSeal** in-process signing core is implemented and tested: DSSE
-> signing (ECDSA P-256), a best-effort
-> [RFC 3161](https://www.rfc-editor.org/rfc/rfc3161) trusted timestamp, and an
+> signing (ECDSA P-256), an **opt-in**
+> [RFC 3161](https://www.rfc-editor.org/rfc/rfc3161) trusted timestamp (since v0.103,
+> ADR-0292: with no `tsa_url` in `novaseal.yaml` no timestamp is requested and no network
+> call is made — earlier releases silently defaulted to FreeTSA), and an
 > append-only SQLite Merkle log, verified by `nova verify <capsule>` — which
-> reports `signature_ok`, `timestamp_ok`, and `log_integrity_ok`. Sealing is
+> reports `signature_ok`, `timestamp_ok`, and `log_integrity_ok`. Verification is
+> self-contained: new seals carry their Merkle inclusion proof, so an auditor needs only the
+> capsule — no `novaseal.yaml` and no copy of your log; a check that cannot run prints
+> `NOT CHECKED` / `NOT PRESENT` and does not fail the command. Sealing is
 > opt-in via `~/.novafabric/novaseal.yaml`; maker-checker seal flows are
 > `nova seal propose / approve / verify` (ADR-0059). See the
 > [NovaSeal configuration guide](novaseal-configuration.md) and the
@@ -1520,7 +1543,7 @@ Two watcher backends: `PollingBackend` (default, zero extra deps) and
 `WatchdogBackend` (`pip install novafabric[watch]`; uses inotify/FSEvents).
 Override with `NOVA_WATCHER_BACKEND=watchdog` and `NOVA_WATCHER_INTERVAL=<seconds>`.
 
-**Navigating.** The 29 tabs are grouped in the sidebar under seven headings:
+**Navigating.** The 30 tabs are grouped in the sidebar under seven headings:
 Overview · Runs & Debug · Govern & Promote · Provenance & Trust · Compliance ·
 Platform · Reports & Export. Since v0.98.3 the groups **start collapsed**, each
 showing its tab count — click a heading to expand it. The group holding the
@@ -1548,6 +1571,16 @@ unchanged.)
 - **Commands tab** — live command builders across journey tracks with copy buttons.
 - **Home tab** — staleness indicator (amber border on resume cards > 24 h).
 - **Capture tab** — recent capsules panel with "Open folder" links for local paths.
+- **Runs filter bar and saved views** *(experimental)* — `status:error -model:gpt-4o` filters are
+  `nova query --where` predicates, with a node / root / tree scope; "save current as" writes a
+  `nova view` file that `nova view run` can re-run. Honest aggregates say "no value" and
+  refuse rather than show `$0.00` for an unpriced model. See
+  [dashboard.md](dashboard.md#filter-bar-experimental-unreleased--adr-0232-d1d3-adr-0233).
+- **Evidence cart** *(experimental, `admin` scope)* — collect runs, then export them as one signed
+  Evidence Bundle. See [dashboard.md](dashboard.md#evidence-cart-experimental-unreleased--adr-0239).
+- **Dashboards tab** *(experimental, `g 4`)* — render, validate and save ADR-0235 widget and
+  dashboard JSON files (the same files `nova dashboard` manages). See
+  [dashboard.md](dashboard.md#dashboards-view-experimental--adr-0235--adr-0236).
 
 > The dashboard also surfaces a component-status view covering the
 > cluster-scale subsystems (NovaSeal, collector, object store, metadata DB,

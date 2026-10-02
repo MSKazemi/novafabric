@@ -1041,6 +1041,7 @@ request.
 |---|---|---|
 | `NOVAFABRIC_SERVER_BULK_MAX_ITEMS` | `100` | Cap on items per bulk request |
 | `NOVAFABRIC_SERVER_PAGINATION_LEGACY_OFFSET_CURSORS` | `true` | Keep accepting legacy offset cursors alongside the current form |
+| `NOVAFABRIC_ALLOW_SEALED_DELETE` | off | Experimental (ADR-0206 P2): exactly `1` lets `DELETE /v0/capsules/{id}`, bulk delete and `nova serve`'s `DELETE /api/runs/{id}` remove a NovaSeal-sealed capsule instead of refusing with 409 `sealed_capsule`; never overrides a legal hold or WORM lock. Refusals and removals are audited (`run.index_delete_refused`, `run.index_delete`) |
 | `NOVA_SERVE_MAX_FILE_BYTES` | `5000000` | `nova serve` per-file read cap |
 
 ### Object store and paths
@@ -1065,6 +1066,7 @@ request.
 |---|---|---|
 | `NOVAFABRIC_CAPTURE_SOCKET` | — | Capture daemon socket path override |
 | `NOVAFABRIC_FAST_EMIT` | off unless `1` | Fast-emit mode inside the captured process |
+| `NOVAFABRIC_CAPTURE_STRICT` | off | Truthy (`1`/`true`/`yes`/`on`): refuse a capture that would overlap another in the same process (`ConcurrentCaptureRefused`) instead of producing a contended capsule (ADR-0224 OQ-2, works today, opt-in) |
 | `NOVAFABRIC_OTLP_LOG_DIR` | `$NOVAFABRIC_HOME/otlp-logs` | Experimental (ADR-0293): sidecar store for `POST /api/otlp/v1/logs`; outside every capsule, not sealed evidence — back it up separately |
 | `NOVAFABRIC_OTLP_LOGS_STORE_BODY` | off | Experimental: also store OTLP log body text and attribute values (secret-redacted, truncated); default stores metadata and a body SHA-256 only |
 
@@ -1083,9 +1085,12 @@ request.
 ## 5b. NovaSeal configuration (cryptographic signing)
 
 NovaSeal is the sealing layer beneath the Evidence Bundle: it signs a capsule with
-an **ECDSA P-256** DSSE signature, timestamps it via **RFC 3161**, and records an
-inclusion proof in an append-only **Merkle log**. `nova verify` checks all three
-layers and exits `0` only if the capsule is unmodified since signing. This is what
+an **ECDSA P-256** DSSE signature, optionally timestamps it via **RFC 3161** (opt-in:
+set `tsa_url`, there is no default TSA, ADR-0292), and records an
+inclusion proof in an append-only **Merkle log** (the proof is also carried in the capsule's
+`log-entry.json`, so `nova verify` works on an auditor's machine with no config and no log).
+`nova verify` checks every layer present and exits `0` only if the capsule is unmodified
+since signing; a layer that was not requested prints `NOT PRESENT` rather than failing. This is what
 turns "here is a capsule" into "here is a capsule I can prove was not tampered with."
 
 NovaSeal is **opt-in** — if `~/.novafabric/novaseal.yaml` (or the

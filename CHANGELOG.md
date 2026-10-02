@@ -13,6 +13,16 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Documentation
 
+- **User docs catch up with the last two days of features.** The Dashboards tab (`g 4`), Runs
+  saved views as `nova view` files, filter-bar and evidence-cart routes
+  ([dashboard.md](docs/dashboard.md), [API reference](docs/api-reference.md), which now lists
+  the 14 previously unlisted routes); strict capture and thread-scope propagation
+  ([multi-agent capture](docs/tutorials/multi-agent-capture.md)); worked, run-and-pasted examples
+  for `nova replay|diff --environment`, `nova consent attest|verify-attestation` (exit codes
+  0/1/3) and OTLP log ingest; the sealed-delete probe; and `NOVAFABRIC_CAPTURE_STRICT` /
+  `NOVAFABRIC_ALLOW_SEALED_DELETE` in the environment-variable tables. The dashboard tab count
+  is 30, not 29.
+
 - **Architecture, as built: four server-side pages with step-by-step animated diagrams.**
   New pages in `docs/architecture/` cover [OTLP ingest](docs/architecture/otlp-ingest.md)
   (traces into a new capsule, logs into the append-only sidecar, sealed capsules never
@@ -353,6 +363,14 @@ longer forwards the submitting shell's environment (ADR-0270).
   `novaseal.yaml`. Configs that already set `tsa_url` or `tsa_urls` are unaffected.
   Capsules sealed earlier verify unchanged. `nova export-evidence --timestamp` is
   unchanged: it is an explicit per-command opt-in and prints the TSA it contacts.
+
+- **Behaviour change — deleting a NovaSeal-sealed capsule is now refused (ADR-0206 P2).**
+  `DELETE /v0/capsules/{id}`, `POST /v0/capsules/bulk-delete` and `nova serve`'s
+  `DELETE /api/runs/{id}` used to remove a capsule that carried a `.seal/` directory; they now
+  answer 409 `sealed_capsule` (per-item refusal in bulk) and append `run.index_delete_refused`
+  to the audit log. **Migration:** to keep the old behaviour set `NOVAFABRIC_ALLOW_SEALED_DELETE=1`
+  on the server; this never overrides a legal hold or an unexpired WORM lock. See the
+  [server admin guide](docs/ops/server-admin-guide.md).
 
 - **Dashboard accessibility and theme polish.** Every tab's loading state is now a polite
   status region and every error box an alert, so screen readers announce both. Warning and

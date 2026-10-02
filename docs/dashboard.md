@@ -10,7 +10,7 @@ The dashboard is an **opt-in local-only HTTP server** (`nova serve --experimenta
 
 ## Dashboard tabs (complete inventory)
 
-The dashboard ships **29 tabs** in **7 balanced workflow groups** (Overview, Runs & Debug, Govern & Promote, Provenance & Trust, Compliance, Platform, Reports & Export). Every tab has a stable two-key navigation shortcut — press `g` then the tab's key (shown on hover and in the `?` overlay). **Since v0.98.3 the sidebar groups start collapsed** (each showing its tab count); the group containing the active tab is always expanded, and manual expand/collapse persists per browser in `novafabric.sidebar-groups`. Below **1024px** the sidebar auto-collapses to the icon rail (v0.97.0); expanding it explicitly wins for the rest of the session. (Source of truth:
+The dashboard ships **30 tabs** in **7 balanced workflow groups** (Overview, Runs & Debug, Govern & Promote, Provenance & Trust, Compliance, Platform, Reports & Export). Every tab has a stable two-key navigation shortcut — press `g` then the tab's key (shown on hover and in the `?` overlay). **Since v0.98.3 the sidebar groups start collapsed** (each showing its tab count); the group containing the active tab is always expanded, and manual expand/collapse persists per browser in `novafabric.sidebar-groups`. Below **1024px** the sidebar auto-collapses to the icon rail (v0.97.0); expanding it explicitly wins for the rest of the session. (Source of truth:
 `web/src/components/dashboard/Sidebar.tsx`; verified by count against
 `NAV_GROUPS` in that file.)
 
@@ -71,11 +71,54 @@ status:error asset:"my agent"     # terms are ANDed; quote values with spaces
   capsule that could not be read is listed as a reason the result may be incomplete.
 - While a filter is applied it owns the list: free-text search and the status chips are
   disabled (use `status:` in the bar). The date window still applies.
-- Saved views now include the filter and scope. They are still stored in your browser;
-  saving a view as a NovaFabric saved view (`nova view`, ADR-0232 D4) is **planned**.
+- **Saved views are `nova view` files** (ADR-0232 D4, experimental). "Save current as" writes
+  an ADR-0130 view that `nova view show` and `nova view run` read, into the same directory
+  (`$NOVAFABRIC_VIEWS_DIR` or `./.novafabric/views`), through the same fail-closed parser;
+  there is no second store. What is saved: the filter bar's predicates (the status chip
+  becomes a `status` predicate), the scope and the date window; sort is an advisory display
+  preference. **Free-text search is not saved**, because `nova query` cannot express it, and
+  the bar says so. A view saved from the CLI is offered back when the bar can express it, and
+  listed disabled with the reason when it cannot (an `IN` or comparison predicate); it is
+  never approximated. If the server routes are unavailable the bar falls back to
+  browser-local views and says so. Verify from the CLI: `nova view show <id>`,
+  `nova view run <id>`.
 
 API (all `read` scope, token required): `GET /api/filter/parse?f=`,
 `GET /api/filter/runs?f=&scope=&since=&until=&limit=`, `GET /api/filter/suggest?dimension=&since=`.
+Saved views: `GET /api/views` (`read`), `POST /api/views` and `DELETE /api/views/{view_id}`
+(`operate`, audited).
+
+### Dashboards view *(experimental — ADR-0235 / ADR-0236)*
+
+Sidebar group **Overview**, key `g` then `4` (deep link `?tab=dashboards`). It lists the
+dashboards and widgets under `$NOVAFABRIC_HOME/dashboards` and renders every schema chart type
+(`line`, `bar`, `area`, `table`, `stat`). The files are the storage; there is no database of
+user dashboards. The same files are managed from the CLI with `nova dashboard
+list|validate|apply|show|export` ([CLI reference](cli-reference.md#nova-dashboard)).
+
+- **Refusals are visible.** A file the validator refuses is listed by name with the
+  validator's reason, so one bad paste cannot blank the page. A dashboard that references a
+  missing or refused widget still shows that panel, says why, and is flagged incomplete.
+- **Absent is not zero** (ADR-0234 D2). An undefined value reads "no value" and charts draw
+  it as a gap; a measured `0` stays `0`. A `ratio()` (ADR-0236) is always shown with its
+  numerator and denominator, and an undefined one says why (zero denominator, absent operand).
+- **Export** each widget or dashboard as its stored JSON, byte for byte, so unknown fields
+  survive.
+- **Add or edit one document** (paste or upload JSON, or a guided widget form). **Validate**
+  is a dry run (`POST /api/dashboards/validate`, `read` scope, writes nothing): the server's
+  own verdict, from the same loaders `nova dashboard validate|apply` use, so the UI cannot
+  accept what the CLI refuses. An accepted document is previewed as a diff against the stored
+  bytes; **Save** (`POST /api/dashboards/apply`, `operate` scope, audited as
+  `dashboard_apply`) stores exactly the previewed bytes, atomically. It refuses an id outside
+  the path pattern, a symlinked target, a `builtin` document, and a body over 256 KiB (413).
+  Saving sends the digest of the file the preview showed, so a file changed meanwhile is a 409
+  rather than a silent overwrite.
+- **Not built:** deleting from the UI, forking a `builtin` document on first edit, and
+  bulk directory installs (use `nova dashboard apply <dir>`).
+
+Read routes (`read` scope): `GET /api/dashboards`, `/api/dashboards/{id}`,
+`/api/dashboards/{id}/export`, `/api/dashboard-widgets/{id}/data` (runs only the query stored
+in the widget file; the request carries no query text) and `/api/dashboard-widgets/{id}/export`.
 
 ### Capsule explorer *(experimental, Unreleased)*
 
@@ -177,6 +220,7 @@ bars to filter (ADR-0234 D1 navigation) is **planned**.
 | Risk | Govern & Promote | v0.55.0 | OWASP LLM assurance (`assure`), secret scan, failure attribution (`diagnose`), risk-tier classify, MCP scan |
 | Lineage | Provenance & Trust | v0.7 | Provenance / blast-radius / replay-chain DAG, interactive query, OpenLineage/PROV export |
 | KG | Provenance & Trust | v0.17.0 | Capsule knowledge graph: query, audit, entity queue, alias mgmt, ingest |
+| Dashboards | Overview | Unreleased (experimental) | Portable ADR-0235 dashboards and widgets from `$NOVAFABRIC_HOME/dashboards`, `ratio()` (ADR-0236), validate-and-save editor; `g 4` (see [Dashboards view](#dashboards-view-experimental--adr-0235--adr-0236)) |
 | Cost | Overview | v0.17.0 | Cost report, pricing, burn analysis (ClickHouse-backed); **v0.64.0:** cost-analytics tools trio — attribution / fairness / usage-breakdown (`/api/cost/{attribute,fairness,usage-breakdown}`, P6) |
 | Schema | Compliance | v0.17.0 | Schema registry (JSON Schema + proto3) |
 | Evidence | Provenance & Trust | v0.9 | Bundle list, DSSE/TSR/Merkle verification, download, in-browser ed25519 verify |
