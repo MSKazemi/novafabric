@@ -62,7 +62,7 @@ weight is, not a quality signal.
 | `capture/` | The capture orchestrator, hook installation, and the event recorder. **The hot path** — changes here need benchmarks. |
 | `runners/` | Where the captured workload actually executes: local process, container, SLURM, Kubernetes. |
 | `proxy/` | Transparent HTTP proxies for providers that cannot be hooked in-process. |
-| `adapters/` | Framework integrations (LangChain, LangGraph, OpenAI Agents SDK, A2A, MCP, and others). Adding one is a good first contribution. |
+| `adapters/` | Framework/integration adapters including LangGraph, AutoGen, CrewAI, DSPy, OpenAI Agents, Google ADK, Bedrock AgentCore, A2A, LlamaIndex, Pydantic AI, Haystack, Git, Langfuse, and MLflow. MCP capture lives under the capture/proxy paths rather than this adapter directory. |
 | `capsule/` | Capsule construction, validation, parent/child relationships. |
 | `spec/`, `registry/` | Asset Spec models and the local asset registry. |
 | `masking/`, `pii/` | Redaction pipeline and pluggable maskers. |
