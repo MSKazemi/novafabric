@@ -17,11 +17,12 @@
  */
 import { useEffect, useState, type ReactNode } from 'react';
 import { api } from '../../../lib/api';
-import type { DashboardSummary, WidgetSummary } from '../../../lib/dashboardTypes';
+import type { DashboardSummary, InvalidDashboardFile, WidgetSummary } from '../../../lib/dashboardTypes';
 import { useQuery } from '../../../lib/useQuery';
 import { useToast } from '../../../lib/ToastContext';
 import Badge from '../../ui/primitives/Badge';
 import Button from '../../ui/primitives/Button';
+import Icon from '../../ui/primitives/Icon';
 import EmptyState from '../../ui/EmptyState';
 import { SkeletonRows } from '../../ui/Skeleton';
 import { ErrorBox, Loading } from '../helpers';
@@ -63,6 +64,26 @@ function NavButton({
       </span>
       <span className="block text-2xs font-mono text-[var(--color-text-faint)] truncate">{meta}</span>
     </button>
+  );
+}
+
+function RefusedFiles({ files }: { files: InvalidDashboardFile[] }) {
+  if (files.length === 0) return null;
+  return (
+    <div role="status" aria-label="Refused files" data-testid="invalid-files">
+      <h3 className={sectionLabel}>Refused files ({files.length})</h3>
+      <ul className="space-y-1">
+        {files.map((f) => (
+          <li key={f.file} className="rounded border border-[color-mix(in_oklab,var(--color-status-failure)_30%,transparent)] bg-[var(--color-danger-tint)] px-2 py-1.5">
+            <span className="flex items-center gap-1.5">
+              <Badge tone="danger" dot>refused</Badge>
+              <span className="text-xs font-mono text-[var(--color-text)] truncate">{f.file}</span>
+            </span>
+            <span className="block mt-0.5 text-2xs font-mono text-[var(--color-text-muted)] break-words">{f.error}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -231,6 +252,49 @@ export default function DashboardsView({ refreshTick: externalTick = 0 }: { refr
   const { dashboards, widgets, invalid_files: invalid } = data;
   const nothing = dashboards.length === 0 && widgets.length === 0;
 
+  if (nothing) {
+    return (
+      <div className="mx-auto w-full max-w-xl space-y-4">
+        <section aria-labelledby="dashboards-empty-title" data-testid="dashboards-empty">
+          <EmptyState
+            variant="fill"
+            className="rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-bg-sunken)] py-12"
+            icon={<Icon name="dashboards" />}
+            message={
+              <span id="dashboards-empty-title" className="font-medium text-[var(--color-text)]">
+                {invalid.length > 0 ? 'No dashboard or widget file passed validation.' : 'No dashboards or widgets installed yet.'}
+              </span>
+            }
+            hint={
+              <>
+                Widgets and dashboards are portable JSON files under{' '}
+                <code className="font-mono">$NOVAFABRIC_HOME/dashboards</code>. Add one here, or install files from the CLI with{' '}
+                <code className="px-1.5 py-0.5 rounded bg-[var(--color-bg-raised)] font-mono text-[var(--color-text)] break-all">
+                  nova dashboard apply ./my.widget.json
+                </code>
+                .
+              </>
+            }
+            action={
+              <Button variant="primary" onClick={() => void openEditor()} aria-haspopup="dialog">
+                Add or import…
+              </Button>
+            }
+          />
+        </section>
+        <RefusedFiles files={invalid} />
+        {editor && (
+          <DashboardEditor
+            key={editor.initialText}
+            initialText={editor.initialText}
+            onClose={() => setEditor(null)}
+            onSaved={() => setWrites((n) => n + 1)}
+          />
+        )}
+      </div>
+    );
+  }
+
   const dashMeta = (d: DashboardSummary) => {
     const bad = d.unresolved_widgets.length + d.invalid_widgets.length;
     return `${d.id} · ${d.widget_count} widget${d.widget_count === 1 ? '' : 's'}${bad ? ` · ${bad} unavailable` : ''}`;
@@ -283,37 +347,11 @@ export default function DashboardsView({ refreshTick: externalTick = 0 }: { refr
             </ul>
           </div>
         )}
-        {invalid.length > 0 && (
-          <div role="status" aria-label="Refused files" data-testid="invalid-files">
-            <h3 className={sectionLabel}>Refused files ({invalid.length})</h3>
-            <ul className="space-y-1">
-              {invalid.map((f) => (
-                <li key={f.file} className="rounded border border-[color-mix(in_oklab,var(--color-status-failure)_30%,transparent)] bg-[var(--color-danger-tint)] px-2 py-1.5">
-                  <span className="flex items-center gap-1.5">
-                    <Badge tone="danger" dot>refused</Badge>
-                    <span className="text-xs font-mono text-[var(--color-text)] truncate">{f.file}</span>
-                  </span>
-                  <span className="block mt-0.5 text-2xs font-mono text-[var(--color-text-muted)] break-words">{f.error}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        <RefusedFiles files={invalid} />
       </nav>
 
       <div className="min-w-0">
-        {nothing ? (
-          <EmptyState
-            message={invalid.length > 0 ? 'No dashboard or widget file passed validation.' : 'No dashboards or widgets installed yet.'}
-            hint={
-              <>
-                Widgets are portable JSON files under <code className="font-mono">$NOVAFABRIC_HOME/dashboards</code>.
-                Add one with &ldquo;Add or import&rdquo;, or install a file with{' '}
-                <code className="font-mono">nova dashboard apply ./my.widget.json</code>.
-              </>
-            }
-          />
-        ) : selection?.kind === 'dashboard' ? (
+        {selection?.kind === 'dashboard' ? (
           <DashboardDetail key={selection.id} id={selection.id} refreshTick={refreshTick} onEdit={(k, i) => void openEditor(k, i)} />
         ) : selection?.kind === 'widget' ? (
           (() => {

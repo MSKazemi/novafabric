@@ -12,12 +12,22 @@
  * - after a write the lists refresh; the guided form composes JSON text only;
  * - keyboard: tabs are a roving tablist, Ctrl+Enter validates, Esc closes.
  */
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { configure, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToastProvider } from '@/lib/ToastContext';
 import type { DashboardValidateResponse } from '@/lib/dashboardTypes';
 import { EMPTY_WIDGET_FIELDS, composeWidgetText, lineDiff } from '@/components/dashboard/dashboards/editorModel';
+
+// Opening a dashboard is three serial async hops (list -> detail -> widget data),
+// each a mock round trip plus a React commit. The library default of 1000 ms for
+// the WHOLE chain is a flake under CPU load; findBy*/waitFor return the moment
+// the element exists, so a generous ceiling costs nothing when healthy.
+const DEFAULT_ASYNC_TIMEOUT = 1000;
+// The per-test ceiling (default 5 s) must outlast the async one under heavy load.
+vi.setConfig({ testTimeout: 15000 });
+beforeAll(() => configure({ asyncUtilTimeout: 4000 }));
+afterAll(() => configure({ asyncUtilTimeout: DEFAULT_ASYNC_TIMEOUT }));
 
 const mocks = vi.hoisted(() => {
   class ServeApiError extends Error {

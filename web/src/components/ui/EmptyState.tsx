@@ -5,6 +5,8 @@ interface EmptyStateProps {
   hint?: ReactNode;
   cliCommand?: string;
   icon?: ReactNode;
+  /** Call to action rendered under the hint (e.g. a Button). */
+  action?: ReactNode;
   variant?: 'bordered' | 'fill' | 'inline';
   className?: string;
 }
@@ -14,6 +16,7 @@ export default function EmptyState({
   hint,
   cliCommand,
   icon,
+  action,
   variant = 'bordered',
   className = '',
 }: EmptyStateProps) {
@@ -43,6 +46,7 @@ export default function EmptyState({
       {resolvedHint && (
         <p className="mt-2 text-xs text-[var(--color-text-faint)]">{resolvedHint}</p>
       )}
+      {action && <div className="mt-4 flex justify-center">{action}</div>}
     </>
   );
 

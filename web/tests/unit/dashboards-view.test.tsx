@@ -11,9 +11,9 @@
  * - a 422 from the data endpoint is a refusal (no Retry), other failures are errors;
  * - Download fetches the verbatim file and names it after the id.
  */
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { configure, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToastProvider } from '@/lib/ToastContext';
 import type {
   DashboardDetailResponse,
@@ -29,6 +29,16 @@ import {
   spanOf,
   toNumber,
 } from '@/components/dashboard/dashboards/model';
+
+// Opening a dashboard is three serial async hops (list -> detail -> widget data),
+// each a mock round trip plus a React commit. The library default of 1000 ms for
+// the WHOLE chain is a flake under CPU load; findBy*/waitFor return the moment
+// the element exists, so a generous ceiling costs nothing when healthy.
+const DEFAULT_ASYNC_TIMEOUT = 1000;
+// The per-test ceiling (default 5 s) must outlast the async one under heavy load.
+vi.setConfig({ testTimeout: 15000 });
+beforeAll(() => configure({ asyncUtilTimeout: 4000 }));
+afterAll(() => configure({ asyncUtilTimeout: DEFAULT_ASYNC_TIMEOUT }));
 
 const mocks = vi.hoisted(() => {
   class ServeApiError extends Error {
@@ -253,6 +263,18 @@ describe('DashboardsView', () => {
     expect(screen.getByRole('table')).toBeInTheDocument();
   });
 
+  it('still reaches the chart control when every load is slow (serial hops, not one 1 s budget)', async () => {
+    const slow = <T,>(v: T) => () => new Promise<T>((r) => setTimeout(() => r(v), 450));
+    mocks.listDashboards.mockReset().mockImplementation(slow(LIST));
+    mocks.getDashboard.mockReset().mockImplementation(slow(DETAIL));
+    mocks.getWidgetData.mockReset().mockImplementation(
+      slow(widgetData({ widget: { ...widgetData().widget, chart: 'line', presentation: { chart: 'line' } } })),
+    );
+    renderView();
+    // 3 x 450 ms > the 1000 ms library default: only passes with the extended ceiling.
+    expect(await screen.findByRole('button', { name: 'Show as table' })).toBeInTheDocument();
+  }, 8000);
+
   it('says an empty result is no data, not zero', async () => {
     mocks.getWidgetData.mockResolvedValue(widgetData({ rows: [], row_count: 0 }));
     renderView();
@@ -299,11 +321,38 @@ describe('DashboardsView', () => {
     expect(mocks.getWidgetData).toHaveBeenCalledWith('cost-rate');
   });
 
-  it('empty store explains how to install a widget', async () => {
-    mocks.listDashboards.mockResolvedValue({ dashboards: [], widgets: [], invalid_files: [], cli_equivalent: 'nova dashboard list' });
-    renderView();
-    expect(await screen.findByText('No dashboards or widgets installed yet.')).toBeInTheDocument();
-    expect(screen.getByText(/nova dashboard apply/)).toBeInTheDocument();
+  describe('empty store', () => {
+    const EMPTY: DashboardListResponse = { dashboards: [], widgets: [], invalid_files: [], cli_equivalent: 'nova dashboard list' };
+
+    it('is one centered, labelled region with the CLI hint and an add action', async () => {
+      mocks.listDashboards.mockResolvedValue(EMPTY);
+      renderView();
+      const region = await screen.findByRole('region', { name: 'No dashboards or widgets installed yet.' });
+      expect(region).toHaveTextContent('nova dashboard apply ./my.widget.json');
+      expect(within(region).getByRole('button', { name: /Add or import/ })).toBeInTheDocument();
+      // No empty sidebar column: the list navigation and the 2-column grid are gone.
+      expect(screen.queryByRole('navigation', { name: 'Dashboards and widgets' })).toBeNull();
+      expect(region.parentElement).toHaveClass('mx-auto');
+      expect(region.parentElement?.parentElement?.className ?? '').not.toMatch(/grid-cols-\[16rem/);
+    });
+
+    it('opens the editor from the call to action, by keyboard', async () => {
+      const user = userEvent.setup();
+      mocks.listDashboards.mockResolvedValue(EMPTY);
+      renderView();
+      const add = await screen.findByRole('button', { name: /Add or import/ });
+      expect(add).toHaveAttribute('aria-haspopup', 'dialog');
+      add.focus();
+      await user.keyboard('{Enter}');
+      expect(await screen.findByRole('dialog', { name: /Add or edit a dashboard/ })).toBeInTheDocument();
+    });
+
+    it('when only refused files exist, says so and still lists them with their reason', async () => {
+      mocks.listDashboards.mockResolvedValue({ ...EMPTY, invalid_files: LIST.invalid_files });
+      renderView();
+      expect(await screen.findByRole('region', { name: 'No dashboard or widget file passed validation.' })).toBeInTheDocument();
+      expect(screen.getByTestId('invalid-files')).toHaveTextContent('DSL rejects');
+    });
   });
 
   it('the tab renders inside the shared shell', async () => {
