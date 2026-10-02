@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 500" width="980" height="500" role="img" aria-labelledby="t d">
+<title id="t">NovaSeal: how a capsule is sealed and verified</title>
+<desc id="d">Top row: every capsule file except .seal/ and capsule.yaml is hashed with SHA-256 into evidence_digests inside capsule.yaml; the manifest is serialised as canonical JSON, whose SHA-256 is the capsule_id, and signed into a DSSE envelope (.seal/manifest.dsse) with ECDSA P-256 or Ed25519. From the envelope, an RFC 3161 timestamp token is requested if a TSA is configured (opt-in, no default) and an entry is appended to a domain-separated SHA-256 Merkle log (.seal/log-entry.json, root kept in a local log database). The redaction proof is one of the digested files. Bottom: nova verify checks the DSSE signature, the timestamp token, Merkle inclusion, that capsule.yaml equals the signed payload, and every per-file digest, exiting 0 only when all pass.</desc>
+<style>
+svg{--bg:#111114;--card:#1c1c22;--card2:#24242c;--stroke:#3a3a44;--fg:#ececf1;--muted:#a8a8b3;--line:#6b6b78;--cap:#7dd3fc;--seal:#c4b5fd;--rep:#5eead4;--diff:#fcd34d;--aud:#c4f0a8;--warn:#fda4af}
+@media (prefers-color-scheme:light){svg{--bg:#fafaf9;--card:#ffffff;--card2:#f1f1f3;--stroke:#d4d4d8;--fg:#18181b;--muted:#52525b;--line:#a1a1aa;--cap:#0369a1;--seal:#6d28d9;--rep:#0f766e;--diff:#a16207;--aud:#3f6212;--warn:#be123c}}
+.bg{fill:var(--bg)}
+.card{fill:var(--card);stroke:var(--stroke);stroke-width:1.2}
+.card2{fill:var(--card2);stroke:var(--stroke);stroke-width:1}
+text{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;fill:var(--fg)}
+.mono{font-family:ui-monospace,'JetBrains Mono','DejaVu Sans Mono',Menlo,monospace}
+.h{font-size:15px;font-weight:650}
+.t{font-size:12.5px}
+.s{font-size:11px;fill:var(--muted)}
+.title{font-size:17px;font-weight:700}
+.wire{fill:none;stroke:var(--line);stroke-width:1.6}
+.flow{fill:none;stroke-width:2;stroke-dasharray:6 8;animation:flow 1.6s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-28}}
+.c-cap{stroke:var(--cap)}.f-cap{fill:var(--cap)}
+.c-seal{stroke:var(--seal)}.f-seal{fill:var(--seal)}
+.c-rep{stroke:var(--rep)}.f-rep{fill:var(--rep)}
+.c-diff{stroke:var(--diff)}.f-diff{fill:var(--diff)}
+.c-aud{stroke:var(--aud)}.f-aud{fill:var(--aud)}
+.c-warn{stroke:var(--warn)}.f-warn{fill:var(--warn)}
+.c-muted{stroke:var(--line)}.f-muted{fill:var(--muted)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}.motion{display:none}.flow{stroke-dasharray:none}}
+@keyframes ring{0%{opacity:0}4%{opacity:1}16%{opacity:1}22%{opacity:0}100%{opacity:0}}
+.ring0{opacity:0;animation:ring 12.0s ease-in-out 0.00s infinite}
+.ring1{opacity:0;animation:ring 12.0s ease-in-out 2.00s infinite}
+.ring2{opacity:0;animation:ring 12.0s ease-in-out 4.00s infinite}
+.ring3{opacity:0;animation:ring 12.0s ease-in-out 6.00s infinite}
+.ring4{opacity:0;animation:ring 12.0s ease-in-out 8.00s infinite}
+.ring5{opacity:0;animation:ring 12.0s ease-in-out 10.00s infinite}
+@media (prefers-reduced-motion:reduce){[class^=ring]{opacity:0}}
+@keyframes tick{0%,8%{opacity:.25}14%,100%{opacity:1}}
+.tk0{animation:tick 12s linear 4.0s infinite}
+.tk1{animation:tick 12s linear 4.6s infinite}
+.tk2{animation:tick 12s linear 5.2s infinite}
+.tk3{animation:tick 12s linear 5.8s infinite}
+.tk4{animation:tick 12s linear 6.4s infinite}
+</style>
+<rect class="bg" x="0" y="0" width="980" height="500" rx="14"/>
+<text class="title" x="22" y="38" text-anchor="start">Seal and verify</text>
+<text class="s" x="22" y="58" text-anchor="start">Sealing runs at the end of nova capture when NovaSeal is configured; nova verify replays the checks</text>
+<rect class="ring0 c-cap" x="18" y="88" width="222" height="96" rx="13" fill="none" stroke-width="2.5"/>
+<rect class="card" x="22" y="92" width="214" height="88" rx="10"/><rect class="f-cap" x="22" y="92" width="214" height="4" rx="2"/>
+<text class="h" x="36" y="122" text-anchor="start">Capsule files</text>
+<text class="t" x="36" y="144" text-anchor="start">every file except</text>
+<text class="s mono" x="36" y="164" text-anchor="start">.seal/ and capsule.yaml</text>
+<rect class="ring1 c-seal" x="260" y="88" width="222" height="96" rx="13" fill="none" stroke-width="2.5"/>
+<rect class="card" x="264" y="92" width="214" height="88" rx="10"/><rect class="f-seal" x="264" y="92" width="214" height="4" rx="2"/>
+<text class="h" x="278" y="122" text-anchor="start">evidence_digests</text>
+<text class="t" x="278" y="144" text-anchor="start">SHA-256 + size per file</text>
+<text class="s mono" x="278" y="164" text-anchor="start">written into capsule.yaml</text>
+<path class="wire" d="M238.0 136.0 L255.0 136.0"/><path class="f-muted" d="M262.0 136.0 L255.0 140.0 L255.0 132.0z"/>
+<rect class="ring2 c-seal" x="502" y="88" width="222" height="96" rx="13" fill="none" stroke-width="2.5"/>
+<rect class="card" x="506" y="92" width="214" height="88" rx="10"/><rect class="f-seal" x="506" y="92" width="214" height="4" rx="2"/>
+<text class="h" x="520" y="122" text-anchor="start">Canonical manifest</text>
+<text class="t" x="520" y="144" text-anchor="start">sorted-key compact JSON</text>
+<text class="s mono" x="520" y="164" text-anchor="start">capsule_id = SHA-256</text>
+<path class="wire" d="M480.0 136.0 L497.0 136.0"/><path class="f-muted" d="M504.0 136.0 L497.0 140.0 L497.0 132.0z"/>
+<rect class="ring3 c-seal" x="744" y="88" width="222" height="96" rx="13" fill="none" stroke-width="2.5"/>
+<rect class="card" x="748" y="92" width="214" height="88" rx="10"/><rect class="f-seal" x="748" y="92" width="214" height="4" rx="2"/>
+<text class="h" x="762" y="122" text-anchor="start">DSSE envelope</text>
+<text class="t" x="762" y="144" text-anchor="start">ECDSA P-256 (or Ed25519)</text>
+<text class="s mono" x="762" y="164" text-anchor="start">.seal/manifest.dsse</text>
+<path class="wire" d="M722.0 136.0 L739.0 136.0"/><path class="f-muted" d="M746.0 136.0 L739.0 140.0 L739.0 132.0z"/>
+<rect class="ring4 c-seal" x="502" y="218" width="222" height="104" rx="13" fill="none" stroke-width="2.5"/>
+<rect class="card" x="506" y="222" width="214" height="96" rx="10"/><rect class="f-seal" x="506" y="222" width="214" height="4" rx="2"/>
+<text class="h" x="520" y="250" text-anchor="start">RFC 3161 timestamp</text>
+<text class="s mono" x="520" y="270" text-anchor="start">opt-in: tsa_url (no default)</text>
+<text class="t mono" x="520" y="290" text-anchor="start">.seal/manifest.dsse.tsr</text>
+<text class="s" x="520" y="308" text-anchor="start">empty if TSA unreachable</text>
+<rect class="ring5 c-seal" x="744" y="218" width="222" height="104" rx="13" fill="none" stroke-width="2.5"/>
+<rect class="card" x="748" y="222" width="214" height="96" rx="10"/><rect class="f-seal" x="748" y="222" width="214" height="4" rx="2"/>
+<text class="h" x="762" y="250" text-anchor="start">Merkle log append</text>
+<text class="s mono" x="762" y="270" text-anchor="start">leaf = H(0x00‖entry)</text>
+<text class="t mono" x="762" y="290" text-anchor="start">.seal/log-entry.json</text>
+<text class="s" x="762" y="308" text-anchor="start">root in local log DB</text>
+<path class="wire" d="M855.0 180 V204 H613.0 V218"/>
+<path class="wire" d="M855.0 180 V218"/>
+<path class="f-muted" d="M613.0 222 l-4 -7 h8z"/><path class="f-muted" d="M855.0 222 l-4 -7 h8z"/>
+<rect class="card" x="22" y="222" width="456" height="96" rx="10"/><rect class="f-warn" x="22" y="222" width="456" height="4" rx="2"/>
+<text class="h" x="36" y="250" text-anchor="start">Redaction proof is sealed too</text>
+<text class="t" x="36" y="272" text-anchor="start">redaction-proof.json (pre/post hashes, rule ids,</text>
+<text class="t" x="36" y="290" text-anchor="start">match hashes, chain_hash) is one of the digested files,</text>
+<text class="t" x="36" y="308" text-anchor="start">so the signature covers it. capture/secrets.py</text>
+<rect class="card2" x="22" y="350" width="936" height="128" rx="12"/>
+<text class="h mono" x="38" y="376" text-anchor="start">nova verify &lt;capsule&gt;</text>
+<text class="s" x="38" y="394" text-anchor="start">cli/verify.py · exit 0 when every check passes, 1 otherwise</text>
+<rect class="card" x="38" y="410" width="176" height="52" rx="9"/>
+<g class="tk0"><circle class="f-aud" cx="60" cy="436" r="11"/><path d="M54 436 l4 4 l8 -9" fill="none" style="stroke:var(--bg)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text class="t" x="80" y="432" text-anchor="start">1. DSSE signature</text>
+<text class="s" x="80" y="450" text-anchor="start">sig over PAE</text>
+<rect class="card" x="222" y="410" width="176" height="52" rx="9"/>
+<g class="tk1"><circle class="f-aud" cx="244" cy="436" r="11"/><path d="M238 436 l4 4 l8 -9" fill="none" style="stroke:var(--bg)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text class="t" x="264" y="432" text-anchor="start">2. RFC 3161 token</text>
+<text class="s" x="264" y="450" text-anchor="start">imprint + status</text>
+<rect class="card" x="406" y="410" width="176" height="52" rx="9"/>
+<g class="tk2"><circle class="f-aud" cx="428" cy="436" r="11"/><path d="M422 436 l4 4 l8 -9" fill="none" style="stroke:var(--bg)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text class="t" x="448" y="432" text-anchor="start">3. Merkle inclusion</text>
+<text class="s" x="448" y="450" text-anchor="start">vs local log DB</text>
+<rect class="card" x="590" y="410" width="176" height="52" rx="9"/>
+<g class="tk3"><circle class="f-aud" cx="612" cy="436" r="11"/><path d="M606 436 l4 4 l8 -9" fill="none" style="stroke:var(--bg)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text class="t" x="632" y="432" text-anchor="start">4. manifest binding</text>
+<text class="s" x="632" y="450" text-anchor="start">capsule.yaml = payload</text>
+<rect class="card" x="774" y="410" width="176" height="52" rx="9"/>
+<g class="tk4"><circle class="f-aud" cx="796" cy="436" r="11"/><path d="M790 436 l4 4 l8 -9" fill="none" style="stroke:var(--bg)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text class="t" x="816" y="432" text-anchor="start">5. per-file digests</text>
+<text class="s" x="816" y="450" text-anchor="start">missing/modified fail</text>
+</svg>

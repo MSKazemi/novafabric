@@ -92,7 +92,7 @@ longer forwards the submitting shell's environment (ADR-0270).
   accepts recording them as omissions; held runs export with `contains_held_evidence` and the
   hold ids, and the hold is never touched. The bundle's `curation.json` states it is an
   operator-curated subset. Only `run`/`capsule` references resolve today; a one-run cart is
-  refused (use the per-run export). The ADR-0228 route table grows to 214 entries.
+  refused (use the per-run export). The ADR-0228 route table grows to 215 entries.
 
 - **The honest-degradation rule now covers every run aggregate** (ADR-0234 D2, **experimental**).
   `/api/analytics/summary`, `/api/stats`, `/api/cost/report` and the cost-burn, throughput and
@@ -161,7 +161,7 @@ longer forwards the submitting shell's environment (ADR-0270).
   carries the `nova query` invocation over the same predicates. A truncated selection, a
   scope expansion that hit its bound, or a tree still filling is reported in
   `complete`/`incomplete_reasons`, never rendered as the whole answer. All three are
-  classified `read` in the ADR-0228 table (now 213 routes) and annotated in
+  classified `read` in the ADR-0228 table (now 215 routes with the other routes in this release) and annotated in
   `api/openapi-dashboard.yaml`.
 
 
@@ -212,6 +212,13 @@ longer forwards the submitting shell's environment (ADR-0270).
   Capsules sealed earlier verify unchanged. `nova export-evidence --timestamp` is
   unchanged: it is an explicit per-command opt-in and prints the TSA it contacts.
 
+- **Dashboard accessibility and theme polish.** Every tab's loading state is now a polite
+  status region and every error box an alert, so screen readers announce both. Warning and
+  pending colours in the Runs, Holds, Policy and Audit tabs use the theme's
+  `--color-status-pending` token instead of raw `amber-500`, which measured about 2:1 on the
+  light theme; a unit-test ratchet keeps raw amber status classes out of the dashboard.
+  Runs-list controls gained accessible names (search, sort, date inputs, status chips with
+  `aria-pressed`).
 
 ### Fixed
 
@@ -366,15 +373,10 @@ longer forwards the submitting shell's environment (ADR-0270).
   signature is only ever accepted over the PAE it was made over. `VerificationResult`
   gains an optional `pae_encoding` field (`dsse-v1` / `legacy-le64`).
 
-### Changed
-
-- **Dashboard accessibility and theme polish.** Every tab's loading state is now a polite
-  status region and every error box an alert, so screen readers announce both. Warning and
-  pending colours in the Runs, Holds, Policy and Audit tabs use the theme's
-  `--color-status-pending` token instead of raw `amber-500`, which measured about 2:1 on the
-  light theme; a unit-test ratchet keeps raw amber status classes out of the dashboard.
-  Runs-list controls gained accessible names (search, sort, date inputs, status chips with
-  `aria-pressed`).
+- **`nova replay-equivalence check --help` listed its rules in a different order on every run.**
+  The `--rule` hint joined a `frozenset` directly, so string-hash randomisation reordered it per
+  process and the generated dashboard command registry changed on every regeneration. The hint
+  is now the sorted list. A test runs the help under four hash seeds and requires one answer.
 
 ### Security
 
@@ -429,7 +431,6 @@ longer forwards the submitting shell's environment (ADR-0270).
   nothing. **Fails closed:** if the entry cannot be written, the insecure start is refused with
   `InsecureModeAuditError`. Secure starts are unaffected. Tests:
   `tests/test_server_insecure_audit.py`.
-
 
 ## [0.102.1] - 2026-09-27
 
@@ -1611,7 +1612,7 @@ longer forwards the submitting shell's environment (ADR-0270).
   `read` sees plus the audit trail, and can mutate nothing at any level. No new vocabulary was
   invented, because a fourth taxonomy is what guarantees drift.
 
-  Enforcement is **one declarative table of 214 routes** consulted by **one** app-level
+  Enforcement is **one declarative table of 210 routes** consulted by **one** app-level
   dependency — not 184 decorators inside the module ADR-0183 froze. A route missing from the
   table is **denied to everyone**, including the server token: in an evidence tool a loud
   failure beats a quiet disclosure, and defaulting to `read` would make a forgotten line a

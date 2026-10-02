@@ -1,0 +1,1 @@
+import{t as e}from"./CapsuleInspector.Bnslehx0.js";export{e as default};
