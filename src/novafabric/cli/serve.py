@@ -250,7 +250,9 @@ def serve_cmd(
     app = create_app(
         token=token,
         capsule_dir=resolved_capsule_dir,
-        db_path=db_path,
+        # Resolve here so every router sees the file the panel prints; a bare None
+        # makes the runs-index routes report "index does not exist yet" forever.
+        db_path=db_path or _registry_db_path(),
         static_dir=None,          # mounted last — see below
         static_mounted_by_caller=static_arg is not None,
         topology_enabled=topology,

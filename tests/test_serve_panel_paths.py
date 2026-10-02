@@ -81,3 +81,26 @@ def test_the_advertised_token_file_contains_the_advertised_token(
         "the token in the printed URL is not the token on disk — following the "
         f"panel's own recovery instruction would not work:\n{text}"
     )
+
+
+def test_app_is_built_with_the_resolved_registry_path(
+    nova_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """create_app must get the registry path, never None.
+
+    With None the runs-index routes (``/api/analytics/summary``) answered
+    "the runs index does not exist yet" for every default ``nova serve``,
+    even with capsules on disk and the registry present.
+    """
+    import novafabric.serve.app as serve_app
+
+    seen: dict[str, object] = {}
+    real = serve_app.create_app
+
+    def spy(*args: object, **kwargs: object):
+        seen.update(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(serve_app, "create_app", spy)
+    _panel(nova_home, monkeypatch)
+    assert seen["db_path"] == nova_home / "registry.db"

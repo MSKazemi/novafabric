@@ -668,11 +668,12 @@ def create_app(
             from novafabric.registry.service import list_assets
             count = len(list_assets(None, None, db_path=_db_path))
             if count == 0:
-                default_db = Path.home() / ".novafabric" / "registry.db"
+                from novafabric.registry.store import get_db_path
+
                 logger.warning(
                     "Registry is empty — run `nova register <spec.yaml>` to add assets. "
                     "DB path: %s",
-                    _db_path or default_db,
+                    _db_path or get_db_path(),
                 )
             else:
                 logger.info("Registry loaded: %d asset(s) available.", count)
@@ -854,7 +855,11 @@ def create_app(
             backend_type = "sqlite"
 
         try:
-            resolved_db_path = str(db_path or Path.home() / ".novafabric" / "registry.db")
+            from novafabric.registry.store import get_db_path as _resolved_registry_db
+
+            # The same resolution the connection uses ($NOVAFABRIC_DB_PATH, then
+            # $NOVAFABRIC_HOME), so the health panel names the file actually read.
+            resolved_db_path = str(db_path or _resolved_registry_db())
         except Exception:  # noqa: BLE001
             resolved_db_path = ""
 

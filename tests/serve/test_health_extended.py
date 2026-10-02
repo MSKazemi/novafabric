@@ -93,3 +93,16 @@ def test_health_postgres_backend_when_env_set(client: TestClient, monkeypatch: p
     resp = client.get("/api/health", headers=LOCALHOST_HEADERS)
     data = resp.json()
     assert data["backend_type"] == "postgres"
+
+
+def test_health_db_path_follows_env_when_not_passed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no explicit db_path, /api/health names the file the registry really uses."""
+    capsule_dir = tmp_path / "runs"
+    capsule_dir.mkdir()
+    env_db = tmp_path / "elsewhere" / "registry.db"
+    monkeypatch.setenv("NOVAFABRIC_DB_PATH", str(env_db))
+    app = create_app(token="testtoken", capsule_dir=capsule_dir)
+    data = TestClient(app).get("/api/health", headers=LOCALHOST_HEADERS).json()
+    assert data["db_path"] == str(env_db)
