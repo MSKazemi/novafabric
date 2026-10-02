@@ -107,7 +107,7 @@ def check(
         list[str] | None,
         typer.Option(
             "--rule",
-            help="Canonicalization rule (repeatable). Known: " + ", ".join(ALL_RULES),
+            help="Canonicalization rule (repeatable). Known: " + ", ".join(sorted(ALL_RULES)),
         ),
     ] = None,
     commutable: Annotated[

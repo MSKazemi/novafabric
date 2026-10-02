@@ -163,3 +163,37 @@ def test_an_unknown_rule_exits_two(tmp_path: Path) -> None:
     result = _check(_write(tmp_path, "b.json", BASE),
                     _write(tmp_path, "r.json", BASE), "--rule", "made_up_rule")
     assert result.exit_code == 2
+
+
+def test_rule_help_lists_known_rules_in_stable_order() -> None:
+    """The ``--rule`` hint must not depend on string-hash randomisation.
+
+    ``ALL_RULES`` is a frozenset, so joining it directly printed the rules in a
+    per-process order; the generated dashboard command registry then churned on
+    every regeneration. The hint is the sorted list, identical under any seed.
+    """
+    import os
+    import subprocess
+    import sys
+
+    from novafabric.replay.equivalence.canonicalize import ALL_RULES
+
+    probe = (
+        "import typer.main, click\n"
+        "from novafabric.cli.main import app\n"
+        "root = typer.main.get_command(app)\n"
+        "grp = root.get_command(click.Context(root), 'replay-equivalence')\n"
+        "cmds = [grp] if not hasattr(grp, 'list_commands') else [\n"
+        "    grp.get_command(click.Context(grp), n) for n in grp.list_commands(click.Context(grp))]\n"
+        "print(next(p.help for c in cmds for p in c.params\n"
+        "           if p.name == 'rule' and 'Canonicalization' in (p.help or '')))\n"
+    )
+    hints = set()
+    for seed in ("0", "1", "2", "12345"):
+        env = {**os.environ, "PYTHONHASHSEED": seed}
+        out = subprocess.run(
+            [sys.executable, "-c", probe], env=env, capture_output=True, text=True, check=True
+        )
+        hints.add(out.stdout.strip())
+    assert len(hints) == 1, hints
+    assert hints.pop().endswith("Known: " + ", ".join(sorted(ALL_RULES)))
