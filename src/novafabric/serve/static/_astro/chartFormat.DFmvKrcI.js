@@ -1,0 +1,1 @@
+function e(e){let n=Math.abs(e);return n>=1e9?`${t(e/1e9)}B`:n>=1e6?`${t(e/1e6)}M`:n>=1e3?`${t(e/1e3)}K`:Number.isInteger(e)?String(e):e.toFixed(+(n<10))}function t(e){let t=e.toFixed(1);return t.endsWith(`.0`)?t.slice(0,-2):t}export{e as t};

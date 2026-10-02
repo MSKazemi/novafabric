@@ -1763,12 +1763,7 @@ longer forwards the submitting shell's environment (ADR-0270).
   `read` sees plus the audit trail, and can mutate nothing at any level. No new vocabulary was
   invented, because a fourth taxonomy is what guarantees drift.
 
-  Enforcement is **one declarative table of 215 routes** consulted by **one** app-level
-
-  Enforcement is **one declarative table of 220 routes** consulted by **one** app-level
-
   Enforcement is **one declarative table of 223 routes** consulted by **one** app-level
-
   dependency — not 184 decorators inside the module ADR-0183 froze. A route missing from the
   table is **denied to everyone**, including the server token: in an evidence tool a loud
   failure beats a quiet disclosure, and defaulting to `read` would make a forgotten line a

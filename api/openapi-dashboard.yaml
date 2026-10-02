@@ -164,6 +164,160 @@ components:
       - added_at
       title: CartItemIn
       type: object
+    DashboardDetailResponse:
+      properties:
+        cli_equivalent:
+          title: Cli Equivalent
+          type: string
+        dashboard:
+          $ref: '#/components/schemas/DashboardSummary'
+        widgets:
+          items:
+            $ref: '#/components/schemas/DashboardWidgetRef'
+          title: Widgets
+          type: array
+      required:
+      - dashboard
+      - widgets
+      - cli_equivalent
+      title: DashboardDetailResponse
+      type: object
+    DashboardListResponse:
+      properties:
+        cli_equivalent:
+          title: Cli Equivalent
+          type: string
+        dashboards:
+          items:
+            $ref: '#/components/schemas/DashboardSummary'
+          title: Dashboards
+          type: array
+        invalid_files:
+          items:
+            $ref: '#/components/schemas/InvalidFile'
+          title: Invalid Files
+          type: array
+        widgets:
+          items:
+            $ref: '#/components/schemas/WidgetSummary'
+          title: Widgets
+          type: array
+      required:
+      - dashboards
+      - widgets
+      - invalid_files
+      - cli_equivalent
+      title: DashboardListResponse
+      type: object
+    DashboardSummary:
+      properties:
+        builtin:
+          title: Builtin
+          type: boolean
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        id:
+          title: Id
+          type: string
+        invalid_widgets:
+          items:
+            type: string
+          title: Invalid Widgets
+          type: array
+        title:
+          title: Title
+          type: string
+        unresolved_widgets:
+          items:
+            type: string
+          title: Unresolved Widgets
+          type: array
+        version:
+          title: Version
+          type: integer
+        widget_count:
+          title: Widget Count
+          type: integer
+      required:
+      - id
+      - title
+      - description
+      - builtin
+      - version
+      - widget_count
+      - unresolved_widgets
+      - invalid_widgets
+      title: DashboardSummary
+      type: object
+    DashboardWidgetRef:
+      properties:
+        definition:
+          anyOf:
+          - $ref: '#/components/schemas/WidgetDefinition'
+          - type: 'null'
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+        position:
+          anyOf:
+          - additionalProperties:
+              type: integer
+            type: object
+          - type: 'null'
+          title: Position
+        status:
+          title: Status
+          type: string
+        widget:
+          title: Widget
+          type: string
+      required:
+      - widget
+      - position
+      - status
+      - definition
+      - error
+      title: DashboardWidgetRef
+      type: object
+    DeleteViewResponse:
+      properties:
+        deleted:
+          title: Deleted
+          type: string
+        ok:
+          title: Ok
+          type: boolean
+      required:
+      - ok
+      - deleted
+      title: DeleteViewResponse
+      type: object
+    DerivedColumn:
+      properties:
+        alias:
+          title: Alias
+          type: string
+        denominator:
+          title: Denominator
+          type: string
+        func:
+          title: Func
+          type: string
+        numerator:
+          title: Numerator
+          type: string
+      required:
+      - alias
+      - func
+      - numerator
+      - denominator
+      title: DerivedColumn
+      type: object
     DryRunReplayRequest:
       properties:
         confirmed:
@@ -461,6 +615,23 @@ components:
       - registries
       title: HoldsListResponse
       type: object
+    InvalidFile:
+      properties:
+        error:
+          title: Error
+          type: string
+        file:
+          title: File
+          type: string
+        kind:
+          title: Kind
+          type: string
+      required:
+      - file
+      - kind
+      - error
+      title: InvalidFile
+      type: object
     IssueTokenRequest:
       properties:
         confirmed:
@@ -651,6 +822,81 @@ components:
           type: string
       title: RollbackRequest
       type: object
+    SaveViewRequest:
+      properties:
+        description:
+          anyOf:
+          - maxLength: 500
+            type: string
+          - type: 'null'
+          title: Description
+        f:
+          default: ''
+          maxLength: 2000
+          title: F
+          type: string
+        name:
+          maxLength: 120
+          minLength: 1
+          title: Name
+          type: string
+        overwrite:
+          default: false
+          title: Overwrite
+          type: boolean
+        scope:
+          default: node
+          enum:
+          - node
+          - root
+          - tree
+          title: Scope
+          type: string
+        since:
+          default: ''
+          maxLength: 64
+          title: Since
+          type: string
+        sort:
+          default: newest
+          enum:
+          - newest
+          - oldest
+          - longest
+          - shortest
+          title: Sort
+          type: string
+        status:
+          default: all
+          title: Status
+          type: string
+        until:
+          default: ''
+          maxLength: 64
+          title: Until
+          type: string
+      required:
+      - name
+      title: SaveViewRequest
+      type: object
+    SaveViewResponse:
+      properties:
+        ok:
+          title: Ok
+          type: boolean
+        path:
+          title: Path
+          type: string
+        view:
+          additionalProperties: true
+          title: View
+          type: object
+      required:
+      - ok
+      - path
+      - view
+      title: SaveViewResponse
+      type: object
     SemanticReplayRequest:
       properties:
         confirmed:
@@ -695,6 +941,154 @@ components:
       - msg
       - type
       title: ValidationError
+      type: object
+    ViewsListResponse:
+      properties:
+        views:
+          items:
+            additionalProperties: true
+            type: object
+          title: Views
+          type: array
+        views_dir:
+          title: Views Dir
+          type: string
+        warnings:
+          items:
+            type: string
+          title: Warnings
+          type: array
+      required:
+      - views_dir
+      - views
+      - warnings
+      title: ViewsListResponse
+      type: object
+    WidgetDataResponse:
+      properties:
+        cli_equivalent:
+          title: Cli Equivalent
+          type: string
+        columns:
+          items:
+            type: string
+          title: Columns
+          type: array
+        derived:
+          items:
+            $ref: '#/components/schemas/DerivedColumn'
+          title: Derived
+          type: array
+        generated_at:
+          title: Generated At
+          type: string
+        index:
+          additionalProperties: true
+          title: Index
+          type: object
+        query:
+          additionalProperties: true
+          title: Query
+          type: object
+        row_count:
+          title: Row Count
+          type: integer
+        rows:
+          items:
+            additionalProperties: true
+            type: object
+          title: Rows
+          type: array
+        schema_version:
+          title: Schema Version
+          type: string
+        time_window:
+          additionalProperties: true
+          title: Time Window
+          type: object
+        truncated:
+          title: Truncated
+          type: boolean
+        widget:
+          $ref: '#/components/schemas/WidgetDefinition'
+      required:
+      - widget
+      - schema_version
+      - generated_at
+      - query
+      - time_window
+      - columns
+      - rows
+      - row_count
+      - truncated
+      - index
+      - derived
+      - cli_equivalent
+      title: WidgetDataResponse
+      type: object
+    WidgetDefinition:
+      properties:
+        chart:
+          title: Chart
+          type: string
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        id:
+          title: Id
+          type: string
+        presentation:
+          additionalProperties: true
+          title: Presentation
+          type: object
+        query:
+          additionalProperties: true
+          title: Query
+          type: object
+        title:
+          title: Title
+          type: string
+        version:
+          title: Version
+          type: integer
+      required:
+      - id
+      - title
+      - description
+      - chart
+      - version
+      - presentation
+      - query
+      title: WidgetDefinition
+      type: object
+    WidgetSummary:
+      properties:
+        chart:
+          title: Chart
+          type: string
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        id:
+          title: Id
+          type: string
+        title:
+          title: Title
+          type: string
+        version:
+          title: Version
+          type: integer
+      required:
+      - id
+      - title
+      - description
+      - chart
+      - version
+      title: WidgetSummary
       type: object
 info:
   description: 'The NovaFabric dashboard (serve) API — the FROZEN local-dashboard surface
@@ -3715,6 +4109,210 @@ paths:
       tags:
       - cost
       x-nova-contract: pending
+  /api/dashboard-widgets/{widget_id}/data:
+    get:
+      operationId: dashboardWidgetData
+      parameters:
+      - in: path
+        name: widget_id
+        required: true
+        schema:
+          pattern: ^[a-z0-9][a-z0-9._-]{0,63}$
+          title: Widget Id
+          type: string
+      - in: query
+        name: token
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Token
+      - in: header
+        name: authorization
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WidgetDataResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Widget Data
+      tags:
+      - dashboards
+  /api/dashboard-widgets/{widget_id}/export:
+    get:
+      operationId: dashboardExportWidget
+      parameters:
+      - in: path
+        name: widget_id
+        required: true
+        schema:
+          pattern: ^[a-z0-9][a-z0-9._-]{0,63}$
+          title: Widget Id
+          type: string
+      - in: query
+        name: token
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Token
+      - in: header
+        name: authorization
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+          description: The stored document, byte-for-byte (ADR-0235 D6).
+        '404':
+          description: No such document.
+        '422':
+          description: The stored document fails validation and is refused.
+      summary: Export Widget
+      tags:
+      - dashboards
+  /api/dashboards:
+    get:
+      operationId: dashboardListDashboards
+      parameters:
+      - in: query
+        name: token
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Token
+      - in: header
+        name: authorization
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardListResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: List Dashboards
+      tags:
+      - dashboards
+  /api/dashboards/{dashboard_id}:
+    get:
+      operationId: dashboardGetDashboard
+      parameters:
+      - in: path
+        name: dashboard_id
+        required: true
+        schema:
+          pattern: ^[a-z0-9][a-z0-9._-]{0,63}$
+          title: Dashboard Id
+          type: string
+      - in: query
+        name: token
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Token
+      - in: header
+        name: authorization
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardDetailResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get Dashboard
+      tags:
+      - dashboards
+  /api/dashboards/{dashboard_id}/export:
+    get:
+      operationId: dashboardExportDashboard
+      parameters:
+      - in: path
+        name: dashboard_id
+        required: true
+        schema:
+          pattern: ^[a-z0-9][a-z0-9._-]{0,63}$
+          title: Dashboard Id
+          type: string
+      - in: query
+        name: token
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Token
+      - in: header
+        name: authorization
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+          description: The stored document, byte-for-byte (ADR-0235 D6).
+        '404':
+          description: No such document.
+        '422':
+          description: The stored document fails validation and is refused.
+      summary: Export Dashboard
+      tags:
+      - dashboards
   /api/db/upgrade:
     post:
       description: 'Run alembic upgrade to the specified revision (default: head).'
@@ -10324,6 +10922,125 @@ paths:
           description: Validation Error
       summary: Validate Spec Endpoint
       x-nova-contract: pending
+  /api/views:
+    get:
+      operationId: dashboardListSavedViews
+      parameters:
+      - in: query
+        name: token
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Token
+      - in: header
+        name: authorization
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ViewsListResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: List Saved Views
+      tags:
+      - saved-views
+    post:
+      operationId: dashboardSaveView
+      parameters:
+      - in: query
+        name: token
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Token
+      - in: header
+        name: authorization
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveViewRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SaveViewResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Save Saved View
+      tags:
+      - saved-views
+  /api/views/{view_id}:
+    delete:
+      operationId: dashboardDeleteView
+      parameters:
+      - in: path
+        name: view_id
+        required: true
+        schema:
+          title: View Id
+          type: string
+      - in: query
+        name: token
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Token
+      - in: header
+        name: authorization
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteViewResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Delete Saved View
+      tags:
+      - saved-views
   /v1/kg/audit:
     get:
       description: 'KG health audit: node/edge counts, zero-call-count edges.
