@@ -4,7 +4,11 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.resolve(HERE, '..', 'dist');
+const REPO_ROOT = path.resolve(HERE, '..', '..');
 const ORIGIN = 'https://novafabric.ai';
+const GITHUB_ORIGIN = 'https://github.com';
+const GITHUB_BLOB_PREFIX = '/MSKazemi/novafabric/blob/main/';
+const GITHUB_TREE_PREFIX = '/MSKazemi/novafabric/tree/main/';
 
 function walk(dir) {
   const out = [];
@@ -38,6 +42,7 @@ if (!fs.existsSync(DIST)) {
 const htmlFiles = walk(DIST).filter((file) => file.endsWith('.html'));
 const failures = [];
 let checked = 0;
+let checkedGitHubTargets = 0;
 
 for (const file of htmlFiles) {
   // Astro emits a flat 404.html whose canonical href is /404/. That canonical
@@ -63,7 +68,29 @@ for (const file of htmlFiles) {
       failures.push(`${pageUrl(file)} -> malformed href ${href}`);
       continue;
     }
-    if (resolved.origin !== ORIGIN) continue;
+    if (resolved.origin !== ORIGIN) {
+      if (resolved.origin === GITHUB_ORIGIN) {
+        const decoded = decodeURIComponent(resolved.pathname);
+        const isBlob = decoded.startsWith(GITHUB_BLOB_PREFIX);
+        const isTree = decoded.startsWith(GITHUB_TREE_PREFIX);
+        if (isBlob || isTree) {
+          const prefix = isBlob ? GITHUB_BLOB_PREFIX : GITHUB_TREE_PREFIX;
+          const repoRelative = decoded.slice(prefix.length);
+          const candidate = path.join(REPO_ROOT, repoRelative);
+          checkedGitHubTargets += 1;
+          if (
+            !fs.existsSync(candidate) ||
+            (isBlob && !fs.statSync(candidate).isFile()) ||
+            (isTree && !fs.statSync(candidate).isDirectory())
+          ) {
+            failures.push(
+              `${pageUrl(file)} -> ${href} (repository target missing or wrong type: ${repoRelative})`,
+            );
+          }
+        }
+      }
+      continue;
+    }
 
     checked += 1;
     let pathname;
@@ -91,5 +118,5 @@ if (failures.length) {
 }
 
 console.log(
-  `Internal link check passed: ${checked} links across ${htmlFiles.length} HTML pages.`,
+  `Link check passed: ${checked} same-site links and ${checkedGitHubTargets} repository blob/tree targets across ${htmlFiles.length} HTML pages.`,
 );
