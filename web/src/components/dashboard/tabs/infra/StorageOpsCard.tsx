@@ -81,7 +81,7 @@ export default function StorageOpsCard({ runIds }: { runIds: string[] }) {
         <button
           onClick={validate}
           disabled={valLoading}
-          className="text-xs font-mono px-3 py-1 rounded border border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-white transition-colors disabled:opacity-50"
+          className="text-xs font-mono px-3 py-1 rounded border border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)] transition-colors disabled:opacity-50"
         >
           {valLoading ? 'validating…' : 'Validate'}
         </button>
@@ -113,7 +113,7 @@ export default function StorageOpsCard({ runIds }: { runIds: string[] }) {
           <button
             onClick={inspect}
             disabled={inspLoading || !runId.trim()}
-            className="text-xs font-mono px-3 py-1 rounded border border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-white transition-colors disabled:opacity-50"
+            className="text-xs font-mono px-3 py-1 rounded border border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)] transition-colors disabled:opacity-50"
           >
             {inspLoading ? 'inspecting…' : 'Inspect'}
           </button>

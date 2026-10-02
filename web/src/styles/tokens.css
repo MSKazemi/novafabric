@@ -8,7 +8,7 @@
 
   --color-text: #e6e6ea;
   --color-text-muted: #a8a8b3;
-  --color-text-faint: #74747f;
+  --color-text-faint: #8a8a96;
 
   --color-accent: #c4f0a8;
   --color-accent-hover: #d4f5be;
@@ -110,7 +110,7 @@
 
   --color-text: #14141a;
   --color-text-muted: #4a4a55;        /* AAA contrast on bg-raised */
-  --color-text-faint: #6a6a75;        /* AA contrast on bg-raised */
+  --color-text-faint: #5e5e69;        /* AA contrast on bg-raised */
 
   --color-accent: #2f6a14;            /* darker forest-green so accent FG is white */
   --color-accent-hover: #265411;
@@ -141,7 +141,7 @@
 
     --color-text: #14141a;
     --color-text-muted: #4a4a55;
-    --color-text-faint: #6a6a75;
+    --color-text-faint: #5e5e69;
 
     --color-accent: #2f6a14;
     --color-accent-hover: #265411;

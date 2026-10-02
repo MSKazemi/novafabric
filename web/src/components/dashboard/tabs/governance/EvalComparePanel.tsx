@@ -131,7 +131,7 @@ export default function EvalComparePanel() {
           'text-xs font-mono px-4 py-1.5 rounded border transition-colors',
           loading || !baselineJson.trim() || !candidateJson.trim()
             ? 'border-[var(--color-border)] text-[var(--color-text-faint)] cursor-not-allowed'
-            : 'border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-white',
+            : 'border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)]',
         )}
       >
         {loading ? 'comparing…' : 'Compare'}

@@ -380,7 +380,7 @@ export default function ReportsTab() {
                   filters={filterValues}
                 />
               )}
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Report rows">
                 <table className="w-full text-xs border-collapse">
                   <thead>
                     <tr>

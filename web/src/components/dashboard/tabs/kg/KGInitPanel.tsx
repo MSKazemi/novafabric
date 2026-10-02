@@ -38,7 +38,7 @@ export default function KGInitPanel({ onDone }: { onDone: () => void }) {
             'text-xs font-mono px-3 py-1.5 rounded border transition-colors shrink-0',
             loading
               ? 'border-[var(--color-border)] text-[var(--color-text-faint)] cursor-not-allowed'
-              : 'border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-white',
+              : 'border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)]',
           )}
         >
           {loading ? 'initialising…' : 'Init schema'}

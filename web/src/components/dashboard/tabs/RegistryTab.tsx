@@ -171,6 +171,7 @@ export default function RegistryTab({
           className="flex-1 text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2 py-1.5 font-mono focus:border-[var(--color-accent)] focus:outline-none"
         />
         <select
+          aria-label="Filter by status"
           value={statusFilter}
           onChange={e => setStatusFilter(e.target.value as typeof statusFilter)}
           className="rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-1.5 py-1.5 font-mono text-xs"

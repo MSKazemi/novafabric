@@ -268,6 +268,7 @@ export function ScanSecretsPanel({ runIds }: { runIds: string[] }) {
         <select
           value={failOn}
           onChange={e => setFailOn(e.target.value)}
+          aria-label="Fail threshold"
           title="Fail threshold — triggers FAIL when findings at or above this severity exist"
           className="text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-sunken)] px-2 py-1.5 font-mono"
         >

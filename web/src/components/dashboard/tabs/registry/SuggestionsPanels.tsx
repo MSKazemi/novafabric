@@ -215,7 +215,7 @@ export function SuggestRegisterPanel({
                     'text-[10px] font-mono px-2 py-1 rounded border shrink-0 transition-colors',
                     busy
                       ? 'border-[var(--color-border)] text-[var(--color-text-faint)] cursor-not-allowed'
-                      : 'border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-white',
+                      : 'border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)]',
                   )}
                 >
                   {busy ? '…' : 'Register'}

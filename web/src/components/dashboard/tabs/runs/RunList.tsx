@@ -199,6 +199,7 @@ export default function RunList({
                     type="checkbox"
                     checked={isChecked}
                     disabled={atLimit}
+                    aria-label={`Select run ${r.run_id} for comparison`}
                     title={atLimit ? 'Maximum 5 runs selected — deselect one first' : isChecked ? 'Deselect' : 'Select for comparison (up to 5)'}
                     onChange={() => {
                       if (isChecked) {
@@ -211,7 +212,7 @@ export default function RunList({
                   />
                 </div>
                 {/* Run content — stacks select button + action buttons vertically */}
-                <div className="flex-1 flex flex-col min-w-0">
+                <div className="relative flex-1 flex flex-col min-w-0">
               <button
                 onClick={() => {
                   onSelect(r);
@@ -229,26 +230,6 @@ export default function RunList({
                   <StatusDot status={r.status} />
                   <div className="relative group flex-1 min-w-0 flex items-center">
                     <code className="font-mono text-xs text-[var(--color-text)] truncate">{r.run_id.slice(0, 16)}…</code>
-                    <button
-                      type="button"
-                      onClick={e => {
-                        e.stopPropagation();
-                        navigator.clipboard.writeText(r.run_id);
-                        setCopiedId(r.run_id);
-                        setTimeout(() => setCopiedId(null), 1500);
-                      }}
-                      title="Copy run ID"
-                      className="opacity-0 group-hover:opacity-100 transition-opacity absolute right-0 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] px-0.5"
-                    >
-                      {copiedId === r.run_id ? (
-                        <span className="text-2xs font-mono text-[var(--color-status-success)]">Copied</span>
-                      ) : (
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3">
-                          <path d="M5 3a1 1 0 000 2h6a1 1 0 100-2H5z"/>
-                          <path fillRule="evenodd" d="M3 5a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V5zm2 1a1 1 0 000 2h6a1 1 0 100-2H5zm0 3a1 1 0 000 2h4a1 1 0 100-2H5z" clipRule="evenodd"/>
-                        </svg>
-                      )}
-                    </button>
                   </div>
                   <span className="text-[10px] text-[var(--color-text-faint)] font-mono shrink-0 tabular-nums">
                     {r.duration_ms != null ? `${r.duration_ms}ms` : '—'}
@@ -283,6 +264,26 @@ export default function RunList({
                       {costMap[r.run_id].calls > 0 ? `${costMap[r.run_id].calls} calls` : '—'}
                     </span>
                   </div>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(r.run_id);
+                  setCopiedId(r.run_id);
+                  setTimeout(() => setCopiedId(null), 1500);
+                }}
+                title="Copy run ID"
+                aria-label={`Copy run ID ${r.run_id}`}
+                className="absolute top-2.5 right-[4.75rem] opacity-0 group-hover/run:opacity-100 focus-visible:opacity-100 transition-opacity text-[var(--color-text-faint)] hover:text-[var(--color-text)] px-0.5"
+              >
+                {copiedId === r.run_id ? (
+                  <span className="text-2xs font-mono text-[var(--color-status-success)]">Copied</span>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3" aria-hidden="true">
+                    <path d="M5 3a1 1 0 000 2h6a1 1 0 100-2H5z"/>
+                    <path fillRule="evenodd" d="M3 5a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V5zm2 1a1 1 0 000 2h6a1 1 0 100-2H5zm0 3a1 1 0 000 2h4a1 1 0 100-2H5z" clipRule="evenodd"/>
+                  </svg>
                 )}
               </button>
               {/*

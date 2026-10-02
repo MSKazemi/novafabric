@@ -20,7 +20,9 @@ export default function GdprErasurePanel({ runIds }: { runIds: string[] }) {
 
   const checkStatus = useCallback(async () => {
     setStatusLoading(true);
+    setErr(null);
     try { setStatusResult(await api.erasureStatus(statusSubjectId.trim() || undefined)); }
+    catch (e) { setErr((e as Error).message); }
     finally { setStatusLoading(false); }
   }, [statusSubjectId]);
 
@@ -36,7 +38,11 @@ export default function GdprErasurePanel({ runIds }: { runIds: string[] }) {
         state: r.request.state,
         erased: r.erased,
         cap003_enabled: r.cap003_enabled,
-        note: r.request.receipt_sha256
+        // A FAILED request still carries a receipt hash; show *why* it failed first,
+        // otherwise the reason (e.g. subject_not_found) is hidden behind a hash.
+        note: r.request.state === 'FAILED' && (r.request.error_class || r.request.error_detail)
+          ? `${r.request.error_class ?? 'error'}: ${r.request.error_detail ?? ''}`.replace(/"/g, '')
+          : r.request.receipt_sha256
           ? `receipt_sha256: ${r.request.receipt_sha256}`
           : (r.request.error_detail ?? ''),
       });
@@ -106,7 +112,7 @@ export default function GdprErasurePanel({ runIds }: { runIds: string[] }) {
           'text-xs font-mono px-4 py-1.5 rounded border transition-colors',
           submitting || !subjectId.trim()
             ? 'border-[var(--color-border)] text-[var(--color-text-faint)] cursor-not-allowed'
-            : 'border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-white',
+            : 'border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)]',
         )}
       >
         {submitting ? 'submitting…' : 'Queue erasure request'}
@@ -144,7 +150,7 @@ export default function GdprErasurePanel({ runIds }: { runIds: string[] }) {
               'text-xs font-mono px-3 py-1.5 rounded border transition-colors',
               statusLoading
                 ? 'border-[var(--color-border)] text-[var(--color-text-faint)] cursor-not-allowed'
-                : 'border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-white',
+                : 'border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)]',
             )}
           >
             {statusLoading ? '…' : 'Check Status'}

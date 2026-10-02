@@ -97,7 +97,7 @@ export default function EvidenceCartPanel({ onFlash }: {
             title={over ? `At most ${MAX_CART_ITEMS} items per export` : 'Export the cart as one signed Evidence Bundle'}
             className={clsx(
               'px-2 py-0.5 rounded border text-[10px] font-medium',
-              'border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-white',
+              'border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)]',
               'disabled:opacity-40 disabled:cursor-not-allowed',
             )}
           >{phase.kind === 'busy' ? 'Exporting…' : 'Export cart'}</button>

@@ -65,7 +65,7 @@ export default function IngestCapsulePanel() {
           <button
             type="submit"
             disabled={loading || (!allMode && !runId.trim())}
-            className="text-xs font-mono px-3 py-1.5 rounded border border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-white disabled:opacity-50 transition-colors"
+            className="text-xs font-mono px-3 py-1.5 rounded border border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)] disabled:opacity-50 transition-colors"
           >
             {loading ? 'Ingesting…' : 'Ingest'}
           </button>

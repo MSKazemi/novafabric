@@ -352,7 +352,7 @@ function CustomQueryPanel() {
         <button
           onClick={() => void run()}
           disabled={loading}
-          className="rounded border border-[var(--color-accent)] px-3 py-1 text-[11px] font-mono text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded border border-[var(--color-accent)] px-3 py-1 text-[11px] font-mono text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)] disabled:cursor-not-allowed disabled:opacity-50"
         >
           {loading ? 'running…' : 'Run query'}
         </button>

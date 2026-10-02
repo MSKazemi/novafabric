@@ -305,7 +305,7 @@ function LineageImportPanel({ runIds }: { runIds: string[] }) {
           'text-xs font-mono px-4 py-1.5 rounded border transition-colors',
           loading || !capsulePath.trim()
             ? 'border-[var(--color-border)] text-[var(--color-text-faint)] cursor-not-allowed'
-            : 'border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-white',
+            : 'border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)]',
         ].join(' ')}
       >
         {loading ? 'importing…' : 'Import'}
@@ -434,7 +434,7 @@ function OpenLineageExportPanel({ runIds }: { runIds: string[] }) {
           'text-xs font-mono px-4 py-1.5 rounded border transition-colors',
           loading || !runId.trim()
             ? 'border-[var(--color-border)] text-[var(--color-text-faint)] cursor-not-allowed'
-            : 'border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-white',
+            : 'border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)]',
         ].join(' ')}
       >
         {loading ? 'building…' : 'Export events'}

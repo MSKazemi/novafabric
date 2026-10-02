@@ -113,7 +113,7 @@ export default function EvidenceList({ bundles, selectedId, onSelect, onRefresh,
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto" tabIndex={0} role="region" aria-label="Evidence bundles">
         {bundles.length === 0 ? (
           <EmptyState
             message="No evidence bundles found."

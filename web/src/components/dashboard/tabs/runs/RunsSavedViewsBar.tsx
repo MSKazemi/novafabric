@@ -183,7 +183,7 @@ export default function RunsSavedViewsBar({
           className={clsx(
             'text-[10px] font-mono px-2 py-0.5 rounded border transition-colors',
             name.trim() && !busy
-              ? 'border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-white'
+              ? 'border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)]'
               : 'border-[var(--color-border)] text-[var(--color-text-faint)] cursor-not-allowed',
           )}
         >Save</button>
