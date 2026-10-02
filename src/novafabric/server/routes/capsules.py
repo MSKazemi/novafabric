@@ -549,6 +549,21 @@ def _audit_append(**kwargs: Any) -> None:
     audit.append(**kwargs)
 
 
+def _index_store(auth: AuthContext) -> tuple[Any, uuid.UUID | None]:
+    """MetadataStore + tenant for the governed index delete, or ``(None, None)``.
+
+    Mirrors the upload-side indexing: only a tenant-bearing caller has rows in
+    the MetadataStore, so only then is there anything to delete there.
+    """
+    raw = getattr(auth, "tenant_id", None)
+    if raw is None:
+        return None, None
+    try:
+        return get_metadata_store_dep(), uuid.UUID(str(raw))
+    except (ValueError, TypeError):
+        return None, None
+
+
 @router.delete(
     "/{run_id}",
     response_model=None,
@@ -566,8 +581,12 @@ async def delete_capsule(
     Legal holds always win: any unreleased hold in any registry refuses with
     409 ``legal_hold_active`` (holds are registry-global today — documented
     limit), and there is no force override. An unexpired WORM lock refuses
-    with 409 ``worm_hold``. Deleting an already-deleted id is a 404 (delete
-    is evidenced, not idempotent-silent).
+    with 409 ``worm_hold``; a NovaSeal-sealed capsule with 409
+    ``sealed_capsule`` (unless ``NOVAFABRIC_ALLOW_SEALED_DELETE=1``). Capsule
+    and index rows are removed in a recoverable order (see
+    ``capsule_delete.execute_delete``); a failure midway restores the capsule
+    (500). Deleting an already-deleted id is a 404 (delete is evidenced,
+    not idempotent-silent).
     """
     if not capsule_delete.is_valid_run_id(run_id):
         raise BadRequestError("invalid run_id")
@@ -584,11 +603,33 @@ async def delete_capsule(
             result="refused",
             error=str(exc),
         )
+        capsule_delete.audit_index_event(
+            True,
+            auth.subject,
+            run_id,
+            {"requested": [run_id], "refusals": [
+                {"run_id": run_id, "code": exc.code, "details": exc.details}
+            ]},
+        )
         raise ConflictError(str(exc), code=exc.code, details=exc.details)
 
+    store, tenant_id = _index_store(auth)
     conn = capsule_index.open_index(db_path)
     try:
-        capsule_delete.execute_delete(capsule_dir, run_id, conn)
+        capsule_delete.execute_delete(
+            capsule_dir, run_id, conn,
+            store=store, tenant_id=tenant_id, actor=auth.subject,
+        )
+    except capsule_delete.DeleteFailedError as exc:
+        _audit_append(
+            action="capsule_delete_failed",
+            args={"run_id": run_id, "code": exc.code, **exc.details},
+            cli_equivalent=f"nova capsule delete {run_id}",
+            actor_token_fp=auth.subject,
+            result="error",
+            error=str(exc),
+        )
+        raise
     finally:
         conn.close()
     # ADR-0208 D3 (experimental): negative usage-ledger rows so workspace
@@ -649,6 +690,8 @@ async def bulk_delete_capsules(
               "invalid_id": 0, "duplicate": 0}
     seen: set[str] = set()
 
+    store, tenant_id = _index_store(auth)
+    refusals: list[dict[str, Any]] = []
     conn = capsule_index.open_index(db_path)
     try:
         for run_id in body.run_ids:
@@ -674,17 +717,24 @@ async def bulk_delete_capsules(
                     {"run_id": run_id, "outcome": "held", "code": exc.code}
                 )
                 counts["held"] += 1
+                refusals.append(
+                    {"run_id": run_id, "code": exc.code, "details": exc.details}
+                )
                 continue
             if body.dry_run:
                 results.append({"run_id": run_id, "outcome": "deleted"})
                 counts["deleted"] += 1
                 continue
             try:
-                capsule_delete.execute_delete(capsule_dir, run_id, conn)
-            except Exception as exc:  # noqa: BLE001 — per-item report, no rollback
+                capsule_delete.execute_delete(
+                    capsule_dir, run_id, conn,
+                    store=store, tenant_id=tenant_id, actor=auth.subject,
+                )
+            except Exception as exc:  # noqa: BLE001 — per-item report; item itself is rolled back
+                code = getattr(exc, "code", "delete_failed")
                 results.append({
                     "run_id": run_id, "outcome": "error",
-                    "code": "delete_failed", "message": str(exc),
+                    "code": code, "message": str(exc),
                 })
                 counts["errors"] += 1
                 continue
@@ -700,6 +750,16 @@ async def bulk_delete_capsules(
             )
     finally:
         conn.close()
+
+    if refusals:
+        # One chained refusal entry per request (spec: keep the log bounded).
+        capsule_delete.audit_index_event(
+            True,
+            auth.subject,
+            f"batch:{len(body.run_ids)}",
+            {"requested": list(body.run_ids), "refusals": refusals,
+             "bulk_id": bulk_id, "dry_run": body.dry_run},
+        )
 
     summary = {
         "requested": len(body.run_ids),

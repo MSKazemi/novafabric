@@ -6591,29 +6591,49 @@ def create_app(
         if not cap_dir.is_dir():
             raise HTTPException(status_code=404, detail=f"Capsule not found: {run_id}")
 
-        # Check active legal holds across all registries (hold always blocks, even with force=True)
-        active_holds: list[str] = []
-        registries_base = capsule_dir.parent / "registries"
-        if registries_base.exists():
-            for reg_dir in registries_base.iterdir():
-                if not reg_dir.is_dir():
-                    continue
-                holds_path = reg_dir / "holds.jsonl"
-                if not holds_path.exists():
-                    continue
-                for line in holds_path.read_text().splitlines():
-                    if line.strip():
-                        h = json.loads(line)
-                        if h.get("released_at") is None:
-                            active_holds.append(h["hold_id"])
-        if active_holds:
-            hold_ids = active_holds[:3]
-            detail = f"Deletion blocked by {len(active_holds)} active legal hold(s): {hold_ids}"
-            raise HTTPException(status_code=409, detail=detail)
+        # ADR-0206 P2: the governed pipeline shared with ``DELETE /v0/capsules``
+        # — holds (always win, even with force), WORM, NovaSeal seal, then a
+        # recoverable capsule + runs-cache delete (see capsule_delete.execute_delete).
+        from novafabric.server import capsule_delete, capsule_index  # noqa: PLC0415
 
-        import shutil  # noqa: PLC0415
+        try:
+            capsule_delete.check_deletable(capsule_dir, run_id)
+        except capsule_delete.DeleteBlockedError as exc:
+            audit.append(
+                action="capsule_delete_refused",
+                args={"run_id": run_id, "code": exc.code, "force": force, **exc.details},
+                cli_equivalent=f"nova capsule delete {run_id}",
+                actor_token_fp=actor_fp,
+                result="refused",
+                error=str(exc),
+            )
+            capsule_delete.audit_index_event(
+                True,
+                actor_fp,
+                run_id,
+                {"requested": [run_id], "refusals": [
+                    {"run_id": run_id, "code": exc.code, "details": exc.details}
+                ]},
+            )
+            hold_ids = exc.details.get("hold_ids")
+            detail = str(exc) if not hold_ids else f"{exc} {hold_ids}"
+            raise HTTPException(status_code=409, detail=detail) from exc
 
-        shutil.rmtree(cap_dir)
+        conn = capsule_index.open_index(_db_path)
+        try:
+            capsule_delete.execute_delete(capsule_dir, run_id, conn, actor=actor_fp)
+        except capsule_delete.DeleteFailedError as exc:
+            audit.append(
+                action="capsule_delete_failed",
+                args={"run_id": run_id, "code": exc.code, **exc.details},
+                cli_equivalent=f"nova capsule delete {run_id}",
+                actor_token_fp=actor_fp,
+                result="error",
+                error=str(exc),
+            )
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        finally:
+            conn.close()
         audit.append(
             action="capsule_delete",
             args={"run_id": run_id, "force": force},

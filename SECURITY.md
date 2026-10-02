@@ -123,6 +123,7 @@ docs for its own risk surface would have missed all four.
 | `NOVAFABRIC_SERVE_ALLOW_ANY_PATH` | the dashboard path denylist | `nova serve` endpoints that take a caller-chosen path (evidence export, capsule migrate, promote-sign) stop refusing system directories. Note this is a **denylist, deliberately not a sandbox** |
 | `NOVAFABRIC_SERVER_WEBHOOKS_ALLOW_INSECURE_URL` | webhook URL validation | permits insecure webhook destinations; the outbound path is the only one that leaves the trust boundary |
 | `NOVAFABRIC_SERVER_DEMO_DEVICE_GRANT` | the device-grant guard | enables local/testing scaffolding whose `/approve` endpoint is **unauthenticated**. The code's own comment says it is off by default "so no production deployment exposes an unauthenticated role-approval surface" |
+| `NOVAFABRIC_ALLOW_SEALED_DELETE` | the sealed-capsule delete refusal | `DELETE /v0/capsules`, `bulk-delete` and `nova serve`'s `DELETE /api/runs` may delete a NovaSeal-sealed capsule (`.seal/` present), destroying sealed evidence. It never overrides a legal hold or WORM lock; deletions stay audited (experimental, ADR-0206) |
 
 Each accepts `1`/`true`/`yes`/`on`.
 

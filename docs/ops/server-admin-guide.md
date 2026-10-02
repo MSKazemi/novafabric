@@ -190,8 +190,14 @@ schema change).
 **Governed deletion (`admin` role only — writer/reader/auditor get 403):**
 
 - `DELETE /v0/capsules/{run_id}` — removes the capsule directory plus its
-  derived index rows (runs-cache, content-search) and appends a
-  `capsule_delete` audit entry. Re-deleting is a 404.
+  derived index rows (runs-cache, content-search, and the MetadataStore row
+  when the caller carries a tenant) and appends a `capsule_delete` audit entry.
+  Re-deleting is a 404. The capsule is first renamed into a sibling
+  `.deleting/` tombstone, then the index rows go, then the tombstone is purged;
+  if an index step fails the capsule is restored (500 `delete_failed`) so
+  files and index never silently disagree, and a purge failure leaves hidden
+  residue that is reaped after an hour. Also served by `nova serve`'s
+  `DELETE /api/runs/{id}`.
 - `POST /v0/capsules/bulk-delete` — body
   `{"run_ids": [...], "dry_run": false}`; per-item outcomes
   (`deleted | held | not_found | invalid_id | duplicate | error`) plus
@@ -204,7 +210,11 @@ schema change).
   `holds.jsonl` refuses deletion (409 `legal_hold_active` / per-item
   `held`) and there is **no force override**. Honest limit: holds are
   registry-global today — one active hold freezes the whole delete
-  surface. Unexpired WORM locks refuse with 409 `worm_hold`.
+  surface. Unexpired WORM locks refuse with 409 `worm_hold`. **NovaSeal-sealed
+  capsules (`.seal/` present) refuse with 409 `sealed_capsule`** unless
+  `NOVAFABRIC_ALLOW_SEALED_DELETE=1` (experimental; never overrides a hold or
+  WORM). Refusals append `run.index_delete_refused` to the chained audit log;
+  removed MetadataStore rows append `run.index_delete`.
   **Since v0.98.0 a corrupt line in `holds.jsonl` fails closed:** an
   unparseable line is treated as an *active, blocking* hold (and logged as a
   warning) rather than skipped, because a truncated or damaged line may encode

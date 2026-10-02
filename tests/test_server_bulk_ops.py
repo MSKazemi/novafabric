@@ -597,10 +597,10 @@ class TestBulkDelete:
 
         real = cd.execute_delete
 
-        def failing(cdir: Path, run_id: str, conn: Any) -> None:
+        def failing(cdir: Path, run_id: str, conn: Any, **kw: Any) -> None:
             if run_id == a:
                 raise OSError("disk says no")
-            real(cdir, run_id, conn)
+            real(cdir, run_id, conn, **kw)
 
         monkeypatch.setattr(cd, "execute_delete", failing)
         resp = client.post("/v0/capsules/bulk-delete", json={"run_ids": [a, b]})

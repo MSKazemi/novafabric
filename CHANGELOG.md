@@ -65,6 +65,18 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Added
 
+- **Capsule delete and index delete now go through one governed path (ADR-0206 P2,
+  experimental).** `DELETE /v0/capsules/{id}`, `POST /v0/capsules/bulk-delete` and
+  `nova serve`'s `DELETE /api/runs/{id}` share `server/capsule_delete.py`: legal holds,
+  WORM locks and **NovaSeal-sealed capsules** (new: 409 `sealed_capsule`; opt out with
+  `NOVAFABRIC_ALLOW_SEALED_DELETE=1`, never over a hold or WORM) refuse; the MetadataStore
+  row is dropped with `MetadataStore.delete_run` alongside the runs-cache row;
+  refusals append `run.index_delete_refused` and removals `run.index_delete` to the chained
+  audit log. Order: tombstone-rename the capsule, delete index rows, purge; a failure
+  restores the capsule so index and files agree (500 `delete_failed`, per-item `error`
+  in bulk), and a purge failure leaves hidden residue reaped after an hour. No new routes.
+  `serve`'s delete also gains the WORM check and runs-cache cleanup it lacked.
+
 - **A Dashboards view in the web dashboard for ADR-0235 widgets and ADR-0236 `ratio()`
   (experimental, read-only).** It lists the dashboards and widgets under
   `$NOVAFABRIC_HOME/dashboards` and renders every schema chart type (`line`, `bar`, `area`,

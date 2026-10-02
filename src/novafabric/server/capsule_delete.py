@@ -14,11 +14,14 @@ run this pipeline per item, so their semantics cannot drift (serve's
 4. WORM refusal — an unexpired ``LocalWormAdapter`` lock for the item
    refuses with ``worm_hold`` (best-effort: unreadable WORM DBs are skipped
    with a warning, matching ``HoldContext``'s "where known" contract);
-5. removal of ``capsule_dir/<run_id>`` plus derived-index cleanup
-   (runs-cache row, content-search rows — ADR-0204 per-run delete). The
-   MetadataStore has no ``delete_run`` today; its best-effort rows may go
-   stale, which its "derived, rebuildable" doctrine permits (ADR-0206
-   Consequences).
+5. sealed-capsule refusal — a NovaSeal-sealed capsule (``.seal/`` present)
+   refuses with ``sealed_capsule`` unless ``NOVAFABRIC_ALLOW_SEALED_DELETE=1``
+   (the same default as ``metadata_store.run_delete``);
+6. removal of ``capsule_dir/<run_id>`` plus **both** derived indexes: the
+   registry runs-cache / content-search rows (ADR-0204) and, when a
+   ``store`` + ``tenant_id`` are given, the MetadataStore rows via
+   ``MetadataStore.delete_run`` (ADR-0206 P2). Ordering and recovery are
+   defined on :func:`execute_delete`.
 
 Audit entries are appended by the route layer (deletion is evidence,
 ADR-0134) — this module only decides and executes.
@@ -28,14 +31,38 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import secrets
 import shutil
 import sqlite3
+import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from novafabric.server import capsule_index
 
+if TYPE_CHECKING:
+    from novafabric.audit import AuditLog
+    from novafabric.metadata_store.interface import MetadataStore
+
 logger = logging.getLogger(__name__)
+
+#: Subdirectory a NovaSeal seal lives in (``capsule/_manifest_write.SEAL_DIR_NAME``).
+SEAL_DIR_NAME = ".seal"
+
+#: Explicit policy opt-out: ``1`` lets a sealed capsule be deleted (default: refuse).
+ALLOW_SEALED_ENV = "NOVAFABRIC_ALLOW_SEALED_DELETE"
+
+#: Sibling of the capsule dir (``<capsule_dir>/../.deleting``) holding capsules
+#: that are mid-delete. Outside ``capsule_dir`` so no scanner mistakes a
+#: tombstone for a live capsule.
+TOMBSTONE_DIRNAME = ".deleting"
+
+#: A tombstone older than this is residue of a crashed delete, safe to reap.
+TOMBSTONE_REAP_AFTER_S = 3600.0
 
 
 class DeleteBlockedError(Exception):
@@ -45,6 +72,77 @@ class DeleteBlockedError(Exception):
         super().__init__(message)
         self.code = code
         self.details = details
+
+
+class DeleteFailedError(Exception):
+    """A delete failed midway (→ 500). ``code`` says what state was left.
+
+    ``delete_failed`` — nothing observable changed (rolled back);
+    ``delete_inconsistent`` — rollback itself failed; ``details`` names the
+    tombstone holding the capsule bytes so an operator can restore it.
+    """
+
+    def __init__(self, message: str, code: str, details: dict[str, object]) -> None:
+        super().__init__(message)
+        self.code = code
+        self.details = details
+
+
+@dataclass(frozen=True)
+class DeleteOutcome:
+    """What :func:`execute_delete` did."""
+
+    metadata_rows_removed: int = 0
+    #: Set when the index is clean and the capsule is hidden but its bytes could
+    #: not be removed yet; reaped on a later delete after the grace period.
+    residue: str | None = None
+
+
+def sealed_capsule(capsule_dir: Path, run_id: str) -> bool:
+    """True when the capsule carries a NovaSeal seal directory."""
+    return (capsule_dir / run_id / SEAL_DIR_NAME).is_dir()
+
+
+def sealed_delete_allowed() -> bool:
+    """Policy opt-out for sealed capsules (``NOVAFABRIC_ALLOW_SEALED_DELETE=1``)."""
+    return os.environ.get(ALLOW_SEALED_ENV, "").strip() == "1"
+
+
+def chained_audit_log() -> AuditLog:
+    """The hash-chained audit log (``NOVAFABRIC_AUDIT_LOG_PATH`` overrides)."""
+    from novafabric.audit import AUDIT_LOG_PATH, AuditLog
+
+    env = os.environ.get("NOVAFABRIC_AUDIT_LOG_PATH")
+    return AuditLog(Path(env) if env else AUDIT_LOG_PATH)
+
+
+def audit_index_event(
+    refused: bool,
+    actor: str,
+    resource_id: str,
+    details: dict[str, Any],
+    audit_log: AuditLog | None = None,
+) -> None:
+    """Append ``run.index_delete`` / ``run.index_delete_refused``. Never raises.
+
+    The route layer also writes the serve audit entry; a failure of this
+    second, chained record is logged loudly but must not undo a delete.
+    """
+    from novafabric.audit import AuditEventType
+
+    try:
+        (audit_log or chained_audit_log()).append(
+            event_type=(
+                AuditEventType.RUN_INDEX_DELETE_REFUSED
+                if refused
+                else AuditEventType.RUN_INDEX_DELETE
+            ),
+            actor=actor,
+            resource_id=resource_id,
+            details=details,
+        )
+    except Exception:  # noqa: BLE001 — see docstring
+        logger.error("chained audit write failed for %s", resource_id, exc_info=True)
 
 
 def is_valid_run_id(run_id: str) -> bool:
@@ -123,10 +221,13 @@ def worm_locked_until(capsule_dir: Path, run_id: str) -> datetime | None:
     return None
 
 
-def check_deletable(capsule_dir: Path, run_id: str) -> None:
-    """Raise :class:`DeleteBlockedError` if a hold or WORM lock refuses.
+def check_deletable(
+    capsule_dir: Path, run_id: str, *, allow_sealed: bool | None = None
+) -> None:
+    """Raise :class:`DeleteBlockedError` if a hold, WORM lock or seal refuses.
 
-    Holds always win — no flag bypasses this check (ADR-0206 D2).
+    Holds always win — no flag bypasses this check (ADR-0206 D2). *allow_sealed*
+    defaults to :func:`sealed_delete_allowed`; it never overrides a hold or WORM.
     """
     holds = active_hold_ids(capsule_dir)
     if holds:
@@ -142,17 +243,141 @@ def check_deletable(capsule_dir: Path, run_id: str) -> None:
             code="worm_hold",
             details={"locked_until": locked_until.isoformat()},
         )
+    if allow_sealed is None:
+        allow_sealed = sealed_delete_allowed()
+    if not allow_sealed and sealed_capsule(capsule_dir, run_id):
+        raise DeleteBlockedError(
+            f"Deletion blocked: '{run_id}' is NovaSeal-sealed.",
+            code="sealed_capsule",
+            details={"seal_dir": SEAL_DIR_NAME, "override_env": ALLOW_SEALED_ENV},
+        )
+
+
+def reap_tombstones(capsule_dir: Path, *, now: float | None = None) -> int:
+    """Remove residue of crashed deletes older than the grace period.
+
+    Tombstones are named ``<run_id>.<epoch>.<hex>``; only the epoch in the name
+    is trusted (a rename does not touch mtime), and a young one may belong to a
+    live sibling worker that can still roll back, so it is left alone.
+    Fail-open; returns the number removed.
+    """
+    base = capsule_dir.parent / TOMBSTONE_DIRNAME
+    cutoff = (time.time() if now is None else now) - TOMBSTONE_REAP_AFTER_S
+    removed = 0
+    try:
+        entries = list(base.iterdir())
+    except OSError:
+        return 0
+    for entry in entries:
+        try:
+            epoch = float(entry.name.rsplit(".", 2)[1])
+        except (IndexError, ValueError):
+            continue
+        if epoch < cutoff and entry.is_dir():
+            shutil.rmtree(entry, ignore_errors=True)
+            removed += not entry.exists()
+    return removed
 
 
 def execute_delete(
-    capsule_dir: Path, run_id: str, conn: sqlite3.Connection | None
-) -> None:
-    """Remove the capsule directory and its derived index rows.
+    capsule_dir: Path,
+    run_id: str,
+    conn: sqlite3.Connection | None,
+    *,
+    store: MetadataStore | None = None,
+    tenant_id: UUID | None = None,
+    actor: str = "system",
+    audit_log: AuditLog | None = None,
+) -> DeleteOutcome:
+    """Remove the capsule and both derived indexes, in a recoverable order.
 
-    *conn* is the registry-DB connection (None skips index cleanup — the
-    lazy ``sync_index`` prune repairs it on the next list request).
+    *conn* is the registry-DB connection (None skips runs-cache cleanup — the
+    lazy ``sync_index`` prune repairs it). *store* + *tenant_id* (a UUID
+    *run_id* only) additionally drop the MetadataStore rows.
+
+    Ordering (the capsule directory is the source of truth, so it is never
+    destroyed while an index step can still fail):
+
+    1. **tombstone** — atomically rename ``capsule_dir/<run_id>`` into
+       ``<capsule_dir>/../.deleting/``. The capsule is now invisible to every
+       reader. A failure here changes nothing (``delete_failed``).
+    2. **index rows** — runs-cache, then MetadataStore. On any failure the
+       tombstone is renamed back and the runs-cache re-synced, so capsule and
+       index agree again (``delete_failed``); if the rename-back itself fails
+       the error is ``delete_inconsistent`` and names the tombstone.
+    3. **purge** — ``rmtree`` the tombstone. The delete has already happened
+       logically; a failure leaves a hidden, unindexed residue (reported in
+       :class:`DeleteOutcome`, reaped by :func:`reap_tombstones` later), never a
+       visible capsule without its index or the reverse.
+
+    One ``run.index_delete`` audit entry is written when MetadataStore rows
+    were actually removed.
     """
-    shutil.rmtree(capsule_dir / run_id)
-    if conn is not None:
-        capsule_index.remove_run(conn, run_id)
-        conn.commit()
+    reap_tombstones(capsule_dir)
+    src = capsule_dir / run_id
+    tomb_dir = capsule_dir.parent / TOMBSTONE_DIRNAME
+    tomb = tomb_dir / f"{run_id}.{int(time.time())}.{secrets.token_hex(4)}"
+    try:
+        tomb_dir.mkdir(parents=True, exist_ok=True)
+        os.rename(src, tomb)
+    except OSError as exc:
+        raise DeleteFailedError(
+            f"could not remove capsule '{run_id}': {exc}",
+            code="delete_failed",
+            details={"stage": "tombstone"},
+        ) from exc
+
+    removed_rows = 0
+    try:
+        if conn is not None:
+            try:
+                capsule_index.remove_run(conn, run_id)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        if store is not None and tenant_id is not None:
+            try:
+                rid: UUID | None = UUID(run_id)
+            except ValueError:
+                rid = None  # not a UUID run: the store cannot hold it
+            if rid is not None:
+                with store.begin_tenant_context(tenant_id) as ctx:
+                    removed_rows = int(ctx.delete_run(rid, tenant_id))
+    except Exception as exc:
+        try:
+            os.rename(tomb, src)
+        except OSError as rb_exc:
+            logger.error("rollback of %s failed; bytes remain at %s", run_id, tomb)
+            raise DeleteFailedError(
+                f"index delete failed ({exc}) and rollback failed ({rb_exc}); "
+                f"capsule bytes are at {tomb}",
+                code="delete_inconsistent",
+                details={"stage": "rollback", "tombstone": str(tomb)},
+            ) from exc
+        if conn is not None:
+            try:
+                capsule_index.sync_index(conn, capsule_dir)  # re-heal runs-cache
+            except Exception:  # noqa: BLE001 — next list request backfills
+                logger.warning("runs-cache resync after rollback failed", exc_info=True)
+        raise DeleteFailedError(
+            f"index delete failed, capsule '{run_id}' restored: {exc}",
+            code="delete_failed",
+            details={"stage": "index"},
+        ) from exc
+
+    residue: str | None = None
+    try:
+        shutil.rmtree(tomb)
+    except OSError:
+        logger.warning("capsule %s deleted but residue remains at %s", run_id, tomb)
+        residue = str(tomb)
+    if removed_rows:
+        audit_index_event(
+            False,
+            actor,
+            run_id,
+            {"tenant_id": str(tenant_id), "scope": "metadata_index", "via": "capsule_delete"},
+            audit_log,
+        )
+    return DeleteOutcome(metadata_rows_removed=removed_rows, residue=residue)
