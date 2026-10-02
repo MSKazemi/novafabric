@@ -54,6 +54,13 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Added
 
+- **Strict capture mode** (ADR-0224 OQ-2, **works today**, opt-in, default unchanged).
+  `NOVAFABRIC_CAPTURE_STRICT=1`, or `install_all(..., strict=True)`, makes a capture that would
+  overlap another in the same process raise `capture.hooks.ConcurrentCaptureRefused` before
+  anything is installed or bound, instead of degrading to a scoped/contended capsule. Sequential
+  captures are unaffected. This is the one deliberate exception to capture's fail-open rule, and
+  only when requested.
+
 - **OTLP logs ingest** (ADR-0127's remaining ingest item, ADR-0293, **experimental**).
   `novafabric.otel.logs_ingest` accepts OTLP `ExportLogsServiceRequest` payloads (JSON, or
   protobuf with the `otlp` extra) for `POST /api/otlp/v1/logs`. Log records are appended to a
@@ -269,6 +276,23 @@ longer forwards the submitting shell's environment (ADR-0270).
   `{error: "crypto_shred_unavailable", reason}` and touches nothing; otherwise it executes.
   Responses and `/status` report `crypto_shred_available`; `cap003_enabled` stays as
   information only.
+
+- **Threads started inside a concurrent capture filed into the wrong capsule** (ADR-0224 D3
+  Amendment 4). A `threading.Thread` or `ThreadPoolExecutor` item started inside a participant
+  capture inherited no capture scope and wrote its model/network events into the hook owner's
+  capsule. While a capture's hooks are installed, `Thread.start` and `ThreadPoolExecutor.submit`
+  now carry the live scope (per work item for pools, so a long-lived worker is never pinned to
+  the capture that started it). Fail-open, restored on teardown. Not covered: threads started
+  before the capture bound, native threads, other pool types; `installed-contended` still warns.
+  Cost while installed: tens of microseconds per thread start / pool submit.
+
+- **The Google ADK adapter could not run on a real ADK `Runner`, and shared state across
+  invocations.** The plugin had no `.name`, took a positional `ctx` where ADK passes
+  `invocation_context=`, did not subclass `BasePlugin`, and kept one writer/run id/hook token on
+  `self`, so interleaved invocations overwrote each other and leaked the hook owner. State is now
+  per `invocation_id` (bounded at 64 in flight), each invocation binds its own capture scope, and
+  failed runs (`on_run_error_callback`) write a `failure` capsule and release the hooks.
+
 
 - **A compliance test expired on 2026-10-01.** `test_recent_capsule_within_retention` used a
   fixed "recent" date of 2026-04-01 against a six-month EU AI Act retention window, so it began

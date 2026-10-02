@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import logging
+import os
 import threading
 import uuid
 from typing import TYPE_CHECKING
@@ -89,8 +90,33 @@ _truncated_participants: set[str] = set()
 _contended_owners: set[str] = set()
 
 
-def _claim_hook_ownership() -> str:
+#: Opt-in strict mode (ADR-0224 OQ-2). Truthy values enable it.
+STRICT_ENV_VAR = "NOVAFABRIC_CAPTURE_STRICT"
+
+
+class ConcurrentCaptureRefused(RuntimeError):
+    """Strict mode: a capture was refused because another is live in-process.
+
+    Raised by :func:`install_all` **before** anything is installed or bound, so
+    a refused capture leaves no state behind. It is the one deliberate exception
+    to capture's fail-open rule: an operator who sets strict mode has asked that
+    a knowingly partial or contended capsule be an error, not a silent
+    degradation. Never raised unless strict mode was requested.
+    """
+
+
+def strict_capture_enabled(strict: bool | None = None) -> bool:
+    """Explicit *strict* wins; otherwise ``NOVAFABRIC_CAPTURE_STRICT`` (default off)."""
+    if strict is not None:
+        return strict
+    return os.environ.get(STRICT_ENV_VAR, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _claim_hook_ownership(strict: bool = False) -> str:
     """Become owner of the process-global hooks.
+
+    With *strict*, raises :class:`ConcurrentCaptureRefused` instead of returning
+    a participant token (or an owner token while a participant is still live).
 
     Returns an **owner** token (``own:``-prefixed) when this call took
     ownership, or a **participant** token (``par:``-prefixed) when another
@@ -99,6 +125,16 @@ def _claim_hook_ownership() -> str:
     """
     global _hook_owner
     with _HOOK_OWNER_LOCK:
+        if strict and (
+            _hook_owner is not None
+            or any(t.startswith(_PARTICIPANT_PREFIX) for t in _scope_bindings)
+        ):
+            raise ConcurrentCaptureRefused(
+                "another capture is live in this process and strict capture "
+                f"({STRICT_ENV_VAR}) refuses to produce a concurrent, "
+                "possibly partial capsule; run captures one at a time or "
+                "unset strict mode (ADR-0224 OQ-2)"
+            )
         if _hook_owner is None:
             _hook_owner = _OWNER_PREFIX + uuid.uuid4().hex
             # A participant that outlived the previous owner is still running
@@ -398,7 +434,9 @@ def _install_plugins(writer: "CapsuleWriter", parent_span_id: str) -> None:
     )
 
 
-def install_all(writer: "CapsuleWriter", parent_span_id: str) -> str:
+def install_all(
+    writer: "CapsuleWriter", parent_span_id: str, *, strict: bool | None = None
+) -> str:
     """Install every built-in hook whose target SDK is importable.
 
     Returns an opaque, always non-empty **token**: an owner token when this call
@@ -420,6 +458,10 @@ def install_all(writer: "CapsuleWriter", parent_span_id: str) -> str:
     :func:`_is_sdk_available`); the main benefit is making intent
     explicit at the install-orchestration layer.
 
+    ``strict`` (default: the ``NOVAFABRIC_CAPTURE_STRICT`` env var, else off)
+    makes an overlapping capture raise :class:`ConcurrentCaptureRefused` before
+    anything is installed. Off, behaviour is unchanged.
+
     Sets the EventRecorder singleton (see :func:`_ensure_recorder`) so the
     wire-level hooks can write their event streams.
 
@@ -427,7 +469,9 @@ def install_all(writer: "CapsuleWriter", parent_span_id: str) -> str:
     patched. For the import-deferred path that avoids importing unused SDKs at
     startup, see :func:`install_all_deferred` (``--fast-emit``).
     """
-    token = _claim_hook_ownership()
+    # Strict mode (opt-in, default off — ADR-0224 OQ-2): refuse a capture that
+    # would overlap another, instead of degrading to a scoped/contended capsule.
+    token = _claim_hook_ownership(strict_capture_enabled(strict))
     if token.startswith(_PARTICIPANT_PREFIX):
         # Another capture owns the hooks. Installing anyway would stack a second
         # patch layer and file this capture's events into the owner's capsule
@@ -457,8 +501,25 @@ def install_all(writer: "CapsuleWriter", parent_span_id: str) -> str:
         hook.install()
         _installed.append(hook)
 
+    _install_thread_propagation()
     _install_plugins(writer, parent_span_id)
     return token
+
+
+def _install_thread_propagation() -> None:
+    """Carry capture scopes into threads and pool items (ADR-0224 D3 ▸ Am. 4).
+
+    Part of the owner's patch layer, so it lives and dies with it. Fail-open: a
+    failure here leaves threads resolving the fallback, as before.
+    """
+    try:
+        from novafabric.capture.hooks._threads import ThreadContextHook
+
+        hook = ThreadContextHook()
+        hook.install()
+        _installed.append(hook)
+    except Exception:
+        _log.debug("capture: thread scope propagation not installed", exc_info=True)
 
 
 def install_all_deferred(writer: "CapsuleWriter", parent_span_id: str) -> None:

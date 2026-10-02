@@ -189,7 +189,9 @@ def get_current_recorder() -> EventRecorder | None:
     subprocess ``sitecustomize`` loader and the orchestrator — working exactly
     as before, and what makes a capture started on a bare thread still record:
     **threads do not inherit context** (ADR-0224 D3), so a thread that binds
-    nothing sees the singleton rather than nothing at all.
+    nothing sees the singleton rather than nothing at all. While a capture's
+    hooks are installed, threads and ``ThreadPoolExecutor`` items started inside
+    a capture carry its scope (:mod:`novafabric.capture.hooks._threads`).
     """
     bound: EventRecorder | None = _resolve("recorder")
     return bound if bound is not None else _current_recorder
@@ -329,6 +331,36 @@ def unbind_all_captures() -> int:
     if _scope_var.get() is not None:
         _scope_var.set(None)
     return len(scopes)
+
+
+def current_scope_snapshot() -> _CaptureScope | None:
+    """The innermost **live** capture scope bound in this context, or None.
+
+    An opaque handle for carrying a capture across a thread boundary (see
+    :mod:`novafabric.capture.hooks._threads`). It is the scope object itself,
+    not a copy, so a release made anywhere still takes effect for a thread that
+    carries it: a thread that outlives its capture resolves the fallback, never
+    the finished capture (ADR-0224 D3 ▸ Amendment 4).
+    """
+    return _first_live(_scope_var.get())
+
+
+def run_with_scope(snapshot: _CaptureScope | None, fn: Any, /, *args: Any, **kwargs: Any) -> Any:
+    """Call ``fn(*args, **kwargs)`` with *snapshot* as this context's capture scope.
+
+    The previous scope is restored afterwards, so a pooled worker thread that
+    runs items for several captures resolves each item's own capture and keeps
+    none of them. *snapshot* may be None, which is the point for pooled work:
+    an item submitted from outside any capture must not inherit the scope of
+    whichever capture happened to start the worker.
+
+    Exceptions from *fn* propagate unchanged — they belong to the workload.
+    """
+    token = _scope_var.set(snapshot)
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        _scope_var.reset(token)
 
 
 def get_current_writer(default: Any = None) -> Any:
