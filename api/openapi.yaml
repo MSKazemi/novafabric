@@ -1750,9 +1750,17 @@ paths:
 
         limit), and there is no force override. An unexpired WORM lock refuses
 
-        with 409 ``worm_hold``. Deleting an already-deleted id is a 404 (delete
+        with 409 ``worm_hold``; a NovaSeal-sealed capsule with 409
 
-        is evidenced, not idempotent-silent).'
+        ``sealed_capsule`` (unless ``NOVAFABRIC_ALLOW_SEALED_DELETE=1``). Capsule
+
+        and index rows are removed in a recoverable order (see
+
+        ``capsule_delete.execute_delete``); a failure midway restores the capsule
+
+        (500). Deleting an already-deleted id is a 404 (delete is evidenced,
+
+        not idempotent-silent).'
       operationId: delete_capsule_v0_capsules__run_id__delete
       parameters:
       - in: path
