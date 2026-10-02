@@ -252,6 +252,71 @@ components:
       - invalid_widgets
       title: DashboardSummary
       type: object
+    DashboardValidateResponse:
+      properties:
+        action:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Action
+        cli_equivalent:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cli Equivalent
+        current_sha256:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Current Sha256
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+        existing:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Existing
+        id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Id
+        kind:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Kind
+        normalized:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Normalized
+        ok:
+          title: Ok
+          type: boolean
+        proposed_sha256:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Proposed Sha256
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+        warnings:
+          default: []
+          items:
+            type: string
+          title: Warnings
+          type: array
+      required:
+      - ok
+      title: DashboardValidateResponse
+      type: object
     DashboardWidgetRef:
       properties:
         definition:
@@ -283,6 +348,45 @@ components:
       - definition
       - error
       title: DashboardWidgetRef
+      type: object
+    DashboardWriteResponse:
+      properties:
+        changed:
+          title: Changed
+          type: boolean
+        cli_equivalent:
+          title: Cli Equivalent
+          type: string
+        file:
+          title: File
+          type: string
+        id:
+          title: Id
+          type: string
+        kind:
+          title: Kind
+          type: string
+        ok:
+          title: Ok
+          type: boolean
+        sha256:
+          title: Sha256
+          type: string
+        warnings:
+          items:
+            type: string
+          title: Warnings
+          type: array
+      required:
+      - ok
+      - kind
+      - id
+      - file
+      - changed
+      - sha256
+      - warnings
+      - cli_equivalent
+      title: DashboardWriteResponse
       type: object
     DeleteViewResponse:
       properties:
@@ -4227,6 +4331,84 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
       summary: List Dashboards
+      tags:
+      - dashboards
+  /api/dashboards/apply:
+    post:
+      description: Validate, then store atomically. Audited whatever the outcome.
+      operationId: dashboardApplyDocument
+      parameters:
+      - in: query
+        name: token
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Token
+      - in: header
+        name: authorization
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardWriteResponse'
+          description: Successful Response
+        '409':
+          description: base_sha256 no longer matches the file on disk (stale preview).
+        '413':
+          description: Body larger than 262144 bytes; nothing was parsed.
+        '422':
+          description: Refused (schema, DSL, id, built-in, symlink). Nothing written.
+        '500':
+          description: The write failed; no partial or temporary file is left.
+      summary: Apply Document
+      tags:
+      - dashboards
+  /api/dashboards/validate:
+    post:
+      description: 'Dry run: the verdict and the diff inputs. Never writes.'
+      operationId: dashboardValidateDocument
+      parameters:
+      - in: query
+        name: token
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Token
+      - in: header
+        name: authorization
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardValidateResponse'
+          description: Successful Response
+        '413':
+          description: Body larger than 262144 bytes; nothing was parsed.
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Validate Document
       tags:
       - dashboards
   /api/dashboards/{dashboard_id}:
