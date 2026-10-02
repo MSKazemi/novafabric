@@ -15,6 +15,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
+from novafabric import _paths as _nf_paths
 from novafabric.promote.bundle_store import PromoteBundleStore
 from novafabric.promote.exceptions import BundleNotFoundError, PolicyNotFoundError
 from novafabric.promote.policy_store import PolicyStore
@@ -108,7 +109,7 @@ def seal_sign_cmd(
             raise typer.Exit(code=1)
 
     effective_capsule_id = capsule_id or hashlib.sha256(manifest_bytes).hexdigest()
-    home_path = _Path(home) if home else _Path.home() / ".novafabric"
+    home_path = _Path(home) if home else _nf_paths.nova_home()
 
     # -- Backend dispatch ---------------------------------------------------
     if backend == "local":

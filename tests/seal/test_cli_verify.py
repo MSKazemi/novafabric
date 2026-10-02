@@ -124,8 +124,8 @@ class TestVerifyCommand:
         seal_dir.mkdir()
         # Patch default config path to non-existent
         monkeypatch.setattr(
-            "novafabric.trust.novaseal.config._DEFAULT_CONFIG_PATH",
-            tmp_path / "nonexistent.yaml",
+            "novafabric.trust.novaseal.config._default_config_path",
+            lambda: tmp_path / "nonexistent.yaml",
         )
         result = runner.invoke(app, ["verify", str(capsule_dir)])
         assert result.exit_code == 1

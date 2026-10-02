@@ -21,6 +21,8 @@ from typing import Annotated, Optional
 
 import typer
 
+from novafabric import _paths as _nf_paths
+
 server_app = typer.Typer(
     name="server",
     help="Manage the multi-user REST API server (Postgres + OIDC).",
@@ -1142,7 +1144,7 @@ def _resolve_key_path(key_path: Optional[Path]) -> Path:  # noqa: UP007
     env_val = os.environ.get("NOVAFABRIC_OFFLINE_KEY_PATH")
     if env_val:
         return Path(env_val)
-    return Path.home() / ".novafabric" / "keys" / "offline-key.pem"
+    return _nf_paths.keys_dir() / "offline-key.pem"
 
 
 def _parse_days(value: str) -> int:

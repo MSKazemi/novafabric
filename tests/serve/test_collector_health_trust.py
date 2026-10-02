@@ -18,6 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import novafabric.serve.app as serve_app
+from novafabric._paths import nova_home
 from novafabric.serve.app import (
     _collector_health_paths,
     _owned_by_current_user,
@@ -48,7 +49,7 @@ def test_env_override_is_first_candidate(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_home_path_precedes_tmp_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NOVA_COLLECTOR_HEALTH_FILE", raising=False)
     paths = _collector_health_paths()
-    home_idx = paths.index(Path.home() / ".novafabric" / "collector-health.json")
+    home_idx = paths.index(nova_home() / "collector-health.json")
     tmp_idx = paths.index(Path(serve_app._DEFAULT_COLLECTOR_HEALTH))
     assert home_idx < tmp_idx
 

@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Generator
 from uuid import UUID
 
+from novafabric import _paths as _nf_paths
 from novafabric.metadata_store._keyset import (
     RUNS_ORDER_BY,
     parse_store_cursor,
@@ -27,7 +28,11 @@ from novafabric.metadata_store._keyset import (
 from novafabric.metadata_store.interface import BackendModeError, MetadataStore
 from novafabric.server.pagination import encode_keyset_cursor
 
-_DEFAULT_DB_PATH = Path.home() / ".novafabric" / "metadata.db"
+
+def _default_db_path() -> Path:
+    """``$NOVAFABRIC_HOME/metadata.db``, resolved per call (not at import)."""
+    return _nf_paths.nova_home() / "metadata.db"
+
 
 _DEV_WARNING = (
     "[novafabric] WARNING: SQLiteMetadataStore is a dev-only, single-process backend. "
@@ -81,7 +86,7 @@ class SQLiteMetadataStore(MetadataStore):
 
         warnings.warn(_DEV_WARNING, UserWarning, stacklevel=2)
 
-        self._db_path = Path(db_path) if db_path is not None else _DEFAULT_DB_PATH
+        self._db_path = Path(db_path) if db_path is not None else _default_db_path()
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------

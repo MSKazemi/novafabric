@@ -13,6 +13,7 @@ import typer
 import yaml
 from rich.console import Console
 
+from novafabric import _paths as _nf_paths
 from novafabric.evidence.bundle import (
     CapsuleValidationError,
     EvidenceBundleBuilder,
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 # Environment variable name for TSA URL
 _ENV_TSA_URL = "NOVAFABRIC_TSA_URL"
 # Config file location
-_CONFIG_FILE = Path.home() / ".novafabric" / "config.yaml"
+_CONFIG_FILE = _nf_paths.nova_home() / "config.yaml"
 
 TIMESTAMP_VERIFIER_SECTION = """\
 ## Timestamp (RFC 3161)

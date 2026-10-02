@@ -22,7 +22,6 @@ the identical due-computation code path and touches nothing.
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -31,6 +30,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from novafabric import _paths as _nf_paths
 from novafabric.audit import AUDIT_LOG_PATH, AuditLog
 from novafabric.pii.dek import DEKStore, open_dek_store
 from novafabric.retention.actions import SweepExecutor
@@ -76,12 +76,12 @@ def _registry_dir(registry: str) -> Path:
 
 
 def _default_capsule_dir() -> Path:
-    home = Path(os.environ.get("NOVAFABRIC_HOME", Path.home() / ".novafabric"))
+    home = _nf_paths.nova_home()
     return home / "capsules"
 
 
 def _nova_home() -> Path:
-    return Path(os.environ.get("NOVAFABRIC_HOME", Path.home() / ".novafabric"))
+    return _nf_paths.nova_home()
 
 
 def _read_active_hold_ids(registry: str) -> list[str]:

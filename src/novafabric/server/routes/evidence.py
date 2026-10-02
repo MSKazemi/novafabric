@@ -8,7 +8,6 @@ Implements:
 
 from __future__ import annotations
 
-import os
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -18,6 +17,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
 
+from novafabric import _paths as _nf_paths
 from novafabric.server.auth import AuthContext
 from novafabric.server.deps import get_capsule_dir, get_db_path
 from novafabric.server.errors import BadRequestError, ConflictError, NotFoundError
@@ -37,8 +37,7 @@ _BUNDLES_LOCK = threading.Lock()
 
 
 def _evidence_dir() -> Path:
-    override = os.environ.get("NOVAFABRIC_EVIDENCE_DIR")
-    return Path(override) if override else Path.home() / ".novafabric" / "evidence"
+    return _nf_paths.evidence_dir()
 
 
 def _now() -> str:
@@ -114,7 +113,7 @@ async def export_evidence(
         )
         from novafabric.evidence.signing import LocalSigner
 
-        key_pem = Path.home() / ".novafabric" / "keys" / "local-key.pem"
+        key_pem = _nf_paths.local_key_path()
         if not key_pem.exists():
             from novafabric.evidence.signing import generate_keypair
 

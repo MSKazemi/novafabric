@@ -215,8 +215,8 @@ class TestLoadSigningProfile:
         monkeypatch.delenv("NOVAFABRIC_SEAL_CONFIG", raising=False)
         # Point default config path to non-existent location
         monkeypatch.setattr(
-            "novafabric.trust.novaseal.config._DEFAULT_CONFIG_PATH",
-            tmp_path / "nonexistent.yaml",
+            "novafabric.trust.novaseal.config._default_config_path",
+            lambda: tmp_path / "nonexistent.yaml",
         )
         assert load_signing_profile() is None
 
@@ -234,8 +234,8 @@ class TestLoadSigningProfile:
     def test_reads_default_path(self, monkeypatch, valid_yaml, tmp_path):
         monkeypatch.delenv("NOVAFABRIC_SEAL_CONFIG", raising=False)
         monkeypatch.setattr(
-            "novafabric.trust.novaseal.config._DEFAULT_CONFIG_PATH",
-            valid_yaml,
+            "novafabric.trust.novaseal.config._default_config_path",
+            lambda: valid_yaml,
         )
         profile = load_signing_profile()
         assert profile is not None

@@ -39,6 +39,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from novafabric import _paths as _nf_paths
+
 logger = logging.getLogger(__name__)
 
 
@@ -410,6 +412,6 @@ def open_dek_store(home: Path | None = None) -> DEKStore:
         A ready :class:`DEKStore` instance.
     """
     if home is None:
-        home = Path(os.environ.get("NOVAFABRIC_HOME", Path.home() / ".novafabric"))
+        home = _nf_paths.nova_home()
     db_path = home / "dek.db"
     return DEKStore(db_path)

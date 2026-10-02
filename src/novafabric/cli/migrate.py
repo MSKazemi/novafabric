@@ -18,6 +18,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from novafabric import _paths as _nf_paths
 from novafabric.storage._migration import MigrationSummary, run_migration
 
 console = Console()
@@ -34,7 +35,7 @@ def migrate_to_postgres_cmd(
             ),
             show_default=False,
         ),
-    ] = Path.home() / ".novafabric" / "registry.db",
+    ] = _nf_paths.nova_home() / "registry.db",
     target: Annotated[
         Optional[str],
         typer.Option(

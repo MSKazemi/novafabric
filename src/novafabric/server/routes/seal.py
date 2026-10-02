@@ -70,11 +70,9 @@ class VerifyResponse(BaseModel):
 
 def _data_dir() -> Path:
     """Return the NovaSeal data directory (base for PromoteBundleStore)."""
-    import os
+    from novafabric._paths import nova_home
 
-    env = os.environ.get("NOVAFABRIC_HOME")
-    base = Path(env) if env else Path.home() / ".novafabric"
-    return base
+    return nova_home()
 
 
 def _merkle_db_path() -> Path:

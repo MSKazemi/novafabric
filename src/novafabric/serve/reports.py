@@ -10,6 +10,7 @@ import io
 from pathlib import Path
 from typing import Any
 
+from novafabric import _paths as _nf_paths
 from novafabric.serve.capsule_loader import list_run_summaries
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -398,11 +399,9 @@ def report_evidence_inventory(
 ) -> tuple[list[str], list[dict[str, Any]]]:
     import hashlib
     import json as _json
-    import os
     import zipfile
 
-    override = os.environ.get("NOVAFABRIC_EVIDENCE_DIR")
-    evidence_dir = Path(override) if override else Path.home() / ".novafabric" / "evidence"
+    evidence_dir = _nf_paths.evidence_dir()
     if not evidence_dir.is_dir():
         return EVIDENCE_COLS, []
 

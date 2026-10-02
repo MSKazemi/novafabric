@@ -9,6 +9,8 @@ from typing import Annotated, Any, Optional
 import typer
 from rich.console import Console
 
+from novafabric import _paths as _nf_paths
+
 console = Console()
 err_console = Console(stderr=True)
 
@@ -851,7 +853,7 @@ def _verify_sigstore(
         SigstoreSigner,
     )
 
-    home_path = Path(home) if home else Path.home() / ".novafabric"
+    home_path = Path(home) if home else _nf_paths.nova_home()
 
     # Determine capsule_id: use provided or compute from manifest
     effective_capsule_id = capsule_id

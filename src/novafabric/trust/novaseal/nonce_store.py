@@ -24,13 +24,13 @@ Database schema:
 from __future__ import annotations
 
 import logging
-import os
 import sqlite3
 import time
 from contextlib import closing
 from pathlib import Path
 from typing import Optional
 
+from novafabric._paths import nova_home
 from novafabric._sqlite_util import connect_sqlite, ensure_wal
 
 logger = logging.getLogger(__name__)
@@ -44,16 +44,11 @@ def _resolve_nonce_store_path(path: Optional[Path]) -> Path:
     Resolution order:
     1. Explicit *path* argument (not None).
     2. ``$NOVAFABRIC_HOME/tsa_nonces.db``.
-    3. ``~/.novafabric/tsa_nonces.db``.
+    3. ``~/.novafabric/tsa_nonces.db`` (what ``NOVAFABRIC_HOME`` defaults to).
     """
     if path is not None:
         return path
-    home_env = os.environ.get("NOVAFABRIC_HOME")
-    if home_env:
-        base = Path(home_env)
-    else:
-        base = Path.home() / ".novafabric"
-    return base / _DEFAULT_NONCES_DB_NAME
+    return nova_home() / _DEFAULT_NONCES_DB_NAME
 
 
 class NonceStore:

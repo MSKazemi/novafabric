@@ -13,6 +13,7 @@ import typer
 import yaml
 from rich.console import Console
 
+from novafabric import _paths as _nf_paths
 from novafabric.capture.secrets import (
     SecretScannerV0,
     recompute_chain_hash,
@@ -87,7 +88,7 @@ def subject_proof_cmd(
     subject_hmac = _hmac_subject(pepper, subject_id)
 
     if db_path is None:
-        home = Path(os.environ.get("NOVAFABRIC_HOME", Path.home() / ".novafabric"))
+        home = _nf_paths.nova_home()
         db_path = home / "compliance" / "redaction_subject_idx.db"
 
     report: dict[str, Any]

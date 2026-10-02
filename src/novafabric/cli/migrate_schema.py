@@ -27,6 +27,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from novafabric import _paths as _nf_paths
+
 console = Console()
 
 # The sentinel version that triggers migration.
@@ -247,7 +249,7 @@ def migrate_schema_cmd(
             ),
             show_default=False,
         ),
-    ] = Path.home() / ".novafabric" / "capsules",
+    ] = _nf_paths.default_capsule_dir(),
     dry_run: Annotated[
         bool,
         typer.Option(

@@ -161,6 +161,21 @@ def test_upgrade_survives_an_empty_path(monkeypatch: pytest.MonkeyPatch) -> None
     assert "FileNotFoundError" not in message
 
 
+def test_upgrade_creates_a_fresh_custom_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A brand-new NOVAFABRIC_HOME (directory not yet created) must be upgradable."""
+    monkeypatch.setenv("HOME", str(tmp_path / "user-home"))
+    fresh = tmp_path / "fresh" / "nova-home"
+    assert not fresh.exists()
+    monkeypatch.setenv("NOVAFABRIC_HOME", str(fresh))
+    monkeypatch.delenv("NOVAFABRIC_DB_PATH", raising=False)
+    ok, message = run_alembic_upgrade("sqlite", revision="head")
+    assert ok, message
+    assert (fresh / "metadata.db").exists()
+    assert not (tmp_path / "user-home" / ".novafabric").exists()
+
+
 def test_missing_alembic_yields_an_actionable_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

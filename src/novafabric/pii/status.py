@@ -44,6 +44,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
+from novafabric import _paths as _nf_paths
 from novafabric.compliance.pii.manifest import RedactionManifest
 from novafabric.pii.dek import DEKStore, DEKSubjectRecord
 
@@ -265,7 +266,7 @@ def build_pii_status(
         ManifestInvalidError: If the capsule's manifest exists but is invalid.
     """
     if nova_home is None:
-        nova_home = Path(os.environ.get("NOVAFABRIC_HOME", Path.home() / ".novafabric"))
+        nova_home = _nf_paths.nova_home()
     if capsule_dir is None:
         capsule_dir = nova_home / "capsules"
     if pepper is None:

@@ -81,6 +81,8 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from novafabric import _paths as _nf_paths
+
 logger = logging.getLogger(__name__)
 
 #: Hard cap on references per export (spec §2.1 "item count … bounded").
@@ -144,11 +146,11 @@ def _audit_log_path() -> Path:
 
 def _evidence_dir() -> Path:
     env = os.environ.get(EVIDENCE_DIR_ENV, "").strip()
-    return Path(env) if env else Path.home() / ".novafabric" / "evidence"
+    return Path(env) if env else _nf_paths.nova_home() / "evidence"
 
 
 def _default_key_path() -> Path:
-    return Path.home() / ".novafabric" / "keys" / "local-key.pem"
+    return _nf_paths.local_key_path()
 
 
 def _ensure_signing_key(key_path: Path) -> bool:

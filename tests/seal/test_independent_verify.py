@@ -47,7 +47,8 @@ def auditor_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("NOVAFABRIC_HOME", str(home))
     monkeypatch.delenv("NOVAFABRIC_SEAL_CONFIG", raising=False)
     monkeypatch.setattr(
-        "novafabric.trust.novaseal.config._DEFAULT_CONFIG_PATH", home / "novaseal.yaml"
+        "novafabric.trust.novaseal.config._default_config_path",
+        lambda: home / "novaseal.yaml",
     )
     return home
 

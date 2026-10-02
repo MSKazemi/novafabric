@@ -494,6 +494,7 @@ class TestAdminTokensBounding:
         monkeypatch.setattr(
             Path, "home", classmethod(lambda cls: tmp_path)  # type: ignore[attr-defined]
         )
+        monkeypatch.setenv("NOVAFABRIC_HOME", str(tmp_path / ".novafabric"))
         tokens_file = tmp_path / ".novafabric" / "tokens.jsonl"
         tokens_file.parent.mkdir(parents=True, exist_ok=True)
         with tokens_file.open("a", encoding="utf-8") as f:

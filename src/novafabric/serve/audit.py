@@ -1,7 +1,7 @@
 """Append-only audit log for `nova serve` mutations (Layer B).
 
 Per ADR-0027 §1 Layer B: every mutation is recorded in
-`~/.novafabric/dashboard-audit.jsonl`, one record per line, append-only.
+`$NOVAFABRIC_HOME/dashboard-audit.jsonl`, one record per line, append-only.
 The user can `cat` it, grep it, or pipe it into their own tooling. There
 is no rotation / no truncation; entries are tiny (few hundred bytes each).
 """

@@ -1046,6 +1046,16 @@ request.
 
 ### Object store and paths
 
+**Home resolution (works today).** Every home-relative path resolves, in order:
+the path's own override variable (e.g. `NOVAFABRIC_DB_PATH`, `NOVAFABRIC_CAPSULE_DIR`,
+`NOVAFABRIC_EVIDENCE_DIR`) > `$NOVAFABRIC_HOME/<name>` > `~/.novafabric/<name>`. This
+covers the registry, capsules, evidence, the keystore (`keys/`, which the health panel's
+`keystore_ok` checks), tokens, the object-store WAL, the dashboard audit log and the
+NovaSeal config and nonce store. Unset `NOVAFABRIC_HOME` and the defaults are exactly the
+old `~/.novafabric` locations. Deliberately **not** under the home: the per-user keyring
+(`~/.config/novafabric`), the XDG audit log and legacy seal stores
+(`~/.local/share/novafabric`), and project-local `./.novafabric/` directories.
+
 | Variable | Default | Effect |
 |---|---|---|
 | `NOVA_S3_ACCESS_KEY` / `NOVA_S3_SECRET_KEY` | — | ⚠ **Credentials.** Prefer an instance role or a mounted secret; a value here is visible to anything that can read the process environment |

@@ -20,7 +20,6 @@ permanently unrecoverable without touching WORM storage or manifest chains.
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -29,6 +28,7 @@ import typer
 from rich.console import Console
 from rich.markup import escape
 
+from novafabric import _paths as _nf_paths
 from novafabric.pii.dek import (
     ErasureDeferredReceipt,
     ErasureReceipt,
@@ -134,7 +134,7 @@ def erase_cmd(
       NOVAFABRIC_HOME=/srv/nova nova pii erase user@example.com
     """
     # Resolve capsule directory.
-    nova_home = Path(os.environ.get("NOVAFABRIC_HOME", Path.home() / ".novafabric"))
+    nova_home = _nf_paths.nova_home()
     if capsule_dir is None:
         capsule_dir = nova_home / "capsules"
 

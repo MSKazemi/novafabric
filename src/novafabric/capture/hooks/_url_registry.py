@@ -30,6 +30,8 @@ from urllib.parse import urlparse
 import yaml
 from pydantic import BaseModel, Field, ValidationError
 
+from novafabric import _paths as _nf_paths
+
 logger = logging.getLogger(__name__)
 
 _VENDORED_DEFAULT_PATH = Path(__file__).with_name("url_registry.yaml")
@@ -130,7 +132,7 @@ def _resolve_path(_override_path: Path | str | None) -> Path | None:
     env_value = os.environ.get("NOVAFABRIC_URL_REGISTRY")
     if env_value:
         return Path(env_value)
-    user_path = Path.home() / ".novafabric" / "url_registry.yaml"
+    user_path = _nf_paths.nova_home() / "url_registry.yaml"
     if user_path.is_file():
         return user_path
     return _VENDORED_DEFAULT_PATH

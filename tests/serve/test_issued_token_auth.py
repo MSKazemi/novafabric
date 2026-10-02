@@ -36,7 +36,7 @@ SERVER_TOKEN = "server-token-0123456789abcdef"
 def client(tmp_path, monkeypatch):
     """A serve app whose token store lives under tmp_path."""
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("NOVAFABRIC_HOME", str(tmp_path))
+    monkeypatch.setenv("NOVAFABRIC_HOME", str(tmp_path / ".novafabric"))
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     app = create_app(token=SERVER_TOKEN, capsule_dir=tmp_path)
     return TestClient(app, base_url="http://127.0.0.1")

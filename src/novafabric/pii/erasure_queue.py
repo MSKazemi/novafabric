@@ -48,6 +48,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from novafabric import _paths as _nf_paths
 from novafabric.audit import AUDIT_LOG_PATH
 from novafabric.capture._ulid import new_ulid
 from novafabric.pii.dek import ErasureDeferredReceipt, open_dek_store
@@ -411,7 +412,7 @@ class ErasureQueue:
 def erasure_db_path(home: Path | None = None) -> Path:
     """``$NOVAFABRIC_HOME/erasure.db`` (or *home*/erasure.db)."""
     if home is None:
-        home = Path(os.environ.get("NOVAFABRIC_HOME", Path.home() / ".novafabric"))
+        home = _nf_paths.nova_home()
     return home / "erasure.db"
 
 

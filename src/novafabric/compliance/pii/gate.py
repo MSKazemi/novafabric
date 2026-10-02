@@ -33,6 +33,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from novafabric import _paths as _nf_paths
+
 from .detector import PIIDetector, PIISpan
 from .manifest import RedactionManifest, RedactionManifestEntry
 
@@ -202,7 +204,7 @@ class PIIDetectionGate:
         self._legal_basis = legal_basis
 
         if legal_hold_dir is None:
-            home = Path(os.environ.get("NOVAFABRIC_HOME", Path.home() / ".novafabric"))
+            home = _nf_paths.nova_home()
             legal_hold_dir = home / "legal_hold"
         self._legal_hold_dir = legal_hold_dir
 

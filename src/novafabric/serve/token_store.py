@@ -50,13 +50,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from novafabric import _paths as _nf_paths
+
 #: Mode for any file holding (or having held) a bearer secret.
 _SECRET_MODE = stat.S_IRUSR | stat.S_IWUSR  # 0600
 
 
 def tokens_path() -> Path:
     """Path to the issued-token file."""
-    return Path.home() / ".novafabric" / "tokens.jsonl"
+    return _nf_paths.tokens_path()
 
 
 def fingerprint(token: str) -> str:

@@ -131,8 +131,8 @@ class TestTrySealProofReport:
 
         monkeypatch.delenv("NOVAFABRIC_SEAL_CONFIG", raising=False)
         monkeypatch.setattr(
-            "novafabric.trust.novaseal.config._DEFAULT_CONFIG_PATH",
-            tmp_path / "nonexistent.yaml",
+            "novafabric.trust.novaseal.config._default_config_path",
+            lambda: tmp_path / "nonexistent.yaml",
         )
 
         report_path = tmp_path / "redaction_proof_report.json"

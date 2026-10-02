@@ -24,6 +24,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from novafabric import _paths as _nf_paths
 from novafabric.cli._extras import rich_install_command
 
 console = Console()
@@ -267,7 +268,7 @@ def run_alembic_upgrade(
         scrub = resolved
     else:
         env.setdefault(
-            "NOVAFABRIC_DB_PATH", str(Path.home() / ".novafabric" / "metadata.db")
+            "NOVAFABRIC_DB_PATH", str(_nf_paths.metadata_db_path())
         )
         scrub = None
 
@@ -285,7 +286,7 @@ def run_alembic_upgrade(
         detail = (proc.stderr or proc.stdout or "no output").strip()
         if scrub:
             detail = detail.replace(scrub, "<dsn redacted>")
-        return False, f"alembic exited {proc.returncode}: {detail[:500]}"
+        return False, f"alembic exited {proc.returncode}: {detail[-500:]}"
     return True, f"alembic upgrade {revision} complete (backend={backend})"
 
 
@@ -321,10 +322,10 @@ def db_upgrade_cmd(
 
     Two parallel alembic tracks exist (ADR-0211): ``--track metadata``
     (default) migrates the MetadataStore tier — sqlite reads
-    NOVAFABRIC_DB_PATH (default ~/.novafabric/metadata.db), postgres reads
+    NOVAFABRIC_DB_PATH (default $NOVAFABRIC_HOME/metadata.db), postgres reads
     NOVAFABRIC_METADATA_DSN. ``--track registry`` (experimental) migrates the
     registry/server database — sqlite uses the registry DB path
-    (~/.novafabric/registry.db), postgres reads NOVAFABRIC_POSTGRES_DSN. The
+    ($NOVAFABRIC_HOME/registry.db), postgres reads NOVAFABRIC_POSTGRES_DSN. The
     server's schema-skew guard names the registry track.
     """
     import subprocess  # noqa: PLC0415
@@ -386,7 +387,7 @@ def db_upgrade_cmd(
     else:
         db_path = env.get(
             "NOVAFABRIC_DB_PATH",
-            str(Path.home() / ".novafabric" / "metadata.db"),
+            str(_nf_paths.metadata_db_path()),
         )
         env["NOVAFABRIC_DB_PATH"] = db_path
         console.print(f"  db_path: [dim]{db_path}[/dim]")

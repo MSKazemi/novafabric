@@ -19,6 +19,16 @@ longer forwards the submitting shell's environment (ADR-0270).
   where both the `.inconsistent` marking rename and the rollback rename fail). `nova serve`'s
   `DELETE /api/runs/{id}` now returns the `delete_inconsistent_pending` 409 naming the tombstone
   instead of a bare 404 on retry. See [server admin guide](docs/ops/server-admin-guide.md).
+- **A custom `NOVAFABRIC_HOME` is now honoured everywhere, not just by the registry.** The
+  dashboard's keystore check (`keystore_ok` on `/api/health`) looked in a hard-coded
+  `~/.novafabric/keys`, so a server started with a custom home reported the wrong keystore
+  state. Same family as the registry-path fix: evidence dir and default signing key, tokens
+  file, object-store WAL, collector health, DuckDB/policy defaults, PII/retention/redact/erasure
+  homes, `nova verify`/`seal propose`, the metadata store, the NovaSeal config + nonce store and
+  the `/v0` evidence routes all resolve through one helper set in `novafabric._paths`. Behaviour
+  with `NOVAFABRIC_HOME` unset is unchanged. The resolution order is in the
+  [operator guide](docs/operator-guide.md). A guard test fails on any new
+  `Path.home() / ".novafabric"` in `src/`.
 
 ### Documentation
 

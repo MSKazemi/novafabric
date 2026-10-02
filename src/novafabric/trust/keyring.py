@@ -12,6 +12,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
+# user-global: a per-user XDG config keyring (~/.config), deliberately NOT under
+# NOVAFABRIC_HOME, so it survives a throwaway or per-project home.
 _KEYRING_DIR = Path.home() / ".config" / "novafabric" / "keyring"
 
 

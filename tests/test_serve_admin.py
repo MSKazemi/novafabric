@@ -21,6 +21,8 @@ def _make_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
     # Redirect Path.home() so tokens.jsonl is written into tmp_path
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[attr-defined]
+    # tokens.jsonl follows NOVAFABRIC_HOME (the autouse fixture points it elsewhere).
+    monkeypatch.setenv("NOVAFABRIC_HOME", str(nova_dir))
 
     app = create_app(
         token=TOKEN,

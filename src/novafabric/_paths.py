@@ -4,6 +4,13 @@ All default paths derive from :func:`nova_home`, which reads ``NOVAFABRIC_HOME``
 (defaults to ``~/.novafabric``).  Individual paths can still be overridden via
 their own env vars.
 
+Resolution order for every home-relative path: the path's own override env var
+(where one exists) > ``$NOVAFABRIC_HOME/<name>`` > ``~/.novafabric/<name>``. Never
+write ``Path.home() / ".novafabric"`` in ``src/``: add a helper here instead. The
+few deliberately user-global locations (``~/.config/novafabric``, the XDG
+``~/.local/share/novafabric`` seal/audit stores, ``./.novafabric`` project
+directories) are not under this home and say so where they are defined.
+
 Environment variables
 ---------------------
 ``NOVAFABRIC_HOME``
@@ -36,6 +43,51 @@ def nova_home() -> Path:
     """
     env = os.environ.get("NOVAFABRIC_HOME")
     return Path(env) if env else Path.home() / ".novafabric"
+
+
+def keys_dir() -> Path:
+    """Local signing-key store: ``$NOVAFABRIC_HOME/keys``."""
+    return nova_home() / "keys"
+
+
+def local_key_path() -> Path:
+    """Default evidence-signing key: ``$NOVAFABRIC_HOME/keys/local-key.pem``."""
+    return keys_dir() / "local-key.pem"
+
+
+def evidence_dir() -> Path:
+    """Evidence-bundle directory.
+
+    Override with ``NOVAFABRIC_EVIDENCE_DIR`` (blank counts as unset); falls back to
+    ``$NOVAFABRIC_HOME/evidence``.
+    """
+    env = os.environ.get("NOVAFABRIC_EVIDENCE_DIR", "").strip()
+    return Path(env) if env else nova_home() / "evidence"
+
+
+def tokens_path() -> Path:
+    """Issued local-token file: ``$NOVAFABRIC_HOME/tokens.jsonl``."""
+    return nova_home() / "tokens.jsonl"
+
+
+def object_store_dir() -> Path:
+    """Local object-store WAL directory: ``$NOVAFABRIC_HOME/object_store``."""
+    return nova_home() / "object_store"
+
+
+def collector_health_path() -> Path:
+    """Collector health file: ``$NOVAFABRIC_HOME/collector-health.json``."""
+    return nova_home() / "collector-health.json"
+
+
+def metadata_db_path() -> Path:
+    """Metadata-store SQLite path.
+
+    Override with ``NOVAFABRIC_DB_PATH``; falls back to
+    ``$NOVAFABRIC_HOME/metadata.db``.
+    """
+    env = os.environ.get("NOVAFABRIC_DB_PATH")
+    return Path(env) if env else nova_home() / "metadata.db"
 
 
 def registry_db_path() -> Path:

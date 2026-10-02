@@ -83,6 +83,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+from novafabric._paths import nova_home
+
 if TYPE_CHECKING:
     from novafabric.trust.novaseal.signing_backend import SigningBackend
 
@@ -95,8 +97,16 @@ except ImportError:  # pragma: no cover
 # "https://freetsa.org/tsr" — an outbound call to a third party on every sealed
 # capture, from a local-mode core path. Empty means "do not timestamp".
 _DEFAULT_TSA_URL = ""
-_DEFAULT_MERKLE_DB = Path.home() / ".novafabric" / "novaseal-merkle.db"
-_DEFAULT_CONFIG_PATH = Path.home() / ".novafabric" / "novaseal.yaml"
+
+
+def _default_merkle_db() -> Path:
+    """``$NOVAFABRIC_HOME/novaseal-merkle.db`` — resolved per call, not at import."""
+    return nova_home() / "novaseal-merkle.db"
+
+
+def _default_config_path() -> Path:
+    """``$NOVAFABRIC_HOME/novaseal.yaml`` — resolved per call, not at import."""
+    return nova_home() / "novaseal.yaml"
 
 _SUPPORTED_PROFILES = frozenset({"local", "aws_kms", "azure_kv", "gcp_kms"})
 _MAX_TSA_CA_CERTS = 32
@@ -136,7 +146,7 @@ class SigningProfile:
     # novaseal.yaml doesn't set tsa_urls explicitly, and is empty when no TSA is
     # configured (ADR-0292: timestamping is opt-in). Never None.
     tsa_urls: list[str] = field(default_factory=list)
-    merkle_db: Path = field(default_factory=lambda: _DEFAULT_MERKLE_DB)
+    merkle_db: Path = field(default_factory=_default_merkle_db)
     # ADR-0055 (experimental): operator CA bundle for signer chain validation at
     # verify time. None = no chain validation (unchanged behaviour).
     ca_bundle: Optional[Path] = None
@@ -174,7 +184,7 @@ def resolve_merkle_db_uri() -> str:
         return env_db
 
     env_cfg = os.environ.get("NOVAFABRIC_SEAL_CONFIG")
-    config_path = Path(env_cfg) if env_cfg else _DEFAULT_CONFIG_PATH
+    config_path = Path(env_cfg) if env_cfg else _default_config_path()
     if config_path.exists() and yaml is not None:
         try:
             with open(config_path) as f:
@@ -187,7 +197,7 @@ def resolve_merkle_db_uri() -> str:
         except Exception:  # noqa: BLE001
             pass  # malformed yaml — fall through
 
-    return str(_DEFAULT_MERKLE_DB)
+    return str(_default_merkle_db())
 
 
 def resolve_merkle_db_path() -> Path:
@@ -216,8 +226,9 @@ def load_signing_profile() -> Optional[SigningProfile]:
             )
         return _parse_profile(config_path)
 
-    if _DEFAULT_CONFIG_PATH.exists():
-        return _parse_profile(_DEFAULT_CONFIG_PATH)
+    default_config = _default_config_path()
+    if default_config.exists():
+        return _parse_profile(default_config)
 
     return None
 
@@ -246,7 +257,7 @@ def _parse_profile(path: Path) -> SigningProfile:
     # literal string "None" (which was then used as a URL until v0.102.x).
     raw_tsa_url = raw.get("tsa_url")
     tsa_url = "" if raw_tsa_url is None else str(raw_tsa_url).strip()
-    merkle_db = Path(raw.get("merkle_db", str(_DEFAULT_MERKLE_DB))).expanduser()
+    merkle_db = Path(raw.get("merkle_db", str(_default_merkle_db()))).expanduser()
     merkle_db.parent.mkdir(parents=True, exist_ok=True)
 
     # REG-ADR-007: optional ordered TSA fallback list. tsa_urls[0] need not
