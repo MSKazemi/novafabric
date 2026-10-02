@@ -242,13 +242,19 @@
     "status": "builder-only"
   },
   "nova dashboard export": {
-    "status": "builder-only"
+    "status": "real-panel",
+    "tab": "dashboards",
+    "api": "/api/dashboard-widgets"
   },
   "nova dashboard list": {
-    "status": "builder-only"
+    "status": "real-panel",
+    "tab": "dashboards",
+    "api": "/api/dashboards"
   },
   "nova dashboard show": {
-    "status": "builder-only"
+    "status": "real-panel",
+    "tab": "dashboards",
+    "api": "/api/dashboards"
   },
   "nova dashboard validate": {
     "status": "builder-only"

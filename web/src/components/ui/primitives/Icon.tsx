@@ -35,6 +35,7 @@ import {
   Home,
   Landmark,
   Layers,
+  LayoutDashboard,
   LayoutGrid,
   Loader2,
   Lock,
@@ -66,7 +67,7 @@ export type IconName =
   | 'eval' | 'risk' | 'lineage' | 'kg' | 'cost' | 'schema' | 'evidence'
   | 'audit' | 'holds' | 'policy' | 'seal' | 'spine' | 'compliance'
   | 'incidents' | 'capture' | 'infra' | 'storage' | 'ops' | 'alerts'
-  | 'admin' | 'commands' | 'reports' | 'export'
+  | 'admin' | 'commands' | 'reports' | 'export' | 'dashboards'
   // common UI
   | 'search' | 'settings' | 'close' | 'check' | 'copy' | 'spinner'
   | 'warning' | 'external' | 'chevron-down' | 'chevron-left' | 'chevron-right'
@@ -102,6 +103,7 @@ const ICONS: Record<IconName, ComponentType<SVGProps<SVGSVGElement>>> = {
   commands: SquareTerminal,
   reports: FileText,
   export: Upload,
+  dashboards: LayoutDashboard,
   search: Search,
   settings: Settings,
   close: X,

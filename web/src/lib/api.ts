@@ -10,6 +10,12 @@
  * endpoints land in v0.8 / v0.9.
  */
 
+import type {
+  DashboardDetailResponse,
+  DashboardListResponse,
+  WidgetDataResponse,
+} from './dashboardTypes';
+
 const TOKEN_KEY = 'novafabric.serve-token';
 const BASE_KEY = 'novafabric.serve-base';
 
@@ -1058,6 +1064,35 @@ export const api = {
   // Capsule Query DSL JSON/YAML document (same shape as `nova query --query-file`).
   runQuery: (q: string, engine?: string) =>
     postJson<QueryPanelResult>('/api/query', engine ? { q, engine } : { q }),
+
+  // ADR-0235/0236 Dashboards view (read-only). Types: ./dashboardTypes.ts.
+  listDashboards: () => request<DashboardListResponse>('/api/dashboards'),
+  getDashboard: (id: string) =>
+    request<DashboardDetailResponse>(`/api/dashboards/${encodeURIComponent(id)}`),
+  getWidgetData: (id: string) =>
+    request<WidgetDataResponse>(`/api/dashboard-widgets/${encodeURIComponent(id)}/data`),
+  /** The stored file's bytes, verbatim (ADR-0235 D6) — unknown fields survive. */
+  async exportDashboardDocument(kind: 'dashboard' | 'widget', id: string): Promise<Blob> {
+    const { token, base } = getCfg();
+    if (!token) throw new ServeApiError(401, 'no token configured — connect first');
+    const prefix = kind === 'dashboard' ? '/api/dashboards' : '/api/dashboard-widgets';
+    const params = new URLSearchParams({ token });
+    const res = await fetch(`${base}${prefix}/${encodeURIComponent(id)}/export?${params.toString()}`);
+    if (res.status === 401) {
+      clearConnection();
+      emitAuthChange();
+      throw new ServeApiError(401, 'session expired — reconnect');
+    }
+    if (!res.ok) {
+      let message = `${res.status} ${res.statusText}`;
+      try {
+        const b = await res.json();
+        if (b && typeof b === 'object' && 'detail' in b) message = String(b.detail);
+      } catch { /* ignore */ }
+      throw new ServeApiError(res.status, message);
+    }
+    return res.blob();
+  },
 
   getRunFile: (run_id: string, filepath: string) =>
     request<{ filename: string; content: string }>(`/api/runs/${encodeURIComponent(run_id)}/file/${filepath}`),

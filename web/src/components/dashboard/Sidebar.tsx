@@ -4,7 +4,7 @@ import AppearancePanel from './AppearancePanel';
 import Badge from '../ui/primitives/Badge';
 import Icon from '../ui/primitives/Icon';
 
-export type Tab = 'home' | 'analytics' | 'runs' | 'registry' | 'lineage' | 'diff' | 'capture' | 'audit' | 'evidence' | 'holds' | 'policy' | 'seal' | 'infra' | 'commands' | 'admin' | 'compliance' | 'governance' | 'kg' | 'cost' | 'schema' | 'reports' | 'eval' | 'risk' | 'storage' | 'incidents' | 'spine' | 'ops' | 'alerts' | 'export';
+export type Tab = 'home' | 'analytics' | 'runs' | 'registry' | 'lineage' | 'diff' | 'capture' | 'audit' | 'evidence' | 'holds' | 'policy' | 'seal' | 'infra' | 'commands' | 'admin' | 'compliance' | 'governance' | 'kg' | 'cost' | 'schema' | 'reports' | 'eval' | 'risk' | 'storage' | 'incidents' | 'spine' | 'ops' | 'alerts' | 'export' | 'dashboards';
 
 interface NavItem {
   id: Tab;
@@ -32,6 +32,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { id: 'home', label: 'Home', shortcut: 'h' },
       { id: 'analytics', label: 'Analytics', shortcut: 'a' },
       { id: 'cost', label: 'Cost', badge: 'cost', shortcut: 'x' },
+      { id: 'dashboards', label: 'Dashboards', badge: 'exp', shortcut: '4' },
     ],
   },
   {

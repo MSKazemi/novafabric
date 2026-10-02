@@ -8,8 +8,8 @@ import { ALL_TABS, NAV_GROUPS, SHORTCUT_TAB, TAB_SHORTCUT, type Tab } from '@/co
 import parity from '@/components/dashboard/commands/commandParity.json';
 
 describe('navigation invariants', () => {
-  it('has 29 unique tab ids', () => {
-    expect(ALL_TABS.length).toBe(29);
+  it('has 30 unique tab ids', () => {
+    expect(ALL_TABS.length).toBe(30);
     expect(new Set(ALL_TABS).size).toBe(ALL_TABS.length);
   });
 
