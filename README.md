@@ -221,7 +221,7 @@ nova replay ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --mode mocked
 nova replay ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --dry-run
 ```
 
-See [the four replay modes](#3-replay-v03) below for `semantic` and `exact`.
+See [the five replay modes](#3-replay-v03) below for `semantic`, `exact`, and experimental `intervention`.
 
 ### 4. Diff two runs
 
@@ -314,7 +314,7 @@ so the schema can grow without a new top-level format.
 
 ### 3. Replay (v0.3)
 
-Re-execute or inspect a capsule with external calls controlled, in **four honest,
+Re-execute or inspect a capsule with external calls controlled, in **five explicit,
 falsifiable modes**:
 
 | Mode | What it does | Use for |
@@ -323,6 +323,7 @@ falsifiable modes**:
 | `mocked` | Re-spawns the command; LLM calls served from the capsule cache; tool calls gated by a safety ladder | CI, regression |
 | `semantic` | Re-executes and judges *meaning* not tokens (0.0–1.0 similarity score) | Drifting remote LLMs |
 | `exact` | Byte-exact eligibility requiring a deterministic env and per-call seed | Local / on-prem / compliance |
+| `intervention` *(experimental)* | Replays under mocked semantics after substituting one captured model/tool event | Counterfactual root-cause analysis |
 
 NovaFabric explicitly does **not** claim exact replay of *remote* LLM calls.
 
@@ -480,7 +481,7 @@ replay, and compare* any past run weeks or months later?" NovaFabric emits
 OpenTelemetry GenAI and OpenLineage, so you can feed an existing observability stack
 while keeping portable capsules for replay and audit.
 
-See [`docs/concepts.md`](docs/concepts.md) for the five primitives and four replay
+See [`docs/concepts.md`](docs/concepts.md) for the five primitives and five replay
 modes in depth.
 
 ---
@@ -740,8 +741,9 @@ secret-redacted record of a run: the manifest, traces, model/tool calls, the
 environment lock, a redaction proof, and a replay policy.
 
 **Can I replay a captured run?**
-Yes — four modes: `exact`, `mocked`, `semantic`, and `forensic` (read-only, no
-network, no subprocess). NovaFabric does not claim exact replay of *remote* LLM calls.
+Yes — five modes: `exact`, `mocked`, `semantic`, `forensic` (read-only, no network, no
+subprocess), and experimental `intervention` for counterfactual replay. NovaFabric does not claim
+exact replay of *remote* LLM calls.
 
 **How is this different from LangSmith / Langfuse / W&B?**
 Those are observability platforms centered on traces in a (hosted or self-hosted)
@@ -876,7 +878,7 @@ certify or guarantee compliance.
 - **Auditing or forensics?** Read the [Evidence Bundle](#5-evidence-bundle-signed-audit-export-v04)
   primitive, then `nova export-evidence`.
 - **Going deeper?** Read [`docs/concepts.md`](docs/concepts.md) for the five
-  primitives and four replay modes, and [`ROADMAP.md`](ROADMAP.md) for what is shipped
+  primitives and five replay modes, and [`ROADMAP.md`](ROADMAP.md) for what is shipped
   versus planned.
 
 ---
