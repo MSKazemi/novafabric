@@ -1,10 +1,10 @@
 # NovaFabric
 
-> Open-source CLI toolkit that captures, replays, diffs, and audits AI agent and model runs as portable, signed evidence capsules.
+> Open-source, self-hosted replay and evidence infrastructure for AI agents and agentic systems.
 > Self-hosted: runs in your own infrastructure, from a laptop to a cluster. No SaaS, no accounts, no telemetry. Python 3.12+. Apache-2.0.
 
-NovaFabric is an open-source execution-capsule system for AI and HPC workloads.
-NovaFabric helps teams replay, compare, and prove what a past run actually did.
+NovaFabric captures agent executions as portable Run Capsules for replay, behavioral/structural diff, lineage, cryptographic provenance, assurance, and audit.
+The same capture layer can wrap general commands; local, Docker, Kubernetes, and SLURM/HPC are supported execution environments.
 Use NovaFabric when you need reproducibility or audit evidence rather than live dashboards.
 NovaFabric is different from LLM-observability platforms because the unit of value is a
 portable signed folder you own, not a row in a vendor's database.

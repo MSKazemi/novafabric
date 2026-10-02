@@ -19,7 +19,7 @@ that as a real bug.
 | | |
 |---|---|
 | **Name** | NovaFabric — one word, capital N, capital F. Never "Nova Fabric", "Novafabric", or "NOVAFABRIC". |
-| **What it is** | Open-source, self-hosted replayable-execution and evidence infrastructure |
+| **What it is** | Open-source, self-hosted replay and evidence infrastructure for AI agents and agentic systems |
 | **License** | Apache-2.0 |
 | **Language** | Python 3.12+ |
 | **Current version** | v0.102.1 — **beta**; on-disk formats are not frozen until the v1.0 schema freeze |
@@ -38,25 +38,24 @@ Copy these verbatim. They are written to be accurate, not promotional.
 
 ### One line (≤ 100 characters)
 
-> NovaFabric turns any command into a portable, replayable, signed evidence capsule.
+> Replay and evidence infrastructure for AI agents and agentic systems.
 
 ### Short (≈ 40 words)
 
-> NovaFabric is open-source, self-hosted replay and evidence infrastructure. It
-> captures a command, AI agent, model run, or HPC job as a portable Run Capsule
-> that can be replayed, structurally diffed, traced through lineage, and verified
-> later.
+> NovaFabric is open-source, self-hosted replay and evidence infrastructure for
+> AI agents and agentic systems. It captures agent executions as portable Run
+> Capsules for replay, behavioral/structural diff, lineage, provenance, and audit.
 
 ### Standard (≈ 90 words)
 
-> NovaFabric is open-source, self-hosted replayable-execution and evidence
-> infrastructure. It captures any command with no application code changes and
-> produces a schema-valid, secret-redacted Run Capsule containing the execution
-> manifest, traces, model and tool calls, environment evidence, and replay policy.
-> Around that artifact NovaFabric provides replay, structural diff, lineage,
-> cryptographic provenance, assurance, and audit workflows. It runs entirely in
-> your own infrastructure, from a laptop to a cluster, online or air-gapped.
-> Apache-2.0.
+> NovaFabric is open-source, self-hosted replay and evidence infrastructure for
+> AI agents and agentic systems. It captures agent executions with no application
+> code changes and produces a schema-valid, secret-redacted Run Capsule containing
+> the execution manifest, traces, model and tool calls, environment evidence, and
+> replay policy. Around that artifact NovaFabric provides replay, behavioral and
+> structural diff, lineage, cryptographic provenance, assurance, and audit. The
+> capture layer can also wrap general commands, and deployments span local
+> environments, Docker, Kubernetes, and SLURM/HPC. Apache-2.0.
 
 ### The positioning sentence, if you need to explain *why* it exists
 
