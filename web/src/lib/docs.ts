@@ -33,46 +33,81 @@ function toSlug(file: string): string {
   return file.replace(/\.md$/, '').replace(/(^|\/)README$/, '$1index').replace(/\/index$/, '');
 }
 
-const GITHUB_BLOB = 'https://github.com/MSKazemi/novafabric/blob/main';
+const GITHUB_REPO = 'https://github.com/MSKazemi/novafabric';
+const GITHUB_BLOB = `${GITHUB_REPO}/blob/main`;
+const GITHUB_TREE = `${GITHUB_REPO}/tree/main`;
+
+function splitTarget(href: string): { target: string; suffix: string } {
+  const hashAt = href.indexOf('#');
+  const beforeHash = hashAt >= 0 ? href.slice(0, hashAt) : href;
+  const hash = hashAt >= 0 ? href.slice(hashAt) : '';
+  const queryAt = beforeHash.indexOf('?');
+  if (queryAt < 0) return { target: beforeHash, suffix: hash };
+  return {
+    target: beforeHash.slice(0, queryAt),
+    suffix: beforeHash.slice(queryAt) + hash,
+  };
+}
+
+/** Resolve a docs-relative target to a path in the repository root. */
+function resolveRepoPath(file: string, target: string): string | null {
+  const dir = file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : '';
+  const resolved = ['docs', ...dir.split('/').filter(Boolean)];
+
+  for (const segment of target.split('/')) {
+    if (!segment || segment === '.') continue;
+    if (segment === '..') {
+      if (!resolved.length) return null;
+      resolved.pop();
+      continue;
+    }
+    resolved.push(segment);
+  }
+  return resolved.join('/');
+}
 
 /**
- * Rewrites the relative `.md` links the repository uses into URLs that work on
- * the web.
+ * Rewrite every repository-relative link according to what is actually
+ * published on novafabric.ai.
  *
- * Markdown links like `concepts.md` are correct in a git checkout and dead on a
- * site whose routes are `/docs/concepts/`. Links that escape `docs/` — the
- * README, CONTRIBUTING, the schemas directory — have no site route at all, so
- * they go to GitHub rather than nowhere.
+ * - a Markdown target whose slug is in `publishedSlugs` -> /docs/<slug>/
+ * - the docs root -> /docs/
+ * - every other repository file -> GitHub blob URL
+ * - every other repository directory -> GitHub tree URL
+ *
+ * The published slug set is deliberately an input. Guessing publication from
+ * the `.md` extension is what caused excluded docs and non-Markdown assets to
+ * turn into site 404s.
  */
-function rewriteLinks(html: string, file: string): string {
-  const dir = file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : '';
-
+export function rewriteLinks(
+  html: string,
+  file: string,
+  publishedSlugs: ReadonlySet<string>,
+): string {
   return html.replace(/href="([^"]+)"/g, (whole, href: string) => {
-    if (/^(?:[a-z]+:|\/|#)/i.test(href)) return whole;
+    if (/^(?:[a-z][a-z0-9+.-]*:|\/|#|\?)/i.test(href)) return whole;
 
-    const [target, anchor = ''] = href.split('#');
-    if (!target.endsWith('.md')) return whole;
+    const { target, suffix } = splitTarget(href);
+    if (!target) return whole;
 
-    // Resolve the link relative to the current file's directory.
-    const segments = (dir ? `${dir}/${target}` : target).split('/');
-    const resolved: string[] = [];
-    let escapes = 0;
-    for (const segment of segments) {
-      if (segment === '.' || segment === '') continue;
-      if (segment === '..') {
-        if (resolved.length) resolved.pop();
-        else escapes += 1;
-        continue;
+    const repoPath = resolveRepoPath(file, target);
+    if (!repoPath) return whole;
+
+    // A bare "." from a top-level docs page means the published docs root.
+    if (repoPath === 'docs') return `href="/docs/${suffix}"`;
+
+    if (target.toLowerCase().endsWith('.md') && repoPath.startsWith('docs/')) {
+      const docFile = repoPath.slice('docs/'.length);
+      const slug = toSlug(docFile);
+      if (slug === '' || slug === 'index') return `href="/docs/${suffix}"`;
+      if (publishedSlugs.has(slug)) {
+        return `href="/docs/${slug}/${suffix}"`;
       }
-      resolved.push(segment);
     }
 
-    const suffix = anchor ? `#${anchor}` : '';
-    if (escapes > 0) {
-      // Outside docs/ — no site route exists; send the reader to the source.
-      return `href="${GITHUB_BLOB}/${resolved.join('/')}${suffix}"`;
-    }
-    return `href="/docs/${toSlug(resolved.join('/'))}/${suffix}"`;
+    const isDirectory = target.endsWith('/');
+    const githubBase = isDirectory ? GITHUB_TREE : GITHUB_BLOB;
+    return `href="${githubBase}/${repoPath}${suffix}"`;
   });
 }
 
@@ -81,27 +116,34 @@ let cache: DocPage[] | null = null;
 export async function docPages(): Promise<DocPage[]> {
   if (cache) return cache;
 
-  // `compiledContent()` is async in Astro 5+; awaiting it here keeps every
-  // caller synchronous-looking while still building statically.
-  const pages = await Promise.all(
-    Object.entries(modules).map(async ([path, mod]) => {
+  // Pass 1 decides the exact public route set before any link is rewritten.
+  // This is the source of truth for whether a relative Markdown target belongs
+  // on novafabric.ai or should point back to the repository.
+  const published = Object.entries(modules)
+    .map(([path, mod]) => {
       const file = toFile(path);
-      return {
-        file,
-        slug: toSlug(file),
-        html: rewriteLinks(await mod.compiledContent(), file),
-        raw: mod.rawContent(),
-      };
-    }),
-  );
-
-  cache = pages
+      return { file, slug: toSlug(file), mod };
+    })
     // The docs index itself is rendered by pages/docs/index.astro, and an empty
     // slug would collide with it.
     .filter((page) => page.slug !== '' && page.slug !== 'index')
-    .filter((page) => !EXCLUDE.some((pattern) => pattern.test(page.file)))
-    .sort((a, b) => a.slug.localeCompare(b.slug));
+    .filter((page) => !EXCLUDE.some((pattern) => pattern.test(page.file)));
 
+  const publishedSlugs = new Set(published.map((page) => page.slug));
+
+  // Pass 2 renders with the complete slug set available to rewriteLinks().
+  // `compiledContent()` is async in Astro 5+; awaiting it keeps the build
+  // static while allowing Astro's Markdown pipeline to finish first.
+  const pages = await Promise.all(
+    published.map(async ({ file, slug, mod }) => ({
+      file,
+      slug,
+      html: rewriteLinks(await mod.compiledContent(), file, publishedSlugs),
+      raw: mod.rawContent(),
+    })),
+  );
+
+  cache = pages.sort((a, b) => a.slug.localeCompare(b.slug));
   return cache;
 }
 
