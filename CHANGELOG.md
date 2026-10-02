@@ -96,6 +96,14 @@ longer forwards the submitting shell's environment (ADR-0270).
   (151 `read`, 30 `admin`, 32 `operate`, 7 `public`, 5 `audit`). Bulk directory installs stay
   with `nova dashboard apply`; deleting from the UI is not built.
 
+- **`npm run test:live`: a live smoke suite against a real `nova serve`** (**experimental**).
+  `web/tests/live/` boots the server on an OS-assigned free port over a throwaway
+  `NOVAFABRIC_HOME` (inherited `NOVAFABRIC_*` variables are dropped), seeds capsules with
+  `nova capture`, and walks Home, Runs (saved view, evidence cart), Dashboards, Evidence,
+  Compliance erasure and a no-console-errors sweep. It is skipped, not failed, when no browser or
+  no `novafabric` interpreter is available (`PW_CHANNEL=chrome` uses an installed Chrome). It is
+  not part of any CI job.
+
 
 - **A Dashboards view in the web dashboard for ADR-0235 widgets and ADR-0236 `ratio()`
   (experimental, read-only).** It lists the dashboards and widgets under
@@ -414,6 +422,27 @@ longer forwards the submitting shell's environment (ADR-0270).
   the shared `capture.hooks.install_all_or_discard`, which removes the just-opened
   capsule directory (only if it is still the untouched skeleton) and re-raises
   `ConcurrentCaptureRefused`. Non-strict behaviour is unchanged.
+
+- **`nova serve` now builds the app with the registry path it prints, so the Runs aggregate and
+  the System Health panel agree with reality** (**works today**). The CLI passed `db_path=None`
+  to `create_app`; the runs-index routes treat `None` as "no index" and answered
+  `/api/analytics/summary` with `source_unavailable: the runs index does not exist yet` for
+  every default launch, even with capsules on disk. `/api/health` and the empty-registry log
+  line also named `~/.novafabric/registry.db` regardless of `NOVAFABRIC_DB_PATH` /
+  `NOVAFABRIC_HOME`. Found in the first real-browser pass; both are pinned by tests.
+- **Dashboard accessibility, from the first real-browser axe pass** (**works today**). Dark
+  theme `--color-text-faint` (4.2:1) and light theme faint badges (4.17:1) are raised above 4.5:1;
+  the 37 accent buttons no longer turn their label white-on-light-green on hover; the Runs row's
+  copy button is no longer a `<button>` nested in a `<button>` (and shows on keyboard focus);
+  compare checkboxes, two selects and two scroll regions gain accessible names / focusability.
+  Unlabeled inputs in several other tabs remain (tracked in the QA hand-off).
+- **The GDPR erasure panel shows why a request FAILED** (**works today**). It printed the
+  receipt hash and hid `subject_not_found`; a failed status check is also reported instead of
+  being an unhandled rejection.
+- **Architecture explainer: deep links follow `hashchange`; the step list works from the
+  keyboard; the diagram scrolls instead of shrinking to illegibility on phones; the terminal
+  label no longer overlaps its first line** (**works today**).
+
 
 - **A curated one-capsule evidence bundle is now schema-valid, so a one-run cart exports**
   (ADR-0011 Am.1 / ADR-0239, **works today**). `CapsuleSetBundleBuilder` with a curation record

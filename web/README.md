@@ -64,6 +64,8 @@ npm run preview         # serve dist/ locally
 
 ```bash
 npm run test:e2e        # Playwright e2e
+npm run test:live       # Playwright against a real `nova serve` (skips if no browser;
+                        # PW_CHANNEL=chrome uses installed Chrome; NOVA_E2E_PYTHON picks the interpreter)
 npm run test:visual     # Playwright pixel diff
 npm run lhci            # Lighthouse CI
 ```

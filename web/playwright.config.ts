@@ -8,6 +8,8 @@ const PORT = Number(process.env.PW_PORT ?? 4321);
 
 export default defineConfig({
   testDir: './tests',
+  // tests/live boots a real `nova serve`; it has its own config (playwright.live.config.ts).
+  testIgnore: '**/live/**',
   timeout: 30_000,
   expect: { timeout: 5_000 },
   fullyParallel: true,

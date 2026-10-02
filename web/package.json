@@ -15,6 +15,7 @@
     "build:fixtures": "python3 scripts/build_showcase_fixture.py && node scripts/sign-evidence.mjs",
     "test:unit": "vitest run",
     "test:e2e": "playwright test tests/e2e",
+    "test:live": "playwright test -c playwright.live.config.ts",
     "test:visual": "playwright test tests/visual",
     "test:a11y": "playwright test tests/e2e/a11y.spec.ts",
     "lhci": "lhci autorun --config=.lighthouserc.json"
