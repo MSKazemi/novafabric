@@ -12,6 +12,10 @@ const nav = [
   { href: '/showcase/evidence', label: 'Evidence' },
   { href: '/docs', label: 'Docs' },
   { href: '/install', label: 'Install' },
+  // The rest of the site (served by the Next.js build under the same domain).
+  { href: '/novafabric/', label: 'Product' },
+  { href: '/demo/', label: 'Demo' },
+  { href: '/blog/', label: 'Blog' },
 ];
 
 const path = Astro.url.pathname;
@@ -34,7 +38,7 @@ const path = Astro.url.pathname;
       <span>NovaFabric</span>
     </a>
 
-    <nav class="hidden lg:flex items-center gap-1 text-sm" aria-label="Primary">
+    <nav class="hidden xl:flex items-center gap-1 text-sm" aria-label="Primary">
       {nav.map((item) => {
         const active = path === item.href || (item.href !== '/' && path.startsWith(item.href));
         return (
@@ -67,7 +71,7 @@ const path = Astro.url.pathname;
   </div>
 
   <!-- Mobile / narrow: secondary nav row -->
-  <nav class="lg:hidden border-t border-[var(--color-border)] container-content flex items-center gap-1 py-2 text-xs overflow-x-auto" aria-label="Primary mobile">
+  <nav class="xl:hidden border-t border-[var(--color-border)] container-content flex items-center gap-1 py-2 text-xs overflow-x-auto" aria-label="Primary mobile">
     {nav.map((item) => {
       const active = path === item.href || (item.href !== '/' && path.startsWith(item.href));
       return (
