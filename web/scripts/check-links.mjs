@@ -10,6 +10,23 @@ const GITHUB_ORIGIN = 'https://github.com';
 const GITHUB_BLOB_PREFIX = '/MSKazemi/novafabric/blob/main/';
 const GITHUB_TREE_PREFIX = '/MSKazemi/novafabric/tree/main/';
 
+/**
+ * Pages served by the Next.js build under the same domain (MSKazemi/novafabric-web). They are
+ * not in this build's dist/ by design, so they cannot be verified here; the deploy workflow
+ * that merges both builds checks every link on the merged site, where they do exist.
+ */
+const NEXT_BUILD_PAGES = new Set([
+  '/novafabric/',
+  '/demo/',
+  '/blog/',
+  '/research/',
+  '/primitives/',
+  '/architecture/',
+  '/changelog/',
+  '/capsules/',
+  '/contact/',
+]);
+
 function walk(dir) {
   const out = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -43,6 +60,7 @@ const htmlFiles = walk(DIST).filter((file) => file.endsWith('.html'));
 const failures = [];
 let checked = 0;
 let checkedGitHubTargets = 0;
+let checkedOtherBuild = 0;
 
 for (const file of htmlFiles) {
   // Astro emits a flat 404.html whose canonical href is /404/. That canonical
@@ -92,6 +110,12 @@ for (const file of htmlFiles) {
       continue;
     }
 
+    const withSlash = resolved.pathname.endsWith('/') ? resolved.pathname : `${resolved.pathname}/`;
+    if (NEXT_BUILD_PAGES.has(withSlash)) {
+      checkedOtherBuild += 1;
+      continue;
+    }
+
     checked += 1;
     let pathname;
     try {
@@ -118,5 +142,5 @@ if (failures.length) {
 }
 
 console.log(
-  `Link check passed: ${checked} same-site links and ${checkedGitHubTargets} repository blob/tree targets across ${htmlFiles.length} HTML pages.`,
+  `Link check passed: ${checked} same-site links, ${checkedGitHubTargets} repository blob/tree targets and ${checkedOtherBuild} links to pages served by the other build, across ${htmlFiles.length} HTML pages.`,
 );
