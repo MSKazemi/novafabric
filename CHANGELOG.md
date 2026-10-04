@@ -11,6 +11,8 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+## [0.103.0] - 2026-10-04
+
 ### Fixed
 
 - **Governed capsule delete: two residual gaps closed (ADR-0206 P2).** The tombstone reaper no

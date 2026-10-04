@@ -51,7 +51,7 @@ jobs:
           environment: test
           # Pin for reproducible CI. Without this you get the latest release,
           # which means a capsule produced by a version you did not choose.
-          novafabric-version: "0.102.1"
+          novafabric-version: "0.103.0"
           artifact-name: capsule-${{ github.run_id }}
           retention-days: "90"
 
@@ -76,7 +76,7 @@ Every row matches `action.yml` exactly.
 | `upload-artifact` | no | `true` | Upload the capsule as a workflow artifact. |
 | `artifact-name` | no | `novafabric-capsule` | Name for the uploaded artifact. |
 | `retention-days` | no | `90` | How long to retain the artifact. |
-| `novafabric-version` | no | `""` (latest) | Version specifier passed to pip, e.g. `0.102.1`. **Pin it** for reproducible CI. |
+| `novafabric-version` | no | `""` (latest) | Version specifier passed to pip, e.g. `0.103.0`. **Pin it** for reproducible CI. |
 | `python-version` | no | `3.12` | NovaFabric requires 3.12+. |
 | `extras` | no | `""` (core) | Extras to install, e.g. `all`. Core is ~113 MB; `all` is ~412 MB. |
 
