@@ -1,9 +1,10 @@
 # NovaFabric Showcase Site
 
 > This is a **showcase site explaining what NovaFabric does**. It is
-> documentation, not a viewer. The canonical interface is the CLI
-> (`pip install novafabric`). When `nova serve` ships in v1.x, that will
-> be the local browser viewer; this site will remain explanatory.
+> documentation, not the user's live dashboard. The canonical automation
+> interface is the CLI (`pip install novafabric`); the shipped
+> `nova serve` surface provides the browser/dashboard workflow for users
+> with their own capsules. This public showcase remains explanatory.
 >
 > The site consumes **only baked-in fixture data** — it does not read
 > user capsules, does not access the registry, and does not phone home.
@@ -32,7 +33,7 @@ The goal: a first-time visitor goes from *"what is this?"* to
 
 ## Stack
 
-Astro 5 + React 19 islands + Tailwind v4 + React Flow (lineage DAG)
+Astro 7 + React 19 islands + Tailwind v4 + React Flow (lineage DAG)
 + Shiki (build-time syntax highlighting) + Ajv (in-browser schema
 validation against the real `/schemas/` files) + `@noble/ed25519`
 (in-browser signature verification for the evidence bundle demo).
@@ -45,7 +46,7 @@ tree and fails the build on any non-Tier-A SPDX id.
 ## Develop
 
 ```bash
-nvm use                 # Node 20 LTS
+nvm use                 # Node >=22.12 (matches package.json engines and CI)
 npm ci
 npm run build:fixtures  # python scripts/build_showcase_fixture.py
 npm run dev             # localhost:4321

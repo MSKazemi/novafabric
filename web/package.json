@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
+    "postbuild": "node scripts/check-links.mjs",
     "preview": "astro preview",
     "build:dashboard": "astro build && node scripts/copy-dashboard.mjs",
     "lint": "tsc --noEmit",

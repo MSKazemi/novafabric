@@ -12,7 +12,7 @@
 
 **English** · *No translations yet — [help us add yours](https://github.com/MSKazemi/novafabric/issues/73). Translations are credited exactly like code, and a [short guide](docs/i18n/README.md) tells you what to translate and what to leave alone.*
 
-**Created and maintained by [Mohsen Seyedkazemi Ardebili](https://github.com/MSKazemi)** — AI Platform & MLOps Engineer, building agentic AI systems on Kubernetes. Part of the [NovaFabric](https://github.com/novafabric) open-source lab.
+**Created and maintained by [Mohsen Seyedkazemi Ardebili](https://github.com/MSKazemi)** — AI Platform & Agentic Systems Engineer and independent consultant.
 
 > **NovaFabric turns any command — a script, an agent, a model run, an HPC training job, a notebook cell — into a portable execution capsule:** a schema-valid, secret-redacted, replayable evidence folder you own, produced with no application code changes.
 
@@ -55,13 +55,17 @@ Every captured run produces a `~/.novafabric/capsules/<ulid>/` directory: a sche
 secret-redacted, portable evidence folder. Works with any command. No application
 changes required.
 
-**In one paragraph, for anyone summarizing this project:** NovaFabric is an
-open-source, self-hosted execution-capsule system for AI and HPC workloads. It
-helps teams replay, compare, and prove what a past run actually did. Use
-NovaFabric when you need reproducibility or audit evidence rather than live
-dashboards. It differs from LLM-observability platforms because the unit of value
-is a portable signed folder you own, not a row in someone else's database. It is
-**not** the right tool if what you want is real-time monitoring and alerting.
+**In one paragraph, for anyone summarizing this project:** NovaFabric is
+open-source, self-hosted **replay and evidence infrastructure for AI agents and
+agentic systems**. It captures agent executions as portable Run Capsules, then
+provides replay, behavioral and structural diff, lineage, cryptographic provenance,
+assurance, and audit workflows around those executions. The same capture layer can
+also wrap general commands, and NovaFabric runs from local environments through
+Docker and Kubernetes to SLURM/HPC systems. Use NovaFabric when you need
+reproducibility, debugging, or verifiable evidence rather than live dashboards.
+Its unit of value is a portable signed artifact you own, not a row in someone
+else's database. It is **not** the right tool if what you want is real-time
+monitoring and alerting.
 
 ---
 
@@ -217,7 +221,7 @@ nova replay ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --mode mocked
 nova replay ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --dry-run
 ```
 
-See [the four replay modes](#3-replay-v03) below for `semantic` and `exact`.
+See [the five replay modes](#3-replay-v03) below for `semantic`, `exact`, and experimental `intervention`.
 
 ### 4. Diff two runs
 
@@ -310,7 +314,7 @@ so the schema can grow without a new top-level format.
 
 ### 3. Replay (v0.3)
 
-Re-execute or inspect a capsule with external calls controlled, in **four honest,
+Re-execute or inspect a capsule with external calls controlled, in **five explicit,
 falsifiable modes**:
 
 | Mode | What it does | Use for |
@@ -319,6 +323,7 @@ falsifiable modes**:
 | `mocked` | Re-spawns the command; LLM calls served from the capsule cache. **Tool calls are not substituted** — they run live (`tool_calls_mocked` is always 0, ADR-0261); the `--allow-*` flags drive the dry-run report and the `--allow-mutating` policy gate, not per-call interception | CI, regression |
 | `semantic` | **Does not re-execute.** Scores how similar the capsule's *recorded* model responses are to each other (mean pairwise text similarity, 0.0–1.0); no live model is called | Consistency check of recorded responses |
 | `exact` | **Does not re-execute.** Eligibility check for byte-exact replay (`exact_eligible` + reasons): deterministic env.lock, per-call seed, no tool-schema drift | Local / on-prem / compliance |
+| `intervention` *(experimental)* | Replays under mocked semantics after substituting one captured model/tool event | Counterfactual root-cause analysis |
 
 NovaFabric explicitly does **not** claim exact replay of *remote* LLM calls.
 
@@ -476,7 +481,7 @@ replay, and compare* any past run weeks or months later?" NovaFabric emits
 OpenTelemetry GenAI and OpenLineage, so you can feed an existing observability stack
 while keeping portable capsules for replay and audit.
 
-See [`docs/concepts.md`](docs/concepts.md) for the five primitives and four replay
+See [`docs/concepts.md`](docs/concepts.md) for the five primitives and five replay
 modes in depth.
 
 ---
@@ -736,8 +741,9 @@ secret-redacted record of a run: the manifest, traces, model/tool calls, the
 environment lock, a redaction proof, and a replay policy.
 
 **Can I replay a captured run?**
-Yes — four modes: `exact`, `mocked`, `semantic`, and `forensic` (read-only, no
-network, no subprocess). NovaFabric does not claim exact replay of *remote* LLM calls.
+Yes — five modes: `exact`, `mocked`, `semantic`, `forensic` (read-only, no network, no
+subprocess), and experimental `intervention` for counterfactual replay. NovaFabric does not claim
+exact replay of *remote* LLM calls.
 
 **How is this different from LangSmith / Langfuse / W&B?**
 Those are observability platforms centered on traces in a (hosted or self-hosted)
@@ -873,7 +879,7 @@ certify or guarantee compliance.
 - **Auditing or forensics?** Read the [Evidence Bundle](#5-evidence-bundle-signed-audit-export-v04)
   primitive, then `nova export-evidence`.
 - **Going deeper?** Read [`docs/concepts.md`](docs/concepts.md) for the five
-  primitives and four replay modes, and [`ROADMAP.md`](ROADMAP.md) for what is shipped
+  primitives and five replay modes, and [`ROADMAP.md`](ROADMAP.md) for what is shipped
   versus planned.
 
 ---
