@@ -61,7 +61,7 @@ dependencies = [
     "python-ulid>=2.7.0",
     "jsonschema>=4.23.0",
     "deepdiff>=8.0",
-    "cryptography>=48.0.1",
+    "cryptography>=50.0.2",
     # jcs (MIT) — RFC 8785 JSON Canonicalization Scheme for proposal_digest computation.
     # Tier A under ADR-0024.
     "jcs>=0.2",
@@ -76,7 +76,7 @@ dependencies = [
     # Moving it to an extra would break `nova --help` on a plain install.
     # See the private design/adr/0222-default-install-dependency-tier-reclassification.md
 # (public index: docs/decisions.md).
-    "networkx>=3.6.1",
+    "networkx>=3.7",
     # NOTE (ADR-0222 OQ-2): `pyjwt` and `python-multipart` used to be pinned
     # here *and* in the `server` extra. They are declared once now, in `server`,
     # because that is the only tier that needs them: `import jwt` appears only
@@ -110,19 +110,19 @@ scale = [
     # nats-py (Apache-2.0) — NATS JetStream pull consumer for LineageConsumer (cap-006).
     "nats-py>=2.9.0",
     # clickhouse-connect (Apache-2.0) — ClickHouse sink for cost attribution (cap-002).
-    "clickhouse-connect>=0.8.0",
+    "clickhouse-connect>=1.9.0",
     # fastavro (MIT) — Avro serialisation for capsule event schemas (cap-001).
     "fastavro>=1.12.2",
     # pyiceberg (Apache-2.0) — Iceberg table format for object capsule store (cap-009).
     "pyiceberg>=0.7.0",
     # blake3 (Apache-2.0/CC0-1.0) — BLAKE3 digest for dual-object store (cap-003).
-    "blake3>=0.4.1",
+    "blake3>=1.0.10",
     # boto3 (Apache-2.0) — S3-API abstraction for NovaObjectStore (cap-009).
-    "boto3>=1.35.0",
+    "boto3>=1.43.108",
     # duckdb (MIT) — in-process store behind evidence_fabric/duckdb_accumulator.py
     # and evidence_fabric/rebuild.py.  Moved here from [project.dependencies] by
     # ADR-0222: every duckdb import site is already extra-gated code.
-    "duckdb>=1.5.5",
+    "duckdb>=1.5.6",
     # pyarrow (Apache-2.0) — Parquet/Arrow for evidence_fabric/pii_table.py
     # (Iceberg-compatible PII event log) and the LineageConsumer Parquet sink.
     # Moved here from [project.dependencies] by ADR-0222.
@@ -130,31 +130,31 @@ scale = [
 ]
 worm-s3 = [
     # boto3 (Apache-2.0) — Tier A under ADR-0024.
-    "boto3>=1.38",
+    "boto3>=1.43.108",
 ]
 worm-azure = [
     # azure-storage-blob (MIT) — Tier A under ADR-0024.
-    "azure-storage-blob>=12.25",
+    "azure-storage-blob>=12.31.0",
 ]
 worm-gcs = [
     # google-cloud-storage (Apache-2.0) — Tier A under ADR-0024.
-    "google-cloud-storage>=3.13.0",
+    "google-cloud-storage>=3.16.0",
 ]
 seal-aws = [
     # boto3 (Apache-2.0) — Tier A under ADR-0024.
     # AWS KMS backend for NovaSeal Cloud KMS dual-mode signing (B-7).
-    "boto3>=1.38.0",
+    "boto3>=1.43.108",
 ]
 seal-azure = [
     # azure-keyvault-keys (MIT) + azure-identity (MIT) — Tier A under ADR-0024.
     # Azure Key Vault backend for NovaSeal Cloud KMS dual-mode signing (B-7).
     "azure-keyvault-keys>=4.9.0",
-    "azure-identity>=1.20.0",
+    "azure-identity>=1.26.0",
 ]
 seal-gcp = [
     # google-cloud-kms (Apache-2.0) — Tier A under ADR-0024.
     # GCP Cloud KMS backend for NovaSeal Cloud KMS dual-mode signing (B-7).
-    "google-cloud-kms>=3.3.0",
+    "google-cloud-kms>=3.18.0",
 ]
 sigstore = [
     # sigstore (Apache-2.0) — Tier A under ADR-0024.
@@ -192,7 +192,7 @@ serve = [
     # --- Live Topology Dashboard backing stores (moved out of core by ADR-0222) ---
     # duckdb (MIT) — the in-process ClusterStore behind
     # serve/topology/cluster_store.py (dashboard ADR-003).
-    "duckdb>=1.5.5",
+    "duckdb>=1.5.6",
     # pyarrow (Apache-2.0) — Arrow IPC encoder for the binary ADS topology
     # frames in serve/topology/ads_encoder.py.
     "pyarrow>=24.0.0",
@@ -226,7 +226,7 @@ server = [
     # psycopg_pool (LGPL-3.0) — Tier B under ADR-0024.  First-party connection
     # pool for psycopg, same license/justification as psycopg itself; enables the
     # opt-in metadata-store pool (ADR-0221) that removes the per-request connect.
-    "psycopg_pool>=3.2",
+    "psycopg_pool>=3.3.3",
     # alembic (MIT) — Tier A under ADR-0024.  Schema migration for both SQLite
     # and Postgres tracks.
     "alembic>=1.14",
@@ -236,7 +236,7 @@ server = [
     "PyJWT>=2.13.0",
     # sqlalchemy (MIT) — Tier A under ADR-0024.  ORM + Core used by the Phase 5
     # MetadataStore (ADR-0040) for both SQLite local mode and Postgres server mode.
-    "sqlalchemy>=2.0",
+    "sqlalchemy>=2.1.3",
     # asyncpg (Apache-2.0) — Tier A under ADR-0024.  High-performance async Postgres
     # driver; required by sqlalchemy[asyncio] for the MetadataStore async session pool.
     "asyncpg>=0.31.0",
@@ -290,22 +290,22 @@ ocs-compress = [
 openai-agents = [
     # openai-agents (MIT) — OpenAI Agents SDK tracing processor adapter (E-5).
     # Tier A under ADR-0024.
-    "openai-agents>=0.17.3",
+    "openai-agents>=0.23.1",
 ]
 google-adk = [
     # google-adk (Apache-2.0) — Google ADK BasePlugin adapter (E-6).
     # Tier A under ADR-0024.
-    "google-adk>=2.6.2",
+    "google-adk>=2.11.0",
 ]
 bedrock-agentcore = [
     # boto3 (Apache-2.0) — AWS Bedrock AgentCore client wrapper (E-7).
     # Tier A under ADR-0024.
-    "boto3>=1.43.10",
+    "boto3>=1.43.108",
 ]
 a2a = [
     # a2a-sdk (Apache-2.0) — A2A ClientCallInterceptor adapter (E-8).
     # Tier A under ADR-0024.
-    "a2a-sdk>=1.1.2",
+    "a2a-sdk>=1.2.1",
 ]
 watch = [
     # watchdog (Apache-2.0) — Tier A under ADR-0024.
@@ -317,7 +317,7 @@ watch = [
 otlp = [
     # opentelemetry-proto (Apache-2.0) — Tier A under ADR-0024.
     # Decodes binary OTLP ExportTraceServiceRequest for OTLP/protobuf ingest (ADR-0177).
-    "opentelemetry-proto>=1.20",
+    "opentelemetry-proto>=1.45.0",
 ]
 query = [
     # duckdb (MIT) — Tier A under ADR-0024.
@@ -327,7 +327,7 @@ query = [
     # result rows are identical either way and the engine actually used is
     # reported in the result's `index.engine` field.  Installing this extra is
     # a performance choice, never a correctness one.  See ADR-0222.
-    "duckdb>=1.5.5",
+    "duckdb>=1.5.6",
 ]
 clickhouse = [
     # clickhouse-connect (Apache-2.0) — Tier A under ADR-0024.
@@ -339,7 +339,7 @@ clickhouse = [
     # [project.dependencies] entry, so this extra is now load-bearing: it (or
     # the wider `scale` extra, which pins the same package for the same
     # purpose) is the only way to get ClickHouse cost attribution.
-    "clickhouse-connect>=0.8.0",
+    "clickhouse-connect>=1.9.0",
 ]
 nats = [
     # nats-py (Apache-2.0) — Tier A under ADR-0024.
@@ -371,7 +371,7 @@ energy-gpu = [
     # actively maintained package and is what actually provides `import
     # pynvml`; depending on the deprecated `pynvml` distribution here would
     # install a package that cannot satisfy the import it's meant to enable.
-    "nvidia-ml-py>=13.610.43",
+    "nvidia-ml-py>=13.615.71",
 ]
 all = [
     # Aggregate escape hatch: a self-referencing PEP 508 extras list so
@@ -403,7 +403,7 @@ dev = [
     # canonical classifier registry; lets tests/packaging_metadata/test_project_metadata.py
     # validate pyproject.toml's `classifiers` list against real, spelled-correctly
     # trove strings instead of trusting them by inspection.
-    "trove-classifiers>=2024.1.31",
+    "trove-classifiers>=2026.9.21.13",
     # pytest-xdist (MIT) — Tier A under ADR-0024.  Parallel test execution for
     # the 5.5K-test suite (suite-health backlog item 3); dev runs use `-n auto`.
     "pytest-xdist>=3.8.0",
@@ -417,8 +417,8 @@ dev = [
     # pytest-watcher (MIT) — Tier A under ADR-0024.  Reruns the selected tests on
     # save (`make test-watch`).  Uses the watchdog already in this group.
     "pytest-watcher>=0.6.3",
-    "ruff>=0.9",
-    "mypy>=1.14",
+    "ruff>=0.16.10",
+    "mypy>=2.4.0",
     "types-PyYAML>=6.0",
     "novafabric",
     "openapi-spec-validator>=0.8.5",
@@ -428,10 +428,10 @@ dev = [
     "httpx>=0.28",
     # Phase 4 — Object Capsule Store testing
     # boto3 (Apache-2.0) — S3/MinIO/Ceph WORM adapter + conformance suite.
-    "boto3>=1.38",
+    "boto3>=1.43.108",
     # hypothesis (MPL-2.0) — property-based tests for chain invariants (FR-03).
     # MPL-2.0 is Tier A under ADR-0024 for dev dependencies.
-    "hypothesis>=6.115",
+    "hypothesis>=6.168.3",
     # prometheus-client (Apache-2.0) — optional metrics instrumentation.
     "prometheus-client>=0.26.0",
     # Phase 5 — MetadataStore (ADR-0040) dev tooling
@@ -449,7 +449,7 @@ dev = [
     "mutmut>=3.0,<3.9",
     # sqlfluff (MIT) — Tier A under ADR-0024.  SQL linter for migration scripts
     # and raw DDL snippets in the MetadataStore.
-    "sqlfluff>=3.0",
+    "sqlfluff>=4.4.0",
     # testcontainers (Apache-2.0) — Tier A under ADR-0024.  Spins up ephemeral
     # Postgres containers for MetadataStore integration tests.
     "testcontainers>=4.0",
@@ -473,16 +473,16 @@ dev = [
     # pyarrow (Apache-2.0) — predates ADR-0222; same reason.
     "pyarrow>=24.0.0",
     # duckdb (MIT) — Tier A under ADR-0024. Extras: [scale]/[serve]/[query].
-    "duckdb>=1.5.5",
+    "duckdb>=1.5.6",
     # python-louvain (BSD-3-Clause) — Tier A under ADR-0024. Extra: [serve].
     "python-louvain>=0.16",
     # clickhouse-connect (Apache-2.0) — Tier A under ADR-0024.
     # Extras: [scale]/[clickhouse].
-    "clickhouse-connect>=0.8.0",
+    "clickhouse-connect>=1.9.0",
     # openai (Apache-2.0) — Tier A under ADR-0024.  Used by the
     # blackbox_demo example (examples/blackbox_demo/) and the OpenAI
     # capture hook tests.
-    "openai>=2.37.0",
+    "openai>=3.24.0",
     # watchdog (Apache-2.0) — Tier A under ADR-0024.  Enables WatchdogBackend
     # tests (TestWatchdogBackend) to run in dev/CI rather than being skipped.
     # Runtime optional; installed here for coverage completeness.
