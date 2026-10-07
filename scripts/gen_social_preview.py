@@ -45,11 +45,12 @@ FONT_REGULAR = FONT_DIR / "DejaVuSans.ttf"
 FONT_MONO = FONT_DIR / "DejaVuSansMono.ttf"
 
 TITLE = "NovaFabric"
+# Category first, then the essence (strategy/brand/brand-core.md).
 TAGLINE = [
-    "Capture, replay, diff and audit AI agent",
-    "and model runs as portable evidence capsules.",
+    "Replay and evidence infrastructure",
+    "for AI agents. Evidence you can replay.",
 ]
-COMMAND = "$ nova capture python my_agent.py"
+COMMAND = "$ nova capture -- python my_agent.py"
 FOOTER_LEFT = "Open source · Apache-2.0 · Self-hosted"
 FOOTER_RIGHT = "github.com/MSKazemi/novafabric"
 

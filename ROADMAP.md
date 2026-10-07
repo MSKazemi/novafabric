@@ -629,7 +629,7 @@ Comprehensive research-backed audit completed in v0.25.0. Status per item after 
 
 | Criterion | Status |
 |---|---|
-| ≥ 3 design partner sign-offs | 1/3 |
+| ≥ 3 independent design partner sign-offs | 0/3 independent (one maintainer self-validation recorded; it does not count — ADR-0034 §5) |
 | OAS v1.0 `open-agent-spec-v1.md` + `oas-extensions-registry.md` | Not started |
 | `nova migrate` v0.x → v1.0 capsule conversion | ✅ shipped v0.22.0 (51 tests; row was stale, corrected 2026-07-15) |
 | LF AI & Data Sandbox application | Draft only; no sponsor yet |

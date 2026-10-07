@@ -11,6 +11,8 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+## [0.104.0] - 2026-10-08
+
 ### Security
 
 - **Secret scanning now covers every file ADR-0009 names.** Until now the scanner walked only
@@ -60,6 +62,16 @@ longer forwards the submitting shell's environment (ADR-0270).
   and RFC 3161 are opt-in; a mocked replay is not a new capsule; prompts and responses *are*
   stored in the capsule (only OTel export of content is opt-in); "secret-scanned", not
   "secret-redacted"; "replayed, compared, and verified", not "proven".
+- The `web/` replay showcase described mocked replay as serving "every model and tool call"
+  and semantic/exact as re-executing; it now matches the replay engine (tools run live;
+  semantic and exact do not re-run) and shows the experimental `intervention` mode.
+- Category-first metadata on the `web/` pages; the contrast line is now "Observability helps you
+  inspect a run. NovaFabric turns the run into a portable artifact you can replay, compare, and
+  verify."; press-kit boilerplate scoped (wraps, optional sealing, tools run live in replay).
+- README BibTeX: software title matches `CITATION.cff` (guarded by a test) and the paper's
+  `primaryClass` is `cs.CR`, as arXiv lists it. PyPI `Documentation` URL →
+  novafabric.ai/docs. Social-preview card regenerated with the category and the correct
+  repository URL. Design-partner status reads 0/3 independent sign-offs everywhere.
 
 ## [0.103.0] - 2026-10-04
 

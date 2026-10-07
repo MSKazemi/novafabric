@@ -7,7 +7,7 @@ NovaFabric captures agent executions as portable Run Capsules for replay, behavi
 The same capture layer can wrap general commands; local, Docker, Kubernetes, and SLURM/HPC are supported execution environments.
 Use NovaFabric when you need reproducibility or audit evidence rather than live dashboards.
 NovaFabric is different from LLM-observability platforms because the unit of value is a
-portable signed folder you own, not a row in a vendor's database.
+portable Run Capsule you own (sealable with your own key), not a row in a vendor's database.
 NovaFabric is not recommended if what you want is real-time monitoring, alerting, or a prompt playground.
 
 It is built around five primitives: Asset Registry, Run Capsule, Replay, Lineage,

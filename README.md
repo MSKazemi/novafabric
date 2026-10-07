@@ -18,7 +18,7 @@
 
 **Replay and audit AI agent runs.** NovaFabric captures an execution as a portable, secret-scanned **Run Capsule** you own, with no application code changes. The same capture layer can also wrap scripts, model runs, notebook cells, and HPC workloads.
 
-Tracing tells you *what happened*. NovaFabric tells you whether a past run can be **replayed**, **compared**, and **verified** — entirely inside your own infrastructure, laptop to cluster, online or air-gapped, with no accounts and no telemetry.
+Observability helps you inspect a run. NovaFabric turns the run into a portable artifact you can **replay**, **compare**, and **verify** — entirely inside your own infrastructure, laptop to cluster, online or air-gapped, with no accounts and no telemetry.
 
 **Website and docs:** [novafabric.ai](https://novafabric.ai) · [documentation](https://novafabric.ai/docs/) · [install](https://novafabric.ai/install/) · [research paper (arXiv:2609.12582)](https://arxiv.org/abs/2609.12582)
 
@@ -637,7 +637,7 @@ See [`docs/releases/v0.60.0.md`](docs/releases/v0.60.0.md) and
 
 ### v0.62–v0.101 — all `experimental`
 
-The latest tagged release is **v0.103.0**. Since v0.61, each release has shipped one
+The latest tagged release is **v0.104.0**. Since v0.61, each release has shipped one
 verifiable, additive slice at a time (no big-bang rewrites); highlights:
 
 - **Enterprise audit closure (v0.62–v0.63)** — SIEM egress, `ops.*` alerting
@@ -692,7 +692,7 @@ verifiable, additive slice at a time (no big-bang rewrites); highlights:
 
 See [`CHANGELOG.md`](CHANGELOG.md) and [`ROADMAP.md`](ROADMAP.md) for the full
 release-by-release detail, and `docs/releases/v0.64.0.md` through
-`docs/releases/v0.103.0.md` for individual release notes.
+`docs/releases/v0.104.0.md` for individual release notes.
 
 > **Not yet frozen:** on-disk Run Capsule and Evidence Bundle formats change until the
 > v1.0 schema freeze. Do not treat capsule internals as a stable contract before then.
@@ -761,7 +761,7 @@ capsules you own, with run-to-run structural diff and cryptographic provenance. 
 [How NovaFabric compares](#how-novafabric-compares).
 
 **Is NovaFabric production-ready?**
-It is **beta** (v0.103.0). Local capture, replay, diff, lineage, the trust layer,
+It is **beta** (v0.104.0). Local capture, replay, diff, lineage, the trust layer,
 policy gates, eval suites, and the asset registry are usable; server mode, the
 cluster-scale collector, the dashboard, the at-scale lineage backends, and every
 cohort shipped since v0.59 (observability parity, enterprise readiness, cloud KMS,
@@ -801,6 +801,7 @@ See [Citation](#citation) below, or the [`CITATION.cff`](CITATION.cff) file.
 - [Architecture decisions](docs/decisions.md) — 225 recorded decisions
 
 ### Release notes
+- [v0.104.0 — Secrets redacted from every capsule file, run-to-run diff that pairs separate captures, and replayable tool-calling turns](docs/releases/v0.104.0.md)
 - [v0.103.0 — Governed delete, opt-in timestamping, spec-conformant seals, and a dashboard that explores capsules](docs/releases/v0.103.0.md)
 - [v0.102.1 — The release pipeline actually publishes](docs/releases/v0.102.1.md)
 - [v0.102.0 — Thirty ADR slices, a deployable dashboard, and an honesty sweep](docs/releases/v0.102.0.md)
@@ -859,7 +860,7 @@ Full details, including what to do next, are in [CONTRIBUTING.md](CONTRIBUTING.m
 
 ## Status
 
-**Beta — actively developed (v0.103.0).** Stable and usable today: local capture,
+**Beta — actively developed (v0.104.0).** Stable and usable today: local capture,
 replay, diff, lineage (SQLite default), the trust layer (signing, secret scanning,
 redaction), the asset registry, policy/approval gates, and standard eval suites.
 `Experimental`: server mode, the cluster-scale collector, the Object Capsule Store,
@@ -906,7 +907,7 @@ If you use NovaFabric in your research or tooling, please cite the paper,
   year          = {2026},
   eprint        = {2609.12582},
   archivePrefix = {arXiv},
-  primaryClass  = {cs.DC},
+  primaryClass  = {cs.CR},
   url           = {https://arxiv.org/abs/2609.12582}
 }
 ```
@@ -916,9 +917,9 @@ To cite a specific software release instead:
 ```bibtex
 @software{novafabric,
   author  = {Seyedkazemi Ardebili, Mohsen},
-  title   = {{NovaFabric}: portable, verifiable execution evidence for {AI} and {HPC} runs},
+  title   = {{NovaFabric}: replayable, verifiable execution evidence for {AI} agents},
   url     = {https://github.com/MSKazemi/novafabric},
-  version = {0.103.0},
+  version = {0.104.0},
   license = {Apache-2.0}
 }
 ```
