@@ -111,10 +111,11 @@ Dark is the default theme. Signal-lime is the single hero accent — used sparin
 
 ### Typography
 
-- **JetBrains Mono** — identity, data, CLI output, headings.
-- **Inter** — body prose.
+- **Instrument Serif** — display/hero headlines and memorable editorial moments.
+- **JetBrains Mono** — identity, CLI output, evidence, labels, and data.
+- **DM Sans** — body prose, navigation, and interface text.
 
-The rule behind it: monospace means identity and data; sans means prose.
+The rule behind it: **serif means narrative/memory; monospace means evidence/data; sans means explanation/interface.**
 
 ### Please do
 
