@@ -21,6 +21,7 @@ recorded at capture; nothing is inferred and no capsule is modified.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -57,9 +58,17 @@ def _diff(*args: str) -> Any:
     return runner.invoke(app, ["diff", *args])
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
 def _flat(output: str) -> str:
-    """Collapse Rich's boxed, wrapped error panel into one searchable line."""
-    return " ".join(output.replace("│", " ").split())
+    """Collapse Rich's boxed, wrapped error panel into one searchable line.
+
+    ANSI escapes are stripped first: under ``FORCE_COLOR`` (set by some CI runners and
+    dev shells) Rich emits colour codes inside the panel, which split the phrases the
+    assertions search for.
+    """
+    return " ".join(_ANSI.sub("", output).replace("│", " ").split())
 
 
 # --- --group-by environment ------------------------------------------------
