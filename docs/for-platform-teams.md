@@ -36,7 +36,7 @@ command. That is the whole integration for most teams.
 |---|---|
 | Python agents / scripts | Auto-hooked SDKs: OpenAI, Anthropic, MCP, httpx, requests, aiohttp, urllib3, Bedrock |
 | Non-Python clients | `nova api-proxy` / `nova mcp-proxy` — wire-level, language-agnostic |
-| Frameworks | Adapters for LangGraph, CrewAI, AutoGen, DSPy, LlamaIndex, Pydantic AI, Haystack, Google ADK, OpenAI Agents, Bedrock AgentCore, MLflow, Langfuse, A2A |
+| Frameworks | 11 adapters (experimental) for LangGraph, CrewAI, AutoGen, DSPy, LlamaIndex, Pydantic AI, Haystack, Google ADK, OpenAI Agents, Bedrock AgentCore, A2A; plus MLflow and Langfuse link helpers |
 | CI | The [GitHub Action](../.github/actions/capture/README.md) — three lines of YAML |
 | Kubernetes | Helm chart and manifests in [`deploy/`](../deploy/) |
 | HPC / Slurm | [`deploy/hpc/`](../deploy/hpc/) |

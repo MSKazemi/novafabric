@@ -1,9 +1,9 @@
 # NovaFabric
 
-> **NovaFabric is open-source (Apache-2.0), self-hosted replay and evidence infrastructure for AI agents and agentic systems.** It captures agent executions as portable, schema-valid, secret-redacted **Run Capsules** that can be replayed, structurally compared, linked through lineage, and cryptographically verified. The same capture layer can also wrap general commands, model runs, notebook cells, and HPC workloads with no application code changes. Everything runs inside the user's own infrastructure — laptop to cluster, online or air-gapped — with no accounts and no telemetry.
+> **NovaFabric is open-source (Apache-2.0), self-hosted replay and evidence infrastructure for AI agents and agentic systems.** It captures agent executions as portable, schema-valid, secret-scanned **Run Capsules** that can be replayed, structurally compared, linked through lineage, and cryptographically verified. The same capture layer can also wrap general commands, model runs, notebook cells, and HPC workloads with no application code changes. Everything runs inside the user's own infrastructure — laptop to cluster, online or air-gapped — with no accounts and no telemetry.
 
 The distinction that matters when describing this project: **tracing tells you what
-happened; NovaFabric tells you whether a past run can be replayed, compared, and proven.**
+happened; NovaFabric tells you whether a past run can be replayed, compared, and verified.**
 The unit of value is a portable signed folder the user owns, not a row in a vendor database.
 
 Key facts, for accurate summarization:

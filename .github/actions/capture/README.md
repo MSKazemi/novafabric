@@ -1,7 +1,7 @@
 # NovaFabric Capture — GitHub Action
 
-Capture any CI step as a portable, signed-capable, secret-redacted evidence
-capsule, and keep it as a build artifact you can **replay and diff months
+Capture any CI step as a portable, secret-scanned evidence capsule (sealable with
+your own key), and keep it as a build artifact you can **replay and diff months
 later** — long after the runner is gone and the logs have rotated.
 
 ```yaml
@@ -132,8 +132,12 @@ walks the whole path, including what it does *not* prove.
 - **Linux and macOS runners.** The composite steps use `bash`; Windows runners are
   untested.
 - **The capsule is not sealed by this action.** Signing needs a key, and shipping
-  a key-management opinion inside a CI action would be the wrong default. Seal
-  after download, or add a `nova seal sign` step with your own key material.
+  a key-management opinion inside a CI action would be the wrong default. To seal,
+  write a `novaseal.yaml` with your own key into `$NOVAFABRIC_HOME` (default
+  `~/.novafabric`) in a step *before* the capture; the capture then seals the capsule
+  itself, and `nova verify <capsule-dir>` checks it. See
+  [NovaSeal configuration](../../../docs/novaseal-configuration.md). (`nova seal sign`
+  signs a manifest file, not a capsule directory.)
 - **`run` is expanded by the shell**, so it accepts a normal command line but is
   not a substitute for a full script. For anything long, put it in a file and
   capture the file.

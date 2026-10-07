@@ -33,8 +33,8 @@ both work. The differences matter when you need more than that.
 
 ### 1. Instrumentation
 
-**Langfuse** requires SDK instrumentation — you add decorators or SDK calls to
-your code at every capture point:
+**Langfuse** is typically wired in through its SDK or integrations — for example
+decorators on the functions you want traced:
 
 ```python
 from langfuse.decorators import observe
@@ -44,33 +44,35 @@ def run_agent():
     ...
 ```
 
-Miss one call site and it isn't captured. Third-party agents you don't control
-can't be instrumented.
-
-**NovaFabric** captures at the HTTP layer — zero code changes required:
+**NovaFabric** wraps the process instead — no code changes:
 
 ```bash
-nova capture python agent.py
+nova capture -- python agent.py
 ```
 
-Works for any Python code, any framework, any LLM provider. Even agents you
-can't modify, because the hook lives below all frameworks at the `requests` /
-`aiohttp` level.
+For a Python workload it patches the OpenAI and Anthropic SDKs and the MCP client,
+and records HTTP calls to known model-provider endpoints at the `httpx` /
+`requests` / `aiohttp` / `urllib3` level, so it works for agents you can't modify.
+Non-Python clients go through `nova api-proxy` / `nova mcp-proxy`. A framework
+adapter adds richer detail but needs one line of code.
 
 ---
 
 ### 2. Where the data lives
 
-**Langfuse** stores traces in its own database. To read them, you open Langfuse.
-The data lives in their system, not yours.
+**Langfuse** stores traces in its database — Langfuse Cloud or a server you
+self-host. To read them, you query that service.
 
 **NovaFabric** stores each run as a portable capsule directory on your filesystem:
 
 ```
 capsules/01KR9Q2AD…/
-    capsule.yaml          # run metadata (model, command, exit code, timing)
-    events.jsonl          # full trace of every LLM call and tool call
-    assets.jsonl          # which datasets this run consumed
+    capsule.yaml          # run manifest (command, exit code, timing, evidence digests)
+    trace.jsonl           # the execution span tree
+    model-calls.jsonl     # each captured model call (request and response)
+    tool-calls.jsonl      # tool calls seen by the MCP hook or an adapter
+    env.lock              # the environment
+    assets.jsonl          # which registered assets this run consumed
     lineage.jsonl         # provenance graph edges
     redaction-proof.json  # secret scanner results
 ```
@@ -80,31 +82,26 @@ or read it on an air-gapped machine. No running server required.
 
 ---
 
-### 3. Forensic replay
+### 3. Replay
 
-**Langfuse** shows you what happened. It has no replay capability.
-
-**NovaFabric** lets you re-drive the agent against the exact same inputs from
-any past run:
+**NovaFabric** can re-run a past capture against its recorded model responses:
 
 ```bash
-nova replay --mode forensic capsules/01KR9Q2AD…
+nova replay --mode mocked capsules/01KR9Q2AD…
 ```
 
-The agent sees the same log file content, same model config, same tool responses
-as the original run. If it produces the same output, the result is reproducible.
-If not, something drifted — model update, tool change, non-determinism.
-
-This is the difference between a flight recorder and a flight simulator.
-Langfuse is the recorder. NovaFabric also lets you re-fly the same route.
+The command runs again, and its OpenAI / Anthropic chat calls are answered from the
+capsule instead of the live API, so no model call is made. **Tool calls are not
+substituted** — they run live — and only synchronous, non-streaming chat calls are
+served from the capsule today. `--mode forensic` inspects the capsule without
+re-running anything. If the replayed run diverges, something drifted: code, a
+tool's behaviour, or the environment.
 
 ---
 
 ### 4. Structural diff between runs
 
-**Langfuse** has no diff capability.
-
-**NovaFabric** compares two runs structurally:
+**NovaFabric** compares two captured runs structurally:
 
 ```bash
 nova diff capsules/01KR9Q2A…  capsules/01KRB4F7…
@@ -113,12 +110,20 @@ nova diff capsules/01KR9Q2A…  capsules/01KRB4F7…
 Output:
 
 ```
-model:          same  (qwen3:35b)
-tools_called:   same  (read_log, write_diagnosis)
-tool_args:      CHANGED — read_log now reads 40 lines, was 100
-output_length:  CHANGED — 312 tokens → 180 tokens
-classification: same  (OOM)
+Diff: 01KR9Q2A… → 01KRB4F7…
+  changed=3  added=0  removed=0
+
+Model calls:
+  ~ call at span 1a9c989341748be5
+Outputs:
+  ~ outputs/decision.json
+  ~ outputs/stdout.txt
 ```
+
+Model calls are paired in order (identical requests anchor the alignment), tool
+calls by name and arguments; `--output-format json` gives the per-call
+request/response/argument flags. `--assert-no-regressions` exits 1 on any change,
+so it can gate CI.
 
 After a prompt update or model upgrade, you can see immediately whether agent
 behavior changed — even if the final label looks the same.
@@ -127,12 +132,19 @@ behavior changed — even if the final label looks the same.
 
 ### 5. Data lineage
 
-**Langfuse** has no concept of which dataset fed which run.
-
-**NovaFabric** tracks this explicitly. Each agent declares what it consumed:
+**NovaFabric** records which registered asset fed which run. Inside a captured
+run, the agent declares what it consumed:
 
 ```python
-record_consumed("slurm-logs/job-42819-oom@v1")
+import os
+from pathlib import Path
+
+from novafabric.registry.service import record_asset_consumption
+
+record_asset_consumption(
+    "slurm-logs/job-42819-oom@v1", "production",
+    Path(os.environ["NOVAFABRIC_CAPSULE_DIR"]),
+)
 ```
 
 This builds a graph:
@@ -151,8 +163,6 @@ nova lineage blast-radius slurm-logs/job-42819-oom@v1
 # → run:01KR9Q2AD…  run:01KRB4F7…  run:01KRC3X9…
 ```
 
-Langfuse cannot answer this question.
-
 ---
 
 ### 6. Evidence bundles for compliance
@@ -168,10 +178,11 @@ nova export-evidence capsules/01KR9Q2AD… --output bundle.zip --key ed25519.pem
 
 (`--output` and `--key` are both required flags — omitting either exits non-zero.)
 
-An auditor can verify the signature and confirm the output hasn't been modified
-since capture. This is a compliance primitive — useful in regulated industries
-(healthcare, finance, HPC facilities) where you need to prove what an agent did
-and that the record hasn't been altered.
+An auditor can verify the signature and confirm the record hasn't been modified
+since it was signed. It is an evidence primitive — useful in regulated industries
+(healthcare, finance, HPC facilities) where you must show what an agent run
+recorded and that the record hasn't been altered. It does not prove the record is
+complete, and it does not certify compliance.
 
 ---
 
@@ -208,12 +219,15 @@ genuinely Langfuse-only.
 | Production alerting | ✓ | — |
 | Prompt management | ✓ (hosted) | ✓ (local, experimental — `nova prompt`/`nova label`) |
 | Portable capsule (no server to read) | — | ✓ |
-| Forensic replay | — | ✓ |
+| Re-run against recorded model responses | — | ✓ (tools run live) |
 | Structural diff between runs | — | ✓ |
 | Data lineage / blast radius | — | ✓ |
 | Signed evidence bundles | — | ✓ |
 | Asset registry + lifecycle | — | ✓ |
 | Wire-level capture (no SDK) | — | ✓ |
+
+The Langfuse column reflects our reading of its features; check Langfuse's current
+documentation before relying on any "—".
 
 ---
 

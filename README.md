@@ -16,9 +16,9 @@
 
 > **NovaFabric is open-source, self-hosted replay and evidence infrastructure for AI agents and agentic systems.**
 
-**Replay and prove what an AI agent did.** NovaFabric captures an execution as a portable, secret-redacted **Run Capsule** you own, with no application code changes. The same capture layer can also wrap scripts, model runs, notebook cells, and HPC workloads.
+**Replay and audit AI agent runs.** NovaFabric captures an execution as a portable, secret-scanned **Run Capsule** you own, with no application code changes. The same capture layer can also wrap scripts, model runs, notebook cells, and HPC workloads.
 
-Tracing tells you *what happened*. NovaFabric tells you whether a past run can be **replayed**, **compared**, and **proven** — entirely inside your own infrastructure, laptop to cluster, online or air-gapped, with no accounts and no telemetry.
+Tracing tells you *what happened*. NovaFabric tells you whether a past run can be **replayed**, **compared**, and **verified** — entirely inside your own infrastructure, laptop to cluster, online or air-gapped, with no accounts and no telemetry.
 
 **Website and docs:** [novafabric.ai](https://novafabric.ai) · [documentation](https://novafabric.ai/docs/) · [install](https://novafabric.ai/install/) · [research paper (arXiv:2609.12582)](https://arxiv.org/abs/2609.12582)
 
@@ -56,7 +56,7 @@ Outputs:
 ```
 
 Every captured run produces a `~/.novafabric/capsules/<ulid>/` directory: a schema-valid,
-secret-redacted, portable evidence folder. Works with any command. No application
+secret-scanned, portable evidence folder. Works with any command. No application
 changes required.
 
 **In one paragraph, for anyone summarizing this project:** NovaFabric is
@@ -67,7 +67,7 @@ assurance, and audit workflows around those executions. The same capture layer c
 also wrap general commands, and NovaFabric runs from local environments through
 Docker and Kubernetes to SLURM/HPC systems. Use NovaFabric when you need
 reproducibility, debugging, or verifiable evidence rather than live dashboards.
-Its unit of value is a portable signed artifact you own, not a row in someone
+Its unit of value is a portable, sealable artifact you own, not a row in someone
 else's database. It is **not** the right tool if what you want is real-time
 monitoring and alerting.
 
@@ -118,13 +118,14 @@ for tools, [OpenLineage](https://openlineage.io/) for pipeline lineage. No proje
 unifies them into a developer-friendly **replay fabric** for complete AI systems.
 
 NovaFabric's unit of value is not a trace row in a hosted database — it is a
-**portable, signed, replayable capsule you own**: a folder on your own filesystem you
+**portable, replayable capsule you own — sealable with your own key**: a folder on your own filesystem you
 can `tar`, archive, share, and read air-gapped, with no running server. The product
 thesis is **replayable AI infrastructure**, and the strategic verb chain across the
 primitives is **Capture → Seal → Replay → Diff → Audit**.
 
 The analogy: observability is a *flight recorder* — it tells you what happened.
-NovaFabric is a *flight simulator* — it re-flies the route.
+NovaFabric keeps the recording as evidence you own, and can re-fly the route against
+the recorded model responses (tools still run live — see [replay modes](docs/architecture/replay-modes.md)).
 
 ---
 
@@ -397,10 +398,14 @@ Both proxies auto-allocate a capsule directory if `--capsule-dir` is omitted.
 
 ### Redaction is a precondition
 
-Secret scanning runs against **every** artifact before the capsule is finalized.
-Detected values are redacted in place (`[REDACTED:rule-id]`), and a cryptographically
-chained proof record is written to `redaction-proof.json`. A capsule without that
-proof is invalid to `nova validate` and cannot be exported.
+Before the capsule is finalized, secret scanning runs over the event streams, the
+manifest (`capsule.yaml`, including the recorded command line), `env.lock`, and every
+file under `inputs/` and `outputs/` (14 API-key and token rules; PII masking is a
+separate opt-in). Detected values in text are redacted in place
+(`[REDACTED:rule-id]`); a binary file that contains a key is dropped from the capsule,
+and a file over 64 MiB is recorded as skipped rather than read. A hash-chained proof
+record is written to `redaction-proof.json`. A capsule without that proof is invalid
+to `nova validate` and cannot be exported.
 
 ### What is captured
 
@@ -424,8 +429,8 @@ Use NovaFabric when you need to:
   debugging or incident forensics, instead of guessing what changed.
 - **Diff two runs** — see exactly which model calls, tool calls, or outputs changed
   between yesterday and today, and gate CI on behavioral change.
-- **Produce portable, signed evidence** of what an agent or model actually did — for
-  governance, auditability, and compliance *support*.
+- **Produce portable, signed evidence** of what a run recorded — sealed capsules and
+  signed Evidence Bundles — for governance, auditability, and compliance *support*.
 - **Capture without changing application code** — SDK hooks, wire-level hooks, and
   transparent proxies capture any command, entirely in **your own environment**,
   online or air-gapped.
@@ -463,7 +468,7 @@ and sits *beside* vLLM / Ray Serve / Triton / Ollama, never in the request path.
 ## How NovaFabric compares
 
 NovaFabric overlaps with LLM-observability platforms but is centered on a different
-unit of value: a **portable, signed, replayable evidence capsule** rather than a
+unit of value: a **portable, replayable evidence capsule you can seal** rather than a
 trace in a hosted database.
 
 | | **NovaFabric** | Self-hosted observability (Langfuse, Arize Phoenix) | Hosted SaaS (LangSmith, W&B, Helicone) |
@@ -533,7 +538,7 @@ v0.6  ✓  Multi-target runners (local + Docker + Kubernetes + Slurm)
 v0.6  ✓  nova api-proxy + nova mcp-proxy (HTTP/SSE) for non-Python clients
 v0.7  ✓  Server mode (multi-tenant REST API, OIDC, RBAC, offline tokens)
 v0.8  ✓  Policy + approval gates (OPA/Rego, maker-checker, WORM storage adapters, legal holds)
-v0.9  ✓  Standard eval suites (GAIA, AgentBench, SWE-bench, MMLU, Smoke; OCI-pinned; Rego-gated)
+v0.9  ✓  Standard eval suites (GAIA, AgentBench, SWE-bench, MMLU, TruthfulQA, Smoke; OCI-pinned; Rego-gated)
 v0.10 ✓  NovaSeal — DSSE signing (ECDSA P-256), RFC 3161 timestamps, Merkle log, nova verify
 v0.10 ✓  Event Envelope v1 — canonical wire format (JSON Schema + proto3 + sha256 pin)
 v0.10 ✓  Cluster-scale collector tier — Go binary, crash-safe spool (100-SIGKILL recovery tested)
@@ -741,7 +746,7 @@ auto-hooked; non-Python clients are captured via `nova api-proxy` and `nova mcp-
 
 **What is an "evidence capsule"?**
 A portable `~/.novafabric/capsules/<ulid>/` folder containing a schema-valid,
-secret-redacted record of a run: the manifest, traces, model/tool calls, the
+secret-scanned record of a run: the manifest, traces, model/tool calls, the
 environment lock, a redaction proof, and a replay policy.
 
 **Can I replay a captured run?**
@@ -751,7 +756,7 @@ exact replay of *remote* LLM calls.
 
 **How is this different from LangSmith / Langfuse / W&B?**
 Those are observability platforms centered on traces in a (hosted or self-hosted)
-database. NovaFabric is self-hosted and centered on portable, signed, *replayable*
+database. NovaFabric is self-hosted and centered on portable, sealable, *replayable*
 capsules you own, with run-to-run structural diff and cryptographic provenance. See
 [How NovaFabric compares](#how-novafabric-compares).
 

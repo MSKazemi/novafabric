@@ -35,6 +35,16 @@ class DiffReport:
         count += sum(1 for p in self.tool_call_pairs if p.get("removed"))
         return count
 
+    @property
+    def has_changes(self) -> bool:
+        """True on ANY structural difference: changed, added or removed.
+
+        This is the ``--assert-no-regressions`` contract ("exits 1 on any change",
+        the private design/spec/diff-report-v1.md). ``changed_count`` alone excludes added and
+        removed calls, so a gate on it passed when calls appeared or vanished.
+        """
+        return (self.changed_count + self.added_count + self.removed_count) > 0
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "run_a_id": self.run_a_id,
@@ -52,8 +62,8 @@ class DiffReport:
                         if not p.get("added") and not p.get("removed")
                     ]),
                     "changed": sum(1 for p in self.model_call_pairs if p.get("changed")),
-                    "added": self.added_count,
-                    "removed": self.removed_count,
+                    "added": sum(1 for p in self.model_call_pairs if p.get("added")),
+                    "removed": sum(1 for p in self.model_call_pairs if p.get("removed")),
                     "pairs": self.model_call_pairs,
                 },
                 "tool_calls": {

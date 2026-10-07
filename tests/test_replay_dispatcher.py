@@ -68,7 +68,9 @@ class TestMockModelDispatcher:
         assert resp.content[0].text == "Claude says hi"
         assert resp.role == "assistant"
         assert resp.usage.input_tokens == 5
-        assert resp.stop_reason == "stop"
+        # The record carries the OTel enum value "stop"; an Anthropic client
+        # expects its own vocabulary, so the mock serves "end_turn".
+        assert resp.stop_reason == "end_turn"
 
     def test_mock_openai_empty_stored(self) -> None:
         resp = _mock_openai_response({})

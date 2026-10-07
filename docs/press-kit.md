@@ -50,7 +50,7 @@ Copy these verbatim. They are written to be accurate, not promotional.
 
 > NovaFabric is open-source, self-hosted replay and evidence infrastructure for
 > AI agents and agentic systems. It captures agent executions with no application
-> code changes and produces a schema-valid, secret-redacted Run Capsule containing
+> code changes and produces a schema-valid, secret-scanned Run Capsule containing
 > the execution manifest, traces, model and tool calls, environment evidence, and
 > replay policy. Around that artifact NovaFabric provides replay, behavioral and
 > structural diff, lineage, cryptographic provenance, assurance, and audit. The
@@ -60,7 +60,7 @@ Copy these verbatim. They are written to be accurate, not promotional.
 ### The positioning sentence, if you need to explain *why* it exists
 
 > Tracing tells you what happened. NovaFabric tells you whether a past run can be
-> replayed, compared, and proven.
+> replayed, compared, and verified.
 
 ---
 

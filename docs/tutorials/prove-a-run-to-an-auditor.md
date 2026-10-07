@@ -1,7 +1,7 @@
-# Prove what an agent did, six months later
+# Prove a recorded agent run has not been edited, six months later
 
-**~20 minutes.** By the end you will have a signed, portable artifact that a
-sceptical third party can verify on their own machine — with no access to your
+**~20 minutes.** By the end you will have a signed, portable record of an agent run
+that a sceptical third party can verify on their own machine — with no access to your
 infrastructure, no running server, and no network.
 
 This is the scenario NovaFabric exists for. Everything else in the docs is
@@ -28,12 +28,35 @@ What follows produces something better.
 
 ---
 
+## 0. Once: give NovaFabric a signing key
+
+Sealing is **opt-in**: a capsule is only signed when a `novaseal.yaml` exists in your
+NovaFabric home when the run is captured. Set it up once, before September:
+
+```bash
+openssl ecparam -name prime256v1 -genkey -noout \
+  | openssl pkcs8 -topk8 -nocrypt -out ~/.novafabric/seal.key
+openssl req -new -x509 -key ~/.novafabric/seal.key -out ~/.novafabric/seal.crt \
+  -days 3650 -subj "/CN=triage-agent evidence"
+
+cat > ~/.novafabric/novaseal.yaml <<'EOF'
+profile: local
+key_path: ~/.novafabric/seal.key
+cert_path: ~/.novafabric/seal.crt
+EOF
+```
+
+This is a self-signed key for the walkthrough; [key management](../novaseal-key-management.md)
+covers KMS/HSM keys and certificates issued by your own CA. Without this step the
+capsule below is still written and still verifiable as a folder, but it is **not
+signed**, and `nova verify` will say so.
+
 ## 1. Capture the run — September
 
 Nothing about your application changes. You wrap the command:
 
 ```bash
-nova capture python triage_agent.py --input incident-4471.json
+nova capture -- python triage_agent.py --input incident-4471.json
 ```
 
 ```console
@@ -47,8 +70,8 @@ That directory is the whole artifact:
 01KZ9VZPFQB95A63AAMD2TC7XD/
   capsule.yaml          ← the run manifest: id, status, timing, exit code
   trace.jsonl           ← the execution span tree
-  model-calls.jsonl     ← every model call, OTel GenAI semconv
-  tool-calls.jsonl      ← every tool invocation and what it returned
+  model-calls.jsonl     ← each captured model call, OTel GenAI semconv
+  tool-calls.jsonl      ← tool calls seen by the MCP hook or a framework adapter
   env.lock              ← the exact environment: packages, versions, platform
   redaction-proof.json  ← proof that secret scanning ran and what it removed
   lineage.jsonl         ← what this run consumed and produced
@@ -61,26 +84,26 @@ complete on failure too — a crashed run produces a capsule with
 `status: failure` and an `error` block, which is usually the run someone asks
 about.
 
-> **Prompts and responses are not captured by default.** If your evidence needs
-> them, opt in explicitly — and know that everything captured passes secret
-> scanning first. A capsule missing its `redaction-proof.json` is **invalid** and
-> cannot be exported. Verifiable redaction is a precondition here, not a feature.
+> **Prompts and responses are in the capsule.** For a Python workload, each captured
+> model call's request messages and response text are written to `model-calls.jsonl`
+> — on your machine, after the built-in secret scan (14 API-key and token rules; PII
+> masking is a separate opt-in). Nothing is sent anywhere. A capsule missing its
+> `redaction-proof.json` is **invalid** and cannot be exported.
 
-## 2. Seal it — the same day
+## 2. It is sealed as it is written
 
-A folder you can edit proves nothing. Sealing signs a Merkle root over the
-contents:
+A folder you can edit proves nothing. Because step 0 configured a key, the capture
+already signed the capsule: a DSSE signature over the manifest, which carries a
+SHA-256 for every file, plus an entry in a local Merkle log whose inclusion proof
+travels inside the capsule (`.seal/`). Nothing to remember, no batch job that might
+not run. Signing takes about 7 ms
+([benchmarks](../benchmarks.md#2-novaseal-signing-latency)).
 
-```bash
-nova seal sign ~/.novafabric/capsules/01KZ9VZPFQB95A63AAMD2TC7XD
-```
+Now any later modification — one byte in one file — breaks verification.
 
-Now any later modification — one byte in one file — breaks verification. Signing
-takes about 7 ms ([benchmarks](../benchmarks.md#2-novaseal-signing-latency)), so
-there is no reason to defer it to a batch job that might not run.
-
-For evidence that must survive a dispute about *when* it existed, add an RFC 3161
-timestamp so the date comes from a third party rather than from your clock.
+For evidence that must survive a dispute about *when* it existed, add a `tsa_url` to
+`novaseal.yaml` so each seal gets an RFC 3161 timestamp from a third party rather
+than from your clock (opt-in; see [NovaSeal configuration](../novaseal-configuration.md)).
 
 ## 3. Archive it — and then forget about it
 
@@ -116,12 +139,28 @@ format only your tool can read reproduces the original problem.
 ### "Prove the record has not been edited"
 
 ```bash
-nova seal verify 01KZ9VZPFQB95A63AAMD2TC7XD
+nova verify 01KZ9VZPFQB95A63AAMD2TC7XD
 ```
 
-Verification needs no network, no server, and no NovaFabric account — because
-there is no such thing. The auditor can run it themselves on their own laptop.
-**That is the property that makes it evidence rather than an assertion.**
+```console
+  ✓ Signature (DSSE ECDSA P-256): OK
+  ⊘ Timestamp (RFC 3161): NOT PRESENT (TSA skipped or unavailable)
+  ✓ Merkle log inclusion: OK
+  ✓ Manifest binding (capsule.yaml == signed payload): OK
+  ✓ Evidence binding (per-file sha256): OK
+```
+
+Verification needs no network, no server, and no NovaFabric account. The auditor can
+run it on their own laptop: the Merkle inclusion proof is carried in the capsule, so
+your log is not needed. Change one byte of `outputs/stdout.txt` and the evidence
+binding fails, with a non-zero exit.
+
+**Who signed it is a separate question.** Run as above, verification checks the
+signature against the certificate stored *in* the capsule: it proves the record is
+unchanged since that key signed it, not whose key it was. To bind the signature to
+your organisation, sign with a certificate issued by a CA the auditor trusts and have
+them pass it: `nova verify … --ca-bundle your-ca.pem` (experimental; a self-signed
+signing certificate like the one in step 0 is rejected there by design).
 
 ### "Demonstrate you would get the same result again"
 
@@ -138,32 +177,36 @@ nova replay 01KZ9VZPFQB95A63AAMD2TC7XD --mode forensic
 reconstructs what happened from the record. Use it when the environment must not
 be touched.
 
-`mocked` goes further — it **re-runs the command** with every model and tool call
-served from the capsule. No API keys, no tokens spent, no dependency on the
-provider still offering that model. This is the mode that answers "would it do
-the same thing again", and it works when the original model has been retired.
+`mocked` goes further — it **re-runs the command** with the recorded model responses
+served from the capsule, so no live model call is made and the original model need
+not exist any more. Two limits matter for this question. **Tool calls are not
+substituted:** they run live, against today's systems. And only synchronous OpenAI
+and Anthropic chat calls are served from the capsule; async, streaming and the
+OpenAI Responses API are not intercepted. So `mocked` answers "given the same model
+replies, does the code take the same path?" — only as far as its tools behave as
+they did in September.
 
-A replay is itself a capsule, so:
+To show what changed between two executions, capture the same input again and diff
+the two capsules:
 
 ```bash
-nova diff 01KZ9VZPFQB95A63AAMD2TC7XD 01KZ9VZX0A9KAXGDNP42QJF0Y4
+nova capture -- python triage_agent.py --input incident-4471.json
+nova diff 01KZ9VZPFQB95A63AAMD2TC7XD 01KZB2C8M3Q4R5S6T7V8W9X0YZ
 ```
 
-```console
-Diff: 01KZ9VZPFQB95A63AAMD2TC7XD → 01KZ9VZX0A9KAXGDNP42QJF0Y4
-  changed=2  added=0  removed=0
-```
-
-A structural diff, not a metric comparison — *what changed in the execution*.
+A structural diff, not a metric comparison — *what changed in the execution*: model
+calls paired in order, tool calls by name and arguments, environment and outputs.
 
 ### Package it for someone who has never heard of NovaFabric
 
 ```bash
-nova export-evidence 01KZ9VZPFQB95A63AAMD2TC7XD --out incident-4471-evidence/
+nova export-evidence ~/.novafabric/capsules/01KZ9VZPFQB95A63AAMD2TC7XD \
+  --output incident-4471-evidence.zip --key ~/.novafabric/keys/signing_key.pem
 ```
 
-An Evidence Bundle: the capsule, its signatures, the verification instructions,
-and an in-toto DSSE statement. Hand over the folder.
+An Evidence Bundle: a ZIP with the capsule, its seal, a manifest of file hashes and
+an in-toto DSSE statement, signed with the Ed25519 key `nova init` created. Hand over
+the file.
 
 ---
 
@@ -178,10 +221,13 @@ Being precise here matters more than in most docs, because someone may rely on i
   exporters map captured facts into a required shape; they do not certify.
 - **It attests only that the capsule is unmodified since signing.** It says
   nothing about whether the inputs were honest or the environment was already
-  compromised.
-- **A `mocked` replay is not a fresh run.** It shows the same code and inputs
-  produce the same result *given the recorded external responses*. It cannot tell
-  you what today's model would say.
+  compromised — and a key holder can sign a false record.
+- **It does not prove the record is complete.** Capture records what it is wired to
+  see: hooked model SDKs, MCP tool calls, adapters, stdout/stderr and the
+  environment. Work the agent did through other channels is not in the capsule.
+- **A `mocked` replay is not a fresh run.** It serves the recorded model responses,
+  but tools run live. It cannot tell you what today's model would say, and it is
+  only as faithful as the tools are stable.
 
 Claiming more than this is exactly the overclaiming the project is built to make
 impossible.
@@ -197,6 +243,6 @@ impossible.
 
 **Does your organization run workloads like this?** Freezing the v1.0 capsule
 format requires three independent
-[design-partner](../governance/design-partners.md) sign-offs and currently has
-zero. If you would have to live with this format, this is the moment your input
-changes it.
+[design-partner](../governance/design-partners.md) sign-offs, and the format is not
+frozen yet. If you would have to live with this format, this is the moment your
+input changes it.

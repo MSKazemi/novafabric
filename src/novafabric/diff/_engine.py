@@ -146,12 +146,16 @@ class DiffEngine:
                 })
             elif a is not None and b is not None:
                 result_changed = a.get("result") != b.get("result")
+                # Positional pairing (diff-report-v1) can pair a call whose
+                # arguments changed; that is a change too, not only the result.
+                arguments_changed = a.get("arguments") != b.get("arguments")
                 report.tool_call_pairs.append({
-                    "changed": result_changed,
+                    "changed": result_changed or arguments_changed,
                     "tool_name": a.get("tool_name"),
                     "tool_call_id_a": a.get("tool_call_id"),
                     "tool_call_id_b": b.get("tool_call_id"),
                     "result_changed": result_changed,
+                    "arguments_changed": arguments_changed,
                 })
 
     def _diff_outputs(

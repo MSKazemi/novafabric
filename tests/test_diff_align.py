@@ -40,13 +40,16 @@ class TestAlignModelCalls:
         assert len(removed) == 1
         assert removed[0][0]["parent_span_id"] == "span2"
 
-    def test_different_spans_no_match(self) -> None:
+    def test_different_spans_fall_back_to_sequence_position(self) -> None:
+        # Spec (diff-report-v1 §alignment, docstring): span match first, THEN
+        # sequence position. This test used to pin "never pair", which made two
+        # separate captures (fresh root span each) impossible to compare.
         a = [_mc("spanA")]
         b = [_mc("spanB")]
         pairs = align_model_calls(a, b)
-        # spanA removed, spanB added
-        assert any(x is not None and y is None for x, y in pairs)
-        assert any(x is None and y is not None for x, y in pairs)
+        assert len(pairs) == 1
+        x, y = pairs[0]
+        assert x is not None and y is not None
 
 
 class TestAlignToolCalls:
