@@ -11114,7 +11114,7 @@ Gap-closure sprint — G-A correctness fixes: ECDSA P-256 signer alignment, DLQ 
 ### Fixed
 
 - `KGIngestionPipeline.ingest_event()` now handles the OTel GenAI semconv format
-  produced by `nova capture` (`model-calls.jsonl`). Records with `gen_ai.request.model`
+  emitted by `nova capture` (`model-calls.jsonl`). Records with `gen_ai.request.model`
   but no `event_type` are normalised to a `ModelCallCompleted` edge via
   `_normalise_otel_semconv()`: `parent_span_id` → `agent_id`, `gen_ai.request.model` →
   `model_id`. Previously every captured capsule event was silently skipped, causing KG
