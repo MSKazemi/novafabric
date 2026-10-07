@@ -5438,7 +5438,7 @@ dependabot diff** — only from running the suite against the upgraded set.
 
 ### Fixed (correctness of the validator and of what adapters write)
 
-- **`nova validate` rejected every capsule written by any of the eight
+- **`nova validate` rejected every capsule emitted by any of the eight
   framework adapters.** `langgraph`, `crewai`, `autogen`, `dspy`,
   `openai_agents`, `google_adk`, `bedrock_agentcore` and `a2a` each wrote a
   top-level `tags` key, and two of them also wrote a private `*_ref` key.
