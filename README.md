@@ -14,7 +14,9 @@
 
 **Created and maintained by [Mohsen Seyedkazemi Ardebili](https://github.com/MSKazemi)** — AI Platform & Agentic Systems Engineer and independent consultant.
 
-> **NovaFabric turns any command — a script, an agent, a model run, an HPC training job, a notebook cell — into a portable execution capsule:** a schema-valid, secret-redacted, replayable evidence folder you own, produced with no application code changes.
+> **NovaFabric is open-source, self-hosted replay and evidence infrastructure for AI agents and agentic systems.**
+
+**Replay and prove what an AI agent did.** NovaFabric captures an execution as a portable, secret-redacted **Run Capsule** you own, with no application code changes. The same capture layer can also wrap scripts, model runs, notebook cells, and HPC workloads.
 
 Tracing tells you *what happened*. NovaFabric tells you whether a past run can be **replayed**, **compared**, and **proven** — entirely inside your own infrastructure, laptop to cluster, online or air-gapped, with no accounts and no telemetry.
 
