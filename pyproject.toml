@@ -574,6 +574,7 @@ exclude = [
   "/priv",
   "/ship",
   "/site-config",
+  "/strategy",
   "/bench",
   "/.benchmark-results",
   "/.p2p.toml",

@@ -24,16 +24,25 @@ const canonical = new URL(Astro.url.pathname, Astro.site).toString();
 const ogImage = new URL('/og.png', Astro.site).toString();
 
 // Sitewide Organization schema — asserted on every page via the shared layout.
-// Only facts visible on the site are included. Update sameAs when social accounts exist.
+// Only facts visible on the site are included.
+//
+// This must describe the SAME entity as the Next.js half of novafabric.ai (its root
+// layout declares `https://novafabric.ai/#organization`). The two sites are merged
+// into one domain, so a differently-named, @id-less Organization here would be parsed
+// as a second, competing entity for the same brand.
 const organizationSchema = {
   '@context': 'https://schema.org',
   '@type': 'Organization',
+  '@id': 'https://novafabric.ai/#organization',
   name: 'NovaFabric',
   url: 'https://novafabric.ai',
   logo: 'https://novafabric.ai/favicon.svg',
-  description: 'Open-source CLI toolkit for capturing, replaying, and auditing AI system runs.',
+  description:
+    'Open-source, self-hosted replay and evidence infrastructure for AI agents and agentic systems: capture past executions as portable Run Capsules for replay, diff, lineage, provenance, and audit.',
   sameAs: [
+    'https://github.com/novafabric',
     'https://github.com/MSKazemi/novafabric',
+    'https://pypi.org/project/novafabric/',
   ],
 };
 ---

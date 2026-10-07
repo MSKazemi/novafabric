@@ -20,6 +20,8 @@
 
 Tracing tells you *what happened*. NovaFabric tells you whether a past run can be **replayed**, **compared**, and **proven** — entirely inside your own infrastructure, laptop to cluster, online or air-gapped, with no accounts and no telemetry.
 
+**Website and docs:** [novafabric.ai](https://novafabric.ai) · [documentation](https://novafabric.ai/docs/) · [install](https://novafabric.ai/install/) · [research paper (arXiv:2609.12582)](https://arxiv.org/abs/2609.12582)
+
 **Tried it? Tell us what you captured** — questions, ideas and show-and-tell live in [GitHub Discussions](https://github.com/MSKazemi/novafabric/discussions).
 
 **▶ Watch the 7-minute demo:** [*I tried to forge my AI agent's evidence — it caught me*](https://youtu.be/uQatmJIJI68) — recorded live on an Azure VM against Azure OpenAI, with the signing key held in an Azure Key Vault HSM. Capture, seal, `nova verify`, two tamper attempts caught and named, then the same run in the dashboard. English captions included. Narration is a synthetic voice generated locally with Piper (MIT); the terminal output is verbatim from the live run, re-rendered on screen for legibility.

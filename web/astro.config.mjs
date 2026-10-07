@@ -7,7 +7,8 @@ export default defineConfig({
   site: 'https://novafabric.ai',
   integrations: [
     react(),
-    sitemap(),
+    // /dashboard/ is a noindex client-only app shell (see DashboardLayout.astro).
+    sitemap({ filter: (page) => !page.endsWith('/dashboard/') }),
   ],
   vite: {
     plugins: [tailwindcss()],
