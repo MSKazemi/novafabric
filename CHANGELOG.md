@@ -164,6 +164,18 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **Two framework adapters wrote capsules that missed the run** (issues #1, #3 follow-up).
+  LlamaIndex: an agent's `run` returns a `WorkflowHandler` and does its work when awaited,
+  but the adapter finished the capsule as soon as `run` returned — an empty, successful
+  capsule, with the wire hooks released before the first model call. It now finishes from
+  the handler's completion (recording a raised or cancelled workflow as a failure), also
+  patches the async twins `aquery`/`achat`, and guards against nested calls. Haystack 2.x:
+  `AsyncPipeline.run` drives `run_async`, and both are patched, so one call opened two
+  capsules and the inner one took the hooks; a re-entrancy guard (as in the Pydantic AI
+  adapter) now keeps it to one. New tests also run all three adapters against the real
+  wire hooks (owner token held during the call, released after, `wire_capture: installed`)
+  and the packaged run-capsule schema.
+
 - **Public files still sent readers to private `.claude/` and `CLAUDE.md` paths** (issue #5).
   The prose guard covered only `design/`, so ROADMAP.md pointed at six `.claude/plans/…` and
   `.claude/memory/…` files, five ROADMAP rows said "`architecture/cluster-scale.md` in

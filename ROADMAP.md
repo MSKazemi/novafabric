@@ -89,7 +89,7 @@ Ten more accepted-ADR slices, all **experimental**, none changing `schemas/run-c
 `src/novafabric/adapters/{llamaindex,pydantic_ai,haystack}.py`, exported as
 `wrap_llamaindex` / `wrap_pydantic_ai` / `wrap_haystack`, covered by
 `tests/adapters/test_new_framework_adapters.py` and
-`test_adapter_manifests_match_the_schema.py` (19 tests green). They now carry
+`test_adapter_manifests_match_the_schema.py` (green). They now carry
 reference docs in [`docs/cli-reference.md`](docs/cli-reference.md) §Framework
 Adapters, which they had never had — the code shipped undocumented, which is part
 of why this row went stale. They appear under Shipped once in a tagged release,

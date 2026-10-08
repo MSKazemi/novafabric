@@ -1351,9 +1351,16 @@ what ADR-0224 requires — a capsule has to say whether its wire stream is
 complete. Getting that ordering wrong is the single easiest mistake here.
 
 **Watch for a framework whose sync entry point drives its async one** (Pydantic
-AI's `run_sync` calls `run`). Patching both without a re-entrancy guard opens
-two capsules for one user-visible call, and the inner one takes the wire hooks
-from the outer, so neither stream is complete. `pydantic_ai.py` shows the guard.
+AI's `run_sync` calls `run`; Haystack 2.x's `AsyncPipeline.run` calls `run_async`).
+Patching both without a re-entrancy guard opens two capsules for one user-visible
+call, and the inner one takes the wire hooks from the outer, so neither stream is
+complete. `pydantic_ai.py` and `haystack.py` show the guard.
+
+**Watch for an entry point that returns before the work runs.** LlamaIndex's
+agent `run` returns a `WorkflowHandler` (an `asyncio.Future`); the work happens
+when the caller awaits it. Finishing the capsule when the method returns writes an
+empty, successful capsule and releases the hooks before the first model call.
+`llamaindex.py` finishes from the future's done-callback instead.
 
 ### Typed `record_*` methods (extended event taxonomy, ADR-0082)
 

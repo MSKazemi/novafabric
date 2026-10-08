@@ -9472,7 +9472,16 @@ Patches the entry-point method **in place** and returns the same object, so exis
 references keep working. LlamaIndex has no single entry point across its object types —
 a query engine exposes `query`, a chat engine `chat`, an agent `chat` or `run` — so the
 wrapper tries an explicit ordered list (`query`, `chat`, `run`) rather than guessing, and
-reports which one it patched. Override with `method=`.
+records which one it patched as `metadata.entry_point`. Override with `method=`.
+
+When the detected entry point has an async twin (`aquery` for `query`, `achat` for
+`chat`), that is patched too, so async callers are captured. An agent's `run`
+(`FunctionAgent`, `AgentWorkflow`, …) returns a `WorkflowHandler` and does its work
+when the handler is awaited, so the capsule is finished from the handler's
+completion, not when `run` returns — it covers the whole workflow and records a
+failure if the workflow raises or is cancelled. A nested call (an `aquery` reached
+from inside a wrapped run) records into the capsule already open rather than
+opening a second one.
 
 Optional: `run_name=` (defaults to the class name), `data_dir=`.
 
@@ -9508,7 +9517,9 @@ result = pipe.run({"retriever": {"query": "..."}})
 
 Patches `run` in place and returns the same object. `AsyncPipeline.run_async` is patched
 too when present, because Haystack exposes the async variant as a separate method rather
-than as a coroutine returned by `run`.
+than as a coroutine returned by `run`. Haystack 2.x's `AsyncPipeline.run` drives
+`run_async` internally, so the same re-entrancy guard as the Pydantic AI adapter keeps
+one call producing one capsule.
 
 Top-level alias: `from novafabric.adapters import wrap_haystack`
 

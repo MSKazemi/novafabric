@@ -5,13 +5,25 @@ Wire-level hooks capture the model calls its components make.
 
 Haystack is an **optional** dependency — this module must stay importable
 without it; :func:`wrap_pipeline` raises :class:`ImportError` at call time.
+
+Haystack 2.x's ``AsyncPipeline.run`` is a blocking convenience that drives
+``run_async`` through ``asyncio.run``. Both are patched, so — exactly as with
+Pydantic AI's ``run_sync`` — one call would open **two** capsules and the inner
+one would take the wire hooks away from the outer. A context-variable guard
+makes the nested call record into the capsule that is already open.
 """
 from __future__ import annotations
 
+import contextvars
 from pathlib import Path
 from typing import Any
 
 from novafabric.adapters._capsule import begin_capture, require
+
+#: Set while a capture is in flight on this task; a nested call records into it.
+_in_flight: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "novafabric_haystack_in_flight", default=False
+)
 
 
 def wrap_pipeline(
@@ -55,14 +67,18 @@ def wrap_pipeline(
         original_run = pipeline.run
 
         def wrapped_run(*args: Any, **kwargs: Any) -> Any:
+            if _in_flight.get():
+                return original_run(*args, **kwargs)
             cap = _capture()
             cap.tags["entry_point"] = "run"
+            token = _in_flight.set(True)
             try:
                 return original_run(*args, **kwargs)
             except Exception as exc:
                 cap.fail(exc)
                 raise
             finally:
+                _in_flight.reset(token)
                 cap.finish()
 
         pipeline.run = wrapped_run
@@ -71,14 +87,18 @@ def wrap_pipeline(
         original_run_async = pipeline.run_async
 
         async def wrapped_run_async(*args: Any, **kwargs: Any) -> Any:
+            if _in_flight.get():
+                return await original_run_async(*args, **kwargs)
             cap = _capture()
             cap.tags["entry_point"] = "run_async"
+            token = _in_flight.set(True)
             try:
                 return await original_run_async(*args, **kwargs)
             except Exception as exc:
                 cap.fail(exc)
                 raise
             finally:
+                _in_flight.reset(token)
                 cap.finish()
 
         pipeline.run_async = wrapped_run_async

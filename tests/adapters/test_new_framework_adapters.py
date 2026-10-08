@@ -320,3 +320,202 @@ class TestAliases:
         with patch.dict(sys.modules, {missing: None}):
             with pytest.raises(ImportError):
                 getattr(adapters, alias)(MagicMock())
+
+
+# --------------------------------------------------------------------------
+# Call shapes that finish after the patched method returns (2026-10-09 audit)
+# --------------------------------------------------------------------------
+
+class TestLlamaIndexDeferredCalls:
+    def test_agent_run_handler_is_captured_when_awaited_not_when_returned(
+        self, tmp_path: Path
+    ) -> None:
+        """An agent's ``run`` returns a WorkflowHandler (an asyncio.Future).
+
+        The work happens when the caller awaits it. Finishing the capsule when
+        ``run`` returns wrote an empty, successful capsule and released the wire
+        hooks before the first model call — the whole run went uncaptured.
+        """
+        seen_during_run: list[int] = []
+
+        class FakeAgent:
+            def run(self, *a: Any, **k: Any) -> asyncio.Future:
+                loop = asyncio.get_running_loop()
+                fut = loop.create_future()
+
+                async def _work() -> None:
+                    await asyncio.sleep(0)
+                    seen_during_run.append(len(list(tmp_path.glob("*/capsule.yaml"))))
+                    fut.set_result("agent answer")
+
+                loop.create_task(_work())
+                return fut
+
+        agent = FakeAgent()
+
+        async def _main() -> str:
+            handler = agent.run(user_msg="hi")
+            return await handler
+
+        with _fake("llama_index.core"), _no_hooks(), _quiet_capsule():
+            from novafabric.adapters.llamaindex import wrap_engine
+
+            wrap_engine(agent, run_name="agent", data_dir=tmp_path)
+            assert asyncio.run(_main()) == "agent answer"
+
+        assert seen_during_run == [0], "the capsule was finished before the run ran"
+        manifest = _sole_manifest(tmp_path)
+        assert manifest["status"] == "success"
+        assert manifest["metadata"]["entry_point"] == "run"
+
+    def test_a_failed_workflow_handler_is_recorded_as_a_failure(
+        self, tmp_path: Path
+    ) -> None:
+        class FakeAgent:
+            def run(self, *a: Any, **k: Any) -> asyncio.Future:
+                fut = asyncio.get_running_loop().create_future()
+                fut.set_exception(RuntimeError("tool crashed"))
+                return fut
+
+        agent = FakeAgent()
+
+        async def _main() -> None:
+            await agent.run()
+            await asyncio.sleep(0)
+
+        with _fake("llama_index.core"), _no_hooks(), _quiet_capsule():
+            from novafabric.adapters.llamaindex import wrap_engine
+
+            wrap_engine(agent, data_dir=tmp_path)
+            with pytest.raises(RuntimeError, match="tool crashed"):
+                asyncio.run(_main())
+
+        manifest = _sole_manifest(tmp_path)
+        assert manifest["status"] == "failure"
+        assert manifest["error"]["type"] == "RuntimeError"
+
+    def test_the_async_twin_is_patched_too(self, tmp_path: Path) -> None:
+        class FakeChatEngine:
+            def chat(self, *a: Any, **k: Any) -> str:
+                return "sync"
+
+            async def achat(self, *a: Any, **k: Any) -> str:
+                return "async"
+
+        engine = FakeChatEngine()
+        with _fake("llama_index.core"), _no_hooks(), _quiet_capsule():
+            from novafabric.adapters.llamaindex import wrap_engine
+
+            wrap_engine(engine, data_dir=tmp_path)
+            assert asyncio.run(engine.achat("hi")) == "async"
+
+        assert _sole_manifest(tmp_path)["metadata"]["entry_point"] == "achat"
+
+    def test_a_nested_call_records_into_the_open_capsule(self, tmp_path: Path) -> None:
+        class FakeQueryEngine:
+            def query(self, *a: Any, **k: Any) -> str:
+                return asyncio.run(self.aquery(*a, **k))
+
+            async def aquery(self, *a: Any, **k: Any) -> str:
+                return "nested"
+
+        engine = FakeQueryEngine()
+        with _fake("llama_index.core"), _no_hooks(), _quiet_capsule():
+            from novafabric.adapters.llamaindex import wrap_engine
+
+            wrap_engine(engine, data_dir=tmp_path)
+            assert engine.query("q") == "nested"
+
+        assert _sole_manifest(tmp_path)["metadata"]["entry_point"] == "query"
+
+
+class TestHaystackNesting:
+    def test_async_pipeline_run_driving_run_async_produces_exactly_one_capsule(
+        self, tmp_path: Path
+    ) -> None:
+        """Haystack 2.x ``AsyncPipeline.run`` is ``asyncio.run(self.run_async(...))``.
+
+        Both are patched; without the guard one call opened two capsules.
+        """
+        calls: list[str] = []
+
+        class FakeAsyncPipeline:
+            async def run_async(self, *a: Any, **k: Any) -> dict:
+                calls.append("run_async")
+                return {"answers": ["x"]}
+
+            def run(self, *a: Any, **k: Any) -> dict:
+                calls.append("run")
+                return asyncio.run(self.run_async(*a, **k))
+
+        pipe = FakeAsyncPipeline()
+        with _fake("haystack"), _no_hooks(), _quiet_capsule():
+            from novafabric.adapters.haystack import wrap_pipeline
+
+            wrap_pipeline(pipe, data_dir=tmp_path)
+            assert pipe.run({}) == {"answers": ["x"]}
+
+        assert calls == ["run", "run_async"], calls
+        assert _sole_manifest(tmp_path)["metadata"]["entry_point"] == "run"
+
+
+# --------------------------------------------------------------------------
+# The real wire hooks and the real schema (issues #1-#3 definition of done)
+# --------------------------------------------------------------------------
+
+def _packaged_capsule_schema() -> dict:
+    import json
+
+    root = Path(__file__).resolve().parents[2]
+    return json.loads(
+        (root / "src" / "novafabric" / "schemas" / "run-capsule.schema.json").read_text()
+    )
+
+
+@pytest.mark.parametrize(
+    ("module", "func", "missing", "method"),
+    [
+        ("llamaindex", "wrap_engine", "llama_index.core", "query"),
+        ("pydantic_ai", "wrap_agent", "pydantic_ai", "run_sync"),
+        ("haystack", "wrap_pipeline", "haystack", "run"),
+    ],
+)
+def test_real_hooks_are_claimed_for_the_call_and_released_after(
+    tmp_path: Path, module: str, func: str, missing: str, method: str
+) -> None:
+    """No hook mocks: the owner token is held during the call and gone after it,
+    the manifest says the wire stream was installed, and the capsule passes the
+    packaged run-capsule schema."""
+    import importlib
+
+    import jsonschema
+
+    from novafabric.capture.hooks import current_hook_owner
+
+    assert current_hook_owner() is None, "a previous test leaked the hooks"
+    owner_during_call: list[str | None] = []
+
+    class Target:
+        name = "real-hooks"
+
+    def _call(*a: Any, **k: Any) -> str:
+        owner_during_call.append(current_hook_owner())
+        return "ok"
+
+    target = Target()
+    setattr(target, method, _call)
+
+    # Only the wrap needs the fake framework module. The call must run OUTSIDE
+    # patch.dict(sys.modules): the real install_all imports SDKs, and
+    # patch.dict would evict them on exit and break every later import.
+    with _fake(missing):
+        wrap = getattr(importlib.import_module(f"novafabric.adapters.{module}"), func)
+        wrap(target, data_dir=tmp_path)
+    with _quiet_capsule():
+        assert getattr(target, method)("q") == "ok"
+
+    assert owner_during_call and owner_during_call[0] is not None
+    assert current_hook_owner() is None, "the adapter did not release the hooks"
+    manifest = _sole_manifest(tmp_path)
+    assert manifest["metadata"]["wire_capture"] == "installed"
+    jsonschema.validate(manifest, _packaged_capsule_schema())
