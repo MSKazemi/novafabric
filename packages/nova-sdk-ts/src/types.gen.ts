@@ -317,7 +317,19 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List assets */
+        /**
+         * List assets
+         * @description List assets — keyset (seek) pagination, ADR-0206 P2 (experimental).
+         *
+         *     Order is pinned to ``created_at DESC, id DESC``; ``next_cursor`` is an
+         *     opaque v1 keyset cursor naming the page's last asset, so registrations
+         *     between pages neither repeat nor skip a surviving asset. A non-empty
+         *     cursor that fails strict decoding is a 400 ``invalid_cursor`` (it used to
+         *     restart silently at page one). Legacy ``{\"offset\": N}`` cursors are served
+         *     by the old path for one deprecation cycle (ADR-0188) with a
+         *     ``Deprecation: true`` header. Cursors are not bound to the filters: reuse a
+         *     cursor only with the ``asset_type``/``status`` it was issued under.
+         */
         get: operations["listAssets"];
         put?: never;
         /** Register an asset from a YAML spec */
@@ -517,8 +529,12 @@ export interface paths {
          *     Legal holds always win: any unreleased hold in any registry refuses with
          *     409 ``legal_hold_active`` (holds are registry-global today — documented
          *     limit), and there is no force override. An unexpired WORM lock refuses
-         *     with 409 ``worm_hold``. Deleting an already-deleted id is a 404 (delete
-         *     is evidenced, not idempotent-silent).
+         *     with 409 ``worm_hold``; a NovaSeal-sealed capsule with 409
+         *     ``sealed_capsule`` (unless ``NOVAFABRIC_ALLOW_SEALED_DELETE=1``). Capsule
+         *     and index rows are removed in a recoverable order (see
+         *     ``capsule_delete.execute_delete``); a failure midway restores the capsule
+         *     (500). Deleting an already-deleted id is a 404 (delete is evidenced,
+         *     not idempotent-silent).
          */
         delete: operations["delete_capsule_v0_capsules__run_id__delete"];
         options?: never;
@@ -628,7 +644,20 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Lineage Nodes */
+        /**
+         * List Lineage Nodes
+         * @description List lineage nodes — keyset (seek) pagination, ADR-0206 P2 (experimental).
+         *
+         *     Order is pinned to ``node_id ASC`` (the primary key, so the seek is
+         *     index-satisfiable without a new index). ``next_cursor`` is the shared v1
+         *     keyset cursor (``server/pagination.py``) with ``k = [null, node_id]`` —
+         *     the first slot is unused because the order has one column; a v1 cursor
+         *     whose first slot is non-null (e.g. a capsules cursor) is rejected.
+         *     Legacy ``{\"offset\": N}`` cursors are served for one deprecation cycle
+         *     (ADR-0188) with a ``Deprecation: true`` header. ``total`` is present on
+         *     the first page and on legacy pages only. A malformed cursor is a 400
+         *     ``invalid_cursor`` (it used to restart silently at offset 0).
+         */
         get: operations["list_lineage_nodes_v0_lineage_nodes_get"];
         put?: never;
         post?: never;
@@ -2243,7 +2272,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description A page of assets. */
+            /** @description A page of assets. `total` is present on the first page only — keyset pages omit it by design (ADR-0206). */
             200: {
                 headers: {
                     [name: string]: unknown;
