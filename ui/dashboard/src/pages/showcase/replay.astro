@@ -7,7 +7,7 @@ import CodeBlock from '../../components/ui/CodeBlock.astro';
 
 <Layout
   title="Replay & diff — NovaFabric Showcase"
-  description="Five replay modes (one experimental) with explicit guarantees, plus a structural diff aligned with the diff-report schema. Honest about what each mode promises — tools run live in mocked replay."
+  description="Five replay modes (one experimental) with explicit guarantees, plus a structural diff aligned with the diff-report schema. Honest about what each mode promises — non-MCP tools run live in mocked replay."
 >
   <article class="container-content py-12">
     <header class="mb-8 max-w-3xl">
@@ -32,8 +32,8 @@ import CodeBlock from '../../components/ui/CodeBlock.astro';
         checks whether a byte-exact re-run is even possible, and for a run
         against a remote LLM the answer is no — with the reasons. Many tools
         claim exact replay anyway. Then click <strong>Mocked</strong>: model
-        replies come from the capsule, and the tool calls that ran live are
-        marked as such.
+        replies and MCP tool results come from the capsule; any other tool
+        would run live, and the replay reports the connections it made.
       </p>
     </aside>
 

@@ -621,15 +621,17 @@ nova replay .novafabric/capsules/01HX.../ --mode mocked
 ```
 
 The original command is re-spawned as a subprocess (Python workloads). Recorded
-responses are served, in recorded order, for **synchronous, non-streaming**
-OpenAI `chat.completions.create` and Anthropic `messages.create` calls, and
-recorded results for **MCP** `ClientSession.call_tool` calls (one recorded
-result per call). **Every other tool runs live** — HTTP requests, shell
-commands, file writes, framework-native tools — so run replays of such agents in
-a sandbox or against test credentials.
+responses are served, in recorded order, for OpenAI `chat.completions.create`,
+OpenAI `responses.create` and Anthropic `messages.create` calls — sync or async,
+streamed or not (ADR-0304) — and recorded results for **MCP**
+`ClientSession.call_tool` calls (one recorded result per call). **Every other
+tool runs live** — HTTP requests, shell commands, file writes, framework-native
+tools — so run replays of such agents in a sandbox or against test credentials.
+The result lists the outbound connections the replay made
+(`replay_contract.network_connections_live`); they are reported, not blocked.
 
 The replay is **fail-closed** (ADR-0300): an extra model call, a call on an
-unsupported surface (async client, `stream=True`, Responses API), an MCP call
+unsupported surface (`parse`, legacy completions, `with_raw_response`), an MCP call
 with no recorded result (the live tool is not run), or a recorded response that
 is never requested makes the replay `failure` with a `divergence_reason`.
 `--permissive` keeps the older warn-and-continue behaviour and only reports.

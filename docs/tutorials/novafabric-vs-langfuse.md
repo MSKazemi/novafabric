@@ -91,9 +91,9 @@ nova replay --mode mocked capsules/01KR9Q2AD…
 ```
 
 The command runs again, and its OpenAI / Anthropic chat calls are answered from the
-capsule instead of the live API, so no model call is made. **Tool calls are not
-substituted** — they run live — and only synchronous, non-streaming chat calls are
-served from the capsule today. `--mode forensic` inspects the capsule without
+capsule instead of the live API, so no model call is made — sync or async,
+streamed or not. **Only MCP tool calls are substituted**; every other tool runs
+live, and the replay reports the network connections it made. `--mode forensic` inspects the capsule without
 re-running anything. If the replayed run diverges, something drifted: code, a
 tool's behaviour, or the environment.
 

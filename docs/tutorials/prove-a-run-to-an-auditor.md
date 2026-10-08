@@ -180,12 +180,13 @@ be touched.
 
 `mocked` goes further — it **re-runs the command** with the recorded model responses
 served from the capsule, so no live model call is made and the original model need
-not exist any more. Two limits matter for this question. **Tool calls are not
-substituted:** they run live, against today's systems. And only synchronous OpenAI
-and Anthropic chat calls are served from the capsule; async, streaming and the
-OpenAI Responses API are not intercepted. So `mocked` answers "given the same model
-replies, does the code take the same path?" — only as far as its tools behave as
-they did in September.
+not exist any more. Two limits matter for this question. **Only MCP tool calls
+are substituted:** every other tool runs live, against today's systems (the replay
+reports the network connections it made). And only the supported OpenAI and
+Anthropic surfaces are served from the capsule — see the
+[support matrix](../architecture/replay-modes.md#support-matrix). So `mocked`
+answers "given the same model replies, does the code take the same path?" — only
+as far as its tools behave as they did in September.
 
 To show what changed between two executions, capture the same input again and diff
 the two capsules:

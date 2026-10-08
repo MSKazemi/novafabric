@@ -161,7 +161,7 @@
     },
     "replay_contract": {
       "type": "object",
-      "description": "Mocked mode (ADR-0300): divergence policy, intercepted surfaces, recorded/live/unconsumed counts and the list of divergences. Additive and optional.",
+      "description": "Mocked mode (ADR-0300): divergence policy, intercepted surfaces, recorded/live/unconsumed counts and the list of divergences. Additive and optional. ADR-0304 adds the observed live network connections.",
       "properties": {
         "divergence_policy": {
           "type": "string",
@@ -224,6 +224,26 @@
         "divergences_not_listed": {
           "type": "integer",
           "minimum": 0
+        },
+        "network_observed": {
+          "type": "boolean",
+          "description": "ADR-0304: the replayed process reported its outbound connections (socket connect observer installed)."
+        },
+        "network_connections_live": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "ADR-0304: IPv4/IPv6 connection attempts the replayed Python process made (observed, never blocked). A lower bound when network_connections_capped is true."
+        },
+        "network_connections_capped": {
+          "type": "boolean",
+          "description": "ADR-0304: more connections were made than the observer logs per process."
+        },
+        "network_destinations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "ADR-0304: distinct host:port destinations, first 20."
         }
       }
     },

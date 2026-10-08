@@ -307,6 +307,33 @@ def test_s11_cross_provider_order_mismatch(
     assert "order_mismatch" in _kinds(result)
 
 
+def test_s11_a_chat_recording_is_not_served_to_the_responses_api(agent: Agent) -> None:
+    """ADR-0304: one queue per API surface -- a Chat Completions recording is
+    never reshaped into a Responses API reply."""
+    result, obs = agent.replay([openai_record("x")], [{"op": "responses", "catch": True}])
+    assert obs[0]["error"] == "ReplayProviderMismatchError"
+    assert "openai.responses.create" in obs[0]["message"]
+    assert "openai.chat.completions.create" in obs[0]["message"]
+    assert result.status == "failure"
+    assert _kinds(result) == ["provider_mismatch", "model_calls_unconsumed"]
+
+
+def test_s11_cross_surface_order_mismatch(agent: Agent) -> None:
+    records = [openai_record("chat"),
+               openai_record("resp", surface="openai.responses")]
+    result, obs = agent.replay(
+        records, [{"op": "responses", "catch": True}, {"op": "chat"}]
+    )
+    assert obs[0]["error"] == "ReplayOrderMismatchError"
+    assert result.status == "failure"
+    (mismatch,) = [
+        d for d in result.replay_contract["divergences"]  # type: ignore[index]
+        if d["kind"] == "order_mismatch"
+    ]
+    assert mismatch["surface"] == "openai.responses.create"
+    assert mismatch["expected_surface"] == "openai.chat.completions.create"
+
+
 # ── scenarios 12-13: mutating and network tools under strict mode ────────────
 
 
@@ -346,6 +373,30 @@ def test_s13_network_tool_refused_and_uncontrolled_transports_reported(agent: Ag
     assert result.replay_contract["tool_calls_not_interceptable"] == 1  # type: ignore[index]
 
 
+def test_s13_live_network_from_an_uncontrolled_tool_is_reported_not_blocked(
+    agent: Agent,
+) -> None:
+    """ADR-0304: replay cannot intercept a plain socket "tool", but it reports that
+    the replay reached the network -- so ``success`` never implies "offline"."""
+    result, obs = agent.replay([openai_record("x")], [{"op": "chat"}, {"op": "net"}])
+    assert obs[1] == {"op": "net"}
+    assert result.status == "success"  # observed, never blocked
+    contract = result.replay_contract
+    assert contract is not None
+    assert contract["network_observed"] is True
+    assert contract["network_connections_live"] == 1
+    (destination,) = contract["network_destinations"]
+    assert destination.startswith("127.0.0.1:")
+
+
+def test_a_replay_with_no_network_reports_zero_connections(agent: Agent) -> None:
+    result, _ = agent.replay([openai_record("x")], [{"op": "chat"}])
+    assert result.replay_contract is not None
+    assert result.replay_contract["network_observed"] is True
+    assert result.replay_contract["network_connections_live"] == 0
+    assert result.replay_contract["network_destinations"] == []
+
+
 def test_s13_permissive_runs_an_unmatched_tool_live_and_counts_it(agent: Agent) -> None:
     result, obs = agent.replay(
         [], [{"op": "tool", "name": "fetch_url", "args": {"url": "https://x"}}], permissive=True
@@ -360,21 +411,30 @@ def test_s13_permissive_runs_an_unmatched_tool_live_and_counts_it(agent: Agent) 
 # ── scenario 17: unsupported surfaces are refused, not run live ──────────────
 
 
-def test_s17_unsupported_model_surfaces_are_refused(agent: Agent) -> None:
+def test_s17_unsupported_model_surfaces_are_refused(
+    agent: Agent, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-0304 serves async, streaming and the Responses API; what is still not
+    served is refused under strict replay instead of reaching the network."""
+    monkeypatch.setenv("PYTHONPATH", str(write_fake_anthropic(tmp_path / "fake_sdk")))
     plan = [
-        {"op": "async_chat", "catch": True},
-        {"op": "stream_chat", "catch": True},
-        {"op": "responses", "catch": True},
+        {"op": "parse", "catch": True},
+        {"op": "legacy", "catch": True},
+        {"op": "raw", "catch": True},
+        {"op": "anthropic_stream_helper", "catch": True},
     ]
     result, obs = agent.replay([], plan)
-    assert [o["error"] for o in obs] == ["ReplayUnsupportedSurfaceError"] * 3
+    assert [o["error"] for o in obs] == ["ReplayUnsupportedSurfaceError"] * 4
     assert result.status == "failure"
-    assert _kinds(result) == ["unsupported_surface"] * 3
+    assert _kinds(result) == ["unsupported_surface"] * 4
     surfaces = [d["surface"] for d in result.replay_contract["divergences"]]  # type: ignore[index]
-    assert any("async" in s for s in surfaces)
-    assert any("stream=True" in s for s in surfaces)
-    assert any("Responses API" in s for s in surfaces)
-    assert result.model_calls_unmatched == 3
+    assert surfaces == [
+        "openai.chat.completions.parse (structured outputs)",
+        "openai.completions.create (legacy text completions)",
+        "openai.chat.completions.create via with_raw_response / with_streaming_response",
+        "anthropic.messages.stream",
+    ]
+    assert result.model_calls_unmatched == 4
     assert result.replay_contract["model_calls_live"] == 0  # type: ignore[index]
 
 
@@ -382,11 +442,48 @@ def test_s17_permissive_lets_an_unsupported_surface_run_live_and_counts_it(
     agent: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("AGENT_CANNED", json.dumps([openai_body(content="live answer")]))
-    result, obs = agent.replay([], [{"op": "async_chat"}], permissive=True)
-    assert obs[0]["content"] == "live answer"
+    result, obs = agent.replay([], [{"op": "raw"}], permissive=True)
+    assert "error" not in obs[0]
     assert result.status == "success"
     assert result.replay_contract["model_calls_live"] == 1  # type: ignore[index]
     assert "unsupported_surface" in str(result.divergence_reason)
+
+
+def test_s14_s16_served_surfaces_share_the_contract(agent: Agent) -> None:
+    """Async, streamed and Responses API calls are counted, exhausted and
+    reported exactly like sync chat calls (synthetic capsule, no capture)."""
+    records = [
+        openai_record("a", surface="openai.chat.completions"),
+        openai_record("b", surface="openai.chat.completions"),
+        openai_record("c", surface="openai.responses"),
+    ]
+    plan = [{"op": "async_chat"}, {"op": "stream_chat"}, {"op": "stream_responses"},
+            {"op": "async_chat", "catch": True}]
+    result, obs = agent.replay(records, plan)
+    assert [o.get("content") or o.get("text") for o in obs[:3]] == ["a", "b", "c"]
+    assert obs[3]["error"] == "ReplayQueueExhaustedError"
+    assert result.status == "failure"
+    assert (result.model_calls_mocked, result.model_calls_available) == (3, 3)
+    assert result.model_calls_unmatched == 1
+    assert _kinds(result) == ["model_queue_exhausted"]
+
+
+def test_a_capsule_captured_before_adr_0304_keeps_refusing_async_and_streams(
+    agent: Agent,
+) -> None:
+    """Unmarked records come from hooks that never recorded async or streamed
+    calls; serving one would hand it a record that belonged to another call."""
+    result, obs = agent.replay(
+        [openai_record("sync answer")],
+        [{"op": "async_chat", "catch": True}, {"op": "stream_chat", "catch": True},
+         {"op": "chat"}],
+    )
+    assert [o.get("error") for o in obs[:2]] == ["ReplayUnsupportedSurfaceError"] * 2
+    assert "captured before async and streamed calls were recorded" in obs[0]["message"]
+    assert obs[2]["content"] == "sync answer"  # the sync call still gets its record
+    assert result.model_calls_mocked == 1
+    assert result.status == "failure"
+    assert _kinds(result) == ["unsupported_surface"] * 2
 
 
 # ── dispatcher reachability ──────────────────────────────────────────────────
@@ -540,3 +637,77 @@ def test_cli_prints_what_was_served_and_fails_on_divergence(
     assert result.exit_code == 1
     assert "model calls: 1 of 2 served from the capsule" in result.output
     assert "divergence: model_calls_unconsumed" in result.output
+
+
+# ── live network observer (ADR-0304) ─────────────────────────────────────────
+
+
+class _Events:
+    def __init__(self) -> None:
+        self.items: list[tuple[str, dict[str, Any]]] = []
+
+    def emit(self, event: str, **fields: Any) -> None:
+        self.items.append((event, fields))
+
+
+def test_network_observer_reports_inet_connections_and_restores_socket() -> None:
+    import socket
+
+    from novafabric.replay._dispatcher import NetworkObserver
+
+    original = socket.socket.connect
+    events = _Events()
+    observer = NetworkObserver(events, cap=1)  # type: ignore[arg-type]
+    assert observer.install() is True
+    server = socket.socket()
+    try:
+        server.bind(("127.0.0.1", 0))
+        server.listen(2)
+        port = server.getsockname()[1]
+        socket.create_connection(("127.0.0.1", port)).close()
+        socket.create_connection(("127.0.0.1", port)).close()  # over the cap
+        a, b = socket.socketpair()  # AF_UNIX: not network, never reported
+        a.close()
+        b.close()
+    finally:
+        server.close()
+        observer.uninstall()
+    assert events.items == [
+        ("network_live", {"host": "127.0.0.1", "port": port}),
+        ("network_live_capped", {"cap": 1}),
+    ]
+    assert socket.socket.connect is original
+
+
+def test_network_observer_never_breaks_the_workload() -> None:
+    import socket
+
+    from novafabric.replay._dispatcher import NetworkObserver
+
+    class Boom:
+        def emit(self, *a: Any, **k: Any) -> None:
+            raise RuntimeError("log unavailable")
+
+    observer = NetworkObserver(Boom())  # type: ignore[arg-type]
+    sock = socket.socket()
+    try:
+        observer.seen(sock, ("10.0.0.1", 80))  # must not raise
+        observer.seen(sock, "not-an-address")
+    finally:
+        sock.close()
+
+
+def test_summary_counts_network_events_and_caps_destinations() -> None:
+    events: list[dict[str, Any]] = [{"event": "network_observer_installed"}]
+    events += [
+        {"event": "network_live", "host": f"10.0.0.{i % 30}", "port": 443}
+        for i in range(40)
+    ]
+    events.append({"event": "network_live_capped", "cap": 40})
+    report = summarize([], [], events, divergence_policy="fail", substitute_tools=True)
+    assert report.network_connections_live == 40
+    out = report.as_dict()
+    assert out["network_observed"] is True
+    assert len(out["network_destinations"]) == 20
+    assert out["network_connections_capped"] is True
+    assert not report.diverged  # observation alone is never a divergence

@@ -1157,7 +1157,7 @@ Options:
 | Mode | Re-executes command? | Re-executes models? | Re-executes tools? | Output |
 |---|---|---|---|---|
 | `forensic` | No | No | No | Inspection report |
-| `mocked` | Yes (Python workloads) | Sync, non-streaming OpenAI `chat.completions` / Anthropic `messages`: from the capsule. Async, streaming, Responses API: refused (live with `--permissive`). Other providers: live | MCP `ClientSession.call_tool`: from the capsule, unmatched calls refused (live with `--permissive`). Every other tool: **live** | Replay result with served/unmatched counters and any divergence |
+| `mocked` | Yes (Python workloads) | OpenAI `chat.completions` and Responses API, Anthropic `messages` — sync or async, streamed or not: from the capsule. `parse`, legacy completions, Anthropic `messages.stream()`, `with_raw_response`: refused (live with `--permissive`). Other providers: live, connections reported | MCP `ClientSession.call_tool`: from the capsule, unmatched calls refused (live with `--permissive`). Every other tool: **live** | Replay result with served/unmatched counters and any divergence |
 | `semantic` | No | No | No | Similarity score (0–1.0) across model call responses |
 | `exact` | No | No | No | Eligibility check: deterministic env + seeded calls |
 | `intervention` | Yes | Substituted + recorded (warn on divergence) | **Live** (no tool dispatcher) | Counterfactual capsule marked `replay_mode: intervention` (experimental, ADR-0086) |
@@ -1174,6 +1174,7 @@ Output is written to `.novafabric/replays/<replay-ulid>/replay_result.yaml`.
 ✓ Replay written: .novafabric/replays/01HXBM1Y3K2NGH9V0RD9P0ZDC4  (replay_id=01HXBM1Y3K2NGH9V0RD9P0ZDC4  mode=mocked)
   model calls: 2 of 2 served from the capsule, 0 unmatched
   tool calls (MCP call_tool): 2 of 2 served, 0 live, 0 unmatched; 0 recorded on surfaces replay does not intercept
+  network: 0 live connections from the replayed process — observed, not blocked
 ```
 
 ---

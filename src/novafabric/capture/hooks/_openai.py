@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import importlib
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -15,9 +16,23 @@ from novafabric.capture.hooks._otel_genai import (
     build_record_envelope,
     extract_request_attributes,
 )
+from novafabric.capture.hooks._sdk_streams import (
+    API_SURFACE_EXT,
+    OPENAI_CHAT_SURFACE,
+    OPENAI_RESPONSES_SURFACE,
+    AsyncRecordingStream,
+    OpenAIChatStreamAccumulator,
+    OpenAIResponsesStreamAccumulator,
+    RecordingStream,
+    attach_stream_info,
+    is_async_stream,
+    is_raw_response_call,
+    is_sync_stream,
+)
 from novafabric.capture.hooks._tool_call_refs import (
     note_dropped_tool_calls,
     openai_tool_call_refs_with_dropped,
+    parse_tool_arguments,
 )
 from novafabric.cost.usage_types import usage_from_openai
 
@@ -45,53 +60,254 @@ def _base_url(resource: Any) -> str:
         return ""
 
 
+#: The SDK methods the hook wraps: (module, class, attribute, surface, async).
+#: ``chat`` records the Chat Completions shape; ``responses`` the Responses API
+#: (ADR-0304: async and Responses API calls used to be recorded by the wire hook
+#: only, with no response, so mocked replay had nothing to serve).
+_TARGETS: tuple[tuple[str, str, str, str, bool], ...] = (
+    ("openai.resources.chat.completions", "Completions", "create", "chat", False),
+    ("openai.resources.chat.completions", "AsyncCompletions", "create", "chat", True),
+    ("openai.resources.responses", "Responses", "create", "responses", False),
+    ("openai.resources.responses", "AsyncResponses", "create", "responses", True),
+)
+
+
+def _get(obj: Any, key: str) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
+
+
+def responses_choice(response: Any) -> tuple[dict[str, Any] | None, int]:
+    """The canonical ``Choice`` of a Responses API ``Response`` (ADR-0304).
+
+    Text from ``message`` output items becomes ``message.content``;
+    ``function_call`` items become ``message.tool_calls`` with ``id`` = the
+    item's ``call_id`` (what the workload echoes back in
+    ``function_call_output``). Other item types (reasoning, hosted tools) are
+    not represented. Returns ``(None, 0)`` for a response with no output.
+    """
+    output = _get(response, "output")
+    if not isinstance(output, (list, tuple)) or not output:
+        return None, 0
+    texts: list[str] = []
+    calls: list[dict[str, Any]] = []
+    dropped = 0
+    refused = False
+    for item in output:
+        kind = _get(item, "type")
+        if kind == "message":
+            for part in _get(item, "content") or []:
+                if _get(part, "type") == "output_text":
+                    texts.append(str(_get(part, "text") or ""))
+                elif _get(part, "type") == "refusal":
+                    texts.append(str(_get(part, "refusal") or ""))
+                    refused = True
+        elif kind == "function_call":
+            name = _get(item, "name")
+            if not isinstance(name, str) or not name:
+                dropped += 1
+                continue
+            calls.append({
+                "id": str(_get(item, "call_id") or _get(item, "id") or ""),
+                "name": name,
+                "arguments": parse_tool_arguments(_get(item, "arguments")),
+            })
+    reason = _get(_get(response, "incomplete_details"), "reason")
+    if calls:
+        finish = "tool_calls"
+    elif reason == "max_output_tokens":
+        finish = "length"
+    elif reason == "content_filter" or refused:
+        finish = "content_filter"
+    else:
+        finish = "stop"
+    message: dict[str, Any] = {
+        "role": "assistant",
+        "content": "".join(texts) if texts else None,
+    }
+    if calls:
+        message["tool_calls"] = calls
+    return {"index": 0, "message": message, "finish_reason": finish}, dropped
+
+
 class OpenAIHook:
     def __init__(self, writer: "CapsuleWriter", parent_span_id: str) -> None:
         self._writer = writer
         self._parent_span_id = parent_span_id
+        #: The sync ``chat.completions.create`` original (kept for callers).
         self._original: Any = None
+        self._patched: list[tuple[Any, str, Any]] = []
 
     def install(self) -> None:
-        try:
-            import openai.resources.chat.completions as _mod
-            self._original = _mod.Completions.create
-            hook_self = self
+        for module_name, class_name, attr, surface, is_async in _TARGETS:
+            try:
+                owner = getattr(importlib.import_module(module_name), class_name)
+                original = getattr(owner, attr)
+            except (ImportError, AttributeError):
+                continue
+            setattr(owner, attr, self._wrap(original, surface, is_async))
+            self._patched.append((owner, attr, original))
+            if (class_name, surface) == ("Completions", "chat"):
+                self._original = original
 
-            @functools.wraps(self._original)
-            def patched(inner_self: Any, *args: Any, **kwargs: Any) -> Any:
-                original_bound = hook_self._original.__get__(inner_self, type(inner_self))
-                return hook_self._intercept(
-                    original_bound, _base_url(inner_self), **kwargs
+    def _wrap(self, original: Any, surface: str, is_async: bool) -> Any:
+        hook_self = self
+        if is_async:
+
+            @functools.wraps(original)
+            async def patched_async(inner_self: Any, *args: Any, **kwargs: Any) -> Any:
+                bound = original.__get__(inner_self, type(inner_self))
+                return await hook_self._intercept_async(
+                    surface, bound, _base_url(inner_self), kwargs
                 )
 
-            _mod.Completions.create = patched  # type: ignore[method-assign, assignment]
-        except (ImportError, AttributeError):
-            pass
+            return patched_async
+
+        @functools.wraps(original)
+        def patched(inner_self: Any, *args: Any, **kwargs: Any) -> Any:
+            bound = original.__get__(inner_self, type(inner_self))
+            return hook_self._intercept_surface(
+                surface, bound, _base_url(inner_self), kwargs
+            )
+
+        return patched
 
     def uninstall(self) -> None:
-        if self._original is None:
-            return
-        try:
-            import openai.resources.chat.completions as _mod
-            _mod.Completions.create = self._original  # type: ignore[method-assign]
-        except (ImportError, AttributeError):
-            pass
-        finally:
-            self._original = None
+        while self._patched:
+            owner, attr, original = self._patched.pop()
+            try:
+                setattr(owner, attr, original)
+            except (AttributeError, TypeError):
+                pass
+        self._original = None
 
     def _intercept(self, original_bound: Any, endpoint: str = "", **kwargs: Any) -> Any:
+        return self._intercept_surface("chat", original_bound, endpoint, kwargs)
+
+    def _intercept_surface(
+        self, surface: str, original_bound: Any, endpoint: str, kwargs: dict[str, Any]
+    ) -> Any:
         started = _now()
         t0 = time.monotonic()
         try:
             response = original_bound(**kwargs)
-            duration_ms = int((time.monotonic() - t0) * 1000)
-            self._record(started, _now(), duration_ms, kwargs, response, "success",
-                         endpoint)
-            return response
         except Exception as exc:
             self._record_error(started, _now(), int((time.monotonic() - t0) * 1000),
                                kwargs, exc, endpoint)
             raise
+        if kwargs.get("stream") is True and is_sync_stream(response):
+            return RecordingStream(
+                response, self._accumulator(surface),
+                self._on_stream_done(surface, started, t0, kwargs, endpoint),
+            )
+        self._record_for(surface, started, _now(), int((time.monotonic() - t0) * 1000),
+                         kwargs, response, endpoint)
+        return response
+
+    async def _intercept_async(
+        self, surface: str, original_bound: Any, endpoint: str, kwargs: dict[str, Any]
+    ) -> Any:
+        started = _now()
+        t0 = time.monotonic()
+        try:
+            response = await original_bound(**kwargs)
+        except Exception as exc:
+            self._record_error(started, _now(), int((time.monotonic() - t0) * 1000),
+                               kwargs, exc, endpoint)
+            raise
+        if kwargs.get("stream") is True and is_async_stream(response):
+            return AsyncRecordingStream(
+                response, self._accumulator(surface),
+                self._on_stream_done(surface, started, t0, kwargs, endpoint),
+            )
+        self._record_for(surface, started, _now(), int((time.monotonic() - t0) * 1000),
+                         kwargs, response, endpoint)
+        return response
+
+    @staticmethod
+    def _accumulator(surface: str) -> Any:
+        if surface == "responses":
+            return OpenAIResponsesStreamAccumulator()
+        return OpenAIChatStreamAccumulator()
+
+    def _on_stream_done(
+        self, surface: str, started: str, t0: float, kwargs: dict[str, Any], endpoint: str
+    ) -> Any:
+        def done(response: Any, count: int, first_ms: int | None, complete: bool) -> None:
+            self._record_for(
+                surface, started, _now(), int((time.monotonic() - t0) * 1000),
+                kwargs, response, endpoint, stream_info=(count, first_ms, complete),
+            )
+
+        return done
+
+    def _record_for(
+        self, surface: str, started: str, finished: str, duration_ms: int,
+        kwargs: dict[str, Any], response: Any, endpoint: str,
+        stream_info: tuple[int, int | None, bool] | None = None,
+    ) -> None:
+        if is_raw_response_call(kwargs):
+            # An HTTP response wrapper, not a parsed response: nothing to fold,
+            # so the record carries no choices and replay never serves it.
+            response = None
+        if surface == "responses":
+            self._record_responses(started, finished, duration_ms, kwargs, response,
+                                   endpoint, stream_info=stream_info)
+        else:
+            self._record(started, finished, duration_ms, kwargs, response, "success",
+                         endpoint, stream_info=stream_info)
+
+    def _record_responses(
+        self,
+        started: str,
+        finished: str,
+        duration_ms: int,
+        kwargs: dict[str, Any],
+        response: Any,
+        endpoint: str = "",
+        *,
+        stream_info: tuple[int, int | None, bool] | None = None,
+    ) -> None:
+        choice, dropped = responses_choice(response)
+        failed = _get(response, "status") == "failed"
+        record = build_record_envelope(
+            model_call_id=new_ulid(),
+            parent_span_id=self._parent_span_id,
+            started_at=started,
+            finished_at=finished,
+            duration_ms=duration_ms,
+            status="error" if failed else "success",
+        )
+        record.update(
+            extract_request_attributes(kwargs, url=endpoint, gen_ai_system="openai")
+        )
+        max_output = kwargs.get("max_output_tokens")
+        if isinstance(max_output, int) and not isinstance(max_output, bool):
+            record["gen_ai.request.max_tokens"] = max_output
+        record["gen_ai.response.model"] = (
+            _get(response, "model") or record["gen_ai.request.model"]
+        )
+        record["gen_ai.response.choices"] = [choice] if choice else []
+        if choice:
+            record["gen_ai.response.finish_reasons"] = [choice["finish_reason"]]
+        usage = _get(response, "usage")
+        record["gen_ai.usage.input_tokens"] = int(_get(usage, "input_tokens") or 0)
+        record["gen_ai.usage.output_tokens"] = int(_get(usage, "output_tokens") or 0)
+        if failed:
+            error = _get(response, "error")
+            record["error"] = {
+                "type": str(_get(error, "code") or "ResponseFailed"),
+                "message": str(_get(error, "message") or "the response failed"),
+                "traceback_ref": None,
+            }
+        record.setdefault("extensions", {})[API_SURFACE_EXT] = OPENAI_RESPONSES_SURFACE
+        note_dropped_tool_calls(record, dropped)
+        attach_stream_info(record, stream_info)
+        response_id = _get(response, "id")
+        if response_id:
+            record["gen_ai.response.id"] = str(response_id)
+        get_current_writer(self._writer).append_model_call(record)
 
     def _record(
         self,
@@ -102,6 +318,8 @@ class OpenAIHook:
         response: Any,
         status: str,
         endpoint: str = "",
+        *,
+        stream_info: tuple[int, int | None, bool] | None = None,
     ) -> None:
         choices: list[dict[str, Any]] = []
         finish_reasons: list[str] = []
@@ -157,7 +375,9 @@ class OpenAIHook:
         if finish_reasons:
             record["gen_ai.response.finish_reasons"] = finish_reasons
         attach_provider_finish_reasons(record, raw_finish_reasons, finish_reasons)
+        record.setdefault("extensions", {})[API_SURFACE_EXT] = OPENAI_CHAT_SURFACE
         note_dropped_tool_calls(record, dropped)
+        attach_stream_info(record, stream_info)
         response_id = getattr(response, "id", None)
         if response_id:
             record["gen_ai.response.id"] = str(response_id)

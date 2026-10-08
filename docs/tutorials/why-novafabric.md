@@ -177,7 +177,7 @@ matches what you're trying to establish:
 | Mode | What it does | Use it for |
 |---|---|---|
 | `forensic` | Read-only inspection, no subprocess, no network | Audit / post-incident |
-| `mocked` | Re-spawns the command (Python workloads). Recorded replies are served for sync, non-streaming OpenAI/Anthropic chat calls, and recorded results for MCP `call_tool`. **Other tools run live** (HTTP, shell, files, framework-native). Fails closed on divergence — an extra, unmatched or unsupported call (async, streaming, Responses API) fails the replay instead of reaching the network (ADR-0300) | CI / regression |
+| `mocked` | Re-spawns the command (Python workloads). Recorded replies are served for OpenAI `chat.completions` / Responses API and Anthropic `messages` calls — sync or async, streamed or not (ADR-0304) — and recorded results for MCP `call_tool`. **Other tools run live** (HTTP, shell, files, framework-native); their connections are reported. Fails closed on divergence — an extra, unmatched or unsupported call fails the replay instead of reaching the network (ADR-0300) | CI / regression |
 | `semantic` | **Does not re-execute.** Scores how similar the capsule's *recorded* model responses are to each other (mean pairwise text similarity, 0.0–1.0); no live model is called | Consistency check of recorded responses |
 | `exact` | **Does not re-execute.** Eligibility check for byte-exact replay (`exact_eligible` + reasons): deterministic env.lock, per-call seed, no tool-schema drift | Local / on-prem / compliance |
 

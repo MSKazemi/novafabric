@@ -44,19 +44,46 @@ def replay_cmd(
     ] = False,
     allow_readonly: Annotated[
         bool,
-        typer.Option("--allow-readonly", help="Allow read-only calls to pass through."),
+        typer.Option(
+            "--allow-readonly",
+            help=(
+                "Policy flag: mark read-only tools as allowed in the --dry-run "
+                "report. It does not intercept or let through calls in a mocked "
+                "replay."
+            ),
+        ),
     ] = False,
     allow_mutating: Annotated[
         bool,
-        typer.Option("--allow-mutating", help="Allow mutating calls (writes/deletes)."),
+        typer.Option(
+            "--allow-mutating",
+            help=(
+                "Policy flag: mark writes/deletes as allowed in the --dry-run "
+                "report; the replay must also pass the policy engine's "
+                "replay_mutating check. It does not gate calls inside a mocked "
+                "replay."
+            ),
+        ),
     ] = False,
     allow_external_side_effects: Annotated[
         bool,
-        typer.Option("--allow-external-side-effects", help="Allow any external side effects."),
+        typer.Option(
+            "--allow-external-side-effects",
+            help=(
+                "Policy flag: mark external side effects as allowed in the "
+                "--dry-run report. It does not gate calls inside a mocked replay."
+            ),
+        ),
     ] = False,
     allow_unknown_mutation: Annotated[
         bool,
-        typer.Option("--allow-unknown-mutation", help="Allow calls of unknown mutation class."),
+        typer.Option(
+            "--allow-unknown-mutation",
+            help=(
+                "Policy flag: mark tools of unknown mutation class as allowed in "
+                "the --dry-run report. It does not gate calls inside a mocked replay."
+            ),
+        ),
     ] = False,
     output_dir: Annotated[
         Path | None, typer.Option("--output-dir", "-o", help="Base dir for replay output")
@@ -99,13 +126,14 @@ def replay_cmd(
 
     Five modes control how outbound calls are handled:
       mocked       — re-runs the command (Python workloads). Serves recorded
-                     responses for sync, non-streaming OpenAI chat.completions
-                     and Anthropic messages calls, and recorded results for MCP
-                     ClientSession.call_tool. Fail-closed: an extra, unmatched or
-                     unsupported call, or an unconsumed recording, fails the
-                     replay (--permissive to only report). Other tools (HTTP,
-                     shell, files, framework-native) are NOT intercepted: they
-                     run live
+                     responses for OpenAI chat.completions and responses, and
+                     Anthropic messages calls (sync or async, streamed or not),
+                     and recorded results for MCP ClientSession.call_tool.
+                     Fail-closed: an extra, unmatched or unsupported call, or an
+                     unconsumed recording, fails the replay (--permissive to
+                     only report). Other tools (HTTP, shell, files,
+                     framework-native) are NOT intercepted: they run live;
+                     outbound connections are reported, not blocked
       forensic     — read-only: inspects the capsule, runs nothing
       semantic     — does not re-run: scores how similar the recorded LLM
                      responses are to each other (0.0-1.0)
@@ -218,6 +246,17 @@ def replay_cmd(
             f"{result.tool_calls_unmatched or 0} unmatched; "
             f"{not_intercepted} recorded on surfaces replay does not intercept"
         )
+        contract = result.replay_contract or {}
+        if contract.get("network_observed"):
+            # ADR-0304: observed, never blocked -- say whether anything went live.
+            live = int(contract.get("network_connections_live") or 0)
+            where = ", ".join(contract.get("network_destinations") or [])
+            console.print(
+                f"  network: {live}{'+' if contract.get('network_connections_capped') else ''}"
+                f" live connection{'s' if live != 1 else ''} from the replayed process"
+                + (f" ({where})" if where else "")
+                + " — observed, not blocked"
+            )
     if result.divergence_reason:
         colour = "red" if result.status == "failure" else "yellow"
         console.print(f"  [{colour}]divergence: {result.divergence_reason}[/{colour}]")

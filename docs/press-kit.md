@@ -79,9 +79,9 @@ readers days.
   deterministic and NovaFabric does not pretend otherwise; that is what the `mocked`,
   `semantic`, and `forensic` replay modes exist for.
 - **Not an offline sandbox for tools.** `mocked` replay serves the recorded model
-  responses; tool calls still run live. (Unreleased on `main`: recorded MCP tool
-  results are served too; HTTP, shell, file, and framework-native tools still run
-  live.)
+  responses; tool calls still run live. (Unreleased on `main`: async, streamed and
+  Responses API model calls and recorded MCP tool results are served too; HTTP, shell,
+  file, and framework-native tools still run live.)
 - **Not signed by default.** A Run Capsule is *sealable*: it is signed once you
   configure a key. Evidence Bundles are always signed. Please do not write "signed
   capsules" or "every run is signed".

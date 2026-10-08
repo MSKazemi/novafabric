@@ -69,7 +69,8 @@ interface ModeMeta {
 }
 
 // Mirrors src/novafabric/replay/_engine.py and `nova replay --help`. Only `mocked`
-// and `intervention` re-run anything; tool calls are never served from the capsule.
+// and `intervention` re-run anything; only `mocked` serves tool results, and only
+// for MCP `ClientSession.call_tool` (ADR-0300). Model surfaces: ADR-0304.
 const MODES: ModeMeta[] = [
   {
     value: 'forensic',
@@ -83,8 +84,8 @@ const MODES: ModeMeta[] = [
     value: 'mocked',
     label: 'Mocked',
     available: true,
-    guarantee: "Re-run the agent's Python process with the recorded OpenAI / Anthropic chat replies served from the capsule.",
-    oneLiner: 'No live model call. Tool calls still run live — this is not a sandbox.',
+    guarantee: "Re-run the agent's Python process with the recorded OpenAI / Anthropic replies and MCP tool results served from the capsule.",
+    oneLiner: 'No live model call. Non-MCP tools still run live — this is not a sandbox.',
     bannerTone: 'pending',
   },
   {
@@ -221,22 +222,23 @@ function MockedPane() {
           <span><code className="text-[var(--color-text)]">openai.chat.completions</code> · served from the capsule (980ms recorded → 0ms replay)</span>
         </li>
         <li className="flex items-center gap-2">
-          <span className="text-[var(--color-status-pending)]">↯</span>
-          <span><code className="text-[var(--color-text)]">mcp.read-file</code> · ran live</span>
+          <span className="text-[var(--color-status-success)]">✓</span>
+          <span><code className="text-[var(--color-text)]">mcp.read-file</code> · served from the capsule (MCP call_tool)</span>
         </li>
         <li className="flex items-center gap-2">
-          <span className="text-[var(--color-status-pending)]">↯</span>
-          <span><code className="text-[var(--color-text)]">mcp.run-tests</code> · ran live</span>
+          <span className="text-[var(--color-status-success)]">✓</span>
+          <span><code className="text-[var(--color-text)]">mcp.run-tests</code> · served from the capsule (MCP call_tool)</span>
         </li>
       </ul>
       <div className="mt-4 pt-4 border-t border-[var(--color-border)] grid grid-cols-3 gap-2 text-xs text-[var(--color-text-muted)]">
-        <div><span className="text-[var(--color-text)] font-mono text-base block">2/2</span>model calls mocked</div>
-        <div><span className="text-[var(--color-text)] font-mono text-base block">0/2</span>tool calls mocked — tools run live</div>
+        <div><span className="text-[var(--color-text)] font-mono text-base block">2/2</span>model calls served</div>
+        <div><span className="text-[var(--color-text)] font-mono text-base block">2/2</span>MCP tool calls served</div>
         <div><span className="text-[var(--color-text)] font-mono text-base block">0</span>env warnings</div>
       </div>
       <p className="mt-3 text-xs text-[var(--color-text-faint)]">
-        Only synchronous, non-streaming OpenAI and Anthropic chat calls are served from the
-        capsule today. Tool responses are not substituted.
+        OpenAI and Anthropic model calls (sync or async, streamed or not) and MCP
+        call_tool results are served from the capsule. Other tools — HTTP, shell, files —
+        run live; the replay reports the network connections they made.
       </p>
     </div>
   );

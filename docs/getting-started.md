@@ -344,7 +344,7 @@ The other modes each answer a different question:
 | Mode | Re-executes? | Network? | Use it for |
 |---|---|---|---|
 | `forensic` | No | No | Audit / post-incident inspection |
-| `mocked` | Yes | Sync OpenAI/Anthropic chat replies and MCP tool results served from the capsule; other tools run live; fails closed on divergence | CI / regression |
+| `mocked` | Yes | OpenAI/Anthropic model replies (sync or async, streamed or not) and MCP tool results served from the capsule; other tools run live; fails closed on divergence | CI / regression |
 | `semantic` | No | No | Text-similarity score (0.0–1.0) over the capsule's *recorded* responses |
 | `exact` | No | No | Eligibility check for a byte-exact re-run (deterministic env, seeds) |
 | `intervention` (experimental) | Yes, mocked semantics | No | Counterfactual root-cause: substitute one captured event per an `InterventionSpec` and see whether the outcome flips |

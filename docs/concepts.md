@@ -332,7 +332,7 @@ new capsule, so you can diff a replay against the original run.
 | Mode | Spawns subprocess? | Network? | Best for |
 |---|---|---|---|
 | **`forensic`** | No | No | Audit / post-incident inspection |
-| **`mocked`** | Yes | Sync OpenAI/Anthropic chat replies and MCP `call_tool` results served from the capsule; **other tools run live**; fails closed on divergence | CI / regression |
+| **`mocked`** | Yes | OpenAI/Anthropic model replies (sync or async, streamed or not) and MCP `call_tool` results served from the capsule; **other tools run live**; fails closed on divergence | CI / regression |
 | **`semantic`** | No | No | Consistency score over the capsule's *recorded* model responses — does **not** re-execute |
 | **`exact`** | No | No | Eligibility check for a byte-exact re-run — does **not** re-execute |
 | **`intervention`** (experimental, ADR-0086) | Yes, under mocked semantics | No | Counterfactual root-cause: substitute one captured event per an `InterventionSpec`, re-execute downstream, and record whether the outcome flips |
@@ -358,18 +358,22 @@ Use forensic mode to inspect what happened without any risk of side effects.
 The original command is re-spawned as a subprocess (**works today** for Python
 workloads, ADR-0300). Inside it:
 
-- `MockModelDispatcher` serves the recorded responses, in order, for
-  **synchronous, non-streaming** OpenAI `chat.completions.create` and Anthropic
-  `messages.create` calls — including the assistant's recorded tool-call
-  requests. Async clients, `stream=True`, the OpenAI Responses API and
-  `chat.completions.parse` are **refused**, not sent to the network.
+- `MockModelDispatcher` serves the recorded responses, in order, for OpenAI
+  `chat.completions.create`, OpenAI `responses.create` and Anthropic
+  `messages.create` calls — sync or async, and with `stream=True` as the chunk or
+  event stream the SDK would have produced (ADR-0304) — including the
+  assistant's recorded tool-call requests. `parse`, legacy completions,
+  Anthropic `messages.stream()` and `with_raw_response` calls are **refused**,
+  not sent to the network.
 - `MockToolDispatcher` serves recorded **MCP** results through
   `mcp.ClientSession.call_tool`, one recorded result per call (matched by tool
   name and arguments, repeated identical calls in recorded order). A call with
   no recorded result is **refused** — the live tool does not run.
 - **Every other tool runs live**: HTTP requests, shell commands, file writes,
   framework-native tools and other providers' SDKs are not intercepted. The
-  result reports them as `tool_calls_not_interceptable`.
+  result reports them as `tool_calls_not_interceptable`, and the outbound
+  connections the replayed process opened as `network_connections_live`
+  (observed, not blocked).
 
 The replay **fails closed**: an extra model call, a call on an unsupported
 surface, an unmatched MCP call, or a recorded response that is never requested

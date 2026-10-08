@@ -52,8 +52,8 @@ Use something else if:
   network. A seal proves the record is unchanged since signing; it does not prove the
   record is complete.
 - **Replaying a run against its recorded model responses** — no live model call and no
-  model tokens spent. Tool calls still run live (they are not substituted), and today
-  only synchronous OpenAI and Anthropic chat calls are served from the capsule.
+  model tokens spent. OpenAI and Anthropic model calls (sync or async, streamed or
+  not) and MCP tool results are served from the capsule; every other tool runs live.
 - **Structural diff between two runs** — not "metric A went up", but *what changed
   in the execution*.
 - **Air-gapped and regulated environments.** No telemetry, no update checks, no

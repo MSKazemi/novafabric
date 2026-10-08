@@ -133,6 +133,24 @@ longer forwards the submitting shell's environment (ADR-0270).
   cells as one plain, stdlib-only process, so the notebook's code path is captured and tested
   on every run where Jupyter is absent. The example tests now also run `nova validate` on every
   capsule they produce.
+  tests: which provider/API surfaces are captured, served, refused or not controlled. Since
+  ADR-0304 the table is **generated** from `replay/_support_matrix.py`
+  (`scripts/gen_replay_support_matrix.py`); a test fails if the page drifts, if a row's
+  served/refused claim disagrees with the methods the dispatcher patches, or if a cited test no
+  longer exists.
+- **Mocked replay serves async, streamed and OpenAI Responses API calls** (ADR-0304, works
+  today for Python workloads). OpenAI `chat.completions.create`, OpenAI `responses.create` and
+  Anthropic `messages.create` are served sync and async, with or without `stream=True`: a
+  streamed call gets the recorded response back as the chunk/event stream the SDK produces, so
+  the SDK's own `chat.completions.stream()` / `responses.stream()` helpers work on it. Each API
+  surface has its own queue; a Chat Completions recording is never reshaped into a Responses
+  API reply (`provider_mismatch` / `order_mismatch` now name the surface). Tested against the
+  real `openai` SDK and a stand-in `anthropic` package.
+- **Mocked replay reports live network connections** (ADR-0304). The replayed process logs
+  each IPv4/IPv6 `socket.connect` with its `host:port` (never a payload), and the result's
+  `replay_contract` gains `network_observed`, `network_connections_live`,
+  `network_destinations` (first 20) and `network_connections_capped` (additive, optional).
+  Connections are **observed, never blocked**; `nova replay` prints them.
 
 ### Changed
 
@@ -159,7 +177,7 @@ longer forwards the submitting shell's environment (ADR-0270).
 - **Mocked replay fails closed (behaviour change, ADR-0300).** A replay now ends `failure`
   (`error.type: ReplayDivergence`, exit 1) when the replayed program makes more model calls
   than were recorded, calls a different provider or in a different order, calls an
-  unsupported surface (async client, `stream=True`, Responses API, `chat.completions.parse`),
+  unsupported surface (e.g. `chat.completions.parse`; see below for what ADR-0304 serves),
   makes an MCP call with no recorded result, or **leaves recorded responses unconsumed** — even
   if it caught the error and exited 0. **A replay that passed before may now fail**, including
   replays of non-Python commands that have recorded model calls (nothing was ever served to
@@ -177,6 +195,27 @@ longer forwards the submitting shell's environment (ADR-0270).
   replay serves back. A consumer that matched the raw string must read the extension.
 - **`nova replay --dry-run` no longer claims every tool is "served from cache"** in mocked mode:
   MCP calls are reported `[MOCK]`, tools on other transports `[LIVE]`.
+- **Capture records async, streamed and Responses API SDK calls with their response**
+  (ADR-0304). The OpenAI hook now also wraps `AsyncCompletions.create`, `Responses.create` and
+  `AsyncResponses.create`, the Anthropic hook `AsyncMessages.create`; a `stream=True` call is
+  folded into one record when the stream ends (`nova.streaming`; one the workload abandoned is
+  flagged `extensions["io.novafabric.stream_complete"]: false`). Before, these calls were
+  recorded by the wire hook only, with no response. **A capsule of such a workload now holds
+  one more model-call record per call** (the SDK record beside the wire record, as sync calls
+  already had), so `model_call_count` grows. Every SDK-hook record carries
+  `extensions["io.novafabric.api_surface"]` (`openai.chat.completions`, `openai.responses`,
+  `anthropic.messages`); additive. Mocked replay of a capsule captured **without** that marker
+  keeps refusing async and streamed calls, since their responses were never recorded.
+- **What mocked replay still refuses** (strict) or runs live (`--permissive`): `parse`
+  (Chat Completions and Responses API), legacy `completions.create`, Anthropic
+  `messages.stream()` and `beta.messages`, and any `with_raw_response` /
+  `with_streaming_response` call — which used to be served a parsed object it did not expect.
+- **`nova replay --allow-*` help no longer says "pass through".** The flags mark tools allowed
+  in the `--dry-run` report (and `--allow-mutating` adds the `replay_mutating` policy gate);
+  they never intercepted or let through calls in a mocked replay. The dashboard's replay pane
+  source now labels the mocked counters "served" instead of "inspected", and the showcase
+  replay demo shows MCP tool results served from the capsule (the packaged dashboard bundle
+  keeps the old text until it is rebuilt).
 - **Wheel contents: `nova serve --experimental` ships the dashboard only (ADR-0299).** The
   packaged `novafabric/serve/static/` no longer carries a second copy of the website:
   `/concepts`, `/install`, `/why`, `/spec`, `/showcase/*` and `robots.txt` are gone from the

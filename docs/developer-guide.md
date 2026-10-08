@@ -42,6 +42,7 @@ If you are *using* the `nova` CLI rather than modifying it, start with
   - [Adding a new `nova serve` API endpoint](#adding-a-new-nova-serve-api-endpoint)
   - [Adding a new report format](#adding-a-new-report-format)
   - [Extending failure attribution](#extending-failure-attribution-diagnose-adr-0084)
+  - [Changing what mocked replay serves](#changing-what-mocked-replay-serves-adr-0300-adr-0304)
   - [Adding a framework adapter](#adding-a-framework-adapter)
   - [Adding a compliance audit profile](#adding-a-compliance-audit-profile)
   - [Adding a compliance exporter](#compliance-exporters--adding-a-new-format)
@@ -750,6 +751,31 @@ presented as calibrated probabilities.
   surface for it, follow the "Adding a new CLI command" pattern above and
   update `docs/user-guide.md`'s v0.75–v0.94 cohort table to move it from
   "Python API only" to "CLI".
+
+## Changing what mocked replay serves (ADR-0300, ADR-0304)
+
+Mocked replay serves a recorded response only on an SDK surface it patches. Three places
+must agree, and a test holds them together:
+
+1. **Capture** (`capture/hooks/_openai.py`, `_anthropic.py`) must record the call *with its
+   response* in the canonical model-call shape, and mark the record with
+   `extensions["io.novafabric.api_surface"]`. A streamed call goes through
+   `capture/hooks/_sdk_streams.py` (a transparent proxy that folds the chunks and writes
+   one record when the stream ends).
+2. **Replay** (`replay/_contract.py:model_queue_key` + `MODEL_SURFACES`, and
+   `replay/_dispatcher.py:SERVED_MODEL_SURFACES` / `UNSUPPORTED_MODEL_SURFACES`) decides the
+   queue a record joins and which SDK methods are served or refused. Never let a method go
+   live silently: if it is not served, add it to `UNSUPPORTED_MODEL_SURFACES`.
+3. **The support matrix** — edit the rows in `replay/_support_matrix.py`, then run
+   `uv run python scripts/gen_replay_support_matrix.py`. Never edit the table in
+   `docs/architecture/replay-modes.md` by hand: `tests/replay/test_support_matrix_is_generated.py`
+   fails if the page drifts, if a row's served/refused claim disagrees with the dispatcher's
+   patch tables, or if a cited test does not exist.
+
+Test a new surface end to end the way `tests/replay/test_model_surface_coverage_e2e.py`
+does: `nova capture` a real agent process (the real SDK over `httpx.MockTransport`), then
+`nova replay` it with the network refused, and assert the agent observed the same thing both
+times and that every recording was consumed.
 
 ## Adding a compliance audit profile
 

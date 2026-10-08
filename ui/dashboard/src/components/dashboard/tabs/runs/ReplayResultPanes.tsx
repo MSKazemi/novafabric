@@ -47,8 +47,10 @@ export function ForensicResultPane({ result }: { result: ReplayResult }) {
       {/* Stats grid */}
       <div className="grid grid-cols-3 gap-3">
         {[
-          { label: isDryRun ? 'model calls (skipped)' : 'model calls inspected', value: result.model_calls_mocked },
-          { label: isDryRun ? 'tool calls checked' : 'tool calls inspected', value: result.tool_calls_mocked },
+          // ADR-0300/0304: in mocked mode these count what was SERVED from the
+          // capsule; no other mode serves tool results (tool_calls_mocked is 0).
+          { label: isDryRun ? 'model calls (skipped)' : result.mode === 'mocked' ? 'model calls served' : 'model calls inspected', value: result.model_calls_mocked },
+          { label: isDryRun ? 'tool calls checked' : 'tool calls served', value: result.tool_calls_mocked },
           { label: 'env warnings', value: result.env_warnings.length },
         ].map(({ label, value }) => (
           <div key={label} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-3 text-center">

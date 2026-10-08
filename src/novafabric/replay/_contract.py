@@ -22,13 +22,32 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-#: Model API surfaces mocked replay serves from the capsule, keyed by the
-#: record's ``gen_ai.system``. Everything else is refused (strict) or runs live
+from novafabric.capture.hooks._sdk_streams import (
+    ANTHROPIC_MESSAGES_SURFACE,
+    API_SURFACE_EXT,
+    OPENAI_CHAT_SURFACE,
+    OPENAI_RESPONSES_SURFACE,
+)
+
+#: Model API surfaces mocked replay serves from the capsule, keyed by replay
+#: queue (``model_queue_key``). Each is served sync and async, with and without
+#: ``stream=True`` (ADR-0304). Everything else is refused (strict) or runs live
 #: (permissive) -- see ``UNSUPPORTED_MODEL_SURFACES`` in ``_dispatcher``.
 MODEL_SURFACES: dict[str, str] = {
-    "openai": "openai.chat.completions.create (sync, non-streaming)",
-    "anthropic": "anthropic.messages.create (sync, non-streaming)",
+    "openai": "openai.chat.completions.create",
+    "openai.responses": "openai.responses.create",
+    "anthropic": "anthropic.messages.create",
 }
+
+#: The provider (``gen_ai.system``) behind each replay queue.
+QUEUE_PROVIDER: dict[str, str] = {
+    "openai": "openai",
+    "openai.responses": "openai",
+    "anthropic": "anthropic",
+}
+
+#: How each served model surface may be called during a mocked replay.
+MODEL_CALL_MODES = "sync and async; stream=True and non-streaming"
 
 #: The one tool surface mocked replay intercepts.
 TOOL_SURFACE_MCP = "mcp.ClientSession.call_tool"
@@ -38,20 +57,70 @@ DivergencePolicy = Literal["fail", "warn"]
 #: Most divergences listed individually in a result; the rest are counted.
 MAX_LISTED_DIVERGENCES = 50
 
+#: Most distinct ``host:port`` network destinations listed in a result.
+MAX_LISTED_NETWORK_DESTINATIONS = 20
+
 
 # ── model calls ──────────────────────────────────────────────────────────────
 
 
+def model_queue_key(record: dict[str, Any]) -> str | None:
+    """The replay queue a recorded model call belongs to, or ``None``.
+
+    Chat Completions and Messages records carry no surface marker (every
+    pre-ADR-0304 capsule); Responses API records carry
+    ``extensions["io.novafabric.api_surface"] = "openai.responses"``. A record
+    marked with any other surface is not servable.
+    """
+    system = record.get("gen_ai.system")
+    if system not in ("openai", "anthropic"):
+        return None
+    surface = _surface_marker(record)
+    if surface is None:
+        return str(system)
+    return _MARKER_QUEUE.get((str(system), surface))
+
+
+#: (gen_ai.system, API_SURFACE_EXT value) -> replay queue.
+_MARKER_QUEUE: dict[tuple[str, str], str] = {
+    ("openai", OPENAI_CHAT_SURFACE): "openai",
+    ("openai", OPENAI_RESPONSES_SURFACE): "openai.responses",
+    ("anthropic", ANTHROPIC_MESSAGES_SURFACE): "anthropic",
+}
+
+
+def _surface_marker(record: dict[str, Any]) -> str | None:
+    ext = record.get("extensions")
+    surface = ext.get(API_SURFACE_EXT) if isinstance(ext, dict) else None
+    return surface if isinstance(surface, str) else None
+
+
+def records_async_and_streamed_calls(model_calls: list[dict[str, Any]]) -> bool:
+    """Whether the capsule was captured by hooks that record async and streamed
+    calls (ADR-0304).
+
+    Those hooks mark every record with its API surface. A capsule with servable
+    records and no marker was captured before: its async and streamed calls
+    were never recorded, so serving one from the queue would hand it a record
+    that belonged to another call. Mocked replay refuses them for such a capsule,
+    exactly as before ADR-0304. A capsule with no servable record is not legacy:
+    any call simply finds its queue empty.
+    """
+    servable = [r for r in model_calls if is_replayable_model_call(r)]
+    return not servable or any(_surface_marker(r) is not None for r in servable)
+
+
 def is_replayable_model_call(record: dict[str, Any]) -> bool:
-    """A record a dispatcher can serve: an intercepted provider, a successful
+    """A record a dispatcher can serve: an intercepted surface, a successful
     call, and at least one recorded choice.
 
     This excludes, by construction, the wire-level duplicate that the
     ``httpx`` hook writes beside every SDK-level record (it carries
-    ``gen_ai.response.choices: []``), error records, and streaming/async calls
-    whose response was never recorded.
+    ``gen_ai.response.choices: []``), error records, and calls whose response
+    was never recorded (e.g. captured before ADR-0304 on an async or streamed
+    path).
     """
-    if record.get("gen_ai.system") not in MODEL_SURFACES:
+    if model_queue_key(record) is None:
         return False
     if record.get("status", "success") != "success":
         return False
@@ -60,18 +129,18 @@ def is_replayable_model_call(record: dict[str, Any]) -> bool:
 
 
 def model_queues(model_calls: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    """Per-provider queues of servable records, in recorded order."""
-    queues: dict[str, list[dict[str, Any]]] = {p: [] for p in MODEL_SURFACES}
+    """Per-surface queues of servable records, in recorded order."""
+    queues: dict[str, list[dict[str, Any]]] = {q: [] for q in MODEL_SURFACES}
     for record in model_calls:
         if is_replayable_model_call(record):
-            queues[str(record["gen_ai.system"])].append(record)
+            queues[str(model_queue_key(record))].append(record)
     return queues
 
 
 def recorded_provider_order(model_calls: list[dict[str, Any]]) -> list[str]:
-    """The provider of each servable record, in recorded order."""
+    """The queue of each servable record, in recorded order."""
     return [
-        str(r["gen_ai.system"]) for r in model_calls if is_replayable_model_call(r)
+        str(model_queue_key(r)) for r in model_calls if is_replayable_model_call(r)
     ]
 
 
@@ -293,6 +362,10 @@ class ReplayContractReport:
     tool_calls_live: int = 0
     tool_calls_unmatched: int = 0
     tool_calls_unconsumed: int = 0
+    network_observed: bool = False
+    network_connections_live: int = 0
+    network_connections_capped: bool = False
+    network_destinations: list[str] = field(default_factory=list)
     divergences: list[dict[str, Any]] = field(default_factory=list)
 
     @property
@@ -328,15 +401,20 @@ class ReplayContractReport:
             "tool_calls_recorded": self.tool_calls_recorded,
             "tool_calls_not_interceptable": self.tool_calls_not_interceptable,
             "tool_calls_unconsumed": self.tool_calls_unconsumed,
+            "network_observed": self.network_observed,
+            "network_connections_live": self.network_connections_live,
+            "network_destinations": self.network_destinations[:MAX_LISTED_NETWORK_DESTINATIONS],
             "divergences": listed,
         }
+        if self.network_connections_capped:
+            out["network_connections_capped"] = True
         if len(self.divergences) > len(listed):
             out["divergences_not_listed"] = len(self.divergences) - len(listed)
         return out
 
 
 def surfaces_for(substitute_tools: bool) -> list[str]:
-    surfaces = list(MODEL_SURFACES.values())
+    surfaces = [f"{name} ({MODEL_CALL_MODES})" for name in MODEL_SURFACES.values()]
     if substitute_tools:
         surfaces.append(TOOL_SURFACE_MCP)
     return surfaces
@@ -378,13 +456,22 @@ def summarize(
                 ),
             })
         elif kind == "model_served":
-            provider = str(ev.get("provider"))
-            served[provider] = served.get(provider, 0) + 1
+            queue = str(ev.get("queue") or ev.get("provider"))
+            served[queue] = served.get(queue, 0) + 1
             report.model_calls_mocked += 1
             serving_pids.add(ev.get("pid"))
         elif kind == "model_live":
             report.model_calls_live += 1
             serving_pids.add(ev.get("pid"))
+        elif kind == "network_observer_installed":
+            report.network_observed = True
+        elif kind == "network_live":
+            report.network_connections_live += 1
+            destination = f"{ev.get('host')}:{ev.get('port')}"
+            if destination not in report.network_destinations:
+                report.network_destinations.append(destination)
+        elif kind == "network_live_capped":
+            report.network_connections_capped = True
         elif kind == "tool_mocked":
             report.tool_calls_mocked += 1
         elif kind == "tool_live":

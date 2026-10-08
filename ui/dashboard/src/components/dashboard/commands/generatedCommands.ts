@@ -11193,28 +11193,28 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "allow-readonly",
         "label": "--allow-readonly",
         "type": "toggle",
-        "hint": "Allow read-only calls to pass through.",
+        "hint": "Policy flag: mark read-only tools as allowed in the --dry-run report. It does not intercept or let through calls in a mocked replay.",
         "flag": "--allow-readonly"
       },
       {
         "key": "allow-mutating",
         "label": "--allow-mutating",
         "type": "toggle",
-        "hint": "Allow mutating calls (writes/deletes).",
+        "hint": "Policy flag: mark writes/deletes as allowed in the --dry-run report; the replay must also pass the policy engine's replay_mutating check. It does not gate calls inside a mocked replay.",
         "flag": "--allow-mutating"
       },
       {
         "key": "allow-external-side-effects",
         "label": "--allow-external-side-effects",
         "type": "toggle",
-        "hint": "Allow any external side effects.",
+        "hint": "Policy flag: mark external side effects as allowed in the --dry-run report. It does not gate calls inside a mocked replay.",
         "flag": "--allow-external-side-effects"
       },
       {
         "key": "allow-unknown-mutation",
         "label": "--allow-unknown-mutation",
         "type": "toggle",
-        "hint": "Allow calls of unknown mutation class.",
+        "hint": "Policy flag: mark tools of unknown mutation class as allowed in the --dry-run report. It does not gate calls inside a mocked replay.",
         "flag": "--allow-unknown-mutation"
       },
       {

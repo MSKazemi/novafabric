@@ -15,6 +15,17 @@ from novafabric.capture.hooks._otel_genai import (
     build_record_envelope,
     extract_request_attributes,
 )
+from novafabric.capture.hooks._sdk_streams import (
+    ANTHROPIC_MESSAGES_SURFACE,
+    API_SURFACE_EXT,
+    AnthropicStreamAccumulator,
+    AsyncRecordingStream,
+    RecordingStream,
+    attach_stream_info,
+    is_async_stream,
+    is_raw_response_call,
+    is_sync_stream,
+)
 from novafabric.capture.hooks._tool_call_refs import (
     anthropic_tool_call_refs_with_dropped,
     note_dropped_tool_calls,
@@ -30,49 +41,101 @@ def _now() -> str:
 
 
 class AnthropicHook:
+    """Records ``messages.create`` -- sync and async, streamed or not (ADR-0304)."""
+
     def __init__(self, writer: "CapsuleWriter", parent_span_id: str) -> None:
         self._writer = writer
         self._parent_span_id = parent_span_id
+        #: The sync ``Messages.create`` original (kept for callers).
         self._original: Any = None
+        self._patched: list[tuple[Any, str, Any]] = []
 
     def install(self) -> None:
         try:
             import anthropic.resources.messages as _mod  # type: ignore[import-not-found]
-            self._original = _mod.Messages.create
-            hook_self = self
-
-            @functools.wraps(self._original)
-            def patched(inner_self: Any, *args: Any, **kwargs: Any) -> Any:
-                original_bound = hook_self._original.__get__(inner_self, type(inner_self))
-                return hook_self._intercept(original_bound, **kwargs)
-
-            _mod.Messages.create = patched
         except (ImportError, AttributeError):
-            pass
+            return
+        for class_name, is_async in (("Messages", False), ("AsyncMessages", True)):
+            owner = getattr(_mod, class_name, None)
+            original = getattr(owner, "create", None) if owner is not None else None
+            if original is None:
+                continue
+            owner.create = self._wrap(original, is_async)  # type: ignore[union-attr]
+            self._patched.append((owner, "create", original))
+            if not is_async:
+                self._original = original
+
+    def _wrap(self, original: Any, is_async: bool) -> Any:
+        hook_self = self
+        if is_async:
+
+            @functools.wraps(original)
+            async def patched_async(inner_self: Any, *args: Any, **kwargs: Any) -> Any:
+                bound = original.__get__(inner_self, type(inner_self))
+                return await hook_self._intercept_async(bound, kwargs)
+
+            return patched_async
+
+        @functools.wraps(original)
+        def patched(inner_self: Any, *args: Any, **kwargs: Any) -> Any:
+            original_bound = original.__get__(inner_self, type(inner_self))
+            return hook_self._intercept(original_bound, **kwargs)
+
+        return patched
 
     def uninstall(self) -> None:
-        if self._original is None:
-            return
-        try:
-            import anthropic.resources.messages as _mod
-            _mod.Messages.create = self._original
-        except (ImportError, AttributeError):
-            pass
-        finally:
-            self._original = None
+        while self._patched:
+            owner, attr, original = self._patched.pop()
+            try:
+                setattr(owner, attr, original)
+            except (AttributeError, TypeError):
+                pass
+        self._original = None
 
     def _intercept(self, original_bound: Any, **kwargs: Any) -> Any:
         started = _now()
         t0 = time.monotonic()
         try:
             response = original_bound(**kwargs)
-            duration_ms = int((time.monotonic() - t0) * 1000)
-            self._record(started, _now(), duration_ms, kwargs, response, "success")
-            return response
         except Exception as exc:
             self._record_error(started, _now(), int((time.monotonic() - t0) * 1000),
                                kwargs, exc)
             raise
+        if kwargs.get("stream") is True and is_sync_stream(response):
+            return RecordingStream(
+                response, AnthropicStreamAccumulator(),
+                self._on_stream_done(started, t0, kwargs),
+            )
+        self._record(started, _now(), int((time.monotonic() - t0) * 1000), kwargs,
+                     None if is_raw_response_call(kwargs) else response, "success")
+        return response
+
+    async def _intercept_async(self, original_bound: Any, kwargs: dict[str, Any]) -> Any:
+        started = _now()
+        t0 = time.monotonic()
+        try:
+            response = await original_bound(**kwargs)
+        except Exception as exc:
+            self._record_error(started, _now(), int((time.monotonic() - t0) * 1000),
+                               kwargs, exc)
+            raise
+        if kwargs.get("stream") is True and is_async_stream(response):
+            return AsyncRecordingStream(
+                response, AnthropicStreamAccumulator(),
+                self._on_stream_done(started, t0, kwargs),
+            )
+        self._record(started, _now(), int((time.monotonic() - t0) * 1000), kwargs,
+                     None if is_raw_response_call(kwargs) else response, "success")
+        return response
+
+    def _on_stream_done(self, started: str, t0: float, kwargs: dict[str, Any]) -> Any:
+        def done(response: Any, count: int, first_ms: int | None, complete: bool) -> None:
+            self._record(
+                started, _now(), int((time.monotonic() - t0) * 1000), kwargs, response,
+                "success", stream_info=(count, first_ms, complete),
+            )
+
+        return done
 
     def _record(
         self,
@@ -82,8 +145,10 @@ class AnthropicHook:
         kwargs: dict[str, Any],
         response: Any,
         status: str,
+        *,
+        stream_info: tuple[int, int | None, bool] | None = None,
     ) -> None:
-        parts = getattr(response, "content", [])
+        parts = getattr(response, "content", None) or []
         text = " ".join(getattr(p, "text", "") for p in parts if hasattr(p, "text"))
         # Anthropic's own stop_reason (end_turn, tool_use, ...) is outside the
         # schema enum: store the canonical value, keep the raw one additively.
@@ -111,7 +176,9 @@ class AnthropicHook:
         )
         record.update(extract_request_attributes(kwargs, gen_ai_system="anthropic"))
         record["gen_ai.response.model"] = getattr(response, "model", record["gen_ai.request.model"])
-        record["gen_ai.response.choices"] = choices
+        # No response object (a with_raw_response call): nothing to fold, and a
+        # record with no choices is never served by mocked replay.
+        record["gen_ai.response.choices"] = choices if response is not None else []
         record["gen_ai.usage.input_tokens"] = getattr(usage, "input_tokens", 0) if usage else 0
         record["gen_ai.usage.output_tokens"] = getattr(usage, "output_tokens", 0) if usage else 0
         # ADR-0132: additive, optional per-type usage block (verbatim from the
@@ -119,10 +186,13 @@ class AnthropicHook:
         usage_block = usage_from_anthropic(usage)
         if usage_block is not None:
             record["nova.usage"] = usage_block
-        record["gen_ai.response.finish_reasons"] = [finish_reason]
+        if response is not None:
+            record["gen_ai.response.finish_reasons"] = [finish_reason]
         if isinstance(raw_finish, str) and raw_finish:
             attach_provider_finish_reasons(record, [raw_finish], [finish_reason])
+        record.setdefault("extensions", {})[API_SURFACE_EXT] = ANTHROPIC_MESSAGES_SURFACE
         note_dropped_tool_calls(record, dropped)
+        attach_stream_info(record, stream_info)
         response_id = getattr(response, "id", None)
         if response_id:
             record["gen_ai.response.id"] = str(response_id)
