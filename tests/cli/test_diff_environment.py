@@ -26,7 +26,7 @@ from typing import Any
 
 import pytest
 import yaml
-from _help_assert import assert_flag_in_help
+from _help_assert import assert_flag_in_help, strip_ansi
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -58,8 +58,15 @@ def _diff(*args: str) -> Any:
 
 
 def _flat(output: str) -> str:
-    """Collapse Rich's boxed, wrapped error panel into one searchable line."""
-    return " ".join(output.replace("│", " ").split())
+    """Collapse Rich's boxed, wrapped error panel into one searchable line.
+
+    Escape sequences are stripped first. CI sets FORCE_COLOR, and Rich then
+    colours option names *inside* the usage-error message (``'--environment'``
+    becomes ``\\x1b[1;36m--environment\\x1b[0m``), so a plain substring check
+    failed in CI and passed locally, where pytest's capture disables colour.
+    Reproduce with ``FORCE_COLOR=1 COLUMNS=80``.
+    """
+    return " ".join(strip_ansi(output).replace("│", " ").split())
 
 
 # --- --group-by environment ------------------------------------------------
