@@ -2690,6 +2690,9 @@ def create_app(
             response["summary"] = canonical["summary"]
             response["sections"] = canonical["sections"]
             response["has_changes"] = report.has_changes
+            # Record lines the engine could not read, per side (ADR-0303 Am. 1):
+            # non-zero means the comparison above is incomplete.
+            response["skipped_malformed_lines"] = canonical["skipped_malformed_lines"]
         return response
 
     # ---------- audit log ----------

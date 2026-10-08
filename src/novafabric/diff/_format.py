@@ -4,6 +4,31 @@ import json
 
 from novafabric.diff._report import DiffReport
 
+#: Record file each ``skipped_malformed_lines`` key counts lines of.
+RECORD_FILES = {"model_calls": "model-calls.jsonl", "tool_calls": "tool-calls.jsonl"}
+
+#: Verdict line when nothing differs but record lines were skipped: "no
+#: differences" is then not established, only "none among what parsed".
+NO_DIFF_INCOMPLETE = (
+    "No differences found in the records that parsed; the comparison is incomplete."
+)
+
+
+def malformed_line_messages(report: DiffReport) -> list[str]:
+    """One sentence per record file with skipped malformed lines, A side first."""
+    run_ids = {"a": report.run_a_id, "b": report.run_b_id}
+    messages: list[str] = []
+    for side in ("a", "b"):
+        for key, count in report.skipped_malformed_lines.get(side, {}).items():
+            if count:
+                messages.append(
+                    f"skipped {count} malformed line(s) in {RECORD_FILES.get(key, key)} "
+                    f"of run {side.upper()} ({run_ids[side]}): not UTF-8, not JSON, "
+                    "or not a JSON object"
+                )
+    return messages
+
+
 
 def format_text(report: DiffReport) -> str:
     lines: list[str] = []
@@ -51,8 +76,14 @@ def format_text(report: DiffReport) -> str:
 
     # DiffReport.has_changes is the one definition of "any difference" — the
     # --assert-no-regressions gate reads it too, so the two cannot disagree.
+    malformed = malformed_line_messages(report)
+    if malformed:
+        lines.append("Skipped (not compared):")
+        for message in malformed:
+            lines.append(f"  ! {message}")
+
     if not report.has_changes:
-        lines.append("No differences found.")
+        lines.append("No differences found." if report.is_complete else NO_DIFF_INCOMPLETE)
 
     return "\n".join(lines)
 
@@ -108,8 +139,15 @@ def format_github_annotations(report: DiffReport) -> str:
     lines = [
         f"::{level} title=NovaFabric Diff::{_annotation_data(m)}" for m in messages
     ]
+    # A skipped record is not a difference, so it does not raise the level; it is
+    # a warning that the verdict above covers only the records that parsed.
+    lines.extend(
+        f"::warning title=NovaFabric Diff::{_annotation_data(m[:1].upper() + m[1:])}"
+        for m in malformed_line_messages(report)
+    )
 
     if not report.has_changes:
-        lines.append("::notice title=NovaFabric Diff::No differences found.")
+        verdict = "No differences found." if report.is_complete else NO_DIFF_INCOMPLETE
+        lines.append(f"::notice title=NovaFabric Diff::{verdict}")
 
     return "\n".join(lines)

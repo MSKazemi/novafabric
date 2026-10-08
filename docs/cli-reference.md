@@ -1197,6 +1197,7 @@ nova diff --group-by environment runs/prod-01/ runs/staging-01/
 nova diff --environment production cap-a/ cap-b/
 nova diff cap-a/ cap-b/ --graph-shape
 nova diff cap-a/ cap-b/ --assert-same-shape
+nova diff my-agent@v1.0 my-agent@v1.1 --output-format json
 ```
 
 Environment gating, as run against a temporary `NOVAFABRIC_HOME` (capsule A captured with
@@ -1219,7 +1220,7 @@ $ echo $?
 ```
 
 Options:
-- `--output-format {text,json,github-annotation}` — output format (default: `text`). Tab-completion available via `nova --install-completion`.
+- `--output-format {text,json,github-annotation}` — output format (default: `text`). Applies to capsule and `name@version` asset diffs alike. Tab-completion available via `nova --install-completion`.
 - `--assert-no-regressions` — exit 1 if the comparison finds any difference (a changed, added or removed entry in any section); the CI gate. See the exit codes below
 - `--group-by variant` — **experimental** ([ADR-0116](./decisions.md)). Group the two capsules by their **recorded** A/B-variant attribution — the `(experiment_id, variant_id)` of the optional `variant` block — and label the diff as cross-arm (different groups) or within-arm (same group). A capsule without a `variant` block groups under `(no variant)`. Read-only over recorded facts: this never assigns variants and never mutates a capsule. Capsule paths only; `text`/`json` output only (`json` wraps the report in `{variant_groups, cross_arm, diff}`).
 - `--group-by environment` — **experimental** ([ADR-0126](./decisions.md) P2). Group the two capsules by their **recorded** `deployment_environment` (the typed top-level field set by `nova capture --environment` / `NOVAFABRIC_ENVIRONMENT`) and label the diff cross-environment or within-environment. A capsule with no value — or one violating the `^[A-Za-z0-9._:-]{1,64}$` rule — groups under `(no environment)`; nothing is inferred. `json` wraps the report in `{environment_groups, cross_environment, diff}`. Same restrictions as `--group-by variant`.
@@ -1242,7 +1243,7 @@ Exit codes (capsule and `name@version` asset diffs, [ADR-0303](./decisions.md)):
 |---|---|
 | `0` | The comparison was made and found no difference — or found one, but no gate flag was given (the diff only reports) |
 | `1` | The comparison was made and found a difference: `--assert-no-regressions` saw a changed, added or removed entry in any section (checked first), or `--assert-same-shape` saw a shape change. `1` means nothing else |
-| `2` | The comparison could not be made: a capsule ref that does not resolve, an asset ref not in the registry, a usage error, `--environment` excluded a capsule, or `--assert-same-shape` could not build a graph for either capsule (fail closed) |
+| `2` | The comparison could not be made: a capsule ref that does not resolve, an asset ref not in the registry, a usage error, `--environment` excluded a capsule, `--assert-same-shape` could not build a graph for either capsule (fail closed), or `--assert-no-regressions` read a capsule with malformed record lines (checked before any difference; see below) |
 | `3` | `--significance` only: a significant regression (SPRT `accept_h1`) |
 
 A gate that only needs "pass or fail" can test for non-zero; one that must tell "the runs
@@ -1269,6 +1270,37 @@ every surface uses it: `--assert-no-regressions` exits 1 on it, the `text` outpu
 `error` level when it holds (an added- or removed-only diff included) and a single `notice`
 when it does not. Annotation messages escape `%`, CR and LF (`%25`, `%0D`, `%0A`), so a
 workload-chosen file name or tool name cannot start a second workflow command.
+
+**Malformed record lines are never skipped silently** ([ADR-0303](./decisions.md) Amendment 1).
+A non-blank line of `model-calls.jsonl` or `tool-calls.jsonl` that is not UTF-8, not JSON, or
+JSON that is not an object takes no part in the comparison, so the diff is incomplete. Each
+such file gets a `warning: skipped N malformed line(s) in … of run A|B (…)` line on stderr in
+every output format; the `text` report lists them under `Skipped (not compared):` and says
+`No differences found in the records that parsed; the comparison is incomplete.` instead of
+`No differences found.`; `github-annotation` adds one `::warning` line per file; and `json`
+always carries the counts per side and file:
+
+```json
+"skipped_malformed_lines": {
+  "a": {"model_calls": 0, "tool_calls": 0},
+  "b": {"model_calls": 2, "tool_calls": 0}
+}
+```
+
+Without a gate flag the diff still exits `0`. Under `--assert-no-regressions` it exits **`2`**,
+"cannot compare", before `has_changes` is consulted: a skipped line can be the very record an
+"added" or "removed" entry on the other side would have paired with, so neither "the runs
+differ" (`1`) nor "they do not" (`0`) is established. Repair or re-capture the capsule.
+
+**Asset refs.** With two `name@version` refs the command compares the two registered specs
+field by field (nested keys flattened to dotted paths). `--output-format` applies: `json` is
+the document `nova asset diff --output-format json` emits — `ref_a`, `ref_b`, `identical`,
+`added`, `removed`, `changed` (`{"from", "to"}` per key) — plus `has_changes`; a key present
+on only one side is added or removed even when its value is `null`. `github-annotation` emits
+one escaped `::error` line per differing field, or a single `::notice` when there is none.
+`text` prints `--- ref_a`, `+++ ref_b` and one `key: before → after` line per field
+(`(absent)` for a missing key). `--assert-no-regressions` exits `1` on any differing field in
+every format. `--group-by`, `--environment` and `--graph-shape` do not apply to asset refs.
 
 ---
 

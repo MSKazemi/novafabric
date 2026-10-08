@@ -147,8 +147,13 @@ formatters read the same property, so an added- or removed-only diff is an
 `error` annotation, never a `notice`, and the `json` report carries it as a
 top-level `has_changes`. Exit `1` means only "the comparison found a
 difference"; a comparison that could not be made (a capsule ref that does not
-resolve, an unknown asset ref, a usage error) exits `2` (ADR-0303). `nova diff`
-also accepts two `name@version` asset references and diffs their specs.
+resolve, an unknown asset ref, a usage error) exits `2` (ADR-0303). A record
+line the engine cannot read (not UTF-8, not JSON, not a JSON object) is skipped,
+counted per side in `skipped_malformed_lines`, and warned about on stderr; under
+`--assert-no-regressions` it exits `2` as well, because the comparison is
+incomplete (ADR-0303 Amendment 1). `nova diff` also accepts two `name@version`
+asset references and diffs their specs field by field, in any of the three
+output formats.
 
 Known limitation: an OpenAI or Anthropic SDK call is currently recorded twice
 in `model-calls.jsonl` (the SDK hook, plus the `httpx` wire hook with no

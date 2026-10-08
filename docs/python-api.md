@@ -429,6 +429,7 @@ print(report.changed_count)  # int
 print(report.added_count)    # int
 print(report.removed_count)  # int
 print(report.has_changes)    # bool: any changed, added or removed entry
+print(report.is_complete)    # bool: False if any record line was skipped as malformed
 print(report.as_dict())      # serialisable dict
 ```
 
@@ -437,6 +438,9 @@ print(report.as_dict())      # serialisable dict
 ```python
 import sys
 report = DiffEngine().compare(baseline_capsule, candidate_capsule)
+if not report.is_complete:
+    print(report.skipped_malformed_lines)
+    sys.exit(2)   # cannot compare: a record line was unreadable
 if report.has_changes:
     print(report.as_dict())
     sys.exit(1)   # fail the build on any structural change
@@ -448,6 +452,13 @@ if report.has_changes:
 > top-level `has_changes` key — reach for the CLI directly in shell-based
 > pipelines. Gating on `changed_count` alone misses a call that was added or
 > removed.
+>
+> `has_changes` is computed over the records that parsed. A non-blank line of
+> `model-calls.jsonl` or `tool-calls.jsonl` that is not UTF-8, not JSON, or not a
+> JSON object is skipped and counted in `skipped_malformed_lines` (per side `a`/`b`,
+> per file `model_calls`/`tool_calls`; also a top-level key of `as_dict()`), and
+> `is_complete` turns False. The CLI gate then exits `2`, "cannot compare", before
+> it looks at `has_changes` (ADR-0303 Amendment 1).
 
 ### `DiffReport`
 
@@ -460,6 +471,7 @@ class DiffReport:
     model_call_pairs: list[dict]
     tool_call_pairs: list[dict]
     output_changes: list[dict]
+    skipped_malformed_lines: dict[str, dict[str, int]]  # {"a"|"b": {"model_calls", "tool_calls"}}
 
     @property
     def changed_count(self) -> int: ...
@@ -469,6 +481,10 @@ class DiffReport:
     def removed_count(self) -> int: ...
     @property
     def has_changes(self) -> bool: ...
+    @property
+    def malformed_line_count(self) -> int: ...
+    @property
+    def is_complete(self) -> bool: ...
     def as_dict(self) -> dict: ...
     def write(self, output_path: Path) -> None: ...
 ```

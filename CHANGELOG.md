@@ -132,6 +132,17 @@ longer forwards the submitting shell's environment (ADR-0270).
   `json` report gains a top-level `has_changes` (the gate's own verdict) and each model-call
   pair gains `provider_changed` (additive). `nova diff --help` and the CLI reference now list
   every exit code (#11).
+- **`nova diff --assert-no-regressions` exits `2` on a capsule with malformed record lines
+  (behaviour change, ADR-0303 Amendment 1).** A line of `model-calls.jsonl` or
+  `tool-calls.jsonl` that was not JSON was dropped silently, so the gate passed (exit `0`) on
+  runs it had not fully read; a valid-JSON line that was not an object (`[1, 2]`) crashed the
+  diff with exit `1`, the "found a difference" code. Such lines (and non-UTF-8 ones) are now
+  skipped, counted per side and file, warned about on stderr in every output format, listed
+  in the `text` report and as `::warning` annotations, and carried in an additive top-level
+  `skipped_malformed_lines` JSON key (also on `GET /api/diff`, and as
+  `DiffReport.skipped_malformed_lines` / `is_complete`). Under the gate the comparison is
+  "cannot compare", exit `2`, checked before any difference. Without a gate flag the diff
+  still exits `0`. Both diff-report schemas document `has_changes` and the new key (optional).
 - **Mocked replay fails closed (behaviour change, ADR-0300).** A replay now ends `failure`
   (`error.type: ReplayDivergence`, exit 1) when the replayed program makes more model calls
   than were recorded, calls a different provider or in a different order, calls an
@@ -173,6 +184,14 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **`nova diff name@version name@version` honours `--output-format`.** The asset-ref path
+  always printed Rich text, so `--output-format json` gave a CI step output it could not parse
+  and `github-annotation` gave no annotations. `json` now emits the document `nova asset diff
+  --output-format json` defines (`ref_a`, `ref_b`, `identical`, `added`, `removed`,
+  `changed`) plus `has_changes`; `github-annotation` emits one escaped `::error` per differing
+  field, or one `::notice`. A key present on one side only is now reported as added or removed
+  even when its value is `null` (it compared equal to a missing key), and `text` prints spec
+  keys and values verbatim instead of reading `[...]` in them as Rich markup (#11).
 - **Two framework adapters wrote capsules that missed the run** (issues #1, #3 follow-up).
   LlamaIndex: an agent's `run` returns a `WorkflowHandler` and does its work when awaited,
   but the adapter finished the capsule as soon as `run` returned — an empty, successful

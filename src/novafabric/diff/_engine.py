@@ -12,17 +12,37 @@ from novafabric.diff._align import align_model_calls, align_tool_calls
 from novafabric.diff._report import DiffReport
 
 
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    records = []
-    if path.exists():
-        for line in path.read_text().splitlines():
-            line = line.strip()
-            if line:
-                try:
-                    records.append(json.loads(line))
-                except json.JSONDecodeError:
-                    pass
-    return records
+def _read_jsonl(path: Path) -> tuple[list[dict[str, Any]], int]:
+    """Records of a capsule JSONL file, and how many non-blank lines were skipped.
+
+    A line is skipped when it is not UTF-8, not JSON, or JSON that is not an
+    object. It used to be dropped silently, so a corrupted record vanished from
+    both sides of the comparison and ``--assert-no-regressions`` passed on runs
+    it had not fully read; a valid-JSON non-object line (``[1, 2]``) crashed the
+    aligner instead, exiting 1 as if a difference had been found. The count is
+    reported per side (``DiffReport.skipped_malformed_lines``) and makes the
+    gate exit 2, "cannot compare" (ADR-0303 Amendment 1).
+
+    Lines are split on bytes, so only ``\\n``/``\\r`` end a record: JSON may
+    carry U+2028 unescaped inside a string, and ``str.splitlines`` cut there.
+    """
+    records: list[dict[str, Any]] = []
+    skipped = 0
+    if not path.exists():
+        return records, skipped
+    for raw in path.read_bytes().splitlines():
+        if not raw.strip():
+            continue
+        try:
+            record = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            skipped += 1
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+        else:
+            skipped += 1
+    return records, skipped
 
 
 def _file_hash(path: Path) -> str:
@@ -112,8 +132,12 @@ class DiffEngine:
     def _diff_model_calls(
         self, capsule_a: Path, capsule_b: Path, report: DiffReport
     ) -> None:
-        calls_a = _read_jsonl(capsule_a / "model-calls.jsonl")
-        calls_b = _read_jsonl(capsule_b / "model-calls.jsonl")
+        calls_a, report.skipped_malformed_lines["a"]["model_calls"] = _read_jsonl(
+            capsule_a / "model-calls.jsonl"
+        )
+        calls_b, report.skipped_malformed_lines["b"]["model_calls"] = _read_jsonl(
+            capsule_b / "model-calls.jsonl"
+        )
         pairs = align_model_calls(calls_a, calls_b)
 
         for a, b in pairs:
@@ -162,8 +186,12 @@ class DiffEngine:
     def _diff_tool_calls(
         self, capsule_a: Path, capsule_b: Path, report: DiffReport
     ) -> None:
-        calls_a = _read_jsonl(capsule_a / "tool-calls.jsonl")
-        calls_b = _read_jsonl(capsule_b / "tool-calls.jsonl")
+        calls_a, report.skipped_malformed_lines["a"]["tool_calls"] = _read_jsonl(
+            capsule_a / "tool-calls.jsonl"
+        )
+        calls_b, report.skipped_malformed_lines["b"]["tool_calls"] = _read_jsonl(
+            capsule_b / "tool-calls.jsonl"
+        )
         pairs = align_tool_calls(calls_a, calls_b)
 
         for a, b in pairs:

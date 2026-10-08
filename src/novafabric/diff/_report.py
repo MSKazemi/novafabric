@@ -14,6 +14,14 @@ class DiffReport:
     model_call_pairs: list[dict[str, Any]] = field(default_factory=list)
     tool_call_pairs: list[dict[str, Any]] = field(default_factory=list)
     output_changes: list[dict[str, Any]] = field(default_factory=list)
+    #: Non-blank record lines the engine could not read (not UTF-8, not JSON, or
+    #: not a JSON object), per side (``a``/``b``) and per record file. They take
+    #: no part in the comparison, so a non-zero count means it is incomplete.
+    skipped_malformed_lines: dict[str, dict[str, int]] = field(
+        default_factory=lambda: {
+            side: {"model_calls": 0, "tool_calls": 0} for side in ("a", "b")
+        }
+    )
 
     @property
     def changed_count(self) -> int:
@@ -45,6 +53,25 @@ class DiffReport:
         """
         return (self.changed_count + self.added_count + self.removed_count) > 0
 
+    @property
+    def malformed_line_count(self) -> int:
+        """Total record lines skipped as malformed, both sides, all record files."""
+        return sum(
+            count for files in self.skipped_malformed_lines.values() for count in files.values()
+        )
+
+    @property
+    def is_complete(self) -> bool:
+        """False when any record line was skipped as malformed.
+
+        ``has_changes`` is computed over the records that parsed. When this is
+        False, "no changes" is not established — a skipped line can be the very
+        record that pairs with an "added" or "removed" entry on the other side —
+        so ``--assert-no-regressions`` exits 2, "cannot compare" (ADR-0303
+        Amendment 1), rather than 0 or 1.
+        """
+        return self.malformed_line_count == 0
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "run_a_id": self.run_a_id,
@@ -57,6 +84,11 @@ class DiffReport:
             # The gate's own verdict (ADR-0303): a consumer of the JSON reads the
             # property --assert-no-regressions uses instead of re-deriving it.
             "has_changes": self.has_changes,
+            # Always present, zeros included: absent would not distinguish "none
+            # skipped" from "an older nova that skipped silently" (ADR-0303 Am. 1).
+            "skipped_malformed_lines": {
+                side: dict(files) for side, files in self.skipped_malformed_lines.items()
+            },
             "sections": {
                 "environment": {"changes": self.env_changes},
                 "model_calls": {

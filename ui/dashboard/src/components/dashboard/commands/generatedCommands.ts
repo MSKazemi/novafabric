@@ -2925,7 +2925,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "output-format",
         "label": "--output-format",
         "type": "text",
-        "hint": "Output format.",
+        "hint": "Output format: text, json or github-annotation. Applies to capsule and name@version asset diffs alike.",
         "flag": "--output-format",
         "defaultValue": "DiffOutputFormat.text"
       },

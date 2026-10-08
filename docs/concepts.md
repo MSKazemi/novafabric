@@ -509,7 +509,9 @@ property, `has_changes`, that is true when any of them is non-zero. The
 `--assert-no-regressions` flag exits 1 on `has_changes`, and the text and
 GitHub-annotation output read the same property, making it suitable as a CI
 gate. Exit 1 means only that; a comparison that could not be made (for
-example, a capsule path that does not exist) exits 2:
+example, a capsule path that does not exist, or a capsule with unreadable
+record lines, which are counted and reported rather than skipped silently)
+exits 2:
 
 ```bash
 # Fail the pipeline if today's run diverges from a known-good baseline

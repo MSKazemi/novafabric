@@ -145,7 +145,12 @@ def _capsule_diff(
     environment: str | None = None,
 ) -> None:
     from novafabric.diff._engine import DiffEngine
-    from novafabric.diff._format import format_github_annotations, format_json, format_text
+    from novafabric.diff._format import (
+        format_github_annotations,
+        format_json,
+        format_text,
+        malformed_line_messages,
+    )
 
     resolved: list[Path] = []
     for p in (capsule_a, capsule_b):
@@ -190,6 +195,10 @@ def _capsule_diff(
     )
 
     report = DiffEngine().compare(capsule_a, capsule_b)
+    # A skipped record line is never silent (ADR-0303 Am. 1): stderr in every
+    # output format, so it reaches a CI log without corrupting JSON on stdout.
+    for message in malformed_line_messages(report):
+        typer.echo(f"warning: {message}", err=True)
 
     # ADR-0124 P3: opt-in agent-graph shape pre-check. Absent both flags, nothing
     # below changes — the default output stays byte-identical.
@@ -257,8 +266,20 @@ def _capsule_diff(
             console.print("")
             console.print(format_graph_shape_text(shape), markup=False, highlight=False)
 
-    if assert_no_regressions and report.has_changes:
-        raise typer.Exit(code=EXIT_DIFFERENCES)
+    if assert_no_regressions:
+        # Checked before has_changes: over an incomplete read neither "the runs
+        # differ" nor "they do not" is established — a skipped line can be the
+        # record that pairs with an added/removed entry (ADR-0303 Am. 1).
+        if not report.is_complete:
+            typer.echo(
+                f"--assert-no-regressions: cannot compare: {report.malformed_line_count} "
+                "malformed record line(s) were skipped, so the runs were not fully "
+                "compared (exit 2). Repair or re-capture the capsule.",
+                err=True,
+            )
+            raise typer.Exit(code=EXIT_CANNOT_COMPARE)
+        if report.has_changes:
+            raise typer.Exit(code=EXIT_DIFFERENCES)
     if assert_same_shape and shape is not None and not shape.same_shape:
         # Fail closed: 1 = shapes differ; 2 = a graph could not be built, so
         # "same shape" cannot be verified.
@@ -327,7 +348,13 @@ def diff_cmd(
     ref_b: Annotated[str | None, typer.Argument(help="name@version  or  path/to/capsule-b")] = None,
     output_format: Annotated[
         DiffOutputFormat,
-        typer.Option("--output-format", help="Output format.")
+        typer.Option(
+            "--output-format",
+            help=(
+                "Output format: text, json or github-annotation. Applies to capsule "
+                "and name@version asset diffs alike."
+            ),
+        )
     ] = DiffOutputFormat.text,
     assert_no_regressions: Annotated[
         bool, typer.Option("--assert-no-regressions", help="Exit 1 if any changes detected")
@@ -436,6 +463,9 @@ def diff_cmd(
       # Fail CI if any difference is found
       nova diff --assert-no-regressions my-agent@v1.0 my-agent@v1.1
 
+      # Field-level asset spec diff as JSON (keys as in `nova asset diff`)
+      nova diff my-agent@v1.0 my-agent@v1.1 --output-format json
+
       # Shape-change pre-check over the agent execution graphs (ADR-0124);
       # exit 1 if the control-flow shape differs, 2 if a graph is unavailable
       nova diff runs/run-01/ runs/run-02/ --graph-shape
@@ -453,7 +483,10 @@ def diff_cmd(
          shape change. 1 means nothing else.
       2  the comparison could not be made: a capsule ref that does not resolve,
          an asset ref not in the registry, a usage error, --environment
-         excluded a capsule, or --assert-same-shape could not build a graph
+         excluded a capsule, --assert-same-shape could not build a graph, or
+         --assert-no-regressions read a capsule with malformed record lines
+         (they are skipped, counted and warned about on stderr, so the
+         comparison is incomplete; checked before any difference)
       3  --significance found a significant regression (SPRT accept_h1)
     --media reports and never gates: 0 whatever it finds, 2 if it cannot run.
     """
@@ -527,6 +560,59 @@ def diff_cmd(
             param_hint="'--environment'",
         )
 
+    _asset_diff(ref_a, ref_b, output_format, assert_no_regressions)
+
+
+def _asset_diff_document(
+    ref_a: str, ref_b: str, spec_a: dict[str, Any], spec_b: dict[str, Any]
+) -> dict[str, Any]:
+    """Field-level diff of two flattened asset specs, as one JSON document.
+
+    The keys are those of ``nova asset diff --output-format json`` (``ref_a``,
+    ``ref_b``, ``identical``, ``added``, ``removed``, ``changed``), so the same
+    comparison has one shape whichever command produced it, plus ``has_changes``,
+    the property ``--assert-no-regressions`` reads (ADR-0303). A key present on
+    one side only is added or removed even when its value is ``null``.
+    """
+    added = {k: spec_b[k] for k in sorted(spec_b.keys() - spec_a.keys())}
+    removed = {k: spec_a[k] for k in sorted(spec_a.keys() - spec_b.keys())}
+    changed = {
+        k: {"from": spec_a[k], "to": spec_b[k]}
+        for k in sorted(spec_a.keys() & spec_b.keys())
+        if spec_a[k] != spec_b[k]
+    }
+    has_changes = bool(added or removed or changed)
+    return {
+        "ref_a": ref_a,
+        "ref_b": ref_b,
+        "has_changes": has_changes,
+        "identical": not has_changes,
+        "added": added,
+        "removed": removed,
+        "changed": changed,
+    }
+
+
+def _asset_diff_messages(doc: dict[str, Any]) -> list[str]:
+    """One line per differing spec field, in key order: added, removed, changed."""
+    messages = [f"{k}: (absent) → {v!r}" for k, v in doc["added"].items()]
+    messages += [f"{k}: {v!r} → (absent)" for k, v in doc["removed"].items()]
+    messages += [f"{k}: {c['from']!r} → {c['to']!r}" for k, c in doc["changed"].items()]
+    return messages
+
+
+def _asset_diff(
+    ref_a: str, ref_b: str, output_format: DiffOutputFormat, assert_no_regressions: bool
+) -> None:
+    """``nova diff name@version name@version``: compare two registered asset specs.
+
+    Honours ``--output-format`` like the capsule path. ``text`` and
+    ``github-annotation`` print to stdout; ``json`` prints one document
+    (:func:`_asset_diff_document`) with no Rich wrapping. It always printed text,
+    so a CI step asking for JSON got a document it could not parse.
+    """
+    from novafabric.diff._format import _annotation_data  # noqa: PLC0415
+
     def parse_ref(ref: str) -> tuple[str, str]:
         n, v = ref.rsplit("@", 1)
         return n, v
@@ -541,27 +627,37 @@ def diff_cmd(
         console.print(str(exc), style="red", markup=False)
         raise typer.Exit(code=EXIT_CANNOT_COMPARE) from exc
 
-    spec_a = _flatten(json.loads(asset_a.get("spec_json", "{}")))
-    spec_b = _flatten(json.loads(asset_b.get("spec_json", "{}")))
+    doc = _asset_diff_document(
+        ref_a,
+        ref_b,
+        _flatten(json.loads(asset_a.get("spec_json") or "{}")),
+        _flatten(json.loads(asset_b.get("spec_json") or "{}")),
+    )
+    messages = _asset_diff_messages(doc)
 
-    all_keys = set(spec_a) | set(spec_b)
-    diffs = {
-        k: (spec_a.get(k), spec_b.get(k))
-        for k in sorted(all_keys)
-        if spec_a.get(k) != spec_b.get(k)
-    }
-
-    if not diffs:
+    if output_format == DiffOutputFormat.json:
+        typer.echo(json.dumps(doc, indent=2))
+    elif output_format == DiffOutputFormat.github_annotation:
+        level = "error" if doc["has_changes"] else "notice"
+        lines = [
+            f"::{level} title=NovaFabric Diff::{_annotation_data(f'Asset spec field {m}')}"
+            for m in messages
+        ]
+        if not doc["has_changes"]:
+            lines.append("::notice title=NovaFabric Diff::No differences found.")
+        typer.echo("\n".join(lines))
+    elif not doc["has_changes"]:
         console.print("[green]No differences found.[/green]")
-        return
+    else:
+        # markup=False: spec keys and values are user-written, and Rich read a
+        # "[bold]" in one as markup (and crashed on "[/x]").
+        _plain(f"--- {ref_a}")
+        _plain(f"+++ {ref_b}")
+        console.print()
+        for message in messages:
+            _plain(f"  {message}")
 
-    console.print(f"--- {ref_a}")
-    console.print(f"+++ {ref_b}")
-    console.print()
-    for k, (va, vb) in diffs.items():
-        console.print(f"  [cyan]{k}[/cyan]: {va!r} → {vb!r}")
-    # The asset path silently ignored the gate; "exits 1 on any change" holds here too.
-    if assert_no_regressions:
+    if assert_no_regressions and doc["has_changes"]:
         raise typer.Exit(code=EXIT_DIFFERENCES)
 
 

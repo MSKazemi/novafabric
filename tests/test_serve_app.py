@@ -1244,3 +1244,34 @@ def test_diff_endpoint_exposes_summary_and_has_changes(
     assert body["summary"] == {"changed": 0, "added": 1, "removed": 0}
     assert body["sections"]["model_calls"]["added"] == 1
     assert "report" in body  # legacy key kept
+    assert body["skipped_malformed_lines"] == {
+        "a": {"model_calls": 0, "tool_calls": 0},
+        "b": {"model_calls": 0, "tool_calls": 0},
+    }
+
+
+def test_diff_endpoint_surfaces_skipped_malformed_lines(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A malformed record line skipped by the engine is reported, not silent."""
+    import sys
+
+    from novafabric.diff import _engine as diff_engine_mod
+    from novafabric.diff._report import DiffReport
+
+    class _FakeEngine:
+        def compare(self, cdir_a: object, cdir_b: object) -> DiffReport:
+            report = DiffReport(run_a_id=_FIXTURE_RUN_ID, run_b_id=_FIXTURE_RUN_ID)
+            report.skipped_malformed_lines["b"]["tool_calls"] = 3
+            return report
+
+    monkeypatch.setattr(diff_engine_mod, "DiffEngine", _FakeEngine)
+    sys.modules.pop("novafabric.diff._engine", None)
+    sys.modules["novafabric.diff._engine"] = diff_engine_mod
+
+    res = client.get(
+        f"/api/diff?run_a={_FIXTURE_RUN_ID}&run_b={_FIXTURE_RUN_ID}&token={VALID_TOKEN}",
+        headers=LOCALHOST_HEADERS,
+    )
+    assert res.status_code == 200
+    assert res.json()["skipped_malformed_lines"]["b"] == {"model_calls": 0, "tool_calls": 3}
