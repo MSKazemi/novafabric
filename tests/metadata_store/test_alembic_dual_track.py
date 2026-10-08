@@ -64,6 +64,7 @@ def test_postgres_migration_files_exist() -> None:
         _POSTGRES_TRACK / "versions" / "__init__.py",
         _POSTGRES_TRACK / "versions" / "v001_init.py",
         _POSTGRES_TRACK / "versions" / "v002_partition_ddl.py",
+        _POSTGRES_TRACK / "versions" / "v005_delete_grants.py",
     ]
     for path in required:
         assert path.exists(), f"Missing Postgres migration file: {path}"
@@ -90,6 +91,16 @@ def test_v002_is_implemented() -> None:
     # Revision metadata must be correct.
     assert mod.revision == "v002"
     assert mod.down_revision == "v001"
+
+
+def test_v005_delete_grant_migration_metadata() -> None:
+    """The delete privilege migration must extend the current Postgres head."""
+    mod = importlib.import_module(
+        "novafabric.metadata_store.migrations.postgres.versions.v005_delete_grants"
+    )
+    assert mod.revision == "v005"
+    assert mod.down_revision == "v004"
+    assert mod._DELETE_TABLES == ("runs", "capsules", "signatures")
 
 
 # ---------------------------------------------------------------------------

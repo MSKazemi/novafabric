@@ -46,6 +46,7 @@ papers/
 priv/
 ship/
 site-config/
+strategy/
 .benchmark-results/
 _linkcheck_probe.md
 metrics.json

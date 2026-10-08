@@ -211,6 +211,26 @@ class TestAdaptersEndpoint:
         assert "count" in data
         assert len(data["adapters"]) >= 8
 
+    def test_registry_lists_every_framework_adapter_module(self, client: TestClient) -> None:
+        """The registry listed 8 while 11 framework adapters shipped; pin it to the
+        modules on disk. langfuse/mlflow are env-check helpers, git is not an
+        adapter, and _-prefixed modules are internal."""
+        from pathlib import Path
+
+        import novafabric.adapters as pkg
+
+        helpers = {"langfuse", "mlflow", "git"}
+        on_disk = {
+            p.stem
+            for p in Path(pkg.__file__).parent.glob("*.py")
+            if not p.stem.startswith("_") and p.stem not in helpers
+        }
+        r = client.get(f"/api/adapters?{TOKEN_Q}", headers=H)
+        assert {a["id"] for a in r.json()["adapters"]} == on_disk
+        for a in r.json()["adapters"]:
+            module = __import__(a["module"], fromlist=[a["function"]])
+            assert hasattr(module, a["function"]), a
+
     def test_adapters_requires_auth(self, client: TestClient) -> None:
         r = client.get("/api/adapters", headers=H)
         assert r.status_code == 401

@@ -56,6 +56,7 @@ class ReplayFlags:
             flags.append("--allow-external-side-effects")
         if self.allow_unknown_mutation:
             flags.append("--allow-unknown-mutation")
-        if not flags and not self.dry_run:
-            flags.append("--mock-tools")
+        # No implicit entry: a "--mock-tools" placeholder used to be recorded here,
+        # but no such flag exists and tool calls are never mocked (ADR-0261), so
+        # the replay record named a substitution that did not happen.
         return flags

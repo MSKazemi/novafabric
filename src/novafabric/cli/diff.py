@@ -239,7 +239,7 @@ def _capsule_diff(
             console.print("")
             console.print(format_graph_shape_text(shape), markup=False, highlight=False)
 
-    if assert_no_regressions and report.changed_count > 0:
+    if assert_no_regressions and report.has_changes:
         raise typer.Exit(code=1)
     if assert_same_shape and shape is not None and not shape.same_shape:
         # Fail closed: 1 = shapes differ; 2 = a graph could not be built, so
@@ -530,6 +530,9 @@ def diff_cmd(
     console.print()
     for k, (va, vb) in diffs.items():
         console.print(f"  [cyan]{k}[/cyan]: {va!r} → {vb!r}")
+    # The asset path silently ignored the gate; "exits 1 on any change" holds here too.
+    if assert_no_regressions:
+        raise typer.Exit(code=1)
 
 
 def _run_media_diff(

@@ -30,8 +30,8 @@ are the part of the system that must keep working offline in five years.
 
 | Specification | Version / profile | What NovaFabric does | Verify it yourself | Maturity |
 |---|---|---|---|---|
-| **in-toto Attestation / DSSE** | DSSE envelope, ed25519 | Signs Evidence Bundles and capsule digests as DSSE envelopes | `nova seal verify <run-id>` · `nova verify-envelope <file>` | works today |
-| **RFC 3161** | Time-Stamp Protocol | Anchors each seal with a trusted timestamp; CRL caching so verification works air-gapped | `nova seal verify <run-id>` | works today |
+| **in-toto Attestation / DSSE** | DSSE envelope, ECDSA P-256 or Ed25519 | Signs Evidence Bundles, and seals capsules when sealing is configured (opt-in: `novaseal.yaml` + your key), as DSSE envelopes | `nova verify <capsule-dir>` · `nova verify-envelope <file>` | works today |
+| **RFC 3161** | Time-Stamp Protocol | Adds a trusted timestamp to a seal when a `tsa_url` is configured (opt-in since v0.103.0); CRL caching so verification works air-gapped | `nova verify <capsule-dir>` | works today (opt-in) |
 | **RFC 8785** | JSON Canonicalization Scheme | Canonical JSON for digest computation, so a digest is reproducible across implementations | inspect `proposal_digest` in a sealed capsule | works today |
 | **JSON Schema** | draft 2020-12 | `schemas/run-capsule.schema.json` and siblings define every artefact the system emits | `nova validate <run-id>` — or validate the schema with any 2020-12 validator | works today |
 | **Merkle inclusion proofs** | RFC 6962-style tree | Evidence Provenance tree over capsule hashes | `nova merkle-tree <run-id>` | works today |

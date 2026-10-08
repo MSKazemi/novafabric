@@ -17,7 +17,7 @@
 
 Capture is the mechanism behind the **Run Capsule** — the second of NovaFabric's five
 primitives (Asset Registry, Run Capsule, Replay, Lineage, Evidence Bundle). Everything
-here produces the same portable, schema-valid, secret-redacted capsule you can later
+here produces the same portable, schema-valid, secret-scanned capsule you can later
 replay, diff, and export as an Evidence Bundle.
 
 ---
@@ -340,8 +340,9 @@ subprocess; under the hood it calls `install_all(writer, parent_span_id)`
 
 - **Run it:** capture a real command and inspect the capsule, then validate it with
   `nova validate`.
-- **Replay it:** re-execute the capsule with external calls controlled — see the
-  Replay primitive's four modes (`forensic`, `mocked`, `semantic`, `exact`).
+- **Replay it:** inspect the capsule, or re-run it with model calls served from the
+  recording — see the Replay primitive's five modes (`forensic`, `mocked`, `semantic`,
+  `exact`, and experimental `intervention`).
 - **Compare runs:** use `nova diff` (with `--assert-no-regressions` as a CI gate) to
   see exactly what changed between two capsules.
 - **Prove it:** export a signed Evidence Bundle with `nova export-evidence` — an

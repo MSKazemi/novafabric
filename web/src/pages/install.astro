@@ -5,7 +5,10 @@ import InstallBlock from '../components/hero/InstallBlock.astro';
 import CodeBlock from '../components/ui/CodeBlock.astro';
 ---
 
-<Layout title="Install — NovaFabric" description="Install NovaFabric and capture your first AI run.">
+<Layout
+  title="Install NovaFabric — capture and replay AI agent runs"
+  description="pip install novafabric (Python 3.12+), then nova capture, inspect and replay. Local-first: no accounts, no telemetry; capsules stay on your machine."
+>
   <article class="container-content py-16 md:py-24">
     <header class="max-w-2xl">
       <ShowcaseBadge variant="page" />
@@ -19,7 +22,7 @@ import CodeBlock from '../components/ui/CodeBlock.astro';
       <section>
         <h2 class="text-xl font-medium text-[var(--color-text)] tracking-tight mb-4">1. Install</h2>
         <InstallBlock command="pip install novafabric" variant="hero" />
-        <p class="mt-3 text-sm text-[var(--color-text-muted)]">Requires Python 3.11+.</p>
+        <p class="mt-3 text-sm text-[var(--color-text-muted)]">Requires Python 3.12+.</p>
       </section>
 
       <section>

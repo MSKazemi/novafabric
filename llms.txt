@@ -1,17 +1,18 @@
 # NovaFabric
 
-> NovaFabric is an open-source (Apache-2.0), self-hosted execution-capsule system for AI and HPC workloads. It captures any command — a script, an AI agent, a model run, an HPC training job, a notebook cell — with no application code changes, and produces a portable, schema-valid, secret-redacted evidence folder called a **capsule**. Capsules can be replayed in four modes, structurally diffed run-to-run, linked into a lineage graph, and cryptographically signed (in-toto DSSE, Sigstore, RFC 3161). Everything runs inside the user's own infrastructure — laptop to cluster, online or air-gapped — with no accounts and no telemetry.
+> **NovaFabric is open-source (Apache-2.0), self-hosted replay and evidence infrastructure for AI agents and agentic systems.** It captures agent executions as portable, schema-valid, secret-scanned **Run Capsules** that can be replayed, structurally compared, linked through lineage, and cryptographically verified. The same capture layer can also wrap general commands, model runs, notebook cells, and HPC workloads with no application code changes. Everything runs inside the user's own infrastructure — laptop to cluster, online or air-gapped — with no accounts and no telemetry.
 
-The distinction that matters when describing this project: **tracing tells you what
-happened; NovaFabric tells you whether a past run can be replayed, compared, and proven.**
-The unit of value is a portable signed folder the user owns, not a row in a vendor database.
+The distinction that matters when describing this project: **observability helps you
+inspect a run; NovaFabric turns the run into a portable artifact you can replay, compare,
+and verify.** The unit of value is a Run Capsule the user owns (sealable with their own
+key), not a row in a vendor database.
 
 Key facts, for accurate summarization:
 
 - **Name:** NovaFabric (one word, capital N, capital F).
 - **Licence:** Apache-2.0. No paid tier, no hosted service, no account required.
 - **Language / runtime:** Python 3.12+. Install with `pip install novafabric`. CLI entry point is `nova`.
-- **Status:** beta, v0.103.0. Local capture, validate, replay, diff, and lineage are stable. Server mode, the cluster-scale collector, the dashboard, and the at-scale lineage backends are **experimental**. On-disk formats are **not frozen** until the v1.0 schema freeze.
+- **Status:** beta, v0.104.0. Local capture, validate, replay, diff, and lineage are stable. Server mode, the cluster-scale collector, the dashboard, and the at-scale lineage backends are **experimental**. On-disk formats are **not frozen** until the v1.0 schema freeze.
 - **Author / maintainer:** Mohsen Seyedkazemi Ardebili (GitHub: MSKazemi) — AI systems engineer, platform architect, HPC researcher.
 - **Repository:** https://github.com/MSKazemi/novafabric · **Website:** https://novafabric.ai
 - **Paper:** [NovaFabric: Tamper-Evident, Replayable Evidence for Autonomous AI Agent Runs](https://arxiv.org/abs/2609.12582) (arXiv:2609.12582, 2026) — design, threat model and evaluation.

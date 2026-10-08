@@ -45,7 +45,7 @@ single tool unifies them into a developer-friendly replay fabric for complete AI
 systems.
 
 That is what NovaFabric does. Every run becomes a **Run Capsule** — a portable,
-schema-valid, secret-redacted record of exactly what happened, written on both success
+schema-valid, secret-scanned record of what capture observed, written on both success
 *and* failure, that you own and can read months later. The product thesis in one line:
 
 > Tracing tells you *what happened*. NovaFabric tells you whether a past run can be
