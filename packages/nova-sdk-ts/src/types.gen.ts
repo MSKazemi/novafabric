@@ -325,7 +325,7 @@ export interface paths {
          *     opaque v1 keyset cursor naming the page's last asset, so registrations
          *     between pages neither repeat nor skip a surviving asset. A non-empty
          *     cursor that fails strict decoding is a 400 ``invalid_cursor`` (it used to
-         *     restart silently at page one). Legacy ``{\"offset\": N}`` cursors are served
+         *     restart silently at page one). Legacy ``{"offset": N}`` cursors are served
          *     by the old path for one deprecation cycle (ADR-0188) with a
          *     ``Deprecation: true`` header. Cursors are not bound to the filters: reuse a
          *     cursor only with the ``asset_type``/``status`` it was issued under.
@@ -653,7 +653,7 @@ export interface paths {
          *     keyset cursor (``server/pagination.py``) with ``k = [null, node_id]`` —
          *     the first slot is unused because the order has one column; a v1 cursor
          *     whose first slot is non-null (e.g. a capsules cursor) is rejected.
-         *     Legacy ``{\"offset\": N}`` cursors are served for one deprecation cycle
+         *     Legacy ``{"offset": N}`` cursors are served for one deprecation cycle
          *     (ADR-0188) with a ``Deprecation: true`` header. ``total`` is present on
          *     the first page and on legacy pages only. A malformed cursor is a 400
          *     ``invalid_cursor`` (it used to restart silently at offset 0).
