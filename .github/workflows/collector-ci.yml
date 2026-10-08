@@ -21,7 +21,11 @@ env:
   # post-handshake), GO-2026-6218 (net/url resolvePath). All four are reported
   # by vuln.go.dev as fixed in 1.26.6; the collector's own code is not implicated
   # and golang.org/x/net is already v0.57.0 (>= the 0.55.0 fix).
-  GO_VERSION: "1.26.7"
+  # 1.26.9 (2026-10-09): GO-2026-6617 (HTTP/2 HPACK encoder race in net/http and
+  # golang.org/x/net, published 2026-10-08) is fixed only in stdlib 1.26.9 and
+  # x/net v0.60.0, and GO-2026-6603..6613 (net/http, crypto/tls, net/textproto)
+  # landed in 1.26.8/1.26.9; govulncheck on 1.26.7 reports them as reachable.
+  GO_VERSION: "1.26.9"
   GOPATH: ${{ github.workspace }}/.gopath
 
 jobs:

@@ -99,6 +99,13 @@ database**, not in application code: `FORCE ROW LEVEL SECURITY` with a
 `novafabric_app` role (no `BYPASSRLS`) and `novafabric_migrator`
 ([ADR-0040](../decisions.md),
 [ADR-0052](../decisions.md)).
+The policy holds only when the server connects as `novafabric_app` (or another
+role without `BYPASSRLS`). A Postgres superuser bypasses row-level security even
+under `FORCE`, so never point `NOVAFABRIC_METADATA_DSN` at a superuser. The app
+role is granted `SELECT, INSERT, UPDATE` on the tenant tables. Capsule deletion
+(`DELETE /v0/capsules/{run_id}`, `POST /v0/capsules/bulk-delete`) also needs `DELETE` on
+`runs`, `capsules` and `signatures`, which migration `v005` grants — run
+`nova db upgrade --backend postgres` after upgrading.
 A CI gate (`metadata_store_security_gate`) re-proves cross-tenant isolation on
 every change.
 

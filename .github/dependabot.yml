@@ -32,6 +32,30 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # The OpenTelemetry API/SDK pair is held by google-adk, not by us. uv.lock is
+      # ONE universal resolution over every extra, and novafabric[google-adk]
+      # (google-adk>=2.6.2) caps opentelemetry-api/-sdk at <=1.43 (2.7.0) and at
+      # <=1.42.1 (2.7.1 and later, incl. 2.11.0). Any newer OpenTelemetry is
+      # therefore unresolvable for the lock, so Dependabot's update job failed with
+      # `dependency_file_not_resolvable` (2026-10-08, otel 1.45.0 / 0.66b0) — and
+      # resolving 1.43 instead silently DOWNGRADES google-adk to 2.7.0.
+      # fastapi is held for the same reason: fastapi>=0.142 requires
+      # opentelemetry-api>=1.44.
+      # opentelemetry-proto is independent of this cap and keeps flowing.
+      #
+      # Drop these four entries when google-adk lifts its OpenTelemetry ceiling.
+      # Check with:  uv lock --dry-run -P opentelemetry-sdk -P fastapi
+      # — the cap is gone when that moves opentelemetry-sdk past 1.42.1 WITHOUT
+      # a "google-adk v2.x -> v2.7.0" downgrade line.
+      - dependency-name: "opentelemetry-api"
+        versions: [">=1.43"]
+      - dependency-name: "opentelemetry-sdk"
+        versions: [">=1.43"]
+      - dependency-name: "opentelemetry-semantic-conventions"
+        versions: [">=0.64b0"]
+      - dependency-name: "fastapi"
+        versions: [">=0.142"]
     open-pull-requests-limit: 10
 
   # GitHub Actions used by the workflows in .github/workflows/.
@@ -60,6 +84,15 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # examples/plugin-hook-reference takes novafabric from the working tree
+      # ([tool.uv.sources] novafabric = { path = "../..", editable = true }), so
+      # its version is whatever pyproject.toml at the root says. Dependabot treats
+      # it as a PyPI pin and tries `novafabric==<latest PyPI>`, which can never
+      # match the local path's version: the job failed with
+      # `dependency_file_not_resolvable` on 2026-10-08 (0.103.0 vs local 0.104.0).
+      # Refresh this lock with `uv lock` in that directory after a version bump.
+      - dependency-name: "novafabric"
     open-pull-requests-limit: 5
 
   # npm workspaces. Each directory gets its own PRs; the group applies within

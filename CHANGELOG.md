@@ -18,6 +18,19 @@ longer forwards the submitting shell's environment (ADR-0270).
 - **Locked `multidict` 6.7.1 → 6.9.1 and `werkzeug` 3.1.8 → 3.1.9**, clearing the two remaining
   MODERATE `pip-audit` findings (CVE-2026-104874, CVE-2026-102598); the gate now reports 0
   findings. `multidict` stays below 7.0 because `aiohttp` requires `multidict<7.0`.
+- **The three npm trees pass the `npm-audit` gate again.** New HIGH/CRITICAL advisories
+  (source-map-js, brace-expansion, compression, devalue, http-cache-semantics, proxy-addr,
+  sharp) turned the gate red on `main`; lockfile refreshes within the declared semver ranges
+  clear all of them. One new time-boxed waiver (expires 2026-11-04): GHSA-c475-qrg2-pj4r
+  (basic-ftp), reached only through the dev-only `@lhci/cli` chain in `ui/dashboard/`. The
+  newest `get-uri` still requires `basic-ftp` 5.x, so no upgrade reaches the fixed 6.2.2.
+- **Lockfile refresh within existing constraints** (`uv.lock`: 104 minor/patch bumps and 2 dropped transitives, all
+  stable releases, `pip-audit` 0 findings; `examples/plugin-hook-reference/uv.lock` re-locked
+  to the current `novafabric`). Majors held for their own PRs: `mcp` 2, `protobuf` 7,
+  `filelock` 4, `setuptools` 84. OpenTelemetry API/SDK stay at 1.42.1 and `fastapi` at
+  0.141.x because `google-adk` caps OpenTelemetry at <=1.42.1. `.github/dependabot.yml` now
+  ignores those versions, with a comment saying when to drop the rule, so the update job
+  stops failing on an unresolvable lock.
 - **Rule pack `gitleaks-core-v0` 0.7.0: AWS and GitHub credentials are detected.** ADR-0009
   names the gitleaks rule set, but the pack had no rule for either, so an AWS key pair or a
   GitHub token printed by a workload stayed verbatim in the capsule. New rules:
@@ -245,6 +258,19 @@ longer forwards the submitting shell's environment (ADR-0270).
   not resolve on the workload's `PATH`) instead of the raw `[Errno 2]` text, and the CLI prints
   it on the existing `Workload never started:` line. Capsule and exit code `127` unchanged.
 
+- **Server-mode `delete_run` could not run as the production application role.** ADR-0206
+  P2 added index deletes, but `novafabric_app` (NOBYPASSRLS) only ever had
+  `SELECT, INSERT, UPDATE`, so on a migrated database the delete failed with
+  `permission denied for table runs`. New Alembic migration `v005` grants `DELETE` on `runs`,
+  `capsules` and `signatures` only (`retention_policies` is unchanged; `downgrade` revokes
+  it). `PostgresMetadataStore.bootstrap()` now applies the same grants. The cross-tenant
+  delete test ran as the Postgres superuser, which bypasses row-level security. That made
+  it fail on `main` (`assert 1 == 0`) without testing the policy. It now switches to
+  `novafabric_app`, so the test checks RLS itself. Shipped callers always pass the
+  context's own tenant id, so no cross-tenant delete path existed.
+- **The TypeScript SDK's generated types were out of date with `api/openapi.yaml`**
+  (endpoint descriptions only). `packages/nova-sdk-ts/src/types.gen.ts` is regenerated, so
+  the SDK type-drift gate passes again.
 - **`go install` for the collector binaries could never work; the Go module now declares the
   path its code lives at.** `collector/go.mod` said `module github.com/novafabric/collector`,
   but that GitHub owner holds no such repository (the Go proxy answers 404), and fetching the
