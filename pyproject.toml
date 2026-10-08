@@ -118,7 +118,9 @@ scale = [
     # blake3 (Apache-2.0/CC0-1.0) — BLAKE3 digest for dual-object store (cap-003).
     "blake3>=0.4.1",
     # boto3 (Apache-2.0) — S3-API abstraction for NovaObjectStore (cap-009).
-    "boto3>=1.35.0",
+    # One boto3 floor in every extra/group: Dependabot cannot update differing
+    # declarations (tests/packaging_metadata/test_dependency_floors_agree.py).
+    "boto3>=1.43.10",
     # duckdb (MIT) — in-process store behind evidence_fabric/duckdb_accumulator.py
     # and evidence_fabric/rebuild.py.  Moved here from [project.dependencies] by
     # ADR-0222: every duckdb import site is already extra-gated code.
@@ -130,7 +132,9 @@ scale = [
 ]
 worm-s3 = [
     # boto3 (Apache-2.0) — Tier A under ADR-0024.
-    "boto3>=1.38",
+    # One boto3 floor in every extra/group: Dependabot cannot update differing
+    # declarations (tests/packaging_metadata/test_dependency_floors_agree.py).
+    "boto3>=1.43.10",
 ]
 worm-azure = [
     # azure-storage-blob (MIT) — Tier A under ADR-0024.
@@ -143,7 +147,9 @@ worm-gcs = [
 seal-aws = [
     # boto3 (Apache-2.0) — Tier A under ADR-0024.
     # AWS KMS backend for NovaSeal Cloud KMS dual-mode signing (B-7).
-    "boto3>=1.38.0",
+    # One boto3 floor in every extra/group: Dependabot cannot update differing
+    # declarations (tests/packaging_metadata/test_dependency_floors_agree.py).
+    "boto3>=1.43.10",
 ]
 seal-azure = [
     # azure-keyvault-keys (MIT) + azure-identity (MIT) — Tier A under ADR-0024.
@@ -300,6 +306,8 @@ google-adk = [
 bedrock-agentcore = [
     # boto3 (Apache-2.0) — AWS Bedrock AgentCore client wrapper (E-7).
     # Tier A under ADR-0024.
+    # One boto3 floor in every extra/group: Dependabot cannot update differing
+    # declarations (tests/packaging_metadata/test_dependency_floors_agree.py).
     "boto3>=1.43.10",
 ]
 a2a = [
@@ -428,7 +436,9 @@ dev = [
     "httpx>=0.28",
     # Phase 4 — Object Capsule Store testing
     # boto3 (Apache-2.0) — S3/MinIO/Ceph WORM adapter + conformance suite.
-    "boto3>=1.38",
+    # One boto3 floor in every extra/group: Dependabot cannot update differing
+    # declarations (tests/packaging_metadata/test_dependency_floors_agree.py).
+    "boto3>=1.43.10",
     # hypothesis (MPL-2.0) — property-based tests for chain invariants (FR-03).
     # MPL-2.0 is Tier A under ADR-0024 for dev dependencies.
     "hypothesis>=6.115",

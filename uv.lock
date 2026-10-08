@@ -3771,9 +3771,9 @@ requires-dist = [
     { name = "azure-storage-blob", marker = "extra == 'worm-azure'", specifier = ">=12.25" },
     { name = "blake3", marker = "extra == 'scale'", specifier = ">=0.4.1" },
     { name = "boto3", marker = "extra == 'bedrock-agentcore'", specifier = ">=1.43.10" },
-    { name = "boto3", marker = "extra == 'scale'", specifier = ">=1.35.0" },
-    { name = "boto3", marker = "extra == 'seal-aws'", specifier = ">=1.38.0" },
-    { name = "boto3", marker = "extra == 'worm-s3'", specifier = ">=1.38" },
+    { name = "boto3", marker = "extra == 'scale'", specifier = ">=1.43.10" },
+    { name = "boto3", marker = "extra == 'seal-aws'", specifier = ">=1.43.10" },
+    { name = "boto3", marker = "extra == 'worm-s3'", specifier = ">=1.43.10" },
     { name = "cachetools", marker = "extra == 'scale-kg'", specifier = ">=5.5" },
     { name = "clickhouse-connect", marker = "extra == 'clickhouse'", specifier = ">=0.8.0" },
     { name = "clickhouse-connect", marker = "extra == 'scale'", specifier = ">=0.8.0" },
@@ -3840,7 +3840,7 @@ provides-extras = ["saml", "scale", "worm-s3", "worm-azure", "worm-gcs", "seal-a
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "boto3", specifier = ">=1.38" },
+    { name = "boto3", specifier = ">=1.43.10" },
     { name = "clickhouse-connect", specifier = ">=0.8.0" },
     { name = "duckdb", specifier = ">=1.5.5" },
     { name = "fastapi", specifier = ">=0.115" },

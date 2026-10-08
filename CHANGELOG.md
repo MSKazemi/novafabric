@@ -154,6 +154,12 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Changed
 
+- **One `boto3` floor, `>=1.43.10`, in every extra and the `dev` group.** Five
+  declarations under four different floor strings (`>=1.35.0`, `>=1.38`, `>=1.38.0`,
+  `>=1.43.10`) made Dependabot fail with `Declaration not found for boto3!`, so boto3 got no
+  update PRs. The locked version (1.43.110) is unchanged; only the `uv.lock` metadata was
+  re-locked. A packaging test now requires a dependency declared in several places to use one
+  identical specifier, at or below the locked version.
 - **`nova diff` exit `1` now means only "found a difference" (behaviour change, ADR-0303).**
   A capsule ref that does not resolve, or a `name@version` asset ref that is not in the
   registry, exited `1` — the same code as `--assert-no-regressions` finding a difference — so a
@@ -242,6 +248,13 @@ longer forwards the submitting shell's environment (ADR-0270).
   schema-valid override never applied, not even to `nova replay --dry-run`. `allow: true`
   now re-executes the tool and `allow: false` refuses it; the legacy `action: replay|refuse`
   form is still read. Overrides still affect only the dry-run report, not the replayed process.
+- **The Google ADK concurrency test now checks its thread half.** The thread it starts raised
+  an unhandled `AttributeError` that pytest only warned about, so the test passed without the
+  thread assertion ever running. The cause was the test harness, not the adapter: the hook owner
+  finished first and its teardown removed the `Thread.start` scope propagation before the
+  participant sampled (the documented `scoped-truncated` degradation). Both invocations now
+  sample while both are live, thread exceptions are re-raised, and a separate test pins the
+  owner-finishes-first degradation.
 - **`nova diff name@version name@version` honours `--output-format`.** The asset-ref path
   always printed Rich text, so `--output-format json` gave a CI step output it could not parse
   and `github-annotation` gave no annotations. `json` now emits the document `nova asset diff
