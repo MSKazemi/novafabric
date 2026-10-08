@@ -221,7 +221,10 @@ capsule: the call and event streams, `env.lock`, `assets.jsonl`,
 `lineage.jsonl`, everything under `inputs/` and `outputs/`, and the manifest. A
 final pass rescans the finished capsule before it is digested and sealed. The
 rule pack matches known key formats (LLM providers, vector stores, AWS, GitHub,
-NovaFabric's own keys); a secret in a format it does not know is not detected. A capsule that lacks this
+NovaFabric's own keys); a secret in a format it does not know is not detected —
+for example PEM private keys, JWTs, passwords and connection-string credentials.
+The full list is in [what the scanner does not detect](architecture/run-capsule.md#what-the-scanner-detects-and-what-it-does-not),
+so read a clean proof as "scanned", not "secret-free". A capsule that lacks this
 proof is invalid to `nova validate` and cannot be exported as an Evidence
 Bundle — redaction is a precondition of trust, not an afterthought.
 

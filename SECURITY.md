@@ -109,6 +109,18 @@ STRIDE analysis in the project's internal threat model:
 If you find a way to make any disabled-by-default surface reachable without
 explicit opt-in, that is a vulnerability — please report it.
 
+**Capsule secret scanning is pattern-based.** Every file in a Run Capsule is
+scanned and matches are redacted before the capsule is digested and sealed, and
+`redaction-proof.json` records what was scanned and redacted. It does **not**
+prove that a capsule holds no secret: formats with no rule (PEM private keys,
+JWTs, passwords, connection-string credentials, Slack/Stripe/Google/Azure keys,
+an AWS secret key with no key name next to it, personal data) pass through. The
+full list is in
+[docs/architecture/run-capsule.md](docs/architecture/run-capsule.md#what-the-scanner-detects-and-what-it-does-not).
+A secret in a format the pack *claims* to detect that survives into a finished
+capsule is a vulnerability — please report it. A format on the "not detected"
+list is a feature request.
+
 ### Escape hatches — every safety default that an environment variable can turn off
 
 These exist so an operator can make a deliberate, auditable exception. They were

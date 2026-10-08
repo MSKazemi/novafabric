@@ -68,7 +68,9 @@ stages in order:
    command line is not written to disk. `lineage/_writer.py:LineageWriter` then
    writes `lineage.jsonl`, which is scanned and masked straight away, and the
    edges are indexed.
-7. **Residual pass and proof.** `SecretScannerV0.residual_scan` rescans every
+7. **Residual pass and proof.** If the event recorder dropped any events,
+   `capture-health.json` is written first, so it is rescanned and digested like
+   every other file. `SecretScannerV0.residual_scan` then rescans every
    file in the finished capsule except `capsule.yaml`, the proof and `.seal/`.
    That includes files written after step 5 (`replay.yaml`, the C2PA marker) and
    files a masker rewrote. A match is redacted and recorded like any other
@@ -85,7 +87,9 @@ stages in order:
 
 Steps 5–8 work today. Detection is rule-based (`gitleaks-core-v0`, pack 0.7.0),
 so a secret in a format no rule matches is not found. For example, a bare AWS
-secret access key is matched only when its key name is next to it.
+secret access key is matched only when its key name is next to it, and PEM
+private keys, JWTs and passwords are not matched at all. The full list:
+[what the scanner does not detect](run-capsule.md#what-the-scanner-detects-and-what-it-does-not).
 
 A failed workload still produces a complete capsule with `status: failure`. If a
 NovaFabric component fails, the failure is recorded and the workload continues.

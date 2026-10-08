@@ -738,6 +738,13 @@ class CaptureOrchestrator:
             )
             proof = _extend_masker_results(proof, _lf, _le)
 
+        # Surface any fail-open capture loss as evidence (capture-health.json,
+        # written only when events were actually dropped). It is written HERE,
+        # before the residual pass and the digest map, so it is scanned and bound
+        # like every other evidence file -- not left unbound after the seal (#10).
+        _health_drops = _event_recorder.drop_counts
+        _event_recorder.finalize_health()
+
         # ADR-0009 residual pass: the LAST write to any evidence file is done, so
         # rescan the whole finished capsule (late files such as replay.yaml and the
         # C2PA marker, and anything a masker rewrote) with the built-in rules, which
@@ -786,9 +793,15 @@ class CaptureOrchestrator:
             import sys as _sys
             print(f"[novafabric] ⚠ OpenLineage COMPLETE failed: {_ol_exc}", file=_sys.stderr)
 
-        # Surface any fail-open capture loss as evidence before teardown:
-        # writes capture-health.json only when events were actually dropped.
-        _event_recorder.finalize_health()
+        # capture-health.json was written before the digest map so it is bound;
+        # a drop after that point cannot be added without breaking the seal, so
+        # it is reported here instead of being lost silently.
+        if _event_recorder.drop_counts != _health_drops:
+            logger.warning(
+                "capture fail-open: events dropped after the evidence digests were "
+                "computed (run %s); they are not counted in capture-health.json",
+                run_id,
+            )
 
         # Clear the module-level recorder singleton now that the run is done —
         # but only if it is still ours. An unconditional clear here would blank

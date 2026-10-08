@@ -54,6 +54,19 @@ longer forwards the submitting shell's environment (ADR-0270).
   written) and each line of every text file under `inputs/` and `outputs/`. Binary and oversize
   files are not offered to maskers; the built-in scanner still covers them. The built-in rules
   run again after the maskers, so a masker cannot reintroduce a key-shaped string.
+- **`capture-health.json` is now scanned and bound by `evidence_digests`.** It was written
+  after the capsule was sealed, so it was the one capsule file that was neither rescanned nor
+  covered by the seal (`nova verify` listed it as not covered). It is now written before the
+  residual pass. A drop that happens after the digests are computed cannot be added without
+  breaking the seal, so it is logged as a warning instead.
+- **The docs now say what the secret scanner does not detect.** `docs/architecture/run-capsule.md`
+  lists the formats pack 0.7.0 misses: PEM private keys, JWTs and bearer tokens, passwords and
+  connection-string credentials, Slack/Stripe/Google/Azure keys, a bare AWS secret key, legacy
+  bare-UUID Pinecone keys, and personal data. A test checks that each listed format is really
+  not matched, so a new rule forces the list to be updated. `README.md` ("proof no secrets
+  leaked"), `examples/capsules/README.md`, `CITATION.cff` and `.zenodo.json`
+  ("secret-redacted") no longer present the redaction proof as proof that a capsule holds no
+  secret. `SECURITY.md` states the scanner's scope.
 - **Mocked replay no longer runs recorded MCP tools live** (ADR-0300). A mocked replay used
   to re-execute every tool — file writes, HTTP calls, MCP tools — even when the capsule held
   the result. MCP `ClientSession.call_tool` results are now served from the capsule, and an MCP

@@ -40,19 +40,20 @@ order. A failed run gets the same set of files.
 | 2 | `outputs/stdout.txt`, `outputs/stderr.txt` | Process output | orchestrator |
 | 2 | `outputs/<sha>.<ext>` | Media blobs, content-addressed | `capture/media.py` |
 | 3 | `env.lock` | Environment snapshot: `mode` (`deterministic` or `best-effort`), host, Python interpreter, installed packages | `capture/env.py:capture_environment` |
-| 4 | `redaction-proof.json` | The secret-scan proof (see below) | `capture/secrets.py:SecretScannerV0` |
-| 5 | `replay.yaml` | Replay policy (`schemas/replay-policy.schema.json`); capture writes a minimal policy, which you can extend | `capture/replay.py:minimal_replay_policy` |
-| 6 | `capsule.yaml` | The run manifest | orchestrator |
-| 7 | `lineage.jsonl` | Typed lineage edges for this run | `lineage/_writer.py:LineageWriter` |
-| 8 | `capsule.yaml` (rewritten) | The manifest again, now with `evidence_digests` | orchestrator, `_evidence_digests` |
-| 9 | `.seal/manifest.dsse`, `.seal/manifest.dsse.tsr`, `.seal/log-entry.json` | The seal, only when NovaSeal is configured | orchestrator, `_seal_capsule` |
+| 4 | `replay.yaml` | Replay policy (`schemas/replay-policy.schema.json`); capture writes a minimal policy, which you can extend | `capture/replay.py:minimal_replay_policy` |
+| 5 | `capsule.yaml` | The run manifest, redacted as a data structure before it is written | orchestrator |
+| 6 | `lineage.jsonl` | Typed lineage edges for this run | `lineage/_writer.py:LineageWriter` |
+| 7 | `capture-health.json` | Dropped-event counts, only when the recorder dropped events | `capture/event_recorder.py:EventRecorder.finalize_health` |
+| 8 | `redaction-proof.json` | The secret-scan proof (see below), written once after the residual pass | `capture/secrets.py:SecretScannerV0` |
+| 9 | `capsule.yaml` (rewritten) | The manifest again, now with `evidence_digests` | orchestrator, `_evidence_digests` |
+| 10 | `.seal/manifest.dsse`, `.seal/manifest.dsse.tsr`, `.seal/log-entry.json` | The seal, only when NovaSeal is configured | orchestrator, `_seal_capsule` |
 
 These files appear only in some runs:
 
 | Path | When |
 |---|---|
 | `network_events.jsonl`, `file_events.jsonl`, `human_approvals.jsonl` | When the event stream has at least one record (`capture/event_recorder.py`) |
-| `capture-health.json` | When the recorder had to drop events. Its absence means nothing was dropped. |
+| `capture-health.json` | When the recorder had to drop events. Its absence means nothing was dropped. Written before the residual pass, so it is scanned and listed in `evidence_digests`. |
 | `c2pa-manifest.json` | `nova capture --mark-provenance` |
 | `otel-genai-spans.json` | `nova capture --emit-otel-genai` |
 
@@ -119,6 +120,43 @@ manifest is checked again before it is sealed. The rule pack is `gitleaks-core-v
 
 `redaction-proof.json` is listed in `evidence_digests`, so a seal covers the proof
 along with everything else.
+
+### What the scanner detects, and what it does not
+
+The proof records what was scanned and what was redacted. It is **not** proof that
+a capsule contains no secret: detection is by pattern, so a secret in a format no
+rule knows passes through unchanged and the proof shows zero findings for it.
+
+**Detected** by `gitleaks-core-v0` 0.7.0 (18 rules, `capture/secrets.py:_RULES`):
+API keys with a known prefix for OpenAI, Anthropic, Hugging Face, Replicate,
+LangFuse, LangSmith, Weaviate, Qdrant and Pinecone (`pckey_`/`pcsk_`); Cohere,
+Together and Mistral keys by shape alone (a bare 40-character alphanumeric, 64-hex
+or 32-character alphanumeric token), which is also why those three rules never
+cause a binary file to be dropped; AWS access key IDs (`AKIA`, `ASIA`, `ABIA`, `ACCA`, `A3T…`); an AWS secret access
+key *when its key name is next to it* (`AWS_SECRET_ACCESS_KEY=…`,
+`"SecretAccessKey": "…"`); GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
+`github_pat_`); NovaFabric's own API keys and webhook secrets.
+
+**Not detected** by the default pack (checked against pack 0.7.0):
+
+- a bare 40-character AWS secret access key with no key name next to it (one
+  made only of letters and digits may still be caught, by accident, by the
+  Cohere shape rule; one containing `/` or `+` is not);
+- a legacy Pinecone key that is a bare UUID (indistinguishable from a run ID);
+- private keys in PEM form (`-----BEGIN … PRIVATE KEY-----`);
+- JWTs and generic `Authorization: Bearer …` tokens;
+- passwords, including `password=…` assignments and credentials inside a
+  connection string such as `postgres://user:pass@host/db`;
+- Slack, Stripe, Google Cloud / Google API, and Azure keys, and any other
+  provider whose prefix is not in the list above;
+- generic high-entropy strings (there is no entropy rule);
+- personal data such as email addresses, names or phone numbers. The opt-in
+  `novafabric-email` masker (ADR-0135, experimental) masks email addresses when
+  you configure it; nothing masks other personal data by default.
+
+Treat a capsule as **secret-scanned**, not as secret-free. If your workload can
+print credentials in a format above, add a masker for it or keep it out of the
+captured output.
 
 ## Parent and child capsules (prototype)
 

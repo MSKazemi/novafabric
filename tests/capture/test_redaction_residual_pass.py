@@ -330,6 +330,57 @@ def test_every_bound_file_is_a_scanned_target_with_its_final_hash(tmp_path: Path
     assert proof["residual_check"]["files_rescanned"] == len(manifest["evidence_digests"]) - 1
 
 
+def test_capture_health_report_is_scanned_and_bound_by_evidence_digests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """capture-health.json is evidence (it records fail-open event loss). It must be
+    written before the residual pass and the digest map, never after the seal --
+    otherwise it is the one capsule file that is neither scanned nor bound."""
+    from novafabric.capture.event_recorder import EventRecorder
+
+    monkeypatch.setattr(
+        EventRecorder, "drop_counts", property(lambda self: {"trace.jsonl": 2})
+    )
+    result = CaptureOrchestrator(base_dir=tmp_path / "runs").run(
+        command=[sys.executable, "-c", "print('ok')"]
+    )
+    capsule = result.capsule_dir
+    health = capsule / "capture-health.json"
+    assert health.is_file()
+    assert json.loads(health.read_text())["dropped_events"] == {"trace.jsonl": 2}
+
+    manifest = yaml.safe_load((capsule / "capsule.yaml").read_text())
+    assert "capture-health.json" in manifest["evidence_digests"]
+    _digest_map_matches_disk(capsule, manifest)
+    proof = json.loads((capsule / "redaction-proof.json").read_text())
+    _validate(proof)
+    after = {t["ref"]: t["hash_after_redaction"] for t in proof["targets"]}
+    assert after["capture-health.json"] == _sha(health.read_bytes())
+
+
+def test_drop_after_the_digests_is_logged_not_lost_silently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A drop after the digest map cannot enter the bound report without breaking the
+    seal, so it is reported as a warning rather than vanishing."""
+    from novafabric.capture.event_recorder import EventRecorder
+
+    calls: list[int] = []
+
+    def _drops(self: EventRecorder) -> dict[str, int]:
+        calls.append(1)
+        return {} if len(calls) == 1 else {"trace.jsonl": 1}
+
+    monkeypatch.setattr(EventRecorder, "drop_counts", property(_drops))
+    with caplog.at_level("WARNING", logger="novafabric.capture.orchestrator"):
+        result = CaptureOrchestrator(base_dir=tmp_path / "runs").run(
+            command=[sys.executable, "-c", "print('ok')"]
+        )
+    assert "after the evidence digests were computed" in caplog.text
+    manifest = yaml.safe_load((result.capsule_dir / "capsule.yaml").read_text())
+    _digest_map_matches_disk(result.capsule_dir, manifest)
+
+
 def test_secret_reaching_the_final_manifest_fails_closed_and_is_not_sealed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -17,7 +17,7 @@ nova capture python examples/minimal-agent-run/agent.py
 | `model-calls.jsonl` | LLM API calls (empty — no AI calls in this example) |
 | `tool-calls.jsonl` | Tool invocations (empty) |
 | `env.lock` | Environment snapshot: Python, packages, OS, hardware |
-| `redaction-proof.json` | Proof that no secrets appear in any artifact |
+| `redaction-proof.json` | Record of the secret scan: files scanned, before/after hashes, findings (never the secret itself). Pattern-based — not a proof that no secret is present |
 | `replay.yaml` | Replay policy |
 | `outputs/stdout.txt` | Agent stdout |
 | `inputs/`, `outputs/` | Input and output artifact directories |

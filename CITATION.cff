@@ -14,7 +14,7 @@ title: "NovaFabric: replayable, verifiable execution evidence for AI agents"
 abstract: >-
   NovaFabric is self-hosted, open-source replay and evidence infrastructure for
   AI agents and agentic systems. It captures agent executions as portable,
-  secret-redacted Run Capsules and provides replay, behavioral and structural
+  secret-scanned Run Capsules and provides replay, behavioral and structural
   diff, lineage, cryptographic provenance, assurance, and audit around those
   executions. The same capture layer can wrap general commands and runs in the
   user's own infrastructure, from local environments through Kubernetes to

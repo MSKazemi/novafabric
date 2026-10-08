@@ -189,7 +189,7 @@ This produces a ULID-named capsule directory:
   model-calls.jsonl     ← LLM API calls (OTel GenAI semconv)
   tool-calls.jsonl      ← tool invocations
   env.lock              ← full environment snapshot
-  redaction-proof.json  ← proof no secrets leaked
+  redaction-proof.json  ← record of the secret scan and its redactions
   replay.yaml           ← replay policy
   inputs/
   outputs/
