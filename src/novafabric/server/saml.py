@@ -182,7 +182,7 @@ class SamlConfig(BaseModel):
     #: Explicit opt-in to the experimental signxml-backed ACS (ADR-0138). Default
     #: False keeps the safe D5 refusal — the ACS never consumes an assertion. Even
     #: when True, a Security-Architect review remains a pre-production blocking
-    #: condition (CLAUDE.md); enabling it acknowledges the pre-review status.
+    #: condition (a standing project rule); enabling it acknowledges the pre-review status.
     experimental_acs_enabled: bool = False
 
     @field_validator("acs_url")

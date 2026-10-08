@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 # SCALE-ADR-001: consumer-side ULID dedup compensates for NATS JetStream's
 # at-least-once delivery (a message can be redelivered across separate
 # fetch() batches, e.g. after an ack is lost or a nak-timeout). Bounded FIFO
-# eviction (not an unbounded set) per CLAUDE.md "bounded queues, bounded
+# eviction (not an unbounded set) per the project rule "bounded queues, bounded
 # retries" — a long-running consumer must not leak memory over its lifetime.
 DEFAULT_DEDUP_CACHE_SIZE = 50_000
 

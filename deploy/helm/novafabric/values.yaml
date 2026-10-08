@@ -22,7 +22,7 @@ serviceAccount:
   name: ""
   annotations: {}
 
-# Pod- and container-level hardening. No-root by default (CLAUDE.md anti-pattern):
+# Pod- and container-level hardening. No-root by default (a standing project anti-pattern rule):
 # the app runs as uid/gid 1000 and writes only to the mounted data volume, whose
 # group ownership is set via fsGroup.
 podSecurityContext:

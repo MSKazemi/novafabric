@@ -81,7 +81,7 @@ jobs:
         # This was invisible until 2026-07-31: `tests/coverage/` shadowed the
         # `coverage` distribution, so pytest-cov failed to load and this job
         # went red before it ever reported a test result.  Matches the
-        # documented dev/release invocation in CLAUDE.md and CONTRIBUTING.md.
+        # documented dev/release invocation in CONTRIBUTING.md.
         run: uv sync --frozen --all-extras
 
       - name: Lint (ruff)

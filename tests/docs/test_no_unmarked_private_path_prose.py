@@ -89,8 +89,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 
-#: A `design/...` path written in prose or backticks.
-PRIVATE_PATH = re.compile(r"`?\bdesign/[A-Za-z0-9_./-]+")
+#: A `design/...` path written in prose or backticks — including the bare tree,
+#: "`architecture/cluster-scale.md` in `design/`", which a `+` quantifier missed
+#: (five ROADMAP rows sent readers there unmarked until 2026-10-09).
+PRIVATE_PATH = re.compile(r"`?\bdesign/[A-Za-z0-9_./-]*")
 
 #: Words that make the privacy explicit. Checked in a window around the match.
 MARKERS = ("private", "not published", "not part of this repository", "maintainers")
@@ -271,4 +273,63 @@ def test_no_publicly_tracked_file_names_a_private_path_without_saying_it_is_priv
         "be able to open. Say it is private, or point at the published "
         "counterpart (docs/decisions.md for an ADR, docs/architecture.md for "
         "design rationale):\n  " + "\n  ".join(offenders)
+    )
+
+
+#: The other private trees and files a public reader cannot open. ``design/`` is
+#: covered above with its own regex; these were the gap that let ROADMAP.md point
+#: readers at six ``.claude/plans/…`` files and shipped source cite ``CLAUDE.md``
+#: as the authority for a rule. The look-behind skips a path segment that merely
+#: *contains* one of these names (``…/worktrees/x/.claude/…`` inside a recorded
+#: ``executable_path`` is data, not an instruction to a reader).
+#:
+#: ``data/`` is private too but is deliberately not matched: the bare word is far
+#: too common in public paths (``src/novafabric/data/``, ``tests/fixtures/data/``)
+#: for a name match to mean anything.
+OTHER_PRIVATE_REF = re.compile(
+    r"(?<![A-Za-z0-9_./-])(?:\.claude/[A-Za-z0-9_./-]*|CLAUDE\.md|papers/[A-Za-z0-9_./-]*)"
+)
+
+#: The Claude Code plugin is a product: its docs may tell a *user* about the
+#: ``CLAUDE.md`` in the user's own project, which is not ours and not private.
+OTHER_EXEMPT_PREFIXES = (*EXEMPT_PREFIXES, "integrations/claude-plugin/")
+
+
+def test_the_other_private_tree_sweep_is_not_vacuous() -> None:
+    """The regex must still find the references that legitimately remain."""
+    hits = 0
+    for rel in _everything_public():
+        path = REPO / rel
+        if path.is_file():
+            hits += len(OTHER_PRIVATE_REF.findall(path.read_text("utf-8", errors="ignore")))
+    assert hits >= 5, hits  # .gitignore, .dockerignore, pyproject.toml, … name them
+
+
+def test_no_publicly_tracked_file_names_another_private_tree_without_saying_so() -> None:
+    """``.claude/``, ``CLAUDE.md`` and ``papers/`` — the same rule as ``design/``.
+
+    Issue #5's definition of done: no public doc tells a reader to consult a
+    document they cannot open. Naming one of these is allowed when the text says
+    it is private (an exclusion list, an explanation of the two-git layout); citing
+    it as the place to look, or as the authority for a rule, is not.
+    """
+    offenders: list[str] = []
+    for rel in _everything_public():
+        path = REPO / rel
+        if not path.is_file() or rel.startswith(OTHER_EXEMPT_PREFIXES):
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for match in OTHER_PRIVATE_REF.finditer(text):
+            start = max(0, match.start() - WINDOW)
+            context = text[start : match.end() + WINDOW].lower()
+            if any(marker in context for marker in MARKERS):
+                continue
+            line = text.count("\n", 0, match.start()) + 1
+            offenders.append(f"{rel}:{line}  {match.group(0)}")
+
+    assert not offenders, (
+        "publicly tracked files name a private path (.claude/, CLAUDE.md, papers/) "
+        "without saying it is private — a dead end for every reader of the public "
+        "repository. Inline what the reader needs, point at a public equivalent, "
+        "or say plainly that it is private:\n  " + "\n  ".join(offenders)
     )

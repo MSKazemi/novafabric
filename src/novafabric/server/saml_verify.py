@@ -32,7 +32,7 @@ Security posture (why this is safe to consume untrusted XML):
   rejected — the verifier never returns a partially-trusted view.
 
 Status: **experimental** (ADR-0138). A Security-Architect review remains a
-pre-production blocking condition (CLAUDE.md) before the ACS route is enabled in
+pre-production blocking condition (a standing project rule) before the ACS route is enabled in
 a production deployment.
 """
 

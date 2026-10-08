@@ -164,6 +164,17 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **Public files still sent readers to private `.claude/` and `CLAUDE.md` paths** (issue #5).
+  The prose guard covered only `design/`, so ROADMAP.md pointed at six `.claude/plans/…` and
+  `.claude/memory/…` files, five ROADMAP rows said "`architecture/cluster-scale.md` in
+  `design/`" (the guard's regex needed a character after the slash), the developer guide
+  told contributors to install hooks from `.claude/settings.json`, and ten source/deploy/CI
+  comments cited `CLAUDE.md` as the authority for a rule. Each now inlines what the reader
+  needs, points at a public equivalent (ADR-0021 in `docs/decisions.md`; the public
+  `scripts/hooks/` with a one-line `pre-push` install), or says plainly the material is
+  private. The guard now also matches the bare `design/` tree and sweeps every publicly
+  tracked file for unmarked `.claude/`, `CLAUDE.md` and `papers/` references.
+
 - **A capsule for a command that never started said "Command exited with code 127"** (issue
   #69). Nothing exited — the workload was never launched — so the evidence stated something
   false. The manifest's `error` block now records `type: WorkloadNotStarted` with the runner's

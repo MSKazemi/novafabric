@@ -8,7 +8,7 @@ contributors to read first.
 
 **The test is "is the target tracked by the public git", not "does the file
 exist".** Those differ precisely where it matters. This repository keeps one
-working tree and two gits: the public one excludes ``design/``, ``.claude/``,
+working tree and two gits: the public one excludes the private ``design/``, ``.claude/``,
 ``CLAUDE.md``, ``monetize/``, ``bench/``, ``site-config/`` and
 ``THREAT_MODEL.md``. All of those are present on a maintainer's disk, so an
 existence check passes locally and fails only for the reader the docs are for.

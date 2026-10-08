@@ -148,8 +148,9 @@ test-container:
 # selected by scripts/testsel.py from location and module name. ~17 s on a
 # one-package change, against ~4 min for the whole fast suite.
 #
-# This is what the Claude Code Stop hook runs automatically at the end of every
-# turn (.claude/settings.json), so in normal work nobody types it.
+# This is what scripts/hooks/stop-scoped-tests.sh runs automatically at the end
+# of every editor turn when that hook is wired in (the maintainers' local editor
+# configuration, not published), so in normal work nobody types it.
 test-direct:
 	./scripts/run-scoped-tests.sh direct
 

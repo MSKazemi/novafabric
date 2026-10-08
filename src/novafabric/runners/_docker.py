@@ -15,7 +15,7 @@ NovaFabric to a registry and a maintained base image, which is out
 of scope for v0.6.
 
 Anti-patterns explicitly forbidden by this runner (per ADR-0025
-§Anti-patterns and CLAUDE.md):
+§Anti-patterns and the project anti-pattern rules):
   - No privileged containers (``--privileged``).
   - No host-PID / host-network / host-IPC namespaces by default.
   - No mounting the docker socket into the container.

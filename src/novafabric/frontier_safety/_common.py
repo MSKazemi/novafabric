@@ -352,7 +352,7 @@ C4_INLINE_KEYS: frozenset[str] = frozenset(
 )
 
 #: Nesting bound for the extra-field walk. Recursion over caller-supplied data
-#: is bounded (CLAUDE.md code style); anything nested deeper than this is
+#: is bounded (a project code-style rule); anything nested deeper than this is
 #: rejected as a payload rather than walked.
 MAX_EXTRA_DEPTH = 8
 

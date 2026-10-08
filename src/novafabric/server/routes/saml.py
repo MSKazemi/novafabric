@@ -14,7 +14,7 @@ assertions — but **only** when the operator explicitly sets
 ``server.saml.experimental_acs_enabled: true``. Without that opt-in the endpoints
 still refuse with 501 and the ACS never parses the posted XML (the safe default).
 Even opted in, a Security-Architect review remains a pre-production blocking
-condition (CLAUDE.md). NovaFabric never consumes an assertion without a verified
+condition (a standing project rule). NovaFabric never consumes an assertion without a verified
 signature under an XXE-hardened parser.
 """
 

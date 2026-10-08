@@ -78,7 +78,7 @@ RUN WHL=$(ls dist/novafabric-*.whl) \
        "${WHL}[server,serve,clickhouse,lineage-kuzu,lineage-migration]" \
     && rm -rf dist/
 
-# Non-root by default (CLAUDE.md anti-pattern list; found 2026-09-04 as the
+# Non-root by default (a standing project anti-pattern rule; found 2026-09-04 as the
 # one gap in an otherwise-aligned chain: the Helm chart already pinned
 # runAsUser/runAsGroup/fsGroup 1000 while this image defined NO such user and
 # owned /data as root, so the chart's pods and this image disagreed about who

@@ -428,7 +428,6 @@ Goal: close all six asset lifecycle gaps; add dashboard compare shortcut.
 ## Shipped — v0.12.x Dashboard UX Improvements
 
 Goal: polish the 13-tab dashboard based on a full stress-test walkthrough.
-Detailed plans: `.claude/plans/dashboard-ux-improvements-v012.md`.
 
 | Track | Feature | Status |
 |---|---|---|
@@ -473,7 +472,7 @@ Detailed plans: `.claude/plans/dashboard-ux-improvements-v012.md`.
 
 ## Shipped — Regulated-Industries ADR Formalizations
 
-Goal: formalize the seven regulated-industries design decisions from the `design/`
+Goal: formalize the seven regulated-industries design decisions from the private `design/`
 SoA2Prod study as first-class ADRs in the main series. Status `Proposed` = design frozen,
 code not yet implemented unless noted.
 
@@ -500,7 +499,6 @@ ADR-0030 respectively; ADR-001 as ADR-0054.
 Goal: every shipped CLI capability and cluster-scale component has a dashboard UI or
 a clear, interactive placeholder with CLI guidance. Phase 1 shipped 2026-05-14
 (13→35 commands, Lineage query panel, InfraTab, enriched CaptureTab).
-Detailed plans: `.claude/plans/dashboard-capability-coverage.md`.
 
 | Track | Feature | Needs |
 |---|---|---|
@@ -523,7 +521,6 @@ Detailed plans: `.claude/plans/dashboard-capability-coverage.md`.
 
 Goal: dashboard works correctly under sustained write load and shows live experiment
 progress. **All items need state-of-the-art engineering research before implementation.**
-See `.claude/plans/dashboard-scale-v013.md` (to be written after research).
 
 | Track | Feature | Research needed |
 |---|---|---|
@@ -547,7 +544,6 @@ See `.claude/plans/dashboard-scale-v013.md` (to be written after research).
 Goal: after collecting many capsules, show an interactive map of agents, tools, models,
 compute nodes, and their communication patterns. Phase 5 + Phase 6 blockers now cleared.
 **Needs research:** WebGL rendering strategy, graph layout algorithms, LOD at 100K+ nodes.
-See `.claude/plans/topology-visualization-investigation.md`.
 
 | Track | Feature | Research needed |
 |---|---|---|
@@ -590,7 +586,7 @@ same v0.56.0 release. The live n1 Slurm `sacct` round-trip remains the only defe
 
 ## Known implementation gaps (2026-05-19 audit)
 
-Comprehensive audit of all 593 nova-design documents vs. v0.20.x. Full report in `.claude/plans/nova-design-gap-audit-2026-05-19.md`. Summary of actionable items:
+Comprehensive audit of all 593 nova-design documents vs. v0.20.x. The full report is a private maintainer note and is not published; the actionable items are summarised here:
 
 ### Tier A — Correctness ✅ ALL CLOSED (v0.22.0)
 
@@ -722,12 +718,12 @@ These are design intent only. No implementation scheduled.
 | eval-result schema freeze | After v1.0 Adopted status |
 | Compliance bundles (SOC 2 Type II, ISO 42001) | v1.x post-certification |
 | Redis / Kafka managed cloud hosting | Operator concern; NovaFabric is deploy-target agnostic |
-| Dashboard at planetary scale (1M workers / 100K nodes) | ClickHouse OLAP, graph sharding (JanusGraph/NebulaGraph), distributed evidence store (Ceph RGW) — see `.claude/memory/project_dashboard_planetary_scale_investigation.md` |
-| Agent lifecycle state machine (hot/warm/cold states, checkpoint_sequence) | `architecture/cluster-scale.md` in `design/` |
-| Cache architecture L1–L4 (node-local, Valkey distributed, cold archive) | `architecture/cluster-scale.md` in `design/` |
-| Cell-based fabric (cell scheduler, placement policy, nova rollout) | `architecture/cluster-scale.md` in `design/` |
-| Human impact ledger (`human_impact` capsule field, sampling policy) | `architecture/governance.md` in `design/` |
-| Jurisdiction policy (`jurisdiction` metadata, export_allowed enforcement) | `architecture/governance.md` in `design/` |
+| Dashboard at planetary scale (1M workers / 100K nodes) | ClickHouse OLAP, graph sharding (JanusGraph/NebulaGraph), distributed evidence store (Ceph RGW) |
+| Agent lifecycle state machine (hot/warm/cold states, checkpoint_sequence) | ADR-0021 (the detailed cluster-scale notes are private and not published) |
+| Cache architecture L1–L4 (node-local, Valkey distributed, cold archive) | ADR-0021 (the detailed cluster-scale notes are private and not published) |
+| Cell-based fabric (cell scheduler, placement policy, nova rollout) | ADR-0021 (the detailed cluster-scale notes are private and not published) |
+| Human impact ledger (`human_impact` capsule field, sampling policy) | ADR-0021 (the detailed governance notes are private and not published) |
+| Jurisdiction policy (`jurisdiction` metadata, export_allowed enforcement) | ADR-0021 (the detailed governance notes are private and not published) |
 
 ### Enterprise readiness (2026-07 program)
 
@@ -935,7 +931,7 @@ missing, four of them hard gates — draft schemas + fixtures, a **dashboard-mod
 delta** (`THREAT_MODEL.md` has one for server mode and none for the mode Helm defaults to),
 an ADR-0230 migration note, and per-ADR test plans. **Root cause worth recording: the cohort
 was written by checking "does the primitive exist?" rather than "what breaks downstream?", and
-took a `ROADMAP.md` label as fact without checking code — the exact failure `CLAUDE.md` warns
+took a `ROADMAP.md` label as fact without checking code — the exact failure the project's own working rules warn
 about.**
 
 **Pre-implementation gates (2026-08-06): 8 of 10 closed.** Draft schemas + fixtures (`52/52` verified, re-checkable by the maintainers via `design/spec/fixtures/verify_dashboard_fixtures.py`), a **dashboard-mode threat-model delta** (`nova serve` had shipped since v0.7 with none), a deployment-migration note, a test plan, and a delivery plan covering rollback, RFC-vs-PR, performance budgets, and doc surfaces. **7 of 12 ADRs require an RFC.** Two gates stay open and are *not* self-closeable: a **security review** of the authorization model (must be done by someone who did not design it) and a **`serve` OpenAPI contract** (~206 undocumented endpoints — deserves its own ADR, copying the conformance-test pattern ADR-0227 just established for `server/`).

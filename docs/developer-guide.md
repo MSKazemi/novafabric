@@ -177,8 +177,8 @@ make check-links   # every relative link in a public doc resolves
 
 `make check-links` is not a style gate. It rejects a link whose target is **not
 tracked by the public git**, which is a different question from whether the file
-exists — this repository keeps one working tree and two gits, so `design/`,
-`.claude/`, `CLAUDE.md` and `THREAT_MODEL.md` are all present on your disk and
+exists — the maintainers keep one working tree and two gits, so their private `design/`,
+`.claude/`, `CLAUDE.md` and `THREAT_MODEL.md` are present on a maintainer's disk and
 absent for every reader of the published repository. Checking existence passes
 locally and fails only for the person the docs are written for.
 
@@ -197,9 +197,14 @@ rung is defined by what it can prove and what it costs.
 | 3 | `make test-par` | the release gate — byte-for-byte CI's `unit` job, coverage ≥ 90% | ~5 min |
 | — | `make test-container` | the Docker tier alone | needs a daemon |
 
-**Tiers 0 and 2 run by themselves.** With the hooks in `.claude/settings.json` installed, a
-`PostToolUse` hook lints each edited file, a `Stop` hook runs tier 0b before a turn ends, and a
-`pre-push` hook runs tier 2 and refuses to push red. In normal work you type none of them.
+**Tiers 0 and 2 can run by themselves.** The three hook scripts are public, under
+`scripts/hooks/`: `lint-edited-file.sh` lints each edited file, `stop-scoped-tests.sh` runs tier
+0b once a batch of edits is done, and `pre-push-test-gate.sh` runs tier 2 and refuses to push red.
+The maintainers wire the first two into their editor tooling (a Claude Code `PostToolUse` and
+`Stop` hook — that local configuration is not part of this repository) and the third as the git
+`pre-push` hook. To get the same push gate, link it yourself:
+`ln -s ../../scripts/hooks/pre-push-test-gate.sh .git/hooks/pre-push`. Without any hook, run
+`make test-direct` while you work and `make test-gate` before you push.
 Design and rationale: ADR-0267.
 
 **Every tier is load-aware.** `-n auto` would otherwise claim *all* cores per run, and several

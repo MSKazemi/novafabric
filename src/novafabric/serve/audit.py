@@ -91,7 +91,7 @@ def _redact_state(value: Any) -> tuple[Any, list[str]]:
 
     This is the sharp edge of ADR-0231 D2: adding before/after state capture to an
     append-only, deliberately unrotated file is a direct route to writing secrets
-    to disk permanently. CLAUDE.md forbids logging *"secrets, tokens, prompts, or
+    to disk permanently. A standing project rule forbids logging *"secrets, tokens, prompts, or
     env vars outside the redacted capsule"*, so reusing the shipped ruleset —
     rather than hand-rolling a second one that drifts from it — is not optional.
 
