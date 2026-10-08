@@ -82,26 +82,68 @@ def test_interleaved_invocations_each_get_their_own_capsule(tmp_path: Path) -> N
     assert hooks.current_hook_owner() is None, "the owner token was never released"
 
 
+def _writer_name() -> str | None:
+    writer = get_current_writer(None)
+    return None if writer is None else str(writer.capsule_dir.name)
+
+
+def _writer_name_in_a_thread() -> str | None:
+    """Resolve the writer in a fresh ``threading.Thread``; re-raise its failure.
+
+    A bare ``Thread`` swallows its exception (pytest only warns), which is how
+    this test once passed with its thread half never running.
+    """
+    result: list[str | None] = []
+    errors: list[BaseException] = []
+
+    def body() -> None:
+        try:
+            result.append(_writer_name())
+        except BaseException as exc:  # noqa: BLE001 — re-raised in the caller
+            errors.append(exc)
+
+    t = threading.Thread(target=body)
+    t.start()
+    t.join(10)
+    assert not t.is_alive(), "the probe thread did not finish"
+    if errors:
+        raise errors[0]
+    assert len(result) == 1, "the probe thread produced no result"
+    return result[0]
+
+
 @pytest.mark.usefixtures("_fast_finalise")
 def test_concurrent_invocations_resolve_their_own_writer(tmp_path: Path) -> None:
     """Work done inside each invocation — in its task and in a thread it
-    starts — resolves that invocation's capsule writer."""
+    starts — resolves that invocation's capsule writer.
+
+    Both invocations sample while **both** are live. Without the barriers the
+    first one (the hook owner) can finish first, and its teardown removes the
+    patch layer — ``Thread.start`` scope propagation included — before the
+    second samples; that degradation is documented and pinned separately below.
+    """
     from novafabric.adapters.google_adk import NovaAdkPlugin
 
     plugin = NovaAdkPlugin(tmp_path)
-    seen: dict[str, set[str]] = {}
+    task_seen: dict[str, str | None] = {}
+    thread_seen: dict[str, str | None] = {}
+    both_bound, both_sampled = asyncio.Event(), asyncio.Event()
+    bound: set[str] = set()
+    sampled: set[str] = set()
 
     async def invocation(inv: str) -> None:
         ctx = _ctx(inv)
         await plugin.before_run_callback(invocation_context=ctx)
-        await asyncio.sleep(0.05)  # let the other invocation bind meanwhile
-        dirs = {get_current_writer(None).capsule_dir.name}
-        box: list[str] = []
-        t = threading.Thread(target=lambda: box.append(get_current_writer(None).capsule_dir.name))
-        t.start()
-        t.join(10)
-        dirs.update(box)
-        seen[inv] = dirs
+        bound.add(inv)
+        if len(bound) == 2:
+            both_bound.set()
+        await asyncio.wait_for(both_bound.wait(), 10)
+        task_seen[inv] = _writer_name()
+        thread_seen[inv] = _writer_name_in_a_thread()
+        sampled.add(inv)
+        if len(sampled) == 2:
+            both_sampled.set()
+        await asyncio.wait_for(both_sampled.wait(), 10)
         await plugin.after_run_callback(invocation_context=ctx)
 
     async def scenario() -> None:
@@ -110,7 +152,42 @@ def test_concurrent_invocations_resolve_their_own_writer(tmp_path: Path) -> None
     asyncio.run(scenario())
 
     by_inv = {m["metadata"]["adk_invocation_id"]: m["run_id"] for m in _manifests(tmp_path)}
-    assert seen == {inv: {run} for inv, run in by_inv.items()}, (seen, by_inv)
+    assert set(by_inv) == {"inv-a", "inv-b"}
+    assert by_inv["inv-a"] != by_inv["inv-b"]
+    assert task_seen == by_inv, ("task", task_seen, by_inv)
+    assert thread_seen == by_inv, ("thread", thread_seen, by_inv)
+
+
+@pytest.mark.usefixtures("_fast_finalise")
+def test_a_participant_outliving_the_owner_is_marked_truncated(tmp_path: Path) -> None:
+    """The documented degradation (ADR-0224 D3, ``scoped-truncated``).
+
+    When the hook owner finishes first, its teardown removes the patch layer
+    while the participant still runs. The participant keeps its task binding,
+    but a thread it starts afterwards is no longer carried into its scope and
+    resolves no writer — and its capsule says so instead of claiming full wire
+    capture.
+    """
+    from novafabric.adapters.google_adk import NovaAdkPlugin
+
+    plugin = NovaAdkPlugin(tmp_path)
+    a, b = _ctx("inv-a"), _ctx("inv-b")
+    seen: dict[str, str | None] = {}
+
+    async def scenario() -> None:
+        await plugin.before_run_callback(invocation_context=a)  # owner
+        await plugin.before_run_callback(invocation_context=b)  # participant
+        await plugin.after_run_callback(invocation_context=a)
+        seen["task"] = _writer_name()
+        seen["thread"] = _writer_name_in_a_thread()
+        await plugin.after_run_callback(invocation_context=b)
+
+    asyncio.run(scenario())
+
+    manifests = {m["metadata"]["adk_invocation_id"]: m for m in _manifests(tmp_path)}
+    assert seen == {"task": manifests["inv-b"]["run_id"], "thread": None}
+    assert manifests["inv-a"]["metadata"]["wire_capture"] == "installed-contended"
+    assert manifests["inv-b"]["metadata"]["wire_capture"] == "scoped-truncated"
 
 
 @pytest.mark.usefixtures("_fast_finalise")
