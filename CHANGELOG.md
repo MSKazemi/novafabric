@@ -11,6 +11,11 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Security
+
+- **Locked `urllib3` 2.7.0 → 2.8.0 and `pyjwt` 2.14.0 → 2.15.1**, clearing the two HIGH
+  `pip-audit` findings (PYSEC-2026-4175/4177) that blocked the gate (#128). No waiver added.
+
 ## [0.104.0] - 2026-10-08
 
 ### Security
