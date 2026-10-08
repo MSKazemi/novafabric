@@ -107,13 +107,16 @@ capsule paths or run IDs and compares:
 | Facet | How it matches | "Changed" means |
 |---|---|---|
 | Environment | Fixed keys from `env.lock`: Python version and interpreter, OS, architecture | Value differs |
-| Model calls | Paired by `parent_span_id` (`diff/_align.py`); unpaired calls count as added or removed | Request model or messages differ, or the response choices differ |
-| Tool calls | Paired by `(tool_name, arg_hash)` | `result` differs |
-| Outputs | Each file under `outputs/` | SHA-256 differs |
+| Model calls | `diff/_align.py`: a `parent_span_id` unique on both sides pairs exactly; the rest pair by sequence position, anchored on identical requests so an inserted or deleted call does not shift later pairs. Unpaired calls count as added or removed | Request model or messages differ, or the response choices differ |
+| Tool calls | Exact `(tool_name, arg_hash)` match, each call used once, then position among calls with the same tool name | `result` or `arguments` differ |
+| Outputs | Every regular file under `outputs/`, recursively, by capsule-relative path; symlinks skipped and never followed (the evidence-digest rule) | SHA-256 differs, or the path exists on one side only |
 
-The output format is `text`, `json` or `github-annotation`.
-`--assert-no-regressions` makes the command exit non-zero when the report has
-changes, which turns it into a CI gate. `nova diff` also accepts two
+The output format is `text`, `json` or `github-annotation`. Whether the report
+has any difference is one property, `DiffReport.has_changes` (a changed, added
+or removed entry in any section). `--assert-no-regressions` exits 1 on it,
+which turns the command into a CI gate; the `text` and `github-annotation`
+formatters read the same property, so an added- or removed-only diff is an
+`error` annotation, never a `notice`. `nova diff` also accepts two
 `name@version` asset references and diffs their specs.
 
 ## 5 · Audit: `nova verify`, `nova export-evidence`, `nova audit` (works today)

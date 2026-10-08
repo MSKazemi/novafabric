@@ -232,7 +232,9 @@ def _capsule_diff(
             else:
                 console.print(f"{cross}: {group_a} → {group_b}", markup=False)
             console.print("")
-        console.print(format_text(report))
+        # markup=False: output paths are workload-chosen file names, and Rich read
+        # ``outputs/[bold]x.txt`` as markup and printed ``outputs/x.txt``.
+        console.print(format_text(report), markup=False, highlight=False)
         if shape is not None:
             from novafabric.diff.graph_shape import format_graph_shape_text
 

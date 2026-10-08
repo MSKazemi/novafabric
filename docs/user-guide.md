@@ -646,8 +646,10 @@ Results land in `.novafabric/replays/<replay-ulid>/replay_result.yaml`. Use
 ### nova diff
 
 Structurally compare two Run Capsules. Aligned field-by-field: model calls
-(by span id), tool calls (by tool name + argument hash), environment, and
-output files (by content hash). This is what turns "it worked yesterday, fails
+(a span id unique on both sides, then sequence position anchored on identical
+requests), tool calls (by tool name + argument hash, then position), environment,
+and every file under `outputs/`, nested ones included (by capsule-relative path
+and content hash). This is what turns "it worked yesterday, fails
 today" into a precise, mechanical answer.
 
 ```bash
@@ -677,6 +679,10 @@ nova diff cap-a/ cap-b/ --assert-no-regressions
 nova diff cap-a/ cap-b/ --output-format json               # machine-readable
 nova diff cap-a/ cap-b/ --output-format github-annotation  # for PR checks
 ```
+
+`github-annotation` emits each difference as an `error` line — an added or
+removed call included — and a single `notice` when there is none: an `error`
+appears exactly when `--assert-no-regressions` would exit 1.
 
 **Asset spec diff.** If both arguments contain `@`, the command falls through
 to the asset registry diff (see [nova inspect](#nova-inspect)):

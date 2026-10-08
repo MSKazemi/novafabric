@@ -158,6 +158,63 @@ class TestToolCallCorpus:
         ]
 
 
+class TestEveryRecordUsedExactlyOnce:
+    """Acceptance: no B-side model/tool record is matched more than once.
+
+    The named cases above each check one shape; this checks the property itself
+    over many seeded shapes — repeated spans, repeated prompts, repeated identical
+    tool calls, mixed unique and shared spans — so a new alignment pass cannot
+    reintroduce reuse (or drop a record) in a shape nobody thought to name.
+    """
+
+    @staticmethod
+    def _assert_partition(pairs: list[tuple[Any, Any]], a: list[dict], b: list[dict]) -> None:
+        assert all(x is not None or y is not None for x, y in pairs)
+        lefts = [id(x) for x, _ in pairs if x is not None]
+        rights = [id(y) for _, y in pairs if y is not None]
+        assert sorted(lefts) == sorted(id(x) for x in a)
+        assert sorted(rights) == sorted(id(y) for y in b)
+
+    @pytest.mark.parametrize("seed", range(200))
+    def test_model_calls(self, seed: int) -> None:
+        import random
+
+        rng = random.Random(seed)
+
+        def side(tag: str) -> list[dict]:
+            return [
+                _mc(
+                    rng.choice("xyz"),
+                    model=rng.choice(["gpt-4o", "gpt-4o-mini"]),
+                    span=rng.choice([f"s{tag}", "s1", "s2", "s3"]),
+                    cid=f"{tag}{i}",
+                )
+                for i in range(rng.randint(0, 7))
+            ]
+
+        a, b = side("a"), side("b")
+        self._assert_partition(align_model_calls(a, b), a, b)
+
+    @pytest.mark.parametrize("seed", range(200))
+    def test_tool_calls(self, seed: int) -> None:
+        import random
+
+        rng = random.Random(seed)
+
+        def side(tag: str) -> list[dict]:
+            return [
+                {
+                    "tool_call_id": f"{tag}{i}",
+                    "tool_name": rng.choice(["ls", "search", "fetch"]),
+                    "arguments": {"q": rng.choice("pq")},
+                }
+                for i in range(rng.randint(0, 7))
+            ]
+
+        a, b = side("a"), side("b")
+        self._assert_partition(align_tool_calls(a, b), a, b)
+
+
 # ── the gate: "exits 1 on any change" (spec :21) ─────────────────────────────
 
 
@@ -253,4 +310,238 @@ def test_asset_ref_diff_honours_the_gate(monkeypatch: pytest.MonkeyPatch) -> Non
     assert result.exit_code == 1, result.output
     same = CliRunner().invoke(app, ["diff", "agent@1", "agent@1", "--assert-no-regressions"])
     assert same.exit_code == 0, same.output
+
+
+# ── corpus 11: added-only and removed-only runs ──────────────────────────────
+#
+# A diff whose ONLY differences are added or removed calls has changed_count == 0.
+# The gate already read DiffReport.has_changes; the GitHub annotations read
+# changed_count and so emitted such a diff as a mere ``notice``, and the text
+# formatter re-derived "any difference" on its own. Every surface now reads the
+# one property, so these cases pin each surface against it.
+
+
+def _gate(a: Path, b: Path, *extra: str) -> Any:
+    from novafabric.cli.main import app
+
+    return CliRunner().invoke(app, ["diff", str(a), str(b), *extra])
+
+
+def test_11_removed_only_run(tmp_path: Path) -> None:
+    from novafabric.diff._engine import DiffEngine
+    from novafabric.diff._format import format_github_annotations, format_text
+
+    a = _write_capsule(tmp_path, "run-a", _a("x", "y", "z"))
+    b = _write_capsule(tmp_path, "run-b", _b("x", "z"))
+    report = DiffEngine().compare(a, b)
+
+    assert (report.changed_count, report.added_count, report.removed_count) == (0, 0, 1)
+    assert report.has_changes
+    removed = [p for p in report.model_call_pairs if p.get("removed")]
+    assert [p["model_call_id_a"] for p in removed] == ["sa:y"]
+
+    ann = format_github_annotations(report)
+    assert ann.splitlines() == ["::error title=NovaFabric Diff::Model call removed"]
+    assert "No differences found." not in format_text(report)
+
+    assert _gate(a, b, "--assert-no-regressions").exit_code == 1
+    cli_ann = _gate(a, b, "--output-format", "github-annotation")
+    assert cli_ann.exit_code == 0, cli_ann.output
+    assert "::error title=NovaFabric Diff::Model call removed" in cli_ann.output
+    assert "::notice" not in cli_ann.output
+
+
+def test_11_added_only_run_is_annotated_as_error(tmp_path: Path) -> None:
+    from novafabric.diff._engine import DiffEngine
+    from novafabric.diff._format import format_github_annotations
+
+    a = _write_capsule(tmp_path, "run-a", _a("x"))
+    b = _write_capsule(tmp_path, "run-b", _b("x", "y"))
+    report = DiffEngine().compare(a, b)
+    assert (report.changed_count, report.added_count, report.removed_count) == (0, 1, 0)
+    assert format_github_annotations(report).splitlines() == [
+        "::error title=NovaFabric Diff::Model call added"
+    ]
+
+
+def test_11_removed_only_tool_call_is_annotated_as_error(tmp_path: Path) -> None:
+    from novafabric.diff._engine import DiffEngine
+    from novafabric.diff._format import format_github_annotations
+
+    a = _write_capsule(tmp_path, "run-a", _a("x"))
+    b = _write_capsule(tmp_path, "run-b", _b("x"))
+    (a / "tool-calls.jsonl").write_text(
+        json.dumps({"tool_call_id": "t1", "tool_name": "search", "arguments": {}}) + "\n"
+    )
+    report = DiffEngine().compare(a, b)
+    assert (report.changed_count, report.added_count, report.removed_count) == (0, 0, 1)
+    assert format_github_annotations(report).splitlines() == [
+        "::error title=NovaFabric Diff::Tool call removed: search"
+    ]
+    assert _gate(a, b, "--assert-no-regressions").exit_code == 1
+
+
+def test_identical_runs_annotate_one_notice(tmp_path: Path) -> None:
+    from novafabric.diff._engine import DiffEngine
+    from novafabric.diff._format import format_github_annotations, format_text
+
+    a = _write_capsule(tmp_path, "run-a", _a("x", "y"))
+    b = _write_capsule(tmp_path, "run-b", _b("x", "y"))
+    report = DiffEngine().compare(a, b)
+    assert not report.has_changes
+    assert format_github_annotations(report).splitlines() == [
+        "::notice title=NovaFabric Diff::No differences found."
+    ]
+    assert format_text(report).endswith("No differences found.")
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(lambda r: r.env_changes.append({"field": "host.os"}), id="env"),
+        pytest.param(lambda r: r.model_call_pairs.append({"changed": True}), id="model-changed"),
+        pytest.param(lambda r: r.model_call_pairs.append({"added": True}), id="model-added"),
+        pytest.param(lambda r: r.model_call_pairs.append({"removed": True}), id="model-removed"),
+        pytest.param(lambda r: r.tool_call_pairs.append({"changed": True}), id="tool-changed"),
+        pytest.param(lambda r: r.tool_call_pairs.append({"added": True}), id="tool-added"),
+        pytest.param(lambda r: r.tool_call_pairs.append({"removed": True}), id="tool-removed"),
+        pytest.param(lambda r: r.output_changes.append({"path": "outputs/x"}), id="output"),
+        pytest.param(lambda r: r.model_call_pairs.append({"changed": False}), id="unchanged"),
+    ],
+)
+def test_every_surface_agrees_with_has_changes(mutate: Any) -> None:
+    """One property defines "any difference"; text and annotations must agree with it."""
+    from novafabric.diff._format import format_github_annotations, format_text
+    from novafabric.diff._report import DiffReport
+
+    report = DiffReport(run_a_id="a", run_b_id="b")
+    mutate(report)
+    ann = format_github_annotations(report).splitlines()
+    text_says_none = format_text(report).endswith("No differences found.")
+    if report.has_changes:
+        assert ann and all(line.startswith("::error ") for line in ann), ann
+        assert not text_says_none
+    else:
+        assert ann == ["::notice title=NovaFabric Diff::No differences found."]
+        assert text_says_none
+
+
+# ── corpus 12: a nested output file changes ──────────────────────────────────
+#
+# _diff_outputs listed only outputs/'s immediate files, so a change under
+# outputs/reports/2026/summary.json was invisible to nova diff and its gate, while
+# the evidence digests (ADR-0251) hash that file recursively.
+
+
+def _nested(capsule: Path, rel: str, text: str) -> None:
+    target = capsule / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text)
+
+
+def test_12_nested_output_change_is_reported_and_gated(tmp_path: Path) -> None:
+    from novafabric.diff._engine import DiffEngine
+
+    a = _write_capsule(tmp_path, "run-a", _a("x"))
+    b = _write_capsule(tmp_path, "run-b", _b("x"))
+    _nested(a, "outputs/reports/2026/summary.json", '{"ok": true}')
+    _nested(b, "outputs/reports/2026/summary.json", '{"ok": false}')
+    _nested(a, "outputs/reports/same.txt", "same")
+    _nested(b, "outputs/reports/same.txt", "same")
+
+    report = DiffEngine().compare(a, b)
+    (change,) = report.output_changes
+    assert change["path"] == "outputs/reports/2026/summary.json"
+    assert change["before_hash"] and change["after_hash"]
+    assert change["before_hash"] != change["after_hash"]
+
+    assert _gate(a, b, "--assert-no-regressions").exit_code == 1
+    as_json = _gate(a, b, "--output-format", "json")
+    assert as_json.exit_code == 0, as_json.output
+    paths = [c["path"] for c in json.loads(as_json.output)["sections"]["outputs"]["changes"]]
+    assert paths == ["outputs/reports/2026/summary.json"]
+    ann = _gate(a, b, "--output-format", "github-annotation")
+    assert (
+        "::error title=NovaFabric Diff::Output changed: outputs/reports/2026/summary.json"
+        in ann.output
+    )
+
+
+def test_12_nested_output_added_and_removed(tmp_path: Path) -> None:
+    from novafabric.diff._engine import DiffEngine
+
+    a = _write_capsule(tmp_path, "run-a", _a("x"))
+    b = _write_capsule(tmp_path, "run-b", _b("x"))
+    _nested(a, "outputs/old/gone.txt", "bye")
+    _nested(b, "outputs/new/deep/born.txt", "hi")
+    changes = {c["path"]: c for c in DiffEngine().compare(a, b).output_changes}
+    assert set(changes) == {"outputs/new/deep/born.txt", "outputs/old/gone.txt"}
+    assert changes["outputs/old/gone.txt"]["after_hash"] is None
+    assert changes["outputs/new/deep/born.txt"]["before_hash"] is None
+
+
+def test_12_file_replaced_by_directory_of_same_name(tmp_path: Path) -> None:
+    from novafabric.diff._engine import DiffEngine
+
+    a = _write_capsule(tmp_path, "run-a", _a("x"))
+    b = _write_capsule(tmp_path, "run-b", _b("x"))
+    _nested(a, "outputs/result", "flat")
+    _nested(b, "outputs/result/part-0", "nested")
+    paths = sorted(c["path"] for c in DiffEngine().compare(a, b).output_changes)
+    assert paths == ["outputs/result", "outputs/result/part-0"]
+
+
+# ── output walking follows the evidence-digest symlink rules ─────────────────
+
+
+def _symlinked_capsule(root: Path, run_id: str, outside: Path) -> Path:
+    cap = _write_capsule(root, run_id, _a("x"))
+    _nested(cap, "outputs/top.txt", "t")
+    _nested(cap, "outputs/nested/deep/x.json", "{}")
+    (cap / "outputs" / "escape").symlink_to(outside, target_is_directory=True)
+    (cap / "outputs" / "inlink").symlink_to(cap / "outputs" / "nested")
+    (cap / "outputs" / "secret-link.txt").symlink_to(outside / "secret.txt")
+    return cap
+
+
+def test_output_walk_matches_the_evidence_digest_walk(tmp_path: Path) -> None:
+    """The diff must see exactly the outputs/ files that ADR-0251 seals — no more."""
+    from novafabric.capture.orchestrator import _evidence_digests
+    from novafabric.diff._engine import _output_files
+
+    outside = tmp_path / "outside"
+    _nested(outside, "secret.txt", "s3cret")
+    cap = _symlinked_capsule(tmp_path, "run-a", outside)
+
+    walked = set(_output_files(cap))
+    sealed = {k for k in _evidence_digests(cap) if k.startswith("outputs/")}
+    assert walked == sealed
+    assert walked == {"outputs/top.txt", "outputs/nested/deep/x.json"}
+
+
+def test_symlinks_out_of_the_capsule_are_never_followed(tmp_path: Path) -> None:
+    from novafabric.diff._engine import DiffEngine
+
+    out_a, out_b = tmp_path / "outside-a", tmp_path / "outside-b"
+    _nested(out_a, "secret.txt", "one")
+    _nested(out_b, "secret.txt", "two")
+    a = _symlinked_capsule(tmp_path, "run-a", out_a)
+    b = _symlinked_capsule(tmp_path, "run-b", out_b)
+    # The symlink targets differ in content; neither is capsule evidence.
+    assert DiffEngine().compare(a, b).output_changes == []
+
+
+def test_symlinked_outputs_dir_contributes_nothing(tmp_path: Path) -> None:
+    from novafabric.capture.orchestrator import _evidence_digests
+    from novafabric.diff._engine import DiffEngine, _output_files
+
+    outside = tmp_path / "elsewhere"
+    _nested(outside, "f.txt", "x")
+    a = _write_capsule(tmp_path, "run-a", _a("x"))
+    b = _write_capsule(tmp_path, "run-b", _b("x"))
+    (b / "outputs").rmdir()
+    (b / "outputs").symlink_to(outside, target_is_directory=True)
+    assert _output_files(b) == {}
+    assert not any(k.startswith("outputs/") for k in _evidence_digests(b))
+    assert DiffEngine().compare(a, b).output_changes == []
 

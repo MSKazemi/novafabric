@@ -16,6 +16,27 @@ longer forwards the submitting shell's environment (ADR-0270).
 - **Locked `urllib3` 2.7.0 → 2.8.0 and `pyjwt` 2.14.0 → 2.15.1**, clearing the two HIGH
   `pip-audit` findings (PYSEC-2026-4175/4177) that blocked the gate (#128). No waiver added.
 
+### Fixed
+
+- **`nova diff` compares nested output files.** Only the files directly under `outputs/` were
+  compared, so a change to `outputs/reports/summary.json` was invisible to the diff and to
+  `--assert-no-regressions`, although the sealed evidence digests hash it. Every regular file
+  under `outputs/` is now compared, keyed by its capsule-relative path, with the evidence-digest
+  walk rules: symlinks are skipped and never followed out of the capsule. Files are hashed in a
+  stream rather than read whole. **A CI gate that passed before may now fail** on runs whose
+  nested outputs differ.
+- **`nova diff --output-format github-annotation` reports an added- or removed-only diff as an
+  `error`.** The severity came from the changed count alone, so a diff whose only differences
+  were added or removed calls was emitted as a `notice` while `--assert-no-regressions` failed
+  on it. The annotations and the text output now read `DiffReport.has_changes`, the property the
+  gate uses. **Behaviour change** for workflows that key on annotation level. Annotation
+  messages are now escaped as `@actions/core` escapes them (`%`, CR, LF): a newline in an
+  output file name ended the annotation and started a second workflow command of the
+  workload's choosing.
+- **`nova diff` text output printed bracketed output paths wrong, or crashed.** Paths were
+  rendered as Rich markup: `outputs/[bold]x.txt` printed as `outputs/x.txt`, and a path
+  containing `[/b]` aborted the command with a markup error. Paths now print verbatim.
+
 ## [0.104.0] - 2026-10-08
 
 ### Security

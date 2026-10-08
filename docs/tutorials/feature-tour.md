@@ -184,7 +184,8 @@ output_score:   CHANGED — 0.85 → 0.62
 output_length:  CHANGED — 420 tokens → 310 tokens
 ```
 
-Wire it into CI to fail the build when outputs, the environment or paired model calls change:
+Wire it into CI to fail the build on any structural change — an output file (nested ones
+included), the environment, or a model or tool call that changed, appeared or disappeared:
 
 ```bash
 nova diff "${CAPS[0]}" "${CAPS[1]}" --assert-no-regressions   # exits 1 on change

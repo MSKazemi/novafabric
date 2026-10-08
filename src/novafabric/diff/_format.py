@@ -49,10 +49,9 @@ def format_text(report: DiffReport) -> str:
         for ch in report.output_changes:
             lines.append(f"  ~ {ch.get('path')}")
 
-    if not (
-        report.env_changes or changed_models or added_models or removed_models
-        or changed_tools or added_tools or removed_tools or report.output_changes
-    ):
+    # DiffReport.has_changes is the one definition of "any difference" — the
+    # --assert-no-regressions gate reads it too, so the two cannot disagree.
+    if not report.has_changes:
         lines.append("No differences found.")
 
     return "\n".join(lines)
@@ -62,39 +61,55 @@ def format_json(report: DiffReport) -> str:
     return json.dumps(report.as_dict(), indent=2)
 
 
-def format_github_annotations(report: DiffReport) -> str:
-    lines: list[str] = []
-    level = "error" if report.changed_count > 0 else "notice"
+def _annotation_data(message: str) -> str:
+    """Escape a workflow-command message the way ``@actions/core`` does.
 
-    if report.env_changes:
-        for ch in report.env_changes:
-            lines.append(
-                f"::{level} title=NovaFabric Diff::Environment field changed: "
-                f"{ch.get('field')} {ch.get('before')!r} → {ch.get('after')!r}"
-            )
+    Output paths, tool names and span ids come from the workload. A newline in one
+    (a legal file-name character) would end the annotation and start a second,
+    attacker-chosen workflow command on the next line.
+    """
+    return message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def format_github_annotations(report: DiffReport) -> str:
+    # Severity follows DiffReport.has_changes, the property the gate uses. It was
+    # derived from changed_count alone, so a diff whose only differences were
+    # added or removed calls was annotated as a mere ``notice``.
+    level = "error" if report.has_changes else "notice"
+    messages: list[str] = []
+
+    for ch in report.env_changes:
+        messages.append(
+            f"Environment field changed: "
+            f"{ch.get('field')} {ch.get('before')!r} → {ch.get('after')!r}"
+        )
 
     for p in report.model_call_pairs:
         span = p.get("span_id", "?")
         if p.get("changed"):
-            lines.append(f"::{level} title=NovaFabric Diff::Model call changed at span {span}")
+            messages.append(f"Model call changed at span {span}")
         elif p.get("added"):
-            lines.append(f"::{level} title=NovaFabric Diff::Model call added")
+            messages.append("Model call added")
         elif p.get("removed"):
-            lines.append(f"::{level} title=NovaFabric Diff::Model call removed")
+            messages.append("Model call removed")
 
     for p in report.tool_call_pairs:
         name = p.get("tool_name", "?")
         if p.get("changed"):
-            lines.append(f"::{level} title=NovaFabric Diff::Tool call changed: {name}")
+            messages.append(f"Tool call changed: {name}")
         elif p.get("added"):
-            lines.append(f"::{level} title=NovaFabric Diff::Tool call added: {name}")
+            messages.append(f"Tool call added: {name}")
         elif p.get("removed"):
-            lines.append(f"::{level} title=NovaFabric Diff::Tool call removed: {name}")
+            messages.append(f"Tool call removed: {name}")
 
     for ch in report.output_changes:
-        lines.append(f"::{level} title=NovaFabric Diff::Output changed: {ch.get('path')}")
+        messages.append(f"Output changed: {ch.get('path')}")
 
-    if not lines:
+    lines = [
+        f"::{level} title=NovaFabric Diff::{_annotation_data(m)}" for m in messages
+    ]
+
+    if not report.has_changes:
         lines.append("::notice title=NovaFabric Diff::No differences found.")
 
     return "\n".join(lines)

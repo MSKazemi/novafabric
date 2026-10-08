@@ -394,6 +394,7 @@ report = DiffEngine().compare(
 print(report.changed_count)  # int
 print(report.added_count)    # int
 print(report.removed_count)  # int
+print(report.has_changes)    # bool: any changed, added or removed entry
 print(report.as_dict())      # serialisable dict
 ```
 
@@ -402,13 +403,16 @@ print(report.as_dict())      # serialisable dict
 ```python
 import sys
 report = DiffEngine().compare(baseline_capsule, candidate_capsule)
-if report.changed_count or report.removed_count:
+if report.has_changes:
     print(report.as_dict())
-    sys.exit(1)   # fail the build on regression
+    sys.exit(1)   # fail the build on any structural change
 ```
 
-> The `nova diff --assert-no-regressions` CLI applies the same rule and exits
-> `1` on regression — reach for it directly in shell-based pipelines.
+> `has_changes` is the one definition of "any difference". The
+> `nova diff --assert-no-regressions` CLI exits `1` on it, and the text and
+> GitHub-annotation formatters read it too — reach for the CLI directly in
+> shell-based pipelines. Gating on `changed_count` alone misses a call that
+> was added or removed.
 
 ### `DiffReport`
 
@@ -428,6 +432,8 @@ class DiffReport:
     def added_count(self) -> int: ...
     @property
     def removed_count(self) -> int: ...
+    @property
+    def has_changes(self) -> bool: ...
     def as_dict(self) -> dict: ...
     def write(self, output_path: Path) -> None: ...
 ```

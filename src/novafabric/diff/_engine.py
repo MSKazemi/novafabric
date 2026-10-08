@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +28,35 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 def _file_hash(path: Path) -> str:
     if not path.exists():
         return ""
-    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    # O_NOFOLLOW: a file swapped for a symlink after the walk is refused, not
+    # followed out of the capsule. Streamed, because an output can be large.
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    fd = os.open(path, flags)
+    with os.fdopen(fd, "rb") as fh:
+        return "sha256:" + hashlib.file_digest(fh, "sha256").hexdigest()
+
+
+def _output_files(capsule: Path) -> dict[str, Path]:
+    """Every regular file under ``outputs/``, keyed by capsule-relative POSIX path.
+
+    Walks with the same rules as the ADR-0251 evidence digests
+    (``capture/orchestrator.py:_evidence_digests``, re-checked by ``nova verify``):
+    recursive, regular files only, and a symlink is never followed. A symlinked
+    file is skipped and a symlinked directory is not descended (``Path.rglob``
+    does not recurse into one), so nothing outside the capsule is read — a
+    workload that leaves ``outputs/x -> /etc`` cannot make the diff hash ``/etc``.
+    An ``outputs`` that is itself a symlink contributes nothing, as it contributes
+    nothing to the evidence digests. ``tests/test_diff_alignment_corpus.py`` pins
+    the walked set against ``_evidence_digests`` so the two cannot drift.
+    """
+    root = capsule / "outputs"
+    if root.is_symlink() or not root.is_dir():
+        return {}
+    return {
+        path.relative_to(capsule).as_posix(): path
+        for path in root.rglob("*")
+        if path.is_file() and not path.is_symlink()
+    }
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -161,18 +190,14 @@ class DiffEngine:
     def _diff_outputs(
         self, capsule_a: Path, capsule_b: Path, report: DiffReport
     ) -> None:
-        dir_a = capsule_a / "outputs"
-        dir_b = capsule_b / "outputs"
-        # Only compare files — a subdirectory under outputs/ would make
-        # _file_hash().read_bytes() raise IsADirectoryError and abort the diff.
-        names_a = {p.name for p in dir_a.iterdir() if p.is_file()} if dir_a.exists() else set()
-        names_b = {p.name for p in dir_b.iterdir() if p.is_file()} if dir_b.exists() else set()
-        for name in sorted(names_a | names_b):
-            h_a = _file_hash(dir_a / name)
-            h_b = _file_hash(dir_b / name)
+        files_a = _output_files(capsule_a)
+        files_b = _output_files(capsule_b)
+        for rel in sorted(files_a.keys() | files_b.keys()):
+            h_a = _file_hash(files_a[rel]) if rel in files_a else ""
+            h_b = _file_hash(files_b[rel]) if rel in files_b else ""
             if h_a != h_b:
                 report.output_changes.append({
-                    "path": f"outputs/{name}",
+                    "path": rel,
                     "before_hash": h_a or None,
                     "after_hash": h_b or None,
                 })

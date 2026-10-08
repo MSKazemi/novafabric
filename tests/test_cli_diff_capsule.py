@@ -81,6 +81,55 @@ def test_github_annotation_format(tmp_path: Path) -> None:
     assert "::" in result.output
 
 
+def test_text_output_prints_bracketed_output_paths_verbatim(tmp_path: Path) -> None:
+    """Output file names are workload-chosen; Rich must not read them as markup.
+
+    ``outputs/[bold]x.txt`` was printed as ``outputs/x.txt`` — a path that does not
+    exist — and a nested ``outputs/[/b]`` (a ``[`` directory) is a closing tag with
+    no opening one, which Rich rejects.
+    """
+    cap_a = _make_capsule(tmp_path, "a", "RUNA")
+    cap_b = _make_capsule(tmp_path, "b", "RUNB")
+    for cap, text in ((cap_a, "1"), (cap_b, "2")):
+        (cap / "outputs" / "[bold]x.txt").write_text(text)
+        (cap / "outputs" / "[").mkdir()
+        (cap / "outputs" / "[" / "b]").write_text(text)
+    result = runner.invoke(app, ["diff", str(cap_a), str(cap_b)])
+    assert result.exit_code == 0, result.output
+    assert "~ outputs/[bold]x.txt" in result.output
+    assert "~ outputs/[/b]" in result.output
+
+
+def test_removed_only_annotation_is_an_error_not_a_notice(tmp_path: Path) -> None:
+    cap_a = _make_capsule(tmp_path, "a", "RUNA")
+    cap_b = _make_capsule(tmp_path, "b", "RUNB")
+    (cap_a / "tool-calls.jsonl").write_text(
+        json.dumps({"tool_call_id": "T1", "tool_name": "search", "arguments": {}}) + "\n"
+    )
+    result = runner.invoke(
+        app, ["diff", str(cap_a), str(cap_b), "--output-format", "github-annotation"]
+    )
+    assert result.exit_code == 0, result.output
+    assert result.output.strip().splitlines() == [
+        "::error title=NovaFabric Diff::Tool call removed: search"
+    ]
+
+
+def test_annotation_escapes_a_newline_in_an_output_path(tmp_path: Path) -> None:
+    """A newline is a legal file-name character; unescaped, it starts a new
+    workflow command chosen by the workload (here a forged ``::notice``)."""
+    cap_a = _make_capsule(tmp_path, "a", "RUNA")
+    cap_b = _make_capsule(tmp_path, "b", "RUNB")
+    (cap_b / "outputs" / "x\n::notice::all clear 100%").write_text("injected")
+    result = runner.invoke(
+        app, ["diff", str(cap_a), str(cap_b), "--output-format", "github-annotation"]
+    )
+    assert result.exit_code == 0, result.output
+    assert result.output.strip().splitlines() == [
+        "::error title=NovaFabric Diff::Output changed: outputs/x%0A::notice::all clear 100%25"
+    ]
+
+
 def test_invalid_capsule_path_exits_1(tmp_path: Path) -> None:
     cap_a = _make_capsule(tmp_path, "a", "RUNA")
     result = runner.invoke(app, ["diff", str(cap_a), str(tmp_path / "no-such-dir")])

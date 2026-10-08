@@ -1220,8 +1220,19 @@ found changes (checked first), or `--assert-same-shape` found a shape change; `2
 `--assert-same-shape` could not build a graph for either capsule (fail closed). Without
 `--graph-shape`/`--assert-same-shape` the output is byte-identical to earlier releases.
 
-Diff sections: environment (Python, OS), model calls (aligned by span_id), tool calls
-(aligned by tool_name + arg hash), output files (by hash).
+Diff sections: environment (Python, OS), model calls (a `parent_span_id` unique on both
+sides first, then sequence position anchored on identical requests), tool calls (exact
+`tool_name` + argument hash, each call used once, then position with the same tool name),
+and output files — every regular file under `outputs/`, recursively, keyed by its
+capsule-relative path (`outputs/reports/summary.json`) and compared by SHA-256. Symlinks under
+`outputs/` are skipped and never followed, the same rule the sealed evidence digests use.
+
+"Any difference" has one definition — a changed, added or removed entry in any section — and
+every surface uses it: `--assert-no-regressions` exits 1 on it, the `text` output prints
+`No differences found.` only without it, and `github-annotation` emits every line at
+`error` level when it holds (an added- or removed-only diff included) and a single `notice`
+when it does not. Annotation messages escape `%`, CR and LF (`%25`, `%0D`, `%0A`), so a
+workload-chosen file name or tool name cannot start a second workflow command.
 
 ---
 
