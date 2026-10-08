@@ -192,12 +192,33 @@ longer forwards the submitting shell's environment (ADR-0270).
   field, or one `::notice`. A key present on one side only is now reported as added or removed
   even when its value is `null` (it compared equal to a missing key), and `text` prints spec
   keys and values verbatim instead of reading `[...]` in them as Rich markup (#11).
+- **Streaming calls through the LlamaIndex and Pydantic AI adapters are captured for the
+  whole stream** (issues #1, #2 follow-up; experimental). Pydantic AI `Agent.run_stream`
+  and `Agent.iter` were not captured at all; they are now patched, and the capsule spans the
+  `async with` block. LlamaIndex `stream_chat` / `astream_chat` are patched alongside
+  `chat`, and a streaming response from `query` / `aquery` (`streaming=True`) keeps its
+  capsule open until the stream ends. A stream that raises is recorded as `failure`; one
+  closed early, dropped unread, or cancelled is recorded as `status: partial` with
+  `metadata.partial_reason` (`abandoned` / `cancelled`) — a value the run-capsule schema
+  already allowed but no adapter wrote. A cancelled Pydantic AI `run` was recorded as
+  `success`; it is now `partial`. Nested calls made while a stream is produced record into
+  the open capsule. Chat streams close when LlamaIndex's own history writer has drained the
+  model stream, which it does even if the caller stops reading, so they record the
+  completed call. Also fixed: the `WorkflowHandler` fix below only recognised the
+  `asyncio.Future` handler of llama-index-workflows 1.x — on the 2.x handler that current
+  `llama-index-core` installs, agent and workflow runs were still captured as an empty,
+  successful capsule; both shapes are now handled. Checked against the real packages
+  (pydantic-ai-slim 2.54.0, llama-index-core 0.14.25, llama-index-workflows 2.25.0) in
+  `tests/adapters/test_streaming_real_frameworks.py`, which skips when they are absent, as
+  in CI; the always-on tests use fakes shaped from those packages' source.
+
 - **Two framework adapters wrote capsules that missed the run** (issues #1, #3 follow-up).
   LlamaIndex: an agent's `run` returns a `WorkflowHandler` and does its work when awaited,
   but the adapter finished the capsule as soon as `run` returned — an empty, successful
   capsule, with the wire hooks released before the first model call. It now finishes from
-  the handler's completion (recording a raised or cancelled workflow as a failure), also
-  patches the async twins `aquery`/`achat`, and guards against nested calls. Haystack 2.x:
+  the handler's completion (recording a raised workflow as a failure, a cancelled one as
+  `partial`), also patches the async twins `aquery`/`achat`, and guards against nested
+  calls. Haystack 2.x:
   `AsyncPipeline.run` drives `run_async`, and both are patched, so one call opened two
   capsules and the inner one took the hooks; a re-entrancy guard (as in the Pydantic AI
   adapter) now keeps it to one. New tests also run all three adapters against the real

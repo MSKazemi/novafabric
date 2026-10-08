@@ -9523,12 +9523,36 @@ records which one it patched as `metadata.entry_point`. Override with `method=`.
 
 When the detected entry point has an async twin (`aquery` for `query`, `achat` for
 `chat`), that is patched too, so async callers are captured. An agent's `run`
-(`FunctionAgent`, `AgentWorkflow`, …) returns a `WorkflowHandler` and does its work
-when the handler is awaited, so the capsule is finished from the handler's
-completion, not when `run` returns — it covers the whole workflow and records a
-failure if the workflow raises or is cancelled. A nested call (an `aquery` reached
-from inside a wrapped run) records into the capsule already open rather than
-opening a second one.
+(`FunctionAgent`, `AgentWorkflow`, any `Workflow`) returns a `WorkflowHandler` and does
+its work in a background task, so the capsule is finished when that run settles, not
+when `run` returns — it covers the whole workflow, whether you `await handler` or read
+`handler.stream_events()`. This works for both handler shapes: the `asyncio.Future`
+of llama-index-workflows 1.x and the plain awaitable of 2.x (the one current
+`llama-index-core` installs). A nested call (an `aquery` reached from inside a wrapped
+run) records into the capsule already open rather than opening a second one.
+
+**Streaming (experimental).** A chat engine's `stream_chat` and `astream_chat` are
+patched alongside `chat`; a query engine built with `streaming=True` streams from
+`query` / `aquery` itself. The capsule stays open until the stream ends, and its
+`status` says how it ended:
+
+| What happened | `status` | `metadata.partial_reason` |
+|---|---|---|
+| Query-engine stream (`response_gen`) read to the end | `success` | — |
+| Stream raised mid-way (the exception still reaches you) | `failure` | — |
+| Query-engine stream closed early, or the response dropped unread | `partial` | `abandoned` |
+| Consumer task cancelled mid-stream; workflow cancelled (`cancel_run()`, or the event loop closed before it finished) | `partial` | `cancelled` |
+| Workflow raised | `failure` | — |
+
+Recorded differently from what you might expect: for **chat** streams, LlamaIndex's own
+background writer (a thread for `stream_chat`, a task for `astream_chat`) drains the
+model stream into chat history whether or not you read `response_gen`, so the capsule
+closes when that writer finishes and records `success` (or `failure` if the stream
+raised) even if you stopped reading early — the model call did run to completion.
+Abandoning `stream_events()` does not end a workflow either: the capsule follows the
+run, not the event stream. A call made while a stream is being produced (a
+sub-question engine queried from inside the token generator, say) records into the
+open capsule.
 
 Optional: `run_name=` (defaults to the class name), `data_dir=`.
 
@@ -9544,11 +9568,36 @@ agent = wrap_agent(agent, run_name="support-bot")
 result = agent.run_sync("Where is my order?")
 ```
 
-Both `Agent.run` (async, the primary API) and `Agent.run_sync` are patched. Wrapping only
-`run_sync` would silently capture nothing for async callers; wrapping only `run` would
-**double-count**, because `run_sync` drives `run` internally. A re-entrancy guard is what
-keeps one `run_sync` call producing one capsule rather than two — without it the inner
-capsule also steals the wire hooks from the outer.
+`Agent.run` (async, the primary API), `Agent.run_sync`, and the streaming entry points
+`Agent.run_stream` and `Agent.iter` are patched. Wrapping only `run_sync` would silently
+capture nothing for async callers; wrapping only `run` would **double-count**, because
+`run_sync` drives `run` internally. A re-entrancy guard is what keeps one `run_sync` call
+producing one capsule rather than two — without it the inner capsule also steals the wire
+hooks from the outer. The same guard makes `run` and `run_stream` (which drive `iter`)
+and `run_stream_sync` (which drives `run_stream`) one capsule each, owned by the
+outermost call.
+
+**Streaming (experimental).** `run_stream` and `iter` are `async with` context managers:
+the model calls happen inside your block. The capsule opens when the block is entered
+and closes when it exits:
+
+```python
+async with agent.run_stream("Where is my order?") as response:
+    async for text in response.stream_text():
+        print(text)
+```
+
+| What happened | `status` | `metadata.partial_reason` |
+|---|---|---|
+| `run_stream` output read to the end (`get_output`, `stream_text`, `stream_output`, …); `iter` reached its `End` node | `success` | — |
+| The run or your block raised (the exception still propagates) | `failure` | — |
+| You left the block before the output was fully read, or broke out of `iter` before `End` | `partial` | `abandoned` |
+| The run was cancelled (e.g. a `run_stream_events` consumer that stopped early) | `partial` | `cancelled` |
+
+A call made inside the block (another `agent.run`, say) records into the open capsule.
+Not patched directly: `run_stream_sync` and `run_stream_events` — they are captured
+through the `run_stream` and `run` they drive, so their capsules carry
+`entry_point: run_stream` / `run`.
 
 Top-level alias: `from novafabric.adapters import wrap_pydantic_ai`
 

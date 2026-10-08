@@ -75,6 +75,9 @@ class AdapterCapture:
     tags: dict[str, str] = field(default_factory=dict)
     error: dict[str, Any] | None = None
     exit_code: int = 0
+    #: Why the run stopped before it finished, when it did — a stream the caller
+    #: abandoned, or a run cancelled mid-flight. Sets ``status: partial``.
+    partial_reason: str | None = None
 
     def fail(self, exc: BaseException) -> None:
         """Record *exc* as the run's failure. Never swallows it."""
@@ -84,6 +87,16 @@ class AdapterCapture:
             "message": str(exc),
             "traceback_ref": None,
         }
+
+    def mark_partial(self, reason: str) -> None:
+        """Record that the run was interrupted before it finished.
+
+        The schema's ``partial`` status exists for exactly this: a streaming
+        run the caller stopped reading, or one cancelled before it completed.
+        A recorded failure wins — an error is the stronger, truer statement.
+        """
+        if self.error is None:
+            self.partial_reason = reason
 
     def finish(self) -> None:
         """Release the hooks and write the capsule. Safe to call in ``finally``."""
@@ -98,8 +111,15 @@ class AdapterCapture:
 
         finished_at = _now()
         duration_ms = int((time.monotonic() - self.t0) * 1000)
-        status = "success" if self.exit_code == 0 else "failure"
+        if self.exit_code != 0:
+            status = "failure"
+        elif self.partial_reason is not None:
+            status = "partial"
+        else:
+            status = "success"
         tags = {**self.tags, "framework": self.framework, "wire_capture": wire_state}
+        if status == "partial" and self.partial_reason is not None:
+            tags["partial_reason"] = self.partial_reason
 
         self.writer.append_trace_span({
             "span_id": self.root_span_id,

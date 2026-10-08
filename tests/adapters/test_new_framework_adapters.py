@@ -9,7 +9,11 @@ capsule that would fail ``nova validate`` fails here first.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import dataclasses
+import gc
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -519,3 +523,965 @@ def test_real_hooks_are_claimed_for_the_call_and_released_after(
     manifest = _sole_manifest(tmp_path)
     assert manifest["metadata"]["wire_capture"] == "installed"
     jsonschema.validate(manifest, _packaged_capsule_schema())
+
+
+# --------------------------------------------------------------------------
+# Streaming (issues #1, #2 follow-up): the capsule spans the stream
+# --------------------------------------------------------------------------
+#
+# Neither framework is installed here, so the fakes below copy the *shape* of
+# the real objects, read from the published wheels (pydantic-ai-slim 2.54.0,
+# llama-index-core 0.14.25, llama-index-workflows 2.25.0, 2.14.0 and 1.3.0):
+#
+# * Pydantic AI ``run_stream`` / ``iter`` are ``@asynccontextmanager`` methods;
+#   ``run`` and ``run_stream`` drive ``self.iter`` internally. A
+#   ``StreamedRunResult`` sets ``is_complete`` once its output is read to the
+#   end; an ``AgentRun`` has ``result`` only once the graph reached ``End``.
+# * LlamaIndex ``StreamingResponse`` / ``AsyncStreamingResponse`` are
+#   dataclasses whose ``response_gen`` *field* is the model stream.
+#   ``StreamingAgentChatResponse`` drains the model stream in its own
+#   ``write_response_to_history_thread`` (sync) or
+#   ``awrite_response_to_history_task`` (async), whether or not the caller
+#   reads ``response_gen``.
+# * ``WorkflowHandler`` is an ``asyncio.Future`` in workflows 1.x/2.0 and, from
+#   2.14 at least, a plain awaitable whose run is the ``_result_task`` behind
+#   ``stop_event_result()`` / ``stream_events()``.
+
+def _capsule_count(tmp_path: Path) -> int:
+    return len(list(tmp_path.glob("*/capsule.yaml")))
+
+
+def _join_stream_closers() -> None:
+    for t in threading.enumerate():
+        if t.name == "novafabric-stream-close":
+            t.join(timeout=10)
+
+
+class _FakeStreamedRunResult:
+    """Pydantic AI ``StreamedRunResult``: complete once read to the end."""
+
+    def __init__(self, tokens: list[str], fail_after: int | None = None) -> None:
+        self._tokens = tokens
+        self._fail_after = fail_after
+        self._stream_response = object()
+        self.is_complete = False
+        self.cancelled = False
+
+    async def stream_text(self, delta: bool = True) -> Any:
+        for i, tok in enumerate(self._tokens):
+            if self._fail_after is not None and i == self._fail_after:
+                raise RuntimeError("provider dropped the stream")
+            yield tok
+        self.is_complete = True
+
+    async def get_output(self) -> str:
+        return "".join([t async for t in self.stream_text()])
+
+
+class _FakeAgentRun:
+    """Pydantic AI ``AgentRun``: async-iterates nodes; ``result`` set at End."""
+
+    def __init__(self, nodes: int, fail_at: int | None = None) -> None:
+        self._nodes = nodes
+        self._fail_at = fail_at
+        self.result: str | None = None
+
+    def __aiter__(self) -> Any:
+        return self._gen()
+
+    async def _gen(self) -> Any:
+        for i in range(self._nodes):
+            if self._fail_at == i:
+                raise RuntimeError("tool raised")
+            yield f"node-{i}"
+        self.result = "final"
+
+
+class _FakePydanticAgent:
+    name = "streamer"
+
+    def __init__(
+        self,
+        *,
+        nodes: int = 3,
+        fail_at: int | None = None,
+        tokens: list[str] | None = None,
+        fail_after: int | None = None,
+    ) -> None:
+        self._nodes, self._fail_at = nodes, fail_at
+        self._tokens = tokens or ["Par", "is"]
+        self._fail_after = fail_after
+
+    @contextlib.asynccontextmanager
+    async def iter(self, prompt: str) -> Any:
+        yield _FakeAgentRun(self._nodes, self._fail_at)
+
+    async def run(self, prompt: str) -> str | None:
+        async with self.iter(prompt) as agent_run:
+            async for _ in agent_run:
+                pass
+        return agent_run.result
+
+    @contextlib.asynccontextmanager
+    async def run_stream(self, prompt: str) -> Any:
+        async with self.iter(prompt):
+            yield _FakeStreamedRunResult(self._tokens, self._fail_after)
+
+
+class TestPydanticAIStreaming:
+    def _wrap(self, agent: Any, tmp_path: Path) -> Any:
+        from novafabric.adapters.pydantic_ai import wrap_agent
+
+        return wrap_agent(agent, data_dir=tmp_path)
+
+    def test_run_stream_capsule_spans_the_body_and_is_one_capsule(
+        self, tmp_path: Path
+    ) -> None:
+        """``run_stream`` drives ``iter``; both are patched — one capsule, the outer's."""
+        agent = _FakePydanticAgent()
+        inside: list[int] = []
+
+        async def _main() -> str:
+            async with agent.run_stream("capital?") as response:
+                inside.append(_capsule_count(tmp_path))
+                return await response.get_output()
+
+        with _fake("pydantic_ai"), _no_hooks(), _quiet_capsule():
+            self._wrap(agent, tmp_path)
+            assert asyncio.run(_main()) == "Paris"
+
+        assert inside == [0], "the capsule was written before the stream was read"
+        manifest = _sole_manifest(tmp_path)
+        assert manifest["status"] == "success"
+        assert manifest["metadata"]["entry_point"] == "run_stream"
+        assert "partial_reason" not in manifest["metadata"]
+
+    def test_run_stream_left_before_the_output_is_read_is_partial(
+        self, tmp_path: Path
+    ) -> None:
+        agent = _FakePydanticAgent()
+
+        async def _main() -> None:
+            async with agent.run_stream("q") as response:
+                async for _ in response.stream_text():
+                    break  # the caller stops reading after one token
+
+        with _fake("pydantic_ai"), _no_hooks(), _quiet_capsule():
+            self._wrap(agent, tmp_path)
+            asyncio.run(_main())
+
+        manifest = _sole_manifest(tmp_path)
+        assert manifest["status"] == "partial"
+        assert manifest["metadata"]["partial_reason"] == "abandoned"
+        assert "error" not in manifest
+
+    def test_run_stream_raising_mid_stream_is_a_failure_and_propagates(
+        self, tmp_path: Path
+    ) -> None:
+        agent = _FakePydanticAgent(tokens=["a", "b", "c"], fail_after=1)
+
+        async def _main() -> None:
+            async with agent.run_stream("q") as response:
+                await response.get_output()
+
+        with _fake("pydantic_ai"), _no_hooks(), _quiet_capsule():
+            self._wrap(agent, tmp_path)
+            with pytest.raises(RuntimeError, match="dropped the stream"):
+                asyncio.run(_main())
+
+        manifest = _sole_manifest(tmp_path)
+        assert manifest["status"] == "failure"
+        assert manifest["error"]["type"] == "RuntimeError"
+
+    def test_iter_driven_to_end_is_a_success(self, tmp_path: Path) -> None:
+        agent = _FakePydanticAgent(nodes=3)
+
+        async def _main() -> list[str]:
+            async with agent.iter("q") as agent_run:
+                return [n async for n in agent_run]
+
+        with _fake("pydantic_ai"), _no_hooks(), _quiet_capsule():
+            self._wrap(agent, tmp_path)
+            assert asyncio.run(_main()) == ["node-0", "node-1", "node-2"]
+
+        manifest = _sole_manifest(tmp_path)
+        assert manifest["status"] == "success"
+        assert manifest["metadata"]["entry_point"] == "iter"
+
+    def test_iter_abandoned_before_end_is_partial(self, tmp_path: Path) -> None:
+        agent = _FakePydanticAgent(nodes=3)
+
+        async def _main() -> None:
+            async with agent.iter("q") as agent_run:
+                async for _ in agent_run:
+                    break
+
+        with _fake("pydantic_ai"), _no_hooks(), _quiet_capsule():
+            self._wrap(agent, tmp_path)
+            asyncio.run(_main())
+
+        manifest = _sole_manifest(tmp_path)
+        assert manifest["status"] == "partial"
+        assert manifest["metadata"]["partial_reason"] == "abandoned"
+
+    def test_iter_raising_mid_run_is_a_failure(self, tmp_path: Path) -> None:
+        agent = _FakePydanticAgent(nodes=3, fail_at=1)
+
+        async def _main() -> None:
+            async with agent.iter("q") as agent_run:
+                async for _ in agent_run:
+                    pass
+
+        with _fake("pydantic_ai"), _no_hooks(), _quiet_capsule():
+            self._wrap(agent, tmp_path)
+            with pytest.raises(RuntimeError, match="tool raised"):
+                asyncio.run(_main())
+
+        manifest = _sole_manifest(tmp_path)
+        assert manifest["status"] == "failure"
+        assert manifest["metadata"]["entry_point"] == "iter"
+
+    def test_run_driving_iter_is_one_capsule_owned_by_run(self, tmp_path: Path) -> None:
+        agent = _FakePydanticAgent(nodes=2)
+
+        with _fake("pydantic_ai"), _no_hooks(), _quiet_capsule():
+            self._wrap(agent, tmp_path)
+            assert asyncio.run(agent.run("q")) == "final"
+
+        manifest = _sole_manifest(tmp_path)
+        assert manifest["metadata"]["entry_point"] == "run"
+        assert manifest["status"] == "success"
+
+    def test_a_call_inside_the_stream_body_records_into_the_open_capsule(
+        self, tmp_path: Path
+    ) -> None:
+        agent = _FakePydanticAgent()
+
+        async def _main() -> None:
+            async with agent.run_stream("q") as response:
+                await agent.run("a follow-up inside the block")
+                await response.get_output()
+
+        with _fake("pydantic_ai"), _no_hooks(), _quiet_capsule():
+            self._wrap(agent, tmp_path)
+            asyncio.run(_main())
+
+        assert _sole_manifest(tmp_path)["metadata"]["entry_point"] == "run_stream"
+
+    def test_a_cancelled_run_is_partial_not_success(self, tmp_path: Path) -> None:
+        """``run_stream_events`` abandoned mid-run cancels the ``run`` task."""
+
+        class SlowAgent:
+            async def run(self, prompt: str) -> str:
+                await asyncio.sleep(3600)
+                return "never"
+
+        agent = SlowAgent()
+
+        async def _main() -> None:
+            task = asyncio.ensure_future(agent.run("q"))
+            await asyncio.sleep(0)
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        with _fake("pydantic_ai"), _no_hooks(), _quiet_capsule():
+            self._wrap(agent, tmp_path)
+            asyncio.run(_main())
+
+        manifest = _sole_manifest(tmp_path)
+        assert manifest["status"] == "partial"
+        assert manifest["metadata"]["partial_reason"] == "cancelled"
+
+
+@dataclasses.dataclass
+class _FakeStreamingResponse:
+    """LlamaIndex ``StreamingResponse``: ``response_gen`` is a dataclass field."""
+
+    response_gen: Any
+    response_txt: str | None = None
+
+    def __str__(self) -> str:
+        if self.response_txt is None and self.response_gen is not None:
+            self.response_txt = "".join(self.response_gen)
+        return self.response_txt or "None"
+
+
+@dataclasses.dataclass
+class _FakeAsyncStreamingResponse:
+    """LlamaIndex ``AsyncStreamingResponse``."""
+
+    response_gen: Any
+    response_txt: str | None = None
+
+    async def async_response_gen(self) -> Any:
+        async for text in self.response_gen:
+            yield text
+
+
+def _tokens(seen: list[int], tmp_path: Path, fail_after: int | None = None) -> Any:
+    for i, tok in enumerate(["The ", "answer ", "is ", "42"]):
+        if fail_after is not None and i == fail_after:
+            raise ConnectionError("stream reset by peer")
+        seen.append(_capsule_count(tmp_path))
+        yield tok
+
+
+async def _atokens(fail_after: int | None = None) -> Any:
+    for i, tok in enumerate(["a", "b", "c"]):
+        if fail_after is not None and i == fail_after:
+            raise ConnectionError("stream reset by peer")
+        await asyncio.sleep(0)
+        yield tok
+
+
+async def _settle() -> None:
+    """Let done-callbacks scheduled by a just-finished task run."""
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+
+class TestLlamaIndexStreaming:
+    def _engine(
+        self, tmp_path: Path, seen: list[int], fail_after: int | None = None
+    ) -> Any:
+        class FakeQueryEngine:  # built with streaming=True
+            def query(self, q: str) -> _FakeStreamingResponse:
+                return _FakeStreamingResponse(_tokens(seen, tmp_path, fail_after))
+
+            async def aquery(self, q: str) -> _FakeAsyncStreamingResponse:
+                return _FakeAsyncStreamingResponse(_atokens(fail_after))
+
+        return FakeQueryEngine()
+
+    def _wrap(self, engine: Any, tmp_path: Path) -> Any:
+        from novafabric.adapters.llamaindex import wrap_engine
+
+        return wrap_engine(engine, run_name="rag", data_dir=tmp_path)
+
+    def test_streaming_query_capsule_closes_when_the_stream_is_exhausted(
+        self, tmp_path: Path
+    ) -> None:
+        seen: list[int] = []
+        engine = self._engine(tmp_path, seen)
+        with _fake("llama_index.core"), _no_hooks(), _quiet_capsule():
+            self._wrap(engine, tmp_path)
+            response = engine.query("q")
+            assert _capsule_count(tmp_path) == 0, "closed before the stream was read"
+            assert str(response) == "The answer is 42"
+
+        assert seen == [0, 0, 0, 0], "the capsule was written mid-stream"
+        manifest = _sole_manifest(tmp_path)
+        assert manifest["status"] == "success"
+        assert manifest["metadata"]["entry_point"] == "query"
+
+    def test_a_stream_closed_early_is_partial(self, tmp_path: Path) -> None:
+        engine = self._engine(tmp_path, [])
+        with _fake("llama_index.core"), _no_hooks(), _quiet_capsule():
+            self._wrap(engine, tmp_path)
+            response = engine.query("q")
+            assert next(response.response_gen) == "The "
+            response.response_gen.close()
+
+        manifest = _sole_manifest(tmp_path)
+        assert manifest["status"] == "partial"
+        assert manifest["metadata"]["partial_reason"] == "abandoned"
+
+    def test_a_stream_dropped_unread_is_partial_and_releases_the_capsule(
+        self, tmp_path: Path
+    ) -> None:
+        """A generator never started runs none of its code when closed."""
+        engine = self._engine(tmp_path, [])
+        with _fake("llama_index.core"), _no_hooks(), _quiet_capsule():
+            self._wrap(engine, tmp_path)
+            response = engine.query("q")
+            del response
+            gc.collect()
+
+        manifest = _sole_manifest(tmp_path)
+        assert manifest["status"] == "partial"
+
+    def test_a_stream_raising_mid_way_is_a_failure_and_propagates(
+        self, tmp_path: Path
+    ) -> None:
+        engine = self._engine(tmp_path, [], fail_after=2)
+        with _fake("llama_index.core"), _no_hooks(), _quiet_capsule():
+            self._wrap(engine, tmp_path)
+            response = engine.query("q")
+            with pytest.raises(ConnectionError, match="reset by peer"):
+                str(response)
+
+        manifest = _sole_manifest(tmp_path)
+        assert manifest["status"] == "failure"
+        assert manifest["error"]["type"] == "ConnectionError"
+
+    def test_a_call_made_while_producing_the_stream_reuses_the_capsule(
+        self, tmp_path: Path
+    ) -> None:
+        holder: dict[str, Any] = {}
+
+        def _gen() -> Any:
+            yield "outer "
+            yield str(holder["engine"].query("nested"))  # e.g. a sub-question
+
+        class FakeQueryEngine:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def query(self, q: str) -> Any:
+                self.calls += 1
+                if self.calls == 1:
+                    return _FakeStreamingResponse(_gen())
+                return "inner"
+
+        engine = FakeQueryEngine()
+        holder["engine"] = engine
+        with _fake("llama_index.core"), _no_hooks(), _quiet_capsule():
+            self._wrap(engine, tmp_path)
+            assert str(engine.query("q")) == "outer inner"
+
+        assert _sole_manifest(tmp_path)["status"] == "success"
+
+    def test_async_streaming_query_success_and_abandon(self, tmp_path: Path) -> None:
+        engine = self._engine(tmp_path, [])
+
+        async def _read_all() -> str:
+            response = await engine.aquery("q")
+            assert _capsule_count(tmp_path) == 0
+            return "".join([t async for t in response.async_response_gen()])
+
+        async def _read_one() -> None:
+            response = await engine.aquery("q")
+            gen = response.response_gen
+            await gen.__anext__()
+            await gen.aclose()
+
+        with _fake("llama_index.core"), _no_hooks(), _quiet_capsule():
+            self._wrap(engine, tmp_path)
+            assert asyncio.run(_read_all()) == "abc"
+            asyncio.run(_read_one())
+
+        found = _manifests(tmp_path)
+        assert sorted(m["status"] for m in found) == ["partial", "success"]
+        assert {m["metadata"]["entry_point"] for m in found} == {"aquery"}
+
+    def test_async_stream_raising_mid_way_is_a_failure(self, tmp_path: Path) -> None:
+        engine = self._engine(tmp_path, [], fail_after=1)
+
+        async def _read() -> None:
+            response = await engine.aquery("q")
+            async for _ in response.async_response_gen():
+                pass
+
+        with _fake("llama_index.core"), _no_hooks(), _quiet_capsule():
+            self._wrap(engine, tmp_path)
+            with pytest.raises(ConnectionError):
+                asyncio.run(_read())
+
+        assert _sole_manifest(tmp_path)["status"] == "failure"
+
+
+@dataclasses.dataclass
+class _FakeStreamingChatResponse:
+    """``StreamingAgentChatResponse``: a writer drains the model stream itself."""
+
+    chat_stream: Any = None
+    exception: Exception | None = None
+    tokens: list[str] = dataclasses.field(default_factory=list)
+    write_response_to_history_thread: threading.Thread | None = None
+    awrite_response_to_history_task: Any = None
+
+    def write_response_to_history(self, gate: threading.Event) -> None:
+        try:
+            for tok in self.chat_stream:
+                gate.wait(10)
+                self.tokens.append(tok)
+        except Exception as e:
+            self.exception = e
+            raise
+
+    async def awrite_response_to_history(self, gate: asyncio.Event) -> None:
+        try:
+            async for tok in self.chat_stream:
+                await gate.wait()
+                self.tokens.append(tok)
+        except Exception as e:
+            self.exception = e
+            raise
+
+
+class TestLlamaIndexChatStreaming:
+    def _engine(self, gate: Any, fail_after: int | None = None) -> Any:
+        class FakeChatEngine:
+            def chat(self, m: str) -> str:
+                return "sync"
+
+            def stream_chat(self, m: str) -> _FakeStreamingChatResponse:
+                stream = _tokens([], Path("/nonexistent"), fail_after)
+                resp = _FakeStreamingChatResponse(chat_stream=stream)
+                t = threading.Thread(target=resp.write_response_to_history, args=(gate,))
+                resp.write_response_to_history_thread = t
+                t.start()
+                return resp
+
+            async def astream_chat(self, m: str) -> _FakeStreamingChatResponse:
+                resp = _FakeStreamingChatResponse(chat_stream=_atokens(fail_after))
+                resp.awrite_response_to_history_task = asyncio.create_task(
+                    resp.awrite_response_to_history(gate)
+                )
+                return resp
+
+        return FakeChatEngine()
+
+    def _wrap(self, engine: Any, tmp_path: Path) -> Any:
+        from novafabric.adapters.llamaindex import wrap_engine
+
+        return wrap_engine(engine, data_dir=tmp_path)
+
+    def test_stream_chat_closes_when_the_writer_drains_the_model_stream(
+        self, tmp_path: Path
+    ) -> None:
+        """Even unread: LlamaIndex's own writer drains the stream, so the model
+        call runs to completion whether or not ``response_gen`` is consumed."""
+        gate = threading.Event()
+        engine = self._engine(gate)
+        with _fake("llama_index.core"), _no_hooks(), _quiet_capsule():
+            self._wrap(engine, tmp_path)
+            resp = engine.stream_chat("hi")
+            assert _capsule_count(tmp_path) == 0, "closed while the model was streaming"
+            gate.set()
+            _join_stream_closers()
+
+        assert resp.tokens == ["The ", "answer ", "is ", "42"]
+        manifest = _sole_manifest(tmp_path)
+        assert manifest["status"] == "success"
+        assert manifest["metadata"]["entry_point"] == "stream_chat"
+
+    @pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
+    def test_stream_chat_writer_failure_is_a_failure(self, tmp_path: Path) -> None:
+        gate = threading.Event()
+        gate.set()
+        engine = self._engine(gate, fail_after=1)
+        with _fake("llama_index.core"), _no_hooks(), _quiet_capsule():
+            self._wrap(engine, tmp_path)
+            engine.stream_chat("hi")
+            _join_stream_closers()
+
+        manifest = _sole_manifest(tmp_path)
+        assert manifest["status"] == "failure"
+        assert manifest["error"]["type"] == "ConnectionError"
+
+    def test_astream_chat_closes_when_the_writer_task_finishes(
+        self, tmp_path: Path
+    ) -> None:
+        async def _main() -> list[str]:
+            gate = asyncio.Event()
+            engine = self._engine(gate)
+            self._wrap(engine, tmp_path)
+            resp = await engine.astream_chat("hi")
+            await _settle()
+            assert _capsule_count(tmp_path) == 0
+            gate.set()
+            await resp.awrite_response_to_history_task
+            return resp.tokens
+
+        with _fake("llama_index.core"), _no_hooks(), _quiet_capsule():
+            assert asyncio.run(_main()) == ["a", "b", "c"]
+
+        manifest = _sole_manifest(tmp_path)
+        assert manifest["status"] == "success"
+        assert manifest["metadata"]["entry_point"] == "astream_chat"
+
+    def test_astream_chat_writer_failure_is_a_failure(self, tmp_path: Path) -> None:
+        async def _main() -> None:
+            gate = asyncio.Event()
+            gate.set()
+            engine = self._engine(gate, fail_after=1)
+            self._wrap(engine, tmp_path)
+            resp = await engine.astream_chat("hi")
+            with pytest.raises(ConnectionError):
+                await resp.awrite_response_to_history_task
+
+        with _fake("llama_index.core"), _no_hooks(), _quiet_capsule():
+            asyncio.run(_main())
+
+        assert _sole_manifest(tmp_path)["status"] == "failure"
+
+
+class _FakeWorkflowHandlerV2:
+    """llama-index-workflows 2.x ``WorkflowHandler``: awaitable, not a Future."""
+
+    def __init__(self, run: Any, events: asyncio.Queue) -> None:
+        self._events = events
+        self._result_task = asyncio.create_task(run)
+
+    async def stop_event_result(self) -> Any:
+        return await self._result_task
+
+    def __await__(self) -> Any:
+        return self.stop_event_result().__await__()
+
+    async def stream_events(self) -> Any:
+        while True:
+            ev = await self._events.get()
+            yield ev
+            if ev == "StopEvent":
+                break
+
+
+class _FakeWorkflowHandlerPublicOnly(_FakeWorkflowHandlerV2):
+    """A handler exposing only the public surface — exercises the fallback."""
+
+    def __init__(self, run: Any, events: asyncio.Queue) -> None:
+        self._events = events
+        self._task = asyncio.create_task(run)
+
+    async def stop_event_result(self) -> Any:
+        return await self._task
+
+
+class TestLlamaIndexWorkflowHandlerV2:
+    def _agent(
+        self, *, fail: bool = False, hang: bool = False, public_only: bool = False
+    ) -> Any:
+        handler_cls = _FakeWorkflowHandlerPublicOnly if public_only else _FakeWorkflowHandlerV2
+
+        class FakeFunctionAgent:
+            def run(self, user_msg: str = "") -> _FakeWorkflowHandlerV2:
+                events: asyncio.Queue = asyncio.Queue()
+
+                async def _work() -> str:
+                    for i in range(3):
+                        await events.put(f"AgentStream-{i}")
+                        await asyncio.sleep(0)
+                    if fail:
+                        raise RuntimeError("step crashed")
+                    if hang:
+                        await asyncio.sleep(3600)
+                    await events.put("StopEvent")
+                    return "done"
+
+                return handler_cls(_work(), events)
+
+        return FakeFunctionAgent()
+
+    def _wrap(self, agent: Any, tmp_path: Path) -> Any:
+        from novafabric.adapters.llamaindex import wrap_engine
+
+        return wrap_engine(agent, data_dir=tmp_path)
+
+    @pytest.mark.parametrize("public_only", [False, True])
+    def test_a_v2_handler_is_captured_until_the_workflow_settles(
+        self, tmp_path: Path, public_only: bool
+    ) -> None:
+        """A ``Future`` check alone wrote this capsule empty, at ``run()`` return.
+
+        The caller returns straight after ``await handler``: the capsule must
+        still say success, not be cancelled by ``asyncio.run``'s teardown.
+        """
+        agent = self._agent(public_only=public_only)
+        during: list[int] = []
+
+        async def _main() -> tuple[list[str], Any]:
+            handler = agent.run(user_msg="hi")
+            during.append(_capsule_count(tmp_path))
+            events = [ev async for ev in handler.stream_events()]
+            return events, await handler
+
+        with _fake("llama_index.core"), _no_hooks(), _quiet_capsule():
+            self._wrap(agent, tmp_path)
+            events, result = asyncio.run(_main())
+
+        assert during == [0]
+        assert events[-1] == "StopEvent" and result == "done"
+        manifest = _sole_manifest(tmp_path)
+        assert manifest["status"] == "success"
+        assert manifest["metadata"]["entry_point"] == "run"
+
+    def test_a_failing_v2_workflow_is_a_failure(self, tmp_path: Path) -> None:
+        agent = self._agent(fail=True)
+
+        async def _main() -> None:
+            handler = agent.run()
+            with pytest.raises(RuntimeError, match="step crashed"):
+                await handler
+
+        with _fake("llama_index.core"), _no_hooks(), _quiet_capsule():
+            self._wrap(agent, tmp_path)
+            asyncio.run(_main())
+
+        manifest = _sole_manifest(tmp_path)
+        assert manifest["status"] == "failure"
+        assert manifest["error"]["type"] == "RuntimeError"
+
+    @pytest.mark.parametrize("public_only", [False, True])
+    def test_stream_events_abandoned_and_the_loop_closed_is_partial(
+        self, tmp_path: Path, public_only: bool
+    ) -> None:
+        agent = self._agent(hang=True, public_only=public_only)
+
+        async def _main() -> None:
+            handler = agent.run()
+            async for _ in handler.stream_events():
+                break  # never awaits the handler; asyncio.run cancels the rest
+
+        with _fake("llama_index.core"), _no_hooks(), _quiet_capsule():
+            self._wrap(agent, tmp_path)
+            asyncio.run(_main())
+
+        manifest = _sole_manifest(tmp_path)
+        assert manifest["status"] == "partial"
+        assert manifest["metadata"]["partial_reason"] == "cancelled"
+
+
+def test_real_hooks_are_held_for_the_whole_stream_and_released_after(
+    tmp_path: Path,
+) -> None:
+    """No hook mocks: the owner token is held while tokens are produced, gone once
+    the stream ends, and a ``partial`` capsule passes the packaged schema."""
+    import jsonschema
+
+    from novafabric.capture.hooks import current_hook_owner
+
+    assert current_hook_owner() is None, "a previous test leaked the hooks"
+    owners: list[str | None] = []
+
+    def _gen() -> Any:
+        for tok in ("x", "y"):
+            owners.append(current_hook_owner())
+            yield tok
+
+    class Engine:
+        def query(self, q: str) -> _FakeStreamingResponse:
+            return _FakeStreamingResponse(_gen())
+
+    engine = Engine()
+    # As in the test above: only the wrap runs under the fake module.
+    with _fake("llama_index.core"):
+        from novafabric.adapters.llamaindex import wrap_engine
+
+        wrap_engine(engine, data_dir=tmp_path)
+    with _quiet_capsule():
+        response = engine.query("q")
+        assert current_hook_owner() is not None, "released before the stream ran"
+        assert next(response.response_gen) == "x"
+        response.response_gen.close()
+
+    assert owners and owners[0] is not None
+    assert current_hook_owner() is None, "the adapter did not release the hooks"
+    manifest = _sole_manifest(tmp_path)
+    assert manifest["status"] == "partial"
+    assert manifest["metadata"]["wire_capture"] == "installed"
+    jsonschema.validate(manifest, _packaged_capsule_schema())
+
+
+def test_real_hooks_span_a_pydantic_ai_run_stream_body(tmp_path: Path) -> None:
+    import jsonschema
+
+    from novafabric.capture.hooks import current_hook_owner
+
+    assert current_hook_owner() is None, "a previous test leaked the hooks"
+    agent = _FakePydanticAgent()
+    owners: list[str | None] = []
+
+    async def _main() -> None:
+        async with agent.run_stream("q") as response:
+            owners.append(current_hook_owner())
+            await response.get_output()
+
+    with _fake("pydantic_ai"):
+        from novafabric.adapters.pydantic_ai import wrap_agent
+
+        wrap_agent(agent, data_dir=tmp_path)
+    with _quiet_capsule():
+        asyncio.run(_main())
+
+    assert owners and owners[0] is not None
+    assert current_hook_owner() is None, "the adapter did not release the hooks"
+    manifest = _sole_manifest(tmp_path)
+    assert manifest["status"] == "success"
+    jsonschema.validate(manifest, _packaged_capsule_schema())
+
+
+class TestStreamingEdgeCases:
+    """Failure paths outside the happy stream: before the first token, on exit,
+    on cancellation, and through a coroutine handed back by a sync method."""
+
+    def test_run_stream_failing_before_the_first_token_is_a_failure(
+        self, tmp_path: Path
+    ) -> None:
+        """``run_stream`` makes the model request inside ``__aenter__``."""
+
+        class Agent:
+            @contextlib.asynccontextmanager
+            async def run_stream(self, prompt: str) -> Any:
+                raise PermissionError("401 from provider")
+                yield  # pragma: no cover
+
+        agent = Agent()
+
+        async def _main() -> None:
+            async with agent.run_stream("q"):
+                pass  # pragma: no cover
+
+        with _fake("pydantic_ai"), _no_hooks(), _quiet_capsule():
+            from novafabric.adapters.pydantic_ai import wrap_agent
+
+            wrap_agent(agent, data_dir=tmp_path)
+            with pytest.raises(PermissionError):
+                asyncio.run(_main())
+
+        manifest = _sole_manifest(tmp_path)
+        assert manifest["status"] == "failure"
+        assert manifest["error"]["type"] == "PermissionError"
+
+    def test_iter_whose_cleanup_raises_is_a_failure(self, tmp_path: Path) -> None:
+        class Agent:
+            @contextlib.asynccontextmanager
+            async def iter(self, prompt: str) -> Any:
+                yield _FakeAgentRun(1)
+                raise OSError("could not close the transport")
+
+        agent = Agent()
+
+        async def _main() -> None:
+            async with agent.iter("q") as agent_run:
+                async for _ in agent_run:
+                    pass
+
+        with _fake("pydantic_ai"), _no_hooks(), _quiet_capsule():
+            from novafabric.adapters.pydantic_ai import wrap_agent
+
+            wrap_agent(agent, data_dir=tmp_path)
+            with pytest.raises(OSError, match="transport"):
+                asyncio.run(_main())
+
+        assert _sole_manifest(tmp_path)["error"]["type"] == "OSError"
+
+    def test_async_entry_point_failure_and_cancellation(self, tmp_path: Path) -> None:
+        class Engine:
+            def query(self, q: str) -> str:
+                return "sync"
+
+            async def aquery(self, q: str) -> str:
+                if q == "boom":
+                    raise ValueError("bad index")
+                await asyncio.sleep(3600)
+                return "never"
+
+        engine = Engine()
+
+        async def _cancelled() -> None:
+            task = asyncio.ensure_future(engine.aquery("slow"))
+            await asyncio.sleep(0)
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        with _fake("llama_index.core"), _no_hooks(), _quiet_capsule():
+            from novafabric.adapters.llamaindex import wrap_engine
+
+            wrap_engine(engine, data_dir=tmp_path)
+            with pytest.raises(ValueError):
+                asyncio.run(engine.aquery("boom"))
+            asyncio.run(_cancelled())
+
+        statuses = sorted(m["status"] for m in _manifests(tmp_path))
+        assert statuses == ["failure", "partial"]
+
+    def test_a_consumer_cancelled_mid_stream_is_partial(self, tmp_path: Path) -> None:
+        class Engine:
+            async def aquery(self, q: str) -> _FakeAsyncStreamingResponse:
+                async def _slow() -> Any:
+                    yield "first"
+                    await asyncio.sleep(3600)
+                    yield "never"  # pragma: no cover
+
+                return _FakeAsyncStreamingResponse(_slow())
+
+            def query(self, q: str) -> str:
+                return "sync"
+
+        engine = Engine()
+
+        async def _main() -> None:
+            response = await engine.aquery("q")
+
+            async def _consume() -> None:
+                async for _ in response.response_gen:
+                    pass
+
+            task = asyncio.ensure_future(_consume())
+            await asyncio.sleep(0.01)
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        with _fake("llama_index.core"), _no_hooks(), _quiet_capsule():
+            from novafabric.adapters.llamaindex import wrap_engine
+
+            wrap_engine(engine, data_dir=tmp_path)
+            asyncio.run(_main())
+
+        manifest = _sole_manifest(tmp_path)
+        assert manifest["status"] == "partial"
+        assert manifest["metadata"]["partial_reason"] == "cancelled"
+
+    def test_a_coroutine_handed_back_by_a_sync_method_is_followed_into_its_stream(
+        self, tmp_path: Path
+    ) -> None:
+        seen: list[int] = []
+
+        class Engine:
+            def query(self, q: str) -> Any:
+                async def _later() -> _FakeStreamingResponse:
+                    if q == "boom":
+                        raise KeyError("retriever")
+                    return _FakeStreamingResponse(_tokens(seen, tmp_path))
+
+                return _later()
+
+        engine = Engine()
+
+        async def _main() -> str:
+            response = await engine.query("q")
+            assert _capsule_count(tmp_path) == 0
+            return str(response)
+
+        with _fake("llama_index.core"), _no_hooks(), _quiet_capsule():
+            from novafabric.adapters.llamaindex import wrap_engine
+
+            wrap_engine(engine, data_dir=tmp_path)
+            assert asyncio.run(_main()) == "The answer is 42"
+            with pytest.raises(KeyError):
+                asyncio.run(engine.query("boom"))
+
+        assert seen == [0, 0, 0, 0]
+        statuses = sorted(m["status"] for m in _manifests(tmp_path))
+        assert statuses == ["failure", "success"]
+
+    def test_a_workflow_cancelled_by_the_user_is_partial(self, tmp_path: Path) -> None:
+        class WorkflowCancelledByUser(Exception):
+            """Same name as ``workflows.errors.WorkflowCancelledByUser``."""
+
+        class Agent:
+            def run(self) -> asyncio.Future:
+                fut = asyncio.get_running_loop().create_future()
+                fut.set_exception(WorkflowCancelledByUser())
+                return fut
+
+        agent = Agent()
+
+        async def _main() -> None:
+            with contextlib.suppress(WorkflowCancelledByUser):
+                await agent.run()
+
+        with _fake("llama_index.core"), _no_hooks(), _quiet_capsule():
+            from novafabric.adapters.llamaindex import wrap_engine
+
+            wrap_engine(agent, data_dir=tmp_path)
+            asyncio.run(_main())
+
+        manifest = _sole_manifest(tmp_path)
+        assert manifest["status"] == "partial"
+        assert manifest["metadata"]["partial_reason"] == "cancelled"

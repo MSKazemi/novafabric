@@ -1357,10 +1357,18 @@ call, and the inner one takes the wire hooks from the outer, so neither stream i
 complete. `pydantic_ai.py` and `haystack.py` show the guard.
 
 **Watch for an entry point that returns before the work runs.** LlamaIndex's
-agent `run` returns a `WorkflowHandler` (an `asyncio.Future`); the work happens
-when the caller awaits it. Finishing the capsule when the method returns writes an
+agent `run` returns a `WorkflowHandler` whose work runs in a background task — an
+`asyncio.Future` in llama-index-workflows 1.x, a plain awaitable in 2.x, so an
+`isinstance(…, Future)` check alone misses every current install. Streaming entry
+points are the same shape: the model call happens while the caller iterates a
+generator (LlamaIndex `response_gen`) or inside an `async with` body (Pydantic AI
+`run_stream` / `iter`). Finishing the capsule when the method returns writes an
 empty, successful capsule and releases the hooks before the first model call.
-`llamaindex.py` finishes from the future's done-callback instead.
+`adapters/_streaming.py` holds the helpers that move the close to where the run
+really ends and record how it ended (`success` / `failure` / `partial` with
+`metadata.partial_reason`); `AdapterCapture.mark_partial()` sets the schema's
+`partial` status. Check the shape against the framework's *installed* source, not
+its docs — and test the abandoned and dropped-unread cases, not just the happy one.
 
 ### Typed `record_*` methods (extended event taxonomy, ADR-0082)
 

@@ -331,7 +331,12 @@ pipe   = wrap_haystack(pipe, run_name="rag-qa")     # Haystack
 ```
 
 Each wrapper patches the entry point **in place** and returns the same object, so
-existing references keep working. Install the framework itself (`pip install
+existing references keep working. Streaming calls are captured too (experimental):
+LlamaIndex `stream_chat` / `astream_chat` and `streaming=True` query engines, Pydantic AI
+`run_stream` / `iter`. The capsule stays open until the stream ends and records
+`status: partial` (with `metadata.partial_reason`) when a stream is abandoned or cancelled
+before it finishes — see [`cli-reference.md`](cli-reference.md) §Framework Adapters for
+exactly what each case records. Install the framework itself (`pip install
 llama-index` / `pydantic-ai` / `haystack-ai`) — these are not NovaFabric extras,
 and the `wrap_*` call raises `ImportError` naming the command if the framework is
 absent.
