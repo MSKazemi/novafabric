@@ -112,6 +112,14 @@ longer forwards the submitting shell's environment (ADR-0270).
   `ReplayRecordMalformedError`, `ReplayToolUnmatchedError`.
 - **Replay support matrix** in `docs/architecture/replay-modes.md`, built from the code and
   tests: which provider/API surfaces are captured, served, refused or not controlled.
+- **Example entry points that skip cleanly without their prerequisite** (#70, #71, #74).
+  `examples/hpc-slurm-job/submit.sh` submits `job.sbatch` or, with no `sbatch`, prints a
+  `skip:` and exits 0. `examples/docker-run/run.sh` runs the documented capture as the invoking
+  user (`--runner-option user=$(id -u):$(id -g)`, not root) and skips with no `docker` binary
+  or an unreachable daemon. `examples/notebook-capture/run_cells.py` runs a notebook's code
+  cells as one plain, stdlib-only process, so the notebook's code path is captured and tested
+  on every run where Jupyter is absent. The example tests now also run `nova validate` on every
+  capsule they produce.
 
 ### Changed
 
@@ -247,6 +255,8 @@ longer forwards the submitting shell's environment (ADR-0270).
   `--help`. A new guard, `tests/docs/test_doc_commands_resolve.py`, resolves every sub-command
   and flag in `README.md`, `llms.txt` and `docs/` (release notes excepted) against the real
   command tree; a planned or non-existent command may be named only where the prose says so.
+  It now scans `examples/**/*.md` too, which caught `nova register --name/--version` in
+  `examples/blackbox_demo/` (neither flag exists; `nova register` takes an asset spec).
 - **Public descriptions no longer overstate what a capsule is.** `CITATION.cff`, `.zenodo.json`,
   the GitHub Action and the Claude Code plugin still said "secret-redacted" or "signed" Run
   Capsules and "four replay modes"; the README listed "4 modes" in its comparison table and
@@ -261,6 +271,17 @@ longer forwards the submitting shell's environment (ADR-0270).
   `CITATION.cff`. New guard `tests/docs/test_public_claims_match_the_code.py` reads the rule
   count and the replay modes from the code; the ADR-0230 read-only guard now scans
   `integrations/` too.
+- **The GitHub Actions guide's download command put the capsule in the wrong place.** `gh run
+  download <id> --name <artifact>` extracts a single artifact into the current directory, so
+  the documented `nova validate ./capsule-<id>` found nothing; it now passes `--dir`. The guide
+  also shows in-workflow retrieval with `actions/download-artifact`, and says that `run` is
+  spliced into the action's bash step as text: `a && b` captures only `a`, and untrusted input
+  in `run` is shell injection. `docs/integrations/README.md` is now guarded to list every guide.
+- **Example READMEs said more than was true.** `docker-run/` said its two gaps (no image
+  digest, no runner recorded) were "tracked as their own issue" — no such issue exists — and
+  did not say that a stock image cannot load NovaFabric's LLM-call hooks (since B3 the loader
+  is mounted and logs `hook install failed` to `outputs/stderr.txt`). `notebook-capture/run.sh`
+  said the executed notebook is part of the capsule; it is written beside it.
 
 ## [0.104.0] - 2026-10-08
 

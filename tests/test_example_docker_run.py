@@ -14,6 +14,7 @@ skips cleanly rather than failing. The skip is deliberate and narrow: it covers
 from __future__ import annotations
 
 import functools
+import os
 import shutil
 import subprocess
 import sys
@@ -229,3 +230,137 @@ def test_extra_volumes_from_the_cli_actually_reaches_docker(tmp_path: Path) -> N
     stderr_path = capsule / "outputs" / "stderr.txt"
     stderr = stderr_path.read_text() if stderr_path.is_file() else ""
     assert "No such file or directory" not in stderr, stderr
+
+
+# ── run.sh: the documented entry point ──────────────────────────────────────
+#
+# Most of what run.sh promises is checkable with no Docker at all: that it skips
+# with exit 0 when Docker is missing or the daemon is down, and exactly which
+# `docker run` it causes NovaFabric to issue. A stub `docker` on PATH records the
+# argv; it never pretends to be a container, and no test below claims a
+# containerized run from it.
+
+RUN_SH = EXAMPLE_DIR / "run.sh"
+
+_STUB_DOCKER = """#!/bin/sh
+if [ "$1" = info ]; then
+  if [ -n "${STUB_DOCKER_DOWN:-}" ]; then
+    echo "Cannot connect to the Docker daemon" >&2
+    exit 1
+  fi
+  echo 28.0.0
+  exit 0
+fi
+if [ "$1" = run ]; then
+  printf '%s\\n' "$@" > "$STUB_DOCKER_RECORD"
+  echo "stub: docker run recorded"
+  exit 0
+fi
+exit 2
+"""
+
+
+def _bash() -> str:
+    return shutil.which("bash") or "/bin/bash"
+
+
+def _run_sh_with_stub(tmp_path: Path, **extra_env: str) -> subprocess.CompletedProcess[str]:
+    bin_dir = Path(sys.executable).parent
+    if not (bin_dir / "nova").is_file():
+        pytest.skip(f"no `nova` console script beside {sys.executable}")
+    stub_dir = tmp_path / "stub-bin"
+    stub_dir.mkdir()
+    (stub_dir / "docker").write_text(_STUB_DOCKER)
+    (stub_dir / "docker").chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{stub_dir}:{bin_dir}:/usr/bin:/bin",
+        "STUB_DOCKER_RECORD": str(tmp_path / "docker-argv.txt"),
+        **extra_env,
+    }
+    return subprocess.run(
+        [_bash(), str(RUN_SH), str(tmp_path / "capsules")],
+        capture_output=True, text=True, env=env, timeout=300,
+    )
+
+
+def test_run_sh_is_valid_shell_and_executable() -> None:
+    assert os.access(RUN_SH, os.X_OK), "run.sh must be executable"
+    proc = subprocess.run([_bash(), "-n", str(RUN_SH)], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_run_sh_skips_cleanly_without_docker(tmp_path: Path) -> None:
+    """No `docker` binary: exit 0 and say so — the CI and fresh-clone case."""
+    env = {"PATH": "/nonexistent", "HOME": str(tmp_path)}
+    proc = subprocess.run(
+        [_bash(), str(RUN_SH), str(tmp_path / "capsules")],
+        capture_output=True, text=True, env=env, timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.startswith("skip: 'docker' is not on PATH"), proc.stdout
+    assert not (tmp_path / "capsules").exists(), "a skip must not start a capture"
+
+
+def test_run_sh_skips_cleanly_when_the_daemon_is_down(tmp_path: Path) -> None:
+    proc = _run_sh_with_stub(tmp_path, STUB_DOCKER_DOWN="1")
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.startswith("skip: the Docker daemon is not reachable"), proc.stdout
+    assert not (tmp_path / "docker-argv.txt").exists(), "no container may be started"
+
+
+def test_run_sh_issues_the_documented_unprivileged_docker_run(tmp_path: Path) -> None:
+    """The exact `docker run` behind the README's command, Docker or not.
+
+    Pins what the README states about the container: it runs as the invoking
+    user, not root; nothing privileged; the example dir is mounted read-only;
+    and the submitting shell's environment does NOT cross into the container
+    (ADR-0270) — only NovaFabric's own variables and PYTHONPATH do.
+    """
+    proc = _run_sh_with_stub(tmp_path, EXAMPLE_HOST_SECRET="do-not-forward")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    argv = (tmp_path / "docker-argv.txt").read_text().splitlines()
+    assert argv[:2] == ["run", "--rm"], argv
+    assert argv[-3:] == ["python:3.12-slim", "python", "/work/payload.py"], argv
+
+    def value_of(flag: str) -> list[str]:
+        return [argv[i + 1] for i, a in enumerate(argv[:-1]) if a == flag]
+
+    assert value_of("--user") == [f"{os.getuid()}:{os.getgid()}"]
+    assert value_of("--workdir") == ["/work"]
+    volumes = value_of("-v")
+    assert f"{EXAMPLE_DIR}:/work:ro" in volumes, volumes
+    assert any(v.endswith(":/novafabric/capsule") for v in volumes), volumes
+    for forbidden in ("--privileged", "--pid", "--ipc", "--cap-add"):
+        assert forbidden not in argv, forbidden
+
+    env_keys = {e.split("=", 1)[0] for e in value_of("-e")}
+    assert "EXAMPLE_HOST_SECRET" not in env_keys
+    assert "do-not-forward" not in "\n".join(argv)
+    assert env_keys <= {"PYTHONPATH"} | {k for k in env_keys if k.startswith("NOVAFABRIC_")}
+    assert "NOVAFABRIC_CAPSULE_DIR=/novafabric/capsule" in value_of("-e")
+
+
+@requires_docker
+def test_run_sh_produces_a_capsule_that_validates(tmp_path: Path) -> None:
+    """The README's documented command, end to end against a real daemon."""
+    proc = subprocess.run(
+        [_bash(), str(RUN_SH), str(tmp_path / "capsules")],
+        capture_output=True, text=True, timeout=600,
+        env={**os.environ, "PATH": f"{Path(sys.executable).parent}:{os.environ['PATH']}"},
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    capsule = _sole_capsule(tmp_path / "capsules")
+    result = CliRunner().invoke(app, ["validate", str(capsule)])
+    assert result.exit_code == 0, result.output
+
+    stdout = (capsule / "outputs" / "stdout.txt").read_text()
+    assert "payload: hello from the container" in stdout
+
+    # Pins the README's "a stock image cannot run wire-level capture": the hook
+    # loader is mounted and runs, but python:3.12-slim has no NovaFabric to
+    # import, and it says so on stderr. If this stops appearing, either the
+    # image gained NovaFabric or the loader stopped running — re-read the README.
+    stderr = (capsule / "outputs" / "stderr.txt").read_text()
+    assert "hook install failed" in stderr, stderr

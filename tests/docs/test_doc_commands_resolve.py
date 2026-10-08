@@ -21,8 +21,8 @@ What it deliberately does not check: positional-argument arity (doc synopses use
 ``--`` separator or after the first positional of a pass-through command such as
 ``nova capture`` — those flags belong to the wrapped program, not to ``nova``.
 
-Scope: ``README.md``, ``llms.txt`` and ``docs/**/*.md`` except ``docs/releases/**``
-— historical release notes describe the CLI as it was on the day they shipped
+Scope: ``README.md``, ``llms.txt``, ``examples/**/*.md`` and ``docs/**/*.md`` except
+``docs/releases/**`` — historical release notes describe the CLI as it was on the day they shipped
 and stay historical, as does ``CHANGELOG.md`` (not scanned).
 
 An invocation that is *intentionally* not runnable (a planned command, or a
@@ -131,6 +131,9 @@ def scanned_files() -> list[Path]:
     files += sorted(
         p for p in (REPO_ROOT / "docs").rglob("*.md") if releases not in p.parents
     )
+    # The examples are the one tree a reader copies verbatim, so their READMEs
+    # are held to the same bar as the docs.
+    files += sorted((REPO_ROOT / "examples").rglob("*.md"))
     return [p for p in files if p.is_file()]
 
 

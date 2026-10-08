@@ -18,9 +18,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
+from novafabric.cli.introspect import root_command, subcommands
 from novafabric.cli.main import app
 
 EXAMPLE_DIR = Path(__file__).resolve().parent.parent / "examples" / "hpc-slurm-job"
@@ -148,3 +150,147 @@ def test_the_batch_script_is_valid_shell() -> None:
         return
     proc = subprocess.run(["bash", "-n", str(SBATCH)], capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
+
+
+# ── submit.sh, `nova validate`, and the documented limitation ───────────────
+
+SUBMIT = EXAMPLE_DIR / "submit.sh"
+
+
+def _bash() -> str:
+    return shutil.which("bash") or "/bin/bash"
+
+
+def _validate(capsule: Path) -> None:
+    """`nova validate` accepts it — the issue's bar, not just `status: success`."""
+    result = CliRunner().invoke(app, ["validate", str(capsule)])
+    assert result.exit_code == 0, result.output
+
+
+def test_the_local_capture_validates(tmp_path: Path) -> None:
+    out = tmp_path / "capsules"
+    out.mkdir()
+    result = CliRunner().invoke(
+        app,
+        ["capture", "--output-dir", str(out), "--environment", "production",
+         "--", sys.executable, str(PAYLOAD)],
+        env={"NOVAFABRIC_EXAMPLE_OUT": str(tmp_path / "metrics.json")},
+    )
+    assert result.exit_code == 0, result.output
+    _validate(_sole_capsule(out))
+
+
+def test_submit_sh_is_valid_shell_and_executable() -> None:
+    assert os.access(SUBMIT, os.X_OK), "submit.sh must be executable"
+    proc = subprocess.run([_bash(), "-n", str(SUBMIT)], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_submit_sh_skips_cleanly_without_sbatch(tmp_path: Path) -> None:
+    """No scheduler on PATH is the CI case: exit 0 and say so, never fail."""
+    # An empty PATH hides `sbatch`; bash itself is invoked by absolute path.
+    env = {"PATH": "/nonexistent", "HOME": str(tmp_path)}
+    proc = subprocess.run(
+        [_bash(), str(SUBMIT)], capture_output=True, text=True, env=env, timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.startswith("skip: 'sbatch' is not on PATH"), proc.stdout
+    assert "job.sbatch" in proc.stdout  # points the reader at the no-scheduler path
+
+
+def test_submit_sh_submits_job_sbatch_from_the_example_dir(tmp_path: Path) -> None:
+    """With `sbatch` present, it is called on job.sbatch from the example dir.
+
+    The directory matters: sbatch records it as SLURM_SUBMIT_DIR, which is
+    where job.sbatch looks for payload.py. A stub stands in for the scheduler.
+    """
+    stub_dir = tmp_path / "bin"
+    stub_dir.mkdir()
+    record = tmp_path / "sbatch-call.txt"
+    stub = stub_dir / "sbatch"
+    stub.write_text(
+        f'#!/bin/sh\necho "$PWD $*" > "{record}"\necho "Submitted batch job 7"\n'
+    )
+    stub.chmod(0o755)
+    env = {"PATH": f"{stub_dir}:/usr/bin:/bin", "HOME": str(tmp_path)}
+    proc = subprocess.run(
+        [_bash(), str(SUBMIT)], capture_output=True, text=True, env=env, timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "Submitted batch job 7" in proc.stdout
+    assert record.read_text().split() == [str(EXAMPLE_DIR), "job.sbatch"]
+
+
+def test_the_batch_script_runs_as_a_plain_shell_script(tmp_path: Path) -> None:
+    """README: `./job.sbatch` works with no scheduler and yields a valid capsule."""
+    bin_dir = Path(sys.executable).parent
+    if not (bin_dir / "nova").is_file():
+        pytest.skip(f"no `nova` console script beside {sys.executable}")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("SLURM")}
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+    env["NOVAFABRIC_CAPSULE_OUT"] = str(tmp_path / "capsules")
+    env["NOVAFABRIC_EXAMPLE_OUT"] = str(tmp_path / "metrics.json")
+    proc = subprocess.run(
+        [_bash(), str(SBATCH)], capture_output=True, text=True, env=env,
+        cwd=tmp_path, timeout=300,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "job.sbatch: capsules are under" in proc.stdout
+    capsule = _sole_capsule(tmp_path / "capsules")
+    manifest = yaml.safe_load((capsule / "capsule.yaml").read_text())
+    assert manifest["deployment_environment"] == "production"
+    _validate(capsule)
+
+
+def _sbatch_capture_flags() -> list[str]:
+    """The flags job.sbatch hands `nova capture`, up to the `--` separator."""
+    logical = SBATCH.read_text().replace("\\\n", " ")
+    line = next(
+        ln for ln in logical.splitlines() if ln.strip().startswith("nova capture")
+    )
+    words = line.split()
+    return [w for w in words[2 : words.index("--")] if w.startswith("-")]
+
+
+def test_the_batch_script_only_uses_real_capture_flags() -> None:
+    """Every flag job.sbatch passes is one `nova capture` declares.
+
+    A renamed flag would otherwise surface only on a cluster, hours into a queue.
+    """
+    children = subcommands(root_command())
+    assert children is not None
+    capture = children["capture"]
+    declared = {opt for p in capture.params for opt in (*p.opts, *p.secondary_opts)}
+    flags = _sbatch_capture_flags()
+    assert flags == ["--output-dir", "--environment"], flags
+    assert set(flags) <= declared, set(flags) - declared
+
+
+def test_the_capsule_records_no_slurm_context(tmp_path: Path) -> None:
+    """Pins the README's "Not captured: any Slurm context at all".
+
+    The job id, node and cluster reach the capsule only through the payload's
+    own stdout. If NovaFabric starts recording scheduler context this fails —
+    and the README section is then the thing to rewrite.
+    """
+    out = tmp_path / "capsules"
+    out.mkdir()
+    values = ("424242", "node-7", "cluster-x")
+    result = CliRunner().invoke(
+        app,
+        ["capture", "--output-dir", str(out), "--", sys.executable, str(PAYLOAD)],
+        env={
+            "SLURM_JOB_ID": values[0],
+            "SLURMD_NODENAME": values[1],
+            "SLURM_CLUSTER_NAME": values[2],
+            "NOVAFABRIC_EXAMPLE_OUT": str(tmp_path / "metrics.json"),
+        },
+    )
+    assert result.exit_code == 0, result.output
+    capsule = _sole_capsule(out)
+    hits = sorted(
+        p.relative_to(capsule).as_posix()
+        for p in capsule.rglob("*")
+        if p.is_file() and any(v in p.read_text(errors="ignore") for v in values)
+    )
+    assert hits == ["outputs/stdout.txt"], hits

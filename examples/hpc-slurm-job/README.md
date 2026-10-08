@@ -1,7 +1,9 @@
 # Capturing a Slurm batch job
 
-**Status: works today.** Verified on a real single-node Slurm 23.11 cluster
-(Ubuntu 24.04, 8 vCPU) on 2026-08-29, not only in CI.
+**Status: works today.** `job.sbatch` was verified on a real single-node Slurm
+23.11 cluster (Ubuntu 24.04, 8 vCPU) on 2026-08-29, not only in CI. `submit.sh`
+was added later as a thin wrapper around the same `sbatch job.sbatch`; it has
+been exercised against a stub `sbatch` in the test suite, not a real scheduler.
 
 The README's first line promises capture of "a script, an agent, a model run, an
 HPC training job". Every other example in this tree is laptop-shaped. This one
@@ -23,8 +25,12 @@ know about the other, which is why this works on any scheduler.
 
 ```bash
 cd examples/hpc-slurm-job
-sbatch job.sbatch
+sbatch job.sbatch        # or ./submit.sh, which does the same
 ```
+
+`./submit.sh` exists for the machine that has no Slurm: when `sbatch` is not on
+`PATH` it prints a `skip:` message pointing at the no-scheduler path below and
+exits 0, rather than failing on a laptop, a CI runner or a fresh clone.
 
 ### Two things that will bite you, both measured on a real cluster
 
@@ -53,9 +59,19 @@ nova capture -- python3 payload.py      # the same capture, no scheduler
 
 `payload.py` reads `SLURM_*` from the environment and reports `scheduler = none
 (running locally)` when they are absent. `job.sbatch` falls back to its own
-directory when `SLURM_SUBMIT_DIR` is unset. The accompanying test
-(`tests/test_example_hpc_slurm_job.py`) exercises the no-scheduler path, and skips
-the `sbatch` path cleanly when no scheduler is present.
+directory when `SLURM_SUBMIT_DIR` is unset, and writes capsules to
+`./novafabric-capsules/` (override with `NOVAFABRIC_CAPSULE_OUT`). Check one with:
+
+```bash
+nova validate novafabric-capsules/<run_id>
+```
+
+The accompanying test (`tests/test_example_hpc_slurm_job.py`) runs all three lines
+above with no scheduler and checks the capsule with `nova validate`; checks that
+`submit.sh` skips with exit 0 when `sbatch` is absent and calls `sbatch job.sbatch`
+from the example directory when it is present (a stub, not a real scheduler);
+and checks that every flag `job.sbatch` passes to `nova capture` is one the CLI
+declares.
 
 ## What is in the capsule — and what is not
 
@@ -67,8 +83,10 @@ node it ran on, and a `redaction-proof.json`. `nova validate` accepts it.
 
 **Not captured: any Slurm context at all.** The capsule records no job ID, no node
 name, no cluster name, no partition, no allocation. Grepping the whole capsule for
-"slurm" matches exactly one file — `outputs/stdout.txt` — and only because
-`payload.py` deliberately prints those variables itself.
+the job's ID, node name and cluster name matches exactly one file —
+`outputs/stdout.txt` — and only because `payload.py` deliberately prints those
+variables itself. `test_the_capsule_records_no_slurm_context` pins this, so the
+paragraph cannot silently go stale if scheduler context is ever recorded.
 
 The consequence is worth stating plainly: **a capsule of this batch job and a
 capsule of the same script run on a login node are indistinguishable.** For a
@@ -77,7 +95,7 @@ question it currently cannot answer. This is the same gap the
 [`docker-run/`](../docker-run/) example finds for containers, where the image
 reference and digest are likewise absent — one gap, two runners.
 
-Until then, the workable pattern is the one `payload.py` uses: print the
+Until that gap is closed, the workable pattern is the one `payload.py` uses: print the
 scheduler variables from inside the workload so they land in the captured stdout,
 where they are at least sealed with everything else.
 
@@ -101,5 +119,6 @@ where they are at least sealed with everything else.
 | File | What it is |
 |---|---|
 | `job.sbatch` | the batch script; the capture pattern lives here |
+| `submit.sh` | `sbatch job.sbatch` from the right directory, or a `skip:` and exit 0 with no Slurm |
 | `payload.py` | stdlib-only stand-in for a training script |
 | `README.md` | this file |

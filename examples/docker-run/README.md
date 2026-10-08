@@ -1,6 +1,11 @@
 # Capturing a containerized run
 
-**Status: works today.**
+**Status: works today.** The capsule contents below were measured on a real run
+(docker 28.x, NovaFabric 0.101.0). `run.sh` and the hook-loader behaviour in
+[LLM-call capture needs NovaFabric in the image](#llm-call-capture-needs-novafabric-in-the-image)
+were written on 2026-10-09 on a machine with no Docker: what they cause NovaFabric
+to send to Docker is tested against a stub `docker` on every test run, and the
+real-daemon tests run only where a daemon is reachable.
 
 Every other example in this tree uses the default `local` runner. This one uses
 `--runner docker`, and its real subject is not the flag — it is **what ends up in
@@ -10,7 +15,7 @@ that decides whether this is useful to a platform engineer.
 The short answer, measured rather than assumed: the run itself is captured
 correctly, and the *environment record describes the host, not the container*.
 Details in [What is in the capsule](#what-is-in-the-capsule) below, including two
-things that are missing and are tracked as their own issue.
+things that are missing.
 
 ## Run it
 
@@ -18,17 +23,35 @@ No image build, no API key, no GPU, no private registry — a stock public image
 and a stdlib-only payload.
 
 ```bash
+examples/docker-run/run.sh               # capsules land in examples/docker-run/capsules/
+examples/docker-run/run.sh /tmp/caps     # or choose the output directory
+nova validate /tmp/caps/<run_id>
+```
+
+`run.sh` runs exactly this, from the repository root:
+
+```bash
 nova capture \
   --runner docker \
   --runner-option image=python:3.12-slim \
+  --runner-option "user=$(id -u):$(id -g)" \
   --runner-option workdir=/work \
   --runner-option "extra_volumes=$PWD/examples/docker-run:/work:ro" \
-  python /work/payload.py
+  -- python /work/payload.py
 ```
 
-Without Docker, `nova capture --runner docker` reports that the daemon is
-unreachable and exits non-zero rather than pretending to run; the accompanying
-test skips cleanly instead.
+`user=` runs the workload as **you** rather than as the image's default root user,
+so nothing in the container runs privileged and anything written into the
+bind-mounted capsule stays owned by you on the host. The runner never adds
+`--privileged`, host namespaces or the Docker socket.
+
+**Without Docker,** `run.sh` prints a `skip:` line and exits 0 — both when there is
+no `docker` binary and when `docker info` cannot reach a daemon. Calling
+`nova capture --runner docker` directly with no `docker` binary does *not* skip: it
+prints `Workload never started: [Errno 2] No such file or directory: 'docker'`,
+exits 127, and still writes a `status: failure` capsule recording that (measured).
+With a binary but no daemon, `docker run` itself exits 125, which the runner
+reports as a setup failure (from the runner's source; not measured here).
 
 > **`--runner-option` takes strings, and structured options are comma-separated.**
 > `extra_volumes=a:b,c:d` is two mounts. Before v0.102.0 the CLI accepted these
@@ -38,9 +61,9 @@ test skips cleanly instead.
 
 ## What is in the capsule
 
-Captured from a real run of the command above (`python:3.12-slim`, docker 28.x,
-NovaFabric 0.101.0). **Read this as a report of what is true today, not a
-specification.**
+Captured from a real run of the command above, before `user=` was added
+(`python:3.12-slim`, docker 28.x, NovaFabric 0.101.0). **Read this as a report of
+what is true today, not a specification.**
 
 ### What proves the workload ran in the container
 
@@ -88,6 +111,30 @@ For an evidence format, that is worth fixing, and it is deliberately **not** fix
 in this example. See `examples/hpc-slurm-job/README.md`, which finds the same gap
 for the Slurm runner — one gap, two runners.
 
+### LLM-call capture needs NovaFabric in the image
+
+Since v0.102.0 (defect B3) the Docker runner writes its hook loader into the
+capsule and puts it on the container's `PYTHONPATH`, so wire-level capture can
+fire inside the container. It can only fire if the **image** has NovaFabric
+installed — the runner's own docstring makes that the image's responsibility.
+`python:3.12-slim` does not, so for this example the loader runs, fails to import
+`novafabric`, and writes `[novafabric] hook install failed: No module named
+'novafabric'` to the capsule's `outputs/stderr.txt`.
+
+The payload makes no model calls, so this example loses nothing. A containerized
+agent that does make them needs an image built with `pip install novafabric`;
+on a stock image its `model-calls.jsonl` comes back empty while the run still
+reports `status: success`. Check `outputs/stderr.txt` for that line.
+
+### Which environment crosses into the container
+
+Not the submitting shell's. The runner forwards a **default-deny allowlist**
+(ADR-0270): NovaFabric's own `NOVAFABRIC_*` variables, the `PYTHONPATH` it sets
+itself, and anything passed explicitly with `--runner-option extra_env=…`.
+Provider keys, tokens and everything else in your shell stay on the host. The
+test suite pins this against the exact `docker run` argv: a variable set in the
+calling environment never appears in it.
+
 ### Redaction still applies
 
 `redaction-proof.json` is written for a container run exactly as for a local one;
@@ -109,6 +156,7 @@ where the process ran.
 
 | File | What it is |
 |---|---|
+| `run.sh` | the documented command; skips with exit 0 when Docker is unavailable |
 | `payload.py` | stdlib-only workload that prints what interpreter and host it sees |
 | `README.md` | this file |
 

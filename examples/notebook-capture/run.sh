@@ -13,6 +13,8 @@ if ! command -v jupyter >/dev/null 2>&1; then
   echo "skip: 'jupyter' is not on PATH — install the example's extra with:"
   echo "      pip install nbconvert ipykernel"
   echo "      (nbconvert is an extra for this example only, not a NovaFabric dependency)"
+  echo "      No Jupyter at all? The same cells run as one plain process with:"
+  echo "        nova capture -- python3 ${here}/run_cells.py ${here}/analysis.ipynb"
   exit 0
 fi
 
@@ -23,7 +25,9 @@ mkdir -p "${out_dir}"
 export NOTEBOOK_OUTPUT_DIR="${out_dir}"
 
 # --to notebook --execute runs every cell in a real kernel and writes the
-# executed copy, so the capsule's outputs carry the executed notebook too.
+# executed copy to ${out_dir}/executed.ipynb — BESIDE the capsule, not inside
+# it. The capsule records the process; the executed notebook (and every cell's
+# printed output, which the kernel routes into it) is not part of the evidence.
 nova capture \
   --output-dir "${out_dir}" \
   -- jupyter nbconvert \

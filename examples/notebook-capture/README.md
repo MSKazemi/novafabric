@@ -12,6 +12,7 @@ the two general mechanisms below.
 examples/notebook-capture/
 ├── analysis.ipynb   a deterministic, stdlib-only notebook (no API key, no network)
 ├── run.sh           the documented command; skips cleanly with no Jupyter installed
+├── run_cells.py     stdlib-only: runs the code cells as one process, for a machine with no Jupyter
 └── README.md
 ```
 
@@ -26,7 +27,29 @@ nova capture --output-dir ./capsules -- \
 ```
 
 `./run.sh` runs exactly that. One capsule per notebook execution, reproducible in
-CI. Verified: `status: success`, `exit_code: 0`.
+CI. Verified: `status: success`, `exit_code: 0`, and `nova validate` accepts the
+capsule (re-run 2026-10-09 with nbconvert + ipykernel 7.4 installed beside
+NovaFabric; the executed notebook and `results.json` land in the output
+directory *beside* the capsule, not inside it).
+
+### No Jupyter on the machine? Run the cells as a plain process
+
+```bash
+nova capture --output-dir ./capsules -- \
+  python3 run_cells.py analysis.ipynb
+```
+
+`run_cells.py` is part of this example, not of NovaFabric. It executes the
+notebook's code cells top to bottom in one shared namespace — what "Restart & Run
+All" does — with only the standard library, so it runs where `nbconvert` is not
+installed, including NovaFabric's own CI, which exercises it on every run. It
+refuses IPython syntax (`%magic`, `!shell`) instead of half-supporting it; a
+notebook that needs those needs nbconvert.
+
+It differs from Pattern 1 in one way that matters for evidence: there is no
+kernel, so a cell's `print()` is ordinary process stdout and **does** land in the
+capsule's `outputs/stdout.txt`. Under nbconvert it does not (see
+[What is not captured](#what-is-not-captured), item 1).
 
 ## Pattern 2 — capture one cell's work in-process
 
@@ -107,6 +130,7 @@ a file survives into evidence, a `print()` does not.
 ```bash
 ./run.sh                 # skips with a message if Jupyter is absent
 ./run.sh /tmp/capsules   # or choose the output directory
+nova validate /tmp/capsules/<run_id>
 ```
 
 ## See also

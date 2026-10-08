@@ -144,13 +144,15 @@ No real LLM, no real API key, no external network call.
 `nova lineage provenance` returns results only when the consumed assets are
 registered in the local registry. The demo runs do not pre-register assets, so
 the provenance query returns "no results" — this is expected. To see populated
-lineage, register the fixture files first:
+lineage, register the assets the run consumed. `nova register` takes an asset
+*spec* YAML, not a raw file, and `nova suggest-register` drafts those specs from a
+capsule's evidence for you to review:
 
 ```sh
-nova register fixtures/service.yaml --name service-config --version v1
-nova register fixtures/prompt.txt --name prompt-template --version v1
 nova capture -- python agent.py --mode bad
-nova lineage provenance $(nova list --json | jq -r '.[0].run_id')
+nova suggest-register --draft-only --output-dir drafts/ <run_id>
+nova register drafts/<spec>.yaml        # each draft you accept
+nova lineage provenance <run_id>
 ```
 
 ---
