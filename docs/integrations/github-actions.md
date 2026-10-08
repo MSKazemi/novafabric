@@ -80,6 +80,29 @@ Every row matches `action.yml` exactly.
 | `python-version` | no | `3.12` | NovaFabric requires 3.12+. |
 | `extras` | no | `""` (core) | Extras to install, e.g. `all`. Core is ~113 MB; `all` is ~412 MB. |
 
+### How `run` is executed — one command, spliced into a shell script
+
+`run` is not a separate shell. GitHub pastes its text into the action's own bash
+step, directly after `nova capture … --`. Quoting therefore works as you would
+type it (`run: python -c 'print("a b")'` is fine), but **shell operators apply to
+the whole line, not to the captured command**:
+
+| `run:` value | What lands in the capsule |
+|---|---|
+| `pytest -q` | `pytest -q` — the normal case |
+| `pytest -q && python report.py` | **only `pytest -q`**; `report.py` runs after the capture, unrecorded |
+| `bash -c 'pytest -q && python report.py'` | both commands, as one captured process |
+
+Measured by splicing each value into the action's capture line exactly as GitHub
+does. For anything compound — `&&`, `|`, `;`, redirections — wrap it in
+`bash -c '…'`, or better, put it in a script and capture the script.
+
+Because the text is spliced into a script, **never put untrusted input in `run`**
+(an issue title, a PR branch name, `${{ github.event.* }}` text): that is shell
+injection into your CI job. This is GitHub's general
+[script-injection rule](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections),
+and it applies here because the action interpolates `run` the same way.
+
 ### Why `environment` defaults to `test` and not `ci`
 
 `nova validate` prints a warning for any environment outside
@@ -129,13 +152,36 @@ build. You just also get the capsule.
 
 ## Retrieving and replaying the capsule later
 
-Download the artifact from the workflow run (UI, or `gh run download <run-id>
---name capsule-<id>`), then:
+The artifact holds the capsule's **contents** at its root — `capsule.yaml`,
+`env.lock`, `outputs/` and so on — not a directory named after the run.
+
+**From your machine,** download it into a directory of its own. `gh run download`
+extracts a single named artifact straight into the current directory unless you
+pass `--dir`:
 
 ```bash
+gh run download <workflow-run-id> --name capsule-<id> --dir capsule-<id>
 nova validate ./capsule-<id>
 nova replay --mode forensic ./capsule-<id>   # read-only: inspect, run nothing
 nova replay ./capsule-<id>
+```
+
+**From a later job in the same workflow,** use `actions/download-artifact` — the
+same step this repository's own
+[`capture-action.yml`](https://github.com/MSKazemi/novafabric/blob/main/.github/workflows/capture-action.yml)
+uses to prove a crashed run's capsule is recoverable:
+
+```yaml
+  inspect:
+    needs: capture
+    if: always()          # a failed capture still uploaded its capsule
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: capsule-${{ github.run_id }}
+          path: capsule/
+      - run: grep -E '^(status|exit_code):' capsule/capsule.yaml
 ```
 
 To compare two CI runs — the classic "it passed yesterday" question — download
@@ -158,8 +204,12 @@ nova diff ./capsule-monday ./capsule-tuesday
   integration ships for them yet.
 - **Matrix builds.** Give each matrix leg a distinct `artifact-name`, or the
   uploads collide.
+- **Compound commands in `run`.** Supported only by wrapping them, as above —
+  the action captures exactly one command.
 
 ## See also
 
 - [`docs/cli-reference.md`](../cli-reference.md) — every flag `nova capture` takes.
+- [`.github/actions/capture/action.yml`](https://github.com/MSKazemi/novafabric/blob/main/.github/actions/capture/action.yml)
+  — the authoritative inputs, defaults and outputs.
 - [`docs/integrations/README.md`](README.md) — the other integration guides.
