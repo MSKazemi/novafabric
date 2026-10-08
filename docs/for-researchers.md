@@ -19,8 +19,9 @@ can you. NovaFabric's response is to record the execution itself, as an artefact
 ## What a capsule gives a reviewer
 
 Wrapping the command produces a directory holding the command line, the environment lock,
-every model call (model identifier, parameters, token counts, latency), every tool
-invocation, the inputs and outputs, and a proof that no secrets were retained.
+the model calls capture can see (model identifier, parameters, token counts, latency),
+tool invocations, the inputs and outputs, and a secret-scan record (rule-based scanning
+for known key and token patterns).
 
 ```console
 $ nova capture python experiments/run_benchmark.py --config configs/main.yaml

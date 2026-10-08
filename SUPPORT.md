@@ -78,9 +78,8 @@ are kept stocked and specified.
 
 ## Commercial / research collaboration
 
-NovaFabric is maintained by
-[Mohsen Seyedkazemi Ardebili](https://github.com/MSKazemi) as part of the
-[NovaFabric](https://github.com/novafabric) open-source lab. There is no
+NovaFabric is an independent open-source project maintained by
+[Mohsen Seyedkazemi Ardebili](https://github.com/MSKazemi). There is no
 commercial offering and no hosted service. For research collaboration, see the
 [design partner program](docs/governance/design-partners.md) or the contact links
 on <https://novafabric.ai>.

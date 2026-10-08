@@ -55,9 +55,9 @@ introducing a third requires an accepted ADR.
 ## Run Capsule
 
 A **Run Capsule** is the fundamental unit of capture in NovaFabric. It is a
-directory containing all observable facts about a single command execution:
-the command, timing, environment, every LLM call made, every tool invoked,
-stdout/stderr, and a proof that no secrets escaped.
+directory recording a single command execution: the command, timing,
+environment, the LLM calls and tool invocations capture can see, stdout/stderr,
+and a secret-scan record (rule-based scanning for known key and token patterns).
 
 Capsules are identified by a [ULID](https://github.com/ulid/spec) — a
 lexicographically sortable, time-prefixed unique identifier.

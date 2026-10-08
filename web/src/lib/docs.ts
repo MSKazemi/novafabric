@@ -13,8 +13,12 @@ const modules = import.meta.glob<{
   rawContent: () => string;
 }>('../../../docs/**/*.md', { eager: true });
 
-/** Files that are not user-facing documentation and should not be published. */
-const EXCLUDE = [/^releases\//, /^whitepaper\//];
+/**
+ * Files that are not user-facing documentation and should not be published.
+ * `_template` files are contributor scaffolding (kept in step with the website's
+ * lib/docs.ts EXCLUDE).
+ */
+const EXCLUDE = [/^releases\//, /^whitepaper\//, /(^|\/)_template\.md$/];
 
 export interface DocPage {
   /** Path relative to docs/, e.g. "ops/monitoring.md". */

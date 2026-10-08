@@ -3,18 +3,20 @@ import ThemeToggle from './ThemeToggle';
 import { GITHUB_REPO } from '../../lib/links';
 
 const nav = [
-  { href: '/dashboard', label: 'Dashboard', emphasis: true },
-  { href: '/concepts', label: 'Concepts' },
-  { href: '/showcase/capsule', label: 'Capsule' },
-  { href: '/showcase/replay', label: 'Replay' },
-  { href: '/showcase/lineage', label: 'Lineage' },
-  { href: '/showcase/registry', label: 'Registry' },
-  { href: '/showcase/evidence', label: 'Evidence' },
-  { href: '/docs', label: 'Docs' },
-  { href: '/install', label: 'Install' },
+  { href: '/dashboard/', label: 'Dashboard', emphasis: true },
+  { href: '/concepts/', label: 'Concepts' },
+  { href: '/showcase/capsule/', label: 'Capsule' },
+  { href: '/showcase/replay/', label: 'Replay' },
+  { href: '/showcase/lineage/', label: 'Lineage' },
+  { href: '/showcase/registry/', label: 'Registry' },
+  { href: '/showcase/evidence/', label: 'Evidence' },
+  { href: '/docs/', label: 'Docs' },
+  { href: '/install/', label: 'Install' },
 ];
 
 const path = Astro.url.pathname;
+// Nav hrefs carry the trailing slash GitHub Pages redirects to; compare without it.
+const norm = (p: string) => p.replace(/\/+$/, '') || '/';
 ---
 
 <header class="border-b border-[var(--color-border)] bg-[var(--color-bg)]/80 backdrop-blur sticky top-0 z-50">
@@ -36,7 +38,7 @@ const path = Astro.url.pathname;
 
     <nav class="hidden lg:flex items-center gap-1 text-sm" aria-label="Primary">
       {nav.map((item) => {
-        const active = path === item.href || (item.href !== '/' && path.startsWith(item.href));
+        const active = norm(path) === norm(item.href) || (item.href !== '/' && norm(path).startsWith(`${norm(item.href)}/`));
         return (
           <a
             href={item.href}
@@ -69,7 +71,7 @@ const path = Astro.url.pathname;
   <!-- Mobile / narrow: secondary nav row -->
   <nav class="lg:hidden border-t border-[var(--color-border)] container-content flex items-center gap-1 py-2 text-xs overflow-x-auto" aria-label="Primary mobile">
     {nav.map((item) => {
-      const active = path === item.href || (item.href !== '/' && path.startsWith(item.href));
+      const active = norm(path) === norm(item.href) || (item.href !== '/' && norm(path).startsWith(`${norm(item.href)}/`));
       return (
         <a
           href={item.href}
