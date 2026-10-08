@@ -9506,6 +9506,59 @@ opt-in; none is a third top-level format ([ADR-0034](./decisions.md)). The
 architecture note behind it is in the maintainers' private `design/` tree and is
 not published.
 
+### LangGraph adapter
+
+```python
+# Install the framework: pip install langgraph
+from novafabric.adapters.langgraph import wrap
+
+graph = wrap(builder.compile(), run_name="my-workflow")
+result = graph.invoke({"messages": ["hi"]})
+for chunk in graph.stream({"messages": ["hi"]}):   # stream_mode="updates" by default
+    print(chunk)
+```
+
+Unlike the adapters below, `wrap` returns a thin **wrapper** around the compiled graph
+rather than patching it in place — keep using the returned object. `invoke`, `ainvoke`,
+`stream` and `astream` each write one capsule; every keyword (`stream_mode`, `subgraphs`,
+`version`, `config`, …) passes through to LangGraph unchanged, and so does every chunk.
+
+What each capsule holds: the wire-level model and tool calls made while the graph ran, and
+(experimental, ADR-0209) state transitions — for `invoke` / `ainvoke` a start marker plus
+one whole-invocation transition; for `stream` / `astream` one transition per yielded chunk,
+digest-chained from the input. Digests always; raw state only at the `forensic` /
+`air_gapped` capture level. A chunk is digested exactly as `stream_mode` shaped it; its
+`agent_id` names the node only for a single-key dict chunk, i.e. under the default
+`"updates"` mode.
+
+**Streaming (experimental).** LangGraph's `stream` / `astream` are generator functions:
+nothing runs until you iterate, and every node runs while you do. The capsule opens when
+you call `stream()` / `astream()` and stays open until the stream ends:
+
+| What happened | `status` | `metadata.partial_reason` |
+|---|---|---|
+| Stream read to the end | `success` | — |
+| A node raised mid-stream (the exception still reaches you) | `failure` | — |
+| You closed the stream early (`break` + `close()` / `aclose()`), dropped it unread, or a `KeyboardInterrupt` stopped it | `partial` | `abandoned` |
+| The task consuming `astream` was cancelled while the graph ran, or an `ainvoke` was cancelled | `partial` | `cancelled` |
+
+A wrapped graph called while another wrapped run is producing — a wrapped subgraph
+invoked from inside a node, sync or async — records into the open capsule instead of
+opening a second one (LangGraph runs nodes in a context copied from the caller's, which
+is how the nested call sees it). Its own state transitions are not recorded, so the outer
+digest chain stays intact.
+
+Not captured: `batch` / `abatch`, `stream_events` / `astream_events`, and every other
+graph method pass straight through with no capsule. Because the capsule opens on the
+`stream()` call, consume one stream before creating the next: overlapping captures share
+the process's wire hooks, and each capsule's `metadata.wire_capture` (ADR-0224) records
+whether its wire stream is complete. `capture_node_capsules=` is reserved for
+per-node child capsules and does nothing today.
+
+Optional: `run_name=` (defaults to `langgraph-run`), `data_dir=`.
+
+Top-level alias: `from novafabric.adapters import wrap_langgraph`
+
 ### LlamaIndex adapter
 
 ```python

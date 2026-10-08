@@ -283,6 +283,18 @@ longer forwards the submitting shell's environment (ADR-0270).
   `tests/adapters/test_streaming_real_frameworks.py`, which skips when they are absent, as
   in CI; the always-on tests use fakes shaped from those packages' source.
 
+- **The LangGraph adapter no longer records an abandoned stream as `success`**
+  (experimental). A `stream()` closed early, dropped unread or stopped by `KeyboardInterrupt`
+  wrote `status: success`; it is now `status: partial` with `metadata.partial_reason:
+  abandoned`, and a node that raises mid-stream is still `failure`. `astream()` and
+  `ainvoke()` were passed through to the graph with no capsule at all; both are now
+  captured, and a cancelled one is `partial` / `cancelled`. A wrapped graph called from
+  inside a node of another wrapped run records into the open capsule instead of opening a
+  second one that took the wire hooks. The capsule now opens when `stream()` is called, not
+  on the first read. Checked against langgraph 1.2.14 (default and list `stream_mode`) in
+  `tests/adapters/test_langgraph_streaming.py`, whose real-library tests skip when langgraph
+  is absent.
+
 - **Two framework adapters wrote capsules that missed the run** (issues #1, #3 follow-up).
   LlamaIndex: an agent's `run` returns a `WorkflowHandler` and does its work when awaited,
   but the adapter finished the capsule as soon as `run` returned — an empty, successful

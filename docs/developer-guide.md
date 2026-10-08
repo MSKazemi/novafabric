@@ -1393,7 +1393,9 @@ empty, successful capsule and releases the hooks before the first model call.
 `adapters/_streaming.py` holds the helpers that move the close to where the run
 really ends and record how it ended (`success` / `failure` / `partial` with
 `metadata.partial_reason`); `AdapterCapture.mark_partial()` sets the schema's
-`partial` status. Check the shape against the framework's *installed* source, not
+`partial` status. `Closer` takes any object with `fail` / `mark_partial` / `finish`
+(the `ClosableRun` protocol), so an adapter with its own capsule writer — `langgraph.py`'s
+`_GraphRun` — reuses the same guards. Check the shape against the framework's *installed* source, not
 its docs — and test the abandoned and dropped-unread cases, not just the happy one.
 
 ### Typed `record_*` methods (extended event taxonomy, ADR-0082)

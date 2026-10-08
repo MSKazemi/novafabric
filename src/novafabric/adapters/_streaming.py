@@ -26,7 +26,7 @@ import contextvars
 import threading
 import weakref
 from collections.abc import AsyncIterator, Callable, Iterator
-from typing import Any
+from typing import Any, Protocol
 
 from novafabric.adapters._capsule import AdapterCapture
 
@@ -40,10 +40,21 @@ CANCELLED = "cancelled"
 _WATCHERS: set[asyncio.Task[None]] = set()
 
 
+class ClosableRun(Protocol):
+    """What :class:`Closer` drives: :class:`AdapterCapture`, or an adapter's own
+    capture object with the same three methods (the LangGraph adapter's)."""
+
+    def fail(self, exc: BaseException) -> None: ...
+
+    def mark_partial(self, reason: str) -> None: ...
+
+    def finish(self) -> None: ...
+
+
 class Closer:
     """Close one capsule exactly once, whoever gets there first."""
 
-    def __init__(self, cap: AdapterCapture) -> None:
+    def __init__(self, cap: ClosableRun) -> None:
         self._cap = cap
         self._lock = threading.Lock()
         self._closed = False
@@ -231,7 +242,7 @@ class GuardedAsyncContext:
             self._value = await self._cm.__aenter__()
         except BaseException as exc:
             self._in_flight.reset(token)
-            _record(cap, exc)
+            record_outcome(cap, exc)
             cap.finish()
             raise
         self._cap, self._token = cap, token
@@ -245,11 +256,11 @@ class GuardedAsyncContext:
         try:
             suppressed = await self._cm.__aexit__(exc_type, exc, tb)
         except BaseException as raised:
-            _record(cap, raised)
+            record_outcome(cap, raised)
             raise
         else:
             if exc is not None and not suppressed:
-                _record(cap, exc)
+                record_outcome(cap, exc)
             else:
                 reason = self._settle(self._value)
                 if reason is not None:
@@ -263,7 +274,7 @@ class GuardedAsyncContext:
             cap.finish()
 
 
-def _record(cap: AdapterCapture, exc: BaseException) -> None:
+def record_outcome(cap: ClosableRun, exc: BaseException) -> None:
     """Record how a run that raised *exc* ended."""
     if isinstance(exc, asyncio.CancelledError):
         cap.mark_partial(CANCELLED)
