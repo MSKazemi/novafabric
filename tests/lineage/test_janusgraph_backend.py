@@ -43,8 +43,12 @@ def janusgraph_endpoint():
     except ImportError:
         pytest.skip("gremlinpython/testcontainers not installed — skipping JanusGraph tests")
     # Pinned per deploy/IMAGE_PINS.md — keep in sync with the compose/Helm pin.
-    container = DockerContainer("janusgraph/janusgraph:1.1.0").with_exposed_ports(8182)
+    # Construct inside the try: DockerContainer() opens a Docker client, so on a
+    # host with no Docker daemon the constructor itself raises — it must skip,
+    # not error at setup.
+    container = None
     try:
+        container = DockerContainer("janusgraph/janusgraph:1.1.0").with_exposed_ports(8182)
         container.start()
         wait_for_logs(container, "Channel started at port 8182", timeout=150)
         time.sleep(3)  # server accepts the port before the graph is fully ready
@@ -54,10 +58,11 @@ def janusgraph_endpoint():
     except Exception as exc:  # pragma: no cover - env-dependent
         pytest.skip(f"Could not start JanusGraph container (Docker unavailable?): {exc}")
     finally:
-        try:
-            container.stop()
-        except Exception:  # pragma: no cover
-            pass
+        if container is not None:
+            try:
+                container.stop()
+            except Exception:  # pragma: no cover
+                pass
 
 
 def _run(rid: str) -> dict:
