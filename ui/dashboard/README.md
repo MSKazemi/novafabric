@@ -1,14 +1,14 @@
-# NovaFabric embedded dashboard (`web/`)
+# NovaFabric embedded dashboard (`ui/dashboard/`)
 
 > This directory is the source of the **local dashboard** that
 > `nova serve --experimental` serves. It is not the public website:
 > `https://novafabric.ai` is built from its own repository, and this tree adds
-> no public-site code (ADR-0299 in the [decisions index](../docs/decisions.md)).
+> no public-site code (ADR-0299 in the [decisions index](../../docs/decisions.md)).
 >
 > The canonical automation interface is the CLI (`pip install novafabric`).
 > The dashboard is a satellite: every view surfaces the equivalent `nova`
 > command. Its limitations versus the CLI are documented in
-> [`docs/dashboard.md`](../docs/dashboard.md).
+> [`docs/dashboard.md`](../../docs/dashboard.md).
 
 ## What ships in the wheel
 
@@ -51,21 +51,22 @@ offline, the dashboard and its API work and those links simply do not load.
 - `src/components/dashboard/**` — the dashboard. It imports only `src/lib/*` and
   `src/components/ui/*`.
 - `src/components/dashboard/commands/generatedCommands.ts` — generated from the
-  live Typer app; regenerate with `uv run python web/scripts/gen-command-registry.py`.
+  live Typer app; regenerate with `uv run python ui/dashboard/scripts/gen-command-registry.py`.
   `tests/serve/test_command_registry_coverage.py` fails if it drifts from the CLI.
 - `serve-shell/` — the product-local `index.html` and `404.html`.
 - **Legacy, not packaged:** the Astro marketing pages under `src/pages/`
   (`index`, `concepts`, `install`, `why`, `spec`, `showcase/*`, `docs/*`) and the
   components only they use. `https://novafabric.ai` serves its own versions of
-  every one of those routes. Removing them from this tree, and renaming `web/`
-  to a dashboard-only path, is **planned** (ADR-0299 stages C–E).
+  every one of those routes. This tree moved from `web/` to `ui/dashboard/` in
+  ADR-0299 stage C (a path rename only); removing the legacy pages from it is
+  **planned** (ADR-0299 stages D–E).
 
 ## Stack
 
 Astro 7 + React 19 islands + Tailwind v4 + React Flow (lineage DAG).
 
 All dependencies are Tier A licenses (Apache-2.0 / MIT / BSD / ISC /
-OFL fonts) per [ADR 0024](../docs/decisions.md).
+OFL fonts) per [ADR 0024](../../docs/decisions.md).
 A CI gate (`scripts/check-licenses.mjs`) walks the full transitive
 tree and fails the build on any non-Tier-A SPDX id.
 

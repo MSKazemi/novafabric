@@ -25,7 +25,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = REPO_ROOT / "docs" / "assets" / "demo.svg"
 
-# Brand tokens from web/src/styles/tokens.css.
+# Brand tokens from ui/dashboard/src/styles/tokens.css.
 BACKGROUND = "#0a0a0c"
 FOREGROUND = "#d8d8dd"
 ACCENT = "#c4f0a8"

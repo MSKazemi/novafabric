@@ -7,7 +7,7 @@ The story:
     capture v0.2.0 (RUN_B, regression), replay v0.1.0 in mocked mode (RUN_C),
     and produce a diff that shows the regression.
 
-Output: web/src/data/fixtures/ with assets, capsules (RUN_A/B/C), lineage,
+Output: ui/dashboard/src/data/fixtures/ with assets, capsules (RUN_A/B/C), lineage,
 diff, and an evidence bundle. Each output validates against the published
 schemas at /schemas/ via jsonschema (when the package is available).
 
@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 WEB_ROOT = Path(__file__).resolve().parent.parent
-REPO_ROOT = WEB_ROOT.parent
+REPO_ROOT = WEB_ROOT.parent.parent
 FIXTURES = WEB_ROOT / "src" / "data" / "fixtures"
 SCHEMAS_SRC = REPO_ROOT / "schemas"
 SCHEMAS_DST = WEB_ROOT / "src" / "data" / "schemas"

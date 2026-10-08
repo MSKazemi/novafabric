@@ -2,7 +2,7 @@
 
 Why this exists: the Python dependency closure has had a severity + waiver
 gate since ADR-0186, while the three publicly tracked npm lockfiles had no
-audit at all — eight HIGH advisories sat in ``web/`` unseen (2026-09-04).
+audit at all — eight HIGH advisories sat in ``ui/dashboard/`` unseen (2026-09-04).
 These tests pin the gate's contract the same way the CI-shape tests pin
 ``pip_audit_gate.py``'s invocation: every exit code, the fail-closed rule,
 the dedup rule, and the waiver lifecycle.
@@ -191,13 +191,13 @@ def test_waiver_with_unknown_field_is_exit_2(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Dedup — the property the real web/ finding exercised
+# Dedup — the property the real ui/dashboard/ finding exercised
 # ---------------------------------------------------------------------------
 
 
 def test_one_advisory_reached_via_six_packages_is_one_decision(tmp_path: Path) -> None:
     """npm attributes one advisory to every package in its chain; the real
-    web/ case surfaced GHSA-jmr9-qjv8-65gv as six 'high' package entries.
+    ui/dashboard/ case surfaced GHSA-jmr9-qjv8-65gv as six 'high' package entries.
     One advisory must be one line, one waiver, one decision."""
     shared = advisory(GHSA_A, "high")
     rep = report_with(

@@ -14,7 +14,7 @@
  *
  * Environment:
  *   NOVA_E2E_PYTHON   interpreter with novafabric installed
- *                     (default: ../.venv/bin/python, else python3)
+ *                     (default: ../../.venv/bin/python, else python3)
  *   PW_CHANNEL        use an installed browser (e.g. "chrome") instead of
  *                     Playwright's bundled Chromium
  */
@@ -56,7 +56,7 @@ export function skipReason(): string | null {
 
 export function pythonBin(): string {
   if (process.env.NOVA_E2E_PYTHON) return process.env.NOVA_E2E_PYTHON;
-  const venv = resolve(dirname(fileURLToPath(import.meta.url)), '../../../.venv/bin/python');
+  const venv = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../.venv/bin/python');
   return existsSync(venv) ? venv : 'python3';
 }
 

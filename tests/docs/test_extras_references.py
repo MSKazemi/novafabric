@@ -17,7 +17,7 @@ Mirrors the ``REPO_ROOT`` derivation and assertion style of
 
 Scope: ``src/``, ``docs/`` (excluding ``docs/releases/``, which is immutable
 release history and may legitimately describe an extra as it existed, or was
-promised, at that historical release), ``web/``, and ``design/`` (excluding
+promised, at that historical release), ``ui/dashboard/``, and ``design/`` (excluding
 ``design/adr/``, which is an immutable decision-record archive that may
 reference extra names that were proposed, renamed, or never shipped — see
 e.g. ADR-0138, which still says ``novafabric[server-saml]``, and ADR-0128,
@@ -44,7 +44,7 @@ PYPROJECT = REPO_ROOT / "pyproject.toml"
 
 # Directories scanned for `novafabric[...]` references. Each is walked
 # recursively; `docs/releases/` and `design/adr/` are excluded below.
-_SCAN_ROOTS = ("src", "docs", "web", "design")
+_SCAN_ROOTS = ("src", "docs", "ui/dashboard", "design")
 _EXCLUDED_DIRS = (
     REPO_ROOT / "docs" / "releases",
     # design/adr/ is an immutable decision-record archive (see module
@@ -87,10 +87,10 @@ def _tracked_paths() -> set[Path] | None:
     """Absolute paths of git-tracked files under the scan roots, or None.
 
     Only *tracked* files are in scope. Walking the filesystem instead would
-    also scan gitignored build output — `web/dist/` (Astro) and
+    also scan gitignored build output — `ui/dashboard/dist/` (Astro) and
     `packages/*/dist/` (Vite) both contain content-hash-named bundles that
     embed whatever strings the sources had *at the time of the last local
-    build*. A developer holding a stale `web/dist/` from before a fix would
+    build*. A developer holding a stale `ui/dashboard/dist/` from before a fix would
     then get a failure describing a phantom reference that no longer exists
     in any source file and that no commit can remove — a false positive on
     untracked local junk. A guard that cries wolf gets deleted, so it must
@@ -175,12 +175,12 @@ def test_scan_finds_the_known_evidence_fabric_extras() -> None:
     for expected in ("scale", "nats", "clickhouse", "avro", "saml", "serve"):
         assert expected in seen, (
             f"expected to see at least one novafabric[{expected}] reference "
-            "somewhere in src/docs/web/design — the scanner may be broken"
+            "somewhere in src, docs, ui/dashboard or design — the scanner may be broken"
         )
 
 
 def test_no_phantom_extra_references_in_src_docs_web() -> None:
-    """Every ``novafabric[<name>]`` reference under src/, docs/, web/, design/
+    """Every ``novafabric[<name>]`` reference under src/, docs/, ui/dashboard/, design/
     must name a real ``[project.optional-dependencies]`` entry.
 
     docs/releases/ and design/adr/ are excluded (both immutable historical
@@ -245,9 +245,9 @@ def test_evidence_fabric_import_error_hints_name_real_extras() -> None:
 def test_scan_ignores_untracked_build_output() -> None:
     """A stale gitignored build artifact must not fail the guard.
 
-    Regression: `web/dist/_astro/EvalTab.*.js` (Astro build output, gitignored)
+    Regression: `ui/dashboard/dist/_astro/EvalTab.*.js` (Astro build output, gitignored)
     still embedded the `novafabric[eval]` hint that S3 removed from
-    `web/src/.../EvalTab.tsx`, because the local bundle predated the fix. The
+    `ui/dashboard/src/.../EvalTab.tsx`, because the local bundle predated the fix. The
     filesystem walk scanned it and failed the guard on a file no commit can
     fix. Only git-tracked files are in scope now; this test pins that.
     """

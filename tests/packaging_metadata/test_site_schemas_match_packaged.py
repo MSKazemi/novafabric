@@ -17,11 +17,11 @@
 ``schemas/`` (canonical, OAS v1.0 target) and ``src/novafabric/schemas/`` (what
 an installed CLI validates against) are held in step by
 ``test_packaged_schemas_match_canonical.py``. There is a **third** copy —
-``web/src/data/schemas/`` — imported by ``web/src/lib/fixtures.ts`` and compiled
-by ``web/src/lib/validate.ts`` into the validator the showcase site runs at build
+``ui/dashboard/src/data/schemas/`` — imported by ``ui/dashboard/src/lib/fixtures.ts`` and compiled
+by ``ui/dashboard/src/lib/validate.ts`` into the validator the showcase site runs at build
 time. It was outside every guard.
 
-The site's own Spec page (``web/src/pages/spec.astro``) states:
+The site's own Spec page (``ui/dashboard/src/pages/spec.astro``) states:
 
     The showcase site validates its fixture against the same schemas at build
     time, so the demo can never silently drift from the real format.
@@ -48,7 +48,7 @@ showcase must demonstrate.
 
 Fix when the first test fails::
 
-    cp src/novafabric/schemas/<name>.schema.json web/src/data/schemas/
+    cp src/novafabric/schemas/<name>.schema.json ui/dashboard/src/data/schemas/
 
 ⚠ The vendored JSON is imported at *build* time, so the compiled bundle under
 ``src/novafabric/serve/static/_astro/`` keeps whatever it was built with. Syncing
@@ -63,9 +63,9 @@ import pytest
 from jsonschema import Draft202012Validator
 
 REPO = Path(__file__).resolve().parents[2]
-SITE_SCHEMAS = REPO / "web" / "src" / "data" / "schemas"
+SITE_SCHEMAS = REPO / "ui" / "dashboard" / "src" / "data" / "schemas"
 PACKAGED_SCHEMAS = REPO / "src" / "novafabric" / "schemas"
-SITE_CAPSULES = REPO / "web" / "src" / "data" / "fixtures" / "capsules"
+SITE_CAPSULES = REPO / "ui" / "dashboard" / "src" / "data" / "fixtures" / "capsules"
 
 _VENDORED = sorted(p.name for p in SITE_SCHEMAS.glob("*.json"))
 _FIXTURES = sorted(p.name for p in SITE_CAPSULES.iterdir() if (p / "capsule.json").is_file())
@@ -82,7 +82,7 @@ def test_there_is_something_to_compare() -> None:
 def test_site_schema_is_the_packaged_schema(name: str) -> None:
     packaged = PACKAGED_SCHEMAS / name
     assert packaged.is_file(), (
-        f"web/src/data/schemas/{name} has no counterpart under "
+        f"ui/dashboard/src/data/schemas/{name} has no counterpart under "
         "src/novafabric/schemas/. The showcase must not demonstrate a format the "
         "installed CLI does not enforce."
     )
@@ -94,12 +94,12 @@ def test_site_schema_is_the_packaged_schema(name: str) -> None:
     pkg = json.loads(packaged.read_text())
     missing = sorted(set(pkg.get("properties", {})) - set(site.get("properties", {})))
     pytest.fail(
-        f"web/src/data/schemas/{name} has drifted from the packaged schema"
+        f"ui/dashboard/src/data/schemas/{name} has drifted from the packaged schema"
         + (f"; it omits {missing}" if missing else "")
         + ". These schemas are additionalProperties:false, so the showcase site "
         "rejects capsules `nova validate` accepts, and the Spec page's promise "
         '("validates its fixture against the same schemas") is false.\n'
-        f"fix: cp src/novafabric/schemas/{name} web/src/data/schemas/"
+        f"fix: cp src/novafabric/schemas/{name} ui/dashboard/src/data/schemas/"
     )
 
 

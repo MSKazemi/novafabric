@@ -4,7 +4,7 @@ ADR-0173 (data slice), read-only. Loads a JSON object of the seven Trust-Layer g
 (``signature_ok``, ``timestamp_ok``, ``log_integrity_ok``, ``redaction_coverage``,
 ``secret_scan_clean``, ``policy_pass``, ``eval_gate_pass``) — for example the summarized
 output of ``nova verify`` plus the evidence-bundle scan flags — and prints the fixed-axis
-radar. This is the CLI/JSON half of feature F-05; the `web/` SVG glyph is future design.
+radar. This is the CLI/JSON half of feature F-05; the `ui/dashboard/` SVG glyph is future design.
 
 Exit codes:
   0 — attested / partial / unsealed (informational);

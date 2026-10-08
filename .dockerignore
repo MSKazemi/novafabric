@@ -66,8 +66,8 @@ p2p-sync-report.html
 
 # Node / dashboard build artifacts (source is compiled during the image build)
 **/node_modules
-web/dist/
-web/.astro/
+ui/dashboard/dist/
+ui/dashboard/.astro/
 packages/**/dist/
 
 # Python caches & build artifacts

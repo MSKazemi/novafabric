@@ -2,13 +2,13 @@
 """Print `nova` CLI commands missing from commandParity.json (and stale ones).
 
 Seeds new entries for the CLI-parity classification registry
-(`web/src/components/dashboard/commands/commandParity.json`, guarded by
+(`ui/dashboard/src/components/dashboard/commands/commandParity.json`, guarded by
 `tests/serve/test_command_parity_classification.py`). For each missing command
 it prints a ready-to-paste `builder-only` entry — the honest default; upgrade
 to `real-panel` only with endpoint evidence on both client and server.
 
 Usage:
-    uv run python web/scripts/gen-parity-skeleton.py
+    uv run python ui/dashboard/scripts/gen-parity-skeleton.py
 """
 from __future__ import annotations
 

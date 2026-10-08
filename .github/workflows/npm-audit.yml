@@ -3,7 +3,7 @@ name: npm-audit
 # Dependency vulnerability gate for the npm trees (ADR-0186, Amendment 1).
 # The Python closure has had this discipline since ADR-0186 (pip-audit.yml);
 # the three publicly tracked npm lockfiles had NO audit at all — found
-# 2026-09-04 with eight HIGH advisories sitting unread in web/. Same
+# 2026-09-04 with eight HIGH advisories sitting unread in ui/dashboard/. Same
 # contract, same waiver schema, shared parser:
 #
 #   - HIGH/CRITICAL advisories (and advisories whose severity is missing —
@@ -19,7 +19,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "web/package-lock.json"
+      - "ui/dashboard/package-lock.json"
       - "packages/nova-dashboard/package-lock.json"
       - "packages/nova-sdk-ts/package-lock.json"
       - ".npm-audit-waivers.toml"
@@ -28,7 +28,7 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - "web/package-lock.json"
+      - "ui/dashboard/package-lock.json"
       - "packages/nova-dashboard/package-lock.json"
       - "packages/nova-sdk-ts/package-lock.json"
       - ".npm-audit-waivers.toml"
@@ -60,7 +60,7 @@ jobs:
       fail-fast: false
       matrix:
         tree:
-          - web
+          - ui/dashboard
           - packages/nova-dashboard
           - packages/nova-sdk-ts
 

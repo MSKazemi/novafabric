@@ -1,14 +1,14 @@
 """Guard: the dashboard CommandsTab must mirror the complete `nova` CLI.
 
 The dashboard ships a generated command registry
-(`web/src/components/dashboard/commands/generatedCommands.ts`) produced by
-`web/scripts/gen-command-registry.py` from the live Typer app. This test fails
+(`ui/dashboard/src/components/dashboard/commands/generatedCommands.ts`) produced by
+`ui/dashboard/scripts/gen-command-registry.py` from the live Typer app. This test fails
 if the checked-in file drifts from the CLI — i.e. a command was added or removed
 without regenerating the registry — so "every CLI capability is in the
 dashboard" stays true over time.
 
 Regenerate with:
-    uv run python web/scripts/gen-command-registry.py
+    uv run python ui/dashboard/scripts/gen-command-registry.py
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from novafabric.cli.introspect import command_paths
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GENERATED_TS = (
-    REPO_ROOT / "web/src/components/dashboard/commands/generatedCommands.ts"
+    REPO_ROOT / "ui/dashboard/src/components/dashboard/commands/generatedCommands.ts"
 )
 
 
@@ -39,7 +39,7 @@ def _registry_command_names() -> set[str]:
 def test_generated_registry_file_exists() -> None:
     assert GENERATED_TS.is_file(), (
         f"{GENERATED_TS} is missing — run "
-        "`uv run python web/scripts/gen-command-registry.py`."
+        "`uv run python ui/dashboard/scripts/gen-command-registry.py`."
     )
 
 
@@ -51,7 +51,7 @@ def test_every_cli_command_is_in_the_dashboard() -> None:
     assert not missing, (
         f"{len(missing)} CLI command(s) are not surfaced in the dashboard "
         f"CommandsTab: {missing}. Regenerate with "
-        "`uv run python web/scripts/gen-command-registry.py`."
+        "`uv run python ui/dashboard/scripts/gen-command-registry.py`."
     )
 
 
@@ -63,7 +63,7 @@ def test_no_stale_commands_in_the_dashboard() -> None:
     assert not stale, (
         f"{len(stale)} command(s) in the dashboard registry no longer exist in "
         f"the CLI: {stale}. Regenerate with "
-        "`uv run python web/scripts/gen-command-registry.py`."
+        "`uv run python ui/dashboard/scripts/gen-command-registry.py`."
     )
 
 

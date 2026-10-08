@@ -211,12 +211,12 @@ All must pass before a PR is merged. For a CLI change, also smoke-test
 The dashboard served by `nova serve --experimental` is built into
 `src/novafabric/serve/static/`, which is **tracked by git** and packaged into the
 wheel. It holds the dashboard only, no marketing pages (ADR-0299); the public
-pages live on `https://novafabric.ai`. After any change to `web/src/` that the
+pages live on `https://novafabric.ai`. After any change to `ui/dashboard/src/` that the
 dashboard reaches, rebuild it and commit the result before tagging a release:
 
 ```bash
 make bundle
-# or, from web/:
+# or, from ui/dashboard/:
 npm run build:dashboard
 ```
 
@@ -227,7 +227,7 @@ correct.
 
 - Keep PRs focused — one feature or fix per PR
 - Update `CHANGELOG.md` under `## Unreleased` for user-facing changes
-- Rebuild the dashboard bundle (`make bundle`) if `web/src/` changed
+- Rebuild the dashboard bundle (`make bundle`) if `ui/dashboard/src/` changed
 - Never delete a `/v0` server endpoint outright: breaking changes go through the
   deprecation register in `docs/api-reference.md` (ADR-0188); the removal gate
   (`tests/test_deprecation_removal_gate.py`) rejects a removal before its

@@ -1,11 +1,11 @@
 """Guard: every `nova` CLI command carries an honest dashboard-parity class.
 
 The dashboard ships a parity registry
-(`web/src/components/dashboard/commands/commandParity.json`) classifying every
+(`ui/dashboard/src/components/dashboard/commands/commandParity.json`) classifying every
 non-hidden CLI leaf command as one of:
 
 - ``real-panel``  — a dashboard tab has a real panel backed by a server
-  endpoint (the ``api`` value must appear in both ``web/src/lib/api.ts`` and
+  endpoint (the ``api`` value must appear in both ``ui/dashboard/src/lib/api.ts`` and
   ``src/novafabric/serve/``);
 - ``builder-only`` — only the copy-only Commands-tab builder (ADR-0027
   Layer C) covers it — the honest default;
@@ -18,7 +18,7 @@ longer backed by evidence — so the classification can only be upgraded with
 proof (a ratchet, not a wish).
 
 Seed / inspect missing entries with:
-    uv run python web/scripts/gen-parity-skeleton.py
+    uv run python ui/dashboard/scripts/gen-parity-skeleton.py
 """
 from __future__ import annotations
 
@@ -31,11 +31,11 @@ from novafabric.cli.introspect import command_paths
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PARITY_JSON = (
-    REPO_ROOT / "web/src/components/dashboard/commands/commandParity.json"
+    REPO_ROOT / "ui/dashboard/src/components/dashboard/commands/commandParity.json"
 )
-API_TS = REPO_ROOT / "web/src/lib/api.ts"
+API_TS = REPO_ROOT / "ui/dashboard/src/lib/api.ts"
 SERVE_DIR = REPO_ROOT / "src/novafabric/serve"
-SIDEBAR_TSX = REPO_ROOT / "web/src/components/dashboard/Sidebar.tsx"
+SIDEBAR_TSX = REPO_ROOT / "ui/dashboard/src/components/dashboard/Sidebar.tsx"
 
 VALID_STATUSES = {"real-panel", "builder-only", "cli-only"}
 
@@ -49,7 +49,7 @@ def _cli_command_paths() -> set[str]:
 def _parity() -> dict[str, dict]:
     assert PARITY_JSON.is_file(), (
         f"{PARITY_JSON} is missing — seed it with "
-        "`uv run python web/scripts/gen-parity-skeleton.py`."
+        "`uv run python ui/dashboard/scripts/gen-parity-skeleton.py`."
     )
     data = json.loads(PARITY_JSON.read_text(encoding="utf-8"))
     assert isinstance(data, dict), "commandParity.json must be a JSON object"
@@ -84,7 +84,7 @@ def test_every_cli_command_is_classified() -> None:
     assert not missing, (
         f"{len(missing)} CLI command(s) have no parity classification: "
         f"{missing}. Add entries to {PARITY_JSON.name} "
-        "(`uv run python web/scripts/gen-parity-skeleton.py` lists them; "
+        "(`uv run python ui/dashboard/scripts/gen-parity-skeleton.py` lists them; "
         '{"status": "builder-only"} is the honest default).'
     )
 
@@ -160,7 +160,7 @@ def test_real_panel_api_is_backed_by_client_and_server() -> None:
         if entry.get("status") == "real-panel" and entry["api"] not in api_ts
     )
     assert not_in_client == [], (
-        "real-panel 'api' value not found in web/src/lib/api.ts for: "
+        "real-panel 'api' value not found in ui/dashboard/src/lib/api.ts for: "
         f"{not_in_client} — downgrade to builder-only or fix the endpoint."
     )
 

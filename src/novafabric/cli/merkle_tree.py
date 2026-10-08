@@ -3,7 +3,7 @@
 ADR-0172 (data slice), read-only. Loads a JSON document with a capsule's leaf hashes (and
 optionally field-path labels, the sealed root, and the RFC 3161 TSR hash) and renders the proof
 tree: ``leaf → intermediate → seal-root → tsr``. This is the CLI/JSON half of feature F-04; the
-`web/` interactive proof tree is future design.
+`ui/dashboard/` interactive proof tree is future design.
 
 The tree is derived from NovaSeal's canonical layer enumerator, so the recomputed root matches the
 sealed root byte-for-byte. Full leaf hashes are never printed — only short prefixes (ADR-0009);

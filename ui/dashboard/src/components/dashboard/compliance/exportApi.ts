@@ -1,7 +1,7 @@
 /**
  * Local API client for the generic compliance-export registry (ADR-0200 §2).
  *
- * Deliberately NOT part of web/src/lib/api.ts: the registry is server-driven
+ * Deliberately NOT part of ui/dashboard/src/lib/api.ts: the registry is server-driven
  * (`GET /api/compliance/export/kinds` describes every kind and its fields),
  * so there is no per-kind TypeScript surface to keep in sync — this thin
  * module only speaks the two generic endpoints. It reuses the same

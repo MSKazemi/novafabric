@@ -311,7 +311,7 @@ evaluation, deployment). To add an eighth:
 4. Regenerate the dashboard command registry so the CommandsTab stays a complete
    mirror of the CLI:
    ```bash
-   uv run python web/scripts/gen-command-registry.py
+   uv run python ui/dashboard/scripts/gen-command-registry.py
    ```
    `tests/serve/test_command_registry_coverage.py` re-runs this introspection in
    CI and fails if the checked-in `generatedCommands.ts` drifts from the live
@@ -327,7 +327,7 @@ evaluation, deployment). To add an eighth:
    `app.routes`, which FastAPI 0.141 made empty for every included router.
 5. If the new command deserves a real dashboard panel (not just a copy-only
    command builder), add a row for it in
-   `web/src/components/dashboard/commands/commandParity.json`
+   `ui/dashboard/src/components/dashboard/commands/commandParity.json`
    (`"status": "real-panel"` + `tab`/`api`); otherwise it defaults to
    `"builder-only"` and needs no entry.
 
@@ -347,13 +347,14 @@ uv run nova <command> --help
 
 ## Adding a new dashboard tab or input
 
-The dashboard is a static Astro/React app under `web/`. After editing source files,
+The dashboard is a static Astro/React app under `ui/dashboard/` (named `web/` before
+ADR-0299 stage C; a path rename only). After editing source files,
 rebuild and copy the bundle with the single dedicated script — **not** a plain
 `astro build` followed by a manual `cp -r`, which would overwrite sibling
 static directories (e.g. `topology/`) that other build steps own:
 
 ```bash
-cd web && npm run build:dashboard   # astro build + scripts/copy-dashboard.mjs
+cd ui/dashboard && npm run build:dashboard   # astro build + scripts/copy-dashboard.mjs
 # or, from the repo root:
 make bundle
 ```
@@ -362,7 +363,7 @@ make bundle
 `src/novafabric/serve/static/` (ADR-0299): the `dashboard/` shell, the `_astro/`
 files that shell reaches (a transitive closure, not the whole directory),
 `favicon.svg`, and the product-local `index.html` (forwards `/` to `/dashboard/`,
-keeping `?token=`) and `404.html` from `web/serve-shell/`. Marketing routes
+keeping `?token=`) and `404.html` from `ui/dashboard/serve-shell/`. Marketing routes
 (`/concepts`, `/install`, `/why`, `/spec`, `/showcase/*`, `/docs/*`) and
 `robots.txt` are not packaged; they live on `https://novafabric.ai`, and the
 dashboard links there as plain external links. Other targets' output
@@ -374,7 +375,7 @@ fails if a marketing page comes back or a shipped chunk references a missing ass
 The dashboard has its own test tiers — run them before rebuilding the bundle:
 
 ```bash
-cd web
+cd ui/dashboard
 npm run lint        # tsc --noEmit, strict
 npm run test:unit   # vitest + jsdom (primitives, hooks, nav invariants)
 npx playwright test tests/e2e --reporter=line
@@ -391,11 +392,11 @@ change fails locally in vitest before it fails in CI.
 
 ### Design-system primitives (v0.97.0)
 
-Build UI from `web/src/components/ui/primitives/` rather than raw Tailwind
+Build UI from `ui/dashboard/src/components/ui/primitives/` rather than raw Tailwind
 strings — Button, Input, Select, Textarea, Field, Card, Badge, StatusPill,
 SegmentedControl, Modal, Drawer, Tooltip, Toolbar, and `Icon` (a semantic
 wrapper over lucide-react, so the icon set is swappable in one file). Colors,
-elevation, spacing, and motion come from `web/src/styles/tokens.css`; **10px
+elevation, spacing, and motion come from `ui/dashboard/src/styles/tokens.css`; **10px
 (`--text-2xs`) is the minimum type size** — smaller text fails contrast checks.
 
 | Component | Purpose |
@@ -472,7 +473,7 @@ response reveals *who did what*.
 
 Add tests in `tests/test_serve_app.py` using the `client` fixture — three tests minimum: auth required (no token → 401), unknown run → 404, happy path → expected shape.
 
-The matching dashboard panel goes in that tab's directory — `web/src/components/dashboard/tabs/<tab>/<Panel>.tsx` — and is rendered by the tab shell (see *Tab structure* above). Add a `Dashboard equivalent:` note in `docs/cli-reference.md` under the corresponding CLI command, and if the command now has a real panel, upgrade its `commandParity.json` entry from `builder-only` to `real-panel` with its `tab` and `api` (the guard checks the `api` string appears in **both** `web/src/lib/api.ts` and `src/novafabric/serve/`).
+The matching dashboard panel goes in that tab's directory — `ui/dashboard/src/components/dashboard/tabs/<tab>/<Panel>.tsx` — and is rendered by the tab shell (see *Tab structure* above). Add a `Dashboard equivalent:` note in `docs/cli-reference.md` under the corresponding CLI command, and if the command now has a real panel, upgrade its `commandParity.json` entry from `builder-only` to `real-panel` with its `tab` and `api` (the guard checks the `api` string appears in **both** `ui/dashboard/src/lib/api.ts` and `src/novafabric/serve/`).
 
 ## Extending the query surface (filter bar, widgets, anything user-facing)
 
@@ -611,7 +612,7 @@ and registers `FACET_NAME` in the capsule schema. ⚠ **This step is not optiona
 
 - `src/novafabric/schemas/run-capsule.schema.json` — what an installed CLI validates against
 - `schemas/run-capsule.schema.json` — the OAS v1.0 target (not yet in force, ADR-0034 §1)
-- `web/src/data/schemas/run-capsule.schema.json` — the dashboard's copy, kept identical to
+- `ui/dashboard/src/data/schemas/run-capsule.schema.json` — the dashboard's copy, kept identical to
   the packaged one by `tests/packaging_metadata/test_site_schemas_match_packaged.py`
 
 Use `"type": "array"` when your facet is a *list* of records rather than one object.
@@ -799,8 +800,8 @@ class MyExporter:
 2. Add a CLI command in `src/novafabric/cli/export_evidence.py` (see `export_ropa_cmd` as a template).
 3. Register the CLI command in `src/novafabric/cli/main.py`.
 4. Add a `nova serve` endpoint in `src/novafabric/serve/app.py` following the `compliance_export_ropa_endpoint` pattern — import the exporter inside the function to avoid unconditional heavy imports.
-5. Add an `api.ts` method in `web/src/lib/api.ts` (see `exportRopa` as a template).
-6. Add a `<MyFormatExportPanel>` component as its **own file** under `web/src/components/dashboard/tabs/compliance/` (built on `PanelScaffold`), then register it in the manifest at `tabs/compliance/index.ts` with its `group` — the hub renders whatever the manifest declares. (Before v0.97.0 these panels lived inline in `ComplianceTab.tsx`; that file is now just the sub-navigation shell.)
+5. Add an `api.ts` method in `ui/dashboard/src/lib/api.ts` (see `exportRopa` as a template).
+6. Add a `<MyFormatExportPanel>` component as its **own file** under `ui/dashboard/src/components/dashboard/tabs/compliance/` (built on `PanelScaffold`), then register it in the manifest at `tabs/compliance/index.ts` with its `group` — the hub renders whatever the manifest declares. (Before v0.97.0 these panels lived inline in `ComplianceTab.tsx`; that file is now just the sub-navigation shell.)
 7. Write integration tests in `tests/test_serve_compliance.py` — one happy-path test and one 422 on missing `run_id`.
 
 **Existing exporters for reference:**
@@ -1688,8 +1689,8 @@ The KG schema has 5 node tables and 4 relationship tables.  To add a new node ty
 3. Register the type in `EntityNormaliser.normalise()` dispatch (`kg/entity_normaliser.py`).
 4. Add extraction logic in `KGIngestionPipeline._resolve_entities()` (`kg/pipeline.py`).
 5. Include the new type in `count_nodes()` / `get_topology_graph()` in `kg/store.py`.
-6. Add the type to `KGTopology` in `web/src/lib/api.ts` and update `TopologyLayerPanel`
-   in `web/src/components/dashboard/tabs/KGTab.tsx`.
+6. Add the type to `KGTopology` in `ui/dashboard/src/lib/api.ts` and update `TopologyLayerPanel`
+   in `ui/dashboard/src/components/dashboard/tabs/KGTab.tsx`.
 
 **MCP server auto-detection pattern:** tool names containing `:` are
 split on the first `:` in `_resolve_entities()`.  The left part becomes the `MCPServer`
@@ -2007,7 +2008,7 @@ docker stop nf-pg
 
 ## Publishing docs to the website
 
-`docs/*.md` is rendered at `novafabric.ai/docs/` by `web/src/lib/docs.ts`, which reads
+`docs/*.md` is rendered at `novafabric.ai/docs/` by `ui/dashboard/src/lib/docs.ts`, which reads
 this directory **directly at build time** via `import.meta.glob`. Nothing is copied,
 so the site cannot drift from the docs you edit — but it does mean a docs change is a
 site change:
@@ -2020,7 +2021,7 @@ site change:
   GitHub, because no site route exists for them.
 - `docs/releases/` and `docs/whitepaper/` are excluded.
 
-Run `cd web && npm run build` after a structural docs change. It needs **Node ≥ 22.12**
+Run `cd ui/dashboard && npm run build` after a structural docs change. It needs **Node ≥ 22.12**
 (Astro 7).
 
 ---

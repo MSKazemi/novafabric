@@ -134,6 +134,12 @@ longer forwards the submitting shell's environment (ADR-0270).
   of a local `/spec#…` anchor that did not exist. Nothing in local mode requires internet
   access: offline, only those external links fail to load. The rebuilt bundle also picks up
   dashboard source changes made since it was last built on 2026-10-02.
+- **Developers: the dashboard source moved from `web/` to `ui/dashboard/` (ADR-0299).** A path
+  rename only — files changed only where they name the path, and the built bundle, the
+  wheel and `nova serve` behave exactly as before. Run dashboard commands from the new
+  directory (`cd ui/dashboard && npm ci`; `make bundle` is unchanged), regenerate the command
+  registry with `uv run python ui/dashboard/scripts/gen-command-registry.py`, and delete any
+  leftover untracked `web/node_modules/` or `web/dist/` from an old checkout.
 
 ### Fixed
 

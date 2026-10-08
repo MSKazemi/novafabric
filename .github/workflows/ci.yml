@@ -305,7 +305,7 @@ jobs:
 
   # --------------------------------------------------------------------------
   # Showcase site build
-  # Confirms the Astro site (web/) builds cleanly and TypeScript types check.
+  # Confirms the Astro site (ui/dashboard/) builds cleanly and TypeScript types check.
   # e2e tests require a running server so are not run here.
   # --------------------------------------------------------------------------
   web:
@@ -325,33 +325,33 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          # Must satisfy web/package.json "engines". Astro 7 refuses to build on
+          # Must satisfy ui/dashboard/package.json "engines". Astro 7 refuses to build on
           # Node 20 ("not supported by Astro! Please upgrade to >=22.12.0"), and
           # this job pinned 20 — so the `web` job failed on every run until
           # 2026-08-05. package.json also *claimed* >=20.0.0, so the pin looked
           # correct; the declaration was the thing that was wrong.
           node-version: "22"
           cache: "npm"
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: ui/dashboard/package-lock.json
 
       - name: Install web dependencies
-        working-directory: web
+        working-directory: ui/dashboard
         run: npm ci
 
       - name: Type check (tsc)
-        working-directory: web
+        working-directory: ui/dashboard
         run: npm run lint
 
-      # web/ carries vitest.config.ts and tests/unit/*.test.tsx, but no job ran
+      # ui/dashboard/ carries vitest.config.ts and tests/unit/*.test.tsx, but no job ran
       # them until 2026-09-08 — a vitest bump here was unverifiable by CI.
       # Playwright suites (test:e2e/test:visual/test:a11y) stay out: they need
       # browsers and a served build.
       - name: Unit tests (vitest)
-        working-directory: web
+        working-directory: ui/dashboard
         run: npm run test:unit
 
       - name: Build showcase site
-        working-directory: web
+        working-directory: ui/dashboard
         run: npm run build
 
   # --------------------------------------------------------------------------

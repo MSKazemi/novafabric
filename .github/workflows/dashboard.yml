@@ -4,8 +4,8 @@ name: Dashboard (nova-dashboard)
 # `nova serve`.
 #
 # Why this exists: the package shipped 13 test files and 175 tests that **no CI
-# job ever ran**. The `web` job in ci.yml covers the marketing site at the repo
-# root (`web/`), and sdk-ts.yml covers `packages/nova-sdk-ts`; nothing covered
+# job ever ran**. The `web` job in ci.yml covers the marketing site in
+# `ui/dashboard/` (formerly `web/`), and sdk-ts.yml covers `packages/nova-sdk-ts`; nothing covered
 # this package. The gap surfaced while reviewing dependabot #43, which bumped 14
 # npm dependencies across nova-dashboard and nova-sdk-ts: its green checks
 # validated only the sdk half, so half the change was unverifiable from CI and

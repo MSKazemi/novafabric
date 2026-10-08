@@ -6,8 +6,8 @@ derived from :func:`novafabric.trust.novaseal.merkle.merkle_layers`, the canonic
 enumerator, so the projected structure matches the sealed root byte-for-byte; this module never
 reimplements the leaf/node hashing or the padding rule (ADR-0172 Consequences c).
 
-This is the Python/JSON half of feature F-04: it feeds the `web/` interactive proof tree that
-ADR-0172 describes; it is not that view. No capsule-schema change.
+This is the Python/JSON half of feature F-04: it feeds the `ui/dashboard/` interactive proof tree
+that ADR-0172 describes; it is not that view. No capsule-schema change.
 
 Privacy (ADR-0009): leaf nodes are labelled with the **field path only** — never the value. A
 :class:`ProofNode` has no value field; only a short hash prefix, node type, verify state, and an
@@ -69,8 +69,8 @@ def build_proof_tree(
     ``leaf_labels`` are field paths, positionally aligned to ``leaf_hashes`` (ADR-0009: paths,
     never values). ``sealed_root`` (if given) is compared against the recomputed root: a match
     verifies the seal-root node, a mismatch flags it. Without a ``sealed_root`` the tree is
-    ``unsealed`` and every node is ``unverified`` (a per-leaf client-side recompute is the `web/`
-    view's job, not this projection's).
+    ``unsealed`` and every node is ``unverified`` (a per-leaf client-side recompute is the
+    `ui/dashboard/` view's job, not this projection's).
     """
     if not leaf_hashes:
         return ProofTree(

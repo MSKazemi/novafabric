@@ -2,7 +2,7 @@
 
 ADR-0174 (data slice), read-only. Loads a JSON document describing a capsule's field-protection
 state and prints a per-field state overlay + a coverage meter + per-state counts. This is the
-CLI/JSON half of feature F-06; the `web/` heat-overlay tree is future design.
+CLI/JSON half of feature F-06; the `ui/dashboard/` heat-overlay tree is future design.
 
 Input is a JSON object with EITHER:
   {"fields":   [{"path": ..., "state": "clear|redacted|secret_scrubbed|never_captured|unknown"}]}

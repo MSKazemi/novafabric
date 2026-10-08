@@ -151,12 +151,12 @@ def _facet_registry(schema_path: pathlib.Path) -> dict[str, object]:
 
 #: The three live copies of the capsule schema. The packaged one is what an installed
 #: CLI validates against; ``schemas/`` is the not-yet-in-force OAS v1.0 target
-#: (ADR-0034 §1); ``web/src/data/schemas/`` is the dashboard's copy. All three close
+#: (ADR-0034 §1); ``ui/dashboard/src/data/schemas/`` is the dashboard's copy. All three close
 #: the facets registry, so all three must know every facet name.
 SCHEMA_COPIES = (
     SRC / "schemas" / "run-capsule.schema.json",
     SRC.parents[1] / "schemas" / "run-capsule.schema.json",
-    SRC.parents[1] / "web" / "src" / "data" / "schemas" / "run-capsule.schema.json",
+    SRC.parents[1] / "ui" / "dashboard" / "src" / "data" / "schemas" / "run-capsule.schema.json",
 )
 
 

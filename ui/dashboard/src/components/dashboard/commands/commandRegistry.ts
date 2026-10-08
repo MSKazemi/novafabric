@@ -966,13 +966,13 @@ export const JOURNEY_LABELS: Record<Journey, string> = {
 
 // ── Full CLI coverage ──────────────────────────────────────────────────────
 // GENERATED_COMMANDS is auto-derived from the live Typer app by
-// `web/scripts/gen-command-registry.py` and covers every `nova` command. The
+// `ui/dashboard/scripts/gen-command-registry.py` and covers every `nova` command. The
 // hand-curated defs above provide richer copy (hints, native-tab notes) for the
 // most-used commands and WIN on collision. Every other command still appears in
 // the CommandsTab as a generated form, so the dashboard mirrors the full CLI.
 //
 // To refresh after adding/removing a CLI command:
-//   uv run python web/scripts/gen-command-registry.py
+//   uv run python ui/dashboard/scripts/gen-command-registry.py
 // A pytest guard (tests/dashboard/test_command_registry_coverage.py) fails CI if
 // any CLI command is missing from this registry.
 

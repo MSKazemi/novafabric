@@ -85,7 +85,7 @@ def _configured_pairs() -> set[tuple[str, str]]:
             directories.append(entry["directory"])
 
         for directory in directories:
-            # Normalise "/", "/web", "web/" to a comparable form.
+            # Normalise "/", "/ui/dashboard", "ui/dashboard/" to a comparable form.
             pairs.add((ecosystem, "/" + directory.strip("/")))
 
     return pairs

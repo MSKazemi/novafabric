@@ -26,7 +26,7 @@ import {
 import { basename, resolve } from 'node:path';
 
 const ROOT = resolve(new URL('..', import.meta.url).pathname);
-const REPO_ROOT = resolve(ROOT, '..');
+const REPO_ROOT = resolve(ROOT, '..', '..');
 const DIST = resolve(ROOT, 'dist');
 const SHELL = resolve(ROOT, 'serve-shell');
 const TARGET = resolve(REPO_ROOT, 'src/novafabric/serve/static');

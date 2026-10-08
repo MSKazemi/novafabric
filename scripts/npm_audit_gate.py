@@ -3,9 +3,9 @@
 
 The Python dependency closure has had a severity + waiver gate since
 ADR-0186 (``pip-audit.yml`` → ``pip_audit_gate.py``). The three publicly
-tracked npm lockfiles (``web/``, ``packages/nova-dashboard/``,
+tracked npm lockfiles (``ui/dashboard/``, ``packages/nova-dashboard/``,
 ``packages/nova-sdk-ts/``) had **no equivalent** — found 2026-09-04 with
-eight HIGH advisories sitting in ``web/`` where no CI job would ever read
+eight HIGH advisories sitting in ``ui/dashboard/`` where no CI job would ever read
 them. This gate closes that asymmetry with the same contract:
 
 - **HIGH / CRITICAL advisories block.** npm audit embeds the severity in
@@ -28,7 +28,7 @@ Usage:
                                                # THIS gate decides what blocks
     python3 scripts/npm_audit_gate.py \
         --report npm-audit-report.json \
-        --waivers .npm-audit-waivers.toml [--label web]
+        --waivers .npm-audit-waivers.toml [--label ui/dashboard]
 """
 
 from __future__ import annotations
@@ -129,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", type=Path, required=True, help="npm audit --json output")
     parser.add_argument("--waivers", type=Path, required=True, help=".npm-audit-waivers.toml path")
-    parser.add_argument("--label", default="", help="tree name for messages, e.g. 'web'")
+    parser.add_argument("--label", default="", help="tree name for messages, e.g. 'ui/dashboard'")
     args = parser.parse_args(argv)
     tag = f"npm-audit-gate[{args.label}]" if args.label else "npm-audit-gate"
 

@@ -108,7 +108,7 @@ weight is, not a quality signal.
 | `cli/` | Every `nova` subcommand. The largest module by file count — and the most approachable. `cli/introspect.py` is the one supported way to enumerate the command tree (ADR-0250). |
 | `server/` | Server mode: REST API, auth, API keys, tenancy. |
 | `serve/` | The dashboard backend that `nova serve` exposes. `serve/introspect.py` is the one supported way to enumerate mounted HTTP routes (ADR-0250). |
-| `web/` (repo root) | The dashboard frontend — Astro + React, with its own vitest suite. |
+| `ui/dashboard/` | The dashboard frontend — Astro + React, with its own vitest suite. |
 | `metadata_store/` | SQLite and Postgres metadata backends, including row-level security. `dsn.py` is the one place a Postgres DSN is normalised — see [below](#one-dsn-two-consumers). |
 | `object_capsule_store/` | S3-compatible object storage for capsules at scale. |
 | `collector_app/`, `collector/` (repo root, Go) | The cluster-scale collector and node spool. |

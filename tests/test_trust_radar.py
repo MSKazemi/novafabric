@@ -6,7 +6,7 @@ guarantees) into a fixed-axis radar model. One axis per guarantee, each plotted 
 verdict; a missing guarantee (e.g. an unsealed capsule) is an ``n/a`` axis, distinct from a
 failed one.
 
-This is the Python/JSON half of feature F-05 — it feeds the `web/` SVG glyph that ADR-0173
+This is the Python/JSON half of feature F-05 — it feeds the `ui/dashboard/` SVG glyph that ADR-0173
 describes; it is NOT the glyph itself. No schema change, no new dependency (ADR-0173 §98).
 """
 from __future__ import annotations

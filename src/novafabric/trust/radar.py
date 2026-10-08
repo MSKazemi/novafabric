@@ -5,7 +5,7 @@ capsule already produces, project them onto a **fixed-axis radar model**. One ax
 guarantee, each plotted ``0..1`` (booleans → ``0``/``1``; ``redaction_coverage`` is already
 a ratio, clamped into range). The filled polygon's shape *is* the verdict.
 
-This is the Python/JSON half of feature F-05: it *feeds* the ``web/`` SVG glyph that
+This is the Python/JSON half of feature F-05: it *feeds* the ``ui/dashboard/`` SVG glyph that
 ADR-0173 describes; it is not the glyph. No capsule-schema change, no new dependency —
 it consumes existing verification output verbatim (ADR-0173 §98).
 

@@ -1,6 +1,6 @@
 # npm-audit waiver file (ADR-0186 discipline, extended to the npm trees).
 #
-# One file for all three publicly tracked npm lockfiles (web/,
+# One file for all three publicly tracked npm lockfiles (ui/dashboard/,
 # packages/nova-dashboard/, packages/nova-sdk-ts/). CI reads this file
 # (.github/workflows/npm-audit.yml -> scripts/npm_audit_gate.py):
 #
@@ -16,7 +16,7 @@
 
 [[waiver]]
 id = "GHSA-jmr9-qjv8-65gv"
-justification = "extract-zip symlink path traversal, reached only through the @lhci/cli -> lighthouse -> puppeteer dev-only chain in web/ (Lighthouse perf checks; never in a build artifact or production path). No fixed version exists upstream as of 2026-09-04: extract-zip 2.0.1 and @lhci/cli 0.15.1 are both the latest releases and both flagged; npm's only offered 'fix' is a downgrade to @lhci/cli 0.12.0. Exposure requires lhci extracting a malicious Chrome archive, i.e. a compromised Google CDN. Re-check upstream at expiry."
+justification = "extract-zip symlink path traversal, reached only through the @lhci/cli -> lighthouse -> puppeteer dev-only chain in ui/dashboard/ (Lighthouse perf checks; never in a build artifact or production path). No fixed version exists upstream as of 2026-09-04: extract-zip 2.0.1 and @lhci/cli 0.15.1 are both the latest releases and both flagged; npm's only offered 'fix' is a downgrade to @lhci/cli 0.12.0. Exposure requires lhci extracting a malicious Chrome archive, i.e. a compromised Google CDN. Re-check upstream at expiry."
 expires = "2026-11-04"
 
 [[waiver]]

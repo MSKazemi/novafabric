@@ -9,7 +9,7 @@ structurally: :class:`FieldXRay` has no value field, and :func:`build_field_xray
 ``path`` and ``state`` out of each input record, so a value handed in alongside them cannot
 survive into the model or its serialization.
 
-This is the Python/JSON half of feature F-06 — it feeds the ``web/`` heat-overlay tree that
+This is the Python/JSON half of feature F-06 — it feeds the ``ui/dashboard/`` heat-overlay tree that
 ADR-0174 describes; it is not that view. No capsule-schema change.
 
 Coverage semantics (documented, deliberately conservative):

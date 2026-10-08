@@ -3,7 +3,7 @@
 ``src/novafabric/serve/static/`` is packaged into the wheel (the
 ``src/novafabric/serve/static/**/*`` include in ``pyproject.toml``) and mounted
 at ``/`` by ``nova serve --experimental``. Until ADR-0299 (issue
-novafabric-private#20, PR B) ``web/scripts/copy-dashboard.mjs`` copied the
+novafabric-private#20, PR B) ``ui/dashboard/scripts/copy-dashboard.mjs`` copied the
 **whole** Astro build into it, so every ``pip install novafabric`` carried a
 second, drifting copy of the public site — ``/concepts``, ``/install``,
 ``/why``, ``/spec``, ``/showcase/*``, ``robots.txt`` — beside the one
@@ -37,8 +37,8 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 STATIC = Path(str(importlib.resources.files("novafabric") / "serve" / "static"))
-COMMANDS = REPO / "web" / "src" / "components" / "dashboard" / "commands"
-DASHBOARD_SRC = REPO / "web" / "src" / "components" / "dashboard"
+COMMANDS = REPO / "ui" / "dashboard" / "src" / "components" / "dashboard" / "commands"
+DASHBOARD_SRC = REPO / "ui" / "dashboard" / "src" / "components" / "dashboard"
 
 # Everything the bundle may hold at its top level. `topology/` is the TV-5 3D
 # view, built by its own step (not copy-dashboard.mjs) and a product feature.
@@ -60,7 +60,7 @@ def _text(path: Path) -> str:
 def test_the_bundle_is_present_and_is_what_the_wheel_packages() -> None:
     """Anti-vacuity, and the link between this tree and the wheel."""
     assert (STATIC / "dashboard" / "index.html").is_file(), (
-        f"{STATIC} has no dashboard shell — run `npm run build:dashboard` in web/"
+        f"{STATIC} has no dashboard shell — run `npm run build:dashboard` in ui/dashboard/"
     )
     with (REPO / "pyproject.toml").open("rb") as fh:
         include = tomllib.load(fh)["tool"]["hatch"]["build"]["targets"]["wheel"]["include"]
@@ -73,7 +73,7 @@ def test_only_dashboard_entries_ship() -> None:
     assert not unexpected, (
         f"serve/static ships {unexpected}, which is not part of the dashboard. "
         "Public pages belong to https://novafabric.ai (ADR-0299); fix "
-        "web/scripts/copy-dashboard.mjs rather than deleting build output by hand."
+        "ui/dashboard/scripts/copy-dashboard.mjs rather than deleting build output by hand."
     )
 
 

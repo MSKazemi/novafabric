@@ -14,7 +14,7 @@
 
 """Every ``githubBlob()`` link on the site must name a path the public repo tracks.
 
-``web/src/lib/links.ts`` turns a repo-relative path into an absolute
+``ui/dashboard/src/lib/links.ts`` turns a repo-relative path into an absolute
 ``github.com/MSKazemi/novafabric/blob/main/<path>`` URL rendered into the built
 site. Until 2026-08-28 two of its three constants pointed into ``design/``, which
 publishes **zero** files — so ``/why``'s "non-goals doc" link, introduced in the
@@ -42,7 +42,7 @@ import subprocess
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-LINKS_TS = REPO / "web" / "src" / "lib" / "links.ts"
+LINKS_TS = REPO / "ui" / "dashboard" / "src" / "lib" / "links.ts"
 
 # githubBlob('some/path')  — single or double quoted.
 BLOB_CALL = re.compile(r"githubBlob\(\s*['\"]([^'\"]+)['\"]\s*\)")
@@ -82,7 +82,7 @@ def test_every_site_github_link_points_at_a_publicly_tracked_path() -> None:
         if any(p == target or p.startswith(target + "/") for p in prefixes):
             continue
         line = text.count("\n", 0, match.start()) + 1
-        offenders.append(f"web/src/lib/links.ts:{line}  githubBlob({target!r})")
+        offenders.append(f"ui/dashboard/src/lib/links.ts:{line}  githubBlob({target!r})")
 
     assert not offenders, (
         "the site builds GitHub links to paths the public repository does not "

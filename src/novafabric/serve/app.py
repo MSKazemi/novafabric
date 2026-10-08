@@ -9105,7 +9105,7 @@ def create_app(
             return {
                 "service": "nova-serve",
                 "experimental": True,
-                "dashboard_static": "missing — run `npm run build:dashboard` in web/",
+                "dashboard_static": "missing — run `npm run build:dashboard` in ui/dashboard/",
                 "api_docs": "/api/docs",
             }
 

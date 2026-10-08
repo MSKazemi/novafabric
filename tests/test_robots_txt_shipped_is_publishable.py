@@ -17,7 +17,7 @@ and ``robots.txt`` is not copied into it at all: on localhost it does nothing,
 and ``https://novafabric.ai`` is the single robots authority. Two properties:
 
 1. the wheel does not ship a ``robots.txt`` (the bug class cannot recur);
-2. the source under ``web/public/`` does not address a named individual —
+2. the source under ``ui/dashboard/public/`` does not address a named individual —
    internal voice must not reach a published artifact.
 """
 from __future__ import annotations
@@ -27,7 +27,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-SOURCE = ROOT / "web" / "public" / "robots.txt"
+SOURCE = ROOT / "ui" / "dashboard" / "public" / "robots.txt"
 SHIPPED = ROOT / "src" / "novafabric" / "serve" / "static" / "robots.txt"
 
 # The maintainer's name is legitimate in README attribution and CITATION.cff.
@@ -39,7 +39,7 @@ def test_robots_txt_is_not_shipped_in_the_wheel() -> None:
     """The dashboard bundle has no use for it; the public site owns robots.txt."""
     assert not SHIPPED.exists(), (
         f"{SHIPPED.relative_to(ROOT)} is back. serve/static is the dashboard only "
-        "(ADR-0299); web/scripts/copy-dashboard.mjs must not copy robots.txt"
+        "(ADR-0299); ui/dashboard/scripts/copy-dashboard.mjs must not copy robots.txt"
     )
 
 

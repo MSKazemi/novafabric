@@ -68,7 +68,7 @@ match, so neither is silent:
 * ``src/novafabric/serve/static/`` — **generated**. It is the built dashboard
   bundle, checked in so ``nova serve`` works from a wheel. Hand-editing build
   output would be overwritten by the next build and would make the artifact
-  disagree with its source. Its source *is* covered: ``web/src/lib/links.ts`` is
+  disagree with its source. Its source *is* covered: ``ui/dashboard/src/lib/links.ts`` is
   guarded by ``test_site_links_resolve_publicly.py``. The exemption is about
   *where the fix belongs*, not about tolerating a match: when the bundle was
   rebuilt on 2026-08-29 it picked up both the marked ``$comment`` strings and
@@ -142,7 +142,7 @@ def test_no_public_doc_names_a_private_path_without_saying_it_is_private() -> No
 
 def _public_schemas() -> list[str]:
     out = subprocess.run(
-        ["git", "ls-files", "schemas", "src/novafabric/schemas", "web/src/data/schemas"],
+        ["git", "ls-files", "schemas", "src/novafabric/schemas", "ui/dashboard/src/data/schemas"],
         cwd=REPO,
         capture_output=True,
         text=True,

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.resolve(HERE, '..', 'dist');
-const REPO_ROOT = path.resolve(HERE, '..', '..');
+const REPO_ROOT = path.resolve(HERE, '..', '..', '..');
 const ORIGIN = 'https://novafabric.ai';
 const GITHUB_ORIGIN = 'https://github.com';
 const GITHUB_BLOB_PREFIX = '/MSKazemi/novafabric/blob/main/';

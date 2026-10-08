@@ -69,11 +69,11 @@ help:
 	@echo "  typecheck         Run mypy on src/"
 	@echo "  check-links       Verify every relative link in public docs resolves"
 	@echo "  check-decisions   Verify docs/decisions.md matches the ADR tree"
-	@echo "  site              Build the public website (web/dist/), docs pages included"
+	@echo "  site              Build the public website (ui/dashboard/dist/), docs pages included"
 	@echo "  papers            Build every LaTeX manuscript in papers/ (private)"
 	@echo "  papers-check      Build, then run the portfolio gate over papers/"
 	@echo "  coverage          Run pytest with coverage report"
-	@echo "  bundle            Build web dashboard (web/) and copy to static dir"
+	@echo "  bundle            Build web dashboard (ui/dashboard/) and copy to static dir"
 	@echo "  serve-local       Build bundle + start nova serve --experimental"
 	@echo "  topology-build    Build nova-dashboard SPA and copy to static/topology/"
 	@echo "  topology-test     Run nova-dashboard TypeScript tests (vitest)"
@@ -249,7 +249,7 @@ coverage:
 # ── Dashboard bundle ──────────────────────────────────────────────────────────
 
 bundle:
-	cd web && npm run build:dashboard
+	cd ui/dashboard && npm run build:dashboard
 
 airgap-bundle:  ## Build a signed air-gap bundle from dist/ (ADR-0249 slice 1)
 	uv build
@@ -260,14 +260,14 @@ airgap-bundle:  ## Build a signed air-gap bundle from dist/ (ADR-0249 slice 1)
 
 site:
 	# Builds the public website, including the docs/ tree as static pages.
-	# The deploy itself is manual — see web/README.md "Deploy". Building is not
+	# The deploy itself is manual — see ui/dashboard/README.md "Deploy". Building is not
 	# deploying, which is why novafabric.ai/docs/ can 404 while these pages exist.
-	cd web && npm run build
+	cd ui/dashboard && npm run build
 	@echo ""
-	@echo "Built $$(find web/dist -name '*.html' | wc -l) pages, of which \
-$$(find web/dist/docs -name index.html 2>/dev/null | wc -l) are docs pages."
-	@echo "Deployable artifact: web/dist/  — copy the WHOLE directory,"
-	@echo "including _astro/ and docs/. See web/README.md for why."
+	@echo "Built $$(find ui/dashboard/dist -name '*.html' | wc -l) pages, of which \
+$$(find ui/dashboard/dist/docs -name index.html 2>/dev/null | wc -l) are docs pages."
+	@echo "Deployable artifact: ui/dashboard/dist/  — copy the WHOLE directory,"
+	@echo "including _astro/ and docs/. See ui/dashboard/README.md for why."
 
 serve-local: bundle
 	uv run nova serve --experimental

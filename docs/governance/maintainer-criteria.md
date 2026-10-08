@@ -130,7 +130,7 @@ someone inside them.
 | CLI | `src/novafabric/cli/` |
 | Adapters & Integrations | `src/novafabric/adapters/`, `integrations/` |
 | Server & Metadata Store | `src/novafabric/server/`, `src/novafabric/metadata_store/` |
-| Dashboard | `web/` |
+| Dashboard | `ui/dashboard/` |
 | Documentation & Spec | `docs/`, `schemas/`, RFC stewardship |
 
 ---

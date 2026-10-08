@@ -17,7 +17,7 @@
 This is the third instance of one class: **a file that was never written to be
 read by strangers ends up on a public surface because the directory around it is
 published wholesale.** The first was a personal ``robots.txt`` copied into the
-package. The second was ``web/src/data/schemas/``, published but guarded by
+package. The second was ``ui/dashboard/src/data/schemas/``, published but guarded by
 nothing. The third — found 2026-08-28 — was ``examples/capsules/minimal-run/``,
 the flagship example a new user opens to learn the capsule format. It recorded:
 

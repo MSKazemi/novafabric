@@ -21,7 +21,7 @@
 # It used to be `find src tests scripts -name '*.py'` — Python sources only.
 # That silently excluded almost everything the suite actually asserts against:
 # pyproject.toml and uv.lock (dependency changes — the highest-risk class of
-# all), collector/ (Go), web/ and packages/ (TypeScript), schemas/, the
+# all), collector/ (Go), ui/dashboard/ and packages/ (TypeScript), schemas/, the
 # Makefile, .github/workflows/, every non-.py fixture, and the whole of docs/.
 #
 # The ~186 guards in tests/docs read exactly those files. So a docs-only or

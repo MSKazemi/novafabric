@@ -31,7 +31,7 @@ OUTPUT = REPO_ROOT / "docs" / "assets" / "social-preview.png"
 WIDTH, HEIGHT = 1280, 640
 MARGIN = 88
 
-# Brand tokens from web/src/styles/tokens.css — keep these in sync with the
+# Brand tokens from ui/dashboard/src/styles/tokens.css — keep these in sync with the
 # dashboard so the card and the product look like the same project.
 BACKGROUND = "#0a0a0c"
 ACCENT = "#c4f0a8"

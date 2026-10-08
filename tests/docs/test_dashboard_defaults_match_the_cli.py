@@ -38,8 +38,8 @@ import pytest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 SERVE_CLI = REPO_ROOT / "src" / "novafabric" / "cli" / "serve.py"
-CONNECT_PANEL = REPO_ROOT / "web" / "src" / "components" / "dashboard" / "ConnectPanel.tsx"
-DASHBOARD_APP = REPO_ROOT / "web" / "src" / "components" / "dashboard" / "DashboardApp.tsx"
+CONNECT_PANEL = REPO_ROOT / "ui" / "dashboard" / "src" / "components" / "dashboard" / "ConnectPanel.tsx"
+DASHBOARD_APP = REPO_ROOT / "ui" / "dashboard" / "src" / "components" / "dashboard" / "DashboardApp.tsx"
 
 #: The token file lives at ``$NOVAFABRIC_HOME/.serve-token`` (``_paths.nova_home()``), which
 #: only equals ``~/.novafabric`` when the variable is unset. Any UI text naming the path has

@@ -1,7 +1,7 @@
 /**
  * Loads the repository's `docs/` markdown tree for publication at /docs/.
  *
- * The files are read from `../../../docs` — the same tree maintainers edit — so
+ * The files are read from `../../../../docs` — the same tree maintainers edit — so
  * the published site cannot drift from the repository. Nothing is copied.
  *
  * `import.meta.glob` with `eager: true` runs at build time, so this is a static
@@ -11,7 +11,7 @@
 const modules = import.meta.glob<{
   compiledContent: () => string | Promise<string>;
   rawContent: () => string;
-}>('../../../docs/**/*.md', { eager: true });
+}>('../../../../docs/**/*.md', { eager: true });
 
 /**
  * Files that are not user-facing documentation and should not be published.

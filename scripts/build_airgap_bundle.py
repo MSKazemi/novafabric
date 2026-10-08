@@ -12,7 +12,7 @@ Usage:
         --out dist/novafabric-airgap.tar \\
         --signing-key ~/.novafabric/keys/evidence.key \\
         --member wheels/novafabric.whl=dist/novafabric-0.100.1-py3-none-any.whl \\
-        --member docs/index.html=web/dist/index.html
+        --member docs/index.html=ui/dashboard/dist/index.html
 """
 
 from __future__ import annotations

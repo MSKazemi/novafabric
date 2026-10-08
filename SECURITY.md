@@ -34,7 +34,7 @@ when a complete fix needs longer than the window.
 - CI runs [pip-audit](https://pypi.org/project/pip-audit/) against the locked
   Python dependency set on every pull request and weekly; HIGH/CRITICAL
   findings block merges.
-- CI runs `npm audit` against every tracked npm lockfile (`web/`,
+- CI runs `npm audit` against every tracked npm lockfile (`ui/dashboard/`,
   `packages/nova-dashboard/`, `packages/nova-sdk-ts/`) on lockfile changes
   and weekly, behind the same severity gate; HIGH/CRITICAL advisories block.
 - Release container images are scanned with trivy; CRITICAL findings with an

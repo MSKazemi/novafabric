@@ -18,13 +18,13 @@
 .envrc
 credentials.json
 # Dashboard showcase fixture that embeds an Ed25519 private half. It is denied
-# in .dualgit/private.deny, but the `web/src/data` carve-out is emitted AFTER
+# in .dualgit/private.deny, but the `ui/dashboard/src/data` carve-out is emitted AFTER
 # the denies in .git/info/exclude and git's last-matching rule wins, so the deny
 # was silently overridden and `git add -A` staged the key into a public commit
 # (caught by `dualgit doctor`, never pushed). This rule sits in .gitignore
 # because .gitignore outranks .git/info/exclude, so no carve-out can re-expose
 # it. The private git already tracks the file, and an ignore rule never untracks.
-web/src/data/fixtures/evidence-bundle/demo-key.json
+ui/dashboard/src/data/fixtures/evidence-bundle/demo-key.json
 secrets.yaml
 secrets.yml
 .streamlit/secrets.toml
@@ -100,8 +100,8 @@ dmypy.json
 
 # ── Node / web build output ──────────────────────────────────────────────────
 node_modules/
-web/node_modules/
-web/test-results/
+ui/dashboard/node_modules/
+ui/dashboard/test-results/
 .astro/
 *.tsbuildinfo
 src/novafabric/serve/static/topology/tsconfig.tsbuildinfo
@@ -149,8 +149,8 @@ celerybeat.pid
 # ── Screenshot noise from browser tooling (real image assets re-included) ─────
 *.png
 !docs/**/*.png
-!web/public/**/*.png
-!web/src/**/*.png
+!ui/dashboard/public/**/*.png
+!ui/dashboard/src/**/*.png
 # Manuscript figures. Every figure in papers/ is TikZ today, so nothing has
 # been lost yet -- but a raster figure dropped into a paper's figures/ would
 # be silently ignored by the blanket *.png rule above, and `git status` would
