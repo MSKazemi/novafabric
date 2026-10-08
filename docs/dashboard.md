@@ -837,7 +837,7 @@ Full comparison with update-trigger matrix: [KG topology vs. Live Topology](./ar
 - [what NovaFabric is not](./architecture.md#what-novafabric-is-not) — the original "no web UI through v1.0" stance and its narrow exception.
 - [`docs/cli-reference.md`](cli-reference.md) — the canonical CLI reference. Every dashboard action maps to a command listed there.
 - [ADR-0011 — Evidence Bundle](./decisions.md) — the signing key model the dashboard reuses.
-- `web/` (in the repo) — the showcase site that explains what NovaFabric does using baked-in fixture data. Different audience: the showcase is *marketing*; the dashboard is *operational*.
+- `web/` (in the repo) — the dashboard's source. Since ADR-0299 `nova serve` ships the dashboard only: `/` opens it, explanatory pages are external links to [novafabric.ai](https://novafabric.ai/), and nothing the dashboard does requires internet access.
 - [ADR-0036](./decisions.md) — cross-run comparison UX design (v0.9).
 - [ADR-0037](./decisions.md) — Evidence Tab native implementation (v0.9).
 - [ADR-0038](./decisions.md) — Eval trend chart in Registry (v0.9).

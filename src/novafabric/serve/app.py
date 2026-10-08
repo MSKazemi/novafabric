@@ -9089,8 +9089,8 @@ def create_app(
     # Mounted LAST so the "/" catch-all does not shadow any explicit routes above.
 
     if static_dir is not None and static_dir.exists():
-        # `html=True` makes Astro's directory-style routes (e.g. /concepts/index.html)
-        # resolve when requested as /concepts.
+        # `html=True` makes Astro's directory-style routes (e.g. /dashboard/index.html)
+        # resolve when requested as /dashboard, and serves the bundle's 404.html.
         app.mount(
             "/",
             StaticFiles(directory=str(static_dir), html=True, check_dir=False),

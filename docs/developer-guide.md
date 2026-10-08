@@ -358,9 +358,16 @@ cd web && npm run build:dashboard   # astro build + scripts/copy-dashboard.mjs
 make bundle
 ```
 
-`copy-dashboard.mjs` copies only the entries the web build owns (`_astro`,
-`dashboard`, `concepts`, `showcase`, etc. — see the script for the full list)
-into `src/novafabric/serve/static/`, leaving other targets' output untouched.
+`copy-dashboard.mjs` copies **only the dashboard** into
+`src/novafabric/serve/static/` (ADR-0299): the `dashboard/` shell, the `_astro/`
+files that shell reaches (a transitive closure, not the whole directory),
+`favicon.svg`, and the product-local `index.html` (forwards `/` to `/dashboard/`,
+keeping `?token=`) and `404.html` from `web/serve-shell/`. Marketing routes
+(`/concepts`, `/install`, `/why`, `/spec`, `/showcase/*`, `/docs/*`) and
+`robots.txt` are not packaged; they live on `https://novafabric.ai`, and the
+dashboard links there as plain external links. Other targets' output
+(`topology/`) is left untouched. `tests/packaging_metadata/test_serve_static_is_dashboard_only.py`
+fails if a marketing page comes back or a shipped chunk references a missing asset.
 
 ### Tests (v0.97.0)
 

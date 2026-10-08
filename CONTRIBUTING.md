@@ -208,9 +208,11 @@ All must pass before a PR is merged. For a CLI change, also smoke-test
 
 ### Dashboard bundle
 
-The static site served by `nova serve --experimental` lives in
-`src/novafabric/serve/static/` and is **not tracked by git**. After any change to
-`web/src/` you must rebuild it before tagging a release:
+The dashboard served by `nova serve --experimental` is built into
+`src/novafabric/serve/static/`, which is **tracked by git** and packaged into the
+wheel. It holds the dashboard only, no marketing pages (ADR-0299); the public
+pages live on `https://novafabric.ai`. After any change to `web/src/` that the
+dashboard reaches, rebuild it and commit the result before tagging a release:
 
 ```bash
 make bundle

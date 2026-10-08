@@ -241,7 +241,9 @@ def serve_cmd(
     token = generate_token()
     token_path = write_token_file(token)
 
-    # Static dashboard (optional — ships in the wheel; absent during dev)
+    # Static dashboard (optional — ships in the wheel; absent during dev). Since
+    # ADR-0299 it holds the dashboard only: `/` forwards to /dashboard/ and the
+    # public pages (concepts, install, spec, showcase, docs) live on novafabric.ai.
     static_dir = Path(__file__).parent.parent / "serve" / "static"
     static_arg = static_dir if static_dir.exists() else None
 
@@ -289,7 +291,6 @@ def serve_cmd(
     # and `/api/tv5/live` are DATA endpoints (Arrow stream / JSON) — printing
     # them as "Topology" made a working feature look broken, because following
     # the link renders binary. Point at the pages; keep the data URLs out.
-    home_url = f"http://{host}:{port}/?token={token}"
     url = f"http://{host}:{port}/dashboard?token={token}"
     api_docs = f"http://{host}:{port}/api/docs?token={token}"
     topo_url = f"http://{host}:{port}/topology/?token={token}"
@@ -297,13 +298,11 @@ def serve_cmd(
     topo_line = f"[bold]Topology:[/bold]  {topo_url}\n" if topology else ""
     tv5_url = f"http://{host}:{port}/topology/?token={token}#tv5"
     tv5_line = f"[bold]TV-5 3D:[/bold]   {tv5_url}\n" if tv5 else ""
-    home_line = f"[bold]Home:[/bold]      {home_url}\n" if static_arg is not None else ""
     console.print(Panel(
         _EXPERIMENTAL_BANNER + "\n"
         f"[bold]Listening:[/bold] http://{host}:{port}\n"
         f"[bold]Capsules:[/bold]  {resolved_capsule_dir}\n"
         f"[bold]Registry:[/bold]  {db_path or _registry_db_path()}\n\n"
-        + home_line
         + f"[bold]Dashboard:[/bold] {url}\n"
         f"[bold]API docs:[/bold]  {api_docs}\n"
         + topo_line

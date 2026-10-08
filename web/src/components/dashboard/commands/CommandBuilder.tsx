@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { clsx } from 'clsx';
 import { buildCommandString, JOURNEY_LABELS, type CommandDef, type CommandField, type Journey } from './commandRegistry';
+import { publicSiteUrl } from '../../../lib/links';
 
 const JOURNEY_BADGE: Record<Journey, string> = {
   debug:  'text-[var(--color-accent)] bg-[color-mix(in_oklab,var(--color-accent)_12%,transparent)]',
@@ -165,9 +166,11 @@ export default function CommandBuilder({ cmd }: { cmd: CommandDef }) {
         <strong className="text-[var(--color-text)]">Copy only</strong> — the dashboard does not execute commands directly (Layer C, per ADR-0027). Run the copied command in your terminal. The Runs tab auto-refreshes when the result appears.
       </div>
 
-      {/* Docs link */}
+      {/* Docs link — external: the wheel ships no docs pages (ADR-0299) */}
       <a
-        href={cmd.docsPath}
+        href={publicSiteUrl(cmd.docsPath)}
+        target="_blank"
+        rel="noopener noreferrer"
         className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors"
       >
         ↗ Full reference for {cmd.name}

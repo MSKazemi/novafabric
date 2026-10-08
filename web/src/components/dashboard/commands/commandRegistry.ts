@@ -17,6 +17,7 @@ export interface CommandDef {
   journey: Journey;
   description: string;
   fields: CommandField[];
+  /** Path on https://novafabric.ai, rendered as an external link (ADR-0299). */
   docsPath: string;
   nativeTabNote?: string;
   /** True for defs derived automatically from the Typer app (vs. hand-curated). */
@@ -99,7 +100,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'no-redact', label: '--no-redact', type: 'toggle', hint: 'Skip automatic secret redaction. Use with caution.' },
       { key: 'dry-run', label: '--dry-run', type: 'toggle', hint: 'Validate the command without executing it.' },
     ],
-    docsPath: '/spec#capture',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-replay',
@@ -111,7 +112,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'mode', label: '--mode', type: 'select', options: ['forensic', 'mocked', 'semantic', 'exact'], defaultValue: 'forensic', hint: 'forensic: read-only inspection. mocked: re-execute with cached responses. semantic/exact: match by semantics or exact hash.' },
       { key: 'output', label: '--output', type: 'text', hint: 'Directory to write the replay capsule. Defaults to a timestamped sub-directory.' },
     ],
-    docsPath: '/spec#replay',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Forensic and dry-run replay are also available from the Runs tab → "Replay" button.',
   },
   {
@@ -124,7 +125,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'run-b', label: 'run-b', type: 'text', required: true, positional: true, hint: 'Second run_id or capsule path (candidate).' },
       { key: 'format', label: '--format', type: 'select', options: ['json', 'markdown'], defaultValue: 'json', hint: 'Output format. Use markdown for human-readable reports.' },
     ],
-    docsPath: '/spec#diff',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'You can also diff runs visually in the Diff tab → or use "Compare" from the Runs tab.',
   },
   {
@@ -136,7 +137,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'run-id', label: 'run-id', type: 'text', required: true, positional: true, hint: 'The run_id or capsule path to verify.' },
       { key: 'verbose', label: '--verbose', type: 'toggle', hint: 'Show full verification trace including signature bytes and log proof.' },
     ],
-    docsPath: '/spec#verify',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Evidence bundles can also be verified from the Evidence tab.',
   },
   {
@@ -149,7 +150,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'with-children', label: '--with-children', type: 'toggle', hint: 'Include child worker capsules in the output (for PARENT capsules in distributed runs).' },
       { key: 'format', label: '--format', type: 'select', options: ['text', 'json'], defaultValue: 'text', hint: 'Output format.' },
     ],
-    docsPath: '/spec#run-show',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'The parent/child capsule tree is also visible in the Runs tab → run detail → "children" view.',
   },
   {
@@ -161,7 +162,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'run-id', label: 'parent-run-id', type: 'text', required: true, positional: true, hint: 'The run_id of the PARENT capsule.' },
       { key: 'strict', label: '--strict', type: 'toggle', hint: 'Fail on any PARTIALLY_COMPLETE child (default: warn).' },
     ],
-    docsPath: '/spec#run-validate-distributed',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-report',
@@ -173,7 +174,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'format', label: '--format', type: 'select', options: ['markdown', 'json'], defaultValue: 'markdown', hint: 'Output format.' },
       { key: 'output', label: '--output', type: 'text', hint: 'File path to write the report. Defaults to stdout.' },
     ],
-    docsPath: '/spec#report',
+    docsPath: '/docs/cli-reference/',
   },
 
   // ── Govern & Promote ──────────────────────────────────────────────────
@@ -185,7 +186,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
     fields: [
       { key: 'spec-file', label: 'spec-file', type: 'text', required: true, positional: true, hint: 'Path to the asset spec YAML (e.g. ./specs/summarizer-v2.yaml).' },
     ],
-    docsPath: '/spec#register',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'You can also register assets from the Registry tab → "+ Register asset"',
   },
   {
@@ -196,7 +197,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
     fields: [
       { key: 'spec-file', label: 'spec-file', type: 'text', required: true, positional: true, hint: 'Path to the asset spec YAML to validate.' },
     ],
-    docsPath: '/spec#validate',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-suggest-register',
@@ -207,7 +208,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'capsule-path', label: 'capsule-path', type: 'text', positional: true, hint: 'Capsule directory to inspect. Omit to scan all recent runs.' },
       { key: 'output', label: '--output', type: 'text', hint: 'Directory to write generated spec stubs. Defaults to stdout.' },
     ],
-    docsPath: '/spec#suggest-register',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Suggestions are also shown in the Registry tab → "Suggestions" banner.',
   },
   {
@@ -226,7 +227,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       },
       { key: 'output', label: '--output', type: 'text', hint: 'Path to write the EvalResult JSON. Defaults to the capsule directory.' },
     ],
-    docsPath: '/spec#eval',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Eval suites can also be run from the Registry tab → asset detail → "Run eval", or from the Governance tab.',
   },
   {
@@ -239,7 +240,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'to', label: '--to', type: 'select', options: ['staging', 'production', 'deprecated'], defaultValue: 'production', hint: 'Target lifecycle stage.' },
       { key: 'note', label: '--note', type: 'text', hint: 'Human-readable promotion rationale logged in the audit trail.' },
     ],
-    docsPath: '/spec#promote',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Promotion is also available from the Registry tab → asset detail → "Promote".',
   },
   {
@@ -252,7 +253,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'role', label: '--role', type: 'select', options: ['reviewer', 'security', 'cto', 'compliance'], defaultValue: 'reviewer', hint: 'Approver role. Must match the policy\'s required roles list.' },
       { key: 'note', label: '--note', type: 'text', hint: 'Sign-off comment recorded in the evidence bundle.' },
     ],
-    docsPath: '/spec#approve',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-rollback',
@@ -264,7 +265,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'to-version', label: '--to-version', type: 'text', hint: 'Explicit version to restore. Omit to use the last known-good production version.' },
       { key: 'note', label: '--note', type: 'text', hint: 'Rollback reason recorded in the audit log.' },
     ],
-    docsPath: '/spec#rollback',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-unregister',
@@ -276,7 +277,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'force', label: '--force', type: 'toggle', hint: 'Override status guard — allows deletion of staging/production/pending_approval assets. Use with caution.' },
       { key: 'note', label: '--note', type: 'text', hint: 'Reason for deletion, recorded in the audit trail.' },
     ],
-    docsPath: '/spec#unregister',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Unregister is also available from the Registry tab → asset detail → "Unregister" button.',
   },
   {
@@ -289,7 +290,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'to', label: '--to', type: 'select', options: ['staging', 'production', 'deprecated'], defaultValue: 'production', hint: 'Target lifecycle stage.' },
       { key: 'note', label: '--note', type: 'text', hint: 'Proposal rationale recorded in the linked envelope.' },
     ],
-    docsPath: '/spec#promote-propose',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-promote-approve',
@@ -301,7 +302,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'role', label: '--role', type: 'select', options: ['reviewer', 'security', 'cto', 'compliance'], defaultValue: 'reviewer', hint: 'Approver role. Must match the policy\'s required roles list.' },
       { key: 'note', label: '--note', type: 'text', hint: 'Approval comment recorded in the linked envelope.' },
     ],
-    docsPath: '/spec#promote-approve',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-eval-compare',
@@ -313,7 +314,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'result-b', label: 'result-b.json', type: 'text', required: true, positional: true, hint: 'Path to the candidate EvalResult JSON (e.g. eval_results/summarizer-v2.json).' },
       { key: 'format', label: '--format', type: 'select', options: ['text', 'json', 'markdown'], defaultValue: 'text', hint: 'Output format.' },
     ],
-    docsPath: '/spec#eval-compare',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Eval trends and cross-run comparisons are also visible in the Registry tab → asset detail → "Eval trend".',
   },
   {
@@ -322,7 +323,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
     journey: 'govern',
     description: 'List all registered eval suite adapters — shows suite ID, version, OCI digest, and entry point for every adapter in the novafabric.eval_suites group.',
     fields: [],
-    docsPath: '/spec#eval',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Registered eval suites are also listed in the Governance tab.',
   },
   {
@@ -334,7 +335,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'asset', label: 'asset@version', type: 'text', required: true, positional: true, hint: 'Asset name and version (e.g. summarizer-v2@0.4.1).' },
       { key: 'suite', label: '--suite', type: 'text', hint: 'Eval suite name to run (e.g. novafabric-smoke-v1).' },
     ],
-    docsPath: '/spec#eval',
+    docsPath: '/docs/cli-reference/',
   },
 
   // ── Govern: Risk Classification (v0.16 — ADR-0056) ────────────────────
@@ -348,7 +349,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'vocabulary', label: '--vocabulary', type: 'select', options: ['eu-ai-act/2024.1.0', 'nist-ai-rmf/1.0.0', 'omb-m-24-10/1.0.0'], defaultValue: 'eu-ai-act/2024.1.0', hint: 'Regulatory vocabulary to classify against.' },
       { key: 'format', label: '--format', type: 'select', options: ['text', 'json'], defaultValue: 'text', hint: 'Output format.' },
     ],
-    docsPath: '/spec#classify',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Risk classification is also available from the Governance tab.',
   },
   {
@@ -361,7 +362,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'vocabulary', label: '--vocabulary', type: 'select', options: ['eu-ai-act/2024.1.0', 'nist-ai-rmf/1.0.0', 'omb-m-24-10/1.0.0'], defaultValue: 'eu-ai-act/2024.1.0', hint: 'Regulatory vocabulary to classify against.' },
       { key: 'format', label: '--format', type: 'select', options: ['text', 'json'], defaultValue: 'text', hint: 'Output format.' },
     ],
-    docsPath: '/spec#classify',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Classification from capsule is also available from the Governance tab.',
   },
   {
@@ -370,7 +371,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
     journey: 'govern',
     description: 'List all available classification vocabularies (EU AI Act, NIST AI RMF, OMB M-24-10).',
     fields: [],
-    docsPath: '/spec#classify',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Vocabularies are also listed in the Governance tab.',
   },
 
@@ -384,7 +385,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'capsule-path', label: 'capsule-path', type: 'text', required: true, positional: true, hint: 'Path to the capsule directory (e.g. .novafabric/runs/<run_id>/).' },
       { key: 'fail-on', label: '--fail-on', type: 'select', options: ['critical', 'high', 'medium', 'low', 'info'], hint: 'Exit 1 if any finding at or above this severity is found. Useful for blocking CI pipelines.' },
     ],
-    docsPath: '/spec#scan-secrets',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Secret scan findings are also visible in the Runs tab → run detail → "secrets" view.',
   },
   {
@@ -396,7 +397,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'capsule-path', label: 'capsule-path', type: 'text', required: true, positional: true, hint: 'Path to the capsule directory to re-redact.' },
       { key: 'force', label: '--force', type: 'toggle', hint: 'Overwrite existing redaction-proof.json without prompting.' },
     ],
-    docsPath: '/spec#redact',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Redaction is also available from the Runs tab → run detail → "Redact" button.',
   },
   {
@@ -409,7 +410,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'output', label: '--output', type: 'text', hint: 'Output path for the ZIP. Defaults to ~/.novafabric/evidence/<run_id>.zip.' },
       { key: 'key', label: '--key', type: 'text', hint: 'Path to signing key PEM. Auto-generated at ~/.novafabric/keys/local-key.pem if omitted.' },
     ],
-    docsPath: '/spec#export-evidence',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Evidence bundles can also be exported from the Runs tab → run detail → "Export evidence".',
   },
   {
@@ -422,7 +423,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'depth', label: '--depth', type: 'number', defaultValue: '5', hint: 'Maximum hops to traverse upstream. Default: 5.' },
       { key: 'format', label: '--format', type: 'select', options: ['text', 'json', 'openlineage'], defaultValue: 'text', hint: 'Output format. openlineage emits OLAF-compatible JSON.' },
     ],
-    docsPath: '/spec#lineage',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Provenance queries are also available in the Lineage tab → "Query Provenance" panel.',
   },
   {
@@ -435,7 +436,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'depth', label: '--depth', type: 'number', defaultValue: '5', hint: 'Maximum hops to traverse downstream. Default: 5.' },
       { key: 'format', label: '--format', type: 'select', options: ['text', 'json'], defaultValue: 'text', hint: 'Output format.' },
     ],
-    docsPath: '/spec#lineage',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Blast-radius queries are also available in the Lineage tab → "Query Blast Radius" panel.',
   },
   {
@@ -446,7 +447,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
     fields: [
       { key: 'run-id', label: 'run-id', type: 'text', required: true, positional: true, hint: 'The original run_id whose replay chain you want to trace.' },
     ],
-    docsPath: '/spec#lineage',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Replay chains are also queryable in the Lineage tab → "Query Replay Chain" panel.',
   },
   {
@@ -459,7 +460,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'at', label: '--at', type: 'text', required: true, hint: 'ISO-8601 timestamp (e.g. 2026-03-01T12:00:00Z). Queries the graph as of this moment.' },
       { key: 'depth', label: '--depth', type: 'number', defaultValue: '5', hint: 'Maximum hops to traverse.' },
     ],
-    docsPath: '/spec#lineage',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-lineage-emit-openlineage',
@@ -471,7 +472,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'transport', label: '--transport', type: 'select', options: ['stdout', 'http'], defaultValue: 'stdout', hint: 'stdout: print events. http: POST to --url endpoint.' },
       { key: 'url', label: '--url', type: 'text', hint: 'HTTP endpoint URL (required when --transport http, e.g. https://marquez.internal/api/v1/lineage).' },
     ],
-    docsPath: '/spec#lineage',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-hold-create',
@@ -483,7 +484,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'reason', label: '--reason', type: 'text', required: true, hint: 'Human-readable hold reason (e.g. "Litigation hold — case #2026-047").' },
       { key: 'expires-in', label: '--expires-in', type: 'text', hint: 'Optional duration string (e.g. 90d, 6m). Omit for indefinite hold.' },
     ],
-    docsPath: '/spec#holds',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Holds can also be created and released from the Holds tab.',
   },
   {
@@ -496,7 +497,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'subject-role', label: '--subject-role', type: 'text', hint: 'Role of the requesting subject (e.g. reviewer, admin).' },
       { key: 'resource', label: '--resource', type: 'text', hint: 'Resource identifier (e.g. summarizer-v2@0.4.1).' },
     ],
-    docsPath: '/spec#policy',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Policy rules can also be tested interactively in the Policy tab.',
   },
   {
@@ -509,7 +510,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'subject-role', label: '--subject-role', type: 'text', hint: 'Role of the requesting subject.' },
       { key: 'resource', label: '--resource', type: 'text', hint: 'Resource identifier.' },
     ],
-    docsPath: '/spec#policy',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-policy-list',
@@ -520,7 +521,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'namespace', label: '--namespace', type: 'text', hint: 'Filter signed policies to this namespace. Omit to list all namespaces.' },
       { key: 'bundle', label: '--bundle', type: 'text', hint: 'Rego bundle directory. Defaults to the built-in bundle.' },
     ],
-    docsPath: '/spec#policy',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'The policy inventory is also visible in the Policy tab → "Policy Inventory" panel.',
   },
   {
@@ -533,7 +534,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'key', label: '--key', type: 'text', required: true, hint: 'Path to the signing key PEM (Ed25519 or ECDSA P-256).' },
       { key: 'cert', label: '--cert', type: 'text', hint: 'Path to the signing certificate PEM. Required for Rekor log inclusion.' },
     ],
-    docsPath: '/spec#policy-sign',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Policy signing is also available from the Policy tab → "Sign Promotion Policy" panel; the active signed policy is shown in the Seal tab → "Promotion Policy" panel.',
   },
   {
@@ -546,7 +547,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'store', label: '--store', type: 'select', options: ['sqlite', 'postgres', 'kuzudb'], defaultValue: 'sqlite', hint: 'Target lineage store backend.' },
       { key: 'dry-run', label: '--dry-run', type: 'toggle', hint: 'Validate the import without writing any edges.' },
     ],
-    docsPath: '/spec#lineage-import',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-seal-bypass',
@@ -559,7 +560,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'key', label: '--key', type: 'text', required: true, hint: 'Path to the admin signing key PEM.' },
       { key: 'justification', label: '--justification', type: 'text', required: true, hint: 'Human-readable reason for the bypass. Logged permanently in the audit trail.' },
     ],
-    docsPath: '/spec#seal-bypass',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-seal-log-verify',
@@ -569,7 +570,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
     fields: [
       { key: 'capsule-id', label: '--capsule-id', type: 'text', hint: 'Optional: verify that this capsule\'s entry is included in the log. Omit to verify the full log.' },
     ],
-    docsPath: '/spec#seal-log-verify',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Log integrity is verifiable from the Seal tab → "Merkle Log Verify" panel.',
   },
   // ── Compliance audit (v0.16 — ADR-0061) ───────────────────────────────
@@ -581,7 +582,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
     fields: [
       { key: 'profile', label: '--profile', type: 'select', options: ['nist-ai-rmf', 'eu-ai-act-high-risk', 'gdpr', 'soc2-type2', 'iso42001', 'scientific-reproducibility'], defaultValue: 'nist-ai-rmf', hint: 'Compliance profile to inspect.' },
     ],
-    docsPath: '/spec#audit-map',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Audit checkers are shown in the Compliance tab → "Compliance Audit" panel.',
   },
   {
@@ -594,7 +595,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'profile', label: '--profile', type: 'select', options: ['nist-ai-rmf', 'eu-ai-act-high-risk', 'gdpr', 'soc2-type2', 'iso42001', 'scientific-reproducibility'], defaultValue: 'nist-ai-rmf', hint: 'Compliance profile to audit against.' },
       { key: 'format', label: '--format', type: 'select', options: ['text', 'json'], defaultValue: 'text', hint: 'Output format.' },
     ],
-    docsPath: '/spec#audit-report',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Compliance audit is also available from the Compliance tab → "Compliance Audit" panel.',
   },
   {
@@ -607,7 +608,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'profile', label: '--profile', type: 'select', options: ['nist-ai-rmf', 'eu-ai-act-high-risk', 'gdpr', 'soc2-type2', 'iso42001', 'scientific-reproducibility'], defaultValue: 'nist-ai-rmf', hint: 'Compliance profile to verify against.' },
       { key: 'min-coverage', label: '--min-coverage', type: 'number', defaultValue: '0.7', hint: 'Minimum coverage fraction (0.0–1.0). Default: 0.7.' },
     ],
-    docsPath: '/spec#audit-verify',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-audit-bundle',
@@ -619,7 +620,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'profile', label: '--profile', type: 'select', options: ['nist-ai-rmf', 'eu-ai-act-high-risk', 'gdpr', 'soc2-type2', 'iso42001', 'scientific-reproducibility'], defaultValue: 'nist-ai-rmf', hint: 'Compliance profile to bundle.' },
       { key: 'output', label: '--output', type: 'text', required: true, hint: 'Output path for the audit bundle ZIP.' },
     ],
-    docsPath: '/spec#audit-bundle',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-audit-coverage',
@@ -629,7 +630,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
     fields: [
       { key: 'capsule-path', label: 'capsule-path', type: 'text', required: true, positional: true, hint: 'Path to the capsule directory.' },
     ],
-    docsPath: '/spec#audit-coverage',
+    docsPath: '/docs/cli-reference/',
   },
   // ── Examiner exports (v0.16 — ADR-0061/0062) ──────────────────────────
   {
@@ -641,7 +642,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'capsule-path', label: 'capsule-path', type: 'text', required: true, positional: true, hint: 'Path to the capsule directory.' },
       { key: 'output', label: '--output', type: 'text', required: true, hint: 'Output path for the BagIt ZIP.' },
     ],
-    docsPath: '/spec#export-examiner',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'BagIt export is also available from the Compliance tab → "Examiner Export" panel.',
   },
   {
@@ -654,7 +655,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'output', label: '--output', type: 'text', required: true, hint: 'Output path for the PCCP package.' },
       { key: 'format', label: '--format', type: 'select', options: ['zip', 'json'], defaultValue: 'zip', hint: 'Output format.' },
     ],
-    docsPath: '/spec#export-examiner',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'PCCP export is also available from the Compliance tab → "Examiner Export" panel.',
   },
   {
@@ -666,7 +667,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'capsule-path', label: 'capsule-path', type: 'text', required: true, positional: true, hint: 'Path to the capsule directory (or data directory for period-based export).' },
       { key: 'output', label: '--output', type: 'text', required: true, hint: 'Output path for the ISO 42001 package ZIP.' },
     ],
-    docsPath: '/spec#export-examiner',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'ISO 42001 export is also available from the Compliance tab → "Examiner Export" panel.',
   },
   {
@@ -680,7 +681,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'deployment-id', label: '--deployment-id', type: 'text', required: true, hint: 'Deployment identifier for the AI system.' },
       { key: 'pdf', label: '--pdf', type: 'toggle', hint: 'Also generate a PDF version of the Annex IV document.' },
     ],
-    docsPath: '/spec#export-annex-iv',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'EU AI Act Annex IV export is also available from the Compliance tab.',
   },
   {
@@ -694,7 +695,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'incident-id', label: '--incident-id', type: 'text', required: true, hint: 'Incident identifier for cross-reference.' },
       { key: 'phase', label: '--phase', type: 'select', options: ['1', '2', '3'], defaultValue: '1', hint: 'NIS2 notification phase.' },
     ],
-    docsPath: '/spec#export-nis2',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'NIS2 report export is also available from the Compliance tab.',
   },
   {
@@ -706,7 +707,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'subject-id', label: 'subject-id', type: 'text', required: true, positional: true, hint: 'Data subject identifier (e.g. user@example.com). Never stored — only an HMAC is queried.' },
       { key: 'output', label: '--output', type: 'text', hint: 'Output path for the proof JSON. Defaults to stdout.' },
     ],
-    docsPath: '/spec#subject-proof',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'GDPR subject proof is also available from the Compliance tab.',
   },
   {
@@ -722,7 +723,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
         hint: 'Directory of capsules for --all. Default: $NOVAFABRIC_CAPSULE_DIR or $NOVAFABRIC_HOME/capsules.' },
       { key: 'force', label: '--force', type: 'toggle', hint: 'Regenerate aibom.json even if one already exists.' },
     ],
-    docsPath: '/spec#aibom',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'AI-SBOM generation is also available from the Compliance tab → "Generate AI-SBOM" panel.',
   },
   {
@@ -736,7 +737,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'depth', label: '--depth', type: 'number', defaultValue: '3', hint: 'Maximum hops to traverse. Default: 3.' },
       { key: 'format', label: '--format', type: 'select', options: ['text', 'json'], defaultValue: 'text', hint: 'Output format.' },
     ],
-    docsPath: '/spec#run-lineage',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Run lineage edges are also available from the Runs tab → run detail, or in the Lineage tab → enter a run_id in any query panel.',
   },
 
@@ -751,7 +752,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'port', label: '--port', type: 'number', defaultValue: '8877', hint: 'Local port to bind the proxy. Default: 8877.' },
       { key: 'host', label: '--host', type: 'text', defaultValue: '127.0.0.1', hint: 'Interface to bind. Default: 127.0.0.1.' },
     ],
-    docsPath: '/spec#api-proxy',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-mcp-proxy',
@@ -762,7 +763,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'upstream', label: 'upstream', type: 'text', required: true, positional: true, hint: 'Upstream MCP server command or socket path.' },
       { key: 'port', label: '--port', type: 'number', hint: 'Optional TCP port for the proxy. Default: stdio mode.' },
     ],
-    docsPath: '/spec#mcp-proxy',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-doctor',
@@ -773,7 +774,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'check-storage', label: '--check-storage', type: 'toggle', hint: 'Also probe the configured storage backend (SQLite, Postgres, or object store).' },
       { key: 'format', label: '--format', type: 'select', options: ['text', 'json'], defaultValue: 'text', hint: 'Output format.' },
     ],
-    docsPath: '/spec#doctor',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-serve',
@@ -787,7 +788,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'capsule-dir', label: '--capsule-dir', type: 'text', hint: 'Directory containing Run Capsule subdirectories. Default: ~/.novafabric/runs/.' },
       { key: 'experimental', label: '--experimental', type: 'toggle', defaultValue: 'true', hint: 'Required flag — acknowledges the dashboard is experimental.' },
     ],
-    docsPath: '/spec#serve',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-new-run-id',
@@ -795,7 +796,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
     journey: 'infra',
     description: 'Print a fresh ULID for use as NOVAFABRIC_GLOBAL_RUN_ID — use this to pre-allocate a run ID before launching a distributed or multi-process capture.',
     fields: [],
-    docsPath: '/spec#new-run-id',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-capsule-delete',
@@ -806,7 +807,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'run-id', label: 'run-id', type: 'text', required: true, positional: true, hint: 'The run_id of the capsule to delete.' },
       { key: 'force', label: '--force', type: 'toggle', hint: 'Skip confirmation prompt. Use with caution — deletion is irreversible.' },
     ],
-    docsPath: '/spec#capsule-delete',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-db-migrate',
@@ -818,7 +819,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'db-path', label: '--db-path', type: 'text', hint: 'Source SQLite path. Default: ~/.novafabric/registry.db.' },
       { key: 'dry-run', label: '--dry-run', type: 'toggle', hint: 'Validate the migration plan without writing to Postgres.' },
     ],
-    docsPath: '/spec#db-migrate',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-login',
@@ -828,7 +829,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
     fields: [
       { key: 'server-url', label: '--server-url', type: 'text', required: true, hint: 'URL of the NovaFabric server (e.g. https://nova.internal).' },
     ],
-    docsPath: '/spec#login',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-logout',
@@ -838,7 +839,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
     fields: [
       { key: 'server-url', label: '--server-url', type: 'text', hint: 'URL of the NovaFabric server to log out from. Defaults to the last authenticated server.' },
     ],
-    docsPath: '/spec#logout',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-migrate',
@@ -850,7 +851,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'from-version', label: '--from-version', type: 'text', hint: 'Source format version (e.g. 0.1.0). Auto-detected if omitted.' },
       { key: 'to-version', label: '--to-version', type: 'text', hint: 'Target format version. Defaults to the current stable version.' },
     ],
-    docsPath: '/spec#migrate',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-rebuild-metadata-db',
@@ -861,7 +862,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'db-path', label: '--db-path', type: 'text', hint: 'Path to the registry SQLite file to rebuild. Default: ~/.novafabric/registry.db.' },
       { key: 'dry-run', label: '--dry-run', type: 'toggle', hint: 'Scan capsules and report what would be imported without writing to the database.' },
     ],
-    docsPath: '/spec#rebuild-metadata-db',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-ingest-capsule',
@@ -874,7 +875,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'capsule-dir', label: '--capsule-dir', type: 'text', hint: 'Override NOVAFABRIC_CAPSULE_DIR.' },
       { key: 'db-path', label: '--db-path', type: 'text', hint: 'Override NOVAFABRIC_DB_PATH.' },
     ],
-    docsPath: '/spec#ingest-capsule',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Capsule reindexing is also available from the Admin tab → "Reindex Capsules" panel.',
   },
   {
@@ -889,7 +890,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'oidc-issuer', label: '--oidc-issuer', type: 'text', hint: 'OIDC issuer URL for JWT validation (e.g. https://accounts.google.com). Required for multi-user auth.' },
       { key: 'dev', label: '--dev', type: 'toggle', hint: 'Enable development mode — disables auth, uses SQLite, and auto-reloads on code changes. Never use in production.' },
     ],
-    docsPath: '/spec#server-start',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'You can also start the combined dashboard+server with "nova serve --experimental".',
   },
   {
@@ -900,7 +901,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
     fields: [
       { key: 'server-url', label: '--server-url', type: 'text', hint: 'URL of the target NovaFabric server. Defaults to the last authenticated server.' },
     ],
-    docsPath: '/spec#server-flush-jwks-cache',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'JWKS cache flush is also available from the Admin tab → "OIDC Configuration" section.',
   },
   {
@@ -913,7 +914,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'target', label: '--target', type: 'select', options: ['sqlite', 'postgres', 'kuzudb'], defaultValue: 'kuzudb', hint: 'Target backend to migrate to.' },
       { key: 'dry-run', label: '--dry-run', type: 'toggle', hint: 'Count edges and validate compatibility without writing to the target.' },
     ],
-    docsPath: '/spec#lineage-store-migrate',
+    docsPath: '/docs/cli-reference/',
   },
   {
     id: 'nova-lineage-store-profile',
@@ -928,7 +929,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
         visibleWhen: { field: 'target', value: 'janusgraph-minimal' } },
       { key: 'image-tag', label: '--image-tag', type: 'text', defaultValue: '', hint: 'Deprecated: overrides all janusgraph-minimal images (janusgraph/cassandra/novafabric) to one tag. Leave blank to use each image\'s own pinned default.' },
     ],
-    docsPath: '/spec#lineage-store-profile',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Deployment profiles are also available from the Infra tab → "Lineage Store Deployment Profile" panel.',
   },
   {
@@ -940,7 +941,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'asset-a', label: 'asset@version-a', type: 'text', required: true, positional: true, hint: 'First asset version (e.g. summarizer-v2@0.3.0).' },
       { key: 'asset-b', label: 'asset@version-b', type: 'text', required: true, positional: true, hint: 'Second asset version (e.g. summarizer-v2@0.4.1).' },
     ],
-    docsPath: '/spec#asset-diff',
+    docsPath: '/docs/cli-reference/',
     nativeTabNote: 'Run Capsule diffs are in the Diff tab. This command diffs asset spec definitions, not run outputs.',
   },
   {
@@ -952,7 +953,7 @@ const CURATED_COMMANDS: readonly CommandDef[] = [
       { key: 'revision', label: '--revision', type: 'text', defaultValue: 'head', hint: 'Alembic revision target. Default: head (latest). Use a specific hash to upgrade to a named migration.' },
       { key: 'db-path', label: '--db-path', type: 'text', hint: 'Override the database path. Default: the configured MetadataStore URL.' },
     ],
-    docsPath: '/spec#db-upgrade',
+    docsPath: '/docs/cli-reference/',
   },
 ];
 

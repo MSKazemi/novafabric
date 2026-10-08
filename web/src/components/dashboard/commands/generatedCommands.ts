@@ -50,7 +50,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--out"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -68,7 +68,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -93,7 +93,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--out"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -111,7 +111,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -178,7 +178,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "true"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -195,7 +195,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--capsules-dir"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -220,7 +220,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -260,7 +260,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -299,7 +299,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -346,7 +346,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -415,7 +415,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -432,7 +432,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -471,7 +471,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -496,7 +496,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -521,7 +521,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--note"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -575,7 +575,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -622,7 +622,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "60.0"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -655,7 +655,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": ""
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -697,7 +697,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "unified"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -723,7 +723,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "AssureOutputFormat.rich"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -762,7 +762,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--p1"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -819,7 +819,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--out"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -853,7 +853,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -878,7 +878,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--out"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -910,7 +910,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -942,7 +942,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -975,7 +975,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--out"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -1001,7 +1001,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -1064,7 +1064,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--out"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -1096,7 +1096,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--output"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -1129,7 +1129,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "0.8"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -1168,7 +1168,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -1208,7 +1208,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "json-ld"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -1226,7 +1226,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -1273,7 +1273,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--out"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -1359,7 +1359,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "auto"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -1433,7 +1433,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--include-keys"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -1451,7 +1451,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -1492,7 +1492,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--force"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -1687,7 +1687,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "true"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -1712,7 +1712,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -1744,7 +1744,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -1776,7 +1776,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -1785,7 +1785,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "journey": "govern",
     "description": "List available EU AI Act and NIST AI RMF vocabulary versions.",
     "fields": [],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -1873,7 +1873,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -1919,7 +1919,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--report"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2002,7 +2002,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2041,7 +2041,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2081,7 +2081,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2121,7 +2121,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2219,7 +2219,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2244,7 +2244,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2269,7 +2269,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2310,7 +2310,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2364,7 +2364,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2389,7 +2389,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2429,7 +2429,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "table"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2454,7 +2454,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2488,7 +2488,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "table"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2521,7 +2521,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2546,7 +2546,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2564,7 +2564,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "64"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2573,7 +2573,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "journey": "infra",
     "description": "Report whether the daemon is reachable.",
     "fields": [],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2582,7 +2582,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "journey": "infra",
     "description": "Signal a running daemon to drain and exit (SIGTERM).",
     "fields": [],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2600,7 +2600,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2625,7 +2625,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--out"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2634,7 +2634,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "journey": "infra",
     "description": "List the widgets and dashboards on disk.",
     "fields": [],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2652,7 +2652,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2670,7 +2670,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2761,7 +2761,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--out"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2802,7 +2802,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--report"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2836,7 +2836,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "metadata"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -2898,7 +2898,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "8"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3055,7 +3055,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--assert-same-shape"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3114,7 +3114,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--postgres-dsn"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3253,7 +3253,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3278,7 +3278,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3303,7 +3303,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3328,7 +3328,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3353,7 +3353,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3378,7 +3378,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3403,7 +3403,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3428,7 +3428,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3453,7 +3453,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3499,7 +3499,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3531,7 +3531,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3556,7 +3556,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3581,7 +3581,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3613,7 +3613,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--rapl-base"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3630,7 +3630,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--rapl-base"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3656,7 +3656,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "table"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3674,7 +3674,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3692,7 +3692,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3710,7 +3710,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3755,7 +3755,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--pretty"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3764,7 +3764,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "journey": "audit",
     "description": "Show EU AI Act compliance status for a capsule.",
     "fields": [],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3782,7 +3782,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3882,7 +3882,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--out"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3900,7 +3900,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3918,7 +3918,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3950,7 +3950,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--out"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -3975,7 +3975,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--identity"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -4017,7 +4017,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "5"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -4049,7 +4049,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -4074,7 +4074,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -4099,7 +4099,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--output"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -4125,7 +4125,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -4134,7 +4134,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "journey": "govern",
     "description": "List all registered evaluation suite adapters.",
     "fields": [],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -4211,7 +4211,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -4251,7 +4251,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--output"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -4345,7 +4345,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--validate-scores"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -4414,7 +4414,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--label"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -4432,7 +4432,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -4456,7 +4456,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -4474,7 +4474,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -4512,7 +4512,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -4560,7 +4560,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "nova events emit"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -4606,7 +4606,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "0"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -4668,7 +4668,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--anchor"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -4708,7 +4708,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--output"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -4769,7 +4769,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--output"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -4794,7 +4794,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--timestamp-ok"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -4826,7 +4826,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--output"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -4920,7 +4920,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--require-comparable"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -4944,7 +4944,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -5064,7 +5064,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--require-comparable"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -5096,7 +5096,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -5135,7 +5135,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--title"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -5167,7 +5167,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -5206,7 +5206,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--out"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -5231,7 +5231,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--output"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -5272,7 +5272,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--pdf"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -5368,7 +5368,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--public-key-out"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -5400,7 +5400,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--training-mining"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -5439,7 +5439,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--out"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -5464,7 +5464,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -5496,7 +5496,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--out"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -5529,7 +5529,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--out"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -5568,7 +5568,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--out"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -5625,7 +5625,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--out"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -5650,7 +5650,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -5675,7 +5675,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -5772,7 +5772,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--dsse"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -5821,7 +5821,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--no-audit-report"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -5862,7 +5862,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--control"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -5904,7 +5904,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -5929,7 +5929,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -5954,7 +5954,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--output"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6007,7 +6007,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6032,7 +6032,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6074,7 +6074,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "1"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6100,7 +6100,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6125,7 +6125,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6150,7 +6150,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6175,7 +6175,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6200,7 +6200,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6225,7 +6225,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6286,7 +6286,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6311,7 +6311,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--output"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6371,7 +6371,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6413,7 +6413,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": ""
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6445,7 +6445,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--key"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6478,7 +6478,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6503,7 +6503,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6528,7 +6528,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6575,7 +6575,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--stats"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6615,7 +6615,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6648,7 +6648,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6673,7 +6673,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6698,7 +6698,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6723,7 +6723,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6756,7 +6756,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6781,7 +6781,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6814,7 +6814,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--duration-days"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6832,7 +6832,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6850,7 +6850,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6910,7 +6910,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6943,7 +6943,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--output"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -6952,7 +6952,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "journey": "govern",
     "description": "List incidents with status and most-pressing deadline.",
     "fields": [],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7008,7 +7008,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--run-id"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7026,7 +7026,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7087,7 +7087,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--db-path"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7111,7 +7111,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--force"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7151,7 +7151,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--cost-db"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7169,7 +7169,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7232,7 +7232,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7278,7 +7278,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7340,7 +7340,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7374,7 +7374,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "text"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7424,7 +7424,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": ".nova/kg/alias.db"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7466,7 +7466,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "6"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7492,7 +7492,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "text"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7533,7 +7533,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "6"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7567,7 +7567,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "true"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7608,7 +7608,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "true"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7655,7 +7655,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--output"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7697,7 +7697,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": ".nova/kg/review_queue.db"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7723,7 +7723,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "text"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7757,7 +7757,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": ".nova/kg/review_queue.db"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7783,7 +7783,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "text"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7853,7 +7853,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "nova.kg.events"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7871,7 +7871,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": ".nova/kg/nova_kg.kuzu"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7905,7 +7905,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7923,7 +7923,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": ".nova/kg/nova_kg.kuzu"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -7986,7 +7986,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8019,7 +8019,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8051,7 +8051,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8076,7 +8076,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8132,7 +8132,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8194,7 +8194,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8234,7 +8234,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8266,7 +8266,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8322,7 +8322,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--principal"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8348,7 +8348,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "table"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8380,7 +8380,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--observed-epoch"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8435,7 +8435,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--with-facets"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8499,7 +8499,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "15.0"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8538,7 +8538,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--otel-correlation"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8585,7 +8585,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "5"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8618,7 +8618,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "prov-json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8636,7 +8636,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8662,7 +8662,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "MetricsOutputFormat.text"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8717,7 +8717,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--with-facets"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8743,7 +8743,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "LineageOutputFormat.text"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8784,7 +8784,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "RootCauseOutputFormat.text"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8825,7 +8825,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "LineageOutputFormat.text"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8893,7 +8893,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--ocs-data-dir"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8934,7 +8934,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--image-tag"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8973,7 +8973,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "30"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -8991,7 +8991,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "http://localhost:7433"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9008,7 +9008,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--server"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9032,7 +9032,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9050,7 +9050,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9075,7 +9075,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9101,7 +9101,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "rich"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9127,7 +9127,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "ScanThreshold.HIGH"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9172,7 +9172,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--upstream-url"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9197,7 +9197,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9223,7 +9223,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "MemoryOutputFormat.text"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9264,7 +9264,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--also-capsule"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9311,7 +9311,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9390,7 +9390,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9445,7 +9445,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9477,7 +9477,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9510,7 +9510,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json-errors"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9597,7 +9597,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9628,7 +9628,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--backup"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9666,7 +9666,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--log"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9675,7 +9675,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "journey": "debug",
     "description": "Print a fresh run ID for use as NOVAFABRIC_GLOBAL_RUN_ID.",
     "fields": [],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9700,7 +9700,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9718,7 +9718,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9758,7 +9758,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--output"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9790,7 +9790,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9799,7 +9799,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "journey": "govern",
     "description": "Show the current capture-level policy.",
     "fields": [],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9817,7 +9817,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9843,7 +9843,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "~/.local/share/novafabric/audit.jsonl"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9874,7 +9874,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--bundle"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9931,7 +9931,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--db"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -9948,7 +9948,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--bundle"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -10032,7 +10032,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--output"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -10063,7 +10063,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -10146,7 +10146,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--output"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -10177,7 +10177,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -10281,7 +10281,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--catalog"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -10305,7 +10305,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -10344,7 +10344,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -10369,7 +10369,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--identity"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -10452,7 +10452,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--identity"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -10485,7 +10485,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--identity"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -10517,7 +10517,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--assembled"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -10559,7 +10559,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "unified"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -10584,7 +10584,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -10609,7 +10609,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -10633,7 +10633,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--status"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -10666,7 +10666,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--force"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -10727,7 +10727,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -10745,7 +10745,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -10826,7 +10826,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -10851,7 +10851,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -10876,7 +10876,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -10908,7 +10908,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -10947,7 +10947,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11048,7 +11048,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--no-cache"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11101,7 +11101,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--review"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11139,7 +11139,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11157,7 +11157,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11246,7 +11246,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--permissive"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11309,7 +11309,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--idempotent"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11327,7 +11327,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11352,7 +11352,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--output"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11413,7 +11413,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "0"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11496,7 +11496,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11543,7 +11543,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11589,7 +11589,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11628,7 +11628,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11668,7 +11668,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--db"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11708,7 +11708,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "text"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11717,7 +11717,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "journey": "debug",
     "description": "Print a fresh run ID (ULID) for use as NOVAFABRIC_GLOBAL_RUN_ID.",
     "fields": [],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11758,7 +11758,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "text"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11784,7 +11784,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": ""
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11816,7 +11816,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11848,7 +11848,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11880,7 +11880,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11913,7 +11913,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--output"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11946,7 +11946,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--output"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -11972,7 +11972,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -12004,7 +12004,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -12013,7 +12013,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
     "journey": "debug",
     "description": "List all capsule event types in the current schema.",
     "fields": [],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -12038,7 +12038,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -12063,7 +12063,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -12088,7 +12088,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -12170,7 +12170,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -12202,7 +12202,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -12312,7 +12312,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -12368,7 +12368,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--data-dir"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -12447,7 +12447,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--data-dir"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -12478,7 +12478,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--new-ca"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -12516,7 +12516,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--consistency"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -12580,7 +12580,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--data-dir"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -12598,7 +12598,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -12616,7 +12616,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -12634,7 +12634,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -12676,7 +12676,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": ""
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -12715,7 +12715,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--data-dir"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -12803,7 +12803,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--db-path"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -12899,7 +12899,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--tls-key"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -12954,7 +12954,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--db-path"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -12978,7 +12978,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--db-path"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13011,7 +13011,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--db-path"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13051,7 +13051,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--db-path"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13092,7 +13092,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--db-path"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13117,7 +13117,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--token"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13158,7 +13158,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--key-path"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13189,7 +13189,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--db-path"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13222,7 +13222,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--db-path"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13247,7 +13247,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--key-path"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13264,7 +13264,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--config"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13309,7 +13309,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--config"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13384,7 +13384,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "text"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13451,7 +13451,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--db-path"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13504,7 +13504,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--db-path"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13551,7 +13551,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--session-dir"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13598,7 +13598,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13623,7 +13623,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--session-dir"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13654,7 +13654,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--rebuild-index"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13686,7 +13686,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--session-dir"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13710,7 +13710,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13807,7 +13807,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--dry-run"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13846,7 +13846,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13871,7 +13871,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13909,7 +13909,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13934,7 +13934,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13959,7 +13959,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "nova-capsules"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -13998,7 +13998,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--output"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -14058,7 +14058,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--runs-dir"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -14083,7 +14083,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "defaultValue": "24"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -14122,7 +14122,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -14170,7 +14170,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -14203,7 +14203,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -14252,7 +14252,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -14335,7 +14335,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--views-dir"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -14360,7 +14360,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -14414,7 +14414,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -14452,7 +14452,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -14498,7 +14498,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--db"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -14537,7 +14537,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--write"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -14642,7 +14642,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--json"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -14668,7 +14668,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "required": true
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -14692,7 +14692,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--views-dir"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -14717,7 +14717,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--views-dir"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -14763,7 +14763,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--views-dir"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -14907,7 +14907,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--views-dir"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   },
   {
@@ -14939,7 +14939,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "flag": "--views-dir"
       }
     ],
-    "docsPath": "/spec",
+    "docsPath": "/docs/cli-reference/",
     "generated": true
   }
 ];

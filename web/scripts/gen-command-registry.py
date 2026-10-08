@@ -181,7 +181,7 @@ def walk(cmd, path: str, out: list) -> None:
         "journey": journey_for(path),
         "description": desc or f"Run `{path}`. See the CLI reference for details.",
         "fields": fields,
-        "docsPath": "/spec",
+        "docsPath": "/docs/cli-reference/",
         "generated": True,
     })
 

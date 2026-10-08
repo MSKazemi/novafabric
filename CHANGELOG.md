@@ -123,6 +123,17 @@ longer forwards the submitting shell's environment (ADR-0270).
   replay serves back. A consumer that matched the raw string must read the extension.
 - **`nova replay --dry-run` no longer claims every tool is "served from cache"** in mocked mode:
   MCP calls are reported `[MOCK]`, tools on other transports `[LIVE]`.
+- **Wheel contents: `nova serve --experimental` ships the dashboard only (ADR-0299).** The
+  packaged `novafabric/serve/static/` no longer carries a second copy of the website:
+  `/concepts`, `/install`, `/why`, `/spec`, `/showcase/*` and `robots.txt` are gone from the
+  wheel (137 → 99 files, 4.63 → 4.03 MB) and now return 404 locally; the public pages live on
+  `https://novafabric.ai`. `/` forwards to `/dashboard/` (keeping `?token=`), a product-local
+  404 page replaces the site's, `_astro/` holds only the assets the dashboard reaches, and the
+  startup panel no longer prints a separate `Home:` URL. The command builders' "Full
+  reference" link now opens `https://novafabric.ai/docs/cli-reference/` in a new tab instead
+  of a local `/spec#…` anchor that did not exist. Nothing in local mode requires internet
+  access: offline, only those external links fail to load. The rebuilt bundle also picks up
+  dashboard source changes made since it was last built on 2026-10-02.
 
 ### Fixed
 

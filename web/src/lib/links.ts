@@ -11,6 +11,18 @@
 
 export const GITHUB_REPO = 'https://github.com/MSKazemi/novafabric';
 
+/**
+ * The public website. Since ADR-0299 the `nova serve` wheel ships the dashboard
+ * only — no concepts/install/spec/showcase/docs pages — so every explanatory
+ * link from the dashboard is an external link here. Nothing in local mode may
+ * *require* it: these are plain links that simply do not load offline.
+ */
+export const PUBLIC_SITE = 'https://novafabric.ai';
+
+/** Absolute public-site URL for a site path such as `/docs/cli-reference/`. */
+export const publicSiteUrl = (path: string): string =>
+  /^https?:\/\//.test(path) ? path : `${PUBLIC_SITE}/${path.replace(/^\/+/, '')}`;
+
 export const githubBlob = (relativePath: string): string =>
   `${GITHUB_REPO}/blob/main/${relativePath.replace(/^\/+/, '')}`;
 
