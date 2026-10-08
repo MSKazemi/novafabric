@@ -134,7 +134,7 @@ Download the artifact from the workflow run (UI, or `gh run download <run-id>
 
 ```bash
 nova validate ./capsule-<id>
-nova view ./capsule-<id>
+nova replay --mode forensic ./capsule-<id>   # read-only: inspect, run nothing
 nova replay ./capsule-<id>
 ```
 

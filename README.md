@@ -303,7 +303,7 @@ nova register my-model.yaml
 nova list --type agent
 nova inspect my-agent@1.0.0
 nova promote direct my-agent@1.0.0 --to staging   # v0.13+: promote is a sub-group
-nova eval my-agent@1.0.0
+nova eval agent my-agent@1.0.0
 nova diff my-agent@1.0.0 my-agent@1.1.0
 nova report
 nova validate spec.yaml   # asset spec or capsule directory
@@ -550,7 +550,7 @@ v0.10 ✓  Lineage at Scale — KuzuDB v2 backend, benchmark harness, migration 
 v0.11 ✓  Dashboard Completeness — every CLI capability has a dashboard equivalent (13 tabs, DC-1..DC-8)
 v0.12 ✓  Asset Intelligence — nova rollback, nova unregister, nova suggest-register,
           stale detection, dependency graph, --require-asset-status gate
-v0.13 ✓  Maker-Checker dual-approval (D-5) — nova promote sub-app (direct/propose/approve),
+v0.13 ✓  Maker-Checker dual-approval (D-5) — nova promote direct/propose/approve,
           Ed25519 keyring, N-run diff in dashboard
 v0.14 ✓  NovaSeal linked-envelope chain maker-checker + SealTab + RBAC API (role mgmt REST);
           security & CI hardening (10 Dependabot alerts cleared)

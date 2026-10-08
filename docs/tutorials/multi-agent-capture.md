@@ -78,7 +78,7 @@ If both agents talk to the same LLM, route them both through the proxy:
 
 ```bash
 # Start the proxy once
-nova api-proxy --port 9900 --upstream http://localhost:11434
+nova api-proxy --listen 127.0.0.1:9900 --upstream-url http://localhost:11434
 
 # Agent B — points to proxy
 OLLAMA_HOST=http://localhost:9900 nova capture python agent_b.py

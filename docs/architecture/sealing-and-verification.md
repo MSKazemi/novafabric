@@ -219,7 +219,7 @@ publication when `NOVA_REKOR_URL` is set, and an outer DSSE envelope.
 | Sigstore keyless signing, `nova seal sign --backend sigstore` and `nova verify --backend sigstore` | experimental, needs the `[sigstore]` extra | `cli/seal_propose.py`, `cli/verify.py` |
 | Rekor transparency-log publication | opt-in (`NOVA_REKOR_URL`), best effort | `promote/rekor_client.py` |
 | Witness cosigning of tree heads | experimental, library only | `trust/novaseal/witness.py` |
-| PII redaction manifest under legal hold (`nova capture --legal-hold`) | experimental | `compliance/pii/manifest.py` |
+| PII redaction manifest (`RedactionManifest`, with its `legal_hold_mode` field; there is no capture flag for it) | experimental, library only | `compliance/pii/manifest.py` |
 | Signed subject-proof reports (`nova verify --check-redaction`) | experimental | `cli/redact.py` |
 
 The roadmap and the [decisions index](../decisions.md) track which further

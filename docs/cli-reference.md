@@ -565,7 +565,7 @@ Subcommands:
   session gives byte-identical archives. Refuses an empty session, a
   `missing`/`tampered` member, a symlink inside a capsule (re-checked when
   each file is opened), or a non-ULID `run_id`; writes atomically (no partial file). **Unsigned** — for signed
-  evidence over the members use `nova evidence export`.
+  evidence run `nova export-evidence` on each member capsule.
 - `nova session verify-bundle <bundle.zip> [--json]` — **experimental
   (ADR-0122 P4).** Offline verification: every listed digest recomputed,
   unlisted files rejected, `session.json` digest and ordering re-checked,
@@ -4569,7 +4569,7 @@ scheduled for v0.26.x), or **future** (ADR accepted, implementation not yet sche
 
 | Command | Regulation | Version |
 |---|---|---|
-| `nova seal sign --intent <intent>` | FDA 21 CFR Part 11 §11.50 | v0.12.15+ |
+| NovaSeal signing intent (DSSE `intent` field; Python API, no CLI flag — see below) | FDA 21 CFR Part 11 §11.50 | v0.12.15+ |
 | `nova export-annex-iv <capsule_id>` | EU AI Act Annex IV (Reg. 2024/1689 Art. 11) | v0.15.0 |
 | `nova export-nis2 <capsule_id>` | NIS2 Directive Art. 23 (Phase 1/2/3) | v0.15.0 |
 | `nova subject-proof <subject_id>` | GDPR Art.17 HMAC subject lookup | v0.15.0 |
@@ -4586,9 +4586,13 @@ scheduled for v0.26.x), or **future** (ADR accepted, implementation not yet sche
 | `nova assure <capsule_id>` | OWASP LLM Top 10 (2025) evidence checks — exit 1 on failure (E-10) | v0.25.1 |
 | `nova mcp scan <manifest>` | OWASP LLM supply-chain risk scanner for MCP manifests (E-9) | v0.25.1 |
 
-#### nova seal sign --intent \<intent\>
+#### Signing intent (FDA 21 CFR Part 11 §11.50)
 
-Sign a capsule with a declared signing intent per FDA 21 CFR Part 11 §11.50.
+Every NovaSeal DSSE envelope can carry a declared signing intent per FDA 21 CFR
+Part 11 §11.50. The intent is set through the Python API —
+`NovaSeal.seal(manifest, intent=SigningIntent.REVIEWED)` (default: `authored`;
+`intent=None` omits it); there is no `--intent` CLI flag. The CLI maker-checker
+path is `nova seal propose` → `nova seal approve`:
 
 ```bash
 nova seal propose <capsule-id> \
@@ -4618,13 +4622,14 @@ Bundle v0.3 using an ephemeral OIDC-bound certificate and Rekor v2 transparency 
 inclusion. Requires `pip install novafabric[sigstore]`.
 
 ```bash
-nova seal sign --backend sigstore --capsule-id 01HX...
-nova seal sign --backend sigstore --capsule-id 01HX... --home /data/nova
+nova seal sign manifest.json --backend sigstore --capsule-id 01HX...
+nova seal sign manifest.json --backend sigstore --capsule-id 01HX... --home /data/nova
 ```
 
 Options:
 - `--backend [local|sigstore]` — signing backend (default: `local`; `sigstore` requires `novafabric[sigstore]`)
-- `--capsule-id TEXT` — capsule ID to sign (required)
+- `<capsule_manifest>` (required) — path to a capsule manifest JSON file, or an inline JSON string
+- `--capsule-id TEXT` — capsule ID for bundle storage (default: SHA-256 of the manifest)
 - `--home PATH` — `NOVAFABRIC_HOME` override for bundle storage path
 
 Bundles stored at `$NOVAFABRIC_HOME/sigstore/<capsule_id>.bundle.json`.
@@ -5475,20 +5480,24 @@ Options:
 
 ### nova seal bypass
 
-Declare a supervised bypass — logs an approved deviation from the seal gate without blocking the run.
+Create a time-limited, signed bypass of the maker-checker separation-of-duties requirement
+for one capsule. Use sparingly — every bypass leaves a permanent audit trail.
 
 ```bash
-nova seal bypass <reason> [--valid-hours N] [--run-id RUN_ID]
+nova seal bypass <capsule-id> --reason "<justification, at least 50 characters>" \
+  --key signer.pem --cert signer_cert.pem [--duration 24h]
 ```
 
 Options:
-- `<reason>` (required) — human-readable justification (e.g. `"staging environment, no TSA access"`)
-- `--valid-hours N` — how long the bypass is valid (default: `24`). After expiry, subsequent `nova verify` calls will flag it.
-- `--run-id RUN_ID` — associate the bypass with a specific run (default: current `$NOVAFABRIC_SPAN_ID`)
+- `<capsule-id>` (required) — capsule to bypass SoD for
+- `--reason TEXT` / `-r` (required) — human-readable justification, at least 50 characters
+- `--key PATH`, `--cert PATH` (required) — ECDSA P-256 private key PEM and X.509 certificate PEM that sign the bypass
+- `--duration TEXT` — validity window, e.g. `24h`, `7d` (default: `24h`, maximum `168h`)
+- `--target-env TEXT` — target environment (default: `production`)
+- `--notify EMAIL` — address to notify (repeatable)
+- `--db PATH`, `--data-dir PATH` — Merkle log database and data directory overrides
 
 The bypass is recorded in the NovaSeal bypass log. The dashboard **SealTab** shows all active and expired bypasses with approver identity.
-
-ECDSA P-256 key is auto-generated at first use if not already present.
 
 ---
 
@@ -5545,38 +5554,34 @@ Properties:
 
 ---
 
-### nova eval \<agent@version\>
-
-Run declared evaluation suites for an agent and store results in the registry.
-Suites are resolved via the `novafabric.evals` entry-point group.
-
 ### nova eval agent
 
-Evaluate an agent version using all registered eval suites for that asset type. Equivalent to `nova eval run --all-suites`.
+Run the legacy asset-based evaluation suites declared in an agent's spec (`spec.evals`,
+resolved via the `novafabric.evals` entry-point group) and store the results in the
+registry. Prefer `nova eval run` for new work.
 
 ```bash
-nova eval agent <name@version> [--db-path PATH] [--timeout SECONDS]
+nova eval agent <name@version>
 ```
 
 Options:
 - `<name@version>` (required) — asset reference (e.g. `my-agent@0.3.0`)
-- `--db-path PATH` — registry DB path
-- `--timeout SECONDS` — per-suite timeout (default: `600`)
 
 Results are stored in `eval_results` table and checked against the Rego gate for promotion eligibility.
 
 ### nova eval run
 
-Run a specific eval suite against a named agent version.
+Run a standard evaluation suite against a capsule directory.
 
 ```bash
-nova eval run <name@version> --suite SUITE_NAME [--db-path PATH]
+nova eval run <capsule-dir> --suite SUITE_ID [--config KEY=VALUE] [--output result.json]
 ```
 
 Options:
-- `<name@version>` (required) — asset reference
-- `--suite SUITE_NAME` — suite to run: `smoke-v1`, `gaia`, `swe-bench`, `agentbench`, `mmlu`, `truthfulqa`
-- `--db-path PATH` — registry DB path
+- `<capsule-dir>` (required) — run capsule directory
+- `--suite SUITE_ID` / `-s` (required) — a suite ID from `nova eval list` (e.g. `novafabric-smoke-v1`, `gaia-v1`)
+- `--config KEY=VALUE` / `-c` — config pairs passed to the suite adapter
+- `--output PATH` / `-o` — write the EvalResult JSON to this file (the input `nova eval compare` reads)
 
 ### nova eval cost \<document\>
 
@@ -5603,18 +5608,19 @@ from a sealed capsule (`--capsule <run_id>`) is **planned**, not implemented.
 
 ### nova eval compare
 
-Compare eval results between two agent versions and generate a regression report.
+Compare two EvalResult JSON files (as written by `nova eval run --output`) and report regressions.
 
 ```bash
-nova eval compare <name@v1> <name@v2> [--suite SUITE_NAME] [--output FORMAT]
+nova eval compare baseline.json candidate.json [--alpha 0.05] [--min-samples 5]
 ```
 
 Options:
-- `<name@v1>` `<name@v2>` (required) — two asset references to compare
-- `--suite SUITE_NAME` — limit comparison to one suite (default: all)
-- `--output FORMAT` — `text` (default), `json`, `markdown`
+- `<baseline>` `<candidate>` (required) — the two EvalResult JSON files
+- `--alpha FLOAT` — significance level / relative-delta threshold (default: `0.05`)
+- `--min-samples N` — minimum `sample_size` that enables the z-test (default: `5`)
 
-A regression is flagged when any metric drops by more than the threshold defined in `regression_gate.rego`.
+Exits `1` when a regression is detected and `0` when results are identical or improved,
+so `nova eval compare baseline.json candidate.json && echo "No regression"` works as a CI gate.
 
 ### nova eval list
 
@@ -7644,7 +7650,7 @@ failed).
 | `NOVA_CLICKHOUSE_USER` | `default` | ClickHouse username for Evidence Fabric Tier 2 connection. |
 | `NOVA_CLICKHOUSE_PASSWORD` | `` | ClickHouse password for Evidence Fabric Tier 2 connection. |
 | `NOVA_COLLECTOR_TOKEN` | — | Bearer token required on every request to the HPC collector HTTP API. Unset = no auth (local-dev only). |
-| `NOVA_COLLECTOR_HEALTH_FILE` | `$NOVAFABRIC_HOME/collector.health` | Path to the collector health-check file written by `nova serve --collector`. |
+| `NOVA_COLLECTOR_HEALTH_FILE` | — (then `$NOVAFABRIC_HOME/collector-health.json`, then `/tmp/novafabric-collector-health.json`) | Collector health-check file that `nova serve` reads for the dashboard's collector status; when set, it is tried first. |
 | `NOVA_CAP003_ENABLED` | `false` | Set to `true` to activate the dual-object-store erasure path (cap-003 compliance). Requires S3 GOVERNANCE Object Lock. |
 | `NOVA_DLQ_DIR` | — | Directory for the dead-letter queue. When set, events that fail forwarding are written here instead of dropped. |
 | `NOVA_LIBSPOOL_PATH` | — | Absolute path to `libspool.so` for the CFFI collector spool. Auto-discovered from `NOVA_LIBSPOOL_PATH`; falls back to the bundled .so. |
@@ -8322,22 +8328,28 @@ PrologFlags=Alloc
 
 ### nova classify run
 
-Classify an AI system's risk tier against EU AI Act Annex III, NIST AI RMF, and OMB M-24-10.
+Classify an AI system's risk tier against EU AI Act Annex III, NIST AI RMF, and OMB M-24-10,
+from a YAML description or from flags.
 
 ```bash
-nova classify run --system system.yaml
-nova classify run --system system.yaml --vocabulary nist-ai-rmf/1.0.0
-nova classify run --system system.yaml --format json
+nova classify run --input system.yaml
+nova classify run --input system.yaml --json
+nova classify run --name "Loan scorer" --domain finance --context credit_scoring --affects-rights
 ```
 
 **Options:**
-- `--system PATH` — YAML file describing the AI system (`AISystemRecord` schema)
-- `--vocabulary TEXT` — vocabulary ID (default: `eu-ai-act/2024.1.0`). List with `nova classify list-vocabularies`.
-- `--format [text|json]` — output format (default: `text`)
+- `--input PATH` / `-i` — YAML file describing the AI system (`AISystemRecord` fields below). `--name`, `--domain`, `--context` and `--description` given alongside it override the file's values.
+- `--name TEXT`, `--domain TEXT`, `--context TEXT` — required together when `--input` is not given; `--description TEXT` is optional
+- `--biometrics` / `--affects-rights` / `--general-purpose` — risk-relevant properties, each with a `--no-…` form (default: off)
+- `--role [provider|deployer]` — operator role (default: `deployer`)
+- `--subject-count N` — estimated number of persons affected
+- `--json` — emit the raw JSON result
 
-**Exit codes:** `0` = classified; `1` = prohibited tier detected.
+The vocabulary versions in force are listed by `nova classify list-vocabularies`.
 
-**AISystemRecord fields:** `name`, `description`, `use_cases` (list of strings), `deployment_context`, `data_subjects` (list), `automated_decision_making` (bool), `biometric_processing` (bool), `critical_infrastructure` (bool).
+**Exit codes:** `0` = classified; `1` = prohibited tier detected; `2` = bad input (file not found, YAML not a mapping, missing required flags).
+
+**AISystemRecord fields:** `name`, `description`, `use_case_domain`, `deployment_context`, `uses_biometrics` (bool), `affects_fundamental_rights` (bool), `is_general_purpose` (bool), `operator_role` (`provider` | `deployer`), `subject_count_estimate` (int, optional).
 
 ### nova classify list-vocabularies
 
@@ -8349,10 +8361,12 @@ nova classify list-vocabularies
 
 ### nova classify from-capsule
 
-Infer an AI system record from a captured run capsule and classify it.
+Infer an AI system record from a captured run capsule's metadata and classify it. Reads
+`<data-dir>/capsules/<capsule-id>/capsule.yaml`.
 
 ```bash
-nova classify from-capsule .novafabric/runs/01HXAY7M/
+nova classify from-capsule 01HXAY7M5JZ8R7K4P9DPBYK2WX
+nova classify from-capsule 01HXAY7M5JZ8R7K4P9DPBYK2WX --data-dir ~/novafabric-data --json
 ```
 
 **Reference:** `src/novafabric/governance/`, `src/novafabric/cli/classify.py`, ADR-0056.
@@ -8361,58 +8375,72 @@ nova classify from-capsule .novafabric/runs/01HXAY7M/
 
 ## Compliance audit commands (v0.16)
 
-### nova audit map
-
-List all evidence checkers for a compliance profile.
-
-```bash
-nova audit map --profile nist-ai-rmf
-nova audit map --profile eu-ai-act-high-risk
-nova audit map --profile gdpr
-```
+All five commands work over the capsules under `--data-dir` / `-d` (default
+`~/novafabric-data`) and take `--profile` / `-p` (default `nist-ai-rmf`; a profile ID
+or the path to a custom profile YAML) — except `nova audit verify`, which checks one report file.
 
 **Available profiles:** `nist-ai-rmf`, `eu-ai-act-high-risk`, `gdpr`, `soc2-type2`, `iso42001`, `scientific-reproducibility`.
 
-### nova audit report
+### nova audit map
 
-Run a compliance audit against a capsule and print the result.
+Map capsule evidence to a profile's regulatory controls and report coverage gaps. Exits 1
+if any required control has no evidence.
 
 ```bash
-nova audit report --capsule .novafabric/runs/01HXAY7M/ --profile nist-ai-rmf
-nova audit report --capsule .novafabric/runs/01HXAY7M/ --profile gdpr --format json
+nova audit map --profile nist-ai-rmf
+nova audit map --profile eu-ai-act-high-risk --capsule 01HXAY7M5JZ8R7K4P9DPBYK2WX
+nova audit map --profile gdpr --json
+```
+
+**Options:** `--capsule ID` — audit a single capsule; `--json` — machine-readable output instead of a table.
+
+### nova audit report
+
+Generate a full compliance audit report (JSON-LD by default).
+
+```bash
+nova audit report --profile nist-ai-rmf
+nova audit report --profile gdpr --output report.json
+nova audit report --format text
 ```
 
 **Options:**
-- `--capsule PATH` — path to a captured run capsule
-- `--profile TEXT` — compliance profile (see `nova audit map`)
-- `--format [text|json]` — output format (default: `text`)
+- `--output PATH` / `-o` — write the report to a file (default: stdout)
+- `--format [json-ld|text]` — output format (default: `json-ld`)
 
 ### nova audit verify
 
-Assert that a capsule meets a minimum compliance coverage threshold. Exits 1 if the coverage is below the threshold.
+Verify the integrity of an audit report: checks that it is structurally valid JSON-LD
+and parses cleanly.
 
 ```bash
-nova audit verify --capsule .novafabric/runs/01HXAY7M/ --profile nist-ai-rmf --min-coverage 0.8
+nova audit report --profile nist-ai-rmf --output report.json
+nova audit verify report.json
 ```
 
-**Options:**
-- `--min-coverage FLOAT` — minimum required coverage score [0.0, 1.0] (default: `0.7`)
+For a coverage threshold gate, use `nova audit coverage --threshold`.
 
 ### nova audit bundle
 
-Export a signed audit bundle (ZIP) containing the compliance report and evidence artifacts.
+Export the audit report and every contributing capsule evidence file as a ZIP archive.
 
 ```bash
-nova audit bundle --capsule .novafabric/runs/01HXAY7M/ --profile eu-ai-act-high-risk --output audit.zip
+nova audit bundle --profile eu-ai-act-high-risk --output audit.zip
 ```
+
+**Options:** `--output PATH` / `-o` — output ZIP (default: `audit-bundle.zip`).
 
 ### nova audit coverage
 
-Print a numeric coverage summary for all profiles against a capsule.
+Show regulatory control coverage for the data directory and exit 1 if the score is below
+the threshold — a CI gate for promotion.
 
 ```bash
-nova audit coverage --capsule .novafabric/runs/01HXAY7M/
+nova audit coverage
+nova audit coverage --profile eu-ai-act-high-risk --threshold 0.9
 ```
+
+**Options:** `--threshold FLOAT` — minimum required coverage score, 0.0–1.0 (default: `0.8`).
 
 **Reference:** `src/novafabric/compliance/audit/`, `src/novafabric/cli/audit.py`.
 
@@ -8422,34 +8450,52 @@ nova audit coverage --capsule .novafabric/runs/01HXAY7M/
 
 ### nova export-examiner bagit
 
-Export a capsule as a RFC 8493 BagIt archive with SHA-256 checksums.
+Export a capsule as an RFC 8493 BagIt archive with SHA-256 checksums.
 
 ```bash
-nova export-examiner bagit .novafabric/runs/01HXAY7M/ --output run.bagit.zip
+nova export-examiner bagit 01HXAY7M5JZ8R7K4P9DPBYK2WX \
+  --data-dir .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --output-dir ./exports
 ```
 
-**Output:** BagIt ZIP containing `bagit.txt`, `bag-info.txt`, `manifest-sha256.txt`, and the full capsule payload under `data/`.
+**Options:**
+- `<capsule-id>` (required) — used as the bag name and External-Identifier
+- `--data-dir DIR` / `-d` (required) — capsule directory containing `capsule.yaml` and the payload files
+- `--output-dir DIR` / `-o` (required) — directory that receives `<capsule-id>-bag.zip`
+- `--contact-email TEXT` — written to `bag-info.txt`
+- `--no-audit-report` — leave `audit-report.json` out of the payload even if present
+
+**Output:** BagIt ZIP containing `bagit.txt`, `bag-info.txt`, `manifest-sha256.txt`, `tagmanifest-sha256.txt`, and the capsule payload under `data/`.
 
 ### nova export-examiner pccp
 
-Export a capsule as an FDA 21 CFR Part 11 PCCP (Predetermined Change Control Plan) package.
+Export an FDA Predetermined Change Control Plan (PCCP) document — per FDA guidance for
+AI/ML-based software as a medical device — comparing a baseline capsule with a proposed one.
 
 ```bash
-nova export-examiner pccp .novafabric/runs/01HXAY7M/ --output pccp.zip
-nova export-examiner pccp .novafabric/runs/01HXAY7M/ --output pccp.zip --format json
+nova export-examiner pccp --baseline 01HXBASE... --proposed 01HXPROP... \
+  --data-dir .novafabric/runs/ --output pccp.json
 ```
 
-**Output:** ZIP containing protocol document, change manifest, training documentation, and validation records.
+**Options (all required):** `--baseline ID` / `-b` (the current, approved version),
+`--proposed ID` / `-p` (the modification to evaluate), `--data-dir DIR` / `-d` (directory of
+capsule sub-directories, or the capsule directory itself), `--output PATH` / `-o` (the PCCP JSON file).
 
 ### nova export-examiner iso42001
 
-Export a capsule as an ISO/IEC 42001 AI Management System package.
+Export an ISO/IEC 42001 AI Management System evidence package for an audit period.
 
 ```bash
-nova export-examiner iso42001 .novafabric/runs/01HXAY7M/ --output iso42001.zip
+nova export-examiner iso42001 --data-dir .novafabric/runs/ \
+  --period 2026-01-01/2026-06-30 --output iso42001.zip
+nova export-examiner iso42001 --data-dir .novafabric/runs/ \
+  --period 2026-01-01/2026-06-30 --output iso42001.zip --control 6.1 --control 8.1
 ```
 
-**Output:** ZIP containing system profile, risk register, monitoring plan, and improvement log.
+**Options:** `--data-dir DIR` / `-d`, `--period START/END` (ISO 8601 interval) and
+`--output PATH` / `-o` are required; `--control` / `-c` selects ISO 42001 clauses (repeatable;
+default: every supported clause).
+
+**Output:** ZIP containing `iso42001-evidence.json`, `control-narratives.json`, `capsule-index.json`, and `README.txt`.
 
 **Reference:** `src/novafabric/compliance/export/examiner.py`, `src/novafabric/cli/export_examiner.py`.
 
@@ -8518,7 +8564,8 @@ payloads are opt-in (ADR-0021).
 Print a per-run LLM cost report for a tenant (cap-002, requires ClickHouse).
 
 ```bash
-nova cost report --tenant acme --period 24h
+nova cost report --tenant acme --since-days 1
+nova cost report --format json | jq .
 ```
 
 Set `NOVA_CLICKHOUSE_URL` to enable ClickHouse integration.

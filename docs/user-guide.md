@@ -1441,7 +1441,7 @@ the registry. Suites are resolved via the `novafabric.evals` Python entry-point
 group.
 
 ```bash
-nova eval support-triage-agent@v1.0.0
+nova eval agent support-triage-agent@v1.0.0
 ```
 
 After a passing eval, `nova promote direct <name@version> --to staging` (or `--to production`) will

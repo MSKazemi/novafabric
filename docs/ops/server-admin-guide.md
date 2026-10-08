@@ -79,7 +79,7 @@ identity can never serve as both maker and checker for one proposal.
 Assigning roles (either surface writes the same `role_assignments` table):
 
 ```bash
-nova server assign-role --subject alice@example.com --role writer
+nova server assign-role alice@example.com writer
 # or over HTTP (admin-gated):
 #   GET/POST /v0/admin/roles, DELETE /v0/admin/roles/{subject}/{role}
 ```
@@ -263,7 +263,7 @@ schema change).
   (one summary per bulk request, dry runs included).
 - Bulk **export** is separate and already shipped —
   [ADR-0141](../decisions.md)
-  (`nova export-batch`).
+  (`nova export-blob`).
 
 ## 7. Backup and restore
 

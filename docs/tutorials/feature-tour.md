@@ -314,7 +314,7 @@ nova capture python your_agent.py
 **LLM API proxy** — for agents already running as services, or non-Python agents:
 
 ```bash
-nova api-proxy --port 9900 --upstream http://localhost:11434
+nova api-proxy --listen 127.0.0.1:9900 --upstream-url http://localhost:11434
 
 # In another terminal — agent thinks it's talking to Ollama directly:
 OLLAMA_HOST=http://localhost:9900 python your_agent.py
@@ -687,7 +687,7 @@ nova storage inspect --run-id run_xyz --json
 
 # Erase a data subject (GDPR Art.17 crypto-shredding, ADR-0069)
 nova pii erase <subject_id>
-nova pii status --capsule <path>
+nova pii status <capsule-id-or-path>
 ```
 
 This supports a GDPR right-to-erasure workflow: the audit trail (hashes, signatures,
@@ -1970,7 +1970,7 @@ nova session show $SID --session-dir /tmp/review/sessions   # all turns "ok"
 
 The archive is deterministic (the same session gives the same bytes) and
 digest-indexed with the same recipe as an Evidence Bundle; it is **unsigned**, so
-for signed evidence use `nova evidence export` on the members. `nova session list`
+for signed evidence run `nova export-evidence` on each member capsule. `nova session list`
 reads a rebuildable SQLite index when it is fresh (`nova session reindex` builds
 it) and falls back to scanning the manifests otherwise (ADR-0122 P3, experimental).
 

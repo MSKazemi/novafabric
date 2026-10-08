@@ -314,7 +314,7 @@ registry. Pick by how you launch and control the agent:
 | Mode | How it works | When to use |
 |---|---|---|
 | `nova capture python agent.py` | Subprocess wrap + `sitecustomize.py` hook injection | You control process startup |
-| `nova api-proxy --port 9900` | Transparent HTTP proxy in front of the LLM | Agent is a service, or a non-Python client |
+| `nova api-proxy --listen 127.0.0.1:9900` | Transparent HTTP proxy in front of the LLM | Agent is a service, or a non-Python client |
 | `nova mcp-proxy -- python mcp_server.py` | Transparent stdio proxy in front of the MCP server | Agent uses MCP tools |
 | `@novafabric.agent` decorator | Direct hook installation from inside your process | Notebooks, embedded agents |
 

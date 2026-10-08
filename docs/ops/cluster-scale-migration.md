@@ -120,8 +120,8 @@ Expected output:
 
 ```bash
 # Switch to Postgres mode and verify.
-NOVA_BACKEND=postgres NOVA_DSN="$NOVA_DSN" nova list --limit 10
-NOVA_BACKEND=postgres NOVA_DSN="$NOVA_DSN" nova server start --experimental
+NOVA_BACKEND=postgres NOVA_DSN="$NOVA_DSN" nova list | head -n 15
+NOVA_BACKEND=postgres NOVA_DSN="$NOVA_DSN" nova server start --backend postgres
 ```
 
 ### 1.4 Deploy PgBouncer (production)
@@ -351,7 +351,7 @@ nova lineage consume --subject "novafabric.lineage.>" \
 # Requires ADR-0051 Postgres partition DDL — run after Phase 1.
 # NOTE (planned): the `--migrate-postgres-v002` flag does not exist yet; RLS/partition
 # DDL is applied through the metadata-store migrations, not a `nova server start` flag.
-nova server start --experimental
+nova server start --backend postgres
 
 # Verify RLS is active.
 uv run pytest tests/metadata_store/ -v -k "rls"
@@ -384,9 +384,10 @@ uv run mypy src
 
 # CLI smoke.
 nova --help
-nova list --limit 5
-nova server start --experimental &
-curl -s http://localhost:4321/api/stats | python -m json.tool
+nova list | head -n 10
+nova serve --experimental --no-browser &
+curl -s -H "Authorization: Bearer $(cat "${NOVAFABRIC_HOME:-$HOME/.novafabric}/.serve-token")" \
+  http://localhost:4321/api/stats | python -m json.tool
 
 # WORM conformance (if OCS enabled).
 nova storage validate

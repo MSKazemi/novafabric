@@ -213,6 +213,16 @@ longer forwards the submitting shell's environment (ADR-0270).
   a recorded response that carries one.
 - **Tool-argument matching no longer collapses non-object arguments to `{}`**, which made
   unrelated calls look identical.
+- **Every `nova …` command the docs tell you to type now exists.** 54 documented invocations
+  failed with `No such command` or `No such option` — among them `nova promote direct --actor`,
+  `nova api-proxy --port/--upstream` (the flags are `--listen` and `--upstream-url`),
+  `nova evidence export` (`nova export-evidence`), `nova eval <name@version>`
+  (`nova eval agent`), `nova export-batch` (`nova export-blob`) and `nova server assign-role
+  --subject/--role` (positional). The classify, audit, examiner, eval, `seal bypass` and
+  `cost report` reference sections documented an earlier interface and were rewritten from
+  `--help`. A new guard, `tests/docs/test_doc_commands_resolve.py`, resolves every sub-command
+  and flag in `README.md`, `llms.txt` and `docs/` (release notes excepted) against the real
+  command tree; a planned or non-existent command may be named only where the prose says so.
 
 ## [0.104.0] - 2026-10-08
 

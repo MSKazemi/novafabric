@@ -682,7 +682,7 @@ optional — small teams often go straight from `development` to `staging`.
 **Promoting an asset updates one database record.** That is all NovaFabric does.
 
 ```
-nova promote direct my-agent@v1.2.0 --to production --actor alice
+nova promote direct my-agent@v1.2.0 --to production
 ```
 
 Internally this:
@@ -690,7 +690,9 @@ Internally this:
 1. Checks the policy engine — allow or deny, written to the audit log.
 2. For `agent` type going to `staging`/`production`: verifies a passing eval
    result exists. Blocks if not (unless `--force`).
-3. Runs `UPDATE assets SET status = 'production', promoted_at = ..., promoted_by = 'alice'`.
+3. Runs `UPDATE assets SET status = 'production', promoted_at = ..., promoted_by = 'cli-user'`
+   (the CLI records the fixed actor `cli-user`; a named human sign-off is the
+   approval record written by `nova approve <name@version> --approver alice`).
 4. Returns the updated record.
 
 **Nothing else happens.** Your agent does not restart. Your prompt does not
@@ -709,7 +711,9 @@ NovaFabric and makes a deployment decision based on it.
 
 ```bash
 # In a GitHub Actions deploy step or Argo CD sync hook:
-STATUS=$(nova inspect my-agent@v1.2.0 | jq -r .status)
+# (`nova inspect` prints a human-readable panel, not JSON — read the record
+# through the Python API instead.)
+STATUS=$(python -c 'from novafabric.registry.service import get_asset; print(get_asset("my-agent", "v1.2.0")["status"])')
 
 if [ "$STATUS" = "production" ]; then
   kubectl set image deployment/my-agent container=my-agent:v1.2.0
@@ -732,11 +736,11 @@ on every PR. Only if evals pass and a team lead approves does the agent reach
 
 ```bash
 # .github/workflows/deploy-agent.yml (simplified)
-- run: nova eval summariser@${{ github.sha }} --suite regression
-- run: nova promote direct summariser@${{ github.sha }} --to pending_approval --actor ci-bot
-# ... human approves in dashboard or via CLI ...
+- run: nova eval agent summariser@${{ github.sha }}
+- run: nova promote direct summariser@${{ github.sha }} --to pending_approval
+# ... human approves in the dashboard or via `nova approve summariser@<sha> --approver <name>` ...
 - run: |
-    nova promote direct summariser@${{ github.sha }} --to production --actor ${{ github.actor }}
+    nova promote direct summariser@${{ github.sha }} --to production
     helm upgrade summariser ./chart --set image.tag=${{ github.sha }}
 ```
 
@@ -768,13 +772,10 @@ approval record (approver, timestamp, note) and an audit log entry. At audit
 time:
 
 ```bash
-nova inspect risk-scorer@v3.1.0 --format json | jq '{
-  status,
-  promoted_by,
-  promoted_at,
-  forced_promotion
-}'
-# → { "status": "production", "promoted_by": "alice", "promoted_at": "2026-03-15T10:22:01Z", "forced_promotion": false }
+python -c 'import json; from novafabric.registry.service import get_asset
+a = get_asset("risk-scorer", "v3.1.0")
+print(json.dumps({k: a[k] for k in ("status", "promoted_by", "promoted_at", "forced_promotion")}))'
+# → { "status": "production", "promoted_by": "cli-user", "promoted_at": "2026-03-15T10:22:01Z", "forced_promotion": false }
 ```
 
 No manual tracking spreadsheet. The registry is the record.
@@ -785,7 +786,7 @@ An agent in production starts producing bad outputs after an upstream model
 update. You archive it:
 
 ```bash
-nova promote direct my-agent@v2.0.0 --to archived --actor on-call-eng
+nova promote direct my-agent@v2.0.0 --to archived
 ```
 
 Your deployment hook detects the status change, rolls back to the previous
@@ -802,7 +803,9 @@ launches agents whose status is `staging` or `production`:
 
 ```bash
 # check_asset_status.sh — called from sbatch prolog
-STATUS=$(NOVAFABRIC_DB_PATH=/shared/nova/registry.db nova inspect $AGENT_NAME@$AGENT_VERSION | jq -r .status)
+STATUS=$(NOVAFABRIC_DB_PATH=/shared/nova/registry.db python -c \
+  'import sys; from novafabric.registry.service import get_asset; print(get_asset(sys.argv[1], sys.argv[2])["status"])' \
+  "$AGENT_NAME" "$AGENT_VERSION")
 if [[ "$STATUS" != "staging" && "$STATUS" != "production" ]]; then
   echo "PROLOG FAIL: $AGENT_NAME@$AGENT_VERSION is not ready (status=$STATUS)" >&2
   exit 1
@@ -837,7 +840,7 @@ OIDC and an RBAC model (`reader < writer < admin`, plus an orthogonal
 
 ## Eval-Gated Promotion
 
-`nova eval <agent@version>` discovers evaluation suites declared in the
+`nova eval agent <agent@version>` discovers evaluation suites declared in the
 agent spec (`spec.evals`) and resolves them via Python entry points in the
 `novafabric.evals` group. Results are stored in the `eval_results` table.
 
