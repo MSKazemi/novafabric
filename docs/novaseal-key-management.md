@@ -342,6 +342,17 @@ expired TSA certificate's entry cannot revoke it; the nonce is reported, not re-
 
 ## 3. Rotation Procedure
 
+> **Local `nova seal init` identity (experimental, ADR-0301):** run
+> `nova seal init --force`. It archives the old key, certificate and `novaseal.yaml`
+> to `keys/novaseal/archive/<UTC>/` (never deleted), generates a new P-256 key,
+> issues its certificate from the **same** local CA, and appends a `key_rotation`
+> entry (`old_keyid`, `new_keyid`) to the Merkle log. Verifiers who pinned
+> `keys/novaseal/ca.crt.pem` keep validating old and new capsules. `--new-ca` also
+> replaces the CA and breaks that continuity. The leaf is valid 5 years and
+> `--ca-bundle` validates at verification time, so rotate before it expires. After a
+> suspected compromise, destroy the archived private keys by hand. The procedure
+> below applies to operator-managed keys.
+
 Rotate keys on any of these triggers:
 - Scheduled rotation (recommended: every 12 months for the ECDSA P-256 keys
   used by the `local`/cloud-KMS profiles and the `x509` identity; the same

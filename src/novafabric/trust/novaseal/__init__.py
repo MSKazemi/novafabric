@@ -22,7 +22,7 @@ Usage:
     )
     bundle = seal.seal(capsule_manifest)
     result = seal.verify(capsule_id, seal_dir)
-    assert result.signature_ok and result.timestamp_ok and result.log_integrity_ok
+    assert result.signature_ok and result.timestamp_ok is not False and result.log_integrity_ok
 """
 
 from __future__ import annotations
@@ -124,17 +124,20 @@ class SealBundle:
 class VerificationResult:
     valid: bool
     signature_ok: bool
-    timestamp_ok: bool
+    # ADR-0301: ``None`` when the capsule carries no RFC 3161 token (absent, not
+    # passed); ``True`` only for a present token that verified; ``False`` for a
+    # present token that failed. Absence does not invalidate (timestamping is opt-in).
+    timestamp_ok: bool | None
     log_integrity_ok: bool
     errors: list[str] = field(default_factory=list)  # noqa: RUF009
     signing_intent: SigningIntent | None = None
+    # True only when a verifier-supplied CA bundle validated the signer chain
+    # (``nova verify --ca-bundle``); ``verify_seal_dir`` alone never sets it.
     ca_chain_ok: bool = False
     ca_chain_errors: list[str] = field(default_factory=list)  # noqa: RUF009
-    # Whether an RFC 3161 token was actually present and verified. ``timestamp_ok``
-    # is deliberately True when timestamping was skipped (the TSA is best-effort),
-    # so it alone cannot tell "timestamped" from "never timestamped" — and
-    # reporting a bare "Timestamp: OK" for a capsule that carries no token
-    # overstates the evidence.
+    # Whether an RFC 3161 token was present (non-empty ``manifest.dsse.tsr``). Until
+    # ADR-0301 ``timestamp_ok`` was True for an absent token too, which printed
+    # ``timestamp_ok=True`` for a capsule that carries no timestamp.
     timestamp_present: bool = False
     # Which DSSE PAE the signature verified over: ``"dsse-v1"`` (spec; verifiable
     # with stock DSSE tooling) or ``"legacy-le64"`` (sealed through v0.102.x;
@@ -149,6 +152,16 @@ class VerificationResult:
     # is True only for the first two; ``not-checked`` does not invalidate.
     log_inclusion: str = "failed"
     log_notes: list[str] = field(default_factory=list)  # noqa: RUF009
+    # ADR-0301: what the verifier established about the signer — one of
+    # ``identity_trust.IDENTITY_TRUST_LEVELS``. ``verify_seal_dir`` consults no CA
+    # bundle, so it reports ``self-asserted`` or ``none``; ``nova verify`` raises it
+    # to ``local-ca-pinned`` / ``ca-anchored`` when ``--ca-bundle`` validates the chain.
+    identity_trust: str = "none"
+    # Subject of the embedded signer certificate — an *unverified* claim of the
+    # envelope unless ``identity_trust`` is an anchored level.
+    signer_subject: str | None = None
+    # True when the signer certificate is a ``nova seal init`` local identity.
+    local_seal_identity: bool = False
 
     def __str__(self) -> str:
         parts = [
@@ -157,6 +170,7 @@ class VerificationResult:
             f"log_integrity_ok={self.log_integrity_ok}",
             f"log_inclusion={self.log_inclusion}",
             f"ca_chain_ok={self.ca_chain_ok}",
+            f"identity_trust={self.identity_trust}",
         ]
         if self.signing_intent is not None:
             parts.append(f"intent={self.signing_intent.value}")
@@ -386,18 +400,16 @@ def verify_seal_dir(
             errors.append(f"Signature verification failed: {exc}")
 
     # --- Timestamp ---
-    timestamp_ok = False
+    # ADR-0301: an absent or empty token is reported as absent (None), not as a
+    # passed check. It does not invalidate the seal — timestamping is opt-in.
+    timestamp_ok: bool | None = None
     timestamp_present = False
     timestamp_strict = False
     tsr_file = seal_path / "manifest.dsse.tsr"
-    if not tsr_file.exists():
-        # TSA may have been skipped — treat as ok if TSR file absent
-        timestamp_ok = True
-    else:
+    if tsr_file.exists():
         tsr_bytes = tsr_file.read_bytes()
         if not tsr_bytes:
-            # Empty TSR = TSA was explicitly skipped
-            timestamp_ok = True
+            pass  # empty TSR = TSA skipped or not configured
         elif dsse_bytes:
             timestamp_present = True
             ts_check = check_timestamp(tsr_bytes, dsse_bytes)
@@ -406,6 +418,7 @@ def verify_seal_dir(
             if not timestamp_ok:
                 errors.append(f"TSR verification failed: {ts_check.reason}")
         else:
+            timestamp_ok = False
             errors.append("Cannot verify TSR: DSSE envelope missing")
 
     # --- Merkle log inclusion ---
@@ -419,9 +432,25 @@ def verify_seal_dir(
     log_integrity_ok = log_inclusion in (LOG_INCLUSION_LOCAL, LOG_INCLUSION_PROOF)
 
     # --- CA chain validation ---
-    ca_chain_ok, ca_chain_errors = _verify_ca_chain(dsse_bytes)
+    # ``_verify_ca_chain`` only *describes* the embedded certificate (self-signed, or
+    # issuer named but not validated); no anchor is consulted here, so the chain is
+    # never validated by this function. ADR-0301: report that as False — True printed
+    # "ca_chain_ok=True" next to an unanchored, self-asserted identity.
+    # ``nova verify --ca-bundle`` sets it when a real chain check passes.
+    _described, ca_chain_errors = _verify_ca_chain(dsse_bytes)
+    ca_chain_ok = False
 
-    valid = signature_ok and timestamp_ok and log_inclusion != LOG_INCLUSION_FAILED
+    # --- Signer identity (ADR-0301) — what the capsule alone can establish ---
+    from novafabric.trust.novaseal.identity_trust import (  # noqa: PLC0415
+        signer_certificate_info,
+        unanchored_identity_trust,
+    )
+
+    signer = signer_certificate_info(dsse_bytes) if signature_ok else None
+
+    valid = (
+        signature_ok and timestamp_ok is not False and log_inclusion != LOG_INCLUSION_FAILED
+    )
     return VerificationResult(
         valid=valid,
         signature_ok=signature_ok,
@@ -436,6 +465,9 @@ def verify_seal_dir(
         pae_encoding=pae_encoding,
         log_inclusion=log_inclusion,
         log_notes=log_notes,
+        identity_trust=unanchored_identity_trust(signature_ok),
+        signer_subject=signer.subject if signer else None,
+        local_seal_identity=bool(signer and signer.local_seal_identity),
     )
 
 

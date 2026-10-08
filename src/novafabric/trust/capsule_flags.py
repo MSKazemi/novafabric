@@ -77,7 +77,8 @@ def _seal_flags(capsule_dir: Path) -> dict[str, Any]:
 
     return {
         "signature_ok": bool(result.signature_ok),
-        "timestamp_ok": bool(result.timestamp_ok),
+        # ADR-0301: no token is "n/a" (None), not a passed timestamp axis.
+        "timestamp_ok": None if result.timestamp_ok is None else bool(result.timestamp_ok),
         "log_integrity_ok": bool(result.log_integrity_ok),
     }
 

@@ -1112,7 +1112,14 @@ For the full configuration reference (all profiles, env vars, Docker/SLURM
 patterns, path resolution order, troubleshooting) see:
 **[docs/novaseal-configuration.md](novaseal-configuration.md)**
 
-**Quick start — local key + minimal config:**
+**Quick start — one command (experimental, ADR-0301):** `nova seal init` creates a
+dedicated P-256 key, a local seal CA and a certificate under
+`$NOVAFABRIC_HOME/keys/novaseal/` and writes a managed `novaseal.yaml` with no
+`tsa_url` (offline). Its identity is **self-asserted**; `nova verify` reports it as
+such. Rotate with `nova seal init --force`. It never replaces a `novaseal.yaml` it did
+not write, so the manual and KMS configurations below are unaffected.
+
+**Manual — your own key + minimal config:**
 
 ```bash
 mkdir -p ~/.novafabric
@@ -1143,9 +1150,10 @@ and configure `merkle_db:` inside it. See [novaseal-configuration.md §3.2](nova
 nova verify /path/to/capsule/
 # Checks three layers of integrity in the .seal/ directory:
 #   • ECDSA P-256 DSSE signature   → signature_ok=True
-#   • RFC 3161 timestamp           → timestamp_ok=True
+#   • RFC 3161 timestamp           → timestamp_ok=True (None when no token: absent, not failed)
 #   • Merkle log inclusion proof   → log_integrity_ok=True
-# Exits 0 if all checks pass, 1 otherwise.
+#   • signer trust level           → identity_trust=self-asserted | local-ca-pinned | ca-anchored
+# Exits 0 if all checks pass, 1 otherwise. --json prints one JSON object.
 
 # Explicit config path (instead of ~/.novafabric/novaseal.yaml):
 nova verify --seal-config ~/configs/novaseal.yaml /path/to/capsule/

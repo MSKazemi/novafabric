@@ -1823,6 +1823,8 @@ def create_app(
           sealed=False  — capsule has no .seal/ directory (was not sealed)
           configured=False — NovaSeal config not found
           signature_ok, timestamp_ok, log_integrity_ok, valid, errors — full result
+          timestamp_ok is null when no RFC 3161 token is present (ADR-0301)
+          identity_trust, signer_subject, local_seal_identity — signer trust level (ADR-0301)
         """
         import json as _json
 
@@ -1884,10 +1886,15 @@ def create_app(
             "configured": True,
             "capsule_id": capsule_id,
             "signature_ok": result.signature_ok,
+            # ADR-0301: null when the capsule carries no RFC 3161 token.
             "timestamp_ok": result.timestamp_ok,
             "log_integrity_ok": result.log_integrity_ok,
             "valid": result.valid,
             "errors": list(result.errors),
+            # ADR-0301: no CA bundle is consulted here, so at most "self-asserted".
+            "identity_trust": result.identity_trust,
+            "signer_subject": result.signer_subject,
+            "local_seal_identity": result.local_seal_identity,
         }
 
     @app.get("/api/assets", dependencies=[Depends(verify_token)])
@@ -2320,7 +2327,7 @@ def create_app(
                 if tsr_path in names:
                     tsr_bytes = zf.read(tsr_path)
                     if not tsr_bytes:
-                        timestamp_ok = True  # empty TSR = TSA skipped intentionally
+                        pass  # empty TSR = TSA skipped: null (absent), not True (ADR-0301)
                     elif dsse_bytes:
                         try:
                             from novafabric.trust.novaseal.timestamp import verify_timestamp

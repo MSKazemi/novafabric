@@ -34,7 +34,7 @@ console = Console()
 err_console = Console(stderr=True)
 
 seal_app = typer.Typer(
-    help="NovaSeal cryptographic signing (propose, approve, verify).",
+    help="NovaSeal cryptographic signing (init, propose, approve, verify).",
     no_args_is_help=True,
 )
 

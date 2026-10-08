@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519
-from cryptography.x509 import load_pem_x509_certificate
+from cryptography.x509 import load_der_x509_certificate, load_pem_x509_certificate
 
 if TYPE_CHECKING:
     from novafabric.trust.novaseal.signing_backend import SigningBackend
@@ -150,6 +150,27 @@ def _load_cert_der(cert_path: Path) -> bytes:
     return cert.public_bytes(serialization.Encoding.DER)
 
 
+def _require_key_matches_cert(
+    private_key: ec.EllipticCurvePrivateKey | ed25519.Ed25519PrivateKey,
+    cert_der: bytes,
+    key_path: Path,
+    cert_path: Path,
+) -> None:
+    """Raise :class:`EnvelopeError` unless *private_key* is the certificate's key."""
+    spki = serialization.PublicFormat.SubjectPublicKeyInfo
+    der = serialization.Encoding.DER
+    try:
+        cert_spki = load_der_x509_certificate(cert_der).public_key().public_bytes(der, spki)
+    except ValueError as exc:
+        raise EnvelopeError(f"Failed to load signing material: {exc}") from exc
+    if private_key.public_key().public_bytes(der, spki) != cert_spki:
+        raise EnvelopeError(
+            f"signing key {key_path} does not match the public key in {cert_path}; "
+            "a seal made with it could never verify (re-issue the certificate, e.g. "
+            "`nova seal init --force`)"
+        )
+
+
 def _keyid_from_cert_der(cert_der: bytes) -> str:
     return hashlib.sha256(cert_der).hexdigest()
 
@@ -239,6 +260,10 @@ def create_envelope(
             cert_der = _load_cert_der(cert_path)
         except (ValueError, TypeError, OSError) as exc:
             raise EnvelopeError(f"Failed to load signing material: {exc}") from exc
+        # ADR-0301: a key that is not the certificate's key yields a seal that can
+        # never verify (the verifier checks the signature under the embedded cert).
+        # Refuse to write one — the caller degrades to an unsealed capsule instead.
+        _require_key_matches_cert(private_key, cert_der, key_path, cert_path)
 
         try:
             if isinstance(private_key, ec.EllipticCurvePrivateKey):
@@ -283,7 +308,11 @@ def _verify_signature_entry(sig_entry: dict[str, Any], pae: bytes) -> None:
     is — so a single-signature envelope takes exactly the same path and raises
     exactly the same errors as before.
     """
-    sig_bytes = _b64_decode(sig_entry.get("sig", ""))
+    try:
+        sig_bytes = _b64_decode(sig_entry.get("sig", ""))
+    except (ValueError, TypeError, AttributeError) as exc:  # binascii.Error is a ValueError
+        # A malformed signature is a failed check, not a crash of `nova verify`.
+        raise EnvelopeError(f"DSSE signature is not valid base64: {exc}") from exc
 
     # Determine key type from the envelope.  Envelopes produced by Go
     # (Ed25519) embed a raw PEM public key in "pubkey"; envelopes produced by

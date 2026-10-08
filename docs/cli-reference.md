@@ -298,13 +298,17 @@ Initialise a local NovaFabric installation (pip install path only — docker-com
 self-initialising via its entrypoint).
 
 Creates the directory structure under `NOVAFABRIC_HOME` and generates an Ed25519 signing
-keypair for NovaSeal.  Safe to run multiple times — existing keys are never overwritten
-unless `--force` is passed.
+keypair (used to sign Evidence Bundle exports, `nova export-evidence --key`). Safe to run
+multiple times — existing keys are never overwritten unless `--force` is passed.
+
+`nova init` does **not** turn on capsule sealing. It prints `nova seal init` as an optional
+next step and reports whether sealing is configured; sealing stays opt-in (ADR-0301).
 
 ```bash
 nova init                        # uses $NOVAFABRIC_HOME (default ~/.novafabric)
 nova init --home /data/nova      # custom home
-nova init --force                # regenerate signing keypair
+nova init --force                # regenerate signing keypair (old pair archived)
+nova seal init                   # optional next step: local, self-asserted sealing
 ```
 
 **Options**
@@ -312,7 +316,7 @@ nova init --force                # regenerate signing keypair
 | Flag | Description |
 |---|---|
 | `--home PATH` | Override `NOVAFABRIC_HOME` for this run |
-| `--force` | Regenerate the Ed25519 keypair even if one already exists |
+| `--force` | Regenerate the Ed25519 keypair even if one already exists. The old pair is **moved** to `keys/archive/<UTC>/` (mode 700), never deleted, and a warning says Evidence Bundles signed with it verify only with the archived public key. Refused (exit 1) when `novaseal.yaml` signs capsules with that same key — rotate with `nova seal init --force` instead |
 
 **Created paths**
 
@@ -3243,6 +3247,7 @@ Checks (all must pass for exit 0; a check that could not run is printed `⊘ …
 | Check | What is verified |
 |---|---|
 | Signature | DSSE envelope signature — ECDSA P-256 against the certificate embedded in the envelope |
+| Signer identity | Not a pass/fail check: the **trust level** this verifier established for the signer (ADR-0301) — `SELF-ASSERTED local key` (`identity_trust=self-asserted`: the holder of the key signed; nothing you trust vouches for the certificate), `LOCAL CA PINNED` (`--ca-bundle` validated the chain to a `nova seal init` local CA), `CA-ANCHORED` (`--ca-bundle` validated the chain to another CA) or `NONE` (no valid signature). An unanchored certificate's subject is printed as an *unverified claim* |
 | Timestamp | RFC 3161 token, offline: the token covers SHA-256 of the whole DSSE envelope (signature included — the token is computed over the signature, so it is outside it by design, ADR-0030). Checked positionally: TSTInfo `messageImprint` equals that hash, `messageDigest` equals the hash of the TSTInfo, the CMS signature verifies under the embedded TSA certificate bound by ESSCertID. A response with no TSA-signed token fails. *Who* the TSA is needs `--tsa-ca-bundle` (below). A token the strict parser cannot read is reported `structural check only` |
 | Merkle log | `log-entry.json`'s entry must hash to its `leaf_hash` and name the signed payload's capsule id; then inclusion is checked by every means available — the **inclusion proof carried in `log-entry.json`** (seals from v0.103) must recompute the recorded `root_hash`, and when the local (sealer's) log holds the entry it must sit at the recorded index under the log's root. A capsule with neither (sealed by ≤ v0.102.x, verified away from the sealer's log) prints `⊘ Merkle log inclusion: NOT CHECKED — log not available` and does **not** fail. The carried proof's tree head is not independently anchored (not signed or witnessed) |
 | Manifest binding | `capsule.yaml` on disk matches the signed DSSE payload, and `capsule_id` is recomputed from that payload rather than read from `log-entry.json` (ADR-0251) |
@@ -3255,6 +3260,7 @@ original checks green.
 
 Options:
 - `--seal-config PATH` — path to `novaseal.yaml` (default: `~/.novafabric/novaseal.yaml`; env: `NOVAFABRIC_SEAL_CONFIG`)
+- `--json` — **experimental** (ADR-0301). Print one JSON object instead of the text report; exit code unchanged. Capsule directories with the local backend only (otherwise exit 2). Fields: `valid`, `sealed`, `signature_ok`, `pae_encoding`, `timestamp_ok` (`null` when the capsule carries no RFC 3161 token), `timestamp_present`, `timestamp_strict`, `log_integrity_ok`, `log_inclusion`, `log_notes`, `capsule_binding_ok`, `capsule_id_ok`, `ca_chain_checked`, `ca_chain_ok` (`null` when no CA bundle was used), `tsa_chain_checked`, `tsa_chain_ok`, `identity_trust` (`none` · `self-asserted` · `local-ca-pinned` · `ca-anchored`), `identity_statement`, `signer_subject`, `local_seal_identity`, `signing_intent`, `errors`
 - `--backend [local|sigstore]` — verification backend (default: `local`). Use `sigstore` to verify a Sigstore bundle stored alongside the capsule; requires `pip install novafabric[sigstore]`
 - `--capsule-id TEXT` — capsule ID for Sigstore bundle lookup (required when `--backend sigstore`)
 - `--home PATH` — `NOVAFABRIC_HOME` override (used for Sigstore bundle path)
@@ -3265,19 +3271,27 @@ Options:
 
 Exit codes: `0` (all checks pass), `1` (any check fails or .seal/ missing).
 
-Example output (all passing):
+Example output (a capsule sealed after `nova seal init` — no TSA configured, so no
+timestamp; abridged):
 
 ```
 NovaSeal verification: 01HXAY7M5JZ8R7K4P9DPBYK2WX
   ✓ Signature (DSSE ECDSA P-256): OK
     Intent: authored
-  ✓ Timestamp (RFC 3161): OK
+  ⊘ Timestamp (RFC 3161): NOT PRESENT (no tsa_url configured, or TSA unavailable) — no trusted time
   ✓ Merkle log inclusion: OK
   ✓ Manifest binding (capsule.yaml == signed payload): OK
   ✓ Evidence binding (per-file sha256): OK
+  Signer identity: SELF-ASSERTED local key (identity_trust=self-asserted)
+    proves the holder of this key signed; the key is not bound to any person, organisation or machine by anything you trust
 
-signature_ok=True, timestamp_ok=True, log_integrity_ok=True
+signature_ok=True, timestamp_ok=None, log_integrity_ok=True, log_inclusion=local-log, ca_chain_ok=False, identity_trust=self-asserted, intent=authored
 ```
+
+`timestamp_ok=None` means **absent**, not passed: until ADR-0301 this line printed
+`timestamp_ok=True` for a capsule that carries no timestamp. A present token prints
+`True` (verified) or `False` (failed). `ca_chain_ok` is `True` only when `--ca-bundle`
+(or `ca_bundle`) validated the signer chain.
 
 Example output (a modified capsule):
 
@@ -3299,7 +3313,8 @@ instance — are listed as `not covered by the seal` but never fail the capsule.
 derived artifact next to a capsule is normal; failing on it would make the check unusable.
 
 Capsules produced without a NovaSeal config have no `.seal/` directory; `nova verify`
-exits 1 with an informational message (not an error — unsigned capsules are valid).
+exits 1 with an informational message pointing at `nova seal init` (not an error —
+unsigned capsules are valid; sealing is opt-in).
 
 **Batch export manifests:** when the argument is an `export-manifest.json` file
 (instead of a capsule directory), `nova verify` runs the offline batch-export
@@ -5300,6 +5315,50 @@ Options:
 - `--db PATH` — SQLite Merkle log DB path (default: resolved by `resolve_merkle_db_path()` — see [NovaSeal Configuration Reference](novaseal-configuration.md#31-path-resolution-order))
 
 Prints `Policy signed and stored: version N` on success.
+
+---
+
+### nova seal init
+
+**Experimental** (ADR-0301). Turn on capsule sealing with a **local, self-asserted**
+identity, offline, in one command. Sealing stays opt-in: nothing else enables it, and
+`nova init` only offers this step.
+
+```bash
+nova seal init                     # create the identity + novaseal.yaml
+nova seal init --force             # rotate the signing key (same local CA)
+nova seal init --force --new-ca    # rotate key and CA (breaks CA-pinned continuity)
+nova seal init --home /data/nova   # custom NOVAFABRIC_HOME
+```
+
+It writes, under `$NOVAFABRIC_HOME`:
+
+| Path | Content | Mode |
+|---|---|---|
+| `keys/novaseal/signing.key.pem` | dedicated ECDSA P-256 signing key (not the `nova init` Ed25519 key) | 600 |
+| `keys/novaseal/signing.crt.pem` | leaf certificate, issued by the local CA (`CA=FALSE`) | 644 |
+| `keys/novaseal/ca.key.pem` | local seal CA key | 600 |
+| `keys/novaseal/ca.crt.pem` | local seal CA certificate — pin it with `nova verify --ca-bundle` | 644 |
+| `novaseal.yaml` | `profile: local`, first line `# managed-by: nova seal init`, no `tsa_url` | 644 |
+
+Both certificates carry `O=NovaFabric local seal identity (self-asserted)` and no host or
+user name. `nova verify` reports capsules sealed with it as
+`identity_trust=self-asserted`, or `local-ca-pinned` with `--ca-bundle …/ca.crt.pem`.
+
+| Situation | Result |
+|---|---|
+| nothing configured | creates the identity (reuses a CA or key left in `keys/novaseal/`); exit 0 |
+| configured by `nova seal init` | no change, prints the identity (idempotent); exit 0 |
+| configured by an operator (no marker line: KMS, operator CA…) | no change; with `--force`, **refused** (exit 1) — never replaced by a self-asserted identity |
+| managed config no longer loads | exit 1, suggests `--force` |
+| `--force` | archives key, leaf and config to `keys/novaseal/archive/<UTC>/`, new key + leaf from the **same** CA, `key_rotation` entry in the Merkle log |
+| `--force --new-ca` | also archives and replaces the CA; prints that pinned verifiers lose continuity |
+| `--force` with the CA key missing | exit 1; restore it or pass `--new-ca` |
+| `--new-ca` without `--force` | exit 1 |
+| `NOVAFABRIC_SEAL_CONFIG` points elsewhere | warns that capture reads that file instead |
+
+The leaf is valid 5 years and the CA 10 years. `--ca-bundle` validates at verification
+time, so rotate before the leaf expires. No network access at any point.
 
 ---
 

@@ -10273,7 +10273,8 @@ paths:
       description: "Verify DSSE signature + RFC 3161 timestamp + Merkle log inclusion (nova verify).\n\
         \nReturns:\n  sealed=False  — capsule has no .seal/ directory (was not sealed)\n  configured=False\
         \ — NovaSeal config not found\n  signature_ok, timestamp_ok, log_integrity_ok, valid, errors —\
-        \ full result"
+        \ full result\n  timestamp_ok is null when no RFC 3161 token is present (ADR-0301)\n  identity_trust,\
+        \ signer_subject, local_seal_identity — signer trust level (ADR-0301)"
       parameters:
       - in: path
         name: run_id

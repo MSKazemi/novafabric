@@ -777,8 +777,13 @@ another capsule, a proof that does not recompute its root) is `failed`.
 
 `verify()` reads `manifest.dsse`, an optional `manifest.dsse.tsr`, and
 `log-entry.json` from the `.seal/` directory. An **absent or empty** TSR is
-treated as a deliberately skipped timestamp (`timestamp_ok=True`); a present but
-invalid TSR fails verification.
+reported as absent — `timestamp_ok=None` (ADR-0301; it was `True` before) — and does
+not invalidate the seal; a present but invalid TSR fails verification
+(`timestamp_ok=False`). `result.identity_trust` is `"self-asserted"` when the
+signature verifies (no CA bundle is consulted here) and `"none"` otherwise;
+`result.signer_subject` is the embedded certificate's subject, an unverified claim.
+`result.ca_chain_ok` is `False` unless a CA bundle validated the chain
+(`nova verify --ca-bundle`).
 
 ### Rotate the signing key
 

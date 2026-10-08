@@ -11,6 +11,46 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Added
+
+- **`nova seal init` — explicit first-run sealing with a local, self-asserted identity
+  (experimental, ADR-0301).** One offline command creates a dedicated ECDSA P-256 signing key,
+  a local seal CA and a CA-issued certificate under `$NOVAFABRIC_HOME/keys/novaseal/` (private
+  keys mode 600) and writes a managed `novaseal.yaml` (`profile: local`, no `tsa_url`). After
+  it, `nova capture` seals new Run Capsules. Sealing stays **opt-in**: `nova init` only offers
+  the step and reports whether sealing is configured. Idempotent; `--force` rotates the key
+  under the same CA (old files archived to `keys/novaseal/archive/<UTC>/`, `key_rotation`
+  logged in the Merkle log) so a verifier who pinned the CA keeps continuity; `--force --new-ca`
+  also replaces the CA. A `novaseal.yaml` it did not write (KMS, operator CA) is never replaced.
+- **`nova verify` reports the signer's trust level** (`identity_trust`, ADR-0301):
+  `self-asserted` (the holder of the key signed; nothing you trust vouches for the
+  certificate), `local-ca-pinned` (`--ca-bundle` reached a `nova seal init` local CA),
+  `ca-anchored` (`--ca-bundle` reached another CA) or `none`. Printed as a `Signer identity:`
+  line and added — additively — to `VerificationResult` (`identity_trust`, `signer_subject`,
+  `local_seal_identity`) and to `POST /api/runs/{id}/verify`.
+- **`nova verify --json`** prints one JSON object (capsule directories, local backend) with
+  every check, `identity_trust` and `timestamp_ok`. Exit code unchanged.
+
+### Fixed
+
+- **`nova verify` printed `timestamp_ok=True` for a capsule with no timestamp.** An absent or
+  empty RFC 3161 token is now `timestamp_ok=None` (JSON `null`) in `VerificationResult`, the
+  text report, `--json` and both serve verify endpoints, and the trust radar shows the
+  Timestamp axis as `n/a` instead of `ok`. Absence still does not invalidate the seal
+  (timestamping is opt-in, ADR-0292). Library callers that tested `timestamp_ok is True` for an
+  untimestamped capsule now get `None`.
+- **`ca_chain_ok=True` was printed when no certificate chain had been validated.** It is now
+  `True` only when `--ca-bundle` (or `ca_bundle`) validated the signer chain.
+- **`nova init --force` overwrote the only copy of the Evidence Bundle signing key.** The old
+  pair is now moved to `keys/archive/<UTC>/` with a warning. It refuses (exit 1) when
+  `novaseal.yaml` signs capsules with that same key. The new private key is created mode 600
+  from the first byte instead of being chmod-ed after the write.
+- **Capture could write a seal that can never verify** when the configured key did not match
+  the certificate. `create_envelope` now refuses; capture warns, keeps the capsule, and writes
+  no `.seal/` (the workload is never blocked).
+- **`nova verify` crashed (`binascii.Error`) on a DSSE signature that is not valid base64**
+  instead of reporting a failed signature check.
+
 ### Security
 
 - **Locked `urllib3` 2.7.0 → 2.8.0 and `pyjwt` 2.14.0 → 2.15.1**, clearing the two HIGH

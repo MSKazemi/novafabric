@@ -129,7 +129,8 @@ data directories and signing keypair:
 ```bash
 nova init                  # creates ~/.novafabric/{capsules,keys,replays}
                            # and ~/.novafabric/keys/signing_key.pem (mode 600)
-nova init --force          # regenerate keypair if needed
+nova init --force          # regenerate keypair (old pair archived to keys/archive/)
+nova seal init             # optional: local, self-asserted capsule sealing (ADR-0301)
 nova init --home /data/nova  # custom NOVAFABRIC_HOME
 ```
 

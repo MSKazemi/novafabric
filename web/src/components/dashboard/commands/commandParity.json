@@ -1211,6 +1211,10 @@
     "tab": "seal",
     "api": "/bypass"
   },
+  "nova seal init": {
+    "status": "cli-only",
+    "reason": "Generates private signing keys and a local CA on the sealing host (mode 600); key material is never minted through the dashboard (ADR-0301)."
+  },
   "nova seal log verify": {
     "status": "real-panel",
     "tab": "seal",

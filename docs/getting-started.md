@@ -95,9 +95,14 @@ guide use `nova`.
 
 > **Optional one-time setup.** `nova init` pre-creates the data directories
 > (`capsules/`, `keys/`, `replays/`) under `~/.novafabric` and generates a local
-> signing keypair. It is optional — `nova capture` creates what it needs on first
-> use — but handy if you want the directory tree in place up front. Re-running it
-> is safe; use `nova init --force` to regenerate the keypair.
+> Ed25519 keypair for signing Evidence Bundles (Step 9). It is optional —
+> `nova capture` creates what it needs on first use — but handy if you want the
+> directory tree in place up front. Re-running it is safe; `nova init --force`
+> regenerates the keypair and archives the old one under `keys/archive/`.
+>
+> `nova init` does **not** seal your captures. Sealing is opt-in: `nova init` prints
+> `nova seal init` as an optional next step (see
+> [Seal your captures](#optional-seal-your-captures-with-a-local-identity) below).
 
 > **Maturity.** NovaFabric is in beta (v0.104.0 at the time of writing). Most surfaces work today but
 > carry `experimental` maturity: interfaces may change before the v1.0 schema
@@ -478,15 +483,51 @@ full bundle layout and the offline verification procedure.
 
 > **Experimental — cryptographic sealing (NovaSeal).** Beyond ed25519 Evidence
 > Bundles, NovaFabric ships an **experimental, opt-in** in-process sealing core
-> (v0.10+): DSSE ECDSA P-256 signatures, best-effort RFC 3161 trusted
+> (v0.10+): DSSE ECDSA P-256 signatures, opt-in RFC 3161 trusted
 > timestamps, and an append-only Merkle log, verified with `nova verify`
-> (`signature_ok` / `timestamp_ok` / `log_integrity_ok`), driven by an optional
-> `~/.novafabric/novaseal.yaml`. Its interfaces may change before the v1.0
-> schema freeze; the dedicated, hardened NovaSeal signing *service* (network
+> (`signature_ok` / `timestamp_ok` / `log_integrity_ok` / `identity_trust`), driven
+> by an optional `~/.novafabric/novaseal.yaml`. Its interfaces may change before the
+> v1.0 schema freeze; the dedicated, hardened NovaSeal signing *service* (network
 > service, qualified timestamps, Sigstore-keyless by default — ADR-0041)
 > remains **planned**. For portable proof with the most stable surface today,
 > use the **Evidence Bundle** above. Sealing is fully opt-in: without a
 > `novaseal.yaml`, capture and export behave exactly as in Steps 2–8.
+
+### Optional: seal your captures with a local identity
+
+Run Capsules can be sealed and verified. To turn that on for this machine, run one
+command (experimental, ADR-0301):
+
+```bash
+nova seal init
+```
+
+It creates a dedicated signing key, a local seal CA and a certificate under
+`~/.novafabric/keys/novaseal/` (private keys mode 600), and writes
+`~/.novafabric/novaseal.yaml`. It works offline: no timestamp authority is
+configured and nothing is contacted. From then on `nova capture` seals new capsules:
+
+```bash
+nova capture python my_agent.py
+nova verify ~/.novafabric/capsules/<run-id>/
+#   Signer identity: SELF-ASSERTED local key (identity_trust=self-asserted)
+#   signature_ok=True, timestamp_ok=None, log_integrity_ok=True, ...
+```
+
+What this does and does not prove:
+
+- **self-asserted** — the capsule has not changed since the holder of this key signed
+  it. The key is not bound to you, your organisation or your machine by anyone else.
+- `timestamp_ok=None` — there is no trusted time. Add `tsa_url` to `novaseal.yaml` to
+  opt in to RFC 3161 timestamps (this contacts that TSA on every sealed capture).
+- `nova verify --ca-bundle ~/.novafabric/keys/novaseal/ca.crt.pem <capsule>` reports
+  `local-ca-pinned`: continuity with this installation, still not an external
+  identity. For an identity someone else vouches for, use an operator CA or a KMS
+  profile — see [NovaSeal configuration](novaseal-configuration.md).
+
+Rotate the key with `nova seal init --force` (the old key is archived, the same CA
+issues the new certificate). If sealing fails during a capture, the capture still
+completes and prints a warning; the capsule is simply not sealed.
 
 ---
 

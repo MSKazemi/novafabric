@@ -150,6 +150,17 @@ def verify_cmd(
             dir_okay=False,
         ),
     ] = None,
+    json_out: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help=(
+                "Print one JSON object instead of the text report (capsule directories, "
+                "local backend). Carries identity_trust and timestamp_ok (null when the "
+                "capsule has no RFC 3161 token) — ADR-0301. Exit code is unchanged."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Verify a capsule's cryptographic seal, timestamp, and Merkle log inclusion.
 
@@ -160,6 +171,12 @@ def verify_cmd(
 
     With ``--backend sigstore``, verifies the Sigstore bundle stored under
     ``<home>/sigstore/<capsule_id>.bundle.json``.
+
+    Also reports the signer's trust level (ADR-0301): SELF-ASSERTED (the holder of
+    the key signed; no anchor you trust vouches for it), LOCAL CA PINNED (chains to a
+    `nova seal init` local CA you passed with --ca-bundle) or CA-ANCHORED (chains to
+    another CA bundle you passed). A capsule without an RFC 3161 token reports the
+    timestamp as NOT PRESENT (timestamp_ok=None), which does not fail verification.
 
     Exits 0 if all checks pass, 1 otherwise. Needs only the capsule: no NovaSeal
     config and no Merkle log are required (an independent auditor can verify on a
@@ -174,6 +191,12 @@ def verify_cmd(
     Examples:
       # Verify a capsule (local ECDSA backend)
       nova verify path/to/my-capsule/
+
+      # Machine-readable result, incl. identity_trust
+      nova verify --json path/to/my-capsule/
+
+      # Pin the local seal CA written by `nova seal init`
+      nova verify --ca-bundle ~/.novafabric/keys/novaseal/ca.crt.pem path/to/my-capsule/
 
       # Use an explicit seal config path
       nova verify --seal-config ~/configs/novaseal.yaml path/to/my-capsule/
@@ -197,6 +220,18 @@ def verify_cmd(
       # Verify an Evidence Bundle ZIP (recomputes every artifact digest)
       nova verify path/to/evidence-bundle.zip
     """
+    if json_out and (
+        check_redaction is not None
+        or backend != "local"
+        or capsule_dir.suffix == ".zip"
+        or capsule_dir.is_file()
+    ):
+        err_console.print(
+            "[red]Error:[/red] --json is supported for capsule directories with the "
+            "local backend only."
+        )
+        raise typer.Exit(code=2)
+
     # Handle --check-redaction standalone check
     if check_redaction is not None:
         _verify_redaction_seal(check_redaction)
@@ -232,17 +267,70 @@ def verify_cmd(
         raise typer.Exit(code=1)
 
     if not capsule_dir.exists():
+        if json_out:
+            _emit_json({"valid": False, "sealed": None, "error": "capsule directory not found"})
+            raise typer.Exit(code=1)
         console.print(f"[red]Error:[/red] capsule directory not found: {capsule_dir}")
         raise typer.Exit(code=1)
 
     seal_dir = capsule_dir / ".seal"
     if not seal_dir.exists():
+        if json_out:
+            _emit_json(
+                {
+                    "capsule": capsule_dir.name,
+                    "valid": False,
+                    "sealed": False,
+                    "identity_trust": "none",
+                    "error": "capsule is not sealed (no .seal/ directory)",
+                }
+            )
+            raise typer.Exit(code=1)
         console.print(
             f"[yellow]No .seal/ directory found in {capsule_dir}[/yellow]\n"
-            "This capsule was not sealed with NovaSeal. "
-            "Run `nova capture` with a novaseal.yaml config to produce sealed capsules."
+            "This capsule was not sealed with NovaSeal. Sealing is opt-in: run "
+            "`nova seal init` once to create a local sealing identity (or configure "
+            "novaseal.yaml), then capture again."
         )
         raise typer.Exit(code=1)
+
+    previous_quiet = console.quiet
+    if json_out:
+        console.quiet = True  # the text report is replaced by one JSON object
+    try:
+        _verify_capsule_dir(
+            capsule_dir,
+            seal_dir,
+            seal_config=seal_config,
+            ca_bundle=ca_bundle,
+            crl_dir=crl_dir,
+            crl_strict=crl_strict,
+            tsa_ca_bundle=tsa_ca_bundle,
+            json_out=json_out,
+        )
+    finally:
+        console.quiet = previous_quiet
+
+
+def _emit_json(payload: dict[str, Any]) -> None:
+    """Print *payload* as JSON on stdout, bypassing the (possibly quiet) rich console."""
+    import json
+
+    typer.echo(json.dumps(payload, indent=2, sort_keys=True, default=str))
+
+
+def _verify_capsule_dir(
+    capsule_dir: Path,
+    seal_dir: Path,
+    *,
+    seal_config: str | None,
+    ca_bundle: Optional[Path],
+    crl_dir: Optional[Path],
+    crl_strict: bool,
+    tsa_ca_bundle: Optional[Path],
+    json_out: bool,
+) -> None:
+    """Verify one sealed capsule directory (local backend) and print the report."""
 
     # Load signing profile for Merkle DB location
     import os
@@ -255,6 +343,10 @@ def verify_cmd(
 
         profile = load_signing_profile()
     except SealConfigError as exc:
+        if json_out:
+            _emit_json(
+                {"capsule": capsule_dir.name, "valid": False, "error": f"NovaSeal config: {exc}"}
+            )
         console.print(f"[red]NovaSeal config error:[/red] {exc}")
         raise typer.Exit(code=1)
 
@@ -337,6 +429,20 @@ def verify_cmd(
         else None
     )
 
+    # ADR-0301: the signer's trust level — what *this verifier* established.
+    from novafabric.trust.novaseal.identity_trust import (  # noqa: PLC0415
+        IDENTITY_TRUST_STATEMENTS,
+        anchored_identity_trust,
+    )
+
+    chain_ok = True
+    chain_anchor: Any = None
+    if chain_check is not None:
+        chain_ok, _, _, chain_anchor = chain_check
+    result.ca_chain_ok = chain_check is not None and chain_ok
+    if result.signature_ok and chain_check is not None and chain_ok:
+        result.identity_trust = anchored_identity_trust(chain_anchor)
+
     # Print results
     console.print(f"\n[bold]NovaSeal verification:[/bold] {capsule_dir.name}")
     _print_check("Signature (DSSE ECDSA P-256)", result.signature_ok)
@@ -350,12 +456,13 @@ def verify_cmd(
         )
     if result.signing_intent is not None:
         console.print(f"    Intent: {result.signing_intent.value}")
-    if result.timestamp_ok and not result.timestamp_present:
-        # Timestamping is best-effort, so a missing token still verifies — but
-        # printing "OK" would claim evidence this capsule does not carry.
+    if result.timestamp_ok is None:
+        # Timestamping is opt-in, so a missing token still verifies — but it is
+        # reported as absent (timestamp_ok=None), never as a passed check (ADR-0301).
         console.print(
             "  [yellow]⊘[/yellow] Timestamp (RFC 3161): "
-            "[yellow]NOT PRESENT[/yellow] (TSA skipped or unavailable)"
+            "[yellow]NOT PRESENT[/yellow] (no tsa_url configured, or TSA unavailable) "
+            "— no trusted time"
         )
     else:
         _print_check("Timestamp (RFC 3161)", result.timestamp_ok)
@@ -372,9 +479,8 @@ def verify_cmd(
             )
     _print_log_inclusion(result.log_inclusion, result.log_notes)
     binding_ok = _print_capsule_binding(binding)
-    chain_ok = True
     if chain_check is not None:
-        chain_ok, chain_detail, revocation_lines = chain_check
+        chain_ok, chain_detail, revocation_lines, _ = chain_check
         _print_check("Signer certificate chain (CA bundle)", chain_ok)
         console.print(f"    {chain_detail}")
         for line in revocation_lines:
@@ -387,6 +493,8 @@ def verify_cmd(
             f"    [red]signed payload hashes to[/red] {derived_capsule_id}"
         )
 
+    _print_identity(result)
+
     if result.errors:
         console.print()
         for err in result.errors:
@@ -395,7 +503,39 @@ def verify_cmd(
     console.print()
     console.print(str(result))
 
-    if not result.valid or not binding_ok or not capsule_id_ok or not chain_ok or not tsa_ok:
+    overall_ok = result.valid and binding_ok and capsule_id_ok and chain_ok and tsa_ok
+    if json_out:
+        _emit_json(
+            {
+                "capsule": capsule_dir.name,
+                "sealed": True,
+                "valid": overall_ok,
+                "signature_ok": result.signature_ok,
+                "pae_encoding": result.pae_encoding,
+                "timestamp_ok": result.timestamp_ok,
+                "timestamp_present": result.timestamp_present,
+                "timestamp_strict": result.timestamp_strict,
+                "log_integrity_ok": result.log_integrity_ok,
+                "log_inclusion": result.log_inclusion,
+                "log_notes": list(result.log_notes),
+                "capsule_binding_ok": binding_ok,
+                "capsule_id_ok": capsule_id_ok,
+                "ca_chain_checked": chain_check is not None,
+                "ca_chain_ok": chain_ok if chain_check is not None else None,
+                "tsa_chain_checked": tsa_check is not None,
+                "tsa_chain_ok": tsa_ok if tsa_check is not None else None,
+                "identity_trust": result.identity_trust,
+                "identity_statement": IDENTITY_TRUST_STATEMENTS[result.identity_trust],
+                "signer_subject": result.signer_subject,
+                "local_seal_identity": result.local_seal_identity,
+                "signing_intent": (
+                    result.signing_intent.value if result.signing_intent is not None else None
+                ),
+                "errors": list(result.errors),
+            }
+        )
+
+    if not overall_ok:
         # ADR-0192 wired source: the evidence guarantee itself failed, so
         # this is `critical` — the run can no longer be proven.
         from novafabric.events.sources import (  # noqa: PLC0415
@@ -410,13 +550,47 @@ def verify_cmd(
         raise typer.Exit(code=1)
 
 
+def _print_identity(result: Any) -> None:
+    """Print the signer trust level (ADR-0301) — never stronger than what was checked."""
+    from novafabric.trust.novaseal.identity_trust import (  # noqa: PLC0415
+        IDENTITY_NONE,
+        IDENTITY_SELF_ASSERTED,
+        IDENTITY_TRUST_HEADLINES,
+        IDENTITY_TRUST_STATEMENTS,
+    )
+
+    level = result.identity_trust
+    if level == IDENTITY_NONE:
+        colour = "red"
+    elif level == IDENTITY_SELF_ASSERTED:
+        colour = "yellow"
+    else:
+        colour = "green"
+    console.print(
+        f"  [bold]Signer identity:[/bold] [{colour}]{IDENTITY_TRUST_HEADLINES[level]}"
+        f"[/{colour}] (identity_trust={level})"
+    )
+    console.print(f"    {IDENTITY_TRUST_STATEMENTS[level]}")
+    if result.signer_subject and level == IDENTITY_SELF_ASSERTED:
+        if result.local_seal_identity:
+            console.print(
+                "    certificate: NovaFabric local seal identity (`nova seal init`); pin "
+                "its CA with --ca-bundle for continuity across key rotations"
+            )
+        else:
+            console.print(
+                f"    certificate subject (unverified claim): {result.signer_subject} "
+                "— pass --ca-bundle to check it"
+            )
+
+
 def _signer_chain_check(
     dsse_bytes: bytes,
     bundle_path: Path,
     *,
     crl_dir: Path | None = None,
     crl_strict: bool = False,
-) -> tuple[bool, str, list[str]]:
+) -> tuple[bool, str, list[str], Any]:
     """Bind the DSSE signature to a CA-validated signer certificate (ADR-0055).
 
     Offline and fail-closed. Passes only when some signature entry verifies over the
@@ -430,7 +604,9 @@ def _signer_chain_check(
     With ``crl_dir`` (ADR-0070 §3), the validated path is also revocation-checked
     against the locally synced CRLs — never fetched. An unusable CRL directory fails
     closed. The third element holds the per-certificate revocation lines and any
-    skipped-file findings, printed so soft-fail warnings are always visible.
+    skipped-file findings, printed so soft-fail warnings are always visible. The fourth
+    is the bundle certificate the validated chain ended at (``None`` on failure), which
+    decides ``local-ca-pinned`` vs ``ca-anchored`` (ADR-0301).
     """
     from novafabric.trust.novaseal.crl import (  # noqa: PLC0415
         CrlStoreError,
@@ -449,13 +625,26 @@ def _signer_chain_check(
             dsse_bytes, anchors, crl_store=store, crl_strict=crl_strict
         )
     except OSError as exc:
-        return False, f"cannot read CA bundle {bundle_path}: {exc}", []
+        return False, f"cannot read CA bundle {bundle_path}: {exc}", [], None
     except (X509ChainError, CrlStoreError) as exc:
-        return False, str(exc), []
+        return False, str(exc), [], None
     lines = _revocation_lines(outcome.revocation)
     if not outcome.valid:
-        return False, outcome.reason, lines
-    return True, "chain: " + " <- ".join(outcome.chain_subjects), lines
+        return False, outcome.reason, lines, None
+    anchor = _anchor_by_fingerprint(anchors, outcome.trust_anchor_fingerprint)
+    return True, "chain: " + " <- ".join(outcome.chain_subjects), lines, anchor
+
+
+def _anchor_by_fingerprint(anchors: list[Any], fingerprint: str | None) -> Any:
+    """The bundle certificate whose ``sha256:`` fingerprint is *fingerprint*, else None."""
+    from cryptography.hazmat.primitives import hashes  # noqa: PLC0415
+
+    if fingerprint is None:
+        return None
+    for cert in anchors:
+        if "sha256:" + cert.fingerprint(hashes.SHA256()).hex() == fingerprint:
+            return cert
+    return None
 
 
 def _read_capsule_tsr(tsr_path: Path) -> bytes | None:

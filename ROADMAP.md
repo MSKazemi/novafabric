@@ -96,6 +96,17 @@ proven by `tests/capture/test_task_scoped_writer.py`, with the `capture-overhead
 green. It appears under Shipped once it is in a tagged release, per this file's
 label rule. Re-derived 2026-09-04.)*
 
+*(**First-run sealing — `nova seal init`** (ADR-0301, **experimental**) is implemented
+and unreleased: an explicit, offline command that creates a local, **self-asserted**
+sealing identity (P-256 key + local CA + leaf, managed `novaseal.yaml`), with `--force`
+rotation under the same CA, and `nova verify` reporting the signer trust level
+(`identity_trust`) plus `--json`. Capture sealing stays **opt-in** — no default change,
+so public wording stays "Run Capsules can be sealed and verified". See CHANGELOG
+`[Unreleased]`; it moves to Shipped with the next tag. **Planned** follow-ups: an
+`identity_trust` value for `--backend sigstore`; validating `--ca-bundle` chains at an
+RFC 3161 `genTime` instead of "now"; an opt-in fail-closed "seal or abort" capture mode
+(future design).)*
+
 **New here?** The adapters are labelled
 [good first issue](https://github.com/MSKazemi/novafabric/labels/good%20first%20issue)
 and each one names the files, the test to add, and what "done" means.

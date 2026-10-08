@@ -142,6 +142,7 @@ from novafabric.cli.scan_secrets import scan_secrets_cmd
 from novafabric.cli.schema import app as schema_app
 from novafabric.cli.science import app as science_app
 from novafabric.cli.score import score_app
+from novafabric.cli.seal_init import seal_init_cmd
 from novafabric.cli.seal_propose import seal_app
 from novafabric.cli.search import search_cmd
 from novafabric.cli.serve import serve_cmd
@@ -528,10 +529,12 @@ app.add_typer(
     help="Map capsule evidence to regulatory controls and report coverage gaps.",
 )
 app.add_typer(audit_log_app, name="audit-log")
+# ADR-0301: explicit first-run sealing setup (local, self-asserted identity).
+seal_app.command("init")(seal_init_cmd)
 app.add_typer(
     seal_app,
     name="seal",
-    help="NovaSeal cryptographic signing (propose, approve, verify).",
+    help="NovaSeal cryptographic signing (init, propose, approve, verify).",
 )
 app.command("doctor")(doctor_cmd)
 app.command("support-bundle")(support_bundle_cmd)

@@ -96,7 +96,8 @@ class TestVerifyCommand:
         )
         assert result.exit_code == 0, result.output
         assert "signature_ok=True" in result.output
-        assert "timestamp_ok=True" in result.output
+        # ADR-0301: the fixture seals without a TSA, so the timestamp is absent.
+        assert "timestamp_ok=None" in result.output
         assert "log_integrity_ok=True" in result.output
 
     def test_verify_missing_capsule_dir_exits_1(self, tmp_path):
@@ -165,11 +166,10 @@ def _local_config(base):
 class TestTimestampPresenceIsReportedHonestly:
     """``nova verify`` must not print "Timestamp: OK" for a capsule with no token.
 
-    Timestamping is best-effort: an absent or empty ``manifest.dsse.tsr`` still
-    verifies, so ``timestamp_ok`` is True in that case.  On its own it therefore
-    cannot distinguish "timestamped and verified" from "never timestamped" — and
-    the CLI printed a green ✓ either way, claiming evidence the capsule does not
-    carry.  ``timestamp_present`` is what separates the two.
+    Timestamping is opt-in: an absent or empty ``manifest.dsse.tsr`` still
+    verifies. Until ADR-0301 ``timestamp_ok`` was True in that case, so the
+    machine-readable line printed ``timestamp_ok=True`` for a capsule that carries
+    no timestamp. It is now ``None`` (absent); ``timestamp_present`` agrees.
     """
 
     def test_result_marks_an_empty_tsr_as_not_present(self, sealed_capsule):
@@ -184,8 +184,9 @@ class TestTimestampPresenceIsReportedHonestly:
         )
         result = seal.verify("", str(capsule_dir / ".seal"))
 
-        assert result.timestamp_ok is True  # best-effort: absence is not failure
+        assert result.timestamp_ok is None  # absent — neither passed nor failed
         assert result.timestamp_present is False
+        assert result.valid is True  # absence is not failure
 
     def test_result_marks_a_missing_tsr_file_as_not_present(self, sealed_capsule):
         capsule_dir, config_path = sealed_capsule
@@ -198,7 +199,7 @@ class TestTimestampPresenceIsReportedHonestly:
         )
         result = seal.verify("", str(capsule_dir / ".seal"))
 
-        assert result.timestamp_ok is True
+        assert result.timestamp_ok is None
         assert result.timestamp_present is False
 
     def test_cli_prints_not_present_instead_of_ok(self, sealed_capsule):
@@ -209,8 +210,9 @@ class TestTimestampPresenceIsReportedHonestly:
         )
         assert result.exit_code == 0, result.output
         assert "NOT PRESENT" in result.output
-        # The machine-readable line still reports the best-effort verdict.
-        assert "timestamp_ok=True" in result.output
+        # ADR-0301 regression: the machine-readable line must not claim True.
+        assert "timestamp_ok=True" not in result.output
+        assert "timestamp_ok=None" in result.output
 
     def test_a_real_token_is_marked_present_and_checked(
         self, sealed_capsule, monkeypatch

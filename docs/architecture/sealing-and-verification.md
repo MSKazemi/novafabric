@@ -39,7 +39,21 @@ flowchart LR
 Sealing is **opt-in**. `trust/novaseal/config.py:load_signing_profile` looks for
 `NOVAFABRIC_SEAL_CONFIG` and then for `~/.novafabric/novaseal.yaml`. If neither
 exists, capture skips sealing. Sealing never blocks a capture: on any error,
-`capture/orchestrator.py:_seal_capsule` prints a warning and the capsule is kept.
+`capture/orchestrator.py:_seal_capsule` prints a warning and the capsule is kept,
+without `.seal/`. `create_envelope` refuses to sign with a key that does not match
+the configured certificate, so a capture never writes a seal that cannot verify.
+
+**First run (experimental, ADR-0301).** `nova init` does not configure sealing; it
+offers `nova seal init` as a next step. That command
+(`trust/novaseal/local_identity.py:init_local_identity`) creates a dedicated ECDSA
+P-256 signing key, a local seal CA and a leaf certificate under
+`keys/novaseal/` (private keys mode 600), and writes a managed `novaseal.yaml`
+(`profile: local`, no `tsa_url`, so no network access). The identity is
+**self-asserted**: a seal made with it proves that the holder of the key signed, not
+who that holder is. `nova seal init --force` rotates the key under the same CA and
+records a `key_rotation` entry in the Merkle log, so a verifier who pinned
+`ca.crt.pem` keeps validating old and new capsules. A `novaseal.yaml` that
+`nova seal init` did not write is never replaced.
 
 The key comes from one of four signing profiles: `local` (a PEM key on disk),
 `aws_kms`, `azure_kv` or `gcp_kms`. The cloud profiles sign through a signing
@@ -122,7 +136,7 @@ in turn:
 | # | Check | Passes when |
 |---|---|---|
 | 1 | DSSE signature | The envelope signature verifies against the embedded certificate |
-| 2 | RFC 3161 token | The token parses strictly, its status is granted and its message imprint matches this envelope. If no token is present, the output says `NOT PRESENT` and the check passes, unless a TSA CA bundle is supplied. A token that cannot be parsed strictly is reported as a structural check only, never as OK. |
+| 2 | RFC 3161 token | The token parses strictly, its status is granted and its message imprint matches this envelope. If no token is present, the output says `NOT PRESENT`, `timestamp_ok` is `None` (absent, not passed) and the seal stays valid, unless a TSA CA bundle is supplied. A token that cannot be parsed strictly is reported as a structural check only, never as OK. |
 | 3 | Merkle inclusion | The proof carried in `log-entry.json` reproduces its root and the entry names this capsule. If a local log is configured, it is checked as well. |
 | 4 | Manifest binding | `capsule.yaml` on disk equals the signed payload, and `capsule_id` matches |
 | 5 | Per-file digests | Every file listed in `evidence_digests` exists and matches its SHA-256. Extra files are listed but do not fail the check. |
@@ -130,12 +144,30 @@ in turn:
 The exit code is `0` when every check passes and `1` otherwise. Optional
 hardening flags are experimental:
 
-- `--ca-bundle` validates the signer certificate chain;
+- `--ca-bundle` validates the signer certificate chain (and raises the reported
+  signer trust level, below);
 - `--crl-dir` and `--crl-strict` add offline revocation checks;
 - `--tsa-ca-bundle` validates the TSA chain.
 
 `nova verify` also accepts an Evidence Bundle `.zip` and recomputes every
 artifact digest, and an `export-manifest.json` from a batch export.
+
+**Signer trust level (experimental, ADR-0301).** Besides the pass/fail checks,
+`nova verify` reports what *the verifier* established about who signed, as
+`identity_trust` in the text report, in `nova verify --json`, in
+`VerificationResult` and in `POST /api/runs/{id}/verify`:
+
+| `identity_trust` | Meaning | Claim it permits |
+|---|---|---|
+| `none` | no signature verified | nothing |
+| `self-asserted` | signature verifies under the envelope's own certificate; nothing the verifier trusts vouches for it | "unchanged since signed by the holder of this key" |
+| `local-ca-pinned` | `--ca-bundle` validated the chain to a `nova seal init` local CA | the above, plus continuity with that installation across key rotations |
+| `ca-anchored` | `--ca-bundle` validated the chain to another CA | "signed by a key certified by that CA", at that CA's assurance |
+
+The `O=NovaFabric local seal identity (self-asserted)` subject marker can only lower
+a label, never raise it. Where a key lived (file, KMS, HSM) cannot be seen from a
+capsule and is never claimed. A Sigstore trust level on `--backend sigstore` is
+**planned**.
 
 **Where verification can run.** Every check uses only the capsule, so
 `nova verify` runs anywhere and never creates a log. The carried proof's root is

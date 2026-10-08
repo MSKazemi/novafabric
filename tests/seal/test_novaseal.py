@@ -128,7 +128,7 @@ class TestVerifyRoundTrip:
         )
         assert isinstance(result, VerificationResult)
         assert result.signature_ok is True
-        assert result.timestamp_ok is True  # no TSR = ok
+        assert result.timestamp_ok is None  # no TSR = absent, not passed (ADR-0301)
         assert result.log_integrity_ok is True
         assert result.valid is True
         assert result.errors == []
@@ -142,7 +142,7 @@ class TestVerifyRoundTrip:
 
         result = nova_seal.verify(bundle.capsule_id, str(capsule_dir / ".seal"))
         assert "signature_ok=True" in str(result)
-        assert "timestamp_ok=True" in str(result)
+        assert "timestamp_ok=None" in str(result)  # ADR-0301: absent, not True
         assert "log_integrity_ok=True" in str(result)
 
     def test_verify_missing_dsse_fails(self, nova_seal, tmp_path):
@@ -249,7 +249,7 @@ class TestVerifyEdgeCases:
         )
 
     def test_tsr_present_empty_ok(self, nova_seal, tmp_path):
-        """Empty TSR bytes (TSA skipped) → timestamp_ok=True."""
+        """Empty TSR bytes (TSA skipped) → timestamp_ok=None (absent, ADR-0301)."""
         manifest = {"run_id": "tsr-empty"}
         bundle = nova_seal.seal(manifest)
         capsule_dir = tmp_path / "cap-tsr-empty"
@@ -262,7 +262,8 @@ class TestVerifyEdgeCases:
             json.dumps(bundle.log_entry, indent=2), encoding="utf-8"
         )
         result = nova_seal.verify(bundle.capsule_id, str(seal_dir))
-        assert result.timestamp_ok is True
+        assert result.timestamp_ok is None
+        assert result.valid is True  # absence does not invalidate (opt-in TSA)
 
     def test_tsr_present_with_valid_bytes(self, signing_materials, tmp_path):
         """A TSA-signed token over SHA256(dsse_bytes) → timestamp_ok=True.

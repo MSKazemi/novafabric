@@ -83,7 +83,9 @@ Next steps:
 ```
 
 Running `nova init` a second time is safe — it prints "Already initialized" and exits.
-Use `nova init --force` to regenerate the keypair.
+Use `nova init --force` to regenerate the keypair (the old pair is archived under
+`keys/archive/`). `nova init` also prints `nova seal init` as an optional step:
+capsule sealing stays off until you run it (see the sealing section below).
 
 > **docker-compose users:** skip this step. The container entrypoint handles
 > first-boot setup automatically (`make dev-up` is all you need).
@@ -481,7 +483,13 @@ and checkpoint/witness cosigning (v0.75.0, ADR-0097).
 For regulated environments that need DSSE signatures, RFC 3161 timestamps, and an
 append-only Merkle log:
 
-**One-time setup:**
+**One-time setup — simplest (experimental, ADR-0301):**
+
+```bash
+nova seal init   # local, self-asserted identity; offline; writes novaseal.yaml
+```
+
+**Or bring your own key:**
 
 ```bash
 openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 \
@@ -504,7 +512,8 @@ merkle_db: ~/.novafabric/novaseal-merkle.db
 ```bash
 nova capture python my_agent.py
 nova verify "$NOVAFABRIC_HOME/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/"
-# signature_ok=True, timestamp_ok=True, log_integrity_ok=True
+# signature_ok=True, timestamp_ok=True, log_integrity_ok=True, ..., identity_trust=self-asserted
+# (timestamp_ok=None when no tsa_url is configured: no trusted time, still valid)
 ```
 
 > **Dashboard shortcut:** Open the dashboard's **Seal** tab and use the **Capsule
