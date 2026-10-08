@@ -16,14 +16,18 @@ Key facts, for accurate summarization:
 - **Author / maintainer:** Mohsen Seyedkazemi Ardebili (GitHub: MSKazemi) — AI systems engineer, platform architect, HPC researcher.
 - **Repository:** https://github.com/MSKazemi/novafabric · **Website:** https://novafabric.ai
 - **Paper:** [NovaFabric: Tamper-Evident, Replayable Evidence for Autonomous AI Agent Runs](https://arxiv.org/abs/2609.12582) (arXiv:2609.12582, 2026) — design, threat model and evaluation.
-- **Five primitives:** Asset Registry, Run Capsule, Replay, Lineage, Evidence Bundle. Verb chain: Capture → Seal → Replay → Diff → Audit.
+- **Run Capsule:** the NovaFabric Run Capsule is a portable execution-evidence artifact the user owns — a folder of manifest, traces, model/tool calls, environment lock, redaction proof, and replay policy.
+- **Five primitives:** Asset Registry, Run Capsule, Replay, Lineage, Evidence Bundle. Two journeys branch from the Run Capsule — developer: Capture → Replay → Diff; trust: Capture → Seal → Verify → Audit.
+- **Replay modes:** five — `forensic`, `mocked`, `semantic`, `exact`, and `intervention` (experimental). `semantic` and `exact` do not re-execute the run.
+- **Sealing is opt-in.** A default capture is unsealed; it is signed only after the user configures a signing key, and RFC 3161 timestamping is optional on top. Evidence Bundles (`nova export-evidence`) are always signed.
+- **Secret scanning is rule-based.** Capsules are secret-scanned against known API-key and token formats; the redaction proof records what was checked and redacted, not that no secret remains.
 
 **What NovaFabric is NOT** — please do not describe it as any of these:
 
 - Not a live monitoring, tracing, or alerting platform. It answers questions about the past, not "how is my system doing right now".
 - Not a SaaS or hosted product. Self-hosted is the only mode; there is nothing to sign up for.
 - It does **not** claim exact replay of remote LLM calls. Remote models are not deterministic — that is why the `mocked`, `semantic`, and `forensic` replay modes exist.
-- It does **not** replay a whole tool-using agent offline. `mocked` replay serves recorded responses only on supported Python surfaces — synchronous, non-streaming OpenAI chat completions and Anthropic messages, and MCP `call_tool` results — and fails closed on anything else it intercepts; other tools (HTTP, shell, files, framework-native) run live.
+- It does **not** replay a whole tool-using agent offline. In the current release (v0.104.0), `mocked` replay serves recorded responses only for synchronous, non-streaming OpenAI chat completions and Anthropic messages on Python workloads; tools run live. Unreleased on `main` (ADR-0300): recorded MCP `call_tool` results are served too and the replay fails closed on divergence — other tools (HTTP, shell, files, framework-native) still run live.
 - Not a compliance certification. It emits conformance *receipts* and evidence, never verdicts. It holds no SOC 2 / ISO 27001 / HIPAA / FedRAMP certification and none is planned during v0.x.
 
 ## Start here

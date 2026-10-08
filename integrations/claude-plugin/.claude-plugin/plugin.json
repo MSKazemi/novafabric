@@ -1,6 +1,6 @@
 {
   "name": "novafabric",
-  "description": "Instrument AI agents with NovaFabric (replayable, signed Run Capsules) and deploy the NovaFabric dashboard to Docker or Kubernetes.",
+  "description": "Instrument AI agents with NovaFabric (replayable Run Capsules you own, sealable with your own key) and deploy the NovaFabric dashboard to Docker or Kubernetes.",
   "version": "0.1.0",
   "author": {
     "name": "NovaFabric"
@@ -12,7 +12,7 @@
     "novafabric",
     "ai",
     "agent",
-    "observability",
+    "evidence",
     "replay",
     "lineage",
     "audit",

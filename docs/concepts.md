@@ -9,8 +9,9 @@ signed evidence is produced.
 **What you will learn**
 
 - The **five primitives** NovaFabric is built on — Asset Registry, Run Capsule,
-  Replay, Lineage, and Evidence Bundle — and the strategic verb chain that
-  connects them: **Capture → Seal → Replay → Diff → Audit**.
+  Replay, Lineage, and Evidence Bundle — and the two journeys that branch from
+  the Run Capsule: **Capture → Replay → Diff** (developer) and
+  **Capture → Seal → Verify → Audit** (trust; sealing is opt-in).
 - The exact on-disk anatomy of a **Run Capsule** and why it is the source of
   truth (everything else is a rebuildable index).
 - How **zero-code-change capture** works via a `sitecustomize.py` loader and

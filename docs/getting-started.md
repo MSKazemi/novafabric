@@ -496,7 +496,9 @@ full bundle layout and the offline verification procedure.
 ### Optional: seal your captures with a local identity
 
 Run Capsules can be sealed and verified. To turn that on for this machine, run one
-command (experimental, ADR-0301):
+command (experimental, ADR-0301; **unreleased** — on `main`, not in v0.104.0, where you
+write `novaseal.yaml` by hand as described in
+[NovaSeal configuration](novaseal-configuration.md)):
 
 ```bash
 nova seal init

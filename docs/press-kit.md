@@ -44,7 +44,8 @@ Copy these verbatim. They are written to be accurate, not promotional.
 
 > NovaFabric is open-source, self-hosted replay and evidence infrastructure for
 > AI agents and agentic systems. It captures agent executions as portable Run
-> Capsules for replay, behavioral/structural diff, lineage, provenance, and audit.
+> Capsules you own, for replay, behavioral/structural diff, lineage, provenance,
+> and audit.
 
 ### Standard (≈ 90 words)
 
@@ -78,7 +79,14 @@ readers days.
   deterministic and NovaFabric does not pretend otherwise; that is what the `mocked`,
   `semantic`, and `forensic` replay modes exist for.
 - **Not an offline sandbox for tools.** `mocked` replay serves the recorded model
-  responses; tool calls still run live.
+  responses; tool calls still run live. (Unreleased on `main`: recorded MCP tool
+  results are served too; HTTP, shell, file, and framework-native tools still run
+  live.)
+- **Not signed by default.** A Run Capsule is *sealable*: it is signed once you
+  configure a key. Evidence Bundles are always signed. Please do not write "signed
+  capsules" or "every run is signed".
+- **Not proof that no secret remains.** Capsules are *secret-scanned* against known
+  key formats; write "secret-scanned", not "secret-redacted" or "secret-free".
 - **Not a compliance certification.** NovaFabric produces conformance *receipts* and
   evidence, never verdicts. See [assurance cases](assurance-cases.md).
 

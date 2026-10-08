@@ -1755,14 +1755,15 @@ primitives:
 | Primitive | Commands |
 |---|---|
 | **Run Capsule** | `nova capture`, `@agent` decorator, runners, `nova validate`, `nova scan-secrets` |
-| **Replay** | `nova replay` (forensic / semantic / exact / mocked), `nova diff` |
+| **Replay** | `nova replay` (forensic / mocked / semantic / exact; intervention experimental), `nova diff` |
 | **Lineage** | `nova lineage provenance / blast-radius / replay-chain / time-travel / import / emit-openlineage` |
 | **Evidence Bundle** | `nova redact`, `nova export-evidence` |
 | **Asset Registry** | `nova register`, `nova suggest-register`, `nova list`, `nova inspect`, `nova promote`, `nova rollback`, `nova eval`, `nova report` |
 
-The strategic verb chain across them is **Capture → Seal → Replay → Diff →
-Audit** (sealing is opt-in and `experimental` — see
-[Cryptographic sealing](#cryptographic-sealing-experimental)). Everything above
+Two journeys branch from the Run Capsule: **Capture → Replay → Diff** (developer:
+what happened, what changed?) and **Capture → Seal → Verify → Audit** (trust: can I
+preserve and verify it later?). Sealing is opt-in and `experimental` — see
+[Cryptographic sealing](#cryptographic-sealing-experimental). Everything above
 runs locally today, offline, with no accounts and no telemetry.
 
 **A good next move, depending on your goal:**

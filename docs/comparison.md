@@ -74,7 +74,7 @@ cost and token analytics, prompt management, and a team UI. It is mature, widely
 deployed, and better than NovaFabric at all of it.
 
 **Use NovaFabric if** you need to replay a run, diff two runs structurally, or hand
-an auditor a signed artifact that verifies without your infrastructure being up.
+an auditor a signed Evidence Bundle that verifies without your infrastructure being up.
 
 **Use both:** NovaFabric emits OpenTelemetry GenAI spans and OpenLineage events, so
 it can feed a Langfuse deployment while keeping portable capsules for replay and

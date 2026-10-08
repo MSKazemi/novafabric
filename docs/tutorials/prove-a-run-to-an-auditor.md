@@ -86,8 +86,9 @@ about.
 
 > **Prompts and responses are in the capsule.** For a Python workload, each captured
 > model call's request messages and response text are written to `model-calls.jsonl`
-> — on your machine, after the built-in secret scan (14 API-key and token rules; PII
-> masking is a separate opt-in). Nothing is sent anywhere. A capsule missing its
+> — on your machine, after the built-in secret scan (known API-key and token formats,
+> not every possible secret — see [what it does not catch](../faq.md#what-does-the-secret-scan-not-catch);
+> PII masking is a separate opt-in). Nothing is sent anywhere. A capsule missing its
 > `redaction-proof.json` is **invalid** and cannot be exported.
 
 ## 2. It is sealed as it is written

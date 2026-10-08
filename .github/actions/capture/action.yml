@@ -1,7 +1,7 @@
 name: "NovaFabric Capture"
 description: >-
-  Run a command and capture it as a portable, schema-valid, secret-redacted
-  NovaFabric capsule — then upload it as a build artifact you can replay and
+  Run a command and capture it as a portable, schema-valid, secret-scanned
+  NovaFabric Run Capsule — then upload it as a build artifact you can replay and
   diff months later.
 author: "NovaFabric"
 

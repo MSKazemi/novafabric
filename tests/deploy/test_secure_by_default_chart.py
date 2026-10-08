@@ -147,9 +147,13 @@ _EXCLUDED = ("docs/releases/",)
 
 def _searchable_files() -> list[Path]:
     files: list[Path] = []
-    for root in ("docs", "deploy"):
+    # integrations/ carries the Claude Code plugin's deploy skill, which still called
+    # the dashboard read-only on 2026-10-09 — outside the roots this guard scanned.
+    for root in ("docs", "deploy", "integrations"):
         for path in sorted((REPO / root).rglob("*")):
-            if not path.is_file() or path.suffix not in {".md", ".yaml", ".yml", ".sh", ".txt"}:
+            if not path.is_file() or path.suffix not in {
+                ".md", ".yaml", ".yml", ".sh", ".txt", ".json"
+            }:
                 continue
             rel = path.relative_to(REPO).as_posix()
             if any(rel.startswith(prefix) for prefix in _EXCLUDED):

@@ -1,11 +1,11 @@
 ---
 name: novafabric-deploy
-description: Use when a user wants to deploy the NovaFabric server — the read-only dashboard + REST API (`nova serve`) — to Docker or Kubernetes. Triggers — "deploy NovaFabric", "run nova serve on k8s/docker", "install the NovaFabric helm chart", "host the NovaFabric dashboard", "stand up a NovaFabric server". Server mode is experimental; front it with TLS.
+description: Use when a user wants to deploy the NovaFabric server — the experimental dashboard + REST API (`nova serve`) — to Docker or Kubernetes. Triggers — "deploy NovaFabric", "run nova serve on k8s/docker", "install the NovaFabric helm chart", "host the NovaFabric dashboard", "stand up a NovaFabric server". Server mode is experimental; front it with TLS.
 ---
 
 # Deploy NovaFabric (dashboard + REST API)
 
-Deploys `nova serve` — NovaFabric's **experimental, read-only** dashboard and REST
+Deploys `nova serve` — NovaFabric's **experimental** dashboard and REST
 API — backed by Postgres. This skill does not capture agent runs; for that use
 `novafabric-instrument`.
 
@@ -49,15 +49,17 @@ kubectl logs deploy/nova-novafabric | grep -i token
   ```
 - **Persistence** (`persistence.enabled=true`, default) so capsules + registry survive
   pod restarts.
-- **Ingress + TLS** (`ingress.enabled=true`, `ingress.tls=[...]`). `nova serve` runs
-  with `--insecure` and a printed token by default — **terminate TLS at the ingress**
+- **Ingress + TLS** (`ingress.enabled=true`, `ingress.tls=[...]`). The chart defaults
+  to `mode: server` with `serve.insecure: false`; an insecure non-loopback dashboard
+  needs an explicit acknowledgement (ADR-0230). **Terminate TLS at the ingress**
   before exposing it.
 - Pod runs **non-root** by default (uid/gid/fsGroup 1000, all capabilities dropped) —
   no privileged or host access required.
 
 ## Honest limitations (state these)
-- `nova serve` is **experimental and read-only** (ADR-0027) — a dashboard over local
-  capsules, not a control plane. No mutation by default.
+- `nova serve` is **experimental** (ADR-0027) — a dashboard over local capsules, not a
+  control plane. It is **not** read-only: it exposes write endpoints such as run
+  deletion, PII erasure and role management, authorized by scope (ADR-0228).
 - The image's entrypoint applies schema migrations on start (stops at `v001`).
 - The GHCR image and chart must be **publicly visible** for anonymous pulls; if a pull
   returns 401/403, the package owner must set the GHCR package visibility to public.

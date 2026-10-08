@@ -9,8 +9,8 @@
 - The one problem NovaFabric exists to solve: AI and agent runs are non-reproducible
   and leave no durable evidence.
 - The five primitives — **Asset Registry, Run Capsule, Replay, Lineage, Evidence
-  Bundle** — and the verb chain that connects them: **Capture → Seal → Replay → Diff
-  → Audit**.
+  Bundle** — and the two journeys that branch from the Run Capsule: **Capture →
+  Replay → Diff** (developer) and **Capture → Seal → Verify → Audit** (trust).
 - Five concrete things you can do with the `nova` CLI that you could not do before,
   each with a runnable example.
 - How the pieces fit together, how to capture without changing your agent code, and
@@ -64,8 +64,9 @@ schema-valid, secret-scanned record of what capture observed, written on both su
 | **Evidence Bundle** | A signed, self-contained ZIP an auditor can verify offline with only `sha256sum` + an ed25519 verifier | v0.4 |
 
 Cryptographic sealing is part of the Evidence Bundle / trust layer, not a sixth
-primitive. The strategic verb chain across all five is **Capture → Seal → Replay →
-Diff → Audit**.
+primitive, and sealing is opt-in. Two journeys branch from the Run Capsule:
+**Capture → Replay → Diff** (developer: what happened, what changed?) and
+**Capture → Seal → Verify → Audit** (trust: can I preserve and verify it later?).
 
 ---
 

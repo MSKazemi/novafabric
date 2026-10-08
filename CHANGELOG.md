@@ -247,6 +247,20 @@ longer forwards the submitting shell's environment (ADR-0270).
   `--help`. A new guard, `tests/docs/test_doc_commands_resolve.py`, resolves every sub-command
   and flag in `README.md`, `llms.txt` and `docs/` (release notes excepted) against the real
   command tree; a planned or non-existent command may be named only where the prose says so.
+- **Public descriptions no longer overstate what a capsule is.** `CITATION.cff`, `.zenodo.json`,
+  the GitHub Action and the Claude Code plugin still said "secret-redacted" or "signed" Run
+  Capsules and "four replay modes"; the README listed "4 modes" in its comparison table and
+  called `redaction-proof.json` "proof no secrets leaked". They now say *secret-scanned* (known
+  key formats; the FAQ lists what is not detected), *sealable* (capture seals only once a
+  signing key is configured), and five replay modes with `intervention` experimental. The
+  README states the rule count (18 on `main`, 14 in v0.104.0) and labels MCP tool-result
+  serving and `nova seal init` as unreleased. Developer and trust journeys (Capture → Replay →
+  Diff; Capture → Seal → Verify → Audit) replace the single verb chain. The plugin's deploy
+  skill no longer calls `nova serve` read-only or `--insecure` by default, and points to the
+  real capsule directory. PyPI keyword `observability` replaced by `audit` to mirror
+  `CITATION.cff`. New guard `tests/docs/test_public_claims_match_the_code.py` reads the rule
+  count and the replay modes from the code; the ADR-0230 read-only guard now scans
+  `integrations/` too.
 
 ## [0.104.0] - 2026-10-08
 

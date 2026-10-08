@@ -7,8 +7,8 @@ It bundles two skills:
 
 | Skill | What it does | Say something like |
 |---|---|---|
-| `novafabric-instrument` | Add NovaFabric capture to your Python agent: record runs as signed, replayable Run Capsules, then validate/verify them. | *"instrument my agent with NovaFabric"*, *"capture my agent runs"*, *"make my agent auditable"* |
-| `novafabric-deploy` | Deploy `nova serve` (the read-only dashboard + REST API) to Docker or Kubernetes via the published image and Helm chart. | *"deploy NovaFabric"*, *"install the NovaFabric helm chart"*, *"host the dashboard on k8s"* |
+| `novafabric-instrument` | Add NovaFabric capture to your Python agent: record runs as replayable Run Capsules you own, then validate them (and verify them once sealing is configured). | *"instrument my agent with NovaFabric"*, *"capture my agent runs"*, *"make my agent auditable"* |
+| `novafabric-deploy` | Deploy `nova serve` (the experimental dashboard + REST API) to Docker or Kubernetes via the published image and Helm chart. | *"deploy NovaFabric"*, *"install the NovaFabric helm chart"*, *"host the dashboard on k8s"* |
 
 ## Install
 
@@ -39,7 +39,8 @@ Claude Code through it. Examples:
 - **"Deploy NovaFabric for production with my own Postgres and TLS."**
   Claude adds `--set postgres.enabled=false --set externalDatabase.host=… --set ingress.enabled=true …`
   and reminds you to terminate TLS at the ingress (`nova serve` is experimental and
-  serves over HTTP with a printed token by default).
+  serves plain HTTP behind a bearer token; the chart refuses an insecure non-loopback
+  dashboard unless you acknowledge it, ADR-0230).
 
 - **"Run NovaFabric locally with Docker to try it."**
   Claude uses the `ghcr.io/mskazemi/novafabric` image (or the repo's
@@ -54,18 +55,21 @@ Claude Code through it. Examples:
 
 - **"Add NovaFabric to this agent."** Claude installs `novafabric`, runs `nova init`,
   captures your entrypoint with `nova capture python <entrypoint>`, then
-  `nova validate` + `nova verify` the resulting capsule — no changes to your agent's
+  `nova validate`s the resulting capsule (and `nova verify`s it if you configured sealing) — no changes to your agent's
   code required. NovaFabric is self-hosted; no server is needed for capture.
 
 ## What is NovaFabric?
 
-Open-source (Apache-2.0) replayable AI infrastructure: capture every agent/LLM run as
-a signed, verifiable Run Capsule, then replay, diff, prove lineage, and gate promotion
-on policy. See the [main repository](https://github.com/MSKazemi/novafabric) and
+Open-source (Apache-2.0), self-hosted replay and evidence infrastructure for AI agents:
+capture an agent/LLM run as a portable Run Capsule you own (sealable with your own key),
+then replay, diff, trace lineage, and gate promotion on policy. See the [main repository](https://github.com/MSKazemi/novafabric) and
 [`docs/`](https://github.com/MSKazemi/novafabric/tree/main/docs).
 
 ## Honest status
 
-`nova serve` (the deployed dashboard) is **experimental and read-only**. Capture is
-**Python-only** and **self-hosted** (no server needed for capture). Both skills state these limits inline so you
+`nova serve` (the deployed dashboard) is **experimental**, and it has write endpoints
+(run deletion, PII erasure, role management), so put it behind TLS and its token.
+Automatic model-call capture is for **Python** workloads (`nova api-proxy` covers other
+clients), capture is **self-hosted** (no server needed), and a capture is **unsealed**
+until you configure a signing key. Both skills state these limits inline so you
 deploy and instrument with eyes open.

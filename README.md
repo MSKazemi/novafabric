@@ -120,13 +120,18 @@ unifies them into a developer-friendly **replay fabric** for complete AI systems
 NovaFabric's unit of value is not a trace row in a hosted database — it is a
 **portable, replayable capsule you own — sealable with your own key**: a folder on your own filesystem you
 can `tar`, archive, share, and read air-gapped, with no running server. The product
-thesis is **replayable AI infrastructure**, and the strategic verb chain across the
-primitives is **Capture → Seal → Replay → Diff → Audit**.
+thesis is **replayable AI infrastructure**. Two journeys branch from the Run Capsule:
+
+- **Developer:** Capture → Replay → Diff — *what happened, and what changed?*
+- **Trust:** Capture → Seal → Verify → Audit — *can I preserve and verify this later?*
+
+Sealing is opt-in: a capsule is sealed only once you configure a signing key.
 
 The analogy: observability is a *flight recorder* — it tells you what happened.
-NovaFabric keeps the recording as evidence you own, and can re-fly the route against
-the recorded model responses and recorded MCP tool results on supported Python API
-paths (other tools still run live — see [replay modes](docs/architecture/replay-modes.md#support-matrix)).
+NovaFabric keeps the recording as evidence you own. Mocked replay re-runs a Python
+workload against the recorded model responses on supported API paths; tools still run
+live (on `main`, unreleased: recorded MCP tool results are served too — see
+[replay modes](docs/architecture/replay-modes.md#support-matrix)).
 
 ---
 
@@ -189,7 +194,7 @@ This produces a ULID-named capsule directory:
   model-calls.jsonl     ← LLM API calls (OTel GenAI semconv)
   tool-calls.jsonl      ← tool invocations
   env.lock              ← full environment snapshot
-  redaction-proof.json  ← record of the secret scan and its redactions
+  redaction-proof.json  ← record of what the secret scan checked and redacted
   replay.yaml           ← replay policy
   inputs/
   outputs/
@@ -209,7 +214,7 @@ nova validate ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/
 ```
 
 A capsule that lacks its `redaction-proof.json` is **invalid** and cannot be exported —
-verifiable redaction is a precondition for evidence, not an afterthought.
+a recorded secret scan is a precondition for evidence, not an afterthought.
 
 ### 3. Replay a capsule
 
@@ -219,8 +224,9 @@ Replay re-executes or inspects a capsule. A replay is itself a new capsule you c
 # Forensic: read-only inspection, no network, no subprocess — for audit / post-incident
 nova replay ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --mode forensic
 
-# Mocked: re-run the command; recorded sync OpenAI/Anthropic chat replies and recorded
-# MCP tool results are served from the capsule, other tools run live; fails on divergence
+# Mocked: re-run the command; recorded sync OpenAI/Anthropic chat replies are served
+# from the capsule and tools run live (unreleased on main: MCP tool results are served
+# too, and divergence fails the replay)
 nova replay ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --mode mocked
 
 # Dry-run: see what would be mocked before committing
@@ -325,7 +331,7 @@ Re-execute or inspect a capsule in **five explicit, falsifiable modes**:
 | Mode | What it does | Use for |
 |---|---|---|
 | `forensic` | Read-only inspection; no subprocess, no network | Audit, post-incident review |
-| `mocked` | Re-spawns the command (Python workloads). Serves recorded replies for sync, non-streaming OpenAI `chat.completions` / Anthropic `messages` calls and recorded MCP `call_tool` results; **other tools run live**. Fails closed: an extra, unmatched or unsupported call (async, streaming, Responses API) or an unconsumed recording fails the replay (`--permissive` only reports it). See the [support matrix](docs/architecture/replay-modes.md#support-matrix) | CI, regression |
+| `mocked` | Re-spawns the command (Python workloads). Serves recorded replies for sync, non-streaming OpenAI `chat.completions` / Anthropic `messages` calls; **tools run live**. Unreleased on `main` (ADR-0300): recorded MCP `call_tool` results are served too (other tools still run live), and the replay fails closed on an extra, unmatched or unsupported call (async, streaming, Responses API) or an unconsumed recording (`--permissive` only reports it). See the [support matrix](docs/architecture/replay-modes.md#support-matrix) | CI, regression |
 | `semantic` | **Does not re-execute.** Scores how similar the capsule's *recorded* model responses are to each other (mean pairwise text similarity, 0.0–1.0); no live model is called | Consistency check of recorded responses |
 | `exact` | **Does not re-execute.** Eligibility check for byte-exact replay (`exact_eligible` + reasons): deterministic env.lock, per-call seed, no tool-schema drift | Local / on-prem / compliance |
 | `intervention` *(experimental)* | Replays under mocked semantics after substituting one captured model/tool event | Counterfactual root-cause analysis |
@@ -400,12 +406,20 @@ Both proxies auto-allocate a capsule directory if `--capsule-dir` is omitted.
 
 Before the capsule is finalized, secret scanning runs over the event streams, the
 manifest (`capsule.yaml`, including the recorded command line), `env.lock`, and every
-file under `inputs/` and `outputs/` (14 API-key and token rules; PII masking is a
+file under `inputs/` and `outputs/` (18 API-key and token rules in rule pack
+`gitleaks-core-v0` 0.7.0 on `main`, unreleased — v0.104.0 ships 14; PII masking is a
 separate opt-in). Detected values in text are redacted in place
 (`[REDACTED:rule-id]`); a binary file that contains a key is dropped from the capsule,
 and a file over 64 MiB is recorded as skipped rather than read. A hash-chained proof
 record is written to `redaction-proof.json`. A capsule without that proof is invalid
 to `nova validate` and cannot be exported.
+
+The scanner matches **known key formats**, so the capsule is *secret-scanned*, not
+guaranteed secret-free: passwords, PEM private keys, JWTs, connection strings, and
+credentials of providers without a rule are not detected, nor is an AWS secret access
+key with no key name beside it. The proof records what was checked and redacted; it
+is not proof that no secret remains. Test it with a planted value before you rely on
+it (see the [FAQ](docs/faq.md#what-does-the-secret-scan-not-catch)).
 
 ### What is captured
 
@@ -429,8 +443,9 @@ Use NovaFabric when you need to:
   debugging or incident forensics, instead of guessing what changed.
 - **Diff two runs** — see exactly which model calls, tool calls, or outputs changed
   between yesterday and today, and gate CI on behavioral change.
-- **Produce portable, signed evidence** of what a run recorded — sealed capsules and
-  signed Evidence Bundles — for governance, auditability, and compliance *support*.
+- **Produce portable evidence** of what a run recorded — signed Evidence Bundles, and
+  capsules you can seal with your own key — for governance, auditability, and
+  compliance *support*.
 - **Capture without changing application code** — SDK hooks, wire-level hooks, and
   transparent proxies capture any command, entirely in **your own environment**,
   online or air-gapped.
@@ -476,9 +491,9 @@ trace in a hosted database.
 | Deployment | Self-hosted CLI, server optional, **no account** | Self-hosted server + database (required) | Managed cloud service |
 | Primary artifact | Portable evidence **capsule** (a folder) | Trace row in a database | Trace row in a vendor cloud |
 | Where data lives | **On your machine** | Your server | Vendor cloud |
-| Replay of a run | **✓ 4 modes** (exact / mocked / semantic / forensic) | ✗ | ✗ |
+| Replay of a run | **✓ 5 modes** (forensic / mocked / semantic / exact; `intervention` experimental) | ✗ | ✗ |
 | Run-to-run structural diff | **✓** | partial (eval) | partial (eval) |
-| Cryptographic signing / provenance | **✓** in-toto DSSE + Sigstore + RFC 3161 | ✗ | ✗ |
+| Cryptographic signing / provenance | **✓** opt-in: in-toto DSSE + Sigstore + RFC 3161 | ✗ | ✗ |
 | Capture without code changes | **✓** SDK + wire-level + proxy | SDK instrumentation | SDK / proxy |
 | Works fully offline | **✓** | self-host only | ✗ |
 
@@ -603,7 +618,7 @@ you opt in:
   promotion gate (Rego), opt-in lifecycle webhooks (`nova events`), SCIM 2.0
   provisioning for server mode, and a partial SAML SSO slice (SP metadata + policy;
   live login at the time deliberately refused with 501 pending a license gate — this
-  was resolved in v0.73.0, see [below](#v062v098--all-experimental)).
+  was resolved in v0.73.0, see [below](#v062v0101--all-experimental)).
 - **Portability & interop** — a single-file offline HTML capsule viewer
   (`nova export --html`), batch capsule export with a signed completeness manifest
   (`nova export-blob`), an OTLP/HTTP GenAI-span ingest endpoint, Inspect-AI eval-log
@@ -725,8 +740,9 @@ signing; it does not vouch for content compliance or certify any regulation.
 ## FAQ
 
 **What is NovaFabric?**
-An open-source, self-hosted CLI toolkit that captures, replays, diffs, and audits AI
-agent and model runs as portable, redacted evidence capsules. It runs in your own
+Open-source, self-hosted replay and evidence infrastructure for AI agents and agentic
+systems: a CLI toolkit that captures, replays, diffs, and audits agent and model runs as
+portable, secret-scanned Run Capsules you own. It runs in your own
 infrastructure — from a laptop to a cluster — and is built around five primitives:
 Asset Registry, Run Capsule, Replay, Lineage, and Evidence Bundle.
 
@@ -798,14 +814,14 @@ See [Citation](#citation) below, or the [`CITATION.cff`](CITATION.cff) file.
 - [How NovaFabric compares](docs/comparison.md) — honest comparisons, including where it loses
 - [Benchmarks](docs/benchmarks.md) — reproducible numbers, with the commands to re-run them
 - [GitHub Action](.github/actions/capture/README.md) — capture a CI step as a capsule in three lines of YAML
-- [Architecture decisions](docs/decisions.md) — 225 recorded decisions
+- [Architecture decisions](docs/decisions.md) — every recorded architecture decision and its status
 
 ### Release notes
-- [v0.104.0 — Secrets redacted from every capsule file, run-to-run diff that pairs separate captures, and replayable tool-calling turns](docs/releases/v0.104.0.md)
+- [v0.104.0 — Every capsule file secret-scanned, run-to-run diff that pairs separate captures, and replayable tool-calling turns](docs/releases/v0.104.0.md)
 - [v0.103.0 — Governed delete, opt-in timestamping, spec-conformant seals, and a dashboard that explores capsules](docs/releases/v0.103.0.md)
 - [v0.102.1 — The release pipeline actually publishes](docs/releases/v0.102.1.md)
 - [v0.102.0 — Thirty ADR slices, a deployable dashboard, and an honesty sweep](docs/releases/v0.102.0.md)
-- [v0.101.0 — The enterprise-grade program: ten first slices (jobs, HA, tenant keys, jurisdiction, air-gap bundle, TLS, step-up auth, SLO catalog, serve contract ratchet, support policy)](docs/releases/v0.101.0.md) (latest; see [`docs/releases/`](docs/releases/) for every v0.64.0–v0.101.0 release note and [`CHANGELOG.md`](CHANGELOG.md) for the full history)
+- [v0.101.0 — The enterprise-grade program: ten first slices (jobs, HA, tenant keys, jurisdiction, air-gap bundle, TLS, step-up auth, SLO catalog, serve contract ratchet, support policy)](docs/releases/v0.101.0.md) (see [`docs/releases/`](docs/releases/) for every release note from v0.64.0 on and [`CHANGELOG.md`](CHANGELOG.md) for the full history)
 - [v0.100.0 — Release-pipeline repair: v0.98.0–v0.99.0 had never reached PyPI (a blocking SBOM step took the publish job down with it)](docs/releases/v0.100.0.md)
 - [v0.99.0 — Opened to outside contributions; API keys whose id started with a hyphen were unmanageable](docs/releases/v0.99.0.md)
 - [v0.98.0 — Enterprise readiness: `--workers`, opt-in Postgres pooling, JSON logs + `X-Request-ID`, signed artifacts, Seal-tab trust surfaces, six security fixes](docs/releases/v0.98.0.md)
@@ -868,7 +884,7 @@ the live dashboard, the at-scale lineage backends (Kuzu/Postgres/AGE/JanusGraph)
 and every cohort shipped since v0.59 (prompt lifecycle, sessions, offline analytics,
 annotation queues, retention, webhooks, the enterprise-readiness surfaces in the
 [New in v0.60 and v0.61](#new-in-v060-and-v061--all-experimental) list, and the
-[v0.62–v0.98](#v062v098--all-experimental) cohorts — cloud KMS, SAML SSO, the EU AI
+[v0.62–v0.101](#v062v0101--all-experimental) cohorts — cloud KMS, SAML SSO, the EU AI
 Act evidence-exporter cohort, verifiable-provenance primitives, no-LLM diagnosis,
 the modernized dashboard, and the enterprise-readiness surfaces; see
 [ROADMAP.md](ROADMAP.md)

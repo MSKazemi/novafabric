@@ -15,7 +15,7 @@ authors = [
 keywords = [
     "ai-agents",
     "llm",
-    "observability",
+    "audit",
     "reproducibility",
     "provenance",
     "lineage",

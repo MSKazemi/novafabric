@@ -154,12 +154,34 @@ grep the capsule for that string. Every capsule also carries a redaction proof
 recording that redaction ran. If you find a leak, that is a security issue: follow
 [SECURITY.md](../SECURITY.md) and do **not** open a public issue.
 
+### What does the secret scan not catch?
+
+The built-in scanner (rule pack `gitleaks-core-v0`, in `novafabric.capture.secrets`)
+matches **known key formats**: OpenAI, Anthropic, Hugging Face, Replicate, Langfuse,
+LangSmith, Weaviate, Qdrant, Cohere, Together, Mistral and Pinecone keys, NovaFabric's
+own API keys and webhook secrets, and — from pack 0.7.0, on `main` and not yet released
+— AWS and GitHub credentials. That is why the project says *secret-scanned*, never
+*secret-free*. It does **not** detect:
+
+- passwords, PEM private keys, JWTs, or database connection strings with credentials;
+- credentials of a provider that has no rule;
+- an AWS secret access key with no key name next to it (a bare 40-character value
+  looks like any other identifier);
+- a pre-prefix Pinecone key, which is indistinguishable from a UUID.
+
+`redaction-proof.json` records what was scanned, what matched, and what was redacted.
+It is not proof that no secret remains. For other formats, add a masker (`--masker`,
+experimental) and keep testing with planted values.
+
 ### What does "signed" actually mean here?
 
 Different things at different layers, and it is worth being precise:
 
 - **Capsules** can carry in-toto DSSE attestations, Sigstore signatures, and RFC 3161
-  trusted timestamps. See [Trust surfaces](trust-surfaces.md).
+  trusted timestamps, once you configure sealing — a default capture is **unsealed**,
+  and timestamping is optional even when sealing is on. See
+  [Trust surfaces](trust-surfaces.md).
+- **Evidence Bundles** (`nova export-evidence`) are always signed.
 - **Container images** are signed keylessly with cosign and carry SLSA build
   provenance plus an SBOM as OCI artifacts.
 - **Air-gap bundles** are one tar whose members are inventoried in a DSSE-signed

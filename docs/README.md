@@ -56,8 +56,9 @@ modes:
 
 The five primitives that everything below is built from — **Asset Registry**,
 **Run Capsule**, **Replay**, **Lineage**, and **Evidence Bundle** — are defined
-in [Concepts](concepts.md). The strategic verb chain across them is
-**Capture → Seal → Replay → Diff → Audit**.
+in [Concepts](concepts.md). Two journeys branch from the Run Capsule:
+**Capture → Replay → Diff** (developer) and **Capture → Seal → Verify → Audit**
+(trust; sealing is opt-in).
 
 ---
 

@@ -135,7 +135,7 @@ Commands grouped by primitive and task. Each entry links to its full section.
 
 | Command | Purpose |
 |---|---|
-| [`nova replay`](#nova-replay-capsule) | Re-run a capsule (forensic / mocked / semantic / exact) |
+| [`nova replay`](#nova-replay-capsule) | Inspect or re-run a capsule (forensic / mocked / semantic / exact; intervention experimental) |
 | [`nova diff`](#nova-diff-capsule-a-capsule-b) | Structurally compare two capsules; CI regression gate |
 | [`nova diagnose`](#nova-diagnose-run-id) | Attribute a failed run to its responsible step |
 | [`nova query`](#nova-query-experimental-adr-0129) | Aggregate metrics across local capsules, offline (experimental) |
