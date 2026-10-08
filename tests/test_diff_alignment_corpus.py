@@ -545,3 +545,282 @@ def test_symlinked_outputs_dir_contributes_nothing(tmp_path: Path) -> None:
     assert not any(k.startswith("outputs/") for k in _evidence_digests(b))
     assert DiffEngine().compare(a, b).output_changes == []
 
+
+# ── the corpus at REPORT level: what a user and the gate actually see ────────
+#
+# The cases above pin which records pair. These pin what the report SAYS about
+# each pair, the section-local counts, and the gate's exit code, for every corpus
+# item that concerns model calls. Alignment alone is not enough: item 7 (provider
+# changed) paired correctly while the report called the pair unchanged, because
+# the per-pair comparison looked at model + messages + response only, so a call
+# that moved from one provider to another passed --assert-no-regressions.
+
+
+def _with_resp(calls: list[dict], *texts: str) -> list[dict]:
+    for call, text in zip(calls, texts, strict=True):
+        call["gen_ai.response.choices"] = _resp(text)
+    return calls
+
+
+def _provider(calls: list[dict], system: str) -> list[dict]:
+    for call in calls:
+        call["gen_ai.system"] = system
+    return calls
+
+
+_REPORT_CORPUS: list[Any] = [
+    # A calls, B calls, (aligned, changed, added, removed), flags on the one changed pair
+    pytest.param(
+        _with_resp(_a("x", "y", "z"), "1", "2", "3"),
+        _with_resp(_b("x", "y", "z"), "1", "2", "3"),
+        (3, 0, 0, 0), None, id="01-identical-three-calls",
+    ),
+    pytest.param(
+        _with_resp(_a("x", "y", "z"), "1", "2", "3"),
+        _with_resp(_b("x", "Y", "z"), "1", "2", "3"),
+        (3, 1, 0, 0), {"request_changed": True, "response_changed": False},
+        id="02-prompt-changed-in-middle-call",
+    ),
+    pytest.param(
+        _with_resp(_a("x", "y", "z"), "1", "2", "3"),
+        _with_resp(_b("x", "y", "z"), "1", "TWO", "3"),
+        (3, 1, 0, 0), {"request_changed": False, "response_changed": True},
+        id="03-response-changed-in-middle-call",
+    ),
+    pytest.param(
+        _a("x", "y", "z"), _b("x", "w", "y", "z"), (3, 0, 1, 0), None, id="04-inserted-call",
+    ),
+    pytest.param(
+        _a("x", "y", "z"), _b("x", "z"), (2, 0, 0, 1), None, id="05-deleted-call",
+    ),
+    pytest.param(
+        _a("x"), [_mc("x", model="gpt-4o-mini", span="sb")],
+        (1, 1, 0, 0), {"request_changed": True, "provider_changed": False},
+        id="06-model-changed",
+    ),
+    pytest.param(
+        _with_resp(_a("x"), "1"), _with_resp(_provider(_b("x"), "anthropic"), "1"),
+        (1, 1, 0, 0), {"request_changed": True, "provider_changed": True},
+        id="07-provider-changed",
+    ),
+    pytest.param(
+        _with_resp(_a("x", "x", "x"), "1", "2", "3"),
+        _with_resp(_b("x", "x", "x"), "1", "2", "3"),
+        (3, 0, 0, 0), None, id="08-repeated-calls-under-one-parent-span",
+    ),
+    pytest.param(_a("x", "y"), _b("y", "x"), None, None, id="10-reordered-calls"),
+    pytest.param(_a("x"), _b("x", "y"), (1, 0, 1, 0), None, id="11-added-only"),
+    pytest.param(_a("x", "y"), _b("x"), (1, 0, 0, 1), None, id="11-removed-only"),
+]
+
+
+@pytest.mark.parametrize(("calls_a", "calls_b", "counts", "flags"), _REPORT_CORPUS)
+def test_report_level_corpus(
+    tmp_path: Path,
+    calls_a: list[dict],
+    calls_b: list[dict],
+    counts: tuple[int, int, int, int] | None,
+    flags: dict[str, bool] | None,
+) -> None:
+    import copy
+
+    a = _write_capsule(tmp_path, "run-a", copy.deepcopy(calls_a))
+    b = _write_capsule(tmp_path, "run-b", copy.deepcopy(calls_b))
+    result = _gate(a, b, "--output-format", "json")
+    assert result.exit_code == 0, result.output
+    doc = json.loads(result.output)
+    section = doc["sections"]["model_calls"]
+    got = (section["aligned"], section["changed"], section["added"], section["removed"])
+
+    if counts is None:  # reordering: some difference, whatever the exact pairing
+        assert got != (len(calls_a), 0, 0, 0)
+        expect_change = True
+    else:
+        assert got == counts
+        expect_change = counts[1:] != (0, 0, 0)
+
+    if flags is not None:
+        (changed,) = [p for p in section["pairs"] if p.get("changed")]
+        assert {k: changed[k] for k in flags} == flags
+
+    # Section-local: no tool calls in any of these, so the tool section is empty.
+    assert doc["sections"]["tool_calls"]["pairs"] == []
+    assert doc["has_changes"] is expect_change
+    gate = _gate(a, b, "--assert-no-regressions")
+    assert gate.exit_code == (1 if expect_change else 0), gate.output
+
+
+def test_09_repeated_identical_tool_calls_pair_in_order_at_report_level(
+    tmp_path: Path,
+) -> None:
+    """Corpus 9: ``ls {path: .}`` three times; only the 2nd result differs in B."""
+    a = _write_capsule(tmp_path, "run-a", _a("x"))
+    b = _write_capsule(tmp_path, "run-b", _b("x"))
+
+    def tools(*results: str, tag: str) -> str:
+        return "".join(
+            json.dumps({
+                "tool_call_id": f"{tag}{i}", "tool_name": "ls",
+                "arguments": {"path": "."}, "result": r,
+            }) + "\n"
+            for i, r in enumerate(results)
+        )
+
+    (a / "tool-calls.jsonl").write_text(tools("r0", "r1", "r2", tag="a"))
+    (b / "tool-calls.jsonl").write_text(tools("r0", "R1", "r2", tag="b"))
+    doc = json.loads(_gate(a, b, "--output-format", "json").output)
+    section = doc["sections"]["tool_calls"]
+    assert (section["aligned"], section["changed"], section["added"], section["removed"]) == (
+        3, 1, 0, 0,
+    )
+    assert [(p["tool_call_id_a"], p["tool_call_id_b"]) for p in section["pairs"]] == [
+        ("a0", "b0"), ("a1", "b1"), ("a2", "b2"),
+    ]
+    (changed,) = [p for p in section["pairs"] if p["changed"]]
+    assert changed["tool_call_id_a"] == "a1" and changed["result_changed"]
+    assert not changed["arguments_changed"]
+    assert doc["sections"]["model_calls"]["changed"] == 0
+
+
+# ── every SDK call is recorded twice (SDK hook + httpx wire hook) ─────────────
+#
+# The wire record is written first and carries no response
+# (``gen_ai.response.choices: []``). Until capture stops double-recording, the
+# diff must at least not cross-pair the two copies: wire pairs with wire, SDK
+# with SDK, and a response-only change is ONE changed pair, not a remove + add.
+
+
+def _wire_and_sdk(prompt: str, response: str, *, span: str, tag: str) -> list[dict]:
+    wire = _mc(prompt, span=span, cid=f"{tag}-wire")
+    wire["gen_ai.response.choices"] = []
+    sdk = _mc(prompt, span=span, cid=f"{tag}-sdk")
+    sdk["gen_ai.response.choices"] = _resp(response)
+    return [wire, sdk]
+
+
+@pytest.mark.parametrize(
+    ("prompt_b", "response_b", "changed_ids"),
+    [
+        pytest.param("plan", "ok", [], id="identical"),
+        pytest.param("plan", "different", [("a-sdk", "b-sdk")], id="response-only"),
+        # A prompt change is visible in both copies: two changed pairs, which is
+        # the double record inflating the count -- still paired copy-to-copy.
+        pytest.param(
+            "PLAN", "ok", [("a-wire", "b-wire"), ("a-sdk", "b-sdk")], id="prompt",
+        ),
+    ],
+)
+def test_double_recorded_sdk_call_pairs_copy_to_copy(
+    tmp_path: Path, prompt_b: str, response_b: str, changed_ids: list[tuple[str, str]]
+) -> None:
+    from novafabric.diff._engine import DiffEngine
+
+    a = _write_capsule(tmp_path, "run-a", _wire_and_sdk("plan", "ok", span="sa", tag="a"))
+    b = _write_capsule(
+        tmp_path, "run-b", _wire_and_sdk(prompt_b, response_b, span="sb", tag="b")
+    )
+    report = DiffEngine().compare(a, b)
+    assert report.added_count == 0 and report.removed_count == 0
+    assert [(p["model_call_id_a"], p["model_call_id_b"]) for p in report.model_call_pairs] == [
+        ("a-wire", "b-wire"), ("a-sdk", "b-sdk"),
+    ]
+    assert [
+        (p["model_call_id_a"], p["model_call_id_b"])
+        for p in report.model_call_pairs if p["changed"]
+    ] == changed_ids
+
+
+# ── the JSON report carries the gate's property, and stays schema-valid ──────
+
+
+def test_json_has_changes_is_the_gate_property(tmp_path: Path) -> None:
+    """``has_changes`` in the JSON is DiffReport.has_changes, not a re-derivation.
+
+    A CI step that keeps diff.json and decides later must reach the same verdict
+    as --assert-no-regressions; before, it had to re-implement the sum.
+    """
+    from novafabric.diff._engine import DiffEngine
+    from novafabric.diff._format import format_json
+
+    same_a = _write_capsule(tmp_path / "s", "run-a", _a("x"))
+    same_b = _write_capsule(tmp_path / "s", "run-b", _b("x"))
+    diff_a = _write_capsule(tmp_path / "d", "run-a", _a("x", "y"))
+    diff_b = _write_capsule(tmp_path / "d", "run-b", _b("x"))
+    verdicts = []
+    for a, b in ((same_a, same_b), (diff_a, diff_b)):
+        report = DiffEngine().compare(a, b)
+        assert report.as_dict()["has_changes"] is report.has_changes
+        assert json.loads(format_json(report))["has_changes"] is report.has_changes
+        verdicts.append(report.has_changes)
+    assert verdicts == [False, True]
+
+
+@pytest.mark.parametrize(
+    "schema_path",
+    ["src/novafabric/schemas/diff-report.schema.json", "schemas/diff-report.schema.json"],
+)
+@pytest.mark.parametrize(("calls_a", "calls_b", "counts", "flags"), _REPORT_CORPUS)
+def test_corpus_json_validates_against_the_diff_report_schemas(
+    tmp_path: Path,
+    schema_path: str,
+    calls_a: list[dict],
+    calls_b: list[dict],
+    counts: Any,
+    flags: Any,
+) -> None:
+    import copy
+
+    import jsonschema
+
+    root = Path(__file__).resolve().parents[1]
+    schema = json.loads((root / schema_path).read_text())
+    a = _write_capsule(tmp_path, "run-a", copy.deepcopy(calls_a))
+    b = _write_capsule(tmp_path, "run-b", copy.deepcopy(calls_b))
+    _nested(b, "outputs/deep/x.txt", "x")
+    doc = json.loads(_gate(a, b, "--output-format", "json").output)
+    jsonschema.Draft202012Validator(schema).validate(doc)
+
+
+# ── exit codes: 1 means "differences found", never "could not compare" ───────
+
+
+def test_unresolvable_capsule_exits_2_not_the_gate_code(tmp_path: Path) -> None:
+    """A gate reading exit 1 as "the runs differ" must not get 1 for a typo'd path."""
+    a = _write_capsule(tmp_path, "run-a", _a("x"))
+    for extra in ((), ("--assert-no-regressions",)):
+        result = _gate(a, tmp_path / "no-such-capsule", *extra)
+        assert result.exit_code == 2, result.output
+        assert "No capsule at path" in result.output
+
+
+def test_unknown_asset_ref_exits_2(monkeypatch: pytest.MonkeyPatch) -> None:
+    import novafabric.cli.diff as diff_cli
+    from novafabric.cli.main import app
+    from novafabric.registry.service import AssetNotFoundError
+
+    def _missing(name: str, version: str) -> dict:
+        raise AssetNotFoundError(f"{name}@{version} not found")
+
+    monkeypatch.setattr(diff_cli, "get_asset", _missing)
+    result = CliRunner().invoke(app, ["diff", "ghost@1", "ghost@2", "--assert-no-regressions"])
+    assert result.exit_code == 2, result.output
+
+
+def test_help_documents_the_exit_codes() -> None:
+    from _help_assert import strip_ansi
+
+    from novafabric.cli.main import app
+
+    result = CliRunner().invoke(app, ["diff", "--help"], terminal_width=200)
+    assert result.exit_code == 0
+    # Typer forces colour when GITHUB_ACTIONS or FORCE_COLOR is set, and Rich then
+    # colours option names mid-sentence; compare the text a reader sees.
+    out = " ".join(strip_ansi(result.output).split())
+    for needle in (
+        "Exit codes",
+        "1 --assert-no-regressions found a difference",
+        "2 the comparison could not be made",
+        "3 --significance",
+    ):
+        assert needle in out, needle
+

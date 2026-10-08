@@ -123,6 +123,15 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Changed
 
+- **`nova diff` exit `1` now means only "found a difference" (behaviour change, ADR-0303).**
+  A capsule ref that does not resolve, or a `name@version` asset ref that is not in the
+  registry, exited `1` — the same code as `--assert-no-regressions` finding a difference — so a
+  CI step could not tell "the runs differ" from "there was nothing to compare". Both now exit
+  `2`, alongside the existing "cannot compare" cases (`--environment` mismatch, an unbuildable
+  graph under `--assert-same-shape`). A gate that tests for non-zero is unaffected. The
+  `json` report gains a top-level `has_changes` (the gate's own verdict) and each model-call
+  pair gains `provider_changed` (additive). `nova diff --help` and the CLI reference now list
+  every exit code (#11).
 - **Mocked replay fails closed (behaviour change, ADR-0300).** A replay now ends `failure`
   (`error.type: ReplayDivergence`, exit 1) when the replayed program makes more model calls
   than were recorded, calls a different provider or in a different order, calls an
@@ -245,6 +254,14 @@ longer forwards the submitting shell's environment (ADR-0270).
   longer calls the redaction proof "a proof that no API keys or secrets leaked". The proof
   records what the scanner did; it cannot prove that no undetected secret remains.
 
+- **`nova diff` reports a model call that moved to another provider as changed.** Calls paired
+  correctly, but a pair was compared on request model, messages and response only, so the same
+  model name and prompt sent to a different provider (`gen_ai.system`) was reported unchanged
+  and passed `--assert-no-regressions`. The provider now counts as part of the request
+  (`request_changed`, plus the new `provider_changed` flag). The acceptance corpus of #11 is now
+  also pinned at report level — section counts, per-pair flags, JSON schema validity and the
+  gate's exit code — including the double-recorded SDK call, whose wire and SDK copies pair
+  copy-to-copy (#11).
 - **`nova diff` compares nested output files.** Only the files directly under `outputs/` were
   compared, so a change to `outputs/reports/summary.json` was invisible to the diff and to
   `--assert-no-regressions`, although the sealed evidence digests hash it. Every regular file

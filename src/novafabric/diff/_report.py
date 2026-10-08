@@ -54,6 +54,9 @@ class DiffReport:
                 "added": self.added_count,
                 "removed": self.removed_count,
             },
+            # The gate's own verdict (ADR-0303): a consumer of the JSON reads the
+            # property --assert-no-regressions uses instead of re-deriving it.
+            "has_changes": self.has_changes,
             "sections": {
                 "environment": {"changes": self.env_changes},
                 "model_calls": {

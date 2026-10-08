@@ -444,9 +444,10 @@ if report.has_changes:
 
 > `has_changes` is the one definition of "any difference". The
 > `nova diff --assert-no-regressions` CLI exits `1` on it, and the text and
-> GitHub-annotation formatters read it too — reach for the CLI directly in
-> shell-based pipelines. Gating on `changed_count` alone misses a call that
-> was added or removed.
+> GitHub-annotation formatters read it too, and `as_dict()` carries it as a
+> top-level `has_changes` key — reach for the CLI directly in shell-based
+> pipelines. Gating on `changed_count` alone misses a call that was added or
+> removed.
 
 ### `DiffReport`
 

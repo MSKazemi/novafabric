@@ -1220,7 +1220,7 @@ $ echo $?
 
 Options:
 - `--output-format {text,json,github-annotation}` — output format (default: `text`). Tab-completion available via `nova --install-completion`.
-- `--assert-no-regressions` — exit 1 if any structural changes detected; useful as CI gate
+- `--assert-no-regressions` — exit 1 if the comparison finds any difference (a changed, added or removed entry in any section); the CI gate. See the exit codes below
 - `--group-by variant` — **experimental** ([ADR-0116](./decisions.md)). Group the two capsules by their **recorded** A/B-variant attribution — the `(experiment_id, variant_id)` of the optional `variant` block — and label the diff as cross-arm (different groups) or within-arm (same group). A capsule without a `variant` block groups under `(no variant)`. Read-only over recorded facts: this never assigns variants and never mutates a capsule. Capsule paths only; `text`/`json` output only (`json` wraps the report in `{variant_groups, cross_arm, diff}`).
 - `--group-by environment` — **experimental** ([ADR-0126](./decisions.md) P2). Group the two capsules by their **recorded** `deployment_environment` (the typed top-level field set by `nova capture --environment` / `NOVAFABRIC_ENVIRONMENT`) and label the diff cross-environment or within-environment. A capsule with no value — or one violating the `^[A-Za-z0-9._:-]{1,64}$` rule — groups under `(no environment)`; nothing is inferred. `json` wraps the report in `{environment_groups, cross_environment, diff}`. Same restrictions as `--group-by variant`.
 - `--environment ENV` — **experimental** ([ADR-0126](./decisions.md) P2). Only compare capsules that both recorded `deployment_environment == ENV` (verbatim, case-sensitive). Fails closed: **exit 2** naming each capsule that recorded another value or none. An `ENV` outside the value rule is a usage error. Capsule paths only; not combinable with `--media`/`--significance`. `json` output adds `environment_filter`. To *list* capsules by environment use `nova query --where 'deployment_environment = production'` — `nova list` lists registry assets, which carry no deployment environment.
@@ -1236,13 +1236,28 @@ Options:
   the diff. Capsule diffs only; not combinable with `--media`/`--significance`.
 - `--assert-same-shape` — **experimental**. Implies `--graph-shape`; CI gate on the shape.
 
-Exit codes (capsule diff): `0` success; `1` a capsule ref did not resolve, `--assert-no-regressions`
-found changes (checked first), or `--assert-same-shape` found a shape change; `2` usage error, or
-`--assert-same-shape` could not build a graph for either capsule (fail closed). Without
-`--graph-shape`/`--assert-same-shape` the output is byte-identical to earlier releases.
+Exit codes (capsule and `name@version` asset diffs, [ADR-0303](./decisions.md)):
+
+| Code | Meaning |
+|---|---|
+| `0` | The comparison was made and found no difference — or found one, but no gate flag was given (the diff only reports) |
+| `1` | The comparison was made and found a difference: `--assert-no-regressions` saw a changed, added or removed entry in any section (checked first), or `--assert-same-shape` saw a shape change. `1` means nothing else |
+| `2` | The comparison could not be made: a capsule ref that does not resolve, an asset ref not in the registry, a usage error, `--environment` excluded a capsule, or `--assert-same-shape` could not build a graph for either capsule (fail closed) |
+| `3` | `--significance` only: a significant regression (SPRT `accept_h1`) |
+
+A gate that only needs "pass or fail" can test for non-zero; one that must tell "the runs
+differ" from "there was nothing to compare" tests for `1` and `2`. Before ADR-0303 an
+unresolvable capsule ref or unknown asset ref exited `1`, the same code as a difference. The
+same table is printed by `nova diff --help`. `--graph-shape`/`--assert-same-shape` only append
+a block; without them, no graph-shape output appears.
+
+The `json` report carries the gate's verdict as a top-level boolean `has_changes`, so a CI step
+that keeps `diff.json` reaches the same answer as `--assert-no-regressions` without re-deriving
+it from the counts. Each model-call pair also carries `provider_changed`.
 
 Diff sections: environment (Python, OS), model calls (a `parent_span_id` unique on both
-sides first, then sequence position anchored on identical requests), tool calls (exact
+sides first, then sequence position anchored on identical requests; a pair is changed when the
+provider, request model, messages or response choices differ), tool calls (exact
 `tool_name` + argument hash, each call used once, then position with the same tool name),
 and output files — every regular file under `outputs/`, recursively, keyed by its
 capsule-relative path (`outputs/reports/summary.json`) and compared by SHA-256. Symlinks under

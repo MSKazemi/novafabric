@@ -130,10 +130,12 @@ def test_annotation_escapes_a_newline_in_an_output_path(tmp_path: Path) -> None:
     ]
 
 
-def test_invalid_capsule_path_exits_1(tmp_path: Path) -> None:
+def test_invalid_capsule_path_exits_2(tmp_path: Path) -> None:
+    # ADR-0303: 1 is reserved for "the comparison found a difference"; a ref that
+    # does not resolve means no comparison was made.
     cap_a = _make_capsule(tmp_path, "a", "RUNA")
     result = runner.invoke(app, ["diff", str(cap_a), str(tmp_path / "no-such-dir")])
-    assert result.exit_code == 1
+    assert result.exit_code == 2
 
 
 def test_asset_diff_routing_preserved(tmp_path: Path) -> None:

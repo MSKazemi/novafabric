@@ -496,8 +496,8 @@ accountability claim checkable.
 - **Model call alignment** — a `parent_span_id` unique on both sides pairs
   exactly; the remaining calls pair by sequence position, anchored on
   identical requests so an inserted or deleted call does not shift the rest.
-  Aligned pairs are compared for the request (model and messages) and the
-  response choices.
+  Aligned pairs are compared for the request (provider, model and messages)
+  and the response choices.
 - **Tool call alignment** — calls are matched by `tool_name` + argument hash,
   each call used once, then by position among calls with the same tool name.
 - **Environment diff** — Python version, OS, architecture, interpreter path.
@@ -508,7 +508,8 @@ accountability claim checkable.
 property, `has_changes`, that is true when any of them is non-zero. The
 `--assert-no-regressions` flag exits 1 on `has_changes`, and the text and
 GitHub-annotation output read the same property, making it suitable as a CI
-gate:
+gate. Exit 1 means only that; a comparison that could not be made (for
+example, a capsule path that does not exist) exits 2:
 
 ```bash
 # Fail the pipeline if today's run diverges from a known-good baseline

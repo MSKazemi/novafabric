@@ -130,7 +130,12 @@ class DiffEngine:
                     "model_call_id_a": a.get("model_call_id"),
                 })
             elif a is not None and b is not None:
-                # Compare request (messages) and response (choices)
+                # Compare request (provider, model, messages) and response (choices).
+                # The provider is part of the request: the alignment's request key
+                # (_align._request_key) includes it, and a call that moved to another
+                # provider under the same model name and prompt was reported as
+                # unchanged, so --assert-no-regressions passed on it.
+                provider_changed = a.get("gen_ai.system") != b.get("gen_ai.system")
                 req_a = {
                     "model": a.get("gen_ai.request.model"),
                     "messages": a.get("gen_ai.request.messages"),
@@ -141,7 +146,7 @@ class DiffEngine:
                 }
                 resp_a = a.get("gen_ai.response.choices", [])
                 resp_b = b.get("gen_ai.response.choices", [])
-                req_changed = req_a != req_b
+                req_changed = req_a != req_b or provider_changed
                 resp_changed = resp_a != resp_b
                 changed = req_changed or resp_changed
                 report.model_call_pairs.append({
@@ -151,6 +156,7 @@ class DiffEngine:
                     "model_call_id_b": b.get("model_call_id"),
                     "request_changed": req_changed,
                     "response_changed": resp_changed,
+                    "provider_changed": provider_changed,
                 })
 
     def _diff_tool_calls(

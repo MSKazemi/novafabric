@@ -135,7 +135,7 @@ capsule paths or run IDs and compares:
 | Facet | How it matches | "Changed" means |
 |---|---|---|
 | Environment | Fixed keys from `env.lock`: Python version and interpreter, OS, architecture | Value differs |
-| Model calls | `diff/_align.py`: a `parent_span_id` unique on both sides pairs exactly; the rest pair by sequence position, anchored on identical requests so an inserted or deleted call does not shift later pairs. Unpaired calls count as added or removed | Request model or messages differ, or the response choices differ |
+| Model calls | `diff/_align.py`: a `parent_span_id` unique on both sides pairs exactly; the rest pair by sequence position, anchored on identical requests so an inserted or deleted call does not shift later pairs. Unpaired calls count as added or removed | Provider (`gen_ai.system`), request model or messages differ, or the response choices differ |
 | Tool calls | Exact `(tool_name, arg_hash)` match, each call used once, then position among calls with the same tool name | `result` or `arguments` differ |
 | Outputs | Every regular file under `outputs/`, recursively, by capsule-relative path; symlinks skipped and never followed (the evidence-digest rule) | SHA-256 differs, or the path exists on one side only |
 
@@ -144,8 +144,17 @@ has any difference is one property, `DiffReport.has_changes` (a changed, added
 or removed entry in any section). `--assert-no-regressions` exits 1 on it,
 which turns the command into a CI gate; the `text` and `github-annotation`
 formatters read the same property, so an added- or removed-only diff is an
-`error` annotation, never a `notice`. `nova diff` also accepts two
-`name@version` asset references and diffs their specs.
+`error` annotation, never a `notice`, and the `json` report carries it as a
+top-level `has_changes`. Exit `1` means only "the comparison found a
+difference"; a comparison that could not be made (a capsule ref that does not
+resolve, an unknown asset ref, a usage error) exits `2` (ADR-0303). `nova diff`
+also accepts two `name@version` asset references and diffs their specs.
+
+Known limitation: an OpenAI or Anthropic SDK call is currently recorded twice
+in `model-calls.jsonl` (the SDK hook, plus the `httpx` wire hook with no
+response). Both captures double alike, so the copies pair wire-to-wire and
+SDK-to-SDK, but the model-call counts include both copies: a changed prompt
+counts as two changed pairs.
 
 ## 5 · Audit: `nova verify`, `nova export-evidence`, `nova audit` (works today)
 

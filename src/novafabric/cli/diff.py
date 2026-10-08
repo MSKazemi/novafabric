@@ -28,6 +28,17 @@ class DiffOutputFormat(str, Enum):
 console = Console()
 
 
+def _plain(text: str) -> None:
+    """Print recorded values verbatim: no markup, and no Rich highlighting.
+
+    Group labels and capsule paths are recorded or user-chosen strings. With
+    colour on (FORCE_COLOR, a TTY) Rich's highlighter split them with escape
+    sequences at every bracket and digit, so ``(no variant)`` was not the text
+    the terminal received.
+    """
+    console.print(text, markup=False, highlight=False)
+
+
 def _flatten(d: dict[str, Any], prefix: str = "") -> dict[str, Any]:
     result: dict[str, Any] = {}
     for k, v in d.items():
@@ -45,9 +56,16 @@ _NO_VARIANT_GROUP = "(no variant)"
 _NO_ENVIRONMENT_GROUP = "(no environment)"
 #: Recorded dimensions ``--group-by`` can partition a capsule diff by.
 GROUP_BY_DIMENSIONS: tuple[str, ...] = ("variant", "environment")
+#: Exit code of ``--assert-no-regressions`` (and ``--assert-same-shape``) when the
+#: comparison was made and found a difference. It means nothing else (ADR-0303).
+EXIT_DIFFERENCES = 1
+#: Exit code when the comparison cannot be made: a capsule ref that does not
+#: resolve, an asset ref not in the registry, or a usage error. A CI gate must be
+#: able to tell "the runs differ" from "there was nothing to compare" (ADR-0303).
+EXIT_CANNOT_COMPARE = 2
 #: Exit code when ``--environment`` excludes a capsule: the requested comparison
 #: cannot be made, which is not the same as "changes found" (exit 1).
-EXIT_ENVIRONMENT_MISMATCH = 2
+EXIT_ENVIRONMENT_MISMATCH = EXIT_CANNOT_COMPARE
 
 
 def _recorded_environment(capsule: Path) -> str | None:
@@ -134,8 +152,9 @@ def _capsule_diff(
         try:
             resolved.append(resolve_capsule_ref(p))
         except CapsuleRefError as exc:
-            console.print(f"[red]{exc}[/red]")
-            raise typer.Exit(code=1) from exc
+            # markup=False: the message quotes the user's ref, which may contain "[".
+            console.print(str(exc), style="red", markup=False)
+            raise typer.Exit(code=EXIT_CANNOT_COMPARE) from exc
     capsule_a, capsule_b = resolved
 
     # ADR-0126 P2: --environment admits only capsules that recorded that value.
@@ -212,10 +231,7 @@ def _capsule_diff(
             typer.echo("\n".join(format_graph_shape_annotations(shape)))
     else:
         if environment is not None:
-            console.print(
-                f"Environment filter: both capsules recorded {environment} (ADR-0126)",
-                markup=False,
-            )
+            _plain(f"Environment filter: both capsules recorded {environment} (ADR-0126)")
         if groups is not None:
             group_a, group_b = groups[str(capsule_a)], groups[str(capsule_b)]
             if group_by == "environment":
@@ -224,13 +240,13 @@ def _capsule_diff(
             else:
                 title = "Variant groups (ADR-0116, recorded attribution):"
                 within, cross = "Within-arm diff", "Cross-arm diff"
-            console.print(title, markup=False)
-            console.print(f"  {group_a}: {capsule_a}", markup=False)
-            console.print(f"  {group_b}: {capsule_b}", markup=False)
+            _plain(title)
+            _plain(f"  {group_a}: {capsule_a}")
+            _plain(f"  {group_b}: {capsule_b}")
             if group_a == group_b:
-                console.print(f"{within} (both capsules in group {group_a}):", markup=False)
+                _plain(f"{within} (both capsules in group {group_a}):")
             else:
-                console.print(f"{cross}: {group_a} → {group_b}", markup=False)
+                _plain(f"{cross}: {group_a} → {group_b}")
             console.print("")
         # markup=False: output paths are workload-chosen file names, and Rich read
         # ``outputs/[bold]x.txt`` as markup and printed ``outputs/x.txt``.
@@ -242,7 +258,7 @@ def _capsule_diff(
             console.print(format_graph_shape_text(shape), markup=False, highlight=False)
 
     if assert_no_regressions and report.has_changes:
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_DIFFERENCES)
     if assert_same_shape and shape is not None and not shape.same_shape:
         # Fail closed: 1 = shapes differ; 2 = a graph could not be built, so
         # "same shape" cannot be verified.
@@ -428,6 +444,18 @@ def diff_cmd(
       # Compare the two runs' media parts by exact hash, then by pHash (NF-170)
       nova diff --media runs/run-01/ runs/run-02/
       nova diff --media --perceptual runs/run-01/ runs/run-02/ --json
+
+    \b
+    Exit codes (capsule and asset diffs):
+      0  no difference, or a difference with no gate flag (the diff only reports)
+      1  --assert-no-regressions found a difference -- a changed, added or
+         removed entry in any section -- or --assert-same-shape found a
+         shape change. 1 means nothing else.
+      2  the comparison could not be made: a capsule ref that does not resolve,
+         an asset ref not in the registry, a usage error, --environment
+         excluded a capsule, or --assert-same-shape could not build a graph
+      3  --significance found a significant regression (SPRT accept_h1)
+    --media reports and never gates: 0 whatever it finds, 2 if it cannot run.
     """
     if environment is not None:
         environment = _validate_environment_filter(environment)
@@ -510,8 +538,8 @@ def diff_cmd(
         asset_a = get_asset(name_a, version_a)
         asset_b = get_asset(name_b, version_b)
     except AssetNotFoundError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1)
+        console.print(str(exc), style="red", markup=False)
+        raise typer.Exit(code=EXIT_CANNOT_COMPARE) from exc
 
     spec_a = _flatten(json.loads(asset_a.get("spec_json", "{}")))
     spec_b = _flatten(json.loads(asset_b.get("spec_json", "{}")))
@@ -534,7 +562,7 @@ def diff_cmd(
         console.print(f"  [cyan]{k}[/cyan]: {va!r} → {vb!r}")
     # The asset path silently ignored the gate; "exits 1 on any change" holds here too.
     if assert_no_regressions:
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_DIFFERENCES)
 
 
 def _run_media_diff(
