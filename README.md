@@ -27,7 +27,7 @@ Observability helps you inspect a run. NovaFabric turns the run into a portable 
 **▶ Watch the 7-minute demo:** [*I tried to forge my AI agent's evidence — it caught me*](https://youtu.be/uQatmJIJI68) — recorded live on an Azure VM against Azure OpenAI, with the signing key held in an Azure Key Vault HSM. Capture, seal, `nova verify`, two tamper attempts caught and named, then the same run in the dashboard. English captions included. Narration is a synthetic voice generated locally with Piper (MIT); the terminal output is verbatim from the live run, re-rendered on screen for legibility.
 
 <p align="center">
-  <img src="docs/assets/demo.svg" alt="Terminal demo: nova capture records an agent run into a portable capsule, nova validate checks it, nova replay re-runs it offline with no API keys, and nova diff shows what changed between the two runs." width="700">
+  <img src="docs/assets/demo.svg" alt="Terminal demo: nova capture records an agent run into a portable capsule, nova validate checks it, nova replay reads it back in forensic mode with no network or API keys, and nova diff shows what changed between the two runs." width="700">
 </p>
 
 The same sequence as text, if you would rather copy it:

@@ -11,7 +11,7 @@ current, maps it onto named standards as *receipts*, and records challenges
 **Status: experimental** (first slices of ADR-0166 D1–D6, shipped
 2026-07-16). The honest scope note up front: ADR-0166's larger
 **continuous-assurance loop is proposed design direction, not a shipped,
-running system** — see [What remains future design](#what-remains-future-design).
+running system** — see [What remains future design](#7-what-remains-future-design).
 
 Two commands share the `assure` prefix; they are different things:
 

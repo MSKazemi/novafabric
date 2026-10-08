@@ -10,7 +10,7 @@ Related documents:
 - [NovaSeal Key Management Guide](novaseal-key-management.md) — key generation, rotation, HSM setup
 - [NovaSeal API Stability Guarantee](novaseal-stability.md) — what changes are breaking
 - [Operator Guide](operator-guide.md) — cluster and Docker deployment context
-- [CLI Reference § nova seal / nova verify](cli-reference.md#novaseal-linked-envelope-chain-maker-checker)
+- [CLI Reference § nova seal / nova verify](cli-reference.md#novaseal-linked-envelope-chain-maker-checker-v0140-adr-0059)
 
 ---
 

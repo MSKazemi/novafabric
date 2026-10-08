@@ -186,15 +186,15 @@ Commands grouped by primitive and task. Each entry links to its full section.
 | [`nova annotate`](#nova-annotate-experimental-adr-0118) | Human annotation queues — route subjects to reviewers, emit HUMAN scores |
 | [`nova score submit`](#nova-score-submit-experimental-adr-0119) | Submit an externally-computed score into a capsule's append-only scores.jsonl |
 | [`nova merkle-tree`](#nova-merkle-tree-document-experimental-adr-0172) | Render an Evidence Provenance Merkle proof tree from a sealed capsule's hashes (experimental) |
-| [`nova trust-radar`](#nova-trust-radar-verification-experimental-adr-0173) | Trust Attestation Radar over a capsule's verification output (experimental) |
+| [`nova trust-radar`](#nova-trust-radar-verification----capsule-dir-experimental-adr-0173) | Trust Attestation Radar over a capsule's verification output (experimental) |
 | [`nova trust-path`](#nova-trust-path-show--verify-experimental-adr-0168) | Show / offline-verify a transitive cross-org trust path against anchors you pin (experimental, NF-363) |
-| [`nova redaction-xray`](#nova-redaction-xray-document-experimental-adr-0174) | Redaction / secret-scan X-Ray of a capsule's protection metadata (experimental) |
+| [`nova redaction-xray`](#nova-redaction-xray-document----capsule-dir-experimental-adr-0174) | Redaction / secret-scan X-Ray of a capsule's protection metadata (experimental) |
 | [`nova assure-case`](#nova-assure-case-document-experimental-adr-0166) | Inspect an assurance-case document: validity, currency, conformance, defeaters (experimental) |
 | [`nova assure-coverage`](#nova-assure-coverage-document-experimental-adr-0166) | Structural coverage of an assurance case — counts and gaps, never a grade (experimental) |
 | [`nova passport`](#nova-passport-issue--verify-experimental-adr-0149) | Portable agent passport: issue + offline verify (experimental) |
 | [`nova embodied`](#nova-embodied-odd-show--trajectory-verify-experimental-adr-0162) | Embodied-agent evidence: ODD record (verdict always null) + perception→actuation trajectory chain verify, offline (experimental); sim2real show/verify, teleop list, timing show ([P3](#nova-embodied-sim2real-show--verify--teleop-list--timing-show-experimental-adr-0162-p3)) |
 | [`nova hitl`](#nova-hitl-thread--context--override--rationale-experimental-adr-0150) | Human-agent accountability: conversation thread, decision-context receipt re-check, overrides, surfaced rationale; [handoffs and acted-on-behalf bindings](#nova-hitl-handoff-list--acted-as-experimental-adr-0150-p3) — read-only (experimental) |
-| [`nova consent`](#nova-consent-record--withdraw--show--verify-experimental-adr-0150-p3) | ISO/IEC TS 27560-shaped consent receipts: record into a capsule, record a withdrawal, show, offline re-check — never asserts legal validity (experimental) |
+| [`nova consent`](#nova-consent-record--withdraw--show--verify--attest--verify-attestation-experimental-adr-0150-p3) | ISO/IEC TS 27560-shaped consent receipts: record into a capsule, record a withdrawal, show, offline re-check — never asserts legal validity (experimental) |
 | [`nova memstore`](#nova-memstore-access-ledger--derive--provenance-experimental-adr-0171) | Shared-store governance evidence: access ledger (`contained:false` = evidence, not enforcement), cross-run read → seeding-write back-trace, source → write → runs fan-out — offline over explicit capsules (experimental) |
 
 ### Registry, promotion, and evaluation
@@ -279,7 +279,7 @@ Status: **experimental**.
 | [`nova migrate-format`](#nova-migrate-format-experimental-adr-0165-nf-332) | Record a format-migration hop in a preservation facet; verify the chain offline (experimental) |
 | [`nova preservation`](#nova-preservation-experimental-adr-0165-nf-333334) | Record/verify crypto re-seal events and LTV timestamp-renewal chains in a preservation facet (experimental, record-only) |
 | [`nova settlement`](#nova-settlement-experimental-adr-0163-nf-315) | Walk the A2A payment-provenance chain in a settlement facet offline (experimental, record-only; moves no money) |
-| [`nova backup`](#nova-backup-create-experimental-adr-0181) / [`nova restore`](#nova-restore-set-path-experimental-adr-0181--adr-0211) | Evidence-grade backup sets: create, verify offline, restore (local + automated pg restore, experimental) |
+| [`nova backup`](#nova-backup-create-experimental-adr-0181--adr-0216) / [`nova restore`](#nova-restore-set-path-experimental-adr-0181--adr-0211) | Evidence-grade backup sets: create, verify offline, restore (local + automated pg restore, experimental) |
 | [`nova support-bundle`](#nova-support-bundle-experimental-adr-0187) | Secret-safe diagnostics tarball for support (experimental) |
 | [`nova audit-log`](#nova-audit-log-export-experimental-adr-0191) | Export local audit logs for SIEM ingestion (OCSF / CEF / native JSONL, experimental) |
 

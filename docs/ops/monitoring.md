@@ -20,7 +20,7 @@ v1.0 freeze.
 > **This is not telemetry.** Nothing here phones home. Metrics are scraped by
 > *your* Prometheus; self-tracing spans go to *your own* OTLP ingest and the
 > server refuses non-loopback trace endpoints unless you explicitly override
-> (see [Self-tracing](#self-tracing-opt-in-default-off)).
+> (see [Self-tracing](#5-self-tracing-opt-in-default-off)).
 
 ---
 
