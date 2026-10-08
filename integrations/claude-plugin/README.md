@@ -30,7 +30,7 @@ Claude Code through it. Examples:
 - **"Deploy the NovaFabric dashboard to my Kubernetes cluster."**
   Claude runs, roughly:
   ```bash
-  helm install nova oci://ghcr.io/novafabric/charts/novafabric --version <X.Y.Z>
+  helm install nova oci://ghcr.io/mskazemi/charts/novafabric --version <X.Y.Z>
   kubectl rollout status deploy/nova-novafabric
   kubectl port-forward svc/nova-novafabric 4321:4321
   # token: kubectl logs deploy/nova-novafabric | grep -i token
@@ -42,7 +42,7 @@ Claude Code through it. Examples:
   serves over HTTP with a printed token by default).
 
 - **"Run NovaFabric locally with Docker to try it."**
-  Claude uses the `ghcr.io/novafabric/novafabric` image (or the repo's
+  Claude uses the `ghcr.io/mskazemi/novafabric` image (or the repo's
   `deploy/docker/docker-compose.yml` / `make dev-up` for a Postgres + dashboard
   stack) and fetches the access token from the container logs.
 

@@ -13,7 +13,7 @@ import (
 	"go.opentelemetry.io/collector/consumer/consumertest"
 	"go.opentelemetry.io/collector/pdata/plog"
 
-	"github.com/novafabric/collector/pkg/novaseal"
+	"github.com/MSKazemi/novafabric/collector/pkg/novaseal"
 )
 
 // staticSigner is a test-only novaseal.Signer that always returns a fixed

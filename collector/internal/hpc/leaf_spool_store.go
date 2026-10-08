@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/novafabric/collector/internal/spool"
+	"github.com/MSKazemi/novafabric/collector/internal/spool"
 )
 
 // envDLQDir is the environment variable that activates the dead-letter queue

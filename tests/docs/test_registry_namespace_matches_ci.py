@@ -97,7 +97,9 @@ def test_no_workflow_hardcodes_a_ghcr_namespace() -> None:
 def test_live_docs_name_the_namespace_ci_publishes_to() -> None:
     expected = _expected_namespace()
     offenders: list[str] = []
-    for rel in _tracked("docs", "deploy", "README.md", "examples"):
+    # integrations/ and collector/ were outside this scan until 2026-10-08, when the
+    # Claude plugin's deploy skill was found still naming ghcr.io/novafabric/.
+    for rel in _tracked("docs", "deploy", "README.md", "examples", "integrations", "collector"):
         path = REPO_ROOT / rel
         if not path.is_file():
             continue
@@ -160,3 +162,27 @@ def test_the_sweep_is_not_vacuous() -> None:
     assert len(_tracked(".github/workflows")) > 5
     assert len(_tracked("docs", "deploy", "README.md", "examples")) > 50
     assert _expected_namespace() == "mskazemi"
+
+
+def test_collector_go_module_path_is_where_its_code_lives() -> None:
+    """``go install <module>/cmd/...@latest`` needs the module path to be fetchable.
+
+    Found 2026-10-08: ``collector/go.mod`` declared ``github.com/novafabric/collector``.
+    Nothing is published at that path (the Go proxy answers 404), and fetching the
+    real location failed on the path mismatch, so every documented ``go install``
+    was dead. The module path must be the public repository plus ``/collector``.
+    """
+    url = subprocess.run(
+        ["git", "remote", "get-url", "origin"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    owner_repo = re.sub(r"^.*github\.com[:/]([^/]+/[^/]+?)(\.git)?$", r"\1", url)
+    assert owner_repo != url, f"could not parse owner/repo from {url!r}"
+    first = (REPO_ROOT / "collector" / "go.mod").read_text(encoding="utf-8").splitlines()[0]
+    assert first == f"module github.com/{owner_repo}/collector", (
+        f"collector/go.mod declares {first!r}; `go install` resolves the module path "
+        f"as a URL, so it must be 'module github.com/{owner_repo}/collector'"
+    )

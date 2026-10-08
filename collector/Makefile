@@ -66,7 +66,7 @@ eval-smoke:
 # ── Distribution ─────────────────────────────────────────────────────────────
 
 build-images:
-	docker build -t ghcr.io/novafabric/novafabric-collector:dev .
+	docker build -t ghcr.io/mskazemi/novafabric-collector:dev .
 
 build-tarball: build
 	tar -czf novafabric-collector.tar.gz bin/

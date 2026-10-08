@@ -18,7 +18,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/novafabric/collector/pkg/novaseal"
+	"github.com/MSKazemi/novafabric/collector/pkg/novaseal"
 )
 
 func main() {
@@ -49,10 +49,10 @@ func main() {
 		signer = s
 	} else if *kmsEndpoint != "" {
 		cfg := novaseal.KeystoreConfig{
-			Endpoint:            *kmsEndpoint,
-			CacheTTL:            5 * time.Minute,
-			RotationInterval:    time.Hour,
-			FailOpen:            false,
+			Endpoint:         *kmsEndpoint,
+			CacheTTL:         5 * time.Minute,
+			RotationInterval: time.Hour,
+			FailOpen:         false,
 		}
 		kstore, err := novaseal.NewKeystore(cfg, tls.Certificate{})
 		if err != nil {

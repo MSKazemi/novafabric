@@ -113,12 +113,12 @@ export default function CollectorCard() {
               <span className="text-[11px] text-[var(--color-status-pending)] font-medium">Collector not detected</span>
             </div>
             <p className="text-[11px] text-[var(--color-text-faint)] leading-relaxed">
-              Build the collector from source (Go; no published module yet) or deploy to your cluster:
+              Install the collector binary (Go 1.26.5+) or deploy to your cluster:
             </p>
             <ul className="space-y-1 text-[11px] text-[var(--color-text-muted)]">
               <li>
                 <code className="font-mono text-[10px] bg-[var(--color-bg-raised)] px-1 py-0.5 rounded border border-[var(--color-border)]">
-                  git clone https://github.com/MSKazemi/novafabric &amp;&amp; make -C novafabric/collector build
+                  go install github.com/MSKazemi/novafabric/collector/cmd/novafabric-collector@latest
                 </code>
               </li>
               <li>Or use cluster configs: <code className="font-mono text-[10px]">deploy/hpc/</code> or <code className="font-mono text-[10px]">deploy/k8s/</code></li>

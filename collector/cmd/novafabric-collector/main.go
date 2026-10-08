@@ -18,7 +18,7 @@ import (
 	"go.opentelemetry.io/collector/otelcol"
 	"go.opentelemetry.io/collector/processor"
 
-	"github.com/novafabric/collector/internal/processor/novasealbatchsigner"
+	"github.com/MSKazemi/novafabric/collector/internal/processor/novasealbatchsigner"
 )
 
 func main() {

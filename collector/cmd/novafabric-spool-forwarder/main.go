@@ -22,8 +22,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/novafabric/collector/internal/forwarder"
-	"github.com/novafabric/collector/internal/hpc"
+	"github.com/MSKazemi/novafabric/collector/internal/forwarder"
+	"github.com/MSKazemi/novafabric/collector/internal/hpc"
 )
 
 func envOr(key, def string) string {

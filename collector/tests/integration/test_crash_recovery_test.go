@@ -16,7 +16,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/novafabric/collector/internal/spool"
+	"github.com/MSKazemi/novafabric/collector/internal/spool"
 )
 
 // TestCrashRecovery runs 100 kill-9 cycles against the spool, verifying
@@ -72,7 +72,7 @@ func TestCheckpointMonotonic(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		sp, err := spool.NewSpool(dir, 1024*1024*100, &noopMetrics{})
 		require.NoError(t, err)
-		require.NoError(t, sp.Write([]byte(`{"i":` + string(rune('0'+i%10)) + `}`)))
+		require.NoError(t, sp.Write([]byte(`{"i":`+string(rune('0'+i%10))+`}`)))
 		batch, err := sp.ReadBatch(1)
 		require.NoError(t, err)
 		require.Len(t, batch, 1)

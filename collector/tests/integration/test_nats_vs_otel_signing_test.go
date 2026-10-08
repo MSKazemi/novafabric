@@ -13,8 +13,8 @@ import (
 	otlplogspb "go.opentelemetry.io/proto/otlp/logs/v1"
 	otlpresourcev1 "go.opentelemetry.io/proto/otlp/resource/v1"
 
-	"github.com/novafabric/collector/pkg/canonical"
-	"github.com/novafabric/collector/pkg/novaseal"
+	"github.com/MSKazemi/novafabric/collector/pkg/canonical"
+	"github.com/MSKazemi/novafabric/collector/pkg/novaseal"
 )
 
 // TestNATSvsOTelSigningParity verifies that signing via the OTel-processor path

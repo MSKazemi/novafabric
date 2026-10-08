@@ -1,4 +1,4 @@
-module github.com/novafabric/collector
+module github.com/MSKazemi/novafabric/collector
 
 go 1.26.5
 

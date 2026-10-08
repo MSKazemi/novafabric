@@ -18,10 +18,10 @@ import (
 	otlplogspb "go.opentelemetry.io/proto/otlp/logs/v1"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/novafabric/collector/pkg/canonical"
-	"github.com/novafabric/collector/pkg/envelope"
-	"github.com/novafabric/collector/pkg/metrics"
-	"github.com/novafabric/collector/pkg/novaseal"
+	"github.com/MSKazemi/novafabric/collector/pkg/canonical"
+	"github.com/MSKazemi/novafabric/collector/pkg/envelope"
+	"github.com/MSKazemi/novafabric/collector/pkg/metrics"
+	"github.com/MSKazemi/novafabric/collector/pkg/novaseal"
 )
 
 // novaSealBatchSignerProcessor implements processor.Logs.  For each

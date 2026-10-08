@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/novafabric/collector/pkg/canonical"
-	"github.com/novafabric/collector/pkg/novaseal"
+	"github.com/MSKazemi/novafabric/collector/pkg/canonical"
+	"github.com/MSKazemi/novafabric/collector/pkg/novaseal"
 	"github.com/stretchr/testify/require"
 	otlpcommonv1 "go.opentelemetry.io/proto/otlp/common/v1"
 	otlplogspb "go.opentelemetry.io/proto/otlp/logs/v1"

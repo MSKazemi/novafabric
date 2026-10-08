@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/novafabric/collector/pkg/novaseal"
+	"github.com/MSKazemi/novafabric/collector/pkg/novaseal"
 )
 
 // TestKMSOutageFailClosed verifies that when the KMS is unreachable,

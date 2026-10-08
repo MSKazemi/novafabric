@@ -8104,8 +8104,17 @@ The SPA at `http://localhost:4321/topology/` auto-fetches the cluster layer on m
 ## Collector binaries (Phase 2 — cluster scale)
 
 Phase 2 ships three Go binaries (`collector/`) that form the cluster-deployable
-evidence ingestion tier. They are separate from the Python `nova` CLI. Install
-them by building from source (Go 1.22+):
+evidence ingestion tier. They are separate from the Python `nova` CLI and need
+Go 1.26.5 or newer. Install one directly:
+
+```bash
+go install github.com/MSKazemi/novafabric/collector/cmd/novafabric-collector@latest
+go install github.com/MSKazemi/novafabric/collector/cmd/novafabric-verifier@latest
+go install github.com/MSKazemi/novafabric/collector/cmd/novafabric-hpc-hub@latest
+```
+
+`@latest` resolves to the newest commit on `main`; the collector module has no
+release tags of its own yet. Or build all three from a checkout:
 
 ```bash
 cd collector

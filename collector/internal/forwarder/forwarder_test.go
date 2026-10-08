@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/novafabric/collector/internal/hpc"
+	"github.com/MSKazemi/novafabric/collector/internal/hpc"
 )
 
 // fakePublisher records every published event and can be made to fail.

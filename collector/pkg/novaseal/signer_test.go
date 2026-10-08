@@ -3,12 +3,12 @@ package novaseal_test
 import (
 	"context"
 	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"testing"
 
-	"github.com/novafabric/collector/pkg/novaseal"
+	"github.com/MSKazemi/novafabric/collector/pkg/novaseal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -369,4 +369,3 @@ func TestECDSAP256Signer_VerifyCancelledContext(t *testing.T) {
 	err = s.Verify(ctx, []byte("data"), sig, keyID)
 	assert.Error(t, err)
 }
-

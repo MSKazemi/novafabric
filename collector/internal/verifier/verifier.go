@@ -15,8 +15,8 @@ import (
 	otlpcommonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	otlplogspb "go.opentelemetry.io/proto/otlp/logs/v1"
 
-	"github.com/novafabric/collector/pkg/canonical"
-	"github.com/novafabric/collector/pkg/novaseal"
+	"github.com/MSKazemi/novafabric/collector/pkg/canonical"
+	"github.com/MSKazemi/novafabric/collector/pkg/novaseal"
 )
 
 // VerifyResult is the outcome of verifying a single ResourceLogs signature.

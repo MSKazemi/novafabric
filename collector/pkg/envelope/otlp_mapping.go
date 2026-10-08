@@ -11,19 +11,19 @@ import (
 
 // OTLP attribute key constants for the nova.* namespace.
 const (
-	attrEventID          = "nova.event_id"
-	attrGlobalRunID      = "nova.global_run_id"
-	attrRunID            = "nova.run_id"
-	attrParentRunID      = "nova.parent_run_id"
-	attrEventType        = "nova.event_type"
-	attrAgentID          = "nova.agent_id"
-	attrClusterID        = "nova.cluster_id"
-	attrTenantID         = "nova.tenant_id"
-	attrEnvelopeVersion  = "nova.envelope_version"
-	attrSchemaVersion    = "nova.schema_version"
-	attrPayloadHash      = "nova.payload_hash"
-	attrEmitterNodeID    = "nova.emitter_node_id"
-	attrBatchSignature   = "nova.batch.signature"
+	attrEventID           = "nova.event_id"
+	attrGlobalRunID       = "nova.global_run_id"
+	attrRunID             = "nova.run_id"
+	attrParentRunID       = "nova.parent_run_id"
+	attrEventType         = "nova.event_type"
+	attrAgentID           = "nova.agent_id"
+	attrClusterID         = "nova.cluster_id"
+	attrTenantID          = "nova.tenant_id"
+	attrEnvelopeVersion   = "nova.envelope_version"
+	attrSchemaVersion     = "nova.schema_version"
+	attrPayloadHash       = "nova.payload_hash"
+	attrEmitterNodeID     = "nova.emitter_node_id"
+	attrBatchSignature    = "nova.batch.signature"
 	attrBatchSigningKeyID = "nova.batch.signing_key_id"
 )
 
@@ -41,7 +41,7 @@ const (
 //   - Nil pointer fields are omitted (attribute not added).
 func ToOTLPLogRecord(e *EventEnvelope) *otlplogspb.LogRecord {
 	lr := &otlplogspb.LogRecord{
-		TimeUnixNano: uint64(e.StartedAt.UnixNano()),
+		TimeUnixNano:         uint64(e.StartedAt.UnixNano()),
 		ObservedTimeUnixNano: uint64(time.Now().UTC().UnixNano()),
 	}
 

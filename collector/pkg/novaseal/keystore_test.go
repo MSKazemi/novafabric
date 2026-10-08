@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/novafabric/collector/pkg/novaseal"
+	"github.com/MSKazemi/novafabric/collector/pkg/novaseal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

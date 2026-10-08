@@ -33,6 +33,20 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **`go install` for the collector binaries could never work; the Go module now declares the
+  path its code lives at.** `collector/go.mod` said `module github.com/novafabric/collector`,
+  but that GitHub owner holds no such repository (the Go proxy answers 404), and fetching the
+  real location `github.com/MSKazemi/novafabric/collector` failed on the path mismatch. The
+  module is now `github.com/MSKazemi/novafabric/collector` (imports, the OCB builder config and
+  the local image tag follow), so
+  `go install github.com/MSKazemi/novafabric/collector/cmd/novafabric-collector@latest` works
+  once this commit is on `main`. The dashboard's collector card no longer prints the dead
+  `go install` path, and the CLI reference states the real minimum Go version (1.26.5, not 1.22).
+- **The Claude Code plugin's deploy skill still pointed at the old GHCR namespace.**
+  `ghcr.io/novafabric/novafabric` and `oci://ghcr.io/novafabric/charts` return 403; the image
+  and chart are published under `ghcr.io/mskazemi/`. The registry-namespace guard now scans
+  `integrations/` too, which is how this one slipped past it.
+
 - **Two `--help` examples used flags that do not exist.** `nova classify run` showed
   `--purpose` and `--file` (the options are `--domain`/`--context` and `--input`); `nova eval
   agent` showed `--suite`, which it does not take.

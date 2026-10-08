@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/novafabric/collector/pkg/novaseal"
+	"github.com/MSKazemi/novafabric/collector/pkg/novaseal"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/consumer/consumertest"
 	"go.opentelemetry.io/collector/pdata/plog"
@@ -36,7 +36,6 @@ func makeTestLogsBatched(nRL, nRecords int) plog.Logs {
 	}
 	return ld
 }
-
 
 // TestNovaSealBatchSigner_ThroughputAndLatency verifies BQ-011 criterion:
 // "NovaSeal batch processor signs at 100K events/sec within p99 < 200ms."

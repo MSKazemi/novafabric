@@ -14,11 +14,11 @@ type noopMetrics struct {
 	dropped int
 }
 
-func (n *noopMetrics) IncDroppedSegments()          { n.dropped++ }
-func (n *noopMetrics) SetSegmentCount(int)          {}
-func (n *noopMetrics) SetTotalBytes(int64)          {}
+func (n *noopMetrics) IncDroppedSegments()             { n.dropped++ }
+func (n *noopMetrics) SetSegmentCount(int)             {}
+func (n *noopMetrics) SetTotalBytes(int64)             {}
 func (n *noopMetrics) SetOldestEventAge(time.Duration) {}
-func (n *noopMetrics) IncDLQEvents()               {}
+func (n *noopMetrics) IncDLQEvents()                   {}
 
 // TestSpool_WriteRead writes 10 events and verifies that ReadBatch returns
 // all of them.

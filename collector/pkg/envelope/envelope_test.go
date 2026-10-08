@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/novafabric/collector/pkg/envelope"
+	"github.com/MSKazemi/novafabric/collector/pkg/envelope"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

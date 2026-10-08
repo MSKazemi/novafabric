@@ -7,8 +7,8 @@
 package main
 
 import (
-	"encoding/pem"
 	"crypto/ed25519"
+	"encoding/pem"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -17,8 +17,8 @@ import (
 	otlplogspb "go.opentelemetry.io/proto/otlp/logs/v1"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/novafabric/collector/internal/verifier"
-	"github.com/novafabric/collector/pkg/novaseal"
+	"github.com/MSKazemi/novafabric/collector/internal/verifier"
+	"github.com/MSKazemi/novafabric/collector/pkg/novaseal"
 )
 
 func main() {

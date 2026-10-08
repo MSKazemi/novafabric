@@ -7,7 +7,7 @@
 #   go install go.opentelemetry.io/collector/cmd/builder@v0.104.0
 #
 # The otelcol_version here is pinned to match the go.mod versions used by
-# the collector module (github.com/novafabric/collector).  Update both in
+# the collector module (github.com/MSKazemi/novafabric/collector).  Update both in
 # lockstep when upgrading OTel dependencies.
 
 dist:
@@ -26,7 +26,7 @@ processors:
   - gomod: go.opentelemetry.io/collector/processor/batchprocessor v0.104.0
   # NovaSeal batch processor — local module replace below.
   # Implements the Ed25519 signing step described in ADR-0041.
-  - gomod: github.com/novafabric/collector v0.0.0
+  - gomod: github.com/MSKazemi/novafabric/collector v0.0.0
     path: ../../collector
 
 exporters:
@@ -36,4 +36,4 @@ exporters:
 connectors: []
 
 replaces:
-  - github.com/novafabric/collector => ../../collector
+  - github.com/MSKazemi/novafabric/collector => ../../collector
