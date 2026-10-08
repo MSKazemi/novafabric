@@ -1,8 +1,8 @@
 # Getting Started with NovaFabric
 
 NovaFabric turns any command — a training script, an AI agent, a notebook cell
-runner — into a **Run Capsule**: a structured, secret-redacted, self-contained
-directory containing every observable fact about that execution. Capsules can be
+runner — into a **Run Capsule**: a structured, secret-scanned, self-contained
+directory containing the execution evidence capture observes. Capsules can be
 validated, replayed, diffed against each other, exported as signed **Evidence
 Bundles**, and fed into a queryable lineage graph — all without modifying the
 code you are running.
@@ -70,7 +70,7 @@ Confirm the install:
 
 ```bash
 nova --version
-# novafabric 0.103.0
+# novafabric 0.104.0
 ```
 
 Both `nova` and `novafabric` are the same binary. The examples throughout this
@@ -99,7 +99,7 @@ guide use `nova`.
 > use — but handy if you want the directory tree in place up front. Re-running it
 > is safe; use `nova init --force` to regenerate the keypair.
 
-> **Maturity.** NovaFabric is in beta (v0.103.0 at the time of writing). Most surfaces work today but
+> **Maturity.** NovaFabric is in beta (v0.104.0 at the time of writing). Most surfaces work today but
 > carry `experimental` maturity: interfaces may change before the v1.0 schema
 > freeze. On-disk formats are **not** frozen until v1.0. See
 > [ROADMAP.md](../ROADMAP.md) for the sequencing.

@@ -7,7 +7,7 @@ import CodeBlock from '../../components/ui/CodeBlock.astro';
 
 <Layout
   title="Replay & diff — NovaFabric Showcase"
-  description="Four replay modes with explicit guarantees, plus a structural diff aligned with the diff-report schema. Honest about what each mode promises."
+  description="Five replay modes (one experimental) with explicit guarantees, plus a structural diff aligned with the diff-report schema. Honest about what each mode promises — tools run live in mocked replay."
 >
   <article class="container-content py-12">
     <header class="mb-8 max-w-3xl">
@@ -28,10 +28,12 @@ import CodeBlock from '../../components/ui/CodeBlock.astro';
     <aside class="mt-12 max-w-3xl rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-5 text-sm text-[var(--color-text-muted)] leading-relaxed">
       <p class="text-[var(--color-text)] font-medium mb-2">The wow moment</p>
       <p>
-        Click the <strong>Exact</strong> tab. It's greyed out — and the
-        explanation is honest: exact replay of remote LLMs is impossible to
-        promise. Many tools claim to do it anyway. We mark it disabled and
-        document why.
+        Click the <strong>Exact</strong> tab. It does not replay anything: it
+        checks whether a byte-exact re-run is even possible, and for a run
+        against a remote LLM the answer is no — with the reasons. Many tools
+        claim exact replay anyway. Then click <strong>Mocked</strong>: model
+        replies come from the capsule, and the tool calls that ran live are
+        marked as such.
       </p>
     </aside>
 
@@ -39,7 +41,7 @@ import CodeBlock from '../../components/ui/CodeBlock.astro';
       <h2 class="text-xl font-medium text-[var(--color-text)] tracking-tight mb-4">On your machine</h2>
       <CodeBlock code="nova replay <run-id> --mode mocked
 nova diff <run-a> <run-b>
-nova diff <run-a> <run-b> --output github-annotation" lang="bash" />
+nova diff <run-a> <run-b> --output-format github-annotation" lang="bash" />
     </section>
   </article>
 </Layout>

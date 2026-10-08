@@ -21,7 +21,12 @@ from novafabric.capture.deployment_env import (
 )
 from novafabric.capture.env import capture_environment
 from novafabric.capture.replay import minimal_replay_policy
-from novafabric.capture.secrets import SecretScannerV0, recompute_chain_hash
+from novafabric.capture.secrets import (
+    SecretScannerV0,
+    merge_scan_results,
+    recompute_chain_hash,
+    redact_secrets_in_text,
+)
 from novafabric.capture.session import resolve_session_membership
 from novafabric.capture.variant import resolve_variant_attribution
 from novafabric.cost.usage_types import usage_totals_from_model_calls
@@ -415,7 +420,9 @@ class CaptureOrchestrator:
             )
             if is_configured():
                 from novafabric.lineage._openlineage import build_start_event
-                emit_if_configured([build_start_event(run_id, command, created_at)])
+                emit_if_configured([build_start_event(
+                    run_id, [redact_secrets_in_text(a) for a in command], created_at
+                )])
         except Exception as _ol_exc:
             import sys as _sys
             print(f"[novafabric] ⚠ OpenLineage START failed: {_ol_exc}", file=_sys.stderr)
@@ -503,7 +510,8 @@ class CaptureOrchestrator:
                     "novafabric: masking pipeline failed; built-in redaction "
                     "already applied, capture continues"
                 )
-        writer.write_text("redaction-proof.json", json.dumps(proof, indent=2))
+        # redaction-proof.json is written once, after the manifest and the
+        # late-written files (lineage.jsonl) are scanned too — see below.
 
         writer.write_text("replay.yaml", yaml.dump(minimal_replay_policy(), allow_unicode=True))
 
@@ -615,6 +623,11 @@ class CaptureOrchestrator:
         if self._mark_provenance and model_call_count > 0:
             manifest["content_provenance_ref"] = "c2pa-manifest.json"
 
+        # ADR-0009: the manifest carries the raw argv, so it is redacted before
+        # it is ever written (and before it becomes the signed seal payload).
+        # Values are redacted in the data structure, not in serialized YAML.
+        manifest, _manifest_target, _manifest_findings = scanner.redact_manifest(manifest)
+        proof = merge_scan_results(proof, [_manifest_target], _manifest_findings)
         writer.write_text("capsule.yaml", yaml.dump(manifest, allow_unicode=True))
 
         # ADR-0074: write the C2PA synthetic-content provenance marker now —
@@ -699,6 +712,14 @@ class CaptureOrchestrator:
         # evidence file into the manifest *before* it becomes the signed payload,
         # then rewrite capsule.yaml so the file on disk and the signed payload
         # agree — verify compares them (ADR-0251 §2).
+        # ADR-0009: lineage.jsonl is written after the main scan; scan it now,
+        # then write the one final redaction proof so evidence_digests binds it.
+        _late_targets, _late_findings, _late_removed = scanner.scan_and_redact_refs(
+            [("lineage.jsonl", "lineage")]
+        )
+        proof = merge_scan_results(proof, _late_targets, _late_findings, _late_removed)
+        writer.write_text("redaction-proof.json", json.dumps(proof, indent=2))
+
         manifest["evidence_digests"] = _evidence_digests(capsule_dir)
         writer.write_text("capsule.yaml", yaml.dump(manifest, allow_unicode=True))
 
@@ -715,7 +736,8 @@ class CaptureOrchestrator:
             if is_configured():
                 from novafabric.lineage._openlineage import build_complete_event
                 emit_if_configured([build_complete_event(
-                    run_id, command, capsule_dir, exit_code, finished_at, created_at
+                    run_id, manifest["command"], capsule_dir, exit_code, finished_at,
+                    created_at,
                 )])
         except Exception as _ol_exc:
             import sys as _sys

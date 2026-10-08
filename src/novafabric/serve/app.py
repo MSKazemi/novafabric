@@ -7270,6 +7270,27 @@ def create_app(
             "framework": "A2A SDK",
             "extra": "a2a",
         },
+        {
+            "id": "llamaindex",
+            "module": "novafabric.adapters.llamaindex",
+            "function": "wrap_engine",
+            "framework": "LlamaIndex",
+            "extra": "llama-index",
+        },
+        {
+            "id": "pydantic_ai",
+            "module": "novafabric.adapters.pydantic_ai",
+            "function": "wrap_agent",
+            "framework": "Pydantic AI",
+            "extra": "pydantic-ai",
+        },
+        {
+            "id": "haystack",
+            "module": "novafabric.adapters.haystack",
+            "function": "wrap_pipeline",
+            "framework": "Haystack",
+            "extra": "haystack-ai",
+        },
     ]
 
     @app.get("/api/adapters", dependencies=[Depends(verify_token)])

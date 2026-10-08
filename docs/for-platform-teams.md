@@ -18,7 +18,7 @@ never verdicts.
 | Question | Answer |
 |---|---|
 | **License** | Apache-2.0. No CLA required to *use*; a CLA applies to contributions ([CLA.md](../CLA.md)). |
-| **Maturity** | **Beta, v0.103.0.** Local capture/replay/diff/lineage are stable and used daily. Server mode, the collector, the dashboard, and the at-scale lineage backends are `experimental`. |
+| **Maturity** | **Beta, v0.104.0.** Local capture/replay/diff/lineage are stable and used daily. Server mode, the collector, the dashboard, and the at-scale lineage backends are `experimental`. |
 | **Format stability** | On-disk capsule and evidence-bundle formats are **not frozen** until the v1.0 schema freeze. Do not build a long-lived external contract on capsule internals yet. |
 | **Runtime dependency on us** | **None.** No accounts, no telemetry, no license server, no phone-home, no update check. If this project disappeared tomorrow, your capsules keep working — they are folders. |
 | **Where data lives** | Your infrastructure only. Local mode writes to `~/.novafabric/`; server mode writes to your own Postgres. |
@@ -36,7 +36,7 @@ command. That is the whole integration for most teams.
 |---|---|
 | Python agents / scripts | Auto-hooked SDKs: OpenAI, Anthropic, MCP, httpx, requests, aiohttp, urllib3, Bedrock |
 | Non-Python clients | `nova api-proxy` / `nova mcp-proxy` — wire-level, language-agnostic |
-| Frameworks | Adapters for LangGraph, CrewAI, AutoGen, DSPy, LlamaIndex, Pydantic AI, Haystack, Google ADK, OpenAI Agents, Bedrock AgentCore, MLflow, Langfuse, A2A |
+| Frameworks | 11 adapters (experimental) for LangGraph, CrewAI, AutoGen, DSPy, LlamaIndex, Pydantic AI, Haystack, Google ADK, OpenAI Agents, Bedrock AgentCore, A2A; plus MLflow and Langfuse link helpers |
 | CI | The [GitHub Action](../.github/actions/capture/README.md) — three lines of YAML |
 | Kubernetes | Helm chart and manifests in [`deploy/`](../deploy/) |
 | HPC / Slurm | [`deploy/hpc/`](../deploy/hpc/) |

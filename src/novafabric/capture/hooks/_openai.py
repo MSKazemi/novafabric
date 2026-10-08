@@ -11,6 +11,7 @@ from novafabric.capture.hooks._otel_genai import (
     build_record_envelope,
     extract_request_attributes,
 )
+from novafabric.capture.hooks._tool_call_refs import openai_tool_call_refs
 from novafabric.cost.usage_types import usage_from_openai
 
 if TYPE_CHECKING:
@@ -107,6 +108,11 @@ class OpenAIHook:
                 },
                 "finish_reason": getattr(c, "finish_reason", "stop") or "stop",
             }
+            # Additive: the assistant's tool-call requests, so mocked replay can
+            # serve them back (absent on a text-only turn).
+            tool_calls = openai_tool_call_refs(msg)
+            if tool_calls:
+                choice["message"]["tool_calls"] = tool_calls
             choices.append(choice)
             finish_reasons.append(choice["finish_reason"])
         usage = getattr(response, "usage", None)

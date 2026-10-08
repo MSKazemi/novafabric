@@ -212,7 +212,7 @@ The agent sees the same log content, same model responses, and same tool results
 the original run. If it produces the same output, the run is reproducible. If it does
 not, something drifted — a model update, a tool change, or non-determinism.
 
-The four modes, and when to reach for each:
+The five modes, and when to reach for each:
 
 | Mode | What it does | Use for |
 |------|--------------|---------|
@@ -220,13 +220,15 @@ The four modes, and when to reach for each:
 | `mocked` | Re-spawns the command; LLM calls served from the capsule cache. **Tool calls are not substituted** — they run live (`tool_calls_mocked` is always 0, ADR-0261); the `--allow-*` flags drive the dry-run report and the `--allow-mutating` policy gate, not per-call interception | CI / regression |
 | `semantic` | **Does not re-execute.** Scores how similar the capsule's *recorded* model responses are to each other (mean pairwise text similarity, 0.0–1.0); no live model is called | Consistency check of recorded responses |
 | `exact` | **Does not re-execute.** Eligibility check for byte-exact replay (`exact_eligible` + reasons): deterministic env.lock, per-call seed, no tool-schema drift | Local / on-prem / compliance |
+| `intervention` | **Experimental** (ADR-0086). Re-runs a counterfactual with one recorded event changed, and writes the result as a new capsule | Root-cause questions ("what if this reply had been different?") |
 
 > NovaFabric does **not** claim byte-exact replay of remote LLM calls — remote models
 > drift, so `semantic` is the honest mode for them. See the
 > [replay section of the user guide](../user-guide.md) for the full mode reference.
 
-Because a replay is **itself a new capsule**, you can diff the original against the
-replay to quantify exactly what drifted:
+A `mocked`, `forensic`, `semantic` or `exact` replay records a `replay_result.yaml`,
+not a new capsule (only the experimental `intervention` mode writes one). To quantify
+what drifted between two executions, capture the run again and diff the two capsules:
 
 ```bash
 nova diff capsules/01KR9Q2AD… capsules/01KRB4F7…
@@ -402,8 +404,8 @@ AutoGen, CrewAI, DSPy, or the OpenAI Agents SDK.
 **Primitive:** Evidence Bundle · **Maturity:** works today (v0.4); DSSE/SLSA outer
 envelope is experimental
 
-For compliance, audits, or any situation where you need to prove what an agent did —
-and prove the record has not been altered:
+For compliance, audits, or any situation where you need to keep evidence of what an
+agent did — and verify the recorded run has not been altered since it was signed:
 
 ```bash
 nova export-evidence capsules/01KR9Q2AD… --output bundle.zip --key ed25519.pem
@@ -1077,7 +1079,7 @@ severity, never downgrade it, and the check is detection-only (no remediation).
 
 **Primitive:** Replay (5th mode) · **Maturity:** experimental (v0.50.0, ADR-0086)
 
-The four replay modes in [§3](#3-replay-a-past-run) answer *"what happened?"*.
+The five replay modes in [§3](#3-replay-a-past-run) answer *"what happened?"*.
 **Intervention replay** answers the counterfactual: *what if the model had answered
 differently? What if the tool had returned something else?* You supply an
 **InterventionSpec** — one target selector plus exactly one substitution — and the
@@ -1928,7 +1930,7 @@ Session replay result written: session-replays/session-replay-…/session_replay
 ```
 
 Each turn runs through the single-capsule replay engine from
-[§3](#3-replay-a-past-run) (any of the four modes via `--mode`), produces its own
+[§3](#3-replay-a-past-run) (any of the five modes via `--mode`), produces its own
 replay capsule, and the session gets one `SessionReplayResult` with ordered per-turn
 verdicts plus a whole-session verdict. Exit code is `0` only when the whole session
 is `reproduced`; `--on-divergence continue` records drift and keeps going, and a
@@ -2217,7 +2219,7 @@ Where to go next:
 |---|---|
 | See every CLI flag and command | [CLI reference](../cli-reference.md) |
 | Understand capsule structure and schema fields | [Concepts](../concepts.md) |
-| Read the four replay modes in depth | [User guide: replay](../user-guide.md) |
+| Read the five replay modes in depth | [User guide: replay](../user-guide.md) |
 | Write a custom capture hook plugin | [Writing a hook plugin](../integrations/writing-a-hook-plugin.md) |
 | Dig into the security graph | [Security knowledge graph](../security-knowledge-graph.md) |
 | See what is shipped vs planned | [ROADMAP.md](../../ROADMAP.md) |

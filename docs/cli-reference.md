@@ -70,9 +70,9 @@ flag, every exit code, and the environment variables that configure them. It is
 organized around the five NovaFabric primitives, so you can find the command by
 knowing what you are trying to do:
 
-- **Capture** a run into a portable, secret-redacted **Run Capsule** — see
+- **Capture** a run into a portable, secret-scanned **Run Capsule** — see
   [Capture commands](#capture-commands-v02).
-- **Replay** that capsule in one of four honest modes, or **diff** two runs as a
+- **Replay** that capsule in one of five modes, or **diff** two runs as a
   CI gate — see [Replay commands](#replay-commands-v03).
 - Trace **Lineage** (provenance, blast-radius, replay-chain, time-travel) and
   emit OpenLineage — see [Lineage commands](#lineage-commands-v04).
@@ -9622,7 +9622,7 @@ with no accounts. A typical first pass through the five primitives looks like:
 # 1. Capture — turn any command into a Run Capsule
 nova capture python agent.py
 
-# 2. Validate — confirm the capsule is schema-valid and secret-redacted
+# 2. Validate — confirm the capsule is schema-valid
 nova validate .novafabric/runs/<ulid>/
 
 # 3. Replay — re-run against the recorded LLM/tool calls (default: mocked)
