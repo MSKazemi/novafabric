@@ -162,8 +162,8 @@ def serve_cmd(
       # Bind to a custom port
       nova serve --experimental --port 8080
 
-      # Open the browser automatically
-      nova serve --experimental --open
+      # Start without opening a browser (it opens one by default)
+      nova serve --experimental --no-browser
     """
     # Gate: --experimental is mandatory until graduation per ADR-0027.
     if not experimental:

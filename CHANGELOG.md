@@ -150,9 +150,14 @@ longer forwards the submitting shell's environment (ADR-0270).
   `ghcr.io/novafabric/novafabric` and `oci://ghcr.io/novafabric/charts` return 403; the image
   and chart are published under `ghcr.io/mskazemi/`. The registry-namespace guard now scans
   `integrations/` too, which is how this one slipped past it.
-- **Two `--help` examples used flags that do not exist.** `nova classify run` showed
-  `--purpose` and `--file` (the options are `--domain`/`--context` and `--input`); `nova eval
-  agent` showed `--suite`, which it does not take.
+- **`--help` examples used flags, IDs and commands that do not exist.** `nova classify run`
+  showed `--purpose` and `--file` (the options are `--domain`/`--context` and `--input`);
+  `nova eval agent` showed `--suite`, which it does not take; `nova eval run` used suite IDs
+  `smoke`/`gaia` (the IDs are `novafabric-smoke-v1`, `gaia-v1`, …); the `nova audit` commands
+  listed profile IDs `eu-ai-act`, `soc2`, `iso-42001`, `reproducibility` (the IDs are
+  `eu-ai-act-high-risk`, `soc2-type2`, `iso42001`, `scientific-reproducibility`);
+  `nova serve` showed `--open` (it opens a browser by default; the flag is `--no-browser`);
+  `nova export-examiner pccp` showed `fda-pccp <path>`.
 - **`GET /api/diff` returns the diff counts and `has_changes`.** It serialized the raw
   `DiffReport` dataclass, whose counts are properties, so a dashboard client could not tell an
   added-only diff from no difference. The response now adds `summary`, `sections` (as in

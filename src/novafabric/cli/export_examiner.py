@@ -153,7 +153,8 @@ def export_pccp(
 
     \b
     Examples:
-      nova export-examiner fda-pccp path/to/my-capsule/
+      nova export-examiner pccp --baseline <capsule-id> --proposed <capsule-id> \
+        --data-dir ~/.novafabric/capsules --output pccp.json
     """
     try:
         from novafabric.compliance.export.examiner import PCCPExporter

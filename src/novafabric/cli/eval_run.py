@@ -104,7 +104,8 @@ def eval_run_cmd(
 ) -> None:
     """Run a standard evaluation suite against a capsule directory.
 
-    Built-in suites: gaia, swe-bench, agentbench, mmlu, smoke.
+    Built-in suites: novafabric-smoke-v1, gaia-v1, swe-bench-verified-v1,
+    agentbench-v1, mmlu-v1, truthful-qa-v1.
     Each suite runs inside an OCI-pinned container. Promotion is
     blocked by policy if a regression is detected.
 
@@ -113,10 +114,10 @@ def eval_run_cmd(
     \b
     Examples:
       # Run the smoke suite (fast, no container required)
-      nova eval run --suite smoke path/to/my-capsule/
+      nova eval run --suite novafabric-smoke-v1 path/to/my-capsule/
 
       # Run GAIA and write results to a file
-      nova eval run --suite gaia --output results.json path/to/my-capsule/
+      nova eval run --suite gaia-v1 --output results.json path/to/my-capsule/
     """
     # Parse --config key=value pairs
     config_dict: dict[str, str] = {}

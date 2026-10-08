@@ -140,7 +140,8 @@ def audit_map(
 ) -> None:
     """Map capsule evidence to regulatory controls and report coverage gaps.
 
-    Built-in profiles: nist-ai-rmf, eu-ai-act, gdpr, soc2, iso-42001, reproducibility.
+    Built-in profiles: nist-ai-rmf, eu-ai-act-high-risk, gdpr, soc2-type2, iso42001,
+    scientific-reproducibility.
     Exits 1 if any required control has no evidence.
 
     Scope: single capsule (or all capsules via --data-dir).
@@ -148,7 +149,7 @@ def audit_map(
     \b
     Examples:
       # Audit a capsule against the EU AI Act profile
-      nova audit map --profile eu-ai-act --capsule <capsule-id>
+      nova audit map --profile eu-ai-act-high-risk --capsule <capsule-id>
 
       # Audit all capsules in a data directory
       nova audit map --profile nist-ai-rmf --data-dir ~/novafabric-data/capsules/
@@ -203,7 +204,7 @@ def audit_report(
 
     \b
     Examples:
-      nova audit report --profile eu-ai-act
+      nova audit report --profile eu-ai-act-high-risk
 
       # Write to a file
       nova audit report --profile gdpr --output report.json
@@ -306,7 +307,7 @@ def audit_bundle(
 
     \b
     Examples:
-      nova audit bundle --profile eu-ai-act
+      nova audit bundle --profile eu-ai-act-high-risk
       nova audit bundle --profile nist-ai-rmf --output nist-evidence.zip
     """
     engine = _load_engine(data_dir, profile)
@@ -374,7 +375,7 @@ def audit_coverage(
     \b
     Examples:
       nova audit coverage
-      nova audit coverage --profile eu-ai-act --threshold 0.9
+      nova audit coverage --profile eu-ai-act-high-risk --threshold 0.9
     """
     engine = _load_engine(data_dir, profile)
     report = engine.scan()
