@@ -212,7 +212,7 @@ always reported as a gap, never fabricated. Each source is capped
 | `GET` | `/api/assets/{name}/{version}` | get asset endpoint |
 | `POST` | `/api/assets/{name}/{version}/eval` | eval asset endpoint |
 | `POST` | `/api/assets/{name}/{version}/promote` | promote asset endpoint |
-| `GET` | `/api/diff` | diff runs |
+| `GET` | `/api/diff` | diff two runs; returns `summary` (changed/added/removed), `sections` (the `nova diff --output-format json` sections) and `has_changes` (the `--assert-no-regressions` property) beside the legacy `report` |
 | `POST` | `/api/eval/compare` | Compare two EvalResult JSON objects for regression — mirrors `nova eval compare`. |
 | `POST` | `/api/eval/run` | Run a standard eval suite against a capsule — nova eval run. |
 | `GET` | `/api/eval/suites` | List registered eval suite adapters — nova eval list. |

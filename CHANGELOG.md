@@ -33,6 +33,11 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **`GET /api/diff` returns the diff counts and `has_changes`.** It serialized the raw
+  `DiffReport` dataclass, whose counts are properties, so a dashboard client could not tell an
+  added-only diff from no difference. The response now adds `summary`, `sections` (as in
+  `nova diff --output-format json`) and `has_changes`; the legacy keys are unchanged (#11).
+
 - **`nova verify` printed `timestamp_ok=True` for a capsule with no timestamp.** An absent or
   empty RFC 3161 token is now `timestamp_ok=None` (JSON `null`) in `VerificationResult`, the
   text report, `--json` and both serve verify endpoints, and the trust radar shows the

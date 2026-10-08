@@ -2678,10 +2678,19 @@ def create_app(
         engine = DiffEngine()
         # Capsule reads + structural diff off the event loop (B4).
         report = await asyncio.to_thread(engine.compare, cdir_a, cdir_b)
-        # DiffEngine returns a Pydantic model in current code; serialize.
         if hasattr(report, "model_dump"):
             return report.model_dump(mode="json")  # type: ignore[no-any-return]
-        return {"run_a_id": run_a, "run_b_id": run_b, "report": report}
+        # DiffEngine returns the DiffReport dataclass. Its counts and has_changes are
+        # properties, which the raw `report` serialization omits, so the canonical
+        # as_dict() sections and the CLI gate's has_changes are added beside the
+        # legacy keys (additive: existing callers keep `report`).
+        response: dict[str, Any] = {"run_a_id": run_a, "run_b_id": run_b, "report": report}
+        if hasattr(report, "as_dict"):
+            canonical = report.as_dict()
+            response["summary"] = canonical["summary"]
+            response["sections"] = canonical["sections"]
+            response["has_changes"] = report.has_changes
+        return response
 
     # ---------- audit log ----------
 
