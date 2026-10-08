@@ -11,69 +11,6 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
-### Added
-
-- **`nova seal init` — explicit first-run sealing with a local, self-asserted identity
-  (experimental, ADR-0301).** One offline command creates a dedicated ECDSA P-256 signing key,
-  a local seal CA and a CA-issued certificate under `$NOVAFABRIC_HOME/keys/novaseal/` (private
-  keys mode 600) and writes a managed `novaseal.yaml` (`profile: local`, no `tsa_url`). After
-  it, `nova capture` seals new Run Capsules. Sealing stays **opt-in**: `nova init` only offers
-  the step and reports whether sealing is configured. Idempotent; `--force` rotates the key
-  under the same CA (old files archived to `keys/novaseal/archive/<UTC>/`, `key_rotation`
-  logged in the Merkle log) so a verifier who pinned the CA keeps continuity; `--force --new-ca`
-  also replaces the CA. A `novaseal.yaml` it did not write (KMS, operator CA) is never replaced.
-- **`nova verify` reports the signer's trust level** (`identity_trust`, ADR-0301):
-  `self-asserted` (the holder of the key signed; nothing you trust vouches for the
-  certificate), `local-ca-pinned` (`--ca-bundle` reached a `nova seal init` local CA),
-  `ca-anchored` (`--ca-bundle` reached another CA) or `none`. Printed as a `Signer identity:`
-  line and added — additively — to `VerificationResult` (`identity_trust`, `signer_subject`,
-  `local_seal_identity`) and to `POST /api/runs/{id}/verify`.
-- **`nova verify --json`** prints one JSON object (capsule directories, local backend) with
-  every check, `identity_trust` and `timestamp_ok`. Exit code unchanged.
-
-### Fixed
-
-- **`go install` for the collector binaries could never work; the Go module now declares the
-  path its code lives at.** `collector/go.mod` said `module github.com/novafabric/collector`,
-  but that GitHub owner holds no such repository (the Go proxy answers 404), and fetching the
-  real location `github.com/MSKazemi/novafabric/collector` failed on the path mismatch. The
-  module is now `github.com/MSKazemi/novafabric/collector` (imports, the OCB builder config and
-  the local image tag follow), so
-  `go install github.com/MSKazemi/novafabric/collector/cmd/novafabric-collector@latest` works
-  once this commit is on `main`. The dashboard's collector card no longer prints the dead
-  `go install` path, and the CLI reference states the real minimum Go version (1.26.5, not 1.22).
-- **The Claude Code plugin's deploy skill still pointed at the old GHCR namespace.**
-  `ghcr.io/novafabric/novafabric` and `oci://ghcr.io/novafabric/charts` return 403; the image
-  and chart are published under `ghcr.io/mskazemi/`. The registry-namespace guard now scans
-  `integrations/` too, which is how this one slipped past it.
-
-- **Two `--help` examples used flags that do not exist.** `nova classify run` showed
-  `--purpose` and `--file` (the options are `--domain`/`--context` and `--input`); `nova eval
-  agent` showed `--suite`, which it does not take.
-
-- **`GET /api/diff` returns the diff counts and `has_changes`.** It serialized the raw
-  `DiffReport` dataclass, whose counts are properties, so a dashboard client could not tell an
-  added-only diff from no difference. The response now adds `summary`, `sections` (as in
-  `nova diff --output-format json`) and `has_changes`; the legacy keys are unchanged (#11).
-
-- **`nova verify` printed `timestamp_ok=True` for a capsule with no timestamp.** An absent or
-  empty RFC 3161 token is now `timestamp_ok=None` (JSON `null`) in `VerificationResult`, the
-  text report, `--json` and both serve verify endpoints, and the trust radar shows the
-  Timestamp axis as `n/a` instead of `ok`. Absence still does not invalidate the seal
-  (timestamping is opt-in, ADR-0292). Library callers that tested `timestamp_ok is True` for an
-  untimestamped capsule now get `None`.
-- **`ca_chain_ok=True` was printed when no certificate chain had been validated.** It is now
-  `True` only when `--ca-bundle` (or `ca_bundle`) validated the signer chain.
-- **`nova init --force` overwrote the only copy of the Evidence Bundle signing key.** The old
-  pair is now moved to `keys/archive/<UTC>/` with a warning. It refuses (exit 1) when
-  `novaseal.yaml` signs capsules with that same key. The new private key is created mode 600
-  from the first byte instead of being chmod-ed after the write.
-- **Capture could write a seal that can never verify** when the configured key did not match
-  the certificate. `create_envelope` now refuses; capture warns, keeps the capsule, and writes
-  no `.seal/` (the workload is never blocked).
-- **`nova verify` crashed (`binascii.Error`) on a DSSE signature that is not valid base64**
-  instead of reporting a failed signature check.
-
 ### Security
 
 - **Locked `urllib3` 2.7.0 → 2.8.0 and `pyjwt` 2.14.0 → 2.15.1**, clearing the two HIGH
@@ -117,16 +54,121 @@ longer forwards the submitting shell's environment (ADR-0270).
   written) and each line of every text file under `inputs/` and `outputs/`. Binary and oversize
   files are not offered to maskers; the built-in scanner still covers them. The built-in rules
   run again after the maskers, so a masker cannot reintroduce a key-shaped string.
+- **Mocked replay no longer runs recorded MCP tools live** (ADR-0300). A mocked replay used
+  to re-execute every tool — file writes, HTTP calls, MCP tools — even when the capsule held
+  the result. MCP `ClientSession.call_tool` results are now served from the capsule, and an MCP
+  call with no recorded result is refused instead of executed. Other tools (HTTP, shell, files,
+  framework-native) still run live; run such replays in a sandbox.
+
+### Added
+
+- **`nova seal init` — explicit first-run sealing with a local, self-asserted identity
+  (experimental, ADR-0301).** One offline command creates a dedicated ECDSA P-256 signing key,
+  a local seal CA and a CA-issued certificate under `$NOVAFABRIC_HOME/keys/novaseal/` (private
+  keys mode 600) and writes a managed `novaseal.yaml` (`profile: local`, no `tsa_url`). After
+  it, `nova capture` seals new Run Capsules. Sealing stays **opt-in**: `nova init` only offers
+  the step and reports whether sealing is configured. Idempotent; `--force` rotates the key
+  under the same CA (old files archived to `keys/novaseal/archive/<UTC>/`, `key_rotation`
+  logged in the Merkle log) so a verifier who pinned the CA keeps continuity; `--force --new-ca`
+  also replaces the CA. A `novaseal.yaml` it did not write (KMS, operator CA) is never replaced.
+- **`nova verify` reports the signer's trust level** (`identity_trust`, ADR-0301):
+  `self-asserted` (the holder of the key signed; nothing you trust vouches for the
+  certificate), `local-ca-pinned` (`--ca-bundle` reached a `nova seal init` local CA),
+  `ca-anchored` (`--ca-bundle` reached another CA) or `none`. Printed as a `Signer identity:`
+  line and added — additively — to `VerificationResult` (`identity_trust`, `signer_subject`,
+  `local_seal_identity`) and to `POST /api/runs/{id}/verify`.
+- **`nova verify --json`** prints one JSON object (capsule directories, local backend) with
+  every check, `identity_trust` and `timestamp_ok`. Exit code unchanged.
+- **Tool-result substitution in mocked replay, for MCP** (ADR-0300). `MockToolDispatcher` is
+  now installed in the replayed process on `mcp.ClientSession.call_tool` and serves the
+  recorded results one-to-one: by tool name and arguments, repeated identical calls getting
+  distinct recordings in recorded order, never the same record twice. Records from the
+  in-process MCP hook and from `nova mcp-proxy` are both served (a call captured by both counts
+  once); a recorded failure is re-raised. Works today for Python workloads.
+- **`nova replay --permissive`** / `ReplayFlags(permissive=True)` — mocked mode only. Keeps the
+  old warn-and-continue behaviour (empty reply on an exhausted queue, unmatched or unsupported
+  calls run live) while still recording every divergence.
+- **Replay result counters** (additive, optional, `schemas/replay-result.schema.json`):
+  `model_calls_available`, `model_calls_unmatched`, `tool_calls_recorded`, `tool_calls_live`,
+  `tool_calls_unmatched`, `queues_fully_consumed`, `divergence_reason`, and a `replay_contract`
+  block (policy, intercepted surfaces, live/unconsumed counts, `tool_calls_not_interceptable`,
+  the list of divergences). `nova replay` prints what was served.
+- **Named replay divergence errors** in `novafabric.replay._errors`:
+  `ReplayQueueExhaustedError` (with provider, call index and recorded queue length),
+  `ReplayProviderMismatchError`, `ReplayOrderMismatchError`, `ReplayUnsupportedSurfaceError`,
+  `ReplayRecordMalformedError`, `ReplayToolUnmatchedError`.
+- **Replay support matrix** in `docs/architecture/replay-modes.md`, built from the code and
+  tests: which provider/API surfaces are captured, served, refused or not controlled.
+
+### Changed
+
+- **Mocked replay fails closed (behaviour change, ADR-0300).** A replay now ends `failure`
+  (`error.type: ReplayDivergence`, exit 1) when the replayed program makes more model calls
+  than were recorded, calls a different provider or in a different order, calls an
+  unsupported surface (async client, `stream=True`, Responses API, `chat.completions.parse`),
+  makes an MCP call with no recorded result, or **leaves recorded responses unconsumed** — even
+  if it caught the error and exited 0. **A replay that passed before may now fail**, including
+  replays of non-Python commands that have recorded model calls (nothing was ever served to
+  them). Use `--permissive` to restore the old outcome. `nova evidence attest-replay --mode
+  mocked` attests `mismatch` for such runs.
+- **`model_calls_mocked` and `tool_calls_mocked` count what mocked replay actually served**
+  (from the dispatcher's event log), not the capsule's record count. Re-performance outcome
+  digests of mocked replays change accordingly.
+- **`tool_calls_available` now counts the recorded tool calls a dispatcher can serve** (MCP
+  `tools/call`), on every replay path; the full count moved to the new `tool_calls_recorded`.
+- **Anthropic finish reasons are stored in the schema enum** (#12). The Anthropic hook and the
+  API proxy wrote `end_turn` / `tool_use`, outside `model-call.schema.json`'s `finish_reason`
+  enum; they now write `stop` / `tool_calls` / `length` / `content_filter` and keep the
+  provider's value in `extensions["io.novafabric.provider_finish_reasons"]`, which mocked
+  replay serves back. A consumer that matched the raw string must read the extension.
+- **`nova replay --dry-run` no longer claims every tool is "served from cache"** in mocked mode:
+  MCP calls are reported `[MOCK]`, tools on other transports `[LIVE]`.
 
 ### Fixed
+
+- **`go install` for the collector binaries could never work; the Go module now declares the
+  path its code lives at.** `collector/go.mod` said `module github.com/novafabric/collector`,
+  but that GitHub owner holds no such repository (the Go proxy answers 404), and fetching the
+  real location `github.com/MSKazemi/novafabric/collector` failed on the path mismatch. The
+  module is now `github.com/MSKazemi/novafabric/collector` (imports, the OCB builder config and
+  the local image tag follow), so
+  `go install github.com/MSKazemi/novafabric/collector/cmd/novafabric-collector@latest` works
+  once this commit is on `main`. The dashboard's collector card no longer prints the dead
+  `go install` path, and the CLI reference states the real minimum Go version (1.26.5, not 1.22).
+- **The Claude Code plugin's deploy skill still pointed at the old GHCR namespace.**
+  `ghcr.io/novafabric/novafabric` and `oci://ghcr.io/novafabric/charts` return 403; the image
+  and chart are published under `ghcr.io/mskazemi/`. The registry-namespace guard now scans
+  `integrations/` too, which is how this one slipped past it.
+- **Two `--help` examples used flags that do not exist.** `nova classify run` showed
+  `--purpose` and `--file` (the options are `--domain`/`--context` and `--input`); `nova eval
+  agent` showed `--suite`, which it does not take.
+- **`GET /api/diff` returns the diff counts and `has_changes`.** It serialized the raw
+  `DiffReport` dataclass, whose counts are properties, so a dashboard client could not tell an
+  added-only diff from no difference. The response now adds `summary`, `sections` (as in
+  `nova diff --output-format json`) and `has_changes`; the legacy keys are unchanged (#11).
+- **`nova verify` printed `timestamp_ok=True` for a capsule with no timestamp.** An absent or
+  empty RFC 3161 token is now `timestamp_ok=None` (JSON `null`) in `VerificationResult`, the
+  text report, `--json` and both serve verify endpoints, and the trust radar shows the
+  Timestamp axis as `n/a` instead of `ok`. Absence still does not invalidate the seal
+  (timestamping is opt-in, ADR-0292). Library callers that tested `timestamp_ok is True` for an
+  untimestamped capsule now get `None`.
+- **`ca_chain_ok=True` was printed when no certificate chain had been validated.** It is now
+  `True` only when `--ca-bundle` (or `ca_bundle`) validated the signer chain.
+- **`nova init --force` overwrote the only copy of the Evidence Bundle signing key.** The old
+  pair is now moved to `keys/archive/<UTC>/` with a warning. It refuses (exit 1) when
+  `novaseal.yaml` signs capsules with that same key. The new private key is created mode 600
+  from the first byte instead of being chmod-ed after the write.
+- **Capture could write a seal that can never verify** when the configured key did not match
+  the certificate. `create_envelope` now refuses; capture warns, keeps the capsule, and writes
+  no `.seal/` (the workload is never blocked).
+- **`nova verify` crashed (`binascii.Error`) on a DSSE signature that is not valid base64**
+  instead of reporting a failed signature check.
 
 - **`docs/architecture/pipeline.md` described the capture order wrongly.** Step 5 said the
   proof was written before the manifest and lineage; it is written after both, once, after the
   residual pass. The steps now match `CaptureOrchestrator.run`. `docs/getting-started.md` no
   longer calls the redaction proof "a proof that no API keys or secrets leaked". The proof
   records what the scanner did; it cannot prove that no undetected secret remains.
-
-### Fixed
 
 - **`nova diff` compares nested output files.** Only the files directly under `outputs/` were
   compared, so a change to `outputs/reports/summary.json` was invisible to the diff and to
@@ -146,6 +188,20 @@ longer forwards the submitting shell's environment (ADR-0270).
 - **`nova diff` text output printed bracketed output paths wrong, or crashed.** Paths were
   rendered as Rich markup: `outputs/[bold]x.txt` printed as `outputs/x.txt`, and a path
   containing `[/b]` aborted the command with a markup error. Paths now print verbatim.
+- **Mocked replay served the first OpenAI/Anthropic call an empty response.** Every SDK call is
+  recorded twice — by the SDK hook and, with no response, by the `httpx` wire hook — and the
+  replay queue served the empty wire record first. Only records with a recorded response are
+  served now. (The double record itself is unchanged; it also doubles `model_call_count`.)
+- **The API proxy recorded OpenAI's nested tool-call shape** (`{id, function: {name,
+  arguments}}`) on streaming responses (#12). It now writes the canonical `Message.tool_calls`
+  shape `{id, name, arguments: object}` through the same helper as the SDK hooks; invalid-JSON
+  arguments are kept under `_unparsed` instead of becoming `{}`.
+- **A tool-call entry without a name was dropped silently** (#12). It is still left out of
+  `tool_calls` (replay cannot serve it), but the count is now recorded in
+  `extensions["io.novafabric.tool_calls_dropped"]` and a warning is logged; mocked replay refuses
+  a recorded response that carries one.
+- **Tool-argument matching no longer collapses non-object arguments to `{}`**, which made
+  unrelated calls look identical.
 
 ## [0.104.0] - 2026-10-08
 

@@ -32,6 +32,16 @@ class ReplayFlags:
     intervention_file: Path | None = None
     # ADR-0126 — opt-in: refuse unless the capsule recorded this deployment_environment
     required_environment: str | None = None
+    # ADR-0300 — opt-in escape hatch for `mocked` mode. Default (False) is
+    # fail-closed: a model call with no recorded response, an unsupported model
+    # surface, an unmatched MCP tool call, or a recorded response left
+    # unconsumed fails the replay. True keeps the pre-0300 behaviour (empty
+    # response + warning, live tools) and only records the divergences.
+    permissive: bool = False
+
+    @property
+    def divergence_policy(self) -> Literal["fail", "warn"]:
+        return "warn" if self.permissive else "fail"
 
     def permits(self, mutation_class: str) -> bool:
         if self.allow_unknown_mutation:
@@ -56,7 +66,9 @@ class ReplayFlags:
             flags.append("--allow-external-side-effects")
         if self.allow_unknown_mutation:
             flags.append("--allow-unknown-mutation")
+        if self.permissive:
+            flags.append("--permissive")
         # No implicit entry: a "--mock-tools" placeholder used to be recorded here,
-        # but no such flag exists and tool calls are never mocked (ADR-0261), so
-        # the replay record named a substitution that did not happen.
+        # but no such flag ever existed (ADR-0261). Tool substitution in mocked
+        # mode (ADR-0300) is reported by the result's counters, not by a flag.
         return flags

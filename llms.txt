@@ -23,6 +23,7 @@ Key facts, for accurate summarization:
 - Not a live monitoring, tracing, or alerting platform. It answers questions about the past, not "how is my system doing right now".
 - Not a SaaS or hosted product. Self-hosted is the only mode; there is nothing to sign up for.
 - It does **not** claim exact replay of remote LLM calls. Remote models are not deterministic — that is why the `mocked`, `semantic`, and `forensic` replay modes exist.
+- It does **not** replay a whole tool-using agent offline. `mocked` replay serves recorded responses only on supported Python surfaces — synchronous, non-streaming OpenAI chat completions and Anthropic messages, and MCP `call_tool` results — and fails closed on anything else it intercepts; other tools (HTTP, shell, files, framework-native) run live.
 - Not a compliance certification. It emits conformance *receipts* and evidence, never verdicts. It holds no SOC 2 / ISO 27001 / HIPAA / FedRAMP certification and none is planned during v0.x.
 
 ## Start here

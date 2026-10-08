@@ -18,19 +18,29 @@ class ReplayResult:
     duration_ms: int
     policy_flags_used: list[str]
     env_warnings: list[dict[str, str]]
+    # In `mocked` mode (ADR-0300): model responses the dispatcher actually
+    # served from the capsule, counted from its event log -- not the capsule's
+    # record count. Other modes keep their pre-0300 meaning (see ADR-0261 for
+    # the open forensic-mode note).
     model_calls_mocked: int = 0
-    # ADR-0261. This counts tool responses actually SERVED FROM CACHE, which is
-    # currently always zero: `_run_mocked_subprocess` writes only model calls
-    # into the replay queue and the hook loader installs only
-    # `MockModelDispatcher`. `MockToolDispatcher` exists but has no `install()`
-    # and is never instantiated, so no tool response is ever substituted. Until
-    # that lands, reporting `len(tool_calls)` here asserted work the engine had
-    # not done. The capsule's tool-call count is preserved in
-    # `tool_calls_available` below.
+    # ADR-0261/ADR-0300: tool responses actually SERVED FROM THE CAPSULE. Only
+    # `mocked` mode installs a tool dispatcher, and only on the
+    # `mcp.ClientSession.call_tool` surface; every other path reports 0.
     tool_calls_mocked: int = 0
-    # ADR-0261, additive and optional: tool calls the capsule carried into this
-    # replay and that a tool dispatcher COULD serve. Not a claim that any were.
+    # ADR-0261/ADR-0300, additive and optional: recorded tool calls on a surface
+    # a tool dispatcher can serve (MCP tools/call). Not a claim that any were.
     tool_calls_available: int | None = None
+    # ADR-0300, additive and optional: every tool call the capsule recorded,
+    # whatever its surface (the pre-0300 value of `tool_calls_available`).
+    tool_calls_recorded: int | None = None
+    # ADR-0300, additive and optional, `mocked` mode only.
+    model_calls_available: int | None = None  # servable recorded responses
+    model_calls_unmatched: int | None = None  # calls with no recorded answer
+    tool_calls_live: int | None = None  # intercepted-surface calls run live
+    tool_calls_unmatched: int | None = None  # intercepted-surface calls refused
+    queues_fully_consumed: bool | None = None
+    divergence_reason: str | None = None
+    replay_contract: dict[str, Any] | None = None
     exit_code: int | None = None
     error: dict[str, Any] | None = None
     # semantic-mode fields
@@ -60,8 +70,20 @@ class ReplayResult:
             "model_calls_mocked": self.model_calls_mocked,
             "tool_calls_mocked": self.tool_calls_mocked,
         }
-        if self.tool_calls_available is not None:
-            d["tool_calls_available"] = self.tool_calls_available
+        for name in (
+            "tool_calls_available",
+            "tool_calls_recorded",
+            "model_calls_available",
+            "model_calls_unmatched",
+            "tool_calls_live",
+            "tool_calls_unmatched",
+            "queues_fully_consumed",
+            "divergence_reason",
+            "replay_contract",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                d[name] = value
         if self.exit_code is not None:
             d["exit_code"] = self.exit_code
         if self.error is not None:

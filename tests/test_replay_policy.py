@@ -12,11 +12,25 @@ def _tc(tool_name: str = "send_email", mutation_class: str = "non-idempotent-wri
     }
 
 
-def test_mocked_mode_always_mocks() -> None:
+def test_mocked_mode_mocks_only_the_intercepted_surface() -> None:
+    """ADR-0300: an MCP tools/call is served from the capsule; any other
+    transport is not intercepted and the dry run must say it runs live (it used
+    to claim "all tools served from cache" for every call)."""
     flags = ReplayFlags(mode="mocked", allow_mutating=True)
     ev = PolicyEvaluator({}, flags)
-    decision = ev.check_tool(_tc("db_write", "non-idempotent-write"))
+    mcp_call = {**_tc("db_write", "non-idempotent-write"), "transport": "mcp"}
+    decision = ev.check_tool(mcp_call)
     assert decision.decision == "mock"
+    assert "mcp.ClientSession.call_tool" in decision.reason
+
+
+def test_mocked_mode_reports_non_intercepted_tools_as_live() -> None:
+    flags = ReplayFlags(mode="mocked")
+    ev = PolicyEvaluator({}, flags)
+    decision = ev.check_tool({**_tc("db_write"), "transport": "http"})
+    assert decision.decision == "live"
+    assert "runs live" in decision.reason
+    assert "[LIVE]" in ev.dry_run_report([{**_tc("db_write"), "transport": "http"}])
 
 
 def test_forensic_mode_always_mocks() -> None:

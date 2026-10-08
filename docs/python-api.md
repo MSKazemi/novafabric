@@ -271,6 +271,9 @@ class ReplayFlags:
     allow_external_side_effects: bool = False
     allow_unknown_mutation: bool = False
     output_dir: Path | None = None
+    intervention_file: Path | None = None
+    required_environment: str | None = None
+    permissive: bool = False   # mocked mode only (ADR-0300): warn instead of fail
 ```
 
 **Modes**
@@ -278,7 +281,7 @@ class ReplayFlags:
 | Mode | What it does | Typical use |
 |---|---|---|
 | `forensic` | Read-only inspection. No subprocess, no network. | Audit / post-incident |
-| `mocked` | Re-spawns the command; LLM calls served from the capsule cache. **Tool calls are not substituted** — they run live (`tool_calls_mocked` is always 0, ADR-0261); the `--allow-*` flags drive the dry-run report and the `--allow-mutating` policy gate, not per-call interception. | CI / regression |
+| `mocked` | Re-spawns the command (Python workloads). Serves recorded responses for **sync, non-streaming** OpenAI `chat.completions.create` / Anthropic `messages.create`, and recorded **MCP** `ClientSession.call_tool` results, one per call. **Other tools run live** (HTTP, shell, files, framework-native). **Fails closed** (ADR-0300): an extra or unmatched call, an unsupported model surface (async, streaming, Responses API), or an unconsumed recording makes the result `failure` with a `divergence_reason`; `permissive=True` only reports them. | CI / regression |
 | `semantic` | **Does not re-execute.** Scores how similar the capsule's *recorded* model responses are to each other (mean pairwise text similarity, 0.0–1.0); no live model is called; returns `similarity_score`. | Consistency check of recorded responses |
 | `exact` | **Does not re-execute.** Eligibility check for byte-exact replay (`exact_eligible` + reasons): deterministic env.lock, per-call seed, no tool-schema drift. | Local / on-prem / compliance |
 | `intervention` | Re-executes with a spec-driven intervention overlay (experimental, ADR-0086). | What-if / counterfactual analysis |
@@ -286,10 +289,13 @@ class ReplayFlags:
 > NovaFabric explicitly does **not** claim byte-exact replay of remote LLM
 > calls. `exact` mode reports *eligibility*, not a guarantee.
 
-The `allow_*` flags form a safety ladder for `mocked`/`intervention` tool
-execution — each opts into a broader class of side effect
+The `allow_*` flags form a safety ladder over the capsule's recorded tool calls
 (`allow_readonly` < `allow_mutating` < `allow_external_side_effects` <
-`allow_unknown_mutation`). Leave them `False` for a fully sandboxed replay.
+`allow_unknown_mutation`). They drive the `dry_run` report, and `allow_mutating`
+triggers an audited policy gate before the replay starts; they do **not**
+intercept calls inside the replayed process. Leaving them `False` does not
+sandbox tools that `mocked` mode does not intercept — run such replays in a
+sandbox or against test credentials.
 
 ### `ReplayEngine(capsule_dir, flags, base_dir=None)`
 
@@ -318,6 +324,24 @@ print(result.status)              # "success" | "failure" | "aborted" | "dry_run
 print(result.model_calls_mocked)  # int
 print(result.env_warnings)        # list of {field, original, current}
 ```
+
+**Example — a mocked replay gate in CI (fail-closed, ADR-0300)**
+
+```python
+result = ReplayEngine(capsule_dir=cap, flags=ReplayFlags(mode="mocked")).run()
+if result.status != "success":
+    # e.g. "model_queue_exhausted: no recorded openai response left for call #3 ..."
+    raise SystemExit(result.divergence_reason or result.error)
+print(result.model_calls_mocked, "of", result.model_calls_available, "model calls served")
+print(result.tool_calls_mocked, "MCP tool results served;",
+      result.replay_contract["tool_calls_not_interceptable"], "recorded tools not intercepted")
+```
+
+The replayed process raises a `ReplayDivergenceError` subclass
+(`novafabric.replay._errors`: `ReplayQueueExhaustedError`,
+`ReplayProviderMismatchError`, `ReplayOrderMismatchError`,
+`ReplayUnsupportedSurfaceError`, `ReplayRecordMalformedError`,
+`ReplayToolUnmatchedError`) at the call that diverged.
 
 **Example — semantic replay against a drifting remote LLM**
 
@@ -351,8 +375,18 @@ class ReplayResult:
     duration_ms: int
     policy_flags_used: list[str]
     env_warnings: list[dict[str, str]]
-    model_calls_mocked: int = 0
-    tool_calls_mocked: int = 0
+    model_calls_mocked: int = 0          # mocked: responses actually served
+    tool_calls_mocked: int = 0           # mocked: MCP results actually served
+    tool_calls_available: int | None = None  # recorded on a servable surface (MCP)
+    tool_calls_recorded: int | None = None   # every recorded tool call
+    # mocked mode, ADR-0300 (all optional)
+    model_calls_available: int | None = None
+    model_calls_unmatched: int | None = None
+    tool_calls_live: int | None = None
+    tool_calls_unmatched: int | None = None
+    queues_fully_consumed: bool | None = None
+    divergence_reason: str | None = None
+    replay_contract: dict | None = None  # policy, surfaces, divergences, ...
     exit_code: int | None = None
     error: dict | None = None
     # semantic mode

@@ -246,14 +246,17 @@ class TestDryRunPlan:
         assert data["range"] is None
         json.dumps(data)  # serializable
 
-    def test_mocked_plan_mocks_every_tool(self, tmp_path: Path) -> None:
+    def test_mocked_plan_reports_non_intercepted_tools_as_live(self, tmp_path: Path) -> None:
+        # ADR-0300: mocked replay serves only MCP tools/call from the capsule; a
+        # recorded call without `transport: mcp` runs live, and the plan says so
+        # (it used to claim every tool would be mocked).
         sid, root, caps, _ = build(tmp_path, n=2, tools=self.TOOLS)
         plan = plan_session_replay(sid, root=root, capsule_base=caps, from_seq=1)
         assert plan.range == (1, 1)
         assert plan.to_json_dict()["range"] == {"from": 1, "to": 1}
         exposure = plan.turns[0].tool_exposure
         assert exposure is not None
-        assert exposure.decisions == {"mock": 1}
+        assert exposure.decisions == {"live": 1}
         assert exposure.mutating == 1
 
     def test_plan_predicts_integrity_refusals(self, tmp_path: Path) -> None:

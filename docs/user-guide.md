@@ -612,21 +612,34 @@ mode is for local / on-prem / compliance runs where determinism is controllable.
 nova replay .novafabric/capsules/01HX.../ --mode mocked
 ```
 
-The original command is re-spawned as a subprocess. All LLM calls are
-intercepted and served from the capsule cache in the order they were recorded.
-Tool calls are denied by default and gated by a five-rung safety ladder; enable
-each rung explicitly:
+The original command is re-spawned as a subprocess (Python workloads). Recorded
+responses are served, in recorded order, for **synchronous, non-streaming**
+OpenAI `chat.completions.create` and Anthropic `messages.create` calls, and
+recorded results for **MCP** `ClientSession.call_tool` calls (one recorded
+result per call). **Every other tool runs live** — HTTP requests, shell
+commands, file writes, framework-native tools — so run replays of such agents in
+a sandbox or against test credentials.
+
+The replay is **fail-closed** (ADR-0300): an extra model call, a call on an
+unsupported surface (async client, `stream=True`, Responses API), an MCP call
+with no recorded result (the live tool is not run), or a recorded response that
+is never requested makes the replay `failure` with a `divergence_reason`.
+`--permissive` keeps the older warn-and-continue behaviour and only reports.
+
+The safety-ladder flags classify the capsule's recorded tool calls for the
+`--dry-run` report, and `--allow-mutating` adds an audited policy gate before the
+replay starts; they do not intercept calls inside the replayed process:
 
 ```bash
 nova replay .novafabric/capsules/01HX.../ --mode mocked \
-  --allow-readonly             # permit read-only tool calls
-  --allow-mutating             # also permit idempotent-write and non-idempotent-write
-  --allow-external-side-effects  # also permit external-side-effect tools
-  --allow-unknown-mutation     # also permit unclassified tools
+  --allow-readonly             # rung: read-only tool calls
+  --allow-mutating             # rung: idempotent / non-idempotent writes (+ policy gate)
+  --allow-external-side-effects  # rung: external-side-effect tools
+  --allow-unknown-mutation     # rung: unclassified tools
 ```
 
 This is the mode for CI and regression testing: re-run the recorded command
-against its cached responses and diff the result.
+against its recorded responses and diff the result.
 
 **Dry-run** (see what would happen without running):
 
@@ -644,7 +657,7 @@ Results land in `.novafabric/replays/<replay-ulid>/replay_result.yaml`. Use
 | `forensic` | No | From capsule (read-only) | Not re-executed | Inspection report | Audit / post-incident |
 | `semantic` | No | Read-only analysis | Not re-executed | `similarity_score` (0–1.0) | Drift detection |
 | `exact` | No | Read-only analysis | Not re-executed | `exact_eligible` + `exact_reasons[]` | Determinism / compliance check |
-| `mocked` | Yes | From capsule cache | Gated by safety ladder | Replay result | CI / regression |
+| `mocked` | Yes | Sync OpenAI/Anthropic chat: from the capsule; unsupported surfaces refused | MCP `call_tool`: from the capsule or refused; other tools **live** | Replay result + divergence report | CI / regression |
 
 ---
 

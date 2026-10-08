@@ -322,15 +322,16 @@ audit artifact.
 
 ## Replay Modes
 
-A replay re-executes or inspects a capsule with all external calls controlled by
-NovaFabric. There are **five explicit, falsifiable modes**; `intervention` is the
+A replay re-executes or inspects a capsule. When it re-executes, NovaFabric
+controls only the calls it intercepts (see [`mocked` mode](#mocked-mode)); the
+rest run live. There are **five explicit, falsifiable modes**; `intervention` is the
 **experimental** counterfactual mode. A replay is itself a
 new capsule, so you can diff a replay against the original run.
 
 | Mode | Spawns subprocess? | Network? | Best for |
 |---|---|---|---|
 | **`forensic`** | No | No | Audit / post-incident inspection |
-| **`mocked`** | Yes | LLM served from cache; **tool calls run live** (not substituted) | CI / regression |
+| **`mocked`** | Yes | Sync OpenAI/Anthropic chat replies and MCP `call_tool` results served from the capsule; **other tools run live**; fails closed on divergence | CI / regression |
 | **`semantic`** | No | No | Consistency score over the capsule's *recorded* model responses — does **not** re-execute |
 | **`exact`** | No | No | Eligibility check for a byte-exact re-run — does **not** re-execute |
 | **`intervention`** (experimental, ADR-0086) | Yes, under mocked semantics | No | Counterfactual root-cause: substitute one captured event per an `InterventionSpec`, re-execute downstream, and record whether the outcome flips |
@@ -353,22 +354,44 @@ Use forensic mode to inspect what happened without any risk of side effects.
 
 ### `mocked` mode
 
-The original command is re-spawned as a subprocess. All LLM calls are
-intercepted and served from the capsule cache in order
-(`MockModelDispatcher`). **Tool calls are not substituted:** the replayed
-command's tools run live, exactly as the command calls them. A
-`MockToolDispatcher` exists but is never installed, so `tool_calls_mocked` is
-always 0 and the capsule's count is reported as `tool_calls_available`
-(ADR-0261). Serving tool results from the capsule is **future design**.
+The original command is re-spawned as a subprocess (**works today** for Python
+workloads, ADR-0300). Inside it:
+
+- `MockModelDispatcher` serves the recorded responses, in order, for
+  **synchronous, non-streaming** OpenAI `chat.completions.create` and Anthropic
+  `messages.create` calls — including the assistant's recorded tool-call
+  requests. Async clients, `stream=True`, the OpenAI Responses API and
+  `chat.completions.parse` are **refused**, not sent to the network.
+- `MockToolDispatcher` serves recorded **MCP** results through
+  `mcp.ClientSession.call_tool`, one recorded result per call (matched by tool
+  name and arguments, repeated identical calls in recorded order). A call with
+  no recorded result is **refused** — the live tool does not run.
+- **Every other tool runs live**: HTTP requests, shell commands, file writes,
+  framework-native tools and other providers' SDKs are not intercepted. The
+  result reports them as `tool_calls_not_interceptable`.
+
+The replay **fails closed**: an extra model call, a call on an unsupported
+surface, an unmatched MCP call, or a recorded response that is never requested
+marks the replay `failure` with a `divergence_reason`, even if the workload
+caught the exception. `--permissive` (Python: `ReplayFlags(permissive=True)`)
+keeps the older behaviour — an empty reply on an exhausted queue, unmatched
+calls run live — and still reports every divergence. The result counts what was
+actually served: `model_calls_mocked` of `model_calls_available`,
+`tool_calls_mocked`/`tool_calls_live`/`tool_calls_unmatched`, and
+`queues_fully_consumed`. See the
+[support matrix](architecture/replay-modes.md#support-matrix).
 
 ### Safety ladder (mocked replay)
 
 The safety ladder classifies the capsule's recorded tool calls by side-effect
-level. **As built it does not intercept tool calls at run time** — it drives the
+level. **It does not change what the replayed process may do** — it drives the
 `--dry-run` report (which recorded calls each rung would permit) and
 `--allow-mutating` triggers a policy-engine gate (an audited allow/deny) before a
-mutating replay starts. Per-call enforcement during the subprocess is **future design**,
-together with tool-result substitution. The rungs:
+mutating replay starts. In `mocked` mode the run-time rule is fixed by ADR-0300
+instead: an MCP `call_tool` is served from the capsule or refused, whatever its
+mutation class, and every other tool runs live (the `--dry-run` report marks
+those `[LIVE]`). Ladder-based enforcement for tools replay does not intercept is
+**future design**. The rungs:
 
 ```
 (none)               — deny all tool calls

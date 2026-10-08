@@ -7,11 +7,18 @@ from typing import TYPE_CHECKING, Any
 
 from novafabric.capture._ulid import new_ulid
 from novafabric.capture.event_recorder import get_current_writer
+from novafabric.capture.hooks._finish_reason import (
+    attach_provider_finish_reasons,
+    canonical_finish_reason,
+)
 from novafabric.capture.hooks._otel_genai import (
     build_record_envelope,
     extract_request_attributes,
 )
-from novafabric.capture.hooks._tool_call_refs import openai_tool_call_refs
+from novafabric.capture.hooks._tool_call_refs import (
+    note_dropped_tool_calls,
+    openai_tool_call_refs_with_dropped,
+)
 from novafabric.cost.usage_types import usage_from_openai
 
 if TYPE_CHECKING:
@@ -98,23 +105,28 @@ class OpenAIHook:
     ) -> None:
         choices: list[dict[str, Any]] = []
         finish_reasons: list[str] = []
+        raw_finish_reasons: list[str] = []
+        dropped = 0
         for c in getattr(response, "choices", []):
             msg = c.message
+            raw_finish = str(getattr(c, "finish_reason", "stop") or "stop")
             choice: dict[str, Any] = {
                 "index": c.index,
                 "message": {
                     "role": getattr(msg, "role", "assistant"),
                     "content": getattr(msg, "content", None),
                 },
-                "finish_reason": getattr(c, "finish_reason", "stop") or "stop",
+                "finish_reason": canonical_finish_reason("openai", raw_finish),
             }
             # Additive: the assistant's tool-call requests, so mocked replay can
             # serve them back (absent on a text-only turn).
-            tool_calls = openai_tool_call_refs(msg)
+            tool_calls, n_dropped = openai_tool_call_refs_with_dropped(msg)
+            dropped += n_dropped
             if tool_calls:
                 choice["message"]["tool_calls"] = tool_calls
             choices.append(choice)
             finish_reasons.append(choice["finish_reason"])
+            raw_finish_reasons.append(raw_finish)
         usage = getattr(response, "usage", None)
         record = build_record_envelope(
             model_call_id=new_ulid(),
@@ -144,6 +156,8 @@ class OpenAIHook:
             record["nova.usage"] = usage_block
         if finish_reasons:
             record["gen_ai.response.finish_reasons"] = finish_reasons
+        attach_provider_finish_reasons(record, raw_finish_reasons, finish_reasons)
+        note_dropped_tool_calls(record, dropped)
         response_id = getattr(response, "id", None)
         if response_id:
             record["gen_ai.response.id"] = str(response_id)

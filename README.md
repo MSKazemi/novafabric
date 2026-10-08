@@ -125,7 +125,8 @@ primitives is **Capture → Seal → Replay → Diff → Audit**.
 
 The analogy: observability is a *flight recorder* — it tells you what happened.
 NovaFabric keeps the recording as evidence you own, and can re-fly the route against
-the recorded model responses (tools still run live — see [replay modes](docs/architecture/replay-modes.md)).
+the recorded model responses and recorded MCP tool results on supported Python API
+paths (other tools still run live — see [replay modes](docs/architecture/replay-modes.md#support-matrix)).
 
 ---
 
@@ -212,14 +213,14 @@ verifiable redaction is a precondition for evidence, not an afterthought.
 
 ### 3. Replay a capsule
 
-Replay re-executes or inspects a capsule with external calls controlled. A replay is
-itself a new capsule you can diff.
+Replay re-executes or inspects a capsule. A replay is itself a new capsule you can diff.
 
 ```bash
 # Forensic: read-only inspection, no network, no subprocess — for audit / post-incident
 nova replay ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --mode forensic
 
-# Mocked: re-run the command, all model and tool calls served from the capsule cache
+# Mocked: re-run the command; recorded sync OpenAI/Anthropic chat replies and recorded
+# MCP tool results are served from the capsule, other tools run live; fails on divergence
 nova replay ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --mode mocked
 
 # Dry-run: see what would be mocked before committing
@@ -319,13 +320,12 @@ so the schema can grow without a new top-level format.
 
 ### 3. Replay (v0.3)
 
-Re-execute or inspect a capsule with external calls controlled, in **five explicit,
-falsifiable modes**:
+Re-execute or inspect a capsule in **five explicit, falsifiable modes**:
 
 | Mode | What it does | Use for |
 |---|---|---|
 | `forensic` | Read-only inspection; no subprocess, no network | Audit, post-incident review |
-| `mocked` | Re-spawns the command; LLM calls served from the capsule cache. **Tool calls are not substituted** — they run live (`tool_calls_mocked` is always 0, ADR-0261); the `--allow-*` flags drive the dry-run report and the `--allow-mutating` policy gate, not per-call interception | CI, regression |
+| `mocked` | Re-spawns the command (Python workloads). Serves recorded replies for sync, non-streaming OpenAI `chat.completions` / Anthropic `messages` calls and recorded MCP `call_tool` results; **other tools run live**. Fails closed: an extra, unmatched or unsupported call (async, streaming, Responses API) or an unconsumed recording fails the replay (`--permissive` only reports it). See the [support matrix](docs/architecture/replay-modes.md#support-matrix) | CI, regression |
 | `semantic` | **Does not re-execute.** Scores how similar the capsule's *recorded* model responses are to each other (mean pairwise text similarity, 0.0–1.0); no live model is called | Consistency check of recorded responses |
 | `exact` | **Does not re-execute.** Eligibility check for byte-exact replay (`exact_eligible` + reasons): deterministic env.lock, per-call seed, no tool-schema drift | Local / on-prem / compliance |
 | `intervention` *(experimental)* | Replays under mocked semantics after substituting one captured model/tool event | Counterfactual root-cause analysis |

@@ -176,7 +176,7 @@ matches what you're trying to establish:
 | Mode | What it does | Use it for |
 |---|---|---|
 | `forensic` | Read-only inspection, no subprocess, no network | Audit / post-incident |
-| `mocked` | Re-spawns the command; LLM calls served from the capsule cache. **Tool calls are not substituted** — they run live (`tool_calls_mocked` is always 0, ADR-0261); the `--allow-*` flags drive the dry-run report and the `--allow-mutating` policy gate, not per-call interception | CI / regression |
+| `mocked` | Re-spawns the command (Python workloads). Recorded replies are served for sync, non-streaming OpenAI/Anthropic chat calls, and recorded results for MCP `call_tool`. **Other tools run live** (HTTP, shell, files, framework-native). Fails closed on divergence — an extra, unmatched or unsupported call (async, streaming, Responses API) fails the replay instead of reaching the network (ADR-0300) | CI / regression |
 | `semantic` | **Does not re-execute.** Scores how similar the capsule's *recorded* model responses are to each other (mean pairwise text similarity, 0.0–1.0); no live model is called | Consistency check of recorded responses |
 | `exact` | **Does not re-execute.** Eligibility check for byte-exact replay (`exact_eligible` + reasons): deterministic env.lock, per-call seed, no tool-schema drift | Local / on-prem / compliance |
 
@@ -188,9 +188,11 @@ nova replay --mode forensic capsules/01KR9Q2AD…
 
 This inspects the *exact same inputs* stored in the capsule — same log content, same
 model config, same recorded tool responses — with no subprocess and no network. To
-re-drive the command with cached LLM responses, use `--mode mocked`. If the agent
-produces the same diagnosis, it's reproducible; if not, something drifted (a model
-update, a tool behavior change, or non-determinism).
+re-drive the command with the recorded LLM responses (and recorded MCP tool results),
+use `--mode mocked`. If the agent produces the same diagnosis and the replay reports no
+divergence, the run is reproducible on the intercepted surfaces; if not, the replay
+names where it left the recording (`divergence_reason`). Tools replay does not
+intercept still run live, so a change in their behaviour shows up here too.
 
 > **Honesty note:** NovaFabric does **not** claim byte-exact replay of *remote* LLM
 > calls. `exact` mode is for deterministic local/on-prem execution; for drifting remote

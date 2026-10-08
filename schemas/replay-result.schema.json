@@ -81,17 +81,77 @@
     "model_calls_mocked": {
       "type": "integer",
       "minimum": 0,
-      "description": "Number of model calls served from cache."
+      "description": "Number of model calls served from cache. In mocked mode (ADR-0300) this is the number of recorded responses the dispatcher actually served, counted from its event log."
     },
     "tool_calls_mocked": {
       "type": "integer",
       "minimum": 0,
-      "description": "Number of tool responses served from cache. ADR-0261: this is currently always 0 -- the replay engine substitutes model responses only, and no tool dispatcher is installed on any path. See tool_calls_available for the count the capsule carried."
+      "description": "Number of tool responses served from the capsule. ADR-0300: only mocked mode installs a tool dispatcher, and only on mcp.ClientSession.call_tool; every other mode reports 0 (ADR-0261)."
     },
     "tool_calls_available": {
       "type": "integer",
       "minimum": 0,
-      "description": "Tool calls the capsule carried into this replay and that a dispatcher could serve. Additive and optional (ADR-0261); not a claim that any were substituted."
+      "description": "Recorded tool calls on a surface a tool dispatcher can serve (MCP tools/call, ADR-0300). Additive and optional (ADR-0261); not a claim that any were substituted. See tool_calls_recorded for every recorded call."
+    },
+    "tool_calls_recorded": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Every tool call the capsule recorded, whatever its surface. Additive and optional (ADR-0300)."
+    },
+    "model_calls_available": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Mocked mode (ADR-0300): recorded model responses the dispatcher can serve (supported provider surface, successful call, a recorded choice). Additive and optional."
+    },
+    "model_calls_unmatched": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Mocked mode (ADR-0300): model calls the replay made that had no recorded response to serve (queue exhausted, provider/order mismatch, malformed record, or a refused unsupported surface). Additive and optional."
+    },
+    "tool_calls_live": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Mocked mode (ADR-0300): calls on the intercepted tool surface that executed live (only possible with --permissive). Calls on surfaces replay does not intercept are not observed and not counted here. Additive and optional."
+    },
+    "tool_calls_unmatched": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Mocked mode (ADR-0300): calls on the intercepted tool surface with no unconsumed recorded result. Additive and optional."
+    },
+    "queues_fully_consumed": {
+      "type": "boolean",
+      "description": "Mocked mode (ADR-0300): every servable recorded model response and MCP tool result was consumed. Additive and optional."
+    },
+    "divergence_reason": {
+      "type": "string",
+      "description": "Mocked mode (ADR-0300): the first divergence from the recorded run, with a count of any others. Absent when the replay followed the recording. Additive and optional."
+    },
+    "replay_contract": {
+      "type": "object",
+      "description": "Mocked mode (ADR-0300): divergence policy, intercepted surfaces, recorded/live/unconsumed counts and the list of divergences. Additive and optional.",
+      "properties": {
+        "divergence_policy": {"type": "string", "enum": ["fail", "warn"]},
+        "interception_surfaces": {"type": "array", "items": {"type": "string"}},
+        "dispatcher_installed": {"type": "boolean"},
+        "model_calls_recorded": {"type": "integer", "minimum": 0},
+        "model_calls_live": {"type": "integer", "minimum": 0},
+        "model_calls_unconsumed": {"type": "integer", "minimum": 0},
+        "tool_calls_recorded": {"type": "integer", "minimum": 0},
+        "tool_calls_not_interceptable": {"type": "integer", "minimum": 0},
+        "tool_calls_unconsumed": {"type": "integer", "minimum": 0},
+        "divergences": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "message"],
+            "properties": {
+              "kind": {"type": "string"},
+              "message": {"type": "string"}
+            }
+          }
+        },
+        "divergences_not_listed": {"type": "integer", "minimum": 0}
+      }
     },
     "exit_code": {
       "type": ["integer", "null"],

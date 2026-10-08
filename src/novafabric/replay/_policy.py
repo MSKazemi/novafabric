@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from novafabric.replay._contract import TOOL_SURFACE_MCP, is_interceptable_tool_call
 from novafabric.replay._flags import ReplayFlags
 
 
@@ -11,7 +12,7 @@ class PolicyDecision:
     tool_call_id: str
     tool_name: str
     mutation_class: str
-    decision: Literal["mock", "allow", "deny"]
+    decision: Literal["mock", "allow", "deny", "live"]
     reason: str
 
 
@@ -47,14 +48,31 @@ class PolicyEvaluator:
                 reason=f"tool_override: {override_action}",
             )
 
-        # In mocked mode, always mock tools regardless of flags
+        # Mocked mode (ADR-0300): only the intercepted surface is served from
+        # the capsule. Anything else is not controlled by replay and runs live;
+        # saying "served from cache" for it was a false statement.
         if self._flags.mode == "mocked":
+            if is_interceptable_tool_call(tool_call):
+                return PolicyDecision(
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                    mutation_class=mutation_class,
+                    decision="mock",
+                    reason=(
+                        f"mocked mode: served from the capsule via {TOOL_SURFACE_MCP}; "
+                        "an unmatched call is refused, never run live"
+                    ),
+                )
+            transport = tool_call.get("transport", "unknown")
             return PolicyDecision(
                 tool_call_id=tool_call_id,
                 tool_name=tool_name,
                 mutation_class=mutation_class,
-                decision="mock",
-                reason="mocked mode: all tools served from cache",
+                decision="live",
+                reason=(
+                    f"mocked mode: transport={transport!r} is not intercepted by "
+                    "replay; the tool runs live"
+                ),
             )
 
         # Forensic mode: nothing is allowed to execute
@@ -95,7 +113,7 @@ class PolicyEvaluator:
 
         lines = ["[dry-run: no execution]\n", "Tool call policy report:\n"]
         for d in decisions:
-            icon = "MOCK" if d.decision == "mock" else "ALLOW" if d.decision == "allow" else "DENY"
+            icon = {"mock": "MOCK", "allow": "ALLOW", "live": "LIVE"}.get(d.decision, "DENY")
             lines.append(
                 f"  [{icon}] {d.tool_name}  mutation_class={d.mutation_class}  ({d.reason})\n"
             )

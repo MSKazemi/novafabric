@@ -73,6 +73,12 @@ Ten more accepted-ADR slices, all **experimental**, none changing `schemas/run-c
 | 0167 P3 | Alignment-risk signals by reference | `nova safety signal list` | P4 gate / case leaves, P5 seal |
 | 0208 P3 | HTTP chargeback export | `GET /v0/usage/export` | per-org budgets, API-key binding enforcement |
 
+### Landed — Unreleased (2026-10-08)
+
+| ADR | Slice | Surface | Still open |
+|---|---|---|---|
+| 0300 (+ issue #12 remainder) | Mocked replay: MCP tool-result substitution (one-to-one), fail-closed divergence with named errors, served/unmatched/unconsumed counters, support matrix; API-proxy canonical tool-call shape, Anthropic finish reasons in the schema enum, counted missing-name drops | `nova replay --mode mocked` (now fail-closed — behaviour change), `nova replay --permissive`, `replay_result.yaml` counters, `docs/architecture/replay-modes.md#support-matrix` | **experimental**. Async / streaming / Responses API model calls (capture records no response — refused today); tools on non-MCP surfaces (HTTP, shell, files, framework-native) still run live; a replay-serving `nova mcp-proxy` for non-Python MCP clients (future design); `replay.yaml` `tool_overrides` inside the replayed process; re-running the RQ1 tool-using replay experiment (needs infrastructure) |
+
 ### Next — specified, unclaimed, ready to build
 
 *(Nothing currently listed. The three capture adapters that stood here —

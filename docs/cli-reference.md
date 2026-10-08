@@ -621,7 +621,7 @@ Subcommands:
   slice is refused, never silently ignored; `--dry-run` prints the plan
   (turn order, per-turn effective mode, member integrity, and each turn's
   recorded tool calls classified by the inherited per-capsule policy:
-  mock/allow/deny counts and how many are mutating) and executes and writes
+  mock/allow/deny/live counts and how many are mutating) and executes and writes
   nothing (`exact`-mode preconditions are only checked on execution).
   *Still future design (planned): content-addressed state-seam verification
   between turns (P2 — so a slice's first turn replays from its captured
@@ -1135,10 +1135,11 @@ nova replay .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --output-dir /mnt/repla
 Options:
 - `--mode {mocked,forensic,semantic,exact,intervention}` — replay mode (default: `mocked`). Tab-completion available via `nova --install-completion`.
 - `--dry-run` — report what would execute without running; writes dry-run report and exits 0
-- `--allow-readonly` — permit re-invocation of `read-only` tools
-- `--allow-mutating` — permit re-invocation of `idempotent-write` and `non-idempotent-write` tools
-- `--allow-external-side-effects` — permit re-invocation of `external-side-effect` tools
-- `--allow-unknown-mutation` — permit re-invocation of tools with `unknown` mutation class
+- `--allow-readonly` — safety-ladder rung: permit `read-only` tools (drives the `--dry-run` report; does not intercept calls in the replayed process)
+- `--allow-mutating` — rung for `idempotent-write` and `non-idempotent-write` tools; also triggers the audited `replay_mutating` policy gate before the replay starts
+- `--allow-external-side-effects` — rung for `external-side-effect` tools (dry-run report)
+- `--allow-unknown-mutation` — rung for tools with `unknown` mutation class (dry-run report)
+- `--permissive` — `mocked` mode only (ADR-0300): do **not** fail on divergence. A model call with no recorded response gets an empty reply with a warning (the pre-ADR-0300 behaviour), unsupported model surfaces and unmatched MCP tool calls run **live**, and unconsumed recordings are only reported. Every divergence is still recorded in `replay_result.yaml` (`divergence_reason`, `replay_contract.divergences`) and `--permissive` is listed in `policy_flags_used`. Exit 1 with any other mode.
 - `--output-dir, -o PATH` — base directory for replay output (default: `.novafabric/replays/`)
 - `--environment ENV` — experimental (ADR-0126): only replay a capsule that recorded `ENV` as its `deployment_environment` (exact match, case-sensitive). Otherwise exit 2 before anything runs; a capsule with no recorded environment is refused. Usable as a CI gate, e.g. `nova replay --environment staging --dry-run <run-id>`. The `replay_mutating` policy input also carries the recorded value as `input.resource.deployment_environment` (`null` when absent).
 - `--intervention-file PATH` — InterventionSpec YAML for `--mode intervention` (experimental, ADR-0086): one target selector (`event_index` or `span_id`) + exactly one substitution (`replace_model_response` / `replace_tool_result` / `mutate_payload`) + optional named check-functions (`fatal: true` aborts). The output capsule is diffable against the baseline with `nova diff`.
@@ -1148,15 +1149,23 @@ Options:
 | Mode | Re-executes command? | Re-executes models? | Re-executes tools? | Output |
 |---|---|---|---|---|
 | `forensic` | No | No | No | Inspection report |
-| `mocked` | Yes | From cache | From cache | Replay result |
+| `mocked` | Yes (Python workloads) | Sync, non-streaming OpenAI `chat.completions` / Anthropic `messages`: from the capsule. Async, streaming, Responses API: refused (live with `--permissive`). Other providers: live | MCP `ClientSession.call_tool`: from the capsule, unmatched calls refused (live with `--permissive`). Every other tool: **live** | Replay result with served/unmatched counters and any divergence |
 | `semantic` | No | No | No | Similarity score (0–1.0) across model call responses |
 | `exact` | No | No | No | Eligibility check: deterministic env + seeded calls |
-| `intervention` | Yes | Substituted + cached | From cache | Counterfactual capsule marked `replay_mode: intervention` (experimental, ADR-0086) |
+| `intervention` | Yes | Substituted + recorded (warn on divergence) | **Live** (no tool dispatcher) | Counterfactual capsule marked `replay_mode: intervention` (experimental, ADR-0086) |
+
+`mocked` is **fail-closed** (ADR-0300): an extra model call, a provider or order
+mismatch, an unsupported model surface, an unmatched MCP tool call, or a recorded
+response that is never requested makes the replay `failure` (exit 1) with a
+`divergence_reason` — even if the workload caught the error and exited 0. See the
+[support matrix](architecture/replay-modes.md#support-matrix).
 
 Output is written to `.novafabric/replays/<replay-ulid>/replay_result.yaml`.
 
 ```
-✓ Replay written: .novafabric/replays/01HXBM1Y3K2NGH9V0RD9P0ZDC4  (replay_id=01HXBM1Y3K2NGH9V0RD9P0ZDC4  mode=forensic)
+✓ Replay written: .novafabric/replays/01HXBM1Y3K2NGH9V0RD9P0ZDC4  (replay_id=01HXBM1Y3K2NGH9V0RD9P0ZDC4  mode=mocked)
+  model calls: 2 of 2 served from the capsule, 0 unmatched
+  tool calls (MCP call_tool): 2 of 2 served, 0 live, 0 unmatched; 0 recorded on surfaces replay does not intercept
 ```
 
 ---
@@ -7639,7 +7648,10 @@ failed).
 | `NOVA_CAP003_ENABLED` | `false` | Set to `true` to activate the dual-object-store erasure path (cap-003 compliance). Requires S3 GOVERNANCE Object Lock. |
 | `NOVA_DLQ_DIR` | — | Directory for the dead-letter queue. When set, events that fail forwarding are written here instead of dropped. |
 | `NOVA_LIBSPOOL_PATH` | — | Absolute path to `libspool.so` for the CFFI collector spool. Auto-discovered from `NOVA_LIBSPOOL_PATH`; falls back to the bundled .so. |
-| `NOVAFABRIC_REPLAY_QUEUE_PATH` | — | Socket/FIFO path used by the mocked replay engine to inject synthetic events into a running subprocess. Set automatically by `nova replay --mode mocked`. |
+| `NOVAFABRIC_REPLAY_QUEUE_PATH` | — | JSON file holding the capsule's model-call records, read by the replay dispatcher inside the replayed process. Set automatically by `nova replay --mode mocked\|intervention`; not meant to be set by hand. |
+| `NOVAFABRIC_REPLAY_TOOL_QUEUE_PATH` | — | JSON file holding the capsule's tool-call records; when set, the MCP tool dispatcher is installed (ADR-0300). Set automatically by `nova replay --mode mocked`. |
+| `NOVAFABRIC_REPLAY_EVENTS_PATH` | — | JSON-lines event log the replay dispatchers append to (served, refused, divergences); read back by the engine for the replay result. Set automatically. |
+| `NOVAFABRIC_REPLAY_DIVERGENCE_POLICY` | `fail` | `fail` (raise and fail the replay on divergence) or `warn` (`--permissive`; intervention mode). Set automatically by `nova replay`. |
 | `NOVAFABRIC_EVIDENCE_DIR` | `$NOVAFABRIC_HOME/evidence` | Override directory for compliance evidence bundles (cap-001/002/004/005). Used by `nova assure` and serve endpoints. |
 | `NOVAFABRIC_TOOL_PERMISSION_DB_PATH` | — | SQLite path for the tool-permission policy DB. Defaults to in-memory when unset (permissions are not persisted across restarts). |
 | `NOVAFABRIC_GAIA_OCI_DIGEST` | — | OCI image digest pin for the GAIA eval container. Unset = default published digest. Override to use a private mirror or a specific version. |

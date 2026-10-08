@@ -7,11 +7,18 @@ from typing import TYPE_CHECKING, Any
 
 from novafabric.capture._ulid import new_ulid
 from novafabric.capture.event_recorder import get_current_writer
+from novafabric.capture.hooks._finish_reason import (
+    attach_provider_finish_reasons,
+    canonical_finish_reason,
+)
 from novafabric.capture.hooks._otel_genai import (
     build_record_envelope,
     extract_request_attributes,
 )
-from novafabric.capture.hooks._tool_call_refs import anthropic_tool_call_refs
+from novafabric.capture.hooks._tool_call_refs import (
+    anthropic_tool_call_refs_with_dropped,
+    note_dropped_tool_calls,
+)
 from novafabric.cost.usage_types import usage_from_anthropic
 
 if TYPE_CHECKING:
@@ -78,11 +85,14 @@ class AnthropicHook:
     ) -> None:
         parts = getattr(response, "content", [])
         text = " ".join(getattr(p, "text", "") for p in parts if hasattr(p, "text"))
-        finish_reason = str(getattr(response, "stop_reason", "end_turn") or "stop")
+        # Anthropic's own stop_reason (end_turn, tool_use, ...) is outside the
+        # schema enum: store the canonical value, keep the raw one additively.
+        raw_finish = getattr(response, "stop_reason", None)
+        finish_reason = canonical_finish_reason("anthropic", raw_finish)
         message: dict[str, Any] = {"role": "assistant", "content": text}
         # Additive: tool_use blocks as Message.tool_calls, so mocked replay can
         # serve the tool-calling turn back (absent on a text-only turn).
-        tool_calls = anthropic_tool_call_refs(parts)
+        tool_calls, dropped = anthropic_tool_call_refs_with_dropped(parts)
         if tool_calls:
             message["tool_calls"] = tool_calls
         choices = [{
@@ -110,6 +120,9 @@ class AnthropicHook:
         if usage_block is not None:
             record["nova.usage"] = usage_block
         record["gen_ai.response.finish_reasons"] = [finish_reason]
+        if isinstance(raw_finish, str) and raw_finish:
+            attach_provider_finish_reasons(record, [raw_finish], [finish_reason])
+        note_dropped_tool_calls(record, dropped)
         response_id = getattr(response, "id", None)
         if response_id:
             record["gen_ai.response.id"] = str(response_id)

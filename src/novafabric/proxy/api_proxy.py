@@ -34,9 +34,19 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from novafabric.capture._ulid import new_ulid
+from novafabric.capture.hooks._finish_reason import (
+    attach_provider_finish_reasons,
+    canonical_finish_reason,
+)
 from novafabric.capture.hooks._otel_genai import (
     build_record_envelope,
     extract_request_attributes,
+)
+from novafabric.capture.hooks._tool_call_refs import (
+    anthropic_tool_call_refs_with_dropped,
+    note_dropped_tool_calls,
+    openai_tool_call_refs_with_dropped,
+    parse_tool_arguments,
 )
 from novafabric.capture.hooks._url_registry import load_url_registry
 
@@ -170,15 +180,16 @@ def _merge_anthropic_streaming_response(body: bytes) -> dict[str, Any]:
                     response.setdefault("usage", {})["output_tokens"] = usage["output_tokens"]
         # message_stop has no payload to merge; it's just a sentinel.
 
-    # Finalize tool_use blocks by parsing the accumulated JSON.
+    # Finalize tool_use blocks by parsing the accumulated JSON. A stream that
+    # never sent input deltas keeps the block's declared ``input``; invalid JSON
+    # is kept verbatim under ``_unparsed`` (the same rule as the SDK hooks).
     for idx, block in blocks.items():
         if block.get("type") == "tool_use" and "_input_json" in block:
             raw_input = block.pop("_input_json")
-            try:
-                parsed = json.loads(raw_input) if raw_input else {}
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                parsed = {}
-            block["input"] = parsed if isinstance(parsed, dict) else {}
+            if raw_input:
+                block["input"] = parse_tool_arguments(raw_input)
+            else:
+                block["input"] = parse_tool_arguments(block.get("input"))
 
     if blocks:
         response["content"] = [blocks[i] for i in sorted(blocks.keys())]
@@ -533,6 +544,21 @@ class ApiProxy:
             # + 'stop_reason'. Normalize both into gen_ai.response.choices.
             choices = merged.get("choices")
             if isinstance(choices, list):
+                # The delta merge accumulates OpenAI's nested wire shape
+                # ({id, function: {name, arguments}}); the record carries the
+                # canonical Message.tool_calls shape {id, name, arguments: object}
+                # -- the same one the SDK hooks write (issue #12).
+                dropped = 0
+                for c in choices:
+                    message_obj = c.get("message") if isinstance(c, dict) else None
+                    if isinstance(message_obj, dict) and "tool_calls" in message_obj:
+                        refs, n_dropped = openai_tool_call_refs_with_dropped(message_obj)
+                        dropped += n_dropped
+                        if refs:
+                            message_obj["tool_calls"] = refs
+                        else:
+                            del message_obj["tool_calls"]
+                note_dropped_tool_calls(record, dropped)
                 record["gen_ai.response.choices"] = choices
                 finish_reasons = [
                     c.get("finish_reason")
@@ -542,43 +568,41 @@ class ApiProxy:
                 if finish_reasons:
                     record["gen_ai.response.finish_reasons"] = finish_reasons
             elif "content" in merged:
-                # Anthropic-shape merged response: synthesize an
-                # OpenAI-style choices array so consumers see a stable
-                # shape regardless of which provider was captured.
+                # Anthropic-shape merged response: synthesize a choices array
+                # in the canonical model-call shape so consumers see one form
+                # regardless of which provider was captured.
                 content_blocks = merged.get("content") or []
                 # Concatenate text blocks into a single content string;
-                # tool_use blocks become tool_calls.
-                text_parts: list[str] = []
-                tool_calls: list[dict[str, Any]] = []
-                for block in content_blocks:
-                    if not isinstance(block, dict):
-                        continue
-                    if block.get("type") == "text" and isinstance(block.get("text"), str):
-                        text_parts.append(block["text"])
-                    elif block.get("type") == "tool_use":
-                        tool_calls.append({
-                            "id": block.get("id", ""),
-                            "type": "function",
-                            "function": {
-                                "name": block.get("name", ""),
-                                "arguments": json.dumps(block.get("input") or {}),
-                            },
-                        })
+                # tool_use blocks become canonical Message.tool_calls.
+                text_parts = [
+                    block["text"]
+                    for block in content_blocks
+                    if isinstance(block, dict)
+                    and block.get("type") == "text"
+                    and isinstance(block.get("text"), str)
+                ]
+                tool_calls, dropped = anthropic_tool_call_refs_with_dropped(content_blocks)
+                note_dropped_tool_calls(record, dropped)
                 stop_reason = merged.get("stop_reason")
+                raw_stop = stop_reason if isinstance(stop_reason, str) and stop_reason else None
                 message: dict[str, Any] = {
                     "role": "assistant",
                     "content": "".join(text_parts) if text_parts else None,
                 }
                 if tool_calls:
                     message["tool_calls"] = tool_calls
+                canonical_stop = (
+                    canonical_finish_reason("anthropic", raw_stop) if raw_stop else None
+                )
                 synthesized_choice: dict[str, Any] = {
                     "index": 0,
                     "message": message,
-                    "finish_reason": stop_reason if isinstance(stop_reason, str) else None,
+                    "finish_reason": canonical_stop,
                 }
                 record["gen_ai.response.choices"] = [synthesized_choice]
-                if isinstance(stop_reason, str) and stop_reason:
-                    record["gen_ai.response.finish_reasons"] = [stop_reason]
+                if raw_stop and canonical_stop:
+                    record["gen_ai.response.finish_reasons"] = [canonical_stop]
+                    attach_provider_finish_reasons(record, [raw_stop], [canonical_stop])
             usage = merged.get("usage")
             if isinstance(usage, dict):
                 # OpenAI uses prompt_tokens/completion_tokens; Anthropic

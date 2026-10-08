@@ -266,7 +266,9 @@ def test_anthropic_hook_populates_response_id_and_finish_reasons(tmp_path: Path)
                     model="claude-sonnet-4-6", messages=[], max_tokens=100)
     r = _model_calls(tmp_path)[0]
     assert r["gen_ai.response.id"] == "msg_real_id_xyz"
-    assert r["gen_ai.response.finish_reasons"] == ["tool_use"]
+    # Issue #12: the schema enum value, with Anthropic's own value kept additively.
+    assert r["gen_ai.response.finish_reasons"] == ["tool_calls"]
+    assert r["extensions"]["io.novafabric.provider_finish_reasons"] == ["tool_use"]
 
 
 def test_anthropic_hook_records_error(tmp_path: Path) -> None:

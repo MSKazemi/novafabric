@@ -220,7 +220,7 @@ The five modes, and when to reach for each:
 | Mode | What it does | Use for |
 |------|--------------|---------|
 | `forensic` | Read-only inspection; no subprocess, no network | Audit, post-incident |
-| `mocked` | Re-spawns the command; LLM calls served from the capsule cache. **Tool calls are not substituted** — they run live (`tool_calls_mocked` is always 0, ADR-0261); the `--allow-*` flags drive the dry-run report and the `--allow-mutating` policy gate, not per-call interception | CI / regression |
+| `mocked` | Re-spawns the command (Python workloads); recorded replies served for sync, non-streaming OpenAI/Anthropic chat calls and recorded results for MCP `call_tool`; **other tools run live**; fails closed on any divergence (ADR-0300, `--permissive` to only report) | CI / regression |
 | `semantic` | **Does not re-execute.** Scores how similar the capsule's *recorded* model responses are to each other (mean pairwise text similarity, 0.0–1.0); no live model is called | Consistency check of recorded responses |
 | `exact` | **Does not re-execute.** Eligibility check for byte-exact replay (`exact_eligible` + reasons): deterministic env.lock, per-call seed, no tool-schema drift | Local / on-prem / compliance |
 | `intervention` | **Experimental** (ADR-0086). Re-runs a counterfactual with one recorded event changed, and writes the result as a new capsule | Root-cause questions ("what if this reply had been different?") |

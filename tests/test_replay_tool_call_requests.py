@@ -134,6 +134,116 @@ def test_anthropic_hook_records_tool_use_blocks(tmp_path: Path) -> None:
     assert choice["message"]["tool_calls"] == [
         {"id": "toolu_1", "name": "get_weather", "arguments": {"city": "Paris"}}
     ]
+    # Issue #12: the schema enum value, never Anthropic's raw vocabulary.
+    assert choice["finish_reason"] == "tool_calls"
+    jsonschema.validate(choice, _choice_schema())
+
+
+# ── missing-name policy (issue #12) ──────────────────────────────────────────
+
+
+def test_nameless_openai_tool_call_is_dropped_counted_and_logged(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    w = _writer(tmp_path)
+    hook = OpenAIHook(writer=w, parent_span_id="0" * 16)
+    named = types.SimpleNamespace(
+        id="call_1", type="function",
+        function=types.SimpleNamespace(name="f", arguments="{}"),
+    )
+    nameless = types.SimpleNamespace(
+        id="call_2", type="function",
+        function=types.SimpleNamespace(name=None, arguments="{}"),
+    )
+    response = MagicMock(model="gpt-4o", id="x")
+    response.choices = [MagicMock(
+        index=0,
+        message=types.SimpleNamespace(role="assistant", content=None,
+                                      tool_calls=[named, nameless]),
+        finish_reason="tool_calls",
+    )]
+    response.usage = MagicMock(prompt_tokens=0, completion_tokens=0)
+
+    with caplog.at_level("WARNING"):
+        hook._intercept(MagicMock(return_value=response), model="gpt-4o", messages=[])
+
+    record = _records(w)[0]
+    assert [tc["id"] for tc in record["gen_ai.response.choices"][0]["message"]["tool_calls"]] == [
+        "call_1"
+    ]
+    assert record["extensions"]["io.novafabric.tool_calls_dropped"] == 1
+    assert "dropped 1 tool-call entry without a name" in caplog.text
+
+
+def test_nameless_anthropic_tool_use_block_is_dropped_and_counted(tmp_path: Path) -> None:
+    w = _writer(tmp_path)
+    hook = AnthropicHook(writer=w, parent_span_id="0" * 16)
+    response = types.SimpleNamespace(
+        model="claude-x", id="msg_1", stop_reason="tool_use",
+        content=[types.SimpleNamespace(type="tool_use", id="toolu_1", name="", input={})],
+        usage=types.SimpleNamespace(input_tokens=1, output_tokens=2),
+    )
+    hook._intercept(MagicMock(return_value=response), model="claude-x", messages=[])
+    record = _records(w)[0]
+    assert "tool_calls" not in record["gen_ai.response.choices"][0]["message"]
+    assert record["extensions"]["io.novafabric.tool_calls_dropped"] == 1
+
+
+def test_replay_refuses_a_recorded_response_with_a_nameless_tool_call() -> None:
+    from novafabric.replay._errors import ReplayRecordMalformedError
+
+    stored = {"gen_ai.system": "openai", **_stored("tool_calls")}
+    stored["gen_ai.response.choices"][0]["message"]["tool_calls"].append(
+        {"id": "call_2", "arguments": {}}
+    )
+    strict = MockModelDispatcher([stored])
+    with pytest.raises(ReplayRecordMalformedError):
+        strict._next_response("openai")
+    permissive = MockModelDispatcher([stored], divergence_policy="warn")
+    (tc,) = permissive._next_response("openai").choices[0].message.tool_calls
+    assert tc.id == "call_1"
+
+
+# ── finish-reason mapping (issue #12) ────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("raw", "canonical"),
+    [("end_turn", "stop"), ("stop_sequence", "stop"), ("max_tokens", "length"),
+     ("tool_use", "tool_calls"), ("refusal", "content_filter"), ("pause_turn", "stop")],
+)
+def test_anthropic_stop_reason_maps_to_schema_enum_and_round_trips(
+    tmp_path: Path, raw: str, canonical: str
+) -> None:
+    w = _writer(tmp_path)
+    hook = AnthropicHook(writer=w, parent_span_id="0" * 16)
+    response = types.SimpleNamespace(
+        model="claude-x", id="msg_1", stop_reason=raw,
+        content=[types.SimpleNamespace(type="text", text="hi")],
+        usage=types.SimpleNamespace(input_tokens=1, output_tokens=2),
+    )
+    hook._intercept(MagicMock(return_value=response), model="claude-x", messages=[])
+    record = _records(w)[0]
+    assert record["gen_ai.response.choices"][0]["finish_reason"] == canonical
+    assert record["gen_ai.response.finish_reasons"] == [canonical]
+    assert record["extensions"]["io.novafabric.provider_finish_reasons"] == [raw]
+    jsonschema.validate(record["gen_ai.response.choices"][0], _choice_schema())
+    # replay serves Anthropic's own value back, exactly
+    assert _mock_anthropic_response(record).stop_reason == raw
+
+
+def test_anthropic_missing_stop_reason_is_not_invented(tmp_path: Path) -> None:
+    w = _writer(tmp_path)
+    hook = AnthropicHook(writer=w, parent_span_id="0" * 16)
+    response = types.SimpleNamespace(
+        model="claude-x", id="msg_1", stop_reason=None,
+        content=[types.SimpleNamespace(type="text", text="hi")],
+        usage=types.SimpleNamespace(input_tokens=1, output_tokens=2),
+    )
+    hook._intercept(MagicMock(return_value=response), model="claude-x", messages=[])
+    record = _records(w)[0]
+    assert record["gen_ai.response.finish_reasons"] == ["stop"]
+    assert "io.novafabric.provider_finish_reasons" not in record.get("extensions", {})
 
 
 # ── replay ───────────────────────────────────────────────────────────────────
@@ -199,16 +309,35 @@ def test_anthropic_mock_maps_openai_style_finish_reason() -> None:
     assert resp.stop_reason == "tool_use"
 
 
-def test_exhausted_queue_warns_instead_of_silently_serving_blanks(
+def test_exhausted_queue_fails_closed_by_default() -> None:
+    """ADR-0300: the default no longer serves a blank reply -- it raises."""
+    pytest.importorskip("openai")
+    import openai.resources.chat.completions as mod
+
+    from novafabric.replay._errors import ReplayQueueExhaustedError
+
+    d = MockModelDispatcher([])
+    d.install()
+    try:
+        with pytest.raises(ReplayQueueExhaustedError) as info:
+            mod.Completions.create(MagicMock(), model="gpt-4o", messages=[])
+    finally:
+        d.uninstall()
+    assert info.value.details["provider"] == "openai"
+    assert info.value.details["call_index"] == 0
+    assert info.value.details["recorded_queue_length"] == 0
+
+
+def test_exhausted_queue_permissive_warns_instead_of_silently_serving_blanks(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     pytest.importorskip("openai")
     import openai.resources.chat.completions as mod
 
-    d = MockModelDispatcher([])
+    d = MockModelDispatcher([], divergence_policy="warn")
     d.install()
     try:
         mod.Completions.create(MagicMock(), model="gpt-4o", messages=[])
     finally:
         d.uninstall()
-    assert "no recorded response left" in capsys.readouterr().err
+    assert "no recorded openai response left" in capsys.readouterr().err

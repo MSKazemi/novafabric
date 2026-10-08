@@ -92,6 +92,7 @@ class TestMockToolDispatcher:
     def test_lookup_by_id(self) -> None:
         tc = {
             "tool_call_id": "ABC123",
+            "transport": "mcp",
             "tool_name": "search",
             "arguments": {"q": "test"},
             "result": "found",
@@ -104,6 +105,7 @@ class TestMockToolDispatcher:
     def test_lookup_by_arg_hash_fallback(self) -> None:
         tc = {
             "tool_call_id": "ORIGINAL",
+            "transport": "mcp",
             "tool_name": "fetch",
             "arguments": {"url": "http://x"},
             "result": "data",

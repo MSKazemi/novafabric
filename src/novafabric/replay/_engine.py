@@ -24,23 +24,43 @@ from novafabric.policy import (
     deployment_environment_from_capsule,
     get_policy_engine,
 )
+from novafabric.replay._contract import (
+    ReplayContractReport,
+    interceptable_tool_calls,
+    read_events,
+    summarize,
+)
+from novafabric.replay._dispatcher import REPLAY_DISPATCHER_UNAVAILABLE_EXIT
 from novafabric.replay._env_check import EnvironmentResolver
 from novafabric.replay._flags import ReplayFlags
 from novafabric.replay._policy import PolicyEvaluator
 from novafabric.replay._result import ReplayResult, write_replay_result
 
-_MOCK_HOOK_LOADER = textwrap.dedent("""\
+#: Written as ``sitecustomize.py`` into the replayed process (ADR-0300). If the
+#: replayed interpreter cannot even import novafabric (e.g. a different venv),
+#: the failure is logged with the stdlib only, and a strict replay stops the
+#: process before the workload runs instead of letting it call the network.
+_MOCK_HOOK_LOADER = textwrap.dedent(f"""\
     import os as _os, sys as _sys, json as _json
-    _queue_path = _os.environ.get("NOVAFABRIC_REPLAY_QUEUE_PATH", "")
-    if _queue_path:
+    if _os.environ.get("NOVAFABRIC_REPLAY_QUEUE_PATH", ""):
         try:
-            from pathlib import Path as _P
-            _queue = _json.loads(_P(_queue_path).read_text())
-            from novafabric.replay._dispatcher import MockModelDispatcher as _MMD
-            _dispatcher = _MMD(model_calls=_queue)
-            _dispatcher.install()
+            from novafabric.replay._dispatcher import install_from_env as _nf_install
         except Exception as _e:
-            print(f"[novafabric] mock dispatcher install failed: {_e}", file=_sys.stderr)
+            print(f"[novafabric] mock dispatcher install failed: {{_e}}", file=_sys.stderr)
+            _events = _os.environ.get("NOVAFABRIC_REPLAY_EVENTS_PATH", "")
+            if _events:
+                try:
+                    with open(_events, "a", encoding="utf-8") as _fh:
+                        _fh.write(_json.dumps({{
+                            "event": "install_failed", "pid": _os.getpid(),
+                            "error": type(_e).__name__ + ": " + str(_e),
+                        }}) + "\\n")
+                except OSError:
+                    pass
+            if _os.environ.get("NOVAFABRIC_REPLAY_DIVERGENCE_POLICY") != "warn":
+                _os._exit({REPLAY_DISPATCHER_UNAVAILABLE_EXIT})
+        else:
+            _nf_install()
 """)
 
 #: How long a mocked/intervention replay subprocess may run before it is killed.
@@ -65,6 +85,29 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
                 except json.JSONDecodeError:
                     pass
     return records
+
+
+def _servable_tool_count(tool_calls: list[dict[str, Any]]) -> int:
+    """ADR-0300: `tool_calls_available` = recorded calls the MCP tool dispatcher
+    can serve; `tool_calls_recorded` carries the full count beside it."""
+    return len(interceptable_tool_calls(tool_calls))
+
+
+def _contract_fields(report: ReplayContractReport) -> dict[str, Any]:
+    """The ADR-0300 counters a mocked replay result carries."""
+    return {
+        "model_calls_mocked": report.model_calls_mocked,
+        "model_calls_available": report.model_calls_available,
+        "model_calls_unmatched": report.model_calls_unmatched,
+        "tool_calls_mocked": report.tool_calls_mocked,
+        "tool_calls_available": report.tool_calls_available,
+        "tool_calls_recorded": report.tool_calls_recorded,
+        "tool_calls_live": report.tool_calls_live,
+        "tool_calls_unmatched": report.tool_calls_unmatched,
+        "queues_fully_consumed": report.queues_fully_consumed,
+        "divergence_reason": report.divergence_reason,
+        "replay_contract": report.as_dict(),
+    }
 
 
 def _load_capsule(capsule_dir: Path) -> dict[str, Any]:
@@ -280,9 +323,11 @@ class ReplayEngine:
             policy_flags_used=self._flags.active_flag_names(),
             env_warnings=[w.as_dict() for w in env_warnings],
             model_calls_mocked=len(mutated_model_calls),
-            # ADR-0261: no tool response is substituted on any path.
+            # ADR-0300: intervention installs no tool dispatcher (a
+            # counterfactual's tools run live), so nothing is substituted.
             tool_calls_mocked=0,
-            tool_calls_available=len(mutated_tool_calls),
+            tool_calls_available=_servable_tool_count(mutated_tool_calls),
+            tool_calls_recorded=len(mutated_tool_calls),
             exit_code=exit_code,
             intervention=intervention_meta,
         )
@@ -330,8 +375,9 @@ class ReplayEngine:
             policy_flags_used=["--mode=forensic"],
             env_warnings=[w.as_dict() for w in env_warnings],
             model_calls_mocked=len(model_calls),
-            tool_calls_mocked=0,  # ADR-0261
-            tool_calls_available=len(tool_calls),
+            tool_calls_mocked=0,  # ADR-0261: forensic executes nothing
+            tool_calls_available=_servable_tool_count(tool_calls),
+            tool_calls_recorded=len(tool_calls),
             schema_drift=schema_drift or None,
         )
         write_replay_result(result, result_dir)
@@ -362,8 +408,9 @@ class ReplayEngine:
             policy_flags_used=self._flags.active_flag_names(),
             env_warnings=[w.as_dict() for w in env_warnings],
             model_calls_mocked=0,
-            tool_calls_mocked=0,  # ADR-0261
-            tool_calls_available=len(tool_calls),
+            tool_calls_mocked=0,  # ADR-0261: a dry run executes nothing
+            tool_calls_available=_servable_tool_count(tool_calls),
+            tool_calls_recorded=len(tool_calls),
         )
         result_dir.mkdir(parents=True, exist_ok=True)
         (result_dir / "dry_run_report.txt").write_text(report)
@@ -518,8 +565,25 @@ class ReplayEngine:
                 error={"type": "MissingCommand", "message": "capsule.yaml has no command field"},
             )
 
-        exit_code, run_error = self._run_mocked_subprocess(command, model_calls)
+        policy = self._flags.divergence_policy
+        exit_code, run_error, events = self._run_replay_subprocess(
+            command, model_calls, tool_calls, divergence_policy=policy
+        )
+        report = summarize(
+            model_calls, tool_calls, events,
+            divergence_policy=policy, substitute_tools=True,
+        )
         status = "success" if exit_code == 0 else "failure"
+        # ADR-0300: under the default fail-closed policy a divergence fails the
+        # replay even if the workload caught the dispatcher's exception and
+        # exited 0 -- the exit code alone would overstate fidelity.
+        if report.diverged and policy == "fail":
+            status = "failure"
+            if run_error is None:
+                run_error = {
+                    "type": "ReplayDivergence",
+                    "message": report.divergence_reason or "replay diverged",
+                }
 
         result = ReplayResult(
             replay_id=replay_id,
@@ -531,11 +595,9 @@ class ReplayEngine:
             duration_ms=int((time.monotonic() - t0) * 1000),
             policy_flags_used=self._flags.active_flag_names(),
             env_warnings=[w.as_dict() for w in env_warnings],
-            model_calls_mocked=len(model_calls),
-            tool_calls_mocked=0,  # ADR-0261
-            tool_calls_available=len(tool_calls),
             exit_code=exit_code,
             schema_drift=schema_drift or None,
+            **_contract_fields(report),
         )
         if status == "failure":
             result.error = run_error or {
@@ -546,52 +608,95 @@ class ReplayEngine:
         return result
 
     def _run_mocked_subprocess(
-        self, command: list[str], model_calls: list[dict[str, Any]]
+        self,
+        command: list[str],
+        model_calls: list[dict[str, Any]],
+        tool_calls: list[dict[str, Any]] | None = None,
+        *,
+        divergence_policy: str = "warn",
     ) -> tuple[int, dict[str, Any] | None]:
         """Run the replayed command; return its exit code and why it stopped.
 
         The second element is ``None`` for an ordinary exit (the code says it
         all) and a populated error for a timeout or a launch failure, where the
-        exit code alone would misdescribe what happened.
+        exit code alone would misdescribe what happened. The dispatchers' event
+        log is discarded; ``_run_replay_subprocess`` returns it.
+        """
+        code, error, _events = self._run_replay_subprocess(
+            command, model_calls, tool_calls, divergence_policy=divergence_policy
+        )
+        return code, error
+
+    def _run_replay_subprocess(
+        self,
+        command: list[str],
+        model_calls: list[dict[str, Any]],
+        tool_calls: list[dict[str, Any]] | None = None,
+        *,
+        divergence_policy: str = "warn",
+    ) -> tuple[int, dict[str, Any] | None, list[dict[str, Any]]]:
+        """As ``_run_mocked_subprocess``, plus the dispatchers' event log.
+
+        ``tool_calls=None`` installs no tool dispatcher (tools run live);
+        a list -- even an empty one -- installs ``MockToolDispatcher`` on
+        ``mcp.ClientSession.call_tool`` (ADR-0300).
         """
         with tempfile.TemporaryDirectory(prefix="nf_replay_") as tmp:
             site_dir = Path(tmp) / "site"
             site_dir.mkdir()
             (site_dir / "sitecustomize.py").write_text(_MOCK_HOOK_LOADER)
 
+            # The full model-call stream, as before ADR-0300: the dispatcher
+            # selects the servable records itself (one implementation, in
+            # `_contract.model_queues`).
             queue_path = Path(tmp) / "model_queue.json"
             queue_path.write_text(json.dumps(model_calls))
+            events_path = Path(tmp) / "replay_events.jsonl"
 
             env = dict(os.environ)
             env["NOVAFABRIC_REPLAY_QUEUE_PATH"] = str(queue_path)
+            env["NOVAFABRIC_REPLAY_EVENTS_PATH"] = str(events_path)
+            env["NOVAFABRIC_REPLAY_DIVERGENCE_POLICY"] = divergence_policy
             env["NOVAFABRIC_REPLAY_MODE"] = "mocked"
+            env.pop("NOVAFABRIC_REPLAY_TOOL_QUEUE_PATH", None)
+            if tool_calls is not None:
+                tool_queue_path = Path(tmp) / "tool_queue.json"
+                tool_queue_path.write_text(json.dumps(tool_calls))
+                env["NOVAFABRIC_REPLAY_TOOL_QUEUE_PATH"] = str(tool_queue_path)
             existing = env.get("PYTHONPATH", "")
             env["PYTHONPATH"] = f"{site_dir}:{existing}" if existing else str(site_dir)
 
-            try:
-                proc = subprocess.run(
-                    command, env=env, capture_output=True,
-                    timeout=REPLAY_SUBPROCESS_TIMEOUT_S,
-                )
-                return proc.returncode, None
-            except subprocess.TimeoutExpired:
-                # 124 is the conventional shell timeout code, but a command may
-                # legitimately exit 124 itself — so the code alone cannot say
-                # which happened. Reporting this as "exited with code 124" (as
-                # this path used to, via the NonZeroExit branch) states something
-                # that did not occur: the command did not exit, it was killed.
-                return 124, {
-                    "type": "ReplayTimeout",
-                    "message": (
-                        "the replayed command did not finish within "
-                        f"{REPLAY_SUBPROCESS_TIMEOUT_S}s and was terminated; it "
-                        "did not exit on its own"
-                    ),
-                }
-            except Exception as exc:
-                # The command may never have launched. "exited with code 1" would
-                # assert an exit that never happened.
-                return 1, {
-                    "type": "ReplayLaunchError",
-                    "message": f"the replayed command could not be run: {exc}",
-                }
+            code, error = self._spawn(command, env)
+            return code, error, read_events(events_path)
+
+    @staticmethod
+    def _spawn(
+        command: list[str], env: dict[str, str]
+    ) -> tuple[int, dict[str, Any] | None]:
+        try:
+            proc = subprocess.run(
+                command, env=env, capture_output=True,
+                timeout=REPLAY_SUBPROCESS_TIMEOUT_S,
+            )
+            return proc.returncode, None
+        except subprocess.TimeoutExpired:
+            # 124 is the conventional shell timeout code, but a command may
+            # legitimately exit 124 itself — so the code alone cannot say
+            # which happened. Reporting this as "exited with code 124" (as
+            # this path used to, via the NonZeroExit branch) states something
+            # that did not occur: the command did not exit, it was killed.
+            return 124, {
+                "type": "ReplayTimeout",
+                "message": (
+                    "the replayed command did not finish within "
+                    f"{REPLAY_SUBPROCESS_TIMEOUT_S}s and was terminated; it "
+                    "did not exit on its own"
+                ),
+            }
+        except Exception as exc:
+            # The command may never have launched. "exited with code 1" would
+            # assert an exit that never happened.
+            return 1, {
+                "type": "ReplayLaunchError",
+                "message": f"the replayed command could not be run: {exc}",
+            }

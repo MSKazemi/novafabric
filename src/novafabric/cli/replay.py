@@ -82,12 +82,30 @@ def replay_cmd(
             ),
         ),
     ] = None,
+    permissive: Annotated[
+        bool,
+        typer.Option(
+            "--permissive",
+            help=(
+                "mocked mode only (ADR-0300): do NOT fail on divergence. A model "
+                "call with no recorded response gets an empty reply, unsupported "
+                "model surfaces and unmatched MCP tool calls run LIVE, and "
+                "unconsumed recordings are only reported. Default is fail-closed."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Re-run a captured run against recorded or mocked LLM responses.
 
     Five modes control how outbound calls are handled:
-      mocked       — re-runs the command; LLM responses served from the capsule
-                     record. Tool calls are NOT substituted: they run live
+      mocked       — re-runs the command (Python workloads). Serves recorded
+                     responses for sync, non-streaming OpenAI chat.completions
+                     and Anthropic messages calls, and recorded results for MCP
+                     ClientSession.call_tool. Fail-closed: an extra, unmatched or
+                     unsupported call, or an unconsumed recording, fails the
+                     replay (--permissive to only report). Other tools (HTTP,
+                     shell, files, framework-native) are NOT intercepted: they
+                     run live
       forensic     — read-only: inspects the capsule, runs nothing
       semantic     — does not re-run: scores how similar the recorded LLM
                      responses are to each other (0.0-1.0)
@@ -112,6 +130,9 @@ def replay_cmd(
 
       # Dry-run: show what would execute
       nova replay --dry-run path/to/my-capsule/
+
+      # Mocked, but only report divergences instead of failing
+      nova replay --permissive 01HXAY7M5JZ8R7K4P9DPBYK2WX
 
       # CI gate: only replay capsules recorded in staging (exit 2 otherwise)
       nova replay --environment staging --dry-run 01HXAY7M5JZ8R7K4P9DPBYK2WX
@@ -139,6 +160,9 @@ def replay_cmd(
             "[red]--intervention-file only applies to --mode intervention[/red]"
         )
         raise typer.Exit(code=1)
+    if permissive and mode is not ReplayMode.mocked:
+        console.print("[red]--permissive only applies to --mode mocked[/red]")
+        raise typer.Exit(code=1)
 
     flags = ReplayFlags(
         mode=mode.value,
@@ -150,6 +174,7 @@ def replay_cmd(
         output_dir=output_dir,
         intervention_file=intervention_file,
         required_environment=environment,
+        permissive=permissive,
     )
 
     base = output_dir or (Path.cwd() / ".novafabric" / "replays")
@@ -175,6 +200,27 @@ def replay_cmd(
         f"{status_icon} Replay written: {result_path}  "
         f"(replay_id={result.replay_id}  mode={result.mode})"
     )
+
+    if result.model_calls_available is not None:
+        # ADR-0300: what was actually served, so "✓" never reads as more.
+        console.print(
+            f"  model calls: {result.model_calls_mocked} of "
+            f"{result.model_calls_available} served from the capsule, "
+            f"{result.model_calls_unmatched or 0} unmatched"
+        )
+        not_intercepted = (result.tool_calls_recorded or 0) - (
+            result.tool_calls_available or 0
+        )
+        console.print(
+            f"  tool calls (MCP call_tool): {result.tool_calls_mocked} of "
+            f"{result.tool_calls_available or 0} served, "
+            f"{result.tool_calls_live or 0} live, "
+            f"{result.tool_calls_unmatched or 0} unmatched; "
+            f"{not_intercepted} recorded on surfaces replay does not intercept"
+        )
+    if result.divergence_reason:
+        colour = "red" if result.status == "failure" else "yellow"
+        console.print(f"  [{colour}]divergence: {result.divergence_reason}[/{colour}]")
 
     if result.env_warnings:
         for w in result.env_warnings:

@@ -324,10 +324,44 @@ class TestStreamingDeltaMerge:
             )
         rec = _model_calls(tmp_path)[0]
         msg = rec["gen_ai.response.choices"][0]["message"]
-        assert msg["tool_calls"][0]["id"] == "call_abc"
-        assert msg["tool_calls"][0]["function"]["name"] == "get_weather"
-        assert msg["tool_calls"][0]["function"]["arguments"] == '{"city":"Paris"}'
+        # Canonical Message.tool_calls (issue #12), not OpenAI's nested wire shape.
+        assert msg["tool_calls"] == [
+            {"id": "call_abc", "name": "get_weather", "arguments": {"city": "Paris"}}
+        ]
         assert rec["gen_ai.response.finish_reasons"] == ["tool_calls"]
+
+    def test_tool_call_stream_without_a_name_is_dropped_and_counted(
+        self, tmp_path: Path
+    ) -> None:
+        """Issue #12 missing-name policy, on the proxy path too: an entry that
+        never received a function name is not recorded, but it is counted."""
+        proxy = ApiProxy(
+            listen_host="127.0.0.1", listen_port=0,
+            upstream_url="https://api.openai.com",
+            writer=_writer(tmp_path), parent_span_id="0" * 16,
+        )
+        ev = {
+            "id": "x", "model": "m",
+            "choices": [{
+                "index": 0,
+                "delta": {"tool_calls": [
+                    {"index": 0, "id": "call_ok", "function": {"name": "f", "arguments": "{}"}},
+                    {"index": 1, "id": "call_bad", "function": {"arguments": "{}"}},
+                ]},
+                "finish_reason": "tool_calls",
+            }],
+        }
+        with patch("httpx.post", return_value=_mock_response(
+            body=self._build_openai_stream(ev), content_type="text/event-stream",
+        )):
+            proxy.serve_one_request_for_test(
+                method="POST", path="/v1/chat/completions", headers={},
+                body=b'{"model":"gpt-4o","messages":[],"stream":true}',
+            )
+        rec = _model_calls(tmp_path)[0]
+        msg = rec["gen_ai.response.choices"][0]["message"]
+        assert msg["tool_calls"] == [{"id": "call_ok", "name": "f", "arguments": {}}]
+        assert rec["extensions"]["io.novafabric.tool_calls_dropped"] == 1
 
     def test_done_sentinel_does_not_corrupt_record(self, tmp_path: Path) -> None:
         """The literal `data: [DONE]` event must not be parsed as JSON."""
@@ -469,17 +503,19 @@ class TestAnthropicStreamingDeltaMerge:
         msg = choices[0]["message"]
         assert msg["role"] == "assistant"
         assert msg["content"] == "Hello world"
-        assert choices[0]["finish_reason"] == "end_turn"
+        # Schema enum value; Anthropic's own value is kept additively.
+        assert choices[0]["finish_reason"] == "stop"
         assert rec["gen_ai.response.id"] == "msg_x"
         assert rec["gen_ai.response.model"] == "claude-sonnet-4-7-20260420"
-        assert rec["gen_ai.response.finish_reasons"] == ["end_turn"]
+        assert rec["gen_ai.response.finish_reasons"] == ["stop"]
+        assert rec["extensions"]["io.novafabric.provider_finish_reasons"] == ["end_turn"]
         # Anthropic usage fields → OTel input/output.
         assert rec["gen_ai.usage.input_tokens"] == 10
         assert rec["gen_ai.usage.output_tokens"] == 5
 
     def test_tool_use_block_synthesized_as_tool_call(self, tmp_path: Path) -> None:
         """Anthropic tool_use blocks accumulate input_json_delta events
-        and become OpenAI-style tool_calls in the synthesized choice."""
+        and become canonical Message.tool_calls in the synthesized choice."""
         proxy = ApiProxy(
             listen_host="127.0.0.1", listen_port=0,
             upstream_url="https://api.anthropic.com",
@@ -513,12 +549,12 @@ class TestAnthropicStreamingDeltaMerge:
             )
         rec = _model_calls(tmp_path)[0]
         msg = rec["gen_ai.response.choices"][0]["message"]
-        assert msg["tool_calls"][0]["id"] == "toolu_abc"
-        assert msg["tool_calls"][0]["function"]["name"] == "get_weather"
-        # Arguments JSON re-assembled from partial_json deltas.
-        args = json.loads(msg["tool_calls"][0]["function"]["arguments"])
-        assert args == {"city": "Paris"}
-        assert rec["gen_ai.response.finish_reasons"] == ["tool_use"]
+        # Arguments re-assembled from partial_json deltas, canonical shape.
+        assert msg["tool_calls"] == [
+            {"id": "toolu_abc", "name": "get_weather", "arguments": {"city": "Paris"}}
+        ]
+        assert rec["gen_ai.response.finish_reasons"] == ["tool_calls"]
+        assert rec["extensions"]["io.novafabric.provider_finish_reasons"] == ["tool_use"]
 
     def test_multiple_text_blocks_in_order(self, tmp_path: Path) -> None:
         """If Anthropic emits multiple text blocks (e.g. interleaved with
@@ -602,8 +638,8 @@ class TestAnthropicStreamingDeltaMerge:
 
     def test_anthropic_tool_use_with_malformed_input_json(self, tmp_path: Path) -> None:
         """If input_json_delta accumulates to invalid JSON (e.g. truncated
-        stream), the tool_call's arguments must still parse to a JSON
-        string of an empty dict — never crash."""
+        stream), the tool call survives with the raw string kept verbatim
+        under ``_unparsed`` (the SDK hooks' rule) — never crash."""
         proxy = ApiProxy(
             listen_host="127.0.0.1", listen_port=0,
             upstream_url="https://api.anthropic.com",
@@ -628,9 +664,8 @@ class TestAnthropicStreamingDeltaMerge:
                 headers={}, body=b'{"model":"m","messages":[],"stream":true}',
             )
         rec = _model_calls(tmp_path)[0]
-        # tool_calls present, arguments parsed to {} on JSON-decode failure.
         msg = rec["gen_ai.response.choices"][0]["message"]
-        assert msg["tool_calls"][0]["function"]["arguments"] == "{}"
+        assert msg["tool_calls"][0]["arguments"] == {"_unparsed": "{not"}
 
     def test_dispatcher_picks_anthropic_for_anthropic_url(
         self, tmp_path: Path

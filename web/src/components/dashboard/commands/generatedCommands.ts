@@ -11237,6 +11237,13 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "type": "text",
         "hint": "Experimental (ADR-0126): only replay a capsule that recorded this deployment_environment (e.g. staging). Exit 2, before anything runs, if it recorded another value or none.",
         "flag": "--environment"
+      },
+      {
+        "key": "permissive",
+        "label": "--permissive",
+        "type": "toggle",
+        "hint": "mocked mode only (ADR-0300): do NOT fail on divergence. A model call with no recorded response gets an empty reply, unsupported model surfaces and unmatched MCP tool calls run LIVE, and unconsumed recordings are only reported. Default is fail-closed.",
+        "flag": "--permissive"
       }
     ],
     "docsPath": "/spec",
