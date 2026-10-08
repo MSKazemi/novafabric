@@ -129,10 +129,10 @@ def classify_run(
     \b
     Examples:
       # Classify from command-line flags
-      nova classify run --name "My Agent" --purpose "customer support"
+      nova classify run --name "My Agent" --domain "customer support" --context "chatbot"
 
       # Classify from a YAML file
-      nova classify run --file system.yaml
+      nova classify run --input system.yaml
     """
     if input is not None:
         if not input.exists():

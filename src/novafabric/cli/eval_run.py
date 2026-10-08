@@ -55,7 +55,7 @@ def eval_agent_cmd(
 
     \b
     Examples:
-      nova eval agent my-agent@v1 --suite smoke
+      nova eval agent my-agent@v1
     """
     if "@" not in asset_ref:
         console.print("[red]Must specify version: agent@version[/red]")

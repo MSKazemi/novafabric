@@ -33,6 +33,10 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **Two `--help` examples used flags that do not exist.** `nova classify run` showed
+  `--purpose` and `--file` (the options are `--domain`/`--context` and `--input`); `nova eval
+  agent` showed `--suite`, which it does not take.
+
 - **`GET /api/diff` returns the diff counts and `has_changes`.** It serialized the raw
   `DiffReport` dataclass, whose counts are properties, so a dashboard client could not tell an
   added-only diff from no difference. The response now adds `summary`, `sections` (as in
