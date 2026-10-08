@@ -231,6 +231,15 @@ class PostgresMetadataStore(MetadataStore):
                         )
                     """  # noqa: S608
                 )
+                privileges = "SELECT, INSERT, UPDATE"
+                if table in {"runs", "capsules", "signatures"}:
+                    privileges += ", DELETE"
+                conn.execute(
+                    f"GRANT {privileges} ON TABLE {table} TO novafabric_app"  # noqa: S608
+                )
+                conn.execute(
+                    f"GRANT ALL PRIVILEGES ON TABLE {table} TO novafabric_migrator"  # noqa: S608
+                )
             conn.commit()
 
     @contextmanager

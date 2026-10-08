@@ -5505,7 +5505,7 @@ dependabot diff** — only from running the suite against the upgraded set.
 
 ### Fixed (correctness of the validator and of what adapters write)
 
-- **`nova validate` rejected every capsule written by any of the eight
+- **`nova validate` rejected every capsule emitted by any of the eight
   framework adapters.** `langgraph`, `crewai`, `autogen`, `dspy`,
   `openai_agents`, `google_adk`, `bedrock_agentcore` and `a2a` each wrote a
   top-level `tags` key, and two of them also wrote a private `*_ref` key.
@@ -11181,7 +11181,7 @@ Gap-closure sprint — G-A correctness fixes: ECDSA P-256 signer alignment, DLQ 
 ### Fixed
 
 - `KGIngestionPipeline.ingest_event()` now handles the OTel GenAI semconv format
-  produced by `nova capture` (`model-calls.jsonl`). Records with `gen_ai.request.model`
+  emitted by `nova capture` (`model-calls.jsonl`). Records with `gen_ai.request.model`
   but no `event_type` are normalised to a `ModelCallCompleted` edge via
   `_normalise_otel_semconv()`: `parent_span_id` → `agent_id`, `gen_ai.request.model` →
   `model_id`. Previously every captured capsule event was silently skipped, causing KG

@@ -486,6 +486,11 @@ def test_pg_delete_run_does_not_cross_tenants(pg_store: PostgresMetadataStore) -
     with pg_store.begin_tenant_context(TENANT) as ctx:
         ctx.register_run(rid, TENANT, event_type="run.started")
     with pg_store.begin_tenant_context(OTHER_TENANT) as ctx:
+        # The testcontainer DSN authenticates as the Postgres superuser, which
+        # has BYPASSRLS. Drop to the production NOBYPASSRLS role so this test
+        # actually proves the tenant_isolation policy rather than only the
+        # explicit tenant_id predicate in delete_run().
+        ctx._conn().execute("SET LOCAL ROLE novafabric_app")
         assert ctx.delete_run(rid, TENANT) == 0  # RLS hides it from the other tenant
     with pg_store.begin_tenant_context(TENANT) as ctx:
         assert ctx.lookup_run(rid, TENANT) is not None
