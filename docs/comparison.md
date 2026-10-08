@@ -96,9 +96,10 @@ Different eras of the same instinct. MLflow and W&B track *experiments*: paramet
 metrics, artifacts, model versions, and they are excellent at it.
 
 NovaFabric captures *executions*: the full call graph of an agent or job, the
-environment lock, the redaction proof, and a signature over all of it. If you want
-to compare learning curves, use MLflow. If you want to prove what an agent did and
-re-run it offline, use NovaFabric. Many teams will reasonably run both.
+environment lock, the secret-scan proof, and, when you seal the capsule, a signature
+over all of it. If you want to compare learning curves, use MLflow. If you want to keep
+a recorded run you can replay (tools still run live) and later verify has not been
+altered since it was sealed, use NovaFabric. Many teams will reasonably run both.
 
 ### NovaFabric vs OpenTelemetry alone
 

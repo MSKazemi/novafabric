@@ -93,7 +93,7 @@ Details: [Sealing and verification](sealing-and-verification.md).
 
 `cli/replay.py:replay_cmd` → `replay/_engine.py:ReplayEngine.run`. The default
 mode, `mocked`, re-runs the captured command with OpenAI and Anthropic responses
-served from the record. The other four modes analyse the capsule. Every mode
+served from the record. `forensic`, `semantic` and `exact` analyse the capsule without re-running it. Every mode
 writes `.novafabric/replays/<ulid>/replay_result.yaml`. `intervention` is the
 only mode that also writes a new capsule.
 

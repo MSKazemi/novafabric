@@ -1,8 +1,8 @@
 # Getting Started with NovaFabric
 
 NovaFabric turns any command — a training script, an AI agent, a notebook cell
-runner — into a **Run Capsule**: a structured, secret-redacted, self-contained
-directory containing every observable fact about that execution. Capsules can be
+runner — into a **Run Capsule**: a structured, secret-scanned, self-contained
+directory containing the execution evidence capture observes. Capsules can be
 validated, replayed, diffed against each other, exported as signed **Evidence
 Bundles**, and fed into a queryable lineage graph — all without modifying the
 code you are running.

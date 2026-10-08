@@ -4,7 +4,7 @@ This guide is for HPC system administrators and platform engineers who deploy
 NovaFabric on shared infrastructure — from a single workstation to a multi-node
 SLURM cluster or a Kubernetes namespace. NovaFabric captures, replays, diffs, and
 audits AI-agent and model runs, turning any command into a portable, schema-valid,
-secret-redacted **Run Capsule** you own. This document covers the operational
+secret-scanned **Run Capsule** you own. This document covers the operational
 mechanics: installation, runner configuration, wire-level capture, site-specific
 URL-registry customization, cryptographic sealing, and a full Docker Compose
 deployment.

@@ -404,8 +404,8 @@ AutoGen, CrewAI, DSPy, or the OpenAI Agents SDK.
 **Primitive:** Evidence Bundle · **Maturity:** works today (v0.4); DSSE/SLSA outer
 envelope is experimental
 
-For compliance, audits, or any situation where you need to prove what an agent did —
-and prove the record has not been altered:
+For compliance, audits, or any situation where you need to keep evidence of what an
+agent did — and verify the recorded run has not been altered since it was signed:
 
 ```bash
 nova export-evidence capsules/01KR9Q2AD… --output bundle.zip --key ed25519.pem

@@ -8,7 +8,7 @@ once you are capturing, replaying, diffing, and auditing real runs.
 
 ## What you will learn
 
-- How to **capture** any command as a portable, schema-valid, secret-redacted
+- How to **capture** any command as a portable, schema-valid, secret-scanned
   [Run Capsule](concepts.md) — with no changes to your application code.
 - How to **inspect and validate** a capsule, and how to gate CI on capsule
   integrity and on the secret scanner's findings.
