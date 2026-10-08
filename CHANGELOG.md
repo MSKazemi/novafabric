@@ -55,6 +55,9 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 - **Locked `urllib3` 2.7.0 → 2.8.0 and `pyjwt` 2.14.0 → 2.15.1**, clearing the two HIGH
   `pip-audit` findings (PYSEC-2026-4175/4177) that blocked the gate (#128). No waiver added.
+- **Locked `multidict` 6.7.1 → 6.9.1 and `werkzeug` 3.1.8 → 3.1.9**, clearing the two remaining
+  MODERATE `pip-audit` findings (CVE-2026-104874, CVE-2026-102598); the gate now reports 0
+  findings. `multidict` stays below 7.0 because `aiohttp` requires `multidict<7.0`.
 - **Rule pack `gitleaks-core-v0` 0.7.0: AWS and GitHub credentials are detected.** ADR-0009
   names the gitleaks rule set, but the pack had no rule for either, so an AWS key pair or a
   GitHub token printed by a workload stayed verbatim in the capsule. New rules:
