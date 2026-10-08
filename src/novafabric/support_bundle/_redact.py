@@ -56,8 +56,10 @@ _LINE_SECRET_RE = re.compile(
 #:
 #: Scope: the **prefixed** rules of the capsule secret pack
 #: (``novafabric.capture.secrets``, gitleaks-core-v0), whose distinctive
-#: prefixes make a false positive nearly impossible, plus three ubiquitous
-#: prefixed credentials the pack does not carry (GitHub, AWS, Slack).
+#: prefixes make a false positive nearly impossible (since pack 0.7.0 that
+#: includes GitHub and AWS), plus Slack, which the pack does not carry. The
+#: AWS secret access key has no prefix and is matched only when its key name
+#: anchors it, as in the pack.
 #:
 #: Deliberately **excluded**: the pack's entropy-only rules — a bare 64-hex
 #: string, a bare 32- or 40-char alphanumeric, a bare UUID. Those match
@@ -79,7 +81,13 @@ _VALUE_SECRET_PATTERNS: tuple[tuple[str, str], ...] = (
     ("weaviate-api-key", r"wcs_[A-Za-z0-9]{30,50}"),
     ("qdrant-api-key", r"qdrant_[A-Za-z0-9]{30,50}"),
     ("github-token", r"gh[pousr]_[A-Za-z0-9]{16,80}"),
+    ("github-fine-grained-pat", r"github_pat_[A-Za-z0-9_]{22,}"),
     ("aws-access-key-id", r"(?<![A-Za-z0-9])(?:AKIA|ASIA)[0-9A-Z]{16}(?![A-Za-z0-9])"),
+    (
+        "aws-secret-access-key",
+        r"(?i:(?:aws[_-]?)?secret[_-]?access[_-]?key|aws[_-]?secret[_-]?key)"
+        r"(?:[\s\\\"']*[:=]+[\s\\\"']*|\s+)[A-Za-z0-9/+]{40}(?![A-Za-z0-9/+=])",
+    ),
     ("slack-token", r"xox[baprs]-[A-Za-z0-9\-]{10,80}"),
 )
 

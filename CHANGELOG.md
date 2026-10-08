@@ -15,6 +15,50 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 - **Locked `urllib3` 2.7.0 → 2.8.0 and `pyjwt` 2.14.0 → 2.15.1**, clearing the two HIGH
   `pip-audit` findings (PYSEC-2026-4175/4177) that blocked the gate (#128). No waiver added.
+- **Rule pack `gitleaks-core-v0` 0.7.0: AWS and GitHub credentials are detected.** ADR-0009
+  names the gitleaks rule set, but the pack had no rule for either, so an AWS key pair or a
+  GitHub token printed by a workload stayed verbatim in the capsule. New rules:
+  `aws-access-key-id` (`AKIA`/`ASIA`/`ABIA`/`ACCA`/`A3T…`), `github-token`
+  (`ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`), `github-fine-grained-pat` (`github_pat_`) and
+  `aws-secret-access-key`. The secret access key has no prefix, so it is matched only when
+  its key name is next to it (`AWS_SECRET_ACCESS_KEY=…`, `"SecretAccessKey": "…"`,
+  `--aws-secret-access-key …`), and only the value is redacted. A bare 40-character secret
+  key with no key name is **not** detected. `match_hash` is still the SHA-256 of the secret
+  value alone. Only the prefixed or key-name-anchored rules can cause a binary to be dropped.
+  The support-bundle redactor matches the same formats.
+- **A final residual pass rescans the finished capsule before it is digested and sealed.**
+  The first scan ran before `replay.yaml` and the C2PA marker were written and before ADR-0135
+  maskers rewrote files, so a secret written at those points reached the sealed capsule
+  unscanned. Now every file except `capsule.yaml`, the proof and `.seal/` is rescanned after
+  the last write. A match is redacted (or, in a binary, the file is dropped) and recorded as an
+  ordinary finding. Each target's after-hash is updated to the bytes on disk, so the proof and
+  `evidence_digests` agree. The pass is recorded in a new optional `residual_check` block in
+  `redaction-proof.json`. Files that no other list names (`replay.yaml`) are recorded under the
+  new target kind `capsule-file`. The final manifest, which now carries the digest map, is
+  checked once more before it is written. If it still matches a rule, it is redacted, the
+  capsule is **not sealed**, and capture prints an error. A file whose *name* carries a
+  key-shaped secret is dropped, and its name is masked in the proof. The proof's own string
+  fields, such as a masker's recorded replacement, are scanned too. Proof schema change is
+  additive and optional (`residual_check`, kind `capsule-file`). Scanner version 0.4.0.
+  **Compatibility:** every new proof carries these fields, and the v0.104.0-and-earlier proof
+  schema forbids unknown fields, so `nova validate` from v0.104.0 or earlier rejects capsules
+  captured by this version. Validate new capsules with this version or later; older capsules
+  still validate here.
+- **ADR-0135 maskers now walk the same files as the built-in scanner** (experimental). They
+  walked only the event streams, so a value a masker exists to remove (an email, say) was
+  masked in `trace.jsonl` but stayed verbatim in `outputs/stdout.txt` and `capsule.yaml`.
+  Maskers now also see `env.lock`, `assets.jsonl`, `lineage.jsonl`, the manifest (before it is
+  written) and each line of every text file under `inputs/` and `outputs/`. Binary and oversize
+  files are not offered to maskers; the built-in scanner still covers them. The built-in rules
+  run again after the maskers, so a masker cannot reintroduce a key-shaped string.
+
+### Fixed
+
+- **`docs/architecture/pipeline.md` described the capture order wrongly.** Step 5 said the
+  proof was written before the manifest and lineage; it is written after both, once, after the
+  residual pass. The steps now match `CaptureOrchestrator.run`. `docs/getting-started.md` no
+  longer calls the redaction proof "a proof that no API keys or secrets leaked". The proof
+  records what the scanner did; it cannot prove that no undetected secret remains.
 
 ### Fixed
 

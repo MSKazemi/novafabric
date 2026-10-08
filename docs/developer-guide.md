@@ -1857,6 +1857,15 @@ Failure semantics (the contract your masker lives under):
 
 - **Built-ins first, always.** Your masker observes already-redacted markers; it can
   never un-redact them.
+- **Same files as the built-in scanner.** Your masker is offered every string value
+  of the call and event streams, `env.lock`, `assets.jsonl`, `lineage.jsonl` and the
+  manifest (before `capsule.yaml` is written), and every *line* of each text file
+  under `inputs/` and `outputs/` (`target_ref` `outputs/stdout.txt#L3`). Binary files
+  and files over the 64 MiB scan limit are not offered to maskers; the built-in
+  scanner still covers them.
+- **Built-ins last, too.** After every masker has run, a final built-in pass
+  rescans the finished capsule. A masker whose output looks like a key cannot leak
+  it: the pass redacts it and records it in `residual_check`.
 - **Fail-closed on secrets.** If your masker raises, times out, exceeds the input cap,
   returns a non-string, or returns output still containing the raw value, the field is
   redacted (or dropped, per `on_error`) and the failure is recorded in the proof's

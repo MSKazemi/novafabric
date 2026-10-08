@@ -286,8 +286,8 @@ environment, stdout/stderr, and timing.
 
 ## Step 5: Inspect the secret scan
 
-Every capsule includes a proof that no API keys or secrets leaked into the
-artifacts:
+Every capsule includes a record of its secret scan: which files were scanned,
+with which rules, and what was redacted:
 
 ```bash
 nova scan-secrets $RUN
@@ -305,8 +305,11 @@ badge); add `--fail-on <severity>` to exit non-zero above a threshold, or
 `redaction-proof.json` file itself records that the scan ran, which files were
 checked, and how many findings were found. If a secret is detected, it is
 redacted **in place** as `[REDACTED:rule-id]` before the capsule is finalized.
-This proof is what makes a capsule safe to share, archive, and export — and it is
-generated on every capture, not as an afterthought.
+Every file in the capsule is scanned, including `outputs/stdout.txt`, `env.lock`
+and the manifest, and a final pass rescans the finished capsule before it is
+digested and sealed. The proof is generated on every capture. It records what the
+scanner did, not a guarantee: the scan is rule-based, so a secret in a format no
+rule knows is not found.
 
 ---
 

@@ -20,10 +20,18 @@ PACK_NAME = "gitleaks-core-v0"
 #        (`sk-proj-` etc., previously not matched at all), Anthropic keys longer
 #        than 87 chars (previously masked with the tail left in clear), Langfuse
 #        secret keys (`sk-lf-`; only the public `pk-lf-` matched before).
-PACK_VERSION = "0.6.0"
+# 0.7.0: AWS and GitHub credentials, which ADR-0009 names (gitleaks) but the pack
+#        never carried -- `aws-access-key-id` (AKIA/ASIA/ABIA/ACCA/A3T*),
+#        `aws-secret-access-key` (only when anchored by its key name; the value
+#        alone is an unprefixed 40-char run), `github-token` (ghp_/gho_/ghu_/
+#        ghs_/ghr_) and `github-fine-grained-pat` (github_pat_).
+PACK_VERSION = "0.7.0"
 #                        0.4.0: + novafabric-webhook-secret (nvwh_, ADR-0205)
 
-# 14 key patterns — ordered from most to least specific to avoid false positives
+# 18 key patterns — ordered from most to least specific to avoid false positives.
+# A rule may set ``secret_group``: only that capture group is the secret -- it is
+# what ``match_hash`` hashes and what is replaced; the rest of the match is the
+# context that anchors it and stays in the capsule. Absent means the whole match.
 _RULES: list[dict[str, Any]] = [
     # ADR-0193: our own credential format (`nvfk_<key_id>_<secret>`) — detect a
     # leaked NovaFabric API key in a capsule before anyone else does.
@@ -54,6 +62,31 @@ _RULES: list[dict[str, Any]] = [
      "pattern": re.compile(r"wcs_[A-Za-z0-9]{30,50}")},
     {"id": "qdrant-api-key", "severity": "medium",
      "pattern": re.compile(r"qdrant_[A-Za-z0-9]{30,50}")},
+    # Pack 0.7.0 (gitleaks `aws-access-token`): an access key id identifies the
+    # account and is half of the credential pair.
+    {"id": "aws-access-key-id", "severity": "high",
+     "pattern": re.compile(
+         r"(?<![A-Za-z0-9])(?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16}(?![A-Za-z0-9])"
+     )},
+    # The secret access key has no prefix: alone it is any 40-char base64 run, so a
+    # bare-value rule would redact digests and ids (the ADR-0261 failure class). It
+    # is matched only when its key name anchors it -- env/ini/YAML/JSON (including
+    # JSON-escaped quotes inside a JSONL string), boto kwargs, STS `SecretAccessKey`
+    # output and `--aws-secret-access-key <value>`. Only the value is redacted.
+    {"id": "aws-secret-access-key", "severity": "critical",
+     "secret_group": 1,
+     "pattern": re.compile(
+         r"(?i:(?:aws[_-]?)?secret[_-]?access[_-]?key|aws[_-]?secret[_-]?key)"
+         r"(?:[\s\\\"']*[:=]+[\s\\\"']*|\s+)"
+         r"([A-Za-z0-9/+]{40})(?![A-Za-z0-9/+=])"
+     )},
+    # Pack 0.7.0 (gitleaks `github-pat`, `github-oauth`, `github-app-token`,
+    # `github-refresh-token`, `github-fine-grained-pat`). No upper length bound,
+    # for the reason given above the Anthropic rule.
+    {"id": "github-token", "severity": "critical",
+     "pattern": re.compile(r"(?<![A-Za-z0-9_])gh[pousr]_[A-Za-z0-9]{36,}")},
+    {"id": "github-fine-grained-pat", "severity": "critical",
+     "pattern": re.compile(r"(?<![A-Za-z0-9_])github_pat_[A-Za-z0-9_]{22,}")},
     # False-positive guard (pack 0.5.0, ADR-0261): a bare 40-character token that
     # is entirely lowercase hex is a SHA-1 -- a git commit id, a blob digest --
     # not a Cohere key. `git rev-parse HEAD` is an ordinary coding-agent tool
@@ -119,14 +152,15 @@ _SCAN_TARGETS = [
     ("vector_retrievals.jsonl", "vector-retrievals"),
 ]
 
-# Public alias: the ADR-0135 masking pipeline walks exactly the same targets
-# the built-in scanner does (the private design/spec/pii-masking-pipeline-v0.md).
+# Public alias: the structured streams. The ADR-0135 masking pipeline walks these
+# AND the artifact targets below -- the same set the built-in scanner walks (see
+# ``iter_artifact_targets``) -- and the content index bounds its corpus by it.
 SCAN_TARGETS: list[tuple[str, str]] = _SCAN_TARGETS
 
 # ADR-0009 "Scanning targets": every byte written to the capsule is scanned, not
 # only the structured streams above. These are the remaining files the ADR names.
-# Kept separate from SCAN_TARGETS because that list is also the ADR-0135 masking
-# walk (JSONL/YAML only) and the content-index corpus bound.
+# Kept separate from SCAN_TARGETS because that list is the content-index corpus
+# bound (ADR-0204), which must not grow to raw stdout/stderr by accident.
 ARTIFACT_SCAN_TARGETS: list[tuple[str, str]] = [
     ("env.lock", "env-lock"),
     ("assets.jsonl", "assets"),
@@ -150,10 +184,146 @@ _EMPTY_HASH = "sha256:" + hashlib.sha256(b"").hexdigest()
 # model-calls.jsonl references by hash). They still apply to text artifacts, where
 # a false positive only masks a string.
 _BINARY_EXCLUDED_RULES = frozenset({"cohere-api-key", "together-api-key", "mistral-api-key"})
+# The rules allowed to DROP a file: on binary content, and on a file *name*. A path
+# like `outputs/media/<64-hex>` must never be dropped by the bare-hex Together rule.
+_DROP_RULES: list[dict[str, Any]] = [
+    r for r in _RULES if r["id"] not in _BINARY_EXCLUDED_RULES
+]
+
+# Residual pass (ADR-0009 "every byte written to the capsule"): a file in the
+# finished capsule that none of the lists above names is still rescanned, and is
+# recorded under this kind. `capsule.yaml` is checked separately (it carries the
+# digest map, so it is written last); `.seal/` does not exist yet; the proof is
+# the output of the pass, not an input to it.
+OTHER_FILE_KIND = "capsule-file"
+_RESIDUAL_EXCLUDED: frozenset[str] = frozenset({"capsule.yaml", "redaction-proof.json"})
+_RESIDUAL_EXCLUDED_DIRS: frozenset[str] = frozenset({".seal"})
+
+
+class ResidualSecretError(Exception):
+    """A supported secret pattern is still present in a finished capsule file.
+
+    Raised by :meth:`SecretScannerV0.assert_manifest_clean`, the last gate before the
+    manifest is written and sealed. Carries the file and the rule ids that fired,
+    never the matched value -- this message is destined for a log.
+    """
+
+    def __init__(self, ref: str, rule_ids: list[str]) -> None:
+        self.ref = ref
+        self.rule_ids = sorted(set(rule_ids))
+        super().__init__(
+            f"{ref}: residual secret match after redaction (rules: {', '.join(self.rule_ids)})"
+        )
 
 
 def _sha256(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def _count_by_severity(findings: list[dict[str, Any]]) -> dict[str, int]:
+    by_severity: dict[str, int] = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+    for f in findings:
+        sev = str(f["severity"])
+        if sev in by_severity:
+            by_severity[sev] += 1
+    return by_severity
+
+
+def _fold_target(
+    targets: list[dict[str, Any]],
+    by_ref: dict[str, dict[str, Any]],
+    target: dict[str, Any],
+    new_findings: int,
+) -> bool:
+    """Fold a rescan ``target`` into ``targets`` in place.
+
+    A target already recorded keeps its ``hash_before_redaction`` (the original
+    bytes -- ADR-0009 semantics); its ``hash_after_redaction`` moves to the bytes
+    as rescanned and ``findings_count`` grows by ``new_findings``. An unrecorded
+    one is appended. Returns True when a recorded target's bytes had changed
+    since its scan with nothing found now -- a clean rewrite, e.g. by a masker.
+    """
+    ref = str(target["ref"])
+    prior = by_ref.get(ref)
+    if prior is None:
+        targets.append(target)
+        by_ref[ref] = target
+        return False
+    reconciled = (
+        new_findings == 0
+        and prior["hash_after_redaction"] != target["hash_after_redaction"]
+    )
+    if new_findings:
+        prior["findings_count"] = int(prior["findings_count"]) + new_findings
+        prior["binary"] = bool(prior["binary"]) or bool(target["binary"])
+    prior["hash_after_redaction"] = target["hash_after_redaction"]
+    return reconciled
+
+
+#: Proof fields that name a capsule path. They are judged by the anchored rules
+#: only, as file names are (``_name_findings``): a generic rule would mask a
+#: legitimate hex/alnum file name here while the same name stays a key of
+#: ``evidence_digests``, and the proof would stop naming the file it scanned.
+_PATH_FIELDS: frozenset[str] = frozenset({"ref", "target_ref"})
+
+
+def _redact_strings(value: Any, *, anchored_only: bool = False) -> tuple[Any, int]:
+    """Mask every rule match in every string (keys included) of a JSON-like value.
+
+    Returns ``(new_value, number_of_strings_changed)``; the input is not mutated.
+    """
+    if isinstance(value, str):
+        new = value
+        for rule in _DROP_RULES if anchored_only else _RULES:
+            new = _sub_rule(rule, new, "mask")
+        return new, int(new != value)
+    if isinstance(value, dict):
+        out: dict[Any, Any] = {}
+        changed = 0
+        for k, v in value.items():
+            new_k, ck = _redact_strings(k)
+            new_v, cv = _redact_strings(
+                v, anchored_only=anchored_only or k in _PATH_FIELDS
+            )
+            out[new_k] = new_v
+            changed += ck + cv
+        return out, changed
+    if isinstance(value, list):
+        items: list[Any] = []
+        changed = 0
+        for v in value:
+            new_v, cv = _redact_strings(v, anchored_only=anchored_only)
+            items.append(new_v)
+            changed += cv
+        return items, changed
+    return value, 0
+
+
+def iter_artifact_targets(capsule_dir: Path) -> Iterator[tuple[Path, str, str]]:
+    """``(path, ref, kind)`` for every ADR-0009 artifact target present in a capsule.
+
+    The fixed files of :data:`ARTIFACT_SCAN_TARGETS`, then every regular file under
+    :data:`ARTIFACT_SCAN_DIRS`, sorted. Symlinks are never followed or yielded. One
+    enumeration shared by the built-in scanner and the ADR-0135 masking pipeline, so
+    the two cannot walk different sets.
+    """
+    for filename, kind in ARTIFACT_SCAN_TARGETS:
+        path = capsule_dir / filename
+        if path.is_file() and not path.is_symlink():
+            yield path, filename, kind
+    for dirname, kind in ARTIFACT_SCAN_DIRS:
+        root = capsule_dir / dirname
+        if not root.is_dir() or root.is_symlink():
+            continue
+        found: list[Path] = []
+        for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+            dirnames.sort()
+            for name in filenames:
+                path = Path(dirpath) / name
+                if path.is_file() and not path.is_symlink():
+                    found.append(path)
+        for path in sorted(found):
+            yield path, path.relative_to(capsule_dir).as_posix(), kind
 
 
 _VALID_STRATEGIES = {"mask", "hash", "drop"}
@@ -170,6 +340,29 @@ def _replacement(rule_id: str, strategy: str, matched: str) -> str:
     raise ValueError(f"unknown strategy: {strategy!r}")
 
 
+def _secret_span(rule: dict[str, Any], m: re.Match[str]) -> tuple[int, str]:
+    """``(offset, secret)`` of a match: the rule's ``secret_group``, else the whole match."""
+    group = int(rule.get("secret_group", 0))
+    return m.start(group), m.group(group)
+
+
+def _sub_rule(rule: dict[str, Any], text: str, strategy: str) -> str:
+    """Replace every match of one rule in ``text``; context outside ``secret_group`` stays."""
+    rule_id = str(rule["id"])
+    group = int(rule.get("secret_group", 0))
+
+    def _repl(m: re.Match[str]) -> str:
+        whole, base = m.group(), m.start()
+        start, end = m.span(group)
+        return (
+            whole[: start - base]
+            + _replacement(rule_id, strategy, m.group(group))
+            + whole[end - base :]
+        )
+
+    return str(rule["pattern"].sub(_repl, text))
+
+
 def redact_secrets_in_text(text: str) -> str:
     """Mask every rule match in ``text`` — same pack the capsule scanner uses.
 
@@ -178,11 +371,7 @@ def redact_secrets_in_text(text: str) -> str:
     strategy; returns the redacted text.
     """
     for rule in _RULES:
-        rule_id = str(rule["id"])
-        text = rule["pattern"].sub(
-            lambda m, rid=rule_id: _replacement(rid, "mask", m.group()),
-            text,
-        )
+        text = _sub_rule(rule, text, "mask")
     return text
 
 
@@ -244,16 +433,11 @@ def merge_scan_results(
     kept_targets = [t for t in proof.get("targets", []) if t["ref"] not in new_refs]
     kept_findings = [f for f in proof.get("findings", []) if f["target_ref"] not in new_refs]
     all_findings = kept_findings + list(findings)
-    by_severity: dict[str, int] = {
-        "critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0
-    }
-    for f in all_findings:
-        sev = str(f["severity"])
-        if sev in by_severity:
-            by_severity[sev] += 1
     proof["targets"] = kept_targets + list(targets)
     proof["findings"] = all_findings
-    proof["findings_count"] = {"total": len(all_findings), "by_severity": by_severity}
+    proof["findings_count"] = {
+        "total": len(all_findings), "by_severity": _count_by_severity(all_findings)
+    }
     proof["bytes_scanned"] = sum(int(t["bytes_scanned"]) for t in proof["targets"])
     proof["bytes_redacted"] = int(proof.get("bytes_redacted", 0)) + max(0, bytes_redacted)
     return recompute_chain_hash(proof)
@@ -313,17 +497,13 @@ class SecretScannerV0:
         for rule in _RULES:
             strategy = self._strategy_for(str(rule["id"]))
             for m in rule["pattern"].finditer(content):
-                out.append(self._finding(rule, kind, ref, m.start(), m.group(), strategy))
+                offset, secret = _secret_span(rule, m)
+                out.append(self._finding(rule, kind, ref, offset, secret, strategy))
         return out
 
     def _redact_text(self, content: str) -> str:
         for rule in _RULES:
-            rule_id = str(rule["id"])
-            strategy = self._strategy_for(rule_id)
-            content = rule["pattern"].sub(
-                lambda m, rid=rule_id, s=strategy: _replacement(rid, s, m.group()),
-                content,
-            )
+            content = _sub_rule(rule, content, self._strategy_for(str(rule["id"])))
         return content
 
     @staticmethod
@@ -355,23 +535,85 @@ class SecretScannerV0:
     # -- target enumeration ---------------------------------------------------
 
     def _artifact_targets(self) -> Iterator[tuple[Path, str, str]]:
-        for filename, kind in ARTIFACT_SCAN_TARGETS:
-            path = self._dir / filename
-            if path.is_file() and not path.is_symlink():
-                yield path, filename, kind
-        for dirname, kind in ARTIFACT_SCAN_DIRS:
-            root = self._dir / dirname
-            if not root.is_dir() or root.is_symlink():
+        return iter_artifact_targets(self._dir)
+
+    def _all_capsule_files(self) -> Iterator[tuple[Path, str, str, bool]]:
+        """``(path, ref, kind, structured)`` for every file the residual pass rescans.
+
+        Every regular file in the capsule except :data:`_RESIDUAL_EXCLUDED` (top
+        level) and anything under ``.seal/``; symlinks are neither followed nor
+        yielded. ``structured`` marks the streams the main pass scans as text
+        (``_scan_structured``) rather than as artifacts that may be binary.
+        """
+        structured = dict(_SCAN_TARGETS)
+        fixed = dict(ARTIFACT_SCAN_TARGETS)
+        dirs = dict(ARTIFACT_SCAN_DIRS)
+        found: list[Path] = []
+        for dirpath, dirnames, filenames in os.walk(self._dir, followlinks=False):
+            if Path(dirpath) == self._dir:
+                dirnames[:] = [d for d in dirnames if d not in _RESIDUAL_EXCLUDED_DIRS]
+            dirnames.sort()
+            for name in filenames:
+                path = Path(dirpath) / name
+                if path.is_file() and not path.is_symlink():
+                    found.append(path)
+        for path in sorted(found):
+            ref = path.relative_to(self._dir).as_posix()
+            if ref in _RESIDUAL_EXCLUDED:
                 continue
-            found: list[Path] = []
-            for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-                dirnames.sort()
-                for name in filenames:
-                    path = Path(dirpath) / name
-                    if path.is_file() and not path.is_symlink():
-                        found.append(path)
-            for path in sorted(found):
-                yield path, path.relative_to(self._dir).as_posix(), kind
+            if ref in structured:
+                yield path, ref, structured[ref], True
+            elif ref in fixed:
+                yield path, ref, fixed[ref], False
+            else:
+                top = ref.split("/", 1)[0]
+                kind = dirs.get(top, OTHER_FILE_KIND) if "/" in ref else OTHER_FILE_KIND
+                yield path, ref, kind, False
+
+    # -- file names -----------------------------------------------------------
+
+    def _name_findings(self, ref: str, kind: str) -> tuple[str, list[dict[str, Any]]]:
+        """Findings for a key-shaped secret in a file's *path*, and the redacted ref.
+
+        A path is not file content, but it is written into the capsule twice: as a
+        ``ref`` in this proof and as a key of the manifest's ``evidence_digests``.
+        Only :data:`_DROP_RULES` apply -- a content-addressed name such as
+        ``outputs/media/<64-hex>`` must never trip the bare-hex rule. Offsets are
+        into the path string.
+        """
+        findings: list[dict[str, Any]] = []
+        safe_ref = ref
+        for rule in _DROP_RULES:
+            for m in rule["pattern"].finditer(ref):
+                offset, secret = _secret_span(rule, m)
+                findings.append(self._finding(rule, kind, ref, offset, secret, "drop"))
+            safe_ref = _sub_rule(rule, safe_ref, "mask")
+        for f in findings:
+            f["target_ref"] = safe_ref
+        return safe_ref, findings
+
+    def _drop_named(
+        self, path: Path, safe_ref: str, kind: str, findings: list[dict[str, Any]]
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], int]:
+        size = path.stat().st_size
+        digest = _file_hash(path)
+        path.unlink()
+        logger.warning(
+            "novafabric.secrets: artifact %s has a secret in its file name and was "
+            "dropped from the capsule",
+            safe_ref,
+        )
+        return (
+            self._target(
+                kind, safe_ref,
+                bytes_scanned=0,
+                findings_count=len(findings),
+                hash_before=digest,
+                hash_after=_EMPTY_HASH,
+            ),
+            findings,
+            size,
+        )
 
     # -- per-file scanning ----------------------------------------------------
 
@@ -401,6 +643,9 @@ class SecretScannerV0:
     def _scan_artifact(
         self, path: Path, ref: str, kind: str
     ) -> tuple[dict[str, Any], list[dict[str, Any]], int]:
+        safe_ref, name_findings = self._name_findings(ref, kind)
+        if name_findings:
+            return self._drop_named(path, safe_ref, kind, name_findings)
         size = path.stat().st_size
         if size > MAX_ARTIFACT_SCAN_BYTES:
             digest = _file_hash(path)
@@ -437,8 +682,9 @@ class SecretScannerV0:
                 if rule["id"] in _BINARY_EXCLUDED_RULES:
                     continue
                 for m in rule["pattern"].finditer(text):
+                    offset, secret = _secret_span(rule, m)
                     findings.append(
-                        self._finding(rule, kind, ref, run.start() + m.start(), m.group(), "drop")
+                        self._finding(rule, kind, ref, run.start() + offset, secret, "drop")
                     )
         hash_before = _sha256(original)
         if not findings:
@@ -498,7 +744,10 @@ class SecretScannerV0:
         Text-level redaction of serialized YAML is unsafe: a secret that is a whole
         scalar would become ``[REDACTED:...]``, which YAML parses as a list. So the
         values are redacted in the data structure, and the findings are reported
-        against the YAML the manifest would otherwise have serialized to.
+        against the YAML the manifest would otherwise have serialized to. String
+        mapping *keys* are redacted too: the findings already count a key-shaped
+        secret in a key, so leaving it in place would report a redaction that
+        never happened.
         Returns ``(redacted_manifest, target, findings)``; the input is not mutated.
         """
         import yaml
@@ -510,7 +759,7 @@ class SecretScannerV0:
             if isinstance(value, str):
                 return self._redact_text(value)
             if isinstance(value, dict):
-                return {k: _walk(v) for k, v in value.items()}
+                return {_walk(k): _walk(v) for k, v in value.items()}
             if isinstance(value, list):
                 return [_walk(v) for v in value]
             return value
@@ -525,6 +774,147 @@ class SecretScannerV0:
             hash_after=_sha256(after.encode()),
         )
         return redacted, target, findings
+
+    def assert_manifest_clean(self, manifest: dict[str, Any]) -> str:
+        """Last gate before ``capsule.yaml`` is written and sealed; returns its YAML.
+
+        The manifest is redacted by :meth:`redact_manifest` before it is first
+        written, but the final manifest gains ``evidence_digests`` afterwards -- a
+        map keyed by capsule file paths. This checks the *final* manifest twice:
+        every string key and value on its own (YAML line-folding can split a long
+        scalar, so the serialized text alone is not enough), and the exact YAML
+        text that will be written. Any match raises :class:`ResidualSecretError`;
+        the caller must not seal. Returns the checked text so the bytes written
+        are the bytes checked.
+        """
+        import yaml
+
+        hits: list[str] = []
+
+        def _walk(value: Any) -> None:
+            if isinstance(value, str):
+                hits.extend(scan_text_rule_ids(value))
+            elif isinstance(value, dict):
+                for k, v in value.items():
+                    _walk(k)
+                    _walk(v)
+            elif isinstance(value, list):
+                for v in value:
+                    _walk(v)
+
+        _walk(manifest)
+        text = yaml.dump(manifest, allow_unicode=True)
+        hits.extend(scan_text_rule_ids(text))
+        if hits:
+            raise ResidualSecretError("capsule.yaml", hits)
+        return text
+
+    def residual_scan(self, proof: dict[str, Any]) -> dict[str, Any]:
+        """Rescan every file of the finished capsule and fold the result into ``proof``.
+
+        ADR-0009 promises that every byte written to the capsule is scanned. The
+        main pass runs before late files exist (``lineage.jsonl``, ``replay.yaml``,
+        the C2PA marker) and before ADR-0135 maskers rewrite files, so this pass
+        runs last -- after every write, before the proof is written and before
+        ``evidence_digests`` bind the bytes. Semantics are ADR-0009's own:
+        redact-and-record. A residual in a text file is redacted in place; a
+        binary carrying one is dropped; each residual is an ordinary finding
+        (``match_hash`` unchanged) against the file's existing target.
+
+        Reconciliation keeps the proof truthful about the final bytes:
+
+        * an existing target keeps ``hash_before_redaction`` (the original
+          bytes) and gets ``hash_after_redaction`` = the bytes now on disk;
+        * a file no target names yet (e.g. ``replay.yaml``) gets a target of
+          its own -- kind :data:`OTHER_FILE_KIND` unless a list names it;
+        * ``residual_check`` (additive, optional) records the pass itself.
+
+        Excluded: ``capsule.yaml`` (see :meth:`assert_manifest_clean`), the
+        proof itself, and ``.seal/``. Returns a new, re-chained proof.
+        """
+        targets = [dict(t) for t in proof.get("targets", [])]
+        by_ref = {t["ref"]: t for t in targets}
+        new_findings: list[dict[str, Any]] = []
+        residual_refs: list[str] = []
+        reconciled_refs: list[str] = []
+        files = rescanned_bytes = removed = 0
+
+        for path, ref, kind, structured in list(self._all_capsule_files()):
+            if structured:
+                target, found, gone = self._scan_structured(path, ref, kind)
+            else:
+                target, found, gone = self._scan_artifact(path, ref, kind)
+            files += 1
+            rescanned_bytes += int(target["bytes_scanned"])
+            removed += gone
+            new_findings.extend(found)
+            if found:
+                residual_refs.append(str(target["ref"]))
+            if _fold_target(targets, by_ref, target, len(found)):
+                reconciled_refs.append(str(target["ref"]))
+
+        if residual_refs:
+            logger.warning(
+                "novafabric.secrets: residual pass redacted %d match(es) the earlier "
+                "passes missed, in %s",
+                len(new_findings), ", ".join(residual_refs),
+            )
+        out = dict(proof)
+        all_findings = list(proof.get("findings", [])) + new_findings
+        out["targets"] = targets
+        out["findings"] = all_findings
+        out["findings_count"] = {
+            "total": len(all_findings), "by_severity": _count_by_severity(all_findings)
+        }
+        out["bytes_scanned"] = sum(int(t["bytes_scanned"]) for t in targets)
+        out["bytes_redacted"] = int(proof.get("bytes_redacted", 0)) + max(0, removed)
+        out.pop("chain_hash", None)
+        # The proof is itself written into the capsule. Its free-text fields --
+        # an ADR-0135 masker's `replacement`, a ref -- come from code that is not
+        # the scanner, so they get the same rules. Digests, ULIDs and counts cannot
+        # match (the bare-hex/alnum rules are bounded and `sha256:`-guarded).
+        out, scrubbed = _redact_strings(out)
+        if scrubbed:
+            logger.warning(
+                "novafabric.secrets: %d string(s) in redaction-proof.json matched a "
+                "rule and were masked before it was written",
+                scrubbed,
+            )
+        out["residual_check"] = {
+            "files_rescanned": files,
+            "bytes_rescanned": rescanned_bytes,
+            "residual_findings": len(new_findings),
+            "residual_refs": residual_refs,
+            "reconciled_refs": reconciled_refs,
+            "proof_strings_redacted": scrubbed,
+        }
+        return recompute_chain_hash(out)
+
+    def fold_rescan(
+        self,
+        proof: dict[str, Any],
+        target: dict[str, Any],
+        findings: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Fold a second scan of an already-recorded target into ``proof``.
+
+        Unlike :func:`merge_scan_results`, which *replaces* a target, this keeps the
+        first scan's ``hash_before_redaction`` and findings, adds the new findings,
+        and moves ``hash_after_redaction`` to the rescanned bytes. Used for the
+        manifest after ADR-0135 maskers ran over it. Returns a re-chained proof.
+        """
+        out = dict(proof)
+        targets = [dict(t) for t in proof.get("targets", [])]
+        by_ref = {t["ref"]: t for t in targets}
+        _fold_target(targets, by_ref, target, len(findings))
+        all_findings = list(proof.get("findings", [])) + list(findings)
+        out["targets"] = targets
+        out["findings"] = all_findings
+        out["findings_count"] = {
+            "total": len(all_findings), "by_severity": _count_by_severity(all_findings)
+        }
+        out["bytes_scanned"] = sum(int(t["bytes_scanned"]) for t in targets)
+        return recompute_chain_hash(out)
 
     def scan_and_redact(self) -> dict[str, Any]:
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -550,13 +940,7 @@ class SecretScannerV0:
             total_bytes_scanned += target["bytes_scanned"]
             total_bytes_redacted += removed
 
-        by_severity: dict[str, int] = {
-            "critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0
-        }
-        for f in findings:
-            sev = str(f["severity"])
-            if sev in by_severity:
-                by_severity[sev] += 1
+        by_severity = _count_by_severity(findings)
 
         proof: dict[str, Any] = {
             "schema_version": "0.1.0",
@@ -565,7 +949,8 @@ class SecretScannerV0:
             "created_at": now,
             "scanner": {
                 "name": "novafabric.secrets",
-                "version": "0.3.0",
+                # 0.4.0: file-name check, residual pass (`residual_check`).
+                "version": "0.4.0",
                 "engine": "regex",
                 "engine_version": "0.2.0",
             },

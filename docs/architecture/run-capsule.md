@@ -98,16 +98,24 @@ Some optional fields matter for the architecture:
 ## The redaction proof: `redaction-proof.json`
 
 The secret scanner runs on every capture. It scans and redacts, in place, the
-free-text streams: `model-calls.jsonl`, `tool-calls.jsonl`, `trace.jsonl` and the
-optional event streams (`capture/secrets.py:_SCAN_TARGETS`).
-Its proof file records:
+call and event streams (`capture/secrets.py:SCAN_TARGETS`), `env.lock`,
+`assets.jsonl`, `lineage.jsonl` and every file under `inputs/` and `outputs/`
+(`ARTIFACT_SCAN_TARGETS`, `ARTIFACT_SCAN_DIRS`). The manifest is redacted before
+`capsule.yaml` is written. Binaries are scanned by string extraction, and a binary
+that carries a key-shaped match is dropped. A final residual pass rescans every
+file in the finished capsule before `evidence_digests` is computed, and the final
+manifest is checked again before it is sealed. The rule pack is `gitleaks-core-v0`
+0.7.0, which matches known key formats only. Its proof file records:
 
-- the SHA-256 of each scanned file before and after redaction;
+- the SHA-256 of each scanned file before redaction and as finally written;
 - for each finding: the rule ID, byte offset, length, redaction strategy, and the
   SHA-256 of the matched secret (never the secret itself);
 - the hash of the rule pack, and a `chain_hash` over the canonical proof;
 - `masker_findings[]` and `masker_errors[]` from the pluggable masking pipeline
-  (`masking/`).
+  (`masking/`);
+- `residual_check`: what the final pass rescanned, any residual it redacted, and
+  any file whose after-hash it updated because the file changed after its first
+  scan.
 
 `redaction-proof.json` is listed in `evidence_digests`, so a seal covers the proof
 along with everything else.

@@ -22,8 +22,9 @@ sequenceDiagram
     C->>W: runner starts the command
     W-->>D: model / tool / trace records (hooks)
     W-->>C: exit code, stdout, stderr
-    C->>D: env.lock, redaction-proof.json, replay.yaml, capsule.yaml, lineage.jsonl
-    C->>D: evidence_digests → capsule.yaml (rewritten)
+    C->>D: env.lock, scan + redact, replay.yaml, capsule.yaml, lineage.jsonl
+    C->>D: residual rescan → redaction-proof.json
+    C->>D: evidence_digests → capsule.yaml (rewritten, gate-checked)
     opt NovaSeal configured
         C->>S: seal(manifest)
         S-->>D: .seal/manifest.dsse, .tsr, log-entry.json
@@ -53,15 +54,38 @@ stages in order:
    `sitecustomize.py` hook loader onto the child's `PYTHONPATH`. In the child,
    `capture/hooks/__init__.py:install_all` patches the supported SDKs and HTTP
    clients.
-5. **Redact.** `capture/secrets.py:SecretScannerV0.scan_and_redact` always runs,
-   followed by any configured maskers (`masking/`). Both feed
-   `redaction-proof.json`.
-6. **Write the manifest and lineage.** The orchestrator writes `replay.yaml` and
-   `capsule.yaml`, then `lineage/_writer.py:LineageWriter` writes
-   `lineage.jsonl` and the edges are indexed.
-7. **Digest.** `evidence_digests` records a SHA-256 and size for every evidence
-   file, and `capsule.yaml` is rewritten.
-8. **Seal**, if configured. See step 2 below.
+5. **Redact.** After `env.lock` is written,
+   `capture/secrets.py:SecretScannerV0.scan_and_redact` always runs over every
+   file that exists at that point: the call and event streams, `env.lock`,
+   `assets.jsonl`, and every file under `inputs/` and `outputs/` (recursively;
+   symlinks are not followed). Matches in text are redacted in place. A binary
+   that carries a key-shaped match, or a file whose *name* carries one, is
+   dropped. Any configured maskers (`masking/`, experimental) then run over the
+   same files.
+6. **Write the manifest and lineage.** The orchestrator writes `replay.yaml`. The
+   manifest is redacted as a data structure (built-in rules, then maskers, then
+   the built-in rules again) before `capsule.yaml` is written, so a key on the
+   command line is not written to disk. `lineage/_writer.py:LineageWriter` then
+   writes `lineage.jsonl`, which is scanned and masked straight away, and the
+   edges are indexed.
+7. **Residual pass and proof.** `SecretScannerV0.residual_scan` rescans every
+   file in the finished capsule except `capsule.yaml`, the proof and `.seal/`.
+   That includes files written after step 5 (`replay.yaml`, the C2PA marker) and
+   files a masker rewrote. A match is redacted and recorded like any other
+   finding. Each file's after-hash is updated to the bytes on disk, and the pass
+   is recorded in `residual_check`. `redaction-proof.json` is then written,
+   once.
+8. **Digest and gate.** `evidence_digests` records a SHA-256 and size for every
+   evidence file, including the proof. Before `capsule.yaml` is rewritten, the
+   final manifest is checked against the rules
+   (`SecretScannerV0.assert_manifest_clean`). If anything matches, the manifest
+   is redacted, the capsule is **not sealed**, and capture prints an error. The
+   workload's exit code is unchanged.
+9. **Seal**, if configured. See step 2 below.
+
+Steps 5–8 work today. Detection is rule-based (`gitleaks-core-v0`, pack 0.7.0),
+so a secret in a format no rule matches is not found. For example, a bare AWS
+secret access key is matched only when its key name is next to it.
 
 A failed workload still produces a complete capsule with `status: failure`. If a
 NovaFabric component fails, the failure is recorded and the workload continues.

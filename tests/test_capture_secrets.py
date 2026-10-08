@@ -84,7 +84,8 @@ def test_proof_pack_has_correct_name(tmp_path: Path) -> None:
     proof = SecretScannerV0(capsule_dir=tmp_path, run_id=RUN_ID).scan_and_redact()
     assert proof["packs"][0]["name"] == PACK_NAME
     assert proof["packs"][0]["version"] == PACK_VERSION
-    assert proof["packs"][0]["rules_count"] == 14  # +novafabric-webhook-secret (ADR-0205)
+    # 14 (+novafabric-webhook-secret, ADR-0205) + 4 AWS/GitHub rules (pack 0.7.0)
+    assert proof["packs"][0]["rules_count"] == 18
 
 
 def test_findings_dont_store_secret(tmp_path: Path) -> None:

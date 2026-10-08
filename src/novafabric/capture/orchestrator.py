@@ -22,6 +22,7 @@ from novafabric.capture.deployment_env import (
 from novafabric.capture.env import capture_environment
 from novafabric.capture.replay import minimal_replay_policy
 from novafabric.capture.secrets import (
+    ResidualSecretError,
     SecretScannerV0,
     merge_scan_results,
     recompute_chain_hash,
@@ -495,8 +496,10 @@ class CaptureOrchestrator:
         proof = scanner.scan_and_redact()
         # ADR-0135: operator-registered maskers run after the built-in scanner
         # (built-ins are never disabled) and before the proof is written, so no
-        # raw value the maskers redact ever persists. Absent pipeline ⇒ the
-        # proof is byte-for-byte ADR-0009.
+        # raw value the maskers redact ever persists. They walk the same targets
+        # the scanner walks (structured streams AND artifacts); the manifest and
+        # lineage.jsonl, which do not exist yet, are masked where they are
+        # produced (below). Absent pipeline ⇒ no masker_* arrays in the proof.
         if self._masking_pipeline is not None:
             try:
                 masker_findings, masker_errors = self._masking_pipeline.run(
@@ -628,6 +631,17 @@ class CaptureOrchestrator:
         # Values are redacted in the data structure, not in serialized YAML.
         manifest, _manifest_target, _manifest_findings = scanner.redact_manifest(manifest)
         proof = merge_scan_results(proof, [_manifest_target], _manifest_findings)
+        # ADR-0135 over the same target: maskers see the manifest after the
+        # built-in redaction and before it is written or signed; the built-in
+        # rules then run once more over the masker output (folded into the same
+        # capsule-yaml target), so they keep the last word here as everywhere.
+        if self._masking_pipeline is not None:
+            manifest, _mf, _me = self._masking_pipeline.mask_mapping(
+                manifest, "capsule.yaml", "capsule-yaml", run_id
+            )
+            proof = _extend_masker_results(proof, _mf, _me)
+            manifest, _rt, _rf = scanner.redact_manifest(manifest)
+            proof = scanner.fold_rescan(proof, _rt, _rf)
         writer.write_text("capsule.yaml", yaml.dump(manifest, allow_unicode=True))
 
         # ADR-0074: write the C2PA synthetic-content provenance marker now —
@@ -712,19 +726,48 @@ class CaptureOrchestrator:
         # evidence file into the manifest *before* it becomes the signed payload,
         # then rewrite capsule.yaml so the file on disk and the signed payload
         # agree — verify compares them (ADR-0251 §2).
-        # ADR-0009: lineage.jsonl is written after the main scan; scan it now,
-        # then write the one final redaction proof so evidence_digests binds it.
+        # ADR-0009: lineage.jsonl is written after the main scan; scan it now
+        # (then ADR-0135 maskers over it, same order as every other target).
         _late_targets, _late_findings, _late_removed = scanner.scan_and_redact_refs(
             [("lineage.jsonl", "lineage")]
         )
         proof = merge_scan_results(proof, _late_targets, _late_findings, _late_removed)
+        if self._masking_pipeline is not None:
+            _lf, _le = self._masking_pipeline.run(
+                capsule_dir, run_id, targets=[("lineage.jsonl", "lineage")]
+            )
+            proof = _extend_masker_results(proof, _lf, _le)
+
+        # ADR-0009 residual pass: the LAST write to any evidence file is done, so
+        # rescan the whole finished capsule (late files such as replay.yaml and the
+        # C2PA marker, and anything a masker rewrote) with the built-in rules, which
+        # therefore have the last word. Residuals are redacted and recorded; the
+        # proof's after-hashes are reconciled to the bytes on disk. Only then is
+        # the one final proof written, so evidence_digests binds it.
+        proof = scanner.residual_scan(proof)
         writer.write_text("redaction-proof.json", json.dumps(proof, indent=2))
 
         manifest["evidence_digests"] = _evidence_digests(capsule_dir)
-        writer.write_text("capsule.yaml", yaml.dump(manifest, allow_unicode=True))
-
-        # --- NovaSeal (v0.10 Phase 0 — opt-in, non-blocking) ---
-        _seal_capsule(capsule_dir, manifest)
+        # Last gate: the final manifest (now carrying the digest map) is checked as
+        # it will be written. A hit means an earlier stage missed something, so the
+        # capsule is NOT sealed — sealing would sign the leak. Fail closed: the
+        # manifest is redacted before it is written, and the run is reported.
+        try:
+            manifest_text = scanner.assert_manifest_clean(manifest)
+        except ResidualSecretError as exc:
+            import sys as _sys
+            logger.error("novafabric.secrets: %s; capsule left unsealed", exc)
+            print(
+                f"[novafabric] ✗ {exc}. capsule.yaml was redacted and the capsule "
+                "was NOT sealed.",
+                file=_sys.stderr,
+            )
+            manifest, _, _ = scanner.redact_manifest(manifest)
+            writer.write_text("capsule.yaml", yaml.dump(manifest, allow_unicode=True))
+        else:
+            writer.write_text("capsule.yaml", manifest_text)
+            # --- NovaSeal (v0.10 Phase 0 — opt-in, non-blocking) ---
+            _seal_capsule(capsule_dir, manifest)
 
         # Hot-path optimization (v0.6.8): same is_configured() short-
         # circuit as the START event above.
@@ -820,6 +863,18 @@ def _mark_content_provenance(capsule_dir: Path) -> None:
             f"[novafabric] ⚠ C2PA provenance marking failed (capsule is still valid): {exc}",
             file=_sys.stderr,
         )
+
+
+def _extend_masker_results(
+    proof: dict[str, Any],
+    findings: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Append ADR-0135 masker results from a later stage to the proof and re-chain it."""
+    proof = dict(proof)
+    proof["masker_findings"] = list(proof.get("masker_findings", [])) + list(findings)
+    proof["masker_errors"] = list(proof.get("masker_errors", [])) + list(errors)
+    return recompute_chain_hash(proof)
 
 
 #: Capsule-relative paths never covered by ``evidence_digests``.

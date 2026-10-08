@@ -216,7 +216,12 @@ The body text itself is absent (only its length and SHA-256) until you set
 
 **Secrets are redacted before the capsule is finalized.** A secret scanner
 rewrites matches in place as `[REDACTED:rule-id]` and writes
-`redaction-proof.json` before the capsule closes. A capsule that lacks this
+`redaction-proof.json` before the capsule closes. It scans every file in the
+capsule: the call and event streams, `env.lock`, `assets.jsonl`,
+`lineage.jsonl`, everything under `inputs/` and `outputs/`, and the manifest. A
+final pass rescans the finished capsule before it is digested and sealed. The
+rule pack matches known key formats (LLM providers, vector stores, AWS, GitHub,
+NovaFabric's own keys); a secret in a format it does not know is not detected. A capsule that lacks this
 proof is invalid to `nova validate` and cannot be exported as an Evidence
 Bundle — redaction is a precondition of trust, not an afterthought.
 
