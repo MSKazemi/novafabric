@@ -84,3 +84,51 @@ def test_dry_run_report_empty_capsule() -> None:
     ev = PolicyEvaluator({}, flags)
     report = ev.dry_run_report([])
     assert "No tool calls" in report
+
+
+def _schema_valid(policy: dict) -> None:
+    """The override must be valid against both packaged replay-policy schemas."""
+    import json
+    from pathlib import Path
+
+    import jsonschema
+
+    root = Path(__file__).resolve().parents[1]
+    for path in (
+        root / "schemas" / "replay-policy.schema.json",
+        root / "src" / "novafabric" / "schemas" / "replay-policy.schema.json",
+    ):
+        schema = json.loads(path.read_text())
+        override_schema = {**schema["$defs"]["ToolOverride"], "$defs": schema["$defs"]}
+        for override in policy["tool_overrides"]:
+            jsonschema.validate(override, override_schema)
+
+
+def test_schema_shape_allow_true_re_executes_the_tool() -> None:
+    """The schema defines `{tool_name, allow: bool}`; the evaluator used to read only
+    `action`, so a schema-valid override was silently ignored, even by --dry-run."""
+    policy = {"tool_overrides": [{"tool_name": "safe_lookup", "allow": True}]}
+    _schema_valid(policy)
+    ev = PolicyEvaluator(policy, ReplayFlags(mode="mocked"))
+    decision = ev.check_tool({**_tc("safe_lookup", "read-only"), "transport": "mcp"})
+    assert decision.decision == "allow"
+    assert decision.reason == "tool_override: allow=true"
+
+
+def test_schema_shape_allow_false_refuses_the_tool() -> None:
+    policy = {"tool_overrides": [{"tool_name": "send_email", "allow": False}]}
+    _schema_valid(policy)
+    ev = PolicyEvaluator(policy, ReplayFlags(mode="mocked"))
+    decision = ev.check_tool({**_tc("send_email"), "transport": "http"})
+    assert decision.decision == "deny"
+    assert decision.reason == "tool_override: allow=false"
+    assert "send_email" in ev.dry_run_report([{**_tc("send_email"), "transport": "http"}])
+
+
+def test_override_with_neither_allow_nor_action_is_not_applied() -> None:
+    """A malformed override is ignored rather than guessed at: the mode's own rule decides."""
+    policy = {"tool_overrides": [{"tool_name": "db_write"}]}
+    ev = PolicyEvaluator(policy, ReplayFlags(mode="mocked"))
+    decision = ev.check_tool({**_tc("db_write"), "transport": "http"})
+    assert decision.decision == "live"
+    assert "tool_override" not in decision.reason

@@ -20,12 +20,28 @@ class PolicyEvaluator:
     def __init__(self, replay_policy: dict[str, Any], flags: ReplayFlags) -> None:
         self._policy = replay_policy
         self._flags = flags
-        self._tool_overrides: dict[str, str] = {}
+        # tool name -> (decision, reason). The schema shape is
+        # `{tool_name, allow: bool}`; the legacy `action: replay|refuse` shape is
+        # still read so replay.yaml files written against it keep working.
+        self._tool_overrides: dict[str, tuple[Literal["mock", "allow", "deny"], str]] = {}
         for override in replay_policy.get("tool_overrides", []):
             name = override.get("tool_name", "")
+            if not name:
+                continue
+            allow = override.get("allow")
             action = override.get("action", "")
-            if name and action:
-                self._tool_overrides[name] = action
+            if isinstance(allow, bool):
+                self._tool_overrides[name] = (
+                    "allow" if allow else "deny",
+                    f"tool_override: allow={'true' if allow else 'false'}",
+                )
+            elif action:
+                self._tool_overrides[name] = (
+                    "allow" if action == "replay" else
+                    "deny" if action == "refuse" else
+                    "mock",
+                    f"tool_override: {action}",
+                )
 
     def check_tool(self, tool_call: dict[str, Any]) -> PolicyDecision:
         tool_call_id = tool_call.get("tool_call_id", "")
@@ -34,18 +50,13 @@ class PolicyEvaluator:
 
         # Per-tool override takes precedence
         if tool_name in self._tool_overrides:
-            override_action = self._tool_overrides[tool_name]
-            decision: Literal["mock", "allow", "deny"] = (
-                "allow" if override_action == "replay" else
-                "deny" if override_action == "refuse" else
-                "mock"
-            )
+            decision, reason = self._tool_overrides[tool_name]
             return PolicyDecision(
                 tool_call_id=tool_call_id,
                 tool_name=tool_name,
                 mutation_class=mutation_class,
                 decision=decision,
-                reason=f"tool_override: {override_action}",
+                reason=reason,
             )
 
         # Mocked mode (ADR-0300): only the intercepted surface is served from

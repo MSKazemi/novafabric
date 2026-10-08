@@ -236,6 +236,12 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **`replay.yaml` per-tool overrides written in the schema's shape were ignored.** Both
+  replay-policy schemas define `tool_overrides` entries as `{tool_name, allow: bool}`, but
+  the policy evaluator read only an `action` field the schema does not allow, so a
+  schema-valid override never applied, not even to `nova replay --dry-run`. `allow: true`
+  now re-executes the tool and `allow: false` refuses it; the legacy `action: replay|refuse`
+  form is still read. Overrides still affect only the dry-run report, not the replayed process.
 - **`nova diff name@version name@version` honours `--output-format`.** The asset-ref path
   always printed Rich text, so `--output-format json` gave a CI step output it could not parse
   and `github-annotation` gave no annotations. `json` now emits the document `nova asset diff

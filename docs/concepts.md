@@ -411,7 +411,20 @@ external-side-effect — permit calls with external effects
 unknown              — permit unclassified tool calls
 ```
 
-Per-tool overrides can be specified in `replay.yaml`.
+Per-tool overrides can be specified in `replay.yaml`, one entry per tool name
+(`schemas/replay-policy.schema.json`, `ToolOverride`):
+
+```yaml
+tool_overrides:
+  - tool_name: safe_lookup
+    allow: true      # re-execute this tool, whatever the default
+  - tool_name: send_email
+    allow: false     # refuse it
+```
+
+An override wins over the mode's own rule. Today it decides what `nova replay --dry-run`
+reports for that tool; it is **not yet** consulted inside the replayed process (ADR-0300).
+The older `action: replay | refuse` form is still read.
 
 ### `semantic` mode
 
