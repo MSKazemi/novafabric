@@ -44,6 +44,73 @@
       },
       "description": "Aggregate change counts across all sections."
     },
+    "has_changes": {
+      "type": "boolean",
+      "description": "True on any changed, added or removed entry: the property nova diff --assert-no-regressions gates on (ADR-0303). Optional."
+    },
+    "skipped_malformed_lines": {
+      "type": "object",
+      "description": "Non-blank record lines that were not UTF-8, not JSON, or not a JSON object, per side (a, b) and record file. They took no part in the comparison: any non-zero count makes it incomplete, and nova diff --assert-no-regressions then exits 2 (ADR-0303 Amendment 1). Optional; when emitted, zeros are included.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "properties": {
+          "model_calls": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Lines of model-calls.jsonl skipped."
+          },
+          "tool_calls": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Lines of tool-calls.jsonl skipped."
+          }
+        }
+      },
+      "properties": {
+        "a": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "properties": {
+            "model_calls": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Lines of model-calls.jsonl skipped."
+            },
+            "tool_calls": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Lines of tool-calls.jsonl skipped."
+            }
+          }
+        },
+        "b": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "properties": {
+            "model_calls": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Lines of model-calls.jsonl skipped."
+            },
+            "tool_calls": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Lines of tool-calls.jsonl skipped."
+            }
+          }
+        }
+      }
+    },
     "sections": {
       "type": "object",
       "required": [
