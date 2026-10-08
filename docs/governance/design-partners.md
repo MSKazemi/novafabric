@@ -31,6 +31,11 @@ The program exists to prevent exactly that:
 maintainers' own validation explicitly does not count toward that number. This is
 the single largest gate on v1.0, and no amount of engineering unblocks it.
 
+**Status (2026-10-08):** pre-freeze ready on technical gates; **0 of 3** required independent
+sign-offs recorded. One maintainer self-validation record exists and does not count. The same
+gate governs both the Run Capsule v1.0 format freeze and OAS v1.0 *Adopted* status — the capsule
+format is one of the OAS v1.0 component specs.
+
 ---
 
 ## The first cohort — deliberately small, deliberately diverse
