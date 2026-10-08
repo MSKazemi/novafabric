@@ -57,7 +57,7 @@ function WordDiffView({ tokens, side }: { tokens: DiffToken[]; side: 'before' | 
   );
 }
 
-type Mode = 'forensic' | 'mocked' | 'semantic' | 'exact';
+type Mode = 'forensic' | 'mocked' | 'semantic' | 'exact' | 'intervention';
 
 interface ModeMeta {
   value: Mode;
@@ -68,6 +68,8 @@ interface ModeMeta {
   bannerTone: 'success' | 'pending' | 'failure' | 'muted';
 }
 
+// Mirrors src/novafabric/replay/_engine.py and `nova replay --help`. Only `mocked`
+// and `intervention` re-run anything; tool calls are never served from the capsule.
 const MODES: ModeMeta[] = [
   {
     value: 'forensic',
@@ -81,25 +83,33 @@ const MODES: ModeMeta[] = [
     value: 'mocked',
     label: 'Mocked',
     available: true,
-    guarantee: 'Re-execute the agent code. Serve every model and tool call from the capsule cache.',
-    oneLiner: 'Same control flow, same outputs, no network.',
-    bannerTone: 'success',
+    guarantee: "Re-run the agent's Python process with the recorded OpenAI / Anthropic chat replies served from the capsule.",
+    oneLiner: 'No live model call. Tool calls still run live — this is not a sandbox.',
+    bannerTone: 'pending',
   },
   {
     value: 'semantic',
     label: 'Semantic',
     available: true,
-    guarantee: 'Re-execute, then a judge model compares meaning. Requires a judge model in real use.',
-    oneLiner: 'Useful for "did the meaning change?"',
-    bannerTone: 'pending',
+    guarantee: "No re-execution. Scores how similar the capsule's recorded model responses are to each other.",
+    oneLiner: 'A consistency check on one run. To compare two runs, use nova diff.',
+    bannerTone: 'success',
   },
   {
     value: 'exact',
     label: 'Exact',
-    available: false,
-    guarantee: 'Re-execute end-to-end with byte-identical results.',
-    oneLiner: 'Available only for local models or fully containerized environments. Greyed out for remote LLMs.',
+    available: true,
+    guarantee: 'No re-execution. Checks whether a byte-exact re-run would even be possible.',
+    oneLiner: 'For a remote-LLM run the answer is no — and it says why.',
     bannerTone: 'muted',
+  },
+  {
+    value: 'intervention',
+    label: 'Intervention',
+    available: true,
+    guarantee: 'Experimental. Re-runs a counterfactual with one recorded event changed, and writes it as a new capsule.',
+    oneLiner: '"What if this reply had been different?"',
+    bannerTone: 'pending',
   },
 ];
 
@@ -156,6 +166,7 @@ export default function ReplayViewer() {
       {mode === 'mocked' && <MockedPane />}
       {mode === 'semantic' && <SemanticPane />}
       {mode === 'exact' && <ExactPane />}
+      {mode === 'intervention' && <InterventionPane />}
 
       {/* Structural diff (always visible below) */}
       <div className="mt-12">
@@ -186,7 +197,7 @@ Style: prefer \`is None\`
           <li>model_calls: 2 recorded</li>
           <li>tool_calls: 2 recorded</li>
           <li>secret_findings: 0</li>
-          <li>chain_hash_verified: <span className="text-[var(--color-status-success)]">yes</span></li>
+          <li>schema_drift: <span className="text-[var(--color-status-success)]">none</span></li>
         </ul>
       </div>
     </div>
@@ -203,26 +214,30 @@ function MockedPane() {
       <ul className="space-y-2 text-sm text-[var(--color-text-muted)]">
         <li className="flex items-center gap-2">
           <span className="text-[var(--color-status-success)]">✓</span>
-          <span><code className="text-[var(--color-text)]">openai.completion</code> · served from cache (1240ms recorded → 0ms replay)</span>
+          <span><code className="text-[var(--color-text)]">openai.chat.completions</code> · served from the capsule (1240ms recorded → 0ms replay)</span>
         </li>
         <li className="flex items-center gap-2">
           <span className="text-[var(--color-status-success)]">✓</span>
-          <span><code className="text-[var(--color-text)]">openai.completion</code> · served from cache (980ms recorded → 0ms replay)</span>
+          <span><code className="text-[var(--color-text)]">openai.chat.completions</code> · served from the capsule (980ms recorded → 0ms replay)</span>
         </li>
         <li className="flex items-center gap-2">
-          <span className="text-[var(--color-status-success)]">✓</span>
-          <span><code className="text-[var(--color-text)]">mcp.read-file</code> · served from cache</span>
+          <span className="text-[var(--color-status-pending)]">↯</span>
+          <span><code className="text-[var(--color-text)]">mcp.read-file</code> · ran live</span>
         </li>
         <li className="flex items-center gap-2">
-          <span className="text-[var(--color-status-success)]">✓</span>
-          <span><code className="text-[var(--color-text)]">mcp.run-tests</code> · served from cache</span>
+          <span className="text-[var(--color-status-pending)]">↯</span>
+          <span><code className="text-[var(--color-text)]">mcp.run-tests</code> · ran live</span>
         </li>
       </ul>
       <div className="mt-4 pt-4 border-t border-[var(--color-border)] grid grid-cols-3 gap-2 text-xs text-[var(--color-text-muted)]">
         <div><span className="text-[var(--color-text)] font-mono text-base block">2/2</span>model calls mocked</div>
-        <div><span className="text-[var(--color-text)] font-mono text-base block">2/2</span>tool calls mocked</div>
+        <div><span className="text-[var(--color-text)] font-mono text-base block">0/2</span>tool calls mocked — tools run live</div>
         <div><span className="text-[var(--color-text)] font-mono text-base block">0</span>env warnings</div>
       </div>
+      <p className="mt-3 text-xs text-[var(--color-text-faint)]">
+        Only synchronous, non-streaming OpenAI and Anthropic chat calls are served from the
+        capsule today. Tool responses are not substituted.
+      </p>
     </div>
   );
 }
@@ -230,24 +245,17 @@ function MockedPane() {
 function SemanticPane() {
   return (
     <div className="mt-6 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-5">
-      <h3 className="text-[var(--color-text)] font-medium mb-3">Semantic comparison — RUN_A vs RUN_B</h3>
-      <div className="grid md:grid-cols-2 gap-3 text-xs">
-        <div className="rounded border border-[var(--color-border)] p-3 bg-[var(--color-bg-sunken)]">
-          <p className="text-[var(--color-text-muted)] uppercase tracking-wider text-[10px] mb-1">RUN_A output (v0.1.0 prompt)</p>
-          <p className="text-[var(--color-text)] font-mono leading-relaxed">Found two issues. Line 42: off-by-one in the slice. Line 78: missing null-check on the optional param. Style: prefer `is None` over `== None`.</p>
-        </div>
-        <div className="rounded border border-[var(--color-border)] p-3 bg-[var(--color-bg-sunken)]">
-          <p className="text-[var(--color-text-muted)] uppercase tracking-wider text-[10px] mb-1">RUN_B output (v0.2.0 prompt)</p>
-          <p className="text-[var(--color-text)] font-mono leading-relaxed">LGTM. Minor style: prefer `is None`.</p>
-        </div>
-      </div>
-      <div className="mt-4 pt-3 border-t border-[var(--color-border)] text-sm">
-        <p className="text-[var(--color-text-muted)]">
-          <span className="text-[var(--color-status-pending)]">⚠ Judge model would assess:</span> RUN_B fails to flag the
-          off-by-one and the missing null-check. Semantic regression detected.
-          <span className="block mt-1 text-xs text-[var(--color-text-faint)]">In real use this comparison runs against a configured judge model. The showcase visualizes the result; it does not run a live judge.</span>
-        </p>
-      </div>
+      <h3 className="text-[var(--color-text)] font-medium mb-3">Semantic consistency — RUN_A</h3>
+      <ul className="text-xs space-y-1.5 text-[var(--color-text-muted)] font-mono">
+        <li>recorded model responses: 2</li>
+        <li>semantic_similarity: <span className="text-[var(--color-text)]">0.82</span> (mean pairwise text similarity, 0.0–1.0)</li>
+        <li>live model calls: 0</li>
+      </ul>
+      <p className="mt-4 pt-3 border-t border-[var(--color-border)] text-sm text-[var(--color-text-muted)]">
+        Nothing is re-run and no judge model is called: the score compares the run's own
+        recorded responses with each other. To see what changed between two runs, diff them
+        (below).
+      </p>
     </div>
   );
 }
@@ -255,16 +263,34 @@ function SemanticPane() {
 function ExactPane() {
   return (
     <div className="mt-6 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-sunken)] p-5">
-      <h3 className="text-[var(--color-text)] font-medium mb-2">Why exact mode is greyed out</h3>
-      <p className="text-sm text-[var(--color-text-muted)] leading-relaxed">
-        Exact replay requires byte-identical re-execution. Remote LLM APIs do not
-        guarantee determinism — <code className="text-[var(--color-text)]">temperature=0</code>
-        is helpful but not sufficient (provider-side updates, sampling implementations,
-        load-shed routing all break it). Exact mode is reserved for runs where every
-        model call hit a local model or a pinned containerized endpoint.
+      <h3 className="text-[var(--color-text)] font-medium mb-2">Exact eligibility — RUN_A</h3>
+      <ul className="text-xs space-y-1.5 text-[var(--color-text-muted)] font-mono">
+        <li>exact_eligible: <span className="text-[var(--color-status-failure)]">false</span></li>
+        <li>· env.lock mode is 'best-effort' — exact replay requires mode=deterministic</li>
+        <li>· model_call 01KT2P4Y8W has no seed — exact reproduction of remote LLM responses is not guaranteed</li>
+      </ul>
+      <p className="mt-3 text-sm text-[var(--color-text-muted)] leading-relaxed">
+        Exact mode never replays anything. It checks the conditions a byte-identical re-run
+        would need — a deterministic environment lock, a seed on every model call, no tool-schema
+        drift — and names each one that fails. Remote LLM APIs do not guarantee determinism, so
+        for them the honest answer is no.
       </p>
       <p className="mt-3 text-xs text-[var(--color-text-faint)]">
         Many tools quietly call this "replay" anyway. We don't.
+      </p>
+    </div>
+  );
+}
+
+function InterventionPane() {
+  return (
+    <div className="mt-6 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-5">
+      <h3 className="text-[var(--color-text)] font-medium mb-2">Intervention (experimental) — RUN_A</h3>
+      <p className="text-sm text-[var(--color-text-muted)] leading-relaxed">
+        Change one recorded event — for example the reply to the first model call — and re-run
+        under mocked semantics. The counterfactual is written as a new capsule, so you can
+        <code className="text-[var(--color-text)] mx-1">nova diff</code>it against the original.
+        Experimental (ADR-0086); tool calls still run live.
       </p>
     </div>
   );

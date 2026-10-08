@@ -186,7 +186,7 @@ behaviour changes between releases, and a citation without a version is not repr
 either.
 
 A DOI is being minted via Zenodo; until it appears in `CITATION.cff`, cite the repository URL
-and the exact version, e.g. `novafabric 0.103.0`.
+and the exact version, e.g. `novafabric 0.104.0`.
 
 ## Working with us
 

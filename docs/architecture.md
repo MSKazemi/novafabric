@@ -231,7 +231,7 @@ Stated plainly, because knowing the boundary saves you from proposing something
 that will be declined:
 
 - **Not an observability platform.** Tracing tells you what happened; this tells
-  you whether a run can be replayed, compared, and proven. If you want spans in a
+  you whether a run can be replayed, compared, and verified. If you want spans in a
   dashboard, use an APM.
 - **Not a hosted service.** There is no SaaS and no account system.
 - **Not a model registry or a feature store.**

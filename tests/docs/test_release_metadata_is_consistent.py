@@ -54,6 +54,21 @@ def test_citation_version_matches_pyproject() -> None:
     )
 
 
+def test_readme_software_bibtex_title_matches_citation_cff() -> None:
+    """One canonical software title: the README's @software BibTeX block had drifted
+    from CITATION.cff ("... for {AI} and {HPC} runs"), giving two citations for one
+    artifact. BibTeX brace-protection is ignored for the comparison."""
+    citation = (REPO_ROOT / "CITATION.cff").read_text(encoding="utf-8")
+    cff = re.search(r'^title:\s*"([^"]+)"\s*$', citation, re.M)
+    assert cff, "CITATION.cff declares no top-level title"
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    block = re.search(r"@software\{novafabric,(.*?)\n\}", readme, re.S)
+    assert block, "README has no @software{novafabric, ...} BibTeX block"
+    bib = re.search(r"^\s*title\s*=\s*\{(.*)\},\s*$", block.group(1), re.M)
+    assert bib, "README @software block has no title"
+    assert bib.group(1).replace("{", "").replace("}", "") == cff.group(1)
+
+
 def test_changelog_newest_release_matches_pyproject() -> None:
     version = _project_version()
     changelog = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")

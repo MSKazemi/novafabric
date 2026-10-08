@@ -11,6 +11,73 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+### Security
+
+- **Locked `urllib3` 2.7.0 → 2.8.0 and `pyjwt` 2.14.0 → 2.15.1**, clearing the two HIGH
+  `pip-audit` findings (PYSEC-2026-4175/4177) that blocked the gate (#128). No waiver added.
+
+## [0.104.0] - 2026-10-08
+
+### Security
+
+- **Secret scanning now covers every file ADR-0009 names.** Until now the scanner walked only
+  the event streams, so a key the workload printed stayed verbatim in `outputs/stdout.txt`,
+  and a key on the command line stayed in `capsule.yaml` (written after the scan) and in the
+  signed seal payload. Now `outputs/**`, `inputs/**`, `env.lock`, `assets.jsonl` and
+  `lineage.jsonl` are scanned; the manifest is redacted before it is written; the proof is
+  written once, after every file. Binary files are scanned by string extraction and, if they
+  carry a key, dropped from the capsule (ADR-0009); files over 64 MiB are recorded in the proof
+  as `skipped`. OpenLineage events carry the redacted command line.
+- **Rule pack `gitleaks-core-v0` 0.6.0.** OpenAI project, service-account and admin keys
+  (`sk-proj-…`, `sk-svcacct-…`, `sk-admin-…`, the current default format) were not matched at
+  all; Anthropic keys longer than 87 characters were masked with their tail left in clear;
+  Langfuse secret keys (`sk-lf-…`) were not matched. Key bodies now have no upper length bound.
+
+### Fixed
+
+- **`nova diff` pairs model calls across two separate captures.** Model calls were paired only
+  by `parent_span_id`, and every capture has a fresh root span, so two captures never paired:
+  each call showed as one added plus one removed. Alignment now follows the diff spec — unique
+  span match first, then sequence position, anchored on identical requests so an inserted or
+  deleted call does not shift the rest. Tool calls keep order-independent exact matching (each
+  call used once), then pair by position with the same tool name; paired tool calls now report
+  `arguments_changed`.
+- **Mocked replay serves a recorded tool-calling turn back.** The capture hooks now record the
+  assistant's tool-call requests (OpenAI `message.tool_calls`, Anthropic `tool_use` blocks) as
+  `Message.tool_calls`, and mocked replay rebuilds them, so a function-calling agent sees its own
+  tool requests. Tool *responses* are still not substituted (ADR-0261). A replay that makes more
+  model calls than were recorded now warns on stderr. `policy_flags_used` no longer records a
+  `--mock-tools` flag that does not exist.
+- **The `/api/adapters` registry lists all 11 framework adapters** (LlamaIndex, Pydantic AI and
+  Haystack were missing).
+
+### Changed
+
+- **`nova diff --assert-no-regressions` exits 1 on any change, including added or removed
+  calls**, as documented. Before, it counted only changed pairs, so a model-only behaviour change
+  between two captures exited 0. **A CI gate that passed before may now fail** on runs whose
+  calls differ. The `name@version` asset-diff path now honours the flag too (it was ignored).
+- Mocked replay maps an OTel finish reason to Anthropic's vocabulary (`stop` → `end_turn`,
+  `tool_calls` → `tool_use`, `length` → `max_tokens`).
+
+### Documentation
+
+- Comparison page, feature tour, standards-conformance table, GitHub Action README, both
+  tutorials and README corrected: five replay modes; tools run live in mocked replay; sealing
+  and RFC 3161 are opt-in; a mocked replay is not a new capsule; prompts and responses *are*
+  stored in the capsule (only OTel export of content is opt-in); "secret-scanned", not
+  "secret-redacted"; "replayed, compared, and verified", not "proven".
+- The `web/` replay showcase described mocked replay as serving "every model and tool call"
+  and semantic/exact as re-executing; it now matches the replay engine (tools run live;
+  semantic and exact do not re-run) and shows the experimental `intervention` mode.
+- Category-first metadata on the `web/` pages; the contrast line is now "Observability helps you
+  inspect a run. NovaFabric turns the run into a portable artifact you can replay, compare, and
+  verify."; press-kit boilerplate scoped (wraps, optional sealing, tools run live in replay).
+- README BibTeX: software title matches `CITATION.cff` (guarded by a test) and the paper's
+  `primaryClass` is `cs.CR`, as arXiv lists it. PyPI `Documentation` URL →
+  novafabric.ai/docs. Social-preview card regenerated with the category and the correct
+  repository URL. Design-partner status reads 0/3 independent sign-offs everywhere.
+
 ## [0.103.0] - 2026-10-04
 
 ### Fixed

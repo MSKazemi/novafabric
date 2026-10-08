@@ -65,8 +65,10 @@ def test_allow_unknown_mutation_permits_all() -> None:
 
 
 def test_active_flag_names_default() -> None:
+    # No flags passed => none recorded. (A phantom "--mock-tools" used to be
+    # recorded here; that flag never existed and tools are never mocked.)
     flags = ReplayFlags()
-    assert flags.active_flag_names() == ["--mock-tools"]
+    assert flags.active_flag_names() == []
 
 
 def test_active_flag_names_dry_run() -> None:

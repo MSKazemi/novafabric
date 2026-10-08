@@ -22,7 +22,7 @@ that as a real bug.
 | **What it is** | Open-source, self-hosted replay and evidence infrastructure for AI agents and agentic systems |
 | **License** | Apache-2.0 |
 | **Language** | Python 3.12+ |
-| **Current version** | v0.103.0 — **beta**; on-disk formats are not frozen until the v1.0 schema freeze |
+| **Current version** | v0.104.0 — **beta**; on-disk formats are not frozen until the v1.0 schema freeze |
 | **Repository** | <https://github.com/MSKazemi/novafabric> |
 | **Website** | <https://novafabric.ai> |
 | **Package** | `pip install novafabric` — <https://pypi.org/project/novafabric/> |
@@ -49,18 +49,18 @@ Copy these verbatim. They are written to be accurate, not promotional.
 ### Standard (≈ 90 words)
 
 > NovaFabric is open-source, self-hosted replay and evidence infrastructure for
-> AI agents and agentic systems. It captures agent executions with no application
-> code changes and produces a schema-valid, secret-redacted Run Capsule containing
+> AI agents and agentic systems. It wraps agent executions with no application
+> code changes and produces a schema-valid, secret-scanned Run Capsule containing
 > the execution manifest, traces, model and tool calls, environment evidence, and
 > replay policy. Around that artifact NovaFabric provides replay, behavioral and
-> structural diff, lineage, cryptographic provenance, assurance, and audit. The
+> structural diff, lineage, optional cryptographic sealing, assurance, and audit. The
 > capture layer can also wrap general commands, and deployments span local
 > environments, Docker, Kubernetes, and SLURM/HPC. Apache-2.0.
 
 ### The positioning sentence, if you need to explain *why* it exists
 
-> Tracing tells you what happened. NovaFabric tells you whether a past run can be
-> replayed, compared, and proven.
+> Observability helps you inspect a run. NovaFabric turns the run into a portable
+> artifact you can replay, compare, and verify.
 
 ---
 
@@ -77,6 +77,8 @@ readers days.
 - **Not a claim of exact replay for remote LLM calls.** A remote model is not
   deterministic and NovaFabric does not pretend otherwise; that is what the `mocked`,
   `semantic`, and `forensic` replay modes exist for.
+- **Not an offline sandbox for tools.** `mocked` replay serves the recorded model
+  responses; tool calls still run live.
 - **Not a compliance certification.** NovaFabric produces conformance *receipts* and
   evidence, never verdicts. See [assurance cases](assurance-cases.md).
 

@@ -11,6 +11,7 @@ from novafabric.capture.hooks._otel_genai import (
     build_record_envelope,
     extract_request_attributes,
 )
+from novafabric.capture.hooks._tool_call_refs import anthropic_tool_call_refs
 from novafabric.cost.usage_types import usage_from_anthropic
 
 if TYPE_CHECKING:
@@ -78,9 +79,15 @@ class AnthropicHook:
         parts = getattr(response, "content", [])
         text = " ".join(getattr(p, "text", "") for p in parts if hasattr(p, "text"))
         finish_reason = str(getattr(response, "stop_reason", "end_turn") or "stop")
+        message: dict[str, Any] = {"role": "assistant", "content": text}
+        # Additive: tool_use blocks as Message.tool_calls, so mocked replay can
+        # serve the tool-calling turn back (absent on a text-only turn).
+        tool_calls = anthropic_tool_call_refs(parts)
+        if tool_calls:
+            message["tool_calls"] = tool_calls
         choices = [{
             "index": 0,
-            "message": {"role": "assistant", "content": text},
+            "message": message,
             "finish_reason": finish_reason,
         }]
         usage = getattr(response, "usage", None)

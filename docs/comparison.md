@@ -18,9 +18,9 @@ reasonable to need both.
 | Deployment | Self-hosted CLI, server optional, **no account** | Self-hosted server + database (required) | Managed cloud | Self-hosted or managed |
 | Primary artifact | Portable evidence **capsule** — a folder | Trace row in a database | Trace row in a vendor cloud | Run record + artifacts |
 | Where your data lives | **Your machine** | Your server | Vendor cloud | Your store or vendor |
-| Replay a past run | **✓ four modes** | ✗ | ✗ | partial — re-run a script |
+| Replay a past run | **✓** recorded model replies (tools run live) + 3 inspection modes | ✗ | ✗ | partial — re-run a script |
 | Run-to-run structural diff | **✓** | partial (eval) | partial (eval) | metric comparison only |
-| Cryptographic signing / provenance | **✓** in-toto DSSE, Sigstore, RFC 3161 | ✗ | ✗ | ✗ |
+| Cryptographic signing / provenance | **✓** opt-in: DSSE seal, Sigstore, optional RFC 3161 | ✗ | ✗ | ✗ |
 | Capture with no code changes | **✓** hooks, wire-level, proxy | SDK instrumentation | SDK or proxy | explicit logging calls |
 | Works fully offline / air-gapped | **✓** | self-host only | ✗ | partial |
 | Real-time dashboards & alerting | ✗ **weak** | ✓ strong | ✓ strong | partial |
@@ -46,10 +46,14 @@ Use something else if:
 
 ## Where NovaFabric is genuinely better
 
-- **Proving what a past run did, months later, to someone who does not trust you.**
-  A capsule is signed, timestamped, and verifiable with no server and no network.
-- **Replaying a run offline** with model and tool calls served from the capsule —
-  no API keys, no tokens spent, no vendor availability required.
+- **Showing that a recorded run has not been altered, months later, to someone who does
+  not trust you.** A sealed capsule (sealing is opt-in: a `novaseal.yaml` and your own
+  key) is signed, can carry an RFC 3161 timestamp, and verifies with no server and no
+  network. A seal proves the record is unchanged since signing; it does not prove the
+  record is complete.
+- **Replaying a run against its recorded model responses** — no live model call and no
+  model tokens spent. Tool calls still run live (they are not substituted), and today
+  only synchronous OpenAI and Anthropic chat calls are served from the capsule.
 - **Structural diff between two runs** — not "metric A went up", but *what changed
   in the execution*.
 - **Air-gapped and regulated environments.** No telemetry, no update checks, no
@@ -92,9 +96,10 @@ Different eras of the same instinct. MLflow and W&B track *experiments*: paramet
 metrics, artifacts, model versions, and they are excellent at it.
 
 NovaFabric captures *executions*: the full call graph of an agent or job, the
-environment lock, the redaction proof, and a signature over all of it. If you want
-to compare learning curves, use MLflow. If you want to prove what an agent did and
-re-run it offline, use NovaFabric. Many teams will reasonably run both.
+environment lock, the secret-scan proof, and, when you seal the capsule, a signature
+over all of it. If you want to compare learning curves, use MLflow. If you want to keep
+a recorded run you can replay (tools still run live) and later verify has not been
+altered since it was sealed, use NovaFabric. Many teams will reasonably run both.
 
 ### NovaFabric vs OpenTelemetry alone
 
@@ -126,13 +131,18 @@ analytics. Core local-mode features need no internet at all.
 **Does it work without a server or database?** Yes — that is the default mode. A
 server is optional and exists for teams sharing capsules.
 
-**Does it capture my prompts and responses?** Not by default. Full prompt and
-response capture is explicitly opt-in, and everything captured passes through
-secret scanning and redaction first.
+**Does it capture my prompts and responses?** Yes, inside the capsule. When a Python
+workload's model calls are captured, the request messages and response text are written
+to `model-calls.jsonl` in your capsule, on your machine, after the built-in secret scan
+(14 API-key/token rules; PII masking is a separate opt-in). What is opt-in is sending
+content anywhere else: `--emit-otel-genai` exports spans without content unless you
+also pass `--capture-content`.
 
 **Which frameworks does it support?** Capture is framework-agnostic — it wraps a
-command. Adapters add richer detail for LangChain, LangGraph, the OpenAI Agents
-SDK, A2A, MCP, and others. See [the architecture map](architecture.md).
+command. Eleven experimental adapters add richer detail: LangGraph, CrewAI, AutoGen,
+DSPy, LlamaIndex, Haystack, Pydantic AI, the OpenAI Agents SDK, Google ADK, Bedrock
+AgentCore and A2A. MCP tool calls are captured by a hook and by the experimental
+`nova mcp-proxy`. See [the architecture map](architecture.md).
 
 **Can I use it with my existing observability stack?** Yes, and that is the
 intended shape. Emit OTel GenAI to your backend, keep capsules for replay and
