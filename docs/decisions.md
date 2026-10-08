@@ -29,7 +29,7 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | **rejected** | Considered and declined; kept as provenance. |
 
 
-**281 decisions recorded** — **264** accepted · **14** proposed · **3** superseded.
+**284 decisions recorded** — **267** accepted · **14** proposed · **3** superseded.
 
 | ADR | Title | Status | Date |
 |---|---|---|---|
@@ -314,3 +314,6 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | `ADR-0295` | Envelope strict mode and a digest-pinned legacy-object inventory (ADR-0290 open items 1 and 2) | accepted | 2026-10-02 |
 | `ADR-0297` | NovaSeal verification correctness: DSSE v1 PAE, self-contained Merkle inclusion, bound RFC 3161 tokens | accepted | 2026-10-02 |
 | `ADR-0298` | Thread scope propagation, google_adk per-invocation state, opt-in strict capture (amends ADR-0224) | accepted | 2026-10-02 |
+| `ADR-0299` | One public website codebase; the product repo keeps only the embedded dashboard | accepted | 2026-10-08 |
+| `ADR-0300` | Mocked replay substitutes MCP tool results and fails closed on divergence | accepted | 2026-10-08 |
+| `ADR-0301` | Local sealing identity and first-run NovaSeal behaviour: explicit `nova seal init`, sealing stays opt-in | accepted | 2026-10-08 |
