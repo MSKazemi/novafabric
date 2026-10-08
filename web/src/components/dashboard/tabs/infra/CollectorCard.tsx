@@ -66,7 +66,7 @@ export default function CollectorCard() {
         <div className="text-[10px] font-medium uppercase tracking-wider text-[var(--color-text-faint)] mb-1.5">Shipped</div>
         <ul className="space-y-0.5">
           {[
-            'novafabric-collector binary (Go, github.com/novafabric/collector)',
+            'novafabric-collector binary (Go, collector/ in the NovaFabric repository)',
             'novafabric-verifier — offline signature verifier',
             'novafabric-hpc-hub — NATS leaf lifecycle wrapper',
             'deploy/hpc/ — prolog.sh, epilog.sh, NATS templates, Ansible playbook',
@@ -113,12 +113,12 @@ export default function CollectorCard() {
               <span className="text-[11px] text-[var(--color-status-pending)] font-medium">Collector not detected</span>
             </div>
             <p className="text-[11px] text-[var(--color-text-faint)] leading-relaxed">
-              Install the collector binary or deploy to your cluster:
+              Build the collector from source (Go; no published module yet) or deploy to your cluster:
             </p>
             <ul className="space-y-1 text-[11px] text-[var(--color-text-muted)]">
               <li>
                 <code className="font-mono text-[10px] bg-[var(--color-bg-raised)] px-1 py-0.5 rounded border border-[var(--color-border)]">
-                  go install github.com/novafabric/collector/cmd/novafabric-collector@latest
+                  git clone https://github.com/MSKazemi/novafabric &amp;&amp; make -C novafabric/collector build
                 </code>
               </li>
               <li>Or use cluster configs: <code className="font-mono text-[10px]">deploy/hpc/</code> or <code className="font-mono text-[10px]">deploy/k8s/</code></li>
