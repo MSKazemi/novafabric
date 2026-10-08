@@ -164,6 +164,15 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **A capsule for a command that never started said "Command exited with code 127"** (issue
+  #69). Nothing exited — the workload was never launched — so the evidence stated something
+  false. The manifest's `error` block now records `type: WorkloadNotStarted` with the runner's
+  reason whenever `runner_status` is `failed_setup`; a program that really exits 127 still
+  records `NonZeroExit`. `error.type` is already a free string, so no schema change. The local
+  runner also words a mistyped command as `command not found: <name>` (only when the name does
+  not resolve on the workload's `PATH`) instead of the raw `[Errno 2]` text, and the CLI prints
+  it on the existing `Workload never started:` line. Capsule and exit code `127` unchanged.
+
 - **`go install` for the collector binaries could never work; the Go module now declares the
   path its code lives at.** `collector/go.mod` said `module github.com/novafabric/collector`,
   but that GitHub owner holds no such repository (the Go proxy answers 404), and fetching the

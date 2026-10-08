@@ -613,7 +613,18 @@ class CaptureOrchestrator:
         usage_totals = usage_totals_from_model_calls(capsule_dir / "model-calls.jsonl")
         if usage_totals is not None:
             manifest["usage_totals"] = usage_totals
-        if status == "failure":
+        if status == "failure" and runner_result.runner_status == "failed_setup":
+            # The workload never ran, so "Command exited with code 127" would
+            # be a false statement in the evidence: nothing exited. Record the
+            # runner's own reason under a distinct error kind (issue #69).
+            # ``error.type`` is a free string in the schema — no schema change.
+            manifest["error"] = {
+                "type": "WorkloadNotStarted",
+                "message": runner_result.runner_error
+                or "the runner could not start the workload",
+                "traceback_ref": None,
+            }
+        elif status == "failure":
             manifest["error"] = {
                 "type": "NonZeroExit",
                 "message": f"Command exited with code {exit_code}",

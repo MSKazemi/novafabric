@@ -137,3 +137,25 @@ class TestLocalRunnerSetupFailure:
         assert result.exit_code == 127
         assert result.runner_status == "failed_setup"
         assert result.runner_error is not None
+
+    def test_missing_command_reason_names_it_in_plain_words(
+        self, tmp_path: Path
+    ) -> None:
+        result = LocalRunner().run(_spec(tmp_path, ["definitely-not-a-real-command-xyz"]))
+        assert result.exit_code == 127
+        assert result.runner_status == "failed_setup"
+        assert result.runner_error == "command not found: definitely-not-a-real-command-xyz"
+
+    def test_existing_script_with_missing_interpreter_keeps_os_wording(
+        self, tmp_path: Path
+    ) -> None:
+        # argv[0] exists, so "command not found" would misdirect the user;
+        # the ENOENT is about the shebang interpreter instead.
+        script = tmp_path / "script.sh"
+        script.write_text("#!/nonexistent/interpreter-xyz\necho hi\n")
+        script.chmod(0o755)
+        result = LocalRunner().run(_spec(tmp_path, [str(script)]))
+        assert result.exit_code == 127
+        assert result.runner_status == "failed_setup"
+        assert result.runner_error is not None
+        assert "command not found" not in result.runner_error

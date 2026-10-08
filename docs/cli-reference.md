@@ -388,9 +388,17 @@ Because a real program can also exit `127`, the code alone cannot tell the two
 apart, so the never-started case prints an extra line naming the reason:
 
 ```
-✗ Workload never started: [Errno 2] No such file or directory: 'my-agnet'
+✗ Workload never started: command not found: my-agnet
 ✗ Capsule written: .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX  (run_id=01HXAY7M5JZ8R7K4P9DPBYK2WX)
 ```
+
+The capsule says the same thing: its `error` block carries
+`type: WorkloadNotStarted` and the runner's reason as `message`, instead of the
+`NonZeroExit` / "Command exited with code 127" it records for a program that ran
+and failed. The local runner says `command not found: <name>` only when the name
+does not resolve on the workload's `PATH`; any other launch failure (for example
+a script whose shebang interpreter is missing) keeps the operating system's own
+wording.
 
 **Observation log levels (ADR-0127 — experimental).** Every record in
 `model-calls.jsonl` / `tool-calls.jsonl` may carry an additive optional severity

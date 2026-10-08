@@ -1,6 +1,9 @@
+import shutil
 import sys
 from pathlib import Path
 
+import pytest
+import yaml
 from typer.testing import CliRunner
 
 from novafabric.cli.main import app
@@ -98,3 +101,51 @@ class TestWorkloadNeverStartedIsDistinguishable:
         # Rich wraps the console at terminal width; join before matching.
         flat = "".join(result.output.split())
         assert self.NOT_A_COMMAND in flat
+
+    def test_the_reason_says_command_not_found(self, tmp_path: Path) -> None:
+        result = runner.invoke(
+            app,
+            ["capture", "--output-dir", str(tmp_path / "runs"), self.NOT_A_COMMAND],
+        )
+        flat = " ".join(result.output.split())
+        assert f"command not found: {self.NOT_A_COMMAND}" in flat
+
+    def test_false_is_a_failing_run_not_a_missing_command(self, tmp_path: Path) -> None:
+        # `false` ran and exited 1: it must not be reported as never-started.
+        false_bin = shutil.which("false")
+        if false_bin is None:  # pragma: no cover — every POSIX host ships it
+            pytest.skip("no `false` binary on this host")
+        result = runner.invoke(
+            app, ["capture", "--output-dir", str(tmp_path / "runs"), false_bin]
+        )
+        assert result.exit_code == 1
+        assert "Capsule written" in result.output
+        assert "Workload never started" not in result.output
+        assert "command not found" not in result.output
+        (run_dir,) = list((tmp_path / "runs").iterdir())
+        manifest = yaml.safe_load((run_dir / "capsule.yaml").read_text())
+        assert manifest["error"]["type"] == "NonZeroExit"
+
+    def test_capsule_records_that_the_workload_never_started(self, tmp_path: Path) -> None:
+        # "Command exited with code 127" would be false evidence: nothing ran.
+        result = runner.invoke(
+            app,
+            ["capture", "--output-dir", str(tmp_path / "runs"), self.NOT_A_COMMAND],
+        )
+        assert result.exit_code == 127
+        (run_dir,) = list((tmp_path / "runs").iterdir())
+        manifest = yaml.safe_load((run_dir / "capsule.yaml").read_text())
+        assert manifest["exit_code"] == 127
+        assert manifest["status"] == "failure"
+        assert manifest["error"]["type"] == "WorkloadNotStarted"
+        assert manifest["error"]["message"] == f"command not found: {self.NOT_A_COMMAND}"
+
+    def test_capsule_for_a_real_127_exit_stays_nonzero_exit(self, tmp_path: Path) -> None:
+        runner.invoke(
+            app,
+            ["capture", "--output-dir", str(tmp_path / "runs"),
+             sys.executable, "-c", "import sys; sys.exit(127)"],
+        )
+        (run_dir,) = list((tmp_path / "runs").iterdir())
+        manifest = yaml.safe_load((run_dir / "capsule.yaml").read_text())
+        assert manifest["error"]["type"] == "NonZeroExit"

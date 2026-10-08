@@ -11,6 +11,7 @@ Concrete runners for Docker / Kubernetes / SLURM live in sibling files
 from __future__ import annotations
 
 import os
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -83,6 +84,23 @@ class LocalRunner:
                         stderr=(stderr or b"") + b"\n[novafabric] capture timeout",
                         runner_error=f"workload exceeded {timeout}s wall-clock deadline",
                     )
+            except FileNotFoundError as exc:
+                # The commonest first-run mistake is a mistyped command name.
+                # Say so in plain words when argv[0] really does not resolve on
+                # the workload's PATH. If it DOES resolve, the ENOENT came from
+                # somewhere else (e.g. a script whose shebang interpreter is
+                # missing), so keep the OS's own wording rather than guess.
+                argv0 = spec.command[0] if spec.command else ""
+                if argv0 and shutil.which(argv0, path=env.get("PATH")) is None:
+                    reason = f"command not found: {argv0}"
+                else:
+                    reason = str(exc)
+                return RunnerJobResult(
+                    exit_code=127,
+                    runner_status="failed_setup",
+                    stderr=reason.encode(),
+                    runner_error=reason,
+                )
             except Exception as exc:
                 return RunnerJobResult(
                     exit_code=127,
