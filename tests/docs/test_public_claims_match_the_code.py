@@ -45,6 +45,7 @@ CLAIM_SURFACES: tuple[str, ...] = (
     "docs/getting-started.md",
     "docs/concepts.md",
     "docs/comparison.md",
+    "docs/tutorials/novafabric-vs-langfuse.md",
     "examples/capsules/README.md",
     ".github/actions/capture/action.yml",
     "integrations/claude-plugin/README.md",
@@ -128,6 +129,24 @@ _NUMBER_WORDS = {3: "three", 4: "four", 5: "five", 6: "six", 7: "seven"}
 
 def _replay_modes() -> tuple[str, ...]:
     return typing.get_args(typing.get_type_hints(ReplayFlags)["mode"])
+
+
+def test_no_claim_surface_states_a_stale_secret_pattern_count() -> None:
+    """A count of key patterns must be the rule pack on ``main`` or the one the latest
+    release shipped (14 in v0.104.0); ``docs/concepts.md`` said 12 long after both moved."""
+    from novafabric.capture.secrets import _RULES
+
+    allowed = {len(_RULES), 14}
+    count = re.compile(r"\b(\d+)\s+(?:LLM\s+)?(?:provider\s+)?key\s+patterns\b", re.I)
+    offenders = [
+        f"{rel}:{number}: {line.strip()[:120]}"
+        for rel in CLAIM_SURFACES
+        for number, line in enumerate(_lines(rel), 1)
+        for match in count.finditer(line)
+        if int(match.group(1)) not in allowed
+    ]
+    assert count.search("for 12 LLM provider key patterns")  # non-vacuity: the shipped phrasing
+    assert not offenders, "\n".join(offenders)
 
 
 def test_readme_replay_mode_count_and_table_match_the_engine() -> None:

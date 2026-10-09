@@ -303,10 +303,13 @@ determination starts.
 
 ## Secret Scanning and Redaction
 
-Before a capsule is finalized, `SecretScannerV0` scans all JSONL artifacts
-for 12 LLM provider key patterns (Anthropic, OpenAI, HuggingFace, Replicate,
-Langfuse, and others). Detected values are redacted in-place as
-`[REDACTED:rule-id]`.
+Before a capsule is finalized, `SecretScannerV0` scans every capsule file against the
+`gitleaks-core-v0` rule pack — LLM provider keys (Anthropic, OpenAI, HuggingFace,
+Replicate, Langfuse, and others) and, unreleased on `main`, AWS and GitHub credentials
+(18 rules on `main`, 14 in v0.104.0). Detected values are redacted in-place as
+`[REDACTED:rule-id]`. The scan is pattern-based: formats it does not detect (PEM keys,
+JWTs, passwords, connection-string credentials, …) are listed in
+[the Run Capsule reference](architecture/run-capsule.md).
 
 After scanning, `redaction-proof.json` is written. It records:
 
