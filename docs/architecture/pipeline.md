@@ -91,8 +91,11 @@ secret access key is matched only when its key name is next to it, and PEM
 private keys, JWTs and passwords are not matched at all. The full list:
 [what the scanner does not detect](run-capsule.md#what-the-scanner-detects-and-what-it-does-not).
 
-A failed workload still produces a complete capsule with `status: failure`. If a
-NovaFabric component fails, the failure is recorded and the workload continues.
+A failed workload still produces a complete capsule with `status: failure`. A
+workload the runner could not start at all (for example a mistyped command, which
+`runners/_local.py` reports as `command not found: <name>`) is recorded with
+`error.type: WorkloadNotStarted` rather than `NonZeroExit`. If a NovaFabric
+component fails, the failure is recorded and the workload continues.
 
 Capture also has proxy paths for clients that cannot be hooked in-process:
 `nova api-proxy` (`proxy/api_proxy.py`) and `nova mcp-proxy`
@@ -120,10 +123,16 @@ Details: [Sealing and verification](sealing-and-verification.md).
 ## 3 · Replay: `nova replay` (works today; `intervention` experimental)
 
 `cli/replay.py:replay_cmd` → `replay/_engine.py:ReplayEngine.run`. The default
-mode, `mocked`, re-runs the captured command with OpenAI and Anthropic responses
-served from the record. `forensic`, `semantic` and `exact` analyse the capsule without re-running it. Every mode
-writes `.novafabric/replays/<ulid>/replay_result.yaml`. `intervention` is the
-only mode that also writes a new capsule.
+mode, `mocked`, re-runs the captured command with the recorded OpenAI and
+Anthropic responses (and recorded SDK errors, raised again as the SDK's own
+exception) and the recorded MCP tool results served from the capsule; other tools
+run live, and outbound connections are reported. A capsule that records no
+command to re-run (a framework-adapter or `@novafabric.agent` capsule, or one
+imported from OpenTelemetry) is refused before anything is spawned
+(`CapsuleNotReplayable`). `forensic`, `semantic` and `exact` analyse the capsule
+without re-running it. Every mode writes
+`.novafabric/replays/<ulid>/replay_result.yaml`. `intervention` is the only mode
+that also writes a new capsule.
 
 Details: [Replay modes](replay-modes.md).
 
@@ -154,6 +163,23 @@ counted per side in `skipped_malformed_lines`, and warned about on stderr; under
 incomplete (ADR-0303 Amendment 1). `nova diff` also accepts two `name@version`
 asset references and diffs their specs field by field, in any of the three
 output formats.
+
+| Exit | Meaning (`cli/diff.py`: `EXIT_DIFFERENCES`, `EXIT_CANNOT_COMPARE`) |
+|---|---|
+| `0` | no difference, or a difference reported without a gate flag |
+| `1` | `--assert-no-regressions` found a difference (`has_changes`), or `--assert-same-shape` found a shape change; nothing else |
+| `2` | the comparison could not be made: an unresolvable capsule ref, an unknown asset ref, a usage error, `--environment` excluded a capsule, `--assert-same-shape` could not build a graph, or `--assert-no-regressions` read skipped malformed lines (checked before `has_changes`) |
+| `3` | `--significance` found a statistically significant regression |
+
+```mermaid
+flowchart LR
+    A[(capsule A)] & B[(capsule B)] --> R["_read_jsonl<br/>skip + count malformed lines"]
+    R --> L["logical_model_calls<br/>(ADR-0305)"] --> AL["diff/_align.py"] --> DR["DiffReport<br/>has_changes · skipped_malformed_lines"]
+    DR --> G{--assert-no-regressions}
+    G -->|lines skipped| E2["exit 2"]
+    G -->|has_changes| E1["exit 1"]
+    G -->|otherwise| E0["exit 0"]
+```
 
 An OpenAI or Anthropic SDK call leaves two kinds of record in `model-calls.jsonl`:
 the SDK hook's logical record and one `httpx` wire record per HTTP attempt, with no

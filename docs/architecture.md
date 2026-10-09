@@ -108,7 +108,7 @@ weight is, not a quality signal.
 | `cli/` | Every `nova` subcommand. The largest module by file count — and the most approachable. `cli/introspect.py` is the one supported way to enumerate the command tree (ADR-0250). |
 | `server/` | Server mode: REST API, auth, API keys, tenancy. |
 | `serve/` | The dashboard backend that `nova serve` exposes. `serve/introspect.py` is the one supported way to enumerate mounted HTTP routes (ADR-0250). |
-| `ui/dashboard/` | The dashboard frontend — Astro + React, with its own vitest suite. |
+| `ui/dashboard/` (repository root, not under `src/`) | The dashboard frontend — Astro + React, with its own vitest suite. Its dashboard build is copied into `src/novafabric/serve/static/` (`ui/dashboard/scripts/copy-dashboard.mjs`), which ships in the wheel. |
 | `metadata_store/` | SQLite and Postgres metadata backends, including row-level security. `dsn.py` is the one place a Postgres DSN is normalised — see [below](#one-dsn-two-consumers). |
 | `object_capsule_store/` | S3-compatible object storage for capsules at scale. |
 | `collector_app/`, `collector/` (repo root, Go) | The cluster-scale collector and node spool. |
@@ -190,7 +190,13 @@ because each one is load-bearing for a promise the project makes to users.
    component fails, the workload continues and the failure is recorded.
 3. **Secrets never leave the redaction boundary.** No prompts, tokens, or env
    vars in logs, telemetry, or unredacted capsule fields.
-4. **Full prompt/response capture is opt-in**, never the default.
+4. **Full prompt/response capture should be opt-in, never the default.** As
+   built, this invariant is **not met**: a default `nova capture` of a Python
+   workload writes the request messages and the response choices into
+   `model-calls.jsonl` (the SDK and wire hooks, `capture/hooks/`), and mocked
+   replay depends on those stored responses. `--capture-content` governs only
+   what the OpenTelemetry span export carries. Changing the default is an open
+   decision; until then, treat a capsule as holding full prompts and responses.
 5. **No silent telemetry and no update checks.** Ever. The project has none and
    will not gain any.
 6. **Core local-mode features require no internet.**

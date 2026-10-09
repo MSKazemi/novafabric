@@ -24,12 +24,14 @@ Every flag of these commands: [CLI reference — nova replay, diff and diagnose]
 flowchart LR
     C[(Capsule)] --> E{ReplayEngine.run}
     E -->|always| CK["env check (_env_check.py)<br/>tool-schema drift (ADR-0128)"]
-    E -->|mocked · default| M["subprocess re-run<br/>MockModelDispatcher + MockToolDispatcher<br/>serve recorded responses · fail closed"]
+    E -->|mocked · default| RQ{"capsule records<br/>a command?<br/>(_replayability.py)"}
+    RQ -->|no| AB["status: aborted<br/>CapsuleNotReplayable · exit 1"]
+    RQ -->|yes| M["subprocess re-run<br/>MockModelDispatcher + MockToolDispatcher<br/>serve recorded responses and errors · fail closed"]
     E -->|forensic| F["read-only report"]
     E -->|semantic| S["similarity of recorded<br/>responses (difflib)"]
     E -->|exact| X["byte-exact eligibility check"]
-    E -->|intervention · experimental| I["substitute one event,<br/>re-run under mocked semantics"]
-    M & F & S & X & I --> R["replays/&lt;ulid&gt;/replay_result.yaml"]
+    E -->|intervention · experimental| I["substitute one event,<br/>re-run under mocked semantics<br/>(model substitutions reach the re-run;<br/>tool substitutions do not)"]
+    M & AB & F & S & X & I --> R["replays/&lt;ulid&gt;/replay_result.yaml"]
     I --> CC[(counterfactual capsule<br/>replay_mode: intervention)]
 ```
 
@@ -96,8 +98,10 @@ Anthropic Messages — its `status` is `success`, and it has at least one record
 choice. Each surface has its own queue, in recorded order; a sync, async or
 `stream=True` call to a surface takes the next record from that queue, and a
 streamed call gets the record back as the chunk or event stream the SDK would
-have produced (ADR-0304). (Every SDK call is also recorded once more by the
-`httpx` wire hook, with no choices; that duplicate is never served.)
+have produced (ADR-0304). (Every SDK call is also recorded by the `httpx` wire
+hook, once per HTTP attempt, with no choices; since ADR-0305 those records are
+marked `transport`, and they are never served or counted. See
+[Model-call record roles](run-capsule.md#model-call-record-roles).)
 
 **Recorded model errors are served too** (issue #16). When the captured call
 raised — a rate limit, a 4xx, a 5xx after the SDK's own retries, a timeout or a
@@ -165,10 +169,22 @@ installs no tool dispatcher, because a counterfactual is expected to diverge.
 | `queues_fully_consumed` | every servable recording was requested |
 | `divergence_reason` | the first divergence, plus a count of the others |
 | `replay_contract` | policy, intercepted surfaces, `dispatcher_installed`, `model_calls_live`, `model_errors_replayed` (recorded SDK errors raised again; they are also counted in `model_calls_mocked`), unconsumed counts, `tool_calls_not_interceptable`, the network observation below, and the divergence list |
-| `replay_contract.network_connections_live` / `network_destinations` | IPv4/IPv6 connections the replayed Python process opened (`socket.connect`), with the distinct `host:port` destinations (first 20). **Observed, never blocked** (ADR-0304); `network_observed: false` means nothing was observed, not that nothing happened |
+| `replay_contract.network_connections_live` / `network_destinations` | IPv4/IPv6 connections the replayed Python process opened (`socket.connect` / `connect_ex`, `replay/_dispatcher.py:NetworkObserver`), with the distinct `host:port` destinations (first 20). **Observed, never blocked** (ADR-0304); `network_observed: false` means nothing was observed, not that nothing happened. After 10,000 connections the count stops and `network_connections_capped: true` marks it as a lower bound |
+| `intervention` | for `--mode intervention`: the spec, `matched_event_index`, the check outcomes, `downstream_reexecuted` (and `downstream_not_reexecuted_reason`), and `substitution_delivered_to_workload` with a `substitution_note` when it is `false` |
 
-`nova replay` prints the served counts, the live network connections and the
-divergence reason under the "Replay written" line.
+`nova replay` prints the served counts (and how many were raised as recorded
+errors), the live network connections and the divergence reason under the
+"Replay written" line, and a warning when an intervention's substitution did not
+reach the re-executed workload.
+
+**Exit codes** (`cli/replay.py:replay_cmd`):
+
+| Code | Meaning |
+|---|---|
+| `0` | the replay succeeded, or a `--dry-run` that the real run would not refuse |
+| `1` | the replay failed or was aborted: `CapsuleNotReplayable` (also under `--dry-run`), a divergence under the fail-closed default (even when the workload itself exited 0), a launch error or timeout |
+| `2` | `--environment` did not match the capsule's recorded environment |
+| `N` | `mocked` / `intervention`: the replayed command's own non-zero exit code, including `86` when the dispatcher could not be installed |
 
 ## Support matrix
 
@@ -215,12 +231,18 @@ These limits are stated so you can rely on the parts that do work:
   `--allow-unknown-mutation` flags are evaluated by
   `replay/_policy.py:PolicyEvaluator`. Their per-call decisions are shown by
   `--dry-run` (which marks non-intercepted tools `[LIVE]`), but they do not
-  intercept calls inside a mocked subprocess.
+  intercept calls inside a mocked subprocess. `replay.yaml` `tool_overrides`
+  entries, in the schema's `{tool_name, allow}` shape or the legacy
+  `action: replay|refuse` shape, override the decision for that tool in the same
+  report; enforcing them inside the replayed process is ADR-0306 (proposed,
+  not implemented).
 - **Capsules captured before ADR-0304 hold no response for async, streamed or
   Responses API calls** (the hooks wrapped only the sync, non-streaming methods).
-  Replaying such a workload fails — the queue runs out (`model_queue_exhausted`)
-  or is left unconsumed — but a call before that point can be served a record
-  that belonged to a later call. Re-capture to replay it faithfully.
+  Such a capsule is recognised by the missing `io.novafabric.api_surface` marker
+  on its served records (`replay/_contract.py:records_async_and_streamed_calls`):
+  its async and `stream=True` calls are refused as `unsupported_surface`, so they
+  are never handed another call's record, and a Responses API call finds its
+  queue empty. Its sync calls are still served. Re-capture to replay the rest.
 - **Recorded model errors need the error detail capture now records.** A
   capsule captured before it (no `io.novafabric.sdk_error`) is refused at the
   failed call (`recorded_error_unreconstructable`); re-capture. Only exceptions

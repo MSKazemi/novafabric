@@ -43,7 +43,7 @@ order. A failed run gets the same set of files.
 | 4 | `replay.yaml` | Replay policy (`schemas/replay-policy.schema.json`); capture writes a minimal policy, which you can extend | `capture/replay.py:minimal_replay_policy` |
 | 5 | `capsule.yaml` | The run manifest, redacted as a data structure before it is written | orchestrator |
 | 6 | `lineage.jsonl` | Typed lineage edges for this run | `lineage/_writer.py:LineageWriter` |
-| 7 | `capture-health.json` | Dropped-event counts, only when the recorder dropped events | `capture/event_recorder.py:EventRecorder.finalize_health` |
+| 7 | `capture-health.json` | Dropped-event counts, only when the recorder dropped events. Written before the residual pass, so it is scanned and listed in `evidence_digests` | `capture/event_recorder.py:EventRecorder.finalize_health` |
 | 8 | `redaction-proof.json` | The secret-scan proof (see below), written once after the residual pass | `capture/secrets.py:SecretScannerV0` |
 | 9 | `capsule.yaml` (rewritten) | The manifest again, now with `evidence_digests` | orchestrator, `_evidence_digests` |
 | 10 | `.seal/manifest.dsse`, `.seal/manifest.dsse.tsr`, `.seal/log-entry.json` | The seal, only when NovaSeal is configured | orchestrator, `_seal_capsule` |
@@ -53,7 +53,7 @@ These files appear only in some runs:
 | Path | When |
 |---|---|
 | `network_events.jsonl`, `file_events.jsonl`, `human_approvals.jsonl` | When the event stream has at least one record (`capture/event_recorder.py`) |
-| `capture-health.json` | When the recorder had to drop events. Its absence means nothing was dropped. Written before the residual pass, so it is scanned and listed in `evidence_digests`. |
+| `capture-health.json` | When the recorder had to drop events. Its absence means nothing was dropped up to the residual pass. Written before that pass, so it is scanned and listed in `evidence_digests`; an event dropped after the digest map was computed cannot be added without breaking the seal, so capture logs a warning for it instead. |
 | `c2pa-manifest.json` | `nova capture --mark-provenance` |
 | `otel-genai-spans.json` | `nova capture --emit-otel-genai` |
 
@@ -86,6 +86,26 @@ The schema requires `schema_version`, `run_id`, `created_at`, `finished_at`,
 `trace_root_span_id`, `inputs`, `outputs`, and the call counters
 (`model_call_count`, `tool_call_count`, `mutating_tool_count`). `model_call_count`
 counts logical model calls, not records (see below).
+
+### The `host` block
+
+`capsule.yaml:host` is built by one function, `capture/env.py:host_info`, for every
+capsule writer: `nova capture` (`CaptureOrchestrator`), the framework adapters
+(`adapters/_capsule.py`) and the `@novafabric.agent` decorator (`sdk/agent.py`).
+Before this was unified, adapter and decorator capsules wrote `arch: x86_64`,
+`cpu_count: 1` and `memory_bytes: 0` whatever the machine;
+`tests/capture/test_host_arch_is_never_hardcoded.py` now fails on any literal for
+a measured host field.
+
+| Field | Source | Limits today |
+|---|---|---|
+| `arch` | `capture/env.py:host_arch`, which `env.lock` and the OTLP importer also use: `platform.machine()` normalised (`aarch64` → `arm64`, `amd64` → `x86_64`) | an unmapped machine string is recorded as reported, never guessed |
+| `os` | `platform.system()`, lower-cased | the schema allows only `linux`, `darwin` and `windows`; any other OS is recorded as `linux` |
+| `cpu_count` | `os.cpu_count()` | `1` if it cannot be read |
+| `memory_bytes` | `MemTotal` from `/proc/meminfo` | `0` where there is no `/proc/meminfo` (macOS, Windows): read `0` as "not measured" |
+| `python` | `platform.python_version()` | |
+| `gpu` | — | always `[]` today: no GPU inventory is collected (`env.lock:hardware.gpus` is empty too) |
+| `hostname_redacted` | — | always `true`; the hostname is never written to the manifest (`env.lock` keeps a SHA-256 of it) |
 
 ## Model-call record roles
 
@@ -128,7 +148,7 @@ Some optional fields matter for the architecture:
 | `parent_run_id`, `replay_of_run_id`, `replay_mode` | Relationships to other capsules. `replay_of_run_id` becomes a `replayed_from` lineage edge. |
 | `session_id`, `sequence` | Membership in a multi-turn session (experimental) |
 | `facets`, `extensions` | Additive extension points (`slurm`, `kubernetes`, …) that let the format grow without a new top-level format |
-| `exit_code`, `error` | The failure record. A failed run is still a complete capsule. |
+| `exit_code`, `error` | The failure record. A failed run is still a complete capsule. `error.type` is `NonZeroExit` when the workload ran and exited non-zero, and `WorkloadNotStarted` when the runner could not start it (`runner_status: failed_setup`, e.g. `command not found: <argv0>` from `runners/_local.py`), so the record never claims that something exited. |
 
 ## The redaction proof: `redaction-proof.json`
 
@@ -191,6 +211,33 @@ key *when its key name is next to it* (`AWS_SECRET_ACCESS_KEY=…`,
 Treat a capsule as **secret-scanned**, not as secret-free. If your workload can
 print credentials in a format above, add a masker for it or keep it out of the
 captured output.
+
+## Capsules written inside a framework call
+
+**Works today**, with a smaller evidence pipeline than `nova capture`. The framework
+adapters (`src/novafabric/adapters/*.py`; LlamaIndex, Pydantic AI and Haystack share
+`adapters/_capsule.py:AdapterCapture`, the others write their own manifest) and the
+`@novafabric.agent` decorator (`sdk/agent.py`) write a capsule from inside the
+Python process:
+
+- `capture_mode: sdk-decorator`, and `command` is a label such as
+  `@langgraph:demo`, not a program. `nova replay --mode mocked` refuses such a
+  capsule up front (see [Replay modes](replay-modes.md#which-capsules-each-mode-accepts)).
+- `host` comes from `host_info()` and `model_call_count` counts logical calls, as
+  above.
+- A streamed run in the LangGraph, LlamaIndex or Pydantic AI adapter is captured
+  until the stream ends (`adapters/_streaming.py`). One the caller closed early, dropped unread or
+  cancelled is `status: partial` with `metadata.partial_reason` (`abandoned` or
+  `cancelled`); one that raised mid-stream is `failure`, and the exception still
+  propagates. In these adapters and Haystack, a wrapped call made from inside a run
+  the same adapter is already capturing records into the open capsule instead of
+  opening a second one.
+- The files are `env.lock`, the call streams, `trace.jsonl`, `redaction-proof.json`,
+  `replay.yaml` and `capsule.yaml`. The secret scanner runs once, over the streams,
+  `env.lock` and `inputs/`/`outputs/`. There is **no** residual pass, no
+  `lineage.jsonl`, no `evidence_digests` in the manifest and no seal: those steps
+  belong to `CaptureOrchestrator.run`, which an in-process capsule does not go
+  through.
 
 ## Parent and child capsules (prototype)
 
