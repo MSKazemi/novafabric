@@ -23,6 +23,14 @@ from novafabric.capture.event_recorder import EventRecorder, set_current_recorde
 RUN_ID = "01HXFACADE0000000000000000"
 
 
+def _coverage_active() -> bool:
+    """True when a coverage tracer is measuring this process (``--cov`` / ``coverage run``)."""
+    import sys
+
+    coverage = sys.modules.get("coverage")
+    return coverage is not None and coverage.Coverage.current() is not None
+
+
 @pytest.fixture(autouse=True)
 def _clean_recorder_singleton() -> Any:
     """Every test starts and ends with no active recorder."""
@@ -104,13 +112,41 @@ class TestNoActiveRun:
         assert wrapped("needle") == ["needle", "hit"]
 
     def test_noop_overhead_is_negligible(self) -> None:
-        """Spec overhead bound: no-op path is one call + one global read."""
+        """Spec overhead bound: no-op path is one call + one global read.
+
+        Asserted as a ratio against ``get_current_recorder()`` -- the global read the
+        no-op path makes -- timed the same way. The ratio is ~1.5-1.7 with or
+        without coverage tracing and does not move with machine load, so it pins the
+        property itself. A wall-clock budget did not: under ``make test-par``
+        coverage makes every call ~25x slower (0.78 s of CPU for this loop on an idle
+        machine) and ~20 workers share the CPU, and it read 1.19 s at load 19.6.
+        The absolute 1 s CPU bound still applies when no coverage tracer is active.
+        Under coverage the ratio is a weaker guard: tracing inflates the baseline
+        more than added C-level work (a ``sorted(dict)`` in the no-op path read 6.3x
+        untraced but stayed under 3x traced), so the untraced tier is the one that
+        enforces it.
+        """
+        from novafabric.capture.event_recorder import get_current_recorder
+
         n = 100_000
-        t0 = time.monotonic()
-        for _ in range(n):
-            record.guardrail("g", "passed")
-        elapsed = time.monotonic() - t0
-        assert elapsed < 1.0, f"{n} no-op calls took {elapsed:.2f}s"
+
+        def cpu_time(fn: Any, *args: Any) -> float:
+            best = float("inf")
+            for _ in range(3):
+                t0 = time.process_time()
+                for _ in range(n):
+                    fn(*args)
+                best = min(best, time.process_time() - t0)
+            return best
+
+        global_read = cpu_time(get_current_recorder)
+        noop = cpu_time(record.guardrail, "g", "passed")
+        assert noop < 3.0 * global_read, (
+            f"{n} no-op guardrail calls took {noop:.3f}s of CPU, "
+            f"{noop / global_read:.1f}x the {global_read:.3f}s of {n} bare recorder reads"
+        )
+        if not _coverage_active():
+            assert noop < 1.0, f"{n} no-op calls took {noop:.2f}s of CPU time"
 
 
 # ── live recorder: correct stream + payload per event type ────────────────
