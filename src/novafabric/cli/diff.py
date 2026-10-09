@@ -515,10 +515,10 @@ def diff_cmd(
          shape change. 1 means nothing else.
       2  the comparison could not be made: a capsule ref that does not resolve,
          an unreadable or malformed capsule.yaml or env.lock (with or without
-         a gate flag), an asset ref not in the registry, a usage error, --environment
-         excluded a capsule, --assert-same-shape could not build a graph or
-         read malformed graph-source lines (model-calls, tool-calls or
-         trace.jsonl; checked before the shape verdict), or
+         a gate flag), an asset ref not in the registry, a usage error,
+         --environment excluded a capsule, --assert-same-shape could not
+         build a graph or read malformed graph-source lines (model-calls,
+         tool-calls or trace.jsonl; checked before the shape verdict), or
          --assert-no-regressions read a capsule with malformed record lines
          (they are skipped, counted and warned about on stderr, so the
          comparison is incomplete; checked before any difference)

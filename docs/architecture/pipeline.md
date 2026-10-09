@@ -144,8 +144,8 @@ capsule paths or run IDs and compares:
 
 | Facet | How it matches | "Changed" means |
 |---|---|---|
-| Environment | Fixed keys from `env.lock`: Python version and interpreter, OS, architecture | Value differs |
-| Model calls | `diff/_align.py`: a `parent_span_id` unique on both sides pairs exactly; the rest pair by sequence position, anchored on identical requests so an inserted or deleted call does not shift later pairs. Unpaired calls count as added or removed | Provider (`gen_ai.system`), request model or messages differ, or the response choices differ |
+| Environment | Fixed keys from `env.lock`: Python version and interpreter, OS, architecture. An `env.lock` or `capsule.yaml` that exists but cannot be read or parsed raises `CapsuleFileError` (exit 2) | Value differs |
+| Model calls | `diff/_align.py`: a `parent_span_id` unique on both sides pairs exactly; the rest pair by sequence position, anchored on identical requests so an inserted or deleted call does not shift later pairs. Unpaired calls count as added or removed | Provider (`gen_ai.system`), request model, messages or any other recorded `gen_ai.request.*` parameter (temperature, seed, …; recorded on one side only counts) differ, or the response choices differ |
 | Tool calls | Exact `(tool_name, arg_hash)` match, each call used once, then position among calls with the same tool name | `result` or `arguments` differ |
 | Outputs | Every regular file under `outputs/`, recursively, by capsule-relative path; symlinks skipped and never followed (the evidence-digest rule) | SHA-256 differs, or the path exists on one side only |
 
@@ -161,18 +161,22 @@ resolve, an unknown asset ref, a usage error) exits `2` (ADR-0303). A record
 line the engine cannot read (not UTF-8, not JSON, not a JSON object) is skipped,
 counted per side in `skipped_malformed_lines`, and warned about on stderr; under
 `--assert-no-regressions` it exits `2` as well, because the comparison is
-incomplete (ADR-0303 Amendment 1). `nova diff` also accepts two `name@version`
+incomplete (ADR-0303 Amendment 1). An unreadable or malformed `capsule.yaml` or
+`env.lock` exits `2` in every format, with or without a gate flag, and
+`--assert-same-shape` exits `2` when graph reconstruction skipped a malformed
+source line (ADR-0303 Amendment 2). `nova diff` also accepts two `name@version`
 asset references and diffs their specs field by field, in any of the three
 output formats.
 
-This contract (ADR-0303 and its Amendment 1) is unreleased, on `main`; in v0.104.0 an
-unresolvable capsule ref exits 1 and malformed lines are dropped silently.
+This contract (ADR-0303 and its Amendments 1 and 2) is unreleased, on `main`; in v0.104.0 an
+unresolvable capsule ref exits 1, malformed lines are dropped silently, a malformed
+`env.lock` crashes the diff, and request parameters are not compared.
 
 | Exit | Meaning (`cli/diff.py`: `EXIT_DIFFERENCES`, `EXIT_CANNOT_COMPARE`) |
 |---|---|
 | `0` | no difference, or a difference reported without a gate flag |
 | `1` | `--assert-no-regressions` found a difference (`has_changes`), or `--assert-same-shape` found a shape change; nothing else |
-| `2` | the comparison could not be made: an unresolvable capsule ref, an unknown asset ref, a usage error, `--environment` excluded a capsule, `--assert-same-shape` could not build a graph, or `--assert-no-regressions` read skipped malformed lines (checked before `has_changes`) |
+| `2` | the comparison could not be made: an unresolvable capsule ref, an unknown asset ref, a usage error, `--environment` excluded a capsule, an unreadable or malformed `capsule.yaml`/`env.lock` (any format, gate or not), `--assert-same-shape` could not build a graph or skipped malformed graph-source lines, or `--assert-no-regressions` read skipped malformed lines (checked before `has_changes`) |
 | `3` | `--significance` found a statistically significant regression |
 
 ```mermaid

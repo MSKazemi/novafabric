@@ -725,9 +725,11 @@ Outputs:
 **Use as a CI gate.** `--assert-no-regressions` exits 1 if any changes are
 detected — a changed, added or removed entry in any section — and, on `main`
 (unreleased, ADR-0303), exits 2 when
-the comparison could not be made (a capsule ref that does not resolve, or a
-record line that could not be read, which is counted in
-`skipped_malformed_lines` and warned about on stderr). Wire it into CI to catch
+the comparison could not be made (a capsule ref that does not resolve, a
+`capsule.yaml` or `env.lock` that cannot be read or parsed, or a record line
+that could not be read, which is counted in `skipped_malformed_lines` and warned
+about on stderr). On `main` a model call whose recorded request parameters
+(temperature, seed, …) changed also counts as a change (ADR-0303 Amendment 2). Wire it into CI to catch
 behavioral regressions before they reach production:
 
 ```bash
