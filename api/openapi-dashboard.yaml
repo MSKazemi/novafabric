@@ -7326,7 +7326,20 @@ paths:
 
         ''ingested-otlp''; other spans are skipped (counted, never guessed). Both wire
 
-        encodings converge on identical events.'
+        encodings converge on identical events.
+
+
+        The capsule finalizes through the path ``nova capture`` uses (secret scan,
+
+        manifest redaction, residual pass, ``evidence_digests``, and a seal only
+
+        when a signing profile exists). ``sealed`` says whether it was sealed; a
+
+        finalization failure keeps every ingested record, leaves the capsule
+
+        unsealed and is reported in ``finalization_error`` (still a 200: the data
+
+        was written).'
       parameters:
       - in: query
         name: token

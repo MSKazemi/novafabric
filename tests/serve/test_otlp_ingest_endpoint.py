@@ -170,3 +170,134 @@ def test_otlp_ingest_protobuf_body(client: TestClient, capsule_base: Path) -> No
     assert body["spans_ingested"] == 1
     assert body["model_call_count"] == 1
     assert body["capture_level"] == "ingested-otlp"
+
+
+# ── finalization: the path `nova capture` uses (ADR-0009/ADR-0251 amendments) ──
+
+# Assembled at runtime: no contiguous provider-shaped token in the source bytes.
+_GH_TOKEN = "ghp" + "_" + "Ab3dEf6hIj" * 3 + "Kl3mNp"
+
+
+def _leaky_agent_payload() -> dict:
+    """The agent name becomes manifest metadata; the message lands in model-calls."""
+    payload = _valid_payload()
+    spans = payload["resourceSpans"][0]["scopeSpans"][0]["spans"]
+    for attr in spans[0]["attributes"]:
+        if attr["key"] == "gen_ai.agent.name":
+            attr["value"] = {"stringValue": f"agent-{_GH_TOKEN}"}
+    spans[1]["attributes"].append({
+        "key": "gen_ai.input.messages",
+        "value": {"stringValue": f"use key {_GH_TOKEN}"},
+    })
+    return payload
+
+
+def _assert_no_token(cdir: Path) -> None:
+    for path in cdir.rglob("*"):
+        if path.is_file():
+            assert _GH_TOKEN[4:20].encode() not in path.read_bytes(), path
+
+
+@pytest.fixture
+def seal_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    import datetime
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    key_path = tmp_path / "seal.key"
+    key_path.write_bytes(key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ))
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "OTLP-Ingest-Seal-Test")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (
+        x509.CertificateBuilder().subject_name(subject).issuer_name(subject)
+        .public_key(key.public_key()).serial_number(x509.random_serial_number())
+        .not_valid_before(now).not_valid_after(now + datetime.timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+    cert_path = tmp_path / "seal.crt"
+    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    config = tmp_path / "novaseal.yaml"
+    config.write_text(
+        f"profile: local\nkey_path: {key_path}\ncert_path: {cert_path}\n"
+        f"tsa_url: \nmerkle_db: {tmp_path / 'merkle.db'}\n"
+    )
+    monkeypatch.setenv("NOVAFABRIC_SEAL_CONFIG", str(config))
+    return config
+
+
+def _post(client: TestClient, payload: dict) -> dict:
+    resp = client.post(
+        f"/api/otlp/v1/traces?token={VALID_TOKEN}", json=payload, headers=HEADERS
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def test_otlp_ingest_redacts_and_binds_without_a_signing_profile(
+    client: TestClient, capsule_base: Path
+) -> None:
+    body = _post(client, _leaky_agent_payload())
+    assert body["sealed"] is False
+    assert "finalization_error" not in body  # opt-in sealing is not a failure
+    cdir = capsule_base / body["capsule_id"]
+    _assert_no_token(cdir)
+    manifest = yaml.safe_load((cdir / "capsule.yaml").read_text())
+    assert manifest["metadata"]["capture_level"] == "ingested-otlp"
+    assert "finalization_error" not in manifest["metadata"]
+    assert {"model-calls.jsonl", "replay.yaml", "lineage.jsonl", "redaction-proof.json"} <= set(
+        manifest["evidence_digests"]
+    )
+    assert not (cdir / ".seal").exists()
+
+
+def test_otlp_ingest_is_sealed_and_verifies_with_a_signing_profile(
+    client: TestClient, capsule_base: Path, seal_profile: Path
+) -> None:
+    from typer.testing import CliRunner
+
+    from novafabric.cli.main import app as cli_app
+
+    body = _post(client, _leaky_agent_payload())
+    assert body["sealed"] is True
+    cdir = capsule_base / body["capsule_id"]
+    _assert_no_token(cdir)
+    assert (cdir / ".seal" / "manifest.dsse").is_file()
+    run = CliRunner().invoke(
+        cli_app, ["verify", str(cdir), "--seal-config", str(seal_profile)]
+    )
+    assert run.exit_code == 0, run.output
+    manifest = yaml.safe_load((cdir / "capsule.yaml").read_text())
+    assert manifest["metadata"]["capture_level"] == "ingested-otlp"
+
+
+def test_otlp_ingest_finalization_failure_keeps_the_data_and_says_why(
+    client: TestClient,
+    capsule_base: Path,
+    seal_profile: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from novafabric.capture import finalize as finalize_mod
+
+    def _broken(capsule_dir: Path) -> dict:
+        raise RuntimeError(f"disk on fire {_GH_TOKEN}")
+
+    monkeypatch.setattr(finalize_mod, "evidence_digests", _broken)
+    body = _post(client, _valid_payload())
+    assert body["sealed"] is False
+    assert "disk on fire" in body["finalization_error"]
+    assert _GH_TOKEN[4:20] not in body["finalization_error"]  # redacted
+    cdir = capsule_base / body["capsule_id"]
+    assert not (cdir / ".seal").exists()
+    manifest = yaml.safe_load((cdir / "capsule.yaml").read_text())
+    assert "disk on fire" in manifest["metadata"]["finalization_error"]
+    assert manifest["metadata"]["capture_level"] == "ingested-otlp"
+    assert len((cdir / "model-calls.jsonl").read_text().splitlines()) == 1
+    assert len((cdir / "tool-calls.jsonl").read_text().splitlines()) == 1

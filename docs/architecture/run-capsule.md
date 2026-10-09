@@ -250,6 +250,15 @@ Python process:
   `metadata.finalization_error` (redacted), and a warning is logged; the call's
   own result or exception is unchanged.
 
+OTLP-ingested capsules (`capture_mode: otel-import`, `metadata.capture_level:
+ingested-otlp`, written by `otel/genai_ingest.py` for `POST /api/otlp/v1/traces`)
+finalize through the same `finalize_in_process_capsule` call (unreleased, on
+`main`): main scan, manifest redaction (an agent name from a span lands in the
+manifest), residual pass, `evidence_digests`, gate, and a seal when a signing profile
+exists. A failure keeps every ingested record and leaves the capsule unsealed with
+`metadata.finalization_error`. The `ingested-otlp` label is permanent; a seal does not
+upgrade it. See [OTLP ingest](otlp-ingest.md).
+
 ## Parent and child capsules (prototype)
 
 Distributed runs, such as a SLURM job across several nodes, use a separate

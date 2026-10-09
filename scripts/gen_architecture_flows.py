@@ -207,11 +207,15 @@ OTLP = Flow(
         Step(("newcap",), ("t3",),
              "write_ingest_capsule creates a new capsule under a fresh ULID; no existing "
              "capsule is ever opened for writing.",
-             "<p>It reuses the native <code>CapsuleWriter</code>, environment lock, secret "
-             "scanner and replay policy, and records <code>capture_mode: otel-import</code> "
-             "and <code>capture_level: ingested-otlp</code>. This path does not apply a "
-             "NovaSeal signature.</p>",
-             "otel/genai_ingest.py:write_ingest_capsule",
+             "<p>It reuses the native <code>CapsuleWriter</code>, environment lock and "
+             "replay policy, records <code>capture_mode: otel-import</code> and "
+             "<code>capture_level: ingested-otlp</code>, then finalizes through the same "
+             "path as <code>nova capture</code>: secret scan, manifest redaction, residual "
+             "pass, <code>evidence_digests</code>, and a seal when a signing profile exists "
+             "(unreleased, on main). A finalization failure keeps the data, leaves the "
+             "capsule unsealed and is reported in <code>finalization_error</code>.</p>",
+             "otel/genai_ingest.py:write_ingest_capsule_finalized · "
+             "capture/finalize.py:finalize_in_process_capsule",
              "experimental", "newcap", "ver"),
         Step(("exp", "gate", "lg"), ("l1", "l2"),
              "Logs: the exporter POSTs to /api/otlp/v1/logs (scope operate); over 16 MiB "

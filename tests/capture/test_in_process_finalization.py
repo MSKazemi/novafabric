@@ -6,6 +6,9 @@ stopped: no ADR-0009 residual pass, no manifest redaction, no ``lineage.jsonl``,
 ADR-0251 ``evidence_digests``, and never a seal -- even with a signing profile
 configured. These tests plant secrets where only the later stages can catch them, then
 search the finished capsule for any fragment, and run the real ``nova verify``.
+
+OTel GenAI ingest (``otel/genai_ingest.py``) had the same gap and the same fix; its
+capsules keep their permanent ``capture_level: ingested-otlp`` label.
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -384,31 +388,191 @@ def test_manifest_gate_refusal_is_recorded_and_unsealed(
     assert "manifest gate" in _manifest(capsule)["metadata"][FINALIZATION_KEY]
 
 
-# ── every in-process writer, not just the two exercised above ────────────────
+# ── OTel GenAI ingest (otel/genai_ingest.py, POST /api/otlp/v1/traces) ──────
+
+
+def _otlp_payload(*, agent_name: str = "summarizer", content: str = "hello") -> dict[str, Any]:
+    """An invoke_agent span (its name lands in the manifest) and one chat span."""
+    return {"resourceSpans": [{"scopeSpans": [{"spans": [
+        {
+            "name": "invoke_agent",
+            "attributes": {"gen_ai.operation.name": "invoke_agent",
+                           "gen_ai.agent.name": agent_name},
+        },
+        {
+            "name": "chat m",
+            "startTimeUnixNano": "1783420800500000000",
+            "endTimeUnixNano": "1783420801500000000",
+            "attributes": {
+                "gen_ai.operation.name": "chat",
+                "gen_ai.request.model": "m",
+                "gen_ai.input.messages": [{"role": "user", "content": content}],
+            },
+        },
+    ]}]}]}
+
+
+def _otlp_capsule(tmp_path: Path, **payload: str) -> Path:
+    from novafabric.otel.genai_ingest import ingest_otlp_json, write_ingest_capsule
+
+    return write_ingest_capsule(ingest_otlp_json(_otlp_payload(**payload)), tmp_path / "runs")
+
+
+def _assert_ingested_label(manifest: dict[str, Any]) -> None:
+    """THREAT_MODEL I-12: the permanent provenance label survives finalization."""
+    assert manifest["capture_mode"] == "otel-import"
+    assert manifest["metadata"]["capture_level"] == "ingested-otlp"
+
+
+def test_otlp_capsule_runs_the_residual_pass_over_late_files(
+    tmp_path: Path, late_secret: str, leaky_replay_policy: None
+) -> None:
+    capsule = _otlp_capsule(tmp_path, content=f"use key {GITHUB_TOKEN}")
+
+    for secret in (GITHUB_TOKEN, ANTHROPIC_KEY, LATE_TOKEN):
+        _assert_absent(capsule, secret)
+    proof = _proof(capsule)
+    # replay.yaml is not a main-scan target and late.txt did not exist yet: only the
+    # residual pass can catch either, exactly as for `nova capture`.
+    assert set(proof["residual_check"]["residual_refs"]) == {"replay.yaml", late_secret}
+    refs = {f["target_ref"] for f in proof["findings"]}
+    assert {"model-calls.jsonl", "replay.yaml", late_secret} <= refs
+    manifest = _assert_bound(capsule)
+    _assert_ingested_label(manifest)
+    assert FINALIZATION_KEY not in manifest["metadata"]
+
+
+def test_otlp_span_attribute_in_the_manifest_is_redacted(tmp_path: Path) -> None:
+    """gen_ai.agent.name becomes metadata.otlp.agent_name: the manifest is redacted."""
+    capsule = _otlp_capsule(tmp_path, agent_name=f"agent-{GITHUB_TOKEN}")
+    _assert_absent(capsule, GITHUB_TOKEN)
+    targets = {t["ref"]: t for t in _proof(capsule)["targets"]}
+    assert targets["capsule.yaml"]["findings_count"] >= 1
+    _assert_ingested_label(_manifest(capsule))
+
+
+def test_otlp_capsule_is_unsealed_without_a_signing_profile(tmp_path: Path) -> None:
+    capsule = _otlp_capsule(tmp_path)
+    assert not (capsule / ".seal").exists()
+    manifest = _assert_bound(capsule)
+    _assert_ingested_label(manifest)
+    # Opt-in sealing (ADR-0301) is not a failure: nothing is recorded.
+    assert FINALIZATION_KEY not in manifest["metadata"]
+    validated = CliRunner().invoke(app, ["validate", str(capsule)])
+    assert validated.exit_code == 0, validated.output
+
+
+def test_otlp_capsule_is_sealed_and_verifies_with_a_signing_profile(
+    tmp_path: Path, seal_config: Path
+) -> None:
+    capsule = _otlp_capsule(tmp_path)
+    assert (capsule / ".seal" / "manifest.dsse").is_file()
+    _assert_ingested_label(_assert_bound(capsule))
+    verified = _verify(capsule, seal_config)
+    assert verified.exit_code == 0, verified.output
+    validated = CliRunner().invoke(app, ["validate", str(capsule)])
+    assert validated.exit_code == 0, validated.output
+
+    # The bytes are bound: an edit to an ingested record is caught.
+    calls = capsule / "model-calls.jsonl"
+    calls.write_text(calls.read_text().replace('"m"', '"edited"'))
+    tampered = _verify(capsule, seal_config)
+    assert tampered.exit_code == 1, tampered.output
+
+
+def test_otlp_finalization_failure_keeps_the_ingested_data_unsealed(
+    tmp_path: Path, seal_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from novafabric.capture import finalize as finalize_mod
+
+    monkeypatch.setattr(finalize_mod, "evidence_digests", _broken_digests)
+    capsule = _otlp_capsule(tmp_path, content=f"use key {GITHUB_TOKEN}")
+    assert not (capsule / ".seal").exists()
+    manifest = _manifest(capsule)
+    assert "disk on fire" in manifest["metadata"][FINALIZATION_KEY]
+    _assert_ingested_label(manifest)
+    assert manifest["model_call_count"] == 1
+    (record,) = [
+        json.loads(line) for line in (capsule / "model-calls.jsonl").read_text().splitlines()
+    ]
+    assert record["gen_ai.request.model"] == "m"  # the ingested data is kept
+    _assert_absent(capsule, GITHUB_TOKEN)  # the main scan had already run
+
+
+# ── every capsule writer, discovered, not listed ─────────────────────────────
 
 _SRC = Path(__file__).resolve().parents[2] / "src" / "novafabric"
-_IN_PROCESS_WRITERS = sorted(
-    [p for p in (_SRC / "adapters").glob("*.py") if p.name != "__init__.py"]
-    + [_SRC / "sdk" / "agent.py"]
+_FINALIZE = _SRC / "capture" / "finalize.py"
+_ORCHESTRATOR = _SRC / "capture" / "orchestrator.py"
+
+
+_MANIFEST_KEY = re.compile(r'"redaction_proof_ref"\s*:')
+
+
+def _builds_a_capsule_manifest(source: str) -> bool:
+    """A module that assembles a Run Capsule manifest literal.
+
+    ``redaction_proof_ref`` is a required manifest field (run-capsule schema); a
+    module that spells it as a dict-literal *key* (not ``meta.get(...)``) is building
+    a manifest, so this finds every capsule writer in the package -- including one
+    added after this test was written.
+    """
+    return bool(_MANIFEST_KEY.search(source)) and '"run_id"' in source
+
+
+_CAPSULE_WRITERS = sorted(
+    p
+    for p in _SRC.rglob("*.py")
+    if p != _FINALIZE and _builds_a_capsule_manifest(p.read_text(encoding="utf-8"))
+)
+_IN_PROCESS_WRITERS = [p for p in _CAPSULE_WRITERS if p != _ORCHESTRATOR]
+
+#: Writing capsule.yaml directly: ``writer.write_text("capsule.yaml", yaml.dump(…))``
+#: or ``(d / "capsule.yaml").write_text(…)``.
+_WRITES_CAPSULE_YAML = re.compile(
+    r"""["']capsule\.yaml["']\s*,\s*yaml\.(?:safe_)?dump"""
+    r"""|["']capsule\.yaml["']\s*\)\s*\.write_(?:text|bytes)"""
 )
 
 
-def _writes_a_manifest(source: str) -> bool:
-    return '"schema_version"' in source and '"run_id"' in source
+def _rel(p: Path) -> str:
+    return p.relative_to(_SRC).as_posix()
 
 
 def test_the_writer_list_is_not_empty() -> None:
-    """Guard the guard: the eight own-writer adapters, AdapterCapture and @agent."""
-    assert sum(_writes_a_manifest(p.read_text()) for p in _IN_PROCESS_WRITERS) >= 10
+    """Guard the guard: the discovery finds every writer known on 2026-10-09."""
+    found = {_rel(p) for p in _CAPSULE_WRITERS}
+    assert {
+        "capture/orchestrator.py",
+        "adapters/_capsule.py",
+        "adapters/langgraph.py",
+        "sdk/agent.py",
+        "otel/genai_ingest.py",
+    } <= found
+    # nova capture, AdapterCapture, eight own-writer adapters, @agent, OTel ingest.
+    assert len(found) >= 12, sorted(found)
 
 
-@pytest.mark.parametrize("path", _IN_PROCESS_WRITERS, ids=lambda p: p.name)
+def test_the_capsule_yaml_pattern_matches_both_spellings() -> None:
+    """Guard the guard: the regex is not vacuous."""
+    assert _WRITES_CAPSULE_YAML.search('writer.write_text("capsule.yaml", yaml.dump(m))')
+    assert _WRITES_CAPSULE_YAML.search("(d / 'capsule.yaml').write_text(text)")
+    assert not _WRITES_CAPSULE_YAML.search('(d / "capsule.yaml").read_text()')
+
+
+def test_nova_capture_finalizes_through_the_shared_path() -> None:
+    source = _ORCHESTRATOR.read_text(encoding="utf-8")
+    assert "write_redacted_manifest(" in source
+    assert "finalize_capsule(" in source
+
+
+@pytest.mark.parametrize("path", _IN_PROCESS_WRITERS, ids=_rel)
 def test_every_in_process_writer_finalizes_through_the_shared_path(path: Path) -> None:
     """A capsule writer that scans or writes capsule.yaml on its own skips the
     residual pass, the digests and the seal -- the gap this module closed."""
-    source = path.read_text()
-    if not _writes_a_manifest(source):
-        return
-    assert "finalize_in_process_capsule(" in source, path.name
-    assert "SecretScannerV0" not in source, f"{path.name} runs its own scan"
-    assert '"capsule.yaml", yaml.dump' not in source, f"{path.name} writes capsule.yaml"
+    source = path.read_text(encoding="utf-8")
+    name = _rel(path)
+    assert "finalize_in_process_capsule(" in source, name
+    assert "SecretScannerV0" not in source, f"{name} runs its own scan"
+    assert "scan_and_redact(" not in source, f"{name} runs its own scan"
+    assert not _WRITES_CAPSULE_YAML.search(source), f"{name} writes capsule.yaml"

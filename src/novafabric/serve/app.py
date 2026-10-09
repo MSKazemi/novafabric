@@ -2614,13 +2614,20 @@ def create_app(
         gen_ai.* attributes become capsule events sealed at capture_level
         'ingested-otlp'; other spans are skipped (counted, never guessed). Both wire
         encodings converge on identical events.
+
+        The capsule finalizes through the path ``nova capture`` uses (secret scan,
+        manifest redaction, residual pass, ``evidence_digests``, and a seal only
+        when a signing profile exists). ``sealed`` says whether it was sealed; a
+        finalization failure keeps every ingested record, leaves the capsule
+        unsealed and is reported in ``finalization_error`` (still a 200: the data
+        was written).
         """
         from novafabric.otel.genai_ingest import (  # noqa: PLC0415
             CAPTURE_LEVEL,
             OTLPIngestError,
             ingest_otlp_json,
             ingest_otlp_protobuf,
-            write_ingest_capsule,
+            write_ingest_capsule_finalized,
         )
 
         content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
@@ -2643,8 +2650,11 @@ def create_app(
                 "note": "no OTel GenAI spans in payload; no capsule written",
             }
 
-        cdir = write_ingest_capsule(result, capsule_dir)
-        return {
+        # Scan + digest + optional seal (a TSA round trip) off the event loop.
+        cdir, finalized = await asyncio.to_thread(
+            write_ingest_capsule_finalized, result, capsule_dir
+        )
+        response: dict[str, Any] = {
             "capsule_id": cdir.name,
             "spans_ingested": result.genai_spans,
             "spans_skipped": result.skipped_spans + result.unclassified_spans,
@@ -2652,7 +2662,16 @@ def create_app(
             "tool_call_count": len(result.tool_calls),
             "capture_level": CAPTURE_LEVEL,
             "unmapped_attribute_keys": result.unmapped_keys,
+            "sealed": finalized.sealed,
         }
+        if finalized.unsealed_reason is not None:
+            from novafabric.capture.secrets import redact_secrets_in_text  # noqa: PLC0415
+
+            # The same redacted reason metadata.finalization_error records.
+            response["finalization_error"] = redact_secrets_in_text(
+                finalized.unsealed_reason
+            )
+        return response
 
     # POST /api/otlp/v1/logs — span-less log records go to the sidecar store,
     # never into a capsule (ADR-0293, experimental).

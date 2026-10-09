@@ -18,8 +18,8 @@ The inbound half of the ADR-0098 canonical vocabulary. :mod:`genai_emitter` maps
 a capsule *outward* to OTel GenAI spans; this module maps an OTLP/HTTP **JSON**
 ``ExportTraceServiceRequest``-shaped payload (``resourceSpans`` → ``scopeSpans``
 → ``spans``) *back* into capsule event dicts (``model-calls.jsonl`` /
-``tool-calls.jsonl``) and seals them into a minimal valid run capsule — so agents
-instrumented with vanilla OTel GenAI SDKs can land evidence in NovaFabric
+``tool-calls.jsonl``) and writes them into a minimal valid run capsule — so
+agents instrumented with vanilla OTel GenAI SDKs can land evidence in NovaFabric
 without the capture orchestrator.
 
 Honesty rules (ADR-0021 §4, ADR-0009):
@@ -33,10 +33,17 @@ Honesty rules (ADR-0021 §4, ADR-0009):
   other-namespace span attributes are dropped but their keys are enumerated.
 - Every event is stamped with the same ``novafabric.mapping_version`` the
   emitter uses, so consumers can tell which capsule↔OTLP mapping produced it.
-- The sealed capsule records ``capture_mode: otel-import`` and
+- The capsule records ``capture_mode: otel-import`` and
   ``metadata.capture_level: ingested-otlp`` — honestly lower-fidelity than
-  native capture. Ingested text passes through the ADR-0009 secret scanner
-  before the manifest is written.
+  native capture, and a permanent label (THREAT_MODEL I-12): sealing proves the
+  bytes were not changed after ingest, never that the spans were truthful.
+- It finalizes through the path ``nova capture`` uses
+  (:func:`novafabric.capture.finalize.finalize_in_process_capsule`): the
+  ADR-0009 main scan, manifest redaction, lineage, the residual pass,
+  ADR-0251 ``evidence_digests``, the manifest gate and — only when a signing
+  profile exists (ADR-0301) — the seal. A finalization failure never drops the
+  ingested data: the capsule is left unsealed and
+  ``metadata.finalization_error`` says why.
 
 Log levels (ADR-0127): an ``ERROR`` span status records ``log_level: error``
 (``span-status``). Since ADR-0127 P4 (inbound half, experimental) the OTel logs
@@ -60,7 +67,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from novafabric.capture.log_level import (
     LogLevelSource,
@@ -75,6 +82,9 @@ from novafabric.otel.genai_emitter import (
     SEVERITY_TEXT_ATTR,
 )
 from novafabric.otel.openinference import translate_attributes as translate_openinference
+
+if TYPE_CHECKING:
+    from novafabric.capture.finalize import FinalizeResult
 
 #: capture-level label recorded on every ingested capsule (ADR-0021 §4).
 CAPTURE_LEVEL = "ingested-otlp"
@@ -608,7 +618,7 @@ def ingest_otlp_protobuf(data: bytes) -> GenAIIngestResult:
     return ingest_otlp_json(_protobuf_to_payload(data))
 
 
-# ── capsule sealing ──────────────────────────────────────────────────────────
+# ── capsule writing ──────────────────────────────────────────────────────────
 
 
 def _parse_iso(ts: str) -> datetime | None:
@@ -618,16 +628,23 @@ def _parse_iso(ts: str) -> datetime | None:
         return None
 
 
-def write_ingest_capsule(
+def write_ingest_capsule_finalized(
     result: GenAIIngestResult, base_dir: Path, *, run_id: str | None = None
-) -> Path:
-    """Seal a :class:`GenAIIngestResult` into a minimal valid run capsule.
+) -> tuple[Path, FinalizeResult]:
+    """Write a :class:`GenAIIngestResult` as a run capsule and finalize it.
 
     Reuses the native capture utilities (``CapsuleWriter``, environment lock,
-    ADR-0009 secret scanner, replay policy) so the capsule passes
-    ``nova validate``. The manifest records ``capture_mode: otel-import`` and
-    ``metadata.capture_level: ingested-otlp`` (honestly lower-fidelity than
-    native capture, ADR-0021 §4). Returns the capsule directory.
+    replay policy) so the capsule passes ``nova validate``, then finalizes it
+    through :func:`~novafabric.capture.finalize.finalize_in_process_capsule` —
+    the ADR-0009 main scan, manifest redaction, lineage, residual pass,
+    ADR-0251 ``evidence_digests``, manifest gate and opt-in seal that
+    ``nova capture`` runs. The manifest records ``capture_mode: otel-import``
+    and ``metadata.capture_level: ingested-otlp`` (honestly lower-fidelity than
+    native capture, ADR-0021 §4; unchanged by sealing, THREAT_MODEL I-12).
+
+    Never raises from finalization: a failure leaves the capsule — with every
+    ingested record — unsealed, and ``metadata.finalization_error`` says why.
+    Returns the capsule directory and what finalization did.
     """
     from importlib.metadata import version as _pkg_version
 
@@ -636,9 +653,9 @@ def write_ingest_capsule(
     from novafabric.capture._ulid import new_span_id, new_ulid
     from novafabric.capture.capsule import CapsuleWriter
     from novafabric.capture.env import capture_environment
+    from novafabric.capture.finalize import finalize_in_process_capsule
     from novafabric.capture.orchestrator import _build_host_info, _now
     from novafabric.capture.replay import minimal_replay_policy
-    from novafabric.capture.secrets import SecretScannerV0
 
     run_id = run_id or new_ulid()
     events = result.model_calls + result.tool_calls
@@ -676,15 +693,10 @@ def write_ingest_capsule(
         },
     })
 
+    # Every file is written before finalization, which scans them all (ADR-0009).
     writer.write_text(
         "env.lock", yaml.dump(capture_environment(created_at, run_id), allow_unicode=True)
     )
-
-    # ADR-0009: ingested foreign span content passes the secret scanner too.
-    import json as _json
-
-    proof = SecretScannerV0(capsule_dir=writer.capsule_dir, run_id=run_id).scan_and_redact()
-    writer.write_text("redaction-proof.json", _json.dumps(proof, indent=2))
     writer.write_text("replay.yaml", yaml.dump(minimal_replay_policy(), allow_unicode=True))
 
     any_error = any(e.get("status") == "error" for e in events)
@@ -726,5 +738,21 @@ def write_ingest_capsule(
         "mutating_tool_count": 0,
         "metadata": metadata,
     }
-    writer.write_text("capsule.yaml", yaml.dump(manifest, allow_unicode=True))
-    return writer.capsule_dir
+    # Main scan, manifest redaction, lineage, residual pass, evidence_digests,
+    # gate and opt-in seal: the path `nova capture` uses. Never raises.
+    finalized = finalize_in_process_capsule(
+        writer.capsule_dir, manifest, run_id=run_id, writer=writer
+    )
+    return writer.capsule_dir, finalized
+
+
+def write_ingest_capsule(
+    result: GenAIIngestResult, base_dir: Path, *, run_id: str | None = None
+) -> Path:
+    """Write and finalize a run capsule; return its directory.
+
+    See :func:`write_ingest_capsule_finalized`, which also returns whether the
+    capsule was sealed and, if finalization failed, why.
+    """
+    capsule_dir, _ = write_ingest_capsule_finalized(result, base_dir, run_id=run_id)
+    return capsule_dir

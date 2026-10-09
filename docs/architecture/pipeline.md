@@ -98,13 +98,15 @@ workload the runner could not start at all (for example a mistyped command, whic
 component fails, the failure is recorded and the workload continues.
 
 Steps 6–9 are one shared function, `capture/finalize.py` (`write_redacted_manifest`
-then `finalize_capsule`). Framework adapters and the `@agent` decorator call the
-same two steps through `finalize_in_process_capsule`, after writing `env.lock` and
-`replay.yaml` and running the step-5 scan (unreleased, on `main`). Their capsules
+then `finalize_capsule`). Framework adapters, the `@agent` decorator and OTLP trace
+ingest (`otel/genai_ingest.py`) call the same two steps through
+`finalize_in_process_capsule`, after writing `env.lock` and `replay.yaml` and
+running the step-5 scan (unreleased, on `main`). Their capsules
 therefore get the residual pass, `lineage.jsonl`, `evidence_digests` and, when a
 signing profile exists, a seal. Configured maskers are a `nova capture` option
 and do not run there. A finalization failure in that path never fails the wrapped
-call: the capsule is left unsealed and `metadata.finalization_error` says why.
+call (or, for OTLP ingest, drop the ingested data): the capsule is left unsealed
+and `metadata.finalization_error` says why.
 See [Run Capsule anatomy](run-capsule.md#capsules-written-inside-a-framework-call).
 
 Capture also has proxy paths for clients that cannot be hooked in-process:
@@ -116,7 +118,7 @@ Details: [Run Capsule anatomy](run-capsule.md).
 ## 2 · Seal: automatic when configured (experimental)
 
 `capture/finalize.py:seal_capsule` runs as the last step of capture (`nova
-capture`, a framework adapter or the `@agent` decorator), but
+capture`, a framework adapter, the `@agent` decorator or OTLP trace ingest), but
 only if a NovaSeal configuration exists (`NOVAFABRIC_SEAL_CONFIG` or
 `~/.novafabric/novaseal.yaml`). Without one, sealing is skipped. A sealing
 failure prints a warning and never fails the capture. A seal produces three

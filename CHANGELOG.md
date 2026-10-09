@@ -18,6 +18,10 @@ longer forwards the submitting shell's environment (ADR-0270).
   secret in `replay.yaml`, a late-written file or a run name / label reached the capsule
   unscanned. They now get manifest redaction, the residual pass and the fail-closed manifest
   gate, like `nova capture`.
+- **OTLP-ingested capsules (`POST /api/otlp/v1/traces`) get the same pipeline.** Ingest ran one
+  scan before `replay.yaml` and `capsule.yaml` were written, so an agent name taken from a
+  span's `gen_ai.agent.name` reached the manifest unredacted, and `replay.yaml` or any late file
+  was never scanned. They now get manifest redaction, the residual pass and the manifest gate.
 - **Locked `urllib3` 2.7.0 → 2.8.0 and `pyjwt` 2.14.0 → 2.15.1**, clearing the two HIGH
   `pip-audit` findings (PYSEC-2026-4175/4177) that blocked the gate (#128). No waiver added.
 - **Locked `multidict` 6.7.1 → 6.9.1 and `werkzeug` 3.1.8 → 3.1.9**, clearing the two remaining
@@ -348,6 +352,16 @@ longer forwards the submitting shell's environment (ADR-0270).
   wrapped call: on a failure, a gate refusal or a failed seal the capsule is left unsealed and
   `metadata.finalization_error` says why. `nova capture` output is unchanged (pinned by
   `tests/capture/test_capture_finalization_golden.py`). ADR-0009 / ADR-0251 amendments.
+- **OTLP-ingested capsules finalize through the same path and can be sealed.**
+  `otel/genai_ingest.py:write_ingest_capsule` now writes `env.lock` and `replay.yaml` and calls
+  `finalize_in_process_capsule`, so an ingested capsule carries `lineage.jsonl` and
+  `evidence_digests` and is sealed when the server has a signing profile (opt-in) — `nova
+  verify` passes on it. Its `capture_mode: otel-import` / `capture_level: ingested-otlp` label is
+  unchanged. A finalization failure keeps every ingested record and leaves the capsule unsealed
+  with `metadata.finalization_error`. The endpoint response adds `sealed` and, on a failure,
+  `finalization_error` (still 200); `write_ingest_capsule_finalized` returns both to Python
+  callers. The guard in `tests/capture/test_in_process_finalization.py` now discovers every
+  module that builds a capsule manifest instead of listing them.
 - **`env.lock` named the wrong NovaFabric version, and macOS/Windows hosts recorded
   `memory_bytes: 0`.** `captured_by` was the literal `novafabric/0.2.0` whatever version wrote
   the lock; it is now `novafabric/<installed version>`. `host.memory_bytes` was read only from

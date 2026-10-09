@@ -91,7 +91,10 @@ STRIDE analysis in the project's internal threat model:
   path remains `experimental`, and Security-Architect review is a recorded
   pre-production blocking condition regardless of the opt-in flag.
 - **OTLP GenAI ingest** (`POST /api/otlp/v1/traces`) — token-authenticated;
-  foreign span data is secret-scanned at write time.
+  foreign span data is secret-scanned at write time, the manifest is redacted,
+  and the finished capsule gets the same residual pass, `evidence_digests` and
+  opt-in seal as `nova capture` (unreleased, on `main`). Ingested capsules stay
+  labeled `capture_level: ingested-otlp`.
 - **Remote runners** (`nova capture --runner {docker,kubernetes,slurm,lsf,pbs}`)
   — send the workload to a container, cluster or batch scheduler. They forward a
   **default-deny allowlist** of environment variables (`NOVAFABRIC_*`, plus
