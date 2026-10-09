@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import platform
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -19,7 +18,7 @@ from novafabric.capture.deployment_env import (
     resolve_deployment_environment,
     unconventional_warning,
 )
-from novafabric.capture.env import capture_environment, host_arch
+from novafabric.capture.env import capture_environment, host_info
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
 from novafabric.capture.replay import minimal_replay_policy
 from novafabric.capture.secrets import (
@@ -72,32 +71,7 @@ def _event_stream_refs(capsule_dir: Path) -> dict[str, str]:
 
 
 def _build_host_info() -> dict[str, Any]:
-    arch = host_arch()
-    os_name = platform.system().lower()
-    if os_name not in ("linux", "darwin", "windows"):
-        os_name = "linux"
-    try:
-        cpu_count = os.cpu_count() or 1
-    except Exception:
-        cpu_count = 1
-    memory_bytes = 0
-    try:
-        with open("/proc/meminfo") as f:
-            for line in f:
-                if line.startswith("MemTotal:"):
-                    memory_bytes = int(line.split()[1]) * 1024
-                    break
-    except Exception:
-        pass
-    return {
-        "os": os_name,
-        "arch": arch,
-        "python": platform.python_version(),
-        "cpu_count": cpu_count,
-        "memory_bytes": memory_bytes,
-        "gpu": [],
-        "hostname_redacted": True,
-    }
+    return host_info()
 
 
 @dataclass

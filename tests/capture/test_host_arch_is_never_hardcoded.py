@@ -124,3 +124,57 @@ def test_an_sdk_agent_capsule_records_the_main_capture_paths_arch(
     assert len(manifests) == 1, manifests
     manifest = yaml.safe_load(manifests[0].read_text())
     assert manifest["host"]["arch"] == _build_host_info()["arch"] == "arm64"
+
+
+# --- the rest of the host block ------------------------------------------------
+# Adapter and SDK-agent capsules also wrote `cpu_count: 1` and `memory_bytes: 0`
+# whatever the machine — the same false host evidence as the arch literal.
+
+_MEASURED_HOST_KEYS = ("arch", "cpu_count", "memory_bytes")
+
+
+def _hardcoded_host_literals() -> list[str]:
+    """Literal values for measured host fields in any dict that is a host block."""
+    hits: list[str] = []
+    for path in sorted(_SRC.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Dict):
+                continue
+            keys = {k.value for k in node.keys if isinstance(k, ast.Constant)}
+            if not keys & {"hostname_redacted", "arch"}:
+                continue
+            for key, value in zip(node.keys, node.values):
+                if (
+                    isinstance(key, ast.Constant)
+                    and key.value in _MEASURED_HOST_KEYS
+                    and isinstance(value, ast.Constant)
+                ):
+                    hits.append(
+                        f"{path.relative_to(_SRC)}:{value.lineno}: {key.value}={value.value!r}"
+                    )
+    return hits
+
+
+def test_no_capsule_writer_hardcodes_a_measured_host_field() -> None:
+    hits = _hardcoded_host_literals()
+    assert not hits, (
+        "host blocks must come from novafabric.capture.env.host_info(), not "
+        "literals:\n  " + "\n  ".join(hits)
+    )
+
+
+def test_an_adapter_capsule_records_the_main_capture_paths_host_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    from novafabric.adapters._capsule import begin_capture
+
+    monkeypatch.setattr(os, "cpu_count", lambda: 7)
+    cap = begin_capture(framework="langgraph", run_name="demo", data_dir=tmp_path)
+    cap.finish()
+
+    manifest = yaml.safe_load((cap.cap_dir / "capsule.yaml").read_text())
+    assert manifest["host"] == _build_host_info()
+    assert manifest["host"]["cpu_count"] == 7

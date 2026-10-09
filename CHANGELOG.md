@@ -256,6 +256,12 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **Adapter and SDK-agent capsules recorded `cpu_count: 1` and `memory_bytes: 0`** whatever
+  the machine — the same false host evidence as the hardcoded `arch` fixed above. Every
+  capsule writer now builds its `host` block with one function,
+  `novafabric.capture.env.host_info()`, which the main capture path uses too; the guard in
+  `tests/capture/test_host_arch_is_never_hardcoded.py` fails on a literal for any measured
+  host field.
 - **`nova replay --mode intervention` no longer implies a tool-result substitution was
   measured downstream.** Only the model-calls stream feeds the re-executed workload;
   intervention installs no tool dispatcher, so a `replace_tool_result` (or a

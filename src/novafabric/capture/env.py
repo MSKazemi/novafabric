@@ -113,6 +113,33 @@ def host_arch() -> str:
     return arch_map.get(machine, machine or "unknown")
 
 
+def host_info() -> dict[str, Any]:
+    """The ``capsule.yaml:host`` block, measured — the one builder every capsule
+    writer uses (the main capture path, the framework adapters and the SDK agent).
+
+    Adapter and SDK-agent capsules used to write ``cpu_count: 1`` and
+    ``memory_bytes: 0`` whatever the machine; ``tests/capture/
+    test_host_arch_is_never_hardcoded.py`` now fails on any literal for a measured
+    host field.
+    """
+    os_name = platform.system().lower()
+    if os_name not in ("linux", "darwin", "windows"):
+        os_name = "linux"
+    try:
+        cpu_count = os.cpu_count() or 1
+    except Exception:
+        cpu_count = 1
+    return {
+        "os": os_name,
+        "arch": host_arch(),
+        "python": platform.python_version(),
+        "cpu_count": cpu_count,
+        "memory_bytes": _memory_bytes(),
+        "gpu": [],
+        "hostname_redacted": True,
+    }
+
+
 def _os_name() -> str:
     name = platform.system().lower()
     return name if name in ("linux", "darwin", "windows") else "linux"

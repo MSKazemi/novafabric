@@ -12,7 +12,6 @@ if the framework is missing.
 from __future__ import annotations
 
 import json
-import platform
 import time
 from datetime import datetime, timezone
 from importlib.metadata import version as _pkg_version
@@ -21,7 +20,7 @@ from typing import Any
 
 import yaml
 
-from novafabric.capture.env import capture_environment, host_arch
+from novafabric.capture.env import capture_environment, host_info
 
 # Module-level imports so tests can patch via ``novafabric.adapters.autogen.<name>``.
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
@@ -92,15 +91,7 @@ def _write_capsule(
         "capture_mode": "sdk-decorator",
         "novafabric_version": _pkg_version("novafabric"),
         "working_directory": str(Path.cwd()).replace(str(Path.home()), "~"),
-        "host": {
-            "os": platform.system().lower(),
-            "arch": host_arch(),
-            "python": platform.python_version(),
-            "cpu_count": 1,
-            "memory_bytes": 0,
-            "gpu": [],
-            "hostname_redacted": True,
-        },
+        "host": host_info(),
         "environment_ref": "env.lock",
         "replay_policy_ref": "replay.yaml",
         "redaction_proof_ref": "redaction-proof.json",

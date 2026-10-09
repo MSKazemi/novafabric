@@ -25,7 +25,6 @@ from __future__ import annotations
 import contextvars
 import hashlib
 import json
-import platform
 import time
 from collections.abc import AsyncIterator, Iterator
 from datetime import datetime, timezone
@@ -46,7 +45,7 @@ from novafabric.adapters._streaming import (
 # These are imported at module level so tests can patch them via
 # ``novafabric.adapters.langgraph.<name>``.
 from novafabric.capture import record as _record
-from novafabric.capture.env import capture_environment, host_arch
+from novafabric.capture.env import capture_environment, host_info
 from novafabric.capture.record import _payloads_enabled
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
 from novafabric.capture.secrets import SecretScannerV0
@@ -154,15 +153,7 @@ def _run_capture(
         "capture_mode": "sdk-decorator",
         "novafabric_version": _pkg_version("novafabric"),
         "working_directory": str(Path.cwd()).replace(str(Path.home()), "~"),
-        "host": {
-            "os": platform.system().lower(),
-            "arch": host_arch(),
-            "python": platform.python_version(),
-            "cpu_count": 1,
-            "memory_bytes": 0,
-            "gpu": [],
-            "hostname_redacted": True,
-        },
+        "host": host_info(),
         "environment_ref": "env.lock",
         "replay_policy_ref": "replay.yaml",
         "redaction_proof_ref": "redaction-proof.json",
