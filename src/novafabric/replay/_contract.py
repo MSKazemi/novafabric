@@ -28,7 +28,12 @@ from novafabric.capture.hooks._sdk_streams import (
     OPENAI_CHAT_SURFACE,
     OPENAI_RESPONSES_SURFACE,
 )
-from novafabric.capture.record_roles import is_transport_record
+from novafabric.capture.record_roles import (
+    ROLE_LOGICAL,
+    classify_model_calls,
+    is_transport_record,
+)
+from novafabric.replay._model_errors import is_recorded_model_error
 
 #: Model API surfaces mocked replay serves from the capsule, keyed by replay
 #: queue (``model_queue_key``). Each is served sync and async, with and without
@@ -107,7 +112,7 @@ def records_async_and_streamed_calls(model_calls: list[dict[str, Any]]) -> bool:
     exactly as before ADR-0304. A capsule with no servable record is not legacy:
     any call simply finds its queue empty.
     """
-    servable = [r for r in model_calls if is_replayable_model_call(r)]
+    servable = served_model_records(model_calls)
     return not servable or any(_surface_marker(r) is not None for r in servable)
 
 
@@ -134,20 +139,55 @@ def is_replayable_model_call(record: dict[str, Any]) -> bool:
     return isinstance(choices, list) and len(choices) > 0
 
 
+def is_replayable_model_error(record: dict[str, Any]) -> bool:
+    """A recorded model call that FAILED and holds a queue position (issue #16).
+
+    An intercepted surface, not a transport record, a non-success status and an
+    ``error`` block -- the SDK hook's record of a call that raised. Mocked replay
+    raises the recorded exception at that position (``_model_errors``), or fails
+    closed when it cannot rebuild it. Wire records never carry an ``error``
+    block, so an HTTP attempt the SDK retried is never an error position; whole-
+    capsule classification (:func:`served_model_records`) additionally drops
+    records ADR-0305's legacy fallback identifies as transport.
+    """
+    if is_transport_record(record):
+        return False
+    if model_queue_key(record) is None:
+        return False
+    return is_recorded_model_error(record)
+
+
+def served_model_records(model_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The records that hold a replay queue position, in recorded order.
+
+    Successful records with a response (:func:`is_replayable_model_call`) and
+    failed SDK calls (:func:`is_replayable_model_error`), restricted to records
+    that are *logical* model calls under ADR-0305 -- by marker, or by the legacy
+    fallback for a capsule captured before the markers. A transport record (an
+    HTTP attempt, retries included) is never served, not even an orphaned one
+    that a count promotes.
+    """
+    roles = classify_model_calls(model_calls)
+    return [
+        record
+        for record, role in zip(model_calls, roles)
+        if isinstance(record, dict)
+        and role.role == ROLE_LOGICAL
+        and (is_replayable_model_call(record) or is_replayable_model_error(record))
+    ]
+
+
 def model_queues(model_calls: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    """Per-surface queues of servable records, in recorded order."""
+    """Per-surface queues of served records (responses and errors), in recorded order."""
     queues: dict[str, list[dict[str, Any]]] = {q: [] for q in MODEL_SURFACES}
-    for record in model_calls:
-        if is_replayable_model_call(record):
-            queues[str(model_queue_key(record))].append(record)
+    for record in served_model_records(model_calls):
+        queues[str(model_queue_key(record))].append(record)
     return queues
 
 
 def recorded_provider_order(model_calls: list[dict[str, Any]]) -> list[str]:
-    """The queue of each servable record, in recorded order."""
-    return [
-        str(model_queue_key(r)) for r in model_calls if is_replayable_model_call(r)
-    ]
+    """The queue of each served record, in recorded order."""
+    return [str(model_queue_key(r)) for r in served_model_records(model_calls)]
 
 
 # ── tool calls ───────────────────────────────────────────────────────────────
@@ -361,6 +401,7 @@ class ReplayContractReport:
     model_calls_unmatched: int = 0
     model_calls_live: int = 0
     model_calls_unconsumed: int = 0
+    model_errors_replayed: int = 0
     tool_calls_recorded: int = 0
     tool_calls_available: int = 0
     tool_calls_not_interceptable: int = 0
@@ -404,6 +445,7 @@ class ReplayContractReport:
             "model_calls_recorded": self.model_calls_recorded,
             "model_calls_live": self.model_calls_live,
             "model_calls_unconsumed": self.model_calls_unconsumed,
+            "model_errors_replayed": self.model_errors_replayed,
             "tool_calls_recorded": self.tool_calls_recorded,
             "tool_calls_not_interceptable": self.tool_calls_not_interceptable,
             "tool_calls_unconsumed": self.tool_calls_unconsumed,
@@ -465,6 +507,8 @@ def summarize(
             queue = str(ev.get("queue") or ev.get("provider"))
             served[queue] = served.get(queue, 0) + 1
             report.model_calls_mocked += 1
+            if ev.get("recorded_error") and ev.get("faithful", True):
+                report.model_errors_replayed += 1
             serving_pids.add(ev.get("pid"))
         elif kind == "model_live":
             report.model_calls_live += 1
@@ -491,6 +535,7 @@ def summarize(
                 "order_mismatch",
                 "unsupported_surface",
                 "malformed_recorded_response",
+                "recorded_error_unreconstructable",
             }:
                 if entry.get("kind") != "unsupported_surface" or divergence_policy == "fail":
                     report.model_calls_unmatched += 1

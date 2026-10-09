@@ -250,10 +250,13 @@ def replay_cmd(
 
     if result.model_calls_available is not None:
         # ADR-0300: what was actually served, so "✓" never reads as more.
+        errors = int((result.replay_contract or {}).get("model_errors_replayed") or 0)
         console.print(
             f"  model calls: {result.model_calls_mocked} of "
-            f"{result.model_calls_available} served from the capsule, "
-            f"{result.model_calls_unmatched or 0} unmatched"
+            f"{result.model_calls_available} served from the capsule"
+            + (f" ({errors} raised as the recorded error{'s' if errors != 1 else ''})"
+               if errors else "")
+            + f", {result.model_calls_unmatched or 0} unmatched"
         )
         not_intercepted = (result.tool_calls_recorded or 0) - (
             result.tool_calls_available or 0

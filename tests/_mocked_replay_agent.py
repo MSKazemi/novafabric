@@ -40,6 +40,14 @@ def _transport(request):
     body = CANNED[_served[0]]
     _served[0] += 1
     import httpx
+    if isinstance(body, dict) and "__status__" in body:
+        # A failed HTTP attempt (rate limit, 4xx, 5xx), as the provider sends it.
+        return httpx.Response(body["__status__"], json=body.get("json"),
+                              headers=body.get("headers") or {})
+    if isinstance(body, dict) and body.get("__raise__") == "timeout":
+        raise httpx.ReadTimeout("read timed out", request=request)
+    if isinstance(body, dict) and body.get("__raise__") == "connect":
+        raise httpx.ConnectError("connection refused", request=request)
     if isinstance(body, dict) and "__sse__" in body:
         # A streamed response: server-sent events, as the provider sends them.
         lines = []
@@ -67,6 +75,29 @@ def _async_openai_client():
         return _transport(request)
     return openai.AsyncOpenAI(
         api_key="sk-test", http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+
+
+def _sdk_error_obs(exc):
+    """What an ``except`` block reads off an SDK error (only when the SDK set it)."""
+    out = {}
+    for name in ("status_code", "body", "request_id", "code", "type", "param"):
+        value = getattr(exc, name, None)
+        if value is not None and not callable(value):
+            out[name] = value
+    response = getattr(exc, "response", None)
+    if response is not None:
+        out["retry_after_ms"] = response.headers.get("retry-after-ms")
+        out["response_status"] = response.status_code
+        try:
+            out["response_json"] = response.json()
+        except Exception:
+            out["response_json"] = None
+    request = getattr(exc, "request", None)
+    if request is not None:
+        out["request"] = [request.method, str(request.url)]
+    if out:
+        out["mro"] = [c.__name__ for c in type(exc).__mro__]
+    return out
 
 
 def _side(line):
@@ -291,7 +322,8 @@ async def main():
             try:
                 obs.append(await _run_step(step, session))
             except Exception as exc:
-                obs.append({"op": step["op"], "error": type(exc).__name__, "message": str(exc)})
+                obs.append({"op": step["op"], "error": type(exc).__name__, "message": str(exc),
+                            **_sdk_error_obs(exc)})
                 if not step.get("catch"):
                     OUT.write_text(json.dumps(obs))
                     sys.exit(3)
@@ -302,6 +334,10 @@ asyncio.run(main())
 '''
 
 _FAKE_ANTHROPIC_INIT = """
+from anthropic._exceptions import (
+    APIConnectionError, APIError, APIStatusError, APITimeoutError, AnthropicError,
+    BadRequestError, InternalServerError, OverloadedError, RateLimitError,
+)
 from anthropic.resources.messages import AsyncMessages, Messages
 
 
@@ -335,6 +371,17 @@ def _next_item():
         raise RuntimeError("network reached during replay (fake anthropic)")
     item = json.loads(raw)[_served[0]]
     _served[0] += 1
+    if "__error__" in item:
+        # A canned failure: raised as the SDK would after its own retries.
+        import httpx
+        from anthropic import _exceptions
+        spec = item["__error__"]
+        request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+        response = httpx.Response(spec["status"], json=spec.get("body"),
+                                  headers=spec.get("headers") or {}, request=request)
+        cls = getattr(_exceptions, spec["class"])
+        raise cls(f"Error code: {spec['status']} - {spec.get('body')}",
+                  response=response, body=spec.get("body"))
     return item
 
 
@@ -376,11 +423,62 @@ class AsyncMessages:
 """
 
 
+#: The real SDK's exception hierarchy and constructors (Stainless-generated, the
+#: same shape as ``openai._exceptions``), reduced to what replay rebuilds.
+_FAKE_ANTHROPIC_EXCEPTIONS = """
+class AnthropicError(Exception):
+    pass
+
+
+class APIError(AnthropicError):
+    def __init__(self, message, request, *, body):
+        super().__init__(message)
+        self.request = request
+        self.message = message
+        self.body = body
+
+
+class APIStatusError(APIError):
+    def __init__(self, message, *, response, body):
+        super().__init__(message, response.request, body=body)
+        self.response = response
+        self.status_code = response.status_code
+        self.request_id = response.headers.get("request-id")
+
+
+class APIConnectionError(APIError):
+    def __init__(self, *, message="Connection error.", request):
+        super().__init__(message, request, body=None)
+
+
+class APITimeoutError(APIConnectionError):
+    def __init__(self, request):
+        super().__init__(message="Request timed out.", request=request)
+
+
+class BadRequestError(APIStatusError):
+    status_code = 400
+
+
+class RateLimitError(APIStatusError):
+    status_code = 429
+
+
+class InternalServerError(APIStatusError):
+    pass
+
+
+class OverloadedError(APIStatusError):
+    status_code = 529
+"""
+
+
 def write_fake_anthropic(root: Path) -> Path:
     """Write the fake ``anthropic`` package under ``root``; return ``root``."""
     pkg = root / "anthropic"
     (pkg / "resources").mkdir(parents=True, exist_ok=True)
     (pkg / "__init__.py").write_text(_FAKE_ANTHROPIC_INIT)
+    (pkg / "_exceptions.py").write_text(_FAKE_ANTHROPIC_EXCEPTIONS)
     (pkg / "resources" / "__init__.py").write_text("")
     (pkg / "resources" / "messages.py").write_text(_FAKE_ANTHROPIC_MESSAGES)
     return root

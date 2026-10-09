@@ -107,3 +107,30 @@ class CapsuleNotReplayableError(Exception):
 
     def as_error(self) -> dict[str, str]:
         return {"type": self.error_type, "message": str(self)}
+
+
+class ReplayRecordedErrorUnreconstructableError(ReplayDivergenceError):
+    """A recorded model call failed, and mocked replay cannot raise that failure
+    faithfully: the exception class is not on the per-SDK allow-list, its HTTP
+    status or body was not recorded, or the capsule predates recorded error
+    details. Strict replay refuses the call rather than raise a different error
+    or hand it another call's response.
+
+    ``details`` carries ``provider``, ``call_index``, ``model_call_id``,
+    ``error_type`` and ``reason``.
+    """
+
+    kind = "recorded_error_unreconstructable"
+
+
+class ReplayRecordedModelError(Exception):
+    """Permissive stand-in for a recorded model error replay could not rebuild.
+
+    Raised only under ``--permissive`` after the divergence is recorded: the
+    recorded call failed, so the replayed call fails too, with the recorded type
+    and message -- but not as the SDK's own exception class.
+    """
+
+    def __init__(self, error_type: str, message: str) -> None:
+        super().__init__(f"{error_type}: {message}" if error_type else message)
+        self.error_type = error_type

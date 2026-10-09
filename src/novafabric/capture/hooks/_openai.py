@@ -16,6 +16,7 @@ from novafabric.capture.hooks._otel_genai import (
     build_record_envelope,
     extract_request_attributes,
 )
+from novafabric.capture.hooks._sdk_errors import SDK_ERROR_EXT, describe_sdk_error
 from novafabric.capture.hooks._sdk_streams import (
     API_SURFACE_EXT,
     OPENAI_CHAT_SURFACE,
@@ -423,8 +424,11 @@ class OpenAIHook:
         record["error"] = {
             "type": type(exc).__name__, "message": str(exc), "traceback_ref": None,
         }
-        record.setdefault("extensions", {})[API_SURFACE_EXT] = (
+        extensions = record.setdefault("extensions", {})
+        extensions[API_SURFACE_EXT] = (
             OPENAI_RESPONSES_SURFACE if surface == "responses" else OPENAI_CHAT_SURFACE
         )
+        # Additive: what mocked replay needs to raise the same exception again.
+        extensions[SDK_ERROR_EXT] = describe_sdk_error(exc, "openai")
         stamp_logical_record(record)
         get_current_writer(self._writer).append_model_call(record)

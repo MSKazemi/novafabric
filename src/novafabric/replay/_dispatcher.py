@@ -50,10 +50,18 @@ from novafabric.replay._errors import (
     ReplayOrderMismatchError,
     ReplayProviderMismatchError,
     ReplayQueueExhaustedError,
+    ReplayRecordedErrorUnreconstructableError,
+    ReplayRecordedModelError,
     ReplayRecordedToolError,
     ReplayRecordMalformedError,
     ReplayToolUnmatchedError,
     ReplayUnsupportedSurfaceError,
+)
+from novafabric.replay._model_errors import (
+    UnreconstructableError,
+    is_recorded_model_error,
+    rebuild_sdk_error,
+    recorded_error_type,
 )
 
 #: Exit status of a strict replay whose dispatcher could not be installed: the
@@ -794,7 +802,11 @@ class MockModelDispatcher:
         self, queue: str, *, stream: bool = False, asynchronous: bool = False
     ) -> dict[str, Any]:
         """The next recorded response on ``queue``; ``{}`` once a divergence is
-        tolerated (``warn``). Raises under ``fail``."""
+        tolerated (``warn``). Raises under ``fail``.
+
+        When the recorded call at this position FAILED, this raises the
+        recorded SDK exception instead of returning (see
+        :meth:`_replay_recorded_error`)."""
         provider = QUEUE_PROVIDER[queue]
         surface = MODEL_SURFACES[queue]
         records = self._queues[queue]
@@ -835,6 +847,10 @@ class MockModelDispatcher:
                 global_call_index=position,
             ))
         record = records[idx]
+        if is_recorded_model_error(record):
+            self._replay_recorded_error(
+                queue, idx, record, stream=stream, asynchronous=asynchronous
+            )
         malformed = _malformed_tool_call_refs(record)
         if malformed:
             _report_divergence(self._events, self._policy, ReplayRecordMalformedError(
@@ -857,6 +873,58 @@ class MockModelDispatcher:
             asynchronous=asynchronous,
         )
         return record
+
+    def _replay_recorded_error(
+        self, queue: str, idx: int, record: dict[str, Any], *,
+        stream: bool, asynchronous: bool,
+    ) -> None:
+        """Raise, at this position, the exception the recorded call raised.
+
+        Built with the SDK's own class from the record's
+        ``io.novafabric.sdk_error`` detail (``_model_errors``). When it cannot
+        be rebuilt faithfully the call is refused (``fail``) -- the record is not
+        consumed, as for a malformed response -- or, under ``warn``, a
+        :class:`ReplayRecordedModelError` stand-in with the recorded type and
+        message is raised. Always raises.
+        """
+        provider = QUEUE_PROVIDER[queue]
+        surface = MODEL_SURFACES[queue]
+        error_type = recorded_error_type(record)
+        faithful = True
+        try:
+            exc: BaseException = rebuild_sdk_error(record)
+        except UnreconstructableError as why:
+            _report_divergence(self._events, self._policy, ReplayRecordedErrorUnreconstructableError(
+                f"recorded {surface} call #{idx + 1} failed with "
+                f"{error_type or 'an error'}, which mocked replay cannot raise "
+                f"faithfully: {why}; "
+                + ("raising a stand-in ReplayRecordedModelError"
+                   if self._policy == "warn" else "refusing the call"),
+                provider=provider,
+                call_index=idx,
+                model_call_id=record.get("model_call_id"),
+                error_type=error_type,
+                reason=str(why),
+                surface=surface,
+            ))
+            error = record.get("error")
+            message = str(error.get("message", "")) if isinstance(error, dict) else ""
+            exc = ReplayRecordedModelError(error_type, message)
+            faithful = False
+        self._index[queue] += 1
+        self._global_index += 1
+        self._events.emit(
+            "model_served",
+            provider=provider,
+            queue=queue,
+            call_index=idx,
+            model_call_id=record.get("model_call_id"),
+            stream=stream,
+            asynchronous=asynchronous,
+            recorded_error=error_type or type(exc).__name__,
+            faithful=faithful,
+        )
+        raise exc
 
 
 # ── tool calls ───────────────────────────────────────────────────────────────
