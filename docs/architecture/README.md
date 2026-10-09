@@ -39,10 +39,33 @@ also has a plain Mermaid diagram that diffs cleanly in review.
 ## Interactive explainer
 
 [`explainer.html`](explainer.html) is a single self-contained page: no network,
-no CDN, no build step. It steps through **capture → seal → replay → verify** on
-one example run, with play, pause and step controls and full keyboard support.
-A second section, **Server-side flows**, steps through pages 8 to 11 the same way
-(deep link: `explainer.html#flow-otlp-ingest-3`).
+no CDN, no build step. It has three sections:
+
+1. **How NovaFabric works** — an animated map of the whole system, end to end:
+   the workload and its framework adapters, capture (SDK interception, the
+   transport wire record, secret scanning, the residual pass and
+   `capture-health.json`), Run Capsule assembly, sealing, registry and lineage,
+   replay (including recorded model errors and `intervention`), `nova diff` and
+   its CI exit codes, `nova verify` and the Evidence Bundle, and server mode
+   (`nova serve`, OTLP ingest, `nova server`). Data tokens travel the arrows, the
+   active stage is highlighted, and every step has a caption, the modules it was
+   checked against, its maturity label, and an **on main, unreleased** marker when
+   the behaviour is newer than the last release. A last stage, *Not built yet*,
+   shows planned and future-design work as exactly that. Controls: play, pause,
+   step, scrub, speed (0.5× to 2×), and the keyboard (`Space`, `←` `→`, `Home`
+   `End`, `1`–`9` and `0` for stages, `-` `+` for speed). Deep links:
+   `explainer.html#story-11`, `explainer.html#stage-diff`.
+2. **One run, end to end** — **capture → seal → replay → verify** on one example
+   run, with the capsule's files appearing as they are written
+   (`explainer.html#step-7`).
+3. **Detailed flows** — two pipeline flows (mocked replay and the diff gate) and
+   the four server-side flows of pages 8 to 11, stepped the same way
+   (`explainer.html#flow-diff-gate-6`, `explainer.html#flow-otlp-ingest-3`).
+
+Under `prefers-reduced-motion` nothing moves: tokens rest, labelled, at the end
+of their arrows, and every step is also listed as text. The page follows the
+system light or dark theme (or a toggle) and fits a 360 px phone screen; the
+diagrams scroll sideways inside their own frame.
 GitHub shows HTML source rather than rendering it, so to use the explainer,
 download the file or clone the repository and open it in any browser.
 
@@ -61,9 +84,13 @@ download the file or clone the repository and open it in any browser.
 | [`serve-request-path.svg`](../assets/architecture/serve-request-path.svg) | serve-request-path |
 | [`encryption-at-rest.svg`](../assets/architecture/encryption-at-rest.svg) | encryption-at-rest |
 | [`server-data-plane.svg`](../assets/architecture/server-data-plane.svg) | server-data-plane |
+| [`how-it-works.svg`](../assets/architecture/how-it-works.svg) | the explainer's system map ([README](README.md) › Interactive explainer) |
+| [`mocked-replay.svg`](../assets/architecture/mocked-replay.svg) | the explainer; zooms into [replay-modes](replay-modes.md) |
+| [`diff-gate.svg`](../assets/architecture/diff-gate.svg) | the explainer; zooms into [pipeline](pipeline.md) § Diff |
 
-The last four are generated, together with the explainer's flow data, by
-`python scripts/gen_architecture_flows.py`. Edit that script, not the SVGs;
+The last seven are generated, together with the explainer's flow and story data,
+by `python scripts/gen_architecture_flows.py`. Edit that script, not the SVGs;
 `tests/docs/test_architecture_diagrams.py` fails when they drift. Each step lights
 its boxes and arrows in turn and every step is also listed as text under the
-diagram, so nothing depends on watching the animation.
+diagram, so nothing depends on watching the animation. A dagger (†) on a step
+marks behaviour that is on main but not in a release yet.

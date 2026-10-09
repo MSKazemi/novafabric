@@ -88,6 +88,7 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Added
 
+- **Architecture explainer: an animated "How NovaFabric works" system map** (22 steps, every stage from the workload to server mode, maturity-labelled, unreleased behaviour marked) plus generated `how-it-works.svg`, `mocked-replay.svg` and `diff-gate.svg` (`docs/architecture/explainer.html`).
 - **`nova seal init` — explicit first-run sealing with a local, self-asserted identity
   (experimental, ADR-0301).** One offline command creates a dedicated ECDSA P-256 signing key,
   a local seal CA and a CA-issued certificate under `$NOVAFABRIC_HOME/keys/novaseal/` (private
