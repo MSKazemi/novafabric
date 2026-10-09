@@ -374,7 +374,27 @@ def _run_significance(
         raise typer.Exit(code=code)
 
 
+def _resolve_output_format(
+    ctx: typer.Context, output_format: DiffOutputFormat, json_flag: bool
+) -> DiffOutputFormat:
+    """``--json`` is exactly ``--output-format json``; asking for JSON and another
+    explicitly given format at once is a usage error (exit 2, ADR-0303)."""
+    if not json_flag:
+        return output_format
+    # By name: typer vendors its own click, whose ParameterSource is not click's.
+    source = ctx.get_parameter_source("output_format")
+    explicit = source is not None and source.name != "DEFAULT"
+    if explicit and output_format != DiffOutputFormat.json:
+        raise typer.BadParameter(
+            f"--json is shorthand for --output-format json and conflicts with "
+            f"--output-format {output_format.value}",
+            param_hint="'--json'",
+        )
+    return DiffOutputFormat.json
+
+
 def diff_cmd(
+    ctx: typer.Context,
     ref_a: Annotated[str | None, typer.Argument(help="name@version, capsule, or run id")] = None,
     ref_b: Annotated[str | None, typer.Argument(help="name@version, capsule, or run id")] = None,
     output_format: Annotated[
@@ -383,7 +403,8 @@ def diff_cmd(
             "--output-format",
             help=(
                 "Output format: text, json or github-annotation. Applies to capsule "
-                "and name@version asset diffs alike."
+                "and name@version asset diffs alike; --media and --significance take "
+                "text or json."
             ),
         )
     ] = DiffOutputFormat.text,
@@ -429,7 +450,14 @@ def diff_cmd(
     p1: Annotated[float, typer.Option(help="Regression-threshold pass-rate H1.")] = DEFAULT_P1,
     alpha: Annotated[float, typer.Option(help="False-positive budget.")] = DEFAULT_ALPHA,
     beta: Annotated[float, typer.Option(help="False-negative budget.")] = DEFAULT_BETA,
-    sig_json: Annotated[bool, typer.Option("--json", help="Emit the diff record as JSON.")] = False,
+    json_flag: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help="Same as --output-format json, in every mode (capsule, asset, --media, "
+            "--significance).",
+        ),
+    ] = False,
     media: Annotated[
         bool,
         typer.Option("--media", help="Compare the two capsules' media parts (NF-170)."),
@@ -525,6 +553,14 @@ def diff_cmd(
       3  --significance found a significant regression (SPRT accept_h1)
     --media reports and never gates: 0 whatever it finds, 2 if it cannot run.
     """
+    output_format = _resolve_output_format(ctx, output_format, json_flag)
+    if (media or significance) and output_format == DiffOutputFormat.github_annotation:
+        raise typer.BadParameter(
+            "--output-format github-annotation is not supported with --media or "
+            "--significance (use text or json)",
+            param_hint="'--output-format'",
+        )
+    as_json = output_format == DiffOutputFormat.json
     if environment is not None:
         environment = _validate_environment_filter(environment)
         if media or significance:
@@ -540,12 +576,12 @@ def diff_cmd(
 
     # NF-170 media diff — capsule paths only, and a distinct output shape.
     if media:
-        _run_media_diff(ref_a, ref_b, perceptual, hamming_threshold, sig_json)
+        _run_media_diff(ref_a, ref_b, perceptual, hamming_threshold, as_json)
         return
 
     # NF-007 statistical regression diff — a distinct mode with no positional refs.
     if significance:
-        _run_significance(baseline, candidate, metric, p0, p1, alpha, beta, sig_json)
+        _run_significance(baseline, candidate, metric, p0, p1, alpha, beta, as_json)
         return
     if ref_a is None or ref_b is None:
         raise typer.BadParameter("provide two refs to compare, or use --significance")

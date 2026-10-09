@@ -72,6 +72,13 @@ sh examples/blackbox_demo/run_demo.sh
 SKIP_VERIFY=1 sh examples/blackbox_demo/run_demo.sh
 ```
 
+The script writes capsules where `nova capture` does by default
+(`$NOVAFABRIC_CAPSULE_DIR`, else `$NOVAFABRIC_HOME/capsules`, else
+`~/.novafabric/capsules`), passing that directory to `nova capture --output-dir`
+and reading the capsule path from the printed `run_id=`. Other knobs:
+`PYTHON` (interpreter, default `python3`), `DEMO_PORT` (mock server port,
+default 9099), `NOVA` (the `nova` executable).
+
 The script:
 1. Starts `mock_llm_server.py` in the background (killed on exit)
 2. Captures the bad run and validates the capsule
@@ -96,14 +103,17 @@ export OPENAI_API_KEY=sk-demo-no-key-needed
 export OPENAI_BASE_URL=http://127.0.0.1:9099
 
 nova capture -- python examples/blackbox_demo/agent.py --mode bad
-BAD_RUN=.novafabric/runs/<ULID-from-output>
+# prints: ✓ Capsule written: <capsule dir>/<run_id>  (run_id=<run_id>)
+# <capsule dir> is $NOVAFABRIC_CAPSULE_DIR if set, else $NOVAFABRIC_HOME/capsules,
+# else ~/.novafabric/capsules
+BAD_RUN=~/.novafabric/capsules/<run_id-from-output>
 
 nova validate $BAD_RUN
 nova scan-secrets $BAD_RUN
 nova replay $BAD_RUN --mode forensic
 
 nova capture -- python examples/blackbox_demo/agent.py --mode fixed
-FIXED_RUN=.novafabric/runs/<ULID-from-output>
+FIXED_RUN=~/.novafabric/capsules/<run_id-from-output>
 
 nova diff $BAD_RUN $FIXED_RUN
 nova lineage provenance $(basename $BAD_RUN)
@@ -119,6 +129,7 @@ nova verify $BAD_RUN      # needs NovaSeal config + internet
 | `agent.py` | Demo agent — reads config, calls mock model, writes `outputs/decision.json` |
 | `mock_llm_server.py` | Fake OpenAI-compatible server on `http://127.0.0.1:9099` |
 | `run_demo.sh` | Automated end-to-end script (all 8 steps, exits 0) |
+| `capsule_path.sh` | Helper `run_demo.sh` sources: capsule path from `nova capture` output |
 | `fixtures/service.yaml` | Fake service config (no real values) |
 | `fixtures/prompt.txt` | System prompt for the agent |
 | `fixtures/fake_api_key.txt` | Deliberately fake API key — triggers redaction scanner |

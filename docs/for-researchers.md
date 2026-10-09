@@ -63,7 +63,8 @@ $ nova list
 installed** — only `sha256sum` and an `ed25519` verifier:
 
 ```console
-$ nova export-evidence <run-id>
+$ nova export-evidence ~/.novafabric/capsules/<run-id> \
+    --key ~/.novafabric/keys/signing_key.pem --output evidence.zip
 ```
 
 This property is deliberate. Evidence that can be checked only by the tool that produced it

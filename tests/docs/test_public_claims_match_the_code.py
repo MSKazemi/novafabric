@@ -48,6 +48,10 @@ CLAIM_SURFACES: tuple[str, ...] = (
     "docs/tutorials/novafabric-vs-langfuse.md",
     "docs/for-researchers.md",
     "docs/architecture/replay-modes.md",
+    "docs/architecture/sealing-and-verification.md",
+    "docs/tutorials/prove-a-run-to-an-auditor.md",
+    "docs/tutorials/why-novafabric.md",
+    "docs/user-guide.md",
     "examples/capsules/README.md",
     ".github/actions/capture/action.yml",
     "integrations/claude-plugin/README.md",
@@ -73,6 +77,12 @@ BANNED: dict[str, re.Pattern[str]] = {
     "unscoped flight-simulator replay": re.compile(r"flight\s+simulator|re-fl(?:y|ies)\s+the\s+route", re.I),
     "a redaction proof presented as intact evidence": re.compile(r"redaction\s+proof\s+intact", re.I),
     "deterministic re-execution": re.compile(r"re-?execut\w*\s+deterministically", re.I),
+    "a secret-scan record presented as proof": re.compile(
+        r"proof\s+that\s+(?:secret\s+)?scann?ing\s+ran", re.I
+    ),
+    "MCP tool serving stated without its release": re.compile(
+        r"only\s+MCP\s+tool\s+calls\s+are\s+substituted", re.I
+    ),
 }
 
 
@@ -102,6 +112,12 @@ def test_the_banned_patterns_match_the_phrasings_they_exist_to_catch() -> None:
         "unscoped flight-simulator replay": "NovaFabric is a flight simulator - it re-flies the route.",
         "a redaction proof presented as intact evidence": "# schema-valid, redaction proof intact",
         "deterministic re-execution": "the pipeline re-executes deterministically, serving",
+        "a secret-scan record presented as proof": (
+            "redaction-proof.json  ← proof that secret scanning ran and what it removed"
+        ),
+        "MCP tool serving stated without its release": (
+            "**Only MCP tool calls are substituted:** every other tool runs live"
+        ),
     }
     assert set(shipped) == set(BANNED)
     for label, phrase in shipped.items():

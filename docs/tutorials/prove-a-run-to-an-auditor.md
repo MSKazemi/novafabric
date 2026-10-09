@@ -73,7 +73,7 @@ That directory is the whole artifact:
   model-calls.jsonl     ← each captured model call, OTel GenAI semconv
   tool-calls.jsonl      ← tool calls seen by the MCP hook or a framework adapter
   env.lock              ← the exact environment: packages, versions, platform
-  redaction-proof.json  ← proof that secret scanning ran and what it removed
+  redaction-proof.json  ← a secret-scan record: what the scan found and redacted
   lineage.jsonl         ← what this run consumed and produced
   inputs/ outputs/      ← the actual data in and out
 ```
@@ -180,13 +180,18 @@ be touched.
 
 `mocked` goes further — it **re-runs the command** with the recorded model responses
 served from the capsule, so no live model call is made and the original model need
-not exist any more. Two limits matter for this question. **Only MCP tool calls
-are substituted:** every other tool runs live, against today's systems (the replay
-reports the network connections it made). And only the supported OpenAI and
-Anthropic surfaces are served from the capsule — see the
-[support matrix](../architecture/replay-modes.md#support-matrix). So `mocked`
-answers "given the same model replies, does the code take the same path?" — only
-as far as its tools behave as they did in September.
+not exist any more. Two limits matter for this question. **Tools run live**,
+against today's systems: in **v0.104.0**, the current PyPI release, every tool call
+runs live. Serving recorded MCP `call_tool` results from the capsule, and reporting
+the network connections the replay made, are **unreleased** (on `main`, for the
+next release; [ADR-0300](../architecture/replay-modes.md#the-mocked-replay-contract-adr-0300-adr-0304))
+— and even then, every tool that is not an MCP call runs live. And only the
+supported OpenAI and Anthropic model surfaces are served from the capsule (in
+v0.104.0: synchronous, non-streaming OpenAI chat completions and Anthropic
+messages) — see the [release scope](../architecture/replay-modes.md) and
+[support matrix](../architecture/replay-modes.md#support-matrix).
+So `mocked` answers "given the same model replies, does the code take the same
+path?" — only as far as its tools behave as they did in September.
 
 To show what changed between two executions, capture the same input again and diff
 the two capsules:
@@ -206,9 +211,11 @@ nova export-evidence ~/.novafabric/capsules/01KZ9VZPFQB95A63AAMD2TC7XD \
   --output incident-4471-evidence.zip --key ~/.novafabric/keys/signing_key.pem
 ```
 
-An Evidence Bundle: a ZIP with the capsule, its seal, a manifest of file hashes and
-an in-toto DSSE statement, signed with the Ed25519 key `nova init` created. Hand over
-the file.
+An Evidence Bundle: a ZIP with a copy of the capsule (its `.seal/` included), its
+lineage edges, the JSON schemas, in-toto DSSE attestations signed with the Ed25519
+key `nova init` created, and a `manifest.json` with a SHA-256 for every file plus
+the verification recipe ([full list](../architecture/sealing-and-verification.md#what-is-in-the-bundle)).
+Hand over the file.
 
 ---
 

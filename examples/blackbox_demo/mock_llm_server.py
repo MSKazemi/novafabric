@@ -1,7 +1,7 @@
 """Mock OpenAI-compatible chat completions server for the blackbox_demo.
 
-Listens on http://127.0.0.1:9099 and serves canned responses for
-POST /v1/chat/completions.  No real API key, no network calls.
+Listens on http://127.0.0.1:9099 (override with DEMO_PORT) and serves canned
+responses for POST /v1/chat/completions.  No real API key, no network calls.
 
 Mode selection: the client sets X-Demo-Mode: bad|fixed in the request
 header.  agent.py passes this via openai.OpenAI(default_headers=...).
@@ -11,6 +11,7 @@ Graceful shutdown: responds to SIGTERM and SIGINT.
 from __future__ import annotations
 
 import json
+import os
 import signal
 import sys
 import time
@@ -19,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
 HOST = "127.0.0.1"
-PORT = 9099
+PORT = int(os.environ.get("DEMO_PORT", "9099"))
 
 BAD_CONTENT = json.dumps({
     "action": "disable_rate_limiting",

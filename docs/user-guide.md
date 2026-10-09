@@ -1052,9 +1052,9 @@ deliberate, recorded decision, never a silent one.
 ### nova export-evidence
 
 Build a signed **Evidence Bundle** ZIP from a capsule. The bundle is a
-self-contained, verifiable archive: it embeds the capsule, the lineage
-subgraph, in-toto attestation statements, ed25519 signatures, and all JSON
-schemas. A reviewer can verify the bundle with nothing but `sha256sum` and an
+self-contained, verifiable archive: a copy of the capsule, its lineage edges, the JSON schemas, Ed25519-signed in-toto DSSE attestations, and a `manifest.json` with a SHA-256 for every file plus the verification recipe
+([full list](architecture/sealing-and-verification.md#what-is-in-the-bundle)).
+A reviewer can verify the bundle with nothing but `sha256sum` and an
 ed25519 verifier — **no NovaFabric runtime required.** This is the primitive
 that makes a capsule portable audit evidence you own.
 

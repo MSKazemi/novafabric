@@ -119,7 +119,7 @@ not a tree over the files of one capsule.
   is experimental.
 - `.seal/log-entry.json` records `leaf_index`, `leaf_hash`, `root_hash`,
   `tree_size` and `entry` for this capsule. New seals also carry the Merkle
-  inclusion proof in this file, and the entry is bound to the signed capsule.
+  inclusion proof in this file, and the entry is bound to the sealed capsule.
 - `nova seal log verify` checks the log, and `--consistency N` checks a
   consistency proof between tree sizes.
 
@@ -197,10 +197,29 @@ these live in `cli/seal_propose.py`.
 4. **Sign attestations.** It writes in-toto Statement v1 envelopes
    (`attestations/run.intoto.json`, `redaction.intoto.json`,
    `lineage.intoto.json`), signed with Ed25519 (`evidence/intoto.py`), each with
-   a matching signature and certificate. The run statement's subject is the
+   a matching signature and public key. The run statement's subject is the
    capsule Merkle root.
 5. **Write `manifest.json`** (`schemas/evidence-bundle.schema.json`). It carries
    a SHA-256 for every artifact and a plain-text verification recipe.
+
+### What is in the bundle
+
+This is the one authoritative list; other pages summarise it and link here.
+`tests/docs/test_evidence_bundle_contents.py` builds a real bundle and checks the list
+against the ZIP.
+
+| Entry | What it is |
+|---|---|
+| `run-capsule/` | A copy of the whole capsule directory: `capsule.yaml`, the record streams, `env.lock`, `redaction-proof.json` (the secret-scan record), `inputs/`, `outputs/` and, when the capsule was sealed at capture, `.seal/` |
+| `lineage-subgraph/edges.jsonl` | The capsule's lineage edges (empty when it recorded none) |
+| `schemas/` | The JSON Schemas shipped with the exporting `novafabric` version |
+| `attestations/` | Ed25519-signed in-toto Statement v1 DSSE envelopes: `run` (subject: the capsule Merkle root), `redaction` (subject: the redaction proof's chain hash), `lineage`, and `energy` when the capsule has `energy-receipts.jsonl` (experimental, ADR-0093) |
+| `signatures/` | Each envelope's raw signature (`.sig`) and the signer's public key (`.cert`, PEM) |
+| `manifest.json` | SHA-256 and size of every other file, the attestation and signature index, `subject.capsule_hash`, the verification recipe and `manifest_hash`; with `--with-custody`, the chain-of-custody blocks (experimental, ADR-0095) |
+| `README.md` | The verification recipe in plain text |
+| `manifest.dsse.tsr` | Only with `--timestamp`: an RFC 3161 token over `attestations/run.intoto.json` |
+
+`--dsse` writes `<bundle>.dsse.json` **next to** the ZIP, not inside it.
 
 The recipe needs only a SHA-256 tool and an Ed25519 verifier:
 

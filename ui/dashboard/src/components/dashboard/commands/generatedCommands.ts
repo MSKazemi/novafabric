@@ -2925,7 +2925,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "output-format",
         "label": "--output-format",
         "type": "text",
-        "hint": "Output format: text, json or github-annotation. Applies to capsule and name@version asset diffs alike.",
+        "hint": "Output format: text, json or github-annotation. Applies to capsule and name@version asset diffs alike; --media and --significance take text or json.",
         "flag": "--output-format",
         "defaultValue": "DiffOutputFormat.text"
       },
@@ -3015,7 +3015,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "json",
         "label": "--json",
         "type": "toggle",
-        "hint": "Emit the diff record as JSON.",
+        "hint": "Same as --output-format json, in every mode (capsule, asset, --media, --significance).",
         "flag": "--json"
       },
       {
@@ -3051,7 +3051,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "assert-same-shape",
         "label": "--assert-same-shape",
         "type": "toggle",
-        "hint": "Experimental (ADR-0124): implies --graph-shape; exit 1 if the agent-graph shapes differ, 2 if either graph is unavailable.",
+        "hint": "Experimental (ADR-0124): implies --graph-shape; exit 1 if the agent-graph shapes differ, 2 if either graph is unavailable or its reconstruction skipped a malformed source line.",
         "flag": "--assert-same-shape"
       }
     ],

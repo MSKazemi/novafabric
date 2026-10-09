@@ -255,8 +255,8 @@ nova export-evidence capsules/01KRB4F7… --output bundle.zip --key ed25519.pem
 > `--output`/`-o` and `--key` (a PEM-encoded ed25519 private key) are both
 > **required** — the command exits non-zero without them.
 
-This produces a signed, self-contained ZIP that embeds the capsule, a lineage
-subgraph, in-toto DSSE attestations, ed25519 signatures, and vendored JSON schemas.
+This produces a signed, self-contained ZIP: a copy of the capsule, its lineage edges, the JSON schemas, Ed25519-signed in-toto DSSE attestations, and a `manifest.json` with a SHA-256 for every file plus the verification recipe
+([full list](../architecture/sealing-and-verification.md#what-is-in-the-bundle)).
 The key property: it is verifiable with only `sha256sum` plus an ed25519 verifier —
 **no NovaFabric runtime required** — so an auditor can check the signature and read the
 exact chain of events entirely offline.

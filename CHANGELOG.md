@@ -308,6 +308,33 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **`nova diff --json` printed the text report for capsule and `name@version` diffs.**
+  `--help` listed `--json` ("Emit the diff record as JSON") but only `--media` and
+  `--significance` read it, and those two modes ignored `--output-format json`. `--json` is now
+  exactly `--output-format json` in every mode. `--json` with an explicit `--output-format text`
+  or `github-annotation` is a usage error (exit `2`, ADR-0303), and so is `--output-format
+  github-annotation` with `--media` or `--significance`, which print text or JSON only.
+- **The blackbox demo (`examples/blackbox_demo/run_demo.sh`) failed at step 1 with "Could not
+  parse capsule path".** It searched `nova capture` output for `.novafabric/runs/<id>`, a path
+  the CLI no longer writes, and the README walkthrough used the same path. The script now passes
+  `--output-dir` explicitly and reads the capsule path from the printed `run_id=`. It also takes
+  `PYTHON` (default `python3`) and `DEMO_PORT`, and waits for the mock server to accept
+  connections instead of sleeping one second. `tests/test_example_blackbox_demo.py` runs the
+  parsing against real `nova capture` output and runs the whole demo end to end.
+- **The auditor tutorial (`docs/tutorials/prove-a-run-to-an-auditor.md`) stated unreleased
+  replay behaviour as released.** It said "only MCP tool calls are substituted" in `mocked`
+  replay. In v0.104.0, the current PyPI release, every tool runs live; serving recorded MCP
+  results is on `main` only. The page now says so, the same way the replay-modes "Release scope"
+  note does. It also called `redaction-proof.json` "proof that secret scanning ran"; it is a
+  secret-scan record.
+- **The Evidence Bundle's contents were described three different ways**, and `nova
+  export-evidence --help` named an `event_log.jsonl` that no bundle has ever contained. The one
+  authoritative list is now the "What is in the bundle" table in
+  `docs/architecture/sealing-and-verification.md`, checked against a real bundle by
+  `tests/docs/test_evidence_bundle_contents.py`. README, getting started, concepts, user guide,
+  CLI reference, `--help` and two tutorials summarise it in the same terms and link to it. The
+  `--help` examples and `docs/for-researchers.md` now pass the `--key` and `--output` the command
+  requires.
 - **`env.lock` named the wrong NovaFabric version, and macOS/Windows hosts recorded
   `memory_bytes: 0`.** `captured_by` was the literal `novafabric/0.2.0` whatever version wrote
   the lock; it is now `novafabric/<installed version>`. `host.memory_bytes` was read only from

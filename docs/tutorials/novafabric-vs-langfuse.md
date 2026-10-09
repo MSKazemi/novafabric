@@ -175,7 +175,7 @@ nova lineage blast-radius slurm-logs/job-42819-oom@v1
 
 ```bash
 nova export-evidence capsules/01KR9Q2AD… --output bundle.zip --key ed25519.pem
-# → signed ZIP with ed25519 signature + full event trace
+# → signed ZIP: the capsule, its lineage, signed in-toto attestations, a hash manifest
 ```
 
 (`--output` and `--key` are both required flags — omitting either exits non-zero.)

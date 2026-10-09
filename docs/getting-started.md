@@ -468,9 +468,10 @@ points at the Ed25519 private key `nova init` already generated for you in
 Step 1. If you skipped `nova init`, generate one with
 `python -m novafabric.evidence.signing` or any ed25519 tool.
 
-An Evidence Bundle is a signed, self-contained ZIP that embeds the capsule, a
-lineage subgraph, in-toto DSSE attestations, **ed25519** signatures, and the
-JSON schemas it validates against. Its defining property is that it is verifiable
+An Evidence Bundle is a signed, self-contained ZIP: a copy of the capsule, its
+lineage edges, the JSON schemas, **Ed25519**-signed in-toto DSSE attestations, and
+a `manifest.json` with a SHA-256 for every file plus the verification recipe
+([full list](architecture/sealing-and-verification.md#what-is-in-the-bundle)). Its defining property is that it is verifiable
 with **only `sha256sum` plus an ed25519 verifier — no NovaFabric runtime
 required**, so an auditor can check it offline, air-gapped, years later.
 

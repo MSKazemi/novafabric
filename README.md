@@ -354,9 +354,11 @@ daemon; all are additive and never required for local-mode use.
 
 ### 5. Evidence Bundle (signed audit export, v0.4)
 
-A signed, self-contained ZIP built by `nova export-evidence`, embedding the capsule,
-a lineage subgraph, [in-toto](https://in-toto.io/) DSSE attestations, ed25519
-signatures, and vendored JSON schemas. It is verifiable with only `sha256sum` plus an
+A signed, self-contained ZIP built by `nova export-evidence`: a copy of the capsule,
+its lineage edges, the JSON schemas, Ed25519-signed [in-toto](https://in-toto.io/)
+DSSE attestations, and a `manifest.json` with a SHA-256 for every file plus the
+verification recipe ([full list](docs/architecture/sealing-and-verification.md#what-is-in-the-bundle)).
+It is verifiable with only `sha256sum` plus an
 ed25519 verifier — **no NovaFabric runtime required** — which is the compliance
 primitive for regulated industries.
 

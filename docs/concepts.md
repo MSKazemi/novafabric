@@ -914,11 +914,13 @@ block on a regression against a prior result.
 An **Evidence Bundle** is the compliance primitive: a signed, self-contained ZIP
 built by `nova export-evidence` that embeds
 
-- the Run Capsule,
-- a lineage subgraph,
-- in-toto DSSE attestations,
-- ed25519 signatures, and
-- vendored JSON schemas.
+- a copy of the Run Capsule,
+- its lineage edges,
+- the JSON schemas,
+- Ed25519-signed in-toto DSSE attestations, and
+- a `manifest.json` with a SHA-256 for every file, plus the verification recipe
+
+([full list](architecture/sealing-and-verification.md#what-is-in-the-bundle)).
 
 Its defining property is **offline verifiability**: a recipient can verify it
 with only `sha256sum` plus an ed25519 verifier — **no NovaFabric runtime

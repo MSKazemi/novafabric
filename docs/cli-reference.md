@@ -1210,8 +1210,9 @@ as [`nova replay`](#nova-replay-capsule).
 
 ```bash
 nova diff 01HXAY7M5JZ8R7K4P9DPBYK2WX 01HYBZ8N6KA9S8L5Q0EQCZL3XY
-nova diff .novafabric/runs/01HX.../ .novafabric/runs/01HY.../
+nova diff ~/.novafabric/capsules/01HX.../ ~/.novafabric/capsules/01HY.../
 nova diff cap-a/ cap-b/ --output-format json
+nova diff cap-a/ cap-b/ --json            # identical to --output-format json
 nova diff cap-a/ cap-b/ --output-format github-annotation
 nova diff cap-a/ cap-b/ --assert-no-regressions
 nova diff --group-by variant runs/arm-a/ runs/arm-b/
@@ -1243,6 +1244,7 @@ $ echo $?
 
 Options:
 - `--output-format {text,json,github-annotation}` — output format (default: `text`). Applies to capsule and `name@version` asset diffs alike. Tab-completion available via `nova --install-completion`.
+- `--json` — exactly `--output-format json`, in every mode (capsule, `name@version`, `--media`, `--significance`). Combined with an explicit `--output-format text` or `github-annotation` it is a usage error (exit `2`). `--media` and `--significance` take `text` or `json` only; `--output-format github-annotation` with either is a usage error.
 - `--assert-no-regressions` — exit 1 if the comparison finds any difference (a changed, added or removed entry in any section); the CI gate. See the exit codes below
 - `--group-by variant` — **experimental** ([ADR-0116](./decisions.md)). Group the two capsules by their **recorded** A/B-variant attribution — the `(experiment_id, variant_id)` of the optional `variant` block — and label the diff as cross-arm (different groups) or within-arm (same group). A capsule without a `variant` block groups under `(no variant)`. Read-only over recorded facts: this never assigns variants and never mutates a capsule. Capsule paths only; `text`/`json` output only (`json` wraps the report in `{variant_groups, cross_arm, diff}`).
 - `--group-by environment` — **experimental** ([ADR-0126](./decisions.md) P2). Group the two capsules by their **recorded** `deployment_environment` (the typed top-level field set by `nova capture --environment` / `NOVAFABRIC_ENVIRONMENT`) and label the diff cross-environment or within-environment. A capsule with no value — or one violating the `^[A-Za-z0-9._:-]{1,64}$` rule — groups under `(no environment)`; nothing is inferred. `json` wraps the report in `{environment_groups, cross_environment, diff}`. Same restrictions as `--group-by variant`.
@@ -3196,7 +3198,8 @@ Exit codes: `0` (ok, including an idempotent replay), `1` (rejection), `2` (usag
 
 Build a signed Evidence Bundle ZIP per [ADR-0011](./decisions.md). Signs with a
 local ed25519 key; optionally publishes the DSSE envelope to a Rekor transparency log
-when `--sigstore` and `NOVA_REKOR_URL` are both set.
+when `--sigstore` and `NOVA_REKOR_URL` are both set. The ZIP holds
+a copy of the capsule, its lineage edges, the JSON schemas, Ed25519-signed in-toto DSSE attestations, and a `manifest.json` with a SHA-256 for every file plus the verification recipe ([full list](architecture/sealing-and-verification.md#what-is-in-the-bundle)).
 
 ```bash
 nova export-evidence <capsule> --key ~/.novafabric/keys/ed25519.pem --output evidence.zip
@@ -5960,7 +5963,7 @@ Options:
 - `--media` — compare media parts instead of the usual capsule fields
 - `--perceptual` — additionally compare `changed` pairs by pHash (**opt-in**; exact remains the default)
 - `--hamming N` — near-duplicate distance for `--perceptual`, default `10` of 64 bits
-- `--json` — emit the media diff as JSON
+- `--json` (or `--output-format json`) — emit the media diff as JSON
 
 ⚠ **`changed` needs an identity that content cannot supply.** Content hashes alone give only
 `identical` / `added` / `removed` — a changed part hashes differently, so it looks like a
@@ -5997,6 +6000,8 @@ nova diff --significance \
     --baseline base/scores.jsonl --candidate cand/scores.jsonl \
     --metric task_pass [--p0 0.9 --p1 0.7 --alpha 0.05 --beta 0.05] [--json]
 ```
+
+`--json` and `--output-format json` are the same switch here as everywhere in `nova diff`.
 
 Exit codes: `0` = `accept_h0`/`continue` (no block), **`3` = `accept_h1`** (significant regression — gate
 CI on this), `2` = usage error (unknown metric, non-boolean metric, or invalid SPRT parameters).

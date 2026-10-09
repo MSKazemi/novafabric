@@ -288,15 +288,18 @@ def export_evidence_cmd(
 ) -> None:
     """Build a signed Evidence Bundle ZIP from a capsule.
 
-    Packages capsule.yaml, event_log.jsonl, and lineage data into a
-    tamper-evident ZIP signed with a local Ed25519 key.
+    The ZIP holds a copy of the whole capsule (run-capsule/), its lineage
+    edges, the JSON schemas, in-toto DSSE attestations signed with a local
+    Ed25519 key, and a manifest.json with a SHA-256 for every file plus the
+    verification recipe (full list: docs/architecture/sealing-and-verification.md).
 
     Scope: single capsule.
 
     \b
     Examples:
-      nova export-evidence path/to/my-capsule/
-      nova export-evidence path/to/my-capsule/ --output bundle.zip
+      # --key is the Ed25519 key `nova init` wrote; --output is required
+      nova export-evidence path/to/my-capsule/ --key ~/.novafabric/keys/signing_key.pem \\
+          --output bundle.zip
     """
     if key is None:
         console.print(
