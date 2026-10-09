@@ -1023,7 +1023,7 @@ STORY = Flow(
             "only inside <code>nova capture</code>), and its <code>command</code> is a label "
             "such as <code>@langgraph:demo</code>, so mocked replay refuses it up front.</p>",
             "adapters/_capsule.py:AdapterCapture · adapters/langgraph.py · sdk/agent.py:agent",
-            "experimental", "adapt", "cap", "graph = wrap_langgraph(graph)", True),
+            "works today", "adapt", "cap", "graph = wrap_langgraph(graph)", True),
         _ss("capture", "Intercept SDK calls", ("wl", "hooks"), ("wl_hooks",),
             ("messages.create",),
             "In the child, install_all patches the OpenAI and Anthropic SDKs: sync, async, "
