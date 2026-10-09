@@ -53,7 +53,7 @@ These files appear only in some runs:
 | Path | When |
 |---|---|
 | `network_events.jsonl`, `file_events.jsonl`, `human_approvals.jsonl` | When the event stream has at least one record (`capture/event_recorder.py`) |
-| `capture-health.json` | When the recorder had to drop events. Its absence means nothing was dropped up to the residual pass. Written before that pass, so it is scanned and listed in `evidence_digests`; an event dropped after the digest map was computed cannot be added without breaking the seal, so capture logs a warning for it instead. |
+| `capture-health.json` | When the recorder had to drop events. Its absence means nothing was dropped up to the residual pass. Written before that pass (unreleased, on `main`; v0.104.0 writes it after sealing, unbound), so it is scanned and listed in `evidence_digests`; an event dropped after the digest map was computed cannot be added without breaking the seal, so capture logs a warning for it instead. |
 | `c2pa-manifest.json` | `nova capture --mark-provenance` |
 | `otel-genai-spans.json` | `nova capture --emit-otel-genai` |
 
@@ -89,7 +89,8 @@ counts logical model calls, not records (see below).
 
 ### The `host` block
 
-`capsule.yaml:host` is built by one function, `capture/env.py:host_info`, for every
+**Works today on `main` (unreleased; v0.104.0 adapter and decorator capsules still carry
+the hardcoded values below).** `capsule.yaml:host` is built by one function, `capture/env.py:host_info`, for every
 capsule writer: `nova capture` (`CaptureOrchestrator`), the framework adapters
 (`adapters/_capsule.py`) and the `@novafabric.agent` decorator (`sdk/agent.py`).
 Before this was unified, adapter and decorator capsules wrote `arch: x86_64`,
@@ -148,7 +149,7 @@ Some optional fields matter for the architecture:
 | `parent_run_id`, `replay_of_run_id`, `replay_mode` | Relationships to other capsules. `replay_of_run_id` becomes a `replayed_from` lineage edge. |
 | `session_id`, `sequence` | Membership in a multi-turn session (experimental) |
 | `facets`, `extensions` | Additive extension points (`slurm`, `kubernetes`, …) that let the format grow without a new top-level format |
-| `exit_code`, `error` | The failure record. A failed run is still a complete capsule. `error.type` is `NonZeroExit` when the workload ran and exited non-zero, and `WorkloadNotStarted` when the runner could not start it (`runner_status: failed_setup`, e.g. `command not found: <argv0>` from `runners/_local.py`), so the record never claims that something exited. |
+| `exit_code`, `error` | The failure record. A failed run is still a complete capsule. `error.type` is `NonZeroExit` when the workload ran and exited non-zero, and `WorkloadNotStarted` when the runner could not start it (`runner_status: failed_setup`, e.g. `command not found: <argv0>` from `runners/_local.py`), so the record never claims that something exited (`WorkloadNotStarted` is unreleased, on `main`). |
 
 ## The redaction proof: `redaction-proof.json`
 
@@ -214,7 +215,9 @@ captured output.
 
 ## Capsules written inside a framework call
 
-**Works today**, with a smaller evidence pipeline than `nova capture`. The framework
+**Works today**, with a smaller evidence pipeline than `nova capture` (the streaming
+behaviour, the measured `host` block and the replay refusal described here are
+unreleased, on `main`). The framework
 adapters (`src/novafabric/adapters/*.py`; LlamaIndex, Pydantic AI and Haystack share
 `adapters/_capsule.py:AdapterCapture`, the others write their own manifest) and the
 `@novafabric.agent` decorator (`sdk/agent.py`) write a capsule from inside the

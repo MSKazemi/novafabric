@@ -94,7 +94,7 @@ private keys, JWTs and passwords are not matched at all. The full list:
 A failed workload still produces a complete capsule with `status: failure`. A
 workload the runner could not start at all (for example a mistyped command, which
 `runners/_local.py` reports as `command not found: <name>`) is recorded with
-`error.type: WorkloadNotStarted` rather than `NonZeroExit`. If a NovaFabric
+`error.type: WorkloadNotStarted` rather than `NonZeroExit` (unreleased, on `main`). If a NovaFabric
 component fails, the failure is recorded and the workload continues.
 
 Capture also has proxy paths for clients that cannot be hooked in-process:
@@ -129,7 +129,8 @@ exception) and the recorded MCP tool results served from the capsule; other tool
 run live, and outbound connections are reported. A capsule that records no
 command to re-run (a framework-adapter or `@novafabric.agent` capsule, or one
 imported from OpenTelemetry) is refused before anything is spawned
-(`CapsuleNotReplayable`). `forensic`, `semantic` and `exact` analyse the capsule
+(`CapsuleNotReplayable`). What v0.104.0 serves versus `main` is in
+[Replay modes › Release scope](replay-modes.md). `forensic`, `semantic` and `exact` analyse the capsule
 without re-running it. Every mode writes
 `.novafabric/replays/<ulid>/replay_result.yaml`. `intervention` is the only mode
 that also writes a new capsule.
@@ -163,6 +164,9 @@ counted per side in `skipped_malformed_lines`, and warned about on stderr; under
 incomplete (ADR-0303 Amendment 1). `nova diff` also accepts two `name@version`
 asset references and diffs their specs field by field, in any of the three
 output formats.
+
+This contract (ADR-0303 and its Amendment 1) is unreleased, on `main`; in v0.104.0 an
+unresolvable capsule ref exits 1 and malformed lines are dropped silently.
 
 | Exit | Meaning (`cli/diff.py`: `EXIT_DIFFERENCES`, `EXIT_CANNOT_COMPARE`) |
 |---|---|

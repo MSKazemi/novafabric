@@ -143,8 +143,8 @@ capsule is still written even when no AI SDK is present at all:
 
 | Transport | What is recorded |
 |---|---|
-| `openai` SDK | `chat.completions.create` and `responses.create` calls, sync or async, streamed or not → `model-calls.jsonl` |
-| `anthropic` SDK | `messages.create` calls, sync or async, streamed or not → `model-calls.jsonl` |
+| `openai` SDK | `chat.completions.create` calls → `model-calls.jsonl`; on `main` (unreleased) also `responses.create`, async and streamed calls |
+| `anthropic` SDK | `messages.create` calls → `model-calls.jsonl`; on `main` (unreleased) also async and streamed calls |
 | `httpx` | Requests to URL-registry-classified hosts → `model-calls.jsonl` |
 | `requests` | Same classification as `httpx`; covers LangChain, LlamaIndex, `boto3` |
 | `aiohttp` | Async wire-level capture; covers async LangChain, FastAPI agents |
@@ -639,7 +639,9 @@ mode is for local / on-prem / compliance runs where determinism is controllable.
 nova replay .novafabric/capsules/01HX.../ --mode mocked
 ```
 
-The original command is re-spawned as a subprocess (Python workloads). A capsule
+The original command is re-spawned as a subprocess (Python workloads; what
+v0.104.0 serves versus unreleased `main` is listed under
+[Release scope](architecture/replay-modes.md)). A capsule
 that records no command — written by a framework adapter or `@agent`
 (`capture_mode: sdk-decorator`), or imported from OpenTelemetry spans — is refused
 before anything is spawned (`CapsuleNotReplayable`, exit 1, also under `--dry-run`).
@@ -652,8 +654,8 @@ tool runs live** — HTTP requests, shell commands, file writes, framework-nativ
 tools — so run replays of such agents in a sandbox or against test credentials.
 The result lists the outbound connections the replay made
 (`replay_contract.network_connections_live`); they are reported, not blocked.
-A recorded call that failed (a rate limit, a 4xx, a 5xx after the SDK's retries,
-a timeout) is replayed by raising the same SDK exception class at the same
+On `main` (unreleased), a recorded call that failed (a rate limit, a 4xx, a 5xx
+after the SDK's retries, a timeout) is replayed by raising the same SDK exception class at the same
 position, so the workload's error handling runs again.
 
 The replay is **fail-closed** (ADR-0300): an extra model call, a call on an
@@ -721,7 +723,8 @@ Outputs:
 ```
 
 **Use as a CI gate.** `--assert-no-regressions` exits 1 if any changes are
-detected — a changed, added or removed entry in any section — and exits 2 when
+detected — a changed, added or removed entry in any section — and, on `main`
+(unreleased, ADR-0303), exits 2 when
 the comparison could not be made (a capsule ref that does not resolve, or a
 record line that could not be read, which is counted in
 `skipped_malformed_lines` and warned about on stderr). Wire it into CI to catch

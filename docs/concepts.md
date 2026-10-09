@@ -167,8 +167,8 @@ the portable Agent Card and the Task/Message/Artifact mapping (ADR-0149). The
 starts the subprocess, it imports this loader automatically, which installs
 monkey-patches for:
 
-- **OpenAI** — `Completions.create` and `AsyncCompletions.create` (Chat Completions), and `Responses.create` and `AsyncResponses.create` (Responses API), in `openai.resources` (`capture/hooks/_openai.py`). A `stream=True` call is folded into one record when the stream ends (ADR-0304), and a call that raised is recorded with the SDK error detail (`io.novafabric.sdk_error`, `capture/hooks/_sdk_errors.py`) that mocked replay needs to raise it again.
-- **Anthropic** — `anthropic.resources.messages.Messages.create` and `AsyncMessages.create`, streamed or not (`capture/hooks/_anthropic.py`).
+- **OpenAI** — `Completions.create`; on `main` (unreleased) also `AsyncCompletions.create`, `Responses.create` and `AsyncResponses.create`, in `openai.resources` (`capture/hooks/_openai.py`). A `stream=True` call is folded into one record when the stream ends (ADR-0304), and a call that raised is recorded with the SDK error detail (`io.novafabric.sdk_error`, `capture/hooks/_sdk_errors.py`) that mocked replay needs to raise it again.
+- **Anthropic** — `anthropic.resources.messages.Messages.create`; on `main` (unreleased) also `AsyncMessages.create`, streamed or not (`capture/hooks/_anthropic.py`).
 - **httpx** — `httpx.Client.send`, recording requests classified by the URL registry (`src/novafabric/capture/hooks/url_registry.yaml` + `~/.novafabric/url_registry.yaml` override). Default coverage: OpenAI, Anthropic, Cohere, Together, Mistral, Replicate, AWS Bedrock, Ollama (default port 11434). Non-default Ollama ports are detected automatically from `OLLAMA_BASE_URL` / `OLLAMA_HOST` at call time.
 - **requests** — `requests.Session.send`, same URL-registry classification (v0.5; RFC-0001 Option C wire-level layer). Covers LangChain HTTP adapters, LlamaIndex REST clients, and any SDK that ships over `requests`.
 - **aiohttp** — `aiohttp.ClientSession._request`, async wire-level capture (v0.6 / C-3.1). Catches LangChain async paths, FastAPI agents, streaming-first SDKs.
@@ -373,11 +373,13 @@ Use forensic mode to inspect what happened without any risk of side effects.
 ### `mocked` mode
 
 The original command is re-spawned as a subprocess (**works today** for Python
-workloads, ADR-0300). A capsule that records **no command to re-run** — written
+workloads; what v0.104.0 serves versus unreleased `main` — MCP results, async,
+streamed and Responses API calls, the fail-closed contract — is listed under
+[Release scope](architecture/replay-modes.md)). A capsule that records **no command to re-run** — written
 by a framework adapter or `@novafabric.agent` (`capture_mode: sdk-decorator`, a
 `@framework:name` label) or imported from OpenTelemetry spans — is refused
-before anything is spawned (`CapsuleNotReplayable`, exit 1). Inside the
-re-spawned process:
+before anything is spawned (`CapsuleNotReplayable`, exit 1; unreleased, on `main`).
+Inside the re-spawned process:
 
 - `MockModelDispatcher` serves the recorded responses, in order, for OpenAI
   `chat.completions.create`, OpenAI `responses.create` and Anthropic
@@ -385,7 +387,7 @@ re-spawned process:
   event stream the SDK would have produced (ADR-0304) — including the
   assistant's recorded tool-call requests. `parse`, legacy completions,
   Anthropic `messages.stream()` and `with_raw_response` calls are **refused**,
-  not sent to the network. A recorded call that **failed** (a rate limit, a 4xx,
+  not sent to the network. On `main` (unreleased), a recorded call that **failed** (a rate limit, a 4xx,
   a 5xx after the SDK's retries, a timeout) is replayed by raising the same SDK
   exception class at its position, from an allow-list
   (`replay/_model_errors.py`); the wire hook's per-attempt transport records are
@@ -478,8 +480,8 @@ semantics (zero live tokens) and writes a diffable capsule hard-marked
 `replay_mode: intervention`, never mistakable for a real run. Only a substituted
 **model** response reaches the re-executed workload: intervention installs no
 tool dispatcher, so tools run live and a substituted **tool** result changes the
-output capsule and the checks only. The result says which with
-`intervention.substitution_delivered_to_workload`. A capsule with no command to
+output capsule and the checks only. On `main` (unreleased) the result says which
+with `intervention.substitution_delivered_to_workload`. A capsule with no command to
 re-run is not re-executed at all (`downstream_reexecuted: false`). This is the
 building block behind the no-LLM causal-graph diagnostic suite below — see
 [Diagnose: causal-graph attribution and counterfactual root-cause
