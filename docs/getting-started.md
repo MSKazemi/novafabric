@@ -550,7 +550,7 @@ A few directions to explore:
 | Run inside a Docker container, Kubernetes, or Slurm | [User guide: runners](user-guide.md#runners) |
 | Build a signed Evidence Bundle | [User guide: export-evidence](user-guide.md#nova-export-evidence) |
 | Register and lifecycle-manage AI assets (eval-gated promotion) | [User guide: asset registry](user-guide.md#asset-registry) |
-| Gate promotion with OPA/Rego policy and maker-checker approval | [User guide: nova promote](user-guide.md) |
+| Gate promotion with OPA/Rego policy and maker-checker approval | [CLI reference: nova promote](cli-reference.md#nova-promote) |
 | Browse capsules in a local web dashboard | [User guide: nova serve](user-guide.md#nova-serve-experimental) |
 | Hands-on tour of every capability (proxies, providers, KG, compliance) | [tutorials/feature-tour.md](tutorials/feature-tour.md) |
 | Prove supply-chain provenance & eval integrity (dataset cards, contamination checks, SLSA-for-ML, OTel export) | [feature tour §17](tutorials/feature-tour.md#17-prove-supply-chain-provenance--eval-integrity) |

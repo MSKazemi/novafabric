@@ -206,7 +206,7 @@ Commands grouped by primitive and task. Each entry links to its full section.
 | [`nova rollback`](#nova-rollback-name---actor-id) / [`nova unregister`](#nova-unregister-nameversion) | Roll back or remove asset versions |
 | [`nova prompt`](#prompt-versioning-commands-experimental-adr-0112) | Immutable, content-addressed prompt versions: register, get, list, history, diff + composition: compose, tree (experimental) |
 | [`nova label`](#deployment-label-commands-experimental-adr-0113) | Deployment labels: movable named pointers to immutable asset versions; protected labels move via maker-checker (experimental) |
-| [`nova eval`](#nova-eval-agentversion) | Run and compare evaluation suites |
+| [`nova eval`](#nova-eval-agent) | Run and compare evaluation suites |
 | [`nova experiment`](#nova-experiment-run--list--show--compare-experimental-adr-0120) | Dataset-experiment harness: per-item runs + A/B regression gate (experimental) |
 | [`nova approve`](#nova-approve-nameversion) | Approve a `pending_approval` asset |
 

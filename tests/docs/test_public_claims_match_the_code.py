@@ -46,6 +46,8 @@ CLAIM_SURFACES: tuple[str, ...] = (
     "docs/concepts.md",
     "docs/comparison.md",
     "docs/tutorials/novafabric-vs-langfuse.md",
+    "docs/for-researchers.md",
+    "docs/architecture/replay-modes.md",
     "examples/capsules/README.md",
     ".github/actions/capture/action.yml",
     "integrations/claude-plugin/README.md",
@@ -69,6 +71,8 @@ BANNED: dict[str, re.Pattern[str]] = {
         r'(?<!")\bsigned,?\s+(?:replayable,?\s+|verifiable,?\s+)*(?:Run\s+)?Capsules?\b', re.I
     ),
     "unscoped flight-simulator replay": re.compile(r"flight\s+simulator|re-fl(?:y|ies)\s+the\s+route", re.I),
+    "a redaction proof presented as intact evidence": re.compile(r"redaction\s+proof\s+intact", re.I),
+    "deterministic re-execution": re.compile(r"re-?execut\w*\s+deterministically", re.I),
 }
 
 
@@ -96,6 +100,8 @@ def test_the_banned_patterns_match_the_phrasings_they_exist_to_catch() -> None:
         "a stale replay-mode count": "and four replay modes (forensic, mocked, semantic, exact)",
         "default signing of capsules": "record runs as signed, replayable Run Capsules",
         "unscoped flight-simulator replay": "NovaFabric is a flight simulator - it re-flies the route.",
+        "a redaction proof presented as intact evidence": "# schema-valid, redaction proof intact",
+        "deterministic re-execution": "the pipeline re-executes deterministically, serving",
     }
     assert set(shipped) == set(BANNED)
     for label, phrase in shipped.items():

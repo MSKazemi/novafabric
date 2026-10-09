@@ -7,6 +7,17 @@ capsule and passes it to `replay/_engine.py:ReplayEngine.run`. There are five
 modes. Two of them, `mocked` and `intervention`, run the captured command again.
 The other three read the capsule and execute nothing.
 
+Every flag of these commands: [CLI reference — nova replay, diff and diagnose](../cli-reference.md#replay-commands-v03).
+
+> **Release scope.** This page describes `main`. In **v0.104.0**, the current PyPI release,
+> `mocked` replay serves recorded responses only for synchronous, non-streaming OpenAI
+> chat completions and Anthropic messages, and every tool runs live. The following are
+> **unreleased** (on `main`, in the next release): recorded MCP `call_tool` results served
+> (ADR-0300), the fail-closed contract and `--permissive`, async / streamed / Responses API
+> serving and live-network reporting (ADR-0304), replay of recorded model errors, the
+> transport-record rule (ADR-0305), and refusing capsules with no command to re-run. Rows
+> of the support matrix below that cite those ADRs are unreleased too.
+
 ![The five replay modes](../assets/architecture/replay-modes.svg)
 
 ```mermaid
@@ -45,7 +56,7 @@ current directory, or under `-o <dir>`.
 
 | Mode | Executes the command? | What it does | Maturity |
 |---|---|---|---|
-| `mocked` (default) | **Yes**, in a subprocess, with a 600 s timeout | Re-runs `capsule.yaml:command` (a capsule with no command to re-run is refused up front — see [which capsules each mode accepts](#which-capsules-each-mode-accepts)). A `sitecustomize.py` installs `replay/_dispatcher.py:MockModelDispatcher` (recorded responses for the supported model surfaces — sync or async, streamed or not — one queue per API surface) and `MockToolDispatcher` (recorded MCP `ClientSession.call_tool` results, matched one-to-one). **Fail-closed** on divergence; `--permissive` only reports. Tools on other surfaces run live; outbound connections are reported, not blocked. See [the mocked-replay contract](#the-mocked-replay-contract-adr-0300-adr-0304) and the [support matrix](#support-matrix). | works today (Python workloads, supported surfaces only) |
+| `mocked` (default) | **Yes**, in a subprocess, with a 600 s timeout | Re-runs `capsule.yaml:command` (a capsule with no command to re-run is refused up front — see [which capsules each mode accepts](#which-capsules-each-mode-accepts)). A `sitecustomize.py` installs `replay/_dispatcher.py:MockModelDispatcher` (recorded responses for the supported model surfaces — sync or async, streamed or not — one queue per API surface) and `MockToolDispatcher` (recorded MCP `ClientSession.call_tool` results, matched one-to-one). **Fail-closed** on divergence; `--permissive` only reports. Tools on other surfaces run live; outbound connections are reported, not blocked. See [the mocked-replay contract](#the-mocked-replay-contract-adr-0300-adr-0304) and the [support matrix](#support-matrix). | works today on `main` (Python workloads, supported surfaces only) — the MCP, async/streamed and error serving is unreleased; see *Release scope* above |
 | `forensic` | No | Read-only inspection. Reports call counts, environment warnings and schema drift. | works today |
 | `semantic` | No | Scores how similar the recorded model responses within the capsule are to one another: the mean pairwise `difflib.SequenceMatcher` ratio, from 0.0 to 1.0. This is a **text** similarity, not a judgment of meaning, and no live model is called. | works today |
 | `exact` | No | An **eligibility check** for byte-exact replay. It requires `env.lock` mode `deterministic` and a `gen_ai.request.seed` on every model call, and refuses if there is any tool-schema drift. Reports `exact_eligible` and `exact_reasons`. | works today |

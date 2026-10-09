@@ -31,14 +31,18 @@ $ nova capture python experiments/run_benchmark.py --config configs/main.yaml
 A reviewer can then, without your API keys and without network access:
 
 ```console
-$ nova validate <run-id>                      # schema-valid, redaction proof intact
+$ nova validate <run-id>                      # schema-valid, secret-scan record present
 $ nova replay  <run-id> --mode forensic       # inspect, execute nothing
 $ nova replay  <run-id> --mode mocked         # re-run with the recorded responses
 $ nova diff    <run-a> <run-b>                # what actually differed between two runs
 ```
 
-`mocked` replay is the one that matters most for review: the pipeline re-executes
-deterministically, serving recorded model responses from the capsule, at no API cost. A
+`mocked` replay is the one that matters most for review: it re-runs the pipeline against
+the recorded model responses from the capsule, at no API cost. In v0.104.0 that covers
+synchronous, non-streaming OpenAI and Anthropic chat calls, and tools run live; async,
+streamed and Responses API calls and recorded MCP tool results are served on `main`
+(unreleased). Re-running is not a determinism guarantee: anything the capsule does not
+serve — tools, the clock, the filesystem — can still differ. A
 reviewer without a budget or an account can still run your experiment.
 
 ## A workflow for a paper artifact
