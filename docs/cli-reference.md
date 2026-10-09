@@ -1142,7 +1142,7 @@ nova replay .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --output-dir /mnt/repla
 
 Options:
 - `--mode {mocked,forensic,semantic,exact,intervention}` — replay mode (default: `mocked`). Tab-completion available via `nova --install-completion`.
-- `--dry-run` — report what would execute without running; writes dry-run report and exits 0
+- `--dry-run` — report what would execute without running; writes dry-run report and exits 0 — or exits 1, with the same `REFUSED: …` message and `error.type: CapsuleNotReplayable`, when the selected mode is `mocked` and the capsule records no command to re-run (see below)
 - `--allow-readonly` — safety-ladder rung: permit `read-only` tools (drives the `--dry-run` report; does not intercept calls in the replayed process)
 - `--allow-mutating` — rung for `idempotent-write` and `non-idempotent-write` tools; also triggers the audited `replay_mutating` policy gate before the replay starts
 - `--allow-external-side-effects` — rung for `external-side-effect` tools (dry-run report)
@@ -1167,6 +1167,23 @@ mismatch, an unsupported model surface, an unmatched MCP tool call, or a recorde
 response that is never requested makes the replay `failure` (exit 1) with a
 `divergence_reason` — even if the workload caught the error and exited 0. See the
 [support matrix](architecture/replay-modes.md#support-matrix).
+
+**Capsules with no command to re-run.** A capsule written by a framework adapter or
+the `@novafabric.agent` decorator (`capture_mode: sdk-decorator`, `command` is a label
+such as `@langgraph:demo`), one imported from OpenTelemetry spans (`otel-import`), or
+one with an empty `command` cannot be re-run. `mocked` refuses it before anything is
+spawned: `status: aborted`, `error.type: CapsuleNotReplayable`, exit 1 (also under
+`--dry-run`). `intervention` emits the counterfactual streams without re-running and
+records `intervention.downstream_reexecuted: false`. `exact` reports it not eligible.
+`forensic` and `semantic` work as for any capsule. See
+[which capsules each mode accepts](architecture/replay-modes.md#which-capsules-each-mode-accepts).
+
+**Exit codes:** `0` — replay succeeded, or a `--dry-run` the real run would not refuse ·
+`1` — replay failed or was aborted (a divergence under the fail-closed default,
+`CapsuleNotReplayable`, a launch error or timeout, a fatal intervention check) or a usage
+error · `2` — `--environment` did not match the capsule's recorded environment · any
+other non-zero value — `mocked`/`intervention` pass through the replayed command's own
+exit code.
 
 Output is written to `.novafabric/replays/<replay-ulid>/replay_result.yaml`.
 
@@ -9423,7 +9440,7 @@ result = await Runner.run(agent, "hello")
 
 The adapter registers a `NovaCapsuleTracingProcessor` via `add_trace_processor()`.
 Each trace produces one capsule in `$NOVAFABRIC_HOME/capsules/`. `capture_mode` is
-`adapter-openai-agents`.
+`sdk-decorator` and `command` is a `@openai-agents:<workflow>` label, so `nova replay --mode mocked` refuses the capsule (`CapsuleNotReplayable`).
 
 Top-level alias: `from novafabric.adapters import register_openai_agents`
 
@@ -9442,7 +9459,7 @@ runner = Runner(
 ```
 
 The adapter implements `before_run_callback` and `after_run_callback` on a
-`NovaAdkPlugin` instance. `capture_mode` is `adapter-google-adk`.
+`NovaAdkPlugin` instance. `capture_mode` is `sdk-decorator` and `command` is an `@google-adk:…` label, so `nova replay --mode mocked` refuses the capsule (`CapsuleNotReplayable`).
 
 Top-level alias: `from novafabric.adapters import make_google_adk_plugin`
 
@@ -9468,7 +9485,7 @@ for event in response["completion"]:
 The adapter wraps `invoke_agent()` and parses the EventStream for
 `orchestrationTrace`, `preProcessingTrace`, `postProcessingTrace` chunks (written to
 `bedrock-traces.jsonl`). The capsule is finalized when the stream is exhausted.
-`capture_mode` is `adapter-bedrock-agentcore`.
+`capture_mode` is `sdk-decorator` and `command` is an `@bedrock-agentcore:…` label, so `nova replay --mode mocked` refuses the capsule (`CapsuleNotReplayable`).
 
 All non-`invoke_agent` methods are delegated transparently to the underlying client
 (`__getattr__` passthrough).
@@ -9491,7 +9508,7 @@ result = await client.send_message(agent_card=card, message=msg)
 
 The adapter implements `before()` and `after()` on a `NovaA2AInterceptor` instance.
 Only `send_message` and `send_message_streaming` calls are captured; other methods
-pass through unchanged. `capture_mode` is `adapter-a2a`. Task envelopes are written
+pass through unchanged. `capture_mode` is `sdk-decorator` and `command` is an `@a2a:…` label, so `nova replay --mode mocked` refuses the capsule (`CapsuleNotReplayable`). Task envelopes are written
 to `a2a-tasks.jsonl` inside the capsule.
 
 This implements RFC-0002 §Q4 (full A2A protocol-aware capture), deferred until A2A SDK

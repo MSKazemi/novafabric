@@ -144,6 +144,21 @@ def replay_cmd(
                      semantics, emit a diffable counterfactual capsule (a
                      substituted tool result is not delivered: tools run live)
 
+    Capsules written by a framework adapter or @novafabric.agent
+    (capture_mode: sdk-decorator) or imported from OpenTelemetry spans record
+    no command to re-run: mocked refuses them up front (error.type
+    CapsuleNotReplayable, exit 1, and the same under --dry-run); intervention
+    emits the counterfactual streams without re-running; exact reports them
+    not eligible; forensic and semantic work as usual.
+
+    \b
+    Exit codes:
+      0  replay succeeded, or a --dry-run the real run would not refuse
+      1  replay failed or was aborted (incl. CapsuleNotReplayable, a
+         divergence under the fail-closed default, a launch error/timeout)
+      2  --environment did not match the capsule's recorded environment
+      N  mocked/intervention: the replayed command's own non-zero exit code
+
     Scope: single capsule.
 
     \b
@@ -221,6 +236,9 @@ def replay_cmd(
         dry_report_path = base / result.replay_id / "dry_run_report.txt"
         if dry_report_path.exists():
             console.print(dry_report_path.read_text(), end="")
+        if result.error is not None:
+            # The real run would refuse this capsule: fail the dry run too.
+            raise typer.Exit(code=1)
         return
 
     status_icon = "[green]✓[/green]" if result.status == "success" else "[red]✗[/red]"
@@ -258,6 +276,12 @@ def replay_cmd(
                 + (f" ({where})" if where else "")
                 + " — observed, not blocked"
             )
+    if result.status == "aborted" and result.error:
+        console.print(
+            f"  {result.error.get('type', 'error')}: {result.error.get('message', '')}",
+            style="red",
+            markup=False,
+        )
     if result.divergence_reason:
         colour = "red" if result.status == "failure" else "yellow"
         console.print(f"  [{colour}]divergence: {result.divergence_reason}[/{colour}]")

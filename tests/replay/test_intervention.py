@@ -331,6 +331,11 @@ class TestCli:
         from novafabric.cli.main import app
 
         capsule = _capsule(tmp_path)
+        # A re-runnable command: a default (mocked) dry run of a capsule with
+        # none says REFUSED and exits 1 (tests/replay/test_capsule_not_replayable.py).
+        (capsule / "capsule.yaml").write_text(
+            yaml.dump({"run_id": "run-int-1", "command": ["true"]})
+        )
         runner = CliRunner()
         result = runner.invoke(
             app,

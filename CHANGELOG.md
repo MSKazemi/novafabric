@@ -263,6 +263,23 @@ longer forwards the submitting shell's environment (ADR-0270).
   what the re-run saw. The result now records `intervention.substitution_delivered_to_workload`
   (with a `substitution_note` when false), the CLI prints a warning, and the feature tour,
   replay-modes page, CLI reference and `--help` say so. Delivery is future design (ADR-0306).
+- **`nova replay` of a framework-adapter or `@novafabric.agent` capsule tried to run a label
+  as a program.** These capsules are captured inside a framework call and record
+  `capture_mode: sdk-decorator` with a `@framework:name` label as `command`; `mocked` replay
+  (and `intervention`) passed that label to `subprocess.run` and failed with `No such file or
+  directory: '@langgraph:demo'`. One helper (`replay/_replayability.py`) now decides up front:
+  `mocked` is refused before anything is spawned, recorded as `status: aborted` with
+  `error.type: CapsuleNotReplayable` and a message naming the modes that work (`forensic`,
+  `semantic`), and exits 1; `--dry-run` says the same and exits 1; `intervention` emits the
+  counterfactual streams without re-running and records `downstream_reexecuted: false`;
+  `exact` reports the capsule not eligible. OTLP-imported and empty-command capsules get the
+  same treatment. Re-running such capsules is not supported (ADR-0306, open question 7).
+- **Adapter and SDK-agent capsules recorded `host.arch: x86_64` on every machine.** Every
+  framework adapter and the `@novafabric.agent` decorator hardcoded the architecture, which
+  is false evidence on arm64. They now record the value the main capture path measures
+  (`capture.env.host_arch()`, which replaces the orchestrator's duplicate map), and an
+  unmapped machine string is recorded as reported instead of defaulting to `x86_64`. A
+  static guard fails on any hardcoded `"arch"` literal under `src/novafabric`.
 - **`replay.yaml` per-tool overrides written in the schema's shape were ignored.** Both
   replay-policy schemas define `tool_overrides` entries as `{tool_name, allow: bool}`, but
   the policy evaluator read only an `action` field the schema does not allow, so a

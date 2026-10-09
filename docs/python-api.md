@@ -112,9 +112,12 @@ Every call to `summarise()` writes a new capsule under `capsules/<ulid>/`.
 - On exception: writes a capsule with `status: failure` and re-raises.
 - Thread-safe: each call writes to its own capsule directory.
 
-> The capsule this produces is identical in shape to one produced by
-> `nova capture` — you can `nova validate`, `nova replay`, and `nova diff` it
-> exactly the same way.
+> The capsule this produces has the same shape as one produced by
+> `nova capture` — you can `nova validate`, `nova diff`, and `nova replay
+> --mode forensic|semantic` it the same way. It records `capture_mode:
+> sdk-decorator` and an `@agent:<name>@<version>` label instead of a command,
+> so `nova replay --mode mocked` refuses it (`CapsuleNotReplayable`): there is
+> no command to re-run.
 
 ---
 

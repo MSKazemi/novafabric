@@ -33,8 +33,14 @@ from novafabric.replay._contract import (
 )
 from novafabric.replay._dispatcher import REPLAY_DISPATCHER_UNAVAILABLE_EXIT
 from novafabric.replay._env_check import EnvironmentResolver
+from novafabric.replay._errors import CapsuleNotReplayableError
 from novafabric.replay._flags import ReplayFlags
 from novafabric.replay._policy import PolicyEvaluator
+from novafabric.replay._replayability import (
+    not_reexecutable_reason,
+    refusal_message,
+    require_reexecutable_command,
+)
 from novafabric.replay._result import ReplayResult, write_replay_result
 
 #: Written as ``sitecustomize.py`` into the replayed process (ADR-0300). If the
@@ -208,7 +214,7 @@ class ReplayEngine:
                 raise PolicyDeniedError(decision.reason, decision.decision_id)
 
         if self._flags.dry_run:
-            return self._dry_run(run_id, evaluator, tool_calls, env_warnings)
+            return self._dry_run(run_id, manifest, evaluator, tool_calls, env_warnings)
 
         if self._flags.mode == "forensic":
             return self._forensic(
@@ -220,7 +226,8 @@ class ReplayEngine:
 
         if self._flags.mode == "exact":
             return self._exact(
-                run_id, env_lock, model_calls, env_warnings, schema_drift
+                run_id, env_lock, model_calls, env_warnings, schema_drift,
+                manifest=manifest,
             )
 
         if self._flags.mode == "intervention":
@@ -305,29 +312,36 @@ class ReplayEngine:
             write_replay_result(result, result_dir)
             return result
 
-        command: list[str] = manifest.get("command", [])
         exit_code: int | None = None
-        if command:
+        not_reexecuted = not_reexecutable_reason(manifest)
+        if not_reexecuted is None:
+            command: list[str] = manifest.get("command", [])
             exit_code, run_error = self._run_mocked_subprocess(
                 command, mutated_model_calls
             )
             status = "success" if exit_code == 0 else "failure"
         else:
-            # no re-executable command — emit the mutated streams only
+            # No re-executable command (an empty command, an otel-import or a
+            # framework-adapter `@framework:name` label): never spawn it --
+            # emit the mutated streams only, and say so on the result.
             status = "success"
             run_error = None
+        intervention_meta["downstream_reexecuted"] = not_reexecuted is None
+        if not_reexecuted is not None:
+            intervention_meta["downstream_not_reexecuted_reason"] = not_reexecuted
 
         # Only the model-calls stream feeds the re-executed workload (through the
         # mocked queue). Intervention installs no tool dispatcher (ADR-0300), so a
         # tool-calls substitution changes the output capsule and the checks, never
         # what the workload saw — say so rather than imply the effect was measured.
-        delivered = bool(command) and spec.target.stream == "model-calls"
+        reexecuted = not_reexecuted is None
+        delivered = reexecuted and spec.target.stream == "model-calls"
         intervention_meta["substitution_delivered_to_workload"] = delivered
         if not delivered:
             intervention_meta["substitution_note"] = (
-                "no command was re-executed; the substitution is applied to the "
-                "output capsule's streams and the checks only"
-                if not command
+                f"no command was re-executed ({not_reexecuted}); the substitution "
+                "is applied to the output capsule's streams and the checks only"
+                if not reexecuted
                 else "the re-executed workload's tools ran live and never saw the "
                 "substituted tool-call record; it is applied to the output "
                 "capsule's streams and the checks only (ADR-0300, ADR-0306)"
@@ -407,6 +421,7 @@ class ReplayEngine:
     def _dry_run(
         self,
         run_id: str,
+        manifest: dict[str, Any],
         evaluator: PolicyEvaluator,
         tool_calls: list[dict[str, Any]],
         env_warnings: list[Any],
@@ -417,6 +432,22 @@ class ReplayEngine:
         result_dir = self._base_dir / replay_id
 
         report = evaluator.dry_run_report(tool_calls)
+        # Say what the real run would do with a capsule that records no
+        # command: `mocked` refuses it (same message, same error), and
+        # `intervention` emits the counterfactual streams without re-running.
+        refusal: dict[str, Any] | None = None
+        if self._flags.mode == "mocked":
+            message = refusal_message(manifest, "mocked")
+            if message is not None:
+                refusal = {"type": CapsuleNotReplayableError.error_type, "message": message}
+                report = f"REFUSED: {message}\n\n{report}"
+        elif self._flags.mode == "intervention":
+            reason = not_reexecutable_reason(manifest)
+            if reason is not None:
+                report = (
+                    f"NOT RE-EXECUTED: {reason}; --mode intervention would emit "
+                    f"the counterfactual streams only.\n\n{report}"
+                )
 
         result = ReplayResult(
             replay_id=replay_id,
@@ -432,6 +463,7 @@ class ReplayEngine:
             tool_calls_mocked=0,  # ADR-0261: a dry run executes nothing
             tool_calls_available=_servable_tool_count(tool_calls),
             tool_calls_recorded=len(tool_calls),
+            error=refusal,
         )
         result_dir.mkdir(parents=True, exist_ok=True)
         (result_dir / "dry_run_report.txt").write_text(report)
@@ -494,6 +526,8 @@ class ReplayEngine:
         model_calls: list[dict[str, Any]],
         env_warnings: list[Any],
         schema_drift: list[dict[str, Any]] | None = None,
+        *,
+        manifest: dict[str, Any] | None = None,
     ) -> ReplayResult:
         start = _now()
         t0 = time.monotonic()
@@ -501,6 +535,10 @@ class ReplayEngine:
         result_dir = self._base_dir / replay_id
 
         reasons: list[str] = []
+        # A byte-exact re-run needs something to re-run.
+        not_reexecuted = None if manifest is None else not_reexecutable_reason(manifest)
+        if not_reexecuted is not None:
+            reasons.append(f"{not_reexecuted} — exact replay needs a re-runnable command")
         # "mode" is the canonical field name (environment.schema.json).
         # Old capsules (pre-v0.2) may omit it; treat as "best-effort".
         env_mode = env_lock.get("mode") or env_lock.get("lock_mode") or "best-effort"
@@ -571,9 +609,12 @@ class ReplayEngine:
         replay_id = new_ulid()
         result_dir = self._base_dir / replay_id
 
-        command: list[str] = manifest.get("command", [])
-        if not command:
-            return ReplayResult(
+        try:
+            command = require_reexecutable_command(manifest, "mocked")
+        except CapsuleNotReplayableError as exc:
+            # Refused before anything is spawned, and recorded: an adapter
+            # capsule's `@framework:name` label is not a program.
+            refused = ReplayResult(
                 replay_id=replay_id,
                 replay_of_run_id=run_id,
                 mode="mocked",
@@ -583,8 +624,12 @@ class ReplayEngine:
                 duration_ms=int((time.monotonic() - t0) * 1000),
                 policy_flags_used=self._flags.active_flag_names(),
                 env_warnings=[w.as_dict() for w in env_warnings],
-                error={"type": "MissingCommand", "message": "capsule.yaml has no command field"},
+                tool_calls_recorded=len(tool_calls),
+                schema_drift=schema_drift or None,
+                error=exc.as_error(),
             )
+            write_replay_result(refused, result_dir)
+            return refused
 
         policy = self._flags.divergence_policy
         exit_code, run_error, events = self._run_replay_subprocess(

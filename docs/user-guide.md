@@ -251,7 +251,12 @@ def run():
 run()
 ```
 
-The capsule structure is identical to `nova capture`. Without `capsule_dir`,
+The capsule structure is the same as `nova capture`'s, with one difference: the
+decorator runs inside your process, so the capsule records `capture_mode:
+sdk-decorator` and a label (`@agent:<name>@<version>`) instead of a command.
+`nova replay --mode mocked` therefore refuses it (`CapsuleNotReplayable`, exit 1);
+`forensic` and `semantic` replay, `nova diff` and `nova validate` work as usual.
+Without `capsule_dir`,
 the decorator emits OTel spans only — no capsule is written. This is the
 original v0.1 observability mode and is still useful if you only need traces.
 
@@ -360,7 +365,15 @@ Adapters ship for eleven frameworks. Each is importable by name from
 | A2A SDK | `make_a2a_interceptor()` | returns an interceptor |
 
 The last four are not wrappers — they hook the framework's own extension point
-(ADR-0078) rather than patching a method. Full reference, including each
+(ADR-0078) rather than patching a method.
+
+**Replaying an adapter capsule.** An adapter capsule is captured inside a framework
+call, so it records `capture_mode: sdk-decorator` and a `@framework:name` label, not a
+command. `nova replay --mode forensic` and `--mode semantic` work on it; `--mode mocked`
+refuses it up front (`CapsuleNotReplayable`, exit 1) because there is nothing to
+re-run; `--mode exact` reports it not eligible. Re-running a framework agent from its
+capsule is **future design** (ADR-0306, open question 7). To get a mocked-replayable
+capsule, capture the script that runs the agent with `nova capture -- python agent.py`. Full reference, including each
 adapter's entry-point and capture-mode details, is in
 [`cli-reference.md`](cli-reference.md) §Framework Adapters.
 
@@ -621,7 +634,11 @@ mode is for local / on-prem / compliance runs where determinism is controllable.
 nova replay .novafabric/capsules/01HX.../ --mode mocked
 ```
 
-The original command is re-spawned as a subprocess (Python workloads). Recorded
+The original command is re-spawned as a subprocess (Python workloads). A capsule
+that records no command — written by a framework adapter or `@agent`
+(`capture_mode: sdk-decorator`), or imported from OpenTelemetry spans — is refused
+before anything is spawned (`CapsuleNotReplayable`, exit 1, also under `--dry-run`).
+Recorded
 responses are served, in recorded order, for OpenAI `chat.completions.create`,
 OpenAI `responses.create` and Anthropic `messages.create` calls — sync or async,
 streamed or not (ADR-0304) — and recorded results for **MCP**

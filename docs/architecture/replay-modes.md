@@ -45,11 +45,32 @@ current directory, or under `-o <dir>`.
 
 | Mode | Executes the command? | What it does | Maturity |
 |---|---|---|---|
-| `mocked` (default) | **Yes**, in a subprocess, with a 600 s timeout | Re-runs `capsule.yaml:command`. A `sitecustomize.py` installs `replay/_dispatcher.py:MockModelDispatcher` (recorded responses for the supported model surfaces — sync or async, streamed or not — one queue per API surface) and `MockToolDispatcher` (recorded MCP `ClientSession.call_tool` results, matched one-to-one). **Fail-closed** on divergence; `--permissive` only reports. Tools on other surfaces run live; outbound connections are reported, not blocked. See [the mocked-replay contract](#the-mocked-replay-contract-adr-0300-adr-0304) and the [support matrix](#support-matrix). | works today (Python workloads, supported surfaces only) |
+| `mocked` (default) | **Yes**, in a subprocess, with a 600 s timeout | Re-runs `capsule.yaml:command` (a capsule with no command to re-run is refused up front — see [which capsules each mode accepts](#which-capsules-each-mode-accepts)). A `sitecustomize.py` installs `replay/_dispatcher.py:MockModelDispatcher` (recorded responses for the supported model surfaces — sync or async, streamed or not — one queue per API surface) and `MockToolDispatcher` (recorded MCP `ClientSession.call_tool` results, matched one-to-one). **Fail-closed** on divergence; `--permissive` only reports. Tools on other surfaces run live; outbound connections are reported, not blocked. See [the mocked-replay contract](#the-mocked-replay-contract-adr-0300-adr-0304) and the [support matrix](#support-matrix). | works today (Python workloads, supported surfaces only) |
 | `forensic` | No | Read-only inspection. Reports call counts, environment warnings and schema drift. | works today |
 | `semantic` | No | Scores how similar the recorded model responses within the capsule are to one another: the mean pairwise `difflib.SequenceMatcher` ratio, from 0.0 to 1.0. This is a **text** similarity, not a judgment of meaning, and no live model is called. | works today |
 | `exact` | No | An **eligibility check** for byte-exact replay. It requires `env.lock` mode `deterministic` and a `gen_ai.request.seed` on every model call, and refuses if there is any tool-schema drift. Reports `exact_eligible` and `exact_reasons`. | works today |
 | `intervention` | **Yes**, under mocked semantics | Needs `--intervention-file spec.yaml`. Substitutes one recorded model or tool event as the `InterventionSpec` describes (`replay/_intervention.py`), re-runs everything downstream with zero live model calls (a substituted **model** response reaches the re-run; a substituted **tool** result does not — tools run live, and the result records `intervention.substitution_delivered_to_workload: false`), and writes a minimal counterfactual capsule (`capsule.yaml` with `replay_mode: intervention` and `replay_of_run_id`, plus the call streams), so you can `nova diff` it against the original. | experimental (ADR-0086) |
+
+## Which capsules each mode accepts
+
+`mocked` and `intervention` re-run `capsule.yaml:command`, so they need a capsule that
+records a real argv. `replay/_replayability.py:not_reexecutable_reason` is the one
+check; it runs before anything is spawned. A capsule has **no command to re-run** when
+its `capture_mode` is `sdk-decorator` (written inside a framework call by a framework
+adapter in `novafabric.adapters` or by the `@novafabric.agent` decorator; `command` is
+a label such as `@langgraph:demo`) or `otel-import` (built from OpenTelemetry spans;
+`command` is empty), or when `command` is empty or starts with `@`.
+
+| Mode | `cli-wrapper` capsule (`nova capture`) | No command to re-run (`sdk-decorator`, `otel-import`, empty) |
+|---|---|---|
+| `forensic` | works | works |
+| `semantic` | works | works |
+| `exact` | eligibility report | eligibility report: always `exact_eligible: false`, with the reason in `exact_reasons` |
+| `mocked` | re-runs the command | **refused** before spawning: `status: aborted`, `error.type: CapsuleNotReplayable` (`replay/_errors.py:CapsuleNotReplayableError`), exit 1; `--dry-run` prints the same `REFUSED:` message and also exits 1 |
+| `intervention` | re-runs the command under mocked semantics | emits the counterfactual capsule **without** re-running; `intervention.downstream_reexecuted: false`, `downstream_not_reexecuted_reason` and `substitution_delivered_to_workload: false` say so |
+
+Re-running a framework-adapter capsule would need the framework call to be rebuilt
+from the capsule; that is future design (ADR-0306, open question 7).
 
 ## The mocked-replay contract (ADR-0300, ADR-0304)
 

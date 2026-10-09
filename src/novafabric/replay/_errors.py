@@ -81,3 +81,29 @@ class ReplayRecordedToolError(Exception):
     def __init__(self, error_type: str, message: str) -> None:
         super().__init__(f"{error_type}: {message}" if error_type else message)
         self.error_type = error_type
+
+
+class CapsuleNotReplayableError(Exception):
+    """The capsule records no command a replay could re-run.
+
+    Not a divergence: nothing was re-run. Raised *before* anything is spawned by
+    :func:`novafabric.replay._replayability.require_reexecutable_command` for a
+    capsule captured inside a framework call (``capture_mode: sdk-decorator``,
+    whose ``command`` is a ``@framework:name`` label), imported from
+    OpenTelemetry spans (``otel-import``), or with an empty ``command``. The
+    engine records it as ``status: aborted`` with ``error.type:
+    CapsuleNotReplayable``.
+    """
+
+    #: Stable ``error.type`` written to ``replay_result.yaml``.
+    error_type = "CapsuleNotReplayable"
+
+    def __init__(
+        self, message: str, *, capture_mode: str | None, command: list[str]
+    ) -> None:
+        super().__init__(message)
+        self.capture_mode = capture_mode
+        self.command = command
+
+    def as_error(self) -> dict[str, str]:
+        return {"type": self.error_type, "message": str(self)}
