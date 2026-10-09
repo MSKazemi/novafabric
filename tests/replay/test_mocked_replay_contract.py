@@ -64,12 +64,16 @@ class Agent:
         *,
         permissive: bool = False,
         command: list[str] | None = None,
+        allow_unknown_mutation: bool = False,
     ) -> tuple[ReplayResult, list[dict[str, Any]]]:
         self._mp.setenv("AGENT_PLAN", json.dumps(plan))
         cap = write_capsule(self.root, self.path, model_calls, tool_calls, command)
         result = ReplayEngine(
             capsule_dir=cap,
-            flags=ReplayFlags(mode="mocked", permissive=permissive),
+            flags=ReplayFlags(
+                mode="mocked", permissive=permissive,
+                allow_unknown_mutation=allow_unknown_mutation,
+            ),
             base_dir=self.root / "replays",
         ).run()
         jsonschema.validate(result.as_dict(), _SCHEMA)
@@ -398,14 +402,38 @@ def test_a_replay_with_no_network_reports_zero_connections(agent: Agent) -> None
 
 
 def test_s13_permissive_runs_an_unmatched_tool_live_and_counts_it(agent: Agent) -> None:
+    """ADR-0306 Q3 (owner decision 2026-10-09): under --permissive an unmatched MCP
+    call runs live only with the ladder flag for its class -- always `unknown`."""
     result, obs = agent.replay(
-        [], [{"op": "tool", "name": "fetch_url", "args": {"url": "https://x"}}], permissive=True
+        [], [{"op": "tool", "name": "fetch_url", "args": {"url": "https://x"}}],
+        permissive=True, allow_unknown_mutation=True,
     )
     assert obs[0]["text"] == "fetched"
     assert agent.side_effects == ["fetch_url https://x"]
     assert result.status == "success"
     assert (result.tool_calls_live, result.tool_calls_unmatched) == (1, 1)
     assert "tool_call_unmatched" in str(result.divergence_reason)
+
+
+def test_s13_permissive_refuses_an_unmatched_mcp_call_without_the_ladder_flag(
+    agent: Agent,
+) -> None:
+    """ADR-0306 Q3: --permissive alone used to run any unmatched MCP call live. It
+    now needs --allow-unknown-mutation; without it the call is refused before the
+    tool runs, and the replay still succeeds (divergences are only reported)."""
+    result, obs = agent.replay(
+        [], [{"op": "tool", "name": "fetch_url", "args": {"url": "https://x"}, "catch": True}],
+        permissive=True,
+    )
+    assert obs[0]["error"] == "ReplayToolUnmatchedError"
+    assert "--allow-unknown-mutation" in obs[0]["message"]
+    assert agent.side_effects == [], "an unmatched MCP call ran live without the ladder flag"
+    assert result.status == "success"
+    contract = result.replay_contract
+    assert contract is not None
+    assert (result.tool_calls_live, result.tool_calls_unmatched) == (0, 1)
+    assert contract["tool_calls_refused"] == 1
+    assert contract["tool_calls_by_surface"]["mcp.ClientSession.call_tool"]["refused"] == 1
 
 
 # ── scenario 17: unsupported surfaces are refused, not run live ──────────────

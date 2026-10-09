@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from rich.console import Console
 
 from novafabric.cli._capsule_ref import CapsuleRefError, resolve_capsule_ref
 from novafabric.replay._engine import ReplayEngine
+from novafabric.replay._errors import ReplayOverrideUnenforceableError
 from novafabric.replay._flags import ReplayFlags
 from novafabric.replay._intervention import InterventionError
 from novafabric.replay.environment_gate import (
@@ -48,10 +49,11 @@ def replay_cmd(
         typer.Option(
             "--allow-readonly",
             help=(
-                "Policy flag: mark read-only tools as allowed in the --dry-run "
-                "report. Under --permissive it also lets an unmatched record.tool "
-                "call of that class run live (ADR-0306, experimental); otherwise "
-                "it does not intercept or let through calls in a mocked replay."
+                "Safety ladder (ADR-0012): permit read-only tools. In mocked mode, "
+                "under --permissive an unmatched record.tool call of that class runs "
+                "live, and a replay.yaml `allow: true` override for such a tool is "
+                "honoured (ADR-0306, experimental). MCP calls always count as "
+                "unknown mutation."
             ),
         ),
     ] = False,
@@ -60,12 +62,12 @@ def replay_cmd(
         typer.Option(
             "--allow-mutating",
             help=(
-                "Policy flag: mark writes/deletes as allowed in the --dry-run "
-                "report; the replay must also pass the policy engine's "
-                "replay_mutating check. Under --permissive it also lets an "
-                "unmatched record.tool call of that class run live (ADR-0306, "
-                "experimental); otherwise it does not gate calls inside a mocked "
-                "replay."
+                "Safety ladder (ADR-0012): permit writes/deletes (implies "
+                "--allow-readonly); the replay must also pass the policy engine's "
+                "replay_mutating check. In mocked mode, under --permissive an "
+                "unmatched record.tool call of that class runs live, and a "
+                "replay.yaml `allow: true` override for such a tool is honoured "
+                "(ADR-0306, experimental)."
             ),
         ),
     ] = False,
@@ -74,10 +76,11 @@ def replay_cmd(
         typer.Option(
             "--allow-external-side-effects",
             help=(
-                "Policy flag: mark external side effects as allowed in the "
-                "--dry-run report. Under --permissive it also lets an unmatched "
-                "record.tool call of that class run live (ADR-0306, experimental); "
-                "otherwise it does not gate calls inside a mocked replay."
+                "Safety ladder (ADR-0012): permit external side effects (implies "
+                "--allow-mutating). In mocked mode, under --permissive an unmatched "
+                "record.tool call of that class runs live, and a replay.yaml "
+                "`allow: true` override for such a tool is honoured (ADR-0306, "
+                "experimental)."
             ),
         ),
     ] = False,
@@ -86,11 +89,12 @@ def replay_cmd(
         typer.Option(
             "--allow-unknown-mutation",
             help=(
-                "Policy flag: mark tools of unknown mutation class as allowed in "
-                "the --dry-run report. Under --permissive it also lets an "
-                "unmatched record.tool call of that class run live (ADR-0306, "
-                "experimental); otherwise it does not gate calls inside a mocked "
-                "replay."
+                "Safety ladder (ADR-0012): permit tools of unknown mutation class "
+                "(implies every lower rung). Every MCP call counts as unknown: in "
+                "mocked mode this is the flag that lets an unmatched MCP call run "
+                "live under --permissive, and that a replay.yaml `allow: true` "
+                "override on an MCP tool needs before it re-executes (ADR-0306, "
+                "experimental)."
             ),
         ),
     ] = False,
@@ -125,10 +129,11 @@ def replay_cmd(
             help=(
                 "mocked mode only (ADR-0300): do NOT fail on divergence. A model "
                 "call with no recorded response gets an empty reply, unsupported "
-                "model surfaces and unmatched MCP tool calls run LIVE, an "
-                "unmatched record.tool call runs live only if an --allow-* flag "
-                "permits its declared mutation class, and unconsumed recordings "
-                "are only reported. Default is fail-closed."
+                "model surfaces run LIVE, an unmatched intercepted tool call runs "
+                "live only if an --allow-* flag permits its mutation class (MCP: "
+                "--allow-unknown-mutation; record.tool: its declared class), never "
+                "if replay.yaml says `allow: false`, and unconsumed recordings are "
+                "only reported. Default is fail-closed."
             ),
         ),
     ] = False,
@@ -144,10 +149,13 @@ def replay_cmd(
                      novafabric.capture.record.tool (experimental).
                      Fail-closed: an extra, unmatched or unsupported call, or an
                      unconsumed recording, fails the replay (--permissive to
-                     only report). Other tools (HTTP, shell, files,
-                     framework-native, undeclared functions) are NOT
-                     intercepted: they run live;
-                     outbound connections are reported, not blocked
+                     only report). replay.yaml tool_overrides are enforced
+                     on both tool surfaces: `allow: false` is never run live,
+                     `allow: true` re-executes only with the --allow-* flag
+                     for its class (experimental). Other tools (HTTP,
+                     shell, files, framework-native, undeclared functions)
+                     are NOT intercepted: they run live; outbound
+                     connections are reported, not blocked
       forensic     — read-only: inspects the capsule, runs nothing
       semantic     — does not re-run: scores how similar the recorded LLM
                      responses are to each other (0.0-1.0)
@@ -171,6 +179,10 @@ def replay_cmd(
       1  replay failed or was aborted (incl. CapsuleNotReplayable, a
          divergence under the fail-closed default, a launch error/timeout)
       2  --environment did not match the capsule's recorded environment
+      3  mocked: refused to start (also under --dry-run) because a replay.yaml
+         `allow: false` override names a tool recorded on a transport replay
+         cannot intercept (error.type ToolOverrideUnenforceable); --permissive
+         starts anyway and reports override_unenforceable
       N  mocked/intervention: the replayed command's own non-zero exit code
 
     Scope: single capsule.
@@ -252,7 +264,7 @@ def replay_cmd(
             console.print(dry_report_path.read_text(), end="")
         if result.error is not None:
             # The real run would refuse this capsule: fail the dry run too.
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=_refusal_exit_code(result.error))
         return
 
     status_icon = "[green]✓[/green]" if result.status == "success" else "[red]✗[/red]"
@@ -317,4 +329,13 @@ def replay_cmd(
         )
 
     if result.status not in ("success", "dry_run"):
+        if result.status == "aborted" and result.error:
+            raise typer.Exit(code=_refusal_exit_code(result.error))
         raise typer.Exit(code=result.exit_code or 1)
+
+
+def _refusal_exit_code(error: dict[str, Any]) -> int:
+    """Exit status of a replay refused before anything ran."""
+    if error.get("type") == ReplayOverrideUnenforceableError.error_type:
+        return ReplayOverrideUnenforceableError.exit_code
+    return 1

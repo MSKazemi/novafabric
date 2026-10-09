@@ -150,3 +150,43 @@ class ReplayToolRecordNotServableError(ReplayDivergenceError):
     """
 
     kind = "tool_result_not_servable"
+
+
+class ReplayOverrideUnenforceableError(Exception):
+    """A strict mocked replay refused to start: a ``replay.yaml`` ``allow: false``
+    override names a tool the capsule recorded on a transport replay cannot
+    intercept (not MCP ``tools/call``, not ``record.tool``), so replay could not
+    stop it running live (ADR-0306 D8, owner decision Q5 2026-10-09).
+
+    Not a divergence: nothing was re-run. The engine records it as ``status:
+    aborted`` with ``error.type: ToolOverrideUnenforceable``; ``nova replay``
+    exits :attr:`exit_code`. Under ``--permissive`` the replay starts instead
+    and reports an ``override_unenforceable`` divergence (a warning).
+    """
+
+    #: Stable ``error.type`` written to ``replay_result.yaml``.
+    error_type = "ToolOverrideUnenforceable"
+    #: ``nova replay`` exit status for this refusal (also under ``--dry-run``).
+    exit_code = 3
+    #: Divergence kind reported instead under ``--permissive``.
+    kind = "override_unenforceable"
+
+    def __init__(self, unenforceable: list[dict[str, Any]]) -> None:
+        self.unenforceable = list(unenforceable)
+        super().__init__(self.describe(self.unenforceable))
+
+    @staticmethod
+    def describe(unenforceable: list[dict[str, Any]]) -> str:
+        detail = "; ".join(
+            f"{u['tool_name']!r} (transport {', '.join(u['transports'])})"
+            for u in unenforceable
+        )
+        return (
+            "replay.yaml tool_overrides `allow: false` cannot be enforced for "
+            f"{detail}: replay does not intercept that transport, so the tool would "
+            "run live. A strict replay refuses to start; pass --permissive to run "
+            "it anyway and report this"
+        )
+
+    def as_error(self) -> dict[str, str]:
+        return {"type": self.error_type, "message": str(self)}

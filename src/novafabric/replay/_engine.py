@@ -35,9 +35,12 @@ from novafabric.replay._contract import (
 )
 from novafabric.replay._dispatcher import REPLAY_DISPATCHER_UNAVAILABLE_EXIT, TOOL_LADDER_ENV
 from novafabric.replay._env_check import EnvironmentResolver
-from novafabric.replay._errors import CapsuleNotReplayableError
+from novafabric.replay._errors import (
+    CapsuleNotReplayableError,
+    ReplayOverrideUnenforceableError,
+)
 from novafabric.replay._flags import ReplayFlags
-from novafabric.replay._policy import PolicyEvaluator
+from novafabric.replay._policy import INSTALL_REQUIRED_ENV, TOOL_POLICY_ENV, PolicyEvaluator
 from novafabric.replay._replayability import (
     not_reexecutable_reason,
     refusal_message,
@@ -66,7 +69,8 @@ _MOCK_HOOK_LOADER = textwrap.dedent(f"""\
                         }}) + "\\n")
                 except OSError:
                     pass
-            if _os.environ.get("NOVAFABRIC_REPLAY_DIVERGENCE_POLICY") != "warn":
+            if (_os.environ.get("NOVAFABRIC_REPLAY_DIVERGENCE_POLICY") != "warn"
+                    or _os.environ.get("{INSTALL_REQUIRED_ENV}") == "1"):
                 _os._exit({REPLAY_DISPATCHER_UNAVAILABLE_EXIT})
         else:
             _nf_install()
@@ -440,10 +444,29 @@ class ReplayEngine:
         # `intervention` emits the counterfactual streams without re-running.
         refusal: dict[str, Any] | None = None
         if self._flags.mode == "mocked":
+            # ADR-0306 D8: what the replayed process will do with each
+            # replay.yaml override -- the same table the real run reports.
+            overrides = evaluator.override_report(tool_calls)
+            if overrides:
+                report += "Tool overrides (replay.yaml):\n" + "".join(
+                    f"  {o['tool_name']}  allow={'true' if o['decision'] == 'allow' else 'false'}"
+                    f"  honoured={'yes' if o['honoured'] else 'no'}  ({o['reason']})\n"
+                    for o in overrides
+                )
             message = refusal_message(manifest, "mocked")
+            unenforceable = evaluator.unenforceable_overrides(tool_calls)
             if message is not None:
                 refusal = {"type": CapsuleNotReplayableError.error_type, "message": message}
                 report = f"REFUSED: {message}\n\n{report}"
+            elif unenforceable:
+                not_enforced = ReplayOverrideUnenforceableError(unenforceable)
+                if self._flags.permissive:
+                    report = (
+                        f"WARNING ({not_enforced.kind}, --permissive): {not_enforced}\n\n{report}"
+                    )
+                else:
+                    refusal = not_enforced.as_error()
+                    report = f"REFUSED: {not_enforced}\n\n{report}"
         elif self._flags.mode == "intervention":
             reason = not_reexecutable_reason(manifest)
             if reason is not None:
@@ -634,14 +657,52 @@ class ReplayEngine:
             write_replay_result(refused, result_dir)
             return refused
 
+        # ADR-0306 D8 / owner Q5: an `allow: false` override on a transport
+        # replay cannot intercept could not be enforced -- a strict replay
+        # refuses to start rather than break that promise; --permissive starts
+        # and reports it (below).
+        unenforceable = evaluator.unenforceable_overrides(tool_calls)
+        if unenforceable and not self._flags.permissive:
+            unenforceable_error = ReplayOverrideUnenforceableError(unenforceable)
+            refused = ReplayResult(
+                replay_id=replay_id,
+                replay_of_run_id=run_id,
+                mode="mocked",
+                status="aborted",
+                start_time=start,
+                end_time=_now(),
+                duration_ms=int((time.monotonic() - t0) * 1000),
+                policy_flags_used=self._flags.active_flag_names(),
+                env_warnings=[w.as_dict() for w in env_warnings],
+                tool_calls_recorded=len(tool_calls),
+                schema_drift=schema_drift or None,
+                error=unenforceable_error.as_error(),
+            )
+            write_replay_result(refused, result_dir)
+            return refused
+
         policy = self._flags.divergence_policy
         exit_code, run_error, events = self._run_replay_subprocess(
-            command, model_calls, tool_calls, divergence_policy=policy
+            command, model_calls, tool_calls, divergence_policy=policy,
+            tool_policy=evaluator.tool_policy_table(),
+            install_required=evaluator.has_deny_override(),
         )
         report = summarize(
             model_calls, tool_calls, events,
             divergence_policy=policy, substitute_tools=True,
         )
+        if unenforceable:  # --permissive: a warning on the result, not a failure
+            message = ReplayOverrideUnenforceableError.describe(unenforceable)
+            report.divergences[:0] = [
+                {
+                    "kind": ReplayOverrideUnenforceableError.kind,
+                    "message": message,
+                    "tool_name": u["tool_name"],
+                    "transports": u["transports"],
+                }
+                for u in unenforceable
+            ]
+        report.tool_overrides = evaluator.override_report(tool_calls)
         status = "success" if exit_code == 0 else "failure"
         # ADR-0300: under the default fail-closed policy a divergence fails the
         # replay even if the workload caught the dispatcher's exception and
@@ -703,12 +764,17 @@ class ReplayEngine:
         tool_calls: list[dict[str, Any]] | None = None,
         *,
         divergence_policy: str = "warn",
+        tool_policy: dict[str, Any] | None = None,
+        install_required: bool = False,
     ) -> tuple[int, dict[str, Any] | None, list[dict[str, Any]]]:
         """As ``_run_mocked_subprocess``, plus the dispatchers' event log.
 
         ``tool_calls=None`` installs no tool dispatcher (tools run live);
         a list -- even an empty one -- installs ``MockToolDispatcher`` on
-        ``mcp.ClientSession.call_tool`` (ADR-0300).
+        ``mcp.ClientSession.call_tool`` (ADR-0300). ``tool_policy`` is the
+        resolved ``replay.yaml`` override table the dispatcher enforces
+        (ADR-0306 D8); ``install_required`` stops the process if the
+        dispatchers cannot be installed even under ``--permissive``.
         """
         with tempfile.TemporaryDirectory(prefix="nf_replay_") as tmp:
             site_dir = Path(tmp) / "site"
@@ -733,10 +799,18 @@ class ReplayEngine:
             flags = getattr(self, "_flags", None) or ReplayFlags()
             env[TOOL_LADDER_ENV] = ",".join(c for c in MUTATION_CLASSES if flags.permits(c))
             env.pop("NOVAFABRIC_REPLAY_TOOL_QUEUE_PATH", None)
+            env.pop(TOOL_POLICY_ENV, None)
+            env.pop(INSTALL_REQUIRED_ENV, None)
             if tool_calls is not None:
                 tool_queue_path = Path(tmp) / "tool_queue.json"
                 tool_queue_path.write_text(json.dumps(tool_calls))
                 env["NOVAFABRIC_REPLAY_TOOL_QUEUE_PATH"] = str(tool_queue_path)
+                if tool_policy is not None:
+                    policy_path = Path(tmp) / "tool_policy.json"
+                    policy_path.write_text(json.dumps(tool_policy))
+                    env[TOOL_POLICY_ENV] = str(policy_path)
+                if install_required:
+                    env[INSTALL_REQUIRED_ENV] = "1"
             existing = env.get("PYTHONPATH", "")
             env["PYTHONPATH"] = f"{site_dir}:{existing}" if existing else str(site_dir)
 

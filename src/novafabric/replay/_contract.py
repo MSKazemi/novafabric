@@ -489,6 +489,9 @@ class ReplayContractReport:
     network_connections_capped: bool = False
     network_destinations: list[str] = field(default_factory=list)
     divergences: list[dict[str, Any]] = field(default_factory=list)
+    #: ``replay.yaml`` overrides and whether this replay honours each
+    #: (ADR-0306 D11); written only when the capsule has overrides.
+    tool_overrides: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def queues_fully_consumed(self) -> bool:
@@ -533,6 +536,8 @@ class ReplayContractReport:
         }
         if self.network_connections_capped:
             out["network_connections_capped"] = True
+        if self.tool_overrides:
+            out["tool_overrides"] = [dict(o) for o in self.tool_overrides]
         if len(self.divergences) > len(listed):
             out["divergences_not_listed"] = len(self.divergences) - len(listed)
         return out
@@ -627,6 +632,11 @@ def summarize(
         elif kind == "tool_live":
             report.tool_calls_live += 1
             _surface_of(ev)["live"] += 1
+            if ev.get("consumed"):
+                # ADR-0306 D8: an honoured `allow: true` re-executes a call
+                # whose record it consumed -- requested, so not left over.
+                surface = str(ev.get("surface") or TOOL_SURFACE_MCP)
+                consumed_unserved[surface] = consumed_unserved.get(surface, 0) + 1
         elif kind == "tool_refused":
             report.tool_calls_refused += 1
             _surface_of(ev)["refused"] += 1

@@ -73,6 +73,7 @@ from novafabric.replay._errors import (
     ReplayToolUnmatchedError,
     ReplayUnsupportedSurfaceError,
 )
+from novafabric.replay._flags import LADDER_FLAG, ladder_flag
 from novafabric.replay._model_errors import (
     UnreconstructableError,
     is_recorded_model_error,
@@ -80,6 +81,12 @@ from novafabric.replay._model_errors import (
     raised_mid_stream,
     rebuild_sdk_error,
     recorded_error_type,
+)
+from novafabric.replay._policy import (
+    INSTALL_REQUIRED_ENV,
+    TOOL_POLICY_ENV,
+    decide_intercepted,
+    gating_mutation_class,
 )
 
 #: Exit status of a strict replay whose dispatcher could not be installed: the
@@ -1166,20 +1173,66 @@ def _mcp_result_from_record(record: dict[str, Any]) -> Any:
 TOOL_LADDER_ENV = "NOVAFABRIC_REPLAY_TOOL_LADDER"
 
 #: The ladder flag that permits each mutation class (ADR-0012).
-_LADDER_FLAG: dict[str, str] = {
-    "none": "always permitted",
-    "read-only": "--allow-readonly",
-    "idempotent-write": "--allow-mutating",
-    "non-idempotent-write": "--allow-mutating",
-    "external-side-effect": "--allow-external-side-effects",
-    "unknown": "--allow-unknown-mutation",
-}
+_LADDER_FLAG: dict[str, str] = LADDER_FLAG
 
 
 def _ladder_from_env() -> frozenset[str]:
     raw = os.environ.get(TOOL_LADDER_ENV, "")
     classes = {c.strip() for c in raw.split(",") if c.strip()}
     return frozenset(classes | {"none"})
+
+
+def _overrides_from_env() -> dict[str, bool]:
+    """The ``replay.yaml`` override table the engine resolved (ADR-0306 D8):
+    tool name -> ``allow``. Absent means no override. A table that cannot be
+    read raises, so a strict replay (or one with an ``allow: false`` override)
+    stops before the workload runs rather than enforce nothing."""
+    path = os.environ.get(TOOL_POLICY_ENV, "")
+    if not path:
+        return {}
+    table = json.loads(Path(path).read_text())
+    overrides = table.get("overrides") if isinstance(table, dict) else None
+    if not isinstance(overrides, dict):
+        raise ValueError(f"{TOOL_POLICY_ENV}: no 'overrides' table")
+    out: dict[str, bool] = {}
+    for name, entry in overrides.items():
+        allow = entry.get("allow") if isinstance(entry, dict) else None
+        if not isinstance(allow, bool):
+            raise ValueError(f"{TOOL_POLICY_ENV}: override {name!r} has no boolean 'allow'")
+        out[str(name)] = allow
+    return out
+
+
+def _override_label(override: bool | None) -> str | None:
+    return None if override is None else ("allow" if override else "deny")
+
+
+def _divergence_outcome(
+    *, live: bool, policy: str, override: bool | None, gating: str, permitted: bool,
+    subject: str,
+) -> str:
+    """Why a diverging call ran live or was refused, for its error message."""
+    if live:
+        return (
+            f"running {subject} live (--permissive; mutation_class {gating!r} is "
+            "permitted by the operator's ladder flag)"
+        )
+    if override is False:
+        return (
+            f"{subject} was not run: replay.yaml tool_overrides `allow: false` -- "
+            "never run live, even under --permissive"
+        )
+    if policy != "warn":
+        return f"{subject} was not run"
+    note = (
+        "; replay.yaml `allow: true` is not honoured without it"
+        if override is True and not permitted else ""
+    )
+    return (
+        f"{subject} was not run: under --permissive an unmatched call runs live "
+        f"only when the operator's ladder flag permits mutation_class {gating!r} "
+        f"({ladder_flag(gating)}){note}"
+    )
 
 
 def _recorded_python_exception(record: dict[str, Any]) -> Exception:
@@ -1221,11 +1274,13 @@ class _PythonToolServer:
         divergence_policy: str,
         events: ReplayEventLog,
         permitted: frozenset[str],
+        overrides: dict[str, bool] | None = None,
     ) -> None:
         self._matcher = ToolCallMatcher(records)
         self._policy = divergence_policy
         self._events = events
         self._permitted = permitted
+        self._overrides = dict(overrides or {})
 
     def call(
         self, spec: Any, fn: Callable[..., Any],
@@ -1249,6 +1304,20 @@ class _PythonToolServer:
         # A call that does not bind raises the TypeError the function itself
         # would raise -- before its body could run.
         call = _tool_codec.canonical_call(spec.signature, spec.ignore, args, kwargs)
+        override = self._overrides.get(spec.name)
+        mutation_class = str(spec.mutation_class)
+        if override is True and mutation_class in self._permitted:
+            # ADR-0306 D8: `allow: true` from the capsule plus the operator's
+            # ladder flag -- re-execute. A matching record is consumed (it was
+            # asked for), so leftover accounting stays exact; nothing is served.
+            consumed = call.not_canonical is None and self._matcher.match_digest(
+                None, spec.name, str(call.digest)
+            ).record is not None
+            self._events.emit(
+                "tool_live", tool_name=spec.name, surface=TOOL_SURFACE_PYTHON,
+                mutation_class=mutation_class, override="allow", consumed=consumed,
+            )
+            return False, None
         if call.not_canonical is not None:
             return self._diverge(
                 spec, ReplayToolRecordNotServableError, None,
@@ -1284,21 +1353,19 @@ class _PythonToolServer:
         what: str, reason: str, **extra: Any,
     ) -> tuple[bool, Any]:
         mutation_class = str(spec.mutation_class)
-        live = self._policy == "warn" and mutation_class in self._permitted
-        if self._policy != "warn":
-            outcome = "the function body was not run"
-        elif live:
-            outcome = (
-                "running the function live (--permissive; its declared "
-                f"mutation_class {mutation_class!r} is permitted)"
-            )
-        else:
-            outcome = (
-                "the function body was not run: under --permissive an unmatched "
-                "call runs live only when the operator's ladder flag permits its "
-                f"declared mutation_class {mutation_class!r} "
-                f"({_LADDER_FLAG.get(mutation_class, '--allow-unknown-mutation')})"
-            )
+        override = self._overrides.get(spec.name)
+        permitted = mutation_class in self._permitted
+        live = decide_intercepted(
+            override=override, servable_match=False, permitted=permitted,
+            permissive=self._policy == "warn",
+        ) == "live"
+        outcome = _divergence_outcome(
+            live=live, policy=self._policy, override=override,
+            gating=mutation_class, permitted=permitted, subject="the function body",
+        )
+        label = _override_label(override)
+        if label is not None:
+            extra["override"] = label
         error = error_cls(
             f"{TOOL_SURFACE_PYTHON}({spec.name!r}) {what}: {reason}; {outcome}",
             tool_name=spec.name,
@@ -1318,6 +1385,7 @@ class _PythonToolServer:
         self._events.emit(
             "tool_refused", tool_name=spec.name, surface=TOOL_SURFACE_PYTHON,
             mutation_class=mutation_class,
+            **({"override": label} if label is not None else {}),
         )
         raise error
 
@@ -1345,6 +1413,7 @@ class MockToolDispatcher:
         divergence_policy: str = "fail",
         events: ReplayEventLog | None = None,
         permitted_mutation_classes: frozenset[str] = frozenset({"none"}),
+        overrides: dict[str, bool] | None = None,
     ) -> None:
         intercepted = interceptable_tool_calls(tool_calls)
         self._matcher = ToolCallMatcher(
@@ -1352,11 +1421,14 @@ class MockToolDispatcher:
         )
         self._policy = divergence_policy
         self._events = events or ReplayEventLog(None)
+        self._permitted = permitted_mutation_classes
+        self._overrides = dict(overrides or {})
         self._python = _PythonToolServer(
             [r for r in intercepted if tool_surface(r) == TOOL_SURFACE_PYTHON],
             divergence_policy=divergence_policy,
             events=self._events,
             permitted=permitted_mutation_classes,
+            overrides=self._overrides,
         )
         self._previous_handler: Any = None
         self._handler_registered = False
@@ -1407,6 +1479,19 @@ class MockToolDispatcher:
         self, original: Any, inner_self: Any, name: str, arguments: Any,
         args: tuple[Any, ...], kwargs: dict[str, Any],
     ) -> Any:
+        override = self._overrides.get(name)
+        # ADR-0306 Q3: an MCP call carries no trustworthy class -- always `unknown`.
+        gating = gating_mutation_class(TOOL_SURFACE_MCP, "unknown")
+        permitted = gating in self._permitted
+        if override is True and permitted:
+            # ADR-0306 D8: `allow: true` plus the operator's ladder flag --
+            # re-execute; a matching record is consumed, never served.
+            consumed = self._matcher.match(None, name, arguments).record is not None
+            self._events.emit(
+                "tool_live", tool_name=name, surface=TOOL_SURFACE_MCP,
+                mutation_class=gating, override="allow", consumed=consumed,
+            )
+            return await original(inner_self, name, arguments, *args, **kwargs)
         match = self._matcher.match(None, name, arguments)
         if match.record is not None:
             self._events.emit(
@@ -1416,17 +1501,36 @@ class MockToolDispatcher:
                 how=match.how,
             )
             return _mcp_result_from_record(match.record)
-        _report_divergence(self._events, self._policy, ReplayToolUnmatchedError(
+        live = decide_intercepted(
+            override=override, servable_match=False, permitted=permitted,
+            permissive=self._policy == "warn",
+        ) == "live"
+        label = _override_label(override)
+        error = ReplayToolUnmatchedError(
             f"{TOOL_SURFACE_MCP}({name!r}) has no unconsumed recorded result: "
             f"{match.reason}; "
-            + ("running the live tool" if self._policy == "warn" else "the live tool was not run"),
+            + _divergence_outcome(
+                live=live, policy=self._policy, override=override, gating=gating,
+                permitted=permitted, subject="the live tool",
+            ),
             tool_name=name,
             arguments_hash=normalized_arg_hash(arguments),
             reason=match.reason,
             surface=TOOL_SURFACE_MCP,
-        ))
-        self._events.emit("tool_live", tool_name=name)
-        return await original(inner_self, name, arguments, *args, **kwargs)
+            mutation_class=gating,
+            **({"override": label} if label is not None else {}),
+        )
+        _report_divergence(self._events, self._policy, error)  # raises under ``fail``
+        if live:
+            self._events.emit(
+                "tool_live", tool_name=name, surface=TOOL_SURFACE_MCP, mutation_class=gating,
+            )
+            return await original(inner_self, name, arguments, *args, **kwargs)
+        self._events.emit(
+            "tool_refused", tool_name=name, surface=TOOL_SURFACE_MCP, mutation_class=gating,
+            **({"override": label} if label is not None else {}),
+        )
+        raise error
 
 
 # ── live network observation ─────────────────────────────────────────────────
@@ -1505,6 +1609,10 @@ def install_from_env() -> None:
         return
     events = ReplayEventLog(os.environ.get("NOVAFABRIC_REPLAY_EVENTS_PATH") or None)
     policy = "warn" if os.environ.get("NOVAFABRIC_REPLAY_DIVERGENCE_POLICY") == "warn" else "fail"
+    # ADR-0306 D8: an `allow: false` override holds even under --permissive,
+    # which it cannot do without the tool dispatcher -- so a failed install
+    # stops the process whenever one is in force.
+    install_required = policy != "warn" or os.environ.get(INSTALL_REQUIRED_ENV) == "1"
     try:
         model_calls = json.loads(Path(model_path).read_text())
         model_dispatcher = MockModelDispatcher(
@@ -1519,6 +1627,7 @@ def install_from_env() -> None:
                 divergence_policy=policy,
                 events=events,
                 permitted_mutation_classes=_ladder_from_env(),
+                overrides=_overrides_from_env(),
             )
             tool_dispatcher.install()
             surfaces.extend(tool_dispatcher.installed_surfaces)
@@ -1528,5 +1637,5 @@ def install_from_env() -> None:
     except Exception as exc:  # noqa: BLE001 -- reported, then fail-closed below
         events.emit("install_failed", error=f"{type(exc).__name__}: {exc}")
         print(f"[novafabric] mock dispatcher install failed: {exc}", file=sys.stderr)
-        if policy != "warn":
+        if install_required:
             os._exit(REPLAY_DISPATCHER_UNAVAILABLE_EXIT)

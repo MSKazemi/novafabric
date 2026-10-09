@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
 from novafabric.replay._flags import ReplayFlags
-from novafabric.replay._policy import PolicyEvaluator
+from novafabric.replay._policy import PolicyEvaluator, decide_intercepted, gating_mutation_class
 
 
 def _tc(tool_name: str = "send_email", mutation_class: str = "non-idempotent-write") -> dict:
@@ -42,12 +44,14 @@ def test_forensic_mode_always_mocks() -> None:
 
 
 def test_tool_override_takes_precedence() -> None:
+    """Outside mocked mode no tool dispatcher exists; the legacy table is kept
+    (the legacy `action: replay` shape is still read)."""
     policy = {
         "tool_overrides": [
             {"tool_name": "safe_lookup", "action": "replay"},
         ]
     }
-    flags = ReplayFlags(mode="mocked")
+    flags = ReplayFlags(mode="semantic")
     ev = PolicyEvaluator(policy, flags)
     decision = ev.check_tool({
         "tool_call_id": "XY",
@@ -56,6 +60,18 @@ def test_tool_override_takes_precedence() -> None:
     })
     assert decision.decision == "allow"
     assert "tool_override" in decision.reason
+
+
+def test_legacy_action_shape_is_enforced_like_allow() -> None:
+    """`action: replay|refuse` maps to `allow: true|false` in the table the
+    replayed process enforces; another action is ignored, never guessed at."""
+    policy = {"tool_overrides": [
+        {"tool_name": "a", "action": "replay"},
+        {"tool_name": "b", "action": "refuse"},
+        {"tool_name": "c", "action": "mock"},
+    ]}
+    table = PolicyEvaluator(policy, ReplayFlags()).tool_policy_table()
+    assert table == {"overrides": {"a": {"allow": True}, "b": {"allow": False}}}
 
 
 def test_check_all_returns_one_per_call() -> None:
@@ -104,25 +120,52 @@ def _schema_valid(policy: dict) -> None:
             jsonschema.validate(override, override_schema)
 
 
-def test_schema_shape_allow_true_re_executes_the_tool() -> None:
-    """The schema defines `{tool_name, allow: bool}`; the evaluator used to read only
-    `action`, so a schema-valid override was silently ignored, even by --dry-run."""
+def test_schema_shape_allow_true_re_executes_the_tool_only_with_the_ladder_flag() -> None:
+    """The schema defines `{tool_name, allow: bool}`. ADR-0306 Q4 (owner decision
+    2026-10-09): a permission read from the capsule takes effect only with the
+    operator's ladder flag -- for MCP always --allow-unknown-mutation, whatever
+    class the capsule recorded."""
     policy = {"tool_overrides": [{"tool_name": "safe_lookup", "allow": True}]}
     _schema_valid(policy)
-    ev = PolicyEvaluator(policy, ReplayFlags(mode="mocked"))
-    decision = ev.check_tool({**_tc("safe_lookup", "read-only"), "transport": "mcp"})
-    assert decision.decision == "allow"
-    assert decision.reason == "tool_override: allow=true"
+    call = {**_tc("safe_lookup", "read-only"), "transport": "mcp"}
+    ev = PolicyEvaluator(policy, ReplayFlags(mode="mocked", allow_readonly=True))
+    decision = ev.check_tool(call)
+    assert decision.decision == "mock"
+    assert "override not honoured: needs --allow-unknown-mutation" in ev.dry_run_report([call])
+    ev = PolicyEvaluator(policy, ReplayFlags(mode="mocked", allow_unknown_mutation=True))
+    decision = ev.check_tool(call)
+    assert decision.decision == "live"
+    assert "[LIVE (override honoured)]" in ev.dry_run_report([call])
 
 
-def test_schema_shape_allow_false_refuses_the_tool() -> None:
+def test_schema_shape_allow_false_on_an_intercepted_tool_is_never_live() -> None:
     policy = {"tool_overrides": [{"tool_name": "send_email", "allow": False}]}
     _schema_valid(policy)
+    call = {**_tc("send_email"), "transport": "mcp"}
+    for flags in (
+        ReplayFlags(mode="mocked"),
+        ReplayFlags(mode="mocked", permissive=True, allow_unknown_mutation=True),
+    ):
+        ev = PolicyEvaluator(policy, flags)
+        assert ev.check_tool(call).decision == "mock"
+        assert "[MOCK (never live)] send_email" in ev.dry_run_report([call])
+
+
+def test_schema_shape_allow_false_on_a_non_intercepted_tool_refuses_to_start() -> None:
+    """ADR-0306 Q5: strict replay refuses to start; --permissive runs it live."""
+    policy = {"tool_overrides": [{"tool_name": "send_email", "allow": False}]}
+    _schema_valid(policy)
+    call = {**_tc("send_email"), "transport": "http"}
     ev = PolicyEvaluator(policy, ReplayFlags(mode="mocked"))
-    decision = ev.check_tool({**_tc("send_email"), "transport": "http"})
+    decision = ev.check_tool(call)
     assert decision.decision == "deny"
-    assert decision.reason == "tool_override: allow=false"
-    assert "send_email" in ev.dry_run_report([{**_tc("send_email"), "transport": "http"}])
+    assert "refuses to start" in decision.reason
+    assert ev.unenforceable_overrides([call]) == [
+        {"tool_name": "send_email", "transports": ["http"]}
+    ]
+    ev = PolicyEvaluator(policy, ReplayFlags(mode="mocked", permissive=True))
+    assert ev.check_tool(call).decision == "live"
+    assert "[LIVE (override cannot be enforced)]" in ev.dry_run_report([call])
 
 
 def test_override_with_neither_allow_nor_action_is_not_applied() -> None:
@@ -132,3 +175,72 @@ def test_override_with_neither_allow_nor_action_is_not_applied() -> None:
     decision = ev.check_tool({**_tc("db_write"), "transport": "http"})
     assert decision.decision == "live"
     assert "tool_override" not in decision.reason
+
+
+# ── ADR-0306 slice 2: one decision, shared by --dry-run and the dispatcher ───
+
+
+@pytest.mark.parametrize("override", [None, False, True])
+@pytest.mark.parametrize("servable_match", [False, True])
+@pytest.mark.parametrize("permitted", [False, True])
+@pytest.mark.parametrize("permissive", [False, True])
+def test_decide_intercepted_truth_table(
+    override: bool | None, servable_match: bool, permitted: bool, permissive: bool
+) -> None:
+    """The owner's rules (2026-10-09, "Strict"), stated independently of the code."""
+    action = decide_intercepted(
+        override=override, servable_match=servable_match,
+        permitted=permitted, permissive=permissive,
+    )
+    if override is True and permitted:
+        expected = "live"  # Q4: a capsule permission plus the operator's flag
+    elif servable_match:
+        expected = "serve"  # serving is not re-execution, even for allow: false
+    elif override is False:
+        expected = "refuse"  # Q4: a capsule restriction holds, even under --permissive
+    elif permissive and permitted:
+        expected = "live"  # D7 / Q3: permissive needs the ladder flag
+    else:
+        expected = "refuse"
+    assert action == expected
+
+
+def test_an_mcp_call_is_always_gated_as_unknown() -> None:
+    """A capsule's recorded class must never grant a permission (fact 9)."""
+    assert gating_mutation_class("mcp.ClientSession.call_tool", "none") == "unknown"
+    assert gating_mutation_class("novafabric.capture.record.tool", "read-only") == "read-only"
+
+
+def test_override_report_states_what_the_replay_will_do() -> None:
+    policy = {"tool_overrides": [
+        {"tool_name": "gone", "allow": False},
+        {"tool_name": "net", "allow": False},
+        {"tool_name": "net_ok", "allow": True},
+        {"tool_name": "mcp_no", "allow": False},
+        {"tool_name": "mcp_yes", "allow": True,
+         "rationale": "idempotent lookup, safe to re-run"},
+    ]}
+    calls = [
+        {**_tc("net"), "transport": "http"},
+        {**_tc("net_ok"), "transport": "shell"},
+        {**_tc("mcp_no"), "transport": "mcp"},
+        {**_tc("mcp_yes"), "transport": "mcp"},
+    ]
+    by_name = {
+        o["tool_name"]: o
+        for o in PolicyEvaluator(policy, ReplayFlags(mode="mocked")).override_report(calls)
+    }
+    assert by_name["gone"]["honoured"] is False
+    assert by_name["gone"]["reason"].startswith("override_unused")
+    assert by_name["net"]["honoured"] is False
+    assert by_name["net"]["reason"].startswith("override_unenforceable")
+    assert by_name["net_ok"]["honoured"] is True
+    assert by_name["mcp_no"]["honoured"] is True
+    assert by_name["mcp_yes"]["honoured"] is False
+    assert by_name["mcp_yes"]["reason"].startswith("override_not_honoured")
+    assert "--allow-unknown-mutation" in by_name["mcp_yes"]["reason"]
+    assert by_name["mcp_yes"]["rationale"] == "idempotent lookup, safe to re-run"
+    flagged = PolicyEvaluator(
+        policy, ReplayFlags(mode="mocked", allow_unknown_mutation=True)
+    ).override_report(calls)
+    assert {o["tool_name"]: o["honoured"] for o in flagged}["mcp_yes"] is True

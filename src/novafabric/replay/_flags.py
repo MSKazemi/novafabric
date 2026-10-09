@@ -18,6 +18,22 @@ _ALLOW_MUTATING_CLASSES = _ALLOW_READONLY_CLASSES | {"idempotent-write", "non-id
 _ALLOW_EXTERNAL_CLASSES = _ALLOW_MUTATING_CLASSES | {"external-side-effect"}
 _ALLOW_UNKNOWN_CLASSES = _ALLOW_EXTERNAL_CLASSES | {"unknown"}
 
+#: The operator flag that permits each mutation class (ADR-0012 safety ladder).
+LADDER_FLAG: dict[str, str] = {
+    "none": "always permitted",
+    "read-only": "--allow-readonly",
+    "idempotent-write": "--allow-mutating",
+    "non-idempotent-write": "--allow-mutating",
+    "external-side-effect": "--allow-external-side-effects",
+    "unknown": "--allow-unknown-mutation",
+}
+
+
+def ladder_flag(mutation_class: str) -> str:
+    """The flag an operator passes to permit *mutation_class* (unknown classes
+    are treated as ``unknown``)."""
+    return LADDER_FLAG.get(mutation_class, LADDER_FLAG["unknown"])
+
 
 @dataclass
 class ReplayFlags:
