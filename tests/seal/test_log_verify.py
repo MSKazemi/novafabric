@@ -144,7 +144,10 @@ class TestLogVerifyHelpStatesTheGuarantee:
         )
         assert result.exit_code == 0, result.output
         # Rich wraps help inside box-drawing panels; flatten to one line of words.
-        return " ".join(result.output.replace("│", " ").split())
+        from _help_assert import strip_ansi
+
+        # CI forces colour (GITHUB_ACTIONS), which splits phrases with ANSI codes.
+        return " ".join(strip_ansi(result.output).replace("│", " ").split())
 
     def test_help_says_the_full_root_is_recomputed(self):
         text = self._help()
