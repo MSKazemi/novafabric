@@ -359,7 +359,7 @@ class ReplayFlags:
 | Mode | What it does | Typical use |
 |---|---|---|
 | `forensic` | Read-only inspection. No subprocess, no network. | Audit / post-incident |
-| `mocked` | Re-spawns the command (Python workloads). Serves recorded responses for OpenAI `chat.completions.create` and `responses.create` / Anthropic `messages.create` — **sync or async, streamed or not** (ADR-0304) — and recorded **MCP** `ClientSession.call_tool` results, one per call, plus — experimental — results of functions declared with [`record.tool`](#extended-event-recording-experimental). **Other tools run live** (HTTP, shell, files, framework-native, undeclared functions); `replay_contract.network_connections_live` reports their connections. **Fails closed** (ADR-0300): an extra or unmatched call, an unsupported model surface (`parse`, legacy completions, `with_raw_response`), or an unconsumed recording makes the result `failure` with a `divergence_reason`; `permissive=True` only reports them. | CI / regression |
+| `mocked` | Re-spawns the command (Python workloads). Serves recorded responses for OpenAI `chat.completions.create` and `responses.create` / Anthropic `messages.create` — **sync or async, streamed or not** (ADR-0304) — and recorded **MCP** `ClientSession.call_tool` results, one per call, plus — experimental — results of functions declared with [`record.tool`](#extended-event-recording-experimental) and of Google ADK tools run with `novafabric.adapters.google_adk.make_tool_plugin()` (unreleased, not in v0.105.0). **Other tools run live** (HTTP, shell, files, other framework-native tools, undeclared functions); `replay_contract.network_connections_live` reports their connections. **Fails closed** (ADR-0300): an extra or unmatched call, an unsupported model surface (`parse`, legacy completions, `with_raw_response`), or an unconsumed recording makes the result `failure` with a `divergence_reason`; `permissive=True` only reports them. | CI / regression |
 | `semantic` | **Does not re-execute.** Scores how similar the capsule's *recorded* model responses are to each other (mean pairwise text similarity, 0.0–1.0); no live model is called; returns `similarity_score`. | Consistency check of recorded responses |
 | `exact` | **Does not re-execute.** Eligibility check for byte-exact replay (`exact_eligible` + reasons): deterministic env.lock, per-call seed, no tool-schema drift. | Local / on-prem / compliance |
 | `intervention` | Re-executes with a spec-driven intervention overlay (experimental, ADR-0086). | What-if / counterfactual analysis |
@@ -372,7 +372,7 @@ The `allow_*` flags form a safety ladder over the capsule's recorded tool calls
 `allow_unknown_mutation`). They drive the `dry_run` report, and `allow_mutating`
 triggers an audited policy gate before the replay starts. Inside the replayed
 process they gate only the intercepted tool surfaces (ADR-0306, experimental):
-with `permissive=True` an unmatched MCP or `record.tool` call runs live only if
+with `permissive=True` an unmatched MCP, `record.tool` or ADK tool call runs live only if
 they permit its class (MCP calls count as `unknown`), and a `replay.yaml`
 `allow: true` override re-executes a tool only if they permit its class. A
 strict replay whose `replay.yaml` has an `allow: false` override on a tool it

@@ -11241,7 +11241,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "permissive",
         "label": "--permissive",
         "type": "toggle",
-        "hint": "mocked mode only (ADR-0300): do NOT fail on divergence. A model call with no recorded response gets an empty reply, unsupported model surfaces run LIVE, an unmatched intercepted tool call runs live only if an --allow-* flag permits its mutation class (MCP: --allow-unknown-mutation; record.tool: its declared class), never if replay.yaml says `allow: false`, and unconsumed recordings are only reported. Default is fail-closed.",
+        "hint": "mocked mode only (ADR-0300): do NOT fail on divergence. A model call with no recorded response gets an empty reply, unsupported model surfaces run LIVE, an unmatched intercepted tool call runs live only if an --allow-* flag permits its mutation class (MCP: --allow-unknown-mutation; record.tool and Google ADK tools: their declared class), never if replay.yaml says `allow: false`, and unconsumed recordings are only reported. Default is fail-closed.",
         "flag": "--permissive"
       }
     ],

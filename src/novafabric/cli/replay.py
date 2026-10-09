@@ -131,7 +131,8 @@ def replay_cmd(
                 "call with no recorded response gets an empty reply, unsupported "
                 "model surfaces run LIVE, an unmatched intercepted tool call runs "
                 "live only if an --allow-* flag permits its mutation class (MCP: "
-                "--allow-unknown-mutation; record.tool: its declared class), never "
+                "--allow-unknown-mutation; record.tool and Google ADK tools: their "
+                "declared class), never "
                 "if replay.yaml says `allow: false`, and unconsumed recordings are "
                 "only reported. Default is fail-closed."
             ),
@@ -144,17 +145,18 @@ def replay_cmd(
       mocked       — re-runs the command (Python workloads). Serves recorded
                      responses for OpenAI chat.completions and responses, and
                      Anthropic messages calls (sync or async, streamed or not),
-                     and recorded results for MCP ClientSession.call_tool
-                     and for functions declared with
-                     novafabric.capture.record.tool (experimental).
+                     and recorded results for MCP ClientSession.call_tool,
+                     for functions declared with
+                     novafabric.capture.record.tool and for Google ADK tools
+                     run with the NovaFabric tool plugin (experimental).
                      Fail-closed: an extra, unmatched or unsupported call, or an
                      unconsumed recording, fails the replay (--permissive to
                      only report). replay.yaml tool_overrides are enforced
-                     on both tool surfaces: `allow: false` is never run live,
+                     on every tool surface: `allow: false` is never run live,
                      `allow: true` re-executes only with the --allow-* flag
                      for its class (experimental). Other tools (HTTP,
-                     shell, files, framework-native, undeclared functions)
-                     are NOT intercepted: they run live; outbound
+                     shell, files, other framework-native tools, undeclared
+                     functions) are NOT intercepted: they run live; outbound
                      connections are reported, not blocked
       forensic     — read-only: inspects the capsule, runs nothing
       semantic     — does not re-run: scores how similar the recorded LLM
@@ -288,7 +290,7 @@ def replay_cmd(
             result.tool_calls_available or 0
         )
         console.print(
-            f"  tool calls (MCP call_tool, record.tool): {result.tool_calls_mocked} of "
+            f"  tool calls (MCP call_tool, record.tool, ADK): {result.tool_calls_mocked} of "
             f"{result.tool_calls_available or 0} served, "
             f"{result.tool_calls_live or 0} live, "
             f"{result.tool_calls_unmatched or 0} unmatched; "

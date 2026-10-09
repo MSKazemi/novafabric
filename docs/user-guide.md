@@ -430,6 +430,19 @@ capsule, capture the script that runs the agent with `nova capture -- python age
 adapter's entry-point and capture-mode details, is in
 [`cli-reference.md`](cli-reference.md) §Framework Adapters.
 
+**Google ADK tools in a mocked replay (experimental, unreleased — not in v0.105.0).**
+For an ADK agent captured with `nova capture -- python agent.py`, add
+`novafabric.adapters.google_adk.make_tool_plugin()` as the **first** plugin of the
+`Runner`. Under capture each ADK tool call is recorded (payloads at
+`NOVA_CAPTURE_LEVEL=forensic`); under `nova replay` the recorded result is returned
+through ADK's documented `before_tool_callback` short-circuit and the tool body never
+runs. Unmatched or unservable calls are refused (fail closed), `--permissive` and
+`replay.yaml` `tool_overrides` work as for MCP and `record.tool`, and the mutation
+class that gates them is declared in `make_tool_plugin({...})`. It does not make
+capsules from `make_google_adk_plugin()` replayable — those keep a pseudo-command
+(ADR-0306 open question 7). Details: [`cli-reference.md`](cli-reference.md) §Google
+ADK adapter and [`architecture/replay-modes.md`](architecture/replay-modes.md).
+
 **`local` (default).** Runs the workload as a local subprocess. Equivalent to
 the pre-v0.6 behavior. No additional setup required.
 
@@ -750,8 +763,9 @@ MCP call live.
 
 The safety-ladder flags classify the capsule's recorded tool calls for the
 `--dry-run` report, and `--allow-mutating` adds an audited policy gate before the
-replay starts. Inside the replayed process they gate only the two intercepted tool
-surfaces — an unmatched call under `--permissive`, and a `replay.yaml`
+replay starts. Inside the replayed process they gate only the intercepted tool
+surfaces (MCP, `record.tool` and, experimental, Google ADK tools through the tool
+plugin) — an unmatched call under `--permissive`, and a `replay.yaml`
 `allow: true` override — and never stop a tool replay does not intercept:
 
 ```bash

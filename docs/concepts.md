@@ -404,8 +404,13 @@ Inside the re-spawned process:
   slice 4):* a declared function that itself called a model or tool is served too,
   and the records it wrote are consumed as covered; MCP arguments a capsule
   redacted at seal now match the live call (redact-then-hash).
+- **Experimental, unreleased (ADR-0306 slice 3, not in v0.105.0):** it also
+  serves **Google ADK** tool calls made through the NovaFabric tool plugin
+  (`novafabric.adapters.google_adk.make_tool_plugin()`, first in the `Runner`'s
+  plugins), through ADK's documented `before_tool_callback` short-circuit — for
+  workloads captured with `nova capture python …` only.
 - **Every other tool runs live**: HTTP requests, shell commands, file writes,
-  framework-native tools, undeclared functions and other providers' SDKs are not
+  other framework-native tools, undeclared functions and other providers' SDKs are not
   intercepted. The
   result reports them as `tool_calls_not_interceptable`, and the outbound
   connections the replayed process opened as `network_connections_live`
@@ -415,7 +420,7 @@ Inside the re-spawned process:
   — report-only, never a failure.
 
 The replay **fails closed**: an extra model call, a call on an unsupported
-surface, an unmatched MCP or `record.tool` call, or a recorded response that is never requested
+surface, an unmatched MCP, `record.tool` or ADK tool call, or a recorded response that is never requested
 marks the replay `failure` with a `divergence_reason`, even if the workload
 caught the exception. `--permissive` (Python: `ReplayFlags(permissive=True)`)
 keeps the older behaviour — an empty reply on an exhausted queue, unsupported
@@ -434,7 +439,7 @@ The safety ladder classifies the capsule's recorded tool calls by side-effect
 level. It drives the `--dry-run` report, and `--allow-mutating` triggers a
 policy-engine gate (an audited allow/deny) before a mutating replay starts. In
 `mocked` mode the run-time rule is fixed by ADR-0300: an intercepted call (MCP
-`call_tool`, or a `record.tool` function) is served from the capsule or refused,
+`call_tool`, a `record.tool` function, or an ADK tool through the tool plugin) is served from the capsule or refused,
 and every other tool runs live (the `--dry-run` report marks those `[LIVE]`). The
 rungs gate the intercepted surfaces in two places only (ADR-0306, experimental):
 under `--permissive` an unmatched call runs live only if a rung permits its class,

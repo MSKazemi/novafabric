@@ -11,11 +11,12 @@ engine writes (see :func:`install_from_env`):
   same SDK exception class at its position (``_model_errors``, issue #16) --
   after the delivered chunks when it was raised mid-stream; a Responses API
   response the SDK *returned* with ``status: failed`` is returned as recorded;
-* :class:`MockToolDispatcher` serves recorded tool results on the two intercepted
+* :class:`MockToolDispatcher` serves recorded tool results on the intercepted
   tool surfaces: MCP ``tools/call`` through ``mcp.ClientSession.call_tool``
-  (ADR-0300), and functions the workload declared with
+  (ADR-0300), functions the workload declared with
   ``novafabric.capture.record.tool`` (ADR-0306, experimental) -- served before
-  the function body runs.
+  the function body runs -- and Google ADK tools through the NovaFabric ADK tool
+  plugin (ADR-0306 slice 3, experimental).
 
 Every action is appended to an event log the engine reads afterwards. Under the
 default ``fail`` divergence policy a call with no recorded answer raises a
@@ -54,6 +55,7 @@ from novafabric.replay._contract import (
     ECHO_NOT_SENT,
     MODEL_SURFACES,
     QUEUE_PROVIDER,
+    TOOL_SURFACE_ADK,
     TOOL_SURFACE_MCP,
     TOOL_SURFACE_PYTHON,
     ReplayEventLog,
@@ -1525,7 +1527,10 @@ class MockToolDispatcher:
 
     * MCP ``tools/call`` through a patch of ``mcp.ClientSession.call_tool``;
     * ``record.tool`` functions through a server registered with the façade
-      (ADR-0306, experimental), asked before the function body runs.
+      (ADR-0306, experimental), asked before the function body runs;
+    * Google ADK tools through a server registered with the ADK tool seam
+      (``adapters._adk_tool_seam``; ADR-0306 slice 3, experimental), asked by
+      the NovaFabric ADK tool plugin's ``before_tool_callback``.
 
     A call with no unconsumed record is refused under ``fail`` -- the live tool
     is never executed. Under ``warn`` an unmatched call runs live only if the
@@ -1533,7 +1538,7 @@ class MockToolDispatcher:
     ``record.tool``, always ``unknown`` for MCP (ADR-0306 D7, Q3).
 
     ``overrides`` is the ``replay.yaml`` table (tool name -> ``allow``), applied
-    on both surfaces through ``_policy.decide_intercepted`` (ADR-0306 D8):
+    on every surface through ``_policy.decide_intercepted`` (ADR-0306 D8):
     ``allow: false`` refuses an unmatched call even under ``warn``; ``allow:
     true`` re-executes a call only when the ladder permits its class.
     """
@@ -1568,6 +1573,16 @@ class MockToolDispatcher:
             overrides=self._overrides,
             on_served=self._cover_nested,
         )
+        from novafabric.replay._adk_tool_server import AdkToolServer
+
+        self._adk = AdkToolServer(
+            [r for r in intercepted if tool_surface(r) == TOOL_SURFACE_ADK],
+            divergence_policy=divergence_policy,
+            events=self._events,
+            permitted=permitted_mutation_classes,
+            overrides=self._overrides,
+        )
+        self._previous_adk_handler: Any = None
         self._previous_handler: Any = None
         self._handler_registered = False
         self._patcher = _Patcher()
@@ -1612,20 +1627,27 @@ class MockToolDispatcher:
             "mcp.client.session", "ClientSession", "call_tool", self._make_call_tool
         ):
             self.installed_surfaces.append(TOOL_SURFACE_MCP)
+        from novafabric.adapters import _adk_tool_seam
         from novafabric.capture import record
 
         self._previous_handler = record._set_tool_handler(self._python)
+        self._previous_adk_handler = _adk_tool_seam._set_handler(self._adk)
         self._handler_registered = True
         self.installed_surfaces.append(TOOL_SURFACE_PYTHON)
+        self.installed_surfaces.append(TOOL_SURFACE_ADK)
 
     def uninstall(self) -> None:
         self._patcher.restore()
         if self._handler_registered:
+            from novafabric.adapters import _adk_tool_seam
             from novafabric.capture import record
 
             if record._get_tool_handler() is self._python:
                 record._set_tool_handler(self._previous_handler)
+            if _adk_tool_seam._get_handler() is self._adk:
+                _adk_tool_seam._set_handler(self._previous_adk_handler)
             self._previous_handler = None
+            self._previous_adk_handler = None
             self._handler_registered = False
         self.installed_surfaces = []
 

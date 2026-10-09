@@ -22,6 +22,9 @@ from novafabric.capture._tool_scope import WITHIN_TOOL_CALL_EXT as WITHIN_TOOL_C
 #: Surface marker written into a python-surface record's ``extensions``.
 TOOL_SURFACE_EXT = "io.novafabric.tool_surface"
 TOOL_SURFACE_PYTHON_FUNCTION = "python.function"
+#: Surface marker of a Google ADK tool call recorded through the NovaFabric ADK
+#: tool plugin (ADR-0306 slice 3, ``adapters/_adk_tool_seam``).
+TOOL_SURFACE_ADK_TOOL = "google.adk.tool"
 QUALNAME_EXT = "io.novafabric.tool_qualname"
 RESULT_CODEC_EXT = "io.novafabric.result_codec"
 NOT_SERVABLE_REASON_EXT = "io.novafabric.not_servable_reason"

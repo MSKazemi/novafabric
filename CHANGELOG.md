@@ -185,6 +185,23 @@ are behaviour changes; read the upgrade notes.** Full narrative:
   `replay_contract.tool_overrides` (`{tool_name, decision, honoured, reason, rationale?}`,
   written only when there are overrides), new divergence kind `override_unenforceable`
   (under `--permissive`), and the named refusal `ToolOverrideUnenforceable` (below).
+- **Google ADK tool calls are captured and served by mocked replay (experimental, ADR-0306
+  slice 3).** `novafabric.adapters.google_adk.make_tool_plugin()`, placed first in an ADK
+  `Runner`'s plugins, records each ADK tool call under `nova capture python …` as one
+  `tool-calls.jsonl` record (`transport: "python"`, `io.novafabric.tool_surface:
+  "google.adk.tool"`, the model's `io.novafabric.adk_function_call_id`; no schema change),
+  with the `record.tool` codec: payloads only at `forensic`/`air_gapped`, after-redaction
+  digests otherwise. In a mocked `nova replay` the recorded result is returned through ADK's
+  documented `before_tool_callback` short-circuit, so the tool body never runs; matching is
+  one-to-one by `function_call_id` (only when name and arguments also match) or by name and
+  canonical arguments. Unmatched calls fail closed (`tool_call_unmatched`); calls that raised,
+  changed `tool_context.actions`, are long-running or made nested model/tool calls are
+  recorded as not servable (`tool_result_not_servable`). `--permissive` and `replay.yaml`
+  `tool_overrides` apply as on the other tool surfaces, gated by the mutation class declared
+  in `make_tool_plugin({...})` (default `unknown`). New intercepted surface
+  `google.adk.tools.BaseTool` in `replay_contract.interception_surfaces` and
+  `tool_calls_by_surface`. Capsules written by the ADK capture plugin (`make_plugin()`) are
+  still refused by mocked replay (pseudo-command; ADR-0306 open question 7).
 - **Architecture explainer: an animated "How NovaFabric works" system map** (22 steps, every stage from the workload to server mode, maturity-labelled, unreleased behaviour marked) plus generated `how-it-works.svg`, `mocked-replay.svg` and `diff-gate.svg` (`docs/architecture/explainer.html`).
 - **`nova seal init` — explicit first-run sealing with a local, self-asserted identity
   (experimental, ADR-0301).** One offline command creates a dedicated ECDSA P-256 signing key,

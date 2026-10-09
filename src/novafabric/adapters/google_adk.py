@@ -1,16 +1,21 @@
 """NovaFabric plugin for Google ADK.
 
 Implements the ADK ``BasePlugin`` interface to capture every Runner
-invocation as a nova capsule.
+invocation as a nova capsule (:func:`make_plugin`), and -- experimental,
+ADR-0306 slice 3 -- a tool plugin (:func:`make_tool_plugin`) that records each
+ADK tool call under ``nova capture`` and serves it from the capsule under a
+mocked ``nova replay``, before the tool body runs.
 
-``google-adk`` is an **optional** dependency.  :func:`make_plugin` raises
-:class:`ImportError` at call time if the package is missing.
+``google-adk`` is an **optional** dependency.  :func:`make_plugin` and
+:func:`make_tool_plugin` raise :class:`ImportError` at call time if the package
+is missing.
 """
 from __future__ import annotations
 
 import logging
 import threading
 import time
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
@@ -271,3 +276,62 @@ def make_plugin(data_dir: Path | None = None) -> NovaAdkPlugin:
             NovaAdkPlugin.__init__(self, data_dir)
 
     return _AdkPlugin(resolved)
+
+
+def make_tool_plugin(
+    mutation_classes: Mapping[str, str] | None = None,
+    *,
+    default_mutation_class: str = "unknown",
+) -> Any:
+    """Create the NovaFabric ADK **tool** plugin (ADR-0306 slice 3, experimental).
+
+    Pass it **first** in ``Runner(plugins=[...])`` -- ADK stops at the first
+    plugin that answers a callback. It does nothing on its own: under
+    ``nova capture python …`` each ADK tool call becomes one
+    ``tool-calls.jsonl`` record; under a mocked ``nova replay`` of that capsule
+    the recorded result is returned through ADK's documented
+    ``before_tool_callback`` short-circuit and the tool body never runs (an
+    unmatched or unservable call is refused, fail closed). Outside capture and
+    replay every callback returns ``None``.
+
+    Only capsules with a re-runnable command (``nova capture python …``) can be
+    replayed: capsules written by :func:`make_plugin` carry a pseudo-command and
+    are refused by ``nova replay`` (ADR-0306 open question 7).
+
+    Args:
+        mutation_classes: ADR-0012 mutation class per tool name. It gates
+            ``--permissive`` and ``replay.yaml`` ``allow: true`` at replay, and
+            is declared here, in the workload's code -- never read from a capsule.
+        default_mutation_class: Class of every tool not named above.
+
+    Raises:
+        ImportError: If ``google-adk`` is not installed.
+        ValueError: If a mutation class is not an ADR-0012 class.
+
+    Usage::
+
+        from novafabric.adapters.google_adk import make_tool_plugin
+        runner = Runner(agent=agent, session_service=svc, plugins=[
+            make_tool_plugin({"lookup_order": "read-only"}),
+        ])
+    """
+    try:
+        from google.adk.plugins.base_plugin import BasePlugin
+    except ImportError:
+        raise ImportError(
+            "google-adk is not installed. "
+            "Install it with: pip install 'novafabric[google-adk]'"
+        )
+
+    from novafabric.adapters._adk_tool_seam import AdkToolSeamPlugin
+
+    class _AdkToolPlugin(AdkToolSeamPlugin, BasePlugin):
+        """The tool seam on ADK's BasePlugin (its no-op defaults fill the rest)."""
+
+        def __init__(
+            self, classes: Mapping[str, str] | None, default_class: str
+        ) -> None:
+            BasePlugin.__init__(self, name=AdkToolSeamPlugin.name)
+            AdkToolSeamPlugin.__init__(self, classes, default_class)
+
+    return _AdkToolPlugin(mutation_classes, default_mutation_class)

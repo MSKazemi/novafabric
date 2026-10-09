@@ -52,6 +52,7 @@ _PY_TOOL = "tests/replay/test_python_tool_replay_e2e.py"
 _OVERRIDES = "tests/replay/test_tool_overrides_enforced_e2e.py"
 _SLICE4 = "tests/replay/test_slice4_matching_and_echo_contract.py"
 _ECHO = "tests/replay/test_echo_and_nested_coverage_e2e.py"
+_ADK = "tests/replay/test_adk_tool_replay_e2e.py"
 
 ROWS: tuple[SurfaceRow, ...] = (
     SurfaceRow(
@@ -377,6 +378,41 @@ ROWS: tuple[SurfaceRow, ...] = (
         servers=("novafabric.capture.record.tool",),
     ),
     SurfaceRow(
+        surface=(
+            "Google ADK tool, through the NovaFabric tool plugin "
+            "(`novafabric.adapters.google_adk.make_tool_plugin`, ADR-0306 slice 3)"
+        ),
+        capture=(
+            "one `transport: python` record per ADK tool call (`google.adk.tool` "
+            "marker, `function_call_id`); arguments and result kept only at the "
+            "`forensic`/`air_gapped` capture level, digests otherwise"
+        ),
+        replay="served",
+        replay_note=(
+            "through ADK's documented `before_tool_callback` short-circuit, before the "
+            "tool body runs; one-to-one by the model's `function_call_id` (same name "
+            "and arguments) or by name and canonical arguments; JSON-native results up "
+            "to 1 MiB; a call that failed, changed `tool_context.actions`, is "
+            "long-running or made nested model/tool calls is not served; an unmatched "
+            "or unservable call is refused (`--permissive` runs it live only if a "
+            "ladder flag permits the class the plugin declares); `replay.yaml` "
+            "`tool_overrides` enforced; `nova capture python …` capsules only "
+            "(adapter capsules are refused by replay)"
+        ),
+        streaming="not served (long-running tools)",
+        asynchronous="served (ADK runs every tool on its event loop)",
+        status="experimental",
+        evidence=(
+            f"{_ADK}::test_adk_tool_calls_are_served_and_their_bodies_never_run",
+            f"{_ADK}::test_an_unmatched_adk_call_fails_closed_before_the_tool_runs",
+            f"{_ADK}::test_the_function_call_id_pairs_identical_calls_by_id",
+            f"{_ADK}::test_permissive_runs_an_unmatched_tool_live_only_with_the_ladder",
+            f"{_ADK}::test_a_replay_yaml_allow_false_override_holds_under_permissive",
+            f"{_ADK}::test_a_nested_record_makes_the_adk_call_unservable",
+        ),
+        servers=("google.adk.tools.BaseTool",),
+    ),
+    SurfaceRow(
         surface="MCP session set-up (server start, `initialize`, `list_tools`)",
         capture="not recorded as tool calls",
         replay="not intercepted",
@@ -413,7 +449,10 @@ ROWS: tuple[SurfaceRow, ...] = (
         ),
     ),
     SurfaceRow(
-        surface="HTTP, shell, filesystem, framework-native tools",
+        surface=(
+            "HTTP, shell, filesystem, framework-native tools "
+            "(other than Google ADK tools through the tool plugin)"
+        ),
         capture="network/file events, not tool records",
         replay="not intercepted",
         replay_note=(

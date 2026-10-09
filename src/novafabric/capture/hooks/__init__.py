@@ -254,6 +254,9 @@ _BUILT_IN_HOOKS: tuple[tuple[str, str, str], ...] = (
     # ADR-0306: the `record.tool` capture sink. Its "SDK" is NovaFabric's own
     # façade module, so it is always available and always installed.
     ("novafabric.capture.record", "novafabric.capture.hooks._python_tool", "PythonToolHook"),
+    # ADR-0306 slice 3: the capture sink of the NovaFabric ADK tool plugin.
+    # Installed when google-adk is importable; it imports nothing from ADK.
+    ("google.adk", "novafabric.adapters._adk_tool_seam", "AdkToolHook"),
     ("requests",   "novafabric.capture.hooks._requests",   "RequestsHook"),
     ("httpx",      "novafabric.capture.hooks._httpx",      "HttpxHook"),
     ("aiohttp",    "novafabric.capture.hooks._aiohttp",    "AiohttpHook"),

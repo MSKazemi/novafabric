@@ -24,6 +24,8 @@ Every flag of these commands: [CLI reference — nova replay, diff and diagnose]
 > not in v0.105.0; **experimental**, ADR-0306 slice 4): MCP arguments matched after
 > secret redaction, `record.tool` boundaries that called a model or tool served with their
 > nested records consumed as covered, and the report-only tool-result echo check.
+> Likewise **Google ADK tool serving** through the NovaFabric tool plugin (ADR-0306
+> slice 3, **experimental**) is newer than v0.105.0 and not in it.
 
 ![The five replay modes](../assets/architecture/replay-modes.svg)
 
@@ -165,10 +167,41 @@ A recorded exception is raised again as the same class only when it is a builtin
 `Exception` subclass; anything else is `ReplayRecordedToolError`. Results are
 decoded as JSON only — never unpickled or imported by name.
 
+**Google ADK tools** (ADR-0306 slice 3, **experimental**, unreleased). A workload
+that passes `novafabric.adapters.google_adk.make_tool_plugin()` **first** in its
+ADK `Runner(plugins=[...])` gets a third intercepted surface,
+`google.adk.tools.BaseTool`, built on the way ADK documents to skip a tool: a
+plugin `before_tool_callback` that returns a value "will stop the tool execution
+and return this response immediately" (google-adk 2.11.0,
+`google/adk/plugins/base_plugin.py:297-319`; honoured at
+`flows/llm_flows/tools/_caller.py:773`). Under `nova capture python …` each ADK
+tool call writes one record with `transport: "python"`, the marker
+`io.novafabric.tool_surface: "google.adk.tool"` and the model's
+`io.novafabric.adk_function_call_id`, using the `record.tool` codec (same
+capture-level, JSON, size-cap and redact-then-hash rules). In a mocked replay the
+plugin asks `MockToolDispatcher`'s ADK server first, and a served call returns the
+recorded result without running the tool (a recorded `None` is served as
+`{"result": None}`, the function response ADK would have built). A call is
+**not served** when the tool raised (ADK wraps an exception from a plugin
+callback in `RuntimeError` and skips the `on_tool_error` callbacks, so the
+failure cannot be replayed faithfully), changed `tool_context.actions` (state,
+artifacts, transfer, escalation, confirmation — serving would drop the effect),
+is long-running, or wrote model/tool records inside the call. The plugin steps
+aside for ADK `McpTool`s (the MCP surface serves them) and for functions already
+declared with `record.tool`. The mutation class that gates `--permissive` and
+`allow: true` is declared in the plugin (`make_tool_plugin({"lookup": "read-only"})`,
+default `unknown`), never read from the capsule. Only `nova capture python …`
+capsules can be replayed: a capsule written by the ADK *capture* plugin
+(`make_plugin()`) carries the pseudo-command `["@google-adk:run"]` and mocked
+replay refuses it (`CapsuleNotReplayable`) until adapters record a re-runnable
+command (ADR-0306 open question 7, still open).
+
 **How tool calls are matched** (`ToolCallMatcher`, one matcher per tool
 surface — a `record.tool` record never answers an MCP call of the same name, nor
 the reverse), one-to-one: by an exact
-`tool_call_id` when the surface carries one (MCP `call_tool` does not); else by
+`tool_call_id` when the surface carries one (MCP `call_tool` and `record.tool` do
+not; for an ADK tool it is the model's `function_call_id`, used only when the
+recorded call with that id has the same name and arguments); else by
 tool name plus an order-insensitive hash of the arguments, earliest unconsumed
 record first — so repeated identical calls get distinct recorded results in
 recorded order. A record is never served twice. Anything else is **unmatched**.
@@ -219,7 +252,8 @@ under `--permissive` **only** when the operator's ladder flag permits its
 `mutation_class` (`none` always; `--allow-readonly`, `--allow-mutating`,
 `--allow-external-side-effects`, `--allow-unknown-mutation` for the others,
 ADR-0012); otherwise it is refused (`tool_calls_refused`). For `record.tool`
-the class comes from the decorator in the workload's code; an MCP call is
+the class comes from the decorator in the workload's code, for an ADK tool from
+the tool plugin's declaration (also the workload's code); an MCP call is
 always `unknown`, so it needs `--allow-unknown-mutation`. The class a capsule
 records is never used to permit anything. *(Changed in v0.105.0, ADR-0306 Q3:
 before, `--permissive` alone ran every unmatched MCP call live.)* `intervention`
@@ -247,8 +281,8 @@ counts.
 **`replay.yaml` `tool_overrides` (experimental, ADR-0306 slice 2).** The engine
 resolves the capsule's `replay.yaml` (`replay/_policy.py:PolicyEvaluator`) into a
 per-tool table and hands it to the replayed process
-(`NOVAFABRIC_REPLAY_TOOL_POLICY_PATH`); `MockToolDispatcher` applies it on both
-tool surfaces through the same function `--dry-run` uses
+(`NOVAFABRIC_REPLAY_TOOL_POLICY_PATH`); `MockToolDispatcher` applies it on every
+intercepted tool surface through the same function `--dry-run` uses
 (`_policy.decide_intercepted`). Because `replay.yaml` ships inside the capsule,
 a **restriction** from it is trusted and a **permission** is not:
 
@@ -277,7 +311,7 @@ used to permit anything.
 |---|---|
 | `model_calls_mocked` / `model_calls_available` | recorded responses actually served / servable |
 | `model_calls_unmatched` | calls with no recorded answer (including refused unsupported surfaces) |
-| `tool_calls_mocked` / `tool_calls_available` / `tool_calls_recorded` | tool results served / tool results servable (MCP and servable `record.tool` records) / every recorded tool call |
+| `tool_calls_mocked` / `tool_calls_available` / `tool_calls_recorded` | tool results served / tool results servable (MCP and servable `record.tool` and ADK records) / every recorded tool call |
 | `tool_calls_live` / `tool_calls_unmatched` | intercepted calls run live (`--permissive`, or an honoured `allow: true` override) / intercepted calls with no servable recorded result |
 | `queues_fully_consumed` | every servable recording was requested |
 | `divergence_reason` | the first divergence, plus a count of the others |
@@ -334,9 +368,10 @@ and is counted in `replay_contract.model_calls_live`.
 | Other providers' SDKs, raw HTTP to a model API | wire hook: request only | Not intercepted — runs **live**; its connections are reported (`network_connections_live`) | — | — | not controlled | `test_mocked_replay_contract.py::test_s13_live_network_from_an_uncontrolled_tool_is_reported_not_blocked` |
 | MCP `ClientSession.call_tool` (in-process hook or `nova mcp-proxy`) | full result (proxy: verbatim JSON-RPC envelope) | **Served** — one-to-one; an unmatched call is refused (`--permissive` runs it live only with `--allow-unknown-mutation`: MCP calls count as `unknown`); `replay.yaml` `tool_overrides` enforced in-process (experimental, ADR-0306); arguments matched after secret redaction, raw-equal records first, so an argument the capsule scanner redacted still matches (experimental, ADR-0306 slice 4) | — | (async by nature) | works today | `test_mocked_replay_contract.py::test_s2_model_tool_model`; `test_mocked_replay_contract.py::test_s4_repeated_identical_calls_consume_distinct_records`; `test_mocked_replay_contract.py::test_s8_missing_tool_record_fails_closed_even_if_the_workload_swallows_it`; `test_mocked_replay_contract.py::test_s13_permissive_refuses_an_unmatched_mcp_call_without_the_ladder_flag`; `test_tool_overrides_enforced_e2e.py::test_dry_run_report_equals_replayed_behaviour`; `test_slice4_matching_and_echo_contract.py::test_an_mcp_call_whose_argument_the_scanner_redacted_is_served`; `test_slice4_matching_and_echo_contract.py::test_an_unsealed_capsule_matches_exactly_as_before_redact_then_hash` |
 | Python function declared with `novafabric.capture.record.tool` (ADR-0306) | one `transport: python` record per call; arguments and result kept only at the `forensic`/`air_gapped` capture level, digests otherwise | **Served** — before the function body runs; one-to-one by name and canonical arguments; JSON-native results up to 1 MiB; an unmatched or unservable call is refused (`--permissive` runs it live only if a ladder flag permits its declared mutation class); `replay.yaml` `tool_overrides` enforced in-process; a boundary that called a model or tool is served too, and the records it wrote are consumed as covered (`*_calls_covered`, slice 4) | refused at decoration (generator functions) | served (`async def`) | experimental | `test_python_tool_replay_e2e.py::test_decorated_calls_are_served_and_their_bodies_never_run`; `test_python_tool_replay_e2e.py::test_positional_keyword_and_default_calls_match_and_consume_in_order`; `test_python_tool_replay_e2e.py::test_an_unmatched_call_fails_closed_before_the_body_runs`; `test_python_tool_replay_e2e.py::test_an_unservable_record_fails_closed_naming_the_cause`; `test_python_tool_replay_e2e.py::test_permissive_refuses_an_unmatched_unknown_call_without_the_ladder_flag`; `test_tool_overrides_enforced_e2e.py::test_an_unmatched_intercepted_call_follows_the_owner_rules`; `test_python_tool_replay_e2e.py::test_a_nested_boundary_is_served_and_its_inner_records_are_covered`; `test_echo_and_nested_coverage_e2e.py::test_a_nested_boundary_is_served_and_its_nested_model_call_is_covered`; `test_echo_and_nested_coverage_e2e.py::test_an_unmarked_nested_call_fails_closed` |
+| Google ADK tool, through the NovaFabric tool plugin (`novafabric.adapters.google_adk.make_tool_plugin`, ADR-0306 slice 3) | one `transport: python` record per ADK tool call (`google.adk.tool` marker, `function_call_id`); arguments and result kept only at the `forensic`/`air_gapped` capture level, digests otherwise | **Served** — through ADK's documented `before_tool_callback` short-circuit, before the tool body runs; one-to-one by the model's `function_call_id` (same name and arguments) or by name and canonical arguments; JSON-native results up to 1 MiB; a call that failed, changed `tool_context.actions`, is long-running or made nested model/tool calls is not served; an unmatched or unservable call is refused (`--permissive` runs it live only if a ladder flag permits the class the plugin declares); `replay.yaml` `tool_overrides` enforced; `nova capture python …` capsules only (adapter capsules are refused by replay) | not served (long-running tools) | served (ADK runs every tool on its event loop) | experimental | `test_adk_tool_replay_e2e.py::test_adk_tool_calls_are_served_and_their_bodies_never_run`; `test_adk_tool_replay_e2e.py::test_an_unmatched_adk_call_fails_closed_before_the_tool_runs`; `test_adk_tool_replay_e2e.py::test_the_function_call_id_pairs_identical_calls_by_id`; `test_adk_tool_replay_e2e.py::test_permissive_runs_an_unmatched_tool_live_only_with_the_ladder`; `test_adk_tool_replay_e2e.py::test_a_replay_yaml_allow_false_override_holds_under_permissive`; `test_adk_tool_replay_e2e.py::test_a_nested_record_makes_the_adk_call_unservable` |
 | MCP session set-up (server start, `initialize`, `list_tools`) | not recorded as tool calls | Not intercepted — runs **live** | — | — | not controlled | e2e tests start a real in-memory MCP server during replay |
 | Undeclared functions the workload runs for a model (the result goes back as a tool message) | the model's tool choice, and the result as the next request sent it back (`role: tool` message / Anthropic `tool_result` block) | Not intercepted — runs **live**; the result it sends back is compared with the recorded one (redacted digests, by `tool_call_id`): a difference is reported in `replay_contract.tool_result_echo` and never fails the replay (report-only, experimental, ADR-0306 D10); not checked for the Responses API, whose request input is not recorded | — | — | not controlled | `test_echo_and_nested_coverage_e2e.py::test_a_changed_tool_result_is_reported_but_never_fails_the_replay`; `test_echo_and_nested_coverage_e2e.py::test_a_capsule_without_request_messages_reports_not_checked_never_matched`; `test_slice4_matching_and_echo_contract.py::test_the_echo_check_compares_anthropic_tool_results` |
-| HTTP, shell, filesystem, framework-native tools | network/file events, not tool records | Not intercepted — runs **live**; outbound connections are reported (`network_connections_live`), files and processes are not; a `replay.yaml` `allow: false` override on one makes a strict replay refuse to start (`ToolOverrideUnenforceable`, exit 3) | — | — | not controlled | `test_mocked_replay_contract.py::test_s13_network_tool_refused_and_uncontrolled_transports_reported`; `test_mocked_replay_contract.py::test_s13_live_network_from_an_uncontrolled_tool_is_reported_not_blocked`; `test_tool_overrides_enforced_e2e.py::test_strict_replay_refuses_to_start_on_an_unenforceable_override` |
+| HTTP, shell, filesystem, framework-native tools (other than Google ADK tools through the tool plugin) | network/file events, not tool records | Not intercepted — runs **live**; outbound connections are reported (`network_connections_live`), files and processes are not; a `replay.yaml` `allow: false` override on one makes a strict replay refuse to start (`ToolOverrideUnenforceable`, exit 3) | — | — | not controlled | `test_mocked_replay_contract.py::test_s13_network_tool_refused_and_uncontrolled_transports_reported`; `test_mocked_replay_contract.py::test_s13_live_network_from_an_uncontrolled_tool_is_reported_not_blocked`; `test_tool_overrides_enforced_e2e.py::test_strict_replay_refuses_to_start_on_an_unenforceable_override` |
 
 <!-- END GENERATED: replay-support-matrix -->
 
@@ -351,7 +386,7 @@ These limits are stated so you can rely on the parts that do work:
   `--allow-unknown-mutation` flags are evaluated by
   `replay/_policy.py:PolicyEvaluator`. Their per-call decisions are shown by
   `--dry-run` (which marks non-intercepted tools `[LIVE]`). Inside a mocked
-  subprocess they gate only the two intercepted tool surfaces: an unmatched call
+  subprocess they gate only the intercepted tool surfaces: an unmatched call
   under `--permissive`, and an `allow: true` override (ADR-0306, experimental).
   They never stop a tool on any other surface. `replay.yaml` `tool_overrides`
   (the schema's `{tool_name, allow}` shape or the legacy `action: replay|refuse`
@@ -360,12 +395,21 @@ These limits are stated so you can rely on the parts that do work:
   start. `--mode intervention` installs no tool dispatcher and enforces no
   override.
 - **`record.tool` serves declared functions only** (experimental). Undeclared
-  functions a model asks the workload to run, framework-native tools, and
+  functions a model asks the workload to run, framework-native tools (other than
+  Google ADK tools through the tool plugin), and
   anything a served function would have done (files, caches, globals) are not
   replayed; an undeclared function's result is only *compared* with the recorded
   one (the echo check, report-only). With the default capture level the records hold digests only and a
   strict replay refuses them with a re-capture hint. Concurrent identical calls
   pair with records in an unspecified order.
+- **The ADK tool plugin serves only what it saw, in the order it was placed**
+  (experimental). It must be the first plugin: ADK stops at the first plugin that
+  answers, so a plugin before it can answer a call this one never records. When it
+  serves a call, later plugins' and the agent's own `before_tool_callback`s do not
+  run (their side effects are skipped); the after-tool callbacks still run, on the
+  served value. A call an agent's own `before_tool_callback` answered at capture is
+  recorded as the tool's result. Adapter capsules (`make_plugin()`) cannot be
+  replayed (ADR-0306 open question 7).
 - **`record.tool` digests are only as safe as secret detection.** Argument and
   result digests are taken over the values after the capsule's secret rules mask
   every detected secret, and replay redacts the live arguments the same way before
