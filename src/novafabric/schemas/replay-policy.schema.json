@@ -229,7 +229,7 @@
         },
         "allow": {
           "type": "boolean",
-          "description": "Whether to re-execute this tool. Wins over the global default."
+          "description": "Whether to re-execute this tool. In mocked replay (ADR-0306): false always holds, even under --permissive; true re-executes only when the operator also passes the --allow-* flag for the tool's mutation class (MCP calls are always gated as unknown)."
         },
         "confirm": {
           "type": "boolean",
