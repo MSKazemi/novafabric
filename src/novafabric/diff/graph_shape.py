@@ -20,8 +20,17 @@ Two digests are reported, deliberately:
 When the shapes differ, the node/edge deltas are summarised by structural path,
 bounded (``limit`` items per list, with the true totals reported) and ordered
 deterministically. A capsule whose graph cannot be built (not a capsule, oversize
-sources, malformed beyond best-effort reconstruction) yields ``status:
-"unavailable"`` with a reason — this annotation never crashes the diff.
+sources, an unreadable or non-UTF-8 source file, malformed beyond best-effort
+reconstruction) yields ``status: "unavailable"`` with a reason — this annotation
+never crashes the diff.
+
+Malformed source lines (ADR-0303 Amendment 2). Reconstruction is best-effort: a
+line that is not JSON, or JSON that is not an object, is skipped. Each available
+side counts those lines per source file in ``skipped_malformed_lines``; any
+non-zero count makes the comparison incomplete (:attr:`GraphShapeDiff.is_complete`),
+and ``nova diff --assert-same-shape`` then exits 2, "cannot compare", before the
+shape verdict — a shape over partial records is neither certified nor reported
+as a change.
 
 Status: **experimental**. Read-only; stdlib + existing Pydantic only.
 """
@@ -37,6 +46,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from novafabric.agent_graph import AgentExecutionGraph, GraphNode, build_agent_graph
+from novafabric.agent_graph.builder import parse_jsonl_text
 
 #: Version of the ``graph_shape`` block and of the shape-digest projection.
 GRAPH_SHAPE_VERSION = "0.1.0"
@@ -59,6 +69,13 @@ _MAX_LABEL_CHARS = 80
 
 _SOURCE_FILES = ("model-calls.jsonl", "tool-calls.jsonl", "trace.jsonl")
 
+#: ``skipped_malformed_lines`` key -> the graph source file it counts lines of.
+SOURCE_FILE_KEYS = {
+    "model_calls": "model-calls.jsonl",
+    "tool_calls": "tool-calls.jsonl",
+    "trace": "trace.jsonl",
+}
+
 ShapeStatus = Literal["same_shape", "shape_changed", "unavailable"]
 
 
@@ -80,6 +97,10 @@ class GraphSide(BaseModel):
     edge_count: int = Field(default=0, ge=0)
     nodes_by_kind: dict[str, int] = Field(default_factory=dict)
     reconstruction_note_count: int = Field(default=0, ge=0)
+    #: Source lines reconstruction skipped (not JSON, or not a JSON object), per
+    #: ``SOURCE_FILE_KEYS`` key. Every key, zeros included, on an available side;
+    #: empty on an unavailable one, whose sources were not (fully) read.
+    skipped_malformed_lines: dict[str, int] = Field(default_factory=dict)
 
 
 class NodeDelta(BaseModel):
@@ -136,6 +157,18 @@ class GraphShapeDiff(BaseModel):
     def same_shape(self) -> bool:
         """True only when both graphs were built and their shapes match."""
         return self.status == "same_shape"
+
+    @property
+    def is_complete(self) -> bool:
+        """False when either side's reconstruction skipped a malformed source line.
+
+        ``status`` is then computed over the records that parsed only, so
+        neither "same shape" nor "shape changed" is established and
+        ``--assert-same-shape`` exits 2 (ADR-0303 Amendment 2).
+        """
+        return not any(
+            count for side in (self.a, self.b) for count in side.skipped_malformed_lines.values()
+        )
 
     def to_document(self) -> dict[str, Any]:
         """JSON-ready dict (stable key set; deterministic list order)."""
@@ -271,6 +304,23 @@ def _source_bytes(capsule: Path) -> int:
     return total
 
 
+def _skipped_source_lines(capsule: Path) -> dict[str, int]:
+    """Lines of each graph source file the builder skips, by its own parse rule.
+
+    Reads with the builder's rule (:func:`parse_jsonl_text`), so the count is
+    what reconstruction actually dropped. Unlike the builder, which reads an
+    unreadable file as empty, this raises — the side is then unavailable rather
+    than a graph silently missing that file's records.
+    """
+    counts: dict[str, int] = {}
+    for key, name in SOURCE_FILE_KEYS.items():
+        path = capsule / name
+        counts[key] = (
+            parse_jsonl_text(path.read_text(encoding="utf-8"))[1] if path.is_file() else 0
+        )
+    return counts
+
+
 def _build(capsule: Path) -> tuple[_Shape | None, GraphSide]:
     """Build + project one side; any failure becomes an ``available=False`` side."""
     size = _source_bytes(capsule)
@@ -282,6 +332,7 @@ def _build(capsule: Path) -> tuple[_Shape | None, GraphSide]:
         if len(graph.nodes) > MAX_GRAPH_NODES:
             raise GraphShapeError(f"{len(graph.nodes)} nodes, over the {MAX_GRAPH_NODES}-node cap")
         shape = project_shape(graph)
+        skipped = _skipped_source_lines(capsule)
     # Fail-open by design (ADR-0124 CLI surface: "never a crash of surrounding
     # commands"): whatever goes wrong reconstructing one side — named errors,
     # malformed records, recursion on pathological depth — is reported, not raised.
@@ -300,6 +351,7 @@ def _build(capsule: Path) -> tuple[_Shape | None, GraphSide]:
         edge_count=len(graph.edges),
         nodes_by_kind=dict(sorted(by_kind.items())),
         reconstruction_note_count=len(graph.reconstruction_notes or []),
+        skipped_malformed_lines=skipped,
     )
     return shape, side
 
@@ -387,6 +439,28 @@ def compare_graph_shapes(
     )
 
 
+def malformed_source_messages(diff: GraphShapeDiff) -> list[str]:
+    """One sentence per graph source file with skipped lines, A side first."""
+    messages: list[str] = []
+    for name, side in (("A", diff.a), ("B", diff.b)):
+        for key, count in side.skipped_malformed_lines.items():
+            if count:
+                messages.append(
+                    f"skipped {count} malformed line(s) in {SOURCE_FILE_KEYS.get(key, key)} "
+                    f"of run {name}: not JSON, or not a JSON object"
+                )
+    return messages
+
+
+def _skipped_lines(name: str, side: GraphSide) -> list[str]:
+    return [
+        f"  {name}: skipped {count} malformed line(s) in {SOURCE_FILE_KEYS.get(key, key)}; "
+        "the shape covers only the records that parsed"
+        for key, count in side.skipped_malformed_lines.items()
+        if count
+    ]
+
+
 def _side_line(name: str, side: GraphSide) -> str:
     if not side.available:
         return f"  {name}: graph unavailable — {side.reason}"
@@ -407,6 +481,7 @@ def format_graph_shape_text(diff: GraphShapeDiff) -> str:
     lines = [f"Graph shape (ADR-0124, experimental): {headline}"]
     lines.append(_side_line("A", diff.a))
     lines.append(_side_line("B", diff.b))
+    lines.extend(_skipped_lines("A", diff.a) + _skipped_lines("B", diff.b))
     if diff.status == "same_shape":
         basis = "identical graph_digest" if diff.graph_digest_equal else "equal shape_digest"
         lines.append(f"  {basis}: {diff.a.shape_digest}")
@@ -452,6 +527,15 @@ def format_graph_shape_text(diff: GraphShapeDiff) -> str:
 def format_graph_shape_annotations(diff: GraphShapeDiff) -> list[str]:
     """GitHub workflow-command lines for ``--output-format github-annotation``."""
     title = "title=NovaFabric Graph Shape"
+    # A skipped line does not change the level of the verdict line; it warns
+    # that the verdict covers only the records that parsed (ADR-0303 Am. 2).
+    warnings = [
+        f"::warning {title}::{m[:1].upper() + m[1:]}" for m in malformed_source_messages(diff)
+    ]
+    return _verdict_annotations(diff, title) + warnings
+
+
+def _verdict_annotations(diff: GraphShapeDiff, title: str) -> list[str]:
     if diff.status == "same_shape":
         return [f"::notice {title}::Agent graph shape unchanged ({diff.a.shape_digest})"]
     if diff.status == "unavailable":

@@ -45,15 +45,16 @@ _TOOL_CALLS = "tool-calls.jsonl"
 _TRACE = "trace.jsonl"
 
 
-def _read_jsonl(path: Path) -> list[tuple[int, dict[str, Any]]]:
-    """Best-effort JSONL read: blank/unparsable/non-object lines are skipped."""
-    if not path.is_file():
-        return []
+def parse_jsonl_text(text: str) -> tuple[list[tuple[int, dict[str, Any]]], int]:
+    """Records of JSONL text with their line numbers, and how many lines were skipped.
+
+    A non-blank line that is not JSON, or JSON that is not an object, is skipped
+    and counted. This is the one definition of "skipped" for graph
+    reconstruction: ``nova diff --graph-shape`` reports the count so a shape
+    built over partial records is never certified (ADR-0303 Amendment 2).
+    """
     records: list[tuple[int, dict[str, Any]]] = []
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return []
+    skipped = 0
     for lineno, line in enumerate(text.splitlines(), start=1):
         stripped = line.strip()
         if not stripped:
@@ -61,10 +62,24 @@ def _read_jsonl(path: Path) -> list[tuple[int, dict[str, Any]]]:
         try:
             record = json.loads(stripped)
         except ValueError:
+            skipped += 1
             continue
         if isinstance(record, dict):
             records.append((lineno, record))
-    return records
+        else:
+            skipped += 1
+    return records, skipped
+
+
+def _read_jsonl(path: Path) -> list[tuple[int, dict[str, Any]]]:
+    """Best-effort JSONL read: blank/unparsable/non-object lines are skipped."""
+    if not path.is_file():
+        return []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    return parse_jsonl_text(text)[0]
 
 
 def _capsule_id(capsule_dir: Path) -> str:

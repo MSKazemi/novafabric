@@ -167,6 +167,17 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Changed
 
+- **`nova diff --assert-same-shape` exits `2` when graph reconstruction skipped a malformed
+  source line (behaviour change, ADR-0303 Amendment 2).** The agent-graph builder drops a
+  line of `model-calls.jsonl`, `tool-calls.jsonl` or `trace.jsonl` that is not JSON, or not a
+  JSON object, without a word. So the gate certified "same shape" (exit `0`) over records it
+  had not read, or reported a change (exit `1`) caused only by the skipped line. Each built
+  side now reports the count per file in an additive
+  `graph_shape.a|b.skipped_malformed_lines` key. A count is warned about on stderr and shown
+  in the text block and as a `::warning` annotation. Under `--assert-same-shape` it is
+  "cannot compare", exit `2`, checked before the shape verdict. A graph source file that
+  cannot be read, which the builder had read as empty, now makes that side `unavailable`.
+  `--graph-shape` without the gate still exits `0`.
 - **Behaviour change — a mocked replay of a capsule with a failed model call fails closed at
   that call** when the error cannot be raised faithfully: a class outside the allow-list, no
   recorded status or body, or a capsule captured before the error detail was recorded. The

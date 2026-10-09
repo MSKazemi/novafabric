@@ -215,9 +215,15 @@ def _capsule_diff(
     # below changes — the default output stays byte-identical.
     shape = None
     if graph_shape or assert_same_shape:
-        from novafabric.diff.graph_shape import compare_graph_shapes
+        from novafabric.diff.graph_shape import (
+            compare_graph_shapes,
+            malformed_source_messages,
+        )
 
         shape = compare_graph_shapes(capsule_a, capsule_b)
+        # Skipped graph-source lines are never silent either (ADR-0303 Am. 2).
+        for message in malformed_source_messages(shape):
+            typer.echo(f"warning: graph shape: {message}", err=True)
 
     if output_format == "json":
         # Machine-readable output must bypass Rich: console.print soft-wraps at
@@ -291,10 +297,24 @@ def _capsule_diff(
             raise typer.Exit(code=EXIT_CANNOT_COMPARE)
         if report.has_changes:
             raise typer.Exit(code=EXIT_DIFFERENCES)
-    if assert_same_shape and shape is not None and not shape.same_shape:
-        # Fail closed: 1 = shapes differ; 2 = a graph could not be built, so
-        # "same shape" cannot be verified.
-        raise typer.Exit(code=2 if shape.status == "unavailable" else 1)
+    if assert_same_shape and shape is not None:
+        # Checked before the verdict, as for --assert-no-regressions: a shape
+        # built over partial records establishes neither "same" nor "changed"
+        # (ADR-0303 Am. 2).
+        if shape.status != "unavailable" and not shape.is_complete:
+            typer.echo(
+                "--assert-same-shape: cannot compare: malformed graph-source lines were "
+                "skipped, so the shapes cover only the records that parsed (exit 2). "
+                "Repair or re-capture the capsule.",
+                err=True,
+            )
+            raise typer.Exit(code=EXIT_CANNOT_COMPARE)
+        if not shape.same_shape:
+            # Fail closed: 1 = shapes differ; 2 = a graph could not be built, so
+            # "same shape" cannot be verified.
+            raise typer.Exit(
+                code=EXIT_CANNOT_COMPARE if shape.status == "unavailable" else EXIT_DIFFERENCES
+            )
 
 
 def _resolve_scores(path: Path) -> Path:
@@ -439,7 +459,8 @@ def diff_cmd(
             "--assert-same-shape",
             help=(
                 "Experimental (ADR-0124): implies --graph-shape; exit 1 if the "
-                "agent-graph shapes differ, 2 if either graph is unavailable."
+                "agent-graph shapes differ, 2 if either graph is unavailable or "
+                "its reconstruction skipped a malformed source line."
             ),
         ),
     ] = False,
@@ -495,7 +516,9 @@ def diff_cmd(
       2  the comparison could not be made: a capsule ref that does not resolve,
          an unreadable or malformed capsule.yaml or env.lock (with or without
          a gate flag), an asset ref not in the registry, a usage error, --environment
-         excluded a capsule, --assert-same-shape could not build a graph, or
+         excluded a capsule, --assert-same-shape could not build a graph or
+         read malformed graph-source lines (model-calls, tool-calls or
+         trace.jsonl; checked before the shape verdict), or
          --assert-no-regressions read a capsule with malformed record lines
          (they are skipped, counted and warned about on stderr, so the
          comparison is incomplete; checked before any difference)

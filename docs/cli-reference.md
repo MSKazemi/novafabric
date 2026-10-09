@@ -1253,7 +1253,18 @@ Options:
   independent `shape_digest` that decides "same shape". In `json` the block is a top-level
   `graph_shape` key; in `github-annotation` one `notice`/`error`/`warning` line. Never fails
   the diff. Capsule diffs only; not combinable with `--media`/`--significance`.
+  Reconstruction is best-effort: a line of `model-calls.jsonl`, `tool-calls.jsonl` or
+  `trace.jsonl` that is not JSON, or not a JSON object, is skipped. Each built side reports
+  those lines per file in `graph_shape.a|b.skipped_malformed_lines`
+  (`{"model_calls", "tool_calls", "trace"}`, zeros included; `{}` on an unavailable side).
+  Any non-zero count gets a `warning: graph shape: skipped N malformed line(s) in … of run A|B`
+  line on stderr, a line in the text block and a `::warning` annotation, and the shape then
+  covers only the records that parsed ([ADR-0303](./decisions.md) Amendment 2). A source file
+  that cannot be read or is not UTF-8 makes that side `graph unavailable`.
 - `--assert-same-shape` — **experimental**. Implies `--graph-shape`; CI gate on the shape.
+  Exits `2` when a graph is unavailable **or** either side skipped a malformed source line,
+  checked before the shape verdict, so a shape over partial records is never certified as the
+  same (`0`) or reported as a change (`1`).
 
 Exit codes (capsule and `name@version` asset diffs, [ADR-0303](./decisions.md)):
 
@@ -1261,7 +1272,7 @@ Exit codes (capsule and `name@version` asset diffs, [ADR-0303](./decisions.md)):
 |---|---|
 | `0` | The comparison was made and found no difference — or found one, but no gate flag was given (the diff only reports) |
 | `1` | The comparison was made and found a difference: `--assert-no-regressions` saw a changed, added or removed entry in any section (checked first), or `--assert-same-shape` saw a shape change. `1` means nothing else |
-| `2` | The comparison could not be made: a capsule ref that does not resolve, an unreadable or malformed `capsule.yaml` or `env.lock` (with or without a gate flag; see below), an asset ref not in the registry, a usage error, `--environment` excluded a capsule, `--assert-same-shape` could not build a graph for either capsule (fail closed), or `--assert-no-regressions` read a capsule with malformed record lines (checked before any difference; see below) |
+| `2` | The comparison could not be made: a capsule ref that does not resolve, an unreadable or malformed `capsule.yaml` or `env.lock` (with or without a gate flag; see below), an asset ref not in the registry, a usage error, `--environment` excluded a capsule, `--assert-same-shape` could not build a graph for either capsule or skipped a malformed graph-source line (fail closed, checked before the shape verdict), or `--assert-no-regressions` read a capsule with malformed record lines (checked before any difference; see below) |
 | `3` | `--significance` only: a significant regression (SPRT `accept_h1`) |
 
 A gate that only needs "pass or fail" can test for non-zero; one that must tell "the runs
