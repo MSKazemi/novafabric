@@ -164,6 +164,17 @@ longer forwards the submitting shell's environment (ADR-0270).
   `extensions["io.novafabric.sdk_error"]` on SDK error records; `replay_contract` gains
   `model_errors_replayed`. Tested against the real `openai` SDK and a stand-in `anthropic`
   package.
+- **Mocked replay reproduces streams that failed part-way and failed Responses API responses**
+  (issue #16 follow-up, experimental, works today). A streamed call that raised after some
+  chunks (an in-stream error event, raised by `openai` as `APIError`, or a dropped connection)
+  is now captured as an error record holding the delivered content and the exception, where it
+  was recorded as a successful partial stream before; replay serves that content, then raises
+  the same SDK exception class. A Responses API response with `status: "failed"` or
+  `"incomplete"`, which the SDK returns rather than raises, is replayed as returned: capture
+  records its `status`, `incomplete_details` and `error` verbatim under
+  `extensions["io.novafabric.response_status"]` (additive; the model-call schema now also
+  describes `io.novafabric.api_surface` and `io.novafabric.stream_complete`). A failed response
+  captured before this is refused with a re-capture reason.
 
 ### Changed
 

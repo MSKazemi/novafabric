@@ -218,7 +218,12 @@ ROWS: tuple[SurfaceRow, ...] = (
             "(allow-listed classes only); transport attempts are never served; an "
             "error that cannot be rebuilt faithfully is refused"
         ),
-        streaming="served (raised at `create`, as the SDK does)",
+        streaming=(
+            "served: raised at `create` when the SDK raised there; when the stream "
+            "failed part-way (an in-stream error event, a dropped connection), the "
+            "delivered content is served without closing or terminal events, then "
+            "the exception is raised"
+        ),
         asynchronous="served",
         status=(
             "works today (OpenAI: real SDK; Anthropic: stand-in package); capsules "
@@ -231,6 +236,36 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_ERRORS}::test_recorded_anthropic_errors_are_replayed",
             f"{_ERRORS}::test_an_unknown_error_class_fails_closed",
             f"{_ERRORS}::test_legacy_capsule_replays_until_its_unrebuildable_error_then_fails_closed",
+            f"{_ERRORS}::test_an_error_event_mid_stream_is_replayed_after_the_delivered_chunks",
+            f"{_ERRORS}::test_a_connection_dropped_mid_stream_is_replayed_after_the_delivered_chunks",
+            f"{_ERRORS}::test_a_responses_stream_dropped_mid_way_is_replayed",
+            f"{_ERRORS}::test_an_anthropic_error_mid_stream_is_replayed",
+            f"{_ERRORS}::test_a_mid_stream_error_that_cannot_be_rebuilt_is_refused_before_any_chunk",
+        ),
+    ),
+    SurfaceRow(
+        surface="OpenAI Responses API response with `status: failed` or `incomplete`",
+        capture=(
+            "SDK hook: the Response's own `status`, `incomplete_details` and `error`, "
+            "verbatim (`io.novafabric.response_status`); `failed` is also "
+            "`status: error` on the record"
+        ),
+        replay="served",
+        replay_note=(
+            "returned, never raised -- the SDK returns these responses; the "
+            "recorded status, reason and error are served as recorded"
+        ),
+        streaming="served: ends with the recorded terminal event (`response.failed`, "
+                  "`response.incomplete`)",
+        asynchronous="served",
+        status=(
+            "works today; a failed response captured before its status was recorded "
+            "is refused (re-capture)"
+        ),
+        evidence=(
+            f"{_ERRORS}::test_a_failed_responses_response_is_returned_not_raised",
+            f"{_ERRORS}::test_an_incomplete_responses_response_keeps_its_recorded_reason",
+            f"{_ERRORS}::test_a_failed_response_captured_before_its_status_was_recorded_is_refused",
         ),
     ),
     SurfaceRow(
