@@ -97,6 +97,19 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Added
 
+- **Capsules record the runner, the image digest and the Slurm job (experimental,
+  ADR-0307, #157).** `capsule.yaml` gains the optional `host.runner` block: `name` on every
+  `nova capture` run, and for `docker`/`kubernetes` an `image` block with the `image=`
+  reference plus the `image_id`/`repo_digests` the runtime resolved (`docker image inspect`
+  before and after the run; the pod's `status.containerStatuses[0].imageID`), or an
+  `unresolved_reason`. The digest is never taken from the tag; a tag that pointed at a
+  different image after the run than before it records no digest. `host.slurm` (already in the
+  schema, never written until now) is filled inside a Slurm job from an explicit
+  allow-list (`SLURM_JOB_ID`, array ids, partition, cluster, node count) with the node list
+  stored as a hash, since the manifest carries no hostname; `--runner slurm` records the job
+  `sbatch` created. Additive schema change: `host.runner` is new; `host.slurm` gains optional
+  fields and now requires only `job_id`. An older `nova validate` rejects the new fields.
+  `examples/docker-run` and `examples/hpc-slurm-job` no longer document the gap.
 - **`record.tool` — declared Python tools are captured and served by mocked replay
   (experimental, ADR-0306 slice 1).** `from novafabric.capture import record;
   @record.tool(mutation_class=..., ignore=(...))` on a sync or `async def` function.

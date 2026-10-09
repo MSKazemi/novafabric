@@ -81,23 +81,40 @@ From a verified single-node Slurm run (`sbatch job.sbatch`, job 2):
 directory, the full stdout/stderr of the job, the environment lock of the compute
 node it ran on, and a `redaction-proof.json`. `nova validate` accepts it.
 
-**Not captured: any Slurm context at all.** The capsule records no job ID, no node
-name, no cluster name, no partition, no allocation. Grepping the whole capsule for
-the job's ID, node name and cluster name matches exactly one file —
-`outputs/stdout.txt` — and only because `payload.py` deliberately prints those
-variables itself. `test_the_capsule_records_no_slurm_context` pins this, so the
-paragraph cannot silently go stale if scheduler context is ever recorded.
+### What the capsule records about the job
 
-The consequence is worth stating plainly: **a capsule of this batch job and a
-capsule of the same script run on a login node are indistinguishable.** For a
-format whose purpose is to prove what a run did, "which job was this?" is a
-question it currently cannot answer. This is the same gap the
-[`docker-run/`](../docker-run/) example finds for containers, where the image
-reference and digest are likewise absent — one gap, two runners.
+**Experimental, unreleased (ADR-0307, issue #157).** The verified run above predates
+this; it is checked in the test suite with the Slurm variables set by hand, not yet
+on a cluster. When `nova capture` runs inside a Slurm job, `capsule.yaml` carries:
 
-Until that gap is closed, the workable pattern is the one `payload.py` uses: print the
-scheduler variables from inside the workload so they land in the captured stdout,
-where they are at least sealed with everything else.
+```yaml
+host:
+  runner:
+    name: local                      # nova capture ran the payload directly
+  slurm:
+    job_id: "2"                      # SLURM_JOB_ID
+    partition: debug                 # SLURM_JOB_PARTITION, when set
+    cluster: mycluster               # SLURM_CLUSTER_NAME, when set
+    node_count: 1                    # SLURM_JOB_NUM_NODES, when set
+    node_list_hash: sha256:<16 hex>  # SLURM_JOB_NODELIST, hashed
+    source: environment
+```
+
+Array jobs add `array_job_id` and `array_task_id`. Those variables are the whole
+list: NovaFabric reads them by name, never `SLURM_*` by prefix, so the account,
+the submit directory and anything else your site exports stay out. A value Slurm
+did not set is left out, never guessed.
+
+**Node names are hashed, not recorded.** They are hostnames, and the manifest
+carries no hostname (`host.hostname_redacted: true`). To check whether a job ran on
+`node[01-04]`, hash that string and compare. The node name still reaches the
+capsule in `outputs/stdout.txt`, and only there, because `payload.py` prints it.
+`test_the_capsule_records_the_slurm_context` pins both halves.
+
+So a capsule of this batch job and a capsule of the same script run on a login
+node are no longer indistinguishable: only the first has `host.slurm`. Printing
+the scheduler variables from the workload, as `payload.py` does, is still how the
+node name and anything outside the list above get into sealed evidence.
 
 ## What this does not prove
 

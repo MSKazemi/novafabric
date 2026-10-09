@@ -17,8 +17,8 @@ NovaFabric?" question. Most are regression tests under
 | [`azure-openai/`](azure-openai/) | NovaFabric working against non-default OpenAI endpoints (Azure, on-prem, gateways) | `openai`, Azure deployment |
 | [`langchain-agent/`](langchain-agent/) | Capturing a real LangChain (+ LangGraph) tool-using agent without code changes | `langgraph` + `langchain-anthropic` *or* `langchain-openai` + key |
 | [`blackbox_demo/`](blackbox_demo/) | End-to-end "black box for agents" walkthrough (capture → seal → verify → replay) | none (pure stdlib) |
-| [`hpc-slurm-job/`](hpc-slurm-job/) | The intended way to capture a **Slurm batch job** — and what the capsule does not record about it (no job id, node, or cluster). `submit.sh` skips with no `sbatch` | Slurm to submit; none to run locally |
-| [`docker-run/`](docker-run/) | What a capsule of a **containerized** run actually contains — and what it does not (the env lock describes the host, no image digest is recorded, and a stock image cannot run the LLM-call hooks). `run.sh` skips with no daemon | Docker daemon |
+| [`hpc-slurm-job/`](hpc-slurm-job/) | The intended way to capture a **Slurm batch job** — and what the capsule records about it (job id, partition, cluster, a hashed node list; experimental). `submit.sh` skips with no `sbatch` | Slurm to submit; none to run locally |
+| [`docker-run/`](docker-run/) | What a capsule of a **containerized** run actually contains — and what it does not (the env lock describes the host; the runner and the resolved image digest are recorded, experimental; a stock image cannot run the LLM-call hooks). `run.sh` skips with no daemon | Docker daemon |
 | [`notebook-capture/`](notebook-capture/) | The two working ways to capture **Jupyter notebook** work — and the four things a notebook capsule does not contain (cell output among them) | `nbconvert` + `ipykernel` in the same env as NovaFabric; none for the `run_cells.py` path |
 | [`plugin-hook-reference/`](plugin-hook-reference/) | The wire-level hook plugin contract — a minimal third-party capture plugin | none (pure stdlib) |
 

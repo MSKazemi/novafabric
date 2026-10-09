@@ -327,6 +327,30 @@ nova capture --runner slurm \
 Pass runner-specific options with `--runner-option key=value` (repeatable). All
 runners are non-privileged by design — see the enforcement notes per runner.
 
+**What the capsule records about where the run happened** (experimental, unreleased,
+ADR-0307). `capsule.yaml` names the runner under `host.runner.name`. For `docker` and
+`kubernetes` it also records the image you passed and the digest the runtime actually
+resolved it to:
+
+```yaml
+host:
+  runner:
+    name: docker
+    image:
+      reference: python:3.12-slim
+      image_id: sha256:…
+      repo_digests: [docker.io/library/python@sha256:…]
+      resolved_by: docker-image-inspect
+```
+
+When no digest can be resolved, `image` carries `unresolved_reason` instead; a digest is
+never inferred from the tag. When `nova capture` runs inside a Slurm job, or you use
+`--runner slurm`, `host.slurm` records the job id (plus array ids, partition, cluster and node
+count when Slurm sets them). Node names are recorded only as a hash, the same way the hostname
+is. The environment lock still describes the machine that ran `nova`, not the container.
+Every field, and what is not recorded:
+[run-capsule.md](architecture/run-capsule.md#hostrunner-and-hostslurm-experimental-adr-0307).
+
 ---
 
 ### Capturing a framework agent without `nova capture`

@@ -14,8 +14,8 @@ that decides whether this is useful to a platform engineer.
 
 The short answer, measured rather than assumed: the run itself is captured
 correctly, and the *environment record describes the host, not the container*.
-Details in [What is in the capsule](#what-is-in-the-capsule) below, including two
-things that are missing.
+Details in [What is in the capsule](#what-is-in-the-capsule) below, including how
+the capsule now identifies the image that ran.
 
 ## Run it
 
@@ -94,22 +94,37 @@ on the **host**. So for the run above:
 This is not wrong so much as **narrower than it looks**: the environment lock is
 an honest record of the machine that performed the capture, and for a `local` run
 that is also the machine that ran the workload. For a container run the two are
-different, and the capsule does not currently say so.
+different. `host.runner` (next section) is what says the run was containerized.
 
-### What is missing
+### What identifies the container run
 
-Two things a reader would reasonably expect and will not find:
+**Experimental, unreleased (ADR-0307, issue #157).** `capsule.yaml` records the
+runner and the image the Docker daemon resolved the tag to:
 
-1. **The image reference and digest are recorded nowhere.** Not the tag, not the
-   `sha256:` digest. You cannot tell from the capsule which image produced it.
-2. **The runner is not recorded either.** Nothing in the capsule says the run was
-   containerized.
+```yaml
+host:
+  runner:
+    name: docker
+    image:
+      reference: python:3.12-slim                 # what you passed
+      image_id: sha256:<64 hex>                   # what the daemon resolved it to
+      repo_digests:
+        - python@sha256:<64 hex>                  # the pullable, pinned form
+      resolved_by: docker-image-inspect
+```
 
-Together these mean a capsule of this run and a capsule of `python payload.py` on
-the host differ only in their outputs — there is no field that distinguishes them.
-For an evidence format, that is worth fixing, and it is deliberately **not** fixed
-in this example. See `examples/hpc-slurm-job/README.md`, which finds the same gap
-for the Slurm runner — one gap, two runners.
+The runner asks `docker image inspect` before and after `docker run`; the tag
+itself is never trusted. If the digest cannot be resolved, `image` carries
+`unresolved_reason` instead (the daemon's own error, or "the tag resolved to …
+before the run and to … after it" when the tag was re-pointed while the workload
+ran). A capsule of this run and a capsule of `python payload.py` on the host now
+differ in `host.runner`.
+
+How this was checked: against a stub `docker` that answers `image inspect` the way
+the daemon does (`tests/test_example_docker_run.py::
+test_run_sh_capsule_records_the_runner_and_the_resolved_digest`). It has not yet
+been measured on a real daemon; the capsule excerpts elsewhere in this README
+predate it.
 
 ### LLM-call capture needs NovaFabric in the image
 

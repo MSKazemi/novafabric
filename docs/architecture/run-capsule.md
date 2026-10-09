@@ -106,7 +106,46 @@ a measured host field.
 | `memory_bytes` | `MemTotal` from `/proc/meminfo` | `0` where there is no `/proc/meminfo` (macOS, Windows): read `0` as "not measured" |
 | `python` | `platform.python_version()` | |
 | `gpu` | — | always `[]` today: no GPU inventory is collected (`env.lock:hardware.gpus` is empty too) |
-| `hostname_redacted` | — | always `true`; the hostname is never written to the manifest (`env.lock` keeps a SHA-256 of it) |
+| `hostname_redacted` | — | always `true`; the hostname is never written to the manifest (`env.lock` keeps a SHA-256 of it). Slurm node names follow the same rule: `slurm.node_list_hash` |
+| `runner` | `capture/orchestrator.py:_host_block` | **experimental** (ADR-0307, unreleased). `nova capture` only; see below |
+| `slurm` | `capture/env.py:slurm_context_from_env` | **experimental** (ADR-0307, unreleased). Present only inside a Slurm job; see below |
+| `kubernetes` | — | in the schema, never written |
+
+These host fields describe the machine that ran `nova`. With `--runner docker`, `kubernetes`
+or `slurm` the workload ran somewhere else, so `python`, `cpu_count` and `memory_bytes` (and
+`env.lock`) are still the capturing host's, not the container's or the compute node's.
+
+#### `host.runner` and `host.slurm` (experimental, ADR-0307)
+
+**Works today on `main`, unreleased.** Which runner ran the workload, which image, and which
+Slurm job.
+
+| Field | Recorded when | Value |
+|---|---|---|
+| `runner.name` | every `nova capture` run | `local`, `docker`, `kubernetes`, `slurm`, `pbs` or `lsf`. Absent on adapter, `@agent` and OTLP-imported capsules, and on capsules from earlier versions |
+| `runner.image.reference` | `docker`, `kubernetes` | the `image=` you passed, verbatim |
+| `runner.image.image_id` | `docker` (and old dockershim clusters) | `sha256:<64 hex>`: what `docker image inspect` resolved the reference to |
+| `runner.image.repo_digests` | when the runtime reports them | `<name>@sha256:<64 hex>`, the pullable pinned form. Docker: from `docker image inspect`; Kubernetes: the pod's `status.containerStatuses[0].imageID` |
+| `runner.image.resolved_by` | with either digest | `docker-image-inspect` or `kubernetes-pod-status` |
+| `runner.image.unresolved_reason` | instead of all three above | why no digest was recorded: the image could not be inspected, the pod was not found, or the tag pointed at a different image after the run than before it |
+| `slurm.job_id` | `SLURM_JOB_ID` is set, or `--runner slurm` | the job id |
+| `slurm.array_job_id`, `slurm.array_task_id` | array jobs | `SLURM_ARRAY_JOB_ID`, `SLURM_ARRAY_TASK_ID` |
+| `slurm.partition`, `slurm.cluster` | when Slurm set them | `SLURM_JOB_PARTITION`, `SLURM_CLUSTER_NAME`. For `--runner slurm`: the partition only if you requested one, the cluster only on a multi-cluster site |
+| `slurm.node_count` | when Slurm set it | `SLURM_JOB_NUM_NODES` |
+| `slurm.node_list_hash` | when Slurm set it | `sha256:` + 16 hex of `SLURM_JOB_NODELIST`. Node names are hostnames, so they are hashed like `env.lock:host.hostname`. To check a node list, hash the same string |
+| `slurm.source` | always | `environment` (read from the variables above) or `runner` (`--runner slurm`: the job `sbatch` created) |
+
+The digest is never taken from the tag. Docker is asked before and after `docker run`: if the
+tag resolved to different images at those two moments, neither can be attributed to the run
+and no digest is recorded. Slurm context comes from those variables only, never from
+`SLURM_*` by prefix, so accounts, submit directories and anything else a site exports under the
+prefix stay out. Both blocks are inside `capsule.yaml` and pass the secret scanner like every
+other manifest field.
+
+**Not recorded:** Slurm node names in clear, step ids, accounts and QOS; the node list for
+`--runner slurm`; PBS and LSF job ids (only `runner.name`); the Kubernetes namespace, pod and
+node (`host.kubernetes` exists in the schema and is never written); the container's own
+environment.
 
 ## Model-call record roles
 

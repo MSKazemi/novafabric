@@ -934,15 +934,15 @@ the copy will fail. This is more likely when:
 - The cluster's pod garbage collection (`completedJobsHistoryLimit`) runs
   aggressively.
 
-Check the runner metadata on the capsule by reading the manifest directly:
+The capsule does not record the pod name. `host.runner.image` in `capsule.yaml`
+tells you whether the pod was found: an `unresolved_reason` of `the workload pod
+was not found` means it was not. The Job is named `nf-<run-id, lower-cased>`, so
+while the pod still exists you can find it and re-run the copy by hand:
 
 ```bash
-cat ~/.novafabric/capsules/<run-id>/capsule.yaml
+kubectl get pods -n <namespace> -l job-name=nf-<run-id-lowercase>
+kubectl cp <namespace>/<pod>:/novafabric/capsule/. ~/.novafabric/capsules/<run-id>/
 ```
-
-Look for `host.runner.metadata.pod_name`. If present, the pod was identified;
-if the copy failed, you may be able to recover artifacts by re-running `kubectl
-cp` manually while the pod still exists.
 
 ### Wire-capture records classified as gen_ai.system=unknown
 

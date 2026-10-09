@@ -130,6 +130,13 @@ credentials here" — guidance, not enforcement. A `secret_env` runner option th
 carrying the value. Residual risk is recorded in the project's internal threat
 model (§Remote Runners) and summarised in [`SECURITY.md`](SECURITY.md).
 
+**Runner and scheduler context, follow-ups** (ADR-0307 open questions). Capsules now record
+the runner, the resolved image digest and the Slurm job (experimental, unreleased). Not yet:
+PBS and LSF job ids; the node list and count for `--runner slurm`; the Kubernetes
+namespace/pod/node (`host.kubernetes`); pinning `docker run` to the resolved digest instead of
+detecting a moved tag; and node names in clear, which needs an owner decision because the
+manifest carries no hostname today.
+
 Broad federation · distributed identity · the 2027 programmes below. Each has accepted
 ADRs; none has a target version. See [the decisions index](docs/decisions.md).
 
@@ -531,7 +538,7 @@ progress. **All items need state-of-the-art engineering research before implemen
 | SC-1 | SSE / WebSocket live feed — replace 5-second polling for run status transitions | FastAPI SSE patterns, event schema design, client reconnect strategy |
 | SC-2 | Virtual scrolling for RunsTab — handle 100K+ rows without DOM collapse | TanStack Virtual vs AG Grid Community (both MIT); windowing strategy |
 | SC-3 | Default time-window on `/api/runs` — no unbounded queries | Index strategy, UI date-range picker |
-| SC-4 | Node/rack topology filter — filter by hostname, SLURM job ID, K8s node | Requires SC-3 index work first |
+| SC-4 | Node/rack topology filter — filter by hostname, SLURM job ID, K8s node | Requires SC-3 index work first. Capsules carry `host.slurm.job_id` since ADR-0307 (unreleased); hostnames and K8s nodes are still not recorded |
 | SC-5 | Pre-aggregated Home tab counts — `COUNT(*)` at 1B rows needs materialized views | Postgres materialized view refresh strategy vs ClickHouse |
 | SC-6 | Approximate query mode — HLL cardinality, reservoir sampling, t-digest percentiles | `postgresql-hll` vs ClickHouse native; DDSketch MIT library |
 
