@@ -36,6 +36,7 @@ from novafabric.object_capsule_store.worm.minio import MinioWormAdapter
 from novafabric.object_capsule_store.worm.s3 import S3WormAdapter
 
 ADAPTERS = [
+    pytest.param(S3WormAdapter, id="s3-compatible"),
     pytest.param(MinioWormAdapter, id="minio"),
     pytest.param(CephWormAdapter, id="ceph"),
 ]
@@ -71,10 +72,33 @@ def test_occ_helpers_bind_against_real_adapter_signatures() -> None:
     live run fail, but never constructs a client.
     """
     sentinel = object()
-    for adapter_cls in (MinioWormAdapter, CephWormAdapter):
+    for adapter_cls in (S3WormAdapter, MinioWormAdapter, CephWormAdapter):
         inspect.signature(adapter_cls).bind(
             bucket="nova-occ-test",
             endpoint_url="http://localhost:9000",
             client=sentinel,
         )
     inspect.signature(S3WormAdapter).bind(bucket="nova-occ-test")
+
+
+def test_s3_compatible_helper_builds_a_generic_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The nightly tier runs a non-MinIO server (SeaweedFS) through this helper.
+
+    It must build the generic ``S3WormAdapter`` — a ``MinioWormAdapter`` would
+    record a MinIO confirmation that never happened.  Building a boto3 client
+    opens no connection, so this runs offline.
+    """
+    from object_capsule_store.integration.test_occ_backends import (
+        _s3_compatible_adapter,
+    )
+
+    monkeypatch.setenv("S3COMPAT_ENDPOINT", "http://localhost:9000")
+    monkeypatch.setenv("S3COMPAT_ACCESS_KEY", "k")
+    monkeypatch.setenv("S3COMPAT_SECRET_KEY", "s")
+    monkeypatch.delenv("S3COMPAT_BUCKET", raising=False)
+    adapter = _s3_compatible_adapter()
+    assert type(adapter) is S3WormAdapter
+    assert adapter._bucket == "nova-occ-test"  # type: ignore[attr-defined]
+    assert adapter._client.meta.endpoint_url == "http://localhost:9000"  # type: ignore[attr-defined]

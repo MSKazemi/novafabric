@@ -212,6 +212,15 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Changed
 
+- **CI: the nightly `object-store-scale` job runs SeaweedFS instead of MinIO.** The job failed
+  every night at its first step: `quay.io/minio/minio:latest` now refuses anonymous pulls
+  (`unauthorized`, exit 125, run 37913204453), the third MinIO image this job has lost. MinIO
+  is also AGPL-3.0, Tier C under ADR-0024. The job now starts `chrislusf/seaweedfs` 4.48
+  (Apache-2.0) pinned by digest, waits for a real write to land rather than only a health
+  check, and runs a new `test_occ_s3_compatible_put_log_object_if_absent` through the generic
+  `S3WormAdapter` (`S3COMPAT_*` variables). The MinIO-specific test stays skipped there, so a
+  pass is never reported as a MinIO confirmation. Not yet proven: Docker is unavailable on the
+  development machine, so the next nightly run is the first real test.
 - **Scale-S4's `nova seal log verify` p99 < 200 ms target is withdrawn by decision, and the
   full-recompute guarantee is documented with its cost (ADR-0268, issue #93).** Verification
   keeps recomputing the Merkle root from every stored leaf hash on every run; no faster, weaker

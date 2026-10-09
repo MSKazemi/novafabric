@@ -11,13 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""OCC (If-None-Match: *) integration tests — S3 / MinIO / Ceph RGW (AC-2, BQ-013).
+"""OCC (If-None-Match: *) integration tests — S3 / S3-compatible / MinIO / Ceph RGW (AC-2, BQ-013).
 
 These tests confirm that conditional-PUT semantics work against real backends.
 They are gated by NOVA_INTEGRATION=1 and backend-specific env vars.
 
 Env vars:
     NOVA_INTEGRATION=1           — required to run all tests below
+    S3COMPAT_ENDPOINT            — any S3-compatible server (the nightly CI tier runs
+                                   SeaweedFS, Apache-2.0); unset ⇒ that test is skipped
+    S3COMPAT_ACCESS_KEY / S3COMPAT_SECRET_KEY / S3COMPAT_BUCKET (default nova-occ-test)
     MINIO_ENDPOINT               — MinIO endpoint (default http://localhost:9000)
     MINIO_ACCESS_KEY             — MinIO access key (default minioadmin)
     MINIO_SECRET_KEY             — MinIO secret key (default minioadmin)
@@ -79,6 +82,26 @@ def _minio_adapter() -> object:
     )
 
 
+def _s3_compatible_adapter() -> object:
+    """Generic ``S3WormAdapter`` pointed at an arbitrary S3-compatible endpoint.
+
+    Deliberately not ``MinioWormAdapter``: a run against a non-MinIO server must
+    not be recorded as a MinIO confirmation.
+    """
+    from novafabric.object_capsule_store.worm.s3 import S3WormAdapter
+
+    endpoint_url = os.environ["S3COMPAT_ENDPOINT"]
+    return S3WormAdapter(
+        bucket=os.environ.get("S3COMPAT_BUCKET", "nova-occ-test"),
+        endpoint_url=endpoint_url,
+        client=_s3_compatible_client(
+            endpoint_url,
+            os.environ.get("S3COMPAT_ACCESS_KEY", ""),
+            os.environ.get("S3COMPAT_SECRET_KEY", ""),
+        ),
+    )
+
+
 def _s3_adapter() -> object:
     from novafabric.object_capsule_store.worm.s3 import S3WormAdapter
 
@@ -132,6 +155,20 @@ def _occ_scenario(adapter: object) -> None:
 def test_occ_minio_put_log_object_if_absent() -> None:
     """AC-2: Conditional-PUT (If-None-Match: *) confirmed on MinIO."""
     _occ_scenario(_minio_adapter())
+
+
+# ---------------------------------------------------------------------------
+# Any S3-compatible server (nightly CI: SeaweedFS)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(
+    not os.environ.get("S3COMPAT_ENDPOINT"),
+    reason="Set S3COMPAT_ENDPOINT (+ S3COMPAT_ACCESS_KEY/S3COMPAT_SECRET_KEY) to run "
+           "the S3-compatible OCC test",
+)
+def test_occ_s3_compatible_put_log_object_if_absent() -> None:
+    """AC-2: Conditional-PUT (If-None-Match: *) confirmed on an S3-compatible server."""
+    _occ_scenario(_s3_compatible_adapter())
 
 
 # ---------------------------------------------------------------------------

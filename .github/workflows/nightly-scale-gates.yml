@@ -1,10 +1,11 @@
 name: Nightly scale & concurrency gates
 
 # The default CI tier deliberately skips the infra-gated tests (NOVA_INTEGRATION=1):
-# concurrent chain writers, Postgres Merkle log, 100K-row scale migration, MinIO
-# WORM end-to-end, the 1M-replay rebuild bench. Those are exactly the highest-risk
-# scalability/concurrency paths (2026-07-16 audit), so this scheduled tier runs
-# them nightly with real services instead of leaving them permanently skipped.
+# concurrent chain writers, Postgres Merkle log, 100K-row scale migration, the
+# S3-compatible conditional-PUT (OCC) path, the 1M-replay rebuild bench. Those
+# are exactly the highest-risk scalability/concurrency paths (2026-07-16
+# audit), so this scheduled tier runs them nightly with real services instead
+# of leaving them permanently skipped.
 #
 # Deliberately NOT wired into PR CI: these jobs are slow and service-heavy.
 # Still skipped even here (documented in the backlog plan, Bucket C):
@@ -90,45 +91,65 @@ jobs:
     if: github.repository == 'MSKazemi/novafabric'
     timeout-minutes: 45
 
-    # MinIO runs as an explicit step rather than a `services:` container.
-    # Bitnami retired its free Docker Hub catalog, so `bitnami/minio:latest`
-    # now returns "manifest unknown" and this job failed at container startup
-    # every night from 2026-08-05 onward.  (The surviving `bitnamilegacy/*`
-    # mirror is an unmaintained archive with no security updates — not a
-    # dependency this project should adopt.)  The official `minio/minio` image
-    # needs `server /data` as its command, and `services:` cannot supply one,
-    # so the container is started here instead.
+    # S3 endpoint: SeaweedFS (Apache-2.0), pinned by digest.
     #
-    # 2026-09-19: Docker Hub's `minio/minio` repository itself is now gone —
-    # `docker pull minio/minio` (any tag) returns "pull access denied ...
-    # repository does not exist", and Docker Hub's own API returns "object not
-    # found" for it. This is MinIO Inc. discontinuing free Docker Hub
-    # distribution, not a local or workflow misconfiguration — every
-    # `object-store-scale` run failed at this exact step from 2026-09-1x
-    # onward while `postgres-scale` and `dashboard-scale` stayed green.
-    # `quay.io/minio/minio` is MinIO's own community-edition mirror and pulls
-    # cleanly (verified locally). Same image, same `server /data` command,
-    # different registry.
+    # History: this job ran MinIO and lost its image three times —
+    # `bitnami/minio` (retired 2026-08-05), Docker Hub `minio/minio` (removed
+    # ~2026-09-17), then `quay.io/minio/minio:latest`, which now refuses an
+    # anonymous pull — "unauthorized", exit 125 (run 37913204453, 2026-10-09);
+    # quay's anonymous token for minio/minio carries no pull action. MinIO is also AGPL-3.0, Tier C under ADR-0024 ("replace with
+    # a Tier-A S3-compatible alternative"), so the fix is to stop depending on
+    # it rather than chase a fourth mirror.
+    #
+    # Why SeaweedFS: Apache-2.0 (upstream LICENSE); its official image
+    # `chrislusf/seaweedfs` is pulled anonymously from Docker Hub; one
+    # `weed server -s3` process gives path-style S3 (what boto3 sends to a
+    # localhost endpoint_url), CreateBucket, PutObject/GetObject and — the one
+    # semantic the OCC test exists for — `If-None-Match: *` on PutObject
+    # answering 412 PreconditionFailed when the key exists
+    # (weed/s3api/s3api_object_handlers_put.go, validateConditionalHeaders,
+    # tag 4.48). The tests need no Object Lock, versioning or multipart.
+    # versitygw (also Apache-2.0) was the alternative; SeaweedFS was chosen
+    # because one container needs no backend setup and its conditional-PUT
+    # handling was read in source at the pinned tag.
+    #
+    # The digest is the multi-arch index of tag 4.48 (latest stable,
+    # 2026-09-28), read from registry-1.docker.io's Docker-Content-Digest.
+    # Bump tag and digest together. AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
+    # make SeaweedFS create a static admin identity and enforce SigV4 auth;
+    # they are throwaway CI constants, not secrets.
+    # -master.telemetry=false: no usage report leaves the runner.
+    #
+    # The tests read S3COMPAT_* and use the generic S3WormAdapter, so a pass
+    # here is recorded as an S3-compatible confirmation, never as a MinIO one
+    # (the MinIO-specific test stays skipped: MINIO_ENDPOINT is unset).
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
-      - name: Start MinIO
+      - name: Start SeaweedFS (S3 gateway)
+        env:
+          SEAWEEDFS_IMAGE: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
         run: |
-          docker run -d --name minio \
-            -p 9000:9000 \
-            -e MINIO_ROOT_USER=novatest \
-            -e MINIO_ROOT_PASSWORD=novatest-secret \
-            quay.io/minio/minio:latest server /data
-          for _ in $(seq 1 60); do
-            if curl -fsS http://localhost:9000/minio/health/live >/dev/null; then
-              echo "MinIO is live"; exit 0
+          docker run -d --name seaweedfs \
+            -p 9000:8333 \
+            -e AWS_ACCESS_KEY_ID=novatest \
+            -e AWS_SECRET_ACCESS_KEY=novatest-secret \
+            "$SEAWEEDFS_IMAGE" \
+            server -s3 -s3.port=8333 -ip.bind=0.0.0.0 -master.telemetry=false
+          # /healthz only proves the S3 gateway is listening; the filer and
+          # the volume server can still be registering, so readiness is
+          # proven by the bucket + probe write in the next step.
+          for _ in $(seq 1 90); do
+            if curl -fsS http://localhost:9000/healthz >/dev/null; then
+              echo "SeaweedFS S3 gateway is up"; exit 0
             fi
             sleep 1
           done
-          echo "MinIO did not become live within 60s"; docker logs minio; exit 1
+          echo "SeaweedFS S3 gateway did not come up within 90s"
+          docker logs seaweedfs; exit 1
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -143,18 +164,18 @@ jobs:
       - name: Install project + all extras
         run: uv sync --frozen --all-extras
 
-      - name: Create the OCC test bucket
+      - name: Create the OCC test bucket and prove a write lands
         # The tests take the bucket as given and never create it, so a missing
-        # bucket surfaces as NoSuchBucket on the first PutObject rather than as
-        # a setup error.  The retired Bitnami image was configurable to
-        # pre-create buckets; the official image is not, and this job never set
-        # that variable anyway — so this step is a genuine gap being closed,
-        # not a port of previous behaviour.
+        # bucket would surface as NoSuchBucket on the first PutObject rather
+        # than as a setup error. The probe put/get/delete retries until the
+        # volume server accepts writes, which /healthz alone does not prove.
         env:
           AWS_ACCESS_KEY_ID: novatest
           AWS_SECRET_ACCESS_KEY: novatest-secret
         run: |
-          uv run python - <<'PY'
+          uv run python - <<'PY' || { docker logs seaweedfs; exit 1; }
+          import time
+
           import boto3
           from botocore.config import Config
 
@@ -164,16 +185,32 @@ jobs:
               config=Config(signature_version="s3v4"),
               region_name="us-east-1",
           )
-          client.create_bucket(Bucket="nova-occ-test")
+          deadline = time.monotonic() + 120
+          while True:
+              try:
+                  names = [b["Name"] for b in client.list_buckets()["Buckets"]]
+                  if "nova-occ-test" not in names:
+                      client.create_bucket(Bucket="nova-occ-test")
+                  client.put_object(Bucket="nova-occ-test", Key="_ci_probe", Body=b"ok")
+                  body = client.get_object(Bucket="nova-occ-test", Key="_ci_probe")["Body"].read()
+                  assert body == b"ok", body
+                  client.delete_object(Bucket="nova-occ-test", Key="_ci_probe")
+                  break
+              except Exception as exc:  # readiness retry; re-raised at the deadline
+                  if time.monotonic() > deadline:
+                      raise
+                  print("not ready yet:", type(exc).__name__, exc)
+                  time.sleep(2)
           print("buckets:", [b["Name"] for b in client.list_buckets()["Buckets"]])
           PY
 
       - name: Object-store concurrency + WORM + rebuild tiers
         env:
           NOVA_INTEGRATION: "1"
-          MINIO_ENDPOINT: http://localhost:9000
-          MINIO_ACCESS_KEY: novatest
-          MINIO_SECRET_KEY: novatest-secret
+          S3COMPAT_ENDPOINT: http://localhost:9000
+          S3COMPAT_ACCESS_KEY: novatest
+          S3COMPAT_SECRET_KEY: novatest-secret
+          S3COMPAT_BUCKET: nova-occ-test
           AWS_ACCESS_KEY_ID: novatest
           AWS_SECRET_ACCESS_KEY: novatest-secret
         run: uv run pytest tests/object_capsule_store -q --timeout=900
