@@ -740,7 +740,7 @@
         "memory_bytes": {
           "type": "integer",
           "minimum": 0,
-          "description": "Total memory available to the process in bytes."
+          "description": "Total physical memory of the host in bytes. 0 means unknown: the capturing platform could not measure it (the field is required and not nullable, so 0 is the only encoding of not measured)."
         },
         "gpu": {
           "type": "array",

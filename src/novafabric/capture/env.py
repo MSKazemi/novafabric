@@ -5,9 +5,12 @@ import importlib.metadata
 import os
 import platform
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+from novafabric import __version__
 
 _DEFAULT_DENY_PATTERNS = [
     r"(?i).*api[_-]?key.*",
@@ -83,7 +86,7 @@ def _runtime_env() -> dict[str, Any]:
     }
 
 
-def _memory_bytes() -> int:
+def _linux_memory_bytes() -> int:
     try:
         with open("/proc/meminfo") as f:
             for line in f:
@@ -92,6 +95,64 @@ def _memory_bytes() -> int:
     except Exception:
         pass
     return 0
+
+
+def _darwin_memory_bytes() -> int:
+    try:
+        proc = subprocess.run(
+            ["sysctl", "-n", "hw.memsize"],
+            capture_output=True, text=True, timeout=2, check=False,
+        )
+        if proc.returncode != 0:
+            return 0
+        value = int(proc.stdout.strip())
+    except Exception:
+        return 0
+    return value if value > 0 else 0
+
+
+def _windows_memory_bytes() -> int:
+    try:
+        import ctypes
+
+        class _MemoryStatusEx(ctypes.Structure):
+            _fields_ = [  # noqa: RUF012 - ctypes reads this class attribute
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        stat = _MemoryStatusEx()
+        stat.dwLength = ctypes.sizeof(_MemoryStatusEx)
+        # getattr: ``ctypes.windll`` exists only on Windows (and mypy knows it).
+        kernel32 = getattr(ctypes, "windll").kernel32  # noqa: B009
+        if not kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+            return 0
+        return int(stat.ullTotalPhys)
+    except Exception:
+        return 0
+
+
+def _memory_bytes() -> int:
+    """Total physical memory in bytes, best-effort and stdlib-only; ``0`` = unknown.
+
+    ``host.memory_bytes`` is a required non-negative integer in both the capsule and
+    the env.lock schema, with no null, so ``0`` is the only way to record "could not
+    be measured" — it never means a machine with no memory. Each OS the schema
+    names has its own reader; a failure in any of them degrades to ``0``, never to
+    an exception that would fail the capture.
+    """
+    if sys.platform == "darwin":
+        return _darwin_memory_bytes()
+    if sys.platform.startswith("win"):
+        return _windows_memory_bytes()
+    return _linux_memory_bytes()
 
 
 def host_arch() -> str:
@@ -122,15 +183,12 @@ def host_info() -> dict[str, Any]:
     test_host_arch_is_never_hardcoded.py`` now fails on any literal for a measured
     host field.
     """
-    os_name = platform.system().lower()
-    if os_name not in ("linux", "darwin", "windows"):
-        os_name = "linux"
     try:
         cpu_count = os.cpu_count() or 1
     except Exception:
         cpu_count = 1
     return {
-        "os": os_name,
+        "os": _os_name(),
         "arch": host_arch(),
         "python": platform.python_version(),
         "cpu_count": cpu_count,
@@ -141,6 +199,13 @@ def host_info() -> dict[str, Any]:
 
 
 def _os_name() -> str:
+    """``host.os`` for both the capsule and the env.lock host block.
+
+    Known gap: both schemas close ``host.os`` to ``linux|darwin|windows``, so any
+    other OS (FreeBSD, AIX, ...) is recorded as ``"linux"``. Adding an ``"other"``
+    value would make an older ``nova validate`` reject new capsules, so the enum
+    is unchanged until a schema-evolution decision covers it.
+    """
     name = platform.system().lower()
     return name if name in ("linux", "darwin", "windows") else "linux"
 
@@ -269,7 +334,7 @@ def capture_environment(created_at: str, run_id: str) -> dict[str, Any]:
             "tz": tz,
         },
         "captured_at": created_at,
-        "captured_by": "novafabric/0.2.0",
+        "captured_by": f"novafabric/{__version__}",
     }
     inference = _inference_facet()
     if inference:

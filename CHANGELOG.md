@@ -276,6 +276,16 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **`env.lock` named the wrong NovaFabric version, and macOS/Windows hosts recorded
+  `memory_bytes: 0`.** `captured_by` was the literal `novafabric/0.2.0` whatever version wrote
+  the lock; it is now `novafabric/<installed version>`. `host.memory_bytes` was read only from
+  Linux `/proc/meminfo`; it is now also measured on macOS (`sysctl -n hw.memsize`) and Windows
+  (`GlobalMemoryStatusEx`), standard library only. The field is required and not nullable in
+  both schemas, so `0` still records a host that could not be measured — the schema
+  descriptions now say `0 means unknown`. Schema changes are description-only. Known gap,
+  unchanged: an OS other than Linux, macOS or Windows is still recorded as `linux`, because
+  `host.os` is a closed enum and adding a value would make older `nova validate` reject new
+  capsules.
 - **Adapter and SDK-agent capsules recorded `cpu_count: 1` and `memory_bytes: 0`** whatever
   the machine — the same false host evidence as the hardcoded `arch` fixed above. Every
   capsule writer now builds its `host` block with one function,

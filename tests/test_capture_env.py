@@ -36,6 +36,14 @@ def test_env_lock_required_fields() -> None:
     assert "captured_by" in lock
 
 
+def test_env_lock_captured_by_names_the_running_package_version() -> None:
+    """``captured_by`` was the literal ``novafabric/0.2.0`` whatever version wrote it."""
+    import novafabric
+
+    lock = capture_environment(created_at=NOW, run_id=RUN_ID)
+    assert lock["captured_by"] == f"novafabric/{novafabric.__version__}"
+
+
 def test_env_lock_hardware_gpus_list() -> None:
     lock = capture_environment(created_at=NOW, run_id=RUN_ID)
     assert isinstance(lock["hardware"]["gpus"], list)

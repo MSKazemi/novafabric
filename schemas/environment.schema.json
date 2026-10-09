@@ -66,7 +66,7 @@
     },
     "captured_by": {
       "type": "string",
-      "description": "Identity of the tool that captured the lock, e.g. 'novafabric/0.2.0'."
+      "description": "Identity of the tool that captured the lock: 'novafabric/' followed by the installed package version, e.g. 'novafabric/0.104.0'."
     },
     "best_effort_reasons": {
       "type": "array",
@@ -156,7 +156,7 @@
         "memory_bytes": {
           "type": "integer",
           "minimum": 0,
-          "description": "Total memory available to the process in bytes."
+          "description": "Total physical memory of the host in bytes. 0 means unknown: the capturing platform could not measure it (the field is required and not nullable, so 0 is the only encoding of not measured)."
         },
         "slurm": {
           "oneOf": [
