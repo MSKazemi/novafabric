@@ -9838,9 +9838,8 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "audit-log",
         "label": "--audit-log",
         "type": "text",
-        "hint": "Path to the audit log JSONL file",
-        "flag": "--audit-log",
-        "defaultValue": "~/.local/share/novafabric/audit.jsonl"
+        "hint": "Path to the audit log JSONL file (default: $NOVAFABRIC_AUDIT_LOG_PATH, else $NOVAFABRIC_HOME/audit.jsonl, else $XDG_DATA_HOME/novafabric/audit.jsonl, else ~/.local/share/novafabric/audit.jsonl)",
+        "flag": "--audit-log"
       }
     ],
     "docsPath": "/docs/cli-reference/",

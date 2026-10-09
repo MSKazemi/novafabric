@@ -100,7 +100,13 @@ def test_kg_quickstart_points_at_the_store_nova_capture_writes() -> None:
     directory, relative to the working directory — so a reader following the
     guide after ``nova capture`` passed a path that did not exist.
     """
-    paths = [m.group("path") for m in _KG_EXAMPLE.finditer(_KG_GUIDE.read_text("utf-8"))]
+    # Only the quickstart's own capsule (run id 01HXAY7M); other examples use
+    # deliberately generic placeholders such as ``suspect/``.
+    paths = [
+        m.group("path")
+        for m in _KG_EXAMPLE.finditer(_KG_GUIDE.read_text("utf-8"))
+        if "01HXAY7M" in m.group("path")
+    ]
     assert paths, "no `nova kg <cmd> <capsule>` example found — the guide's shape changed"
     for path in paths:
         assert Path(path).parent.name == _CAPSULE_LEAF, (
