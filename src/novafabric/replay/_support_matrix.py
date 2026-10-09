@@ -36,6 +36,10 @@ class SurfaceRow:
     evidence: tuple[str, ...]
     #: The SDK methods this row speaks for; must match the dispatcher tables.
     patches: tuple[PatchTarget, ...] = field(default_factory=tuple)
+    #: Tool surfaces this row speaks for that are served by a *registered
+    #: server* rather than a patch (ADR-0306); must match the surfaces
+    #: ``MockToolDispatcher.install`` registers.
+    servers: tuple[str, ...] = field(default_factory=tuple)
 
 
 _E2E = "tests/replay/test_model_surface_coverage_e2e.py"
@@ -44,6 +48,7 @@ _ROUND_TRIP = "tests/replay/test_tool_choice_round_trip_e2e.py"
 _CAPTURE = "tests/capture/test_sdk_stream_capture.py"
 _ERRORS = "tests/replay/test_recorded_model_errors_replay.py"
 _ENDINGS = "tests/replay/test_undelivered_stream_endings.py"
+_PY_TOOL = "tests/replay/test_python_tool_replay_e2e.py"
 
 ROWS: tuple[SurfaceRow, ...] = (
     SurfaceRow(
@@ -327,6 +332,31 @@ ROWS: tuple[SurfaceRow, ...] = (
         patches=(("mcp.client.session", "ClientSession", "call_tool"),),
     ),
     SurfaceRow(
+        surface="Python function declared with `novafabric.capture.record.tool` (ADR-0306)",
+        capture=(
+            "one `transport: python` record per call; arguments and result kept only at "
+            "the `forensic`/`air_gapped` capture level, digests otherwise"
+        ),
+        replay="served",
+        replay_note=(
+            "before the function body runs; one-to-one by name and canonical arguments; "
+            "JSON-native results up to 1 MiB; an unmatched or unservable call is refused "
+            "(`--permissive` runs it live only if a ladder flag permits its declared "
+            "mutation class)"
+        ),
+        streaming="refused at decoration (generator functions)",
+        asynchronous="served (`async def`)",
+        status="experimental",
+        evidence=(
+            f"{_PY_TOOL}::test_decorated_calls_are_served_and_their_bodies_never_run",
+            f"{_PY_TOOL}::test_positional_keyword_and_default_calls_match_and_consume_in_order",
+            f"{_PY_TOOL}::test_an_unmatched_call_fails_closed_before_the_body_runs",
+            f"{_PY_TOOL}::test_an_unservable_record_fails_closed_naming_the_cause",
+            f"{_PY_TOOL}::test_permissive_refuses_an_unmatched_unknown_call_without_the_ladder_flag",
+        ),
+        servers=("novafabric.capture.record.tool",),
+    ),
+    SurfaceRow(
         surface="MCP session set-up (server start, `initialize`, `list_tools`)",
         capture="not recorded as tool calls",
         replay="not intercepted",
@@ -337,7 +367,10 @@ ROWS: tuple[SurfaceRow, ...] = (
         evidence=("e2e tests start a real in-memory MCP server during replay",),
     ),
     SurfaceRow(
-        surface="HTTP, shell, filesystem, framework-native tools",
+        surface=(
+            "HTTP, shell, filesystem, framework-native tools, undeclared functions "
+            "the workload runs for a model"
+        ),
         capture="network/file events, not tool records",
         replay="not intercepted",
         replay_note=(

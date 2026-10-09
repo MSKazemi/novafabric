@@ -15,13 +15,16 @@ Pure functions and small dataclasses only; no import-time IO.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
+import threading
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from novafabric.capture import _tool_codec
+from novafabric.capture._tool_codec import normalized_arg_hash as normalized_arg_hash
 from novafabric.capture.hooks._sdk_streams import (
     ANTHROPIC_MESSAGES_SURFACE,
     API_SURFACE_EXT,
@@ -55,8 +58,10 @@ QUEUE_PROVIDER: dict[str, str] = {
 #: How each served model surface may be called during a mocked replay.
 MODEL_CALL_MODES = "sync and async; stream=True and non-streaming"
 
-#: The one tool surface mocked replay intercepts.
+#: The tool surfaces mocked replay intercepts (ADR-0300, ADR-0306).
 TOOL_SURFACE_MCP = "mcp.ClientSession.call_tool"
+TOOL_SURFACE_PYTHON = "novafabric.capture.record.tool"
+TOOL_SURFACES: tuple[str, ...] = (TOOL_SURFACE_MCP, TOOL_SURFACE_PYTHON)
 
 DivergencePolicy = Literal["fail", "warn"]
 
@@ -193,21 +198,6 @@ def recorded_provider_order(model_calls: list[dict[str, Any]]) -> list[str]:
 # ── tool calls ───────────────────────────────────────────────────────────────
 
 
-def normalized_arg_hash(arguments: Any) -> str:
-    """Order-insensitive digest of tool arguments.
-
-    ``None`` is the same as ``{}`` (the MCP hook records ``arguments or {}``);
-    any other value is hashed as itself -- a non-dict is never collapsed into
-    ``{}``, which would make unrelated calls collide.
-    """
-    if arguments is None:
-        arguments = {}
-    canonical = json.dumps(
-        arguments, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str
-    )
-    return hashlib.sha256(canonical.encode()).hexdigest()[:32]
-
-
 def _mcp_method(record: dict[str, Any]) -> str:
     mcp = record.get("mcp")
     if isinstance(mcp, dict) and isinstance(mcp.get("method"), str):
@@ -220,15 +210,80 @@ def _is_proxy_record(record: dict[str, Any]) -> bool:
     return isinstance(ext, dict) and ext.get("io.novafabric.capture_method") == "proxy"
 
 
-def is_interceptable_tool_call(record: dict[str, Any]) -> bool:
-    """Recorded on the intercepted surface: an MCP ``tools/call`` with a name."""
+def tool_surface(record: dict[str, Any]) -> str | None:
+    """The intercepted surface a recorded tool call belongs to, or ``None``.
+
+    * ``TOOL_SURFACE_MCP``: an MCP ``tools/call`` with a name (ADR-0300);
+    * ``TOOL_SURFACE_PYTHON``: a ``record.tool`` boundary -- ``transport:
+      "python"`` **and** the ``io.novafabric.tool_surface: "python.function"``
+      marker (ADR-0306). Absent on every older record, which keeps its meaning.
+
+    A record is matchable only on the surface it was recorded on.
+    """
+    if not isinstance(record, dict):
+        return None
     name = record.get("tool_name")
-    return (
-        record.get("transport") == "mcp"
-        and _mcp_method(record) == "tools/call"
-        and isinstance(name, str)
-        and bool(name)
-    )
+    if not isinstance(name, str) or not name:
+        return None
+    transport = record.get("transport")
+    if transport == "mcp" and _mcp_method(record) == "tools/call":
+        return TOOL_SURFACE_MCP
+    if transport == "python":
+        ext = record.get("extensions")
+        if (
+            isinstance(ext, dict)
+            and ext.get(_tool_codec.TOOL_SURFACE_EXT) == _tool_codec.TOOL_SURFACE_PYTHON_FUNCTION
+        ):
+            return TOOL_SURFACE_PYTHON
+    return None
+
+
+def is_interceptable_tool_call(record: dict[str, Any]) -> bool:
+    """Recorded on an intercepted surface (:func:`tool_surface`)."""
+    return tool_surface(record) is not None
+
+
+def not_servable_reason(record: dict[str, Any]) -> str | None:
+    """Why an intercepted record cannot be served, or ``None`` if it can.
+
+    MCP records are always servable (ADR-0300). A python-surface record is
+    servable only when capture marked its codec ``json-v1`` (ADR-0306 D3).
+    """
+    if tool_surface(record) != TOOL_SURFACE_PYTHON:
+        return None
+    ext = record.get("extensions")
+    ext = ext if isinstance(ext, dict) else {}
+    if ext.get(_tool_codec.RESULT_CODEC_EXT) == _tool_codec.CODEC_JSON:
+        if record.get("status", "success") == "success" and not isinstance(
+            record.get("result"), dict
+        ):
+            return "the record holds no result value"
+        return None
+    reason = ext.get(_tool_codec.NOT_SERVABLE_REASON_EXT)
+    return str(reason) if reason else "the record was not marked servable at capture"
+
+
+def is_servable_tool_record(record: dict[str, Any]) -> bool:
+    """On an intercepted surface and servable: what ``tool_calls_available`` counts."""
+    return is_interceptable_tool_call(record) and not_servable_reason(record) is None
+
+
+def record_arguments_digest(record: dict[str, Any]) -> str:
+    """The argument digest a replayed call is matched against.
+
+    A python-surface record captured with payload capture off holds no
+    arguments, only their digest (``io.novafabric.arguments_digest``). Otherwise
+    a python-surface record is hashed **after** secret redaction, exactly as the
+    live call is (``_tool_codec.redacted_arguments_digest``), so an argument the
+    capsule scanner redacted still matches. MCP records keep ADR-0300's raw hash.
+    """
+    if tool_surface(record) == TOOL_SURFACE_PYTHON:
+        ext = record.get("extensions")
+        digest = ext.get(_tool_codec.ARGUMENTS_DIGEST_EXT) if isinstance(ext, dict) else None
+        if isinstance(digest, str) and digest:
+            return digest
+        return _tool_codec.redacted_arguments_digest(record.get("arguments") or {})
+    return normalized_arg_hash(record.get("arguments"))
 
 
 def _nests(outer: dict[str, Any], inner: dict[str, Any]) -> bool:
@@ -290,59 +345,77 @@ class ToolCallMatcher:
        so repeated identical calls consume distinct records in recorded order;
     3. otherwise **unmatched**, with a reason. A record is never served twice:
        this is the dict-keyed-by-signature bug class ``nova diff`` once had.
+
+    Indexed by ``(name, argument hash)`` -> queue of unconsumed record indices,
+    so tier 2 is amortised O(1) per call instead of a scan of the capsule
+    (ADR-0306 D9). Thread-safe: decorated python tools may run on executor
+    threads (ADR-0306 D6.4).
     """
 
     def __init__(self, records: list[dict[str, Any]]) -> None:
         self._records = list(records)
-        self._hashes = [normalized_arg_hash(r.get("arguments")) for r in self._records]
+        self._hashes = [record_arguments_digest(r) for r in self._records]
         self._consumed = [False] * len(self._records)
+        self._consumed_count = 0
+        self._lock = threading.Lock()
+        self._index: dict[tuple[Any, str], deque[int]] = {}
+        self._signatures_by_name: dict[Any, set[str]] = {}
+        for idx, (rec, digest) in enumerate(zip(self._records, self._hashes)):
+            name = rec.get("tool_name")
+            self._index.setdefault((name, digest), deque()).append(idx)
+            self._signatures_by_name.setdefault(name, set()).add(digest)
 
     def __len__(self) -> int:
         return len(self._records)
 
     @property
     def consumed_count(self) -> int:
-        return sum(self._consumed)
+        return self._consumed_count
 
     def unconsumed(self) -> list[dict[str, Any]]:
         return [r for r, used in zip(self._records, self._consumed) if not used]
 
     def _take(self, idx: int, how: Literal["id", "signature"]) -> ToolMatch:
         self._consumed[idx] = True
+        self._consumed_count += 1
         return ToolMatch(record=self._records[idx], how=how)
 
     def match(
         self, tool_call_id: str | None, tool_name: str, arguments: Any
     ) -> ToolMatch:
-        if tool_call_id:
-            for idx, rec in enumerate(self._records):
-                if self._consumed[idx] or rec.get("tool_call_id") != tool_call_id:
-                    continue
-                if rec.get("tool_name") == tool_name:
-                    return self._take(idx, "id")
-                return ToolMatch(
-                    record=None,
-                    reason=(
-                        f"tool_call_id {tool_call_id!r} was recorded for "
-                        f"{rec.get('tool_name')!r}, not {tool_name!r}"
-                    ),
-                )
-        digest = normalized_arg_hash(arguments)
-        for idx, rec in enumerate(self._records):
-            if (
-                not self._consumed[idx]
-                and rec.get("tool_name") == tool_name
-                and self._hashes[idx] == digest
-            ):
-                return self._take(idx, "signature")
-        same_name = [i for i, r in enumerate(self._records) if r.get("tool_name") == tool_name]
-        if any(self._hashes[i] == digest for i in same_name):
-            reason = "every recorded call with these arguments was already consumed"
-        elif same_name:
-            reason = "the tool was recorded, but not with these arguments"
-        else:
-            reason = "no recorded call to this tool"
-        return ToolMatch(record=None, reason=reason)
+        return self.match_digest(tool_call_id, tool_name, normalized_arg_hash(arguments))
+
+    def match_digest(
+        self, tool_call_id: str | None, tool_name: str, digest: str
+    ) -> ToolMatch:
+        """As :meth:`match`, for a caller that already hashed its arguments."""
+        with self._lock:
+            if tool_call_id:
+                for idx, rec in enumerate(self._records):
+                    if self._consumed[idx] or rec.get("tool_call_id") != tool_call_id:
+                        continue
+                    if rec.get("tool_name") == tool_name:
+                        return self._take(idx, "id")
+                    return ToolMatch(
+                        record=None,
+                        reason=(
+                            f"tool_call_id {tool_call_id!r} was recorded for "
+                            f"{rec.get('tool_name')!r}, not {tool_name!r}"
+                        ),
+                    )
+            queue = self._index.get((tool_name, digest))
+            while queue:
+                idx = queue.popleft()
+                if not self._consumed[idx]:  # an id-tier match may have taken it
+                    return self._take(idx, "signature")
+            signatures = self._signatures_by_name.get(tool_name)
+            if signatures and digest in signatures:
+                reason = "every recorded call with these arguments was already consumed"
+            elif signatures:
+                reason = "the tool was recorded, but not with these arguments"
+            else:
+                reason = "no recorded call to this tool"
+            return ToolMatch(record=None, reason=reason)
 
 
 # ── event log (written in the replayed process, read by the engine) ──────────
@@ -409,6 +482,8 @@ class ReplayContractReport:
     tool_calls_live: int = 0
     tool_calls_unmatched: int = 0
     tool_calls_unconsumed: int = 0
+    tool_calls_refused: int = 0
+    tool_calls_by_surface: dict[str, dict[str, int]] = field(default_factory=dict)
     network_observed: bool = False
     network_connections_live: int = 0
     network_connections_capped: bool = False
@@ -449,6 +524,8 @@ class ReplayContractReport:
             "tool_calls_recorded": self.tool_calls_recorded,
             "tool_calls_not_interceptable": self.tool_calls_not_interceptable,
             "tool_calls_unconsumed": self.tool_calls_unconsumed,
+            "tool_calls_refused": self.tool_calls_refused,
+            "tool_calls_by_surface": {k: dict(v) for k, v in self.tool_calls_by_surface.items()},
             "network_observed": self.network_observed,
             "network_connections_live": self.network_connections_live,
             "network_destinations": self.network_destinations[:MAX_LISTED_NETWORK_DESTINATIONS],
@@ -464,8 +541,16 @@ class ReplayContractReport:
 def surfaces_for(substitute_tools: bool) -> list[str]:
     surfaces = [f"{name} ({MODEL_CALL_MODES})" for name in MODEL_SURFACES.values()]
     if substitute_tools:
-        surfaces.append(TOOL_SURFACE_MCP)
+        surfaces.extend(TOOL_SURFACES)
     return surfaces
+
+
+#: Divergence kinds counted as a refused/unmatched *tool* call.
+_TOOL_DIVERGENCE_KINDS = frozenset({"tool_call_unmatched", "tool_result_not_servable"})
+
+_SURFACE_COUNTERS = (
+    "recorded", "available", "mocked", "live", "refused", "unmatched", "unconsumed",
+)
 
 
 def summarize(
@@ -479,6 +564,15 @@ def summarize(
     """Fold the dispatchers' event log into a :class:`ReplayContractReport`."""
     queues = model_queues(model_calls)
     tools = interceptable_tool_calls(tool_calls)
+    by_surface: dict[str, dict[str, int]] = {
+        surface: dict.fromkeys(_SURFACE_COUNTERS, 0) for surface in TOOL_SURFACES
+    }
+    for rec in tools:
+        counters = by_surface[str(tool_surface(rec))]
+        counters["recorded"] += 1
+        if not_servable_reason(rec) is None:
+            counters["available"] += 1
+    consumed_unserved: dict[str, int] = dict.fromkeys(TOOL_SURFACES, 0)
     report = ReplayContractReport(
         divergence_policy=divergence_policy,
         substitute_tools=substitute_tools,
@@ -486,9 +580,14 @@ def summarize(
         model_calls_recorded=len(model_calls),
         model_calls_available=sum(len(q) for q in queues.values()),
         tool_calls_recorded=len(tool_calls),
-        tool_calls_available=len(tools),
+        tool_calls_available=sum(c["available"] for c in by_surface.values()),
         tool_calls_not_interceptable=len(tool_calls) - len(tools),
     )
+
+    def _surface_of(ev: dict[str, Any]) -> dict[str, int]:
+        surface = ev.get("surface") or TOOL_SURFACE_MCP
+        return by_surface.setdefault(str(surface), dict.fromkeys(_SURFACE_COUNTERS, 0))
+
     served: dict[str, int] = dict.fromkeys(queues, 0)
     serving_pids: set[Any] = set()
     for ev in events:
@@ -524,8 +623,13 @@ def summarize(
             report.network_connections_capped = True
         elif kind == "tool_mocked":
             report.tool_calls_mocked += 1
+            _surface_of(ev)["mocked"] += 1
         elif kind == "tool_live":
             report.tool_calls_live += 1
+            _surface_of(ev)["live"] += 1
+        elif kind == "tool_refused":
+            report.tool_calls_refused += 1
+            _surface_of(ev)["refused"] += 1
         elif kind == "divergence":
             entry = {k: v for k, v in ev.items() if k != "event"}
             report.divergences.append(entry)
@@ -539,8 +643,13 @@ def summarize(
             }:
                 if entry.get("kind") != "unsupported_surface" or divergence_policy == "fail":
                     report.model_calls_unmatched += 1
-            elif entry.get("kind") == "tool_call_unmatched":
+            elif entry.get("kind") in _TOOL_DIVERGENCE_KINDS:
                 report.tool_calls_unmatched += 1
+                counters = _surface_of(entry)
+                counters["unmatched"] += 1
+                if entry.get("consumed"):
+                    surface = str(entry.get("surface") or TOOL_SURFACE_MCP)
+                    consumed_unserved[surface] = consumed_unserved.get(surface, 0) + 1
 
     leftovers = {p: len(q) - served[p] for p, q in queues.items() if len(q) > served[p]}
     report.model_calls_unconsumed = sum(leftovers.values())
@@ -559,14 +668,34 @@ def summarize(
             {"kind": "model_calls_unconsumed", "message": message, "unconsumed": leftovers}
         )
     if substitute_tools:
-        report.tool_calls_unconsumed = max(0, len(tools) - report.tool_calls_mocked)
+        for surface, counters in by_surface.items():
+            counters["unconsumed"] = max(
+                0,
+                counters["recorded"] - counters["mocked"] - consumed_unserved.get(surface, 0),
+            )
+        report.tool_calls_unconsumed = sum(c["unconsumed"] for c in by_surface.values())
+        report.tool_calls_by_surface = by_surface
         if report.tool_calls_unconsumed:
+            leftover = [
+                (surface, c["unconsumed"], c["recorded"])
+                for surface, c in by_surface.items() if c["unconsumed"]
+            ]
+            if len(leftover) == 1:
+                surface, n, recorded = leftover[0]
+                message = (
+                    f"{n} of {recorded} recorded {surface} results were never "
+                    "requested by the replay"
+                )
+            else:
+                detail = "; ".join(f"{s}: {n} of {r}" for s, n, r in leftover)
+                message = (
+                    f"{report.tool_calls_unconsumed} of {len(tools)} recorded tool "
+                    f"results were never requested by the replay ({detail})"
+                )
             report.divergences.append({
                 "kind": "tool_calls_unconsumed",
-                "message": (
-                    f"{report.tool_calls_unconsumed} of {len(tools)} recorded "
-                    f"{TOOL_SURFACE_MCP} results were never requested by the replay"
-                ),
+                "message": message,
+                "unconsumed": {s: n for s, n, _ in leftover},
             })
     if len({p for p in serving_pids if p is not None}) > 1:
         report.divergences.append({

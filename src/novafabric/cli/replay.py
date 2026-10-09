@@ -49,8 +49,9 @@ def replay_cmd(
             "--allow-readonly",
             help=(
                 "Policy flag: mark read-only tools as allowed in the --dry-run "
-                "report. It does not intercept or let through calls in a mocked "
-                "replay."
+                "report. Under --permissive it also lets an unmatched record.tool "
+                "call of that class run live (ADR-0306, experimental); otherwise "
+                "it does not intercept or let through calls in a mocked replay."
             ),
         ),
     ] = False,
@@ -61,7 +62,9 @@ def replay_cmd(
             help=(
                 "Policy flag: mark writes/deletes as allowed in the --dry-run "
                 "report; the replay must also pass the policy engine's "
-                "replay_mutating check. It does not gate calls inside a mocked "
+                "replay_mutating check. Under --permissive it also lets an "
+                "unmatched record.tool call of that class run live (ADR-0306, "
+                "experimental); otherwise it does not gate calls inside a mocked "
                 "replay."
             ),
         ),
@@ -72,7 +75,9 @@ def replay_cmd(
             "--allow-external-side-effects",
             help=(
                 "Policy flag: mark external side effects as allowed in the "
-                "--dry-run report. It does not gate calls inside a mocked replay."
+                "--dry-run report. Under --permissive it also lets an unmatched "
+                "record.tool call of that class run live (ADR-0306, experimental); "
+                "otherwise it does not gate calls inside a mocked replay."
             ),
         ),
     ] = False,
@@ -82,7 +87,10 @@ def replay_cmd(
             "--allow-unknown-mutation",
             help=(
                 "Policy flag: mark tools of unknown mutation class as allowed in "
-                "the --dry-run report. It does not gate calls inside a mocked replay."
+                "the --dry-run report. Under --permissive it also lets an "
+                "unmatched record.tool call of that class run live (ADR-0306, "
+                "experimental); otherwise it does not gate calls inside a mocked "
+                "replay."
             ),
         ),
     ] = False,
@@ -117,8 +125,10 @@ def replay_cmd(
             help=(
                 "mocked mode only (ADR-0300): do NOT fail on divergence. A model "
                 "call with no recorded response gets an empty reply, unsupported "
-                "model surfaces and unmatched MCP tool calls run LIVE, and "
-                "unconsumed recordings are only reported. Default is fail-closed."
+                "model surfaces and unmatched MCP tool calls run LIVE, an "
+                "unmatched record.tool call runs live only if an --allow-* flag "
+                "permits its declared mutation class, and unconsumed recordings "
+                "are only reported. Default is fail-closed."
             ),
         ),
     ] = False,
@@ -129,11 +139,14 @@ def replay_cmd(
       mocked       — re-runs the command (Python workloads). Serves recorded
                      responses for OpenAI chat.completions and responses, and
                      Anthropic messages calls (sync or async, streamed or not),
-                     and recorded results for MCP ClientSession.call_tool.
+                     and recorded results for MCP ClientSession.call_tool
+                     and for functions declared with
+                     novafabric.capture.record.tool (experimental).
                      Fail-closed: an extra, unmatched or unsupported call, or an
                      unconsumed recording, fails the replay (--permissive to
                      only report). Other tools (HTTP, shell, files,
-                     framework-native) are NOT intercepted: they run live;
+                     framework-native, undeclared functions) are NOT
+                     intercepted: they run live;
                      outbound connections are reported, not blocked
       forensic     — read-only: inspects the capsule, runs nothing
       semantic     — does not re-run: scores how similar the recorded LLM
@@ -263,7 +276,7 @@ def replay_cmd(
             result.tool_calls_available or 0
         )
         console.print(
-            f"  tool calls (MCP call_tool): {result.tool_calls_mocked} of "
+            f"  tool calls (MCP call_tool, record.tool): {result.tool_calls_mocked} of "
             f"{result.tool_calls_available or 0} served, "
             f"{result.tool_calls_live or 0} live, "
             f"{result.tool_calls_unmatched or 0} unmatched; "

@@ -15,6 +15,7 @@ from typing import Any
 import yaml
 
 from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
+from novafabric.capture._tool_codec import MUTATION_CLASSES
 from novafabric.capture._ulid import new_ulid
 from novafabric.capture.record_roles import logical_model_calls
 from novafabric.policy import (
@@ -28,10 +29,11 @@ from novafabric.policy import (
 from novafabric.replay._contract import (
     ReplayContractReport,
     interceptable_tool_calls,
+    is_servable_tool_record,
     read_events,
     summarize,
 )
-from novafabric.replay._dispatcher import REPLAY_DISPATCHER_UNAVAILABLE_EXIT
+from novafabric.replay._dispatcher import REPLAY_DISPATCHER_UNAVAILABLE_EXIT, TOOL_LADDER_ENV
 from novafabric.replay._env_check import EnvironmentResolver
 from novafabric.replay._errors import CapsuleNotReplayableError
 from novafabric.replay._flags import ReplayFlags
@@ -95,9 +97,10 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def _servable_tool_count(tool_calls: list[dict[str, Any]]) -> int:
-    """ADR-0300: `tool_calls_available` = recorded calls the MCP tool dispatcher
-    can serve; `tool_calls_recorded` carries the full count beside it."""
-    return len(interceptable_tool_calls(tool_calls))
+    """ADR-0300: `tool_calls_available` = recorded calls a tool dispatcher can
+    serve (MCP, and servable `record.tool` records -- ADR-0306);
+    `tool_calls_recorded` carries the full count beside it."""
+    return sum(1 for r in interceptable_tool_calls(tool_calls) if is_servable_tool_record(r))
 
 
 def _contract_fields(report: ReplayContractReport) -> dict[str, Any]:
@@ -724,6 +727,11 @@ class ReplayEngine:
             env["NOVAFABRIC_REPLAY_EVENTS_PATH"] = str(events_path)
             env["NOVAFABRIC_REPLAY_DIVERGENCE_POLICY"] = divergence_policy
             env["NOVAFABRIC_REPLAY_MODE"] = "mocked"
+            # ADR-0306 D7: the mutation classes the operator's ladder flags
+            # permit -- an unmatched `record.tool` call may run live under
+            # --permissive only for these. From the command line, never the capsule.
+            flags = getattr(self, "_flags", None) or ReplayFlags()
+            env[TOOL_LADDER_ENV] = ",".join(c for c in MUTATION_CLASSES if flags.permits(c))
             env.pop("NOVAFABRIC_REPLAY_TOOL_QUEUE_PATH", None)
             if tool_calls is not None:
                 tool_queue_path = Path(tmp) / "tool_queue.json"

@@ -55,7 +55,30 @@ def test_rows_match_the_dispatcher_patch_tables() -> None:
     for row in ROWS:
         if row.replay in ("not intercepted", "capture only"):
             assert not row.patches, row.surface
+            assert not row.servers, row.surface
     assert TOOL_SURFACE_MCP == "mcp.ClientSession.call_tool"
+
+
+def test_registered_server_rows_match_what_the_dispatcher_registers() -> None:
+    """ADR-0306: a surface served by a registered server (not a patch) is claimed
+    by exactly the rows that say so -- checked against a real install."""
+    from novafabric.capture import record
+    from novafabric.replay._contract import TOOL_SURFACE_MCP, TOOL_SURFACE_PYTHON, ReplayEventLog
+    from novafabric.replay._dispatcher import MockToolDispatcher
+
+    dispatcher = MockToolDispatcher([], events=ReplayEventLog(None))
+    dispatcher.install()
+    try:
+        registered = set(dispatcher.installed_surfaces) - {TOOL_SURFACE_MCP}
+        assert record._get_tool_handler() is not None
+    finally:
+        dispatcher.uninstall()
+    assert record._get_tool_handler() is None
+    claimed = {s for r in ROWS if r.replay == "served" for s in r.servers}
+    assert claimed == registered == {TOOL_SURFACE_PYTHON}
+    for row in ROWS:
+        if row.servers:
+            assert row.replay == "served" and not row.patches, row.surface
 
 
 def test_every_cited_evidence_test_exists() -> None:

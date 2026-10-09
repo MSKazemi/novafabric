@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from novafabric.replay._contract import TOOL_SURFACE_MCP, is_interceptable_tool_call
+from novafabric.replay._contract import not_servable_reason, tool_surface
 from novafabric.replay._flags import ReplayFlags
 
 
@@ -63,14 +63,29 @@ class PolicyEvaluator:
         # the capsule. Anything else is not controlled by replay and runs live;
         # saying "served from cache" for it was a false statement.
         if self._flags.mode == "mocked":
-            if is_interceptable_tool_call(tool_call):
+            surface = tool_surface(tool_call)
+            unservable = not_servable_reason(tool_call) if surface else None
+            if surface is not None and unservable is not None:
+                # ADR-0306 D7: intercepted, but the record cannot be served --
+                # a strict replay refuses the call before the body runs.
+                return PolicyDecision(
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                    mutation_class=mutation_class,
+                    decision="deny",
+                    reason=(
+                        f"mocked mode: intercepted via {surface} but not servable "
+                        f"({unservable}); the call is refused, never run live"
+                    ),
+                )
+            if surface is not None:
                 return PolicyDecision(
                     tool_call_id=tool_call_id,
                     tool_name=tool_name,
                     mutation_class=mutation_class,
                     decision="mock",
                     reason=(
-                        f"mocked mode: served from the capsule via {TOOL_SURFACE_MCP}; "
+                        f"mocked mode: served from the capsule via {surface}; "
                         "an unmatched call is refused, never run live"
                     ),
                 )

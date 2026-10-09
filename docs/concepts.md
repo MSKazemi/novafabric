@@ -349,7 +349,7 @@ can `nova diff` against the original run.
 | Mode | Spawns subprocess? | Network? | Best for |
 |---|---|---|---|
 | **`forensic`** | No | No | Audit / post-incident inspection |
-| **`mocked`** | Yes | OpenAI/Anthropic model replies (sync or async, streamed or not) and MCP `call_tool` results served from the capsule; **other tools run live**; fails closed on divergence | CI / regression |
+| **`mocked`** | Yes | OpenAI/Anthropic model replies (sync or async, streamed or not), MCP `call_tool` results and (experimental) `record.tool` function results served from the capsule; **other tools run live**; fails closed on divergence | CI / regression |
 | **`semantic`** | No | No | Consistency score over the capsule's *recorded* model responses — does **not** re-execute |
 | **`exact`** | No | No | Eligibility check for a byte-exact re-run — does **not** re-execute |
 | **`intervention`** (experimental, ADR-0086) | Yes, under mocked semantics | Model replies served from the capsule (with the one substitution); **tools run live**, so a substituted tool result is not delivered to the workload | Counterfactual root-cause: substitute one captured event per an `InterventionSpec`, re-execute downstream, and record whether the outcome flips |
@@ -396,14 +396,20 @@ Inside the re-spawned process:
   `mcp.ClientSession.call_tool`, one recorded result per call (matched by tool
   name and arguments, repeated identical calls in recorded order). A call with
   no recorded result is **refused** — the live tool does not run.
+- **Experimental, unreleased (ADR-0306 slice 1):** it also serves functions the
+  workload declared with `novafabric.capture.record.tool`, before the function
+  body runs, matched by name and signature-bound arguments. Records are servable
+  only when captured at the `forensic`/`air_gapped` level with JSON-native
+  values; anything else is refused with the reason.
 - **Every other tool runs live**: HTTP requests, shell commands, file writes,
-  framework-native tools and other providers' SDKs are not intercepted. The
+  framework-native tools, undeclared functions and other providers' SDKs are not
+  intercepted. The
   result reports them as `tool_calls_not_interceptable`, and the outbound
   connections the replayed process opened as `network_connections_live`
   (observed, not blocked).
 
 The replay **fails closed**: an extra model call, a call on an unsupported
-surface, an unmatched MCP call, or a recorded response that is never requested
+surface, an unmatched MCP or `record.tool` call, or a recorded response that is never requested
 marks the replay `failure` with a `divergence_reason`, even if the workload
 caught the exception. `--permissive` (Python: `ReplayFlags(permissive=True)`)
 keeps the older behaviour — an empty reply on an exhausted queue, unmatched
@@ -422,8 +428,10 @@ level. **It does not change what the replayed process may do** — it drives the
 mutating replay starts. In `mocked` mode the run-time rule is fixed by ADR-0300
 instead: an MCP `call_tool` is served from the capsule or refused, whatever its
 mutation class, and every other tool runs live (the `--dry-run` report marks
-those `[LIVE]`). Ladder-based enforcement for tools replay does not intercept is
-**future design**. The rungs:
+those `[LIVE]`). One exception (ADR-0306, experimental): under `--permissive`,
+an unmatched `record.tool` call runs live only if a rung permits the mutation
+class its decorator declares. Ladder-based enforcement for tools replay does not
+intercept is **future design**. The rungs:
 
 ```
 (none)               — deny all tool calls

@@ -711,3 +711,113 @@ def test_summary_counts_network_events_and_caps_destinations() -> None:
     assert len(out["network_destinations"]) == 20
     assert out["network_connections_capped"] is True
     assert not report.diverged  # observation alone is never a divergence
+
+
+# ── ADR-0306 slice 1: per-surface counters, the not-servable kind ───────────
+
+
+def _python_record(
+    name: str, arguments: dict[str, Any], value: Any, **ext: Any
+) -> dict[str, Any]:
+    return {
+        "tool_call_id": "01HXAY7M5JZ8R7K4P9DPBYK2P0",
+        "tool_name": name,
+        "transport": "python",
+        "arguments": arguments,
+        "result": {"value": value},
+        "status": "success",
+        "extensions": {
+            "io.novafabric.tool_surface": "python.function",
+            "io.novafabric.result_codec": "json-v1",
+            **ext,
+        },
+    }
+
+
+def test_summary_counts_each_tool_surface_separately() -> None:
+    from novafabric.replay._contract import TOOL_SURFACE_MCP, TOOL_SURFACE_PYTHON
+
+    tools = [
+        mcp_record("search", {"q": "a"}, "A"),
+        _python_record("search", {"q": "a"}, {"hits": 1}),
+        _python_record("lookup", {"id": 1}, None, **{
+            "io.novafabric.result_codec": "not-servable",
+            "io.novafabric.not_servable_reason": "the result is a tuple",
+        }),
+    ]
+    events = [
+        {"event": "tool_mocked", "tool_name": "search"},  # MCP events carry no surface
+        {"event": "tool_mocked", "tool_name": "search", "surface": TOOL_SURFACE_PYTHON},
+        {"event": "divergence", "kind": "tool_result_not_servable", "message": "m",
+         "surface": TOOL_SURFACE_PYTHON, "consumed": True},
+    ]
+    report = summarize([], tools, events, divergence_policy="fail", substitute_tools=True)
+    assert report.tool_calls_available == 2  # the not-servable record is not available
+    assert report.tool_calls_mocked == 2
+    # counted as a tool divergence, never a model one
+    assert report.tool_calls_unmatched == 1 and report.model_calls_unmatched == 0
+    assert report.tool_calls_unconsumed == 0  # the not-servable record was consumed
+    by_surface = report.as_dict()["tool_calls_by_surface"]
+    assert by_surface[TOOL_SURFACE_MCP] == {
+        "recorded": 1, "available": 1, "mocked": 1, "live": 0, "refused": 0,
+        "unmatched": 0, "unconsumed": 0,
+    }
+    assert by_surface[TOOL_SURFACE_PYTHON]["recorded"] == 2
+    assert by_surface[TOOL_SURFACE_PYTHON]["available"] == 1
+    assert by_surface[TOOL_SURFACE_PYTHON]["unmatched"] == 1
+    assert TOOL_SURFACE_PYTHON in report.interception_surfaces
+
+
+def test_unconsumed_message_names_the_surface_of_each_leftover() -> None:
+    from novafabric.replay._contract import TOOL_SURFACE_MCP, TOOL_SURFACE_PYTHON
+
+    only_python = summarize(
+        [], [_python_record("f", {}, 1)], [], divergence_policy="fail", substitute_tools=True
+    )
+    (div,) = only_python.divergences
+    assert div["kind"] == "tool_calls_unconsumed"
+    assert div["message"] == (
+        f"1 of 1 recorded {TOOL_SURFACE_PYTHON} results were never requested by the replay"
+    )
+    both = summarize(
+        [], [mcp_record("g", {}, "x"), _python_record("f", {}, 1)], [],
+        divergence_policy="fail", substitute_tools=True,
+    )
+    (div,) = both.divergences
+    assert f"{TOOL_SURFACE_MCP}: 1 of 1" in div["message"]
+    assert f"{TOOL_SURFACE_PYTHON}: 1 of 1" in div["message"]
+    assert div["unconsumed"] == {TOOL_SURFACE_MCP: 1, TOOL_SURFACE_PYTHON: 1}
+
+
+def test_refused_and_live_python_calls_are_counted() -> None:
+    from novafabric.replay._contract import TOOL_SURFACE_PYTHON
+
+    events = [
+        {"event": "tool_live", "tool_name": "f", "surface": TOOL_SURFACE_PYTHON},
+        {"event": "tool_refused", "tool_name": "g", "surface": TOOL_SURFACE_PYTHON},
+    ]
+    report = summarize([], [], events, divergence_policy="warn", substitute_tools=True)
+    assert (report.tool_calls_live, report.tool_calls_refused) == (1, 1)
+    assert report.as_dict()["tool_calls_refused"] == 1
+
+
+def test_the_tool_matcher_index_keeps_one_to_one_order() -> None:
+    records = [
+        mcp_record("t", {"a": 1}, "first", tool_call_id="01HXAY7M5JZ8R7K4P9DPBYK2T1"),
+        mcp_record("t", {"a": 1}, "second", tool_call_id="01HXAY7M5JZ8R7K4P9DPBYK2T2"),
+        mcp_record("t", {"a": 2}, "other", tool_call_id="01HXAY7M5JZ8R7K4P9DPBYK2T3"),
+    ]
+    matcher = ToolCallMatcher(records)
+    # an id-tier match consumes a record the signature queue still lists
+    assert matcher.match("01HXAY7M5JZ8R7K4P9DPBYK2T1", "t", {"a": 1}).how == "id"
+    second = matcher.match(None, "t", {"a": 1})
+    assert second.record is records[1]
+    exhausted = matcher.match(None, "t", {"a": 1})
+    assert exhausted.record is None
+    assert exhausted.reason == "every recorded call with these arguments was already consumed"
+    assert matcher.match(None, "t", {"a": 3}).reason == (
+        "the tool was recorded, but not with these arguments"
+    )
+    assert matcher.match(None, "u", {}).reason == "no recorded call to this tool"
+    assert matcher.consumed_count == 2
+    assert matcher.unconsumed() == [records[2]]

@@ -679,7 +679,33 @@ OpenAI `responses.create` and Anthropic `messages.create` calls — sync or asyn
 streamed or not (ADR-0304) — and recorded results for **MCP**
 `ClientSession.call_tool` calls (one recorded result per call). **Every other
 tool runs live** — HTTP requests, shell commands, file writes, framework-native
-tools — so run replays of such agents in a sandbox or against test credentials.
+tools, functions you did not declare — so run replays of such agents in a sandbox
+or against test credentials.
+
+**Declaring your own Python tools** (experimental, unreleased — ADR-0306 slice 1).
+Decorate a tool function with `record.tool` and a mocked replay returns its
+recorded result instead of running it:
+
+```python
+from novafabric.capture import record
+
+@record.tool(mutation_class="external-side-effect", ignore=("ctx",))
+def send_invoice(ctx, customer_id: str, amount_cents: int) -> dict: ...
+```
+
+```bash
+NOVA_CAPTURE_LEVEL=forensic nova capture python agent.py   # keeps arguments and results
+nova replay <run-id>                                       # send_invoice's body does not run
+```
+
+The arguments and result are stored only at the `forensic` (or `air_gapped`)
+capture level; at the default level the capsule holds digests and the replay
+fails with a "re-capture with payload capture enabled" reason. Those digests are
+taken after secret redaction, but a secret the rules miss (a short password, a PIN)
+still feeds them, so do not decorate tools that take credentials at the default
+level. Results must be
+JSON-native (no tuples or objects) and at most 1 MiB. See
+[Python API: `record.tool`](python-api.md#extended-event-recording-experimental).
 The result lists the outbound connections the replay made
 (`replay_contract.network_connections_live`); they are reported, not blocked.
 On `main` (unreleased), a recorded call that failed (a rate limit, a 4xx, a 5xx
@@ -687,14 +713,19 @@ after the SDK's retries, a timeout) is replayed by raising the same SDK exceptio
 position, so the workload's error handling runs again.
 
 The replay is **fail-closed** (ADR-0300): an extra model call, a call on an
-unsupported surface (`parse`, legacy completions, `with_raw_response`), an MCP call
-with no recorded result (the live tool is not run), or a recorded response that
-is never requested makes the replay `failure` with a `divergence_reason`.
-`--permissive` keeps the older warn-and-continue behaviour and only reports.
+unsupported surface (`parse`, legacy completions, `with_raw_response`), an MCP or
+`record.tool` call with no recorded result (the live tool is not run), a
+`record.tool` call whose record cannot be served (`tool_result_not_servable`), or a
+recorded response that is never requested makes the replay `failure` with a
+`divergence_reason`. `--permissive` keeps the older warn-and-continue behaviour and
+only reports — except that an unmatched `record.tool` call runs live only if a
+safety-ladder flag permits its declared `mutation_class`.
 
 The safety-ladder flags classify the capsule's recorded tool calls for the
 `--dry-run` report, and `--allow-mutating` adds an audited policy gate before the
-replay starts; they do not intercept calls inside the replayed process:
+replay starts; they do not intercept calls inside the replayed process (the one
+exception: under `--permissive` they decide whether an unmatched `record.tool`
+call may run live):
 
 ```bash
 nova replay .novafabric/capsules/01HX.../ --mode mocked \

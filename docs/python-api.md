@@ -254,6 +254,60 @@ automatically (OpenAI Agents guardrail spans, LangGraph state transitions)
 are documented in the capture tutorial; file/memory/evaluator/reranker
 events have **no auto-capture** — they record only when you call the façade.
 
+### `record.tool(fn=None, *, name=None, mutation_class="unknown", version=None, ignore=())`
+
+**Status: experimental** (ADR-0306 slice 1, unreleased — on `main`). Declares a
+Python function as a tool boundary that `nova capture` records and mocked
+`nova replay` serves, so the tool does not run again during replay.
+
+```python
+from novafabric.capture import record
+
+@record.tool(mutation_class="external-side-effect", ignore=("ctx",))
+def send_invoice(ctx, customer_id: str, amount_cents: int) -> dict: ...
+
+@record.tool  # name = fn.__name__, mutation_class = "unknown"
+async def lookup_order(order_id: str) -> dict: ...
+```
+
+- **Outside capture and replay** the wrapper reads one global and calls the
+  function; nothing is recorded.
+- **Under `nova capture`** the body runs, then one record is written to
+  `tool-calls.jsonl` with `transport: "python"`; exceptions propagate unchanged
+  and recording never raises into your code. Arguments and the result are kept
+  **only at the `forensic`/`air_gapped` capture level** (`NOVA_CAPTURE_LEVEL`).
+  At the default level the record keeps the name, an argument digest and a result
+  digest, and replay refuses it with a re-capture hint.
+- **Under mocked `nova replay`** the recorded result is returned **before the body
+  runs**, matched by tool name and the arguments bound to the signature (defaults
+  applied, `ignore` names dropped), one record per call in recorded order. An
+  unmatched call raises `ReplayToolUnmatchedError`; a record that cannot be
+  served raises `ReplayToolRecordNotServableError` with the reason. Either way the
+  replay fails, even if your code catches the exception. With `--permissive` an
+  unmatched call runs live only if a `--allow-*` ladder flag permits its declared
+  `mutation_class`.
+- **Served values**: JSON-native results only (`dict`, `list`, `str`, numbers,
+  `bool`, `None`), up to `NOVAFABRIC_TOOL_RESULT_MAX_BYTES` (default 1 MiB).
+  Tuples, sets, pydantic models and other objects are recorded as not servable.
+  Arguments may also be pydantic models or dataclasses (dumped to JSON); any
+  other non-JSON argument must be listed in `ignore` (methods need
+  `ignore=("self",)`). A recorded builtin exception (e.g. `ValueError`) is raised
+  again as itself; any other class becomes `ReplayRecordedToolError`.
+- **Not supported**: generator functions (rejected at decoration), and a
+  decorated function that itself calls a model or tool — its record is marked
+  nested and is not servable yet.
+- **Digests and secrets.** At the default capture level the record keeps an
+  argument digest (and, for results up to 64 KiB, a result digest) instead of the
+  values. Both are computed **after** the capsule's secret rules have masked every
+  detected secret as `[REDACTED:<rule>]`, so a detected secret leaves no digest
+  derived from its value; replay redacts the live arguments the same way before
+  matching. ⚠ A secret the rules do **not** detect — a short password, a PIN, a
+  customer number — still feeds the digest, and a digest of a low-entropy value can
+  be confirmed offline by guessing. **Do not decorate a tool that takes credentials
+  or other low-entropy secrets at the default capture level**; pass them through an
+  `ignore=` parameter or leave the function undecorated. Redaction costs roughly
+  150 µs per KiB of argument text per call at that level.
+
 ---
 
 ## Replay
@@ -290,7 +344,7 @@ class ReplayFlags:
 | Mode | What it does | Typical use |
 |---|---|---|
 | `forensic` | Read-only inspection. No subprocess, no network. | Audit / post-incident |
-| `mocked` | Re-spawns the command (Python workloads). Serves recorded responses for OpenAI `chat.completions.create` and `responses.create` / Anthropic `messages.create` — **sync or async, streamed or not** (ADR-0304) — and recorded **MCP** `ClientSession.call_tool` results, one per call. **Other tools run live** (HTTP, shell, files, framework-native); `replay_contract.network_connections_live` reports their connections. **Fails closed** (ADR-0300): an extra or unmatched call, an unsupported model surface (`parse`, legacy completions, `with_raw_response`), or an unconsumed recording makes the result `failure` with a `divergence_reason`; `permissive=True` only reports them. | CI / regression |
+| `mocked` | Re-spawns the command (Python workloads). Serves recorded responses for OpenAI `chat.completions.create` and `responses.create` / Anthropic `messages.create` — **sync or async, streamed or not** (ADR-0304) — and recorded **MCP** `ClientSession.call_tool` results, one per call, plus — experimental — results of functions declared with [`record.tool`](#extended-event-recording-experimental). **Other tools run live** (HTTP, shell, files, framework-native, undeclared functions); `replay_contract.network_connections_live` reports their connections. **Fails closed** (ADR-0300): an extra or unmatched call, an unsupported model surface (`parse`, legacy completions, `with_raw_response`), or an unconsumed recording makes the result `failure` with a `divergence_reason`; `permissive=True` only reports them. | CI / regression |
 | `semantic` | **Does not re-execute.** Scores how similar the capsule's *recorded* model responses are to each other (mean pairwise text similarity, 0.0–1.0); no live model is called; returns `similarity_score`. | Consistency check of recorded responses |
 | `exact` | **Does not re-execute.** Eligibility check for byte-exact replay (`exact_eligible` + reasons): deterministic env.lock, per-call seed, no tool-schema drift. | Local / on-prem / compliance |
 | `intervention` | Re-executes with a spec-driven intervention overlay (experimental, ADR-0086). | What-if / counterfactual analysis |
@@ -302,7 +356,9 @@ The `allow_*` flags form a safety ladder over the capsule's recorded tool calls
 (`allow_readonly` < `allow_mutating` < `allow_external_side_effects` <
 `allow_unknown_mutation`). They drive the `dry_run` report, and `allow_mutating`
 triggers an audited policy gate before the replay starts; they do **not**
-intercept calls inside the replayed process. Leaving them `False` does not
+intercept calls inside the replayed process, except that with `permissive=True`
+an unmatched `record.tool` call runs live only if they permit its declared
+class (ADR-0306, experimental). Leaving them `False` does not
 sandbox tools that `mocked` mode does not intercept — run such replays in a
 sandbox or against test credentials.
 

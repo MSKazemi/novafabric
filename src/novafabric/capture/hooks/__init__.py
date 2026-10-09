@@ -251,6 +251,9 @@ _BUILT_IN_HOOKS: tuple[tuple[str, str, str], ...] = (
     ("openai",     "novafabric.capture.hooks._openai",     "OpenAIHook"),
     ("anthropic",  "novafabric.capture.hooks._anthropic",  "AnthropicHook"),
     ("mcp",        "novafabric.capture.hooks._mcp",        "MCPHook"),
+    # ADR-0306: the `record.tool` capture sink. Its "SDK" is NovaFabric's own
+    # façade module, so it is always available and always installed.
+    ("novafabric.capture.record", "novafabric.capture.hooks._python_tool", "PythonToolHook"),
     ("requests",   "novafabric.capture.hooks._requests",   "RequestsHook"),
     ("httpx",      "novafabric.capture.hooks._httpx",      "HttpxHook"),
     ("aiohttp",    "novafabric.capture.hooks._aiohttp",    "AiohttpHook"),

@@ -11,8 +11,11 @@ engine writes (see :func:`install_from_env`):
   same SDK exception class at its position (``_model_errors``, issue #16) --
   after the delivered chunks when it was raised mid-stream; a Responses API
   response the SDK *returned* with ``status: failed`` is returned as recorded;
-* :class:`MockToolDispatcher` serves recorded MCP ``tools/call`` results through
-  ``mcp.ClientSession.call_tool`` -- the one tool surface NovaFabric intercepts.
+* :class:`MockToolDispatcher` serves recorded tool results on the two intercepted
+  tool surfaces: MCP ``tools/call`` through ``mcp.ClientSession.call_tool``
+  (ADR-0300), and functions the workload declared with
+  ``novafabric.capture.record.tool`` (ADR-0306, experimental) -- served before
+  the function body runs.
 
 Every action is appended to an event log the engine reads afterwards. Under the
 default ``fail`` divergence policy a call with no recorded answer raises a
@@ -24,6 +27,7 @@ recorded.
 
 from __future__ import annotations
 
+import builtins
 import functools
 import importlib
 import inspect
@@ -35,6 +39,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
+from novafabric.capture import _tool_codec
 from novafabric.capture.hooks._sdk_streams import (
     RESPONSE_STATUS_EXT,
     STREAM_ERROR_EVENT_EXT,
@@ -44,13 +49,16 @@ from novafabric.replay._contract import (
     MODEL_SURFACES,
     QUEUE_PROVIDER,
     TOOL_SURFACE_MCP,
+    TOOL_SURFACE_PYTHON,
     ReplayEventLog,
     ToolCallMatcher,
     interceptable_tool_calls,
     model_queues,
     normalized_arg_hash,
+    not_servable_reason,
     recorded_provider_order,
     records_async_and_streamed_calls,
+    tool_surface,
 )
 from novafabric.replay._errors import (
     ReplayDivergenceError,
@@ -61,6 +69,7 @@ from novafabric.replay._errors import (
     ReplayRecordedModelError,
     ReplayRecordedToolError,
     ReplayRecordMalformedError,
+    ReplayToolRecordNotServableError,
     ReplayToolUnmatchedError,
     ReplayUnsupportedSurfaceError,
 )
@@ -1152,12 +1161,181 @@ def _mcp_result_from_record(record: dict[str, Any]) -> Any:
         )
 
 
-class MockToolDispatcher:
-    """Serve recorded MCP ``tools/call`` results, one-to-one (ADR-0300).
+#: Env var carrying the mutation classes the operator's ladder flags permit
+#: (``ReplayFlags.permits``), comma-separated; absent means ``none`` only.
+TOOL_LADDER_ENV = "NOVAFABRIC_REPLAY_TOOL_LADDER"
 
-    Only records on the intercepted surface (``_contract.interceptable_tool_calls``)
-    are matchable. A call with no unconsumed record is refused under ``fail``
-    -- the live tool is never executed -- and runs live under ``warn``.
+#: The ladder flag that permits each mutation class (ADR-0012).
+_LADDER_FLAG: dict[str, str] = {
+    "none": "always permitted",
+    "read-only": "--allow-readonly",
+    "idempotent-write": "--allow-mutating",
+    "non-idempotent-write": "--allow-mutating",
+    "external-side-effect": "--allow-external-side-effects",
+    "unknown": "--allow-unknown-mutation",
+}
+
+
+def _ladder_from_env() -> frozenset[str]:
+    raw = os.environ.get(TOOL_LADDER_ENV, "")
+    classes = {c.strip() for c in raw.split(",") if c.strip()}
+    return frozenset(classes | {"none"})
+
+
+def _recorded_python_exception(record: dict[str, Any]) -> Exception:
+    """The exception a recorded ``record.tool`` failure is re-raised as (ADR-0306 D4).
+
+    The recorded class is used only when capture marked it as living in
+    ``builtins`` **and** ``getattr(builtins, type)`` is an ``Exception``
+    subclass -- never ``BaseException``, so a capsule cannot raise
+    ``SystemExit`` or ``KeyboardInterrupt`` into the workload, and nothing is
+    ever imported by name. Anything else is ``ReplayRecordedToolError``.
+    """
+    raw_error = record.get("error")
+    error: dict[str, Any] = raw_error if isinstance(raw_error, dict) else {}
+    type_name = str(error.get("type", ""))
+    message = str(error.get("message", ""))
+    ext = record.get("extensions")
+    if isinstance(ext, dict) and ext.get(_tool_codec.EXCEPTION_BUILTIN_EXT) is True:
+        cls = getattr(builtins, type_name, None) if type_name.isidentifier() else None
+        if isinstance(cls, type) and issubclass(cls, Exception):
+            try:
+                return cls(message)
+            except Exception:  # noqa: BLE001 -- needs other constructor args
+                pass
+    return ReplayRecordedToolError(type_name, message or "recorded tool call failed")
+
+
+class _PythonToolServer:
+    """Serves ``record.tool`` calls from python-surface records (ADR-0306 D5-D7).
+
+    Registered as the façade's tool handler, so a decorated call asks it
+    *before* the function body runs. Its matcher holds python-surface records
+    only: a python record never answers an MCP call, and the reverse.
+    """
+
+    def __init__(
+        self,
+        records: list[dict[str, Any]],
+        *,
+        divergence_policy: str,
+        events: ReplayEventLog,
+        permitted: frozenset[str],
+    ) -> None:
+        self._matcher = ToolCallMatcher(records)
+        self._policy = divergence_policy
+        self._events = events
+        self._permitted = permitted
+
+    def call(
+        self, spec: Any, fn: Callable[..., Any],
+        args: tuple[Any, ...], kwargs: dict[str, Any],
+    ) -> Any:
+        served, value = self._resolve(spec, args, kwargs)
+        return value if served else fn(*args, **kwargs)
+
+    async def call_async(
+        self, spec: Any, fn: Callable[..., Any],
+        args: tuple[Any, ...], kwargs: dict[str, Any],
+    ) -> Any:
+        served, value = self._resolve(spec, args, kwargs)
+        return value if served else await fn(*args, **kwargs)
+
+    def _resolve(
+        self, spec: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> tuple[bool, Any]:
+        """``(True, value)`` to serve, ``(False, None)`` to run the body live;
+        raises to refuse (a divergence) or to replay a recorded failure."""
+        # A call that does not bind raises the TypeError the function itself
+        # would raise -- before its body could run.
+        call = _tool_codec.canonical_call(spec.signature, spec.ignore, args, kwargs)
+        if call.not_canonical is not None:
+            return self._diverge(
+                spec, ReplayToolRecordNotServableError, None,
+                "cannot be matched", call.not_canonical, consumed=False,
+            )
+        digest = str(call.digest)
+        match = self._matcher.match_digest(None, spec.name, digest)
+        if match.record is None:
+            return self._diverge(
+                spec, ReplayToolUnmatchedError, digest,
+                "has no unconsumed recorded result", str(match.reason),
+            )
+        reason = not_servable_reason(match.record)
+        if reason is not None:
+            return self._diverge(
+                spec, ReplayToolRecordNotServableError, digest,
+                "matched a recorded call that cannot be served", reason, consumed=True,
+            )
+        self._events.emit(
+            "tool_mocked",
+            tool_name=spec.name,
+            record_id=match.record.get("tool_call_id"),
+            how=match.how,
+            surface=TOOL_SURFACE_PYTHON,
+        )
+        if match.record.get("status", "success") != "success":
+            raise _recorded_python_exception(match.record)
+        _ok, value = _tool_codec.decode_result(match.record)
+        return True, value
+
+    def _diverge(
+        self, spec: Any, error_cls: type[ReplayDivergenceError], digest: str | None,
+        what: str, reason: str, **extra: Any,
+    ) -> tuple[bool, Any]:
+        mutation_class = str(spec.mutation_class)
+        live = self._policy == "warn" and mutation_class in self._permitted
+        if self._policy != "warn":
+            outcome = "the function body was not run"
+        elif live:
+            outcome = (
+                "running the function live (--permissive; its declared "
+                f"mutation_class {mutation_class!r} is permitted)"
+            )
+        else:
+            outcome = (
+                "the function body was not run: under --permissive an unmatched "
+                "call runs live only when the operator's ladder flag permits its "
+                f"declared mutation_class {mutation_class!r} "
+                f"({_LADDER_FLAG.get(mutation_class, '--allow-unknown-mutation')})"
+            )
+        error = error_cls(
+            f"{TOOL_SURFACE_PYTHON}({spec.name!r}) {what}: {reason}; {outcome}",
+            tool_name=spec.name,
+            arguments_hash=digest,
+            reason=reason,
+            surface=TOOL_SURFACE_PYTHON,
+            mutation_class=mutation_class,
+            **extra,
+        )
+        _report_divergence(self._events, self._policy, error)  # raises under ``fail``
+        if live:
+            self._events.emit(
+                "tool_live", tool_name=spec.name, surface=TOOL_SURFACE_PYTHON,
+                mutation_class=mutation_class,
+            )
+            return False, None
+        self._events.emit(
+            "tool_refused", tool_name=spec.name, surface=TOOL_SURFACE_PYTHON,
+            mutation_class=mutation_class,
+        )
+        raise error
+
+
+class MockToolDispatcher:
+    """Serve recorded tool results, one-to-one (ADR-0300, ADR-0306).
+
+    Two surfaces, each with its own matcher (a record answers only calls on the
+    surface it was recorded on):
+
+    * MCP ``tools/call`` through a patch of ``mcp.ClientSession.call_tool``;
+    * ``record.tool`` functions through a server registered with the façade
+      (ADR-0306, experimental), asked before the function body runs.
+
+    A call with no unconsumed record is refused under ``fail`` -- the live tool
+    is never executed. Under ``warn`` an unmatched MCP call runs live; an
+    unmatched ``record.tool`` call runs live only if the operator's ladder
+    flags permit its declared mutation class (ADR-0306 D7).
     """
 
     def __init__(
@@ -1166,17 +1344,29 @@ class MockToolDispatcher:
         *,
         divergence_policy: str = "fail",
         events: ReplayEventLog | None = None,
+        permitted_mutation_classes: frozenset[str] = frozenset({"none"}),
     ) -> None:
-        self._matcher = ToolCallMatcher(interceptable_tool_calls(tool_calls))
+        intercepted = interceptable_tool_calls(tool_calls)
+        self._matcher = ToolCallMatcher(
+            [r for r in intercepted if tool_surface(r) == TOOL_SURFACE_MCP]
+        )
         self._policy = divergence_policy
         self._events = events or ReplayEventLog(None)
+        self._python = _PythonToolServer(
+            [r for r in intercepted if tool_surface(r) == TOOL_SURFACE_PYTHON],
+            divergence_policy=divergence_policy,
+            events=self._events,
+            permitted=permitted_mutation_classes,
+        )
+        self._previous_handler: Any = None
+        self._handler_registered = False
         self._patcher = _Patcher()
         self.installed_surfaces: list[str] = []
 
     def lookup(
         self, tool_call_id: str | None, tool_name: str, arguments: Any
     ) -> dict[str, Any] | None:
-        """Match and CONSUME one recorded call; ``None`` when unmatched."""
+        """Match and CONSUME one recorded MCP call; ``None`` when unmatched."""
         return self._matcher.match(tool_call_id, tool_name, arguments).record
 
     def install(self) -> None:
@@ -1184,9 +1374,21 @@ class MockToolDispatcher:
             "mcp.client.session", "ClientSession", "call_tool", self._make_call_tool
         ):
             self.installed_surfaces.append(TOOL_SURFACE_MCP)
+        from novafabric.capture import record
+
+        self._previous_handler = record._set_tool_handler(self._python)
+        self._handler_registered = True
+        self.installed_surfaces.append(TOOL_SURFACE_PYTHON)
 
     def uninstall(self) -> None:
         self._patcher.restore()
+        if self._handler_registered:
+            from novafabric.capture import record
+
+            if record._get_tool_handler() is self._python:
+                record._set_tool_handler(self._previous_handler)
+            self._previous_handler = None
+            self._handler_registered = False
         self.installed_surfaces = []
 
     def _make_call_tool(self, original: Any) -> Any:
@@ -1316,6 +1518,7 @@ def install_from_env() -> None:
                 json.loads(Path(tool_path).read_text()),
                 divergence_policy=policy,
                 events=events,
+                permitted_mutation_classes=_ladder_from_env(),
             )
             tool_dispatcher.install()
             surfaces.extend(tool_dispatcher.installed_surfaces)

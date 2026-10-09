@@ -375,6 +375,17 @@ def redact_secrets_in_text(text: str) -> str:
     return text
 
 
+def redact_json_strings(value: Any) -> Any:
+    """A copy of a JSON-like value with every rule match masked in every string.
+
+    Same rule pack and ``mask`` placeholder (``[REDACTED:<rule>]``) as the capsule
+    scanner. ADR-0306 digests ``record.tool`` arguments and results over this
+    redacted form, so a detected secret contributes only its placeholder and a
+    stored digest is never an offline guessing oracle for it (the NF-166 lesson).
+    """
+    return _redact_strings(value)[0]
+
+
 def scan_text_rule_ids(text: str) -> list[str]:
     """Rule ids from the ADR-0009 pack that match *text*, in pack order.
 

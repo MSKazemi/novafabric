@@ -97,6 +97,31 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Added
 
+- **`record.tool` — declared Python tools are captured and served by mocked replay
+  (experimental, ADR-0306 slice 1).** `from novafabric.capture import record;
+  @record.tool(mutation_class=..., ignore=(...))` on a sync or `async def` function.
+  Under `nova capture` each call writes one `tool-calls.jsonl` record with
+  `transport: "python"` (no schema change; `io.novafabric.*` extension keys). In a
+  mocked `nova replay` the recorded result is returned before the body runs, matched
+  one-to-one by name and signature-bound arguments; an unmatched call fails closed
+  (`tool_call_unmatched`), and a record that cannot be served fails closed with the
+  new divergence `tool_result_not_servable` naming the cause (payloads not recorded,
+  non-JSON or over-1 MiB result, non-JSON argument, nested model/tool records). Under
+  `--permissive` an unmatched call runs live only if an `--allow-*` ladder flag
+  permits its declared mutation class. Arguments and results are kept only at the
+  `forensic`/`air_gapped` capture level; below it the record keeps argument and
+  result digests computed **after** ADR-0009 secret redaction (a detected secret
+  contributes only its `[REDACTED:<rule>]` placeholder, and replay redacts the live
+  arguments the same way before matching). A secret the rules do not detect still
+  feeds the digest, so tools taking credentials should not be decorated at the
+  default level. Results are decoded as JSON only and only builtin `Exception`
+  classes are re-raised. New result counters `replay_contract.tool_calls_by_surface`
+  and `tool_calls_refused`; the tool matcher is now indexed (O(1) per call). Measured
+  capture cost on a laptop: about 120 µs per call with a 1 KiB result and 400 µs
+  with 64 KiB at the forensic level, dominated by the capsule writer's per-record
+  append and JSON encoding; at the default level the redaction behind the digests
+  adds roughly 150 µs per KiB digested (the result digest is skipped above
+  64 KiB). The no-op path outside capture is about 1.4x a bare recorder read.
 - **Architecture explainer: an animated "How NovaFabric works" system map** (22 steps, every stage from the workload to server mode, maturity-labelled, unreleased behaviour marked) plus generated `how-it-works.svg`, `mocked-replay.svg` and `diff-gate.svg` (`docs/architecture/explainer.html`).
 - **`nova seal init` — explicit first-run sealing with a local, self-asserted identity
   (experimental, ADR-0301).** One offline command creates a dedicated ECDSA P-256 signing key,

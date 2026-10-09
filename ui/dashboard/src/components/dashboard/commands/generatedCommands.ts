@@ -11192,28 +11192,28 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "allow-readonly",
         "label": "--allow-readonly",
         "type": "toggle",
-        "hint": "Policy flag: mark read-only tools as allowed in the --dry-run report. It does not intercept or let through calls in a mocked replay.",
+        "hint": "Policy flag: mark read-only tools as allowed in the --dry-run report. Under --permissive it also lets an unmatched record.tool call of that class run live (ADR-0306, experimental); otherwise it does not intercept or let through calls in a mocked replay.",
         "flag": "--allow-readonly"
       },
       {
         "key": "allow-mutating",
         "label": "--allow-mutating",
         "type": "toggle",
-        "hint": "Policy flag: mark writes/deletes as allowed in the --dry-run report; the replay must also pass the policy engine's replay_mutating check. It does not gate calls inside a mocked replay.",
+        "hint": "Policy flag: mark writes/deletes as allowed in the --dry-run report; the replay must also pass the policy engine's replay_mutating check. Under --permissive it also lets an unmatched record.tool call of that class run live (ADR-0306, experimental); otherwise it does not gate calls inside a mocked replay.",
         "flag": "--allow-mutating"
       },
       {
         "key": "allow-external-side-effects",
         "label": "--allow-external-side-effects",
         "type": "toggle",
-        "hint": "Policy flag: mark external side effects as allowed in the --dry-run report. It does not gate calls inside a mocked replay.",
+        "hint": "Policy flag: mark external side effects as allowed in the --dry-run report. Under --permissive it also lets an unmatched record.tool call of that class run live (ADR-0306, experimental); otherwise it does not gate calls inside a mocked replay.",
         "flag": "--allow-external-side-effects"
       },
       {
         "key": "allow-unknown-mutation",
         "label": "--allow-unknown-mutation",
         "type": "toggle",
-        "hint": "Policy flag: mark tools of unknown mutation class as allowed in the --dry-run report. It does not gate calls inside a mocked replay.",
+        "hint": "Policy flag: mark tools of unknown mutation class as allowed in the --dry-run report. Under --permissive it also lets an unmatched record.tool call of that class run live (ADR-0306, experimental); otherwise it does not gate calls inside a mocked replay.",
         "flag": "--allow-unknown-mutation"
       },
       {
@@ -11241,7 +11241,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "permissive",
         "label": "--permissive",
         "type": "toggle",
-        "hint": "mocked mode only (ADR-0300): do NOT fail on divergence. A model call with no recorded response gets an empty reply, unsupported model surfaces and unmatched MCP tool calls run LIVE, and unconsumed recordings are only reported. Default is fail-closed.",
+        "hint": "mocked mode only (ADR-0300): do NOT fail on divergence. A model call with no recorded response gets an empty reply, unsupported model surfaces and unmatched MCP tool calls run LIVE, an unmatched record.tool call runs live only if an --allow-* flag permits its declared mutation class, and unconsumed recordings are only reported. Default is fail-closed.",
         "flag": "--permissive"
       }
     ],

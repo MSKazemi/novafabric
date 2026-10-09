@@ -134,3 +134,19 @@ class ReplayRecordedModelError(Exception):
     def __init__(self, error_type: str, message: str) -> None:
         super().__init__(f"{error_type}: {message}" if error_type else message)
         self.error_type = error_type
+
+
+class ReplayToolRecordNotServableError(ReplayDivergenceError):
+    """A ``record.tool`` call matched a recorded call whose result cannot be
+    served faithfully (ADR-0306 D7): payloads were not recorded, the result was
+    not JSON-native or over the size cap, an argument was not JSON-representable,
+    or the boundary wrote nested model/tool records. Strict replay refuses the
+    call before the function body runs.
+
+    ``details`` carries ``tool_name``, ``arguments_hash`` (never the values),
+    ``surface``, ``reason`` and ``consumed`` (whether a record was consumed).
+    Counted as a *tool* divergence (``tool_calls_unmatched``), never as a model
+    one.
+    """
+
+    kind = "tool_result_not_servable"

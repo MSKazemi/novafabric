@@ -4,6 +4,7 @@ import json
 import threading
 from pathlib import Path
 
+from novafabric.capture._tool_scope import mark_nested
 from novafabric.capture.log_level import validate_severity_fields
 
 
@@ -45,6 +46,8 @@ class CapsuleWriter:
         # ADR-0127: reject an out-of-domain severity at write; absent fields
         # pass through untouched (absence is preserved, never back-filled).
         validate_severity_fields(record)
+        # ADR-0306 D3: inside a record.tool boundary, mark the record as nested.
+        mark_nested(record)
         # ADR-0125: rewrite inline base64 media in the messages to
         # content-addressed MediaPart references (bytes stored under outputs/
         # only when NOVAFABRIC_CAPTURE_MEDIA opts in). Records without inline
@@ -59,6 +62,7 @@ class CapsuleWriter:
 
     def append_tool_call(self, record: dict) -> None:  # type: ignore[type-arg]
         validate_severity_fields(record)  # ADR-0127 write-time gate
+        mark_nested(record)  # ADR-0306 D3: inside a record.tool boundary
         # ADR-0128: when the record declares arguments_schema_ref /
         # result_schema_ref, attach a record-only schema_validation verdict.
         # No-op when no schema is declared; never raises into the workload.
