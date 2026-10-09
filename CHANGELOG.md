@@ -317,6 +317,13 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **Docs: `.novafabric/runs/` example paths where the capsule came from `nova capture`.** The
+  security knowledge graph quickstart (`docs/security-knowledge-graph.md`) builds on a
+  `nova capture` capsule, but every `nova kg` example passed `.novafabric/runs/01HXAY7M`, the
+  SDK directory. They now use the capsule store, `~/.novafabric/capsules/`.
+  `docs/python-api.md` keeps its `.novafabric/runs/` paths, which are correct for
+  `CaptureOrchestrator` capsules, and now says where `nova capture` writes instead. Guarded
+  in `tests/docs/test_onboarding_paths_are_real.py`.
 - **`nova diff --json` printed the text report for capsule and `name@version` diffs.**
   `--help` listed `--json` ("Emit the diff record as JSON") but only `--media` and
   `--significance` read it, and those two modes ignored `--output-format json`. `--json` is now

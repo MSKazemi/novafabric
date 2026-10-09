@@ -137,7 +137,7 @@ capsule is written on both success and failure (a failed run sets
 
 | Parameter | Type | Default |
 |---|---|---|
-| `base_dir` | `Path \| None` | `.novafabric/runs/` |
+| `base_dir` | `Path \| None` | `./.novafabric/runs/` (relative to the working directory) |
 
 ### `CaptureOrchestrator.run(command) → CaptureResult`
 
@@ -158,6 +158,12 @@ print(result.run_id)      # ULID string
 print(result.capsule_dir) # Path to capsule directory
 print(result.exit_code)   # int
 ```
+
+The examples on this page pass capsules written this way, so their paths start with
+`.novafabric/runs/`. That is the SDK default, not the CLI's: `nova capture` writes to
+the capsule store, `~/.novafabric/capsules/<run_id>/` by default
+(`novafabric._paths.default_capsule_dir()`, which honours `NOVAFABRIC_CAPSULE_DIR`
+and `NOVAFABRIC_HOME`). For a capsule from `nova capture`, pass that directory instead.
 
 ### `CaptureResult`
 

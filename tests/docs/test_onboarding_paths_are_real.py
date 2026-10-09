@@ -86,3 +86,39 @@ def test_getting_started_does_not_send_cli_readers_to_the_sdk_directory() -> Non
         "getting-started.md is a CLI walkthrough but names .novafabric/runs/, which "
         f"is the in-process SDK default. `nova capture` writes to {default_capsule_dir()}"
     )
+
+
+_KG_GUIDE = _ROOT / "docs" / "security-knowledge-graph.md"
+_PYTHON_API = _ROOT / "docs" / "python-api.md"
+_KG_EXAMPLE = re.compile(r"^nova kg [a-z-]+ (?P<path>\S+)", re.M)
+
+
+def test_kg_quickstart_points_at_the_store_nova_capture_writes() -> None:
+    """The KG quickstart says its capsule came from `nova capture` (Getting Started).
+
+    Until 2026-10-09 every example used ``.novafabric/runs/01HXAY7M`` — the SDK
+    directory, relative to the working directory — so a reader following the
+    guide after ``nova capture`` passed a path that did not exist.
+    """
+    paths = [m.group("path") for m in _KG_EXAMPLE.finditer(_KG_GUIDE.read_text("utf-8"))]
+    assert paths, "no `nova kg <cmd> <capsule>` example found — the guide's shape changed"
+    for path in paths:
+        assert Path(path).parent.name == _CAPSULE_LEAF, (
+            f"`nova kg ... {path}` does not sit in the {_CAPSULE_LEAF!r} store that "
+            f"`nova capture` writes ({default_capsule_dir()})"
+        )
+
+
+def test_python_api_says_its_runs_paths_are_the_sdk_default() -> None:
+    """``.novafabric/runs`` is right for SDK capsules; the page must say so.
+
+    Its examples pass ``CaptureOrchestrator`` capsules, which do land in
+    ``./.novafabric/runs/``. A reader holding a ``nova capture`` capsule needs to be
+    told it lives in the capsule store instead.
+    """
+    text = _PYTHON_API.read_text(encoding="utf-8")
+    if ".novafabric/runs" in text:
+        assert "default_capsule_dir()" in text and "nova capture" in text, (
+            "python-api.md uses .novafabric/runs/ paths without saying that "
+            f"`nova capture` writes to {default_capsule_dir()} instead"
+        )

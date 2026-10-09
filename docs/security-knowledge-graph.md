@@ -80,8 +80,13 @@ pip install 'novafabric[spkg]'   # rdflib + pyshacl + kuzu (all permissively lic
 
 ## Quickstart
 
-Assume you have a captured capsule at `.novafabric/runs/01HXAY7M/` (see
-[Getting Started](getting-started.md) for how to produce one).
+Assume you captured a capsule with `nova capture` (see
+[Getting Started](getting-started.md)), so it sits in the capsule store at
+`~/.novafabric/capsules/01HXAY7M/` (`$NOVAFABRIC_CAPSULE_DIR`, or
+`$NOVAFABRIC_HOME/capsules`, when those are set). A capsule written by the Python
+SDK or a framework adapter lands in `./.novafabric/runs/` instead (or
+`$NOVAFABRIC_HOME/runs/`); pass that path. Every `nova kg` command below takes the
+capsule's directory path.
 
 ### 1. Build the graph
 
@@ -89,7 +94,7 @@ Build both SPKG layers — the SHACL-gated PROV-O RDF and the operational KùzuD
 store — from the capsule's lineage:
 
 ```bash
-nova kg build .novafabric/runs/01HXAY7M
+nova kg build ~/.novafabric/capsules/01HXAY7M
 # ✓ SPKG built from 01HXAY7M (SHACL-valid): 7 PROV-O triples · 3 LPG edges → .nova/kg/spkg.kuzu
 ```
 
@@ -105,7 +110,7 @@ self-baselines on the target; pass one or more `--baseline` capsules to learn
 
 ```bash
 # Self-baseline, top 10
-nova kg detect .novafabric/runs/01HXAY7M -k 10
+nova kg detect ~/.novafabric/capsules/01HXAY7M -k 10
 
 # Baseline against known-good runs, machine-readable output
 nova kg detect suspect/ --baseline normal-week-1/ --baseline normal-week-2/ \
@@ -121,7 +126,7 @@ records instead. A finding is informational, not a failure — `detect` exits `0
 Ask whether a path exists between two entities (each written as `kind:ref`):
 
 ```bash
-nova kg attack-path .novafabric/runs/01HXAY7M \
+nova kg attack-path ~/.novafabric/capsules/01HXAY7M \
   --from run:attacker --to dataset:aws_credentials
 # ⚠ Attack path found: run:attacker → … → dataset:aws_credentials in 3 hop(s)
 ```
@@ -136,10 +141,10 @@ See what an entity affected (downstream / impact) or where it came from
 
 ```bash
 # What did the poisoned model touch?
-nova kg blast-radius .novafabric/runs/01HXAY7M --entity model:poisoned-model
+nova kg blast-radius ~/.novafabric/capsules/01HXAY7M --entity model:poisoned-model
 
 # Where did this artifact come from?
-nova kg blast-radius .novafabric/runs/01HXAY7M --entity artifact:report.md --upstream
+nova kg blast-radius ~/.novafabric/capsules/01HXAY7M --entity artifact:report.md --upstream
 ```
 
 `--downstream` is the default. Both print a table of affected entities
