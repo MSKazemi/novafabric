@@ -2668,12 +2668,17 @@ def create_app(
         cdir_a = _resolve_capsule(run_a, capsule_dir)
         cdir_b = _resolve_capsule(run_b, capsule_dir)
         try:
-            from novafabric.diff._engine import DiffEngine
+            from novafabric.diff._engine import CapsuleFileError, DiffEngine
         except (ImportError, ModuleNotFoundError):
             raise HTTPException(status_code=501, detail="diff engine unavailable")
         engine = DiffEngine()
         # Capsule reads + structural diff off the event loop (B4).
-        report = await asyncio.to_thread(engine.compare, cdir_a, cdir_b)
+        try:
+            report = await asyncio.to_thread(engine.compare, cdir_a, cdir_b)
+        except CapsuleFileError as exc:
+            # An unreadable or malformed capsule.yaml/env.lock is not a server
+            # fault but input that cannot be compared (ADR-0303 Am. 2).
+            raise HTTPException(status_code=422, detail=f"cannot compare: {exc}") from exc
         if hasattr(report, "model_dump"):
             return report.model_dump(mode="json")  # type: ignore[no-any-return]
         # DiffEngine returns the DiffReport dataclass. Its counts and has_changes are

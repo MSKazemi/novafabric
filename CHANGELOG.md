@@ -286,6 +286,15 @@ longer forwards the submitting shell's environment (ADR-0270).
   unchanged: an OS other than Linux, macOS or Windows is still recorded as `linux`, because
   `host.os` is a closed enum and adding a value would make older `nova validate` reject new
   capsules.
+- **`nova diff` exits `2` with one clean line on an unreadable or malformed `capsule.yaml` or
+  `env.lock` (exit-code change, ADR-0303 Amendment 2).** Invalid YAML, non-UTF-8 bytes, an
+  unreadable file, or a top level that is not a mapping crashed the diff with a traceback,
+  and Python exits `1` on that, the "found a difference" code, so under
+  `--assert-no-regressions` a corrupt capsule read as a regression. The engine now raises
+  `novafabric.diff.CapsuleFileError`, which names the file and the reason. `nova diff` prints
+  `cannot compare: <file>: <reason>` on stderr and exits `2` in every output format, with or
+  without a gate flag, and `GET /api/diff` answers `422`. A missing or empty file is still
+  read as absent.
 - **Adapter and SDK-agent capsules recorded `cpu_count: 1` and `memory_bytes: 0`** whatever
   the machine — the same false host evidence as the hardcoded `arch` fixed above. Every
   capsule writer now builds its `host` block with one function,

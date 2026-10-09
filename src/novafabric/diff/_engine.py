@@ -13,6 +13,25 @@ from novafabric.diff._align import align_model_calls, align_tool_calls
 from novafabric.diff._report import DiffReport
 
 
+class CapsuleFileError(ValueError):
+    """A capsule's ``capsule.yaml`` or ``env.lock`` exists but cannot be read as one.
+
+    Not readable, not UTF-8, not YAML, or YAML whose top level is not a mapping
+    (or, for ``env.lock``, whose compared ``python``/``host`` section is not a
+    mapping). The two capsules then cannot be compared: ``nova diff`` exits 2
+    in every output format, gate flag or not, and ``GET /api/diff`` answers 422
+    (ADR-0303 Amendment 2). Before, the parse error escaped as a traceback,
+    which Python exits with 1 — the code reserved for "found a difference".
+    A *missing* or empty file is not this error: older capsules lack fields,
+    and the diff reads what is there.
+    """
+
+    def __init__(self, path: Path, reason: str) -> None:
+        super().__init__(f"{path}: {reason}")
+        self.path = path
+        self.reason = reason
+
+
 def _read_jsonl(path: Path) -> tuple[list[dict[str, Any]], int]:
     """Records of a capsule JSONL file, and how many non-blank lines were skipped.
 
@@ -81,13 +100,65 @@ def _output_files(capsule: Path) -> dict[str, Path]:
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
+    """A capsule YAML file as a mapping; ``{}`` when it is absent or empty.
+
+    Raises:
+        CapsuleFileError: the file exists but cannot be read, is not UTF-8, is
+            not YAML, or its top level is not a mapping.
+    """
     if not path.exists():
         return {}
-    return yaml.safe_load(path.read_text()) or {}
+    try:
+        text = path.read_bytes().decode("utf-8")
+    except OSError as exc:
+        raise CapsuleFileError(path, f"cannot be read ({exc.strerror or exc})") from exc
+    except UnicodeDecodeError as exc:
+        raise CapsuleFileError(path, f"not UTF-8 (byte {exc.start})") from exc
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        mark = getattr(exc, "problem_mark", None)
+        where = f" at line {mark.line + 1}, column {mark.column + 1}" if mark else ""
+        raise CapsuleFileError(path, f"not valid YAML{where}") from exc
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise CapsuleFileError(path, f"top level is a {type(data).__name__}, not a mapping")
+    return data
+
+
+#: ``env.lock`` fields the environment section compares, as (section, key).
+_ENV_FIELDS = (
+    ("python", "version"),
+    ("python", "interpreter"),
+    ("host", "os"),
+    ("host", "arch"),
+)
+
+
+def _env_fields(env: dict[str, Any], path: Path) -> dict[str, Any]:
+    """The compared ``env.lock`` fields; a present non-mapping section is malformed."""
+    fields: dict[str, Any] = {}
+    for section, key in _ENV_FIELDS:
+        block = env.get(section)
+        if block is None:
+            block = {}
+        if not isinstance(block, dict):
+            raise CapsuleFileError(
+                path, f"'{section}' is a {type(block).__name__}, not a mapping"
+            )
+        fields[f"{section}.{key}"] = block.get(key)
+    return fields
 
 
 class DiffEngine:
     def compare(self, capsule_a: Path, capsule_b: Path) -> DiffReport:
+        """Structural diff of two capsules.
+
+        Raises:
+            CapsuleFileError: a ``capsule.yaml`` or ``env.lock`` exists but is
+                unreadable or malformed, so the capsules cannot be compared.
+        """
         manifest_a = _load_yaml(capsule_a / "capsule.yaml")
         manifest_b = _load_yaml(capsule_b / "capsule.yaml")
         run_a_id = manifest_a.get("run_id", str(capsule_a))
@@ -105,21 +176,12 @@ class DiffEngine:
     def _diff_env(self, capsule_a: Path, capsule_b: Path, report: DiffReport) -> None:
         env_a = _load_yaml(capsule_a / "env.lock")
         env_b = _load_yaml(capsule_b / "env.lock")
+        # Equal documents establish "no environment change" whatever their shape.
         if env_a == env_b:
             return
         # Compare key fields only (avoid package list noise)
-        fields_a = {
-            "python.version": env_a.get("python", {}).get("version"),
-            "python.interpreter": env_a.get("python", {}).get("interpreter"),
-            "host.os": env_a.get("host", {}).get("os"),
-            "host.arch": env_a.get("host", {}).get("arch"),
-        }
-        fields_b = {
-            "python.version": env_b.get("python", {}).get("version"),
-            "python.interpreter": env_b.get("python", {}).get("interpreter"),
-            "host.os": env_b.get("host", {}).get("os"),
-            "host.arch": env_b.get("host", {}).get("arch"),
-        }
+        fields_a = _env_fields(env_a, capsule_a / "env.lock")
+        fields_b = _env_fields(env_b, capsule_b / "env.lock")
         for field, val_a in fields_a.items():
             val_b = fields_b.get(field)
             if val_a != val_b:

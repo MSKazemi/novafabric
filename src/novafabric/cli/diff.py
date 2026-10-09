@@ -60,7 +60,8 @@ GROUP_BY_DIMENSIONS: tuple[str, ...] = ("variant", "environment")
 #: comparison was made and found a difference. It means nothing else (ADR-0303).
 EXIT_DIFFERENCES = 1
 #: Exit code when the comparison cannot be made: a capsule ref that does not
-#: resolve, an asset ref not in the registry, or a usage error. A CI gate must be
+#: resolve, a capsule.yaml/env.lock that cannot be read (ADR-0303 Am. 2), an
+#: asset ref not in the registry, or a usage error. A CI gate must be
 #: able to tell "the runs differ" from "there was nothing to compare" (ADR-0303).
 EXIT_CANNOT_COMPARE = 2
 #: Exit code when ``--environment`` excludes a capsule: the requested comparison
@@ -144,7 +145,7 @@ def _capsule_diff(
     assert_same_shape: bool = False,
     environment: str | None = None,
 ) -> None:
-    from novafabric.diff._engine import DiffEngine
+    from novafabric.diff._engine import CapsuleFileError, DiffEngine
     from novafabric.diff._format import (
         format_github_annotations,
         format_json,
@@ -194,7 +195,17 @@ def _capsule_diff(
         else ("variant_groups", "cross_arm")
     )
 
-    report = DiffEngine().compare(capsule_a, capsule_b)
+    try:
+        report = DiffEngine().compare(capsule_a, capsule_b)
+    except CapsuleFileError as exc:
+        # ADR-0303 Am. 2: a capsule whose manifest or env.lock cannot be read is
+        # "cannot compare" (2) in every format, gate or not — the same as a ref
+        # that does not resolve. stderr, so stdout carries no partial report.
+        typer.echo(
+            f"cannot compare: {exc}. Repair or re-capture the capsule (exit 2).",
+            err=True,
+        )
+        raise typer.Exit(code=EXIT_CANNOT_COMPARE) from exc
     # A skipped record line is never silent (ADR-0303 Am. 1): stderr in every
     # output format, so it reaches a CI log without corrupting JSON on stdout.
     for message in malformed_line_messages(report):
@@ -482,7 +493,8 @@ def diff_cmd(
          removed entry in any section -- or --assert-same-shape found a
          shape change. 1 means nothing else.
       2  the comparison could not be made: a capsule ref that does not resolve,
-         an asset ref not in the registry, a usage error, --environment
+         an unreadable or malformed capsule.yaml or env.lock (with or without
+         a gate flag), an asset ref not in the registry, a usage error, --environment
          excluded a capsule, --assert-same-shape could not build a graph, or
          --assert-no-regressions read a capsule with malformed record lines
          (they are skipped, counted and warned about on stderr, so the

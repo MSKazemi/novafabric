@@ -1261,7 +1261,7 @@ Exit codes (capsule and `name@version` asset diffs, [ADR-0303](./decisions.md)):
 |---|---|
 | `0` | The comparison was made and found no difference — or found one, but no gate flag was given (the diff only reports) |
 | `1` | The comparison was made and found a difference: `--assert-no-regressions` saw a changed, added or removed entry in any section (checked first), or `--assert-same-shape` saw a shape change. `1` means nothing else |
-| `2` | The comparison could not be made: a capsule ref that does not resolve, an asset ref not in the registry, a usage error, `--environment` excluded a capsule, `--assert-same-shape` could not build a graph for either capsule (fail closed), or `--assert-no-regressions` read a capsule with malformed record lines (checked before any difference; see below) |
+| `2` | The comparison could not be made: a capsule ref that does not resolve, an unreadable or malformed `capsule.yaml` or `env.lock` (with or without a gate flag; see below), an asset ref not in the registry, a usage error, `--environment` excluded a capsule, `--assert-same-shape` could not build a graph for either capsule (fail closed), or `--assert-no-regressions` read a capsule with malformed record lines (checked before any difference; see below) |
 | `3` | `--significance` only: a significant regression (SPRT `accept_h1`) |
 
 A gate that only needs "pass or fail" can test for non-zero; one that must tell "the runs
@@ -1310,6 +1310,23 @@ Without a gate flag the diff still exits `0`. Under `--assert-no-regressions` it
 "cannot compare", before `has_changes` is consulted: a skipped line can be the very record an
 "added" or "removed" entry on the other side would have paired with, so neither "the runs
 differ" (`1`) nor "they do not" (`0`) is established. Repair or re-capture the capsule.
+
+**An unreadable or malformed `capsule.yaml` or `env.lock` is "cannot compare"**
+([ADR-0303](./decisions.md) Amendment 2). When either file exists but cannot be read, is not
+UTF-8, is not YAML, or has a top level that is not a mapping — or when two differing `env.lock`
+files have a `python`/`host` section that is not a mapping — `nova diff` prints one line on
+stderr and exits **`2`** in every output format, with or without a gate flag, and prints
+nothing on stdout:
+
+```text
+cannot compare: runs/run-02/env.lock: not valid YAML at line 2, column 1. Repair or re-capture the capsule (exit 2).
+```
+
+A missing or empty file is still read as absent (older capsules lack fields). Unlike a
+malformed record line, which leaves the rest of the comparison meaningful, these files say
+which run it is and what it ran on, so no partial report is printed. `GET /api/diff` answers
+`422` with the same message. Before, the parse error escaped as a traceback, which Python
+exits with `1`, the "found a difference" code.
 
 **Asset refs.** With two `name@version` refs the command compares the two registered specs
 field by field (nested keys flattened to dotted paths). `--output-format` applies: `json` is
