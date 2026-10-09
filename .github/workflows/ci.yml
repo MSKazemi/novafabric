@@ -43,7 +43,15 @@ jobs:
     # number never transferred — a local measurement is not a CI measurement.
     # Raised to 40 to let the job finish and report a real duration; tighten it
     # once there is a measured number from an actual green run.
-    timeout-minutes: 40
+    #
+    # 2026-10-09, measured: with ~19.4K tests on a 4-CPU runner the unit step
+    # took 30.5 min (run 37961343086) and 37.4 min (run 37913910773) on normal
+    # runners, but two runs (0629ae6, df01f0c) were killed at the 40-min cap at
+    # 67% — not a hang: their progress timelines are uniformly ~1.8x slower at
+    # every checkpoint (10%->30% took 17 min vs 9), i.e. ~57 min for the suite on
+    # a slow runner. 75 leaves headroom for that measured spread; a run that
+    # still hits it is a real stall, not runner variance.
+    timeout-minutes: 75
 
     steps:
       - name: Checkout
