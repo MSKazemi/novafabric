@@ -59,6 +59,16 @@ def _declared_status(text: str) -> str | None:
 _SHIPPED_MARKERS = ("## Implementation status",)
 
 
+def _has_heading(text: str, heading: str) -> bool:
+    """True when *heading* is an actual Markdown heading line, not a mention of one.
+
+    A proposed ADR may name the heading it will gain once built (ADR-0306 says an
+    `` `## Implementation status` `` section "has been added in the …" as a planned
+    step); a substring match read that sentence as a shipped-code claim.
+    """
+    return re.search(rf"^{re.escape(heading)}\b", text, re.M) is not None
+
+
 def _adrs() -> list[Path]:
     return sorted(ADR_DIR.glob("[0-9][0-9][0-9][0-9]-*.md"))
 
@@ -75,7 +85,7 @@ def test_no_adr_documents_shipped_code_while_calling_itself_proposed() -> None:
         if _declared_status(text) != "proposed":
             continue
         for marker in _SHIPPED_MARKERS:
-            if marker in text:
+            if _has_heading(text, marker):
                 offenders.append(f"{path.name}: has '{marker}' but status: proposed")
                 break
 
@@ -107,3 +117,12 @@ def test_some_adrs_do_declare_a_status() -> None:
     """Non-vacuity for the test above: if none did, it would pass while blind."""
     with_status = [p for p in _adrs() if _declared_status(p.read_text(encoding="utf-8"))]
     assert len(with_status) > 50, f"only {len(with_status)} ADRs carry a status field"
+
+
+def test_a_mentioned_heading_is_not_a_heading() -> None:
+    """The marker counts only as a heading line — red-green for the substring false positive."""
+    assert _has_heading("intro\n## Implementation status\n\nbuilt", "## Implementation status")
+    assert _has_heading("## Implementation status (2026-10-09)\n", "## Implementation status")
+    assert not _has_heading(
+        "once built, an `## Implementation status` section is added", "## Implementation status"
+    )
