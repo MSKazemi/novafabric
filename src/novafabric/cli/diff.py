@@ -375,8 +375,8 @@ def _run_significance(
 
 
 def diff_cmd(
-    ref_a: Annotated[str | None, typer.Argument(help="name@version  or  path/to/capsule-a")] = None,
-    ref_b: Annotated[str | None, typer.Argument(help="name@version  or  path/to/capsule-b")] = None,
+    ref_a: Annotated[str | None, typer.Argument(help="name@version, capsule, or run id")] = None,
+    ref_b: Annotated[str | None, typer.Argument(help="name@version, capsule, or run id")] = None,
     output_format: Annotated[
         DiffOutputFormat,
         typer.Option(

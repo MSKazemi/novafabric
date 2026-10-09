@@ -149,11 +149,9 @@ def wrap_crew(
             "Install it with: pip install crewai"
         )
 
-    import os
+    from novafabric._paths import adapter_default_runs_dir
 
-    resolved_data_dir = data_dir or Path(
-        os.environ.get("NOVAFABRIC_HOME", str(Path.cwd() / ".novafabric"))
-    ) / "runs"
+    resolved_data_dir = data_dir or adapter_default_runs_dir()
 
     resolved_name: str = run_name or "crewai-run"
     tags: dict[str, str] = {"framework": "crewai"}

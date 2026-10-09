@@ -32,7 +32,8 @@ def replay_cmd(
     capsule: Annotated[
         Path,
         typer.Argument(
-            help="Run capsule directory, or the run id printed by `nova capture`."
+            help="Run capsule directory, or a bare run id (printed by `nova capture`, or "
+            "written by a framework adapter)."
         ),
     ],
     mode: Annotated[

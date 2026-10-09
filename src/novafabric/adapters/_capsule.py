@@ -20,7 +20,6 @@ has to say whether its wire stream is complete.
 from __future__ import annotations
 
 import json
-import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -42,12 +41,17 @@ def _now() -> str:
 
 
 def resolve_data_dir(data_dir: Path | None) -> Path:
-    """Where capsules go when the caller does not say."""
+    """Where capsules go when the caller does not say.
+
+    The default is :func:`novafabric._paths.adapter_default_runs_dir` — the one
+    definition the run-id resolver also searches, so ``nova replay <run-id>``
+    finds what an adapter wrote.
+    """
+    from novafabric._paths import adapter_default_runs_dir
+
     if data_dir is not None:
         return Path(data_dir)
-    return Path(
-        os.environ.get("NOVAFABRIC_HOME", str(Path.cwd() / ".novafabric"))
-    ) / "runs"
+    return adapter_default_runs_dir()
 
 
 def _count_lines(path: Path) -> int:

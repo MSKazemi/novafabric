@@ -455,11 +455,9 @@ def wrap(
             "Install it with: pip install langgraph"
         )
 
-    import os
+    from novafabric._paths import adapter_default_runs_dir
 
-    resolved_data_dir = data_dir or Path(
-        os.environ.get("NOVAFABRIC_HOME", str(Path.cwd() / ".novafabric"))
-    ) / "runs"
+    resolved_data_dir = data_dir or adapter_default_runs_dir()
 
     return _WrappedGraph(
         inner=graph,

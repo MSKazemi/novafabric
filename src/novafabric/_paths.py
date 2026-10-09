@@ -134,6 +134,34 @@ def default_capsule_dir() -> Path:
     return Path(env) if env else nova_home() / "capsules"
 
 
+def project_runs_dir() -> Path:
+    """Project-local capsule directory: ``./.novafabric/runs`` under the CWD.
+
+    Deliberately **not** under :func:`nova_home`. It is the default of the
+    in-process ``CaptureOrchestrator`` and of ``nova api-proxy`` /
+    ``nova mcp-proxy`` (``docs/README.md`` "Default storage paths"), and what
+    the framework adapters fall back to when ``NOVAFABRIC_HOME`` is unset. The
+    run-id resolver (``cli/_capsule_ref.py``) searches it as a fallback, so a
+    bare run id written here is still found.
+    """
+    return Path.cwd() / ".novafabric" / "runs"
+
+
+def adapter_default_runs_dir() -> Path:
+    """Where a framework adapter writes capsules when given no ``data_dir``.
+
+    ``$NOVAFABRIC_HOME/runs`` when ``NOVAFABRIC_HOME`` is set, otherwise
+    :func:`project_runs_dir`. Note ``runs``, not ``capsules`` — this is *not*
+    :func:`default_capsule_dir`; it is the documented SDK/adapter default, kept
+    for compatibility. The single definition every adapter shares, so the
+    run-id resolver's fallback list cannot drift from what the adapters write.
+
+    An *empty* ``NOVAFABRIC_HOME`` is honoured as given (a relative ``runs``),
+    exactly as the per-adapter expressions this replaced behaved.
+    """
+    return Path(os.environ.get("NOVAFABRIC_HOME", str(project_runs_dir().parent))) / "runs"
+
+
 def dashboards_dir() -> Path:
     """Directory holding ADR-0235 dashboard and widget JSON files.
 

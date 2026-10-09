@@ -221,7 +221,11 @@ Not sure where to start? Follow the path that matches your goal.
 - **Default storage paths.** The CLI `nova capture` writes capsules under
   `~/.novafabric/capsules/`. The Python `CaptureOrchestrator`, the `nova api-proxy`
   / `nova mcp-proxy` commands, and `nova serve --capsule-dir` default to a
-  project-local `./.novafabric/runs/`. Both are correct in their respective contexts.
+  project-local `./.novafabric/runs/`; the framework adapters write the same
+  directory, or `$NOVAFABRIC_HOME/runs/` when `NOVAFABRIC_HOME` is set. Both are
+  correct in their respective contexts. A capsule path works with every command; on
+  `main` (unreleased) a bare run id is also found in the adapter/SDK directories (see
+  [cli-reference.md](cli-reference.md) §Framework Adapters).
 
 ---
 

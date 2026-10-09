@@ -259,10 +259,9 @@ def make_plugin(data_dir: Path | None = None) -> NovaAdkPlugin:
             "Install it with: pip install 'novafabric[google-adk]'"
         )
 
-    import os
-    resolved = data_dir or Path(
-        os.environ.get("NOVAFABRIC_HOME", str(Path.cwd() / ".novafabric"))
-    ) / "runs"
+    from novafabric._paths import adapter_default_runs_dir
+
+    resolved = data_dir or adapter_default_runs_dir()
 
     class _AdkPlugin(NovaAdkPlugin, BasePlugin):
         """NovaAdkPlugin on ADK's BasePlugin, so every callback ADK looks up by

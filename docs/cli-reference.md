@@ -1125,7 +1125,11 @@ The other ADR-0171 surfaces (`nova memstore mutation show|verify`, `retention ve
 Replay a captured run. `<capsule>` is either the **run id** `nova capture` printed, or a
 path to the capsule directory. A path that exists is always used as given; only a
 reference that is not a usable path is looked up as a run id, in
-`$NOVAFABRIC_CAPSULE_DIR` (default `~/.novafabric/capsules/`).
+`$NOVAFABRIC_CAPSULE_DIR` (default `~/.novafabric/capsules/`). On `main` (unreleased)
+the lookup also covers the framework-adapter defaults — `$NOVAFABRIC_HOME/runs/` and
+`./.novafabric/runs/` — announcing on stderr where the capsule was found, and failing
+with every matching path listed if the id exists in more than one of them (see
+§Framework Adapters, "Where adapter capsules land").
 
 ```bash
 # By run id — what `nova capture` hands you
@@ -9458,6 +9462,32 @@ Drop-in capture adapters for four additional AI frameworks. Each adapter uses th
 SDK's own native extensibility interface (ADR-0078) rather than wrapping the executor.
 All framework packages are optional extras.
 
+### Where adapter capsules land, and how to refer to them
+
+Every adapter writes to the `data_dir` it is given. With none it writes to
+`$NOVAFABRIC_HOME/runs/<run-id>/` when `NOVAFABRIC_HOME` is set, otherwise to
+`./.novafabric/runs/<run-id>/` under the working directory — the documented
+SDK/adapter default, which is **not** the `nova capture` store
+(`$NOVAFABRIC_CAPSULE_DIR`, default `~/.novafabric/capsules/`).
+
+```bash
+# Always works: the capsule path
+nova replay .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --mode forensic
+
+# On main (unreleased): the bare run id works too
+nova replay 01HXAY7M5JZ8R7K4P9DPBYK2WX --mode forensic
+nova diff 01HXAY7M5JZ8R7K4P9DPBYK2WX 01HXB2Q9W3N4K5M6P7R8S9T0VW
+nova validate 01HXAY7M5JZ8R7K4P9DPBYK2WX
+```
+
+A bare run id is looked up in at most three directories, in order: the capture store,
+`$NOVAFABRIC_HOME/runs/`, `./.novafabric/runs/` (de-duplicated; never a filesystem
+search). A hit outside the capture store prints `note: run <id> found in <dir> …` on
+stderr, so `--output-format json` stdout stays clean. An id present in more than one of
+them is an error listing every path — pass the capsule path to choose. A command's own
+`--capsule-dir` option, where it has one, restricts the lookup to that directory.
+v0.104.0 resolves a bare id in the capture store only, so there use the path.
+
 ### OpenAI Agents SDK adapter (E-5)
 
 ```python
@@ -9472,7 +9502,7 @@ result = await Runner.run(agent, "hello")
 ```
 
 The adapter registers a `NovaCapsuleTracingProcessor` via `add_trace_processor()`.
-Each trace produces one capsule in `$NOVAFABRIC_HOME/capsules/`. `capture_mode` is
+Each trace produces one capsule in the adapter default directory (`$NOVAFABRIC_HOME/runs/`, or `./.novafabric/runs/` when `NOVAFABRIC_HOME` is unset). `capture_mode` is
 `sdk-decorator` and `command` is a `@openai-agents:<workflow>` label, so `nova replay --mode mocked` refuses the capsule (`CapsuleNotReplayable`).
 
 Top-level alias: `from novafabric.adapters import register_openai_agents`

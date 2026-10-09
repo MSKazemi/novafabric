@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import json
 from pathlib import Path
 
@@ -9,7 +8,11 @@ import typer
 import yaml
 from rich.console import Console
 
-from novafabric.cli._capsule_ref import CapsuleRefError, resolve_capsule_ref
+from novafabric.cli._capsule_ref import (
+    AmbiguousCapsuleRefError,
+    CapsuleRefError,
+    resolve_capsule_ref,
+)
 from novafabric.spec.validator import (
     SpecValidationError,
     print_spec_error,
@@ -281,8 +284,15 @@ def validate_cmd(
     # is not already a usable path, so every existing invocation is untouched — an
     # asset spec, a capsule directory and a replay directory all still win outright.
     if not spec_file.exists():
-        with contextlib.suppress(CapsuleRefError):
+        try:
             spec_file = resolve_capsule_ref(spec_file)
+        except AmbiguousCapsuleRefError as exc:
+            # An id that names two capsules is an answer, not a miss: falling
+            # through to "File not found" would hide which copies collided.
+            console.print(str(exc), style="red", markup=False)
+            raise typer.Exit(code=1) from exc
+        except CapsuleRefError:
+            pass  # not a run id either — report it as a spec path below
 
     if _is_replay_dir(spec_file):
         _validate_replay(spec_file)

@@ -327,6 +327,20 @@ longer forwards the submitting shell's environment (ADR-0270).
   `cannot compare: <file>: <reason>` on stderr and exits `2` in every output format, with or
   without a gate flag, and `GET /api/diff` answers `422`. A missing or empty file is still
   read as absent.
+- **A framework-adapter capsule could not be named by its run id.** With no `data_dir`,
+  adapters write `./.novafabric/runs/<run-id>/` (or `$NOVAFABRIC_HOME/runs/` when set),
+  while `nova replay` / `nova diff` / `nova validate` and every other run-id command
+  looked a bare id up only in the capture store (`$NOVAFABRIC_CAPSULE_DIR`, default
+  `~/.novafabric/capsules/`) and failed with "Captured runs live there — check the id";
+  only the path form worked (reproduced on PyPI 0.104.0 with `haystack-ai` 3.3.0). The
+  resolver now also searches those two adapter defaults — at most three directories,
+  no filesystem walk — prints a stderr `note:` naming where it found the capsule, and
+  refuses an id present in two places with an error listing both paths. A command's
+  explicit `--capsule-dir` still searches only that directory. The adapter default
+  location is unchanged (it is the documented SDK default), and the nine adapters now
+  share one definition of it, `novafabric._paths.adapter_default_runs_dir()`, so the
+  resolver cannot drift from what they write. `docs/cli-reference.md` also no longer
+  says the OpenAI Agents adapter writes to `$NOVAFABRIC_HOME/capsules/`.
 - **Adapter and SDK-agent capsules recorded `cpu_count: 1` and `memory_bytes: 0`** whatever
   the machine — the same false host evidence as the hardcoded `arch` fixed above. Every
   capsule writer now builds its `host` block with one function,

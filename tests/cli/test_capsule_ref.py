@@ -25,7 +25,11 @@ from pathlib import Path
 
 import pytest
 
-from novafabric.cli._capsule_ref import CapsuleRefError, resolve_capsule_ref
+from novafabric.cli._capsule_ref import (
+    AmbiguousCapsuleRefError,
+    CapsuleRefError,
+    resolve_capsule_ref,
+)
 
 RUN_ID = "01KZMDB3V38GV86AYTBR77JJQD"
 
@@ -117,3 +121,110 @@ def test_capsule_dir_defaults_to_the_configured_location(
     monkeypatch.setenv("NOVAFABRIC_CAPSULE_DIR", str(store))
 
     assert resolve_capsule_ref(RUN_ID) == expected
+
+
+# --- Fallback to the adapter/SDK default directories ------------------------------
+
+
+@pytest.fixture
+def stores(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
+    """Configured store, adapter home and project cwd, all distinct."""
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    monkeypatch.setenv("NOVAFABRIC_CAPSULE_DIR", str(tmp_path / "configured"))
+    monkeypatch.setenv("NOVAFABRIC_HOME", str(tmp_path / "home"))
+    return {
+        "configured": tmp_path / "configured",
+        "home_runs": tmp_path / "home" / "runs",
+        "project_runs": work / ".novafabric" / "runs",
+    }
+
+
+@pytest.mark.parametrize("where", ["home_runs", "project_runs"])
+def test_a_bare_id_falls_back_to_the_adapter_default_dirs(
+    stores: dict[str, Path], where: str
+) -> None:
+    expected = _make_capsule(stores[where], RUN_ID)
+    notes: list[str] = []
+
+    got = resolve_capsule_ref(RUN_ID, notify=notes.append)
+
+    assert got == expected
+    assert len(notes) == 1
+    assert str(stores[where]) in notes[0], "it must say where it found the capsule"
+
+
+def test_a_hit_in_the_configured_store_is_silent(stores: dict[str, Path]) -> None:
+    expected = _make_capsule(stores["configured"], RUN_ID)
+    notes: list[str] = []
+
+    assert resolve_capsule_ref(RUN_ID, notify=notes.append) == expected
+    assert notes == []
+
+
+def test_an_id_in_two_stores_is_ambiguous_and_names_both(stores: dict[str, Path]) -> None:
+    a = _make_capsule(stores["configured"], RUN_ID)
+    b = _make_capsule(stores["project_runs"], RUN_ID)
+
+    with pytest.raises(AmbiguousCapsuleRefError) as exc:
+        resolve_capsule_ref(RUN_ID)
+
+    assert exc.value.matches == [a, b]
+    assert str(a) in str(exc.value) and str(b) in str(exc.value)
+    assert isinstance(exc.value, CapsuleRefError), "existing callers must still report it"
+
+
+def test_an_explicit_capsule_dir_disables_the_fallback(stores: dict[str, Path]) -> None:
+    """``--capsule-dir`` means "look here": no silent widening to other stores."""
+    _make_capsule(stores["project_runs"], RUN_ID)
+
+    with pytest.raises(CapsuleRefError) as exc:
+        resolve_capsule_ref(RUN_ID, capsule_dir=stores["configured"])
+
+    assert not isinstance(exc.value, AmbiguousCapsuleRefError)
+    assert str(stores["project_runs"]) not in str(exc.value)
+
+
+def test_a_store_configured_as_the_project_dir_is_not_ambiguous_with_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    monkeypatch.delenv("NOVAFABRIC_HOME", raising=False)
+    monkeypatch.setenv("NOVAFABRIC_CAPSULE_DIR", ".novafabric/runs")
+    _make_capsule(work / ".novafabric" / "runs", RUN_ID)
+    notes: list[str] = []
+
+    got = resolve_capsule_ref(RUN_ID, notify=notes.append)
+
+    assert got.resolve() == (work / ".novafabric" / "runs" / RUN_ID).resolve()
+    assert notes == []
+
+
+def test_the_not_found_message_lists_every_directory_searched(
+    stores: dict[str, Path],
+) -> None:
+    with pytest.raises(CapsuleRefError) as exc:
+        resolve_capsule_ref(RUN_ID)
+
+    msg = str(exc.value)
+    for d in stores.values():
+        assert str(d) in msg
+
+
+def test_env_precedence_for_the_primary_store_is_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """NOVAFABRIC_CAPSULE_DIR beats $NOVAFABRIC_HOME/capsules, as before."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("NOVAFABRIC_HOME", str(tmp_path / "home"))
+    _make_capsule(tmp_path / "home" / "capsules", RUN_ID)
+    monkeypatch.setenv("NOVAFABRIC_CAPSULE_DIR", str(tmp_path / "configured"))
+
+    with pytest.raises(CapsuleRefError):
+        resolve_capsule_ref(RUN_ID)
+
+    monkeypatch.delenv("NOVAFABRIC_CAPSULE_DIR")
+    assert resolve_capsule_ref(RUN_ID) == tmp_path / "home" / "capsules" / RUN_ID

@@ -198,8 +198,7 @@ def wrap_client(client: Any, data_dir: Path | None = None) -> _WrappedBedrockCli
             "Install it with: pip install 'novafabric[bedrock-agentcore]'"
         )
 
-    import os
-    resolved = data_dir or Path(
-        os.environ.get("NOVAFABRIC_HOME", str(Path.cwd() / ".novafabric"))
-    ) / "runs"
+    from novafabric._paths import adapter_default_runs_dir
+
+    resolved = data_dir or adapter_default_runs_dir()
     return _WrappedBedrockClient(client, resolved)

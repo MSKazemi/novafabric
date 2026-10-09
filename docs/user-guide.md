@@ -368,6 +368,19 @@ Adapters ship for eleven frameworks. Each is importable by name from
 The last four are not wrappers — they hook the framework's own extension point
 (ADR-0078) rather than patching a method.
 
+**Where adapter capsules land, and how to refer to them.** An adapter writes to the
+`data_dir` you pass it; with none, to `$NOVAFABRIC_HOME/runs/<run-id>/` when
+`NOVAFABRIC_HOME` is set, otherwise to `./.novafabric/runs/<run-id>/` under the
+working directory. That is **not** where `nova capture` writes
+(`$NOVAFABRIC_CAPSULE_DIR`, default `~/.novafabric/capsules/`). A capsule path
+always works (`nova replay .novafabric/runs/<run-id>/ --mode forensic`). On `main`
+(unreleased; v0.104.0 resolves a bare id in the capture store only) the bare run id
+works too: `nova replay`, `nova diff`, `nova validate` and every other command that
+takes a run id also look in those two adapter defaults, print a `note:` on stderr
+naming the directory the capsule was found in, and fail with an error listing both
+paths if the same id exists in two of them. Passing `--capsule-dir` to a command
+that has it searches only that directory.
+
 **Replaying an adapter capsule.** An adapter capsule is captured inside a framework
 call, so it records `capture_mode: sdk-decorator` and a `@framework:name` label, not a
 command. `nova replay --mode forensic` and `--mode semantic` work on it; `--mode mocked`
