@@ -317,6 +317,22 @@ class ReplayEngine:
             status = "success"
             run_error = None
 
+        # Only the model-calls stream feeds the re-executed workload (through the
+        # mocked queue). Intervention installs no tool dispatcher (ADR-0300), so a
+        # tool-calls substitution changes the output capsule and the checks, never
+        # what the workload saw — say so rather than imply the effect was measured.
+        delivered = bool(command) and spec.target.stream == "model-calls"
+        intervention_meta["substitution_delivered_to_workload"] = delivered
+        if not delivered:
+            intervention_meta["substitution_note"] = (
+                "no command was re-executed; the substitution is applied to the "
+                "output capsule's streams and the checks only"
+                if not command
+                else "the re-executed workload's tools ran live and never saw the "
+                "substituted tool-call record; it is applied to the output "
+                "capsule's streams and the checks only (ADR-0300, ADR-0306)"
+            )
+
         result = ReplayResult(
             replay_id=replay_id,
             replay_of_run_id=run_id,

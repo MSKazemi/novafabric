@@ -141,7 +141,8 @@ def replay_cmd(
                      possible (deterministic env.lock, seeds, no schema drift)
       intervention — experimental: substitute one captured event per an
                      InterventionSpec, re-execute downstream under mocked
-                     semantics, emit a diffable counterfactual capsule
+                     semantics, emit a diffable counterfactual capsule (a
+                     substituted tool result is not delivered: tools run live)
 
     Scope: single capsule.
 
@@ -264,6 +265,15 @@ def replay_cmd(
     if result.env_warnings:
         for w in result.env_warnings:
             console.print(f"  [yellow]⚠ {w.get('message', '')}[/yellow]")
+
+    if result.intervention is not None and not result.intervention.get(
+        "substitution_delivered_to_workload", True
+    ):
+        console.print(
+            "  [yellow]⚠ substitution not delivered to the re-executed workload: "
+            f"{result.intervention.get('substitution_note', '')}[/yellow]",
+            highlight=False,
+        )
 
     if result.status not in ("success", "dry_run"):
         raise typer.Exit(code=result.exit_code or 1)

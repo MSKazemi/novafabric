@@ -1167,6 +1167,13 @@ Honest notes on the current implementation:
 - The spec allows **one substitution per replay** (`replace_model_response` for
   `model-calls`, `replace_tool_result` for `tool-calls`, or `mutate_payload` for
   arbitrary fields on either stream). Chained multi-step interventions are not a thing yet.
+- **Only a model-calls substitution reaches the re-executed workload.** The mutated model
+  calls are served to the re-run; its tools run live (intervention installs no tool
+  dispatcher), so a `replace_tool_result` — or a `mutate_payload` on `tool-calls` — changes
+  the output capsule and the checks, not what the workload saw. The result records
+  `intervention.substitution_delivered_to_workload: false` with a
+  `substitution_note`, and the CLI prints a warning. Delivering tool substitutions to the
+  workload is **future design** (ADR-0306).
 - Check-functions are named per-step assertions; failures are reported, never
   swallowed, and a check with `fatal: true` **aborts** the replay (status `aborted`).
 - The output capsule is deliberately *minimal* (manifest + mutated event streams), so

@@ -256,6 +256,13 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **`nova replay --mode intervention` no longer implies a tool-result substitution was
+  measured downstream.** Only the model-calls stream feeds the re-executed workload;
+  intervention installs no tool dispatcher, so a `replace_tool_result` (or a
+  `mutate_payload` on `tool-calls`) changed the output capsule and the checks but never
+  what the re-run saw. The result now records `intervention.substitution_delivered_to_workload`
+  (with a `substitution_note` when false), the CLI prints a warning, and the feature tour,
+  replay-modes page, CLI reference and `--help` say so. Delivery is future design (ADR-0306).
 - **`replay.yaml` per-tool overrides written in the schema's shape were ignored.** Both
   replay-policy schemas define `tool_overrides` entries as `{tool_name, allow: bool}`, but
   the policy evaluator read only an `action` field the schema does not allow, so a

@@ -337,3 +337,79 @@ class TestCli:
             ["replay", str(capsule), "--output-dir", str(tmp_path / "out"), "--dry-run"],
         )
         assert result.exit_code == 0, result.output
+
+
+class TestSubstitutionDelivery:
+    """A substituted event reaches the re-executed workload only on the model-calls
+    stream (mutated model calls feed the mocked subprocess). Intervention installs no
+    tool dispatcher (ADR-0300), so a tool-calls substitution changes the output
+    capsule and the checks but never what the re-run workload saw — the result must
+    say so instead of implying the downstream effect was measured."""
+
+    def _run_with_command(self, tmp_path: Path, spec_payload: dict[str, object]):  # type: ignore[no-untyped-def]
+        import sys
+
+        capsule = _capsule(tmp_path)
+        (capsule / "capsule.yaml").write_text(
+            yaml.dump({"run_id": "run-int-1", "command": [sys.executable, "-c", "pass"]})
+        )
+        flags = ReplayFlags(
+            mode="intervention",
+            intervention_file=_spec_file(tmp_path, spec_payload),
+        )
+        engine = ReplayEngine(capsule_dir=capsule, flags=flags, base_dir=tmp_path / "replays")
+        return engine.run()
+
+    def test_tool_result_substitution_is_reported_as_not_delivered(self, tmp_path: Path) -> None:
+        result = self._run_with_command(
+            tmp_path,
+            {"target": {"stream": "tool-calls", "event_index": 0},
+             "replace_tool_result": {"rows": 0}},
+        )
+        assert result.intervention is not None
+        assert result.intervention["substitution_delivered_to_workload"] is False
+        assert "ran live" in result.intervention["substitution_note"]
+
+    def test_tool_stream_payload_mutation_is_reported_as_not_delivered(self, tmp_path: Path) -> None:
+        result = self._run_with_command(
+            tmp_path,
+            {"target": {"stream": "tool-calls", "event_index": 0},
+             "mutate_payload": {"result": {"rows": 9}}},
+        )
+        assert result.intervention is not None
+        assert result.intervention["substitution_delivered_to_workload"] is False
+
+    def test_model_response_substitution_is_delivered(self, tmp_path: Path) -> None:
+        result = self._run_with_command(tmp_path, GOLDEN_VALID_SPEC)
+        assert result.intervention is not None
+        assert result.intervention["substitution_delivered_to_workload"] is True
+        assert "substitution_note" not in result.intervention
+
+    def test_nothing_is_delivered_when_no_command_is_re_executed(self, tmp_path: Path) -> None:
+        _, _, result = TestEngine()._run(tmp_path, GOLDEN_VALID_SPEC)
+        assert result.intervention is not None
+        assert result.intervention["substitution_delivered_to_workload"] is False
+        assert "no command" in result.intervention["substitution_note"]
+
+    def test_cli_warns_when_the_substitution_was_not_delivered(self, tmp_path: Path) -> None:
+        import re
+        import sys
+
+        from novafabric.cli.main import app
+
+        capsule = _capsule(tmp_path)
+        (capsule / "capsule.yaml").write_text(
+            yaml.dump({"run_id": "run-int-1", "command": [sys.executable, "-c", "pass"]})
+        )
+        spec = _spec_file(
+            tmp_path,
+            {"target": {"stream": "tool-calls", "event_index": 0},
+             "replace_tool_result": {"rows": 0}},
+        )
+        out = CliRunner().invoke(
+            app,
+            ["replay", "--mode", "intervention", "--intervention-file", str(spec), str(capsule)],
+            env={"NOVAFABRIC_HOME": str(tmp_path / "home")},
+        )
+        text = re.sub(r"\x1b\[[0-9;]*m", "", out.output)
+        assert "not delivered to the re-executed workload" in " ".join(text.split())
