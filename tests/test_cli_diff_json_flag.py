@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 import yaml
+from _help_assert import strip_ansi
 from typer.testing import CliRunner
 
 import novafabric.cli.diff as diff_cli
@@ -189,5 +190,6 @@ def test_github_annotation_is_refused_where_it_has_no_meaning(
 def test_help_describes_json_as_the_output_format_alias() -> None:
     result = runner.invoke(app, ["diff", "--help"], env={"COLUMNS": "200"})
     assert result.exit_code == 0
-    line = next(ln for ln in result.output.splitlines() if "--json" in ln and "│" in ln)
+    text = strip_ansi(result.output)
+    line = next(ln for ln in text.splitlines() if "--json" in ln and "│" in ln)
     assert "--output-format json" in line
