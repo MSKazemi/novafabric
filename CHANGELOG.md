@@ -122,6 +122,19 @@ longer forwards the submitting shell's environment (ADR-0270).
   append and JSON encoding; at the default level the redaction behind the digests
   adds roughly 150 µs per KiB digested (the result digest is skipped above
   64 KiB). The no-op path outside capture is about 1.4x a bare recorder read.
+- **`replay.yaml` `tool_overrides` are enforced inside the mocked replay (experimental,
+  ADR-0306 slice 2).** The engine resolves the capsule's overrides into a per-tool table
+  that `MockToolDispatcher` applies to MCP `call_tool` and `record.tool` calls, through the
+  same decision `--dry-run` prints; a test runs the dry run and the real replay for every
+  override × surface × ladder flag × `--permissive` combination and requires them to agree.
+  `replay.yaml` ships inside the capsule, so a restriction is trusted and a permission is
+  not: `allow: false` is never run live, even under `--permissive` (a recorded result is
+  still served); `allow: true` re-executes a tool only when the operator also passes the
+  `--allow-*` flag for its class (MCP calls always count as `unknown`), otherwise the
+  recorded result is served and `override_not_honoured` is reported. New result field
+  `replay_contract.tool_overrides` (`{tool_name, decision, honoured, reason, rationale?}`,
+  written only when there are overrides), new divergence kind `override_unenforceable`
+  (under `--permissive`), and the named refusal `ToolOverrideUnenforceable` (below).
 - **Architecture explainer: an animated "How NovaFabric works" system map** (22 steps, every stage from the workload to server mode, maturity-labelled, unreleased behaviour marked) plus generated `how-it-works.svg`, `mocked-replay.svg` and `diff-gate.svg` (`docs/architecture/explainer.html`).
 - **`nova seal init` — explicit first-run sealing with a local, self-asserted identity
   (experimental, ADR-0301).** One offline command creates a dedicated ECDSA P-256 signing key,
@@ -233,6 +246,28 @@ longer forwards the submitting shell's environment (ADR-0270).
   correction and ROADMAP Scale-S4 (now closed) say so. The `--full` help no longer implies the
   default check is sublinear, and the `--db` help no longer loses `[seal-postgres]` to Rich
   markup. The nightly Postgres benchmark is unchanged: it stays a regression guard on this cost.
+- **`nova replay --permissive` no longer runs an unmatched MCP tool call live by itself
+  (behaviour change, ADR-0306 Q3, amends ADR-0300 D7; experimental, unreleased).** An
+  unmatched MCP `call_tool` under `--permissive` now runs live only if the safety-ladder
+  flag for its class is passed; MCP calls are always `unknown`, so that is
+  `--allow-unknown-mutation`. Without it the call is refused before the tool runs
+  (`ReplayToolUnmatchedError`, counted in `replay_contract.tool_calls_refused`) and the
+  replay still succeeds with the divergence reported. Add `--allow-unknown-mutation` to
+  keep the old behaviour.
+- **A strict mocked replay refuses to start when a `replay.yaml` `allow: false` override
+  cannot be enforced (behaviour change, ADR-0306 Q5).** If the override names a tool the
+  capsule recorded on a transport replay does not intercept (HTTP, shell, an undeclared
+  function), the replay is `status: aborted` with `error.type: ToolOverrideUnenforceable`
+  and `nova replay` exits **3** before anything is spawned (also under `--dry-run`).
+  `--permissive` starts instead and reports an `override_unenforceable` divergence.
+- **`nova replay --dry-run` labels say what the replay will do with an override (behaviour
+  change, ADR-0306 D8).** `allow: false` on an intercepted tool printed `DENY` while the
+  replay served it; it now prints `[MOCK (never live)]`. `allow: true` printed `ALLOW`
+  while the replay served it; it now prints `[MOCK (override not honoured: needs
+  --allow-…)]`, or `[LIVE (override honoured)]` with the flag. The report ends with a
+  `Tool overrides (replay.yaml)` table. While an `allow: false` override is in force, a
+  failed dispatcher install stops the replayed process (exit 86) even under
+  `--permissive`. The `--allow-*` and `--permissive` help text says this.
 - **`nova diff` compares a model call's recorded request parameters (behaviour change,
   ADR-0303 Amendment 2).** A paired call was compared on its provider, model, messages and
   response only. A run whose `gen_ai.request.temperature` went from `0` to `1`, or which lost

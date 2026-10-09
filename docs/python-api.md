@@ -285,7 +285,10 @@ async def lookup_order(order_id: str) -> dict: ...
   served raises `ReplayToolRecordNotServableError` with the reason. Either way the
   replay fails, even if your code catches the exception. With `--permissive` an
   unmatched call runs live only if a `--allow-*` ladder flag permits its declared
-  `mutation_class`.
+  `mutation_class`. A capsule's `replay.yaml` `tool_overrides` entry naming the
+  function is enforced too (ADR-0306 slice 2): `allow: false` is never run live,
+  `allow: true` re-executes the body only with the ladder flag for its declared
+  class.
 - **Served values**: JSON-native results only (`dict`, `list`, `str`, numbers,
   `bool`, `None`), up to `NOVAFABRIC_TOOL_RESULT_MAX_BYTES` (default 1 MiB).
   Tuples, sets, pydantic models and other objects are recorded as not servable.
@@ -355,10 +358,14 @@ class ReplayFlags:
 The `allow_*` flags form a safety ladder over the capsule's recorded tool calls
 (`allow_readonly` < `allow_mutating` < `allow_external_side_effects` <
 `allow_unknown_mutation`). They drive the `dry_run` report, and `allow_mutating`
-triggers an audited policy gate before the replay starts; they do **not**
-intercept calls inside the replayed process, except that with `permissive=True`
-an unmatched `record.tool` call runs live only if they permit its declared
-class (ADR-0306, experimental). Leaving them `False` does not
+triggers an audited policy gate before the replay starts. Inside the replayed
+process they gate only the intercepted tool surfaces (ADR-0306, experimental):
+with `permissive=True` an unmatched MCP or `record.tool` call runs live only if
+they permit its class (MCP calls count as `unknown`), and a `replay.yaml`
+`allow: true` override re-executes a tool only if they permit its class. A
+strict replay whose `replay.yaml` has an `allow: false` override on a tool it
+cannot intercept returns `status: "aborted"` with `error["type"] ==
+"ToolOverrideUnenforceable"`. Leaving them `False` does not
 sandbox tools that `mocked` mode does not intercept — run such replays in a
 sandbox or against test credentials.
 

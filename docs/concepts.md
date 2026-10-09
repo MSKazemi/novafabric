@@ -412,8 +412,11 @@ The replay **fails closed**: an extra model call, a call on an unsupported
 surface, an unmatched MCP or `record.tool` call, or a recorded response that is never requested
 marks the replay `failure` with a `divergence_reason`, even if the workload
 caught the exception. `--permissive` (Python: `ReplayFlags(permissive=True)`)
-keeps the older behaviour — an empty reply on an exhausted queue, unmatched
-calls run live — and still reports every divergence. The result counts what was
+keeps the older behaviour — an empty reply on an exhausted queue, unsupported
+model surfaces run live — and still reports every divergence; an unmatched MCP or
+`record.tool` call runs live only if a safety-ladder flag permits its class (an MCP
+call always counts as `unknown`: `--allow-unknown-mutation`). *(Changed, unreleased,
+ADR-0306: `--permissive` alone used to run every unmatched MCP call live.)* The result counts what was
 actually served: `model_calls_mocked` of `model_calls_available`,
 `tool_calls_mocked`/`tool_calls_live`/`tool_calls_unmatched`, and
 `queues_fully_consumed`. See the
@@ -422,16 +425,17 @@ actually served: `model_calls_mocked` of `model_calls_available`,
 ### Safety ladder (mocked replay)
 
 The safety ladder classifies the capsule's recorded tool calls by side-effect
-level. **It does not change what the replayed process may do** — it drives the
-`--dry-run` report (which recorded calls each rung would permit) and
-`--allow-mutating` triggers a policy-engine gate (an audited allow/deny) before a
-mutating replay starts. In `mocked` mode the run-time rule is fixed by ADR-0300
-instead: an MCP `call_tool` is served from the capsule or refused, whatever its
-mutation class, and every other tool runs live (the `--dry-run` report marks
-those `[LIVE]`). One exception (ADR-0306, experimental): under `--permissive`,
-an unmatched `record.tool` call runs live only if a rung permits the mutation
-class its decorator declares. Ladder-based enforcement for tools replay does not
-intercept is **future design**. The rungs:
+level. It drives the `--dry-run` report, and `--allow-mutating` triggers a
+policy-engine gate (an audited allow/deny) before a mutating replay starts. In
+`mocked` mode the run-time rule is fixed by ADR-0300: an intercepted call (MCP
+`call_tool`, or a `record.tool` function) is served from the capsule or refused,
+and every other tool runs live (the `--dry-run` report marks those `[LIVE]`). The
+rungs gate the intercepted surfaces in two places only (ADR-0306, experimental):
+under `--permissive` an unmatched call runs live only if a rung permits its class,
+and a `replay.yaml` `allow: true` override re-executes a tool only if a rung
+permits its class. The class is the one a `record.tool` decorator declares, or
+`unknown` for every MCP call — never a class the capsule recorded. Ladder-based
+enforcement for tools replay does not intercept is **future design**. The rungs:
 
 ```
 (none)               — deny all tool calls
@@ -452,14 +456,31 @@ Per-tool overrides can be specified in `replay.yaml`, one entry per tool name
 ```yaml
 tool_overrides:
   - tool_name: safe_lookup
-    allow: true      # re-execute this tool, whatever the default
+    allow: true      # re-execute it -- only if the operator also passes the ladder flag
   - tool_name: send_email
-    allow: false     # refuse it
+    allow: false     # never run it live
 ```
 
-An override wins over the mode's own rule. Today it decides what `nova replay --dry-run`
-reports for that tool; it is **not yet** consulted inside the replayed process (ADR-0300).
-The older `action: replay | refuse` form is still read.
+In `mocked` mode the overrides are **enforced inside the replayed process**
+(experimental, unreleased, ADR-0306) on the two surfaces replay intercepts — MCP
+`ClientSession.call_tool` and functions declared with `record.tool` — and `--dry-run`
+prints exactly the same decisions. Because `replay.yaml` travels inside the capsule, a
+restriction from it is trusted and a permission is not:
+
+- `allow: false` — a recorded result is still served (serving is not re-execution); a
+  call with no recorded result is refused, **even under `--permissive`**. If the tool
+  was recorded on a transport replay cannot intercept (HTTP, shell, an undeclared
+  function), the override cannot be enforced, so a strict replay **refuses to start**
+  (`ToolOverrideUnenforceable`, exit 3); `--permissive` starts and reports
+  `override_unenforceable`.
+- `allow: true` — the tool is re-executed live **only** if the operator also passes the
+  ladder flag for its class (an MCP tool always counts as `unknown`, so
+  `--allow-unknown-mutation`). Without it the recorded result is served and the result
+  reports `override_not_honoured`.
+
+The result lists every override under `replay_contract.tool_overrides`. Outside `mocked`
+mode no tool dispatcher exists and the overrides only colour the `--dry-run` report. The
+older `action: replay | refuse` form is still read as `allow: true | false`.
 
 ### `semantic` mode
 

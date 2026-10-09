@@ -718,14 +718,17 @@ unsupported surface (`parse`, legacy completions, `with_raw_response`), an MCP o
 `record.tool` call whose record cannot be served (`tool_result_not_servable`), or a
 recorded response that is never requested makes the replay `failure` with a
 `divergence_reason`. `--permissive` keeps the older warn-and-continue behaviour and
-only reports — except that an unmatched `record.tool` call runs live only if a
-safety-ladder flag permits its declared `mutation_class`.
+only reports — except that an unmatched MCP or `record.tool` call runs live only if
+a safety-ladder flag permits its `mutation_class` (the decorator's declared class;
+every MCP call counts as `unknown`, so it needs `--allow-unknown-mutation`).
+*Changed, unreleased (ADR-0306):* `--permissive` alone used to run every unmatched
+MCP call live.
 
 The safety-ladder flags classify the capsule's recorded tool calls for the
 `--dry-run` report, and `--allow-mutating` adds an audited policy gate before the
-replay starts; they do not intercept calls inside the replayed process (the one
-exception: under `--permissive` they decide whether an unmatched `record.tool`
-call may run live):
+replay starts. Inside the replayed process they gate only the two intercepted tool
+surfaces — an unmatched call under `--permissive`, and a `replay.yaml`
+`allow: true` override — and never stop a tool replay does not intercept:
 
 ```bash
 nova replay .novafabric/capsules/01HX.../ --mode mocked \
@@ -734,6 +737,27 @@ nova replay .novafabric/capsules/01HX.../ --mode mocked \
   --allow-external-side-effects  # rung: external-side-effect tools
   --allow-unknown-mutation     # rung: unclassified tools
 ```
+
+**Per-tool overrides** (experimental, unreleased, ADR-0306). A capsule's
+`replay.yaml` may carry `tool_overrides`; in `mocked` mode they are enforced inside
+the replayed process, and `--dry-run` prints the same decisions:
+
+```yaml
+tool_overrides:
+  - tool_name: send_email
+    allow: false   # never run live, even under --permissive
+  - tool_name: lookup_order
+    allow: true    # re-execute -- only if you also pass the ladder flag for its class
+```
+
+`replay.yaml` travels with the capsule, so its restrictions hold and its
+permissions need your consent: `allow: true` without the matching `--allow-*` flag
+serves the recorded result and reports `override_not_honoured`. An `allow: false`
+on a tool recorded on a surface replay cannot intercept (HTTP, shell, an undeclared
+function) cannot be enforced: a strict replay refuses to start
+(`ToolOverrideUnenforceable`, exit 3), and `--permissive` runs it and reports
+`override_unenforceable`. Each override's outcome is listed under
+`replay_contract.tool_overrides` in `replay_result.yaml`.
 
 This is the mode for CI and regression testing: re-run the recorded command
 against its recorded responses and diff the result.

@@ -15,10 +15,12 @@ Every flag of these commands: [CLI reference — nova replay, diff and diagnose]
 > **unreleased** (on `main`, in the next release): recorded MCP `call_tool` results served
 > (ADR-0300), the fail-closed contract and `--permissive`, async / streamed / Responses API
 > serving and live-network reporting (ADR-0304), replay of recorded model errors, the
-> transport-record rule (ADR-0305), refusing capsules with no command to re-run, and
+> transport-record rule (ADR-0305), refusing capsules with no command to re-run,
 > **experimental** serving of functions declared with `novafabric.capture.record.tool`
-> (ADR-0306 slice 1). Rows of the support matrix below that cite those ADRs are unreleased
-> too.
+> (ADR-0306 slice 1), and — also **experimental** — `replay.yaml` `tool_overrides`
+> enforced inside the replayed process, with `--permissive` needing the ladder flag before
+> an unmatched MCP call runs live (ADR-0306 slice 2). Rows of the support matrix below that
+> cite those ADRs are unreleased too.
 
 ![The five replay modes](../assets/architecture/replay-modes.svg)
 
@@ -173,6 +175,7 @@ that diverged, instead of fabricating a reply or reaching the network:
 | `recorded_error_unreconstructable` | the recorded call failed, and replay cannot raise that failure faithfully (`error_type`, `reason` reported); under `--permissive` a `ReplayRecordedModelError` stand-in with the recorded type and message is raised instead |
 | `tool_call_unmatched` | an MCP `call_tool` or `record.tool` call with no unconsumed recorded result — **the live tool is not run** |
 | `tool_result_not_servable` | a `record.tool` call matched a record whose result cannot be served, or has an argument that is not JSON-representable; `reason` names the cause (payloads not recorded, tuple/object result, size cap, the parameter, nested records) — **the function body is not run**. Counted as a tool divergence |
+| `override_unenforceable` | `--permissive` only (a strict replay refuses to start instead): a `replay.yaml` `allow: false` override names a tool recorded on a transport replay cannot intercept, so it ran live (`tool_name`, `transports` reported; experimental, ADR-0306) |
 | `model_calls_unconsumed` / `tool_calls_unconsumed` | (after the run) recorded responses that were never requested |
 | `dispatcher_install_failed`, `multiple_interpreters` | the dispatcher could not be installed (the process is stopped, exit 86, before the workload runs), or several Python processes each consumed the queue |
 
@@ -181,14 +184,46 @@ ReplayDivergence` and a `divergence_reason` — even when the workload caught th
 exception and exited 0, because the engine reads the dispatchers' event log, not
 just the exit code. `--permissive` (`ReplayFlags(permissive=True)`) switches to
 the `warn` policy: an exhausted queue serves an empty reply with a warning (the
-pre-ADR-0300 behaviour), unsupported surfaces and unmatched MCP calls run live,
-and every divergence is still recorded. An unmatched or unservable `record.tool`
-call runs live under `--permissive` **only** when the operator's ladder flag
-permits its declared `mutation_class` (`none` always; `--allow-readonly`,
-`--allow-mutating`, `--allow-external-side-effects`, `--allow-unknown-mutation`
-for the others, ADR-0012); otherwise it is refused (`tool_calls_refused`). The
-class comes from the decorator in the workload's code, never from the capsule. `intervention` always uses `warn` and
-installs no tool dispatcher, because a counterfactual is expected to diverge.
+pre-ADR-0300 behaviour), unsupported model surfaces run live, and every
+divergence is still recorded. An unmatched intercepted tool call — MCP or
+`record.tool`, or a `record.tool` call whose record cannot be served — runs live
+under `--permissive` **only** when the operator's ladder flag permits its
+`mutation_class` (`none` always; `--allow-readonly`, `--allow-mutating`,
+`--allow-external-side-effects`, `--allow-unknown-mutation` for the others,
+ADR-0012); otherwise it is refused (`tool_calls_refused`). For `record.tool`
+the class comes from the decorator in the workload's code; an MCP call is
+always `unknown`, so it needs `--allow-unknown-mutation`. The class a capsule
+records is never used to permit anything. *(Changed, unreleased, ADR-0306 Q3:
+before, `--permissive` alone ran every unmatched MCP call live.)* `intervention`
+always uses `warn` and installs no tool dispatcher, because a counterfactual is
+expected to diverge.
+
+**`replay.yaml` `tool_overrides` (experimental, ADR-0306 slice 2).** The engine
+resolves the capsule's `replay.yaml` (`replay/_policy.py:PolicyEvaluator`) into a
+per-tool table and hands it to the replayed process
+(`NOVAFABRIC_REPLAY_TOOL_POLICY_PATH`); `MockToolDispatcher` applies it on both
+tool surfaces through the same function `--dry-run` uses
+(`_policy.decide_intercepted`). Because `replay.yaml` ships inside the capsule,
+a **restriction** from it is trusted and a **permission** is not:
+
+| Override | Recorded call, intercepted surface | Unmatched call, intercepted surface | Tool recorded on a surface replay does not intercept |
+|---|---|---|---|
+| none | served | refused (strict); live under `--permissive` only with the ladder flag | runs live, reported |
+| `allow: false` | served (serving is not re-execution) | refused, **even under `--permissive`** | a strict replay **refuses to start** (`ToolOverrideUnenforceable`, exit 3); `--permissive` starts, the tool runs live, and an `override_unenforceable` divergence is reported |
+| `allow: true` | re-executed live **only** with the operator's ladder flag for its class (MCP: `--allow-unknown-mutation`); otherwise served and reported `override_not_honoured`. The record is consumed either way | same gate | runs live anyway |
+
+An override naming a tool the capsule never recorded is reported
+`override_unused`. While an `allow: false` override is in force, a failed
+dispatcher install stops the replayed process (exit 86) even under
+`--permissive`, since nothing else could hold it. `--dry-run` prints the same
+decision for every recorded call (`[MOCK (never live)]`,
+`[MOCK (override not honoured: needs --allow-…)]`, `[LIVE (override honoured)]`)
+and a `Tool overrides (replay.yaml)` table; a test runs the dry run and the real
+replay for every override × surface × ladder flag × `--permissive` combination
+and requires them to agree
+(`tests/replay/test_tool_overrides_enforced_e2e.py::test_dry_run_report_equals_replayed_behaviour`).
+The `mutation_class` field a `ToolOverride` may carry is informational and never
+used to permit anything.
 
 **What the result reports** (`replay_result.yaml`, additive and optional):
 
@@ -197,10 +232,11 @@ installs no tool dispatcher, because a counterfactual is expected to diverge.
 | `model_calls_mocked` / `model_calls_available` | recorded responses actually served / servable |
 | `model_calls_unmatched` | calls with no recorded answer (including refused unsupported surfaces) |
 | `tool_calls_mocked` / `tool_calls_available` / `tool_calls_recorded` | tool results served / tool results servable (MCP and servable `record.tool` records) / every recorded tool call |
-| `tool_calls_live` / `tool_calls_unmatched` | intercepted calls run live (`--permissive` only) / intercepted calls with no servable recorded result |
+| `tool_calls_live` / `tool_calls_unmatched` | intercepted calls run live (`--permissive`, or an honoured `allow: true` override) / intercepted calls with no servable recorded result |
 | `queues_fully_consumed` | every servable recording was requested |
 | `divergence_reason` | the first divergence, plus a count of the others |
-| `replay_contract` | policy, intercepted surfaces, `dispatcher_installed`, `model_calls_live`, `model_errors_replayed` (recorded SDK errors raised again; they are also counted in `model_calls_mocked`), unconsumed counts, `tool_calls_not_interceptable`, `tool_calls_refused` (`record.tool` calls `--permissive` did not run because no ladder flag permitted their class), `tool_calls_by_surface` (`recorded`, `available`, `mocked`, `live`, `refused`, `unmatched`, `unconsumed` per tool surface), the network observation below, and the divergence list |
+| `replay_contract` | policy, intercepted surfaces, `dispatcher_installed`, `model_calls_live`, `model_errors_replayed` (recorded SDK errors raised again; they are also counted in `model_calls_mocked`), unconsumed counts, `tool_calls_not_interceptable`, `tool_calls_refused` (intercepted calls `--permissive` did not run: no ladder flag permitted their class, or an `allow: false` override), `tool_calls_by_surface` (`recorded`, `available`, `mocked`, `live`, `refused`, `unmatched`, `unconsumed` per tool surface), the network observation below, and the divergence list |
+| `replay_contract.tool_overrides` | only when `replay.yaml` has overrides: one `{tool_name, decision, honoured, reason, rationale?}` per override; `reason` starts with `override_unused`, `override_unenforceable` or `override_not_honoured` when it is not honoured (experimental, ADR-0306) |
 | `replay_contract.network_connections_live` / `network_destinations` | IPv4/IPv6 connections the replayed Python process opened (`socket.connect` / `connect_ex`, `replay/_dispatcher.py:NetworkObserver`), with the distinct `host:port` destinations (first 20). **Observed, never blocked** (ADR-0304); `network_observed: false` means nothing was observed, not that nothing happened. After 10,000 connections the count stops and `network_connections_capped: true` marks it as a lower bound |
 | `intervention` | for `--mode intervention`: the spec, `matched_event_index`, the check outcomes, `downstream_reexecuted` (and `downstream_not_reexecuted_reason`), and `substitution_delivered_to_workload` with a `substitution_note` when it is `false` |
 
@@ -216,6 +252,7 @@ reach the re-executed workload.
 | `0` | the replay succeeded, or a `--dry-run` that the real run would not refuse |
 | `1` | the replay failed or was aborted: `CapsuleNotReplayable` (also under `--dry-run`), a divergence under the fail-closed default (even when the workload itself exited 0), a launch error or timeout |
 | `2` | `--environment` did not match the capsule's recorded environment |
+| `3` | `mocked` refused to start (also under `--dry-run`): a `replay.yaml` `allow: false` override names a tool recorded on a transport replay cannot intercept (`status: aborted`, `error.type: ToolOverrideUnenforceable`; experimental, ADR-0306) |
 | `N` | `mocked` / `intervention`: the replayed command's own non-zero exit code, including `86` when the dispatcher could not be installed |
 
 ## Support matrix
@@ -247,10 +284,10 @@ and is counted in `replay_contract.model_calls_live`.
 | OpenAI Responses API response with `status: failed` or `incomplete`, or a stream that delivered an `error` event | SDK hook: the Response's own `status`, `incomplete_details` and `error`, verbatim (`io.novafabric.response_status`); `failed` is also `status: error` on the record; a yielded `error` event is kept verbatim (`io.novafabric.stream_error_event`, `status: error`) | **Served** — returned, never raised -- the SDK returns these responses and yields the `error` event; the recorded status, reason and error are served as recorded | served: ends with the recorded terminal event (`response.failed`, `response.incomplete`); after an `error` event, the delivered events, then that event, and no terminal event | served | works today; a failed response captured before its status was recorded is refused (re-capture) | `test_recorded_model_errors_replay.py::test_a_failed_responses_response_is_returned_not_raised`; `test_recorded_model_errors_replay.py::test_an_incomplete_responses_response_keeps_its_recorded_reason`; `test_recorded_model_errors_replay.py::test_a_failed_response_captured_before_its_status_was_recorded_is_refused`; `test_undelivered_stream_endings.py::test_a_responses_error_event_is_recorded_and_replayed_as_delivered` |
 | Non-Python clients via `nova api-proxy` | streaming: merged response, canonical `tool_calls`; non-streaming: request + id/model only | Not intercepted — replay patches Python SDKs | — | — | capture only | `tests/test_api_proxy.py` |
 | Other providers' SDKs, raw HTTP to a model API | wire hook: request only | Not intercepted — runs **live**; its connections are reported (`network_connections_live`) | — | — | not controlled | `test_mocked_replay_contract.py::test_s13_live_network_from_an_uncontrolled_tool_is_reported_not_blocked` |
-| MCP `ClientSession.call_tool` (in-process hook or `nova mcp-proxy`) | full result (proxy: verbatim JSON-RPC envelope) | **Served** — one-to-one; an unmatched call is refused | — | (async by nature) | works today | `test_mocked_replay_contract.py::test_s2_model_tool_model`; `test_mocked_replay_contract.py::test_s4_repeated_identical_calls_consume_distinct_records`; `test_mocked_replay_contract.py::test_s8_missing_tool_record_fails_closed_even_if_the_workload_swallows_it` |
-| Python function declared with `novafabric.capture.record.tool` (ADR-0306) | one `transport: python` record per call; arguments and result kept only at the `forensic`/`air_gapped` capture level, digests otherwise | **Served** — before the function body runs; one-to-one by name and canonical arguments; JSON-native results up to 1 MiB; an unmatched or unservable call is refused (`--permissive` runs it live only if a ladder flag permits its declared mutation class) | refused at decoration (generator functions) | served (`async def`) | experimental | `test_python_tool_replay_e2e.py::test_decorated_calls_are_served_and_their_bodies_never_run`; `test_python_tool_replay_e2e.py::test_positional_keyword_and_default_calls_match_and_consume_in_order`; `test_python_tool_replay_e2e.py::test_an_unmatched_call_fails_closed_before_the_body_runs`; `test_python_tool_replay_e2e.py::test_an_unservable_record_fails_closed_naming_the_cause`; `test_python_tool_replay_e2e.py::test_permissive_refuses_an_unmatched_unknown_call_without_the_ladder_flag` |
+| MCP `ClientSession.call_tool` (in-process hook or `nova mcp-proxy`) | full result (proxy: verbatim JSON-RPC envelope) | **Served** — one-to-one; an unmatched call is refused (`--permissive` runs it live only with `--allow-unknown-mutation`: MCP calls count as `unknown`); `replay.yaml` `tool_overrides` enforced in-process (experimental, ADR-0306) | — | (async by nature) | works today | `test_mocked_replay_contract.py::test_s2_model_tool_model`; `test_mocked_replay_contract.py::test_s4_repeated_identical_calls_consume_distinct_records`; `test_mocked_replay_contract.py::test_s8_missing_tool_record_fails_closed_even_if_the_workload_swallows_it`; `test_mocked_replay_contract.py::test_s13_permissive_refuses_an_unmatched_mcp_call_without_the_ladder_flag`; `test_tool_overrides_enforced_e2e.py::test_dry_run_report_equals_replayed_behaviour` |
+| Python function declared with `novafabric.capture.record.tool` (ADR-0306) | one `transport: python` record per call; arguments and result kept only at the `forensic`/`air_gapped` capture level, digests otherwise | **Served** — before the function body runs; one-to-one by name and canonical arguments; JSON-native results up to 1 MiB; an unmatched or unservable call is refused (`--permissive` runs it live only if a ladder flag permits its declared mutation class); `replay.yaml` `tool_overrides` enforced in-process | refused at decoration (generator functions) | served (`async def`) | experimental | `test_python_tool_replay_e2e.py::test_decorated_calls_are_served_and_their_bodies_never_run`; `test_python_tool_replay_e2e.py::test_positional_keyword_and_default_calls_match_and_consume_in_order`; `test_python_tool_replay_e2e.py::test_an_unmatched_call_fails_closed_before_the_body_runs`; `test_python_tool_replay_e2e.py::test_an_unservable_record_fails_closed_naming_the_cause`; `test_python_tool_replay_e2e.py::test_permissive_refuses_an_unmatched_unknown_call_without_the_ladder_flag`; `test_tool_overrides_enforced_e2e.py::test_an_unmatched_intercepted_call_follows_the_owner_rules` |
 | MCP session set-up (server start, `initialize`, `list_tools`) | not recorded as tool calls | Not intercepted — runs **live** | — | — | not controlled | e2e tests start a real in-memory MCP server during replay |
-| HTTP, shell, filesystem, framework-native tools, undeclared functions the workload runs for a model | network/file events, not tool records | Not intercepted — runs **live**; outbound connections are reported (`network_connections_live`), files and processes are not | — | — | not controlled | `test_mocked_replay_contract.py::test_s13_network_tool_refused_and_uncontrolled_transports_reported`; `test_mocked_replay_contract.py::test_s13_live_network_from_an_uncontrolled_tool_is_reported_not_blocked` |
+| HTTP, shell, filesystem, framework-native tools, undeclared functions the workload runs for a model | network/file events, not tool records | Not intercepted — runs **live**; outbound connections are reported (`network_connections_live`), files and processes are not; a `replay.yaml` `allow: false` override on one makes a strict replay refuse to start (`ToolOverrideUnenforceable`, exit 3) | — | — | not controlled | `test_mocked_replay_contract.py::test_s13_network_tool_refused_and_uncontrolled_transports_reported`; `test_mocked_replay_contract.py::test_s13_live_network_from_an_uncontrolled_tool_is_reported_not_blocked`; `test_tool_overrides_enforced_e2e.py::test_strict_replay_refuses_to_start_on_an_unenforceable_override` |
 
 <!-- END GENERATED: replay-support-matrix -->
 
@@ -265,13 +302,14 @@ These limits are stated so you can rely on the parts that do work:
   `--allow-unknown-mutation` flags are evaluated by
   `replay/_policy.py:PolicyEvaluator`. Their per-call decisions are shown by
   `--dry-run` (which marks non-intercepted tools `[LIVE]`). Inside a mocked
-  subprocess they matter in one place only: under `--permissive`, an unmatched
-  `record.tool` call runs live only if they permit its declared class (ADR-0306,
-  experimental). `replay.yaml` `tool_overrides`
-  entries, in the schema's `{tool_name, allow}` shape or the legacy
-  `action: replay|refuse` shape, override the decision for that tool in the same
-  report; enforcing them inside the replayed process is ADR-0306 slice 2
-  (planned, not implemented).
+  subprocess they gate only the two intercepted tool surfaces: an unmatched call
+  under `--permissive`, and an `allow: true` override (ADR-0306, experimental).
+  They never stop a tool on any other surface. `replay.yaml` `tool_overrides`
+  (the schema's `{tool_name, allow}` shape or the legacy `action: replay|refuse`
+  shape) are enforced on the intercepted surfaces only; on any other surface an
+  `allow: false` cannot be enforced, which is why a strict replay refuses to
+  start. `--mode intervention` installs no tool dispatcher and enforces no
+  override.
 - **`record.tool` serves declared functions only** (experimental). Undeclared
   functions a model asks the workload to run, framework-native tools, and
   anything a served function would have done (files, caches, globals) are not

@@ -1146,13 +1146,13 @@ nova replay .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --output-dir /mnt/repla
 
 Options:
 - `--mode {mocked,forensic,semantic,exact,intervention}` — replay mode (default: `mocked`). Tab-completion available via `nova --install-completion`.
-- `--dry-run` — report what would execute without running; writes dry-run report and exits 0 — or exits 1, with the same `REFUSED: …` message and `error.type: CapsuleNotReplayable`, when the selected mode is `mocked` and the capsule records no command to re-run (see below)
-- `--allow-readonly` — safety-ladder rung: permit `read-only` tools (drives the `--dry-run` report; does not intercept calls in the replayed process)
+- `--dry-run` — report what would execute without running; writes dry-run report and exits 0 — or exits 1, with the same `REFUSED: …` message and `error.type: CapsuleNotReplayable`, when the selected mode is `mocked` and the capsule records no command to re-run (see below), or exits 3 with `ToolOverrideUnenforceable` when a strict mocked replay would refuse to start (see *Per-tool overrides* below). In `mocked` mode each recorded tool call is labelled with exactly what the replay will do (`[MOCK]`, `[MOCK (never live)]`, `[MOCK (override not honoured: needs --allow-…)]`, `[LIVE]`, `[LIVE (override honoured)]`, `[DENY]`), followed by a `Tool overrides (replay.yaml)` table
+- `--allow-readonly` — safety-ladder rung: permit `read-only` tools
 - `--allow-mutating` — rung for `idempotent-write` and `non-idempotent-write` tools; also triggers the audited `replay_mutating` policy gate before the replay starts
-- `--allow-external-side-effects` — rung for `external-side-effect` tools (dry-run report)
-- `--allow-unknown-mutation` — rung for tools with `unknown` mutation class (dry-run report)
-- Under `--permissive` these four rungs also decide whether an unmatched `record.tool` call may run live in the replayed process (its declared `mutation_class` must be permitted; `none` always is) — ADR-0306, experimental. Otherwise they do not gate calls inside a mocked replay.
-- `--permissive` — `mocked` mode only (ADR-0300): do **not** fail on divergence. A model call with no recorded response gets an empty reply with a warning (the pre-ADR-0300 behaviour), unsupported model surfaces and unmatched MCP tool calls run **live**, an unmatched `record.tool` call runs live only if a ladder flag permits its declared mutation class (otherwise it is refused and counted in `replay_contract.tool_calls_refused`), and unconsumed recordings are only reported. Every divergence is still recorded in `replay_result.yaml` (`divergence_reason`, `replay_contract.divergences`) and `--permissive` is listed in `policy_flags_used`. Exit 1 with any other mode.
+- `--allow-external-side-effects` — rung for `external-side-effect` tools
+- `--allow-unknown-mutation` — rung for tools with `unknown` mutation class. **Every MCP call counts as `unknown`**, whatever class the capsule recorded, so this is the rung MCP calls need
+- The four rungs drive the `--dry-run` report. In a `mocked` replay they gate the two intercepted tool surfaces (MCP `call_tool`, `record.tool`) in two places only — ADR-0306, experimental: under `--permissive` an unmatched call runs live only if its class is permitted (`none` always is; a `record.tool` call uses its declared class), and a `replay.yaml` `allow: true` override re-executes a tool only if its class is permitted. They never stop a tool replay does not intercept.
+- `--permissive` — `mocked` mode only (ADR-0300): do **not** fail on divergence. A model call with no recorded response gets an empty reply with a warning (the pre-ADR-0300 behaviour), unsupported model surfaces run **live**, an unmatched MCP or `record.tool` call runs live only if a ladder flag permits its mutation class — `--allow-unknown-mutation` for MCP, the declared class for `record.tool` — and never when `replay.yaml` says `allow: false` (otherwise it is refused and counted in `replay_contract.tool_calls_refused`), and unconsumed recordings are only reported. *Changed, unreleased (ADR-0306 Q3):* `--permissive` alone used to run every unmatched MCP call live. Every divergence is still recorded in `replay_result.yaml` (`divergence_reason`, `replay_contract.divergences`) and `--permissive` is listed in `policy_flags_used`. Exit 1 with any other mode.
 - `--output-dir, -o PATH` — base directory for replay output (default: `.novafabric/replays/`)
 - `--environment ENV` — experimental (ADR-0126): only replay a capsule that recorded `ENV` as its `deployment_environment` (exact match, case-sensitive). Otherwise exit 2 before anything runs; a capsule with no recorded environment is refused. Usable as a CI gate, e.g. `nova replay --environment staging --dry-run <run-id>`. The `replay_mutating` policy input also carries the recorded value as `input.resource.deployment_environment` (`null` when absent).
 - `--intervention-file PATH` — InterventionSpec YAML for `--mode intervention` (experimental, ADR-0086): one target selector (`event_index` or `span_id`) + exactly one substitution (`replace_model_response` / `replace_tool_result` / `mutate_payload`) + optional named check-functions (`fatal: true` aborts). The output capsule is diffable against the baseline with `nova diff`. Only a `model-calls` substitution reaches the re-executed workload; a `tool-calls` one changes the output capsule and the checks only (tools run live), which the result records as `intervention.substitution_delivered_to_workload: false` and the CLI reports as a warning.
@@ -1162,7 +1162,7 @@ Options:
 | Mode | Re-executes command? | Re-executes models? | Re-executes tools? | Output |
 |---|---|---|---|---|
 | `forensic` | No | No | No | Inspection report |
-| `mocked` | Yes (Python workloads) | OpenAI `chat.completions` and Responses API, Anthropic `messages` — sync or async, streamed or not: from the capsule. `parse`, legacy completions, Anthropic `messages.stream()`, `with_raw_response`: refused (live with `--permissive`). Other providers: live, connections reported | MCP `ClientSession.call_tool`: from the capsule, unmatched calls refused (live with `--permissive`). Functions declared with `novafabric.capture.record.tool` (experimental, ADR-0306): from the capsule before the body runs, unmatched or unservable calls refused (live with `--permissive` only if an `--allow-*` flag permits the declared mutation class). Every other tool: **live** | Replay result with served/unmatched counters and any divergence |
+| `mocked` | Yes (Python workloads) | OpenAI `chat.completions` and Responses API, Anthropic `messages` — sync or async, streamed or not: from the capsule. `parse`, legacy completions, Anthropic `messages.stream()`, `with_raw_response`: refused (live with `--permissive`). Other providers: live, connections reported | MCP `ClientSession.call_tool`: from the capsule, unmatched calls refused (live with `--permissive` only with `--allow-unknown-mutation`). Functions declared with `novafabric.capture.record.tool` (experimental, ADR-0306): from the capsule before the body runs, unmatched or unservable calls refused (live with `--permissive` only if an `--allow-*` flag permits the declared mutation class). Every other tool: **live** | Replay result with served/unmatched counters and any divergence |
 | `semantic` | No | No | No | Similarity score (0–1.0) across model call responses |
 | `exact` | No | No | No | Eligibility check: deterministic env + seeded calls |
 | `intervention` | Yes | Substituted + recorded (warn on divergence) | **Live** (no tool dispatcher) | Counterfactual capsule marked `replay_mode: intervention` (experimental, ADR-0086) |
@@ -1184,10 +1184,25 @@ records `intervention.downstream_reexecuted: false`. `exact` reports it not elig
 `forensic` and `semantic` work as for any capsule. See
 [which capsules each mode accepts](architecture/replay-modes.md#which-capsules-each-mode-accepts).
 
+**Per-tool overrides** (experimental, unreleased, ADR-0306). A capsule's `replay.yaml`
+`tool_overrides` (`{tool_name, allow}`, or the legacy `action: replay|refuse`) are
+enforced inside the replayed `mocked` process on both intercepted surfaces. A restriction
+from the capsule holds and a permission needs the operator: `allow: false` is never run
+live, even under `--permissive` (a recorded result is still served); `allow: true`
+re-executes the tool only with the `--allow-*` flag for its class, otherwise the
+recorded result is served and `override_not_honoured` is reported. An `allow: false`
+on a tool recorded on a transport replay cannot intercept cannot be enforced: a strict
+replay refuses to start (`status: aborted`, `error.type: ToolOverrideUnenforceable`,
+exit 3, also under `--dry-run`); `--permissive` starts and reports an
+`override_unenforceable` divergence. Each override's outcome is written to
+`replay_contract.tool_overrides`.
+
 **Exit codes:** `0` — replay succeeded, or a `--dry-run` the real run would not refuse ·
 `1` — replay failed or was aborted (a divergence under the fail-closed default,
 `CapsuleNotReplayable`, a launch error or timeout, a fatal intervention check) or a usage
-error · `2` — `--environment` did not match the capsule's recorded environment · any
+error · `2` — `--environment` did not match the capsule's recorded environment · `3` —
+`mocked` refused to start because a `replay.yaml` `allow: false` override cannot be
+enforced (`ToolOverrideUnenforceable`, also under `--dry-run`) · any
 other non-zero value — `mocked`/`intervention` pass through the replayed command's own
 exit code.
 

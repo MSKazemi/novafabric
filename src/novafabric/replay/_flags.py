@@ -52,7 +52,9 @@ class ReplayFlags:
     # fail-closed: a model call with no recorded response, an unsupported model
     # surface, an unmatched MCP tool call, or a recorded response left
     # unconsumed fails the replay. True keeps the pre-0300 behaviour (empty
-    # response + warning, live tools) and only records the divergences.
+    # response + warning) and only records the divergences; an unmatched tool
+    # call runs live only if `permits` its class, never against a replay.yaml
+    # `allow: false` (ADR-0306 D7/D8).
     permissive: bool = False
 
     @property

@@ -49,6 +49,7 @@ _CAPTURE = "tests/capture/test_sdk_stream_capture.py"
 _ERRORS = "tests/replay/test_recorded_model_errors_replay.py"
 _ENDINGS = "tests/replay/test_undelivered_stream_endings.py"
 _PY_TOOL = "tests/replay/test_python_tool_replay_e2e.py"
+_OVERRIDES = "tests/replay/test_tool_overrides_enforced_e2e.py"
 
 ROWS: tuple[SurfaceRow, ...] = (
     SurfaceRow(
@@ -320,7 +321,11 @@ ROWS: tuple[SurfaceRow, ...] = (
         surface="MCP `ClientSession.call_tool` (in-process hook or `nova mcp-proxy`)",
         capture="full result (proxy: verbatim JSON-RPC envelope)",
         replay="served",
-        replay_note="one-to-one; an unmatched call is refused",
+        replay_note=(
+            "one-to-one; an unmatched call is refused (`--permissive` runs it live only "
+            "with `--allow-unknown-mutation`: MCP calls count as `unknown`); "
+            "`replay.yaml` `tool_overrides` enforced in-process (experimental, ADR-0306)"
+        ),
         streaming="—",
         asynchronous="(async by nature)",
         status="works today",
@@ -328,6 +333,8 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_CONTRACT}::test_s2_model_tool_model",
             f"{_CONTRACT}::test_s4_repeated_identical_calls_consume_distinct_records",
             f"{_CONTRACT}::test_s8_missing_tool_record_fails_closed_even_if_the_workload_swallows_it",
+            f"{_CONTRACT}::test_s13_permissive_refuses_an_unmatched_mcp_call_without_the_ladder_flag",
+            f"{_OVERRIDES}::test_dry_run_report_equals_replayed_behaviour",
         ),
         patches=(("mcp.client.session", "ClientSession", "call_tool"),),
     ),
@@ -342,7 +349,7 @@ ROWS: tuple[SurfaceRow, ...] = (
             "before the function body runs; one-to-one by name and canonical arguments; "
             "JSON-native results up to 1 MiB; an unmatched or unservable call is refused "
             "(`--permissive` runs it live only if a ladder flag permits its declared "
-            "mutation class)"
+            "mutation class); `replay.yaml` `tool_overrides` enforced in-process"
         ),
         streaming="refused at decoration (generator functions)",
         asynchronous="served (`async def`)",
@@ -353,6 +360,7 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_PY_TOOL}::test_an_unmatched_call_fails_closed_before_the_body_runs",
             f"{_PY_TOOL}::test_an_unservable_record_fails_closed_naming_the_cause",
             f"{_PY_TOOL}::test_permissive_refuses_an_unmatched_unknown_call_without_the_ladder_flag",
+            f"{_OVERRIDES}::test_an_unmatched_intercepted_call_follows_the_owner_rules",
         ),
         servers=("novafabric.capture.record.tool",),
     ),
@@ -375,7 +383,9 @@ ROWS: tuple[SurfaceRow, ...] = (
         replay="not intercepted",
         replay_note=(
             "runs **live**; outbound connections are reported "
-            "(`network_connections_live`), files and processes are not"
+            "(`network_connections_live`), files and processes are not; a "
+            "`replay.yaml` `allow: false` override on one makes a strict replay refuse "
+            "to start (`ToolOverrideUnenforceable`, exit 3)"
         ),
         streaming="—",
         asynchronous="—",
@@ -383,6 +393,7 @@ ROWS: tuple[SurfaceRow, ...] = (
         evidence=(
             f"{_CONTRACT}::test_s13_network_tool_refused_and_uncontrolled_transports_reported",
             f"{_CONTRACT}::test_s13_live_network_from_an_uncontrolled_tool_is_reported_not_blocked",
+            f"{_OVERRIDES}::test_strict_replay_refuses_to_start_on_an_unenforceable_override",
         ),
     ),
 )

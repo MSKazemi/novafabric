@@ -11192,28 +11192,28 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "allow-readonly",
         "label": "--allow-readonly",
         "type": "toggle",
-        "hint": "Policy flag: mark read-only tools as allowed in the --dry-run report. Under --permissive it also lets an unmatched record.tool call of that class run live (ADR-0306, experimental); otherwise it does not intercept or let through calls in a mocked replay.",
+        "hint": "Safety ladder (ADR-0012): permit read-only tools. In mocked mode, under --permissive an unmatched record.tool call of that class runs live, and a replay.yaml `allow: true` override for such a tool is honoured (ADR-0306, experimental). MCP calls always count as unknown mutation.",
         "flag": "--allow-readonly"
       },
       {
         "key": "allow-mutating",
         "label": "--allow-mutating",
         "type": "toggle",
-        "hint": "Policy flag: mark writes/deletes as allowed in the --dry-run report; the replay must also pass the policy engine's replay_mutating check. Under --permissive it also lets an unmatched record.tool call of that class run live (ADR-0306, experimental); otherwise it does not gate calls inside a mocked replay.",
+        "hint": "Safety ladder (ADR-0012): permit writes/deletes (implies --allow-readonly); the replay must also pass the policy engine's replay_mutating check. In mocked mode, under --permissive an unmatched record.tool call of that class runs live, and a replay.yaml `allow: true` override for such a tool is honoured (ADR-0306, experimental).",
         "flag": "--allow-mutating"
       },
       {
         "key": "allow-external-side-effects",
         "label": "--allow-external-side-effects",
         "type": "toggle",
-        "hint": "Policy flag: mark external side effects as allowed in the --dry-run report. Under --permissive it also lets an unmatched record.tool call of that class run live (ADR-0306, experimental); otherwise it does not gate calls inside a mocked replay.",
+        "hint": "Safety ladder (ADR-0012): permit external side effects (implies --allow-mutating). In mocked mode, under --permissive an unmatched record.tool call of that class runs live, and a replay.yaml `allow: true` override for such a tool is honoured (ADR-0306, experimental).",
         "flag": "--allow-external-side-effects"
       },
       {
         "key": "allow-unknown-mutation",
         "label": "--allow-unknown-mutation",
         "type": "toggle",
-        "hint": "Policy flag: mark tools of unknown mutation class as allowed in the --dry-run report. Under --permissive it also lets an unmatched record.tool call of that class run live (ADR-0306, experimental); otherwise it does not gate calls inside a mocked replay.",
+        "hint": "Safety ladder (ADR-0012): permit tools of unknown mutation class (implies every lower rung). Every MCP call counts as unknown: in mocked mode this is the flag that lets an unmatched MCP call run live under --permissive, and that a replay.yaml `allow: true` override on an MCP tool needs before it re-executes (ADR-0306, experimental).",
         "flag": "--allow-unknown-mutation"
       },
       {
@@ -11241,7 +11241,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "permissive",
         "label": "--permissive",
         "type": "toggle",
-        "hint": "mocked mode only (ADR-0300): do NOT fail on divergence. A model call with no recorded response gets an empty reply, unsupported model surfaces and unmatched MCP tool calls run LIVE, an unmatched record.tool call runs live only if an --allow-* flag permits its declared mutation class, and unconsumed recordings are only reported. Default is fail-closed.",
+        "hint": "mocked mode only (ADR-0300): do NOT fail on divergence. A model call with no recorded response gets an empty reply, unsupported model surfaces run LIVE, an unmatched intercepted tool call runs live only if an --allow-* flag permits its mutation class (MCP: --allow-unknown-mutation; record.tool: its declared class), never if replay.yaml says `allow: false`, and unconsumed recordings are only reported. Default is fail-closed.",
         "flag": "--permissive"
       }
     ],

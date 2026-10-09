@@ -21,8 +21,10 @@ Every action is appended to an event log the engine reads afterwards. Under the
 default ``fail`` divergence policy a call with no recorded answer raises a
 :class:`~novafabric.replay._errors.ReplayDivergenceError` subclass; under the
 opt-in ``warn`` policy (``nova replay --permissive``) the pre-ADR-0300 behaviour
-is kept -- an empty model response, live tools -- and the divergence is still
-recorded.
+is kept -- an empty model response, live unsupported model surfaces -- and the
+divergence is still recorded; an unmatched tool call runs live only if the
+operator's safety-ladder flags permit its class, and never against a
+``replay.yaml`` ``allow: false`` override (ADR-0306).
 """
 
 from __future__ import annotations
@@ -1401,9 +1403,14 @@ class MockToolDispatcher:
       (ADR-0306, experimental), asked before the function body runs.
 
     A call with no unconsumed record is refused under ``fail`` -- the live tool
-    is never executed. Under ``warn`` an unmatched MCP call runs live; an
-    unmatched ``record.tool`` call runs live only if the operator's ladder
-    flags permit its declared mutation class (ADR-0306 D7).
+    is never executed. Under ``warn`` an unmatched call runs live only if the
+    operator's ladder flags permit its mutation class -- the declared one for
+    ``record.tool``, always ``unknown`` for MCP (ADR-0306 D7, Q3).
+
+    ``overrides`` is the ``replay.yaml`` table (tool name -> ``allow``), applied
+    on both surfaces through ``_policy.decide_intercepted`` (ADR-0306 D8):
+    ``allow: false`` refuses an unmatched call even under ``warn``; ``allow:
+    true`` re-executes a call only when the ladder permits its class.
     """
 
     def __init__(
