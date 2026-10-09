@@ -492,7 +492,25 @@
         },
         "io.novafabric.sdk_error": {
           "type": "object",
-          "description": "Issue #16 (additive, optional). On an SDK hook's error record: what mocked replay needs to raise the same exception again -- sdk, class (exception class name), module (informational; never imported), message, status_code, body (the SDK's parsed error body, or body_omitted with a reason), request_id, request_method, request_url (query stripped), response_headers (retry and rate-limit headers only), response_text, response_type (httpx or httpx2)."
+          "description": "Issue #16 (additive, optional). On an SDK hook's error record: what mocked replay needs to raise the same exception again -- sdk, class (exception class name), module (informational; never imported), message, status_code, body (the SDK's parsed error body, or body_omitted with a reason), request_id, request_method, request_url (query stripped), response_headers (retry and rate-limit headers only), response_text, response_type (httpx or httpx2). On a record that also carries nova.streaming, the exception was raised while the stream was being iterated, after nova.streaming.chunk_count chunks; the record holds the content delivered before it."
+        },
+        "io.novafabric.api_surface": {
+          "type": "string",
+          "description": "ADR-0304 (additive, optional). The SDK surface an SDK hook captured the call on: 'openai.chat.completions', 'openai.responses' or 'anthropic.messages'. Absent on records captured before ADR-0304, which mean Chat Completions (OpenAI) or Messages (Anthropic)."
+        },
+        "io.novafabric.stream_complete": {
+          "type": "boolean",
+          "description": "ADR-0304 (additive, optional). false: the record was folded from a stream that did not run to its end -- abandoned by the workload, or failed part-way (then the record also carries status 'error' and io.novafabric.sdk_error); it holds what was delivered. Absent: the stream ran to its end, or the call was not streamed."
+        },
+        "io.novafabric.response_status": {
+          "type": "object",
+          "description": "Issue #16 (additive, optional). On an OpenAI Responses API record: the provider Response's own status, incomplete_details and error, verbatim. The SDK returns a 'failed' or 'incomplete' Response rather than raising, and mocked replay returns it with exactly these. Absent on a record folded from a stream that ended before its terminal event, and on records captured before this key existed.",
+          "required": ["status"],
+          "properties": {
+            "status": {"type": "string"},
+            "incomplete_details": {"type": ["object", "null"]},
+            "error": {"type": ["object", "null"]}
+          }
         }
       }
     }

@@ -16,11 +16,16 @@ from novafabric.capture.hooks._otel_genai import (
     build_record_envelope,
     extract_request_attributes,
 )
-from novafabric.capture.hooks._sdk_errors import SDK_ERROR_EXT, describe_sdk_error
+from novafabric.capture.hooks._sdk_errors import (
+    SDK_ERROR_EXT,
+    describe_sdk_error,
+    mark_failed_by,
+)
 from novafabric.capture.hooks._sdk_streams import (
     API_SURFACE_EXT,
     OPENAI_CHAT_SURFACE,
     OPENAI_RESPONSES_SURFACE,
+    RESPONSE_STATUS_EXT,
     AsyncRecordingStream,
     OpenAIChatStreamAccumulator,
     OpenAIResponsesStreamAccumulator,
@@ -29,6 +34,7 @@ from novafabric.capture.hooks._sdk_streams import (
     is_async_stream,
     is_raw_response_call,
     is_sync_stream,
+    response_status_detail,
 )
 from novafabric.capture.hooks._tool_call_refs import (
     note_dropped_tool_calls,
@@ -243,11 +249,14 @@ class OpenAIHook:
         self, surface: str, started: str, t0: float, kwargs: dict[str, Any], endpoint: str,
         call_id: str | None = None,
     ) -> Any:
-        def done(response: Any, count: int, first_ms: int | None, complete: bool) -> None:
+        def done(
+            response: Any, count: int, first_ms: int | None, complete: bool,
+            error: BaseException | None = None,
+        ) -> None:
             self._record_for(
                 surface, started, _now(), int((time.monotonic() - t0) * 1000),
                 kwargs, response, endpoint, stream_info=(count, first_ms, complete),
-                call_id=call_id,
+                call_id=call_id, stream_error=error,
             )
 
         return done
@@ -257,6 +266,7 @@ class OpenAIHook:
         kwargs: dict[str, Any], response: Any, endpoint: str,
         stream_info: tuple[int, int | None, bool] | None = None,
         call_id: str | None = None,
+        stream_error: BaseException | None = None,
     ) -> None:
         if is_raw_response_call(kwargs):
             # An HTTP response wrapper, not a parsed response: nothing to fold,
@@ -264,10 +274,12 @@ class OpenAIHook:
             response = None
         if surface == "responses":
             self._record_responses(started, finished, duration_ms, kwargs, response,
-                                   endpoint, stream_info=stream_info, call_id=call_id)
+                                   endpoint, stream_info=stream_info, call_id=call_id,
+                                   stream_error=stream_error)
         else:
             self._record(started, finished, duration_ms, kwargs, response, "success",
-                         endpoint, stream_info=stream_info, call_id=call_id)
+                         endpoint, stream_info=stream_info, call_id=call_id,
+                         stream_error=stream_error)
 
     def _record_responses(
         self,
@@ -280,6 +292,7 @@ class OpenAIHook:
         *,
         stream_info: tuple[int, int | None, bool] | None = None,
         call_id: str | None = None,
+        stream_error: BaseException | None = None,
     ) -> None:
         choice, dropped = responses_choice(response)
         failed = _get(response, "status") == "failed"
@@ -313,9 +326,17 @@ class OpenAIHook:
                 "message": str(_get(error, "message") or "the response failed"),
                 "traceback_ref": None,
             }
-        record.setdefault("extensions", {})[API_SURFACE_EXT] = OPENAI_RESPONSES_SURFACE
+        extensions = record.setdefault("extensions", {})
+        extensions[API_SURFACE_EXT] = OPENAI_RESPONSES_SURFACE
+        # Additive (issue #16): the provider's status verbatim, so mocked replay
+        # returns a failed/incomplete Response exactly as the SDK returned it.
+        status_detail = response_status_detail(response)
+        if status_detail is not None:
+            extensions[RESPONSE_STATUS_EXT] = status_detail
         note_dropped_tool_calls(record, dropped)
         attach_stream_info(record, stream_info)
+        if stream_error is not None:
+            mark_failed_by(record, stream_error, "openai")
         response_id = _get(response, "id")
         if response_id:
             record["gen_ai.response.id"] = str(response_id)
@@ -334,6 +355,7 @@ class OpenAIHook:
         *,
         stream_info: tuple[int, int | None, bool] | None = None,
         call_id: str | None = None,
+        stream_error: BaseException | None = None,
     ) -> None:
         choices: list[dict[str, Any]] = []
         finish_reasons: list[str] = []
@@ -392,6 +414,8 @@ class OpenAIHook:
         record.setdefault("extensions", {})[API_SURFACE_EXT] = OPENAI_CHAT_SURFACE
         note_dropped_tool_calls(record, dropped)
         attach_stream_info(record, stream_info)
+        if stream_error is not None:
+            mark_failed_by(record, stream_error, "openai")
         response_id = getattr(response, "id", None)
         if response_id:
             record["gen_ai.response.id"] = str(response_id)

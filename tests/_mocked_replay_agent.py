@@ -32,6 +32,9 @@ SIDE = Path(os.environ["AGENT_SIDE"])
 CANNED = json.loads(os.environ.get("AGENT_CANNED") or "null")
 _served = [0]
 obs = []
+#: The items a streamed call yielded during the current step, so a step that
+#: raised part-way through a stream can report what had been delivered.
+_DELIVERED = []
 
 
 def _transport(request):
@@ -58,9 +61,72 @@ def _transport(request):
             lines.append("")
         if body.get("done", True):
             lines += ["data: [DONE]", ""]
-        return httpx.Response(200, content=("\n".join(lines) + "\n").encode(),
+        content = ("\n".join(lines) + "\n").encode()
+        if body.get("drop"):
+            # The connection drops after these events (no terminal event).
+            return httpx.Response(200, stream=_Dropping(content, body["drop"]),
+                                  headers={"content-type": "text/event-stream"})
+        return httpx.Response(200, content=content,
                               headers={"content-type": "text/event-stream"})
     return httpx.Response(200, json=body)
+
+
+import httpx as _httpx
+
+
+class _Dropping(_httpx.SyncByteStream, _httpx.AsyncByteStream):
+    """A response body that delivers ``data`` and then fails mid-read."""
+
+    def __init__(self, data, how):
+        self._data, self._how = data, how
+
+    def _fail(self):
+        if self._how == "timeout":
+            return _httpx.ReadTimeout("read timed out mid-stream")
+        return _httpx.ReadError("connection reset mid-stream")
+
+    def __iter__(self):
+        yield self._data
+        raise self._fail()
+
+    async def __aiter__(self):
+        yield self._data
+        raise self._fail()
+
+
+def _track(items):
+    for item in items:
+        _DELIVERED.append(item)
+        yield item
+
+
+async def _atrack(items):
+    async for item in items:
+        _DELIVERED.append(item)
+        yield item
+
+
+def _delivered_obs():
+    """What a consumer had folded from a stream that then raised."""
+    items = list(_DELIVERED)
+    if not items:
+        return None
+    if hasattr(items[0], "choices"):
+        fold = _ChunkFold()
+        for item in items:
+            fold.add(item)
+        return fold.obs("delivered")
+    if str(getattr(items[0], "type", "")).startswith("response."):
+        kinds = []
+        for e in items:
+            if e.type not in kinds:
+                kinds.append(e.type)
+        return {"types": kinds, "text": "".join(
+            e.delta for e in items if e.type == "response.output_text.delta")}
+    fold = _EventFold()
+    for item in items:
+        fold.add(item)
+    return fold.obs("delivered")
 
 
 def _openai_client():
@@ -149,6 +215,8 @@ class _ChunkFold:
 
 def _responses_obs(op, r):
     return {"op": op, "text": r.output_text, "status": r.status,
+            "response_error": r.error.model_dump(exclude_unset=True) if r.error else None,
+            "incomplete": r.incomplete_details.reason if r.incomplete_details else None,
             "calls": [{"call_id": i.call_id, "name": i.name,
                        "arguments": json.loads(i.arguments)}
                       for i in r.output if i.type == "function_call"]}
@@ -159,7 +227,7 @@ def _responses_stream_obs(op, events):
     for e in events:
         if e.type == "response.output_text.delta":
             deltas.append(e.delta)
-        elif e.type in ("response.completed", "response.incomplete"):
+        elif e.type in ("response.completed", "response.incomplete", "response.failed"):
             final = e.response
     return {**_responses_obs(op, final), "delta_text": "".join(deltas)}
 
@@ -215,13 +283,14 @@ async def _run_step(step, session):
     if op == "anthropic_stream":
         import anthropic
         fold = _EventFold()
-        for e in anthropic.Anthropic().messages.create(stream=True, **MSG):
+        for e in _track(anthropic.Anthropic().messages.create(stream=True, **MSG)):
             fold.add(e)
         return fold.obs(op)
     if op == "anthropic_async_stream":
         import anthropic
         fold = _EventFold()
-        async for e in await anthropic.AsyncAnthropic().messages.create(stream=True, **MSG):
+        async for e in _atrack(
+                await anthropic.AsyncAnthropic().messages.create(stream=True, **MSG)):
             fold.add(e)
         return fold.obs(op)
     if op == "anthropic_stream_helper":
@@ -238,7 +307,7 @@ async def _run_step(step, session):
         fold = _ChunkFold()
         extra = {"stream_options": {"include_usage": True}} if step.get("usage") else {}
         with _openai_client().chat.completions.create(stream=True, **CHAT, **extra) as s:
-            for chunk in s:
+            for chunk in _track(s):
                 fold.add(chunk)
         return fold.obs(op)
     if op == "stream_chat_partial":
@@ -249,8 +318,8 @@ async def _run_step(step, session):
         return {"op": op, "first": first.choices[0].delta.content}
     if op == "async_stream_chat":
         fold = _ChunkFold()
-        async for chunk in await _async_openai_client().chat.completions.create(
-                stream=True, **CHAT):
+        async for chunk in _atrack(await _async_openai_client().chat.completions.create(
+                stream=True, **CHAT)):
             fold.add(chunk)
         return fold.obs(op)
     if op == "chat_stream_helper":
@@ -265,11 +334,12 @@ async def _run_step(step, session):
             op, await _async_openai_client().responses.create(model="gpt-4o", input="hi"))
     if op == "stream_responses":
         return _responses_stream_obs(
-            op, list(_openai_client().responses.create(model="gpt-4o", input="hi", stream=True)))
+            op, list(_track(_openai_client().responses.create(
+                model="gpt-4o", input="hi", stream=True))))
     if op == "async_stream_responses":
         stream = await _async_openai_client().responses.create(
             model="gpt-4o", input="hi", stream=True)
-        return _responses_stream_obs(op, [e async for e in stream])
+        return _responses_stream_obs(op, [e async for e in _atrack(stream)])
     if op == "responses_stream_helper":
         with _openai_client().responses.stream(model="gpt-4o", input="hi") as s:
             for _ in s:
@@ -319,11 +389,14 @@ async def main():
 
     async with create_connected_server_and_client_session(server) as session:
         for step in PLAN:
+            _DELIVERED.clear()
             try:
                 obs.append(await _run_step(step, session))
             except Exception as exc:
+                delivered = _delivered_obs()
                 obs.append({"op": step["op"], "error": type(exc).__name__, "message": str(exc),
-                            **_sdk_error_obs(exc)})
+                            **_sdk_error_obs(exc),
+                            **({"delivered": delivered} if delivered else {})})
                 if not step.get("catch"):
                     OUT.write_text(json.dumps(obs))
                     sys.exit(3)
@@ -365,6 +438,17 @@ def _ns(value):
     return value
 
 
+def _sdk_error(spec):
+    import httpx
+    from anthropic import _exceptions
+    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    response = httpx.Response(spec["status"], json=spec.get("body"),
+                              headers=spec.get("headers") or {}, request=request)
+    cls = getattr(_exceptions, spec["class"])
+    return cls(f"Error code: {spec['status']} - {spec.get('body')}",
+               response=response, body=spec.get("body"))
+
+
 def _next_item():
     raw = os.environ.get("FAKE_ANTHROPIC_CANNED")
     if not raw:
@@ -373,15 +457,7 @@ def _next_item():
     _served[0] += 1
     if "__error__" in item:
         # A canned failure: raised as the SDK would after its own retries.
-        import httpx
-        from anthropic import _exceptions
-        spec = item["__error__"]
-        request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
-        response = httpx.Response(spec["status"], json=spec.get("body"),
-                                  headers=spec.get("headers") or {}, request=request)
-        cls = getattr(_exceptions, spec["class"])
-        raise cls(f"Error code: {spec['status']} - {spec.get('body')}",
-                  response=response, body=spec.get("body"))
+        raise _sdk_error(item["__error__"])
     return item
 
 
@@ -395,14 +471,23 @@ def _canned():
 
 
 def _events():
-    # A canned streamed call is {"events": [raw stream events]}.
-    return [_ns(e) for e in _next_item()["events"]]
+    # A canned streamed call is {"events": [raw stream events]}; an event
+    # {"__error__": spec} is raised when the consumer reaches it (mid-stream).
+    events = _next_item()["events"]
+
+    def gen():
+        for e in events:
+            if "__error__" in e:
+                raise _sdk_error(e["__error__"])
+            yield _ns(e)
+
+    return gen()
 
 
 class Messages:
     def create(self, **kwargs):
         if kwargs.get("stream"):
-            return (e for e in _events())
+            return _events()
         return _canned()
 
     def stream(self, **kwargs):
@@ -587,7 +672,9 @@ def responses_sse(body: dict[str, Any]) -> dict[str, Any]:
                        "part": {**part, "text": text}})
         events.append({"type": "response.output_item.done", "output_index": index,
                        "item": item})
-    events.append({"type": "response.completed", "response": body})
+    terminal = {"failed": "response.failed", "incomplete": "response.incomplete"}
+    events.append({"type": terminal.get(body["status"], "response.completed"),
+                   "response": body})
     for n, event in enumerate(events):
         event["sequence_number"] = n
     return {"__sse__": events, "named_events": True, "done": False}

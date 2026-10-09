@@ -523,3 +523,314 @@ def test_cli_prints_replayed_errors(
     assert result.exit_code == 0, result.output
     assert "1 of 1 served from the capsule (1 raised as the recorded error)" in result.output
     shutil.rmtree(env["replays"])
+
+
+# ══ Follow-ups: errors raised MID-STREAM, and Responses API failed/incomplete ══
+#
+# Acceptance criteria (written before the implementation):
+#
+# AC1 capture -- a streamed SDK call whose iteration raises an ``Exception``
+#     after k chunks is ONE logical record: ``status: error``, the ``error``
+#     block, ``extensions["io.novafabric.sdk_error"]`` (as for an error at
+#     ``create``), ``nova.streaming.chunk_count == k``, ``stream_complete:
+#     false``, and the content delivered before the error. Not ``success``.
+# AC2 replay -- mocked replay serves, at that position, a stream that delivers
+#     the same content (text, tool calls) with no closing or terminal event,
+#     then raises the same SDK exception class (``openai.APIError`` with the
+#     error payload for an in-stream error event; ``APIConnectionError`` /
+#     ``APITimeoutError`` for a dropped connection). Sync and async, Chat
+#     Completions, Responses API, Messages. Counted in ``model_errors_replayed``.
+# AC3 fail closed -- an exception that cannot be rebuilt is refused at
+#     ``create`` (``recorded_error_unreconstructable``), before any chunk is
+#     served; ``--permissive`` serves the chunks, then the stand-in.
+# AC4 Responses ``status: failed`` -- the SDK RETURNS it (non-streamed) and
+#     YIELDS ``response.failed`` (streamed); it never raises (openai 3.26.1:
+#     ``resources/responses/responses.py`` posts with ``cast_to=Response``;
+#     ``_streaming.py`` raises only on a payload carrying an ``error`` key).
+#     Replay does the same: a ``Response`` with ``status: failed`` and the
+#     recorded ``error``, or a ``response.failed`` terminal event. Nothing is
+#     raised; it counts as a served response, not as a replayed error.
+# AC5 the Responses ``status`` is replayed verbatim -- capture records
+#     ``status``, ``incomplete_details`` and ``error`` from the provider's
+#     Response (``io.novafabric.response_status``), so an ``incomplete``
+#     response whose reason the finish-reason mapping cannot express is
+#     replayed as ``incomplete`` with that reason, not as ``completed``.
+# AC6 a failed Responses record captured before AC5 is refused with a
+#     re-capture reason (never served as ``completed``, never raised).
+
+_CHUNK_BASE = {"id": "chatcmpl-m", "object": "chat.completion.chunk", "created": 1,
+               "model": "gpt-4o"}
+_STREAM_ERROR = {"error": {"message": "The server had an error while processing your "
+                                      "request.", "type": "server_error", "code": None,
+                           "param": None}}
+
+
+def _chunk(delta: dict[str, Any]) -> dict[str, Any]:
+    return {**_CHUNK_BASE, "choices": [{"index": 0, "delta": delta, "finish_reason": None}]}
+
+
+def _chat_sse_then_error(*, drop: str | None = None) -> dict[str, Any]:
+    """Three content chunks, then the failure: the provider's in-stream error
+    payload, or (``drop``) a dropped connection."""
+    events: list[dict[str, Any]] = [
+        _chunk({"role": "assistant", "content": ""}),
+        _chunk({"content": "Hel"}), _chunk({"content": "lo"}),
+    ]
+    if drop:
+        return {"__sse__": events, "drop": drop, "done": False}
+    return {"__sse__": [*events, _STREAM_ERROR]}
+
+
+@pytest.mark.parametrize("op", ["stream_chat", "async_stream_chat"])
+def test_an_error_event_mid_stream_is_replayed_after_the_delivered_chunks(
+    env: dict[str, Path], monkeypatch: pytest.MonkeyPatch, op: str
+) -> None:
+    capsule, captured, replay, replayed = _round_trip(
+        env, monkeypatch, [{"op": op, "catch": True}, {"op": "chat"}],
+        canned=[_chat_sse_then_error(), openai_body(content="next")],
+    )
+    record = [r for r in _records(capsule) if _role(r) == "logical"][0]
+    # AC1: the stream that raised is recorded as an error, with what it delivered.
+    assert record["status"] == "error"
+    assert record["error"]["type"] == "APIError"
+    detail = record["extensions"][SDK_ERROR_EXT]
+    assert detail["class"] == "APIError" and detail["body"] == _STREAM_ERROR["error"]
+    assert record["nova.streaming"]["chunk_count"] == 3
+    assert record["extensions"]["io.novafabric.stream_complete"] is False
+    assert record["gen_ai.response.choices"][0]["message"]["content"] == "Hello"
+    # AC2: replay delivers the same content, then raises the same class.
+    error = replayed[0]
+    assert error["error"] == "APIError" and error["body"] == _STREAM_ERROR["error"]
+    assert error["type"] == "server_error"
+    assert error["delivered"]["content"] == "Hello"
+    assert error["delivered"]["finish"] is None
+    assert replayed[1]["content"] == "next"
+    _assert_faithful(replay, captured, replayed, model_calls=2, errors=1)
+
+
+@pytest.mark.parametrize("drop, expected", [
+    ("read", "APIConnectionError"), ("timeout", "APITimeoutError"),
+])
+def test_a_connection_dropped_mid_stream_is_replayed_after_the_delivered_chunks(
+    env: dict[str, Path], monkeypatch: pytest.MonkeyPatch, drop: str, expected: str
+) -> None:
+    capsule, captured, replay, replayed = _round_trip(
+        env, monkeypatch, [{"op": "stream_chat", "catch": True}],
+        canned=[_chat_sse_then_error(drop=drop)],
+    )
+    (record,) = [r for r in _records(capsule) if _role(r) == "logical"]
+    assert record["status"] == "error" and record["error"]["type"] == expected
+    assert replayed[0]["error"] == expected
+    assert replayed[0]["delivered"]["content"] == "Hello"
+    _assert_faithful(replay, captured, replayed, model_calls=1, errors=1)
+
+
+def _responses_sse_dropped(text: str) -> dict[str, Any]:
+    """A Responses stream cut after the text deltas: no done or terminal events."""
+    full = responses_sse(responses_body(text=text))["__sse__"]
+    kept = [e for e in full if not e["type"].endswith((".done", "completed"))]
+    return {"__sse__": kept, "named_events": True, "done": False, "drop": "read"}
+
+
+@pytest.mark.parametrize("op", ["stream_responses", "async_stream_responses"])
+def test_a_responses_stream_dropped_mid_way_is_replayed(
+    env: dict[str, Path], monkeypatch: pytest.MonkeyPatch, op: str
+) -> None:
+    capsule, captured, replay, replayed = _round_trip(
+        env, monkeypatch, [{"op": op, "catch": True}],
+        canned=[_responses_sse_dropped("partial answer")],
+    )
+    (record,) = [r for r in _records(capsule) if _role(r) == "logical"]
+    assert record["status"] == "error"
+    assert "io.novafabric.response_status" not in record["extensions"]
+    assert replayed[0]["error"] == "APIConnectionError"
+    assert replayed[0]["delivered"] == {
+        "types": ["response.created", "response.output_item.added",
+                  "response.content_part.added", "response.output_text.delta"],
+        "text": "partial answer",
+    }
+    _assert_faithful(replay, captured, replayed, model_calls=1, errors=1)
+
+
+@pytest.mark.parametrize("op", ["anthropic_stream", "anthropic_async_stream"])
+def test_an_anthropic_error_mid_stream_is_replayed(
+    env: dict[str, Path], monkeypatch: pytest.MonkeyPatch, op: str
+) -> None:
+    from _mocked_replay_agent import anthropic_events
+
+    events = anthropic_events("Hello there", tool=("toolu_1", "get_weather", {"city": "Rome"}))
+    body = {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}
+    # Cut after the text block closed and the tool block opened, before its input.
+    cut = events["events"][:8]
+    assert [e["type"] for e in cut[-2:]] == ["content_block_stop", "content_block_start"]
+    cut.append({"__error__": {"class": "OverloadedError", "status": 529, "body": body}})
+    capsule, captured, replay, replayed = _round_trip(
+        env, monkeypatch, [{"op": op, "catch": True}], anthropic=[{"events": cut}],
+    )
+    (record,) = _records(capsule)
+    assert record["status"] == "error" and record["nova.streaming"]["chunk_count"] == 8
+    assert replayed[0]["error"] == "OverloadedError" and replayed[0]["body"] == body
+    assert replayed[0]["delivered"]["stop_reason"] is None
+    assert [b["type"] for b in replayed[0]["delivered"]["blocks"]] == ["text", "tool_use"]
+    _assert_faithful(replay, captured, replayed, model_calls=1, errors=1)
+
+
+def _stream_error_record(detail: dict[str, Any]) -> dict[str, Any]:
+    record = _error_record(detail, error_type=str(detail.get("class")))
+    record["gen_ai.response.choices"] = [{
+        "index": 0, "message": {"role": "assistant", "content": "Hel"},
+        "finish_reason": "stop"}]
+    record["nova.streaming"] = {"streamed": True, "chunk_count": 2, "first_token_ms": 1}
+    record["extensions"]["io.novafabric.stream_complete"] = False
+    return record
+
+
+_VALUE_ERROR = {"sdk": "openai", "class": "ValueError", "message": "recorded failure"}
+
+
+def test_a_mid_stream_error_that_cannot_be_rebuilt_is_refused_before_any_chunk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result, obs = _synthetic_replay(
+        tmp_path, monkeypatch, [_stream_error_record(_VALUE_ERROR)],
+        [{"op": "stream_chat", "catch": True}],
+    )
+    assert obs[0]["error"] == "ReplayRecordedErrorUnreconstructableError"
+    assert "delivered" not in obs[0]
+    assert result.replay_contract is not None
+    assert result.replay_contract["divergences"][0]["kind"] == (
+        "recorded_error_unreconstructable"
+    )
+
+
+def test_permissive_serves_the_delivered_chunks_then_the_stand_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, obs = _synthetic_replay(
+        tmp_path, monkeypatch, [_stream_error_record(_VALUE_ERROR)],
+        [{"op": "stream_chat", "catch": True}], permissive=True,
+    )
+    assert obs[0]["error"] == "ReplayRecordedModelError"
+    assert obs[0]["delivered"]["content"] == "Hel"
+    assert obs[0]["delivered"]["finish"] is None
+
+
+# ── Responses API: status failed / incomplete are returned, not raised ───────
+
+_FAILED_ERROR = {"code": "server_error", "message": "The model failed to generate."}
+
+
+def _failed_body(*, text: str | None = None) -> dict[str, Any]:
+    return {**responses_body(text=text, rid="resp_failed"), "status": "failed",
+            "error": _FAILED_ERROR, "usage": None}
+
+
+@pytest.mark.parametrize("op, canned", [
+    ("responses", _failed_body()),
+    ("async_responses", _failed_body()),
+    ("stream_responses", responses_sse(_failed_body(text="half"))),
+    ("async_stream_responses", responses_sse(_failed_body(text="half"))),
+])
+def test_a_failed_responses_response_is_returned_not_raised(
+    env: dict[str, Path], monkeypatch: pytest.MonkeyPatch, op: str, canned: Any
+) -> None:
+    capsule, captured, replay, replayed = _round_trip(
+        env, monkeypatch, [{"op": op}, {"op": "chat"}],
+        canned=[canned, openai_body(content="next")],
+    )
+    record = [r for r in _records(capsule) if _role(r) == "logical"][0]
+    assert record["status"] == "error"
+    assert record["extensions"]["io.novafabric.response_status"] == {
+        "status": "failed", "incomplete_details": None, "error": _FAILED_ERROR,
+    }
+    assert SDK_ERROR_EXT not in record["extensions"]
+    # The SDK returned it: the workload read status and error, nothing raised.
+    assert replayed[0]["status"] == "failed" and replayed[0]["response_error"] == _FAILED_ERROR
+    _assert_faithful(replay, captured, replayed, model_calls=2, errors=0)
+
+
+@pytest.mark.parametrize("op", ["responses", "stream_responses"])
+def test_an_incomplete_responses_response_keeps_its_recorded_reason(
+    env: dict[str, Path], monkeypatch: pytest.MonkeyPatch, op: str
+) -> None:
+    # "max_messages" is a reason the installed SDK defines that the finish-reason
+    # mapping cannot express; before AC5 it was replayed as "completed".
+    body = {**responses_body(text="cut"), "status": "incomplete",
+            "incomplete_details": {"reason": "max_messages"}}
+    canned = body if op == "responses" else responses_sse(body)
+    _, captured, replay, replayed = _round_trip(
+        env, monkeypatch, [{"op": op}], canned=[canned],
+    )
+    assert replayed[0]["status"] == "incomplete"
+    assert replayed[0]["incomplete"] == "max_messages"
+    _assert_faithful(replay, captured, replayed, model_calls=1, errors=0)
+
+
+# ── golden fixtures (tests/fixtures/recorded-model-errors/) ──────────────────
+
+GOLDEN = REPO / "tests" / "fixtures" / "recorded-model-errors"
+
+
+def _golden(name: str) -> list[dict[str, Any]]:
+    path = GOLDEN / name
+    return [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
+
+
+#: The in-force model-call schema (``schemas/`` holds the not-yet-in-force v1 target).
+_MODEL_CALL_SCHEMA = REPO / "src" / "novafabric" / "schemas" / "model-call.schema.json"
+
+
+def test_golden_records_are_valid_and_every_extension_they_use_is_described() -> None:
+    schema = json.loads(_MODEL_CALL_SCHEMA.read_text())
+    described = set(schema["properties"]["extensions"]["properties"])
+    for name in ("failed-response.jsonl", "mid-stream-error.jsonl",
+                 "legacy-failed-response.jsonl"):
+        for record in _golden(name):
+            jsonschema.validate(record, schema)
+            assert set(record["extensions"]) <= described, name
+
+
+def test_a_response_status_without_its_status_is_invalid() -> None:
+    schema = json.loads(_MODEL_CALL_SCHEMA.read_text())
+    (record,) = _golden("failed-response.jsonl")
+    record["extensions"]["io.novafabric.response_status"].pop("status")
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(record, schema)
+
+
+def test_golden_failed_response_replays_as_returned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result, obs = _synthetic_replay(
+        tmp_path, monkeypatch, _golden("failed-response.jsonl"), [{"op": "responses"}],
+    )
+    assert obs[0]["status"] == "failed" and obs[0]["response_error"] == _FAILED_ERROR
+    assert result.status == "success"
+
+
+def test_golden_mid_stream_error_replays_the_chunks_then_the_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result, obs = _synthetic_replay(
+        tmp_path, monkeypatch, _golden("mid-stream-error.jsonl"),
+        [{"op": "stream_chat", "catch": True}],
+    )
+    assert obs[0]["error"] == "APIError"
+    assert obs[0]["delivered"]["content"] == "Hello"
+    assert result.status == "success"
+    assert result.replay_contract is not None
+    assert result.replay_contract["model_errors_replayed"] == 1
+
+
+def test_a_failed_response_captured_before_its_status_was_recorded_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result, obs = _synthetic_replay(
+        tmp_path, monkeypatch, _golden("legacy-failed-response.jsonl"),
+        [{"op": "responses", "catch": True}],
+    )
+    assert obs[0]["error"] == "ReplayRecordedErrorUnreconstructableError"
+    assert result.replay_contract is not None
+    first = result.replay_contract["divergences"][0]
+    assert first["kind"] == "recorded_error_unreconstructable"
+    assert "status 'failed'" in first["reason"] and "re-capture" in first["reason"]

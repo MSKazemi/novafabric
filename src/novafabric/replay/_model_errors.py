@@ -27,16 +27,21 @@ from types import ModuleType
 from typing import Any
 
 from novafabric.capture.hooks._sdk_errors import SDK_ERROR_EXT
+from novafabric.capture.hooks._sdk_streams import RESPONSE_STATUS_EXT
 
 #: How an allow-listed exception class is constructed.
 #: ``status``: ``cls(message, response=<http response>, body=body)`` (an HTTP
 #: 4xx/5xx the SDK turned into an exception); ``connection``:
 #: ``cls(message=message, request=<http request>)``; ``timeout``:
-#: ``cls(request=<http request>)``. These are the constructors the ``openai``
-#: and ``anthropic`` SDKs (both Stainless-generated) define.
+#: ``cls(request=<http request>)``; ``api_error``: ``cls(message, request,
+#: body=body)`` (``openai.APIError``, which ``openai._streaming`` raises when a
+#: stream that already started carries an ``error`` payload). These are the
+#: constructors the ``openai`` and ``anthropic`` SDKs (both Stainless-generated)
+#: define.
 STATUS = "status"
 CONNECTION = "connection"
 TIMEOUT = "timeout"
+API_ERROR = "api_error"
 
 _STATUS_CLASSES = (
     "BadRequestError",
@@ -58,6 +63,7 @@ ALLOWED_SDK_ERRORS: dict[str, dict[str, str]] = {
         **dict.fromkeys(_STATUS_CLASSES, STATUS),
         "APIConnectionError": CONNECTION,
         "APITimeoutError": TIMEOUT,
+        "APIError": API_ERROR,
     },
     "anthropic": {
         **dict.fromkeys(_STATUS_CLASSES, STATUS),
@@ -96,15 +102,52 @@ def recorded_error_type(record: dict[str, Any]) -> str:
     return str(error.get("type") or "") if isinstance(error, dict) else ""
 
 
-def _detail(record: dict[str, Any]) -> dict[str, Any]:
+def _ext(record: dict[str, Any], key: str) -> Any:
     ext = record.get("extensions")
-    detail = ext.get(SDK_ERROR_EXT) if isinstance(ext, dict) else None
+    return ext.get(key) if isinstance(ext, dict) else None
+
+
+def is_returned_failed_response(record: dict[str, Any]) -> bool:
+    """A failed call the SDK *returned* rather than raised (issue #16).
+
+    A Responses API ``Response`` with ``status: failed``: ``openai`` parses it
+    like any other body (``cast_to=Response``) and returns it, and streams its
+    ``response.failed`` event like any other. Served as a response, never
+    raised -- but only when capture recorded its status verbatim
+    (``io.novafabric.response_status``); an older record is refused.
+    """
+    status = _ext(record, RESPONSE_STATUS_EXT)
+    return (
+        is_recorded_model_error(record)
+        and not isinstance(_ext(record, SDK_ERROR_EXT), dict)
+        and isinstance(status, dict)
+        and status.get("status") == "failed"
+    )
+
+
+def raised_mid_stream(record: dict[str, Any]) -> bool:
+    """A recorded SDK exception raised while a stream was being iterated.
+
+    The SDK call returned a stream (``nova.streaming`` is recorded only then),
+    delivered ``chunk_count`` chunks, and then raised; an exception raised at
+    ``create`` has no ``nova.streaming`` block.
+    """
+    return (
+        is_recorded_model_error(record)
+        and isinstance(_ext(record, SDK_ERROR_EXT), dict)
+        and isinstance(record.get("nova.streaming"), dict)
+    )
+
+
+def _detail(record: dict[str, Any]) -> dict[str, Any]:
+    detail = _ext(record, SDK_ERROR_EXT)
     if not isinstance(detail, dict):
         if record.get("gen_ai.response.id") or record.get("gen_ai.response.choices"):
             raise UnreconstructableError(
-                "the call returned a response that reported failure (e.g. a Responses "
-                "API response with status 'failed') rather than raising; mocked "
-                "replay does not serve failed responses"
+                "the call returned a response with status 'failed' (a Responses API "
+                "response, which the SDK returns rather than raises), and this capsule "
+                "was captured before that status and its error were recorded "
+                f"(no extensions[{RESPONSE_STATUS_EXT!r}]); re-capture to replay it"
             )
         raise UnreconstructableError(
             "the capsule was captured before SDK error details were recorded "
@@ -187,7 +230,7 @@ def rebuild_sdk_error(record: dict[str, Any]) -> BaseException:
         not isinstance(status, int) or isinstance(status, bool) or not 100 <= status <= 599
     ):
         raise UnreconstructableError(f"no HTTP status was recorded for {class_name}")
-    if kind == STATUS and "body_omitted" in detail:
+    if kind in (STATUS, API_ERROR) and "body_omitted" in detail:
         raise UnreconstructableError(
             f"the error body was not recorded ({detail['body_omitted']})"
         )
@@ -204,6 +247,8 @@ def rebuild_sdk_error(record: dict[str, Any]) -> BaseException:
             built = factory(request=request)
         elif kind == CONNECTION:
             built = factory(message=message, request=request)
+        elif kind == API_ERROR:
+            built = factory(message, request, body=detail.get("body"))
         else:
             headers = detail.get("response_headers")
             response = http.Response(

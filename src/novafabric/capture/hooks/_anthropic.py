@@ -15,7 +15,11 @@ from novafabric.capture.hooks._otel_genai import (
     build_record_envelope,
     extract_request_attributes,
 )
-from novafabric.capture.hooks._sdk_errors import SDK_ERROR_EXT, describe_sdk_error
+from novafabric.capture.hooks._sdk_errors import (
+    SDK_ERROR_EXT,
+    describe_sdk_error,
+    mark_failed_by,
+)
 from novafabric.capture.hooks._sdk_streams import (
     ANTHROPIC_MESSAGES_SURFACE,
     API_SURFACE_EXT,
@@ -141,10 +145,14 @@ class AnthropicHook:
     def _on_stream_done(
         self, started: str, t0: float, kwargs: dict[str, Any], call_id: str | None = None
     ) -> Any:
-        def done(response: Any, count: int, first_ms: int | None, complete: bool) -> None:
+        def done(
+            response: Any, count: int, first_ms: int | None, complete: bool,
+            error: BaseException | None = None,
+        ) -> None:
             self._record(
                 started, _now(), int((time.monotonic() - t0) * 1000), kwargs, response,
                 "success", stream_info=(count, first_ms, complete), call_id=call_id,
+                stream_error=error,
             )
 
         return done
@@ -160,6 +168,7 @@ class AnthropicHook:
         *,
         stream_info: tuple[int, int | None, bool] | None = None,
         call_id: str | None = None,
+        stream_error: BaseException | None = None,
     ) -> None:
         parts = getattr(response, "content", None) or []
         text = " ".join(getattr(p, "text", "") for p in parts if hasattr(p, "text"))
@@ -206,6 +215,8 @@ class AnthropicHook:
         record.setdefault("extensions", {})[API_SURFACE_EXT] = ANTHROPIC_MESSAGES_SURFACE
         note_dropped_tool_calls(record, dropped)
         attach_stream_info(record, stream_info)
+        if stream_error is not None:
+            mark_failed_by(record, stream_error, "anthropic")
         response_id = getattr(response, "id", None)
         if response_id:
             record["gen_ai.response.id"] = str(response_id)

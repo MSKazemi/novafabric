@@ -68,6 +68,22 @@ def _kept_headers(response: Any) -> dict[str, str]:
     return headers
 
 
+def mark_failed_by(record: dict[str, Any], exc: BaseException, sdk: str) -> None:
+    """Mark a model-call record as failed by ``exc``, as an SDK error record is.
+
+    Used for a stream that raised while it was iterated (issue #16): the record
+    keeps the content delivered before the exception and ``nova.streaming``,
+    and gains ``status: error``, the ``error`` block and ``SDK_ERROR_EXT``.
+    """
+    try:
+        message = str(exc)
+    except Exception:  # noqa: BLE001 -- capture must never fail the workload
+        message = ""
+    record["status"] = "error"
+    record["error"] = {"type": type(exc).__name__, "message": message, "traceback_ref": None}
+    record.setdefault("extensions", {})[SDK_ERROR_EXT] = describe_sdk_error(exc, sdk)
+
+
 def describe_sdk_error(exc: BaseException, sdk: str) -> dict[str, Any]:
     """The replay-relevant detail of an exception an SDK call raised.
 

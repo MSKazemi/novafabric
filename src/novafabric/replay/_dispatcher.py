@@ -8,7 +8,9 @@ engine writes (see :func:`install_from_env`):
   API, Anthropic Messages -- sync and async, with and without ``stream=True``)
   and guards the unsupported ones (``UNSUPPORTED_MODEL_SURFACES``) so they
   cannot silently go live. A recorded call that FAILED is served by raising the
-  same SDK exception class at its position (``_model_errors``, issue #16);
+  same SDK exception class at its position (``_model_errors``, issue #16) --
+  after the delivered chunks when it was raised mid-stream; a Responses API
+  response the SDK *returned* with ``status: failed`` is returned as recorded;
 * :class:`MockToolDispatcher` serves recorded MCP ``tools/call`` results through
   ``mcp.ClientSession.call_tool`` -- the one tool surface NovaFabric intercepts.
 
@@ -33,7 +35,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
-from novafabric.capture.hooks._sdk_streams import is_raw_response_call
+from novafabric.capture.hooks._sdk_streams import RESPONSE_STATUS_EXT, is_raw_response_call
 from novafabric.replay._contract import (
     MODEL_SURFACES,
     QUEUE_PROVIDER,
@@ -61,6 +63,8 @@ from novafabric.replay._errors import (
 from novafabric.replay._model_errors import (
     UnreconstructableError,
     is_recorded_model_error,
+    is_returned_failed_response,
+    raised_mid_stream,
     rebuild_sdk_error,
     recorded_error_type,
 )
@@ -226,12 +230,16 @@ def _mock_openai_response(stored: dict[str, Any]) -> Any:
     )
 
 
-def _openai_chat_chunks(stored: dict[str, Any], *, include_usage: bool) -> list[Any]:
+def _openai_chat_chunks(
+    stored: dict[str, Any], *, include_usage: bool, partial: bool = False
+) -> list[Any]:
     """A recorded Chat Completions response as the chunk stream ``stream=True`` yields.
 
     Per choice: the role and full content in one delta, one delta per tool
     call (id, name and full arguments), then the finish reason. A usage chunk
     (``choices: []``) closes the stream when the request asked for it.
+    ``partial`` (a stream that raised part-way): the delivered content only --
+    no finish-reason or usage chunk, which capture cannot tell were delivered.
     """
     base = {
         "id": stored.get("gen_ai.response.id", "replay-mocked"),
@@ -265,10 +273,11 @@ def _openai_chat_chunks(stored: dict[str, Any], *, include_usage: bool) -> list[
                 }]},
                 "finish_reason": None,
             }]})
-        chunks.append({**base, "choices": [{
-            "index": index, "delta": {}, "finish_reason": c.get("finish_reason", "stop"),
-        }]})
-    if include_usage:
+        if not partial:
+            chunks.append({**base, "choices": [{
+                "index": index, "delta": {}, "finish_reason": c.get("finish_reason", "stop"),
+            }]})
+    if include_usage and not partial:
         prompt = int(stored.get("gen_ai.usage.input_tokens", 0) or 0)
         completion = int(stored.get("gen_ai.usage.output_tokens", 0) or 0)
         chunks.append({**base, "choices": [], "usage": {
@@ -308,19 +317,33 @@ def _responses_payload(stored: dict[str, Any]) -> dict[str, Any]:
                 "arguments": _arguments_json(ref.get("arguments")),
                 "status": "completed",
             })
-    incomplete = {"length": "max_output_tokens", "content_filter": "content_filter"}
     prompt = int(stored.get("gen_ai.usage.input_tokens", 0) or 0)
     completion = int(stored.get("gen_ai.usage.output_tokens", 0) or 0)
+    ext = stored.get("extensions")
+    recorded = ext.get(RESPONSE_STATUS_EXT) if isinstance(ext, dict) else None
+    if isinstance(recorded, dict) and isinstance(recorded.get("status"), str):
+        # The provider's own status, incomplete_details and error (issue #16).
+        status: dict[str, Any] = {
+            "status": recorded["status"],
+            "incomplete_details": recorded.get("incomplete_details"),
+            "error": recorded.get("error"),
+        }
+    else:
+        # Captured before the status was recorded: inferred from the finish reason.
+        incomplete = {"length": "max_output_tokens", "content_filter": "content_filter"}
+        status = {
+            "status": "incomplete" if finish in incomplete else "completed",
+            "incomplete_details": (
+                {"reason": incomplete[finish]} if finish in incomplete else None
+            ),
+            "error": None,
+        }
     return {
         "id": rid,
         "object": "response",
         "created_at": 0,
         "model": stored.get("gen_ai.response.model", ""),
-        "status": "incomplete" if finish in incomplete else "completed",
-        "incomplete_details": (
-            {"reason": incomplete[finish]} if finish in incomplete else None
-        ),
-        "error": None,
+        **status,
         "output": output,
         "parallel_tool_calls": True,
         "tool_choice": "auto",
@@ -347,12 +370,25 @@ def _mock_responses_response(stored: dict[str, Any]) -> Any:
     return built
 
 
-def _responses_events(stored: dict[str, Any]) -> list[Any]:
+#: The terminal stream event for each final ``Response.status`` (the three
+#: events ``OpenAIResponsesStreamAccumulator`` folds as final).
+_RESPONSES_TERMINAL_EVENT = {
+    "completed": "response.completed",
+    "incomplete": "response.incomplete",
+    "failed": "response.failed",
+}
+
+
+def _responses_events(stored: dict[str, Any], *, partial: bool = False) -> list[Any]:
     """A recorded Responses API call as the event stream ``stream=True`` yields.
 
     ``response.created`` → per output item: ``output_item.added``, its content
     (one text delta, or one arguments delta) and ``output_item.done`` →
-    ``response.completed`` (or ``response.incomplete``) carrying the full response.
+    ``response.completed`` (or ``response.incomplete`` / ``response.failed``)
+    carrying the full response. ``partial`` (a stream that raised part-way):
+    a text item stops after its delta -- capture cannot tell whether its done
+    events were delivered -- and there is no terminal event. A function call
+    is only folded at capture from its ``output_item.done``, so it is complete.
     """
     payload = _responses_payload(stored)
     seq = iter(range(1_000_000))
@@ -375,6 +411,10 @@ def _responses_events(stored: dict[str, Any]) -> list[Any]:
                 {"type": "response.output_text.delta", "sequence_number": next(seq),
                  "item_id": item["id"], "output_index": index, "content_index": 0,
                  "delta": text, "logprobs": []},
+            ]
+            if partial:
+                continue
+            events += [
                 {"type": "response.output_text.done", "sequence_number": next(seq),
                  "item_id": item["id"], "output_index": index, "content_index": 0,
                  "text": text, "logprobs": []},
@@ -397,8 +437,9 @@ def _responses_events(stored: dict[str, Any]) -> list[Any]:
             ]
         events.append({"type": "response.output_item.done", "sequence_number": next(seq),
                        "output_index": index, "item": item})
-    final = "response.incomplete" if payload["status"] == "incomplete" else "response.completed"
-    events.append({"type": final, "sequence_number": next(seq), "response": payload})
+    if not partial:
+        final = _RESPONSES_TERMINAL_EVENT.get(payload["status"], "response.completed")
+        events.append({"type": final, "sequence_number": next(seq), "response": payload})
     return [
         _construct("openai", "openai.types.responses", "ResponseStreamEvent", event)
         for event in events
@@ -460,9 +501,17 @@ def _mock_anthropic_response(stored: dict[str, Any]) -> Any:
     )
 
 
-def _anthropic_events(stored: dict[str, Any]) -> list[Any]:
-    """A recorded Messages call as the raw event stream ``stream=True`` yields."""
+def _anthropic_events(stored: dict[str, Any], *, partial: bool = False) -> list[Any]:
+    """A recorded Messages call as the raw event stream ``stream=True`` yields.
+
+    ``partial`` (a stream that raised part-way): the blocks that carry
+    delivered content, each closed except the last (blocks stream one after
+    another), and no ``message_delta`` / ``message_stop``.
+    """
     message = _mock_anthropic_response(stored)
+    blocks = list(message.content)
+    if partial:
+        blocks = [b for b in blocks if b.type == "tool_use" or b.text]
     events: list[dict[str, Any]] = [{
         "type": "message_start",
         "message": {
@@ -472,24 +521,29 @@ def _anthropic_events(stored: dict[str, Any]) -> list[Any]:
             "usage": {"input_tokens": message.usage.input_tokens, "output_tokens": 0},
         },
     }]
-    for index, block in enumerate(message.content):
+    for index, block in enumerate(blocks):
         if block.type == "tool_use":
             start = {"type": "tool_use", "id": block.id, "name": block.name, "input": {}}
-            delta = {"type": "input_json_delta", "partial_json": json.dumps(block.input)}
+            # An argument string cut off mid-stream was kept verbatim under
+            # "_unparsed"; _arguments_json serves it back as it was delivered.
+            has_content = bool(block.input)
+            delta = {"type": "input_json_delta", "partial_json": _arguments_json(block.input)}
         else:
             start = {"type": "text", "text": ""}
+            has_content = bool(block.text)
             delta = {"type": "text_delta", "text": block.text}
+        events.append({"type": "content_block_start", "index": index, "content_block": start})
+        if has_content or not partial:
+            events.append({"type": "content_block_delta", "index": index, "delta": delta})
+        if not partial or index < len(blocks) - 1:
+            events.append({"type": "content_block_stop", "index": index})
+    if not partial:
         events += [
-            {"type": "content_block_start", "index": index, "content_block": start},
-            {"type": "content_block_delta", "index": index, "delta": delta},
-            {"type": "content_block_stop", "index": index},
+            {"type": "message_delta",
+             "delta": {"stop_reason": message.stop_reason, "stop_sequence": None},
+             "usage": {"output_tokens": message.usage.output_tokens}},
+            {"type": "message_stop"},
         ]
-    events += [
-        {"type": "message_delta",
-         "delta": {"stop_reason": message.stop_reason, "stop_sequence": None},
-         "usage": {"output_tokens": message.usage.output_tokens}},
-        {"type": "message_stop"},
-    ]
     return [
         _construct("anthropic", "anthropic.types", "RawMessageStreamEvent", event)
         for event in events
@@ -514,19 +568,45 @@ class _NoHTTPResponse:
         return None
 
 
+class _RecordedItems:
+    """The recorded chunks of a served stream, then the recorded error if any.
+
+    ``error``: the exception the recorded stream raised after those chunks
+    (issue #16); raised once, when the consumer asks for the next chunk. A
+    stream closed before then never raises it.
+    """
+
+    def __init__(self, items: list[Any], error: BaseException | None = None) -> None:
+        self._iterator: Iterator[Any] = iter(items)
+        self._error = error
+
+    def next_item(self) -> Any:
+        try:
+            return next(self._iterator)
+        except StopIteration:
+            error, self._error = self._error, None
+            if error is not None:
+                raise error from None
+            raise
+
+    def clear(self) -> None:
+        self._iterator = iter(())
+        self._error = None
+
+
 class _ReplayStream:
     """What a served ``stream=True`` call returns: the recorded chunks, in order."""
 
     response = _NoHTTPResponse()
 
-    def __init__(self, items: list[Any]) -> None:
-        self._iterator: Iterator[Any] = iter(items)
+    def __init__(self, items: list[Any], error: BaseException | None = None) -> None:
+        self._items = _RecordedItems(items, error)
 
     def __iter__(self) -> _ReplayStream:
         return self
 
     def __next__(self) -> Any:
-        return next(self._iterator)
+        return self._items.next_item()
 
     def __enter__(self) -> _ReplayStream:
         return self
@@ -535,7 +615,7 @@ class _ReplayStream:
         self.close()
 
     def close(self) -> None:
-        self._iterator = iter(())
+        self._items.clear()
 
 
 class _AsyncReplayStream:
@@ -543,15 +623,15 @@ class _AsyncReplayStream:
 
     response = _NoHTTPResponse()
 
-    def __init__(self, items: list[Any]) -> None:
-        self._iterator: Iterator[Any] = iter(items)
+    def __init__(self, items: list[Any], error: BaseException | None = None) -> None:
+        self._items = _RecordedItems(items, error)
 
     def __aiter__(self) -> _AsyncReplayStream:
         return self
 
     async def __anext__(self) -> Any:
         try:
-            return next(self._iterator)
+            return self._items.next_item()
         except StopIteration:
             raise StopAsyncIteration from None
 
@@ -562,7 +642,7 @@ class _AsyncReplayStream:
         await self.close()
 
     async def close(self) -> None:
-        self._iterator = iter(())
+        self._items.clear()
 
 
 def _include_usage(kwargs: dict[str, Any]) -> bool:
@@ -572,22 +652,36 @@ def _include_usage(kwargs: dict[str, Any]) -> bool:
 
 def build_served_response(
     queue: str, stored: dict[str, Any], *, stream: bool, asynchronous: bool,
-    kwargs: dict[str, Any] | None = None,
+    kwargs: dict[str, Any] | None = None, error: BaseException | None = None,
 ) -> Any:
-    """The object a served call returns: a response, or a recorded stream."""
+    """The object a served call returns: a response, or a recorded stream.
+
+    ``error`` (streamed only): the recorded stream raised part-way (issue #16).
+    The stream then delivers what capture recorded as delivered -- nothing when
+    it raised before the first chunk -- with no closing or terminal event, and
+    raises ``error`` when the consumer asks for more.
+    """
     if not stream:
         if queue == "openai.responses":
             return _mock_responses_response(stored)
         if queue == "anthropic":
             return _mock_anthropic_response(stored)
         return _mock_openai_response(stored)
-    if queue == "openai.responses":
-        items = _responses_events(stored)
+    partial = error is not None
+    streaming = stored.get("nova.streaming")
+    if partial and isinstance(streaming, dict) and not streaming.get("chunk_count"):
+        items: list[Any] = []
+    elif queue == "openai.responses":
+        items = _responses_events(stored, partial=partial)
     elif queue == "anthropic":
-        items = _anthropic_events(stored)
+        items = _anthropic_events(stored, partial=partial)
     else:
-        items = _openai_chat_chunks(stored, include_usage=_include_usage(kwargs or {}))
-    return _AsyncReplayStream(items) if asynchronous else _ReplayStream(items)
+        items = _openai_chat_chunks(
+            stored, include_usage=_include_usage(kwargs or {}), partial=partial
+        )
+    if asynchronous:
+        return _AsyncReplayStream(items, error)
+    return _ReplayStream(items, error)
 
 
 #: Pre-ADR-0304 name: the non-streaming builder per provider queue.
@@ -788,9 +882,10 @@ class MockModelDispatcher:
 
     def _serve(self, queue: str, kwargs: dict[str, Any], *, asynchronous: bool) -> Any:
         stream = bool(kwargs.get("stream"))
-        record = self._next_record(queue, stream=stream, asynchronous=asynchronous)
+        record, error = self._take(queue, stream=stream, asynchronous=asynchronous)
         return build_served_response(
-            queue, record, stream=stream, asynchronous=asynchronous, kwargs=kwargs
+            queue, record, stream=stream, asynchronous=asynchronous, kwargs=kwargs,
+            error=error,
         )
 
     def _next_response(self, queue: str) -> Any:
@@ -802,12 +897,26 @@ class MockModelDispatcher:
     def _next_record(
         self, queue: str, *, stream: bool = False, asynchronous: bool = False
     ) -> dict[str, Any]:
+        """The next recorded response on ``queue`` (see :meth:`_take`); raises
+        the recorded SDK exception when the recorded call failed."""
+        record, error = self._take(queue, stream=stream, asynchronous=asynchronous)
+        if error is not None:
+            raise error
+        return record
+
+    def _take(
+        self, queue: str, *, stream: bool = False, asynchronous: bool = False
+    ) -> tuple[dict[str, Any], BaseException | None]:
         """The next recorded response on ``queue``; ``{}`` once a divergence is
         tolerated (``warn``). Raises under ``fail``.
 
         When the recorded call at this position FAILED, this raises the
         recorded SDK exception instead of returning (see
-        :meth:`_replay_recorded_error`)."""
+        :meth:`_recorded_exception`) -- except for a ``stream=True`` call whose
+        recorded stream raised part-way: the record is returned with the
+        exception, to be raised after its delivered chunks. A Responses API
+        response the SDK returned with ``status: failed`` is served as a
+        response (issue #16)."""
         provider = QUEUE_PROVIDER[queue]
         surface = MODEL_SURFACES[queue]
         records = self._queues[queue]
@@ -834,7 +943,7 @@ class MockModelDispatcher:
                 recorded_queue_length=len(records),
                 surface=surface,
             ))
-            return {}
+            return {}, None
         position = self._global_index
         if position < len(self._order) and self._order[position] != queue:
             expected = self._order[position]
@@ -848,10 +957,13 @@ class MockModelDispatcher:
                 global_call_index=position,
             ))
         record = records[idx]
-        if is_recorded_model_error(record):
-            self._replay_recorded_error(
+        if is_recorded_model_error(record) and not is_returned_failed_response(record):
+            exc = self._recorded_exception(
                 queue, idx, record, stream=stream, asynchronous=asynchronous
             )
+            if stream and raised_mid_stream(record):
+                return record, exc
+            raise exc
         malformed = _malformed_tool_call_refs(record)
         if malformed:
             _report_divergence(self._events, self._policy, ReplayRecordMalformedError(
@@ -873,20 +985,21 @@ class MockModelDispatcher:
             stream=stream,
             asynchronous=asynchronous,
         )
-        return record
+        return record, None
 
-    def _replay_recorded_error(
+    def _recorded_exception(
         self, queue: str, idx: int, record: dict[str, Any], *,
         stream: bool, asynchronous: bool,
-    ) -> None:
-        """Raise, at this position, the exception the recorded call raised.
+    ) -> BaseException:
+        """The exception the recorded call raised, to raise at this position.
 
         Built with the SDK's own class from the record's
         ``io.novafabric.sdk_error`` detail (``_model_errors``). When it cannot
-        be rebuilt faithfully the call is refused (``fail``) -- the record is not
-        consumed, as for a malformed response -- or, under ``warn``, a
+        be rebuilt faithfully the call is refused (``fail``: the divergence is
+        raised here, before any chunk is served, and the record is not
+        consumed, as for a malformed response) or, under ``warn``, a
         :class:`ReplayRecordedModelError` stand-in with the recorded type and
-        message is raised. Always raises.
+        message is returned. Consumes the record otherwise.
         """
         provider = QUEUE_PROVIDER[queue]
         surface = MODEL_SURFACES[queue]
@@ -926,7 +1039,7 @@ class MockModelDispatcher:
             recorded_error=error_type or type(exc).__name__,
             faithful=faithful,
         )
-        raise exc
+        return exc
 
 
 # ── tool calls ───────────────────────────────────────────────────────────────

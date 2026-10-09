@@ -7,7 +7,11 @@ chunks are folded into one response-like object as the workload consumes them,
 and the record is written **once**, when the stream ends: exhausted, closed, or
 garbage-collected. A stream the workload abandoned early is recorded with what
 it actually delivered and flagged ``extensions["io.novafabric.stream_complete"]:
-false``.
+false``. A stream whose iteration *raised* (an in-stream error event or a dropped
+connection after some chunks; issue #16) is recorded the same way, and the hook
+also marks the record failed with that exception (``status: error``, the
+``error`` block and ``io.novafabric.sdk_error``), so mocked replay can serve the
+delivered chunks and then raise it again.
 
 The wrappers are transparent proxies: iteration yields the SDK's own chunk
 objects unchanged, and every other attribute is delegated. Folding never raises
@@ -46,6 +50,17 @@ API_SURFACE_EXT = "io.novafabric.api_surface"
 OPENAI_CHAT_SURFACE = "openai.chat.completions"
 OPENAI_RESPONSES_SURFACE = "openai.responses"
 ANTHROPIC_MESSAGES_SURFACE = "anthropic.messages"
+
+#: Reverse-DNS extension key on a Responses API record: the provider's own
+#: ``status``, ``incomplete_details`` and ``error``, verbatim (issue #16). The SDK
+#: *returns* a ``failed`` or ``incomplete`` Response rather than raising, so
+#: mocked replay serves it back with exactly these. Absent on a record folded
+#: from a stream that ended before its terminal event, and on records captured
+#: before this key existed.
+RESPONSE_STATUS_EXT = "io.novafabric.response_status"
+
+#: Largest ``RESPONSE_STATUS_EXT`` value (serialized JSON, characters) recorded.
+MAX_RESPONSE_STATUS_CHARS = 16 * 1024
 
 #: Header the SDKs set on ``with_raw_response`` / ``with_streaming_response``
 #: calls: the return value is an HTTP response wrapper, not a parsed response.
@@ -266,15 +281,51 @@ class OpenAIResponsesStreamAccumulator:
             incomplete_details=None,
             usage=None,
             output=output,
+            # Not the provider's Response: its status is never recorded.
+            nf_partial_fold=True,
         )
+
+
+def _plain(value: Any) -> Any:
+    """A provider model object as JSON data: only the fields the provider sent."""
+    if value is None or isinstance(value, (dict, str, int, float, bool, list)):
+        return value
+    dump = getattr(value, "model_dump", None)
+    if callable(dump):
+        return dump(mode="json", exclude_unset=True)
+    return dict(vars(value))
+
+
+def response_status_detail(response: Any) -> dict[str, Any] | None:
+    """The ``RESPONSE_STATUS_EXT`` value for a Responses API ``Response``.
+
+    ``None`` when there is no provider status to record (no response, or a
+    partial fold of a stream that ended before its terminal event) or it cannot
+    be recorded verbatim within :data:`MAX_RESPONSE_STATUS_CHARS`. Never raises.
+    """
+    try:
+        status = _get(response, "status")
+        if not isinstance(status, str) or _get(response, "nf_partial_fold"):
+            return None
+        detail = {
+            "status": status,
+            "incomplete_details": _plain(_get(response, "incomplete_details")),
+            "error": _plain(_get(response, "error")),
+        }
+        if len(json.dumps(detail)) > MAX_RESPONSE_STATUS_CHARS:
+            return None
+        return detail
+    except Exception:  # noqa: BLE001 -- capture must never fail the workload
+        return None
 
 
 # ── stream proxies ───────────────────────────────────────────────────────────
 
 
 #: Called once with (folded response, chunk count, ms to first chunk or None,
-#: whether the provider ended the stream).
-OnStreamDone = Callable[[Any, int, "int | None", bool], None]
+#: whether the provider ended the stream, and the exception iterating it raised
+#: or None).
+OnStreamDone = Callable[[Any, int, "int | None", bool, "BaseException | None"], None]
 
 
 class _StreamState:
@@ -295,12 +346,12 @@ class _StreamState:
         except Exception:  # noqa: BLE001 -- capture must never fail the workload
             _log.debug("novafabric: could not fold a stream chunk", exc_info=True)
 
-    def finish(self, complete: bool) -> None:
+    def finish(self, complete: bool, error: BaseException | None = None) -> None:
         if self._done:
             return
         self._done = True
         try:
-            self._on_done(self._acc.response(), self._count, self._first_ms, complete)
+            self._on_done(self._acc.response(), self._count, self._first_ms, complete, error)
         except Exception:  # noqa: BLE001 -- capture must never fail the workload
             _log.debug("novafabric: could not record a streamed response", exc_info=True)
 
@@ -323,6 +374,9 @@ class RecordingStream:
             item = next(self._nf_iter)
         except StopIteration:
             self._nf_state.finish(complete=True)
+            raise
+        except Exception as exc:  # the stream failed part-way: record why
+            self._nf_state.finish(complete=False, error=exc)
             raise
         except BaseException:
             self._nf_state.finish(complete=False)
@@ -377,7 +431,10 @@ class AsyncRecordingStream:
         except StopAsyncIteration:
             self._nf_state.finish(complete=True)
             raise
-        except BaseException:
+        except Exception as exc:  # the stream failed part-way: record why
+            self._nf_state.finish(complete=False, error=exc)
+            raise
+        except BaseException:  # cancelled or interrupted: abandoned, not failed
             self._nf_state.finish(complete=False)
             raise
         self._nf_state.add(item)
