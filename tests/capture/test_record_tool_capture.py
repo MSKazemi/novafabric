@@ -424,7 +424,7 @@ def test_a_recording_failure_never_reaches_the_workload(monkeypatch: pytest.Monk
 # ── nesting, through the real CapsuleWriter ─────────────────────────────────
 
 
-def test_nested_records_are_marked_and_make_the_boundary_unservable(
+def test_nested_records_are_marked_and_the_boundary_stays_servable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("NOVA_CAPTURE_LEVEL", "forensic")
@@ -450,9 +450,12 @@ def test_nested_records_are_marked_and_make_the_boundary_unservable(
     assert models[0]["extensions"][codec.WITHIN_TOOL_CALL_EXT] == outer_rec["tool_call_id"]
     assert outer_rec["extensions"][codec.NESTED_RECORDS_EXT] == 2
     assert codec.WITHIN_TOOL_CALL_EXT not in outer_rec["extensions"]
-    reason = not_servable_reason(outer_rec)
-    assert reason is not None and "2 model/tool record(s)" in reason
-    assert outer_rec["result"] == {"value": {"inner": {"sum": 3, "opts": {}}}}  # kept for slice 3
+    # ADR-0306 slice 4: nesting is no longer a reason -- replay serves the boundary
+    # and consumes its marked records as covered.
+    assert outer_rec["extensions"][codec.RESULT_CODEC_EXT] == codec.CODEC_JSON
+    assert codec.NOT_SERVABLE_REASON_EXT not in outer_rec["extensions"]
+    assert not_servable_reason(outer_rec) is None
+    assert outer_rec["result"] == {"value": {"inner": {"sum": 3, "opts": {}}}}
     assert is_servable_tool_record(inner)
     # Outside any boundary, records are left untouched.
     writer.append_model_call({"model_call_id": "m2"})

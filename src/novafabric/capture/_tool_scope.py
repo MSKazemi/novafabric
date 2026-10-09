@@ -5,7 +5,7 @@ the boundary's pre-allocated ``tool_call_id`` sits in a context variable;
 ``CapsuleWriter.append_model_call`` / ``append_tool_call`` -- the one write path
 every in-process hook passes through -- call :func:`mark_nested`, which stamps
 ``extensions["io.novafabric.within_tool_call_id"]`` on the record and counts it.
-A boundary with nested records is recorded as not servable in slice 1.
+A served boundary consumes its nested records as *covered* (ADR-0306 slice 4).
 
 A raw thread inherits no context (ADR-0224 D3), so a nested call made from one
 goes unmarked; its record is then left unconsumed and a strict replay fails

@@ -295,6 +295,17 @@ def replay_cmd(
             f"{not_intercepted} recorded on surfaces replay does not intercept"
         )
         contract = result.replay_contract or {}
+        echo = contract.get("tool_result_echo")
+        if isinstance(echo, dict) and any(
+            echo.get(k) for k in ("matched", "mismatched", "not_checked")
+        ):
+            # ADR-0306 D10: undeclared functions' results, as sent back to the model.
+            console.print(
+                f"  tool-result echoes (undeclared functions): {echo.get('matched', 0)} "
+                f"matched, {echo.get('mismatched', 0)} mismatched (report-only), "
+                f"{echo.get('not_checked', 0)} not checked",
+                markup=False,
+            )
         if contract.get("network_observed"):
             # ADR-0304: observed, never blocked -- say whether anything went live.
             live = int(contract.get("network_connections_live") or 0)

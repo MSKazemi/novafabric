@@ -50,6 +50,8 @@ _ERRORS = "tests/replay/test_recorded_model_errors_replay.py"
 _ENDINGS = "tests/replay/test_undelivered_stream_endings.py"
 _PY_TOOL = "tests/replay/test_python_tool_replay_e2e.py"
 _OVERRIDES = "tests/replay/test_tool_overrides_enforced_e2e.py"
+_SLICE4 = "tests/replay/test_slice4_matching_and_echo_contract.py"
+_ECHO = "tests/replay/test_echo_and_nested_coverage_e2e.py"
 
 ROWS: tuple[SurfaceRow, ...] = (
     SurfaceRow(
@@ -324,7 +326,10 @@ ROWS: tuple[SurfaceRow, ...] = (
         replay_note=(
             "one-to-one; an unmatched call is refused (`--permissive` runs it live only "
             "with `--allow-unknown-mutation`: MCP calls count as `unknown`); "
-            "`replay.yaml` `tool_overrides` enforced in-process (experimental, ADR-0306)"
+            "`replay.yaml` `tool_overrides` enforced in-process (experimental, ADR-0306); "
+            "arguments matched after secret redaction, raw-equal records first, so an "
+            "argument the capsule scanner redacted still matches (experimental, ADR-0306 "
+            "slice 4)"
         ),
         streaming="—",
         asynchronous="(async by nature)",
@@ -335,6 +340,8 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_CONTRACT}::test_s8_missing_tool_record_fails_closed_even_if_the_workload_swallows_it",
             f"{_CONTRACT}::test_s13_permissive_refuses_an_unmatched_mcp_call_without_the_ladder_flag",
             f"{_OVERRIDES}::test_dry_run_report_equals_replayed_behaviour",
+            f"{_SLICE4}::test_an_mcp_call_whose_argument_the_scanner_redacted_is_served",
+            f"{_SLICE4}::test_an_unsealed_capsule_matches_exactly_as_before_redact_then_hash",
         ),
         patches=(("mcp.client.session", "ClientSession", "call_tool"),),
     ),
@@ -349,7 +356,9 @@ ROWS: tuple[SurfaceRow, ...] = (
             "before the function body runs; one-to-one by name and canonical arguments; "
             "JSON-native results up to 1 MiB; an unmatched or unservable call is refused "
             "(`--permissive` runs it live only if a ladder flag permits its declared "
-            "mutation class); `replay.yaml` `tool_overrides` enforced in-process"
+            "mutation class); `replay.yaml` `tool_overrides` enforced in-process; a "
+            "boundary that called a model or tool is served too, and the records it "
+            "wrote are consumed as covered (`*_calls_covered`, slice 4)"
         ),
         streaming="refused at decoration (generator functions)",
         asynchronous="served (`async def`)",
@@ -361,6 +370,9 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_PY_TOOL}::test_an_unservable_record_fails_closed_naming_the_cause",
             f"{_PY_TOOL}::test_permissive_refuses_an_unmatched_unknown_call_without_the_ladder_flag",
             f"{_OVERRIDES}::test_an_unmatched_intercepted_call_follows_the_owner_rules",
+            f"{_PY_TOOL}::test_a_nested_boundary_is_served_and_its_inner_records_are_covered",
+            f"{_ECHO}::test_a_nested_boundary_is_served_and_its_nested_model_call_is_covered",
+            f"{_ECHO}::test_an_unmarked_nested_call_fails_closed",
         ),
         servers=("novafabric.capture.record.tool",),
     ),
@@ -376,9 +388,32 @@ ROWS: tuple[SurfaceRow, ...] = (
     ),
     SurfaceRow(
         surface=(
-            "HTTP, shell, filesystem, framework-native tools, undeclared functions "
-            "the workload runs for a model"
+            "Undeclared functions the workload runs for a model (the result goes back "
+            "as a tool message)"
         ),
+        capture=(
+            "the model's tool choice, and the result as the next request sent it back "
+            "(`role: tool` message / Anthropic `tool_result` block)"
+        ),
+        replay="not intercepted",
+        replay_note=(
+            "runs **live**; the result it sends back is compared with the recorded one "
+            "(redacted digests, by `tool_call_id`): a difference is reported in "
+            "`replay_contract.tool_result_echo` and never fails the replay "
+            "(report-only, experimental, ADR-0306 D10); not checked for the Responses "
+            "API, whose request input is not recorded"
+        ),
+        streaming="—",
+        asynchronous="—",
+        status="not controlled",
+        evidence=(
+            f"{_ECHO}::test_a_changed_tool_result_is_reported_but_never_fails_the_replay",
+            f"{_ECHO}::test_a_capsule_without_request_messages_reports_not_checked_never_matched",
+            f"{_SLICE4}::test_the_echo_check_compares_anthropic_tool_results",
+        ),
+    ),
+    SurfaceRow(
+        surface="HTTP, shell, filesystem, framework-native tools",
         capture="network/file events, not tool records",
         replay="not intercepted",
         replay_note=(

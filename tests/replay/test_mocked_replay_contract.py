@@ -788,7 +788,7 @@ def test_summary_counts_each_tool_surface_separately() -> None:
     by_surface = report.as_dict()["tool_calls_by_surface"]
     assert by_surface[TOOL_SURFACE_MCP] == {
         "recorded": 1, "available": 1, "mocked": 1, "live": 0, "refused": 0,
-        "unmatched": 0, "unconsumed": 0,
+        "unmatched": 0, "covered": 0, "unconsumed": 0,
     }
     assert by_surface[TOOL_SURFACE_PYTHON]["recorded"] == 2
     assert by_surface[TOOL_SURFACE_PYTHON]["available"] == 1

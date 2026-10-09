@@ -48,6 +48,10 @@ from novafabric.capture.hooks._sdk_streams import (
     is_raw_response_call,
 )
 from novafabric.replay._contract import (
+    ECHO_DIFFERS,
+    ECHO_NO_COUNTERPART,
+    ECHO_NOT_RECORDED,
+    ECHO_NOT_SENT,
     MODEL_SURFACES,
     QUEUE_PROVIDER,
     TOOL_SURFACE_MCP,
@@ -56,10 +60,14 @@ from novafabric.replay._contract import (
     ToolCallMatcher,
     interceptable_tool_calls,
     model_queues,
+    nested_boundary_ids,
+    nested_within,
     normalized_arg_hash,
     not_servable_reason,
     recorded_provider_order,
     records_async_and_streamed_calls,
+    request_messages,
+    tool_result_messages,
     tool_surface,
 )
 from novafabric.replay._errors import (
@@ -834,6 +842,16 @@ class MockModelDispatcher:
         self._legacy_capture = not records_async_and_streamed_calls(model_calls)
         self._index: dict[str, int] = dict.fromkeys(self._queues, 0)
         self._global_index = 0
+        #: Global recorded position of each queue record (queue -> [position]).
+        self._global_pos: dict[str, list[int]] = {q: [] for q in self._queues}
+        for position, queue in enumerate(self._order):
+            self._global_pos[queue].append(position)
+        #: Records covered by a served nested ``record.tool`` boundary (ADR-0306
+        #: slice 4): skipped, never served -- the boundary's body never ran.
+        self._covered: dict[str, set[int]] = {q: set() for q in self._queues}
+        self._global_covered: set[int] = set()
+        #: Tool-result ids the D10 echo check already reported (each once).
+        self._echo_seen: set[str] = set()
         self._policy = divergence_policy
         self._events = events or ReplayEventLog(None)
         self._patcher = _Patcher()
@@ -946,9 +964,103 @@ class MockModelDispatcher:
             )
         return None
 
+    def cover_nested(self, boundary_ids: set[str]) -> int:
+        """Skip, without serving, every not-yet-served record written inside one of
+        *boundary_ids* (ADR-0306 slice 4). Returns how many were covered.
+
+        Called when a nested ``record.tool`` boundary is served: its body never
+        runs, so the model calls it made at capture are never requested. Each
+        is reported as ``model_covered``, so it is neither served nor left over.
+        """
+        count = 0
+        for queue, records in self._queues.items():
+            covered = self._covered[queue]
+            for idx in range(self._index[queue], len(records)):
+                record = records[idx]
+                within = nested_within(record)
+                if idx in covered or within not in boundary_ids:
+                    continue
+                covered.add(idx)
+                self._global_covered.add(self._global_pos[queue][idx])
+                count += 1
+                self._events.emit(
+                    "model_covered",
+                    provider=QUEUE_PROVIDER[queue],
+                    queue=queue,
+                    call_index=idx,
+                    model_call_id=record.get("model_call_id"),
+                    within_tool_call_id=within,
+                )
+        return count
+
+    def _skip_covered(self, queue: str) -> None:
+        covered = self._covered[queue]
+        while self._index[queue] in covered:
+            self._index[queue] += 1
+        while self._global_index in self._global_covered:
+            self._global_index += 1
+
+    def _check_echo(
+        self, queue: str, idx: int, record: dict[str, Any], request: dict[str, Any]
+    ) -> None:
+        """The D10 echo check (ADR-0306 slice 4): report-only, never raises.
+
+        Compares each tool result this request sends back to the model with the
+        one recorded in the request at the same served position, paired by
+        ``tool_call_id``, by a digest over the secret-redacted value. A
+        difference means the workload's own (undeclared) function returned
+        something else than at capture. Each id is reported once -- at the
+        first request that carries it -- and no value ever reaches the event
+        log. A capsule that kept no request messages reports ``not_checked``,
+        never ``matched``.
+        """
+        try:
+            live = tool_result_messages(request_messages(request))
+            if live is None:  # no readable message list: nothing to say either way
+                return
+            recorded_messages = tool_result_messages(record.get("gen_ai.request.messages"))
+            recorded = recorded_messages or {}
+            if not any(cid not in self._echo_seen for cid in (*live, *recorded)):
+                return
+            base = {
+                "queue": queue,
+                "surface": MODEL_SURFACES[queue],
+                "call_index": idx,
+                "model_call_id": record.get("model_call_id"),
+            }
+            for cid, value in live.items():
+                if cid in self._echo_seen:
+                    continue
+                self._echo_seen.add(cid)
+                if recorded_messages is None:
+                    outcome, reason = "not_checked", ECHO_NOT_RECORDED
+                elif cid not in recorded:
+                    outcome, reason = "not_checked", ECHO_NO_COUNTERPART
+                elif _tool_codec.echo_digest(value) == _tool_codec.echo_digest(recorded[cid]):
+                    outcome, reason = "matched", None
+                else:
+                    outcome, reason = "mismatched", ECHO_DIFFERS
+                self._events.emit(
+                    "tool_result_echo", tool_call_id=cid, outcome=outcome,
+                    **({"reason": reason} if reason else {}), **base,
+                )
+            for cid in recorded:
+                if cid in live or cid in self._echo_seen:
+                    continue
+                self._echo_seen.add(cid)
+                self._events.emit(
+                    "tool_result_echo", tool_call_id=cid, outcome="mismatched",
+                    reason=ECHO_NOT_SENT,
+                    **base,
+                )
+        except Exception:  # noqa: BLE001 -- a report-only check never breaks a replay
+            pass
+
     def _serve(self, queue: str, kwargs: dict[str, Any], *, asynchronous: bool) -> Any:
         stream = bool(kwargs.get("stream"))
-        record, error = self._take(queue, stream=stream, asynchronous=asynchronous)
+        record, error = self._take(
+            queue, stream=stream, asynchronous=asynchronous, request=kwargs
+        )
         return build_served_response(
             queue, record, stream=stream, asynchronous=asynchronous, kwargs=kwargs,
             error=error,
@@ -971,7 +1083,8 @@ class MockModelDispatcher:
         return record
 
     def _take(
-        self, queue: str, *, stream: bool = False, asynchronous: bool = False
+        self, queue: str, *, stream: bool = False, asynchronous: bool = False,
+        request: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], BaseException | None]:
         """The next recorded response on ``queue``; ``{}`` once a divergence is
         tolerated (``warn``). Raises under ``fail``.
@@ -987,6 +1100,7 @@ class MockModelDispatcher:
         provider = QUEUE_PROVIDER[queue]
         surface = MODEL_SURFACES[queue]
         records = self._queues[queue]
+        self._skip_covered(queue)
         idx = self._index[queue]
         if idx >= len(records):
             self._index[queue] += 1
@@ -1024,6 +1138,8 @@ class MockModelDispatcher:
                 global_call_index=position,
             ))
         record = records[idx]
+        if request is not None:
+            self._check_echo(queue, idx, record, request)
         if is_recorded_model_error(record) and not is_returned_failed_response(record):
             exc = self._recorded_exception(
                 queue, idx, record, stream=stream, asynchronous=asynchronous
@@ -1277,12 +1393,16 @@ class _PythonToolServer:
         events: ReplayEventLog,
         permitted: frozenset[str],
         overrides: dict[str, bool] | None = None,
+        on_served: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self._matcher = ToolCallMatcher(records)
         self._policy = divergence_policy
         self._events = events
         self._permitted = permitted
         self._overrides = dict(overrides or {})
+        #: Called with each served record before its value is returned, so the
+        #: records nested inside it are covered (ADR-0306 slice 4).
+        self._on_served = on_served
 
     def call(
         self, spec: Any, fn: Callable[..., Any],
@@ -1313,7 +1433,7 @@ class _PythonToolServer:
             # ladder flag -- re-execute. A matching record is consumed (it was
             # asked for), so leftover accounting stays exact; nothing is served.
             consumed = call.not_canonical is None and self._matcher.match_digest(
-                None, spec.name, str(call.digest)
+                None, spec.name, str(call.digest), raw_digest=call.raw_digest
             ).record is not None
             self._events.emit(
                 "tool_live", tool_name=spec.name, surface=TOOL_SURFACE_PYTHON,
@@ -1326,7 +1446,7 @@ class _PythonToolServer:
                 "cannot be matched", call.not_canonical, consumed=False,
             )
         digest = str(call.digest)
-        match = self._matcher.match_digest(None, spec.name, digest)
+        match = self._matcher.match_digest(None, spec.name, digest, raw_digest=call.raw_digest)
         if match.record is None:
             return self._diverge(
                 spec, ReplayToolUnmatchedError, digest,
@@ -1345,9 +1465,14 @@ class _PythonToolServer:
             how=match.how,
             surface=TOOL_SURFACE_PYTHON,
         )
+        if self._on_served is not None:
+            self._on_served(match.record)
         if match.record.get("status", "success") != "success":
             raise _recorded_python_exception(match.record)
-        _ok, value = _tool_codec.decode_result(match.record)
+        ok, value = _tool_codec.decode_result(match.record)
+        if not ok:  # a slice-1 nested-only record: servable since slice 4, value kept
+            result = match.record.get("result")
+            value = result.get("value") if isinstance(result, dict) else None
         return True, value
 
     def _diverge(
@@ -1421,8 +1546,13 @@ class MockToolDispatcher:
         events: ReplayEventLog | None = None,
         permitted_mutation_classes: frozenset[str] = frozenset({"none"}),
         overrides: dict[str, bool] | None = None,
+        model_dispatcher: MockModelDispatcher | None = None,
     ) -> None:
         intercepted = interceptable_tool_calls(tool_calls)
+        #: Every tool record, interceptable or not: nesting is a tree over all of
+        #: them (a boundary nested in a boundary nested in ...).
+        self._all_tool_calls = [r for r in tool_calls if isinstance(r, dict)]
+        self._model = model_dispatcher
         self._matcher = ToolCallMatcher(
             [r for r in intercepted if tool_surface(r) == TOOL_SURFACE_MCP]
         )
@@ -1436,11 +1566,40 @@ class MockToolDispatcher:
             events=self._events,
             permitted=permitted_mutation_classes,
             overrides=self._overrides,
+            on_served=self._cover_nested,
         )
         self._previous_handler: Any = None
         self._handler_registered = False
         self._patcher = _Patcher()
         self.installed_surfaces: list[str] = []
+
+    def _cover_nested(self, record: dict[str, Any]) -> None:
+        """Consume as covered every record written inside a served boundary.
+
+        ADR-0306 slice 4 (D3's nested coverage): a served ``record.tool``
+        boundary never runs its body, so the model calls, MCP calls and inner
+        boundaries it made at capture are never requested. Records marked
+        ``within_tool_call_id`` (transitively) are consumed as ``covered``
+        instead of being reported unconsumed. A nested call capture could not
+        mark (made from a raw thread) stays unconsumed: the replay fails closed.
+        """
+        ext = record.get("extensions")
+        nested = ext.get(_tool_codec.NESTED_RECORDS_EXT) if isinstance(ext, dict) else None
+        boundary = record.get("tool_call_id")
+        if type(nested) is not int or nested <= 0 or not isinstance(boundary, str):
+            return
+        ids = nested_boundary_ids(boundary, self._all_tool_calls)
+        for surface, matcher in (
+            (TOOL_SURFACE_MCP, self._matcher), (TOOL_SURFACE_PYTHON, self._python._matcher),
+        ):
+            for rec in matcher.cover(ids):
+                self._events.emit(
+                    "tool_covered", tool_name=rec.get("tool_name"),
+                    record_id=rec.get("tool_call_id"), surface=surface,
+                    within_tool_call_id=nested_within(rec),
+                )
+        if self._model is not None:
+            self._model.cover_nested(ids)
 
     def lookup(
         self, tool_call_id: str | None, tool_name: str, arguments: Any
@@ -1521,7 +1680,8 @@ class MockToolDispatcher:
                 permitted=permitted, subject="the live tool",
             ),
             tool_name=name,
-            arguments_hash=normalized_arg_hash(arguments),
+            # D12.3: the redact-then-hash digest, never one of a raw secret.
+            arguments_hash=_tool_codec.redacted_arguments_digest(arguments),
             reason=match.reason,
             surface=TOOL_SURFACE_MCP,
             mutation_class=gating,
@@ -1635,6 +1795,7 @@ def install_from_env() -> None:
                 events=events,
                 permitted_mutation_classes=_ladder_from_env(),
                 overrides=_overrides_from_env(),
+                model_dispatcher=model_dispatcher,
             )
             tool_dispatcher.install()
             surfaces.extend(tool_dispatcher.installed_surfaces)

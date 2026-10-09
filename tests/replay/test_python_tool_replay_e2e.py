@@ -127,6 +127,12 @@ def outer(x):
 
 
 @record.tool
+def outer2(x):
+    side(f"outer2 {x}")
+    return {"outer": outer(x)}
+
+
+@record.tool
 def secret():
     side("secret")
     return {"key": "AKIA" + "QZ7XK2M4PZT3W6RN"}
@@ -146,7 +152,7 @@ def login(user, token):
 
 TOOLS = {f.__name__: f for f in (
     add, pure, unknown_tool, look, tup, obj, big, with_ctx, ctx_ignored, boom, outer,
-    secret, sentinel, login,
+    outer2, secret, sentinel, login,
 )}
 
 
@@ -362,9 +368,8 @@ def test_permissive_refuses_an_unmatched_unknown_call_without_the_ladder_flag(
         (_call("obj"), "is a Ctx"),
         (_call("big", 64), "over the 16-byte cap"),
         (_call("with_ctx", "<ctx>", "q"), "argument `ctx`"),
-        (_call("outer", 4), "model/tool record(s) were written inside this boundary"),
     ],
-    ids=["tuple", "object", "size-cap", "non-canonical-argument", "nested"],
+    ids=["tuple", "object", "size-cap", "non-canonical-argument"],
 )
 def test_an_unservable_record_fails_closed_naming_the_cause(
     env: Env, monkeypatch: pytest.MonkeyPatch, op: dict[str, Any], reason_fragment: str
@@ -385,6 +390,44 @@ def test_an_unservable_record_fails_closed_naming_the_cause(
     # A tool divergence, never counted as a model one.
     assert result["model_calls_unmatched"] == 0
     assert result["tool_calls_unmatched"] >= 1
+
+
+# ── ADR-0306 slice 4: nested boundaries are served, their records covered ───
+
+
+@pytest.mark.parametrize(
+    ("op", "covered"), [(_call("outer", 4), 1), (_call("outer2", 4), 2)],
+    ids=["one-level", "transitive"],
+)
+def test_a_nested_boundary_is_served_and_its_inner_records_are_covered(
+    env: Env, op: dict[str, Any], covered: int
+) -> None:
+    capsule, captured = env.capture([op])
+    records = {r["tool_name"]: r for r in env.records(capsule)}
+    top = records[op["tool"]]
+    assert top["extensions"]["io.novafabric.result_codec"] == "json-v1"
+    assert top["extensions"]["io.novafabric.nested_records"] == 1
+    assert "io.novafabric.not_servable_reason" not in top["extensions"]
+    result, replayed, _ = env.replay(capsule)
+    assert env.side_effects == [], "a nested boundary ran its body during mocked replay"
+    assert replayed == captured
+    assert result["status"] == "success", _kinds(result)
+    assert result["tool_calls_mocked"] == 1
+    contract = result["replay_contract"]
+    assert contract["tool_calls_covered"] == covered
+    assert contract["tool_calls_by_surface"]["novafabric.capture.record.tool"]["covered"] == covered
+    assert result["queues_fully_consumed"] is True
+
+
+def test_a_covered_record_is_never_served_to_a_later_call(env: Env) -> None:
+    capsule, _ = env.capture([_call("outer", 4)])
+    # The replay serves outer(4) -- covering the add(4) recorded inside it -- and
+    # then calls add(4) directly: that record is spent, so the call fails closed.
+    result, replayed, _ = env.replay(capsule, plan=[_call("outer", 4), _call("add", 4)])
+    assert env.side_effects == []
+    assert replayed[1]["error"] == "ReplayToolUnmatchedError"
+    assert "already consumed" in replayed[1]["message"]
+    assert result["status"] == "failure"
 
 
 def test_ignore_makes_a_non_json_argument_servable(env: Env) -> None:

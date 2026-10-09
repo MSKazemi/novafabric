@@ -260,7 +260,61 @@ def not_servable_reason(record: dict[str, Any]) -> str | None:
             return "the record holds no result value"
         return None
     reason = ext.get(_tool_codec.NOT_SERVABLE_REASON_EXT)
+    if _only_nested(record, ext, reason):
+        return None
     return str(reason) if reason else "the record was not marked servable at capture"
+
+
+def _only_nested(record: dict[str, Any], ext: dict[str, Any], reason: Any) -> bool:
+    """A slice-1 record whose ONLY obstacle was nesting (ADR-0306 slice 4).
+
+    Slice-1 capture marked a boundary with nested records not servable, with
+    exactly ``_tool_codec.legacy_nested_reason(n)`` as its reason and its value
+    kept. Nested boundaries are served now (their nested records are consumed as
+    covered), so such a record is servable without a re-capture. Any other
+    reason in the text -- payloads off, a non-JSON result, the size cap, a
+    non-canonical argument -- keeps it unservable.
+    """
+    nested = ext.get(_tool_codec.NESTED_RECORDS_EXT)
+    if type(nested) is not int or nested <= 0:
+        return False
+    if reason != _tool_codec.legacy_nested_reason(nested):
+        return False
+    if record.get("status", "success") == "success":
+        result = record.get("result")
+        return isinstance(result, dict) and "value" in result
+    return True
+
+
+def nested_within(record: dict[str, Any]) -> str | None:
+    """The ``tool_call_id`` of the ``record.tool`` boundary *record* was written
+    inside (``io.novafabric.within_tool_call_id``, ADR-0306 D3), or ``None``."""
+    ext = record.get("extensions") if isinstance(record, dict) else None
+    within = ext.get(_tool_codec.WITHIN_TOOL_CALL_EXT) if isinstance(ext, dict) else None
+    return within if isinstance(within, str) and within else None
+
+
+def nested_boundary_ids(boundary_id: str, tool_calls: list[dict[str, Any]]) -> set[str]:
+    """*boundary_id* and every boundary recorded inside it, transitively.
+
+    A decorated function may call another decorated function: the inner
+    boundary's own nested records carry the inner id, so covering the outer
+    boundary must cover them too.
+    """
+    ids = {boundary_id}
+    children: dict[str, list[str]] = {}
+    for rec in tool_calls:
+        within = nested_within(rec)
+        tool_call_id = rec.get("tool_call_id") if isinstance(rec, dict) else None
+        if within and isinstance(tool_call_id, str) and tool_call_id:
+            children.setdefault(within, []).append(tool_call_id)
+    frontier = [boundary_id]
+    while frontier:
+        for child in children.get(frontier.pop(), []):
+            if child not in ids:
+                ids.add(child)
+                frontier.append(child)
+    return ids
 
 
 def is_servable_tool_record(record: dict[str, Any]) -> bool:
@@ -268,22 +322,50 @@ def is_servable_tool_record(record: dict[str, Any]) -> bool:
     return is_interceptable_tool_call(record) and not_servable_reason(record) is None
 
 
-def record_arguments_digest(record: dict[str, Any]) -> str:
-    """The argument digest a replayed call is matched against.
+def _stored_arguments_digest(record: dict[str, Any]) -> str | None:
+    """The payloads-off python record's stored digest, else ``None``."""
+    if tool_surface(record) != TOOL_SURFACE_PYTHON:
+        return None
+    ext = record.get("extensions")
+    digest = ext.get(_tool_codec.ARGUMENTS_DIGEST_EXT) if isinstance(ext, dict) else None
+    return digest if isinstance(digest, str) and digest else None
 
-    A python-surface record captured with payload capture off holds no
-    arguments, only their digest (``io.novafabric.arguments_digest``). Otherwise
-    a python-surface record is hashed **after** secret redaction, exactly as the
-    live call is (``_tool_codec.redacted_arguments_digest``), so an argument the
-    capsule scanner redacted still matches. MCP records keep ADR-0300's raw hash.
-    """
+
+def _record_arguments(record: dict[str, Any]) -> Any:
+    arguments = record.get("arguments")
     if tool_surface(record) == TOOL_SURFACE_PYTHON:
-        ext = record.get("extensions")
-        digest = ext.get(_tool_codec.ARGUMENTS_DIGEST_EXT) if isinstance(ext, dict) else None
-        if isinstance(digest, str) and digest:
-            return digest
-        return _tool_codec.redacted_arguments_digest(record.get("arguments") or {})
-    return normalized_arg_hash(record.get("arguments"))
+        return arguments or {}
+    return arguments
+
+
+def record_arguments_digest(record: dict[str, Any]) -> str:
+    """The argument digest a replayed call is matched against: redact-then-hash.
+
+    Every surface hashes a record's arguments **after** ADR-0009 secret
+    redaction (``_tool_codec.redacted_arguments_digest``), exactly as the live
+    call's arguments are hashed (ADR-0306 D12.3), so an argument the capsule
+    scanner redacted at seal still matches -- the python surface since slice 1,
+    MCP since slice 4. Redaction is idempotent, so a sealed and an unsealed
+    capsule hash alike. A python-surface record captured with payload capture
+    off holds no arguments, only this digest (``io.novafabric.arguments_digest``).
+    """
+    stored = _stored_arguments_digest(record)
+    if stored is not None:
+        return stored
+    return _tool_codec.redacted_arguments_digest(_record_arguments(record))
+
+
+def record_raw_arguments_digest(record: dict[str, Any]) -> str | None:
+    """ADR-0300's raw digest of the stored arguments, for the matcher's exact tier.
+
+    ``None`` when the record holds no arguments (payloads off). Computed in
+    memory at replay only, never written: the dual-hash fallback that keeps a
+    capsule matching exactly as it did before redact-then-hash (see
+    :class:`ToolCallMatcher`).
+    """
+    if _stored_arguments_digest(record) is not None:
+        return None
+    return normalized_arg_hash(_record_arguments(record))
 
 
 def _nests(outer: dict[str, Any], inner: dict[str, Any]) -> bool:
@@ -326,12 +408,20 @@ def interceptable_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str,
     return [r for i, r in enumerate(candidates) if i not in dropped]
 
 
+MatchHow = Literal["id", "signature", "redacted-signature"]
+
+
 @dataclass
 class ToolMatch:
-    """Outcome of matching one replayed tool call."""
+    """Outcome of matching one replayed tool call.
+
+    ``how`` is ``"redacted-signature"`` when the match needed redact-then-hash:
+    the live arguments held a detected secret and no record held the same raw
+    arguments, so recorded order chose among records whose secrets redact alike.
+    """
 
     record: dict[str, Any] | None
-    how: Literal["id", "signature"] | None = None
+    how: MatchHow | None = None
     reason: str | None = None
 
 
@@ -341,29 +431,44 @@ class ToolCallMatcher:
     Order of preference:
 
     1. exact ``tool_call_id`` (when the surface carries one) with the same name;
-    2. tool name + normalized argument hash, earliest unconsumed record first --
-       so repeated identical calls consume distinct records in recorded order;
+    2. tool name + argument hash, earliest unconsumed record first -- so
+       repeated identical calls consume distinct records in recorded order.
+       Two hashes, in this order (the dual-hash fallback, ADR-0306 D12.3):
+
+       a. the **raw** hash (ADR-0300 D6): the record holds exactly these
+          arguments. Every call an older replay matched still matches, and to
+          the same record;
+       b. the **redact-then-hash** digest (:func:`record_arguments_digest`):
+          the arguments are equal once ADR-0009 secrets are masked, so a call
+          whose secret the capsule scanner redacted at seal still matches.
+          Two different secrets caught by one rule collapse to one value here,
+          and recorded order decides between them (``how`` says so).
     3. otherwise **unmatched**, with a reason. A record is never served twice:
        this is the dict-keyed-by-signature bug class ``nova diff`` once had.
 
-    Indexed by ``(name, argument hash)`` -> queue of unconsumed record indices,
-    so tier 2 is amortised O(1) per call instead of a scan of the capsule
+    Indexed by ``(name, digest)`` -> queue of unconsumed record indices, so
+    tier 2 is amortised O(1) per call instead of a scan of the capsule
     (ADR-0306 D9). Thread-safe: decorated python tools may run on executor
-    threads (ADR-0306 D6.4).
+    threads (ADR-0306 D6.4). Raw digests live in memory only.
     """
 
     def __init__(self, records: list[dict[str, Any]]) -> None:
         self._records = list(records)
         self._hashes = [record_arguments_digest(r) for r in self._records]
+        self._raw_hashes = [record_raw_arguments_digest(r) for r in self._records]
         self._consumed = [False] * len(self._records)
         self._consumed_count = 0
         self._lock = threading.Lock()
         self._index: dict[tuple[Any, str], deque[int]] = {}
+        self._raw_index: dict[tuple[Any, str], deque[int]] = {}
         self._signatures_by_name: dict[Any, set[str]] = {}
         for idx, (rec, digest) in enumerate(zip(self._records, self._hashes)):
             name = rec.get("tool_name")
             self._index.setdefault((name, digest), deque()).append(idx)
             self._signatures_by_name.setdefault(name, set()).add(digest)
+            raw = self._raw_hashes[idx]
+            if raw is not None:
+                self._raw_index.setdefault((name, raw), deque()).append(idx)
 
     def __len__(self) -> int:
         return len(self._records)
@@ -375,20 +480,53 @@ class ToolCallMatcher:
     def unconsumed(self) -> list[dict[str, Any]]:
         return [r for r, used in zip(self._records, self._consumed) if not used]
 
-    def _take(self, idx: int, how: Literal["id", "signature"]) -> ToolMatch:
+    def _take(self, idx: int, how: MatchHow) -> ToolMatch:
         self._consumed[idx] = True
         self._consumed_count += 1
         return ToolMatch(record=self._records[idx], how=how)
 
+    def _first_unconsumed(self, queue: deque[int] | None) -> int | None:
+        while queue:
+            idx = queue.popleft()
+            if not self._consumed[idx]:  # another tier may have taken it
+                return idx
+        return None
+
     def match(
         self, tool_call_id: str | None, tool_name: str, arguments: Any
     ) -> ToolMatch:
-        return self.match_digest(tool_call_id, tool_name, normalized_arg_hash(arguments))
+        return self.match_digest(
+            tool_call_id, tool_name,
+            _tool_codec.redacted_arguments_digest(arguments),
+            raw_digest=normalized_arg_hash(arguments),
+        )
+
+    def cover(self, boundary_ids: set[str]) -> list[dict[str, Any]]:
+        """Consume, without serving, every unconsumed record written inside one of
+        *boundary_ids* (ADR-0306 slice 4, nested coverage); return them.
+
+        A served ``record.tool`` boundary never runs its body, so the calls it
+        made at capture are never requested: they are *covered* by the served
+        result, not left over. Each record is covered at most once.
+        """
+        covered: list[dict[str, Any]] = []
+        with self._lock:
+            for idx, rec in enumerate(self._records):
+                if not self._consumed[idx] and nested_within(rec) in boundary_ids:
+                    self._consumed[idx] = True
+                    self._consumed_count += 1
+                    covered.append(rec)
+        return covered
 
     def match_digest(
-        self, tool_call_id: str | None, tool_name: str, digest: str
+        self, tool_call_id: str | None, tool_name: str, digest: str,
+        *, raw_digest: str | None = None,
     ) -> ToolMatch:
-        """As :meth:`match`, for a caller that already hashed its arguments."""
+        """As :meth:`match`, for a caller that already hashed its arguments.
+
+        *digest* is the redact-then-hash digest (tier 2b); *raw_digest*, when
+        given, is tried first (tier 2a).
+        """
         with self._lock:
             if tool_call_id:
                 for idx, rec in enumerate(self._records):
@@ -403,11 +541,16 @@ class ToolCallMatcher:
                             f"{rec.get('tool_name')!r}, not {tool_name!r}"
                         ),
                     )
-            queue = self._index.get((tool_name, digest))
-            while queue:
-                idx = queue.popleft()
-                if not self._consumed[idx]:  # an id-tier match may have taken it
-                    return self._take(idx, "signature")
+            if raw_digest is not None:
+                found = self._first_unconsumed(self._raw_index.get((tool_name, raw_digest)))
+                if found is not None:
+                    return self._take(found, "signature")
+            found = self._first_unconsumed(self._index.get((tool_name, digest)))
+            if found is not None:
+                # Redaction changed nothing in the live arguments, or the record
+                # holds them raw: no secret was collapsed to reach this record.
+                exact = raw_digest is None or raw_digest in (digest, self._raw_hashes[found])
+                return self._take(found, "signature" if exact else "redacted-signature")
             signatures = self._signatures_by_name.get(tool_name)
             if signatures and digest in signatures:
                 reason = "every recorded call with these arguments was already consumed"
@@ -416,6 +559,74 @@ class ToolCallMatcher:
             else:
                 reason = "no recorded call to this tool"
             return ToolMatch(record=None, reason=reason)
+
+
+# ── tool-result echo check (ADR-0306 D10, slice 4) ───────────────────────────
+
+#: Kind of a reported echo mismatch. Report-only (owner Q10): it is listed under
+#: ``replay_contract.tool_result_echo``, never in ``divergences``, and never fails
+#: a replay.
+TOOL_RESULT_ECHO_MISMATCH = "tool_result_echo_mismatch"
+TOOL_RESULT_ECHO_POLICY = "report-only"
+
+#: ``not_checked`` reasons (stable strings, counted in the result).
+ECHO_NOT_RECORDED = "the capsule recorded no request messages for this model call"
+ECHO_NO_COUNTERPART = "no tool result with this id was recorded at this position"
+#: ``mismatched`` reasons.
+ECHO_DIFFERS = "the result the replay sent back differs from the recorded one"
+ECHO_NOT_SENT = "recorded at this position, but the replay sent no result for it"
+
+
+def _field(item: Any, name: str) -> Any:
+    if isinstance(item, dict):
+        return item.get(name)
+    return getattr(item, name, None)
+
+
+def tool_result_messages(messages: Any) -> dict[str, Any] | None:
+    """``tool_call_id`` -> the tool result a model request sends back (D10, fact 6).
+
+    Reads the three shapes the served surfaces use, from dicts or SDK objects:
+
+    * Chat Completions: a ``role: "tool"`` message -> its ``content``;
+    * Anthropic Messages: a ``tool_result`` block in a ``user`` message ->
+      ``{"content", "is_error"}``, keyed by ``tool_use_id``;
+    * Responses API: a ``function_call_output`` input item -> its ``output``.
+
+    ``None`` when *messages* is not a non-empty list: a request with no message
+    list (or a record that kept none) has nothing to compare, which is never
+    the same as "matched". The first result per id wins.
+    """
+    if not isinstance(messages, (list, tuple)) or not messages:
+        return None
+    out: dict[str, Any] = {}
+
+    def put(call_id: Any, value: Any) -> None:
+        if isinstance(call_id, str) and call_id and call_id not in out:
+            out[call_id] = value
+
+    for item in messages:
+        if _field(item, "role") == "tool":
+            put(_field(item, "tool_call_id"), _field(item, "content"))
+        elif _field(item, "type") == "function_call_output":
+            put(_field(item, "call_id"), _field(item, "output"))
+        elif _field(item, "role") == "user":
+            content = _field(item, "content")
+            if isinstance(content, (list, tuple)):
+                for block in content:
+                    if _field(block, "type") == "tool_result":
+                        put(_field(block, "tool_use_id"), {
+                            "content": _field(block, "content"),
+                            "is_error": bool(_field(block, "is_error")),
+                        })
+    return out
+
+
+def request_messages(kwargs: dict[str, Any]) -> Any:
+    """The message list of a replayed ``create`` call (``input`` for Responses)."""
+    if "messages" in kwargs:
+        return kwargs.get("messages")
+    return kwargs.get("input")
 
 
 # ── event log (written in the replayed process, read by the engine) ──────────
@@ -492,6 +703,14 @@ class ReplayContractReport:
     #: ``replay.yaml`` overrides and whether this replay honours each
     #: (ADR-0306 D11); written only when the capsule has overrides.
     tool_overrides: list[dict[str, Any]] = field(default_factory=list)
+    #: Records consumed as covered by a served nested ``record.tool`` boundary
+    #: (ADR-0306 slice 4): never requested, because the boundary's body never ran.
+    model_calls_covered: int = 0
+    tool_calls_covered: int = 0
+    #: The D10 echo check, report-only (ADR-0306 slice 4, owner Q10).
+    echo_matched: int = 0
+    echo_not_checked: dict[str, int] = field(default_factory=dict)
+    echo_mismatches: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def queues_fully_consumed(self) -> bool:
@@ -514,6 +733,21 @@ class ReplayContractReport:
             reason += f" (+{more} more divergence{'s' if more > 1 else ''})"
         return reason
 
+    def tool_result_echo(self) -> dict[str, Any]:
+        """The D10 echo check as the result reports it (report-only)."""
+        listed = self.echo_mismatches[:MAX_LISTED_DIVERGENCES]
+        out: dict[str, Any] = {
+            "policy": TOOL_RESULT_ECHO_POLICY,
+            "matched": self.echo_matched,
+            "mismatched": len(self.echo_mismatches),
+            "not_checked": sum(self.echo_not_checked.values()),
+            "not_checked_reasons": dict(self.echo_not_checked),
+            "mismatches": [dict(m) for m in listed],
+        }
+        if len(self.echo_mismatches) > len(listed):
+            out["mismatches_not_listed"] = len(self.echo_mismatches) - len(listed)
+        return out
+
     def as_dict(self) -> dict[str, Any]:
         listed = self.divergences[:MAX_LISTED_DIVERGENCES]
         out: dict[str, Any] = {
@@ -529,6 +763,9 @@ class ReplayContractReport:
             "tool_calls_unconsumed": self.tool_calls_unconsumed,
             "tool_calls_refused": self.tool_calls_refused,
             "tool_calls_by_surface": {k: dict(v) for k, v in self.tool_calls_by_surface.items()},
+            "model_calls_covered": self.model_calls_covered,
+            "tool_calls_covered": self.tool_calls_covered,
+            "tool_result_echo": self.tool_result_echo(),
             "network_observed": self.network_observed,
             "network_connections_live": self.network_connections_live,
             "network_destinations": self.network_destinations[:MAX_LISTED_NETWORK_DESTINATIONS],
@@ -554,7 +791,8 @@ def surfaces_for(substitute_tools: bool) -> list[str]:
 _TOOL_DIVERGENCE_KINDS = frozenset({"tool_call_unmatched", "tool_result_not_servable"})
 
 _SURFACE_COUNTERS = (
-    "recorded", "available", "mocked", "live", "refused", "unmatched", "unconsumed",
+    "recorded", "available", "mocked", "live", "refused", "unmatched", "covered",
+    "unconsumed",
 )
 
 
@@ -594,6 +832,7 @@ def summarize(
         return by_surface.setdefault(str(surface), dict.fromkeys(_SURFACE_COUNTERS, 0))
 
     served: dict[str, int] = dict.fromkeys(queues, 0)
+    covered: dict[str, int] = dict.fromkeys(queues, 0)
     serving_pids: set[Any] = set()
     for ev in events:
         kind = ev.get("event")
@@ -617,6 +856,39 @@ def summarize(
         elif kind == "model_live":
             report.model_calls_live += 1
             serving_pids.add(ev.get("pid"))
+        elif kind == "model_covered":
+            queue = str(ev.get("queue"))
+            covered[queue] = covered.get(queue, 0) + 1
+            report.model_calls_covered += 1
+        elif kind == "tool_covered":
+            report.tool_calls_covered += 1
+            _surface_of(ev)["covered"] += 1
+        elif kind == "tool_result_echo":
+            outcome = ev.get("outcome")
+            if outcome == "matched":
+                report.echo_matched += 1
+            elif outcome == "mismatched":
+                report.echo_mismatches.append({
+                    "kind": TOOL_RESULT_ECHO_MISMATCH,
+                    "message": (
+                        f"tool result {ev.get('tool_call_id')} at {ev.get('surface')} call "
+                        f"#{int(ev.get('call_index') or 0) + 1}: "
+                        f"{ev.get('reason') or ECHO_DIFFERS} -- the workload's own code "
+                        "produced a different tool result than at capture, so the "
+                        "answers served after it respond to a different question "
+                        "(report-only, ADR-0306 D10)"
+                    ),
+                    **{
+                        k: ev[k]
+                        for k in (
+                            "tool_call_id", "surface", "call_index", "model_call_id", "reason",
+                        )
+                        if k in ev
+                    },
+                })
+            else:
+                why = str(ev.get("reason") or "not checked")
+                report.echo_not_checked[why] = report.echo_not_checked.get(why, 0) + 1
         elif kind == "network_observer_installed":
             report.network_observed = True
         elif kind == "network_live":
@@ -661,7 +933,11 @@ def summarize(
                     surface = str(entry.get("surface") or TOOL_SURFACE_MCP)
                     consumed_unserved[surface] = consumed_unserved.get(surface, 0) + 1
 
-    leftovers = {p: len(q) - served[p] for p, q in queues.items() if len(q) > served[p]}
+    leftovers = {
+        p: len(q) - served[p] - covered.get(p, 0)
+        for p, q in queues.items()
+        if len(q) > served[p] + covered.get(p, 0)
+    }
     report.model_calls_unconsumed = sum(leftovers.values())
     if report.model_calls_unconsumed:
         detail = ", ".join(
@@ -681,7 +957,8 @@ def summarize(
         for surface, counters in by_surface.items():
             counters["unconsumed"] = max(
                 0,
-                counters["recorded"] - counters["mocked"] - consumed_unserved.get(surface, 0),
+                counters["recorded"] - counters["mocked"] - counters["covered"]
+                - consumed_unserved.get(surface, 0),
             )
         report.tool_calls_unconsumed = sum(c["unconsumed"] for c in by_surface.values())
         report.tool_calls_by_surface = by_surface

@@ -182,12 +182,8 @@ class PythonToolHook:
             ext[codec.ARGUMENTS_DIGEST_EXT] = call.digest
         if not payloads:
             reasons.append(PAYLOADS_OFF_REASON)
-        if nested:
-            reasons.append(
-                f"{nested} model/tool record(s) were written inside this boundary; "
-                "serving it would leave them unrequested (nested boundaries are "
-                "served from slice 3)"
-            )
+        # Nesting is not a reason (ADR-0306 slice 4): replay serves the boundary
+        # and consumes the records marked `within_tool_call_id` as covered.
 
         finished = _now()
         record: dict[str, Any] = {
@@ -226,8 +222,7 @@ class PythonToolHook:
             if encoded.digest:
                 ext[codec.RESULT_DIGEST_EXT] = encoded.digest
             # Kept whenever capture may keep it -- even on a record that is not
-            # servable for another reason (nested records), so a later slice can
-            # serve it without a re-capture.
+            # servable for another reason -- so the value is evidence either way.
             record["result"] = encoded.result
         if reasons:
             ext[codec.RESULT_CODEC_EXT] = codec.CODEC_NOT_SERVABLE

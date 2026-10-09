@@ -145,6 +145,15 @@ class CanonicalCall:
         """
         return None if self.arguments is None else redacted_arguments_digest(self.arguments)
 
+    @property
+    def raw_digest(self) -> str | None:
+        """ADR-0300's raw digest, for the matcher's exact tier only.
+
+        Computed in memory at replay and never written anywhere: a digest of a raw
+        value is a guessing oracle for a secret inside it (NF-166).
+        """
+        return None if self.arguments is None else normalized_arg_hash(self.arguments)
+
 
 def redact_for_digest(value: Any) -> Any:
     """*value* with every ADR-0009 rule match masked as ``[REDACTED:<rule>]``.
@@ -170,6 +179,58 @@ def redacted_arguments_digest(arguments: Any) -> str:
     stored record at replay (redact-then-hash, ADR-0306 D12.3, python surface).
     """
     return normalized_arg_hash(redact_for_digest(arguments))
+
+
+def legacy_nested_reason(nested: int) -> str:
+    """The not-servable reason slice-1 capture wrote for a boundary with nested records.
+
+    Nesting alone no longer makes a record unservable (ADR-0306 slice 4): replay
+    serves the boundary and consumes its nested records as *covered*. A capsule
+    captured before that carries this exact text as its only reason; replay
+    recognises it (``_contract.not_servable_reason``) so the capsule needs no
+    re-capture. Do not change the text.
+    """
+    return (
+        f"{nested} model/tool record(s) were written inside this boundary; "
+        "serving it would leave them unrequested (nested boundaries are "
+        "served from slice 3)"
+    )
+
+
+def echo_digest(value: Any) -> str:
+    """``sha256:`` over the canonical JSON of a secret-redacted tool-result echo.
+
+    Used by the D10 echo check on both sides -- the recorded request message and
+    the replayed one -- so a secret the capsule scanner masked at seal compares
+    equal to the raw value the live function returned. Values that are not JSON
+    (an SDK message object) are converted with ``model_dump`` or ``str`` first;
+    nothing is imported or evaluated.
+    """
+    return _digest(
+        json.dumps(
+            redact_for_digest(_plain(value)), sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False, default=str,
+        )
+    )
+
+
+def _plain(value: Any, depth: int = 0) -> Any:
+    """A JSON-like copy of *value*: SDK objects through ``model_dump(mode="json")``."""
+    if depth > 32:
+        return str(value)
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): _plain(v, depth + 1) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(v, depth + 1) for v in value]
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump) and not isinstance(value, type):
+        try:
+            return _plain(model_dump(mode="json", exclude_none=True), depth + 1)
+        except Exception:  # noqa: BLE001 -- an odd object is compared by its str
+            return str(value)
+    return str(value)
 
 
 def canonical_call(
