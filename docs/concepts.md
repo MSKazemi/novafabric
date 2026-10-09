@@ -167,8 +167,8 @@ the portable Agent Card and the Task/Message/Artifact mapping (ADR-0149). The
 starts the subprocess, it imports this loader automatically, which installs
 monkey-patches for:
 
-- **OpenAI** — `openai.resources.chat.completions.Completions.create`
-- **Anthropic** — `anthropic.resources.messages.Messages.create`
+- **OpenAI** — `Completions.create` and `AsyncCompletions.create` (Chat Completions), and `Responses.create` and `AsyncResponses.create` (Responses API), in `openai.resources` (`capture/hooks/_openai.py`). A `stream=True` call is folded into one record when the stream ends (ADR-0304), and a call that raised is recorded with the SDK error detail (`io.novafabric.sdk_error`, `capture/hooks/_sdk_errors.py`) that mocked replay needs to raise it again.
+- **Anthropic** — `anthropic.resources.messages.Messages.create` and `AsyncMessages.create`, streamed or not (`capture/hooks/_anthropic.py`).
 - **httpx** — `httpx.Client.send`, recording requests classified by the URL registry (`src/novafabric/capture/hooks/url_registry.yaml` + `~/.novafabric/url_registry.yaml` override). Default coverage: OpenAI, Anthropic, Cohere, Together, Mistral, Replicate, AWS Bedrock, Ollama (default port 11434). Non-default Ollama ports are detected automatically from `OLLAMA_BASE_URL` / `OLLAMA_HOST` at call time.
 - **requests** — `requests.Session.send`, same URL-registry classification (v0.5; RFC-0001 Option C wire-level layer). Covers LangChain HTTP adapters, LlamaIndex REST clients, and any SDK that ships over `requests`.
 - **aiohttp** — `aiohttp.ClientSession._request`, async wire-level capture (v0.6 / C-3.1). Catches LangChain async paths, FastAPI agents, streaming-first SDKs.
@@ -300,8 +300,10 @@ The environment lock records the full execution environment at capture time:
 - Python version and interpreter path
 - All installed packages (up to 200)
 - Safe environment variables (secrets are excluded)
-- Host OS, CPU architecture, CPU count, total memory
-- GPU presence
+- Host OS, CPU architecture, CPU count, total memory (read from `/proc/meminfo`;
+  `0` where that file does not exist)
+- A GPU field (`hardware.gpus`), which is not populated today: no GPU inventory
+  is collected
 - Detected package manager (`uv.lock`, `poetry.lock`, `requirements.txt`, etc.)
 
 `nova replay` uses `env.lock` to warn about environment mismatches before
@@ -340,8 +342,9 @@ audit artifact.
 A replay re-executes or inspects a capsule. When it re-executes, NovaFabric
 controls only the calls it intercepts (see [`mocked` mode](#mocked-mode)); the
 rest run live. There are **five explicit, falsifiable modes**; `intervention` is the
-**experimental** counterfactual mode. A replay is itself a
-new capsule, so you can diff a replay against the original run.
+**experimental** counterfactual mode. Every mode writes a `replay_result.yaml`
+report; only `intervention` also writes a new (counterfactual) capsule, which you
+can `nova diff` against the original run.
 
 | Mode | Spawns subprocess? | Network? | Best for |
 |---|---|---|---|
@@ -349,7 +352,7 @@ new capsule, so you can diff a replay against the original run.
 | **`mocked`** | Yes | OpenAI/Anthropic model replies (sync or async, streamed or not) and MCP `call_tool` results served from the capsule; **other tools run live**; fails closed on divergence | CI / regression |
 | **`semantic`** | No | No | Consistency score over the capsule's *recorded* model responses — does **not** re-execute |
 | **`exact`** | No | No | Eligibility check for a byte-exact re-run — does **not** re-execute |
-| **`intervention`** (experimental, ADR-0086) | Yes, under mocked semantics | No | Counterfactual root-cause: substitute one captured event per an `InterventionSpec`, re-execute downstream, and record whether the outcome flips |
+| **`intervention`** (experimental, ADR-0086) | Yes, under mocked semantics | Model replies served from the capsule (with the one substitution); **tools run live**, so a substituted tool result is not delivered to the workload | Counterfactual root-cause: substitute one captured event per an `InterventionSpec`, re-execute downstream, and record whether the outcome flips |
 
 > **Honesty note.** NovaFabric explicitly does **not** claim byte-exact replay of
 > remote LLM calls. `exact` mode requires a deterministic environment and a
@@ -370,7 +373,11 @@ Use forensic mode to inspect what happened without any risk of side effects.
 ### `mocked` mode
 
 The original command is re-spawned as a subprocess (**works today** for Python
-workloads, ADR-0300). Inside it:
+workloads, ADR-0300). A capsule that records **no command to re-run** — written
+by a framework adapter or `@novafabric.agent` (`capture_mode: sdk-decorator`, a
+`@framework:name` label) or imported from OpenTelemetry spans — is refused
+before anything is spawned (`CapsuleNotReplayable`, exit 1). Inside the
+re-spawned process:
 
 - `MockModelDispatcher` serves the recorded responses, in order, for OpenAI
   `chat.completions.create`, OpenAI `responses.create` and Anthropic
@@ -378,7 +385,11 @@ workloads, ADR-0300). Inside it:
   event stream the SDK would have produced (ADR-0304) — including the
   assistant's recorded tool-call requests. `parse`, legacy completions,
   Anthropic `messages.stream()` and `with_raw_response` calls are **refused**,
-  not sent to the network.
+  not sent to the network. A recorded call that **failed** (a rate limit, a 4xx,
+  a 5xx after the SDK's retries, a timeout) is replayed by raising the same SDK
+  exception class at its position, from an allow-list
+  (`replay/_model_errors.py`); the wire hook's per-attempt transport records are
+  never served (ADR-0305).
 - `MockToolDispatcher` serves recorded **MCP** results through
   `mcp.ClientSession.call_tool`, one recorded result per call (matched by tool
   name and arguments, repeated identical calls in recorded order). A call with
@@ -464,7 +475,12 @@ differently, would the run's outcome have changed?* An `InterventionSpec`
 names one captured model or tool call and a substitute outcome for it; the
 engine re-executes everything downstream of that point under mocked
 semantics (zero live tokens) and writes a diffable capsule hard-marked
-`replay_mode: intervention`, never mistakable for a real run. This is the
+`replay_mode: intervention`, never mistakable for a real run. Only a substituted
+**model** response reaches the re-executed workload: intervention installs no
+tool dispatcher, so tools run live and a substituted **tool** result changes the
+output capsule and the checks only. The result says which with
+`intervention.substitution_delivered_to_workload`. A capsule with no command to
+re-run is not re-executed at all (`downstream_reexecuted: false`). This is the
 building block behind the no-LLM causal-graph diagnostic suite below — see
 [Diagnose: causal-graph attribution and counterfactual root-cause
 search](#diagnose-causal-graph-attribution-and-counterfactual-root-cause-search-experimental).

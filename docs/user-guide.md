@@ -12,8 +12,9 @@ once you are capturing, replaying, diffing, and auditing real runs.
   [Run Capsule](concepts.md) — with no changes to your application code.
 - How to **inspect and validate** a capsule, and how to gate CI on capsule
   integrity and on the secret scanner's findings.
-- How to **replay** a captured run in each of the four honest modes
-  (`forensic`, `semantic`, `exact`, `mocked`) and **diff** two runs
+- How to **replay** a captured run in each of the five honest modes
+  (`forensic`, `semantic`, `exact`, `mocked`, and the experimental
+  `intervention`) and **diff** two runs
   structurally as a regression gate.
 - How to query the **lineage graph** — provenance, blast-radius, replay-chain,
   time-travel — and emit OpenLineage events to a data catalog.
@@ -142,8 +143,8 @@ capsule is still written even when no AI SDK is present at all:
 
 | Transport | What is recorded |
 |---|---|
-| `openai` SDK | `chat.completions.create` calls → `model-calls.jsonl` |
-| `anthropic` SDK | `messages.create` calls → `model-calls.jsonl` |
+| `openai` SDK | `chat.completions.create` and `responses.create` calls, sync or async, streamed or not → `model-calls.jsonl` |
+| `anthropic` SDK | `messages.create` calls, sync or async, streamed or not → `model-calls.jsonl` |
 | `httpx` | Requests to URL-registry-classified hosts → `model-calls.jsonl` |
 | `requests` | Same classification as `httpx`; covers LangChain, LlamaIndex, `boto3` |
 | `aiohttp` | Async wire-level capture; covers async LangChain, FastAPI agents |
@@ -583,13 +584,15 @@ stays pinned to the four v0 streams until the P2 slice bumps it). See the
 
 This is the core of "replayable AI infrastructure." Tracing tells you what
 happened; replay tells you whether a past run can be re-executed under controlled
-conditions, and diff tells you exactly what changed between two runs. A replay is
-itself a new capsule — so you can diff a replay against its original.
+conditions, and diff tells you exactly what changed between two runs. Every
+replay writes a `replay_result.yaml` report; only an `intervention` replay also
+writes a new (counterfactual) capsule that you can diff against its original.
 
 ### nova replay
 
-Replay a captured run from its capsule, in one of **four honest, falsifiable
-modes**. NovaFabric deliberately does **not** claim byte-exact replay of remote
+Replay a captured run from its capsule, in one of **five honest, falsifiable
+modes** (the fifth, `intervention`, is experimental and described in
+[Concepts](concepts.md#intervention-mode-experimental)). NovaFabric deliberately does **not** claim byte-exact replay of remote
 LLM calls; the mode you choose reflects how much determinism the run actually
 supports.
 
@@ -623,7 +626,9 @@ nova replay .novafabric/capsules/01HX.../ --mode exact
 ```
 
 Checks whether the capsule meets the requirements for byte-exact replay:
-`env.lock.lock_mode=deterministic` and a `seed` field on every model call.
+`env.lock` `mode: deterministic` (the legacy `lock_mode` key is still read), a
+`gen_ai.request.seed` on every model call, no tool-schema drift, and a command
+to re-run (a framework-adapter capsule is never eligible).
 Returns `exact_eligible` (bool) and a list of `exact_reasons` if not eligible.
 No subprocess, no network. Remote LLMs are almost never exact-eligible; this
 mode is for local / on-prem / compliance runs where determinism is controllable.
@@ -647,6 +652,9 @@ tool runs live** — HTTP requests, shell commands, file writes, framework-nativ
 tools — so run replays of such agents in a sandbox or against test credentials.
 The result lists the outbound connections the replay made
 (`replay_contract.network_connections_live`); they are reported, not blocked.
+A recorded call that failed (a rate limit, a 4xx, a 5xx after the SDK's retries,
+a timeout) is replayed by raising the same SDK exception class at the same
+position, so the workload's error handling runs again.
 
 The replay is **fail-closed** (ADR-0300): an extra model call, a call on an
 unsupported surface (`parse`, legacy completions, `with_raw_response`), an MCP call
@@ -685,7 +693,8 @@ Results land in `.novafabric/replays/<replay-ulid>/replay_result.yaml`. Use
 | `forensic` | No | From capsule (read-only) | Not re-executed | Inspection report | Audit / post-incident |
 | `semantic` | No | Read-only analysis | Not re-executed | `similarity_score` (0–1.0) | Drift detection |
 | `exact` | No | Read-only analysis | Not re-executed | `exact_eligible` + `exact_reasons[]` | Determinism / compliance check |
-| `mocked` | Yes | Sync OpenAI/Anthropic chat: from the capsule; unsupported surfaces refused | MCP `call_tool`: from the capsule or refused; other tools **live** | Replay result + divergence report | CI / regression |
+| `mocked` | Yes (refused for a capsule with no command) | OpenAI Chat Completions / Responses API and Anthropic Messages, sync or async, streamed or not: from the capsule, recorded errors raised again; unsupported surfaces refused | MCP `call_tool`: from the capsule or refused; other tools **live** | Replay result + divergence report | CI / regression |
+| `intervention` (experimental) | Yes, under mocked semantics | From the capsule, with one substituted event | Other tools **live**; a substituted tool result is not delivered | Replay result + counterfactual capsule | Counterfactual root cause |
 
 ---
 
@@ -712,8 +721,11 @@ Outputs:
 ```
 
 **Use as a CI gate.** `--assert-no-regressions` exits 1 if any changes are
-detected — wire it into CI to catch behavioral regressions before they reach
-production:
+detected — a changed, added or removed entry in any section — and exits 2 when
+the comparison could not be made (a capsule ref that does not resolve, or a
+record line that could not be read, which is counted in
+`skipped_malformed_lines` and warned about on stderr). Wire it into CI to catch
+behavioral regressions before they reach production:
 
 ```bash
 nova diff cap-a/ cap-b/ --assert-no-regressions
@@ -756,9 +768,12 @@ regression:
 nova diff --significance --baseline base/ --candidate cand/ --metric task_pass
 ```
 
-**A common pattern** is capture → replay → diff: capture a baseline, replay it
-in `mocked` mode after a code change, and diff the replay against the baseline
-under `--assert-no-regressions`.
+**A common pattern** is capture → replay → diff: capture a baseline; after a code
+change, replay it in `mocked` mode (which fails closed if the new code makes a
+model or MCP call the recording does not hold), then capture the changed run and
+diff that capture against the baseline under `--assert-no-regressions`. A
+`mocked` replay writes a report, not a capsule, so it is not itself a diff
+input; an `intervention` replay's counterfactual capsule is.
 
 ---
 
