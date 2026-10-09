@@ -1,6 +1,6 @@
 """``host.arch`` is measured, never written as a literal.
 
-Found 2026-10-09: every framework adapter and the ``@novafabric.agent`` SDK
+Found 2026-10-09: every framework adapter and the ``novafabric.sdk.agent`` SDK
 decorator wrote ``"arch": "x86_64"`` into ``capsule.yaml:host`` — a constant, so
 an adapter capsule recorded on an arm64 laptop claimed an x86_64 host. That is
 false evidence in the one block whose job is to say where a run happened.

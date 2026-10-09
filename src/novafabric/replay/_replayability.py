@@ -5,7 +5,7 @@ The one place that answers it. ``mocked`` and ``intervention`` re-run
 argv. Three kinds of capsule record none:
 
 * ``capture_mode: sdk-decorator`` — written by a framework adapter
-  (``novafabric.adapters``) or the ``@novafabric.agent`` decorator from *inside*
+  (``novafabric.adapters``) or the ``novafabric.sdk.agent`` decorator from *inside*
   a framework call. Its ``command`` is a label such as ``@langgraph:demo``, not
   a program; spawning it fails with ``No such file or directory``.
 * ``capture_mode: otel-import`` — built from OpenTelemetry spans; ``command`` is
@@ -27,7 +27,7 @@ from novafabric.replay._errors import CapsuleNotReplayableError
 #: ``capture_mode`` values whose capsules never record a re-runnable argv.
 NON_REEXECUTABLE_CAPTURE_MODES: dict[str, str] = {
     "sdk-decorator": "was captured inside a framework call, by a framework adapter "
-    "or the @novafabric.agent decorator",
+    "or the novafabric.sdk.agent decorator",
     "otel-import": "was imported from OpenTelemetry spans",
 }
 

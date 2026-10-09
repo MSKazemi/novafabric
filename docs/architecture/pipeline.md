@@ -127,7 +127,7 @@ mode, `mocked`, re-runs the captured command with the recorded OpenAI and
 Anthropic responses (and recorded SDK errors, raised again as the SDK's own
 exception) and the recorded MCP tool results served from the capsule; other tools
 run live, and outbound connections are reported. A capsule that records no
-command to re-run (a framework-adapter or `@novafabric.agent` capsule, or one
+command to re-run (a framework-adapter or `@agent`-decorator (`novafabric.sdk.agent`) capsule, or one
 imported from OpenTelemetry) is refused before anything is spawned
 (`CapsuleNotReplayable`). What v0.104.0 serves versus `main` is in
 [Replay modes › Release scope](replay-modes.md). `forensic`, `semantic` and `exact` analyse the capsule

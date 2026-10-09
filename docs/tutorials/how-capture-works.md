@@ -256,7 +256,7 @@ row in a hosted database, is the unit you own, tar, archive, and read air-gapped
 `model-calls.jsonl` is one file among several the capsule holds — it also carries
 `capsule.yaml` (the manifest), `trace.jsonl` (OTel spans), `tool-calls.jsonl`,
 `assets.jsonl`, `env.lock` (Python version, installed packages, safe env vars,
-OS/arch/CPU/mem, GPU presence), `redaction-proof.json`, `replay.yaml`,
+OS/arch/CPU/mem; GPU detection is not implemented), `redaction-proof.json`, `replay.yaml`,
 `lineage.jsonl`, and `inputs/` + `outputs/`. Determinism-relevant request
 parameters — including `gen_ai.request.temperature`, `gen_ai.request.top_p`, and
 `gen_ai.request.seed` — are recorded so that `exact` replay can be judged eligible.
@@ -316,9 +316,9 @@ registry. Pick by how you launch and control the agent:
 | `nova capture python agent.py` | Subprocess wrap + `sitecustomize.py` hook injection | You control process startup |
 | `nova api-proxy --listen 127.0.0.1:9900` | Transparent HTTP proxy in front of the LLM | Agent is a service, or a non-Python client |
 | `nova mcp-proxy -- python mcp_server.py` | Transparent stdio proxy in front of the MCP server | Agent uses MCP tools |
-| `@novafabric.agent` decorator | Direct hook installation from inside your process | Notebooks, embedded agents |
+| `@agent` decorator (`novafabric.sdk.agent`) | Direct hook installation from inside your process | Notebooks, embedded agents |
 
-The `@novafabric.agent` decorator wraps a function in-process without spawning a
+The `@agent` decorator (`novafabric.sdk.agent`) wraps a function in-process without spawning a
 subprocess; under the hood it calls `install_all(writer, parent_span_id)`
 (`capture/hooks/__init__.py`), the same installer the subprocess path uses.
 

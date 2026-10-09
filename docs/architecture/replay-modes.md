@@ -70,7 +70,7 @@ current directory, or under `-o <dir>`.
 records a real argv. `replay/_replayability.py:not_reexecutable_reason` is the one
 check; it runs before anything is spawned. A capsule has **no command to re-run** when
 its `capture_mode` is `sdk-decorator` (written inside a framework call by a framework
-adapter in `novafabric.adapters` or by the `@novafabric.agent` decorator; `command` is
+adapter in `novafabric.adapters` or by the `@agent` decorator (`novafabric.sdk.agent`); `command` is
 a label such as `@langgraph:demo`) or `otel-import` (built from OpenTelemetry spans;
 `command` is empty), or when `command` is empty or starts with `@`.
 

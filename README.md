@@ -429,7 +429,7 @@ it (see the [FAQ](docs/faq.md#what-does-the-secret-scan-not-catch)).
 | `trace.jsonl` | Root span + any child spans (OpenTelemetry-compatible) |
 | `model-calls.jsonl` | One record per LLM call, OTel GenAI semconv fields |
 | `tool-calls.jsonl` | Tool invocations |
-| `env.lock` | Python version, packages, OS, CPU, GPU, locale, safe env vars (secrets excluded) |
+| `env.lock` | Python version, packages, OS, CPU, locale, safe env vars (secrets excluded) |
 | `redaction-proof.json` | Scan summary, findings count, chain hash |
 | `replay.yaml` | Replay mode and constraints |
 

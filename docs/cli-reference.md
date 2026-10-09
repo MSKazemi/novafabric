@@ -1169,7 +1169,7 @@ response that is never requested makes the replay `failure` (exit 1) with a
 [support matrix](architecture/replay-modes.md#support-matrix).
 
 **Capsules with no command to re-run.** A capsule written by a framework adapter or
-the `@novafabric.agent` decorator (`capture_mode: sdk-decorator`, `command` is a label
+the `@agent` decorator (`novafabric.sdk.agent`; `capture_mode: sdk-decorator`, `command` is a label
 such as `@langgraph:demo`), one imported from OpenTelemetry spans (`otel-import`), or
 one with an empty `command` cannot be re-run. `mocked` refuses it before anything is
 spawned: `status: aborted`, `error.type: CapsuleNotReplayable`, exit 1 (also under

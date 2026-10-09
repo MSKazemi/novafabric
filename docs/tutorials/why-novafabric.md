@@ -104,7 +104,7 @@ find, among other files:
 | `trace.jsonl` | OpenTelemetry spans |
 | `model-calls.jsonl` | LLM calls in OTel GenAI semconv |
 | `tool-calls.jsonl` | Tool invocations and results |
-| `env.lock` | Python version, packages, safe env vars, OS/arch/CPU/mem, GPU presence |
+| `env.lock` | Python version, packages, safe env vars, OS/arch/CPU/mem (GPU detection not implemented) |
 | `redaction-proof.json` | Proof that a secret scan ran before the capsule was finalized |
 
 Validate and read it:
@@ -316,7 +316,7 @@ capture, all shipped:
 | `nova capture` | You control how the process starts | `nova capture python agent.py` |
 | `nova api-proxy` | Agent already running as a service, or non-Python | transparent HTTP proxy, URL-classified against a vendored provider registry |
 | `nova mcp-proxy` | Agent uses MCP tools over stdio | `nova mcp-proxy -- python mcp_server.py` |
-| In-process hooks / `@novafabric.agent` | Jupyter notebook, embedded agent | decorate the function or install hooks in-process |
+| In-process hooks / `@agent` decorator (`novafabric.sdk.agent`) | Jupyter notebook, embedded agent | decorate the function or install hooks in-process |
 
 Under the hood, `nova capture` covers both SDK-level hooks (OpenAI, Anthropic) and
 wire-level hooks (httpx, requests, aiohttp, urllib3, Bedrock, and MCP) — so capture

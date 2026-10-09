@@ -376,7 +376,7 @@ The original command is re-spawned as a subprocess (**works today** for Python
 workloads; what v0.104.0 serves versus unreleased `main` — MCP results, async,
 streamed and Responses API calls, the fail-closed contract — is listed under
 [Release scope](architecture/replay-modes.md)). A capsule that records **no command to re-run** — written
-by a framework adapter or `@novafabric.agent` (`capture_mode: sdk-decorator`, a
+by a framework adapter or the `@agent` decorator (`novafabric.sdk.agent`; `capture_mode: sdk-decorator`, a
 `@framework:name` label) or imported from OpenTelemetry spans — is refused
 before anything is spawned (`CapsuleNotReplayable`, exit 1; unreleased, on `main`).
 Inside the re-spawned process:
@@ -963,7 +963,7 @@ declared.
 
 ## SDK Decorator
 
-`@novafabric.agent` is an in-process alternative to `nova capture`. It wraps
+The `@agent` decorator (`from novafabric.sdk.agent import agent`) is an in-process alternative to `nova capture`. It wraps
 an agent function with the same capture hooks used by the CLI, recording all
 LLM calls into a capsule. Without `capsule_dir`, it emits OTel spans only —
 this is the v0.1 observability mode.

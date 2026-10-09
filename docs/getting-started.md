@@ -142,7 +142,7 @@ finishes.
   model-calls.jsonl     ← LLM API calls, one record each (OTel GenAI semconv)
   tool-calls.jsonl      ← tool invocations (MCP or plugin hooks)
   assets.jsonl          ← asset references declared by the run
-  env.lock              ← frozen environment: Python, packages, OS, GPU
+  env.lock              ← frozen environment: Python, packages, OS, CPU
   redaction-proof.json  ← proof that the secret scan ran (required to validate)
   replay.yaml           ← replay constraints and policy
   lineage.jsonl         ← lineage edges emitted by this run
@@ -227,7 +227,7 @@ pip install anthropic
 nova capture python examples/minimal-agent-run/agent.py
 ```
 
-The same example also demonstrates the in-process `@novafabric.agent` decorator
+The same example also demonstrates the in-process `@agent` decorator (`novafabric.sdk.agent`)
 if you prefer capturing without wrapping in a subprocess — see the
 [User guide: SDK decorator](user-guide.md#sdk-decorator-in-process-capture).
 

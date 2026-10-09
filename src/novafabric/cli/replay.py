@@ -144,7 +144,7 @@ def replay_cmd(
                      semantics, emit a diffable counterfactual capsule (a
                      substituted tool result is not delivered: tools run live)
 
-    Capsules written by a framework adapter or @novafabric.agent
+    Capsules written by a framework adapter or novafabric.sdk.agent
     (capture_mode: sdk-decorator) or imported from OpenTelemetry spans record
     no command to re-run: mocked refuses them up front (error.type
     CapsuleNotReplayable, exit 1, and the same under --dry-run); intervention

@@ -92,7 +92,7 @@ counts logical model calls, not records (see below).
 **Works today on `main` (unreleased; v0.104.0 adapter and decorator capsules still carry
 the hardcoded values below).** `capsule.yaml:host` is built by one function, `capture/env.py:host_info`, for every
 capsule writer: `nova capture` (`CaptureOrchestrator`), the framework adapters
-(`adapters/_capsule.py`) and the `@novafabric.agent` decorator (`sdk/agent.py`).
+(`adapters/_capsule.py`) and the `@agent` decorator (`novafabric.sdk.agent`, in `sdk/agent.py`).
 Before this was unified, adapter and decorator capsules wrote `arch: x86_64`,
 `cpu_count: 1` and `memory_bytes: 0` whatever the machine;
 `tests/capture/test_host_arch_is_never_hardcoded.py` now fails on any literal for
@@ -220,7 +220,7 @@ behaviour, the measured `host` block and the replay refusal described here are
 unreleased, on `main`). The framework
 adapters (`src/novafabric/adapters/*.py`; LlamaIndex, Pydantic AI and Haystack share
 `adapters/_capsule.py:AdapterCapture`, the others write their own manifest) and the
-`@novafabric.agent` decorator (`sdk/agent.py`) write a capsule from inside the
+`@agent` decorator (`novafabric.sdk.agent`, in `sdk/agent.py`) write a capsule from inside the
 Python process:
 
 - `capture_mode: sdk-decorator`, and `command` is a label such as

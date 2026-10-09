@@ -3,7 +3,7 @@
 Found 2026-10-09: ``nova replay --mode mocked`` of every framework-adapter
 capsule failed with ``the replayed command could not be run: [Errno 2] No such
 file or directory: '@langgraph:demo'``. Adapter capsules (and the
-``@novafabric.agent`` decorator's) are captured *inside* a framework call; their
+``novafabric.sdk.agent`` decorator's) are captured *inside* a framework call; their
 ``command`` is a ``@framework:name`` label with ``capture_mode: sdk-decorator``,
 and the engine handed that label to ``subprocess.run`` as if it were a program.
 
