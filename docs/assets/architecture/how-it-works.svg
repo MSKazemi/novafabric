@@ -1,0 +1,465 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 1244" width="980" height="1244" role="img" aria-labelledby="t d">
+<title id="t">How NovaFabric works, end to end</title>
+<desc id="d">The whole system on one map. A workload runs under nova capture or a framework adapter; its SDK calls are intercepted, secret-scanned and written into a Run Capsule, which is optionally sealed and then indexed for lineage. The capsule is replayed, diffed in CI, verified and exported as an Evidence Bundle. nova serve, OTLP ingest and nova server work on the same capsules. Step 1: nova capture runs your command as a child process; the runner puts a sitecustomize hook loader on its PYTHONPATH. Step 2: Or capture in-process: a framework adapter, or the sdk agent decorator, writes its own capsule with capture_mode sdk-decorator. (on main, unreleased (after v0.104.0).) Step 3: In the child, install_all patches the OpenAI and Anthropic SDKs: sync, async, streamed and Responses API calls each become one record. (on main, unreleased (after v0.104.0).) Step 4: The httpx hook also records each HTTP attempt. Under an SDK call it is marked transport and linked by logical_call_id (ADR-0305). (on main, unreleased (after v0.104.0).) Step 5: When the workload exits, env.lock is written with the measured host block; then SecretScannerV0 redacts matches in place. (on main, unreleased (after v0.104.0).) Step 6: If events were dropped, capture-health.json is written first, so the residual secret pass rescans it and the digests bind it. (on main, unreleased (after v0.104.0).) Step 7: replay.yaml, lineage.jsonl and capsule.yaml are written; evidence_digests pins a SHA-256 and size for every evidence file. Step 8: If NovaSeal is configured, the canonical manifest is signed into a DSSE envelope; a sealing failure only warns, never fails capture. Step 9: The seal is appended to a SHA-256 Merkle log; an RFC 3161 token is requested only from a tsa_url you configure. Step 10: lineage.jsonl edges are indexed into the local SQLite lineage store; assets are versioned as name@version in the registry. Step 11: nova replay re-runs the command (mocked, the default) and serves recorded model calls per API surface, sync, async or streamed. (on main, unreleased (after v0.104.0).) Step 12: A recorded rate limit or 5xx is raised again as the SDK's own exception class; transport attempts are never served. (on main, unreleased (after v0.104.0).) Step 13: intervention substitutes one event and writes a counterfactual capsule; it records whether the substitute reached the workload. (on main, unreleased (after v0.104.0).) Step 14: nova diff A B pairs logical model calls (transport left out), tool calls and outputs/; a provider change is a changed call. (on main, unreleased (after v0.104.0).) Step 15: With --assert-no-regressions: exit 0 no difference, 1 a difference, 2 could not compare (bad ref, malformed lines). (on main, unreleased (after v0.104.0).) Step 16: nova verify checks signature, timestamp, Merkle inclusion, manifest binding and every file digest; one changed byte exits 1. Step 17: nova export-evidence packs the capsule, a lineage subgraph and Ed25519-signed in-toto attestations into one ZIP. Step 18: nova serve is a localhost dashboard and API over your capsules: a Host guard, a token, and a scope on every route. Step 19: OTLP traces carrying gen_ai.* spans become a brand-new capsule; OTLP logs go to an append-only sidecar, never into a capsule. Step 20: nova server is the team REST API (/v0): API keys with workspace binding, budgets and keyset pages, on SQLite or Postgres. Step 21: Planned: mocked replay substitutes non-MCP tool results on owned boundaries (ADR-0306, proposed). Today those tools run live. Step 22: Future design: re-running a framework-adapter capsule, and multi-cluster federation of capsules and lineage. Not implemented.</desc>
+<style>
+svg{--bg:#111114;--card:#1c1c22;--card2:#24242c;--stroke:#3a3a44;--fg:#ececf1;--muted:#a8a8b3;--line:#6b6b78;--cap:#7dd3fc;--seal:#c4b5fd;--rep:#5eead4;--ver:#c4f0a8;--amb:#fcd34d;--warn:#fda4af}
+@media (prefers-color-scheme:light){svg{--bg:#fafaf9;--card:#ffffff;--card2:#f1f1f3;--stroke:#d4d4d8;--fg:#18181b;--muted:#52525b;--line:#a1a1aa;--cap:#0369a1;--seal:#6d28d9;--rep:#0f766e;--ver:#3f6212;--amb:#a16207;--warn:#be123c}}
+.bg{fill:var(--bg)}
+.card{fill:var(--card);stroke:var(--stroke);stroke-width:1.2}
+.card2{fill:var(--card2);stroke:var(--stroke);stroke-width:1}
+.store{stroke-dasharray:5 4}
+.warnbox{stroke:var(--warn)}
+text{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;fill:var(--fg)}
+.mono{font-family:ui-monospace,'JetBrains Mono','DejaVu Sans Mono',Menlo,monospace}
+.h{font-size:14px;font-weight:650}
+.t{font-size:12px}
+.m{font-size:11px}
+.s{font-size:11px;fill:var(--muted)}
+.title{font-size:17px;font-weight:700}
+.num{font-size:11px;font-weight:700;text-anchor:middle}
+.wire{fill:none;stroke:var(--line);stroke-width:1.6}
+.observe{stroke-dasharray:4 4}
+.blocked{stroke:var(--warn);stroke-dasharray:3 4}
+.deny{stroke:var(--warn)}
+.hl{fill:none;stroke-width:3;stroke-dasharray:7 7;stroke-linecap:round}
+.ring{fill:none;stroke-width:2.5}
+.lit{fill-opacity:.18}
+.planned{stroke-dasharray:3 4;fill-opacity:.6}
+.c-cap{stroke:var(--cap)}.f-cap{fill:var(--cap)}
+.c-seal{stroke:var(--seal)}.f-seal{fill:var(--seal)}
+.c-rep{stroke:var(--rep)}.f-rep{fill:var(--rep)}
+.c-ver{stroke:var(--ver)}.f-ver{fill:var(--ver)}
+.c-amb{stroke:var(--amb)}.f-amb{fill:var(--amb)}
+.c-warn{stroke:var(--warn)}.f-warn{fill:var(--warn)}
+.c-muted{stroke:var(--line)}.f-muted{fill:var(--line)}
+@keyframes on{0%{opacity:0}1.5%{opacity:1}2.05%{opacity:1}4.05%{opacity:0}100%{opacity:0}}
+@keyframes dash{to{stroke-dashoffset:-28}}
+.k{opacity:0;animation:on 74.8s linear infinite}
+.hl{opacity:0;animation:on 74.8s linear infinite,dash 1.1s linear infinite}
+@media (prefers-reduced-motion:reduce){.k,.hl{animation:none!important;opacity:0!important}.motion{display:none}}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-muted" d="M0 0 L10 5 L0 10z"/></marker><marker id="ahw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-warn" d="M0 0 L10 5 L0 10z"/></marker></defs>
+<rect class="bg" x="0" y="0" width="980" height="1244" rx="14"/>
+<text class="title" x="22" y="36" text-anchor="start">How NovaFabric works, end to end</text>
+<text class="s" x="22" y="56" text-anchor="start">Capture → Run Capsule → seal → registry and lineage → replay → diff gate → verify → Evidence Bundle, plus server mode</text>
+<rect class="ring k c-cap" x="18" y="80" width="178" height="124" rx="13" style="animation-delay:0s"/>
+<rect class="ring k c-cap" x="210" y="80" width="178" height="124" rx="13" style="animation-delay:0s"/>
+<rect class="ring k c-cap" x="18" y="80" width="178" height="124" rx="13" style="animation-delay:3.4s"/>
+<rect class="ring k c-cap" x="18" y="228" width="178" height="124" rx="13" style="animation-delay:3.4s"/>
+<rect class="ring k c-cap" x="594" y="80" width="178" height="272" rx="13" style="animation-delay:3.4s"/>
+<rect class="ring k c-cap" x="18" y="80" width="178" height="124" rx="13" style="animation-delay:6.8s"/>
+<rect class="ring k c-cap" x="210" y="80" width="178" height="124" rx="13" style="animation-delay:6.8s"/>
+<rect class="ring k c-amb" x="210" y="80" width="178" height="124" rx="13" style="animation-delay:10.2s"/>
+<rect class="ring k c-amb" x="210" y="228" width="178" height="124" rx="13" style="animation-delay:10.2s"/>
+<rect class="ring k c-warn" x="402" y="80" width="178" height="124" rx="13" style="animation-delay:13.6s"/>
+<rect class="ring k c-warn" x="402" y="228" width="178" height="124" rx="13" style="animation-delay:17s"/>
+<rect class="ring k c-ver" x="594" y="80" width="178" height="272" rx="13" style="animation-delay:20.4s"/>
+<rect class="ring k c-seal" x="594" y="80" width="178" height="272" rx="13" style="animation-delay:23.8s"/>
+<rect class="ring k c-seal" x="786" y="80" width="178" height="124" rx="13" style="animation-delay:23.8s"/>
+<rect class="ring k c-seal" x="786" y="80" width="178" height="124" rx="13" style="animation-delay:27.2s"/>
+<rect class="ring k c-rep" x="594" y="80" width="178" height="272" rx="13" style="animation-delay:30.6s"/>
+<rect class="ring k c-rep" x="786" y="228" width="178" height="124" rx="13" style="animation-delay:30.6s"/>
+<rect class="ring k c-rep" x="594" y="80" width="178" height="272" rx="13" style="animation-delay:34s"/>
+<rect class="ring k c-rep" x="18" y="392" width="178" height="124" rx="13" style="animation-delay:34s"/>
+<rect class="ring k c-rep" x="18" y="80" width="178" height="124" rx="13" style="animation-delay:34s"/>
+<rect class="ring k c-amb" x="18" y="392" width="178" height="124" rx="13" style="animation-delay:37.4s"/>
+<rect class="ring k c-amb" x="18" y="80" width="178" height="124" rx="13" style="animation-delay:37.4s"/>
+<rect class="ring k c-rep" x="18" y="392" width="178" height="124" rx="13" style="animation-delay:40.8s"/>
+<rect class="ring k c-rep" x="210" y="392" width="178" height="124" rx="13" style="animation-delay:40.8s"/>
+<rect class="ring k c-amb" x="594" y="80" width="178" height="272" rx="13" style="animation-delay:44.2s"/>
+<rect class="ring k c-amb" x="210" y="392" width="178" height="124" rx="13" style="animation-delay:44.2s"/>
+<rect class="ring k c-amb" x="210" y="392" width="178" height="124" rx="13" style="animation-delay:47.6s"/>
+<rect class="ring k c-amb" x="402" y="392" width="178" height="124" rx="13" style="animation-delay:47.6s"/>
+<rect class="ring k c-ver" x="786" y="80" width="178" height="124" rx="13" style="animation-delay:51s"/>
+<rect class="ring k c-ver" x="594" y="80" width="178" height="272" rx="13" style="animation-delay:51s"/>
+<rect class="ring k c-ver" x="594" y="392" width="178" height="124" rx="13" style="animation-delay:51s"/>
+<rect class="ring k c-ver" x="594" y="392" width="178" height="124" rx="13" style="animation-delay:54.4s"/>
+<rect class="ring k c-ver" x="786" y="392" width="178" height="124" rx="13" style="animation-delay:54.4s"/>
+<rect class="ring k c-seal" x="210" y="556" width="178" height="124" rx="13" style="animation-delay:57.8s"/>
+<rect class="ring k c-rep" x="18" y="556" width="178" height="124" rx="13" style="animation-delay:61.2s"/>
+<rect class="ring k c-rep" x="210" y="556" width="178" height="124" rx="13" style="animation-delay:61.2s"/>
+<rect class="ring k c-rep" x="402" y="556" width="178" height="124" rx="13" style="animation-delay:61.2s"/>
+<rect class="ring k c-rep" x="594" y="80" width="178" height="272" rx="13" style="animation-delay:61.2s"/>
+<rect class="ring k c-seal" x="594" y="556" width="178" height="124" rx="13" style="animation-delay:64.6s"/>
+<rect class="ring k c-amb" x="786" y="556" width="178" height="124" rx="13" style="animation-delay:68s"/>
+<rect class="ring k c-amb" x="18" y="392" width="178" height="124" rx="13" style="animation-delay:68s"/>
+<rect class="ring k c-amb" x="786" y="556" width="178" height="124" rx="13" style="animation-delay:71.4s"/>
+<rect class="card" x="22" y="84" width="170" height="116" rx="10"/>
+<rect class="f-cap" x="22" y="84" width="170" height="4" rx="2"/>
+<text class="h" x="34" y="108" text-anchor="start">Workload</text>
+<text class="t" x="34" y="130" text-anchor="start">nova capture -- cmd</text>
+<text class="t" x="34" y="147" text-anchor="start">your code, unchanged</text>
+<text class="t" x="34" y="164" text-anchor="start">OpenAI · Anthropic SDK</text>
+<text class="t" x="34" y="181" text-anchor="start">MCP · httpx · requests</text>
+<rect class="card" x="214" y="84" width="170" height="116" rx="10"/>
+<rect class="f-cap" x="214" y="84" width="170" height="4" rx="2"/>
+<text class="h" x="226" y="108" text-anchor="start">SDK interception</text>
+<text class="t" x="226" y="130" text-anchor="start">sitecustomize hooks</text>
+<text class="t" x="226" y="147" text-anchor="start">sync · async · stream</text>
+<text class="t" x="226" y="164" text-anchor="start">Responses API</text>
+<text class="t" x="226" y="181" text-anchor="start">1 logical record/call</text>
+<rect class="card" x="406" y="84" width="170" height="116" rx="10"/>
+<rect class="f-warn" x="406" y="84" width="170" height="4" rx="2"/>
+<text class="h" x="418" y="108" text-anchor="start">Secret scan</text>
+<text class="t" x="418" y="130" text-anchor="start">SecretScannerV0</text>
+<text class="t" x="418" y="147" text-anchor="start">redact in place</text>
+<text class="t" x="418" y="164" text-anchor="start">rule pack 0.7.0</text>
+<text class="t" x="418" y="181" text-anchor="start">+ maskers (opt-in)</text>
+<rect class="card store" x="598" y="84" width="170" height="264" rx="10"/>
+<rect class="f-ver" x="598" y="84" width="170" height="4" rx="2"/>
+<text class="h" x="610" y="108" text-anchor="start">Run Capsule</text>
+<text class="m mono" x="610" y="130" text-anchor="start">capsule.yaml</text>
+<text class="m mono" x="610" y="147" text-anchor="start">model-calls.jsonl</text>
+<text class="m mono" x="610" y="164" text-anchor="start">tool-calls.jsonl</text>
+<text class="m mono" x="610" y="181" text-anchor="start">trace.jsonl</text>
+<text class="m mono" x="610" y="198" text-anchor="start">env.lock</text>
+<text class="m mono" x="610" y="215" text-anchor="start">replay.yaml</text>
+<text class="m mono" x="610" y="232" text-anchor="start">lineage.jsonl</text>
+<text class="m mono" x="610" y="249" text-anchor="start">redaction-proof.json</text>
+<text class="m mono" x="610" y="266" text-anchor="start">capture-health.json</text>
+<text class="m mono" x="610" y="283" text-anchor="start">outputs/</text>
+<text class="m mono" x="610" y="300" text-anchor="start">sha256 per file</text>
+<rect class="card" x="790" y="84" width="170" height="116" rx="10"/>
+<rect class="f-seal" x="790" y="84" width="170" height="4" rx="2"/>
+<text class="h" x="802" y="108" text-anchor="start">NovaSeal</text>
+<g aria-hidden="true"><rect class="f-seal" x="934" y="100" width="12" height="9" rx="2"/><path class="c-seal" d="M937 100 v-2.5 a3 3 0 0 1 6 0 v2.5" fill="none" stroke-width="1.6"/></g>
+<text class="t" x="802" y="130" text-anchor="start">DSSE signature</text>
+<text class="t" x="802" y="147" text-anchor="start">Merkle log entry</text>
+<text class="t" x="802" y="164" text-anchor="start">RFC 3161 (opt-in)</text>
+<text class="t" x="802" y="181" text-anchor="start">.seal/ if configured</text>
+<rect class="card" x="22" y="232" width="170" height="116" rx="10"/>
+<rect class="f-cap" x="22" y="232" width="170" height="4" rx="2"/>
+<text class="h" x="34" y="256" text-anchor="start">Framework adapters</text>
+<text class="t" x="34" y="278" text-anchor="start">LangGraph · CrewAI</text>
+<text class="t" x="34" y="295" text-anchor="start">ADK · AutoGen · DSPy</text>
+<text class="t" x="34" y="312" text-anchor="start">LlamaIndex · +5 more</text>
+<text class="t" x="34" y="329" text-anchor="start">in-process capsule</text>
+<rect class="card" x="214" y="232" width="170" height="116" rx="10"/>
+<rect class="f-amb" x="214" y="232" width="170" height="4" rx="2"/>
+<text class="h" x="226" y="256" text-anchor="start">Wire record</text>
+<text class="t" x="226" y="278" text-anchor="start">httpx: per attempt</text>
+<text class="t" x="226" y="295" text-anchor="start">role: transport</text>
+<text class="t" x="226" y="312" text-anchor="start">→ logical_call_id</text>
+<text class="t" x="226" y="329" text-anchor="start">counted once (0305)</text>
+<rect class="card" x="406" y="232" width="170" height="116" rx="10"/>
+<rect class="f-warn" x="406" y="232" width="170" height="4" rx="2"/>
+<text class="h" x="418" y="256" text-anchor="start">Residual pass</text>
+<text class="t" x="418" y="278" text-anchor="start">capture-health.json</text>
+<text class="t" x="418" y="295" text-anchor="start">written first</text>
+<text class="t" x="418" y="312" text-anchor="start">residual_scan</text>
+<text class="t" x="418" y="329" text-anchor="start">redaction-proof.json</text>
+<rect class="card" x="790" y="232" width="170" height="116" rx="10"/>
+<rect class="f-rep" x="790" y="232" width="170" height="4" rx="2"/>
+<text class="h" x="802" y="256" text-anchor="start">Registry + lineage</text>
+<text class="t" x="802" y="278" text-anchor="start">assets: name@version</text>
+<text class="t" x="802" y="295" text-anchor="start">lineage.jsonl edges</text>
+<text class="t" x="802" y="312" text-anchor="start">→ SQLite store</text>
+<text class="t" x="802" y="329" text-anchor="start">provenance queries</text>
+<rect class="card" x="22" y="396" width="170" height="116" rx="10"/>
+<rect class="f-rep" x="22" y="396" width="170" height="4" rx="2"/>
+<text class="h" x="34" y="420" text-anchor="start">nova replay</text>
+<text class="t" x="34" y="442" text-anchor="start">mocked (default)</text>
+<text class="t" x="34" y="459" text-anchor="start">forensic · semantic</text>
+<text class="t" x="34" y="476" text-anchor="start">exact · intervention</text>
+<text class="t" x="34" y="493" text-anchor="start">replay_result.yaml</text>
+<rect class="card" x="214" y="396" width="170" height="116" rx="10"/>
+<rect class="f-amb" x="214" y="396" width="170" height="4" rx="2"/>
+<text class="h" x="226" y="420" text-anchor="start">nova diff A B</text>
+<text class="t" x="226" y="442" text-anchor="start">logical calls only</text>
+<text class="t" x="226" y="459" text-anchor="start">env · model · tool</text>
+<text class="t" x="226" y="476" text-anchor="start">outputs/ by sha256</text>
+<text class="t" x="226" y="493" text-anchor="start">has_changes</text>
+<rect class="card" x="406" y="396" width="170" height="116" rx="10"/>
+<rect class="f-amb" x="406" y="396" width="170" height="4" rx="2"/>
+<text class="h" x="418" y="420" text-anchor="start">CI gate</text>
+<text class="t" x="418" y="442" text-anchor="start">--assert-no-</text>
+<text class="t" x="418" y="459" text-anchor="start">regressions</text>
+<text class="t" x="418" y="476" text-anchor="start">0 same · 1 changed</text>
+<text class="t" x="418" y="493" text-anchor="start">2 cannot compare</text>
+<rect class="card" x="598" y="396" width="170" height="116" rx="10"/>
+<rect class="f-ver" x="598" y="396" width="170" height="4" rx="2"/>
+<text class="h" x="610" y="420" text-anchor="start">nova verify</text>
+<text class="t" x="610" y="442" text-anchor="start">1 DSSE signature</text>
+<text class="t" x="610" y="459" text-anchor="start">2 RFC 3161 token</text>
+<text class="t" x="610" y="476" text-anchor="start">3 Merkle inclusion</text>
+<text class="t" x="610" y="493" text-anchor="start">4 binding 5 digests</text>
+<rect class="card" x="790" y="396" width="170" height="116" rx="10"/>
+<rect class="f-ver" x="790" y="396" width="170" height="4" rx="2"/>
+<text class="h" x="802" y="420" text-anchor="start">Evidence Bundle</text>
+<text class="t" x="802" y="442" text-anchor="start">nova export-evidence</text>
+<text class="t" x="802" y="459" text-anchor="start">capsule + lineage</text>
+<text class="t" x="802" y="476" text-anchor="start">in-toto attestations</text>
+<text class="t" x="802" y="493" text-anchor="start">offline recipe</text>
+<rect class="card" x="22" y="560" width="170" height="116" rx="10"/>
+<rect class="f-cap" x="22" y="560" width="170" height="4" rx="2"/>
+<text class="h" x="34" y="584" text-anchor="start">OTel exporter</text>
+<text class="t" x="34" y="606" text-anchor="start">SDK or Collector</text>
+<text class="t" x="34" y="623" text-anchor="start">OTLP/HTTP</text>
+<text class="t" x="34" y="640" text-anchor="start">JSON or protobuf</text>
+<rect class="card" x="214" y="560" width="170" height="116" rx="10"/>
+<rect class="f-seal" x="214" y="560" width="170" height="4" rx="2"/>
+<text class="h" x="226" y="584" text-anchor="start">nova serve</text>
+<text class="t" x="226" y="606" text-anchor="start">localhost dashboard</text>
+<text class="t" x="226" y="623" text-anchor="start">token · scopes</text>
+<text class="t" x="226" y="640" text-anchor="start">single-tenant</text>
+<rect class="card" x="406" y="560" width="170" height="116" rx="10"/>
+<rect class="f-rep" x="406" y="560" width="170" height="4" rx="2"/>
+<text class="h" x="418" y="584" text-anchor="start">OTLP ingest</text>
+<text class="t" x="418" y="606" text-anchor="start">traces → new capsule</text>
+<text class="t" x="418" y="623" text-anchor="start">logs → sidecar store</text>
+<text class="t" x="418" y="640" text-anchor="start">sealed: never written</text>
+<rect class="card" x="598" y="560" width="170" height="116" rx="10"/>
+<rect class="f-seal" x="598" y="560" width="170" height="4" rx="2"/>
+<text class="h" x="610" y="584" text-anchor="start">nova server /v0</text>
+<text class="t" x="610" y="606" text-anchor="start">team REST API</text>
+<text class="t" x="610" y="623" text-anchor="start">API keys · quotas</text>
+<text class="t" x="610" y="640" text-anchor="start">SQLite or Postgres</text>
+<rect class="card planned" x="790" y="560" width="170" height="116" rx="10"/>
+<rect class="f-amb" x="790" y="560" width="170" height="4" rx="2"/>
+<text class="h" x="802" y="584" text-anchor="start">Not built yet</text>
+<text class="t" x="802" y="606" text-anchor="start">non-MCP tool replay</text>
+<text class="t" x="802" y="623" text-anchor="start">→ planned (ADR-0306)</text>
+<text class="t" x="802" y="640" text-anchor="start">adapter-capsule re-run</text>
+<text class="t" x="802" y="657" text-anchor="start">→ future design</text>
+<path class="wire" d="M192 142 H212" marker-end="url(#ah)"/>
+<path class="wire" d="M107 200 V230" marker-end="url(#ah)"/>
+<path class="wire" d="M299 200 V230" marker-end="url(#ah)"/>
+<path class="wire" d="M384 142 H404" marker-end="url(#ah)"/>
+<path class="wire" d="M384 290 H395 V172 H404" marker-end="url(#ah)"/>
+<path class="wire" d="M491 200 V230" marker-end="url(#ah)"/>
+<path class="wire" d="M576 142 H596" marker-end="url(#ah)"/>
+<path class="wire" d="M576 290 H596" marker-end="url(#ah)"/>
+<path class="wire" d="M107 348 V362 H620 V350" marker-end="url(#ah)"/>
+<path class="wire" d="M768 142 H788" marker-end="url(#ah)"/>
+<path class="wire" d="M768 290 H788" marker-end="url(#ah)"/>
+<path class="wire" d="M700 348 V380 H150 V394" marker-end="url(#ah)"/>
+<path class="wire" d="M700 348 V380 H330 V394" marker-end="url(#ah)"/>
+<path class="wire" d="M740 348 V394" marker-end="url(#ah)"/>
+<path class="wire" d="M800 200 V214 H779 V384 H756 V394" marker-end="url(#ah)"/>
+<path class="wire" d="M22 454 H10 V142 H20" marker-end="url(#ah)"/>
+<path class="wire" d="M192 454 H212" marker-end="url(#ah)"/>
+<path class="wire" d="M384 454 H404" marker-end="url(#ah)"/>
+<path class="wire" d="M768 454 H788" marker-end="url(#ah)"/>
+<path class="wire" d="M192 618 H212" marker-end="url(#ah)"/>
+<path class="wire" d="M384 618 H404" marker-end="url(#ah)"/>
+<path class="wire" d="M576 618 H587 V372 H660 V350" marker-end="url(#ah)"/>
+<path class="hl c-cap" d="M192 142 H212" style="animation-delay:0s,0s"/>
+<path class="hl c-cap" d="M107 200 V230" style="animation-delay:3.4s,0s"/>
+<path class="hl c-cap" d="M107 348 V362 H620 V350" style="animation-delay:3.4s,0s"/>
+<path class="hl c-cap" d="M192 142 H212" style="animation-delay:6.8s,0s"/>
+<path class="hl c-amb" d="M299 200 V230" style="animation-delay:10.2s,0s"/>
+<path class="hl c-cap" d="M384 142 H404" style="animation-delay:13.6s,0s"/>
+<path class="hl c-amb" d="M384 290 H395 V172 H404" style="animation-delay:13.6s,0s"/>
+<path class="hl c-warn" d="M491 200 V230" style="animation-delay:17s,0s"/>
+<path class="hl c-ver" d="M576 142 H596" style="animation-delay:20.4s,0s"/>
+<path class="hl c-ver" d="M576 290 H596" style="animation-delay:20.4s,0s"/>
+<path class="hl c-seal" d="M768 142 H788" style="animation-delay:23.8s,0s"/>
+<path class="hl c-seal" d="M768 142 H788" style="animation-delay:27.2s,0s"/>
+<path class="hl c-rep" d="M768 290 H788" style="animation-delay:30.6s,0s"/>
+<path class="hl c-rep" d="M700 348 V380 H150 V394" style="animation-delay:34s,0s"/>
+<path class="hl c-rep" d="M22 454 H10 V142 H20" style="animation-delay:34s,0s"/>
+<path class="hl c-rep" d="M22 454 H10 V142 H20" style="animation-delay:37.4s,0s"/>
+<path class="hl c-amb" d="M192 454 H212" style="animation-delay:40.8s,0s"/>
+<path class="hl c-amb" d="M700 348 V380 H330 V394" style="animation-delay:44.2s,0s"/>
+<path class="hl c-amb" d="M384 454 H404" style="animation-delay:47.6s,0s"/>
+<path class="hl c-seal" d="M800 200 V214 H779 V384 H756 V394" style="animation-delay:51s,0s"/>
+<path class="hl c-ver" d="M740 348 V394" style="animation-delay:51s,0s"/>
+<path class="hl c-ver" d="M768 454 H788" style="animation-delay:54.4s,0s"/>
+<path class="hl c-cap" d="M192 618 H212" style="animation-delay:61.2s,0s"/>
+<path class="hl c-rep" d="M384 618 H404" style="animation-delay:61.2s,0s"/>
+<path class="hl c-rep" d="M576 618 H587 V372 H660 V350" style="animation-delay:61.2s,0s"/>
+<circle class="card2 c-cap" cx="24" cy="86" r="10" stroke-width="1.6"/>
+<circle class="k f-cap" cx="24" cy="86" r="10" style="animation-delay:0s"/>
+<text class="num" x="24" y="90" text-anchor="start">1</text>
+<circle class="card2 c-cap" cx="24" cy="234" r="10" stroke-width="1.6"/>
+<circle class="k f-cap" cx="24" cy="234" r="10" style="animation-delay:3.4s"/>
+<text class="num" x="24" y="238" text-anchor="start">2</text>
+<circle class="card2 c-cap" cx="216" cy="86" r="10" stroke-width="1.6"/>
+<circle class="k f-cap" cx="216" cy="86" r="10" style="animation-delay:6.8s"/>
+<text class="num" x="216" y="90" text-anchor="start">3</text>
+<circle class="card2 c-amb" cx="216" cy="234" r="10" stroke-width="1.6"/>
+<circle class="k f-amb" cx="216" cy="234" r="10" style="animation-delay:10.2s"/>
+<text class="num" x="216" y="238" text-anchor="start">4</text>
+<circle class="card2 c-warn" cx="408" cy="86" r="10" stroke-width="1.6"/>
+<circle class="k f-warn" cx="408" cy="86" r="10" style="animation-delay:13.6s"/>
+<text class="num" x="408" y="90" text-anchor="start">5</text>
+<circle class="card2 c-warn" cx="408" cy="234" r="10" stroke-width="1.6"/>
+<circle class="k f-warn" cx="408" cy="234" r="10" style="animation-delay:17s"/>
+<text class="num" x="408" y="238" text-anchor="start">6</text>
+<circle class="card2 c-ver" cx="600" cy="86" r="10" stroke-width="1.6"/>
+<circle class="k f-ver" cx="600" cy="86" r="10" style="animation-delay:20.4s"/>
+<text class="num" x="600" y="90" text-anchor="start">7</text>
+<circle class="card2 c-seal" cx="792" cy="86" r="10" stroke-width="1.6"/>
+<circle class="k f-seal" cx="792" cy="86" r="10" style="animation-delay:23.8s"/>
+<text class="num" x="792" y="90" text-anchor="start">8</text>
+<circle class="card2 c-seal" cx="814" cy="86" r="10" stroke-width="1.6"/>
+<circle class="k f-seal" cx="814" cy="86" r="10" style="animation-delay:27.2s"/>
+<text class="num" x="814" y="90" text-anchor="start">9</text>
+<circle class="card2 c-rep" cx="792" cy="234" r="10" stroke-width="1.6"/>
+<circle class="k f-rep" cx="792" cy="234" r="10" style="animation-delay:30.6s"/>
+<text class="num" x="792" y="238" text-anchor="start">10</text>
+<circle class="card2 c-rep" cx="24" cy="398" r="10" stroke-width="1.6"/>
+<circle class="k f-rep" cx="24" cy="398" r="10" style="animation-delay:34s"/>
+<text class="num" x="24" y="402" text-anchor="start">11</text>
+<circle class="card2 c-amb" cx="46" cy="398" r="10" stroke-width="1.6"/>
+<circle class="k f-amb" cx="46" cy="398" r="10" style="animation-delay:37.4s"/>
+<text class="num" x="46" y="402" text-anchor="start">12</text>
+<circle class="card2 c-rep" cx="68" cy="398" r="10" stroke-width="1.6"/>
+<circle class="k f-rep" cx="68" cy="398" r="10" style="animation-delay:40.8s"/>
+<text class="num" x="68" y="402" text-anchor="start">13</text>
+<circle class="card2 c-amb" cx="216" cy="398" r="10" stroke-width="1.6"/>
+<circle class="k f-amb" cx="216" cy="398" r="10" style="animation-delay:44.2s"/>
+<text class="num" x="216" y="402" text-anchor="start">14</text>
+<circle class="card2 c-amb" cx="408" cy="398" r="10" stroke-width="1.6"/>
+<circle class="k f-amb" cx="408" cy="398" r="10" style="animation-delay:47.6s"/>
+<text class="num" x="408" y="402" text-anchor="start">15</text>
+<circle class="card2 c-ver" cx="600" cy="398" r="10" stroke-width="1.6"/>
+<circle class="k f-ver" cx="600" cy="398" r="10" style="animation-delay:51s"/>
+<text class="num" x="600" y="402" text-anchor="start">16</text>
+<circle class="card2 c-ver" cx="792" cy="398" r="10" stroke-width="1.6"/>
+<circle class="k f-ver" cx="792" cy="398" r="10" style="animation-delay:54.4s"/>
+<text class="num" x="792" y="402" text-anchor="start">17</text>
+<circle class="card2 c-seal" cx="216" cy="562" r="10" stroke-width="1.6"/>
+<circle class="k f-seal" cx="216" cy="562" r="10" style="animation-delay:57.8s"/>
+<text class="num" x="216" y="566" text-anchor="start">18</text>
+<circle class="card2 c-rep" cx="408" cy="562" r="10" stroke-width="1.6"/>
+<circle class="k f-rep" cx="408" cy="562" r="10" style="animation-delay:61.2s"/>
+<text class="num" x="408" y="566" text-anchor="start">19</text>
+<circle class="card2 c-seal" cx="600" cy="562" r="10" stroke-width="1.6"/>
+<circle class="k f-seal" cx="600" cy="562" r="10" style="animation-delay:64.6s"/>
+<text class="num" x="600" y="566" text-anchor="start">20</text>
+<circle class="card2 c-amb" cx="792" cy="562" r="10" stroke-width="1.6"/>
+<circle class="k f-amb" cx="792" cy="562" r="10" style="animation-delay:68s"/>
+<text class="num" x="792" y="566" text-anchor="start">21</text>
+<circle class="card2 c-amb" cx="814" cy="562" r="10" stroke-width="1.6"/>
+<circle class="k f-amb" cx="814" cy="562" r="10" style="animation-delay:71.4s"/>
+<text class="num" x="814" y="566" text-anchor="start">22</text>
+<g class="motion" aria-hidden="true">
+<circle r="5" class="f-cap" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M192 142 H212" keyPoints="0;0;1;1" keyTimes="0;0.004;0.033;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.004;0.006;0.033;0.037;1"/></circle>
+<circle r="5" class="f-cap" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M107 200 V230" keyPoints="0;0;1;1" keyTimes="0;0.049;0.056;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.049;0.051;0.056;0.06;1"/></circle>
+<circle r="5" class="f-cap" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M107 348 V362 H620 V350" keyPoints="0;0;1;1" keyTimes="0;0.072;0.079;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.072;0.074;0.079;0.083;1"/></circle>
+<circle r="5" class="f-cap" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M192 142 H212" keyPoints="0;0;1;1" keyTimes="0;0.095;0.124;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.095;0.097;0.124;0.128;1"/></circle>
+<circle r="5" class="f-amb" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M299 200 V230" keyPoints="0;0;1;1" keyTimes="0;0.14;0.17;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.14;0.142;0.17;0.174;1"/></circle>
+<circle r="5" class="f-cap" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M384 142 H404" keyPoints="0;0;1;1" keyTimes="0;0.186;0.193;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.186;0.188;0.193;0.197;1"/></circle>
+<circle r="5" class="f-amb" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M384 290 H395 V172 H404" keyPoints="0;0;1;1" keyTimes="0;0.209;0.215;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.209;0.211;0.215;0.219;1"/></circle>
+<circle r="5" class="f-warn" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M491 200 V230" keyPoints="0;0;1;1" keyTimes="0;0.231;0.261;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.231;0.233;0.261;0.265;1"/></circle>
+<circle r="5" class="f-ver" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M576 142 H596" keyPoints="0;0;1;1" keyTimes="0;0.277;0.283;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.277;0.279;0.283;0.287;1"/></circle>
+<circle r="5" class="f-ver" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M576 290 H596" keyPoints="0;0;1;1" keyTimes="0;0.299;0.306;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.299;0.301;0.306;0.31;1"/></circle>
+<circle r="5" class="f-seal" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M768 142 H788" keyPoints="0;0;1;1" keyTimes="0;0.322;0.352;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.322;0.324;0.352;0.356;1"/></circle>
+<circle r="5" class="f-seal" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M768 142 H788" keyPoints="0;0;1;1" keyTimes="0;0.368;0.397;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.368;0.37;0.397;0.401;1"/></circle>
+<circle r="5" class="f-rep" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M768 290 H788" keyPoints="0;0;1;1" keyTimes="0;0.413;0.443;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.413;0.415;0.443;0.447;1"/></circle>
+<circle r="5" class="f-rep" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M700 348 V380 H150 V394" keyPoints="0;0;1;1" keyTimes="0;0.459;0.465;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.459;0.461;0.465;0.469;1"/></circle>
+<circle r="5" class="f-rep" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M22 454 H10 V142 H20" keyPoints="0;0;1;1" keyTimes="0;0.481;0.488;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.481;0.483;0.488;0.492;1"/></circle>
+<circle r="5" class="f-rep" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M22 454 H10 V142 H20" keyPoints="0;0;1;1" keyTimes="0;0.504;0.533;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.504;0.506;0.533;0.537;1"/></circle>
+<circle r="5" class="f-amb" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M192 454 H212" keyPoints="0;0;1;1" keyTimes="0;0.549;0.579;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.549;0.551;0.579;0.583;1"/></circle>
+<circle r="5" class="f-amb" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M700 348 V380 H330 V394" keyPoints="0;0;1;1" keyTimes="0;0.595;0.624;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.595;0.597;0.624;0.628;1"/></circle>
+<circle r="5" class="f-amb" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M384 454 H404" keyPoints="0;0;1;1" keyTimes="0;0.64;0.67;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.64;0.642;0.67;0.674;1"/></circle>
+<circle r="5" class="f-seal" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M800 200 V214 H779 V384 H756 V394" keyPoints="0;0;1;1" keyTimes="0;0.686;0.693;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.686;0.688;0.693;0.697;1"/></circle>
+<circle r="5" class="f-ver" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M740 348 V394" keyPoints="0;0;1;1" keyTimes="0;0.709;0.715;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.709;0.711;0.715;0.719;1"/></circle>
+<circle r="5" class="f-ver" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M768 454 H788" keyPoints="0;0;1;1" keyTimes="0;0.731;0.761;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.731;0.733;0.761;0.765;1"/></circle>
+<circle r="5" class="f-cap" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M192 618 H212" keyPoints="0;0;1;1" keyTimes="0;0.822;0.821;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.822;0.824;0.821;0.825;1"/></circle>
+<circle r="5" class="f-rep" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M384 618 H404" keyPoints="0;0;1;1" keyTimes="0;0.837;0.836;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.837;0.839;0.836;0.84;1"/></circle>
+<circle r="5" class="f-rep" opacity="0"><animateMotion dur="74.8s" repeatCount="indefinite" path="M576 618 H587 V372 H660 V350" keyPoints="0;0;1;1" keyTimes="0;0.852;0.852;1" calcMode="linear"/><animate attributeName="opacity" dur="74.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.852;0.854;0.852;0.856;1"/></circle>
+</g>
+<rect class="card2" x="22" y="706" width="936" height="524" rx="10"/>
+<text class="h" x="38" y="730" text-anchor="start">Steps, in order</text>
+<rect class="k lit f-cap" x="30" y="734" width="920" height="20" rx="5" style="animation-delay:0s"/>
+<circle class="f-cap" cx="48" cy="744" r="8"/>
+<text class="num" x="48" y="748" style="fill:var(--bg)">1</text>
+<text class="t" x="70" y="748" text-anchor="start">nova capture runs your command as a child process; the runner puts a sitecustomize hook loader on its PYTHONPATH.</text>
+<rect class="k lit f-cap" x="30" y="755" width="920" height="20" rx="5" style="animation-delay:3.4s"/>
+<circle class="f-cap" cx="48" cy="765" r="8"/>
+<text class="num" x="48" y="769" style="fill:var(--bg)">2</text>
+<text class="s" x="59" y="769" text-anchor="start">†</text>
+<text class="t" x="70" y="769" text-anchor="start">Or capture in-process: a framework adapter, or the sdk agent decorator, writes its own capsule with capture_mode sdk-decorator.</text>
+<rect class="k lit f-cap" x="30" y="776" width="920" height="20" rx="5" style="animation-delay:6.8s"/>
+<circle class="f-cap" cx="48" cy="786" r="8"/>
+<text class="num" x="48" y="790" style="fill:var(--bg)">3</text>
+<text class="s" x="59" y="790" text-anchor="start">†</text>
+<text class="t" x="70" y="790" text-anchor="start">In the child, install_all patches the OpenAI and Anthropic SDKs: sync, async, streamed and Responses API calls each become one record.</text>
+<rect class="k lit f-amb" x="30" y="797" width="920" height="20" rx="5" style="animation-delay:10.2s"/>
+<circle class="f-amb" cx="48" cy="807" r="8"/>
+<text class="num" x="48" y="811" style="fill:var(--bg)">4</text>
+<text class="s" x="59" y="811" text-anchor="start">†</text>
+<text class="t" x="70" y="811" text-anchor="start">The httpx hook also records each HTTP attempt. Under an SDK call it is marked transport and linked by logical_call_id (ADR-0305).</text>
+<rect class="k lit f-warn" x="30" y="818" width="920" height="20" rx="5" style="animation-delay:13.6s"/>
+<circle class="f-warn" cx="48" cy="828" r="8"/>
+<text class="num" x="48" y="832" style="fill:var(--bg)">5</text>
+<text class="s" x="59" y="832" text-anchor="start">†</text>
+<text class="t" x="70" y="832" text-anchor="start">When the workload exits, env.lock is written with the measured host block; then SecretScannerV0 redacts matches in place.</text>
+<rect class="k lit f-warn" x="30" y="839" width="920" height="20" rx="5" style="animation-delay:17s"/>
+<circle class="f-warn" cx="48" cy="849" r="8"/>
+<text class="num" x="48" y="853" style="fill:var(--bg)">6</text>
+<text class="s" x="59" y="853" text-anchor="start">†</text>
+<text class="t" x="70" y="853" text-anchor="start">If events were dropped, capture-health.json is written first, so the residual secret pass rescans it and the digests bind it.</text>
+<rect class="k lit f-ver" x="30" y="860" width="920" height="20" rx="5" style="animation-delay:20.4s"/>
+<circle class="f-ver" cx="48" cy="870" r="8"/>
+<text class="num" x="48" y="874" style="fill:var(--bg)">7</text>
+<text class="t" x="70" y="874" text-anchor="start">replay.yaml, lineage.jsonl and capsule.yaml are written; evidence_digests pins a SHA-256 and size for every evidence file.</text>
+<rect class="k lit f-seal" x="30" y="881" width="920" height="20" rx="5" style="animation-delay:23.8s"/>
+<circle class="f-seal" cx="48" cy="891" r="8"/>
+<text class="num" x="48" y="895" style="fill:var(--bg)">8</text>
+<text class="t" x="70" y="895" text-anchor="start">If NovaSeal is configured, the canonical manifest is signed into a DSSE envelope; a sealing failure only warns, never fails capture.</text>
+<rect class="k lit f-seal" x="30" y="902" width="920" height="20" rx="5" style="animation-delay:27.2s"/>
+<circle class="f-seal" cx="48" cy="912" r="8"/>
+<text class="num" x="48" y="916" style="fill:var(--bg)">9</text>
+<text class="t" x="70" y="916" text-anchor="start">The seal is appended to a SHA-256 Merkle log; an RFC 3161 token is requested only from a tsa_url you configure.</text>
+<rect class="k lit f-rep" x="30" y="923" width="920" height="20" rx="5" style="animation-delay:30.6s"/>
+<circle class="f-rep" cx="48" cy="933" r="8"/>
+<text class="num" x="48" y="937" style="fill:var(--bg)">10</text>
+<text class="t" x="70" y="937" text-anchor="start">lineage.jsonl edges are indexed into the local SQLite lineage store; assets are versioned as name@version in the registry.</text>
+<rect class="k lit f-rep" x="30" y="944" width="920" height="20" rx="5" style="animation-delay:34s"/>
+<circle class="f-rep" cx="48" cy="954" r="8"/>
+<text class="num" x="48" y="958" style="fill:var(--bg)">11</text>
+<text class="s" x="59" y="958" text-anchor="start">†</text>
+<text class="t" x="70" y="958" text-anchor="start">nova replay re-runs the command (mocked, the default) and serves recorded model calls per API surface, sync, async or streamed.</text>
+<rect class="k lit f-amb" x="30" y="965" width="920" height="20" rx="5" style="animation-delay:37.4s"/>
+<circle class="f-amb" cx="48" cy="975" r="8"/>
+<text class="num" x="48" y="979" style="fill:var(--bg)">12</text>
+<text class="s" x="59" y="979" text-anchor="start">†</text>
+<text class="t" x="70" y="979" text-anchor="start">A recorded rate limit or 5xx is raised again as the SDK's own exception class; transport attempts are never served.</text>
+<rect class="k lit f-rep" x="30" y="986" width="920" height="20" rx="5" style="animation-delay:40.8s"/>
+<circle class="f-rep" cx="48" cy="996" r="8"/>
+<text class="num" x="48" y="1000" style="fill:var(--bg)">13</text>
+<text class="s" x="59" y="1000" text-anchor="start">†</text>
+<text class="t" x="70" y="1000" text-anchor="start">intervention substitutes one event and writes a counterfactual capsule; it records whether the substitute reached the workload.</text>
+<rect class="k lit f-amb" x="30" y="1007" width="920" height="20" rx="5" style="animation-delay:44.2s"/>
+<circle class="f-amb" cx="48" cy="1017" r="8"/>
+<text class="num" x="48" y="1021" style="fill:var(--bg)">14</text>
+<text class="s" x="59" y="1021" text-anchor="start">†</text>
+<text class="t" x="70" y="1021" text-anchor="start">nova diff A B pairs logical model calls (transport left out), tool calls and outputs/; a provider change is a changed call.</text>
+<rect class="k lit f-amb" x="30" y="1028" width="920" height="20" rx="5" style="animation-delay:47.6s"/>
+<circle class="f-amb" cx="48" cy="1038" r="8"/>
+<text class="num" x="48" y="1042" style="fill:var(--bg)">15</text>
+<text class="s" x="59" y="1042" text-anchor="start">†</text>
+<text class="t" x="70" y="1042" text-anchor="start">With --assert-no-regressions: exit 0 no difference, 1 a difference, 2 could not compare (bad ref, malformed lines).</text>
+<rect class="k lit f-ver" x="30" y="1049" width="920" height="20" rx="5" style="animation-delay:51s"/>
+<circle class="f-ver" cx="48" cy="1059" r="8"/>
+<text class="num" x="48" y="1063" style="fill:var(--bg)">16</text>
+<text class="t" x="70" y="1063" text-anchor="start">nova verify checks signature, timestamp, Merkle inclusion, manifest binding and every file digest; one changed byte exits 1.</text>
+<rect class="k lit f-ver" x="30" y="1070" width="920" height="20" rx="5" style="animation-delay:54.4s"/>
+<circle class="f-ver" cx="48" cy="1080" r="8"/>
+<text class="num" x="48" y="1084" style="fill:var(--bg)">17</text>
+<text class="t" x="70" y="1084" text-anchor="start">nova export-evidence packs the capsule, a lineage subgraph and Ed25519-signed in-toto attestations into one ZIP.</text>
+<rect class="k lit f-seal" x="30" y="1091" width="920" height="20" rx="5" style="animation-delay:57.8s"/>
+<circle class="f-seal" cx="48" cy="1101" r="8"/>
+<text class="num" x="48" y="1105" style="fill:var(--bg)">18</text>
+<text class="t" x="70" y="1105" text-anchor="start">nova serve is a localhost dashboard and API over your capsules: a Host guard, a token, and a scope on every route.</text>
+<rect class="k lit f-rep" x="30" y="1112" width="920" height="20" rx="5" style="animation-delay:61.2s"/>
+<circle class="f-rep" cx="48" cy="1122" r="8"/>
+<text class="num" x="48" y="1126" style="fill:var(--bg)">19</text>
+<text class="t" x="70" y="1126" text-anchor="start">OTLP traces carrying gen_ai.* spans become a brand-new capsule; OTLP logs go to an append-only sidecar, never into a capsule.</text>
+<rect class="k lit f-seal" x="30" y="1133" width="920" height="20" rx="5" style="animation-delay:64.6s"/>
+<circle class="f-seal" cx="48" cy="1143" r="8"/>
+<text class="num" x="48" y="1147" style="fill:var(--bg)">20</text>
+<text class="t" x="70" y="1147" text-anchor="start">nova server is the team REST API (/v0): API keys with workspace binding, budgets and keyset pages, on SQLite or Postgres.</text>
+<rect class="k lit f-amb" x="30" y="1154" width="920" height="20" rx="5" style="animation-delay:68s"/>
+<circle class="f-amb" cx="48" cy="1164" r="8"/>
+<text class="num" x="48" y="1168" style="fill:var(--bg)">21</text>
+<text class="t" x="70" y="1168" text-anchor="start">Planned: mocked replay substitutes non-MCP tool results on owned boundaries (ADR-0306, proposed). Today those tools run live.</text>
+<rect class="k lit f-amb" x="30" y="1175" width="920" height="20" rx="5" style="animation-delay:71.4s"/>
+<circle class="f-amb" cx="48" cy="1185" r="8"/>
+<text class="num" x="48" y="1189" style="fill:var(--bg)">22</text>
+<text class="t" x="70" y="1189" text-anchor="start">Future design: re-running a framework-adapter capsule, and multi-cluster federation of capsules and lineage. Not implemented.</text>
+<text class="s" x="38" y="1214" text-anchor="start">† On main, unreleased (after v0.104.0).</text>
+</svg>
