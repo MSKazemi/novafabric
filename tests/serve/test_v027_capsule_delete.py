@@ -154,7 +154,7 @@ def test_delete_released_hold_allows_deletion(
     with TestClient(app) as tc:
         r = tc.delete(f"/api/runs/{run_id}", params={"token": VALID_TOKEN}, headers=H)
 
-    assert r.status_code == 200
+    assert r.status_code == 200, r.text  # the body names the cause of a 500
     body = r.json()
     assert body["ok"] is True
     assert body["run_id"] == run_id
@@ -169,7 +169,7 @@ def test_delete_success_removes_directory(client: TestClient, capsule_dir: Path)
 
     r = client.delete(f"/api/runs/{run_id}", params={"token": VALID_TOKEN}, headers=H)
 
-    assert r.status_code == 200
+    assert r.status_code == 200, r.text  # the body names the cause of a 500
     body = r.json()
     assert body["ok"] is True
     assert body["run_id"] == run_id
@@ -199,7 +199,7 @@ def test_delete_force_flag_accepted(client: TestClient, capsule_dir: Path) -> No
         params={"token": VALID_TOKEN, "force": "true"},
         headers=H,
     )
-    assert r.status_code == 200
+    assert r.status_code == 200, r.text  # the body names the cause of a 500
     assert r.json()["ok"] is True
     assert not (capsule_dir / run_id).exists()
 
