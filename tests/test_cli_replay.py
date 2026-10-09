@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import yaml
@@ -82,7 +83,7 @@ def test_invalid_mode_exits_1(tmp_path: Path) -> None:
 
 
 def test_mocked_mode_exit_zero(tmp_path: Path) -> None:
-    cap = _make_capsule(tmp_path, command=["python", "-c", "print('ok')"])
+    cap = _make_capsule(tmp_path, command=[sys.executable, "-c", "print('ok')"])
     result = runner.invoke(app, ["replay", str(cap), "--mode", "mocked",
                                  "--output-dir", str(tmp_path / "replays")])
     assert result.exit_code == 0
