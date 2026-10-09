@@ -49,11 +49,18 @@ def test_explicit_env_wins_over_everything(
     assert resolve_audit_log_path() == tmp_path / "explicit.jsonl"
 
 
-def test_novafabric_home_wins_over_xdg(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_novafabric_home_does_not_move_the_audit_log(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A custom data home must not hide the existing trail or fork a second chain."""
     _clear(monkeypatch)
     monkeypatch.setenv("NOVAFABRIC_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
-    assert resolve_audit_log_path() == tmp_path / "home" / "audit.jsonl"
+    assert resolve_audit_log_path() == tmp_path / "xdg" / "novafabric" / "audit.jsonl"
+    monkeypatch.delenv("XDG_DATA_HOME")
+    monkeypatch.setenv("HOME", str(tmp_path / "fakehome"))
+    expected = tmp_path / "fakehome" / ".local" / "share" / "novafabric" / "audit.jsonl"
+    assert resolve_audit_log_path() == expected
 
 
 def test_xdg_data_home_when_no_novafabric_vars(
@@ -192,13 +199,15 @@ def test_export_evidence_audits_to_the_explicit_override(
     assert "policy.allow" in _actions(target)
 
 
-def test_export_evidence_audits_under_novafabric_home(
+def test_export_evidence_audits_under_xdg_data_home(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.delenv(AUDIT_LOG_PATH_ENV, raising=False)
     monkeypatch.setenv("NOVAFABRIC_HOME", str(tmp_path / "nhome"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
     _export(tmp_path)
-    assert "policy.allow" in _actions(tmp_path / "nhome" / "audit.jsonl")
+    assert "policy.allow" in _actions(tmp_path / "xdg" / "novafabric" / "audit.jsonl")
+    assert not (tmp_path / "nhome" / "audit.jsonl").exists()
 
 
 def test_export_evidence_refuses_cleanly_when_the_audit_log_is_unwritable(
@@ -236,8 +245,8 @@ def test_the_suite_never_resolves_the_audit_log_under_the_real_home() -> None:
 def test_the_suite_stays_off_the_real_home_even_without_the_explicit_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Defence in depth: drop the explicit override; NOVAFABRIC_HOME (and, below
-    # it, XDG_DATA_HOME) from the hermetic fixture must still keep us off it.
+    # Defence in depth: drop the explicit override; XDG_DATA_HOME from the
+    # hermetic fixture must still keep us off it (NOVAFABRIC_HOME never moves it).
     monkeypatch.delenv(AUDIT_LOG_PATH_ENV, raising=False)
     assert not resolve_audit_log_path().resolve().is_relative_to(REAL_HOME / ".local")
     monkeypatch.delenv("NOVAFABRIC_HOME", raising=False)

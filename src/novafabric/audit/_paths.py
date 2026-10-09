@@ -3,14 +3,16 @@
 Precedence (first match wins; a blank value counts as unset):
 
 1. ``NOVAFABRIC_AUDIT_LOG_PATH`` — explicit file path (deployments, backup/restore).
-2. ``$NOVAFABRIC_HOME/audit.jsonl`` — when ``NOVAFABRIC_HOME`` is set, the audit
-   log follows the rest of that installation's data instead of escaping to the
-   user-global store.
-3. ``$XDG_DATA_HOME/novafabric/audit.jsonl`` — when ``XDG_DATA_HOME`` is set to an
+2. ``$XDG_DATA_HOME/novafabric/audit.jsonl`` — when ``XDG_DATA_HOME`` is set to an
    absolute path (the XDG Base Directory spec says relative values are invalid
    and must be ignored).
-4. ``~/.local/share/novafabric/audit.jsonl`` — the historical default, unchanged,
+3. ``~/.local/share/novafabric/audit.jsonl`` — the historical default, unchanged,
    so an existing user's log keeps being appended to.
+
+``NOVAFABRIC_HOME`` deliberately does **not** move the audit log: pointing a shell at
+another data home must not be able to hide the existing trail or silently start a
+second hash chain beside it. Moving the log is always an explicit act
+(``NOVAFABRIC_AUDIT_LOG_PATH``), which a deployment sets on purpose.
 
 Every reader and writer of the audit log must call :func:`resolve_audit_log_path` at the
 moment it needs the path. Binding the path at import time (the old
@@ -27,7 +29,7 @@ from typing import Final
 #: Explicit audit-log path override.
 AUDIT_LOG_PATH_ENV: Final[str] = "NOVAFABRIC_AUDIT_LOG_PATH"
 
-#: File name used under ``NOVAFABRIC_HOME`` and the XDG data directory.
+#: File name used under the XDG data directory.
 AUDIT_LOG_FILENAME: Final[str] = "audit.jsonl"
 
 
@@ -36,9 +38,6 @@ def resolve_audit_log_path() -> Path:
     explicit = os.environ.get(AUDIT_LOG_PATH_ENV, "").strip()
     if explicit:
         return Path(explicit)
-    home = os.environ.get("NOVAFABRIC_HOME", "").strip()
-    if home:
-        return Path(home) / AUDIT_LOG_FILENAME
     xdg = os.environ.get("XDG_DATA_HOME", "").strip()
     if xdg and Path(xdg).is_absolute():
         return Path(xdg) / "novafabric" / AUDIT_LOG_FILENAME

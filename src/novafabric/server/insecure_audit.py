@@ -18,7 +18,7 @@ audit trail, not only a log line: a startup warning scrolls away, a
 hash-chained audit entry does not.  :func:`record_insecure_start` appends one
 ``server.insecure_no_auth`` entry to the deployment audit log
 (:func:`novafabric.audit.resolve_audit_log_path`: ``NOVAFABRIC_AUDIT_LOG_PATH``,
-else ``$NOVAFABRIC_HOME/audit.jsonl``, else the XDG data directory).
+else the XDG data directory, else ``~/.local/share/novafabric/audit.jsonl``).
 
 Fail closed: if the entry cannot be written, the server refuses to start in
 insecure mode (:class:`InsecureModeAuditError`).  The audit entry is the

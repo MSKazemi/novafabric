@@ -317,21 +317,20 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
-- **The hash-chained audit log ignored `NOVAFABRIC_HOME`, and most writers ignored
-  `NOVAFABRIC_AUDIT_LOG_PATH` (behaviour change).** The path was a constant bound to
+- **Most audit-log writers ignored `NOVAFABRIC_AUDIT_LOG_PATH`, so tests wrote to the
+  user's real audit log.** The path was a constant bound to
   `~/.local/share/novafabric/audit.jsonl` at import time and copied into 24 modules; only
   four call sites read the override. Every `nova export-evidence`, promotion, hold, replay,
   retention run and the server's key/webhook/role routes wrote to the user-global file
-  regardless of either variable, and so did the test suite. Every reader and writer now calls
-  one resolver, `novafabric.audit.resolve_audit_log_path()`, at the moment it needs the path:
-  `NOVAFABRIC_AUDIT_LOG_PATH`, else `$NOVAFABRIC_HOME/audit.jsonl` when `NOVAFABRIC_HOME` is
-  set, else `$XDG_DATA_HOME/novafabric/audit.jsonl`, else
-  `~/.local/share/novafabric/audit.jsonl`. With none of them set, the path is unchanged. **If you set `NOVAFABRIC_HOME`, new entries go to
-  `$NOVAFABRIC_HOME/audit.jsonl`, which starts a new hash chain**; set
-  `NOVAFABRIC_AUDIT_LOG_PATH=~/.local/share/novafabric/audit.jsonl` to keep appending to the
-  old file. The Docker Compose stack and the Helm chart both set `NOVAFABRIC_HOME=/data/nova`,
-  so their audit log now lands on the mounted data volume, not in the container's home
-  directory. `nova policy explain --audit-log` defaults to the same resolver.
+  regardless of it, and so did the test suite. Every reader and writer now calls one
+  resolver, `novafabric.audit.resolve_audit_log_path()`, at the moment it needs the path:
+  `NOVAFABRIC_AUDIT_LOG_PATH`, else `$XDG_DATA_HOME/novafabric/audit.jsonl`, else
+  `~/.local/share/novafabric/audit.jsonl`. With neither variable set, the path is unchanged.
+  `NOVAFABRIC_HOME` deliberately does **not** move the audit log — a custom data home must
+  not hide the existing trail or fork a second hash chain; deployments that want the log on a
+  data volume set `NOVAFABRIC_AUDIT_LOG_PATH`. `nova policy explain --audit-log` defaults to
+  the same resolver. Earlier test runs may have appended `test-user` / `cli` lines to a
+  developer's real log; this change does not modify that file.
   `novafabric.audit.AUDIT_LOG_PATH` still works, but is now resolved each time it is read.
   An evidence export whose policy decision cannot be written to the audit log now fails with
   a message (CLI exit `1`; dashboard cart export `503 audit_unavailable`). Before, it raised an

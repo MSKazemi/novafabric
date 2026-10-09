@@ -63,8 +63,7 @@ def policy_explain(
         "--audit-log",
         help=(
             "Path to the audit log JSONL file (default: $NOVAFABRIC_AUDIT_LOG_PATH, "
-            "else $NOVAFABRIC_HOME/audit.jsonl, else "
-            "$XDG_DATA_HOME/novafabric/audit.jsonl, else "
+            "else $XDG_DATA_HOME/novafabric/audit.jsonl, else "
             "~/.local/share/novafabric/audit.jsonl)"
         ),
     ),

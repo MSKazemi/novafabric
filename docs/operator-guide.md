@@ -1011,7 +1011,7 @@ Disabled by default. This is the only path that leaves the trust boundary.
 |---|---|---|
 | `NOVAFABRIC_DB_URL` | — | Target Postgres URL for `nova db` migrations |
 | `NOVAFABRIC_API_WORKERS` | `1` | ⚠ Read by `SQLiteMetadataStore`, which **refuses to construct** when this is > 1. It is the guard behind "SQLite cannot be shared across writer processes" — see §3 on `--workers` |
-| `NOVAFABRIC_AUDIT_LOG_PATH` | `$NOVAFABRIC_HOME/audit.jsonl` when `NOVAFABRIC_HOME` is set, else `$XDG_DATA_HOME/novafabric/audit.jsonl`, else `~/.local/share/novafabric/audit.jsonl` | Hash-chained audit log path. Every writer and reader (exports, promotions, holds, `nova audit-log`, `nova policy explain`, `nova serve`, backup) resolves it the same way, at the moment it is used |
+| `NOVAFABRIC_AUDIT_LOG_PATH` | `$XDG_DATA_HOME/novafabric/audit.jsonl` when `XDG_DATA_HOME` is set, else `~/.local/share/novafabric/audit.jsonl` (`NOVAFABRIC_HOME` deliberately does not move it) | Hash-chained audit log path. Every writer and reader (exports, promotions, holds, `nova audit-log`, `nova policy explain`, `nova serve`, backup) resolves it the same way, at the moment it is used |
 
 ### Rate limiting
 
@@ -1054,10 +1054,11 @@ covers the registry, capsules, evidence, the keystore (`keys/`, which the health
 NovaSeal config and nonce store. Unset `NOVAFABRIC_HOME` and the defaults are exactly the
 old `~/.novafabric` locations. Deliberately **not** under the home: the per-user keyring
 (`~/.config/novafabric`), the legacy seal stores (`~/.local/share/novafabric`), and
-project-local `./.novafabric/` directories. The hash-chained audit log follows
-`NOVAFABRIC_HOME` when it is set (`$NOVAFABRIC_HOME/audit.jsonl`); with it unset it stays at
+project-local `./.novafabric/` directories — and the hash-chained audit log, which stays at
 `$XDG_DATA_HOME/novafabric/audit.jsonl`, or `~/.local/share/novafabric/audit.jsonl` when
-`XDG_DATA_HOME` is unset too. `NOVAFABRIC_AUDIT_LOG_PATH` overrides all three.
+`XDG_DATA_HOME` is unset, whatever `NOVAFABRIC_HOME` says: pointing a shell at another data
+home must not hide the existing trail or start a second hash chain beside it. Move it
+explicitly with `NOVAFABRIC_AUDIT_LOG_PATH` (deployments put it on the data volume that way).
 
 | Variable | Default | Effect |
 |---|---|---|

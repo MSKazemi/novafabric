@@ -42,8 +42,9 @@ Postgres backend and migration from SQLite.
 > ([ADR-0184](../decisions.md)). Each insecure start logs a warning **and**
 > appends a `server.insecure_no_auth` entry (bind host, port, loopback,
 > public-bind confirmation) to the hash-chained audit log at
-> `NOVAFABRIC_AUDIT_LOG_PATH` (default `$NOVAFABRIC_HOME/audit.jsonl` when
-> `NOVAFABRIC_HOME` is set, else `~/.local/share/novafabric/audit.jsonl`).
+> `NOVAFABRIC_AUDIT_LOG_PATH` (default `$XDG_DATA_HOME/novafabric/audit.jsonl`, else
+> `~/.local/share/novafabric/audit.jsonl`; `NOVAFABRIC_HOME` does not move it — set the
+> variable explicitly to put the log on a data volume).
 > If the entry cannot be written the server refuses to start in insecure mode.
 
 ## 2. Identity backends

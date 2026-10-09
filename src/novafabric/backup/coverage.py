@@ -29,8 +29,7 @@ from novafabric.backup.models import BackupMember, CoverageEntry, MemberOrigin
 def default_audit_log_path() -> Path:
     """Deployment audit-log path — the one resolver every audit reader shares.
 
-    ``NOVAFABRIC_AUDIT_LOG_PATH`` > ``$NOVAFABRIC_HOME/audit.jsonl`` >
-    ``$XDG_DATA_HOME/novafabric/audit.jsonl`` >
+    ``NOVAFABRIC_AUDIT_LOG_PATH`` > ``$XDG_DATA_HOME/novafabric/audit.jsonl`` >
     ``~/.local/share/novafabric/audit.jsonl``
     (:func:`novafabric.audit.resolve_audit_log_path`), so backup/restore
     archives exactly the log every writer appends to.
