@@ -14,7 +14,6 @@ Schema changes in this version:
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from pathlib import Path
@@ -183,60 +182,54 @@ def ingest_capsule(run_id: str, capsule_dir: Path, tenant_id: str = "default") -
         pass  # table might not exist yet; insertions will create it
 
     rows: list[tuple[Any, ...]] = []
-    with mcalls_path.open() as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                ev = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+    from novafabric.capture.record_roles import read_logical_model_calls
 
-            call_id: str = ev.get("model_call_id", "")
-            if call_id in existing:
-                continue
+    # ADR-0305: one cost event per logical call; transport records are skipped.
+    for ev in read_logical_model_calls(mcalls_path):
+        call_id: str = ev.get("model_call_id", "")
+        if call_id in existing:
+            continue
 
-            model: str = ev.get("gen_ai.response.model") or ev.get(
-                "gen_ai.request.model", ""
-            )
-            provider: str = ev.get("gen_ai.system", "unknown")
-            input_tokens = int(ev.get("gen_ai.usage.input_tokens", 0))
-            output_tokens = int(ev.get("gen_ai.usage.output_tokens", 0))
-            # ADR-0132: the optional nova.usage block carries the per-type
-            # breakdown; cached_tokens feeds the (pre-existing) column.
-            # The column is non-nullable, so unknown is stored as 0 here —
-            # the capsule record stays the source of truth for absent vs zero.
-            nova_usage = ev.get("nova.usage")
-            cached_tokens = 0
-            if isinstance(nova_usage, dict):
-                raw_cached = nova_usage.get("cached_tokens")
-                if isinstance(raw_cached, int) and not isinstance(raw_cached, bool):
-                    cached_tokens = max(raw_cached, 0)
-            # Compute estimated cost. ADR-0234 D2: record *whether* a price was
-            # known alongside the figure, because `_estimate_cost` answers 0.0
-            # for an unpriced model and 0.0 is also a legitimate cost.
-            cost_usd = CostInterceptor._estimate_cost(
-                model, input_tokens, output_tokens
-            )
-            priced = 1 if CostInterceptor.is_priced(model) else 0
-            capsule_id: str = ev.get("capsule_id", run_id)
+        model: str = ev.get("gen_ai.response.model") or ev.get(
+            "gen_ai.request.model", ""
+        )
+        provider: str = ev.get("gen_ai.system", "unknown")
+        input_tokens = int(ev.get("gen_ai.usage.input_tokens", 0))
+        output_tokens = int(ev.get("gen_ai.usage.output_tokens", 0))
+        # ADR-0132: the optional nova.usage block carries the per-type
+        # breakdown; cached_tokens feeds the (pre-existing) column.
+        # The column is non-nullable, so unknown is stored as 0 here —
+        # the capsule record stays the source of truth for absent vs zero.
+        nova_usage = ev.get("nova.usage")
+        cached_tokens = 0
+        if isinstance(nova_usage, dict):
+            raw_cached = nova_usage.get("cached_tokens")
+            if isinstance(raw_cached, int) and not isinstance(raw_cached, bool):
+                cached_tokens = max(raw_cached, 0)
+        # Compute estimated cost. ADR-0234 D2: record *whether* a price was
+        # known alongside the figure, because `_estimate_cost` answers 0.0
+        # for an unpriced model and 0.0 is also a legitimate cost.
+        cost_usd = CostInterceptor._estimate_cost(
+            model, input_tokens, output_tokens
+        )
+        priced = 1 if CostInterceptor.is_priced(model) else 0
+        capsule_id: str = ev.get("capsule_id", run_id)
 
-            rows.append(
-                (
-                    run_id,
-                    capsule_id,
-                    call_id,
-                    tenant_id,
-                    model,
-                    provider,
-                    input_tokens,
-                    output_tokens,
-                    cached_tokens,
-                    cost_usd,
-                    priced,
-                )
+        rows.append(
+            (
+                run_id,
+                capsule_id,
+                call_id,
+                tenant_id,
+                model,
+                provider,
+                input_tokens,
+                output_tokens,
+                cached_tokens,
+                cost_usd,
+                priced,
             )
+        )
 
     if not rows:
         return 0

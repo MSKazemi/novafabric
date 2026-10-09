@@ -154,6 +154,20 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Changed
 
+- **Behaviour change — model-call counts halve for SDK workloads (ADR-0305).** An OpenAI or
+  Anthropic SDK call was recorded twice in `model-calls.jsonl` (the SDK hook, plus the `httpx`
+  wire hook with no response — once per HTTP attempt, so a retried call three times), and
+  every count included the copies. Both records are still written; the wire records are now
+  marked `extensions["io.novafabric.record_role"]: "transport"` with
+  `io.novafabric.logical_call_id` naming the SDK record (additive, optional schema fields),
+  and `model_call_count`, `nova cost`, `nova diff` (one changed prompt is now 1 changed pair,
+  not 2), mocked replay counters, `nova query` (cache rebuilt once), the dashboard
+  (`/api/runs/{id}` lists transport records separately as `transport_model_calls`), the
+  knowledge graph, OTel/AIBOM/finance exporters and the budget rollup count logical calls
+  only. Raw `httpx` calls with no SDK around them stay logical. Capsules captured earlier are
+  read with a reader-side fallback that recognises the old duplicate shape; the
+  `model_call_count` sealed into an old manifest is not rewritten. SDK error records now carry
+  `io.novafabric.api_surface` too.
 - **One `boto3` floor, `>=1.43.10`, in every extra and the `dev` group.** Five
   declarations under four different floor strings (`>=1.35.0`, `>=1.38`, `>=1.38.0`,
   `>=1.43.10`) made Dependabot fail with `Declaration not found for boto3!`, so boto3 got no

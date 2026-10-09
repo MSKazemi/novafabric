@@ -29,6 +29,8 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from novafabric.capture.record_roles import logical_model_calls
+
 MODEL_CALLS_FILE = "model-calls.jsonl"
 ENERGY_RECEIPTS_FILE = "energy-receipts.jsonl"
 
@@ -138,7 +140,8 @@ def budget_block_from_capsule(capsule_dir: Path) -> dict[str, Any]:
     For a single-run capsule ``cost_per_run`` equals ``total_cost`` (per the
     v0 spec); the value is an independent copy, never an alias.
     """
-    model_calls = list(_iter_jsonl(capsule_dir / MODEL_CALLS_FILE))
+    # ADR-0305: roll up logical calls only (transport records are wire copies).
+    model_calls = logical_model_calls(_iter_jsonl(capsule_dir / MODEL_CALLS_FILE))
     receipts = list(_iter_jsonl(capsule_dir / ENERGY_RECEIPTS_FILE))
 
     total_cost, cost_measured = _rollup_cost(model_calls)

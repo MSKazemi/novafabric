@@ -29,6 +29,8 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from novafabric.capture.record_roles import logical_model_calls
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from novafabric.lineage._store import LineageStore
 
@@ -255,7 +257,11 @@ def _load_steps(capsule_dir: Path, manifest: dict[str, Any]) -> list[Step]:
     for ref, kind in sources:
         if not isinstance(ref, str):
             continue
-        for rec in _read_jsonl(capsule_dir / ref):
+        records = _read_jsonl(capsule_dir / ref)
+        if kind == "model":
+            # ADR-0305: a transport record is a wire attempt, not a step.
+            records = logical_model_calls(records)
+        for rec in records:
             sid = rec.get("span_id") or rec.get("id") or rec.get("call_id")
             step_id = str(sid) if sid is not None else f"{kind}-{ordinal}"
             name = str(

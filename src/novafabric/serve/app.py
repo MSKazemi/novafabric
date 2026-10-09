@@ -548,7 +548,6 @@ def _cost_report_from_capsules(
     Returns the ``{model: {...}}`` shape of ``query_cost_report``.
     """
     import datetime as _dt
-    import json as _j
 
     cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)
     try:
@@ -567,14 +566,10 @@ def _cost_report_from_capsules(
         calls_file = cdir / "model-calls.jsonl"
         if not calls_file.is_file():
             continue
-        for line in calls_file.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rec = _j.loads(line)
-            except ValueError:
-                continue
+        from novafabric.capture.record_roles import read_logical_model_calls
+
+        # ADR-0305: one entry per logical call, never one per wire attempt.
+        for rec in read_logical_model_calls(calls_file):
             started = rec.get("started_at") or ""
             try:
                 when = _dt.datetime.fromisoformat(started.replace("Z", "+00:00"))
@@ -1686,6 +1681,7 @@ def create_app(
             },
             "trace": [],
             "model_calls": [],
+            "transport_model_calls": [],
             "tool_calls": [],
             "lineage": [],
             "assets": [],
@@ -5135,15 +5131,24 @@ def create_app(
         if not event_files:
             return {"ingested": 0, "skipped": 0, "written": 0}
 
+        from novafabric.capture.record_roles import non_counting_model_call_ids
+
         ingested = 0
         skipped = 0
         for events_file in event_files:
+            # ADR-0305: transport records are not model calls -- no KG node.
+            transport = (
+                non_counting_model_call_ids(events_file)
+                if events_file.name == "model-calls.jsonl" else set()
+            )
             for raw in events_file.read_text(encoding="utf-8").splitlines():
                 raw = raw.strip()
                 if not raw:
                     continue
                 try:
                     ev = _json.loads(raw)
+                    if transport and ev.get("model_call_id") in transport:
+                        continue
                     pipeline.ingest_event(ev, novaseal_valid=False)
                     ingested += 1
                 except Exception:  # noqa: BLE001
@@ -5994,6 +5999,13 @@ def create_app(
                     "error": "No events file found (expected model-calls.jsonl or events.jsonl)",
                     "note": "",
                 }
+            from novafabric.capture.record_roles import non_counting_model_call_ids
+
+            # ADR-0305: transport records are not model calls -- no KG node.
+            transport = (
+                non_counting_model_call_ids(events_file)
+                if events_file.name == "model-calls.jsonl" else set()
+            )
             ingested = 0
             skipped = 0
             for raw in events_file.read_text(encoding="utf-8").splitlines():
@@ -6002,6 +6014,8 @@ def create_app(
                     continue
                 try:
                     ev = _json.loads(raw)
+                    if transport and ev.get("model_call_id") in transport:
+                        continue
                     pipeline.ingest_event(ev, novaseal_valid=novaseal_verified)
                     ingested += 1
                 except Exception:  # noqa: BLE001
@@ -8271,7 +8285,6 @@ def create_app(
             Newly seeded dirs are added to ``_topology_seeded_dirs``.
             Returns a summary dict compatible with the /api/topology/seed response.
             """
-            import json as _jseed
             import time as _time
 
             agents_added = 0
@@ -8303,14 +8316,10 @@ def create_app(
 
                 mc_path = cap_dir / "model-calls.jsonl"
                 if mc_path.exists():
-                    for line in mc_path.read_text().splitlines():
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            mc = _jseed.loads(line)
-                        except Exception:  # noqa: BLE001
-                            continue
+                    from novafabric.capture.record_roles import read_logical_model_calls
+
+                    # ADR-0305: one "calls" edge per logical call.
+                    for mc in read_logical_model_calls(mc_path):
                         model = (
                             mc.get("gen_ai.response.model") or mc.get("gen_ai.request.model", "")
                         )

@@ -36,6 +36,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from novafabric.capture.record_roles import logical_model_calls
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -367,7 +369,8 @@ class AIBOMExporter:
             }]
 
         aggregated: dict[str, dict[str, Any]] = {}
-        for call in self._read_jsonl(capsule_dir / "model-calls.jsonl"):
+        # ADR-0305: call_count counts logical calls, not wire attempts.
+        for call in logical_model_calls(self._read_jsonl(capsule_dir / "model-calls.jsonl")):
             name = call.get("gen_ai.response.model") or call.get("gen_ai.request.model")
             if not name:
                 continue

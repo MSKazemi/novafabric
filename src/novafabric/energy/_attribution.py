@@ -20,6 +20,7 @@ from pathlib import Path
 import yaml
 
 from novafabric.capsule.ulid_util import new_ulid
+from novafabric.capture.record_roles import logical_model_calls
 from novafabric.energy._readers import _RAPL_BASE, probe_counters, rapl_delta_joules
 from novafabric.energy._receipt import (
     ActionKind,
@@ -92,7 +93,11 @@ def _iter_actions(
 ) -> Iterator[tuple[ActionKind, dict[str, object]]]:
     """Yield ``(kind, record)`` for every action across the capsule streams."""
     for stream, kind in _ACTION_STREAMS.items():
-        for record in _iter_jsonl(capsule_dir / stream):
+        records: Iterable[dict[str, object]] = _iter_jsonl(capsule_dir / stream)
+        if kind is ActionKind.MODEL_CALL:
+            # ADR-0305: a transport record is a wire attempt, not an action.
+            records = logical_model_calls(records)
+        for record in records:
             yield kind, record
 
 

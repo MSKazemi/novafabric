@@ -34,6 +34,8 @@ import math
 from pathlib import Path
 from typing import Any
 
+from novafabric.capture.record_roles import logical_model_calls
+
 from ._sealed_read import CorruptCapsuleError, hash_regular_file, read_sealed, sha256_bytes
 from .adverse_action import (
     ATTRIBUTION_FACET_KEY,
@@ -194,6 +196,7 @@ def _read_model_calls(
     recorded = digests.get("model-calls.jsonl")
     calls: list[ModelCallFacts] = []
     total = 0
+    parsed: list[tuple[int, bytes, dict[str, Any]]] = []
     for lineno, line in enumerate(raw.split(b"\n"), start=1):
         if not line.strip():
             continue
@@ -203,6 +206,13 @@ def _read_model_calls(
             raise CorruptCapsuleError(f"model-calls.jsonl line {lineno} is not JSON") from exc
         if not isinstance(record, dict):
             raise CorruptCapsuleError(f"model-calls.jsonl line {lineno} is not a JSON object")
+        parsed.append((lineno, line, record))
+    # ADR-0305: logical calls only; a transport record is the wire hook's copy
+    # of an HTTP attempt under an SDK call. Line numbers stay the file's own.
+    keep = {id(r) for r in logical_model_calls([r for _, _, r in parsed])}
+    for lineno, line, record in parsed:
+        if id(record) not in keep:
+            continue
         total += 1
         if len(calls) >= MAX_MODEL_CALLS:
             continue

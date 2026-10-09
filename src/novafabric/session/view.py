@@ -88,16 +88,11 @@ def _member_cost(capsule_dir: Path) -> dict[str, float]:
     calls_file = capsule_dir / "model-calls.jsonl"
     if not calls_file.is_file():
         return totals
-    import json
+    from novafabric.capture.record_roles import read_logical_model_calls
 
-    for line in calls_file.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            record = json.loads(line)
-        except ValueError:
-            continue
-        cost_block = record.get("nova.cost") if isinstance(record, dict) else None
+    # ADR-0305: logical calls only (transport records are wire copies).
+    for record in read_logical_model_calls(calls_file):
+        cost_block = record.get("nova.cost")
         if not isinstance(cost_block, dict):
             continue
         amount = cost_block.get("amount")

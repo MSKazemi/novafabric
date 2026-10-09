@@ -83,7 +83,12 @@ CACHE_SCHEMA_VERSION = 1
 #: and does **not** get one: it is arithmetic over already-extracted aggregates
 #: and extracts nothing new, so bumping would discard every user's cache for no
 #: reason. The test decides it: *did the indexer learn to read something?*
-INDEXER_SCHEMA_VERSION = 2
+#:
+#: ``3`` (ADR-0305): the indexer no longer emits a row for a ``transport``
+#: model-call record (the wire hook's copy of an SDK call). Load-bearing: the
+#: same capsule now yields fewer rows, so a version-2 cache would keep serving
+#: the doubled call counts and the latency averaged over the duplicates.
+INDEXER_SCHEMA_VERSION = 3
 
 #: Files whose content the indexer reads. Any change to one of these changes the
 #: rows a capsule contributes, so each is part of the signature.

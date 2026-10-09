@@ -30,6 +30,7 @@ from typing import Annotated, Any
 import typer
 from rich.console import Console
 
+from novafabric.capture.record_roles import logical_model_calls
 from novafabric.replay.determinism import Eligibility, assess
 from novafabric.replay.equivalence import (
     ALL_RULES,
@@ -219,7 +220,8 @@ def regime(
             raise typer.Exit(2)
         calls.append(record)
 
-    result = assess(calls)
+    # ADR-0305: assess logical calls; transport records are wire attempts.
+    result = assess(logical_model_calls(calls))
     console.print_json(json.dumps(result.model_dump(mode="json")))
     for reason in result.reasons:
         console.print(f"[dim]{reason}[/dim]")

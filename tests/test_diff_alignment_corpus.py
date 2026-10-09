@@ -685,44 +685,63 @@ def test_09_repeated_identical_tool_calls_pair_in_order_at_report_level(
 # ── every SDK call is recorded twice (SDK hook + httpx wire hook) ─────────────
 #
 # The wire record is written first and carries no response
-# (``gen_ai.response.choices: []``). Until capture stops double-recording, the
-# diff must at least not cross-pair the two copies: wire pairs with wire, SDK
-# with SDK, and a response-only change is ONE changed pair, not a remove + add.
+# (``gen_ai.response.choices: []``). ADR-0305 keeps it but marks it
+# ``transport`` (linked to the SDK record), and ``nova diff`` aligns logical
+# calls only: one changed prompt is ONE changed pair, not two. A capsule
+# captured before ADR-0305 carries no marker; the reader-side fallback
+# recognises the duplicate shape, so it diffs the same way.
 
 
-def _wire_and_sdk(prompt: str, response: str, *, span: str, tag: str) -> list[dict]:
+def _wire_and_sdk(
+    prompt: str, response: str, *, span: str, tag: str, marked: bool
+) -> list[dict]:
     wire = _mc(prompt, span=span, cid=f"{tag}-wire")
     wire["gen_ai.response.choices"] = []
     sdk = _mc(prompt, span=span, cid=f"{tag}-sdk")
     sdk["gen_ai.response.choices"] = _resp(response)
+    if marked:
+        wire["extensions"] = {
+            "io.novafabric.record_role": "transport",
+            "io.novafabric.logical_call_id": f"{tag}-sdk",
+        }
+        sdk["extensions"] = {
+            "io.novafabric.record_role": "logical",
+            "io.novafabric.logical_call_id": f"{tag}-sdk",
+        }
+    else:  # the pre-ADR-0305 shape: timestamps put the wire call inside the SDK call
+        sdk["started_at"], wire["started_at"] = "2026-01-01T00:00:00.0Z", "2026-01-01T00:00:00.1Z"
+        wire["finished_at"], sdk["finished_at"] = "2026-01-01T00:00:01.0Z", "2026-01-01T00:00:01.1Z"
     return [wire, sdk]
 
 
+@pytest.mark.parametrize("marked", [True, False], ids=["marked", "pre-adr0305"])
 @pytest.mark.parametrize(
     ("prompt_b", "response_b", "changed_ids"),
     [
         pytest.param("plan", "ok", [], id="identical"),
         pytest.param("plan", "different", [("a-sdk", "b-sdk")], id="response-only"),
-        # A prompt change is visible in both copies: two changed pairs, which is
-        # the double record inflating the count -- still paired copy-to-copy.
-        pytest.param(
-            "PLAN", "ok", [("a-wire", "b-wire"), ("a-sdk", "b-sdk")], id="prompt",
-        ),
+        # Before ADR-0305 a prompt change showed in both copies: TWO changed
+        # pairs (a-wire/b-wire and a-sdk/b-sdk) for one changed call.
+        pytest.param("PLAN", "ok", [("a-sdk", "b-sdk")], id="prompt"),
     ],
 )
-def test_double_recorded_sdk_call_pairs_copy_to_copy(
-    tmp_path: Path, prompt_b: str, response_b: str, changed_ids: list[tuple[str, str]]
+def test_double_recorded_sdk_call_is_one_pair(
+    tmp_path: Path, prompt_b: str, response_b: str, changed_ids: list[tuple[str, str]],
+    marked: bool,
 ) -> None:
     from novafabric.diff._engine import DiffEngine
 
-    a = _write_capsule(tmp_path, "run-a", _wire_and_sdk("plan", "ok", span="sa", tag="a"))
+    a = _write_capsule(
+        tmp_path, "run-a", _wire_and_sdk("plan", "ok", span="sa", tag="a", marked=marked)
+    )
     b = _write_capsule(
-        tmp_path, "run-b", _wire_and_sdk(prompt_b, response_b, span="sb", tag="b")
+        tmp_path, "run-b",
+        _wire_and_sdk(prompt_b, response_b, span="sb", tag="b", marked=marked),
     )
     report = DiffEngine().compare(a, b)
     assert report.added_count == 0 and report.removed_count == 0
     assert [(p["model_call_id_a"], p["model_call_id_b"]) for p in report.model_call_pairs] == [
-        ("a-wire", "b-wire"), ("a-sdk", "b-sdk"),
+        ("a-sdk", "b-sdk"),
     ]
     assert [
         (p["model_call_id_a"], p["model_call_id_b"])

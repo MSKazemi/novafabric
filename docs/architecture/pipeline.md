@@ -155,11 +155,12 @@ incomplete (ADR-0303 Amendment 1). `nova diff` also accepts two `name@version`
 asset references and diffs their specs field by field, in any of the three
 output formats.
 
-Known limitation: an OpenAI or Anthropic SDK call is currently recorded twice
-in `model-calls.jsonl` (the SDK hook, plus the `httpx` wire hook with no
-response). Both captures double alike, so the copies pair wire-to-wire and
-SDK-to-SDK, but the model-call counts include both copies: a changed prompt
-counts as two changed pairs.
+An OpenAI or Anthropic SDK call leaves two kinds of record in `model-calls.jsonl`:
+the SDK hook's logical record and one `httpx` wire record per HTTP attempt, with no
+response. Since ADR-0305 the wire records are marked `transport` and `nova diff`
+aligns logical calls only, so a changed prompt is one changed pair; a capsule
+captured before the marker existed is read the same way, through the reader-side
+fallback described in [Model-call record roles](run-capsule.md#model-call-record-roles).
 
 ## 5 · Audit: `nova verify`, `nova export-evidence`, `nova audit` (works today)
 

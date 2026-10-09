@@ -34,6 +34,7 @@ from novafabric.capture.hooks._tool_call_refs import (
     openai_tool_call_refs_with_dropped,
     parse_tool_arguments,
 )
+from novafabric.capture.record_roles import sdk_call_scope, stamp_logical_record
 from novafabric.cost.usage_types import usage_from_openai
 
 if TYPE_CHECKING:
@@ -190,19 +191,23 @@ class OpenAIHook:
     ) -> Any:
         started = _now()
         t0 = time.monotonic()
+        # ADR-0305: every wire record written inside the SDK call (one per HTTP
+        # attempt, retries included) is transport for this logical call id.
+        call_id = new_ulid()
         try:
-            response = original_bound(**kwargs)
+            with sdk_call_scope(call_id):
+                response = original_bound(**kwargs)
         except Exception as exc:
             self._record_error(started, _now(), int((time.monotonic() - t0) * 1000),
-                               kwargs, exc, endpoint)
+                               kwargs, exc, endpoint, surface=surface, call_id=call_id)
             raise
         if kwargs.get("stream") is True and is_sync_stream(response):
             return RecordingStream(
                 response, self._accumulator(surface),
-                self._on_stream_done(surface, started, t0, kwargs, endpoint),
+                self._on_stream_done(surface, started, t0, kwargs, endpoint, call_id),
             )
         self._record_for(surface, started, _now(), int((time.monotonic() - t0) * 1000),
-                         kwargs, response, endpoint)
+                         kwargs, response, endpoint, call_id=call_id)
         return response
 
     async def _intercept_async(
@@ -210,19 +215,21 @@ class OpenAIHook:
     ) -> Any:
         started = _now()
         t0 = time.monotonic()
+        call_id = new_ulid()
         try:
-            response = await original_bound(**kwargs)
+            with sdk_call_scope(call_id):
+                response = await original_bound(**kwargs)
         except Exception as exc:
             self._record_error(started, _now(), int((time.monotonic() - t0) * 1000),
-                               kwargs, exc, endpoint)
+                               kwargs, exc, endpoint, surface=surface, call_id=call_id)
             raise
         if kwargs.get("stream") is True and is_async_stream(response):
             return AsyncRecordingStream(
                 response, self._accumulator(surface),
-                self._on_stream_done(surface, started, t0, kwargs, endpoint),
+                self._on_stream_done(surface, started, t0, kwargs, endpoint, call_id),
             )
         self._record_for(surface, started, _now(), int((time.monotonic() - t0) * 1000),
-                         kwargs, response, endpoint)
+                         kwargs, response, endpoint, call_id=call_id)
         return response
 
     @staticmethod
@@ -232,12 +239,14 @@ class OpenAIHook:
         return OpenAIChatStreamAccumulator()
 
     def _on_stream_done(
-        self, surface: str, started: str, t0: float, kwargs: dict[str, Any], endpoint: str
+        self, surface: str, started: str, t0: float, kwargs: dict[str, Any], endpoint: str,
+        call_id: str | None = None,
     ) -> Any:
         def done(response: Any, count: int, first_ms: int | None, complete: bool) -> None:
             self._record_for(
                 surface, started, _now(), int((time.monotonic() - t0) * 1000),
                 kwargs, response, endpoint, stream_info=(count, first_ms, complete),
+                call_id=call_id,
             )
 
         return done
@@ -246,6 +255,7 @@ class OpenAIHook:
         self, surface: str, started: str, finished: str, duration_ms: int,
         kwargs: dict[str, Any], response: Any, endpoint: str,
         stream_info: tuple[int, int | None, bool] | None = None,
+        call_id: str | None = None,
     ) -> None:
         if is_raw_response_call(kwargs):
             # An HTTP response wrapper, not a parsed response: nothing to fold,
@@ -253,10 +263,10 @@ class OpenAIHook:
             response = None
         if surface == "responses":
             self._record_responses(started, finished, duration_ms, kwargs, response,
-                                   endpoint, stream_info=stream_info)
+                                   endpoint, stream_info=stream_info, call_id=call_id)
         else:
             self._record(started, finished, duration_ms, kwargs, response, "success",
-                         endpoint, stream_info=stream_info)
+                         endpoint, stream_info=stream_info, call_id=call_id)
 
     def _record_responses(
         self,
@@ -268,11 +278,12 @@ class OpenAIHook:
         endpoint: str = "",
         *,
         stream_info: tuple[int, int | None, bool] | None = None,
+        call_id: str | None = None,
     ) -> None:
         choice, dropped = responses_choice(response)
         failed = _get(response, "status") == "failed"
         record = build_record_envelope(
-            model_call_id=new_ulid(),
+            model_call_id=call_id or new_ulid(),
             parent_span_id=self._parent_span_id,
             started_at=started,
             finished_at=finished,
@@ -307,6 +318,7 @@ class OpenAIHook:
         response_id = _get(response, "id")
         if response_id:
             record["gen_ai.response.id"] = str(response_id)
+        stamp_logical_record(record)
         get_current_writer(self._writer).append_model_call(record)
 
     def _record(
@@ -320,6 +332,7 @@ class OpenAIHook:
         endpoint: str = "",
         *,
         stream_info: tuple[int, int | None, bool] | None = None,
+        call_id: str | None = None,
     ) -> None:
         choices: list[dict[str, Any]] = []
         finish_reasons: list[str] = []
@@ -347,7 +360,7 @@ class OpenAIHook:
             raw_finish_reasons.append(raw_finish)
         usage = getattr(response, "usage", None)
         record = build_record_envelope(
-            model_call_id=new_ulid(),
+            model_call_id=call_id or new_ulid(),
             parent_span_id=self._parent_span_id,
             started_at=started,
             finished_at=finished,
@@ -381,6 +394,7 @@ class OpenAIHook:
         response_id = getattr(response, "id", None)
         if response_id:
             record["gen_ai.response.id"] = str(response_id)
+        stamp_logical_record(record)
         get_current_writer(self._writer).append_model_call(record)
 
     def _record_error(
@@ -391,9 +405,12 @@ class OpenAIHook:
         kwargs: dict[str, Any],
         exc: Exception,
         endpoint: str = "",
+        *,
+        surface: str = "chat",
+        call_id: str | None = None,
     ) -> None:
         record = build_record_envelope(
-            model_call_id=new_ulid(),
+            model_call_id=call_id or new_ulid(),
             parent_span_id=self._parent_span_id,
             started_at=started,
             finished_at=finished,
@@ -406,4 +423,8 @@ class OpenAIHook:
         record["error"] = {
             "type": type(exc).__name__, "message": str(exc), "traceback_ref": None,
         }
+        record.setdefault("extensions", {})[API_SURFACE_EXT] = (
+            OPENAI_RESPONSES_SURFACE if surface == "responses" else OPENAI_CHAT_SURFACE
+        )
+        stamp_logical_record(record)
         get_current_writer(self._writer).append_model_call(record)

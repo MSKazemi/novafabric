@@ -31,8 +31,10 @@ from typing import Any
 
 import yaml
 
-# Module-level so tests can patch via ``novafabric.adapters._capsule.<name>``.
 from novafabric.capture.env import capture_environment
+
+# Module-level so tests can patch via ``novafabric.adapters._capsule.<name>``.
+from novafabric.capture.record_roles import count_logical_model_calls_in_file
 from novafabric.capture.secrets import SecretScannerV0
 
 
@@ -173,7 +175,9 @@ class AdapterCapture:
             "assets_ref": "assets.jsonl",
             "inputs": [],
             "outputs": [],
-            "model_call_count": _count_lines(self.cap_dir / "model-calls.jsonl"),
+            "model_call_count": count_logical_model_calls_in_file(
+                self.cap_dir / "model-calls.jsonl"
+            ),
             "tool_call_count": _count_lines(self.cap_dir / "tool-calls.jsonl"),
             "mutating_tool_count": 0,
             "exit_code": self.exit_code,

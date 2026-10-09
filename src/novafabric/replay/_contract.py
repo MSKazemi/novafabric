@@ -28,6 +28,7 @@ from novafabric.capture.hooks._sdk_streams import (
     OPENAI_CHAT_SURFACE,
     OPENAI_RESPONSES_SURFACE,
 )
+from novafabric.capture.record_roles import is_transport_record
 
 #: Model API surfaces mocked replay serves from the capsule, keyed by replay
 #: queue (``model_queue_key``). Each is served sync and async, with and without
@@ -116,10 +117,15 @@ def is_replayable_model_call(record: dict[str, Any]) -> bool:
 
     This excludes, by construction, the wire-level duplicate that the
     ``httpx`` hook writes beside every SDK-level record (it carries
-    ``gen_ai.response.choices: []``), error records, and calls whose response
-    was never recorded (e.g. captured before ADR-0304 on an async or streamed
-    path).
+    ``gen_ai.response.choices: []``, and since ADR-0305 is marked
+    ``extensions["io.novafabric.record_role"]: "transport"``), error records,
+    and calls whose response was never recorded (e.g. captured before ADR-0304
+    on an async or streamed path). A future serving rule that relaxes the
+    status or choices test must keep the transport test: a transport record is
+    an HTTP attempt, never a call to serve.
     """
+    if is_transport_record(record):
+        return False
     if model_queue_key(record) is None:
         return False
     if record.get("status", "success") != "success":

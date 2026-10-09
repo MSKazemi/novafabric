@@ -53,6 +53,7 @@ from typing import Any
 import yaml
 
 from novafabric.capture.log_level import InvalidLogLevelError, to_otel_severity
+from novafabric.capture.record_roles import logical_model_calls
 from novafabric.otel.content_bridge import bridge_messages
 
 #: version of the capsule ↔ OTel GenAI mapping table (R3).
@@ -186,8 +187,10 @@ def emit_spans(
         )
     ]
 
-    # LLM client spans (Stable semconv) from model-calls.jsonl.
-    for i, rec in enumerate(_read_jsonl(capsule_dir / "model-calls.jsonl")):
+    # LLM client spans (Stable semconv) from model-calls.jsonl -- one span per
+    # logical call (ADR-0305: transport records are wire attempts, not calls).
+    model_calls = logical_model_calls(_read_jsonl(capsule_dir / "model-calls.jsonl"))
+    for i, rec in enumerate(model_calls):
         attrs: dict[str, Any] = {
             key: rec[key]
             for key in (

@@ -16,6 +16,7 @@ import yaml
 
 from novafabric.audit import AUDIT_LOG_PATH, AuditEventType, AuditLog
 from novafabric.capture._ulid import new_ulid
+from novafabric.capture.record_roles import logical_model_calls
 from novafabric.policy import (
     PolicyDeniedError,
     PolicyInput,
@@ -154,7 +155,11 @@ class ReplayEngine:
             check_replay_environment(self._capsule_dir, self._flags.required_environment)
         replay_policy = _load_replay_policy(self._capsule_dir)
         env_lock = _load_env_lock(self._capsule_dir)
-        model_calls = _read_jsonl(self._capsule_dir / "model-calls.jsonl")
+        # ADR-0305: replay sees logical calls only -- the wire hook's transport
+        # records are neither served nor counted (model_calls_recorded).
+        model_calls = logical_model_calls(
+            _read_jsonl(self._capsule_dir / "model-calls.jsonl")
+        )
         tool_calls = _read_jsonl(self._capsule_dir / "tool-calls.jsonl")
 
         env_warnings = EnvironmentResolver().check(env_lock)

@@ -48,6 +48,7 @@ from novafabric.adapters._streaming import (
 from novafabric.capture import record as _record
 from novafabric.capture.env import capture_environment
 from novafabric.capture.record import _payloads_enabled
+from novafabric.capture.record_roles import count_logical_model_calls_in_file
 from novafabric.capture.secrets import SecretScannerV0
 
 #: Set while a wrapped run is producing — in this context, and in the node
@@ -133,10 +134,8 @@ def _run_capture(
 
     writer.write_text("replay.yaml", yaml.dump(minimal_replay_policy(), allow_unicode=True))
 
-    model_call_count = sum(
-        1
-        for line in (cap_dir / "model-calls.jsonl").read_text().splitlines()
-        if line.strip()
+    model_call_count = count_logical_model_calls_in_file(
+        cap_dir / "model-calls.jsonl"
     )
     tool_call_count = sum(
         1

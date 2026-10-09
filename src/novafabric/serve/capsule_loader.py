@@ -12,6 +12,8 @@ from typing import Any
 
 import yaml
 
+from novafabric.capture.record_roles import split_model_calls
+
 
 def discover_capsule_dirs(base: Path) -> list[Path]:
     """Return every directory under `base` that contains a capsule.yaml."""
@@ -137,12 +139,17 @@ def _list_dir_files(capsule_dir: Path, subdir: str) -> list[dict[str, Any]]:
 def load_full_capsule(capsule_dir: Path) -> dict[str, Any]:
     """Manifest + every parsed sub-file. Used by /api/runs/{run_id}."""
     manifest = load_capsule_manifest(capsule_dir)
+    # ADR-0305: ``model_calls`` holds one record per logical call; the wire
+    # hook's transport records (HTTP attempts under an SDK call) are kept,
+    # additively, under ``transport_model_calls``.
+    model_calls, transport = split_model_calls(load_jsonl(capsule_dir, "model-calls.jsonl"))
     return {
         "run_id": manifest.get("run_id", capsule_dir.name),
         "capsule_path": str(capsule_dir.resolve()),
         "manifest": manifest,
         "trace": load_jsonl(capsule_dir, "trace.jsonl"),
-        "model_calls": load_jsonl(capsule_dir, "model-calls.jsonl"),
+        "model_calls": model_calls,
+        "transport_model_calls": transport,
         "tool_calls": load_jsonl(capsule_dir, "tool-calls.jsonl"),
         "lineage": load_jsonl(capsule_dir, "lineage.jsonl"),
         "assets": load_jsonl(capsule_dir, "assets.jsonl"),

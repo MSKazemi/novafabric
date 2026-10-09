@@ -21,8 +21,10 @@ from typing import Any
 
 import yaml
 
-# Module-level imports so tests can patch via ``novafabric.adapters.autogen.<name>``.
 from novafabric.capture.env import capture_environment
+
+# Module-level imports so tests can patch via ``novafabric.adapters.autogen.<name>``.
+from novafabric.capture.record_roles import count_logical_model_calls_in_file
 from novafabric.capture.secrets import SecretScannerV0
 
 
@@ -70,10 +72,8 @@ def _write_capsule(
 
     writer.write_text("replay.yaml", yaml.dump(minimal_replay_policy(), allow_unicode=True))
 
-    model_call_count = sum(
-        1
-        for line in (cap_dir / "model-calls.jsonl").read_text().splitlines()
-        if line.strip()
+    model_call_count = count_logical_model_calls_in_file(
+        cap_dir / "model-calls.jsonl"
     )
     tool_call_count = sum(
         1

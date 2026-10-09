@@ -40,6 +40,7 @@ from typing import Any
 
 import yaml
 
+from novafabric.capture.record_roles import logical_model_calls
 from novafabric.eval.scores import SCORES_FILENAME, ScoreValueType, read_scores
 from novafabric.query.errors import QueryIndexError
 from novafabric.query.model import LOG_LEVEL_ALIASES, LOG_LEVEL_RANKS
@@ -206,6 +207,7 @@ def _log_level_of(record: dict[str, Any]) -> str:
 def _model_call_rows(capsule_dir: Path, dims: dict[str, Any]) -> list[CallRow]:
     path = capsule_dir / MODEL_CALLS_FILENAME
     rows: list[CallRow] = []
+    records: list[dict[str, Any]] = []
     if path.is_file():
         for line_no, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             line = raw.strip()
@@ -217,6 +219,11 @@ def _model_call_rows(capsule_dir: Path, dims: dict[str, Any]) -> list[CallRow]:
                 raise QueryIndexError(f"{path}:{line_no}: invalid model-call record") from exc
             if not isinstance(record, dict):
                 raise QueryIndexError(f"{path}:{line_no}: model-call record is not an object")
+            records.append(record)
+    # ADR-0305: one row per logical call; the wire hook's transport records
+    # under an SDK call would otherwise double count() and skew latency.
+    if records:
+        for record in logical_model_calls(records):
             model = _opt_str(record.get("gen_ai.response.model")) or _opt_str(
                 record.get("gen_ai.request.model")
             )

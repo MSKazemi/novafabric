@@ -479,7 +479,18 @@
     },
     "extensions": {
       "type": "object",
-      "description": "Vendor extensions. Keys must be reverse-DNS-prefixed."
+      "description": "Vendor extensions. Keys must be reverse-DNS-prefixed.",
+      "properties": {
+        "io.novafabric.record_role": {
+          "type": "string",
+          "enum": ["logical", "transport"],
+          "description": "ADR-0305 (additive, optional). 'logical': this record is a model call. 'transport': an HTTP attempt the wire hook recorded inside an SDK call that has its own logical record (retries give several); kept as evidence, excluded from every model-call count. Absent: logical, except in a capsule where no record carries the marker (captured before ADR-0305), whose readers recognise the old wire/SDK duplicate shape."
+        },
+        "io.novafabric.logical_call_id": {
+          "type": "string",
+          "description": "ADR-0305 (additive, optional). The model_call_id of the logical call this record belongs to: its own id on a logical record, the covering SDK record's id on a transport record."
+        }
+      }
     }
   },
   "$defs": {

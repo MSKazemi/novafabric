@@ -33,7 +33,7 @@ order. A failed run gets the same set of files.
 | # | Path | Holds | Written by |
 |---|---|---|---|
 | 1 | `inputs/`, `outputs/` | Inputs, and the workload's outputs | `capture/capsule.py:CapsuleWriter.open` |
-| 1 | `model-calls.jsonl` | One record per LLM call, keyed with OTel GenAI attributes (`gen_ai.request.*`, `gen_ai.response.*`) | hooks, through `CapsuleWriter` |
+| 1 | `model-calls.jsonl` | LLM call records, keyed with OTel GenAI attributes (`gen_ai.request.*`, `gen_ai.response.*`); a call made through the OpenAI/Anthropic SDK also leaves one `transport` record per HTTP attempt (see [Model-call record roles](#model-call-record-roles)) | hooks, through `CapsuleWriter` |
 | 1 | `tool-calls.jsonl` | One record per tool invocation | hooks, through `CapsuleWriter` |
 | 1 | `trace.jsonl` | Execution spans, including the root span | hooks and orchestrator |
 | 1 | `assets.jsonl` | References to registry assets the run consumed | hooks, through `CapsuleWriter` |
@@ -84,7 +84,41 @@ The schema requires `schema_version`, `run_id`, `created_at`, `finished_at`,
 `duration_ms`, `status`, `command`, `capture_mode`, `novafabric_version`,
 `working_directory`, `host`, the `*_ref` pointers to the files above,
 `trace_root_span_id`, `inputs`, `outputs`, and the call counters
-(`model_call_count`, `tool_call_count`, `mutating_tool_count`).
+(`model_call_count`, `tool_call_count`, `mutating_tool_count`). `model_call_count`
+counts logical model calls, not records (see below).
+
+## Model-call record roles
+
+**Works today** (ADR-0305, unreleased). A call made through the OpenAI or Anthropic SDK
+is recorded by two hooks: the SDK hook writes the **logical** record (the parsed response,
+`io.novafabric.api_surface`), and the wire hook (`httpx`) writes one **transport** record
+per HTTP attempt underneath it, with no response. Both are kept: the transport records are
+the only evidence of SDK-internal retries (a 429 followed by a 200) and of what went over
+the wire. Two optional `extensions` keys say which is which:
+
+| Key | Value |
+|---|---|
+| `io.novafabric.record_role` | `logical` or `transport` |
+| `io.novafabric.logical_call_id` | The `model_call_id` of the logical call: its own id on a logical record, the covering SDK record's id on a transport record (every retry of one SDK call links to the same id) |
+
+A wire record with no SDK call around it (raw `httpx`, a non-SDK client) is `logical`.
+An unmarked record is logical (adapter, API-proxy and OTel-ingest records carry no marker).
+
+Everything that counts or iterates model calls reads logical records only:
+`model_call_count`, `nova cost`, `nova diff`, mocked replay and its counters, `nova query`,
+the dashboard (`/api/runs/{id}` returns transport records separately as
+`transport_model_calls`), the knowledge graph, and the exporters. Evidence surfaces that
+hash, scan or bundle the file read every record. A transport record whose logical record
+is missing (the call was cancelled before the SDK hook wrote it) counts once, so a call
+is never dropped from a count. The rule lives in one place,
+`novafabric.capture.record_roles` (`logical_model_calls`, `is_transport_record`).
+
+**Capsules captured before ADR-0305** carry no marker. Readers recognise the old
+duplicate shape: a response-less wire record followed by an SDK record for the same
+request (model + messages) that encloses it in time, or, without timestamps, follows it
+with only retries in between. Anything less certain is counted, so the fallback never
+under-counts. The `model_call_count` sealed into an old `capsule.yaml` is not rewritten:
+it keeps the doubled value it was signed with.
 
 Some optional fields matter for the architecture:
 

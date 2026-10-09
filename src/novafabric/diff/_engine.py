@@ -8,6 +8,7 @@ from typing import Any
 
 import yaml
 
+from novafabric.capture.record_roles import logical_model_calls
 from novafabric.diff._align import align_model_calls, align_tool_calls
 from novafabric.diff._report import DiffReport
 
@@ -138,7 +139,10 @@ class DiffEngine:
         calls_b, report.skipped_malformed_lines["b"]["model_calls"] = _read_jsonl(
             capsule_b / "model-calls.jsonl"
         )
-        pairs = align_model_calls(calls_a, calls_b)
+        # ADR-0305: align logical calls only. The wire hook's transport records
+        # (one per HTTP attempt under an SDK call) are not calls: pairing them
+        # too reported one changed prompt as two changed pairs.
+        pairs = align_model_calls(logical_model_calls(calls_a), logical_model_calls(calls_b))
 
         for a, b in pairs:
             if a is None and b is not None:

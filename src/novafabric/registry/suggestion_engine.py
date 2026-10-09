@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from novafabric.capture.record_roles import read_logical_model_calls
+
 _SEMVER_RE = re.compile(
     r"^v?\d+\.\d+(\.\d+)?(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?$"
 )
@@ -127,13 +129,8 @@ class SuggestionEngine:
             return []
 
         counts: dict[tuple[str, str], int] = {}
-        for line in path.read_text().splitlines():
-            if not line.strip():
-                continue
-            try:
-                r = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+        # ADR-0305: count logical calls, not the wire hook's transport copies.
+        for r in read_logical_model_calls(path):
             system = r.get("gen_ai.system", "unknown")
             model_id = r.get("gen_ai.response.model") or r.get("gen_ai.request.model", "")
             if model_id:
@@ -243,17 +240,11 @@ class SuggestionEngine:
         if not path.exists():
             return None
         counts: dict[tuple[str, str], int] = {}
-        for line in path.read_text().splitlines():
-            if not line.strip():
-                continue
-            try:
-                r = json.loads(line)
-                m = r.get("gen_ai.request.model", "")
-                s = r.get("gen_ai.system", "unknown")
-                if m:
-                    counts[(m, s)] = counts.get((m, s), 0) + 1
-            except json.JSONDecodeError:
-                pass
+        for r in read_logical_model_calls(path):
+            m = r.get("gen_ai.request.model", "")
+            s = r.get("gen_ai.system", "unknown")
+            if m:
+                counts[(m, s)] = counts.get((m, s), 0) + 1
         if not counts:
             return None
         best = max(counts, key=lambda k: counts[k])

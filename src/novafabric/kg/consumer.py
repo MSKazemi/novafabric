@@ -15,6 +15,8 @@ import zipfile
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+from novafabric.capture.record_roles import non_counting_model_call_ids
+
 logger = logging.getLogger(__name__)
 
 # Files within a capsule that carry KG-relevant events
@@ -65,13 +67,18 @@ class CapsuleEventConsumer:
         except OSError as exc:
             logger.warning("CapsuleEventConsumer: cannot read %s: %s", jsonl_path, exc)
             return
+        # ADR-0305: transport records (incl. pre-ADR-0305 duplicates) are not calls.
+        transport = (
+            non_counting_model_call_ids(jsonl_path)
+            if jsonl_path.name == "model-calls.jsonl" else set()
+        )
         for line in text.splitlines():
             line = line.strip()
             if not line:
                 continue
             try:
                 event = json.loads(line)
-                if isinstance(event, dict):
+                if isinstance(event, dict) and event.get("model_call_id") not in transport:
                     yield event
             except json.JSONDecodeError as exc:
                 logger.debug("CapsuleEventConsumer: skipping bad JSON in %s: %s", jsonl_path, exc)

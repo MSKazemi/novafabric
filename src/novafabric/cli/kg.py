@@ -59,6 +59,16 @@ _QueueDBAr = Annotated[
     ),
 ]
 
+
+def _transport_ids(events_file: Path) -> set[str]:
+    """ADR-0305: ids of model-call records that are not calls (no KG edge)."""
+    if events_file.name != "model-calls.jsonl":
+        return set()
+    from novafabric.capture.record_roles import non_counting_model_call_ids
+
+    return non_counting_model_call_ids(events_file)
+
+
 kg_app = typer.Typer(
     name="kg",
     help="Capsule Knowledge Graph: ingest, query, and inspect (requires novafabric[scale-kg]).",
@@ -326,12 +336,15 @@ def kg_ingest_cmd(
                     cap_ingested = 0
                     cap_skipped = 0
                     for evf in ev_files:
+                        skip = _transport_ids(evf)
                         for raw in evf.read_text(encoding="utf-8").splitlines():
                             raw = raw.strip()
                             if not raw:
                                 continue
                             try:
                                 event = json.loads(raw)
+                                if skip and event.get("model_call_id") in skip:
+                                    continue
                                 pipeline.ingest_event(event, novaseal_valid=novaseal_verified)
                                 cap_ingested += 1
                             except json.JSONDecodeError:
@@ -442,12 +455,15 @@ def kg_ingest_cmd(
     ingested = 0
     skipped = 0
     for events_file in event_files:
+        skip = _transport_ids(events_file)
         for raw_line in events_file.read_text(encoding="utf-8").splitlines():
             raw_line = raw_line.strip()
             if not raw_line:
                 continue
             try:
                 event = json.loads(raw_line)
+                if skip and event.get("model_call_id") in skip:
+                    continue
                 pipeline.ingest_event(event, novaseal_valid=novaseal_verified)
                 ingested += 1
             except json.JSONDecodeError as exc:

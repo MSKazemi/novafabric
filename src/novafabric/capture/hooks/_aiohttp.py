@@ -33,6 +33,7 @@ from novafabric.capture.hooks._url_registry import (
     UrlRegistry,
     load_url_registry,
 )
+from novafabric.capture.record_roles import stamp_wire_record
 
 if TYPE_CHECKING:
     from novafabric.capture.capsule import CapsuleWriter
@@ -150,7 +151,9 @@ class AiohttpHook:
                 body, url=url, gen_ai_system=self._registry.gen_ai_system(url),
             ))
             try:
-                get_current_writer(self._writer).append_model_call(record)
+                get_current_writer(self._writer).append_model_call(
+                    stamp_wire_record(record)
+                )
             except Exception:
                 # Never let a bookkeeping failure surface to the caller.
                 pass

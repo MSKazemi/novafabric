@@ -16,7 +16,7 @@ endpoint is that follow-on's first, narrowest real slice: it reconstructs
 only what a run's own sealed capsule already carries —
 
 - two ``run``-kind lifecycle events (``created_at`` / ``finished_at``);
-- one ``model-call`` event per ``model-calls.jsonl`` record with a
+- one ``model-call`` event per logical ``model-calls.jsonl`` record (ADR-0305) with a
   ``started_at`` timestamp;
 - one ``tool-call`` event per ``tool-calls.jsonl`` record with a
   ``started_at`` timestamp.
@@ -37,6 +37,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request, Response
 
+from novafabric.capture.record_roles import logical_model_calls
 from novafabric.forensics.timeline import TimelineEvent, merge_timeline
 from novafabric.serve.capsule_loader import load_capsule_manifest, load_jsonl
 from novafabric.serve.http_cache import conditional_json
@@ -92,6 +93,9 @@ def _call_events(
     events: list[TimelineEvent] = []
     gaps: list[str] = []
     records = load_jsonl(cdir, filename)
+    if filename == "model-calls.jsonl":
+        # ADR-0305: one event per logical call, not one per wire attempt.
+        records = logical_model_calls(records)
     seq = seq_start
     omitted_missing_ts = 0
     for record in records[:MAX_EVENTS_PER_SOURCE]:

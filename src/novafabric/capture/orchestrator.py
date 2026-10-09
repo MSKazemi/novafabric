@@ -20,6 +20,7 @@ from novafabric.capture.deployment_env import (
     unconventional_warning,
 )
 from novafabric.capture.env import capture_environment
+from novafabric.capture.record_roles import count_logical_model_calls_in_file
 from novafabric.capture.replay import minimal_replay_policy
 from novafabric.capture.secrets import (
     ResidualSecretError,
@@ -519,10 +520,8 @@ class CaptureOrchestrator:
         writer.write_text("replay.yaml", yaml.dump(minimal_replay_policy(), allow_unicode=True))
 
         working_dir = str(Path.cwd()).replace(str(Path.home()), "~")
-        model_call_count = sum(
-            1
-            for line in (capsule_dir / "model-calls.jsonl").read_text().splitlines()
-            if line.strip()
+        model_call_count = count_logical_model_calls_in_file(
+            capsule_dir / "model-calls.jsonl"
         )
         tool_call_count = sum(
             1

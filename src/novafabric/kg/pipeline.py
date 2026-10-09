@@ -26,6 +26,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from novafabric.capture.record_roles import is_transport_record
 from novafabric.kg.crdt import CRDTAccumulator
 from novafabric.kg.entity_normaliser import EntityNormaliser
 from novafabric.kg.store import KGStore
@@ -264,7 +265,14 @@ class KGIngestionPipeline:
         Accepts both the internal KG event schema (event_type + agent_id + model_id)
         and the OTel GenAI semconv format produced by nova capture (gen_ai.request.model,
         parent_span_id, endpoint).  Silently skips events with missing required fields.
+
+        A model-call record marked ``transport`` (ADR-0305: the wire hook's copy
+        of an HTTP attempt under an SDK call) is not a model call and adds no
+        edge. Whole-file ingest paths also drop the unmarked pre-ADR-0305
+        duplicates via :func:`~novafabric.capture.record_roles.non_counting_model_call_ids`.
         """
+        if is_transport_record(event):
+            return
         # Normalise OTel GenAI semconv format (model-calls.jsonl) to internal schema.
         if not event.get("event_type") and event.get("gen_ai.request.model"):
             event = _normalise_otel_semconv(event)

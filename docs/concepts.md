@@ -182,6 +182,17 @@ call that bypasses a known SDK (or uses a version whose surface changed) is stil
 recorded once at the transport layer. Because the hooks reach down to `urllib3`,
 capture does not depend on your choice of HTTP client library.
 
+A call made through the OpenAI or Anthropic SDK passes through both layers, so it
+leaves two kinds of record: the SDK hook's **logical** record (with the response) and
+one wire-level **transport** record per HTTP attempt beneath it, retries included.
+Both are kept as evidence; the transport records are marked
+`extensions["io.novafabric.record_role"]: "transport"` and link to the SDK record
+through `io.novafabric.logical_call_id`, and every count — `model_call_count`,
+`nova cost`, `nova diff`, replay counters, `nova query`, the dashboard — counts
+logical calls only (ADR-0305, works today). A capsule captured before this marker
+existed is read with the same rule: readers recognise the old wire-plus-SDK duplicate
+shape. See [Model-call record roles](architecture/run-capsule.md#model-call-record-roles).
+
 Patches are removed after the run. If an SDK is not installed, its hook is
 silently skipped. Capture works even if none of the AI SDKs are present — the
 capsule is still written with environment, stdout/stderr, and timing.

@@ -34,6 +34,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from novafabric.capture.record_roles import logical_model_calls
+
 from ._sealed_read import CorruptCapsuleError, read_sealed, sha256_bytes
 from .cat_trail import EventFacts, Stage, StreamFacts, TrailFacts
 
@@ -278,6 +280,7 @@ def _read_stream(
     scan = _Scan()
     events: list[EventFacts] = []
     total = 0
+    parsed: list[tuple[int, bytes, dict[str, Any]]] = []
     for lineno, line in enumerate(raw.split(b"\n"), start=1):
         if not line.strip():
             continue
@@ -287,6 +290,13 @@ def _read_stream(
             raise CorruptCapsuleError(f"{spec.name} line {lineno} is not JSON") from exc
         if not isinstance(record, dict):
             raise CorruptCapsuleError(f"{spec.name} line {lineno} is not a JSON object")
+        parsed.append((lineno, line, record))
+    if spec.name == "model-calls.jsonl":
+        # ADR-0305: one decision per logical call; a transport record is the
+        # wire hook's copy of an HTTP attempt under an SDK call, not a decision.
+        keep = {id(r) for r in logical_model_calls([r for _, _, r in parsed])}
+        parsed = [p for p in parsed if id(p[2]) in keep]
+    for lineno, line, record in parsed:
         total += 1
         if len(events) >= MAX_EVENTS_PER_STREAM:
             continue

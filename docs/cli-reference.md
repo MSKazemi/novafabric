@@ -1257,8 +1257,9 @@ The `json` report carries the gate's verdict as a top-level boolean `has_changes
 that keeps `diff.json` reaches the same answer as `--assert-no-regressions` without re-deriving
 it from the counts. Each model-call pair also carries `provider_changed`.
 
-Diff sections: environment (Python, OS), model calls (a `parent_span_id` unique on both
-sides first, then sequence position anchored on identical requests; a pair is changed when the
+Diff sections: environment (Python, OS), model calls (logical calls only — the wire hook's
+`transport` records under an SDK call are not paired, so one changed prompt is one changed
+pair, ADR-0305; a `parent_span_id` unique on both sides first, then sequence position anchored on identical requests; a pair is changed when the
 provider, request model, messages or response choices differ), tool calls (exact
 `tool_name` + argument hash, each call used once, then position with the same tool name),
 and output files — every regular file under `outputs/`, recursively, keyed by its
@@ -8643,7 +8644,8 @@ works today; see `nova pricing` and `nova cost estimate` below).
 ### nova cost estimate (experimental, ADR-0133)
 
 Offline cost for one capsule's model calls — no ClickHouse, no server, no
-network. Each call's recorded `nova.cost` block is reported verbatim
+network. The `calls` column counts logical calls: the wire hook's `transport` records
+(one per HTTP attempt under an SDK call, ADR-0305) are not calls of their own. Each call's recorded `nova.cost` block is reported verbatim
 (`basis=recorded`; it is never overwritten or recomputed). Calls without a
 recorded cost are priced from the merged local pricing catalog and labeled
 `basis=estimated`; models absent from every catalog layer stay `unpriced`

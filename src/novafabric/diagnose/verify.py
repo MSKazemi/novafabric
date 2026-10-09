@@ -46,6 +46,7 @@ from typing import Any
 
 import yaml
 
+from novafabric.capture.record_roles import logical_model_calls
 from novafabric.diagnose.attribution import (
     AgentErrorTaxonomy,
     RunAttribution,
@@ -267,7 +268,8 @@ def _verify_step(
 
 def _load_model_calls(capsule_dir: Path, manifest: dict[str, Any]) -> list[dict[str, Any]]:
     model_calls_ref = str(manifest.get("model_calls_ref", "model-calls.jsonl"))
-    return _read_jsonl(capsule_dir / model_calls_ref)
+    # ADR-0305: logical calls only (transport records are wire attempts).
+    return logical_model_calls(_read_jsonl(capsule_dir / model_calls_ref))
 
 
 def verify_hypothesis(

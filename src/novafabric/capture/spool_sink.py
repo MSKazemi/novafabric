@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Union
 
 from novafabric.capture._ulid import new_span_id, new_ulid
+from novafabric.capture.record_roles import read_logical_model_calls
 from novafabric.collector_cffi.spool import NovaPySpool
 
 _ENVELOPE_VERSION = "1"
@@ -119,14 +120,9 @@ def emit_call_events_from_capsule(
     capsule_dir = Path(capsule_dir)
 
     try:
-        for line in (capsule_dir / "model-calls.jsonl").read_text().splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+        # ADR-0305: one event per logical call -- a retried wire attempt under
+        # an SDK call is not a ModelCallFailed.
+        for record in read_logical_model_calls(capsule_dir / "model-calls.jsonl"):
             model_id = record.get("gen_ai.response.model") or record.get("gen_ai.request.model")
             if not model_id:
                 continue

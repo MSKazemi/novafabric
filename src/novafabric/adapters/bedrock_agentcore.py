@@ -23,6 +23,7 @@ from typing import Any
 import yaml
 
 from novafabric.capture.env import capture_environment
+from novafabric.capture.record_roles import count_logical_model_calls_in_file
 from novafabric.capture.secrets import SecretScannerV0
 
 
@@ -145,7 +146,9 @@ class _WrappedBedrockClient:
                 "assets_ref": "assets.jsonl",
                 "inputs": [{"type": "text", "value": kwargs.get("inputText", "")}],
                 "outputs": [],
-                "model_call_count": _count_jsonl(cap_dir / "model-calls.jsonl"),
+                "model_call_count": count_logical_model_calls_in_file(
+                    cap_dir / "model-calls.jsonl"
+                ),
                 "tool_call_count": _count_jsonl(cap_dir / "tool-calls.jsonl"),
                 "mutating_tool_count": 0,
                 "exit_code": 0,

@@ -24,13 +24,13 @@ Determinism classification (normative downgrade rule, ADR-0094 §B):
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
 
+from novafabric.capture.record_roles import read_logical_model_calls
 from novafabric.evidence.intoto import dsse_sign, make_intoto_statement
 from novafabric.evidence.reperformance import ReperformanceAttestation
 
@@ -167,7 +167,7 @@ def classify_determinism(
 def pinned_block_from_capsule(capsule_dir: Path) -> PinnedBlock:
     """Extract the pinned model/env dimensions recorded in a capsule.
 
-    Reads the first record of ``model-calls.jsonl`` (OTel ``gen_ai.*`` pins,
+    Reads the first logical record of ``model-calls.jsonl`` (OTel ``gen_ai.*`` pins,
     plus the optional ``model_digest`` extension) and ``env.lock`` (lock mode,
     container image digest, python lock-file hash, inference determinism).
     Missing values are recorded as ``None`` — never fabricated — which
@@ -176,13 +176,9 @@ def pinned_block_from_capsule(capsule_dir: Path) -> PinnedBlock:
     model = PinnedModel(request_model="unknown", response_model="unknown")
     calls_path = capsule_dir / "model-calls.jsonl"
     if calls_path.exists():
-        for line in calls_path.read_text().splitlines():
-            if not line.strip():
-                continue
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                break
+        # ADR-0305: the first LOGICAL call -- a transport record only mirrors
+        # the request model, never the model that actually answered.
+        for rec in read_logical_model_calls(calls_path)[:1]:
             request_model = str(rec.get("gen_ai.request.model", "unknown"))
             model = PinnedModel(
                 request_model=request_model,
@@ -192,7 +188,6 @@ def pinned_block_from_capsule(capsule_dir: Path) -> PinnedBlock:
                 temperature=rec.get("gen_ai.request.temperature"),
                 top_p=rec.get("gen_ai.request.top_p"),
             )
-            break
 
     env = PinnedEnv(lock_mode="best-effort")
     lock_path = capsule_dir / "env.lock"

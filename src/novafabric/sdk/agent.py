@@ -13,6 +13,8 @@ from typing import Any, TypeVar
 import yaml
 from opentelemetry import trace
 
+from novafabric.capture.record_roles import count_logical_model_calls_in_file
+
 F = TypeVar("F", bound=Callable[..., Any])
 
 
@@ -158,10 +160,8 @@ def _run_with_capture(
 
         writer.write_text("replay.yaml", yaml.dump(minimal_replay_policy(), allow_unicode=True))
 
-        model_call_count = sum(
-            1
-            for line in (cap_dir / "model-calls.jsonl").read_text().splitlines()
-            if line.strip()
+        model_call_count = count_logical_model_calls_in_file(
+            cap_dir / "model-calls.jsonl"
         )
         tool_call_count = sum(
             1

@@ -761,7 +761,13 @@ must agree, and a test holds them together:
    response* in the canonical model-call shape, and mark the record with
    `extensions["io.novafabric.api_surface"]`. A streamed call goes through
    `capture/hooks/_sdk_streams.py` (a transparent proxy that folds the chunks and writes
-   one record when the stream ends).
+   one record when the stream ends). Run the SDK call inside
+   `record_roles.sdk_call_scope(call_id)` and write the SDK record with that `call_id`
+   (stamped by `stamp_logical_record`), so the wire hook's records underneath become
+   `transport` records of it (ADR-0305). A new wire hook calls `stamp_wire_record`.
+   Any code that counts or iterates model calls goes through
+   `record_roles.logical_model_calls` — never `len()` of the file — and a serving rule
+   must reject `is_transport_record(record)` before anything else.
 2. **Replay** (`replay/_contract.py:model_queue_key` + `MODEL_SURFACES`, and
    `replay/_dispatcher.py:SERVED_MODEL_SURFACES` / `UNSUPPORTED_MODEL_SURFACES`) decides the
    queue a record joins and which SDK methods are served or refused. Never let a method go

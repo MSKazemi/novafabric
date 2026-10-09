@@ -24,6 +24,8 @@ from typing import Any
 
 import yaml
 
+from novafabric.capture.record_roles import logical_model_calls
+
 #: ``CapsuleView.schema_version`` — tracks ``schemas/capsule-view.schema.json``.
 CAPSULE_VIEW_SCHEMA_VERSION = "0.1.0"
 
@@ -180,7 +182,10 @@ def build_capsule_view(capsule_dir: str | Path, *, title: str | None = None) -> 
         "generator": {"name": "novafabric", "version": _generator_version()},
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "capsule": header,
-        "model_calls": [_model_call_row(r) for r in _section("model-calls.jsonl")],
+        # ADR-0305: one row per logical call (transport records are wire copies).
+        "model_calls": [
+            _model_call_row(r) for r in logical_model_calls(_section("model-calls.jsonl"))
+        ],
         "tool_calls": [_tool_call_row(r) for r in _section("tool-calls.jsonl")],
         "scores": [_score_row(r) for r in _section("scores.jsonl")],
         "lineage_refs": _lineage_refs(_section("lineage.jsonl")),

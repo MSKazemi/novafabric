@@ -37,6 +37,7 @@ from novafabric.agent_graph.model import (
     ReconstructionNote,
     make_edge,
 )
+from novafabric.capture.record_roles import logical_model_calls
 
 _MANIFEST_NAMES = ("capsule.yaml", "capsule.json")
 _MODEL_CALLS = "model-calls.jsonl"
@@ -174,7 +175,12 @@ def build_agent_graph(capsule_dir: Path) -> AgentExecutionGraph:
     order = 0
 
     # Rule 1 — emit nodes (model calls, then tool calls, then remaining spans).
-    for lineno, record in _read_jsonl(capsule_dir / _MODEL_CALLS):
+    # ADR-0305: a node per logical call; transport records are wire copies.
+    model_rows = _read_jsonl(capsule_dir / _MODEL_CALLS)
+    logical = {id(r) for r in logical_model_calls([r for _, r in model_rows])}
+    for lineno, record in model_rows:
+        if id(record) not in logical:
+            continue
         node_id = _opt_str(record.get("model_call_id"))
         if node_id is None or node_id == ROOT_NODE_ID or node_id in nodes:
             continue

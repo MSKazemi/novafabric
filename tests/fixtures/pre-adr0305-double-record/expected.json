@@ -1,0 +1,12 @@
+{
+  "_comment": "Pre-ADR-0305 capsule: markers stripped from a real capture (tests/capture/test_record_roles.py). Calls: sync, streamed, retried (2 wire attempts), failed (HTTP 400), raw httpx (no SDK), and an async call recorded by the wire hook only (pre-ADR-0304). The old model_call_count was `records`; the correct count is len(logical).",
+  "records": 11,
+  "logical": [
+    "01M4F168CP9PPEZJWX1ZDEZ0Y4",
+    "01M4F168D6WW33JRKC1B25VQSH",
+    "01M4F168DCET386P3Z503MYQ5T",
+    "01M4F168DGC4PRSFR8E3PK2TH1",
+    "01M4F168DHKZT9XGE8XW0K5ZW4",
+    "01M4F168DMPAF0XXJ842JV9MV0"
+  ]
+}

@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 
 from novafabric.assure.models import AssuranceResult, CheckStatus
+from novafabric.capture.record_roles import logical_model_calls
 
 _TOOL_RATIO_WARN = 10   # tool_calls per model_call
 _TOOL_RATIO_FAIL = 50
@@ -170,7 +171,7 @@ class LLM04Check(BaseCheck):
     category = "LLM04-DataModelPoisoning"
 
     def run(self, capsule_dir: Path) -> AssuranceResult:
-        calls = self._read_jsonl(capsule_dir / "model-calls.jsonl")
+        calls = logical_model_calls(self._read_jsonl(capsule_dir / "model-calls.jsonl"))
         if not calls:
             return self._skip(
                 "model-calls.jsonl empty or absent — cannot assess token bounds"
@@ -254,7 +255,7 @@ class LLM07Check(BaseCheck):
     category = "LLM07-SystemPromptLeakage"
 
     def run(self, capsule_dir: Path) -> AssuranceResult:
-        calls = self._read_jsonl(capsule_dir / "model-calls.jsonl")
+        calls = logical_model_calls(self._read_jsonl(capsule_dir / "model-calls.jsonl"))
         leaked = [
             c
             for c in calls
