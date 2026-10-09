@@ -29,7 +29,7 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | **rejected** | Considered and declined; kept as provenance. |
 
 
-**287 decisions recorded** — **270** accepted · **14** proposed · **3** superseded.
+**288 decisions recorded** — **270** accepted · **15** proposed · **3** superseded.
 
 | ADR | Title | Status | Date |
 |---|---|---|---|
@@ -320,3 +320,4 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | `ADR-0303` | `nova diff` exit-code contract: 1 means only a difference was found, 2 means the comparison could not be made | accepted | 2026-10-09 |
 | `ADR-0304` | Mocked replay serves async, streamed and Responses API model calls, reports live network, and generates its support matrix | accepted | 2026-10-09 |
 | `ADR-0305` | Wire records under an SDK call are transport, not model calls | accepted | 2026-10-09 |
+| `ADR-0306` | Mocked replay substitutes non-MCP tool results on owned boundaries only, and enforces replay.yaml tool_overrides inside the replayed process | proposed | 2026-10-09 |
