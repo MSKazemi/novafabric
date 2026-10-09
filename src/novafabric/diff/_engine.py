@@ -151,6 +151,29 @@ def _env_fields(env: dict[str, Any], path: Path) -> dict[str, Any]:
     return fields
 
 
+#: Prefix of the OTel GenAI request attributes capture records on a model call.
+_REQUEST_PREFIX = "gen_ai.request."
+#: Request attributes compared on their own (``request_changed``), not as parameters.
+_REQUEST_CORE = frozenset({"gen_ai.request.model", "gen_ai.request.messages"})
+
+
+def _changed_params(a: dict[str, Any], b: dict[str, Any]) -> list[str]:
+    """Recorded request parameters that differ between two paired calls, sorted.
+
+    Every ``gen_ai.request.*`` attribute other than the model and messages —
+    temperature, top_p, top_k, max_tokens, seed, stop_sequences, the penalties,
+    choice.count, and any added later. A key recorded on one side only is a
+    change: capture records a parameter only when the request set it, so its
+    absence is not a default value (ADR-0303 Amendment 2).
+    """
+    keys = {
+        k
+        for k in a.keys() | b.keys()
+        if k.startswith(_REQUEST_PREFIX) and k not in _REQUEST_CORE
+    }
+    return sorted(k for k in keys if (k in a) != (k in b) or a.get(k) != b.get(k))
+
+
 class DiffEngine:
     def compare(self, capsule_a: Path, capsule_b: Path) -> DiffReport:
         """Structural diff of two capsules.
@@ -226,6 +249,9 @@ class DiffEngine:
                 # provider under the same model name and prompt was reported as
                 # unchanged, so --assert-no-regressions passed on it.
                 provider_changed = a.get("gen_ai.system") != b.get("gen_ai.system")
+                # Sampling parameters are part of the request too: a temperature
+                # or seed change can alter every response (ADR-0303 Am. 2).
+                changed_params = _changed_params(a, b)
                 req_a = {
                     "model": a.get("gen_ai.request.model"),
                     "messages": a.get("gen_ai.request.messages"),
@@ -236,7 +262,7 @@ class DiffEngine:
                 }
                 resp_a = a.get("gen_ai.response.choices", [])
                 resp_b = b.get("gen_ai.response.choices", [])
-                req_changed = req_a != req_b or provider_changed
+                req_changed = req_a != req_b or provider_changed or bool(changed_params)
                 resp_changed = resp_a != resp_b
                 changed = req_changed or resp_changed
                 report.model_call_pairs.append({
@@ -247,6 +273,8 @@ class DiffEngine:
                     "request_changed": req_changed,
                     "response_changed": resp_changed,
                     "provider_changed": provider_changed,
+                    "params_changed": bool(changed_params),
+                    "changed_params": changed_params,
                 })
 
     def _diff_tool_calls(

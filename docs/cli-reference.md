@@ -1283,12 +1283,17 @@ a block; without them, no graph-shape output appears.
 
 The `json` report carries the gate's verdict as a top-level boolean `has_changes`, so a CI step
 that keeps `diff.json` reaches the same answer as `--assert-no-regressions` without re-deriving
-it from the counts. Each model-call pair also carries `provider_changed`.
+it from the counts. Each model-call pair also carries `provider_changed`, `params_changed` and
+`changed_params` (the sorted `gen_ai.request.*` parameter names that differ).
 
 Diff sections: environment (Python, OS), model calls (logical calls only — the wire hook's
 `transport` records under an SDK call are not paired, so one changed prompt is one changed
 pair, ADR-0305; a `parent_span_id` unique on both sides first, then sequence position anchored on identical requests; a pair is changed when the
-provider, request model, messages or response choices differ), tool calls (exact
+provider, request model, messages, any recorded request parameter or the response choices
+differ — the parameters are every other `gen_ai.request.*` attribute capture recorded
+(`temperature`, `top_p`, `top_k`, `max_tokens`, `seed`, `stop_sequences`, the penalties,
+`choice.count`), and one recorded on one side only counts as changed, [ADR-0303](./decisions.md)
+Amendment 2), tool calls (exact
 `tool_name` + argument hash, each call used once, then position with the same tool name),
 and output files — every regular file under `outputs/`, recursively, keyed by its
 capsule-relative path (`outputs/reports/summary.json`) and compared by SHA-256. Symlinks under

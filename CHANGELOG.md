@@ -167,6 +167,16 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Changed
 
+- **`nova diff` compares a model call's recorded request parameters (behaviour change,
+  ADR-0303 Amendment 2).** A paired call was compared on its provider, model, messages and
+  response only. A run whose `gen_ai.request.temperature` went from `0` to `1`, or which lost
+  its `seed`, printed "No differences found." and `--assert-no-regressions` exited `0`.
+  Every recorded `gen_ai.request.*` attribute other than model and messages is now part of
+  the request (`temperature`, `top_p`, `top_k`, `max_tokens`, `seed`, `stop_sequences`, the
+  penalties, `choice.count`). A different value, or a parameter recorded on one side only,
+  makes the pair changed with `request_changed`, so the gate exits `1`. Each JSON pair gains
+  additive `params_changed` and `changed_params` (sorted names). Alignment is unchanged: it
+  is one changed pair, not an added and a removed call.
 - **`nova diff --assert-same-shape` exits `2` when graph reconstruction skipped a malformed
   source line (behaviour change, ADR-0303 Amendment 2).** The agent-graph builder drops a
   line of `model-calls.jsonl`, `tool-calls.jsonl` or `trace.jsonl` that is not JSON, or not a
