@@ -1020,11 +1020,16 @@ STORY = Flow(
             "its own capsule with capture_mode sdk-decorator.",
             "<p>Eleven adapters ship: LangGraph, CrewAI, AutoGen, DSPy, Google ADK, OpenAI "
             "Agents, A2A, Bedrock AgentCore, LlamaIndex, Pydantic AI and Haystack, plus "
-            "<code>novafabric.sdk.agent</code>. Each runs the secret scan and records the "
-            "measured host block. Such a capsule is <strong>not sealed</strong> (sealing runs "
-            "only inside <code>nova capture</code>), and its <code>command</code> is a label "
-            "such as <code>@langgraph:demo</code>, so mocked replay refuses it up front.</p>",
-            "adapters/_capsule.py:AdapterCapture · adapters/langgraph.py · sdk/agent.py:agent",
+            "<code>novafabric.sdk.agent</code>. Each records the measured host block and "
+            "finalizes through the same path as <code>nova capture</code>: secret scan, "
+            "manifest redaction, <code>lineage.jsonl</code>, residual pass, "
+            "<code>evidence_digests</code>, and a seal when a signing profile exists. A "
+            "finalization failure leaves the capsule unsealed with "
+            "<code>metadata.finalization_error</code>, never failing the wrapped call. Its "
+            "<code>command</code> is a label such as <code>@langgraph:demo</code>, so mocked "
+            "replay refuses it up front.</p>",
+            "adapters/_capsule.py:AdapterCapture · adapters/langgraph.py · sdk/agent.py:agent "
+            "· capture/finalize.py:finalize_in_process_capsule",
             "works today", "adapt", "cap", "graph = wrap_langgraph(graph)", True),
         _ss("capture", "Intercept SDK calls", ("wl", "hooks"), ("wl_hooks",),
             ("messages.create",),
@@ -1089,7 +1094,7 @@ STORY = Flow(
             "capsule is not sealed. A failed workload still yields a complete capsule with "
             "<code>status: failure</code>, and a failing NovaFabric component is recorded "
             "without blocking the workload.</p>",
-            "capture/orchestrator.py:_evidence_digests · capture/capsule.py:CapsuleWriter · "
+            "capture/finalize.py:evidence_digests · capture/capsule.py:CapsuleWriter · "
             "lineage/_writer.py:LineageWriter",
             "works today", "capsule", "ver", "✓ capsule written  ~/.novafabric/capsules/01J9Z…/"),
         _ss("seal", "Sign the manifest", ("capsule", "seal"), ("cap_seal",),
@@ -1100,7 +1105,7 @@ STORY = Flow(
             "<code>$NOVAFABRIC_HOME/novaseal.yaml</code>; without one, sealing is skipped. "
             "The SHA-256 of the canonical manifest is the <code>capsule_id</code>. Keys are "
             "ECDSA P-256 (local or cloud KMS) or Ed25519 (local).</p>",
-            "capture/orchestrator.py:_seal_capsule · trust/novaseal/__init__.py:NovaSeal.seal "
+            "capture/finalize.py:seal_capsule · trust/novaseal/__init__.py:NovaSeal.seal "
             "· trust/novaseal/envelope.py",
             "experimental", "seal", "seal", "  sealed: capsule_id 3f9a…"),
         _ss("seal", "Log and timestamp the seal", ("seal",), ("cap_seal",),

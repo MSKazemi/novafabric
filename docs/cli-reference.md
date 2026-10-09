@@ -9467,6 +9467,16 @@ Drop-in capture adapters for four additional AI frameworks. Each adapter uses th
 SDK's own native extensibility interface (ADR-0078) rather than wrapping the executor.
 All framework packages are optional extras.
 
+**Capsule finalization (unreleased, on `main`).** Every adapter below, and the
+`@agent` decorator, finalizes its capsule through the same code as `nova capture`
+(`capture/finalize.py`): secret scan, manifest redaction, ADR-0009 residual pass,
+`lineage.jsonl`, ADR-0251 `evidence_digests`, the manifest gate, and a NovaSeal
+seal when a signing profile exists (opt-in, ADR-0301) — so `nova verify <capsule>`
+works on an adapter capsule. `--masker` maskers are a `nova capture` option and do
+not run in-process. Finalization never fails the framework call: on a failure, a
+gate refusal or a failed seal the capsule is left unsealed and
+`metadata.finalization_error` records why.
+
 ### Where adapter capsules land, and how to refer to them
 
 Every adapter writes to the `data_dir` it is given. With none it writes to

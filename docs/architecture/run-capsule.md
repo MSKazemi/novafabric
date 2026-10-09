@@ -215,9 +215,8 @@ captured output.
 
 ## Capsules written inside a framework call
 
-**Works today**, with a smaller evidence pipeline than `nova capture` (the streaming
-behaviour, the measured `host` block and the replay refusal described here are
-unreleased, on `main`). The framework
+**Works today** (the streaming behaviour, the measured `host` block, the replay
+refusal and the shared finalization described here are unreleased, on `main`). The framework
 adapters (`src/novafabric/adapters/*.py`; LlamaIndex, Pydantic AI and Haystack share
 `adapters/_capsule.py:AdapterCapture`, the others write their own manifest) and the
 `@agent` decorator (`novafabric.sdk.agent`, in `sdk/agent.py`) write a capsule from inside the
@@ -235,12 +234,21 @@ Python process:
   propagates. In these adapters and Haystack, a wrapped call made from inside a run
   the same adapter is already capturing records into the open capsule instead of
   opening a second one.
-- The files are `env.lock`, the call streams, `trace.jsonl`, `redaction-proof.json`,
-  `replay.yaml` and `capsule.yaml`. The secret scanner runs once, over the streams,
-  `env.lock` and `inputs/`/`outputs/`. There is **no** residual pass, no
-  `lineage.jsonl`, no `evidence_digests` in the manifest and no seal: those steps
-  belong to `CaptureOrchestrator.run`, which an in-process capsule does not go
-  through.
+- Finalization is the same as for `nova capture` (unreleased, on `main`): every
+  writer calls `capture/finalize.py:finalize_in_process_capsule` after writing
+  `env.lock` and `replay.yaml`. The secret scanner runs over the streams, `env.lock`
+  and `inputs/`/`outputs/`; the manifest is redacted before it is written;
+  `lineage.jsonl` is written and indexed; the residual pass rescans every file
+  (including `replay.yaml` and anything written late); `redaction-proof.json` is
+  written once; `evidence_digests` binds every file; the final manifest is gated;
+  and the capsule is **sealed when a signing profile exists** (opt-in, as for
+  `nova capture`), so `nova verify` checks it the same way. Configured maskers
+  (ADR-0135) are a `nova capture` option and do not run here.
+- Finalization never fails the wrapped call. If it raises, if the manifest gate
+  finds a secret, or if a configured seal fails, the capsule is left unsealed (any
+  partial `.seal/` is removed), the reason is written to
+  `metadata.finalization_error` (redacted), and a warning is logged; the call's
+  own result or exception is unchanged.
 
 ## Parent and child capsules (prototype)
 

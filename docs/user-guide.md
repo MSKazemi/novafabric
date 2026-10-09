@@ -261,6 +261,13 @@ Without `capsule_dir`,
 the decorator emits OTel spans only — no capsule is written. This is the
 original v0.1 observability mode and is still useful if you only need traces.
 
+**Same finalization as `nova capture` (unreleased, on `main`).** The capsule goes
+through the same secret scan, manifest redaction, residual pass, `lineage.jsonl`
+and `evidence_digests`, and it is sealed when a signing profile exists
+(`nova seal init`), so `nova verify` checks it like any other capsule. Sealing
+stays opt-in. If finalization fails, your function's return value or exception is
+unchanged: the capsule is left unsealed and `metadata.finalization_error` says why.
+
 **Optional record-only tags (experimental, v0.59).** The decorator also accepts
 `deployment_environment=` (ADR-0126), `variant=` (ADR-0116, A/B attribution),
 and `session_id=`/`session_sequence=` (ADR-0122, multi-turn sessions). Each is
@@ -367,6 +374,14 @@ Adapters ship for eleven frameworks. Each is importable by name from
 
 The last four are not wrappers — they hook the framework's own extension point
 (ADR-0078) rather than patching a method.
+
+**Evidence and sealing (unreleased, on `main`).** Every adapter finalizes its
+capsule through the same path as `nova capture`: secret scan, manifest redaction,
+residual pass, `lineage.jsonl`, `evidence_digests`, and a seal when a signing
+profile exists (opt-in), so `nova verify` works on an adapter capsule. Configured
+maskers (`nova capture --masker`) do not run in-process. A finalization failure
+never breaks the framework call: the capsule is left unsealed and
+`metadata.finalization_error` records why.
 
 **Where adapter capsules land, and how to refer to them.** An adapter writes to the
 `data_dir` you pass it; with none, to `$NOVAFABRIC_HOME/runs/<run-id>/` when

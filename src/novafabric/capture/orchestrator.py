@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import os
 import time
@@ -19,12 +18,17 @@ from novafabric.capture.deployment_env import (
     unconventional_warning,
 )
 from novafabric.capture.env import capture_environment, host_info
+from novafabric.capture.finalize import (
+    evidence_digests,
+    extend_masker_results,
+    finalize_capsule,
+    seal_capsule,
+    write_redacted_manifest,
+)
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
 from novafabric.capture.replay import minimal_replay_policy
 from novafabric.capture.secrets import (
-    ResidualSecretError,
     SecretScannerV0,
-    merge_scan_results,
     recompute_chain_hash,
     redact_secrets_in_text,
 )
@@ -604,23 +608,13 @@ class CaptureOrchestrator:
         if self._mark_provenance and model_call_count > 0:
             manifest["content_provenance_ref"] = "c2pa-manifest.json"
 
-        # ADR-0009: the manifest carries the raw argv, so it is redacted before
-        # it is ever written (and before it becomes the signed seal payload).
-        # Values are redacted in the data structure, not in serialized YAML.
-        manifest, _manifest_target, _manifest_findings = scanner.redact_manifest(manifest)
-        proof = merge_scan_results(proof, [_manifest_target], _manifest_findings)
-        # ADR-0135 over the same target: maskers see the manifest after the
-        # built-in redaction and before it is written or signed; the built-in
-        # rules then run once more over the masker output (folded into the same
-        # capsule-yaml target), so they keep the last word here as everywhere.
-        if self._masking_pipeline is not None:
-            manifest, _mf, _me = self._masking_pipeline.mask_mapping(
-                manifest, "capsule.yaml", "capsule-yaml", run_id
-            )
-            proof = _extend_masker_results(proof, _mf, _me)
-            manifest, _rt, _rf = scanner.redact_manifest(manifest)
-            proof = scanner.fold_rescan(proof, _rt, _rf)
-        writer.write_text("capsule.yaml", yaml.dump(manifest, allow_unicode=True))
+        # ADR-0009: the manifest carries the raw argv, so it is redacted (built-in
+        # rules, ADR-0135 maskers, built-in rules again) before it is ever written
+        # and before it becomes the signed seal payload — capture/finalize.py.
+        manifest, proof = write_redacted_manifest(
+            manifest, scanner=scanner, proof=proof, writer=writer, run_id=run_id,
+            masking_pipeline=self._masking_pipeline,
+        )
 
         # ADR-0074: write the C2PA synthetic-content provenance marker now —
         # after capsule.yaml exists (the exporter reads it) and before sealing,
@@ -670,89 +664,25 @@ class CaptureOrchestrator:
                     file=_sys.stderr,
                 )
 
-        # --- lineage emission (v0.4) ---
-        # ADR-0251 §6: emitted *before* sealing so lineage.jsonl is covered by
-        # evidence_digests. The writer needs only capsule.yaml, which already
-        # exists; index_capsule_lineage() writes outside the capsule, so its
-        # position is immaterial.
-        # Always write lineage.jsonl AND index the run into the lineage
-        # DB — even for no-edge captures, the run-node must be
-        # queryable via `nova lineage provenance <run_id>`. The SQLite
-        # open is the irreducible cost of that contract; deferring it
-        # to first-query would be an architectural change (queued for
-        # v0.7+, not v0.6.8).
-        try:
-            from novafabric.lineage._importer import index_capsule_lineage
-            from novafabric.lineage._writer import LineageWriter
+        # Capture-health (fail-open capture loss as evidence) is written by the
+        # shared path immediately before the residual pass, so it is scanned and
+        # bound like every other evidence file — not left unbound after the seal (#10).
+        _health_seen: list[dict[str, int]] = []
 
-            lw = LineageWriter(capsule_dir=capsule_dir, run_id=run_id)
-            lineage_edges = lw.infer()
-            lw.write(lineage_edges)
-            index_capsule_lineage(capsule_dir)
-        except Exception as _lineage_exc:
-            import sys as _sys
-            print(
-                f"[novafabric] ⚠ Lineage index update failed: {_lineage_exc}\n"
-                f"  Run `nova lineage import {capsule_dir}` to repair.",
-                file=_sys.stderr,
-            )
-        # --- end lineage emission ---
+        def _write_capture_health() -> None:
+            _health_seen.append(_event_recorder.drop_counts)
+            _event_recorder.finalize_health()
 
-        # --- ADR-0251: bind the seal to the bytes on disk -------------------
-        # The manifest names its evidence files by filename with no digest, so a
-        # signature over it proves only that the names are unchanged. Hash every
-        # evidence file into the manifest *before* it becomes the signed payload,
-        # then rewrite capsule.yaml so the file on disk and the signed payload
-        # agree — verify compares them (ADR-0251 §2).
-        # ADR-0009: lineage.jsonl is written after the main scan; scan it now
-        # (then ADR-0135 maskers over it, same order as every other target).
-        _late_targets, _late_findings, _late_removed = scanner.scan_and_redact_refs(
-            [("lineage.jsonl", "lineage")]
-        )
-        proof = merge_scan_results(proof, _late_targets, _late_findings, _late_removed)
-        if self._masking_pipeline is not None:
-            _lf, _le = self._masking_pipeline.run(
-                capsule_dir, run_id, targets=[("lineage.jsonl", "lineage")]
-            )
-            proof = _extend_masker_results(proof, _lf, _le)
-
-        # Surface any fail-open capture loss as evidence (capture-health.json,
-        # written only when events were actually dropped). It is written HERE,
-        # before the residual pass and the digest map, so it is scanned and bound
-        # like every other evidence file -- not left unbound after the seal (#10).
-        _health_drops = _event_recorder.drop_counts
-        _event_recorder.finalize_health()
-
-        # ADR-0009 residual pass: the LAST write to any evidence file is done, so
-        # rescan the whole finished capsule (late files such as replay.yaml and the
-        # C2PA marker, and anything a masker rewrote) with the built-in rules, which
-        # therefore have the last word. Residuals are redacted and recorded; the
-        # proof's after-hashes are reconciled to the bytes on disk. Only then is
-        # the one final proof written, so evidence_digests binds it.
-        proof = scanner.residual_scan(proof)
-        writer.write_text("redaction-proof.json", json.dumps(proof, indent=2))
-
-        manifest["evidence_digests"] = _evidence_digests(capsule_dir)
-        # Last gate: the final manifest (now carrying the digest map) is checked as
-        # it will be written. A hit means an earlier stage missed something, so the
-        # capsule is NOT sealed — sealing would sign the leak. Fail closed: the
-        # manifest is redacted before it is written, and the run is reported.
-        try:
-            manifest_text = scanner.assert_manifest_clean(manifest)
-        except ResidualSecretError as exc:
-            import sys as _sys
-            logger.error("novafabric.secrets: %s; capsule left unsealed", exc)
-            print(
-                f"[novafabric] ✗ {exc}. capsule.yaml was redacted and the capsule "
-                "was NOT sealed.",
-                file=_sys.stderr,
-            )
-            manifest, _, _ = scanner.redact_manifest(manifest)
-            writer.write_text("capsule.yaml", yaml.dump(manifest, allow_unicode=True))
-        else:
-            writer.write_text("capsule.yaml", manifest_text)
-            # --- NovaSeal (v0.10 Phase 0 — opt-in, non-blocking) ---
-            _seal_capsule(capsule_dir, manifest)
+        # Lineage (ADR-0251 §6), late scans, ADR-0009 residual pass, the proof,
+        # ADR-0251 evidence_digests, the fail-closed manifest gate and the opt-in
+        # NovaSeal — one path shared with adapter and @agent capsules.
+        manifest = finalize_capsule(
+            capsule_dir, manifest, run_id=run_id, writer=writer, scanner=scanner,
+            proof=proof, masking_pipeline=self._masking_pipeline,
+            before_residual=_write_capture_health,
+            digests=_evidence_digests, seal=_seal_capsule,
+        ).manifest
+        _health_drops = _health_seen[0] if _health_seen else {}
 
         # Hot-path optimization (v0.6.8): same is_configured() short-
         # circuit as the START event above.
@@ -856,101 +786,9 @@ def _mark_content_provenance(capsule_dir: Path) -> None:
         )
 
 
-def _extend_masker_results(
-    proof: dict[str, Any],
-    findings: list[dict[str, Any]],
-    errors: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Append ADR-0135 masker results from a later stage to the proof and re-chain it."""
-    proof = dict(proof)
-    proof["masker_findings"] = list(proof.get("masker_findings", [])) + list(findings)
-    proof["masker_errors"] = list(proof.get("masker_errors", [])) + list(errors)
-    return recompute_chain_hash(proof)
-
-
-#: Capsule-relative paths never covered by ``evidence_digests``.
-#: ``.seal/`` does not exist yet at digest time, and ``capsule.yaml`` is the
-#: carrier of the digest map itself — it is bound instead by comparing it to the
-#: signed DSSE payload at verify time (ADR-0251 §2).
-_DIGEST_EXCLUDED_TOP: frozenset[str] = frozenset({".seal", "capsule.yaml"})
-
-
-def _evidence_digests(capsule_dir: Path) -> dict[str, Any]:
-    """Hash every evidence file in *capsule_dir* for inclusion in the manifest.
-
-    ADR-0251: the signed manifest names its evidence files (``model_calls_ref``,
-    ``trace_ref``, …) by filename and nothing else, so a signature over it proves
-    only that the *names* are unchanged.  Editing a recorded token count left
-    ``nova verify`` fully green.  This map puts the bytes inside the signed
-    payload.
-
-    Keys are capsule-relative POSIX paths, sorted, so the payload is stable across
-    filesystems.  Entry shape matches the Evidence Bundle's ``ArtifactEntry``
-    (``sha256`` in ``sha256:<hex>`` form, ``size_bytes``) so the two tamper-evidence
-    layers read alike.
-    """
-    digests: dict[str, Any] = {}
-    for path in sorted(capsule_dir.rglob("*")):
-        if not path.is_file() or path.is_symlink():
-            continue
-        rel = path.relative_to(capsule_dir)
-        if rel.parts[0] in _DIGEST_EXCLUDED_TOP:
-            continue
-        data = path.read_bytes()
-        digests[rel.as_posix()] = {"sha256": _sha256(data), "size_bytes": len(data)}
-    return digests
-
-
-def _seal_capsule(capsule_dir: Path, manifest: dict[str, Any]) -> None:
-    """Apply NovaSeal signing to *capsule_dir* if NovaSeal is configured.
-
-    Non-blocking: any failure logs a warning and returns without raising.
-    NovaSeal is skipped entirely if no config is found.
-    """
-    import sys as _sys
-    try:
-        from novafabric.trust.novaseal.config import SealConfigError, load_signing_profile
-        profile = load_signing_profile()
-        if profile is None:
-            return  # NovaSeal not configured — skip silently
-
-        from novafabric.trust.novaseal import KeyConfig, NovaSeal
-
-        config = KeyConfig(
-            profile=profile.profile,
-            key_path=str(profile.key_path or ""),
-            cert_path=str(profile.cert_path),
-        )
-        # The cloud profiles have no local private key, so they must sign through
-        # a SigningBackend. Without this the seal fell through to the local PEM
-        # branch of create_envelope() and failed with a misleading
-        # "No such file or directory: 'None'" — which meant aws_kms, azure_kv and
-        # gcp_kms could never actually seal a capsule.
-        backend = None
-        if profile.profile != "local":
-            from novafabric.trust.novaseal.config import build_signing_backend
-
-            backend = build_signing_backend(profile)
-        seal = NovaSeal(
-            config=config,
-            tsa_url=profile.tsa_url,
-            tsa_urls=profile.tsa_urls,
-            db_path=str(profile.merkle_db),
-            backend=backend,
-        )
-        bundle = seal.seal(manifest)
-
-        seal_dir = capsule_dir / ".seal"
-        seal_dir.mkdir(exist_ok=True)
-        (seal_dir / "manifest.dsse").write_bytes(bundle.dsse_envelope)
-        (seal_dir / "manifest.dsse.tsr").write_bytes(bundle.tsr)
-        import json as _json
-        (seal_dir / "log-entry.json").write_text(
-            _json.dumps(bundle.log_entry, indent=2), encoding="utf-8"
-        )
-
-    except SealConfigError as exc:
-        print(f"[novafabric] ⚠ NovaSeal config error: {exc}", file=_sys.stderr)
-    except Exception as exc:
-        print(f"[novafabric] ⚠ NovaSeal sealing failed (capsule is still valid): {exc}",
-              file=_sys.stderr)
+# Re-exported under their historical names: callers and tests import them from
+# here, and ``run`` passes them to ``finalize_capsule`` so a patch of this
+# module's attribute still reaches the shared path.
+_extend_masker_results = extend_masker_results
+_evidence_digests = evidence_digests
+_seal_capsule = seal_capsule

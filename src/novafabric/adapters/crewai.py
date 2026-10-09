@@ -10,7 +10,6 @@ will raise :class:`ImportError` at call time if the framework is missing.
 """
 from __future__ import annotations
 
-import json
 import time
 from datetime import datetime, timezone
 from importlib.metadata import version as _pkg_version
@@ -20,10 +19,10 @@ from typing import Any
 import yaml
 
 from novafabric.capture.env import capture_environment, host_info
+from novafabric.capture.finalize import finalize_in_process_capsule
 
 # Module-level imports so tests can patch via ``novafabric.adapters.crewai.<name>``.
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
-from novafabric.capture.secrets import SecretScannerV0
 
 
 def _now() -> str:
@@ -63,10 +62,6 @@ def _write_capsule(
 
     env_lock = capture_environment(created_at=created_at, run_id=run_id)
     writer.write_text("env.lock", yaml.dump(env_lock, allow_unicode=True))
-
-    scanner = SecretScannerV0(capsule_dir=cap_dir, run_id=run_id)
-    proof = scanner.scan_and_redact()
-    writer.write_text("redaction-proof.json", json.dumps(proof, indent=2))
 
     writer.write_text("replay.yaml", yaml.dump(minimal_replay_policy(), allow_unicode=True))
 
@@ -110,7 +105,10 @@ def _write_capsule(
     if error:
         manifest["error"] = error
 
-    writer.write_text("capsule.yaml", yaml.dump(manifest, allow_unicode=True))
+    # Main scan (after replay.yaml), manifest redaction, lineage, residual
+    # pass, evidence_digests, gate and opt-in seal: the path `nova capture`
+    # uses. Never raises; a failure leaves the capsule unsealed and says why.
+    finalize_in_process_capsule(cap_dir, manifest, run_id=run_id, writer=writer)
 
 
 def wrap_crew(

@@ -25,8 +25,8 @@ from typing import Any
 import yaml
 
 from novafabric.capture.env import capture_environment, host_info
+from novafabric.capture.finalize import finalize_in_process_capsule
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
-from novafabric.capture.secrets import SecretScannerV0
 
 _CAPTURE_METHODS = frozenset({"send_message", "send_message_streaming"})
 
@@ -167,9 +167,6 @@ class NovaA2AInterceptor:
 
         env_lock = capture_environment(created_at=created_at, run_id=run_id)
         writer.write_text("env.lock", yaml.dump(env_lock, allow_unicode=True))
-        scanner = SecretScannerV0(capsule_dir=cap_dir, run_id=run_id)
-        proof = scanner.scan_and_redact()
-        writer.write_text("redaction-proof.json", json.dumps(proof, indent=2))
         writer.write_text("replay.yaml", yaml.dump(minimal_replay_policy(), allow_unicode=True))
 
         manifest: dict[str, Any] = {
@@ -213,7 +210,10 @@ class NovaA2AInterceptor:
                 "wire_capture": _wire_state,
             },
         }
-        writer.write_text("capsule.yaml", yaml.dump(manifest, allow_unicode=True))
+        # Main scan (after replay.yaml), manifest redaction, lineage, residual
+        # pass, evidence_digests, gate and opt-in seal: the path `nova capture`
+        # uses. Never raises; a failure leaves the capsule unsealed and says why.
+        finalize_in_process_capsule(cap_dir, manifest, run_id=run_id, writer=writer)
 
 
 def make_interceptor(data_dir: Path | None = None) -> NovaA2AInterceptor:

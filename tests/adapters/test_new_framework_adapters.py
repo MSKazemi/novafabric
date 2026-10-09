@@ -41,17 +41,14 @@ def _no_hooks() -> Any:
 
 
 def _quiet_capsule() -> Any:
-    """Stub the two heavyweight helpers the manifest writer calls.
+    """Stub the environment snapshot, the one heavyweight helper the writer calls.
 
-    ``scan_and_redact`` must return a real dict: the writer json-dumps it, and
-    a bare MagicMock is not serializable.
+    The secret scanner is not stubbed: since 2026-10-09 the capsule is finalized
+    through the shared path (``capture/finalize.py``), which runs the real scan.
     """
-    scanner = MagicMock()
-    scanner.return_value.scan_and_redact.return_value = {}
     return patch.multiple(
         "novafabric.adapters._capsule",
         capture_environment=MagicMock(return_value={}),
-        SecretScannerV0=scanner,
     )
 
 

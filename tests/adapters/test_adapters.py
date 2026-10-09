@@ -7,12 +7,23 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
+
+
+def _capsules(tmp_path: Path) -> Iterator[Path]:
+    """Capsule directories under *tmp_path*, skipping the hermetic NOVAFABRIC_HOME.
+
+    Adapter capsules index their lineage like `nova capture` does, so the per-test
+    NOVAFABRIC_HOME (``.nova-home-hermetic``, see ``tests/conftest.py``) now
+    appears under ``tmp_path`` too.
+    """
+    return (d for d in tmp_path.iterdir() if not d.name.startswith("."))
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -61,11 +72,9 @@ class TestLangGraphWrap:
 
             with (
                 patch("novafabric.adapters.langgraph.capture_environment", return_value={}),  # noqa: SIM117
-                patch("novafabric.adapters.langgraph.SecretScannerV0") as MockScanner,
                 patch("novafabric.capture.hooks.install_all"),
                 patch("novafabric.capture.hooks.uninstall_all"),
             ):
-                MockScanner.return_value.scan_and_redact.return_value = {}
                 wrapped = wrap(mock_graph, data_dir=tmp_path)
 
             assert hasattr(wrapped, "invoke")
@@ -80,11 +89,9 @@ class TestLangGraphWrap:
 
             with (
                 patch("novafabric.adapters.langgraph.capture_environment", return_value={}),
-                patch("novafabric.adapters.langgraph.SecretScannerV0") as MockScanner,
                 patch("novafabric.capture.hooks.install_all"),
                 patch("novafabric.capture.hooks.uninstall_all"),
             ):
-                MockScanner.return_value.scan_and_redact.return_value = {}
                 wrapped = wrap(mock_graph, data_dir=tmp_path)
                 result = wrapped.invoke({"input": "hello"})
 
@@ -100,15 +107,13 @@ class TestLangGraphWrap:
 
             with (
                 patch("novafabric.adapters.langgraph.capture_environment", return_value={}),
-                patch("novafabric.adapters.langgraph.SecretScannerV0") as MockScanner,
                 patch("novafabric.capture.hooks.install_all"),
                 patch("novafabric.capture.hooks.uninstall_all"),
             ):
-                MockScanner.return_value.scan_and_redact.return_value = {}
                 wrapped = wrap(mock_graph, run_name="test-wf", data_dir=tmp_path)
                 wrapped.invoke({"x": 1})
 
-        capsule_dirs = list(tmp_path.iterdir())
+        capsule_dirs = list(_capsules(tmp_path))
         assert len(capsule_dirs) == 1
         capsule_yaml = capsule_dirs[0] / "capsule.yaml"
         assert capsule_yaml.exists()
@@ -126,17 +131,15 @@ class TestLangGraphWrap:
 
             with (
                 patch("novafabric.adapters.langgraph.capture_environment", return_value={}),
-                patch("novafabric.adapters.langgraph.SecretScannerV0") as MockScanner,
                 patch("novafabric.capture.hooks.install_all"),
                 patch("novafabric.capture.hooks.uninstall_all"),
             ):
-                MockScanner.return_value.scan_and_redact.return_value = {}
                 wrapped = wrap(mock_graph, data_dir=tmp_path)
 
                 with pytest.raises(RuntimeError, match="graph boom"):
                     wrapped.invoke({})
 
-        capsule_dirs = list(tmp_path.iterdir())
+        capsule_dirs = list(_capsules(tmp_path))
         manifest = yaml.safe_load((capsule_dirs[0] / "capsule.yaml").read_text())
         assert manifest["status"] == "failure"
         assert manifest["error"]["type"] == "RuntimeError"
@@ -150,11 +153,9 @@ class TestLangGraphWrap:
 
             with (
                 patch("novafabric.adapters.langgraph.capture_environment", return_value={}),
-                patch("novafabric.adapters.langgraph.SecretScannerV0") as MockScanner,
                 patch("novafabric.capture.hooks.install_all"),
                 patch("novafabric.capture.hooks.uninstall_all"),
             ):
-                MockScanner.return_value.scan_and_redact.return_value = {}
                 wrapped = wrap(mock_graph, data_dir=tmp_path)
                 chunks = list(wrapped.stream({"x": 1}))
 
@@ -180,18 +181,16 @@ class TestLangGraphWrap:
 
             with (
                 patch("novafabric.adapters.langgraph.capture_environment", return_value={}),
-                patch("novafabric.adapters.langgraph.SecretScannerV0") as MockScanner,
                 patch("novafabric.capture.hooks.install_all"),
                 patch("novafabric.capture.hooks.uninstall_all"),
             ):
-                MockScanner.return_value.scan_and_redact.return_value = {}
                 wrapped = wrap(mock_graph, run_name="my-custom-name", data_dir=tmp_path)
                 wrapped.invoke({})
 
         manifest = yaml.safe_load(
-            next(tmp_path.iterdir(), None / "capsule.yaml")  # type: ignore[operator]
+            next(_capsules(tmp_path), None / "capsule.yaml")  # type: ignore[operator]
             if False
-            else (list(tmp_path.iterdir())[0] / "capsule.yaml").read_text()
+            else (list(_capsules(tmp_path))[0] / "capsule.yaml").read_text()
         )
         assert "@langgraph:my-custom-name" in manifest["command"][0]
 
@@ -242,11 +241,9 @@ class TestAutoGenWrap:
 
             with (
                 patch("novafabric.adapters.autogen.capture_environment", return_value={}),
-                patch("novafabric.adapters.autogen.SecretScannerV0") as MockScanner,
                 patch("novafabric.capture.hooks.install_all"),
                 patch("novafabric.capture.hooks.uninstall_all"),
             ):
-                MockScanner.return_value.scan_and_redact.return_value = {}
                 wrap_agent(mock_agent, run_name="autogen-test", data_dir=tmp_path)
                 # After wrapping, mock_agent.initiate_chat is our wrapper function.
                 # Calling it should delegate to the original mock.
@@ -268,16 +265,14 @@ class TestAutoGenWrap:
 
             with (
                 patch("novafabric.adapters.autogen.capture_environment", return_value={}),
-                patch("novafabric.adapters.autogen.SecretScannerV0") as MockScanner,
                 patch("novafabric.capture.hooks.install_all"),
                 patch("novafabric.capture.hooks.uninstall_all"),
             ):
-                MockScanner.return_value.scan_and_redact.return_value = {}
                 wrap_agent(mock_agent, run_name="bot-run", data_dir=tmp_path)
                 # After wrapping, initiate_chat is the wrapper; call it to trigger capture.
                 mock_agent.initiate_chat(recipient, message="go")
 
-        capsule_dirs = list(tmp_path.iterdir())
+        capsule_dirs = list(_capsules(tmp_path))
         assert len(capsule_dirs) == 1
         manifest = yaml.safe_load((capsule_dirs[0] / "capsule.yaml").read_text())
         assert manifest["capture_mode"] == "sdk-decorator"
@@ -325,15 +320,13 @@ class TestCrewAIWrap:
 
             with (
                 patch("novafabric.adapters.crewai.capture_environment", return_value={}),
-                patch("novafabric.adapters.crewai.SecretScannerV0") as MockScanner,
                 patch("novafabric.capture.hooks.install_all"),
                 patch("novafabric.capture.hooks.uninstall_all"),
             ):
-                MockScanner.return_value.scan_and_redact.return_value = {}
                 wrap_crew(mock_crew, run_name="my-crew", data_dir=tmp_path)
                 mock_crew.kickoff()
 
-        capsule_dirs = list(tmp_path.iterdir())
+        capsule_dirs = list(_capsules(tmp_path))
         assert len(capsule_dirs) == 1
         manifest = yaml.safe_load((capsule_dirs[0] / "capsule.yaml").read_text())
         assert manifest["capture_mode"] == "sdk-decorator"
@@ -348,17 +341,15 @@ class TestCrewAIWrap:
 
             with (
                 patch("novafabric.adapters.crewai.capture_environment", return_value={}),
-                patch("novafabric.adapters.crewai.SecretScannerV0") as MockScanner,
                 patch("novafabric.capture.hooks.install_all"),
                 patch("novafabric.capture.hooks.uninstall_all"),
             ):
-                MockScanner.return_value.scan_and_redact.return_value = {}
                 wrap_crew(mock_crew, data_dir=tmp_path)
                 with pytest.raises(ValueError, match="crew exploded"):
                     mock_crew.kickoff()
 
         manifest = yaml.safe_load(
-            (list(tmp_path.iterdir())[0] / "capsule.yaml").read_text()
+            (list(_capsules(tmp_path))[0] / "capsule.yaml").read_text()
         )
         assert manifest["status"] == "failure"
         assert manifest["error"]["type"] == "ValueError"
@@ -404,15 +395,13 @@ class TestDSPyWrap:
 
             with (
                 patch("novafabric.adapters.dspy.capture_environment", return_value={}),
-                patch("novafabric.adapters.dspy.SecretScannerV0") as MockScanner,
                 patch("novafabric.capture.hooks.install_all"),
                 patch("novafabric.capture.hooks.uninstall_all"),
             ):
-                MockScanner.return_value.scan_and_redact.return_value = {}
                 wrap_program(mock_program, run_name="my-chain", data_dir=tmp_path)
                 mock_program.forward(question="What is 2+2?")
 
-        capsule_dirs = list(tmp_path.iterdir())
+        capsule_dirs = list(_capsules(tmp_path))
         assert len(capsule_dirs) == 1
         manifest = yaml.safe_load((capsule_dirs[0] / "capsule.yaml").read_text())
         assert manifest["capture_mode"] == "sdk-decorator"
@@ -427,17 +416,15 @@ class TestDSPyWrap:
 
             with (
                 patch("novafabric.adapters.dspy.capture_environment", return_value={}),
-                patch("novafabric.adapters.dspy.SecretScannerV0") as MockScanner,
                 patch("novafabric.capture.hooks.install_all"),
                 patch("novafabric.capture.hooks.uninstall_all"),
             ):
-                MockScanner.return_value.scan_and_redact.return_value = {}
                 wrap_program(mock_program, data_dir=tmp_path)
                 with pytest.raises(TypeError, match="bad input"):
                     mock_program.forward("x")
 
         manifest = yaml.safe_load(
-            (list(tmp_path.iterdir())[0] / "capsule.yaml").read_text()
+            (list(_capsules(tmp_path))[0] / "capsule.yaml").read_text()
         )
         assert manifest["status"] == "failure"
         assert manifest["error"]["type"] == "TypeError"
@@ -451,11 +438,9 @@ class TestDSPyWrap:
 
             with (
                 patch("novafabric.adapters.dspy.capture_environment", return_value={}),
-                patch("novafabric.adapters.dspy.SecretScannerV0") as MockScanner,
                 patch("novafabric.capture.hooks.install_all"),
                 patch("novafabric.capture.hooks.uninstall_all"),
             ):
-                MockScanner.return_value.scan_and_redact.return_value = {}
                 wrap_program(mock_program, data_dir=tmp_path)
                 result = mock_program.forward(x=1)
 
@@ -540,11 +525,9 @@ class TestOpenAIAgentsProcessor:
 
         with (
             patch("novafabric.adapters.openai_agents.capture_environment", return_value={}),
-            patch("novafabric.adapters.openai_agents.SecretScannerV0") as MockScanner,
             patch("novafabric.capture.hooks.install_all"),
             patch("novafabric.capture.hooks.uninstall_all"),
         ):
-            MockScanner.return_value.scan_and_redact.return_value = {}
             processor.on_trace_start(mock_trace)
             processor.on_trace_end(mock_trace)
 
@@ -602,11 +585,9 @@ class TestGoogleAdkPlugin:
 
         with (
             patch("novafabric.adapters.google_adk.capture_environment", return_value={}),
-            patch("novafabric.adapters.google_adk.SecretScannerV0") as MockScanner,
             patch("novafabric.capture.hooks.install_all"),
             patch("novafabric.capture.hooks.uninstall_all"),
         ):
-            MockScanner.return_value.scan_and_redact.return_value = {}
             asyncio.run(plugin.before_run_callback(mock_ctx))
             asyncio.run(plugin.after_run_callback(mock_ctx))
 
@@ -657,11 +638,9 @@ class TestBedrockAgentCoreAdapter:
 
             with (
                 patch("novafabric.adapters.bedrock_agentcore.capture_environment", return_value={}),
-                patch("novafabric.adapters.bedrock_agentcore.SecretScannerV0") as MockScanner,
                 patch("novafabric.capture.hooks.install_all"),
                 patch("novafabric.capture.hooks.uninstall_all"),
             ):
-                MockScanner.return_value.scan_and_redact.return_value = {}
                 wrapped = wrap_client(mock_client, data_dir=tmp_path)
                 result = wrapped.invoke_agent(agentId="agent-1", agentAliasId="alias-1",
                                                sessionId="sess-1", inputText="hello")
@@ -747,11 +726,9 @@ class TestA2AInterceptor:
 
         with (
             patch("novafabric.adapters.a2a.capture_environment", return_value={}),
-            patch("novafabric.adapters.a2a.SecretScannerV0") as MockScanner,
             patch("novafabric.capture.hooks.install_all"),
             patch("novafabric.capture.hooks.uninstall_all"),
         ):
-            MockScanner.return_value.scan_and_redact.return_value = {}
             asyncio.run(_one_call())
 
         assert not hasattr(after_args, "_nova_key"), (
@@ -833,11 +810,9 @@ class TestA2AInterceptor:
 
         with (
             patch("novafabric.adapters.a2a.capture_environment", return_value={}),
-            patch("novafabric.adapters.a2a.SecretScannerV0") as MockScanner,
             patch("novafabric.capture.hooks.install_all"),
             patch("novafabric.capture.hooks.uninstall_all"),
         ):
-            MockScanner.return_value.scan_and_redact.return_value = {}
             asyncio.run(_both())
 
         task_logs = sorted(tmp_path.rglob("a2a-tasks.jsonl"))
@@ -912,9 +887,7 @@ class TestA2AInterceptor:
             patch.object(hooks_mod, "install_all", side_effect=_fake_install),
             patch.object(hooks_mod, "uninstall_all", side_effect=_fake_uninstall),
             patch("novafabric.adapters.a2a.capture_environment", return_value={}),
-            patch("novafabric.adapters.a2a.SecretScannerV0") as MockScanner,
         ):
-            MockScanner.return_value.scan_and_redact.return_value = {}
 
             def _card(name: str) -> MagicMock:
                 card = MagicMock()

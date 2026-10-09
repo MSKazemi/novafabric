@@ -42,9 +42,7 @@ def _clean_state():
 def _fast_finalise():
     with (
         patch("novafabric.adapters.google_adk.capture_environment", return_value={}),
-        patch("novafabric.adapters.google_adk.SecretScannerV0") as scanner,
     ):
-        scanner.return_value.scan_and_redact.return_value = {}
         yield
 
 
@@ -245,9 +243,7 @@ def test_live_invocations_are_bounded(tmp_path: Path) -> None:
 
     with (
         patch("novafabric.adapters.google_adk.capture_environment", return_value={}),
-        patch("novafabric.adapters.google_adk.SecretScannerV0") as scanner,
     ):
-        scanner.return_value.scan_and_redact.return_value = {}
         asyncio.run(scenario())
     assert plugin._runs == {}
 

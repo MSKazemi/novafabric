@@ -19,7 +19,6 @@ has to say whether its wire stream is complete.
 """
 from __future__ import annotations
 
-import json
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -30,10 +29,10 @@ from typing import Any
 import yaml
 
 from novafabric.capture.env import capture_environment, host_info
+from novafabric.capture.finalize import finalize_in_process_capsule
 
 # Module-level so tests can patch via ``novafabric.adapters._capsule.<name>``.
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
-from novafabric.capture.secrets import SecretScannerV0
 
 
 def _now() -> str:
@@ -140,10 +139,6 @@ class AdapterCapture:
         env_lock = capture_environment(created_at=self.created_at, run_id=self.run_id)
         self.writer.write_text("env.lock", yaml.dump(env_lock, allow_unicode=True))
 
-        scanner = SecretScannerV0(capsule_dir=self.cap_dir, run_id=self.run_id)
-        self.writer.write_text(
-            "redaction-proof.json", json.dumps(scanner.scan_and_redact(), indent=2)
-        )
         self.writer.write_text(
             "replay.yaml", yaml.dump(minimal_replay_policy(), allow_unicode=True)
         )
@@ -181,7 +176,12 @@ class AdapterCapture:
         if self.error:
             manifest["error"] = self.error
 
-        self.writer.write_text("capsule.yaml", yaml.dump(manifest, allow_unicode=True))
+        # Main scan (after replay.yaml), manifest redaction, lineage, residual pass,
+        # evidence_digests, gate and opt-in seal: the path `nova capture` uses.
+        # Never raises; a failure leaves the capsule unsealed and says why.
+        finalize_in_process_capsule(
+            self.cap_dir, manifest, run_id=self.run_id, writer=self.writer
+        )
 
 
 def begin_capture(

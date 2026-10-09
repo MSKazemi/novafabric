@@ -39,7 +39,7 @@ flowchart LR
 Sealing is **opt-in**. `trust/novaseal/config.py:load_signing_profile` looks for
 `NOVAFABRIC_SEAL_CONFIG` and then for `~/.novafabric/novaseal.yaml`. If neither
 exists, capture skips sealing. Sealing never blocks a capture: on any error,
-`capture/orchestrator.py:_seal_capsule` prints a warning and the capsule is kept,
+`capture/finalize.py:seal_capsule` prints a warning and the capsule is kept,
 without `.seal/`. `create_envelope` refuses to sign with a key that does not match
 the configured certificate, so a capture never writes a seal that cannot verify.
 
@@ -63,7 +63,7 @@ backend, so the private key never leaves the KMS. See
 
 ## What gets signed
 
-1. **Per-file digests.** `capture/orchestrator.py:_evidence_digests` hashes every
+1. **Per-file digests.** `capture/finalize.py:evidence_digests` hashes every
    file in the capsule except `capsule.yaml` (which carries the result) and
    `.seal/` (which does not exist yet). It records `sha256` and `size_bytes` for
    each, writes the map into the manifest as `evidence_digests`, and rewrites

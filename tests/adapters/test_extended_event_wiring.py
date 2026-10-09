@@ -131,14 +131,15 @@ def _wrapped_graph(mock_graph: MagicMock, tmp_path: Path) -> Any:
 
 
 def _capsule_dir(tmp_path: Path) -> Path:
-    dirs = [d for d in tmp_path.iterdir() if d.is_dir()]
+    # Skip the hermetic NOVAFABRIC_HOME (tests/conftest.py): adapter capsules index
+    # their lineage there, like `nova capture`.
+    dirs = [d for d in tmp_path.iterdir() if d.is_dir() and not d.name.startswith(".")]
     assert len(dirs) == 1
     return dirs[0]
 
 
 _ADAPTER_PATCHES = (
     "novafabric.adapters.langgraph.capture_environment",
-    "novafabric.adapters.langgraph.SecretScannerV0",
 )
 
 
@@ -154,9 +155,7 @@ class TestLangGraphStateTransitionWiring:
         mock_graph.stream.return_value = iter(chunks)
         with (
             patch(_ADAPTER_PATCHES[0], return_value={}),
-            patch(_ADAPTER_PATCHES[1]) as scanner,
         ):
-            scanner.return_value.scan_and_redact.return_value = {}
             wrapped = _wrapped_graph(mock_graph, tmp_path)
             yielded = list(wrapped.stream(graph_input))
         return yielded, _capsule_dir(tmp_path)
@@ -222,9 +221,7 @@ class TestLangGraphStateTransitionWiring:
         mock_graph.invoke.return_value = result
         with (
             patch(_ADAPTER_PATCHES[0], return_value={}),
-            patch(_ADAPTER_PATCHES[1]) as scanner,
         ):
-            scanner.return_value.scan_and_redact.return_value = {}
             wrapped = _wrapped_graph(mock_graph, tmp_path)
             assert wrapped.invoke(graph_input) == result
 
@@ -251,9 +248,7 @@ class TestLangGraphStateTransitionWiring:
         mock_graph.invoke.return_value = result
         with (
             patch(_ADAPTER_PATCHES[0], return_value={}),
-            patch(_ADAPTER_PATCHES[1]) as scanner,
         ):
-            scanner.return_value.scan_and_redact.return_value = {}
             wrapped = _wrapped_graph(mock_graph, tmp_path)
             wrapped.invoke(graph_input)
 
@@ -268,9 +263,7 @@ class TestLangGraphStateTransitionWiring:
         mock_graph.invoke.side_effect = RuntimeError("node exploded")
         with (
             patch(_ADAPTER_PATCHES[0], return_value={}),
-            patch(_ADAPTER_PATCHES[1]) as scanner,
         ):
-            scanner.return_value.scan_and_redact.return_value = {}
             wrapped = _wrapped_graph(mock_graph, tmp_path)
             with pytest.raises(RuntimeError, match="node exploded"):
                 wrapped.invoke({"q": 1})
@@ -288,11 +281,9 @@ class TestLangGraphStateTransitionWiring:
         mock_graph.stream.return_value = iter([{"n": {"x": 1}}])
         with (
             patch(_ADAPTER_PATCHES[0], return_value={}),
-            patch(_ADAPTER_PATCHES[1]) as scanner,
             patch("novafabric.capture.hooks.install_all"),
             patch("novafabric.capture.hooks.uninstall_all"),
         ):
-            scanner.return_value.scan_and_redact.return_value = {}
             wrapped = _wrapped_graph(mock_graph, tmp_path)
             assert list(wrapped.stream({"q": 1})) == [{"n": {"x": 1}}]
         cap_dir = _capsule_dir(tmp_path)

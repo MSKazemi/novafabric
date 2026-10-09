@@ -91,9 +91,18 @@ class ImportResult:
 def index_capsule_lineage(
     capsule_dir: Path,
     db_path: Path | None = None,
+    *,
+    run_id: str | None = None,
 ) -> ImportResult:
+    """Index *capsule_dir*'s ``lineage.jsonl`` into the lineage store.
+
+    The run is keyed by *run_id* when given, else by the directory name. A
+    ``nova capture`` capsule directory is always named after its run id; an
+    ``@agent`` capsule directory is whatever the caller chose, so the shared
+    finalization path passes the run id explicitly.
+    """
     lineage_path = capsule_dir / "lineage.jsonl"
-    capsule_run_id = capsule_dir.name
+    capsule_run_id = run_id or capsule_dir.name
 
     if not lineage_path.exists():
         return ImportResult(
@@ -114,7 +123,7 @@ def index_capsule_lineage(
             record: dict[str, Any] = json.loads(line)
             _validate_edge_record(record)
             edge = _edge_from_dict(record)
-            run_id_for_node = record.get("capsule_run_id", capsule_dir.name)
+            run_id_for_node = record.get("capsule_run_id", capsule_run_id)
             edges.append(edge)
             for node_dict in (record["source"], record["target"]):
                 node = _node_from_node_dict(node_dict, run_id_for_node)

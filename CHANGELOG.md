@@ -13,6 +13,11 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Security
 
+- **Framework-adapter and `@agent` capsules get the full ADR-0009 secret pipeline.** They used
+  to run one scan before `replay.yaml` was written and never redacted the manifest, so a
+  secret in `replay.yaml`, a late-written file or a run name / label reached the capsule
+  unscanned. They now get manifest redaction, the residual pass and the fail-closed manifest
+  gate, like `nova capture`.
 - **Locked `urllib3` 2.7.0 → 2.8.0 and `pyjwt` 2.14.0 → 2.15.1**, clearing the two HIGH
   `pip-audit` findings (PYSEC-2026-4175/4177) that blocked the gate (#128). No waiver added.
 - **Locked `multidict` 6.7.1 → 6.9.1 and `werkzeug` 3.1.8 → 3.1.9**, clearing the two remaining
@@ -335,6 +340,14 @@ longer forwards the submitting shell's environment (ADR-0270).
   CLI reference, `--help` and two tutorials summarise it in the same terms and link to it. The
   `--help` examples and `docs/for-researchers.md` now pass the `--key` and `--output` the command
   requires.
+- **Adapter and `@agent` capsules finalize through `nova capture`'s path and can be sealed.**
+  The orchestrator's finalization tail moved into `capture/finalize.py`; all eleven framework
+  adapters and the `@agent` decorator now call it (`finalize_in_process_capsule`), so their
+  capsules carry `lineage.jsonl` and `evidence_digests`, and are sealed when a signing profile
+  exists (sealing stays opt-in) — `nova verify` passes on them. Finalization never fails the
+  wrapped call: on a failure, a gate refusal or a failed seal the capsule is left unsealed and
+  `metadata.finalization_error` says why. `nova capture` output is unchanged (pinned by
+  `tests/capture/test_capture_finalization_golden.py`). ADR-0009 / ADR-0251 amendments.
 - **`env.lock` named the wrong NovaFabric version, and macOS/Windows hosts recorded
   `memory_bytes: 0`.** `captured_by` was the literal `novafabric/0.2.0` whatever version wrote
   the lock; it is now `novafabric/<installed version>`. `host.memory_bytes` was read only from

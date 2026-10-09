@@ -952,7 +952,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
    ],
    "caption": "Or capture in-process: a framework adapter, or the sdk agent decorator, writes its own capsule with capture_mode sdk-decorator.",
    "color": "cap",
-   "detail": "<p>Eleven adapters ship: LangGraph, CrewAI, AutoGen, DSPy, Google ADK, OpenAI Agents, A2A, Bedrock AgentCore, LlamaIndex, Pydantic AI and Haystack, plus <code>novafabric.sdk.agent</code>. Each runs the secret scan and records the measured host block. Such a capsule is <strong>not sealed</strong> (sealing runs only inside <code>nova capture</code>), and its <code>command</code> is a label such as <code>@langgraph:demo</code>, so mocked replay refuses it up front.</p>",
+   "detail": "<p>Eleven adapters ship: LangGraph, CrewAI, AutoGen, DSPy, Google ADK, OpenAI Agents, A2A, Bedrock AgentCore, LlamaIndex, Pydantic AI and Haystack, plus <code>novafabric.sdk.agent</code>. Each records the measured host block and finalizes through the same path as <code>nova capture</code>: secret scan, manifest redaction, <code>lineage.jsonl</code>, residual pass, <code>evidence_digests</code>, and a seal when a signing profile exists. A finalization failure leaves the capsule unsealed with <code>metadata.finalization_error</code>, never failing the wrapped call. Its <code>command</code> is a label such as <code>@langgraph:demo</code>, so mocked replay refuses it up front.</p>",
    "edges": [
     "wl_adapt",
     "adapt_cap"
@@ -963,7 +963,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     "adapt",
     "capsule"
    ],
-   "ref": "adapters/_capsule.py:AdapterCapture · adapters/langgraph.py · sdk/agent.py:agent",
+   "ref": "adapters/_capsule.py:AdapterCapture · adapters/langgraph.py · sdk/agent.py:agent · capture/finalize.py:finalize_in_process_capsule",
    "stage": "workload",
    "term": "graph = wrap_langgraph(graph)",
    "title": "Or capture inside a framework",
@@ -1089,7 +1089,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
    "nodes": [
     "capsule"
    ],
-   "ref": "capture/orchestrator.py:_evidence_digests · capture/capsule.py:CapsuleWriter · lineage/_writer.py:LineageWriter",
+   "ref": "capture/finalize.py:evidence_digests · capture/capsule.py:CapsuleWriter · lineage/_writer.py:LineageWriter",
    "stage": "capsule",
    "term": "✓ capsule written  ~/.novafabric/capsules/01J9Z…/",
    "title": "Assemble the Run Capsule",
@@ -1115,7 +1115,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     "capsule",
     "seal"
    ],
-   "ref": "capture/orchestrator.py:_seal_capsule · trust/novaseal/__init__.py:NovaSeal.seal · trust/novaseal/envelope.py",
+   "ref": "capture/finalize.py:seal_capsule · trust/novaseal/__init__.py:NovaSeal.seal · trust/novaseal/envelope.py",
    "stage": "seal",
    "term": "  sealed: capsule_id 3f9a…",
    "title": "Sign the manifest",
@@ -1828,11 +1828,11 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
       on: [], term: [["c", "  manifest + lineage written"]] },
     { p: 1, title: "Digest every evidence file", mat: "works today",
       body: "<p>Every file except <code>capsule.yaml</code> and <code>.seal/</code> is hashed (SHA-256 plus size) into <code>evidence_digests</code>, and <code>capsule.yaml</code> is rewritten. The manifest now commits to the whole directory, including the redaction proof and, when present, <code>capture-health.json</code>.</p>",
-      ref: "capture/orchestrator.py:_evidence_digests",
+      ref: "capture/finalize.py:evidence_digests",
       on: [], hashed: true, term: [["c", "  evidence_digests: 11 files"]] },
     { p: 1, title: "Sign a DSSE envelope", mat: "experimental",
       body: "<p>Only when NovaSeal is configured (<code>NOVAFABRIC_SEAL_CONFIG</code> or <code>~/.novafabric/novaseal.yaml</code>). The manifest is serialised as canonical JSON, its SHA-256 becomes the <code>capsule_id</code>, and it is signed (ECDSA P-256, or Ed25519 with a local key) into <code>.seal/manifest.dsse</code>. A sealing failure only warns. It never fails the capture.</p>",
-      ref: "capture/orchestrator.py:_seal_capsule → trust/novaseal/__init__.py:NovaSeal.seal · envelope.py",
+      ref: "capture/finalize.py:seal_capsule → trust/novaseal/__init__.py:NovaSeal.seal · envelope.py",
       on: ["b-dsse"], hashed: true, term: [["c", "  sealed: capsule_id 3f9a…"]] },
     { p: 1, title: "Timestamp and log the seal", mat: "experimental",
       body: "<p>An RFC 3161 token is requested for the envelope (opt-in: only the <code>tsa_url</code> you configure is contacted; with none, no timestamp and no network call). The seal is then appended to a domain-separated SHA-256 Merkle log. <code>log-entry.json</code> records its leaf index, the root and the inclusion proof, so verification needs nothing but the capsule.</p>",
@@ -1854,7 +1854,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
       term: [["p", "$ nova verify ~/.novafabric/capsules/01J9Z…/"], ["ok", "✓ signature  ✓ timestamp  ✓ log  ✓ binding  ✓ digests"], ["c", "  exit 0"]] },
     { p: 3, title: "Tamper with one byte", mat: "works today",
       body: "<p>Edit <code>outputs/stdout.txt</code> after sealing and its SHA-256 no longer matches <code>evidence_digests</code>. The signature is still valid, because the manifest is untouched, but check 5 fails and <code>nova verify</code> exits <code>1</code>. Editing <code>capsule.yaml</code> instead would break the binding check.</p>",
-      ref: "cli/verify.py · capture/orchestrator.py:_evidence_digests",
+      ref: "cli/verify.py · capture/finalize.py:evidence_digests",
       on: ["b-dsse"], hashed: true, tamper: true, checks: [1, 1, 1, 1, 0],
       term: [["p", "$ echo x >> outputs/stdout.txt && nova verify …"], ["bad", "✗ digests: outputs/stdout.txt modified"], ["c", "  exit 1"]] },
     { p: 3, title: "Hand evidence to a third party", mat: "works today",

@@ -41,12 +41,9 @@ import novafabric.adapters.langgraph as _langgraph_adapter
 
 
 def _quiet_capsule() -> Any:
-    scanner = MagicMock()
-    scanner.return_value.scan_and_redact.return_value = {}
     return patch.multiple(
         "novafabric.adapters.langgraph",
         capture_environment=MagicMock(return_value={}),
-        SecretScannerV0=scanner,
     )
 
 
