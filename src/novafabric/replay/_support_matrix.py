@@ -43,6 +43,7 @@ _CONTRACT = "tests/replay/test_mocked_replay_contract.py"
 _ROUND_TRIP = "tests/replay/test_tool_choice_round_trip_e2e.py"
 _CAPTURE = "tests/capture/test_sdk_stream_capture.py"
 _ERRORS = "tests/replay/test_recorded_model_errors_replay.py"
+_ENDINGS = "tests/replay/test_undelivered_stream_endings.py"
 
 ROWS: tuple[SurfaceRow, ...] = (
     SurfaceRow(
@@ -53,7 +54,11 @@ ROWS: tuple[SurfaceRow, ...] = (
         ),
         replay="served",
         replay_note="",
-        streaming="served: the record is replayed as chunks (usage chunk when requested)",
+        streaming=(
+            "served: the record is replayed as chunks (usage chunk when requested); "
+            "a stream that never delivered a finish reason is recorded with "
+            "`finish_reason: null` and served without a finish-reason or usage chunk"
+        ),
         asynchronous="served",
         status="works today",
         evidence=(
@@ -61,6 +66,7 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_E2E}::test_s14_async_chat_completions_round_trip",
             f"{_E2E}::test_s15_streamed_chat_completions_round_trip",
             f"{_E2E}::test_s15_async_streamed_chat_round_trip",
+            f"{_ENDINGS}::test_a_chat_stream_that_never_finished_is_recorded_and_replayed_without_one",
         ),
         patches=(
             ("openai.resources.chat.completions", "Completions", "create"),
@@ -156,7 +162,11 @@ ROWS: tuple[SurfaceRow, ...] = (
         ),
         replay="served",
         replay_note="raw `stop_reason` served back",
-        streaming="served: the record is replayed as raw stream events",
+        streaming=(
+            "served: the record is replayed as raw stream events; no `message_delta` "
+            "/ `message_stop` when the stream delivered no `stop_reason` "
+            "(`finish_reason: null`)"
+        ),
         asynchronous="served",
         status=(
             "works today (tested against a stand-in `anthropic` package; the real "
@@ -166,6 +176,7 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_ROUND_TRIP}::test_anthropic_tool_use_round_trips_through_capture_and_mocked_replay",
             f"{_E2E}::test_s14_async_anthropic_messages_round_trip",
             f"{_E2E}::test_s15_streamed_anthropic_messages_round_trip",
+            f"{_ENDINGS}::test_an_anthropic_stream_without_a_stop_reason_is_recorded_and_replayed_without_one",
         ),
         patches=(
             ("anthropic.resources.messages", "Messages", "create"),
@@ -244,19 +255,25 @@ ROWS: tuple[SurfaceRow, ...] = (
         ),
     ),
     SurfaceRow(
-        surface="OpenAI Responses API response with `status: failed` or `incomplete`",
+        surface=(
+            "OpenAI Responses API response with `status: failed` or `incomplete`, "
+            "or a stream that delivered an `error` event"
+        ),
         capture=(
             "SDK hook: the Response's own `status`, `incomplete_details` and `error`, "
             "verbatim (`io.novafabric.response_status`); `failed` is also "
-            "`status: error` on the record"
+            "`status: error` on the record; a yielded `error` event is kept verbatim "
+            "(`io.novafabric.stream_error_event`, `status: error`)"
         ),
         replay="served",
         replay_note=(
-            "returned, never raised -- the SDK returns these responses; the "
-            "recorded status, reason and error are served as recorded"
+            "returned, never raised -- the SDK returns these responses and yields "
+            "the `error` event; the recorded status, reason and error are served as "
+            "recorded"
         ),
         streaming="served: ends with the recorded terminal event (`response.failed`, "
-                  "`response.incomplete`)",
+                  "`response.incomplete`); after an `error` event, the delivered "
+                  "events, then that event, and no terminal event",
         asynchronous="served",
         status=(
             "works today; a failed response captured before its status was recorded "
@@ -266,6 +283,7 @@ ROWS: tuple[SurfaceRow, ...] = (
             f"{_ERRORS}::test_a_failed_responses_response_is_returned_not_raised",
             f"{_ERRORS}::test_an_incomplete_responses_response_keeps_its_recorded_reason",
             f"{_ERRORS}::test_a_failed_response_captured_before_its_status_was_recorded_is_refused",
+            f"{_ENDINGS}::test_a_responses_error_event_is_recorded_and_replayed_as_delivered",
         ),
     ),
     SurfaceRow(

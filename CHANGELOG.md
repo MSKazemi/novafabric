@@ -317,6 +317,17 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **A streamed model call that never delivered a finish reason was recorded as `"stop"`, and
+  a Responses API `error` event was replayed as `response.completed`** (ADR-0304 follow-on,
+  experimental). A stream abandoned by the workload, failed part-way or ended without a finish
+  reason is now recorded with `finish_reason: null` and no `gen_ai.response.finish_reasons`
+  (the model-call schema admits `null`, additively); mocked replay serves no finish-reason,
+  usage, done or terminal event for it, and `None` on a non-streamed response. A Responses
+  stream that yielded an `error` event (the `openai` SDK yields it, it does not raise) is now
+  an error record carrying the event verbatim under
+  `extensions["io.novafabric.stream_error_event"]`, replayed as the delivered events, then that
+  event, with no terminal event. Capsules captured earlier keep their recorded `"stop"` and are
+  served exactly as before.
 - **Most audit-log writers ignored `NOVAFABRIC_AUDIT_LOG_PATH`, so tests wrote to the
   user's real audit log.** The path was a constant bound to
   `~/.local/share/novafabric/audit.jsonl` at import time and copied into 24 modules; only
