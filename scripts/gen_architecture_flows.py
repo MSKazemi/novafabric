@@ -725,7 +725,9 @@ REPLAY = Flow(
              "raised again as the SDK's own exception class.",
              "<p>The class comes from an allow-list looked up on the SDK package, never "
              "imported by a name read from the capsule. A call the SDK retried and then "
-             "completed is served as the success it was. An error that cannot be rebuilt "
+             "completed is served as the success it was. A stream that raised part-way "
+             "serves its delivered chunks, then raises; a failed or incomplete Responses API "
+             "response is returned with its recorded status. An error that cannot be rebuilt "
              "faithfully is the divergence <code>recorded_error_unreconstructable</code>.</p>",
              "replay/_model_errors.py:rebuild_sdk_error · ALLOWED_SDK_ERRORS",
              "experimental", "err", "amb", unreleased=True),
@@ -1144,7 +1146,10 @@ STORY = Flow(
             "runs against the same failure. Classes come from an allow-list looked up on the "
             "SDK package (for example <code>openai.RateLimitError</code> with "
             "<code>status_code == 429</code>, the body and the request id), never from a "
-            "name read out of the capsule.</p>",
+            "name read out of the capsule. A stream that raised part-way is served as its "
+            "delivered chunks, then the same exception. A Responses API response with "
+            "<code>status: failed</code> is returned as recorded, because the SDK returns it "
+            "rather than raising.</p>",
             "replay/_model_errors.py:rebuild_sdk_error · "
             "replay/_dispatcher.py:MockModelDispatcher",
             "experimental", "replay", "amb",
@@ -1163,8 +1168,8 @@ STORY = Flow(
             "experimental", "replay", "rep",
             "$ nova replay --mode intervention --intervention-file spec.yaml 01J9Z…", True),
         _ss("diff", "Diff two runs", ("capsule", "diff"), ("cap_diff",), ("A ⇄ B",),
-            "nova diff A B pairs logical model calls (transport left out), tool calls and "
-            "outputs/; a provider change is a changed call.",
+            "nova diff A B pairs logical model calls, tool calls and outputs/; a provider "
+            "or request-parameter change is a changed call.",
             "<p>It compares the environment keys of <code>env.lock</code>, model calls, tool "
             "calls and every file under <code>outputs/</code> by SHA-256. Malformed record "
             "lines are skipped and counted, never dropped silently. Zoom in: "
@@ -1176,8 +1181,10 @@ STORY = Flow(
         _ss("diff", "Gate CI on the exit code", ("diff", "gate"), ("diff_gate",),
             ("has_changes",),
             "With --assert-no-regressions: exit 0 no difference, 1 a difference, 2 could not "
-            "compare (bad ref, malformed lines).",
-            "<p>A ref that does not resolve exits 2 with or without the flag. Without a gate "
+            "compare (bad ref, malformed capsule file or lines).",
+            "<p>A ref that does not resolve, or an unreadable or malformed "
+            "<code>capsule.yaml</code> or <code>env.lock</code>, exits 2 with or without the "
+            "flag. Without a gate "
             "flag a difference is reported and exits 0. The JSON report carries "
             "<code>has_changes</code> and <code>skipped_malformed_lines</code>; "
             "<code>github-annotation</code> output turns any change into an "
