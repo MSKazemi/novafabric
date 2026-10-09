@@ -26,6 +26,7 @@ from novafabric.a2a.objects import (
     map_objects,
     roundtrip,
 )
+from novafabric.cli._output import emit_json
 
 app = typer.Typer(
     name="a2a-objects",
@@ -86,7 +87,7 @@ def map_cmd(
         out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         console.print(f"[green]Mapped[/green] -> {out}")
     else:
-        console.print_json(json.dumps(payload))
+        emit_json(json.dumps(payload))
 
     unmapped = sum(len(o.unmapped) for o in facet.all_objects())
     if unmapped:
@@ -113,7 +114,7 @@ def roundtrip_cmd(
         err_console.print(f"[red]Invalid a2a_objects facet:[/red] {exc}")
         raise typer.Exit(2) from exc
 
-    console.print_json(json.dumps(result.model_dump()))
+    emit_json(json.dumps(result.model_dump()))
     if not result.matches:
         for d in result.diverging:
             err_console.print(

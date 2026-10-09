@@ -41,6 +41,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from novafabric.cli._output import emit_json
 from novafabric.cli.score_config import config_app
 from novafabric.eval.card import (
     Calibration,
@@ -167,7 +168,7 @@ def card_new(
         raise typer.Exit(code=1) from exc
     payload = card.model_dump_json(exclude_none=True, indent=2)
     if out is None:
-        console.print_json(payload)
+        emit_json(payload)
     else:
         out.write_text(payload + "\n", encoding="utf-8")
         console.print(f"[green]Wrote[/green] {out}  digest={card_digest(card)}")
@@ -215,7 +216,7 @@ def card_show(
     except EvalCardNotFoundError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
-    console.print_json(card.model_dump_json(exclude_none=True))
+    emit_json(card.model_dump_json(exclude_none=True))
     console.print(f"digest={card_digest(card)}")
 
 
@@ -343,7 +344,7 @@ def score_list(
         scores = [s for s in scores if s.source is source]
     if as_json:
         payload = [json.loads(s.model_dump_json(exclude_none=True)) for s in scores]
-        console.print_json(json.dumps(payload))
+        emit_json(json.dumps(payload))
         return
     table = Table(title=f"scores ({len(scores)})")
     for col in ("score_id", "name", "value", "type", "source", "eval_card_digest"):

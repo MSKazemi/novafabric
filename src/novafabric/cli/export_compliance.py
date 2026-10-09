@@ -38,6 +38,7 @@ import typer
 from pydantic import BaseModel
 from rich.console import Console
 
+from novafabric.cli._output import emit_json
 from novafabric.compliance.export.genai_csa_profile import build_genai_csa_profile
 from novafabric.compliance.export.gpai53 import build_gpai53_form
 from novafabric.compliance.export.iso42001 import build_iso42001_mapping
@@ -74,7 +75,7 @@ def _emit(model: BaseModel, out: Optional[Path], *, label: str) -> None:
         out.write_text(payload + "\n", encoding="utf-8")
         console.print(f"[green]✓[/green] {label} written to {out}")
     else:
-        console.print_json(payload)
+        emit_json(payload)
 
 
 def _load_json(path: Path) -> Any:

@@ -20,6 +20,7 @@ from novafabric.capture.secrets import (
 )
 
 console = Console()
+err_console = Console(stderr=True)
 
 
 def _get_pepper() -> bytes:
@@ -93,7 +94,8 @@ def subject_proof_cmd(
 
     report: dict[str, Any]
     if not db_path.exists():
-        console.print(
+        # stderr: without --output, stdout carries the JSON report and nothing else.
+        err_console.print(
             f"[yellow]⚠[/yellow] Redaction index not found at {db_path}. "
             "No redaction records exist for this subject."
         )
@@ -137,7 +139,7 @@ def subject_proof_cmd(
                 "sig": base64.b64encode(sig).decode("ascii"),
             }
         except Exception as exc:
-            console.print(f"[yellow]⚠[/yellow] signing failed: {exc}")
+            err_console.print(f"[yellow]⚠[/yellow] signing failed: {exc}")
 
     report_json = json.dumps(report, indent=2)
 
@@ -151,7 +153,9 @@ def subject_proof_cmd(
         # Attempt NovaSeal document sealing (G-CROSS-004 / FR-03)
         _try_seal_proof_report(output, report_json.encode("utf-8"))
     else:
-        console.print(report_json)
+        # Plain stdout, never the Rich console: it wraps at the terminal width,
+        # reads ``[...]`` as markup and colours numbers when colour is forced.
+        typer.echo(report_json)
 
 
 def _try_seal_proof_report(report_path: Path, proof_bytes: bytes) -> None:

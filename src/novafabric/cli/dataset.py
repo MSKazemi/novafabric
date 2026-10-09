@@ -24,6 +24,8 @@ from typing import Annotated, Optional
 import typer
 from rich.console import Console
 
+from novafabric.cli._output import emit_json
+
 console = Console()
 
 dataset_app = typer.Typer(
@@ -121,4 +123,4 @@ def provenance_card_cmd(
         signed_note = " (signed)" if sign else ""
         console.print(f"[green]✓[/green] Dataset provenance card written: {out}{signed_note}")
     else:
-        console.print_json(payload)
+        emit_json(payload)

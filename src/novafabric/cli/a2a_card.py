@@ -27,6 +27,7 @@ from novafabric.a2a.card import (
     verify_facet,
     write_portable_export,
 )
+from novafabric.cli._output import emit_json
 
 app = typer.Typer(
     name="a2a-card",
@@ -92,7 +93,7 @@ def capture(
         out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         console.print(f"[green]Captured[/green] {facet.card_fingerprint} -> {out}")
     else:
-        console.print_json(json.dumps(payload))
+        emit_json(json.dumps(payload))
 
     if facet.signature_ok is None:
         console.print(f"[yellow]signature:[/yellow] {facet.signature_status}")
@@ -122,7 +123,7 @@ def verify(
         err_console.print(f"[red]Invalid a2a_card facet:[/red] {exc}")
         raise typer.Exit(2) from exc
 
-    console.print_json(json.dumps(result.model_dump()))
+    emit_json(json.dumps(result.model_dump()))
     if result.signature_ok is None:
         console.print(f"[yellow]signature:[/yellow] {result.signature_status}")
     if not result.fingerprint_matches:

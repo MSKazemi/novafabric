@@ -28,6 +28,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from novafabric.cli._output import emit_json
 from novafabric.dashboards import (
     DashboardError,
     apply_path,
@@ -106,7 +107,7 @@ def show_cmd(
     store = default_store()
     for getter in (store.get_widget, store.get_dashboard):
         try:
-            console.print_json(getter(identifier).to_json())
+            emit_json(getter(identifier).to_json())
             return
         except DashboardError:
             continue

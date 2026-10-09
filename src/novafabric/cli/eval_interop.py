@@ -30,6 +30,8 @@ from typing import Annotated, Optional
 import typer
 from rich.console import Console
 
+from novafabric.cli._output import emit_json
+
 console = Console()
 
 
@@ -133,4 +135,4 @@ def export_inspect_cmd(
         output.write_text(payload + "\n", encoding="utf-8")
         console.print(f"Wrote Inspect log ({len(log['samples'])} sample(s)) to {output}")
     else:
-        console.print_json(payload)
+        emit_json(payload)

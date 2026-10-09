@@ -26,6 +26,7 @@ from novafabric.assure.attestation import (
     facet_from_capsule,
     record_run,
 )
+from novafabric.cli._output import emit_json
 
 app = typer.Typer(
     name="assure-run",
@@ -84,7 +85,7 @@ def record(
             f"[green]Recorded[/green] {schedule_id}; next due {attestation.next_due}"
         )
     else:
-        console.print_json(json.dumps(payload))
+        emit_json(json.dumps(payload))
     console.print(f"[dim]{HONESTY_LINE}[/dim]")
 
 
@@ -120,7 +121,7 @@ def check(
         err_console.print(f"[red]Invalid attestation:[/red] {exc}")
         raise typer.Exit(2) from exc
 
-    console.print_json(json.dumps(verdict.model_dump()))
+    emit_json(json.dumps(verdict.model_dump()))
     console.print(f"[dim]{HONESTY_LINE}[/dim]")
     if verdict.overdue:
         err_console.print(

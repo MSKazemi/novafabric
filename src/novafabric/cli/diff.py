@@ -9,6 +9,7 @@ import typer
 from rich.console import Console
 
 from novafabric.cli._capsule_ref import CapsuleRefError, resolve_capsule_ref
+from novafabric.cli._output import emit_json
 from novafabric.eval.regression_diff import (
     DEFAULT_ALPHA,
     DEFAULT_BETA,
@@ -356,7 +357,7 @@ def _run_significance(
     except ValueError as exc:  # invalid p0/p1/alpha/beta from the SPRT primitive
         raise typer.BadParameter(str(exc)) from exc
     if as_json:
-        console.print_json(diff.model_dump_json())
+        emit_json(diff.model_dump_json())
     else:
         bw = diff.baseline.wilson
         cw = diff.candidate.wilson

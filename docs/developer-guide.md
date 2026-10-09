@@ -337,6 +337,14 @@ evaluation, deployment). To add an eighth:
    (`"status": "real-panel"` + `tab`/`api`); otherwise it defaults to
    `"builder-only"` and needs no entry.
 
+**JSON output — never through a Rich console.** A `--json` / `--output-format json`
+path writes with `novafabric.cli._output.emit_json(text)` (or a plain `typer.echo` /
+`print` of `json.dumps(...)`), and nothing else goes to stdout on that path — warnings
+belong on stderr. `console.print_json` syntax-highlights whenever colour is forced
+(`FORCE_COLOR`, GitHub Actions) and `console.print` wraps at the terminal width and
+reads `[...]` as markup; either one hands a CI step or a `> out.json` redirect
+unparseable output. `tests/cli/test_json_output_is_plain.py` fails on both.
+
 **Fixed-value options — use `str` Enum types.** When an option accepts a finite set
 of values, define a `class MyOption(str, Enum)` in the same module and use it as the
 type annotation. This gives shell tab-completion (via `nova --install-completion`) and

@@ -23,6 +23,7 @@ from rich.console import Console
 
 from novafabric.assure._honesty import HONESTY_LINE
 from novafabric.assure.canary import CanaryError, record_canary_run
+from novafabric.cli._output import emit_json
 
 app = typer.Typer(
     name="assure-canary",
@@ -93,7 +94,7 @@ def record(
         out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         console.print(f"[green]Recorded[/green] {run.baseline_id} -> {out}")
     else:
-        console.print_json(json.dumps(payload))
+        emit_json(json.dumps(payload))
 
     if run.same_stack is False:
         console.print(

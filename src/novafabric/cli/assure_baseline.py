@@ -35,6 +35,7 @@ from novafabric.assure.baseline import (
     pin_baseline,
     verify_pin,
 )
+from novafabric.cli._output import emit_json
 
 app = typer.Typer(
     name="assure-baseline",
@@ -89,7 +90,7 @@ def pin(
         out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         console.print(f"[green]Pinned[/green] {baseline_id} -> {out}")
     else:
-        console.print_json(json.dumps(payload))
+        emit_json(json.dumps(payload))
     console.print(f"[dim]{HONESTY_LINE}[/dim]")
 
 
@@ -142,7 +143,7 @@ def verify(
         raise typer.Exit(2)
 
     result = results[0]
-    console.print_json(json.dumps(result.model_dump()))
+    emit_json(json.dumps(result.model_dump()))
     console.print(f"[dim]{HONESTY_LINE}[/dim]")
     if not result.matches:
         raise typer.Exit(1)

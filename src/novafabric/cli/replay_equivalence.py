@@ -31,6 +31,7 @@ import typer
 from rich.console import Console
 
 from novafabric.capture.record_roles import logical_model_calls
+from novafabric.cli._output import emit_json
 from novafabric.replay.determinism import Eligibility, assess
 from novafabric.replay.equivalence import (
     ALL_RULES,
@@ -164,7 +165,7 @@ def check(
         "rules_applied": list(base_canon.rules_applied),
         "divergent_steps": [asdict(step) for step in verdict.divergent_steps],
     }
-    console.print_json(json.dumps(payload, default=str))
+    emit_json(json.dumps(payload, default=str))
 
     if not verdict.equivalent:
         err_console.print(
@@ -222,7 +223,7 @@ def regime(
 
     # ADR-0305: assess logical calls; transport records are wire attempts.
     result = assess(logical_model_calls(calls))
-    console.print_json(json.dumps(result.model_dump(mode="json")))
+    emit_json(json.dumps(result.model_dump(mode="json")))
     for reason in result.reasons:
         console.print(f"[dim]{reason}[/dim]")
 

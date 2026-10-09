@@ -27,6 +27,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from novafabric.cli._output import emit_json
 from novafabric.session import (
     SessionError,
     SessionReplayMode,
@@ -216,7 +217,7 @@ def list_cmd(
         )
     manifests = listing.manifests
     if json_output:
-        console.print_json(json.dumps([m.to_json_dict() for m in manifests]))
+        emit_json(json.dumps([m.to_json_dict() for m in manifests]))
         return
     if not manifests:
         console.print("[dim]No sessions found.[/dim]")
@@ -259,7 +260,7 @@ def reindex_cmd(
         console.print(f"[red]Session index error:[/red] {exc}")
         raise typer.Exit(code=1) from exc
     if json_output:
-        console.print_json(report.model_dump_json())
+        emit_json(report.model_dump_json())
         return
     console.print(
         f"[green]✓[/green] Indexed {report.indexed} session(s)"
@@ -312,7 +313,7 @@ def export_cmd(
         console.print(f"[red]Session bundle error:[/red] {exc}")
         raise typer.Exit(code=1) from exc
     if json_output:
-        console.print_json(report.model_dump_json())
+        emit_json(report.model_dump_json())
         return
     console.print(
         f"[green]✓[/green] Bundled session {session_id}: {report.members} member(s), "
@@ -336,7 +337,7 @@ def verify_bundle_cmd(
     """
     report = verify_session_bundle(bundle)
     if json_output:
-        console.print_json(report.model_dump_json())
+        emit_json(report.model_dump_json())
     else:
         console.print(f"Session bundle verification: {bundle.name}")
         console.print(
@@ -423,7 +424,7 @@ def show_cmd(
             "members": [r.model_dump(exclude_none=True) for r in resolved],
             "stats": stats.model_dump(exclude_none=True),
         }
-        console.print_json(json.dumps(payload))
+        emit_json(json.dumps(payload))
         return
 
     console.print(
@@ -490,7 +491,7 @@ def _parse_turn_modes(raw: list[str]) -> dict[int, SessionReplayMode]:
 def _print_plan(plan: SessionReplayPlan, json_output: bool) -> None:
     """Render a dry-run plan (nothing was executed)."""
     if json_output:
-        console.print_json(json.dumps(plan.to_json_dict()))
+        emit_json(json.dumps(plan.to_json_dict()))
         return
     scope = (
         f"turns {plan.range[0]}..{plan.range[1]} of {plan.total_turns}"
@@ -683,7 +684,7 @@ def replay_cmd(
     result_path = write_session_replay_result(result, base / f"session-replay-{new_ulid()}")
 
     if json_output:
-        console.print_json(json.dumps(result.to_json_dict()))
+        emit_json(json.dumps(result.to_json_dict()))
     else:
         table = Table(title=f"Session replay: {session_id} (mode: {result.mode})")
         table.add_column("seq", justify="right")

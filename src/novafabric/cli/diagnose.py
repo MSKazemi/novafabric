@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from novafabric._paths import default_capsule_dir
+from novafabric.cli._output import emit_json
 from novafabric.diagnose import CapsuleNotFoundError, attribute_failure
 from novafabric.diagnose.verify import HypothesisVerification, RootCauseSearch
 
@@ -177,7 +178,7 @@ def diagnose_cmd(
             payload["verification"] = verification.as_dict()
         if root_cause is not None:
             payload["root_cause_search"] = root_cause.as_dict()
-        console.print_json(json.dumps(payload))
+        emit_json(json.dumps(payload))
         return
 
     head = f"[bold]Failure attribution for[/bold] {result.run_id} " \

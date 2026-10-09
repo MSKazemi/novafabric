@@ -42,15 +42,6 @@ def _redact_app() -> typer.Typer:
     return app
 
 
-def _extract_json_obj(output: str) -> dict:
-    """Extract the trailing JSON object from console output that may be
-    prefixed with rich warning lines (rich wraps text, so we slice from the
-    first ``{`` to the last ``}``)."""
-    start = output.index("{")
-    end = output.rindex("}")
-    return json.loads(output[start : end + 1])
-
-
 def _gen_ed25519_key(path: Path) -> None:
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -857,7 +848,9 @@ def test_subject_proof_no_db_legal_hold(
         _redact_app(), ["subject-proof", "alice@example.com", "--db", str(db)]
     )
     assert result.exit_code == 0, result.output
-    report = _extract_json_obj(result.output)
+    # stdout is the JSON report alone; the missing-index warning goes to stderr.
+    report = json.loads(result.stdout)
+    assert "Redaction index not found" in result.stderr
     assert report["legal_hold_mode"] is True
     assert report["records"] == []
 
@@ -906,7 +899,7 @@ def test_subject_proof_db_default_from_env(
     monkeypatch.setenv("NOVAFABRIC_HOME", str(tmp_path / "home"))
     result = runner.invoke(_redact_app(), ["subject-proof", "carol@example.com"])
     assert result.exit_code == 0, result.output
-    report = _extract_json_obj(result.output)
+    report = json.loads(result.stdout)
     # No index file under the default home -> legal-hold, empty records.
     assert report["records"] == []
 
@@ -924,7 +917,8 @@ def test_subject_proof_signing_failure_warns(
         ["subject-proof", "dave@example.com", "--db", str(db), "--key", str(bad_key)],
     )
     assert result.exit_code == 0, result.output
-    assert "signing failed" in result.output.lower()
+    assert "signing failed" in result.stderr.lower()
+    assert "signature" not in json.loads(result.stdout)  # stdout still parses
 
 
 def test_subject_proof_compliance_import_error(monkeypatch: pytest.MonkeyPatch) -> None:

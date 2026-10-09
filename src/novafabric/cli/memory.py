@@ -13,6 +13,7 @@ from rich.console import Console
 from rich.table import Table
 
 from novafabric.capture.events import MemoryOperationEvent
+from novafabric.cli._output import emit_json
 from novafabric.lineage.memory import edges_for_events, readers_of, writers_of
 
 console = Console()
@@ -132,7 +133,7 @@ def memory_lineage(
     edges = edges_for_events(_load_events(capsule))
 
     if output is MemoryOutputFormat.json:
-        console.print_json(json.dumps([e.as_dict() for e in edges]))
+        emit_json(json.dumps([e.as_dict() for e in edges]))
         return
 
     if not edges:
@@ -193,7 +194,7 @@ def memory_trace(
     readers = _dedupe(readers_of(edges, key))
 
     if output is MemoryOutputFormat.json:
-        console.print_json(
+        emit_json(
             json.dumps(
                 {
                     "memory_key": key,

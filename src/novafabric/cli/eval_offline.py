@@ -37,6 +37,7 @@ import typer
 import yaml
 from rich.console import Console
 
+from novafabric.cli._output import emit_json
 from novafabric.eval.offline import (
     MetamorphicSpecError,
     run_contract,
@@ -102,7 +103,7 @@ def offline_cmd(
             raise typer.BadParameter(str(exc)) from exc
 
     if as_json:
-        console.print_json(score.model_dump_json(exclude_none=True))
+        emit_json(score.model_dump_json(exclude_none=True))
     else:
         console.print(f"{score.name} = {score.value}  (source={score.source.value}, zero-token)")
 

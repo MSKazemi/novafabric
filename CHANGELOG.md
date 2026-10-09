@@ -363,6 +363,19 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **JSON output carried ANSI colour codes when colour was forced.** 38 `--json` /
+  `--output-format json` paths (`nova diff --significance`, `nova media list`, `nova aibom
+  validate`, `nova session …`, `nova eval card …`, `nova assure …`, `nova eval score config …`,
+  `nova dashboard show`, `nova policy explain` and others) printed through Rich's
+  `print_json`, which syntax-highlights whenever `FORCE_COLOR` is set or GitHub Actions is
+  detected, so a CI step or a `> out.json` redirect received unparseable JSON. They now write
+  plain JSON to stdout through one helper (`novafabric.cli._output.emit_json`); the bytes are
+  unchanged apart from the removed escapes. `nova subject-proof` printed its report through
+  the Rich console, which also wrapped long lines at the terminal width and wrote its
+  missing-index and signing warnings to stdout ahead of the JSON; the report is now the only
+  thing on stdout and the warnings go to stderr. A guard test fails on any `print_json`, or a
+  Rich console printing a JSON value, under `novafabric.cli`, and runs representative JSON
+  commands with `FORCE_COLOR=1 COLUMNS=40`.
 - **A streamed model call that never delivered a finish reason was recorded as `"stop"`, and
   a Responses API `error` event was replayed as `response.completed`** (ADR-0304 follow-on,
   experimental). A stream abandoned by the workload, failed part-way or ended without a finish

@@ -8,6 +8,7 @@ from rich.console import Console
 from rich.table import Table
 
 from novafabric._paths import default_capsule_dir
+from novafabric.cli._output import emit_json
 
 console = Console()
 
@@ -294,7 +295,7 @@ def aibom_validate_cmd(
 
     errors = AIBOMExporter.validate(payload)
     if as_json:
-        console.print_json(_json.dumps({"valid": not errors, "errors": errors}))
+        emit_json(_json.dumps({"valid": not errors, "errors": errors}))
     elif errors:
         console.print(f"[red]✗[/red] {len(errors)} validation error(s):")
         for err in errors:

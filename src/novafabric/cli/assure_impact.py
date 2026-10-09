@@ -26,6 +26,7 @@ from novafabric.assure.impact import (
     RunOutcome,
     build_report,
 )
+from novafabric.cli._output import emit_json
 
 app = typer.Typer(
     name="assure-impact",
@@ -92,7 +93,7 @@ def report(
         out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         console.print(f"[green]Report[/green] -> {out}")
     else:
-        console.print_json(json.dumps(payload))
+        emit_json(json.dumps(payload))
 
     if built.inconclusive:
         console.print(

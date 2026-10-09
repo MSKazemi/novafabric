@@ -29,6 +29,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from novafabric.cli._output import emit_json
+
 console = Console()
 
 _STATUS_STYLE = {
@@ -88,7 +90,7 @@ def contamination_check_cmd(
     results = check_contamination(capsule, reg)
 
     if as_json:
-        console.print_json(_json.dumps(as_dicts(results)))
+        emit_json(_json.dumps(as_dicts(results)))
     elif not results:
         console.print("[dim]No dataset_provenance facets in this capsule.[/dim]")
     else:

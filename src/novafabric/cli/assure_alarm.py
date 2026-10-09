@@ -25,6 +25,7 @@ from rich.console import Console
 
 from novafabric.assure._honesty import HONESTY_LINE
 from novafabric.assure.alarm import AlarmError, AlarmVerdict, evaluate
+from novafabric.cli._output import emit_json
 
 app = typer.Typer(
     name="assure-alarm",
@@ -97,7 +98,7 @@ def check(
         err_console.print(f"[red]Cannot evaluate the alarm:[/red] {exc}")
         raise typer.Exit(2) from exc
 
-    console.print_json(json.dumps(alarm.model_dump(mode="json")))
+    emit_json(json.dumps(alarm.model_dump(mode="json")))
     if alarm.verdict is AlarmVerdict.inconclusive:
         console.print(
             "[yellow]inconclusive[/yellow] — not enough evidence yet; "

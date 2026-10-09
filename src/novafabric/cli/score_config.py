@@ -39,6 +39,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from novafabric.cli._output import emit_json
 from novafabric.eval.score_config import (
     ScoreCategory,
     ScoreConfig,
@@ -170,7 +171,7 @@ def config_list(
     configs = list_configs(all_versions=all_versions)
     if as_json:
         payload = [json.loads(c.model_dump_json(exclude_none=True)) for c in configs]
-        console.print_json(json.dumps(payload))
+        emit_json(json.dumps(payload))
         return
     table = Table(title=f"score configs ({len(configs)})")
     for col in ("name", "version", "value_type", "shape", "content_digest", "description"):
@@ -201,7 +202,7 @@ def config_get(
 ) -> None:
     """Resolve one config and print it as canonical JSON."""
     config = _resolve_or_exit(ref)
-    console.print_json(config.model_dump_json(exclude_none=True))
+    emit_json(config.model_dump_json(exclude_none=True))
 
 
 @config_app.command("show")

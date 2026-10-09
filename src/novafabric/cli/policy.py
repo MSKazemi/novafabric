@@ -9,6 +9,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from novafabric.cli._output import emit_json
 from novafabric.policy._opa_engine import _get_bundle_default
 
 console = Console()
@@ -93,7 +94,7 @@ def policy_explain(
         console.print(f"[red]Decision ID not found: {decision_id}[/red]")
         raise typer.Exit(code=1)
     for e in match:
-        console.print_json(e.model_dump_json(indent=2))
+        emit_json(e.model_dump_json(indent=2))
 
 
 @app.command("sign")

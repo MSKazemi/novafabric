@@ -10,6 +10,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from novafabric.cli._output import emit_json
+
 console = Console()
 
 media_app = typer.Typer(no_args_is_help=True)
@@ -54,7 +56,7 @@ def list_cmd(
     rows = list(iter_media_parts(capsule_dir))
 
     if as_json:
-        console.print_json(
+        emit_json(
             json.dumps(
                 [{"model_call_id": call_id, **media} for call_id, media in rows]
             )
