@@ -160,7 +160,8 @@ def test_json_flag_with_another_explicit_format_is_a_usage_error(
     b = _capsule(tmp_path, "b")
     result = _invoke(str(a), str(b), "--json", "--output-format", other)
     assert result.exit_code == 2
-    assert "--json" in result.output and other in result.output
+    out = strip_ansi(result.output)  # CI forces colour into the usage-error panel
+    assert "--json" in out and other in out
 
 
 def test_json_flag_with_explicit_json_format_is_fine(tmp_path: Path) -> None:
@@ -184,7 +185,7 @@ def test_github_annotation_is_refused_where_it_has_no_meaning(
     ]
     result = _invoke(*args, "--output-format", "github-annotation")
     assert result.exit_code == 2
-    assert "github-annotation" in result.output
+    assert "github-annotation" in strip_ansi(result.output)
 
 
 def test_help_describes_json_as_the_output_format_alias() -> None:
