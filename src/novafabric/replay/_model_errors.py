@@ -193,15 +193,17 @@ def rebuild_sdk_error(record: dict[str, Any]) -> BaseException:
         )
 
     http = _http_module(detail.get("response_type"), exc_class)
+    # The constructor signatures are the SDK's (see STATUS/CONNECTION/TIMEOUT).
+    factory: Any = exc_class
     try:
         request = http.Request(
             str(detail.get("request_method") or "POST"),
             str(detail.get("request_url") or record.get("endpoint") or _PLACEHOLDER_URL),
         )
         if kind == TIMEOUT:
-            built = exc_class(request=request)
+            built = factory(request=request)
         elif kind == CONNECTION:
-            built = exc_class(message=message, request=request)
+            built = factory(message=message, request=request)
         else:
             headers = detail.get("response_headers")
             response = http.Response(
@@ -210,7 +212,7 @@ def rebuild_sdk_error(record: dict[str, Any]) -> BaseException:
                 content=_content(detail),
                 request=request,
             )
-            built = exc_class(message, response=response, body=detail.get("body"))
+            built = factory(message, response=response, body=detail.get("body"))
     except Exception as exc:  # noqa: BLE001 -- a different SDK/HTTP layout
         raise UnreconstructableError(
             f"{sdk}.{class_name} could not be constructed: {type(exc).__name__}: {exc}"
@@ -224,4 +226,5 @@ def rebuild_sdk_error(record: dict[str, Any]) -> BaseException:
             f"the rebuilt {class_name} reports status {getattr(built, 'status_code', None)}, "
             f"not the recorded {status}"
         )
+    assert isinstance(built, BaseException)
     return built

@@ -86,7 +86,29 @@ choice. Each surface has its own queue, in recorded order; a sync, async or
 `stream=True` call to a surface takes the next record from that queue, and a
 streamed call gets the record back as the chunk or event stream the SDK would
 have produced (ADR-0304). (Every SDK call is also recorded once more by the
-`httpx` wire hook, with no choices; that duplicate is never served.) A recorded tool call is
+`httpx` wire hook, with no choices; that duplicate is never served.)
+
+**Recorded model errors are served too** (issue #16). When the captured call
+raised — a rate limit, a 4xx, a 5xx after the SDK's own retries, a timeout or a
+connection error — the SDK hook wrote one logical error record carrying
+`extensions["io.novafabric.sdk_error"]`: the exception class, HTTP status,
+message, parsed error body, request id, and the retry and rate-limit response
+headers. That record holds its position in the surface's queue, and the replayed
+call there **raises the same SDK exception class** (`openai.RateLimitError` with
+`status_code == 429`, `body`, `request_id`, and a synthetic `response` carrying
+the recorded status, headers and body), sync or async, streamed or not. Classes
+come from an explicit allow-list per SDK (`replay/_model_errors.py:ALLOWED_SDK_ERRORS`:
+the `APIStatusError` family, `APIConnectionError`, `APITimeoutError`), looked up
+on the SDK package itself — never imported by a name read from the capsule. The
+wire hook's record of each HTTP attempt is a transport record (ADR-0305) and is
+never served, so a call the SDK retried twice and then completed is served as
+the success it was; in a capsule captured before ADR-0305, the legacy fallback
+identifies those attempts instead. A recorded error that cannot be rebuilt
+faithfully — a class outside the allow-list, a missing status, a body too large
+to have been recorded, or a capsule captured before the error detail was
+recorded — is the divergence `recorded_error_unreconstructable`.
+
+A recorded tool call is
 servable when it is an MCP `tools/call` with a tool name; a call captured both by
 the in-process MCP hook and by `nova mcp-proxy` counts once.
 
@@ -107,6 +129,7 @@ that diverged, instead of fabricating a reply or reaching the network:
 | `order_mismatch` | a call reaches a different API surface than the recording did at that position (`surface`, `expected_surface`) |
 | `unsupported_surface` | `chat.completions.parse`, `responses.parse`, legacy completions, Anthropic `messages.stream()` and `beta.messages`, `with_raw_response` / `with_streaming_response` |
 | `malformed_recorded_response` | a recorded tool-call entry has no `name` |
+| `recorded_error_unreconstructable` | the recorded call failed, and replay cannot raise that failure faithfully (`error_type`, `reason` reported); under `--permissive` a `ReplayRecordedModelError` stand-in with the recorded type and message is raised instead |
 | `tool_call_unmatched` | an MCP `call_tool` with no unconsumed recorded result — **the live tool is not run** |
 | `model_calls_unconsumed` / `tool_calls_unconsumed` | (after the run) recorded responses that were never requested |
 | `dispatcher_install_failed`, `multiple_interpreters` | the dispatcher could not be installed (the process is stopped, exit 86, before the workload runs), or several Python processes each consumed the queue |
@@ -130,7 +153,7 @@ installs no tool dispatcher, because a counterfactual is expected to diverge.
 | `tool_calls_live` / `tool_calls_unmatched` | MCP calls run live (`--permissive` only) / MCP calls with no recorded result |
 | `queues_fully_consumed` | every servable recording was requested |
 | `divergence_reason` | the first divergence, plus a count of the others |
-| `replay_contract` | policy, intercepted surfaces, `dispatcher_installed`, `model_calls_live`, unconsumed counts, `tool_calls_not_interceptable`, the network observation below, and the divergence list |
+| `replay_contract` | policy, intercepted surfaces, `dispatcher_installed`, `model_calls_live`, `model_errors_replayed` (recorded SDK errors raised again; they are also counted in `model_calls_mocked`), unconsumed counts, `tool_calls_not_interceptable`, the network observation below, and the divergence list |
 | `replay_contract.network_connections_live` / `network_destinations` | IPv4/IPv6 connections the replayed Python process opened (`socket.connect`), with the distinct `host:port` destinations (first 20). **Observed, never blocked** (ADR-0304); `network_observed: false` means nothing was observed, not that nothing happened |
 
 `nova replay` prints the served counts, the live network connections and the
@@ -161,6 +184,7 @@ and is counted in `replay_contract.model_calls_live`.
 | Anthropic Messages `create` | SDK hook: full response incl. `tool_use`; finish reason mapped to the schema enum, raw value kept; a streamed response is folded into one record | **Served** — raw `stop_reason` served back | served: the record is replayed as raw stream events | served | works today (tested against a stand-in `anthropic` package; the real SDK is not a dependency) | `test_tool_choice_round_trip_e2e.py::test_anthropic_tool_use_round_trips_through_capture_and_mocked_replay`; `test_model_surface_coverage_e2e.py::test_s14_async_anthropic_messages_round_trip`; `test_model_surface_coverage_e2e.py::test_s15_streamed_anthropic_messages_round_trip` |
 | Anthropic `messages.stream()` helper | not recorded with a response (it bypasses `create`) | Refused | refused | refused | unsupported | `test_mocked_replay_contract.py::test_s17_unsupported_model_surfaces_are_refused` |
 | Anthropic `beta.messages` | wire hook: request only | Refused | refused | refused | unsupported | code: `UNSUPPORTED_MODEL_SURFACES` (real SDK not installed in CI) |
+| Recorded model errors on any served surface (rate limit, 4xx, 5xx after the SDK's retries, timeout, connection error) | SDK hook: one logical error record with the exception class, status, parsed body, request id and retry/rate-limit headers (`io.novafabric.sdk_error`); each HTTP attempt is a transport record | **Served** — the same SDK exception class is raised at the recorded position (allow-listed classes only); transport attempts are never served; an error that cannot be rebuilt faithfully is refused | served (raised at `create`, as the SDK does) | served | works today (OpenAI: real SDK; Anthropic: stand-in package); capsules captured before the error detail was recorded are refused | `test_recorded_model_errors_replay.py::test_rate_limit_is_replayed_as_rate_limit_error_with_status_429`; `test_recorded_model_errors_replay.py::test_a_call_retried_twice_then_successful_is_served_as_the_success`; `test_recorded_model_errors_replay.py::test_recorded_errors_replay_on_every_openai_surface`; `test_recorded_model_errors_replay.py::test_recorded_anthropic_errors_are_replayed`; `test_recorded_model_errors_replay.py::test_an_unknown_error_class_fails_closed`; `test_recorded_model_errors_replay.py::test_legacy_capsule_replays_until_its_unrebuildable_error_then_fails_closed` |
 | Non-Python clients via `nova api-proxy` | streaming: merged response, canonical `tool_calls`; non-streaming: request + id/model only | Not intercepted — replay patches Python SDKs | — | — | capture only | `tests/test_api_proxy.py` |
 | Other providers' SDKs, raw HTTP to a model API | wire hook: request only | Not intercepted — runs **live**; its connections are reported (`network_connections_live`) | — | — | not controlled | `test_mocked_replay_contract.py::test_s13_live_network_from_an_uncontrolled_tool_is_reported_not_blocked` |
 | MCP `ClientSession.call_tool` (in-process hook or `nova mcp-proxy`) | full result (proxy: verbatim JSON-RPC envelope) | **Served** — one-to-one; an unmatched call is refused | — | (async by nature) | works today | `test_mocked_replay_contract.py::test_s2_model_tool_model`; `test_mocked_replay_contract.py::test_s4_repeated_identical_calls_consume_distinct_records`; `test_mocked_replay_contract.py::test_s8_missing_tool_record_fails_closed_even_if_the_workload_swallows_it` |
@@ -186,9 +210,16 @@ These limits are stated so you can rely on the parts that do work:
   Replaying such a workload fails — the queue runs out (`model_queue_exhausted`)
   or is left unconsumed — but a call before that point can be served a record
   that belonged to a later call. Re-capture to replay it faithfully.
-- **Recorded model errors are not replayed.** A call that raised during capture
-  has an error record, which is never served; the replayed call at that position
-  receives the next recorded response, and the replay then diverges.
+- **Recorded model errors need the error detail capture now records.** A
+  capsule captured before it (no `io.novafabric.sdk_error`) is refused at the
+  failed call (`recorded_error_unreconstructable`); re-capture. Only exceptions
+  raised by `create` are replayed: an exception raised while iterating a stream
+  that had already started is not, an exception class outside the allow-list
+  (e.g. `OAuthError`, a `TypeError` from bad arguments) is refused, and a Responses
+  API response returned with `status: "failed"` (not raised) is refused. The
+  rebuilt `exc.response` is synthetic: the recorded status, retry/rate-limit
+  headers and body, not every header the provider sent. Anthropic errors are
+  tested against a stand-in package.
 - **A streamed response is recorded when the stream ends.** One the workload
   abandons is recorded with what it delivered and flagged
   `extensions["io.novafabric.stream_complete"]: false`; two streams consumed

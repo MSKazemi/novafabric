@@ -489,6 +489,10 @@
         "io.novafabric.logical_call_id": {
           "type": "string",
           "description": "ADR-0305 (additive, optional). The model_call_id of the logical call this record belongs to: its own id on a logical record, the covering SDK record's id on a transport record."
+        },
+        "io.novafabric.sdk_error": {
+          "type": "object",
+          "description": "Issue #16 (additive, optional). On an SDK hook's error record: what mocked replay needs to raise the same exception again -- sdk, class (exception class name), module (informational; never imported), message, status_code, body (the SDK's parsed error body, or body_omitted with a reason), request_id, request_method, request_url (query stripped), response_headers (retry and rate-limit headers only), response_text, response_type (httpx or httpx2)."
         }
       }
     }

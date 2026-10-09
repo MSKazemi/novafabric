@@ -1,4 +1,4 @@
-"""The mocked-replay support matrix, as data (ADR-0300, ADR-0304).
+"""The mocked-replay support matrix, as data (ADR-0300, ADR-0304, issue #16).
 
 ``docs/architecture/replay-modes.md`` carries this table between generated-block
 markers; ``scripts/gen_replay_support_matrix.py`` renders it and
@@ -42,6 +42,7 @@ _E2E = "tests/replay/test_model_surface_coverage_e2e.py"
 _CONTRACT = "tests/replay/test_mocked_replay_contract.py"
 _ROUND_TRIP = "tests/replay/test_tool_choice_round_trip_e2e.py"
 _CAPTURE = "tests/capture/test_sdk_stream_capture.py"
+_ERRORS = "tests/replay/test_recorded_model_errors_replay.py"
 
 ROWS: tuple[SurfaceRow, ...] = (
     SurfaceRow(
@@ -199,6 +200,37 @@ ROWS: tuple[SurfaceRow, ...] = (
             ("anthropic.resources.beta.messages", "AsyncMessages", "create"),
             ("anthropic.resources.beta.messages", "Messages", "stream"),
             ("anthropic.resources.beta.messages", "AsyncMessages", "stream"),
+        ),
+    ),
+    SurfaceRow(
+        surface=(
+            "Recorded model errors on any served surface (rate limit, 4xx, 5xx "
+            "after the SDK's retries, timeout, connection error)"
+        ),
+        capture=(
+            "SDK hook: one logical error record with the exception class, status, "
+            "parsed body, request id and retry/rate-limit headers "
+            "(`io.novafabric.sdk_error`); each HTTP attempt is a transport record"
+        ),
+        replay="served",
+        replay_note=(
+            "the same SDK exception class is raised at the recorded position "
+            "(allow-listed classes only); transport attempts are never served; an "
+            "error that cannot be rebuilt faithfully is refused"
+        ),
+        streaming="served (raised at `create`, as the SDK does)",
+        asynchronous="served",
+        status=(
+            "works today (OpenAI: real SDK; Anthropic: stand-in package); capsules "
+            "captured before the error detail was recorded are refused"
+        ),
+        evidence=(
+            f"{_ERRORS}::test_rate_limit_is_replayed_as_rate_limit_error_with_status_429",
+            f"{_ERRORS}::test_a_call_retried_twice_then_successful_is_served_as_the_success",
+            f"{_ERRORS}::test_recorded_errors_replay_on_every_openai_surface",
+            f"{_ERRORS}::test_recorded_anthropic_errors_are_replayed",
+            f"{_ERRORS}::test_an_unknown_error_class_fails_closed",
+            f"{_ERRORS}::test_legacy_capsule_replays_until_its_unrebuildable_error_then_fails_closed",
         ),
     ),
     SurfaceRow(

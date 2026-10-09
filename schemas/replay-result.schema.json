@@ -38,7 +38,7 @@
     },
     "mode": {
       "type": "string",
-      "enum": ["mocked", "forensic", "exact", "semantic"],
+      "enum": ["mocked", "forensic", "exact", "semantic", "intervention"],
       "description": "Replay mode used."
     },
     "status": {
@@ -136,6 +136,7 @@
         "model_calls_recorded": {"type": "integer", "minimum": 0},
         "model_calls_live": {"type": "integer", "minimum": 0},
         "model_calls_unconsumed": {"type": "integer", "minimum": 0},
+        "model_errors_replayed": {"type": "integer", "minimum": 0, "description": "Issue #16: recorded SDK errors mocked replay raised again as the SDK's own exception class (also counted in model_calls_mocked)."},
         "tool_calls_recorded": {"type": "integer", "minimum": 0},
         "tool_calls_not_interceptable": {"type": "integer", "minimum": 0},
         "tool_calls_unconsumed": {"type": "integer", "minimum": 0},

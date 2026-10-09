@@ -7,7 +7,8 @@ engine writes (see :func:`install_from_env`):
   surfaces (``SERVED_MODEL_SURFACES``: OpenAI Chat Completions and Responses
   API, Anthropic Messages -- sync and async, with and without ``stream=True``)
   and guards the unsupported ones (``UNSUPPORTED_MODEL_SURFACES``) so they
-  cannot silently go live;
+  cannot silently go live. A recorded call that FAILED is served by raising the
+  same SDK exception class at its position (``_model_errors``, issue #16);
 * :class:`MockToolDispatcher` serves recorded MCP ``tools/call`` results through
   ``mcp.ClientSession.call_tool`` -- the one tool surface NovaFabric intercepts.
 
@@ -894,7 +895,7 @@ class MockModelDispatcher:
         try:
             exc: BaseException = rebuild_sdk_error(record)
         except UnreconstructableError as why:
-            _report_divergence(self._events, self._policy, ReplayRecordedErrorUnreconstructableError(
+            refusal = ReplayRecordedErrorUnreconstructableError(
                 f"recorded {surface} call #{idx + 1} failed with "
                 f"{error_type or 'an error'}, which mocked replay cannot raise "
                 f"faithfully: {why}; "
@@ -906,7 +907,8 @@ class MockModelDispatcher:
                 error_type=error_type,
                 reason=str(why),
                 surface=surface,
-            ))
+            )
+            _report_divergence(self._events, self._policy, refusal)
             error = record.get("error")
             message = str(error.get("message", "")) if isinstance(error, dict) else ""
             exc = ReplayRecordedModelError(error_type, message)

@@ -151,8 +151,27 @@ longer forwards the submitting shell's environment (ADR-0270).
   `replay_contract` gains `network_observed`, `network_connections_live`,
   `network_destinations` (first 20) and `network_connections_capped` (additive, optional).
   Connections are **observed, never blocked**; `nova replay` prints them.
+- **Mocked replay replays recorded model errors** (issue #16, experimental, works today for
+  Python workloads). When the captured SDK call raised — a rate limit, a 4xx, a 5xx after the
+  SDK's own retries, a timeout or a connection error — the replayed call at that position now
+  raises the same SDK exception class (`openai.RateLimitError` with `status_code` 429, the
+  recorded `body`, `request_id` and retry headers), sync or async, streamed or not, on every
+  surface ADR-0304 serves. Classes come from an explicit per-SDK allow-list, looked up on the
+  SDK package, never imported by a name from the capsule. The HTTP attempts underneath are
+  transport records (ADR-0305) and are never served, so a call retried and then completed is
+  served as the success it was. Capture records the detail additively under
+  `extensions["io.novafabric.sdk_error"]` on SDK error records; `replay_contract` gains
+  `model_errors_replayed`. Tested against the real `openai` SDK and a stand-in `anthropic`
+  package.
 
 ### Changed
+
+- **Behaviour change — a mocked replay of a capsule with a failed model call fails closed at
+  that call** when the error cannot be raised faithfully: a class outside the allow-list, no
+  recorded status or body, or a capsule captured before the error detail was recorded. The
+  new divergence `recorded_error_unreconstructable` names the reason (`--permissive` raises a
+  `ReplayRecordedModelError` stand-in instead). Before, the error record was skipped and the
+  failed call was handed the next call's recorded response.
 
 - **Behaviour change — model-call counts halve for SDK workloads (ADR-0305).** An OpenAI or
   Anthropic SDK call was recorded twice in `model-calls.jsonl` (the SDK hook, plus the `httpx`
