@@ -31,7 +31,7 @@ from typing import Any
 
 import yaml
 
-from novafabric.capture.env import capture_environment
+from novafabric.capture.env import capture_environment, host_arch
 
 # Module-level so tests can patch via ``novafabric.adapters._capsule.<name>``.
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
@@ -158,7 +158,7 @@ class AdapterCapture:
             "working_directory": str(Path.cwd()).replace(str(Path.home()), "~"),
             "host": {
                 "os": platform.system().lower(),
-                "arch": "x86_64",
+                "arch": host_arch(),
                 "python": platform.python_version(),
                 "cpu_count": 1,
                 "memory_bytes": 0,

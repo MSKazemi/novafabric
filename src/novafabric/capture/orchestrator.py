@@ -19,7 +19,7 @@ from novafabric.capture.deployment_env import (
     resolve_deployment_environment,
     unconventional_warning,
 )
-from novafabric.capture.env import capture_environment
+from novafabric.capture.env import capture_environment, host_arch
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
 from novafabric.capture.replay import minimal_replay_policy
 from novafabric.capture.secrets import (
@@ -72,13 +72,7 @@ def _event_stream_refs(capsule_dir: Path) -> dict[str, str]:
 
 
 def _build_host_info() -> dict[str, Any]:
-    machine = platform.machine().lower()
-    arch_map = {
-        "x86_64": "x86_64", "amd64": "x86_64",
-        "arm64": "arm64", "aarch64": "arm64",
-        "riscv64": "riscv64", "s390x": "s390x", "ppc64le": "ppc64le",
-    }
-    arch = arch_map.get(machine, "x86_64")
+    arch = host_arch()
     os_name = platform.system().lower()
     if os_name not in ("linux", "darwin", "windows"):
         os_name = "linux"

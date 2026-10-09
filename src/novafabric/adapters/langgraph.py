@@ -46,7 +46,7 @@ from novafabric.adapters._streaming import (
 # These are imported at module level so tests can patch them via
 # ``novafabric.adapters.langgraph.<name>``.
 from novafabric.capture import record as _record
-from novafabric.capture.env import capture_environment
+from novafabric.capture.env import capture_environment, host_arch
 from novafabric.capture.record import _payloads_enabled
 from novafabric.capture.record_roles import count_logical_model_calls_in_file
 from novafabric.capture.secrets import SecretScannerV0
@@ -156,7 +156,7 @@ def _run_capture(
         "working_directory": str(Path.cwd()).replace(str(Path.home()), "~"),
         "host": {
             "os": platform.system().lower(),
-            "arch": "x86_64",
+            "arch": host_arch(),
             "python": platform.python_version(),
             "cpu_count": 1,
             "memory_bytes": 0,

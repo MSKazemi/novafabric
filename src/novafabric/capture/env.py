@@ -94,14 +94,23 @@ def _memory_bytes() -> int:
     return 0
 
 
-def _arch() -> str:
+def host_arch() -> str:
+    """The host CPU architecture as every capsule writer records it.
+
+    The single normalisation for ``capsule.yaml:host.arch`` and
+    ``env.lock:host.arch`` (``aarch64`` -> ``arm64``, ``amd64`` -> ``x86_64``).
+    Capsule writers call this; none may hardcode an architecture —
+    ``tests/capture/test_host_arch_is_never_hardcoded.py`` fails if one does.
+    """
     machine = platform.machine().lower()
     arch_map = {
         "x86_64": "x86_64", "amd64": "x86_64",
         "arm64": "arm64", "aarch64": "arm64",
         "riscv64": "riscv64", "s390x": "s390x", "ppc64le": "ppc64le",
     }
-    return arch_map.get(machine, "x86_64")
+    # An unmapped machine string is recorded as reported, never guessed: a
+    # default of "x86_64" would be false evidence on any other host.
+    return arch_map.get(machine, machine or "unknown")
 
 
 def _os_name() -> str:
@@ -200,7 +209,7 @@ def capture_environment(created_at: str, run_id: str) -> dict[str, Any]:
         "mode": mode,
         "host": {
             "os": _os_name(),
-            "arch": _arch(),
+            "arch": host_arch(),
             "hostname": f"sha256:{hostname_hash}",
             "cpu_count": cpu_count,
             "memory_bytes": _memory_bytes(),

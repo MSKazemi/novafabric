@@ -88,7 +88,7 @@ def _run_with_capture(
     from novafabric.capture._ulid import new_span_id, new_ulid
     from novafabric.capture.capsule import CapsuleWriter
     from novafabric.capture.deployment_env import resolve_deployment_environment
-    from novafabric.capture.env import capture_environment
+    from novafabric.capture.env import capture_environment, host_arch
     from novafabric.capture.hooks import install_all, uninstall_all
     from novafabric.capture.replay import minimal_replay_policy
     from novafabric.capture.secrets import SecretScannerV0
@@ -183,7 +183,7 @@ def _run_with_capture(
             "working_directory": str(Path.cwd()).replace(str(Path.home()), "~"),
             "host": {
                 "os": platform.system().lower(),
-                "arch": "x86_64",
+                "arch": host_arch(),
                 "python": platform.python_version(),
                 "cpu_count": 1,
                 "memory_bytes": 0,
