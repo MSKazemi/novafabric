@@ -317,6 +317,17 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **`nova export-evidence --timestamp` produced a bundle that failed its own verification
+  recipe.** The timestamp step appended the RFC 3161 section to `README.md` after
+  `manifest.json` had recorded README's SHA-256 and size, so recipe step 2 failed on
+  `README.md`. It also added `manifest.dsse.tsr` without listing it in `artifacts[]`, so
+  `nova verify <bundle>` reported it as an unlisted file. The export itself exited `0`. The
+  step now re-records README's digest and lists the token in `artifacts[]` (it stays pinned by
+  `manifest_dsse_tsr_sha256` too) before recomputing `manifest_hash`. The token still covers
+  the unchanged `attestations/run.intoto.json`, and no signature changes. A bundle timestamped
+  before this fix still fails step 2 on `README.md`; its capsule, attestations and token are
+  intact. `tests/test_cli_export_evidence.py` runs the full recipe and `nova verify` on a
+  bundle exported with `--timestamp` against a mocked TSA.
 - **Docs: `.novafabric/runs/` example paths where the capsule came from `nova capture`.** The
   security knowledge graph quickstart (`docs/security-knowledge-graph.md`) builds on a
   `nova capture` capsule, but every `nova kg` example passed `.novafabric/runs/01HXAY7M`, the

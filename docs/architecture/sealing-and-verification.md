@@ -216,8 +216,8 @@ against the ZIP.
 | `attestations/` | Ed25519-signed in-toto Statement v1 DSSE envelopes: `run` (subject: the capsule Merkle root), `redaction` (subject: the redaction proof's chain hash), `lineage`, and `energy` when the capsule has `energy-receipts.jsonl` (experimental, ADR-0093) |
 | `signatures/` | Each envelope's raw signature (`.sig`) and the signer's public key (`.cert`, PEM) |
 | `manifest.json` | SHA-256 and size of every other file, the attestation and signature index, `subject.capsule_hash`, the verification recipe and `manifest_hash`; with `--with-custody`, the chain-of-custody blocks (experimental, ADR-0095) |
-| `README.md` | The verification recipe in plain text |
-| `manifest.dsse.tsr` | Only with `--timestamp`: an RFC 3161 token over `attestations/run.intoto.json` |
+| `README.md` | The verification recipe in plain text; with `--timestamp`, also the OpenSSL steps for the token. Its digest in `manifest.json` is recorded after that section is added |
+| `manifest.dsse.tsr` | Only with `--timestamp`: an RFC 3161 token over `attestations/run.intoto.json`. Listed in `artifacts[]` like every other file, and also pinned by `manifest_dsse_tsr_sha256` |
 
 `--dsse` writes `<bundle>.dsse.json` **next to** the ZIP, not inside it.
 

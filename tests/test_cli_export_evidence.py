@@ -447,6 +447,128 @@ def test_timestamp_readme_updated(tmp_path: Path) -> None:
     assert "openssl ts -verify" in readme
 
 
+def _run_bundle_recipe(bundle: Path, public_pem: bytes) -> list[str]:
+    """Run the bundle's OWN verifier recipe (README / manifest steps 1-4).
+
+    Returns every failure as a string; empty means the recipe passes.
+    """
+    failures: list[str] = []
+    public_key = serialization.load_pem_public_key(public_pem)
+    with zipfile.ZipFile(bundle) as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        # Step 1: manifest_hash over the canonical manifest without it.
+        work = {k: v for k, v in manifest.items() if k != "manifest_hash"}
+        canonical = json.dumps(work, sort_keys=True, separators=(",", ":")).encode()
+        if "sha256:" + hashlib.sha256(canonical).hexdigest() != manifest["manifest_hash"]:
+            failures.append("step 1: manifest_hash")
+        # Step 2: every artifact's recorded digest and size.
+        for art in manifest["artifacts"]:
+            data = zf.read(art["path"])
+            if "sha256:" + hashlib.sha256(data).hexdigest() != art["sha256"]:
+                failures.append(f"step 2: sha256 {art['path']}")
+            if len(data) != art["size_bytes"]:
+                failures.append(f"step 2: size_bytes {art['path']}")
+        # Step 3: every DSSE envelope verifies over its PAE.
+        for att in manifest["attestations"]:
+            envelope = json.loads(zf.read(att["path"]))
+            payload = base64.b64decode(envelope["payload"])
+            sig = base64.b64decode(envelope["signatures"][0]["sig"])
+            try:
+                public_key.verify(sig, dsse_pae(envelope["payloadType"], payload))
+            except Exception:  # noqa: BLE001 — any verify failure is a recipe failure
+                failures.append(f"step 3: signature {att['path']}")
+        # Step 4: the run statement's subject is the capsule hash.
+        run_att = next(
+            a for a in manifest["attestations"] if a["predicate_type"].endswith("/runcapsule/v0")
+        )
+        if manifest["subject"]["capsule_hash"] not in run_att["subject_hashes"]:
+            failures.append("step 4: subject")
+    return failures
+
+
+def test_timestamped_bundle_passes_its_own_verification_recipe(tmp_path: Path) -> None:
+    """--timestamp must not break the bundle's own verification (README steps 1-4).
+
+    Regression: the timestamp step appended to README.md AFTER manifest.json had
+    recorded README.md's SHA-256, so step 2 failed on README.md, and
+    manifest.dsse.tsr was absent from artifacts[] so `nova verify` reported it
+    as an unlisted file.
+    """
+    capsule_dir = _make_capsule(tmp_path)
+    key_path = _make_keypair(tmp_path)
+    pub_pem = (key_path.parent / "ed25519.pub.pem").read_bytes()
+    out = tmp_path / "evidence.zip"
+    tsr_der = _make_mock_tsr_response(0)
+
+    with patch(
+        "novafabric.trust._rfc3161.httpx.post",
+        return_value=_mock_tsa_post(tsr_der),
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "export-evidence", str(capsule_dir),
+                "--key", str(key_path),
+                "--output", str(out),
+                "--timestamp",
+                "--timestamp-url", "https://tsa.example.com/tsr",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+
+    assert _run_bundle_recipe(out, pub_pem) == []
+    manifest = _read_manifest(out)
+    jsonschema.validate(manifest, BUNDLE_SCHEMA)
+    by_path = {a["path"]: a for a in manifest["artifacts"]}
+    # The token is a listed, digested artifact (and still pinned by its own field).
+    assert by_path["manifest.dsse.tsr"]["sha256"] == manifest["manifest_dsse_tsr_sha256"]
+    # The token still timestamps the unchanged run envelope.
+    with zipfile.ZipFile(out) as zf:
+        assert zf.read("manifest.dsse.tsr") == tsr_der
+        assert "## Timestamp (RFC 3161)" in zf.read("README.md").decode()
+
+    verify = runner.invoke(app, ["verify", str(out)])
+    assert verify.exit_code == 0, verify.output
+    assert "PASSED" in verify.output
+
+
+def test_untimestamped_and_failed_timestamp_bundles_pass_the_recipe(tmp_path: Path) -> None:
+    """Control: the recipe passes without --timestamp and on a --timestamp-optional failure."""
+    import httpx as httpx_mod
+
+    capsule_dir = _make_capsule(tmp_path)
+    key_path = _make_keypair(tmp_path)
+    pub_pem = (key_path.parent / "ed25519.pub.pem").read_bytes()
+
+    plain = tmp_path / "plain.zip"
+    result = runner.invoke(
+        app, ["export-evidence", str(capsule_dir), "--key", str(key_path), "--output", str(plain)]
+    )
+    assert result.exit_code == 0, result.output
+    assert _run_bundle_recipe(plain, pub_pem) == []
+
+    failed = tmp_path / "failed.zip"
+    with patch(
+        "novafabric.trust._rfc3161.httpx.post",
+        side_effect=httpx_mod.TransportError("connection refused"),
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "export-evidence", str(capsule_dir),
+                "--key", str(key_path),
+                "--output", str(failed),
+                "--timestamp", "--timestamp-optional",
+                "--timestamp-url", "https://tsa.example.com/tsr",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    assert _run_bundle_recipe(failed, pub_pem) == []
+    for bundle in (plain, failed):
+        verify = runner.invoke(app, ["verify", str(bundle)])
+        assert verify.exit_code == 0, verify.output
+
+
 def test_timestamp_tsa_fatal_failure_exits_nonzero(tmp_path: Path) -> None:
     """Without --timestamp-optional, TSA failure is fatal (exit code 1)."""
     import httpx as httpx_mod

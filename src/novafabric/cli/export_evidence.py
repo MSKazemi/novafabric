@@ -7,7 +7,7 @@ import os
 import shutil
 import zipfile
 from pathlib import Path
-from typing import Optional  # noqa: UP007
+from typing import Any, Optional  # noqa: UP007
 
 import typer
 import yaml
@@ -35,6 +35,10 @@ TIMESTAMP_VERIFIER_SECTION = """\
 
 This bundle includes a trusted timestamp from a Timestamp Authority (TSA).
 The raw DER-encoded TimeStampResponse is stored as `manifest.dsse.tsr`.
+It timestamps the bytes of `attestations/run.intoto.json`, which adding it does
+not change. The token is listed in `manifest.json` `artifacts[]` (and pinned by
+`manifest_dsse_tsr_sha256`), and the digest recorded for this README includes
+this section, so steps 1-2 of the recipe above cover both files.
 
 To verify the timestamp independently (requires OpenSSL 1.1+):
 
@@ -79,6 +83,28 @@ def _sha256_hex(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
+#: RFC 3161 §4 media type of a TimeStampResp (``manifest.dsse.tsr``).
+TSR_MEDIA_TYPE = "application/timestamp-reply"
+
+
+def _record_artifact(
+    manifest: dict[str, Any], path: str, data: bytes, media_type: str
+) -> None:
+    """Set (or add) *path*'s ``artifacts[]`` entry to the digest and size of *data*.
+
+    Keeps ``artifacts[]`` sorted by path, the order the builder writes it in, and
+    preserves any existing ``covered_by``.
+    """
+    artifacts: list[dict[str, Any]] = manifest.setdefault("artifacts", [])
+    entry = next((a for a in artifacts if a.get("path") == path), None)
+    if entry is None:
+        entry = {"path": path, "media_type": media_type}
+        artifacts.append(entry)
+        artifacts.sort(key=lambda a: str(a.get("path", "")))
+    entry["size_bytes"] = len(data)
+    entry["sha256"] = _sha256_hex(data)
+
+
 def _rewrite_zip_entry(bundle_path: Path, entry_name: str, new_data: bytes) -> None:
     """Replace a single file entry in a ZIP archive (atomic via temp file)."""
     tmp_path = bundle_path.with_suffix(".tmp.zip")
@@ -110,8 +136,10 @@ def _add_timestamp_to_bundle(
     2. Call the TSA to get a TSR DER.
     3. Write the TSR as `manifest.dsse.tsr` into the ZIP.
     4. Append OpenSSL verification instructions to README.md inside the ZIP.
-    5. Rewrite manifest.json: add manifest_dsse_tsr_sha256, timestamp_status,
-       timestamp_tsa_url, and recompute manifest_hash.
+    5. Rewrite manifest.json: re-record README.md's digest and size, list
+       manifest.dsse.tsr in artifacts[], add manifest_dsse_tsr_sha256,
+       timestamp_status, timestamp_tsa_url, and recompute manifest_hash — so
+       every file is still covered by the bundle's own verification recipe.
     """
     with zipfile.ZipFile(bundle_path, "r") as zf:
         names = zf.namelist()
@@ -153,8 +181,21 @@ def _add_timestamp_to_bundle(
 
     tsr_sha256 = _sha256_hex(tsr_der)
 
-    # Update manifest.json
+    # Build updated README FIRST: its digest must be the one manifest.json records.
+    new_readme_bytes = readme_bytes
+    if new_readme_bytes and not new_readme_bytes.endswith(b"\n"):
+        new_readme_bytes += b"\n"
+    new_readme_bytes += b"\n" + TIMESTAMP_VERIFIER_SECTION.encode()
+
+    # Update manifest.json. Every file this step changes or adds is re-recorded in
+    # artifacts[] before manifest_hash is recomputed, so the bundle's own recipe
+    # (step 2: recompute every artifact's SHA-256) and `nova verify`'s
+    # no-unlisted-files check both still pass. Neither README.md nor the token is
+    # inside any signed statement — the token timestamps the unchanged
+    # attestations/run.intoto.json — so re-recording them changes no signature.
     manifest = json.loads(manifest_json)
+    _record_artifact(manifest, "README.md", new_readme_bytes, "text/markdown")
+    _record_artifact(manifest, "manifest.dsse.tsr", tsr_der, TSR_MEDIA_TYPE)
     manifest["manifest_dsse_tsr_sha256"] = tsr_sha256
     manifest["timestamp_status"] = "ok"
     manifest["timestamp_tsa_url"] = tsa_url
@@ -162,12 +203,6 @@ def _add_timestamp_to_bundle(
     canonical = json.dumps(work, sort_keys=True, separators=(",", ":"))
     manifest["manifest_hash"] = _sha256_hex(canonical.encode())
     new_manifest_bytes = json.dumps(manifest, indent=2, sort_keys=True).encode()
-
-    # Build updated README
-    new_readme_bytes = readme_bytes
-    if new_readme_bytes and not new_readme_bytes.endswith(b"\n"):
-        new_readme_bytes += b"\n"
-    new_readme_bytes += b"\n" + TIMESTAMP_VERIFIER_SECTION.encode()
 
     # Rewrite bundle atomically
     tmp_path = bundle_path.with_suffix(".tmp.zip")
