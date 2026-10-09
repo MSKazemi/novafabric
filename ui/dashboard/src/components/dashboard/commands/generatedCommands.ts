@@ -12490,7 +12490,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "db",
         "label": "--db",
         "type": "text",
-        "hint": "Merkle log path (SQLite) or postgresql:// DSN (Postgres, requires [seal-postgres]). Defaults to NOVAFABRIC_SEAL_DB_PATH env var, then merkle_db in novaseal.yaml, then ~/.novafabric/novaseal-merkle.db.",
+        "hint": "Merkle log path (SQLite) or postgresql:// DSN (Postgres, requires the seal-postgres extra). Defaults to NOVAFABRIC_SEAL_DB_PATH env var, then merkle_db in novaseal.yaml, then ~/.novafabric/novaseal-merkle.db.",
         "flag": "--db"
       },
       {
@@ -12504,7 +12504,7 @@ export const GENERATED_COMMANDS: readonly CommandDef[] = [
         "key": "full",
         "label": "--full",
         "type": "toggle",
-        "hint": "Full re-hash audit (slow at large N; default: sampled)",
+        "hint": "Also re-hash every stored entry (Postgres; SQLite always does). Default: entry re-hash sampled. The root is recomputed from every leaf either way.",
         "flag": "--full"
       },
       {

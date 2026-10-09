@@ -231,7 +231,8 @@ class TestPostgresMerkleLogIntegration:
 
 
 # ---------------------------------------------------------------------------
-# Integration benchmark: 1M entries, verify_consistency < 200ms p99
+# Integration benchmark: 1M entries — regression guard on the documented O(N)
+# cost of verify_consistency() (the 200 ms target is withdrawn, ADR-0268)
 # ---------------------------------------------------------------------------
 
 
@@ -268,10 +269,13 @@ class TestPostgresMerkleLogBenchmark:
 
         So this now measures the worst of N runs and guards against *regression*
         past a measured ceiling, which is a claim the test can actually support.
-        Restoring a real 200 ms gate means changing the algorithm — verifying
-        inclusion proofs against a signed tree head rather than recomputing the
-        full root. That is a weaker guarantee, so it needs an ADR, not a
-        quietly-relaxed number here.
+        A 200 ms gate is not coming back: ADR-0268 (owner decision 2026-10-09)
+        keeps the full root recompute as the guarantee and withdraws the target.
+        Reaching it would mean verifying sampled inclusion proofs against a
+        signed tree head instead — a weaker guarantee, rejected for now. The
+        expectation pinned here is the documented linear cost, bounded by the
+        ceiling below; neither the ceiling nor the algorithm should be changed
+        to chase the old number.
         """
         from novafabric.trust.novaseal.merkle import PostgresMerkleLog
 

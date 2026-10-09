@@ -141,7 +141,7 @@ treat them as evidence the design meets its gates, not as an SLA:
 |---|---|---|
 | Collector NovaSeal batch signer | **295 K events/sec, p99 4.7 ms** (gate: ≥100 K events/sec, p99 < 200 ms) | `docs/releases/v0.14.3.md` |
 | `NovaSeal.seal()` per-capsule latency | CI gate **median < 50 ms** over 100 rounds (p99 ≥ 200 ms raises a non-blocking alarm); medians of 0.5–9.2 ms on shared CI runners | `docs/releases/v0.12.16.md`, `docs/release-process.md` §1a |
-| `nova seal log verify` (sampled) | **p99 < 200 ms at 1 M log entries** | `docs/releases/v0.38.0.md`, `docs/cli-reference.md` |
+| `nova seal log verify` | **O(N) by design** — recomputes the Merkle root from every leaf hash. Measured ~1.9 s at 1 M entries end to end (CI runner + Postgres 16); ~1.2 µs per leaf of in-process hashing. The former p99 < 200 ms target was never met and is withdrawn (ADR-0268) | `docs/releases/v0.38.0.md` (correction), `docs/cli-reference.md` |
 | KuzuDB lineage tier (BQ-015 gate) | **blast_radius p99 = 45.5 ms @ 10 M edges** (gate < 500 ms, cleared 2026-05-16) | `docs/lineage/migration-guide.md` |
 
 When your `nova-bench run` shows p99 depth-5 lineage traversal > 500 ms on

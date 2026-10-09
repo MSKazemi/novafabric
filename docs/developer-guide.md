@@ -913,7 +913,8 @@ Point `NOVAFABRIC_SEAL_DB_PATH` at a Postgres DSN (or set `merkle_db` in `novase
 ```bash
 export NOVAFABRIC_SEAL_DB_PATH=postgresql://user:pass@host:5432/nova
 nova seal log verify          # samples the entry re-hash; the root pass is
-                              # still O(N) — ~1.9 s at 1M entries
+                              # always O(N) by design (ADR-0268) — ~1.9 s
+                              # at 1M entries, measured on a CI runner
 nova seal log verify --full   # full O(N) re-hash audit
 ```
 

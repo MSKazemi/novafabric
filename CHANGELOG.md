@@ -212,6 +212,18 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Changed
 
+- **Scale-S4's `nova seal log verify` p99 < 200 ms target is withdrawn by decision, and the
+  full-recompute guarantee is documented with its cost (ADR-0268, issue #93).** Verification
+  keeps recomputing the Merkle root from every stored leaf hash on every run; no faster, weaker
+  mode is added. Its cost is O(N): measured ~1.9 s at 1M entries end to end (GitHub-hosted runner
+  + Postgres 16), 1361 ms of it in-process hashing with no database, roughly 1.2 µs per leaf
+  re-measured on a laptop. A sub-200 ms path (sampled leaves checked against a signed tree head)
+  would detect less and make the signer a trust anchor, so it is not planned. `--help`, the CLI
+  reference, the NovaSeal configuration guide, the sizing guide (which still listed the withdrawn
+  figure as a measured result), the dashboard scale table, the developer guide, the v0.38.0
+  correction and ROADMAP Scale-S4 (now closed) say so. The `--full` help no longer implies the
+  default check is sublinear, and the `--db` help no longer loses `[seal-postgres]` to Rich
+  markup. The nightly Postgres benchmark is unchanged: it stays a regression guard on this cost.
 - **`nova diff` compares a model call's recorded request parameters (behaviour change,
   ADR-0303 Amendment 2).** A paired call was compared on its provider, model, messages and
   response only. A run whose `gen_ai.request.temperature` went from `0` to `1`, or which lost

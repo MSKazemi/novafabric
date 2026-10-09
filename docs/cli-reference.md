@@ -5627,11 +5627,13 @@ nova seal log verify [--db URI] [--full] [--verbose]
 
 Options:
 - `--db URI` — Merkle log path (SQLite file) **or** `postgresql://` DSN for Postgres backend.  Default: `$NOVAFABRIC_SEAL_DB_PATH` or `~/.novafabric/novaseal-merkle.db`.  Postgres requires `pip install novafabric[seal-postgres]`.
-- `--full` — full O(N) re-hash audit; re-computes every leaf hash from its stored entry (slow at large N).  Default: sampled check (spot-checks up to 1 000 random leaves + verifies the Merkle root) — p99 < 200 ms at 1 M entries on Postgres.
+- `--full` — also re-hash every stored entry against its leaf hash (Postgres; the SQLite backend always does this).  Default on Postgres: the entry re-hash is spot-checked on up to 1 000 random leaves.
 - `--verbose` / `-v` — show per-leaf details on failure.
 - `--consistency N` — additionally emit + verify an append-only consistency proof from tree size `N` to the current head (experimental, ADR-0041 v0.2). The proof is an aligned perfect-subtree decomposition (O(log n) verifier) valid for the v0.1 duplicate-padding tree shape.
 
 Returns exit code 0 if the log is consistent, 1 if tampered or inconsistent, 2 if a `--consistency` proof fails.
+
+**What a clean result guarantees, and what it costs.** Every run — with or without `--full`, on either backend — recomputes the Merkle root from **every** stored leaf hash and compares it with the recorded tree head, so tampering with any leaf hash is detected. Nothing is trusted that is not re-derived from the stored data. The price is linear cost: the root pass is O(N). *Measured:* ~1.9 s end to end at 1 M entries (GitHub-hosted runner + Postgres 16, 2026-09); the hashing alone, in-process with no database, measured 1361 ms at 1 M (2026-09) and scales at roughly 1.2 µs per leaf (re-measured on a laptop, 2026-10). At millions of entries, schedule verification as an audit job rather than running it interactively. An earlier `p99 < 200 ms at 1M entries` target (Scale-S4) was never met and has been **withdrawn by decision** ([ADR-0268](decisions.md)): reaching it would mean checking only sampled leaves against a signed tree head, a weaker guarantee.
 
 **Examples:**
 
@@ -5639,7 +5641,7 @@ Returns exit code 0 if the log is consistent, 1 if tampered or inconsistent, 2 i
 # SQLite (default)
 nova seal log verify
 
-# Postgres — fast sampled check at 1M+ entries
+# Postgres — samples the entry re-hash; the root is still recomputed from every leaf
 nova seal log verify --db postgresql://user:pass@db.example.com/nova
 
 # Full audit (slower — re-hashes every entry_json)

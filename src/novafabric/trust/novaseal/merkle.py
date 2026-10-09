@@ -33,19 +33,20 @@ Scale-S4 — Postgres backend
     recomputation is never sampled — that full pass *is* the tamper
     detection for the stored leaf_hash column.
 
-    ⚠ **The Scale-S4 acceptance criterion of p99 < 200 ms at 1M entries is
-    NOT met, and is not reachable with this algorithm.**  Recomputing the
-    root over 1M leaves costs ~1M SHA-256 calls in Python: measured at
-    1361 ms in-process with no database involved at all, 6.8x the entire
-    200 ms budget, plus the cost of streaming 1M hashes out of Postgres.
-    The nightly gate measures ~1879 ms end-to-end and has been red
-    continuously since 2026-08-05.
+    **Full recompute is the guarantee; its linear cost is documented, not
+    optimised away (ADR-0268, owner decision 2026-10-09).**  Recomputing
+    the root over 1M leaves costs ~1M SHA-256 calls in Python: measured at
+    1361 ms in-process with no database involved at all, plus the cost of
+    streaming 1M hashes out of Postgres (~1879 ms end-to-end on a CI
+    runner).  The former Scale-S4 criterion of p99 < 200 ms at 1M entries
+    was never met and is withdrawn, not deferred.
 
     Reaching 200 ms would mean not recomputing the full root — verifying
     inclusion proofs for the sampled leaves against a signed tree head
     instead, as Certificate Transparency does.  That is a different and
-    weaker guarantee, not a speed-up, so it needs an ADR rather than a
-    quiet substitution.  Until then the criterion is documented as unmet.
+    weaker guarantee, not a speed-up, and ADR-0268 rejects it for now.  The
+    nightly ``tests/seal/test_postgres_merkle.py`` benchmark is a regression
+    guard on this cost, not a latency target.
 
     For a full re-hash audit (slower, O(N) Python SHA-256 calls), call
     ``verify_consistency(full=True)``.
@@ -629,7 +630,8 @@ class PostgresMerkleLog:
 
     ``verify_consistency()`` samples the entry_json re-hash but always recomputes
     the root from every stored leaf hash, so it is O(N) even on the fast path
-    (~1.9 s at 1M entries).  The Scale-S4 target of p99 < 200 ms is **not met** —
+    (~1.9 s at 1M entries).  That cost is the guarantee (ADR-0268); the former
+    Scale-S4 target of p99 < 200 ms is **withdrawn** —
     see the module docstring.  Pass ``full=True`` to additionally re-hash every
     entry_json.
     """
@@ -825,8 +827,9 @@ class PostgresMerkleLog:
         Fast path (default): spot-checks up to SAMPLE_SIZE random leaves, then
         reads all leaf_hashes (not entry_json) to recompute and verify the root.
         "Fast" is relative to ``full=True`` only — the root pass is O(N) and
-        measures ~1.9 s at 1M entries.  The Scale-S4 target of p99 < 200 ms is
-        **not met**; see the module docstring for the measurement and why.
+        measures ~1.9 s at 1M entries.  That pass is the guarantee and is never
+        sampled (ADR-0268); the former Scale-S4 target of p99 < 200 ms is
+        withdrawn.  See the module docstring for the measurement and why.
 
         Full audit (``full=True``): also re-hashes every entry_json to verify
         each stored leaf_hash.  O(N) Python SHA-256 calls; slow at large N.

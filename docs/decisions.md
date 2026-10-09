@@ -29,7 +29,7 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | **rejected** | Considered and declined; kept as provenance. |
 
 
-**288 decisions recorded** — **271** accepted · **14** proposed · **3** superseded.
+**288 decisions recorded** — **272** accepted · **13** proposed · **3** superseded.
 
 | ADR | Title | Status | Date |
 |---|---|---|---|
@@ -300,7 +300,7 @@ process](governance/rfc-process.md), not an ADR. RFCs are public and live in
 | `ADR-0265` | The multi-cluster scheduler campaign (campaign 2) | accepted | 2026-08-29 |
 | `ADR-0266` | Kuzu lineage storage format: one generic node table | accepted | 2026-09-01 |
 | `ADR-0267` | Automated test tiers: the harness runs the tests, not the developer | accepted | 2026-09-02 |
-| `ADR-0268` | Merkle log verification: the 200 ms target costs a guarantee, not an optimisation | proposed | 2026-09-04 |
+| `ADR-0268` | Merkle log verification: the 200 ms target costs a guarantee, not an optimisation | accepted | 2026-09-04 |
 | `ADR-0269` | A replay that never finished must not attest disagreement | proposed | 2026-09-04 |
 | `ADR-0270` | A runner forwards an allowlist, never the submitting environment | accepted | 2026-09-10 |
 | `ADR-0271` | The server never indexes a run: MetadataStore.register_run has no reachable caller | proposed | 2026-09-10 |

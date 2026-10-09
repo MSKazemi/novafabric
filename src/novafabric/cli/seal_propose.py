@@ -591,14 +591,20 @@ def log_verify_cmd(
         None,
         "--db",
         help=(
-            "Merkle log path (SQLite) or postgresql:// DSN (Postgres, requires [seal-postgres]). "
-            "Defaults to NOVAFABRIC_SEAL_DB_PATH env var, then merkle_db in novaseal.yaml, "
-            "then ~/.novafabric/novaseal-merkle.db."
+            "Merkle log path (SQLite) or postgresql:// DSN (Postgres, requires the "
+            "seal-postgres extra). Defaults to NOVAFABRIC_SEAL_DB_PATH env var, then "
+            "merkle_db in novaseal.yaml, then ~/.novafabric/novaseal-merkle.db."
         ),
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show all leaf details"),
     full: bool = typer.Option(
-        False, "--full", help="Full re-hash audit (slow at large N; default: sampled)"
+        False,
+        "--full",
+        help=(
+            "Also re-hash every stored entry (Postgres; SQLite always does). "
+            "Default: entry re-hash sampled. The root is recomputed from every "
+            "leaf either way."
+        ),
     ),
     consistency: int | None = typer.Option(
         None,
@@ -614,6 +620,12 @@ def log_verify_cmd(
     Supports both SQLite (default) and Postgres backends. With --consistency
     N, additionally proves the current head is an append-only extension of
     the log at size N.
+
+    Verification recomputes the full Merkle root from every stored leaf
+    hash on every run, so a clean result trusts nothing it did not
+    re-derive. The cost scales linearly with the log: measured ~1.9 s at
+    1M entries (CI runner + Postgres 16). Schedule it as an audit at that
+    scale. There is no faster, weaker mode (ADR-0268).
 
     Exit codes:
       0 — log is consistent (or empty)

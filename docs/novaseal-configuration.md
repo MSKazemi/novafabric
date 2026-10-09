@@ -377,10 +377,21 @@ recomputed from every stored leaf hash on both backends, so verification is O(N)
 either way — roughly **1.9 s at 1M entries**, dominated by ~1M SHA-256 calls in
 Python rather than by the database.
 
+**Full recompute is the guarantee, and linear cost is its documented price**
+([ADR-0268](decisions.md), decided 2026-10-09). A clean `nova seal log verify`
+means every stored leaf hash was folded back into the recorded root — no signer
+or cached interior node is trusted. *Measured:* ~1.9 s end to end at 1M entries
+(GitHub-hosted runner + Postgres 16, 2026-09); 1361 ms of that is in-process
+hashing with no database, and the in-process pass scales at roughly 1.2 µs per
+leaf (re-measured 2026-10 on a laptop). Plan on roughly 1.2–2 s per million
+entries plus the time to read the leaf hashes from the backend, and run
+verification at that scale as a scheduled audit, not an interactive check.
+
 ⚠ Earlier releases documented a p99 < 200 ms verification at 1M entries. **That
-figure was never achieved and has been withdrawn** — see the correction in
-[`docs/releases/v0.38.0.md`](releases/v0.38.0.md). Budget for seconds, not
-milliseconds, when scheduling verification at that scale.
+figure was never achieved and is withdrawn by decision**, not deferred — see the
+correction in [`docs/releases/v0.38.0.md`](releases/v0.38.0.md). A faster path
+(checking sampled leaves against a signed tree head) would detect less and add a
+trusted signer, so it is not planned.
 
 ---
 

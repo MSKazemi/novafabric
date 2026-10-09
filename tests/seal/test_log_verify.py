@@ -122,3 +122,40 @@ class TestConsistencyResultFields:
         r2 = ConsistencyResult(leaf_count=0, root_hash="", consistent=True)
         r2.errors.append("err")
         assert r.errors == []
+
+
+class TestLogVerifyHelpStatesTheGuarantee:
+    """ADR-0268: `nova seal log verify --help` must say what a clean result costs.
+
+    The owner decision (2026-10-09) keeps the full root recompute as the guarantee
+    and withdraws the Scale-S4 p99 < 200 ms target. The help is where an operator
+    decides whether to run this interactively, so it must state the full recompute
+    and the linear cost, and must never revive the withdrawn number.
+    """
+
+    @staticmethod
+    def _help() -> str:
+        from typer.testing import CliRunner
+
+        from novafabric.cli.seal_propose import seal_app
+
+        result = CliRunner().invoke(
+            seal_app, ["log", "verify", "--help"], env={"COLUMNS": "200", "NO_COLOR": "1"}
+        )
+        assert result.exit_code == 0, result.output
+        # Rich wraps help inside box-drawing panels; flatten to one line of words.
+        return " ".join(result.output.replace("│", " ").split())
+
+    def test_help_says_the_full_root_is_recomputed(self):
+        text = self._help()
+        assert "recomputes the full Merkle root from every stored leaf hash" in text
+        assert "root is recomputed from every leaf either way" in text
+
+    def test_help_says_the_cost_scales_linearly(self):
+        text = self._help()
+        assert "scales linearly" in text
+        assert "ADR-0268" in text
+
+    def test_help_does_not_revive_the_withdrawn_target(self):
+        text = self._help()
+        assert "200 ms" not in text and "200ms" not in text
