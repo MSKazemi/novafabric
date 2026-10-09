@@ -62,6 +62,15 @@ RESPONSE_STATUS_EXT = "io.novafabric.response_status"
 #: Largest ``RESPONSE_STATUS_EXT`` value (serialized JSON, characters) recorded.
 MAX_RESPONSE_STATUS_CHARS = 16 * 1024
 
+#: Reverse-DNS extension key on a streamed Responses API record: the ``error``
+#: event the stream delivered, verbatim (``type``, ``code``, ``message``,
+#: ``param``, ``sequence_number``). ``openai._streaming`` *yields* this event --
+#: it raises only for a payload with a top-level ``error`` key -- so the workload
+#: saw it and the stream then ended without a terminal event. Mocked replay serves
+#: it back after the delivered events. Over :data:`MAX_RESPONSE_STATUS_CHARS` it
+#: is replaced by ``{"type": "error", "omitted": <reason>}``.
+STREAM_ERROR_EVENT_EXT = "io.novafabric.stream_error_event"
+
 #: Header the SDKs set on ``with_raw_response`` / ``with_streaming_response``
 #: calls: the return value is an HTTP response wrapper, not a parsed response.
 RAW_RESPONSE_HEADER = "X-Stainless-Raw-Response"
@@ -242,11 +251,13 @@ class OpenAIResponsesStreamAccumulator:
 
     The provider sends the full response in its terminal event; that object is
     used verbatim. A stream that ended before it is rebuilt from the text
-    deltas and the completed output items seen so far.
+    deltas and the completed output items seen so far. The first ``error``
+    event the stream delivered is kept as :attr:`error_event`.
     """
 
     def __init__(self) -> None:
         self.final: Any = None
+        self.error_event: Any = None
         self._seed: Any = None
         self._text: list[str] = []
         self._items: list[Any] = []
@@ -255,6 +266,9 @@ class OpenAIResponsesStreamAccumulator:
         kind = _get(event, "type")
         if kind in _RESPONSES_FINAL_EVENTS:
             self.final = _get(event, "response")
+        elif kind == "error":
+            if self.error_event is None:
+                self.error_event = event
         elif kind == "response.created":
             self._seed = _get(event, "response")
         elif kind == "response.output_text.delta":
@@ -317,6 +331,28 @@ def response_status_detail(response: Any) -> dict[str, Any] | None:
         return detail
     except Exception:  # noqa: BLE001 -- capture must never fail the workload
         return None
+
+
+def stream_error_event_detail(event: Any) -> dict[str, Any] | None:
+    """The ``STREAM_ERROR_EVENT_EXT`` value for a Responses ``error`` event.
+
+    The fields the provider sent, verbatim; ``{"type": "error", "omitted": ...}``
+    when that exceeds :data:`MAX_RESPONSE_STATUS_CHARS`. ``None`` when there is no
+    event. Never raises.
+    """
+    if event is None:
+        return None
+    try:
+        detail = _plain(event)
+        if not isinstance(detail, dict):
+            raise TypeError("not an event object")
+        detail = dict(detail)
+        if len(json.dumps(detail)) > MAX_RESPONSE_STATUS_CHARS:
+            return {"type": "error",
+                    "omitted": f"larger than {MAX_RESPONSE_STATUS_CHARS} characters"}
+        return detail
+    except Exception:  # noqa: BLE001 -- capture must never fail the workload
+        return {"type": "error", "omitted": "the event could not be serialized"}
 
 
 # ── stream proxies ───────────────────────────────────────────────────────────

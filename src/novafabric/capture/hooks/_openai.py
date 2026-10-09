@@ -26,6 +26,7 @@ from novafabric.capture.hooks._sdk_streams import (
     OPENAI_CHAT_SURFACE,
     OPENAI_RESPONSES_SURFACE,
     RESPONSE_STATUS_EXT,
+    STREAM_ERROR_EVENT_EXT,
     AsyncRecordingStream,
     OpenAIChatStreamAccumulator,
     OpenAIResponsesStreamAccumulator,
@@ -35,6 +36,7 @@ from novafabric.capture.hooks._sdk_streams import (
     is_raw_response_call,
     is_sync_stream,
     response_status_detail,
+    stream_error_event_detail,
 )
 from novafabric.capture.hooks._tool_call_refs import (
     note_dropped_tool_calls,
@@ -94,6 +96,8 @@ def responses_choice(response: Any) -> tuple[dict[str, Any] | None, int]:
     item's ``call_id`` (what the workload echoes back in
     ``function_call_output``). Other item types (reasoning, hosted tools) are
     not represented. Returns ``(None, 0)`` for a response with no output.
+    ``finish_reason`` is ``None`` for the partial fold of a stream that ended
+    before its terminal event: the provider delivered no status to map.
     """
     output = _get(response, "output")
     if not isinstance(output, (list, tuple)) or not output:
@@ -122,7 +126,10 @@ def responses_choice(response: Any) -> tuple[dict[str, Any] | None, int]:
                 "arguments": parse_tool_arguments(_get(item, "arguments")),
             })
     reason = _get(_get(response, "incomplete_details"), "reason")
-    if calls:
+    finish: str | None
+    if _get(response, "nf_partial_fold"):
+        finish = None
+    elif calls:
         finish = "tool_calls"
     elif reason == "max_output_tokens":
         finish = "length"
@@ -209,9 +216,10 @@ class OpenAIHook:
                                kwargs, exc, endpoint, surface=surface, call_id=call_id)
             raise
         if kwargs.get("stream") is True and is_sync_stream(response):
+            acc = self._accumulator(surface)
             return RecordingStream(
-                response, self._accumulator(surface),
-                self._on_stream_done(surface, started, t0, kwargs, endpoint, call_id),
+                response, acc,
+                self._on_stream_done(surface, started, t0, kwargs, endpoint, call_id, acc),
             )
         self._record_for(surface, started, _now(), int((time.monotonic() - t0) * 1000),
                          kwargs, response, endpoint, call_id=call_id)
@@ -231,9 +239,10 @@ class OpenAIHook:
                                kwargs, exc, endpoint, surface=surface, call_id=call_id)
             raise
         if kwargs.get("stream") is True and is_async_stream(response):
+            acc = self._accumulator(surface)
             return AsyncRecordingStream(
-                response, self._accumulator(surface),
-                self._on_stream_done(surface, started, t0, kwargs, endpoint, call_id),
+                response, acc,
+                self._on_stream_done(surface, started, t0, kwargs, endpoint, call_id, acc),
             )
         self._record_for(surface, started, _now(), int((time.monotonic() - t0) * 1000),
                          kwargs, response, endpoint, call_id=call_id)
@@ -247,7 +256,7 @@ class OpenAIHook:
 
     def _on_stream_done(
         self, surface: str, started: str, t0: float, kwargs: dict[str, Any], endpoint: str,
-        call_id: str | None = None,
+        call_id: str | None = None, accumulator: Any = None,
     ) -> Any:
         def done(
             response: Any, count: int, first_ms: int | None, complete: bool,
@@ -257,6 +266,7 @@ class OpenAIHook:
                 surface, started, _now(), int((time.monotonic() - t0) * 1000),
                 kwargs, response, endpoint, stream_info=(count, first_ms, complete),
                 call_id=call_id, stream_error=error,
+                error_event=getattr(accumulator, "error_event", None),
             )
 
         return done
@@ -267,6 +277,7 @@ class OpenAIHook:
         stream_info: tuple[int, int | None, bool] | None = None,
         call_id: str | None = None,
         stream_error: BaseException | None = None,
+        error_event: Any = None,
     ) -> None:
         if is_raw_response_call(kwargs):
             # An HTTP response wrapper, not a parsed response: nothing to fold,
@@ -275,7 +286,7 @@ class OpenAIHook:
         if surface == "responses":
             self._record_responses(started, finished, duration_ms, kwargs, response,
                                    endpoint, stream_info=stream_info, call_id=call_id,
-                                   stream_error=stream_error)
+                                   stream_error=stream_error, error_event=error_event)
         else:
             self._record(started, finished, duration_ms, kwargs, response, "success",
                          endpoint, stream_info=stream_info, call_id=call_id,
@@ -293,9 +304,13 @@ class OpenAIHook:
         stream_info: tuple[int, int | None, bool] | None = None,
         call_id: str | None = None,
         stream_error: BaseException | None = None,
+        error_event: Any = None,
     ) -> None:
         choice, dropped = responses_choice(response)
-        failed = _get(response, "status") == "failed"
+        returned_failed = _get(response, "status") == "failed"
+        # A delivered ``error`` event (yielded by the SDK, not raised) also makes
+        # the call a failure; the event itself is kept verbatim below.
+        failed = returned_failed or error_event is not None
         record = build_record_envelope(
             model_call_id=call_id or new_ulid(),
             parent_span_id=self._parent_span_id,
@@ -314,20 +329,29 @@ class OpenAIHook:
             _get(response, "model") or record["gen_ai.request.model"]
         )
         record["gen_ai.response.choices"] = [choice] if choice else []
-        if choice:
+        if choice and choice["finish_reason"] is not None:
             record["gen_ai.response.finish_reasons"] = [choice["finish_reason"]]
         usage = _get(response, "usage")
         record["gen_ai.usage.input_tokens"] = int(_get(usage, "input_tokens") or 0)
         record["gen_ai.usage.output_tokens"] = int(_get(usage, "output_tokens") or 0)
-        if failed:
+        if returned_failed:
             error = _get(response, "error")
             record["error"] = {
                 "type": str(_get(error, "code") or "ResponseFailed"),
                 "message": str(_get(error, "message") or "the response failed"),
                 "traceback_ref": None,
             }
+        elif failed:
+            record["error"] = {
+                "type": str(_get(error_event, "code") or _get(error_event, "type") or "error"),
+                "message": str(_get(error_event, "message") or ""),
+                "traceback_ref": None,
+            }
         extensions = record.setdefault("extensions", {})
         extensions[API_SURFACE_EXT] = OPENAI_RESPONSES_SURFACE
+        event_detail = stream_error_event_detail(error_event)
+        if event_detail is not None:
+            extensions[STREAM_ERROR_EVENT_EXT] = event_detail
         # Additive (issue #16): the provider's status verbatim, so mocked replay
         # returns a failed/incomplete Response exactly as the SDK returned it.
         status_detail = response_status_detail(response)
@@ -358,12 +382,15 @@ class OpenAIHook:
         stream_error: BaseException | None = None,
     ) -> None:
         choices: list[dict[str, Any]] = []
-        finish_reasons: list[str] = []
+        finish_reasons: list[str | None] = []
         raw_finish_reasons: list[str] = []
         dropped = 0
         for c in getattr(response, "choices", []):
             msg = c.message
-            raw_finish = str(getattr(c, "finish_reason", "stop") or "stop")
+            # None when the provider delivered no finish reason (a stream
+            # abandoned, failed or ended before it): recorded as null.
+            delivered = getattr(c, "finish_reason", None)
+            raw_finish = str(delivered) if delivered else None
             choice: dict[str, Any] = {
                 "index": c.index,
                 "message": {
@@ -380,7 +407,8 @@ class OpenAIHook:
                 choice["message"]["tool_calls"] = tool_calls
             choices.append(choice)
             finish_reasons.append(choice["finish_reason"])
-            raw_finish_reasons.append(raw_finish)
+            if raw_finish is not None:
+                raw_finish_reasons.append(raw_finish)
         usage = getattr(response, "usage", None)
         record = build_record_envelope(
             model_call_id=call_id or new_ulid(),
@@ -408,9 +436,12 @@ class OpenAIHook:
         usage_block = usage_from_openai(usage)
         if usage_block is not None:
             record["nova.usage"] = usage_block
-        if finish_reasons:
-            record["gen_ai.response.finish_reasons"] = finish_reasons
-        attach_provider_finish_reasons(record, raw_finish_reasons, finish_reasons)
+        # One finish reason per choice, so written only when every choice
+        # delivered one (the attribute is optional in OTel GenAI).
+        delivered_reasons = [f for f in finish_reasons if f is not None]
+        if finish_reasons and len(delivered_reasons) == len(finish_reasons):
+            record["gen_ai.response.finish_reasons"] = delivered_reasons
+            attach_provider_finish_reasons(record, raw_finish_reasons, delivered_reasons)
         record.setdefault("extensions", {})[API_SURFACE_EXT] = OPENAI_CHAT_SURFACE
         note_dropped_tool_calls(record, dropped)
         attach_stream_info(record, stream_info)

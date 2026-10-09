@@ -784,7 +784,8 @@ def test_golden_records_are_valid_and_every_extension_they_use_is_described() ->
     schema = json.loads(_MODEL_CALL_SCHEMA.read_text())
     described = set(schema["properties"]["extensions"]["properties"])
     for name in ("failed-response.jsonl", "mid-stream-error.jsonl",
-                 "legacy-failed-response.jsonl"):
+                 "legacy-failed-response.jsonl", "legacy-mid-stream-error.jsonl",
+                 "responses-error-event.jsonl"):
         for record in _golden(name):
             jsonschema.validate(record, schema)
             assert set(record["extensions"]) <= described, name
@@ -808,18 +809,42 @@ def test_golden_failed_response_replays_as_returned(
     assert result.status == "success"
 
 
+@pytest.mark.parametrize("name", ["mid-stream-error.jsonl", "legacy-mid-stream-error.jsonl"])
 def test_golden_mid_stream_error_replays_the_chunks_then_the_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
+    # The legacy record (captured before a missing finish reason was recorded as
+    # null) holds a fabricated "stop"; neither serves a finish reason.
+    (record,) = _golden(name)
+    expected = None if name.startswith("mid") else "stop"
+    assert record["gen_ai.response.choices"][0]["finish_reason"] == expected
     result, obs = _synthetic_replay(
-        tmp_path, monkeypatch, _golden("mid-stream-error.jsonl"),
-        [{"op": "stream_chat", "catch": True}],
+        tmp_path, monkeypatch, [record], [{"op": "stream_chat", "catch": True}],
     )
     assert obs[0]["error"] == "APIError"
     assert obs[0]["delivered"]["content"] == "Hello"
+    assert obs[0]["delivered"]["finish"] is None
     assert result.status == "success"
     assert result.replay_contract is not None
     assert result.replay_contract["model_errors_replayed"] == 1
+
+
+def test_golden_responses_error_event_replays_the_events_then_the_error_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result, obs = _synthetic_replay(
+        tmp_path, monkeypatch, _golden("responses-error-event.jsonl"),
+        [{"op": "stream_responses_events"}],
+    )
+    assert obs[0]["types"] == ["response.created", "response.output_item.added",
+                               "response.content_part.added",
+                               "response.output_text.delta", "error"]
+    assert obs[0]["text"] == "partial"
+    assert obs[0]["errors"] == [{"code": "server_error", "message": _STREAM_ERROR["error"][
+        "message"], "param": None, "sequence_number": 4}]
+    assert result.status == "success"
+    assert result.replay_contract is not None
+    assert result.replay_contract["model_errors_replayed"] == 0
 
 
 def test_a_failed_response_captured_before_its_status_was_recorded_is_refused(

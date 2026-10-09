@@ -232,6 +232,20 @@ def _responses_stream_obs(op, events):
     return {**_responses_obs(op, final), "delta_text": "".join(deltas)}
 
 
+def _responses_events_obs(op, events):
+    """Every event kind a Responses stream yielded (in order, consecutive repeats
+    folded), the text, and each ``error`` event as the SDK yielded it."""
+    kinds = []
+    for e in events:
+        if not kinds or kinds[-1] != e.type:
+            kinds.append(e.type)
+    return {"op": op, "types": kinds,
+            "text": "".join(e.delta for e in events if e.type == "response.output_text.delta"),
+            "errors": [{"code": e.code, "message": e.message, "param": e.param,
+                        "sequence_number": e.sequence_number}
+                       for e in events if e.type == "error"]}
+
+
 def _anthropic_obs(op, r):
     return {"op": op, "stop_reason": r.stop_reason,
             "blocks": [{"type": b.type, "text": getattr(b, "text", None),
@@ -340,6 +354,14 @@ async def _run_step(step, session):
         stream = await _async_openai_client().responses.create(
             model="gpt-4o", input="hi", stream=True)
         return _responses_stream_obs(op, [e async for e in _atrack(stream)])
+    if op == "stream_responses_events":
+        return _responses_events_obs(
+            op, list(_track(_openai_client().responses.create(
+                model="gpt-4o", input="hi", stream=True))))
+    if op == "async_stream_responses_events":
+        stream = await _async_openai_client().responses.create(
+            model="gpt-4o", input="hi", stream=True)
+        return _responses_events_obs(op, [e async for e in _atrack(stream)])
     if op == "responses_stream_helper":
         with _openai_client().responses.stream(model="gpt-4o", input="hi") as s:
             for _ in s:

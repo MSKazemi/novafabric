@@ -174,6 +174,7 @@ class AnthropicHook:
         text = " ".join(getattr(p, "text", "") for p in parts if hasattr(p, "text"))
         # Anthropic's own stop_reason (end_turn, tool_use, ...) is outside the
         # schema enum: store the canonical value, keep the raw one additively.
+        # None (recorded as null) when the stream delivered no stop_reason.
         raw_finish = getattr(response, "stop_reason", None)
         finish_reason = canonical_finish_reason("anthropic", raw_finish)
         message: dict[str, Any] = {"role": "assistant", "content": text}
@@ -208,9 +209,9 @@ class AnthropicHook:
         usage_block = usage_from_anthropic(usage)
         if usage_block is not None:
             record["nova.usage"] = usage_block
-        if response is not None:
+        if response is not None and finish_reason is not None:
             record["gen_ai.response.finish_reasons"] = [finish_reason]
-        if isinstance(raw_finish, str) and raw_finish:
+        if isinstance(raw_finish, str) and raw_finish and finish_reason is not None:
             attach_provider_finish_reasons(record, [raw_finish], [finish_reason])
         record.setdefault("extensions", {})[API_SURFACE_EXT] = ANTHROPIC_MESSAGES_SURFACE
         note_dropped_tool_calls(record, dropped)

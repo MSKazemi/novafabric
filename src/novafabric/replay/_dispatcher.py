@@ -35,7 +35,11 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
-from novafabric.capture.hooks._sdk_streams import RESPONSE_STATUS_EXT, is_raw_response_call
+from novafabric.capture.hooks._sdk_streams import (
+    RESPONSE_STATUS_EXT,
+    STREAM_ERROR_EVENT_EXT,
+    is_raw_response_call,
+)
 from novafabric.replay._contract import (
     MODEL_SURFACES,
     QUEUE_PROVIDER,
@@ -181,6 +185,20 @@ def _choices(stored: dict[str, Any]) -> list[dict[str, Any]]:
     return [c for c in raw if isinstance(c, dict)] if isinstance(raw, list) else []
 
 
+def _delivered_finish(choice: dict[str, Any]) -> str | None:
+    """The finish reason a recorded choice holds; ``None`` when the provider
+    delivered none (``finish_reason: null``, or a record without the key).
+    Replay never substitutes one."""
+    finish = choice.get("finish_reason")
+    return finish if isinstance(finish, str) and finish else None
+
+
+def _unfinished(stored: dict[str, Any]) -> bool:
+    """A record of a stream that never delivered a finish reason for some choice:
+    its closing events were never delivered either, so none is served."""
+    return any(_delivered_finish(c) is None for c in _choices(stored))
+
+
 def _openai_tool_calls(message: dict[str, Any]) -> list[Any] | None:
     refs = message.get("tool_calls")
     if not isinstance(refs, list) or not refs:
@@ -212,7 +230,7 @@ def _mock_openai_response(stored: dict[str, Any]) -> Any:
         choices.append(types.SimpleNamespace(
             index=c.get("index", 0),
             message=msg,
-            finish_reason=c.get("finish_reason", "stop"),
+            finish_reason=_delivered_finish(c),
         ))
     usage = types.SimpleNamespace(
         prompt_tokens=stored.get("gen_ai.usage.input_tokens", 0),
@@ -240,6 +258,8 @@ def _openai_chat_chunks(
     (``choices: []``) closes the stream when the request asked for it.
     ``partial`` (a stream that raised part-way): the delivered content only --
     no finish-reason or usage chunk, which capture cannot tell were delivered.
+    A choice recorded without a finish reason gets no finish-reason chunk, and
+    then no usage chunk is served (the provider sends it last).
     """
     base = {
         "id": stored.get("gen_ai.response.id", "replay-mocked"),
@@ -273,11 +293,12 @@ def _openai_chat_chunks(
                 }]},
                 "finish_reason": None,
             }]})
-        if not partial:
+        finish = _delivered_finish(c)
+        if not partial and finish is not None:
             chunks.append({**base, "choices": [{
-                "index": index, "delta": {}, "finish_reason": c.get("finish_reason", "stop"),
+                "index": index, "delta": {}, "finish_reason": finish,
             }]})
-    if include_usage and not partial:
+    if include_usage and not partial and not _unfinished(stored):
         prompt = int(stored.get("gen_ai.usage.input_tokens", 0) or 0)
         completion = int(stored.get("gen_ai.usage.output_tokens", 0) or 0)
         chunks.append({**base, "choices": [], "usage": {
@@ -296,7 +317,7 @@ def _responses_payload(stored: dict[str, Any]) -> dict[str, Any]:
     choices = _choices(stored)
     message = choices[0].get("message") if choices else {}
     message = message if isinstance(message, dict) else {}
-    finish = choices[0].get("finish_reason", "stop") if choices else "stop"
+    finish = _delivered_finish(choices[0]) if choices else "stop"
     output: list[dict[str, Any]] = []
     if isinstance(message.get("content"), str):
         output.append({
@@ -385,10 +406,13 @@ def _responses_events(stored: dict[str, Any], *, partial: bool = False) -> list[
     ``response.created`` → per output item: ``output_item.added``, its content
     (one text delta, or one arguments delta) and ``output_item.done`` →
     ``response.completed`` (or ``response.incomplete`` / ``response.failed``)
-    carrying the full response. ``partial`` (a stream that raised part-way):
-    a text item stops after its delta -- capture cannot tell whether its done
-    events were delivered -- and there is no terminal event. A function call
-    is only folded at capture from its ``output_item.done``, so it is complete.
+    carrying the full response. ``partial`` (a stream that raised part-way, or
+    that never delivered a terminal event): a text item stops after its delta --
+    capture cannot tell whether its done events were delivered -- and there is
+    no terminal event. A function call is only folded at capture from its
+    ``output_item.done``, so it is complete. An ``error`` event the stream
+    delivered (``io.novafabric.stream_error_event``) is served verbatim after the
+    delivered events, before any terminal event.
     """
     payload = _responses_payload(stored)
     seq = iter(range(1_000_000))
@@ -437,6 +461,16 @@ def _responses_events(stored: dict[str, Any], *, partial: bool = False) -> list[
             ]
         events.append({"type": "response.output_item.done", "sequence_number": next(seq),
                        "output_index": index, "item": item})
+    error_event = _recorded_error_event(stored)
+    if error_event is not None:
+        # Its recorded sequence number, unless that would run backwards: replay
+        # folds the deltas, so the served events before it are never more.
+        position = next(seq)
+        recorded = error_event.get("sequence_number")
+        events.append({**error_event, "sequence_number": (
+            recorded if isinstance(recorded, int) and not isinstance(recorded, bool)
+            and recorded >= position else position
+        )})
     if not partial:
         final = _RESPONSES_TERMINAL_EVENT.get(payload["status"], "response.completed")
         events.append({"type": final, "sequence_number": next(seq), "response": payload})
@@ -444,6 +478,15 @@ def _responses_events(stored: dict[str, Any], *, partial: bool = False) -> list[
         _construct("openai", "openai.types.responses", "ResponseStreamEvent", event)
         for event in events
     ]
+
+
+def _recorded_error_event(stored: dict[str, Any]) -> dict[str, Any] | None:
+    """The Responses ``error`` event capture recorded verbatim, if servable."""
+    ext = stored.get("extensions")
+    event = ext.get(STREAM_ERROR_EVENT_EXT) if isinstance(ext, dict) else None
+    if isinstance(event, dict) and isinstance(event.get("message"), str):
+        return {**event, "type": "error"}
+    return None
 
 
 # A record carries the schema's finish-reason enum (model-call.schema.json); an
@@ -456,7 +499,10 @@ _ANTHROPIC_STOP_REASON = {
 }
 
 
-def _anthropic_stop_reason(stored: dict[str, Any], finish_reason: str) -> str:
+def _anthropic_stop_reason(stored: dict[str, Any], finish_reason: str | None) -> str | None:
+    # None: the stream delivered no stop_reason, and none is served.
+    if finish_reason is None:
+        return None
     # Capture keeps Anthropic's raw value additively (issue #12); serve exactly
     # that when present, so e.g. stop_sequence is not flattened to end_turn.
     ext = stored.get("extensions")
@@ -471,7 +517,7 @@ def _mock_anthropic_response(stored: dict[str, Any]) -> Any:
     choices = stored.get("gen_ai.response.choices", [])
     message = choices[0].get("message", {}) if choices else {}
     content_text = message.get("content", "") or ""
-    finish_reason = choices[0].get("finish_reason", "end_turn") if choices else "end_turn"
+    finish_reason = _delivered_finish(choices[0]) if choices else "end_turn"
     blocks: list[Any] = []
     if content_text:
         blocks.append(types.SimpleNamespace(type="text", text=content_text))
@@ -659,7 +705,9 @@ def build_served_response(
     ``error`` (streamed only): the recorded stream raised part-way (issue #16).
     The stream then delivers what capture recorded as delivered -- nothing when
     it raised before the first chunk -- with no closing or terminal event, and
-    raises ``error`` when the consumer asks for more.
+    raises ``error`` when the consumer asks for more. A record without a finish
+    reason (the stream never delivered one) is served the same way, minus the
+    exception: its closing events were never delivered.
     """
     if not stream:
         if queue == "openai.responses":
@@ -672,9 +720,9 @@ def build_served_response(
     if partial and isinstance(streaming, dict) and not streaming.get("chunk_count"):
         items: list[Any] = []
     elif queue == "openai.responses":
-        items = _responses_events(stored, partial=partial)
+        items = _responses_events(stored, partial=partial or _unfinished(stored))
     elif queue == "anthropic":
-        items = _anthropic_events(stored, partial=partial)
+        items = _anthropic_events(stored, partial=partial or _unfinished(stored))
     else:
         items = _openai_chat_chunks(
             stored, include_usage=_include_usage(kwargs or {}), partial=partial
@@ -915,8 +963,9 @@ class MockModelDispatcher:
         :meth:`_recorded_exception`) -- except for a ``stream=True`` call whose
         recorded stream raised part-way: the record is returned with the
         exception, to be raised after its delivered chunks. A Responses API
-        response the SDK returned with ``status: failed`` is served as a
-        response (issue #16)."""
+        response the SDK returned with ``status: failed``, or a Responses
+        stream that delivered an ``error`` event, is served as recorded, never
+        raised (issue #16; ADR-0304 follow-on)."""
         provider = QUEUE_PROVIDER[queue]
         surface = MODEL_SURFACES[queue]
         records = self._queues[queue]

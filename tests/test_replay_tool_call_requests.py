@@ -242,8 +242,12 @@ def test_anthropic_missing_stop_reason_is_not_invented(tmp_path: Path) -> None:
     )
     hook._intercept(MagicMock(return_value=response), model="claude-x", messages=[])
     record = _records(w)[0]
-    assert record["gen_ai.response.finish_reasons"] == ["stop"]
+    # Neither the raw value nor the canonical one is invented (ADR-0304
+    # follow-on: this used to record "stop").
+    assert record["gen_ai.response.choices"][0]["finish_reason"] is None
+    assert "gen_ai.response.finish_reasons" not in record
     assert "io.novafabric.provider_finish_reasons" not in record.get("extensions", {})
+    jsonschema.validate(record["gen_ai.response.choices"][0], _choice_schema())
 
 
 # ── replay ───────────────────────────────────────────────────────────────────

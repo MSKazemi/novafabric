@@ -27,7 +27,7 @@ from types import ModuleType
 from typing import Any
 
 from novafabric.capture.hooks._sdk_errors import SDK_ERROR_EXT
-from novafabric.capture.hooks._sdk_streams import RESPONSE_STATUS_EXT
+from novafabric.capture.hooks._sdk_streams import RESPONSE_STATUS_EXT, STREAM_ERROR_EVENT_EXT
 
 #: How an allow-listed exception class is constructed.
 #: ``status``: ``cls(message, response=<http response>, body=body)`` (an HTTP
@@ -115,13 +115,23 @@ def is_returned_failed_response(record: dict[str, Any]) -> bool:
     ``response.failed`` event like any other. Served as a response, never
     raised -- but only when capture recorded its status verbatim
     (``io.novafabric.response_status``); an older record is refused.
+
+    Also a Responses stream that delivered an ``error`` event: ``openai._streaming``
+    *yields* that event (it raises only for a payload with a top-level ``error``
+    key). Served as the delivered events followed by that event -- only when
+    capture kept it verbatim (``io.novafabric.stream_error_event`` with its
+    message); one omitted for size is refused.
     """
+    if not is_recorded_model_error(record) or isinstance(_ext(record, SDK_ERROR_EXT), dict):
+        return False
     status = _ext(record, RESPONSE_STATUS_EXT)
+    if isinstance(status, dict) and status.get("status") == "failed":
+        return True
+    event = _ext(record, STREAM_ERROR_EVENT_EXT)
     return (
-        is_recorded_model_error(record)
-        and not isinstance(_ext(record, SDK_ERROR_EXT), dict)
-        and isinstance(status, dict)
-        and status.get("status") == "failed"
+        isinstance(event, dict)
+        and isinstance(event.get("message"), str)
+        and isinstance(record.get("nova.streaming"), dict)
     )
 
 
@@ -142,6 +152,12 @@ def raised_mid_stream(record: dict[str, Any]) -> bool:
 def _detail(record: dict[str, Any]) -> dict[str, Any]:
     detail = _ext(record, SDK_ERROR_EXT)
     if not isinstance(detail, dict):
+        if isinstance(_ext(record, STREAM_ERROR_EVENT_EXT), dict):
+            raise UnreconstructableError(
+                "the stream delivered an error event that capture could not keep "
+                f"verbatim (extensions[{STREAM_ERROR_EVENT_EXT!r}] has no message), "
+                "so replay cannot serve it as delivered"
+            )
         if record.get("gen_ai.response.id") or record.get("gen_ai.response.choices"):
             raise UnreconstructableError(
                 "the call returned a response with status 'failed' (a Responses API "

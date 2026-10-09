@@ -198,7 +198,7 @@
           "error"
         ]
       },
-      "description": "One finish reason per choice."
+      "description": "One finish reason per choice. Absent when any choice has a null finish_reason (none delivered)."
     },
     "nova.cost": {
       "type": "object",
@@ -510,6 +510,19 @@
             "status": {"type": "string"},
             "incomplete_details": {"type": ["object", "null"]},
             "error": {"type": ["object", "null"]}
+          }
+        },
+        "io.novafabric.stream_error_event": {
+          "type": "object",
+          "description": "ADR-0304 follow-on (additive, optional). On a streamed OpenAI Responses API record: the 'error' event the stream delivered, verbatim (type, code, message, param, sequence_number). The SDK yields this event rather than raising, so the workload saw it; the record is status 'error'. Mocked replay serves the delivered events, then this event, and no terminal event. Over 16 KiB it is replaced by {type: 'error', omitted: <reason>}, and replay refuses the call. Absent on records captured before this key existed.",
+          "required": ["type"],
+          "properties": {
+            "type": {"const": "error"},
+            "code": {"type": ["string", "null"]},
+            "message": {"type": "string"},
+            "param": {"type": ["string", "null"]},
+            "sequence_number": {"type": "integer"},
+            "omitted": {"type": "string"}
           }
         }
       }
@@ -876,15 +889,16 @@
           "description": "The assistant message for this choice."
         },
         "finish_reason": {
-          "type": "string",
+          "type": ["string", "null"],
           "enum": [
             "stop",
             "length",
             "content_filter",
             "tool_calls",
-            "error"
+            "error",
+            null
           ],
-          "description": "Why the model stopped generating."
+          "description": "Why the model stopped generating. null (additive, ADR-0304 follow-on): the provider delivered no finish reason -- a streamed response abandoned by the workload, failed part-way, or ended without one. Never replaced by an invented value; records captured before this was allowed hold 'stop' there."
         },
         "logprobs": {
           "oneOf": [

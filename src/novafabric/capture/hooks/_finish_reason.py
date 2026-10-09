@@ -37,9 +37,16 @@ CANONICAL_FINISH_REASONS = frozenset(
 )
 
 
-def canonical_finish_reason(provider: str, raw: Any) -> str:
-    """Return the schema-enum finish reason for a provider's raw value."""
-    value = str(raw) if raw else "stop"
+def canonical_finish_reason(provider: str, raw: Any) -> str | None:
+    """Return the schema-enum finish reason for a provider's raw value.
+
+    ``None`` when the provider delivered none -- a stream abandoned, failed or
+    ended before its finish reason. That is recorded as ``finish_reason: null``,
+    never as ``"stop"``: a value the provider did not send is not invented.
+    """
+    if not raw:
+        return None
+    value = str(raw)
     if provider == "anthropic":
         if value in CANONICAL_FINISH_REASONS:
             return value
