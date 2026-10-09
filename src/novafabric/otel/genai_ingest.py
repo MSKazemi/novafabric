@@ -652,9 +652,9 @@ def write_ingest_capsule_finalized(
 
     from novafabric.capture._ulid import new_span_id, new_ulid
     from novafabric.capture.capsule import CapsuleWriter
-    from novafabric.capture.env import capture_environment
+    from novafabric.capture.env import capture_environment, host_info
     from novafabric.capture.finalize import finalize_in_process_capsule
-    from novafabric.capture.orchestrator import _build_host_info, _now
+    from novafabric.capture.orchestrator import _now
     from novafabric.capture.replay import minimal_replay_policy
 
     run_id = run_id or new_ulid()
@@ -722,7 +722,9 @@ def write_ingest_capsule_finalized(
         "capture_mode": "otel-import",
         "novafabric_version": _pkg_version("novafabric"),
         "working_directory": working_dir,
-        "host": _build_host_info(),
+        # ADR-0307: the spans ran elsewhere, so the importer's own Slurm job
+        # (if any) is not this run's job.
+        "host": host_info(scheduler_context=False),
         "environment_ref": "env.lock",
         "replay_policy_ref": "replay.yaml",
         "redaction_proof_ref": "redaction-proof.json",

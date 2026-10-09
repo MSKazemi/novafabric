@@ -256,8 +256,14 @@ if [ "$1" = run ]; then
   echo "stub: docker run recorded"
   exit 0
 fi
+if [ "$1" = image ] && [ "$2" = inspect ]; then
+  echo "sha256:$STUB_IMAGE_HEX docker.io/library/python@sha256:$STUB_REPO_HEX"
+  exit 0
+fi
 exit 2
 """
+_STUB_IMAGE_HEX = "1" * 64
+_STUB_REPO_HEX = "2" * 64
 
 
 def _bash() -> str:
@@ -276,6 +282,8 @@ def _run_sh_with_stub(tmp_path: Path, **extra_env: str) -> subprocess.CompletedP
         **os.environ,
         "PATH": f"{stub_dir}:{bin_dir}:/usr/bin:/bin",
         "STUB_DOCKER_RECORD": str(tmp_path / "docker-argv.txt"),
+        "STUB_IMAGE_HEX": _STUB_IMAGE_HEX,
+        "STUB_REPO_HEX": _STUB_REPO_HEX,
         **extra_env,
     }
     return subprocess.run(
@@ -340,6 +348,30 @@ def test_run_sh_issues_the_documented_unprivileged_docker_run(tmp_path: Path) ->
     assert "do-not-forward" not in "\n".join(argv)
     assert env_keys <= {"PYTHONPATH"} | {k for k in env_keys if k.startswith("NOVAFABRIC_")}
     assert "NOVAFABRIC_CAPSULE_DIR=/novafabric/capsule" in value_of("-e")
+
+
+def test_run_sh_capsule_records_the_runner_and_the_resolved_digest(tmp_path: Path) -> None:
+    """Pins the README's "What identifies the container run" (ADR-0307).
+
+    The stub answers `docker image inspect` the way the daemon does; the digest
+    in the capsule must be the one the runtime reported, never the tag.
+    """
+    proc = _run_sh_with_stub(tmp_path)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    capsule = _sole_capsule(tmp_path / "capsules")
+    result = CliRunner().invoke(app, ["validate", str(capsule)])
+    assert result.exit_code == 0, result.output
+
+    runner = yaml.safe_load((capsule / "capsule.yaml").read_text())["host"]["runner"]
+    assert runner == {
+        "name": "docker",
+        "image": {
+            "reference": "python:3.12-slim",
+            "resolved_by": "docker-image-inspect",
+            "image_id": f"sha256:{_STUB_IMAGE_HEX}",
+            "repo_digests": [f"docker.io/library/python@sha256:{_STUB_REPO_HEX}"],
+        },
+    }
 
 
 @requires_docker

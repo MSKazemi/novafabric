@@ -75,10 +75,11 @@ def test_payload_runs_without_a_scheduler(tmp_path: Path) -> None:
 def test_payload_reports_slurm_context_when_the_scheduler_sets_it(
     tmp_path: Path,
 ) -> None:
-    """The capsule records no Slurm context, so the payload must print it.
+    """The payload prints its Slurm context, as the README shows.
 
-    That is the workaround the README documents. If it stops working, the
-    documented pattern is broken and the README is the thing to fix.
+    The capsule records the job itself in `host.slurm` (ADR-0307), but not the
+    node name; printing it from the workload is still how it reaches the sealed
+    stdout. If this stops working, the README is the thing to fix.
     """
     env = dict(os.environ)
     env["NOVAFABRIC_EXAMPLE_OUT"] = str(tmp_path / "metrics.json")
@@ -266,31 +267,44 @@ def test_the_batch_script_only_uses_real_capture_flags() -> None:
     assert set(flags) <= declared, set(flags) - declared
 
 
-def test_the_capsule_records_no_slurm_context(tmp_path: Path) -> None:
-    """Pins the README's "Not captured: any Slurm context at all".
+def test_the_capsule_records_the_slurm_context(tmp_path: Path) -> None:
+    """Pins the README's "What the capsule records about the job" (ADR-0307).
 
-    The job id, node and cluster reach the capsule only through the payload's
-    own stdout. If NovaFabric starts recording scheduler context this fails —
-    and the README section is then the thing to rewrite.
+    Job id, partition and cluster are recorded in `capsule.yaml:host.slurm`; the
+    node list only as a hash, because node names are hostnames and the manifest
+    carries none. `SLURMD_NODENAME` is not on the allow-list, so the node name
+    still reaches the capsule only through the payload's own stdout.
     """
     out = tmp_path / "capsules"
     out.mkdir()
-    values = ("424242", "node-7", "cluster-x")
     result = CliRunner().invoke(
         app,
         ["capture", "--output-dir", str(out), "--", sys.executable, str(PAYLOAD)],
         env={
-            "SLURM_JOB_ID": values[0],
-            "SLURMD_NODENAME": values[1],
-            "SLURM_CLUSTER_NAME": values[2],
+            "SLURM_JOB_ID": "424242",
+            "SLURM_JOB_PARTITION": "debug",
+            "SLURM_CLUSTER_NAME": "cluster-x",
+            "SLURM_JOB_NODELIST": "node-7",
+            "SLURM_JOB_NUM_NODES": "1",
+            "SLURMD_NODENAME": "node-7",
             "NOVAFABRIC_EXAMPLE_OUT": str(tmp_path / "metrics.json"),
         },
     )
     assert result.exit_code == 0, result.output
     capsule = _sole_capsule(out)
-    hits = sorted(
+    _validate(capsule)
+
+    slurm = yaml.safe_load((capsule / "capsule.yaml").read_text())["host"]["slurm"]
+    assert slurm["job_id"] == "424242"
+    assert slurm["partition"] == "debug"
+    assert slurm["cluster"] == "cluster-x"
+    assert slurm["node_count"] == 1
+    assert slurm["node_list_hash"].startswith("sha256:")
+    assert slurm["source"] == "environment"
+
+    node_hits = sorted(
         p.relative_to(capsule).as_posix()
         for p in capsule.rglob("*")
-        if p.is_file() and any(v in p.read_text(errors="ignore") for v in values)
+        if p.is_file() and "node-7" in p.read_text(errors="ignore")
     )
-    assert hits == ["outputs/stdout.txt"], hits
+    assert node_hits == ["outputs/stdout.txt"], node_hits

@@ -62,6 +62,18 @@ class TestTheLoaderIsNotAutoInstalled:
             )
 
 
+def _docker_run_argv(run: object) -> list[str]:
+    """The `docker run` argv among the runner's subprocess calls.
+
+    The runner also calls `docker image inspect` before and after the run
+    (ADR-0307), so the last call is no longer the run itself.
+    """
+    calls = [[str(a) for a in c.args[0]] for c in run.call_args_list]  # type: ignore[attr-defined]
+    runs = [argv for argv in calls if argv[1:2] == ["run"]]
+    assert len(runs) == 1, calls
+    return runs[0]
+
+
 class TestDockerInjectsTheHookLoader:
     def _argv(self, tmp_path: Path) -> tuple[list[str], Path]:
         spec = _spec(tmp_path, runner_options={"image": "img"})
@@ -69,7 +81,7 @@ class TestDockerInjectsTheHookLoader:
         with patch("shutil.which", return_value="/usr/bin/docker"), \
              patch("subprocess.run", return_value=fail) as run:
             DockerRunner().run(spec)
-        return [str(a) for a in run.call_args.args[0]], spec.capsule_dir
+        return _docker_run_argv(run), spec.capsule_dir
 
     def test_materialises_the_loader_into_the_mounted_capsule_dir(
         self, tmp_path: Path
@@ -106,7 +118,7 @@ class TestDockerInjectsTheHookLoader:
         with patch("shutil.which", return_value="/usr/bin/docker"), \
              patch("subprocess.run", return_value=fail) as run:
             DockerRunner().run(spec)
-        argv = [str(a) for a in run.call_args.args[0]]
+        argv = _docker_run_argv(run)
         pp = next(a for a in argv if a.startswith("PYTHONPATH="))
         assert pp == "PYTHONPATH=/novafabric/capsule:/opt/workload-libs", (
             f"prepend, never clobber, the workload's own PYTHONPATH: {pp}"

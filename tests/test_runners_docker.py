@@ -91,8 +91,14 @@ class TestDockerRunnerArgvConstruction:
 
         with patch("subprocess.run", side_effect=_record):
             DockerRunner().run(spec)
-        assert len(captured) == 1, f"expected 1 docker invocation, got {len(captured)}"
-        return captured[0]
+        # One `docker run`, bracketed by `docker image inspect` before and after
+        # it (ADR-0307: the capsule records the digest the runtime resolved).
+        runs = [argv for argv in captured if argv[1:2] == ["run"]]
+        inspects = [argv for argv in captured if argv[1:3] == ["image", "inspect"]]
+        assert len(runs) == 1, f"expected 1 docker run, got {captured}"
+        assert len(inspects) == 2 and len(captured) == 3, captured
+        assert captured.index(runs[0]) == 1, "inspect, run, inspect — in that order"
+        return runs[0]
 
     def test_includes_run_rm_image_and_command(self, tmp_path: Path) -> None:
         argv = self._run_with_recorded_argv(_spec(

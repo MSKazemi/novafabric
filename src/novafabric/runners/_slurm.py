@@ -402,11 +402,12 @@ class SlurmRunner:
 
         out = sub.stdout.decode(errors="replace").strip()
         # --parsable returns "<jobid>[;cluster]". A bare integer is also valid.
-        jobid = out.split(";", 1)[0].strip()
+        jobid, _, parsable_cluster = (part.strip() for part in out.partition(";"))
         if not jobid.isdigit():
             # Fallback to legacy "Submitted batch job <id>" parser.
             m = _SBATCH_JOBID_RE.search(sub.stdout.decode(errors="replace"))
             jobid = m.group(1) if m else ""
+            parsable_cluster = ""  # not --parsable output: no cluster field
         if not jobid:
             return RunnerJobResult(
                 exit_code=125, runner_status="failed_setup",
@@ -452,6 +453,10 @@ class SlurmRunner:
             "final_state": last_state,
             "sacct_exit_code": exit_code_str,
         }
+        # ADR-0307: sbatch names the cluster only on a multi-cluster setup;
+        # record it when it did, never otherwise.
+        if parsable_cluster:
+            runner_metadata["cluster"] = parsable_cluster
 
         if last_state not in _SACCT_TERMINAL_STATES:
             return RunnerJobResult(

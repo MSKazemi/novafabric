@@ -17,7 +17,12 @@ from novafabric.capture.deployment_env import (
     resolve_deployment_environment,
     unconventional_warning,
 )
-from novafabric.capture.env import capture_environment, host_info
+from novafabric.capture.env import (
+    capture_environment,
+    host_info,
+    runner_context,
+    slurm_context_from_runner,
+)
 from novafabric.capture.finalize import (
     evidence_digests,
     extend_masker_results,
@@ -76,6 +81,25 @@ def _event_stream_refs(capsule_dir: Path) -> dict[str, str]:
 
 def _build_host_info() -> dict[str, Any]:
     return host_info()
+
+
+def _host_block(runner: RunnerSpec, metadata: dict[str, Any]) -> dict[str, Any]:
+    """``host`` for a ``nova capture`` run: the measured host, which runner ran
+    the workload, and the scheduler job it ran in (ADR-0307).
+
+    For ``--runner slurm`` the job is the one ``sbatch`` created, so it replaces
+    any ``host.slurm`` read from this process's environment, which would
+    describe the allocation ``nova`` was started in, not the submitted job.
+    """
+    host = _build_host_info()
+    host["runner"] = runner_context(runner.name, metadata)
+    if runner.name == "slurm":
+        submitted = slurm_context_from_runner(metadata)
+        if submitted is not None:
+            host["slurm"] = submitted
+        else:
+            host.pop("slurm", None)
+    return host
 
 
 @dataclass
@@ -538,7 +562,7 @@ class CaptureOrchestrator:
             "capture_mode": "cli-wrapper",
             "novafabric_version": _pkg_version("novafabric"),
             "working_directory": working_dir,
-            "host": _build_host_info(),
+            "host": _host_block(self._runner, runner_result.runner_metadata),
             "environment_ref": "env.lock",
             "replay_policy_ref": "replay.yaml",
             "redaction_proof_ref": "redaction-proof.json",

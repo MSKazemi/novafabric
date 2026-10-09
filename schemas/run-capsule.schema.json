@@ -757,22 +757,51 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "cluster",
-            "partition",
             "job_id"
           ],
           "properties": {
             "cluster": {
-              "type": "string"
+              "type": "string",
+              "description": "SLURM_CLUSTER_NAME."
             },
             "partition": {
-              "type": "string"
+              "type": "string",
+              "description": "SLURM_JOB_PARTITION."
             },
             "job_id": {
-              "type": "string"
+              "type": "string",
+              "description": "SLURM_JOB_ID (or the id sbatch returned)."
+            },
+            "array_job_id": {
+              "type": "string",
+              "pattern": "^[0-9]+$",
+              "description": "SLURM_ARRAY_JOB_ID."
+            },
+            "array_task_id": {
+              "type": "string",
+              "pattern": "^[0-9]+$",
+              "description": "SLURM_ARRAY_TASK_ID."
+            },
+            "node_count": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "SLURM_JOB_NUM_NODES."
+            },
+            "node_list_hash": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{16}$",
+              "description": "First 16 hex of the SHA-256 of SLURM_JOB_NODELIST, the same redaction env.lock applies to the hostname: node names are hostnames and the manifest carries none."
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "environment",
+                "runner"
+              ],
+              "description": "'environment': read from the allow-listed SLURM_* variables of the process that wrote the capsule. 'runner': reported by `nova capture --runner slurm` for the job it submitted."
             }
           },
-          "description": "SLURM context when running under a SLURM scheduler."
+          "description": "Slurm job context when the run executed inside a Slurm job (ADR-0307). Only job_id is required: a value Slurm did not provide is left out, never guessed."
         },
         "kubernetes": {
           "type": "object",
@@ -794,6 +823,114 @@
             }
           },
           "description": "Kubernetes context when running in a pod."
+        },
+        "runner": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "description": "The runner that executed the workload, as `nova capture --runner` names it: 'local', 'docker', 'kubernetes', 'slurm', 'pbs' or 'lsf' today. ADR-0307."
+            },
+            "image": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "reference"
+              ],
+              "properties": {
+                "reference": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024,
+                  "description": "The image reference the operator supplied (`--runner-option image=`), verbatim. A tag names an image; it does not identify one."
+                },
+                "image_id": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$",
+                  "description": "Content-addressed image ID the runtime resolved the reference to (docker `image inspect .Id`, or a dockershim `docker://sha256:` imageID)."
+                },
+                "repo_digests": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 32,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[^\\s@]+@sha256:[0-9a-f]{64}$"
+                  },
+                  "description": "Registry manifest digests (`<name>@sha256:<hex>`), the pullable pinned form, as the runtime reported them."
+                },
+                "resolved_by": {
+                  "type": "string",
+                  "enum": [
+                    "docker-image-inspect",
+                    "kubernetes-pod-status"
+                  ],
+                  "description": "Which runtime surface reported the digest."
+                },
+                "unresolved_reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Why no digest was recorded. Present exactly when image_id, repo_digests and resolved_by are all absent: a digest is never inferred from the tag."
+                }
+              },
+              "oneOf": [
+                {
+                  "required": [
+                    "resolved_by"
+                  ],
+                  "anyOf": [
+                    {
+                      "required": [
+                        "image_id"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "repo_digests"
+                      ]
+                    }
+                  ],
+                  "not": {
+                    "required": [
+                      "unresolved_reason"
+                    ]
+                  }
+                },
+                {
+                  "required": [
+                    "unresolved_reason"
+                  ],
+                  "not": {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "image_id"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "repo_digests"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "resolved_by"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ],
+              "description": "Container runners only (docker, kubernetes): the image the runtime ran, by digest when it could be resolved. ADR-0307."
+            }
+          },
+          "description": "Which runner executed the workload (ADR-0307, implementing the host.runner block ADR-0025 planned). Written by `nova capture`; absent on capsules from other writers and from earlier versions, which says nothing about where they ran."
         },
         "hostname_redacted": {
           "type": "boolean",

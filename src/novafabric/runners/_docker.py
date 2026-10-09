@@ -27,8 +27,17 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 from novafabric.runners._env import forwardable_env
+from novafabric.runners._image import (
+    DOCKER_INSPECT_FORMAT,
+    IMAGE_PROVENANCE_KEY,
+    ImageInspection,
+    image_block,
+    parse_docker_inspect,
+    resolve_docker_image,
+)
 from novafabric.runners._options import coerce_str_dict, coerce_str_list
 from novafabric.runners._sitecustomize import HOOK_LOADER as _HOOK_LOADER
 from novafabric.runners._types import ContainerEvalError, RunnerJobResult, RunnerJobSpec
@@ -90,6 +99,43 @@ class DockerRunner:
             tail = err[-1] if err else "(no stderr)"
             return False, f"docker daemon not reachable: {tail}"
         return True, ""
+
+    def _inspect_image(self, image: str) -> ImageInspection:
+        """What the local runtime says *image* resolves to right now (ADR-0307).
+
+        Never raises: a missing binary, an unknown image, a timeout or a
+        malformed reply all come back as an ``ImageInspection`` with ``error``
+        set, and the capsule then records the digest as absent with that reason.
+        """
+        try:
+            proc = subprocess.run(
+                [self._docker, "image", "inspect", "--format",
+                 DOCKER_INSPECT_FORMAT, image],
+                capture_output=True, timeout=10,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            return ImageInspection(error=f"docker image inspect failed: {exc}")
+        if proc.returncode != 0:
+            err = (proc.stderr or b"").decode(errors="replace").strip().splitlines()
+            tail = err[-1] if err else f"exit {proc.returncode}"
+            return ImageInspection(error=f"docker image inspect failed: {tail[:200]}")
+        return parse_docker_inspect((proc.stdout or b"").decode(errors="replace"))
+
+    def _metadata(
+        self, image: str, before: ImageInspection, *, ran: bool
+    ) -> dict[str, Any]:
+        """``runner_metadata`` for a run of *image*, with the resolved digest.
+
+        ``ran`` is False when ``docker run`` itself could not be launched; the
+        before-run read then stands alone (nothing was pulled in between).
+        """
+        after = self._inspect_image(image) if ran else ImageInspection(
+            error="docker run could not be launched"
+        )
+        return {
+            "image": image,
+            IMAGE_PROVENANCE_KEY: image_block(image, resolve_docker_image(before, after)),
+        }
 
     def run(self, spec: RunnerJobSpec) -> RunnerJobResult:
         opts = spec.runner_options or {}
@@ -180,6 +226,11 @@ class DockerRunner:
         argv.append(image)
         argv.extend(spec.command)
 
+        # ADR-0307: resolve the tag before the run (what a local image already
+        # resolves to is what `docker run` uses) and again after it (what it
+        # pulled, when nothing was local). Never trust the tag itself.
+        before = self._inspect_image(image)
+
         try:
             proc = subprocess.run(
                 argv, capture_output=True, timeout=timeout,
@@ -191,7 +242,7 @@ class DockerRunner:
                 stdout=exc.stdout or b"",
                 stderr=(exc.stderr or b"") + b"[novafabric] docker capture timeout",
                 runner_error=f"workload exceeded {timeout}s wall-clock deadline",
-                runner_metadata={"image": image},
+                runner_metadata=self._metadata(image, before, ran=True),
             )
         except FileNotFoundError as exc:
             return RunnerJobResult(
@@ -199,7 +250,7 @@ class DockerRunner:
                 runner_status="failed_setup",
                 stderr=str(exc).encode(),
                 runner_error=str(exc),
-                runner_metadata={"image": image},
+                runner_metadata=self._metadata(image, before, ran=False),
             )
         except Exception as exc:
             return RunnerJobResult(
@@ -207,7 +258,7 @@ class DockerRunner:
                 runner_status="failed_setup",
                 stderr=str(exc).encode(),
                 runner_error=str(exc),
-                runner_metadata={"image": image},
+                runner_metadata=self._metadata(image, before, ran=False),
             )
 
         # docker exit codes:
@@ -230,7 +281,7 @@ class DockerRunner:
             stdout=proc.stdout,
             stderr=proc.stderr,
             runner_error=runner_error,
-            runner_metadata={"image": image},
+            runner_metadata=self._metadata(image, before, ran=True),
         )
 
     # ── Eval container helper (ADR-0033 E-4) ──────────────────────────────────

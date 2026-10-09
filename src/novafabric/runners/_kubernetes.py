@@ -30,11 +30,23 @@ import time
 from typing import Any
 
 from novafabric.runners._env import forwardable_env
+from novafabric.runners._image import (
+    IMAGE_PROVENANCE_KEY,
+    image_block,
+    parse_kubernetes_image_id,
+)
 from novafabric.runners._options import coerce_str_dict
 from novafabric.runners._poll import jittered_sleep
 from novafabric.runners._types import RunnerJobResult, RunnerJobSpec
 
 _DEFAULT_IN_POD_CAPSULE = "/novafabric/capsule"
+
+# The pod name and, tab-separated, the workload container's resolved image
+# (ADR-0307). kubectl's jsonpath prints an empty string for a missing key.
+_POD_JSONPATH = (
+    'jsonpath={.items[0].metadata.name}{"\\t"}'
+    "{.items[0].status.containerStatuses[0].imageID}"
+)
 
 
 # Accepts the CLI's "k=v,k2=v2" string as well as a real mapping — see
@@ -284,17 +296,25 @@ class KubernetesRunner:
                 break
             jittered_sleep(poll_interval)
 
-        # 3. Find the pod (for log retrieval and kubectl cp).
+        # 3. Find the pod (for log retrieval and kubectl cp). The same `get pods`
+        # also returns the workload container's status.imageID, the digest the
+        # kubelet actually ran (ADR-0307): no extra call, no extra RBAC verb.
+        image_resolution: dict[str, Any] = {
+            "unresolved_reason": "the workload pod was not found",
+        }
         try:
             pods = subprocess.run(
                 [self._kubectl, "get", "pods",
                  "-n", namespace,
                  "-l", f"job-name={job_name}",
-                 "-o", "jsonpath={.items[0].metadata.name}"],
+                 "-o", _POD_JSONPATH],
                 capture_output=True, timeout=10,
             )
             if pods.returncode == 0 and pods.stdout.strip():
-                pod_name = pods.stdout.decode().strip()
+                name, _, image_id = pods.stdout.decode().strip().partition("\t")
+                pod_name = name.strip() or None
+                if pod_name:
+                    image_resolution = parse_kubernetes_image_id(image_id)
         except (subprocess.TimeoutExpired, OSError):
             pass
 
@@ -335,6 +355,7 @@ class KubernetesRunner:
 
         runner_metadata: dict[str, Any] = {
             "image": image, "namespace": namespace, "job_name": job_name,
+            IMAGE_PROVENANCE_KEY: image_block(image, image_resolution),
         }
         if pod_name:
             runner_metadata["pod_name"] = pod_name
