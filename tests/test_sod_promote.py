@@ -241,38 +241,27 @@ def test_approve_promotion_no_open_proposal(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_audit_entries_written(tmp_path: Path) -> None:
+def test_audit_entries_written(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import json
 
-    import novafabric.audit as audit_module
-
-    original_path = audit_module.AUDIT_LOG_PATH
     audit_log_path = tmp_path / "audit.jsonl"
-    audit_module.AUDIT_LOG_PATH = audit_log_path
-
-    # patch the service module too
-    import novafabric.registry.service as svc
-    svc.AUDIT_LOG_PATH = audit_log_path
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(audit_log_path))
 
     tmp_db = tmp_path / "test.db"
     _register_model(tmp_db)
     _promote_to_validated(tmp_db)
 
-    try:
-        propose_promotion(
-            "fraud-model", "1.0.0", AssetStatus.staging,
-            "alice", "fp_alice", "sig_alice", db_path=tmp_db
-        )
-        approve_promotion(
-            "fraud-model", "1.0.0",
-            approver="bob",
-            approver_key_fp="fp_bob",
-            approver_sig="sig_bob",
-            db_path=tmp_db,
-        )
-    finally:
-        audit_module.AUDIT_LOG_PATH = original_path
-        svc.AUDIT_LOG_PATH = original_path
+    propose_promotion(
+        "fraud-model", "1.0.0", AssetStatus.staging,
+        "alice", "fp_alice", "sig_alice", db_path=tmp_db
+    )
+    approve_promotion(
+        "fraud-model", "1.0.0",
+        approver="bob",
+        approver_key_fp="fp_bob",
+        approver_sig="sig_bob",
+        db_path=tmp_db,
+    )
 
     lines = [json.loads(line) for line in audit_log_path.read_text().splitlines() if line.strip()]
     event_types = [entry["event_type"] for entry in lines]

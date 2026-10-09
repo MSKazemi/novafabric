@@ -34,10 +34,10 @@ def _chained_audit(event_value: str, actor: str, subject: str, details: "dict[st
     import logging
 
     from novafabric.audit import AuditEventType, AuditLog
-    from novafabric.audit._paths import AUDIT_LOG_PATH
+    from novafabric.audit._paths import resolve_audit_log_path
 
     try:
-        AuditLog(AUDIT_LOG_PATH).append(
+        AuditLog(resolve_audit_log_path()).append(
             event_type=AuditEventType(event_value),
             actor=actor,
             resource_id=subject,

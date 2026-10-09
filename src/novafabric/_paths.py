@@ -8,8 +8,11 @@ Resolution order for every home-relative path: the path's own override env var
 (where one exists) > ``$NOVAFABRIC_HOME/<name>`` > ``~/.novafabric/<name>``. Never
 write ``Path.home() / ".novafabric"`` in ``src/``: add a helper here instead. The
 few deliberately user-global locations (``~/.config/novafabric``, the XDG
-``~/.local/share/novafabric`` seal/audit stores, ``./.novafabric`` project
-directories) are not under this home and say so where they are defined.
+``~/.local/share/novafabric`` legacy seal stores, ``./.novafabric`` project
+directories) are not under this home and say so where they are defined. The
+hash-chained audit log follows this home when ``NOVAFABRIC_HOME`` is set and
+falls back to the XDG data directory otherwise
+(:func:`novafabric.audit.resolve_audit_log_path`).
 
 Environment variables
 ---------------------

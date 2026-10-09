@@ -31,7 +31,7 @@ from rich.console import Console
 from rich.table import Table
 
 from novafabric import _paths as _nf_paths
-from novafabric.audit import AUDIT_LOG_PATH, AuditLog
+from novafabric.audit import AuditLog, resolve_audit_log_path
 from novafabric.pii.dek import DEKStore, open_dek_store
 from novafabric.retention.actions import SweepExecutor
 from novafabric.retention.models import (
@@ -317,7 +317,7 @@ def apply_cmd(
         executor = SweepExecutor(
             registry=registry,
             principal=principal,
-            audit_log=None if dry_run else AuditLog(AUDIT_LOG_PATH),
+            audit_log=None if dry_run else AuditLog(resolve_audit_log_path()),
             dek_store=dek_store,
             receipt_dir=_nova_home() / "evidence" / "erasure",
             retention_months=retention_months,
@@ -334,7 +334,7 @@ def apply_cmd(
         console.print(
             f"[green]Sweep complete:[/green] {applied} applied, "
             f"{len(records) - applied} skipped/deferred/errored. "
-            f"Evidence appended to {AUDIT_LOG_PATH}."
+            f"Evidence appended to {resolve_audit_log_path()}."
         )
 
 

@@ -122,13 +122,18 @@ def _hermetic_novafabric_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
         if key.startswith("NOVAFABRIC_"):
             monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("NOVAFABRIC_HOME", str(tmp_path / ".nova-home-hermetic"))
-    # The audit log lives OUTSIDE the home (~/.local/share/novafabric/) with a
-    # hard-coded default; without this override, backup tests would slurp the
-    # developer's real hash-chained audit log into test backup sets (ADR-0216).
+    # The hash-chained audit log: every layer of its precedence
+    # (novafabric.audit.resolve_audit_log_path) is pointed at this test's tmp dir —
+    # the explicit override, NOVAFABRIC_HOME above, and XDG_DATA_HOME below it —
+    # so no test can append to the developer's real
+    # ~/.local/share/novafabric/audit.jsonl (it held `test-user` entries from test
+    # runs before 2026-10-09) or slurp it into a backup set (ADR-0216).
+    # Guarded by tests/audit/test_audit_log_path.py.
     monkeypatch.setenv(
         "NOVAFABRIC_AUDIT_LOG_PATH",
         str(tmp_path / ".nova-home-hermetic" / "audit-hermetic.jsonl"),
     )
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / ".xdg-data-hermetic"))
     # The registry-schema DDL memo (init-once-per-db, B4) must not leak across
     # tests: a test that deletes/replaces a db file another test path shared
     # would otherwise skip re-initialisation.

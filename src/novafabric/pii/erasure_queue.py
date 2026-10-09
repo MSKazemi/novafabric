@@ -49,7 +49,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from novafabric import _paths as _nf_paths
-from novafabric.audit import AUDIT_LOG_PATH
+from novafabric.audit import resolve_audit_log_path
 from novafabric.capture._ulid import new_ulid
 from novafabric.pii.dek import ErasureDeferredReceipt, open_dek_store
 
@@ -132,11 +132,10 @@ def retention_months_from_env() -> int:
 def erasure_audit_log_path() -> Path:
     """Path of the hash-chained audit log the ``erasure.request`` events ride on.
 
-    Module-level indirection so tests can monkeypatch
-    ``novafabric.pii.erasure_queue.AUDIT_LOG_PATH`` (same pattern as
-    ``registry.service``).
+    Resolved at call time by :func:`novafabric.audit.resolve_audit_log_path`,
+    so ``NOVAFABRIC_AUDIT_LOG_PATH`` / ``NOVAFABRIC_HOME`` redirect it.
     """
-    return AUDIT_LOG_PATH
+    return resolve_audit_log_path()
 
 
 # ---------------------------------------------------------------------------

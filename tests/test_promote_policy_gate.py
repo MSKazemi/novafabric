@@ -99,7 +99,7 @@ class TestPromotePolicyGate:
     ) -> None:
         """A policy.allow event is written to the audit log."""
         audit_path = tmp_path / "audit.jsonl"
-        monkeypatch.setattr("novafabric.registry.service.AUDIT_LOG_PATH", audit_path)
+        monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(audit_path))
 
         _register_model(tmp_db, fixtures_dir)
         engine = _mock_engine(_allow_decision(decision_id="dec-allow-1"))
@@ -130,7 +130,7 @@ class TestPromotePolicyGate:
     ) -> None:
         """A policy.deny event is written to the audit log even when the promotion is blocked."""
         audit_path = tmp_path / "audit.jsonl"
-        monkeypatch.setattr("novafabric.registry.service.AUDIT_LOG_PATH", audit_path)
+        monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(audit_path))
 
         _register_model(tmp_db, fixtures_dir)
         engine = _mock_engine(_deny_decision(decision_id="dec-deny-1"))
@@ -159,7 +159,7 @@ class TestPromotePolicyGate:
     ) -> None:
         """force=True bypasses the raise but the deny is still logged for audit trail."""
         audit_path = tmp_path / "audit.jsonl"
-        monkeypatch.setattr("novafabric.registry.service.AUDIT_LOG_PATH", audit_path)
+        monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(audit_path))
 
         _register_model(tmp_db, fixtures_dir)
         engine = _mock_engine(_deny_decision(decision_id="dec-force-bypass"))
@@ -215,7 +215,7 @@ class TestEvidenceExportPolicyGate:
         from novafabric.evidence.bundle import EvidenceBundleBuilder
         from novafabric.evidence.signing import LocalSigner
 
-        monkeypatch.setattr("novafabric.evidence.bundle.AUDIT_LOG_PATH", tmp_path / "audit.jsonl")
+        monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(tmp_path / "audit.jsonl"))
 
         capsule_dir = _make_real_capsule(tmp_path)
         signer = LocalSigner(_make_keypair(tmp_path))
@@ -241,7 +241,7 @@ class TestEvidenceExportPolicyGate:
         from novafabric.evidence.bundle import EvidenceBundleBuilder
         from novafabric.evidence.signing import LocalSigner
 
-        monkeypatch.setattr("novafabric.evidence.bundle.AUDIT_LOG_PATH", tmp_path / "audit.jsonl")
+        monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(tmp_path / "audit.jsonl"))
 
         capsule_dir = _make_real_capsule(tmp_path)
         signer = LocalSigner(_make_keypair(tmp_path))
@@ -301,7 +301,7 @@ class TestReplayMutatingGate:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Policy deny raises PolicyDeniedError for allow_mutating replay."""
-        monkeypatch.setattr("novafabric.replay._engine.AUDIT_LOG_PATH", tmp_path / "audit.jsonl")
+        monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(tmp_path / "audit.jsonl"))
 
         cap = _make_capsule(tmp_path)
         engine = _mock_engine(_deny_decision(reason="no-mutate", decision_id="R1"))
@@ -348,7 +348,7 @@ class TestReplayMutatingGate:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """When allow_mutating=True, evaluate() is called with action='replay_mutating'."""
-        monkeypatch.setattr("novafabric.replay._engine.AUDIT_LOG_PATH", tmp_path / "audit.jsonl")
+        monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(tmp_path / "audit.jsonl"))
 
         cap = _make_capsule(tmp_path)
         engine = _mock_engine(_allow_decision())

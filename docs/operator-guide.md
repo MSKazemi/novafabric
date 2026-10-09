@@ -1011,7 +1011,7 @@ Disabled by default. This is the only path that leaves the trust boundary.
 |---|---|---|
 | `NOVAFABRIC_DB_URL` | — | Target Postgres URL for `nova db` migrations |
 | `NOVAFABRIC_API_WORKERS` | `1` | ⚠ Read by `SQLiteMetadataStore`, which **refuses to construct** when this is > 1. It is the guard behind "SQLite cannot be shared across writer processes" — see §3 on `--workers` |
-| `NOVAFABRIC_AUDIT_LOG_PATH` | — | Deployment audit-log path override |
+| `NOVAFABRIC_AUDIT_LOG_PATH` | `$NOVAFABRIC_HOME/audit.jsonl` when `NOVAFABRIC_HOME` is set, else `$XDG_DATA_HOME/novafabric/audit.jsonl`, else `~/.local/share/novafabric/audit.jsonl` | Hash-chained audit log path. Every writer and reader (exports, promotions, holds, `nova audit-log`, `nova policy explain`, `nova serve`, backup) resolves it the same way, at the moment it is used |
 
 ### Rate limiting
 
@@ -1053,8 +1053,11 @@ covers the registry, capsules, evidence, the keystore (`keys/`, which the health
 `keystore_ok` checks), tokens, the object-store WAL, the dashboard audit log and the
 NovaSeal config and nonce store. Unset `NOVAFABRIC_HOME` and the defaults are exactly the
 old `~/.novafabric` locations. Deliberately **not** under the home: the per-user keyring
-(`~/.config/novafabric`), the XDG audit log and legacy seal stores
-(`~/.local/share/novafabric`), and project-local `./.novafabric/` directories.
+(`~/.config/novafabric`), the legacy seal stores (`~/.local/share/novafabric`), and
+project-local `./.novafabric/` directories. The hash-chained audit log follows
+`NOVAFABRIC_HOME` when it is set (`$NOVAFABRIC_HOME/audit.jsonl`); with it unset it stays at
+`$XDG_DATA_HOME/novafabric/audit.jsonl`, or `~/.local/share/novafabric/audit.jsonl` when
+`XDG_DATA_HOME` is unset too. `NOVAFABRIC_AUDIT_LOG_PATH` overrides all three.
 
 | Variable | Default | Effect |
 |---|---|---|

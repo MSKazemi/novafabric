@@ -52,7 +52,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from novafabric.audit import AUDIT_LOG_PATH, AuditEventType, AuditLog
+from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
 from novafabric.events.adapters import (
     Adapter,
     build_email_message,
@@ -418,7 +418,7 @@ class AlertRouter:
         """
         try:
             if self._audit is None:
-                path = self._config.audit_log_path or AUDIT_LOG_PATH
+                path = self._config.audit_log_path or resolve_audit_log_path()
                 self._audit = AuditLog(path)
             details: dict[str, Any] = {
                 "endpoint_id": endpoint.endpoint_id,

@@ -17,7 +17,8 @@ ADR-0184 makes ``--insecure-no-auth`` an explicit opt-out that must leave an
 audit trail, not only a log line: a startup warning scrolls away, a
 hash-chained audit entry does not.  :func:`record_insecure_start` appends one
 ``server.insecure_no_auth`` entry to the deployment audit log
-(``NOVAFABRIC_AUDIT_LOG_PATH``, default ``~/.local/share/novafabric/audit.jsonl``).
+(:func:`novafabric.audit.resolve_audit_log_path`: ``NOVAFABRIC_AUDIT_LOG_PATH``,
+else ``$NOVAFABRIC_HOME/audit.jsonl``, else the XDG data directory).
 
 Fail closed: if the entry cannot be written, the server refuses to start in
 insecure mode (:class:`InsecureModeAuditError`).  The audit entry is the
@@ -27,11 +28,16 @@ both is not something the operator asked for.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from novafabric.audit import AUDIT_LOG_PATH, AuditEntry, AuditEventType, AuditLog
+from novafabric.audit import (
+    AUDIT_LOG_PATH_ENV,
+    AuditEntry,
+    AuditEventType,
+    AuditLog,
+    resolve_audit_log_path,
+)
 
 if TYPE_CHECKING:
     from novafabric.server.config import ServerConfig
@@ -44,8 +50,6 @@ __all__ = [
     "record_insecure_start",
 ]
 
-#: Deployment audit-log override (the same variable the backup tooling honours).
-AUDIT_LOG_PATH_ENV = "NOVAFABRIC_AUDIT_LOG_PATH"
 #: Actor recorded for the entry — the server process itself, not a user.
 INSECURE_START_ACTOR = "system:nova-server"
 
@@ -66,8 +70,7 @@ def insecure_mode_active(config: ServerConfig) -> bool:
 def _resolve_audit_log_path(audit_log_path: Path | None) -> Path:
     if audit_log_path is not None:
         return audit_log_path
-    env = os.environ.get(AUDIT_LOG_PATH_ENV, "").strip()
-    return Path(env) if env else AUDIT_LOG_PATH
+    return resolve_audit_log_path()
 
 
 def record_insecure_start(

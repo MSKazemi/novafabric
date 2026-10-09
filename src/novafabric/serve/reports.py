@@ -663,7 +663,7 @@ def report_alert_digest(
     unreadable config degrade to empty rows — never an exception.
     """
     try:
-        from novafabric.audit import AUDIT_LOG_PATH
+        from novafabric.audit import resolve_audit_log_path
         from novafabric.events.alerts import load_alerts_config_from_env
         from novafabric.events.emitter import load_config_from_env
         from novafabric.serve.routers.alerts import (
@@ -674,7 +674,7 @@ def report_alert_digest(
 
         alerts_cfg = load_alerts_config_from_env()
         events_cfg = load_config_from_env()
-        audit_path = alerts_cfg.audit_log_path or AUDIT_LOG_PATH
+        audit_path = alerts_cfg.audit_log_path or resolve_audit_log_path()
     except Exception:  # noqa: BLE001
         return ALERT_DIGEST_COLS, []
 

@@ -64,7 +64,7 @@ def test_approve_records_sign_off(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     audit_path = tmp_path / "audit.jsonl"
-    monkeypatch.setattr("novafabric.registry.service.AUDIT_LOG_PATH", audit_path)
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(audit_path))
 
     _register_model(tmp_db, fixtures_dir)
     _promote_to_pending_approval(tmp_db)
@@ -86,7 +86,7 @@ def test_approve_multiple_sign_offs_allowed(
 ) -> None:
     """Multiple approvers can each record a sign-off independently."""
     audit_path = tmp_path / "audit.jsonl"
-    monkeypatch.setattr("novafabric.registry.service.AUDIT_LOG_PATH", audit_path)
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(audit_path))
 
     _register_model(tmp_db, fixtures_dir)
     _promote_to_pending_approval(tmp_db)
@@ -115,7 +115,7 @@ def test_approve_note_stored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     audit_path = tmp_path / "audit.jsonl"
-    monkeypatch.setattr("novafabric.registry.service.AUDIT_LOG_PATH", audit_path)
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(audit_path))
 
     _register_model(tmp_db, fixtures_dir)
     _promote_to_pending_approval(tmp_db)
@@ -142,7 +142,7 @@ def test_approve_asset_not_found(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     audit_path = tmp_path / "audit.jsonl"
-    monkeypatch.setattr("novafabric.registry.service.AUDIT_LOG_PATH", audit_path)
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(audit_path))
 
     with pytest.raises(AssetNotFoundError):
         approve_asset("ghost-model", "9.9.9", approver="alice", db_path=tmp_db)
@@ -156,7 +156,7 @@ def test_approve_requires_pending_approval_status(
 ) -> None:
     """approve_asset() must reject an asset that is not in pending_approval status."""
     audit_path = tmp_path / "audit.jsonl"
-    monkeypatch.setattr("novafabric.registry.service.AUDIT_LOG_PATH", audit_path)
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(audit_path))
 
     # Register an asset — it starts in development status, never promoted.
     _register_model(tmp_db, fixtures_dir)
@@ -179,7 +179,7 @@ def test_approve_audit_log_entry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     audit_path = tmp_path / "audit.jsonl"
-    monkeypatch.setattr("novafabric.registry.service.AUDIT_LOG_PATH", audit_path)
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(audit_path))
 
     _register_model(tmp_db, fixtures_dir)
     _promote_to_pending_approval(tmp_db)
@@ -219,7 +219,7 @@ def test_lifecycle_transition_to_validated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     audit_path = tmp_path / "audit.jsonl"
-    monkeypatch.setattr("novafabric.registry.service.AUDIT_LOG_PATH", audit_path)
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(audit_path))
 
     _register_model(tmp_db, fixtures_dir)
     result = promote_asset(
@@ -235,7 +235,7 @@ def test_lifecycle_transition_to_pending_approval(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     audit_path = tmp_path / "audit.jsonl"
-    monkeypatch.setattr("novafabric.registry.service.AUDIT_LOG_PATH", audit_path)
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(audit_path))
 
     _register_model(tmp_db, fixtures_dir)
     promote_asset("fraud-model", "1.0.0", AssetStatus.validated, "test-user", db_path=tmp_db)
@@ -252,7 +252,7 @@ def test_lifecycle_transition_pending_approval_to_staging(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     audit_path = tmp_path / "audit.jsonl"
-    monkeypatch.setattr("novafabric.registry.service.AUDIT_LOG_PATH", audit_path)
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(audit_path))
 
     _register_model(tmp_db, fixtures_dir)
     promote_asset("fraud-model", "1.0.0", AssetStatus.validated, "test-user", db_path=tmp_db)

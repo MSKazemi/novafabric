@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from novafabric.audit import AUDIT_LOG_PATH, AuditEventType, AuditLog
+from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
 from novafabric.metadata_store.interface import MetadataStore
 from novafabric.server.capsule_delete import active_hold_ids, worm_locked_until
 
@@ -161,7 +161,7 @@ def delete_runs(
     propagates — the caller must treat the request as completed-but-unaudited.
     """
     ids = _normalise(run_ids)
-    log = audit_log if audit_log is not None else AuditLog(AUDIT_LOG_PATH)
+    log = audit_log if audit_log is not None else AuditLog(resolve_audit_log_path())
     requested = [str(r) for r in ids]
 
     refusals = check_runs_deletable(ids, capsule_dir=capsule_dir, allow_sealed=allow_sealed)

@@ -349,13 +349,12 @@ class TestListStaleWithEvalAndLineage:
     ) -> None:
         """rollback_asset uses DB fallback when audit log has no PROMOTE entries."""
         # Set up assets without an audit log (simulate fresh install)
-        import novafabric.registry.service as _svc
         from novafabric.registry.service import rollback_asset
 
         # Redirect audit log to an empty file
         audit_path = tmp_path / "empty_audit.log"
-        original = _svc.AUDIT_LOG_PATH
-        _svc.AUDIT_LOG_PATH = audit_path
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(audit_path))
         try:
             v1_path = _write_spec(tmp_path, _MODEL_YAML, "v1.yaml")
             # Use a second model spec
@@ -384,4 +383,4 @@ class TestListStaleWithEvalAndLineage:
             assert result["archived_version"] == "2.0.0"
             assert result["restored_version"] == "1.0.0"
         finally:
-            _svc.AUDIT_LOG_PATH = original
+            monkeypatch.undo()

@@ -22,20 +22,20 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Optional
 
-from novafabric.audit import AUDIT_LOG_PATH
+from novafabric.audit import resolve_audit_log_path
 from novafabric.backup.models import BackupMember, CoverageEntry, MemberOrigin
 
 
 def default_audit_log_path() -> Path:
-    """Deployment audit-log path, overridable via ``NOVAFABRIC_AUDIT_LOG_PATH``.
+    """Deployment audit-log path — the one resolver every audit reader shares.
 
-    The audit module hard-codes ``~/.local/share/novafabric/audit.jsonl``; the
-    env override exists so backup/restore can be pointed elsewhere (relocated
-    deployments) and so the hermetic test fixture keeps tests away from the
-    developer's real audit chain.
+    ``NOVAFABRIC_AUDIT_LOG_PATH`` > ``$NOVAFABRIC_HOME/audit.jsonl`` >
+    ``$XDG_DATA_HOME/novafabric/audit.jsonl`` >
+    ``~/.local/share/novafabric/audit.jsonl``
+    (:func:`novafabric.audit.resolve_audit_log_path`), so backup/restore
+    archives exactly the log every writer appends to.
     """
-    env = os.environ.get("NOVAFABRIC_AUDIT_LOG_PATH")
-    return Path(env) if env else AUDIT_LOG_PATH
+    return resolve_audit_log_path()
 
 #: Arc-path prefix for members that do not live under the home.
 EXTERNAL_PREFIX = "external"

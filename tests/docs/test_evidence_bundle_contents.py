@@ -60,8 +60,8 @@ def bundle(tmp_path_factory: pytest.TempPathFactory) -> zipfile.ZipFile:
     tmp = tmp_path_factory.mktemp("bundle")
     mp = pytest.MonkeyPatch()
     mp.setenv("NOVAFABRIC_HOME", str(tmp / "home"))
-    # The policy gate appends to an audit log under the real home directory by default.
-    mp.setattr(bundle_mod, "AUDIT_LOG_PATH", tmp / "audit.jsonl")
+    # The policy gate appends to the audit log; keep it in this module-scoped tmp dir.
+    mp.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(tmp / "audit.jsonl"))
     try:
         cap = CaptureOrchestrator(base_dir=tmp / "runs").run(
             command=[sys.executable, "-c", "pass"]

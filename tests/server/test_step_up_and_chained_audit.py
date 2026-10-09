@@ -53,9 +53,8 @@ def audit_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     # The chained log path is resolved at import in _paths; point the module
     # constant at the tmp file for this test.
     path = tmp_path / "audit.jsonl"
-    import novafabric.audit._paths as audit_paths
 
-    monkeypatch.setattr(audit_paths, "AUDIT_LOG_PATH", path)
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(path))
     return path
 
 

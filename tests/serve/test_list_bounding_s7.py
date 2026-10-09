@@ -562,9 +562,8 @@ class TestAdminTokensBounding:
 @pytest.fixture()
 def _tmp_api_audit_log(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     path = tmp_path / "api-audit.jsonl"
-    from novafabric.audit import _paths
 
-    monkeypatch.setattr(_paths, "AUDIT_LOG_PATH", path)
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(path))
     return path
 
 

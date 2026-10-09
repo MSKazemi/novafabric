@@ -163,8 +163,8 @@ Collect runs while you investigate, then export them as **one** signed Evidence 
 - **Legal holds**: held runs export, and the bundle says so (`contains_held_evidence`, hold
   ids per item). The export never places, releases or changes a hold.
 - **Audited, or not exported**: each export appends an `evidence.export` entry to the
-  hash-chained audit log (`~/.local/share/novafabric/audit.jsonl`, or
-  `$NOVAFABRIC_AUDIT_LOG_PATH`) naming the actor, the items and the bundle digest, plus a
+  hash-chained audit log (`$NOVAFABRIC_AUDIT_LOG_PATH`, else `$NOVAFABRIC_HOME/audit.jsonl`,
+  else `~/.local/share/novafabric/audit.jsonl`) naming the actor, the items and the bundle digest, plus a
   dashboard audit record. If the chained entry cannot be written, the bundle is deleted and
   the export answers **503**.
 - **Bounds**: at most **50 items** and **256 MiB** of capsule content per export, one export

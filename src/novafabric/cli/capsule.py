@@ -6,7 +6,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from novafabric.audit import AUDIT_LOG_PATH, AuditEventType, AuditLog
+from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
 from novafabric.storage._retention import LegalHold, RetentionPolicy, RetentionPolicyEngine
 
 console = Console()
@@ -71,7 +71,7 @@ def capsule_delete(
                 raise typer.Exit(code=1)
 
     # Record successful deletion in the audit log
-    AuditLog(AUDIT_LOG_PATH).append(
+    AuditLog(resolve_audit_log_path()).append(
         event_type=AuditEventType.CAPSULE_DELETE,
         actor="cli-user",
         resource_id=capsule_id,

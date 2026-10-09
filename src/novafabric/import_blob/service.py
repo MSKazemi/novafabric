@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Literal
 
 from novafabric._paths import default_capsule_dir, nova_home
-from novafabric.audit import AUDIT_LOG_PATH, AuditEventType, AuditLog
+from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
 from novafabric.capture._ulid import new_ulid
 from novafabric.export_blob.destinations import LocalDirDestination
 from novafabric.export_blob.digest import compute_batch_digest
@@ -127,7 +127,7 @@ def _write_receipt(receipt: ImportReceipt, receipts_dir: Path | None) -> Path:
 
 def _append_audit(receipt: ImportReceipt, audit_log_path: Path | None) -> None:
     """One hash-chained audit entry per run — never capsule content (D7)."""
-    path = audit_log_path if audit_log_path is not None else AUDIT_LOG_PATH
+    path = audit_log_path if audit_log_path is not None else resolve_audit_log_path()
     try:
         AuditLog(path).append(
             event_type=AuditEventType.CAPSULE_IMPORT,

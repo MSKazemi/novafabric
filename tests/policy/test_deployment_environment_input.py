@@ -147,7 +147,7 @@ def test_export_gate_passes_recorded_environment(
     from novafabric.evidence.bundle import EvidenceBundleBuilder
     from novafabric.evidence.signing import LocalSigner, generate_keypair
 
-    monkeypatch.setattr("novafabric.evidence.bundle.AUDIT_LOG_PATH", tmp_path / "audit.jsonl")
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(tmp_path / "audit.jsonl"))
     monkeypatch.delenv("NOVAFABRIC_ENVIRONMENT", raising=False)
     result = CaptureOrchestrator(base_dir=tmp_path / "runs").run(
         command=[sys.executable, "-c", "pass"], environment=env

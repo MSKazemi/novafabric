@@ -58,10 +58,15 @@ def policy_test(
 @app.command("explain")
 def policy_explain(
     decision_id: str = typer.Argument(...),
-    audit_log_path: str = typer.Option(
-        "~/.local/share/novafabric/audit.jsonl",
+    audit_log_path: Optional[str] = typer.Option(
+        None,
         "--audit-log",
-        help="Path to the audit log JSONL file",
+        help=(
+            "Path to the audit log JSONL file (default: $NOVAFABRIC_AUDIT_LOG_PATH, "
+            "else $NOVAFABRIC_HOME/audit.jsonl, else "
+            "$XDG_DATA_HOME/novafabric/audit.jsonl, else "
+            "~/.local/share/novafabric/audit.jsonl)"
+        ),
     ),
 ) -> None:
     """Show the full decision record for a past policy evaluation.
@@ -73,9 +78,11 @@ def policy_explain(
       nova policy explain <decision-id>
       nova policy explain <decision-id> --audit-log /custom/audit.jsonl
     """
-    from novafabric.audit import AuditLog
+    from novafabric.audit import AuditLog, resolve_audit_log_path
 
-    path = Path(audit_log_path).expanduser()
+    path = (
+        Path(audit_log_path).expanduser() if audit_log_path else resolve_audit_log_path()
+    )
     log = AuditLog(path)
     entries = log.query()
     match = [

@@ -24,10 +24,7 @@ runner = CliRunner()
 @pytest.fixture(autouse=True)
 def _isolated_audit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Keep CLI-driven audit appends out of the developer's real audit log."""
-    monkeypatch.setattr(
-        "novafabric.import_blob.service.AUDIT_LOG_PATH",
-        tmp_path / "cli-audit.jsonl",
-    )
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(tmp_path / "cli-audit.jsonl"))
 
 
 @pytest.fixture()

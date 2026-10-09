@@ -19,7 +19,7 @@ import typer
 from rich.console import Console
 
 from novafabric._paths import default_capsule_dir
-from novafabric.audit import AUDIT_LOG_PATH
+from novafabric.audit import resolve_audit_log_path
 from novafabric.evidence.admissibility import (
     ChainOfCustody,
     Custodian,
@@ -425,7 +425,7 @@ def evidence_bind_custody_cmd(
     signer = _load_signer(key) if key else None
     block = admissibility_block(
         capsule_dir,
-        audit_log_path=AUDIT_LOG_PATH,
+        audit_log_path=resolve_audit_log_path(),
         run_id=capsule_dir.name,
         custodian=custodian,
         signer=signer,

@@ -54,7 +54,7 @@ def policy_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     engine = MagicMock()
     engine.evaluate.return_value = PolicyDecision(allow=True, decision_id="d-1")
     monkeypatch.setattr("novafabric.replay._engine.get_policy_engine", lambda: engine)
-    monkeypatch.setattr("novafabric.replay._engine.AUDIT_LOG_PATH", tmp_path / "audit.jsonl")
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(tmp_path / "audit.jsonl"))
     return engine
 
 

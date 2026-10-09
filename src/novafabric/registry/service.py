@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from novafabric.adapters.git import get_head_sha
-from novafabric.audit import AUDIT_LOG_PATH, AuditEventType, AuditLog
+from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
 from novafabric.policy import (
     PolicyInput,
     PolicyResource,
@@ -537,7 +537,7 @@ def promote_asset(
             ),
         )
         decision = engine.evaluate(inp)
-        AuditLog(AUDIT_LOG_PATH).append(
+        AuditLog(resolve_audit_log_path()).append(
             event_type=(
                 AuditEventType.POLICY_ALLOW if decision.allow else AuditEventType.POLICY_DENY
             ),
@@ -698,7 +698,7 @@ def approve_asset(
         conn.close()
 
     # Audit write follows the committed DB record; an IO failure here leaves the DB authoritative.
-    AuditLog(AUDIT_LOG_PATH).append(
+    AuditLog(resolve_audit_log_path()).append(
         event_type=AuditEventType.APPROVE,
         actor=approver,
         resource_id=f"{name}@{version}",
@@ -801,7 +801,7 @@ def rollback_asset(
             #      A rollback can restore an archived version back to production.
             #   4. Fallback (no audit entries): query the DB directly for any
             #      other version ordered by promoted_at DESC.
-            audit_log = AuditLog(AUDIT_LOG_PATH)
+            audit_log = AuditLog(resolve_audit_log_path())
             promote_entries = audit_log.query(resource_id=None)
             # collect unique versions in reverse-chronological order
             seen: set[str] = set()
@@ -922,7 +922,7 @@ def rollback_asset(
     # ------------------------------------------------------------------ #
     # 4. Audit entry (outside the DB transaction; DB row is authoritative).#
     # ------------------------------------------------------------------ #
-    AuditLog(AUDIT_LOG_PATH).append(
+    AuditLog(resolve_audit_log_path()).append(
         event_type=AuditEventType.ROLLBACK,
         actor=actor,
         resource_id=f"{name}@{target_version}",
@@ -1010,7 +1010,7 @@ def unregister_asset(
 
     _delete_synthetic_lineage_edges(name, version, db_path)
 
-    AuditLog(AUDIT_LOG_PATH).append(
+    AuditLog(resolve_audit_log_path()).append(
         event_type=AuditEventType.UNREGISTER,
         actor=actor,
         resource_id=f"{name}@{version}",
@@ -1245,7 +1245,7 @@ def propose_promotion(
     finally:
         conn.close()
 
-    AuditLog(AUDIT_LOG_PATH).append(
+    AuditLog(resolve_audit_log_path()).append(
         event_type=AuditEventType.PROMOTE_PROPOSE,
         actor=proposer,
         resource_id=f"{name}@{version}",
@@ -1320,7 +1320,7 @@ def approve_promotion(
     finally:
         conn.close()
 
-    AuditLog(AUDIT_LOG_PATH).append(
+    AuditLog(resolve_audit_log_path()).append(
         event_type=AuditEventType.PROMOTE_APPROVE,
         actor=approver,
         resource_id=f"{name}@{version}",

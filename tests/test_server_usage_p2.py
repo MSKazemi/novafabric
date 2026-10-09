@@ -38,7 +38,6 @@ import pytest
 from typer.testing import CliRunner, Result
 
 from novafabric.audit import AuditLog
-from novafabric.audit import _paths as audit_paths
 from novafabric.cli.main import app
 from novafabric.server import usage, usage_export
 from novafabric.server.usage import METRIC_BYTES, METRIC_CAPSULES, Attribution
@@ -96,7 +95,7 @@ def capsule_dir(tmp_path: Path) -> Path:
 @pytest.fixture
 def audit_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path = tmp_path / "audit.jsonl"
-    monkeypatch.setattr(audit_paths, "AUDIT_LOG_PATH", path)
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(path))
     return path
 
 

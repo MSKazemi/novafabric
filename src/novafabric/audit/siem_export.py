@@ -319,7 +319,7 @@ def default_source_path(source: str) -> Path:
     if source == "audit":
         from novafabric.audit import _paths
 
-        return _paths.AUDIT_LOG_PATH
+        return _paths.resolve_audit_log_path()
     if source == "dashboard":
         from novafabric._paths import dashboard_audit_path
 

@@ -51,8 +51,8 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     monkeypatch.setenv("NOVAFABRIC_DASHBOARD_AUDIT_FILE", str(h / "dashboard-audit.jsonl"))
     monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(h / "chained-audit.jsonl"))
     monkeypatch.setenv("NOVAFABRIC_EVIDENCE_DIR", str(h / "evidence"))
-    # The bundle builder's own policy-decision entries go to a module constant.
-    monkeypatch.setattr("novafabric.evidence.bundle.AUDIT_LOG_PATH", h / "policy-audit.jsonl")
+    # The bundle builder's policy-decision entries resolve the same audit log
+    # (one resolver since 2026-10-09), so they land in chained-audit.jsonl too.
     yield h
 
 

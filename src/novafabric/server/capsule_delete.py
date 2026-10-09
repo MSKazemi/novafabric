@@ -117,11 +117,10 @@ def sealed_delete_allowed() -> bool:
 
 
 def chained_audit_log() -> AuditLog:
-    """The hash-chained audit log (``NOVAFABRIC_AUDIT_LOG_PATH`` overrides)."""
-    from novafabric.audit import AUDIT_LOG_PATH, AuditLog
+    """The hash-chained audit log, at :func:`novafabric.audit.resolve_audit_log_path`."""
+    from novafabric.audit import AuditLog, resolve_audit_log_path
 
-    env = os.environ.get("NOVAFABRIC_AUDIT_LOG_PATH")
-    return AuditLog(Path(env) if env else AUDIT_LOG_PATH)
+    return AuditLog(resolve_audit_log_path())
 
 
 def audit_index_event(

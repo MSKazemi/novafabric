@@ -36,9 +36,7 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Isolated cwd + NOVAFABRIC_HOME with one registry, policy, and capsules."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("NOVAFABRIC_HOME", str(tmp_path / "home"))
-    monkeypatch.setattr(
-        "novafabric.cli.retention.AUDIT_LOG_PATH", tmp_path / "audit.jsonl"
-    )
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(tmp_path / "audit.jsonl"))
     reg_dir = tmp_path / ".novafabric" / "registries" / REGISTRY
     reg_dir.mkdir(parents=True)
     (reg_dir / "retention-policy.yaml").write_text(

@@ -967,7 +967,7 @@ def test_cli_help() -> None:
 def test_cli_export_audit_to_file(
     tmp_path: Path, audit_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("novafabric.audit._paths.AUDIT_LOG_PATH", audit_path)
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(audit_path))
     out = tmp_path / "export.jsonl"
     result = runner.invoke(
         app, ["audit-log", "export", "--source", "audit", "--format", "ocsf", "--out", str(out)]
@@ -981,7 +981,7 @@ def test_cli_export_audit_to_file(
 def test_cli_export_audit_cef(
     tmp_path: Path, audit_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("novafabric.audit._paths.AUDIT_LOG_PATH", audit_path)
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(audit_path))
     out = tmp_path / "export.cef"
     result = runner.invoke(
         app,
@@ -1027,7 +1027,7 @@ def test_cli_chain_tamper_exit_code_3(
     lines[0] = json.dumps(tampered, separators=(",", ":"), sort_keys=True)
     audit_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    monkeypatch.setattr("novafabric.audit._paths.AUDIT_LOG_PATH", audit_path)
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(audit_path))
     out = tmp_path / "export.jsonl"
     result = runner.invoke(
         app, ["audit-log", "export", "--source", "audit", "--out", str(out)]
@@ -1079,7 +1079,7 @@ def test_cli_tail_chain_tamper_exit_code_3(
     lines[0] = json.dumps(tampered, separators=(",", ":"), sort_keys=True)
     audit_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    monkeypatch.setattr("novafabric.audit._paths.AUDIT_LOG_PATH", audit_path)
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(audit_path))
     result = runner.invoke(app, ["audit-log", "tail", "--source", "audit"])
     assert result.exit_code == 3
 
@@ -1087,8 +1087,6 @@ def test_cli_tail_chain_tamper_exit_code_3(
 def test_cli_missing_source_file_is_empty_export(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        "novafabric.audit._paths.AUDIT_LOG_PATH", tmp_path / "does-not-exist.jsonl"
-    )
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(tmp_path / "does-not-exist.jsonl"))
     result = runner.invoke(app, ["audit-log", "export", "--source", "audit"])
     assert result.exit_code == 0, result.output

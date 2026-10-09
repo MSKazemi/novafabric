@@ -63,7 +63,7 @@ def _isolated_audit_log(
 ) -> Path:
     """Keep the hash-chained audit log out of ~/.local/share during tests."""
     path = tmp_path / "audit.jsonl"
-    monkeypatch.setattr("novafabric.pii.erasure_queue.AUDIT_LOG_PATH", path)
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(path))
     return path
 
 

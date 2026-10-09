@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from novafabric.audit import AUDIT_LOG_PATH, AuditEventType, AuditLog
+from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
 from novafabric.capture._ulid import new_ulid
 from novafabric.capture.record_roles import logical_model_calls
 from novafabric.policy import (
@@ -196,7 +196,7 @@ class ReplayEngine:
                 ),
             )
             decision = engine.evaluate(inp)
-            AuditLog(AUDIT_LOG_PATH).append(
+            AuditLog(resolve_audit_log_path()).append(
                 event_type=(
                     AuditEventType.POLICY_ALLOW
                     if decision.allow

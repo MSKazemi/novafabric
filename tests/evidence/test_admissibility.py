@@ -185,7 +185,7 @@ def test_cli_bind_custody_and_check_admissibility(tmp_path, monkeypatch):
     _capsule(cap)
     # point the global audit log at our fixture log with 2 chained entries for the run
     audit = _audit_log(tmp_path)
-    monkeypatch.setattr("novafabric.cli.evidence.AUDIT_LOG_PATH", audit)
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(audit))
     priv, _ = generate_keypair(tmp_path / "key")
 
     runner = CliRunner()
@@ -222,7 +222,7 @@ def test_cli_bind_custody_unwitnessed_is_requires_foundation(tmp_path, monkeypat
     cap.mkdir()
     _capsule(cap)
     audit = _audit_log(tmp_path)
-    monkeypatch.setattr("novafabric.cli.evidence.AUDIT_LOG_PATH", audit)
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(audit))
 
     runner = CliRunner()
     out = tmp_path / "custody.json"

@@ -84,10 +84,7 @@ def db_path(tmp_path: Path) -> Path:
 def audit_log_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Redirect the audit log to a temp file so tests are isolated."""
     log_path = tmp_path / "audit.log"
-    import novafabric.audit._paths as _paths
-    monkeypatch.setattr(_paths, "AUDIT_LOG_PATH", log_path)
-    import novafabric.registry.service as _svc
-    monkeypatch.setattr(_svc, "AUDIT_LOG_PATH", log_path)
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(log_path))
     return log_path
 
 

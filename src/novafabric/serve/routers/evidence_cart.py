@@ -137,11 +137,25 @@ class CartExportResponse(BaseModel):
     cli_verify: str
 
 
-def _audit_log_path() -> Path:
-    from novafabric.audit import AUDIT_LOG_PATH
+def _audit_unavailable() -> JSONResponse:
+    """503 for an export whose hash-chained audit entry could not be written."""
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": "audit_unavailable",
+            "detail": (
+                "the hash-chained audit entry could not be written, so no bundle "
+                "was kept; an unaudited evidence export is refused (ADR-0239 D6)"
+            ),
+            "remedy": f"make the audit log writable or set {AUDIT_LOG_PATH_ENV}",
+        },
+    )
 
-    env = os.environ.get(AUDIT_LOG_PATH_ENV, "").strip()
-    return Path(env) if env else AUDIT_LOG_PATH
+
+def _audit_log_path() -> Path:
+    from novafabric.audit import resolve_audit_log_path
+
+    return resolve_audit_log_path()
 
 
 def _evidence_dir() -> Path:
@@ -225,6 +239,7 @@ def build_evidence_cart_router(
         from novafabric.evidence.bundle import (
             CapsuleSetBundleBuilder,
             CapsuleValidationError,
+            PolicyAuditUnavailableError,
             UnsafeSkipsError,
         )
         from novafabric.evidence.cart import (
@@ -420,6 +435,13 @@ def build_evidence_cart_router(
             partial.unlink(missing_ok=True)
             _record_failure(str(exc))
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except PolicyAuditUnavailableError as exc:
+            # The builder's policy decision rides the same chained audit log; if
+            # it cannot be recorded, nothing was built and nothing is exported.
+            partial.unlink(missing_ok=True)
+            logger.error("evidence cart export refused: %s", exc)
+            _record_failure("audit append failed: policy decision")
+            return _audit_unavailable()
 
         bundle_sha = _sha256_file(partial)
         size = partial.stat().st_size
@@ -447,18 +469,7 @@ def build_evidence_cart_router(
             partial.unlink(missing_ok=True)
             logger.error("evidence cart export refused: chained audit append failed: %s", exc)
             _record_failure(f"audit append failed: {type(exc).__name__}")
-            return JSONResponse(
-                status_code=503,
-                content={
-                    "error": "audit_unavailable",
-                    "detail": (
-                        "the export was built but the hash-chained audit entry could "
-                        "not be written, so the bundle was deleted; an unaudited "
-                        "evidence export is refused (ADR-0239 D6)"
-                    ),
-                    "remedy": f"make the audit log writable or set {AUDIT_LOG_PATH_ENV}",
-                },
-            )
+            return _audit_unavailable()
         os.replace(partial, final_path)
 
         extra: dict[str, Any] = {

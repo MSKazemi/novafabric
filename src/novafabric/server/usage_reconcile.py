@@ -230,7 +230,7 @@ def _audit_run(result: ReconciliationResult, actor: str, audit_log_path: Path | 
         "rows_recorded": result.rows_recorded,
         **result.report.model_dump(),
     }
-    AuditLog(audit_log_path or _paths.AUDIT_LOG_PATH).append(
+    AuditLog(audit_log_path or _paths.resolve_audit_log_path()).append(
         event_type=AuditEventType.USAGE_RECONCILE,
         actor=actor,
         resource_id=result.ref or f"report:{result.report.checked_at}",

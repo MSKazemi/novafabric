@@ -10,7 +10,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from novafabric.audit import AUDIT_LOG_PATH, AuditEventType, AuditLog
+from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
 
 console = Console()
 app = typer.Typer(
@@ -75,7 +75,7 @@ def hold_create(
     }
     with path.open("a") as f:
         f.write(json.dumps(record) + "\n")
-    AuditLog(AUDIT_LOG_PATH).append(
+    AuditLog(resolve_audit_log_path()).append(
         event_type=AuditEventType.HOLD_CREATE,
         actor="cli-user",
         resource_id=registry,
@@ -150,7 +150,7 @@ def hold_release(
             tmp = holds_file.with_suffix(".tmp")
             tmp.write_text("\n".join(updated_lines) + "\n")
             os.replace(tmp, holds_file)
-            AuditLog(AUDIT_LOG_PATH).append(
+            AuditLog(resolve_audit_log_path()).append(
                 event_type=AuditEventType.HOLD_RELEASE,
                 actor="cli-user",
                 resource_id=registry,

@@ -14,7 +14,7 @@ import yaml
 
 from novafabric import __version__ as NF_VERSION
 from novafabric._hashutil import sha256_file_prefixed, sha256_prefixed
-from novafabric.audit import AUDIT_LOG_PATH, AuditEventType, AuditLog
+from novafabric.audit import AuditEventType, AuditLog, resolve_audit_log_path
 from novafabric.capture._ulid import new_ulid
 from novafabric.evidence.admissibility import Custodian, admissibility_block
 from novafabric.evidence.intoto import dsse_sign, make_intoto_statement
@@ -64,6 +64,14 @@ class CapsuleValidationError(Exception):
 
 class UnsafeSkipsError(Exception):
     pass
+
+
+class PolicyAuditUnavailableError(Exception):
+    """The export-policy decision could not be appended to the audit log.
+
+    Raised before anything is written: an evidence export whose policy decision
+    is not on the hash-chained audit log is refused, not performed unaudited.
+    """
 
 
 def _now_iso() -> str:
@@ -124,7 +132,7 @@ class EvidenceBundleBuilder:
         self._actor = actor
         self._with_custody = with_custody
         self._custodian = custodian
-        self._audit_log_path = audit_log_path or AUDIT_LOG_PATH
+        self._audit_log_path = audit_log_path or resolve_audit_log_path()
 
     def _validate_capsule(self, capsule_dir: Path | None = None) -> None:
         """Structural + redaction validation for one capsule.
@@ -206,18 +214,25 @@ class EvidenceBundleBuilder:
             ),
         )
         decision = engine.evaluate(inp)
-        AuditLog(AUDIT_LOG_PATH).append(
-            event_type=(
-                AuditEventType.POLICY_ALLOW if decision.allow else AuditEventType.POLICY_DENY
-            ),
-            actor=self._actor,
-            resource_id=capsule_ref,
-            details={
-                "decision_id": decision.decision_id,
-                "reason": decision.reason,
-                "action": "evidence_export",
-            },
-        )
+        audit_path = resolve_audit_log_path()
+        try:
+            AuditLog(audit_path).append(
+                event_type=(
+                    AuditEventType.POLICY_ALLOW if decision.allow else AuditEventType.POLICY_DENY
+                ),
+                actor=self._actor,
+                resource_id=capsule_ref,
+                details={
+                    "decision_id": decision.decision_id,
+                    "reason": decision.reason,
+                    "action": "evidence_export",
+                },
+            )
+        except OSError as exc:
+            raise PolicyAuditUnavailableError(
+                f"cannot record the export-policy decision in the audit log at "
+                f"{audit_path}: {exc}"
+            ) from exc
         if not decision.allow:
             raise PolicyDeniedError(decision.reason, decision.decision_id)
 

@@ -137,13 +137,13 @@ def build_alerts_router(
         request: Request,
         limit: int = Query(default=50, ge=1, le=200),
     ) -> Response:
-        from novafabric.audit import AUDIT_LOG_PATH  # noqa: PLC0415
+        from novafabric.audit import resolve_audit_log_path  # noqa: PLC0415
         from novafabric.events.alerts import load_alerts_config_from_env  # noqa: PLC0415
         from novafabric.events.emitter import load_config_from_env  # noqa: PLC0415
 
         alerts_cfg = load_alerts_config_from_env()
         events_cfg = load_config_from_env()
-        audit_path = alerts_cfg.audit_log_path or AUDIT_LOG_PATH
+        audit_path = alerts_cfg.audit_log_path or resolve_audit_log_path()
 
         # Scan cap per source: 2×limit keeps IO bounded while leaving headroom
         # so `total` stays exact for any log within the tail window (and the

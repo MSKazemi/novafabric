@@ -7849,6 +7849,10 @@ Replay a past policy decision from the audit log, showing the event type, actor,
 nova policy explain 3f8a1b2c-...
 ```
 
+- `--audit-log PATH` — audit log to read (default: the hash-chained audit log —
+  `$NOVAFABRIC_AUDIT_LOG_PATH`, else `$NOVAFABRIC_HOME/audit.jsonl`, else
+  `$XDG_DATA_HOME/novafabric/audit.jsonl`, else `~/.local/share/novafabric/audit.jsonl`)
+
 The dashboard Policy Explain panel auto-completes decision IDs via
 `GET /api/policy/recent-decisions?limit=50` (serve REST API), which returns up to 50
 recent IDs from `~/.novafabric/dashboard-audit.jsonl` in most-recent-first order.

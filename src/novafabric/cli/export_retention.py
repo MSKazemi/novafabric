@@ -86,7 +86,7 @@ def export_retention_cmd(
       nova export-retention --bundle a.zip --bundle b.zip --regime mifid --json
       nova export-retention --bundle a.zip --worm-receipts receipts.json
     """
-    from novafabric.audit import AUDIT_LOG_PATH
+    from novafabric.audit import resolve_audit_log_path
     from novafabric.compliance.export.finance.retention import (
         Regime,
         build_retention_attestation,
@@ -108,7 +108,7 @@ def export_retention_cmd(
             bundles,
             worm_db=worm_db,
             worm_receipts=worm_receipts,
-            audit_log=audit_log or AUDIT_LOG_PATH,
+            audit_log=audit_log or resolve_audit_log_path(),
         )
     except CorruptEvidenceError as exc:
         err_console.print(f"[red]Unreadable evidence:[/red] {escape(str(exc))}")

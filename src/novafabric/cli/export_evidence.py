@@ -17,6 +17,7 @@ from novafabric import _paths as _nf_paths
 from novafabric.evidence.bundle import (
     CapsuleValidationError,
     EvidenceBundleBuilder,
+    PolicyAuditUnavailableError,
     UnsafeSkipsError,
 )
 from novafabric.evidence.signing import LocalSigner
@@ -371,7 +372,7 @@ def export_evidence_cmd(
     except UnsafeSkipsError as exc:
         console.print(f"[red]✗[/red] {exc}")
         raise typer.Exit(code=2) from exc
-    except CapsuleValidationError as exc:
+    except (CapsuleValidationError, PolicyAuditUnavailableError) as exc:
         console.print(f"[red]✗[/red] {exc}")
         raise typer.Exit(code=1) from exc
 

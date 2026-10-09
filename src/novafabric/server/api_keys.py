@@ -197,7 +197,7 @@ def _audit(
     """
     from novafabric.audit import AuditEventType, AuditLog, _paths
 
-    path = audit_log_path or _paths.AUDIT_LOG_PATH
+    path = audit_log_path or _paths.resolve_audit_log_path()
     AuditLog(path).append(
         event_type=AuditEventType(event_type_value),
         actor=actor,

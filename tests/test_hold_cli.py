@@ -13,7 +13,7 @@ runner = CliRunner()
 
 def test_hold_create(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("novafabric.cli.hold.AUDIT_LOG_PATH", tmp_path / "audit.jsonl")
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(tmp_path / "audit.jsonl"))
     result = runner.invoke(app, ["hold", "create", "my-registry", "--reason", "SEC exam 2026"])
     assert result.exit_code == 0, result.output
     assert "hold-" in result.output
@@ -34,7 +34,7 @@ def test_hold_list_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_hold_create_and_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("novafabric.cli.hold.AUDIT_LOG_PATH", tmp_path / "audit.jsonl")
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(tmp_path / "audit.jsonl"))
     runner.invoke(app, ["hold", "create", "r", "--reason", "exam", "--duration-days", "30"])
     result = runner.invoke(app, ["hold", "list", "r"])
     assert result.exit_code == 0, result.output
@@ -44,7 +44,7 @@ def test_hold_create_and_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 def test_hold_release(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("novafabric.cli.hold.AUDIT_LOG_PATH", tmp_path / "audit.jsonl")
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(tmp_path / "audit.jsonl"))
     create_result = runner.invoke(app, ["hold", "create", "r", "--reason", "test"])
     assert create_result.exit_code == 0, create_result.output
     # Extract hold_id from output
@@ -65,7 +65,7 @@ def test_hold_release_not_found(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
 def test_hold_indefinite_duration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("novafabric.cli.hold.AUDIT_LOG_PATH", tmp_path / "audit.jsonl")
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(tmp_path / "audit.jsonl"))
     result = runner.invoke(app, ["hold", "create", "r2", "--reason", "indefinite hold"])
     assert result.exit_code == 0, result.output
     assert "indefinite" in result.output
@@ -77,8 +77,7 @@ def test_capsule_delete_blocked_by_hold(tmp_path: Path, monkeypatch: pytest.Monk
     """capsule delete must be blocked by an active hold, even without a retention-policy.yaml."""
     monkeypatch.chdir(tmp_path)
     audit_path = tmp_path / "audit.jsonl"
-    monkeypatch.setattr("novafabric.cli.hold.AUDIT_LOG_PATH", audit_path)
-    monkeypatch.setattr("novafabric.cli.capsule.AUDIT_LOG_PATH", audit_path)
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(audit_path))
     # Create a hold on the registry
     create_result = runner.invoke(
         app, ["hold", "create", "reg1", "--reason", "SEC exam"]
@@ -96,7 +95,7 @@ def test_hold_audit_log_written(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     """Both hold.create and hold.release should write entries to the audit log."""
     audit_path = tmp_path / "audit.jsonl"
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("novafabric.cli.hold.AUDIT_LOG_PATH", audit_path)
+    monkeypatch.setenv("NOVAFABRIC_AUDIT_LOG_PATH", str(audit_path))
     create_result = runner.invoke(app, ["hold", "create", "r", "--reason", "audit-test"])
     assert create_result.exit_code == 0
     hold_id = [w for w in create_result.output.split() if w.startswith("hold-")][0]
