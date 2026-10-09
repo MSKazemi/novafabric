@@ -598,7 +598,7 @@ runners:
 > If you need model-call evidence today, use `--runner docker` (fixed in the same
 > release), `--runner slurm`, or `--runner local`.
 
-**Environment variables (changed — ADR-0270, unreleased):** the pod receives
+**Environment variables (changed in v0.102.0 — ADR-0270):** the pod receives
 **only** `NOVAFABRIC_*` variables plus anything you name in `extra_env`. The
 environment of the shell you ran `nova capture` in is *not* forwarded.
 

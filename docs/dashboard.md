@@ -23,7 +23,7 @@ stale `?sub=` when you leave the hub), so any view you reach by keyboard is shar
 survives a reload. Tab ids have not changed since before the v0.97.0 regrouping, so existing
 links still resolve.
 
-**Runs view state in the URL** *(experimental, Unreleased — ADR-0232 D2)*. The whole Runs
+**Runs view state in the URL** *(experimental, since v0.103.0 — ADR-0232 D2)*. The whole Runs
 view is in the URL, so a pasted link reproduces exactly what you were looking at:
 
 | Key | Meaning | Example |
@@ -44,7 +44,7 @@ What is deliberately *not* in the URL: the half-finished Compare selection (ADR-
 checkboxes, unsubmitted filter text, and the *Replay result* view (it shows a result
 produced in your session, so a link to it would open on nothing).
 
-### Filter bar *(experimental, Unreleased — ADR-0232 D1/D3, ADR-0233)*
+### Filter bar *(experimental — ADR-0232 D1/D3, ADR-0233)*
 
 Under the Runs search box. Type terms, press **Enter** to apply:
 
@@ -120,7 +120,7 @@ Read routes (`read` scope): `GET /api/dashboards`, `/api/dashboards/{id}`,
 `/api/dashboards/{id}/export`, `/api/dashboard-widgets/{id}/data` (runs only the query stored
 in the widget file; the request carries no query text) and `/api/dashboard-widgets/{id}/export`.
 
-### Capsule explorer *(experimental, Unreleased)*
+### Capsule explorer *(experimental)*
 
 Selecting a run opens the inspector with a **summary strip** — status, start time,
 duration, exit code, model/tool call counts (mutating tools called out), the command — and
@@ -137,7 +137,7 @@ keyboard tablist (←/→, Home/End):
   to open it (even if it is not in the loaded list) or **Compare** it with this run.
 - **Secrets / Forensics / Children** — unchanged.
 
-### Evidence cart *(experimental, Unreleased — ADR-0239)*
+### Evidence cart *(experimental — ADR-0239)*
 
 Collect runs while you investigate, then export them as **one** signed Evidence Bundle.
 
@@ -174,7 +174,7 @@ Collect runs while you investigate, then export them as **one** signed Evidence 
 API: `POST /api/evidence/cart/export` (`admin` scope) with
 `{items: [{kind, ref, added_at, added_from?, note?}], confirmed: true, accept_unresolved?}`.
 
-### Honest aggregates and the Runs aggregate strip *(experimental, Unreleased — ADR-0234)*
+### Honest aggregates and the Runs aggregate strip *(experimental — ADR-0234)*
 
 Every run aggregate the dashboard serves now carries an `aggregate` verdict. When the number
 cannot be computed faithfully, the endpoint **refuses** — it says why and what would make it
@@ -212,7 +212,7 @@ bars to filter (ADR-0234 D1 navigation) is **planned**.
 | Home | Overview | v0.8 | Journey cards, status bar, resume session |
 | Analytics | Overview | v0.62.0 | Time-bucketed run analytics from the runs index: volume + failure stacked bars, duration p50/p95 lines, stat tiles, 7/30/90-day ranges, chart/table toggle (`/api/analytics/summary`) |
 | Alerts | Platform | v0.63.0 | Operational alerts feed (quota/rate-limit/policy/drift/seal/backup) + delivery outcomes from the audit log; severity badges, stat tiles, live refresh (`/api/alerts/recent`, ADR-0192) |
-| Runs | Runs & Debug | v0.7 | Run list, search/filter, inspect capsule, validate, replay, verify; capsule tree, run lineage edges, secret scan (v0.46.0); **v0.64.0:** per-run **Forensics** timeline view (`/api/runs/{id}/forensics-timeline`, P5) + saved filter presets (E2); **Unreleased (experimental):** filter bar (`/api/filter/*`, ADR-0232/0233), full view state in the URL, capsule explorer with summary strip + **Integrity** and **Lineage** views — see [Runs view state](#dashboard-tabs-complete-inventory) |
+| Runs | Runs & Debug | v0.7 | Run list, search/filter, inspect capsule, validate, replay, verify; capsule tree, run lineage edges, secret scan (v0.46.0); **v0.64.0:** per-run **Forensics** timeline view (`/api/runs/{id}/forensics-timeline`, P5) + saved filter presets (E2); **v0.103.0 (experimental):** filter bar (`/api/filter/*`, ADR-0232/0233), full view state in the URL, capsule explorer with summary strip + **Integrity** and **Lineage** views — see [Runs view state](#dashboard-tabs-complete-inventory) |
 | Diff | Runs & Debug | v0.7 | N-run comparison (2–5), word-level diff, mutation badges |
 | Registry | Govern & Promote | v0.7 | Asset lifecycle: eval, promote, rollback, register, suggest-register, unregister |
 | Governance | Govern & Promote | v0.16.0 | Classify (EU AI Act/NIST/OMB), audit (6 profiles), export-examiner, policy sign |
@@ -220,7 +220,7 @@ bars to filter (ADR-0234 D1 navigation) is **planned**.
 | Risk | Govern & Promote | v0.55.0 | OWASP LLM assurance (`assure`), secret scan, failure attribution (`diagnose`), risk-tier classify, MCP scan |
 | Lineage | Provenance & Trust | v0.7 | Provenance / blast-radius / replay-chain DAG, interactive query, OpenLineage/PROV export |
 | KG | Provenance & Trust | v0.17.0 | Capsule knowledge graph: query, audit, entity queue, alias mgmt, ingest |
-| Dashboards | Overview | Unreleased (experimental) | Portable ADR-0235 dashboards and widgets from `$NOVAFABRIC_HOME/dashboards`, `ratio()` (ADR-0236), validate-and-save editor; `g 4` (see [Dashboards view](#dashboards-view-experimental--adr-0235--adr-0236)) |
+| Dashboards | Overview | v0.103.0 (experimental) | Portable ADR-0235 dashboards and widgets from `$NOVAFABRIC_HOME/dashboards`, `ratio()` (ADR-0236), validate-and-save editor; `g 4` (see [Dashboards view](#dashboards-view-experimental--adr-0235--adr-0236)) |
 | Cost | Overview | v0.17.0 | Cost report, pricing, burn analysis (ClickHouse-backed); **v0.64.0:** cost-analytics tools trio — attribution / fairness / usage-breakdown (`/api/cost/{attribute,fairness,usage-breakdown}`, P6) |
 | Schema | Compliance | v0.17.0 | Schema registry (JSON Schema + proto3) |
 | Evidence | Provenance & Trust | v0.9 | Bundle list, DSSE/TSR/Merkle verification, download, in-browser ed25519 verify |

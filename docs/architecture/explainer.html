@@ -865,7 +865,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
    "y": 560
   }
  ],
- "note": "on main, unreleased (after v0.104.0)",
+ "note": "on main, unreleased (after v0.105.0)",
  "page": "README.md",
  "stages": [
   {
@@ -971,7 +971,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     "agent run",
     "capsule"
    ],
-   "unreleased": true
+   "unreleased": false
   },
   {
    "badge": [
@@ -996,7 +996,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
    "tokens": [
     "messages.create"
    ],
-   "unreleased": true
+   "unreleased": false
   },
   {
    "badge": [
@@ -1021,7 +1021,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
    "tokens": [
     "HTTP attempt"
    ],
-   "unreleased": true
+   "unreleased": false
   },
   {
    "badge": [
@@ -1047,7 +1047,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     "api_key=sk-…",
     "[REDACTED]"
    ],
-   "unreleased": true
+   "unreleased": false
   },
   {
    "badge": [
@@ -1071,7 +1071,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
    "tokens": [
     "capture-health.json"
    ],
-   "unreleased": true
+   "unreleased": false
   },
   {
    "badge": [
@@ -1199,7 +1199,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     "capsule",
     "re-run"
    ],
-   "unreleased": true
+   "unreleased": false
   },
   {
    "badge": [
@@ -1224,7 +1224,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
    "tokens": [
     "RateLimitError 429"
    ],
-   "unreleased": true
+   "unreleased": false
   },
   {
    "badge": [
@@ -1249,7 +1249,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
    "tokens": [
     "counterfactual"
    ],
-   "unreleased": true
+   "unreleased": false
   },
   {
    "badge": [
@@ -1274,7 +1274,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
    "tokens": [
     "A ⇄ B"
    ],
-   "unreleased": true
+   "unreleased": false
   },
   {
    "badge": [
@@ -1299,7 +1299,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
    "tokens": [
     "has_changes"
    ],
-   "unreleased": true
+   "unreleased": false
   },
   {
    "badge": [
@@ -1811,7 +1811,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
       ref: "capture/_ulid.py · capture/capsule.py:CapsuleWriter.open · capture/env.py",
       on: [], term: [["c", "  run_id 01J9Z… · capsule opened"]] },
     { p: 0, title: "Run the workload with hooks", mat: "works today",
-      body: "<p>The runner puts a <code>sitecustomize.py</code> hook loader on the child's <code>PYTHONPATH</code>. Inside the workload, <code>install_all()</code> patches the supported SDKs and HTTP clients, and every LLM call, tool call and span is appended to its stream. Your code is unchanged. On main (unreleased), async, streamed and Responses API SDK calls are recorded with their response too, and the <code>httpx</code> record of each HTTP attempt under an SDK call is marked <code>transport</code>, so one SDK call counts once (ADR-0305).</p>",
+      body: "<p>The runner puts a <code>sitecustomize.py</code> hook loader on the child's <code>PYTHONPATH</code>. Inside the workload, <code>install_all()</code> patches the supported SDKs and HTTP clients, and every LLM call, tool call and span is appended to its stream. Your code is unchanged. Since v0.105.0, async, streamed and Responses API SDK calls are recorded with their response too, and the <code>httpx</code> record of each HTTP attempt under an SDK call is marked <code>transport</code>, so one SDK call counts once (ADR-0305).</p>",
       ref: "runners/_sitecustomize.py · capture/hooks/__init__.py:install_all · capture/record_roles.py", rel: true,
       on: ["b-cmd", "b-hooks", "b-llm", "b-tool"], flow: true, term: [["c", "  [agent] calling model… calling tool search_docs…"]] },
     { p: 0, title: "Workload exits", mat: "works today",
@@ -1839,7 +1839,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
       ref: "trust/novaseal/timestamp.py · trust/_rfc3161.py · trust/novaseal/merkle.py",
       on: ["b-tsa", "b-log"], hashed: true, term: [["ok", "✓ capsule written  ~/.novafabric/capsules/01J9Z…/"]] },
     { p: 2, title: "Replay in mocked mode", mat: "works today", rel: true,
-      body: "<p><code>nova replay</code> defaults to <code>mocked</code>. It re-runs the captured command in a subprocess, and <code>MockModelDispatcher</code> serves the recorded OpenAI and Anthropic responses in order, so the LLM spends no tokens. A capsule with no command to re-run (a framework-adapter or OTLP-import capsule) is refused before anything is spawned. On main (unreleased, experimental): async, streamed and Responses API calls are served too, a recorded model error is raised again as the SDK's own exception class, MCP <code>call_tool</code> results are served one-to-one, divergence fails closed, and live network connections are reported. <strong>Other tools still run live</strong>, so replay in a sandbox.</p>",
+      body: "<p><code>nova replay</code> defaults to <code>mocked</code>. It re-runs the captured command in a subprocess, and <code>MockModelDispatcher</code> serves the recorded OpenAI and Anthropic responses in order, so the LLM spends no tokens. A capsule with no command to re-run (a framework-adapter or OTLP-import capsule) is refused before anything is spawned. Since v0.105.0 (experimental): async, streamed and Responses API calls are served too, a recorded model error is raised again as the SDK's own exception class, MCP <code>call_tool</code> results are served one-to-one, divergence fails closed, and live network connections are reported. <strong>Other tools still run live</strong>, so replay in a sandbox.</p>",
       ref: "cli/replay.py → replay/_engine.py:ReplayEngine.run · replay/_dispatcher.py · replay/_model_errors.py",
       on: ["b-cmd", "b-llm", "b-tool"], llm: "served from the record (MockModelDispatcher)", tool: "MCP: served · other tools: run live", flow: true, hashed: true,
       term: [["p", "$ nova replay 01J9Z…"], ["c", "  mode mocked · 2 model calls served from record"]] },
@@ -2312,7 +2312,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     "y": 404
    }
   ],
-  "note": "on main, unreleased (after v0.104.0)",
+  "note": "on main, unreleased (after v0.105.0)",
   "page": "replay-modes.md",
   "steps": [
    {
@@ -2334,7 +2334,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
      "refuse"
     ],
     "ref": "replay/_replayability.py:not_reexecutable_reason · replay/_errors.py:CapsuleNotReplayableError",
-    "unreleased": true
+    "unreleased": false
    },
    {
     "badge": [
@@ -2361,7 +2361,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     ],
     "caption": "The command re-runs in a subprocess; MockModelDispatcher serves each surface's recorded calls in order, sync, async or streamed.",
     "color": "rep",
-    "detail": "<p>Chat Completions, the Responses API and Anthropic Messages each have their own queue (ADR-0304). A <code>stream=True</code> call gets the record back as the chunk or event stream the SDK would have produced, so no tokens are spent. Wire records are transport (ADR-0305) and are never served. Serving sync Chat Completions and Messages calls shipped earlier; async, streamed and Responses API serving is on main and not in a release yet.</p>",
+    "detail": "<p>Chat Completions, the Responses API and Anthropic Messages each have their own queue (ADR-0304). A <code>stream=True</code> call gets the record back as the chunk or event stream the SDK would have produced, so no tokens are spent. Wire records are transport (ADR-0305) and are never served. Serving sync Chat Completions and Messages calls shipped earlier; async, streamed and Responses API serving shipped in v0.105.0.</p>",
     "edges": [
      "m3",
      "dmod"
@@ -2372,7 +2372,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
      "model"
     ],
     "ref": "replay/_engine.py:ReplayEngine.run · replay/_dispatcher.py:MockModelDispatcher",
-    "unreleased": true
+    "unreleased": false
    },
    {
     "badge": [
@@ -2391,7 +2391,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
      "err"
     ],
     "ref": "replay/_model_errors.py:rebuild_sdk_error · ALLOWED_SDK_ERRORS",
-    "unreleased": true
+    "unreleased": false
    },
    {
     "badge": [
@@ -2411,7 +2411,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
      "div"
     ],
     "ref": "replay/_dispatcher.py:MockToolDispatcher · replay/_contract.py",
-    "unreleased": true
+    "unreleased": false
    },
    {
     "badge": [
@@ -2429,7 +2429,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
      "net"
     ],
     "ref": "replay/_dispatcher.py:NetworkObserver · replay/_contract.py",
-    "unreleased": true
+    "unreleased": false
    },
    {
     "badge": [
@@ -2448,7 +2448,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
      "res"
     ],
     "ref": "replay/_result.py:write_replay_result · replay/_engine.py",
-    "unreleased": true
+    "unreleased": false
    }
   ],
   "subtitle": "nova replay --mode mocked (the default) · ADR-0300, ADR-0304, ADR-0305",
@@ -2720,7 +2720,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     "y": 388
    }
   ],
-  "note": "on main, unreleased (after v0.104.0)",
+  "note": "on main, unreleased (after v0.105.0)",
   "page": "pipeline.md",
   "steps": [
    {
@@ -2742,7 +2742,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
      "e2"
     ],
     "ref": "cli/diff.py:diff_cmd · EXIT_CANNOT_COMPARE",
-    "unreleased": true
+    "unreleased": false
    },
    {
     "badge": [
@@ -2760,7 +2760,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
      "read"
     ],
     "ref": "diff/_engine.py · diff/_report.py:DiffReport",
-    "unreleased": true
+    "unreleased": false
    },
    {
     "badge": [
@@ -2778,7 +2778,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
      "align"
     ],
     "ref": "capture/record_roles.py:logical_model_calls · diff/_align.py",
-    "unreleased": true
+    "unreleased": false
    },
    {
     "badge": [
@@ -2796,7 +2796,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
      "facets"
     ],
     "ref": "diff/_engine.py:DiffEngine.compare",
-    "unreleased": true
+    "unreleased": false
    },
    {
     "badge": [
@@ -2814,7 +2814,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
      "report"
     ],
     "ref": "diff/_report.py:DiffReport · diff/_format.py",
-    "unreleased": true
+    "unreleased": false
    },
    {
     "badge": [
@@ -2835,7 +2835,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
      "e2"
     ],
     "ref": "cli/diff.py:diff_cmd · DiffReport.is_complete",
-    "unreleased": true
+    "unreleased": false
    },
    {
     "badge": [
@@ -2856,7 +2856,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
      "e0"
     ],
     "ref": "cli/diff.py:EXIT_DIFFERENCES · eval/regression_diff.py",
-    "unreleased": true
+    "unreleased": false
    }
   ],
   "subtitle": "nova diff --assert-no-regressions · ADR-0303 and Amendment 1, ADR-0305",
@@ -3079,7 +3079,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     "y": 398
    }
   ],
-  "note": "on main, unreleased (after v0.104.0)",
+  "note": "on main, unreleased (after v0.105.0)",
   "page": "otlp-ingest.md",
   "steps": [
    {
@@ -3126,7 +3126,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     ],
     "caption": "write_ingest_capsule creates a new capsule under a fresh ULID; no existing capsule is ever opened for writing.",
     "color": "ver",
-    "detail": "<p>It reuses the native <code>CapsuleWriter</code>, environment lock and replay policy, records <code>capture_mode: otel-import</code> and <code>capture_level: ingested-otlp</code>, then finalizes through the same path as <code>nova capture</code>: secret scan, manifest redaction, residual pass, <code>evidence_digests</code>, and a seal when a signing profile exists (unreleased, on main). A finalization failure keeps the data, leaves the capsule unsealed and is reported in <code>finalization_error</code>.</p>",
+    "detail": "<p>It reuses the native <code>CapsuleWriter</code>, environment lock and replay policy, records <code>capture_mode: otel-import</code> and <code>capture_level: ingested-otlp</code>, then finalizes through the same path as <code>nova capture</code>: secret scan, manifest redaction, residual pass, <code>evidence_digests</code>, and a seal when a signing profile exists (since v0.105.0). A finalization failure keeps the data, leaves the capsule unsealed and is reported in <code>finalization_error</code>.</p>",
     "edges": [
      "t3"
     ],
@@ -3470,7 +3470,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     "y": 384
    }
   ],
-  "note": "on main, unreleased (after v0.104.0)",
+  "note": "on main, unreleased (after v0.105.0)",
   "page": "serve-request-path.md",
   "steps": [
    {
@@ -3947,7 +3947,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     "y": 504
    }
   ],
-  "note": "on main, unreleased (after v0.104.0)",
+  "note": "on main, unreleased (after v0.105.0)",
   "page": "encryption-at-rest.md",
   "steps": [
    {
@@ -4420,7 +4420,7 @@ details.all summary{cursor:pointer;color:var(--muted);font-size:.9rem}
     "y": 424
    }
   ],
-  "note": "on main, unreleased (after v0.104.0)",
+  "note": "on main, unreleased (after v0.105.0)",
   "page": "server-data-plane.md",
   "steps": [
    {

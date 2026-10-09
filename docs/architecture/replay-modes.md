@@ -9,18 +9,18 @@ The other three read the capsule and execute nothing.
 
 Every flag of these commands: [CLI reference — nova replay, diff and diagnose](../cli-reference.md#replay-commands-v03).
 
-> **Release scope.** This page describes `main`. In **v0.104.0**, the current PyPI release,
-> `mocked` replay serves recorded responses only for synchronous, non-streaming OpenAI
-> chat completions and Anthropic messages, and every tool runs live. The following are
-> **unreleased** (on `main`, in the next release): recorded MCP `call_tool` results served
-> (ADR-0300), the fail-closed contract and `--permissive`, async / streamed / Responses API
-> serving and live-network reporting (ADR-0304), replay of recorded model errors, the
+> **Release scope.** This page describes **v0.105.0**, the current release. The following
+> shipped in v0.105.0: recorded MCP `call_tool` results served (ADR-0300), the fail-closed
+> contract and `--permissive`, async / streamed / Responses API serving and live-network
+> reporting (ADR-0304), replay of recorded model errors (**experimental**), the
 > transport-record rule (ADR-0305), refusing capsules with no command to re-run,
 > **experimental** serving of functions declared with `novafabric.capture.record.tool`
 > (ADR-0306 slice 1), and — also **experimental** — `replay.yaml` `tool_overrides`
 > enforced inside the replayed process, with `--permissive` needing the ladder flag before
-> an unmatched MCP call runs live (ADR-0306 slice 2). Rows of the support matrix below that
-> cite those ADRs are unreleased too.
+> an unmatched MCP call runs live (ADR-0306 slice 2). In **v0.104.0** and earlier, `mocked`
+> replay served recorded responses only for synchronous, non-streaming OpenAI chat
+> completions and Anthropic messages, and every tool ran live; rows of the support matrix
+> below that cite those ADRs do not apply to those versions.
 
 ![The five replay modes](../assets/architecture/replay-modes.svg)
 
@@ -62,7 +62,7 @@ current directory, or under `-o <dir>`.
 
 | Mode | Executes the command? | What it does | Maturity |
 |---|---|---|---|
-| `mocked` (default) | **Yes**, in a subprocess, with a 600 s timeout | Re-runs `capsule.yaml:command` (a capsule with no command to re-run is refused up front — see [which capsules each mode accepts](#which-capsules-each-mode-accepts)). A `sitecustomize.py` installs `replay/_dispatcher.py:MockModelDispatcher` (recorded responses for the supported model surfaces — sync or async, streamed or not — one queue per API surface) and `MockToolDispatcher` (recorded MCP `ClientSession.call_tool` results, and — experimental, ADR-0306 — results of functions declared with `record.tool`, both matched one-to-one). **Fail-closed** on divergence; `--permissive` only reports. Tools on other surfaces run live; outbound connections are reported, not blocked. See [the mocked-replay contract](#the-mocked-replay-contract-adr-0300-adr-0304) and the [support matrix](#support-matrix). | works today on `main` (Python workloads, supported surfaces only) — the MCP, async/streamed and error serving is unreleased; see *Release scope* above |
+| `mocked` (default) | **Yes**, in a subprocess, with a 600 s timeout | Re-runs `capsule.yaml:command` (a capsule with no command to re-run is refused up front — see [which capsules each mode accepts](#which-capsules-each-mode-accepts)). A `sitecustomize.py` installs `replay/_dispatcher.py:MockModelDispatcher` (recorded responses for the supported model surfaces — sync or async, streamed or not — one queue per API surface) and `MockToolDispatcher` (recorded MCP `ClientSession.call_tool` results, and — experimental, ADR-0306 — results of functions declared with `record.tool`, both matched one-to-one). **Fail-closed** on divergence; `--permissive` only reports. Tools on other surfaces run live; outbound connections are reported, not blocked. See [the mocked-replay contract](#the-mocked-replay-contract-adr-0300-adr-0304) and the [support matrix](#support-matrix). | works today (Python workloads, supported surfaces only) — the MCP, async/streamed and error serving shipped in v0.105.0 (error serving is experimental); see *Release scope* above |
 | `forensic` | No | Read-only inspection. Reports call counts, environment warnings and schema drift. | works today |
 | `semantic` | No | Scores how similar the recorded model responses within the capsule are to one another: the mean pairwise `difflib.SequenceMatcher` ratio, from 0.0 to 1.0. This is a **text** similarity, not a judgment of meaning, and no live model is called. | works today |
 | `exact` | No | An **eligibility check** for byte-exact replay. It requires `env.lock` mode `deterministic` and a `gen_ai.request.seed` on every model call, and refuses if there is any tool-schema drift. Reports `exact_eligible` and `exact_reasons`. | works today |
@@ -193,7 +193,7 @@ under `--permissive` **only** when the operator's ladder flag permits its
 ADR-0012); otherwise it is refused (`tool_calls_refused`). For `record.tool`
 the class comes from the decorator in the workload's code; an MCP call is
 always `unknown`, so it needs `--allow-unknown-mutation`. The class a capsule
-records is never used to permit anything. *(Changed, unreleased, ADR-0306 Q3:
+records is never used to permit anything. *(Changed in v0.105.0, ADR-0306 Q3:
 before, `--permissive` alone ran every unmatched MCP call live.)* `intervention`
 always uses `warn` and installs no tool dispatcher, because a counterfactual is
 expected to diverge.

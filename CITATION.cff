@@ -36,8 +36,8 @@ authors:
 repository-code: "https://github.com/MSKazemi/novafabric"
 url: "https://novafabric.ai"
 license: Apache-2.0
-version: 0.104.0
-date-released: 2026-10-08
+version: 0.105.0
+date-released: 2026-10-10
 # identifiers:                                          # see TODO 1 above
 #   - type: doi
 #     value: "10.5281/zenodo.XXXXXXX"

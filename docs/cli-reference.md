@@ -352,7 +352,7 @@ Options:
     variables into the workload, plus `PATH` for `slurm` and whatever you name in
     `extra_env` for `docker`/`kubernetes` (ADR-0270). `local` runs as you, on your
     machine, and keeps your full environment.
-  - **Experimental, unreleased** ([ADR-0307](./decisions.md)): the capsule records
+  - **Experimental, since v0.105.0** ([ADR-0307](./decisions.md)): the capsule records
     which runner ran the workload as `host.runner.name`. `docker` and `kubernetes`
     also record `host.runner.image`: the `image=` reference plus the digest the
     runtime resolved (`docker image inspect` before and after the run; the pod's
@@ -1023,7 +1023,7 @@ Options:
 
 ---
 
-## Memory commands (Unreleased)
+## Memory commands
 
 Memory provenance (ADR-0143 P1). Answers the poisoned-read question: an agent
 gave a bad answer from something it remembered — where did that value come
@@ -1135,7 +1135,7 @@ The other ADR-0171 surfaces (`nova memstore mutation show|verify`, `retention ve
 Replay a captured run. `<capsule>` is either the **run id** `nova capture` printed, or a
 path to the capsule directory. A path that exists is always used as given; only a
 reference that is not a usable path is looked up as a run id, in
-`$NOVAFABRIC_CAPSULE_DIR` (default `~/.novafabric/capsules/`). On `main` (unreleased)
+`$NOVAFABRIC_CAPSULE_DIR` (default `~/.novafabric/capsules/`). Since v0.105.0
 the lookup also covers the framework-adapter defaults — `$NOVAFABRIC_HOME/runs/` and
 `./.novafabric/runs/` — announcing on stderr where the capsule was found, and failing
 with every matching path listed if the id exists in more than one of them (see
@@ -1162,7 +1162,7 @@ Options:
 - `--allow-external-side-effects` — rung for `external-side-effect` tools
 - `--allow-unknown-mutation` — rung for tools with `unknown` mutation class. **Every MCP call counts as `unknown`**, whatever class the capsule recorded, so this is the rung MCP calls need
 - The four rungs drive the `--dry-run` report. In a `mocked` replay they gate the two intercepted tool surfaces (MCP `call_tool`, `record.tool`) in two places only — ADR-0306, experimental: under `--permissive` an unmatched call runs live only if its class is permitted (`none` always is; a `record.tool` call uses its declared class), and a `replay.yaml` `allow: true` override re-executes a tool only if its class is permitted. They never stop a tool replay does not intercept.
-- `--permissive` — `mocked` mode only (ADR-0300): do **not** fail on divergence. A model call with no recorded response gets an empty reply with a warning (the pre-ADR-0300 behaviour), unsupported model surfaces run **live**, an unmatched MCP or `record.tool` call runs live only if a ladder flag permits its mutation class — `--allow-unknown-mutation` for MCP, the declared class for `record.tool` — and never when `replay.yaml` says `allow: false` (otherwise it is refused and counted in `replay_contract.tool_calls_refused`), and unconsumed recordings are only reported. *Changed, unreleased (ADR-0306 Q3):* `--permissive` alone used to run every unmatched MCP call live. Every divergence is still recorded in `replay_result.yaml` (`divergence_reason`, `replay_contract.divergences`) and `--permissive` is listed in `policy_flags_used`. Exit 1 with any other mode.
+- `--permissive` — `mocked` mode only (ADR-0300): do **not** fail on divergence. A model call with no recorded response gets an empty reply with a warning (the pre-ADR-0300 behaviour), unsupported model surfaces run **live**, an unmatched MCP or `record.tool` call runs live only if a ladder flag permits its mutation class — `--allow-unknown-mutation` for MCP, the declared class for `record.tool` — and never when `replay.yaml` says `allow: false` (otherwise it is refused and counted in `replay_contract.tool_calls_refused`), and unconsumed recordings are only reported. *Changed in v0.105.0 (ADR-0306 Q3):* `--permissive` alone used to run every unmatched MCP call live. Every divergence is still recorded in `replay_result.yaml` (`divergence_reason`, `replay_contract.divergences`) and `--permissive` is listed in `policy_flags_used`. Exit 1 with any other mode.
 - `--output-dir, -o PATH` — base directory for replay output (default: `.novafabric/replays/`)
 - `--environment ENV` — experimental (ADR-0126): only replay a capsule that recorded `ENV` as its `deployment_environment` (exact match, case-sensitive). Otherwise exit 2 before anything runs; a capsule with no recorded environment is refused. Usable as a CI gate, e.g. `nova replay --environment staging --dry-run <run-id>`. The `replay_mutating` policy input also carries the recorded value as `input.resource.deployment_environment` (`null` when absent).
 - `--intervention-file PATH` — InterventionSpec YAML for `--mode intervention` (experimental, ADR-0086): one target selector (`event_index` or `span_id`) + exactly one substitution (`replace_model_response` / `replace_tool_result` / `mutate_payload`) + optional named check-functions (`fatal: true` aborts). The output capsule is diffable against the baseline with `nova diff`. Only a `model-calls` substitution reaches the re-executed workload; a `tool-calls` one changes the output capsule and the checks only (tools run live), which the result records as `intervention.substitution_delivered_to_workload: false` and the CLI reports as a warning.
@@ -1194,7 +1194,7 @@ records `intervention.downstream_reexecuted: false`. `exact` reports it not elig
 `forensic` and `semantic` work as for any capsule. See
 [which capsules each mode accepts](architecture/replay-modes.md#which-capsules-each-mode-accepts).
 
-**Per-tool overrides** (experimental, unreleased, ADR-0306). A capsule's `replay.yaml`
+**Per-tool overrides** (experimental, since v0.105.0, ADR-0306). A capsule's `replay.yaml`
 `tool_overrides` (`{tool_name, allow}`, or the legacy `action: replay|refuse`) are
 enforced inside the replayed `mocked` process on both intercepted surfaces. A restriction
 from the capsule holds and a permission needs the operator: `allow: false` is never run
@@ -9500,7 +9500,7 @@ Drop-in capture adapters for four additional AI frameworks. Each adapter uses th
 SDK's own native extensibility interface (ADR-0078) rather than wrapping the executor.
 All framework packages are optional extras.
 
-**Capsule finalization (unreleased, on `main`).** Every adapter below, and the
+**Capsule finalization (since v0.105.0).** Every adapter below, and the
 `@agent` decorator, finalizes its capsule through the same code as `nova capture`
 (`capture/finalize.py`): secret scan, manifest redaction, ADR-0009 residual pass,
 `lineage.jsonl`, ADR-0251 `evidence_digests`, the manifest gate, and a NovaSeal
@@ -9522,7 +9522,7 @@ SDK/adapter default, which is **not** the `nova capture` store
 # Always works: the capsule path
 nova replay .novafabric/runs/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --mode forensic
 
-# On main (unreleased): the bare run id works too
+# Since v0.105.0: the bare run id works too
 nova replay 01HXAY7M5JZ8R7K4P9DPBYK2WX --mode forensic
 nova diff 01HXAY7M5JZ8R7K4P9DPBYK2WX 01HXB2Q9W3N4K5M6P7R8S9T0VW
 nova validate 01HXAY7M5JZ8R7K4P9DPBYK2WX
@@ -9534,7 +9534,7 @@ search). A hit outside the capture store prints `note: run <id> found in <dir> �
 stderr, so `--output-format json` stdout stays clean. An id present in more than one of
 them is an error listing every path — pass the capsule path to choose. A command's own
 `--capsule-dir` option, where it has one, restricts the lookup to that directory.
-v0.104.0 resolves a bare id in the capture store only, so there use the path.
+v0.104.0 and earlier resolve a bare id in the capture store only, so there use the path.
 
 ### OpenAI Agents SDK adapter (E-5)
 

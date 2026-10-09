@@ -53,7 +53,7 @@ These files appear only in some runs:
 | Path | When |
 |---|---|
 | `network_events.jsonl`, `file_events.jsonl`, `human_approvals.jsonl` | When the event stream has at least one record (`capture/event_recorder.py`) |
-| `capture-health.json` | When the recorder had to drop events. Its absence means nothing was dropped up to the residual pass. Written before that pass (unreleased, on `main`; v0.104.0 writes it after sealing, unbound), so it is scanned and listed in `evidence_digests`; an event dropped after the digest map was computed cannot be added without breaking the seal, so capture logs a warning for it instead. |
+| `capture-health.json` | When the recorder had to drop events. Its absence means nothing was dropped up to the residual pass. Written before that pass (since v0.105.0; v0.104.0 wrote it after sealing, unbound), so it is scanned and listed in `evidence_digests`; an event dropped after the digest map was computed cannot be added without breaking the seal, so capture logs a warning for it instead. |
 | `c2pa-manifest.json` | `nova capture --mark-provenance` |
 | `otel-genai-spans.json` | `nova capture --emit-otel-genai` |
 
@@ -89,7 +89,7 @@ counts logical model calls, not records (see below).
 
 ### The `host` block
 
-**Works today on `main` (unreleased; v0.104.0 adapter and decorator capsules still carry
+**Works today (since v0.105.0; v0.104.0 adapter and decorator capsules still carry
 the hardcoded values below).** `capsule.yaml:host` is built by one function, `capture/env.py:host_info`, for every
 capsule writer: `nova capture` (`CaptureOrchestrator`), the framework adapters
 (`adapters/_capsule.py`) and the `@agent` decorator (`novafabric.sdk.agent`, in `sdk/agent.py`).
@@ -107,8 +107,8 @@ a measured host field.
 | `python` | `platform.python_version()` | |
 | `gpu` | — | always `[]` today: no GPU inventory is collected (`env.lock:hardware.gpus` is empty too) |
 | `hostname_redacted` | — | always `true`; the hostname is never written to the manifest (`env.lock` keeps a SHA-256 of it). Slurm node names follow the same rule: `slurm.node_list_hash` |
-| `runner` | `capture/orchestrator.py:_host_block` | **experimental** (ADR-0307, unreleased). `nova capture` only; see below |
-| `slurm` | `capture/env.py:slurm_context_from_env` | **experimental** (ADR-0307, unreleased). Present only inside a Slurm job; see below |
+| `runner` | `capture/orchestrator.py:_host_block` | **experimental** (ADR-0307, since v0.105.0). `nova capture` only; see below |
+| `slurm` | `capture/env.py:slurm_context_from_env` | **experimental** (ADR-0307, since v0.105.0). Present only inside a Slurm job; see below |
 | `kubernetes` | — | in the schema, never written |
 
 These host fields describe the machine that ran `nova`. With `--runner docker`, `kubernetes`
@@ -117,7 +117,7 @@ or `slurm` the workload ran somewhere else, so `python`, `cpu_count` and `memory
 
 #### `host.runner` and `host.slurm` (experimental, ADR-0307)
 
-**Works today on `main`, unreleased.** Which runner ran the workload, which image, and which
+**Since v0.105.0.** Which runner ran the workload, which image, and which
 Slurm job.
 
 | Field | Recorded when | Value |
@@ -149,7 +149,7 @@ environment.
 
 ## Model-call record roles
 
-**Works today** (ADR-0305, unreleased). A call made through the OpenAI or Anthropic SDK
+**Works today** (ADR-0305, since v0.105.0). A call made through the OpenAI or Anthropic SDK
 is recorded by two hooks: the SDK hook writes the **logical** record (the parsed response,
 `io.novafabric.api_surface`), and the wire hook (`httpx`) writes one **transport** record
 per HTTP attempt underneath it, with no response. Both are kept: the transport records are
@@ -188,7 +188,7 @@ Some optional fields matter for the architecture:
 | `parent_run_id`, `replay_of_run_id`, `replay_mode` | Relationships to other capsules. `replay_of_run_id` becomes a `replayed_from` lineage edge. |
 | `session_id`, `sequence` | Membership in a multi-turn session (experimental) |
 | `facets`, `extensions` | Additive extension points (`slurm`, `kubernetes`, …) that let the format grow without a new top-level format |
-| `exit_code`, `error` | The failure record. A failed run is still a complete capsule. `error.type` is `NonZeroExit` when the workload ran and exited non-zero, and `WorkloadNotStarted` when the runner could not start it (`runner_status: failed_setup`, e.g. `command not found: <argv0>` from `runners/_local.py`), so the record never claims that something exited (`WorkloadNotStarted` is unreleased, on `main`). |
+| `exit_code`, `error` | The failure record. A failed run is still a complete capsule. `error.type` is `NonZeroExit` when the workload ran and exited non-zero, and `WorkloadNotStarted` when the runner could not start it (`runner_status: failed_setup`, e.g. `command not found: <argv0>` from `runners/_local.py`), so the record never claims that something exited (`WorkloadNotStarted` is new in v0.105.0). |
 
 ## The redaction proof: `redaction-proof.json`
 
@@ -255,7 +255,7 @@ captured output.
 ## Capsules written inside a framework call
 
 **Works today** (the streaming behaviour, the measured `host` block, the replay
-refusal and the shared finalization described here are unreleased, on `main`). The framework
+refusal and the shared finalization described here shipped in v0.105.0). The framework
 adapters (`src/novafabric/adapters/*.py`; LlamaIndex, Pydantic AI and Haystack share
 `adapters/_capsule.py:AdapterCapture`, the others write their own manifest) and the
 `@agent` decorator (`novafabric.sdk.agent`, in `sdk/agent.py`) write a capsule from inside the
@@ -273,7 +273,7 @@ Python process:
   propagates. In these adapters and Haystack, a wrapped call made from inside a run
   the same adapter is already capturing records into the open capsule instead of
   opening a second one.
-- Finalization is the same as for `nova capture` (unreleased, on `main`): every
+- Finalization is the same as for `nova capture` (since v0.105.0): every
   writer calls `capture/finalize.py:finalize_in_process_capsule` after writing
   `env.lock` and `replay.yaml`. The secret scanner runs over the streams, `env.lock`
   and `inputs/`/`outputs/`; the manifest is redacted before it is written;
@@ -291,8 +291,8 @@ Python process:
 
 OTLP-ingested capsules (`capture_mode: otel-import`, `metadata.capture_level:
 ingested-otlp`, written by `otel/genai_ingest.py` for `POST /api/otlp/v1/traces`)
-finalize through the same `finalize_in_process_capsule` call (unreleased, on
-`main`): main scan, manifest redaction (an agent name from a span lands in the
+finalize through the same `finalize_in_process_capsule` call (since
+v0.105.0): main scan, manifest redaction (an agent name from a span lands in the
 manifest), residual pass, `evidence_digests`, gate, and a seal when a signing profile
 exists. A failure keeps every ingested record and leaves the capsule unsealed with
 `metadata.finalization_error`. The `ingested-otlp` label is permanent; a seal does not

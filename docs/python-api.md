@@ -256,7 +256,7 @@ events have **no auto-capture** — they record only when you call the façade.
 
 ### `record.tool(fn=None, *, name=None, mutation_class="unknown", version=None, ignore=())`
 
-**Status: experimental** (ADR-0306 slice 1, unreleased — on `main`). Declares a
+**Status: experimental** (ADR-0306 slice 1, since v0.105.0). Declares a
 Python function as a tool boundary that `nova capture` records and mocked
 `nova replay` serves, so the tool does not run again during replay.
 

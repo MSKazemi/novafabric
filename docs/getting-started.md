@@ -70,7 +70,7 @@ Confirm the install:
 
 ```bash
 nova --version
-# novafabric 0.104.0
+# novafabric 0.105.0
 ```
 
 Both `nova` and `novafabric` are the same binary. The examples throughout this
@@ -104,7 +104,7 @@ guide use `nova`.
 > `nova seal init` as an optional next step (see
 > [Seal your captures](#optional-seal-your-captures-with-a-local-identity) below).
 
-> **Maturity.** NovaFabric is in beta (v0.104.0 at the time of writing). Most surfaces work today but
+> **Maturity.** NovaFabric is in beta (v0.105.0 at the time of writing). Most surfaces work today but
 > carry `experimental` maturity: interfaces may change before the v1.0 schema
 > freeze. On-disk formats are **not** frozen until v1.0. See
 > [ROADMAP.md](../ROADMAP.md) for the sequencing.
@@ -497,8 +497,8 @@ full bundle layout and the offline verification procedure.
 ### Optional: seal your captures with a local identity
 
 Run Capsules can be sealed and verified. To turn that on for this machine, run one
-command (experimental, ADR-0301; **unreleased** — on `main`, not in v0.104.0, where you
-write `novaseal.yaml` by hand as described in
+command (experimental, ADR-0301; since v0.105.0 — on earlier versions you write
+`novaseal.yaml` by hand as described in
 [NovaSeal configuration](novaseal-configuration.md)):
 
 ```bash

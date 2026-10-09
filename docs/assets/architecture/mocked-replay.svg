@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 733" width="980" height="733" role="img" aria-labelledby="t d">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 711" width="980" height="711" role="img" aria-labelledby="t d">
 <title id="t">Mocked replay: what is served, what runs live, what is refused</title>
-<desc id="d">How the default replay mode re-runs a capsule. A capsule with no command is refused before anything is spawned. The re-run gets in-process dispatchers that serve recorded model calls and MCP tool results, raise recorded model errors as the SDK's own exception class, and report live network connections without blocking them. Step 1: A capsule with no command to re-run (framework adapter, OTLP import, an @label) is refused before anything is spawned. (on main, unreleased (after v0.104.0).) Step 2: Every mode first compares env.lock with this host and re-validates each recorded tool call against its current schema. Step 3: The command re-runs in a subprocess; MockModelDispatcher serves each surface's recorded calls in order, sync, async or streamed. (on main, unreleased (after v0.104.0).) Step 4: A recorded rate limit, 4xx, 5xx or timeout keeps its queue position and is raised again as the SDK's own exception class. (on main, unreleased (after v0.104.0).) Step 5: MCP call_tool results are served one-to-one and an unmatched call fails closed. Other tools still run live. (on main, unreleased (after v0.104.0).) Step 6: NetworkObserver counts every IPv4/IPv6 connection the replayed process opens: observed and reported, never blocked. (on main, unreleased (after v0.104.0).) Step 7: replay_result.yaml records status, exit code and the replay_contract counters (served, unmatched, unconsumed, live network). (on main, unreleased (after v0.104.0).)</desc>
+<desc id="d">How the default replay mode re-runs a capsule. A capsule with no command is refused before anything is spawned. The re-run gets in-process dispatchers that serve recorded model calls and MCP tool results, raise recorded model errors as the SDK's own exception class, and report live network connections without blocking them. Step 1: A capsule with no command to re-run (framework adapter, OTLP import, an @label) is refused before anything is spawned. Step 2: Every mode first compares env.lock with this host and re-validates each recorded tool call against its current schema. Step 3: The command re-runs in a subprocess; MockModelDispatcher serves each surface's recorded calls in order, sync, async or streamed. Step 4: A recorded rate limit, 4xx, 5xx or timeout keeps its queue position and is raised again as the SDK's own exception class. Step 5: MCP call_tool results are served one-to-one and an unmatched call fails closed. Other tools still run live. Step 6: NetworkObserver counts every IPv4/IPv6 connection the replayed process opens: observed and reported, never blocked. Step 7: replay_result.yaml records status, exit code and the replay_contract counters (served, unmatched, unconsumed, live network).</desc>
 <style>
 svg{--bg:#111114;--card:#1c1c22;--card2:#24242c;--stroke:#3a3a44;--fg:#ececf1;--muted:#a8a8b3;--line:#6b6b78;--cap:#7dd3fc;--seal:#c4b5fd;--rep:#5eead4;--ver:#c4f0a8;--amb:#fcd34d;--warn:#fda4af}
 @media (prefers-color-scheme:light){svg{--bg:#fafaf9;--card:#ffffff;--card2:#f1f1f3;--stroke:#d4d4d8;--fg:#18181b;--muted:#52525b;--line:#a1a1aa;--cap:#0369a1;--seal:#6d28d9;--rep:#0f766e;--ver:#3f6212;--amb:#a16207;--warn:#be123c}}
@@ -38,7 +38,7 @@ text{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvet
 @media (prefers-reduced-motion:reduce){.k,.hl{animation:none!important;opacity:0!important}.motion{display:none}}
 </style>
 <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-muted" d="M0 0 L10 5 L0 10z"/></marker><marker id="ahw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-warn" d="M0 0 L10 5 L0 10z"/></marker></defs>
-<rect class="bg" x="0" y="0" width="980" height="733" rx="14"/>
+<rect class="bg" x="0" y="0" width="980" height="711" rx="14"/>
 <text class="title" x="22" y="36" text-anchor="start">Mocked replay: what is served, what runs live, what is refused</text>
 <text class="s" x="22" y="56" text-anchor="start">nova replay --mode mocked (the default) · ADR-0300, ADR-0304, ADR-0305</text>
 <rect class="ring k c-warn" x="18" y="74" width="158" height="112" rx="13" style="animation-delay:0s"/>
@@ -176,41 +176,34 @@ text{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvet
 <circle r="5" class="f-ver" opacity="0"><animateMotion dur="23.8s" repeatCount="indefinite" path="M900 236 V184" keyPoints="0;0;1;1" keyTimes="0;0.861;0.917;1" calcMode="linear"/><animate attributeName="opacity" dur="23.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.861;0.863;0.917;0.921;1"/></circle>
 <circle r="5" class="f-ver" opacity="0"><animateMotion dur="23.8s" repeatCount="indefinite" path="M772 130 H788" keyPoints="0;0;1;1" keyTimes="0;0.933;0.988;1" calcMode="linear"/><animate attributeName="opacity" dur="23.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.933;0.935;0.988;0.992;1"/></circle>
 </g>
-<rect class="card2" x="22" y="510" width="936" height="209" rx="10"/>
+<rect class="card2" x="22" y="510" width="936" height="187" rx="10"/>
 <text class="h" x="38" y="534" text-anchor="start">Steps, in order</text>
 <rect class="k lit f-warn" x="30" y="538" width="920" height="20" rx="5" style="animation-delay:0s"/>
 <circle class="f-warn" cx="48" cy="548" r="8"/>
 <text class="num" x="48" y="552" style="fill:var(--bg)">1</text>
-<text class="s" x="59" y="552" text-anchor="start">†</text>
-<text class="t" x="70" y="552" text-anchor="start">A capsule with no command to re-run (framework adapter, OTLP import, an @label) is refused before anything is spawned.</text>
+<text class="t" x="64" y="552" text-anchor="start">A capsule with no command to re-run (framework adapter, OTLP import, an @label) is refused before anything is spawned.</text>
 <rect class="k lit f-rep" x="30" y="559" width="920" height="20" rx="5" style="animation-delay:3.4s"/>
 <circle class="f-rep" cx="48" cy="569" r="8"/>
 <text class="num" x="48" y="573" style="fill:var(--bg)">2</text>
-<text class="t" x="70" y="573" text-anchor="start">Every mode first compares env.lock with this host and re-validates each recorded tool call against its current schema.</text>
+<text class="t" x="64" y="573" text-anchor="start">Every mode first compares env.lock with this host and re-validates each recorded tool call against its current schema.</text>
 <rect class="k lit f-rep" x="30" y="580" width="920" height="20" rx="5" style="animation-delay:6.8s"/>
 <circle class="f-rep" cx="48" cy="590" r="8"/>
 <text class="num" x="48" y="594" style="fill:var(--bg)">3</text>
-<text class="s" x="59" y="594" text-anchor="start">†</text>
-<text class="t" x="70" y="594" text-anchor="start">The command re-runs in a subprocess; MockModelDispatcher serves each surface's recorded calls in order, sync, async or streamed.</text>
+<text class="t" x="64" y="594" text-anchor="start">The command re-runs in a subprocess; MockModelDispatcher serves each surface's recorded calls in order, sync, async or streamed.</text>
 <rect class="k lit f-amb" x="30" y="601" width="920" height="20" rx="5" style="animation-delay:10.2s"/>
 <circle class="f-amb" cx="48" cy="611" r="8"/>
 <text class="num" x="48" y="615" style="fill:var(--bg)">4</text>
-<text class="s" x="59" y="615" text-anchor="start">†</text>
-<text class="t" x="70" y="615" text-anchor="start">A recorded rate limit, 4xx, 5xx or timeout keeps its queue position and is raised again as the SDK's own exception class.</text>
+<text class="t" x="64" y="615" text-anchor="start">A recorded rate limit, 4xx, 5xx or timeout keeps its queue position and is raised again as the SDK's own exception class.</text>
 <rect class="k lit f-rep" x="30" y="622" width="920" height="20" rx="5" style="animation-delay:13.6s"/>
 <circle class="f-rep" cx="48" cy="632" r="8"/>
 <text class="num" x="48" y="636" style="fill:var(--bg)">5</text>
-<text class="s" x="59" y="636" text-anchor="start">†</text>
-<text class="t" x="70" y="636" text-anchor="start">MCP call_tool results are served one-to-one and an unmatched call fails closed. Other tools still run live.</text>
+<text class="t" x="64" y="636" text-anchor="start">MCP call_tool results are served one-to-one and an unmatched call fails closed. Other tools still run live.</text>
 <rect class="k lit f-amb" x="30" y="643" width="920" height="20" rx="5" style="animation-delay:17s"/>
 <circle class="f-amb" cx="48" cy="653" r="8"/>
 <text class="num" x="48" y="657" style="fill:var(--bg)">6</text>
-<text class="s" x="59" y="657" text-anchor="start">†</text>
-<text class="t" x="70" y="657" text-anchor="start">NetworkObserver counts every IPv4/IPv6 connection the replayed process opens: observed and reported, never blocked.</text>
+<text class="t" x="64" y="657" text-anchor="start">NetworkObserver counts every IPv4/IPv6 connection the replayed process opens: observed and reported, never blocked.</text>
 <rect class="k lit f-ver" x="30" y="664" width="920" height="20" rx="5" style="animation-delay:20.4s"/>
 <circle class="f-ver" cx="48" cy="674" r="8"/>
 <text class="num" x="48" y="678" style="fill:var(--bg)">7</text>
-<text class="s" x="59" y="678" text-anchor="start">†</text>
-<text class="t" x="70" y="678" text-anchor="start">replay_result.yaml records status, exit code and the replay_contract counters (served, unmatched, unconsumed, live network).</text>
-<text class="s" x="38" y="703" text-anchor="start">† On main, unreleased (after v0.104.0).</text>
+<text class="t" x="64" y="678" text-anchor="start">replay_result.yaml records status, exit code and the replay_contract counters (served, unmatched, unconsumed, live network).</text>
 </svg>

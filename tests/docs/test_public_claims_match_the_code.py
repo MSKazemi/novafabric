@@ -154,11 +154,13 @@ def _replay_modes() -> tuple[str, ...]:
 
 
 def test_no_claim_surface_states_a_stale_secret_pattern_count() -> None:
-    """A count of key patterns must be the rule pack on ``main`` or the one the latest
-    release shipped (14 in v0.104.0); ``docs/concepts.md`` said 12 long after both moved."""
+    """A count of key patterns must be the rule pack's; ``docs/concepts.md`` said 12 long
+    after the pack moved. When ``main`` grows the pack past the latest release, add that
+    release's count here until the next tag (v0.104.0 shipped 14; v0.105.0 ships the
+    current pack)."""
     from novafabric.capture.secrets import _RULES
 
-    allowed = {len(_RULES), 14}
+    allowed = {len(_RULES)}
     count = re.compile(r"\b(\d+)\s+(?:LLM\s+)?(?:provider\s+)?key\s+patterns\b", re.I)
     offenders = [
         f"{rel}:{number}: {line.strip()[:120]}"

@@ -41,7 +41,7 @@ Work through these in order. Confirm each step's output before moving on.
    sign Evidence Bundles). Docker users skip this. Captures are **not sealed** by
    default; to seal them, configure a signing profile — see
    [NovaSeal configuration](https://github.com/MSKazemi/novafabric/blob/main/docs/novaseal-configuration.md)
-   (`nova seal init` does it in one command on `main`, not yet released).
+   (`nova seal init` does it in one command since v0.105.0; experimental).
 
 4. **Capture a run.** Wrap the existing entrypoint — no code change needed:
    ```bash

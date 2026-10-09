@@ -22,7 +22,7 @@ that as a real bug.
 | **What it is** | Open-source, self-hosted replay and evidence infrastructure for AI agents and agentic systems |
 | **License** | Apache-2.0 |
 | **Language** | Python 3.12+ |
-| **Current version** | v0.104.0 — **beta**; on-disk formats are not frozen until the v1.0 schema freeze |
+| **Current version** | v0.105.0 — **beta**; on-disk formats are not frozen until the v1.0 schema freeze |
 | **Repository** | <https://github.com/MSKazemi/novafabric> |
 | **Website** | <https://novafabric.ai> |
 | **Package** | `pip install novafabric` — <https://pypi.org/project/novafabric/> |
@@ -79,9 +79,8 @@ readers days.
   deterministic and NovaFabric does not pretend otherwise; that is what the `mocked`,
   `semantic`, and `forensic` replay modes exist for.
 - **Not an offline sandbox for tools.** `mocked` replay serves the recorded model
-  responses; tool calls still run live. (Unreleased on `main`: async, streamed and
-  Responses API model calls and recorded MCP tool results are served too; HTTP, shell,
-  file, and framework-native tools still run live.)
+  responses and, since v0.105.0, recorded MCP tool results; HTTP, shell, file, and
+  framework-native tools still run live.
 - **Not signed by default.** A Run Capsule is *sealable*: it is signed once you
   configure a key. Evidence Bundles are always signed. Please do not write "signed
   capsules" or "every run is signed".

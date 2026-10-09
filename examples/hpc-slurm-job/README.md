@@ -83,7 +83,7 @@ node it ran on, and a `redaction-proof.json`. `nova validate` accepts it.
 
 ### What the capsule records about the job
 
-**Experimental, unreleased (ADR-0307, issue #157).** The verified run above predates
+**Experimental, since v0.105.0 (ADR-0307, issue #157).** The verified run above predates
 this; it is checked in the test suite with the Slurm variables set by hand, not yet
 on a cluster. When `nova capture` runs inside a Slurm job, `capsule.yaml` carries:
 

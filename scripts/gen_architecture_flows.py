@@ -47,7 +47,7 @@ STORY_END = "/* END generated story */"
 MATURITY = ("works today", "experimental", "planned", "future design")
 # The last tagged release. Steps marked ``unreleased`` describe behaviour on main
 # after it; bump this (and clear those flags) when the next release is cut.
-LAST_RELEASE = "v0.104.0"
+LAST_RELEASE = "v0.105.0"
 
 WIDTH = 980
 SLOT_SECONDS = 3.4  # how long each step stays lit
@@ -212,7 +212,7 @@ OTLP = Flow(
              "<code>capture_level: ingested-otlp</code>, then finalizes through the same "
              "path as <code>nova capture</code>: secret scan, manifest redaction, residual "
              "pass, <code>evidence_digests</code>, and a seal when a signing profile exists "
-             "(unreleased, on main). A finalization failure keeps the data, leaves the "
+             "(since v0.105.0). A finalization failure keeps the data, leaves the "
              "capsule unsealed and is reported in <code>finalization_error</code>.</p>",
              "otel/genai_ingest.py:write_ingest_capsule_finalized · "
              "capture/finalize.py:finalize_in_process_capsule",
@@ -704,7 +704,7 @@ REPLAY = Flow(
              "the same and also exits 1.</p>",
              "replay/_replayability.py:not_reexecutable_reason · "
              "replay/_errors.py:CapsuleNotReplayableError",
-             "works today", "chk", "warn", unreleased=True),
+             "works today", "chk", "warn"),
         Step(("pre",), ("m2",),
              "Every mode first compares env.lock with this host and re-validates each "
              "recorded tool call against its current schema.",
@@ -721,9 +721,9 @@ REPLAY = Flow(
              "the chunk or event stream the SDK would have produced, so no tokens are "
              "spent. Wire records are transport (ADR-0305) and are never served. Serving "
              "sync Chat Completions and Messages calls shipped earlier; async, streamed and "
-             "Responses API serving is on main and not in a release yet.</p>",
+             "Responses API serving shipped in v0.105.0.</p>",
              "replay/_engine.py:ReplayEngine.run · replay/_dispatcher.py:MockModelDispatcher",
-             "experimental", "spawn", "rep", unreleased=True),
+             "experimental", "spawn", "rep"),
         Step(("model", "err"), ("derr",),
              "A recorded rate limit, 4xx, 5xx or timeout keeps its queue position and is "
              "raised again as the SDK's own exception class.",
@@ -734,7 +734,7 @@ REPLAY = Flow(
              "response is returned with its recorded status. An error that cannot be rebuilt "
              "faithfully is the divergence <code>recorded_error_unreconstructable</code>.</p>",
              "replay/_model_errors.py:rebuild_sdk_error · ALLOWED_SDK_ERRORS",
-             "experimental", "err", "amb", unreleased=True),
+             "experimental", "err", "amb"),
         Step(("tool", "div"), ("dtool", "ddiv"),
              "MCP call_tool results are served one-to-one and an unmatched call fails "
              "closed. Other tools still run live.",
@@ -742,7 +742,7 @@ REPLAY = Flow(
              "<strong>planned</strong> (ADR-0306, proposed). Until then, a tool that writes "
              "files or calls an API does so again on replay, so replay in a sandbox.</p>",
              "replay/_dispatcher.py:MockToolDispatcher · replay/_contract.py",
-             "experimental", "tool", "rep", unreleased=True),
+             "experimental", "tool", "rep"),
         Step(("net",), ("dnet",),
              "NetworkObserver counts every IPv4/IPv6 connection the replayed process "
              "opens: observed and reported, never blocked.",
@@ -750,7 +750,7 @@ REPLAY = Flow(
              "stops counting at 10,000 events (then the count is a lower bound). The totals "
              "land in <code>replay_contract.network_*</code>.</p>",
              "replay/_dispatcher.py:NetworkObserver · replay/_contract.py",
-             "experimental", "net", "amb", unreleased=True),
+             "experimental", "net", "amb"),
         Step(("res",), ("nres", "m4"),
              "replay_result.yaml records status, exit code and the replay_contract counters "
              "(served, unmatched, unconsumed, live network).",
@@ -759,7 +759,7 @@ REPLAY = Flow(
              "a substituted model response reaches the re-run; a substituted tool result "
              "does not, because tools run live.</p>",
              "replay/_result.py:write_replay_result · replay/_engine.py",
-             "works today", "res", "ver", unreleased=True),
+             "works today", "res", "ver"),
     ),
 )
 
@@ -826,7 +826,7 @@ DIFF = Flow(
              "asset that is not in the registry, or a usage error. It is never 1, the gate's "
              "<em>found a difference</em> code (ADR-0303).</p>",
              "cli/diff.py:diff_cmd · EXIT_CANNOT_COMPARE",
-             "works today", "res", "rep", unreleased=True),
+             "works today", "res", "rep"),
         Step(("read",), ("a2",),
              "A record line that is not UTF-8, not JSON or not a JSON object is skipped, "
              "counted per side and warned about on stderr.",
@@ -834,7 +834,7 @@ DIFF = Flow(
              "could pass on runs it had not fully read. The count is carried in the "
              "additive <code>skipped_malformed_lines</code> JSON key.</p>",
              "diff/_engine.py · diff/_report.py:DiffReport",
-             "works today", "read", "amb", unreleased=True),
+             "works today", "read", "amb"),
         Step(("align",), ("a3",),
              "Only logical model calls are aligned: wire records marked transport are left "
              "out, so one SDK call is one pair (ADR-0305).",
@@ -842,7 +842,7 @@ DIFF = Flow(
              "pair by position, anchored on identical requests, so one inserted call does not "
              "shift every later pair. Unpaired calls count as added or removed.</p>",
              "capture/record_roles.py:logical_model_calls · diff/_align.py",
-             "works today", "align", "amb", unreleased=True),
+             "works today", "align", "amb"),
         Step(("facets",), ("a4",),
              "Environment, model calls, tool calls and outputs/ are compared; a provider "
              "change under the same model is a changed call.",
@@ -850,7 +850,7 @@ DIFF = Flow(
              "the additive <code>provider_changed</code> flag. Output files compare by "
              "SHA-256; symlinks are skipped and never followed.</p>",
              "diff/_engine.py:DiffEngine.compare",
-             "works today", "facets", "amb", unreleased=True),
+             "works today", "facets", "amb"),
         Step(("report",), ("a5",),
              "One property, has_changes, is the verdict; text, json and github-annotation "
              "all read it, so an added-only diff is an error.",
@@ -858,7 +858,7 @@ DIFF = Flow(
              "<code>github-annotation</code> formatter emits <code>::error</code> for any "
              "change, never <code>::notice</code>.</p>",
              "diff/_report.py:DiffReport · diff/_format.py",
-             "works today", "report", "ver", unreleased=True),
+             "works today", "report", "ver"),
         Step(("gate", "e2"), ("a6", "xbad", "g2"),
              "With --assert-no-regressions an incomplete read is checked first: the runs "
              "were not fully compared, so the gate exits 2.",
@@ -866,14 +866,14 @@ DIFF = Flow(
              "entry, so over an incomplete read neither <em>the runs differ</em> nor "
              "<em>they do not</em> is established (ADR-0303 Amendment 1).</p>",
              "cli/diff.py:diff_cmd · DiffReport.is_complete",
-             "works today", "gate", "warn", unreleased=True),
+             "works today", "gate", "warn"),
         Step(("gate", "e1", "e0"), ("g1", "g0"),
              "Then has_changes decides: exit 1 for any difference, else 0. Without a gate "
              "flag, a difference is reported and exits 0.",
              "<p><code>--significance</code> is a separate path: a statistical test over "
              "stored pass/fail scores, which exits 3 on a significant regression.</p>",
              "cli/diff.py:EXIT_DIFFERENCES · eval/regression_diff.py",
-             "works today", "gate", "seal", unreleased=True),
+             "works today", "gate", "seal"),
     ),
 )
 
@@ -1034,7 +1034,7 @@ STORY = Flow(
             "replay refuses it up front.</p>",
             "adapters/_capsule.py:AdapterCapture · adapters/langgraph.py · sdk/agent.py:agent "
             "· capture/finalize.py:finalize_in_process_capsule",
-            "works today", "adapt", "cap", "graph = wrap_langgraph(graph)", True),
+            "works today", "adapt", "cap", "graph = wrap_langgraph(graph)"),
         _ss("capture", "Intercept SDK calls", ("wl", "hooks"), ("wl_hooks",),
             ("messages.create",),
             "In the child, install_all patches the OpenAI and Anthropic SDKs: sync, async, "
@@ -1047,8 +1047,7 @@ STORY = Flow(
             "<code>call_tool</code> results go to <code>tool-calls.jsonl</code>.</p>",
             "capture/hooks/__init__.py:install_all · capture/hooks/_openai.py · "
             "capture/hooks/_sdk_streams.py",
-            "experimental", "hooks", "cap", "  chat.completions.create(stream=True) → 1 record",
-            True),
+            "experimental", "hooks", "cap", "  chat.completions.create(stream=True) → 1 record"),
         _ss("capture", "The wire record is transport", ("hooks", "wire"), ("hooks_wire",),
             ("HTTP attempt",),
             "The httpx hook also records each HTTP attempt. Under an SDK call it is marked "
@@ -1061,8 +1060,7 @@ STORY = Flow(
             "duplicate shape.</p>",
             "capture/record_roles.py:stamp_wire_record · count_logical_model_calls · "
             "capture/hooks/_httpx.py",
-            "works today", "wire", "amb", "  model_call_count: 2 logical (3 transport records)",
-            True),
+            "works today", "wire", "amb", "  model_call_count: 2 logical (3 transport records)"),
         _ss("capture", "Scan and redact secrets", ("scan",), ("hooks_scan", "wire_scan"),
             ("api_key=sk-…", "[REDACTED]"),
             "When the workload exits, env.lock is written with the measured host block; then "
@@ -1075,7 +1073,7 @@ STORY = Flow(
             "<code>host_info()</code> measures arch, CPU count and memory for every "
             "capsule.</p>",
             "capture/secrets.py:SecretScannerV0.scan_and_redact · capture/env.py:host_info",
-            "works today", "scan", "warn", "  redaction: 1 finding (rule api-key)", True),
+            "works today", "scan", "warn", "  redaction: 1 finding (rule api-key)"),
         _ss("capture", "Residual pass and capture health", ("proof",), ("scan_proof",),
             ("capture-health.json",),
             "If events were dropped, capture-health.json is written first, so the residual "
@@ -1087,8 +1085,7 @@ STORY = Flow(
             "sealing and nothing bound it.</p>",
             "capture/event_recorder.py:finalize_health · "
             "capture/secrets.py:SecretScannerV0.residual_scan",
-            "works today", "proof", "warn", "  residual pass: 0 new findings · proof written",
-            True),
+            "works today", "proof", "warn", "  residual pass: 0 new findings · proof written"),
         _ss("capsule", "Assemble the Run Capsule", ("capsule",), ("scan_cap", "proof_cap"),
             ("streams", "proof"),
             "replay.yaml, lineage.jsonl and capsule.yaml are written; evidence_digests pins "
@@ -1146,7 +1143,7 @@ STORY = Flow(
             "<a href=\"#flow-mocked-replay-3\">the mocked replay flow</a>.</p>",
             "replay/_engine.py:ReplayEngine.run · replay/_dispatcher.py:MockModelDispatcher · "
             "replay/_contract.py",
-            "experimental", "replay", "rep", "$ nova replay 01J9Z…", True),
+            "experimental", "replay", "rep", "$ nova replay 01J9Z…"),
         _ss("replay", "Replay a recorded failure", ("replay", "wl"), ("replay_wl",),
             ("RateLimitError 429",),
             "A recorded rate limit or 5xx is raised again as the SDK's own exception class; "
@@ -1162,7 +1159,7 @@ STORY = Flow(
             "replay/_model_errors.py:rebuild_sdk_error · "
             "replay/_dispatcher.py:MockModelDispatcher",
             "experimental", "replay", "amb",
-            "  call 2 raised openai.RateLimitError (429), as recorded", True),
+            "  call 2 raised openai.RateLimitError (429), as recorded"),
         _ss("replay", "Intervene, or refuse up front", ("replay", "diff"), ("replay_diff",),
             ("counterfactual",),
             "intervention substitutes one event and writes a counterfactual capsule; it "
@@ -1175,7 +1172,7 @@ STORY = Flow(
             "replay/_intervention.py · replay/_engine.py · "
             "replay/_replayability.py:not_reexecutable_reason",
             "experimental", "replay", "rep",
-            "$ nova replay --mode intervention --intervention-file spec.yaml 01J9Z…", True),
+            "$ nova replay --mode intervention --intervention-file spec.yaml 01J9Z…"),
         _ss("diff", "Diff two runs", ("capsule", "diff"), ("cap_diff",), ("A ⇄ B",),
             "nova diff A B pairs logical model calls, tool calls and outputs/; a provider "
             "or request-parameter change is a changed call.",
@@ -1185,8 +1182,7 @@ STORY = Flow(
             "<a href=\"#flow-diff-gate-1\">the diff gate flow</a>.</p>",
             "diff/_engine.py:DiffEngine.compare · diff/_align.py · "
             "capture/record_roles.py:logical_model_calls",
-            "works today", "diff", "amb", "$ nova diff 01J9A… 01J9B… --assert-no-regressions",
-            True),
+            "works today", "diff", "amb", "$ nova diff 01J9A… 01J9B… --assert-no-regressions"),
         _ss("diff", "Gate CI on the exit code", ("diff", "gate"), ("diff_gate",),
             ("has_changes",),
             "With --assert-no-regressions: exit 0 no difference, 1 a difference, 2 could not "
@@ -1199,7 +1195,7 @@ STORY = Flow(
             "<code>github-annotation</code> output turns any change into an "
             "<code>::error</code>.</p>",
             "cli/diff.py:diff_cmd · EXIT_DIFFERENCES · EXIT_CANNOT_COMPARE",
-            "works today", "gate", "amb", "  1 model call changed · exit 1", True),
+            "works today", "gate", "amb", "  1 model call changed · exit 1"),
         _ss("verify", "Verify the seal", ("seal", "capsule", "verify"),
             ("seal_verify", "cap_verify"), ("manifest.dsse", "files"),
             "nova verify checks signature, timestamp, Merkle inclusion, manifest binding and "

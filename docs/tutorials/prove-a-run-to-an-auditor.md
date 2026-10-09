@@ -181,14 +181,13 @@ be touched.
 `mocked` goes further — it **re-runs the command** with the recorded model responses
 served from the capsule, so no live model call is made and the original model need
 not exist any more. Two limits matter for this question. **Tools run live**,
-against today's systems: in **v0.104.0**, the current PyPI release, every tool call
-runs live. Serving recorded MCP `call_tool` results from the capsule, and reporting
-the network connections the replay made, are **unreleased** (on `main`, for the
-next release; [ADR-0300](../architecture/replay-modes.md#the-mocked-replay-contract-adr-0300-adr-0304))
-— and even then, every tool that is not an MCP call runs live. And only the
-supported OpenAI and Anthropic model surfaces are served from the capsule (in
-v0.104.0: synchronous, non-streaming OpenAI chat completions and Anthropic
-messages) — see the [release scope](../architecture/replay-modes.md) and
+against today's systems. Since **v0.105.0** recorded MCP `call_tool` results are served
+from the capsule and the replay reports the network connections it made
+([ADR-0300](../architecture/replay-modes.md#the-mocked-replay-contract-adr-0300-adr-0304)),
+but every tool that is not an MCP call (or a function declared with the experimental
+`record.tool`) runs live; in v0.104.0 and earlier every tool call ran live. And only the
+supported OpenAI and Anthropic model surfaces are served from the capsule — see the
+[release scope](../architecture/replay-modes.md) and
 [support matrix](../architecture/replay-modes.md#support-matrix).
 So `mocked` answers "given the same model replies, does the code take the same
 path?" — only as far as its tools behave as they did in September.

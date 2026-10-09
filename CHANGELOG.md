@@ -11,6 +11,18 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
+## [0.105.0] - 2026-10-10
+
+**Mocked replay that fails closed, a diff gate that tells a difference from a failure to
+compare, and one secret pipeline for every capsule.** Mocked replay now serves async, streamed
+and Responses API calls, recorded model errors, recorded MCP results and declared `record.tool`
+functions, and ends `failure` on any divergence. `nova diff` exits `1` only for a difference and
+`2` when it cannot compare, and compares request parameters. Capsules from framework adapters,
+`@agent` and OTLP ingest get the same secret scan, residual pass and opt-in seal as `nova
+capture`, and capsules record the runner, image digest and Slurm job. **Several entries below
+are behaviour changes; read the upgrade notes.** Full narrative:
+[docs/releases/v0.105.0.md](docs/releases/v0.105.0.md).
+
 ### Security
 
 - **Framework-adapter and `@agent` capsules get the full ADR-0009 secret pipeline.** They used
@@ -185,7 +197,11 @@ longer forwards the submitting shell's environment (ADR-0270).
   `ReplayProviderMismatchError`, `ReplayOrderMismatchError`, `ReplayUnsupportedSurfaceError`,
   `ReplayRecordMalformedError`, `ReplayToolUnmatchedError`.
 - **Replay support matrix** in `docs/architecture/replay-modes.md`, built from the code and
-  tests: which provider/API surfaces are captured, served, refused or not controlled.
+  tests: which provider/API surfaces are captured, served, refused or not controlled. Since
+  ADR-0304 the table is **generated** from `replay/_support_matrix.py`
+  (`scripts/gen_replay_support_matrix.py`); a test fails if the page drifts, if a row's
+  served/refused claim disagrees with the methods the dispatcher patches, or if a cited test no
+  longer exists.
 - **Example entry points that skip cleanly without their prerequisite** (#70, #71, #74).
   `examples/hpc-slurm-job/submit.sh` submits `job.sbatch` or, with no `sbatch`, prints a
   `skip:` and exits 0. `examples/docker-run/run.sh` runs the documented capture as the invoking
@@ -194,11 +210,6 @@ longer forwards the submitting shell's environment (ADR-0270).
   cells as one plain, stdlib-only process, so the notebook's code path is captured and tested
   on every run where Jupyter is absent. The example tests now also run `nova validate` on every
   capsule they produce.
-  tests: which provider/API surfaces are captured, served, refused or not controlled. Since
-  ADR-0304 the table is **generated** from `replay/_support_matrix.py`
-  (`scripts/gen_replay_support_matrix.py`); a test fails if the page drifts, if a row's
-  served/refused claim disagrees with the methods the dispatcher patches, or if a cited test no
-  longer exists.
 - **Mocked replay serves async, streamed and OpenAI Responses API calls** (ADR-0304, works
   today for Python workloads). OpenAI `chat.completions.create`, OpenAI `responses.create` and
   Anthropic `messages.create` are served sync and async, with or without `stream=True`: a
@@ -260,7 +271,7 @@ longer forwards the submitting shell's environment (ADR-0270).
   default check is sublinear, and the `--db` help no longer loses `[seal-postgres]` to Rich
   markup. The nightly Postgres benchmark is unchanged: it stays a regression guard on this cost.
 - **`nova replay --permissive` no longer runs an unmatched MCP tool call live by itself
-  (behaviour change, ADR-0306 Q3, amends ADR-0300 D7; experimental, unreleased).** An
+  (behaviour change, ADR-0306 Q3, amends ADR-0300 D7; experimental).** An
   unmatched MCP `call_tool` under `--permissive` now runs live only if the safety-ladder
   flag for its class is passed; MCP calls are always `unknown`, so that is
   `--allow-unknown-mutation`. Without it the call is refused before the tool runs
@@ -505,8 +516,8 @@ longer forwards the submitting shell's environment (ADR-0270).
   parsing against real `nova capture` output and runs the whole demo end to end.
 - **The auditor tutorial (`docs/tutorials/prove-a-run-to-an-auditor.md`) stated unreleased
   replay behaviour as released.** It said "only MCP tool calls are substituted" in `mocked`
-  replay. In v0.104.0, the current PyPI release, every tool runs live; serving recorded MCP
-  results is on `main` only. The page now says so, the same way the replay-modes "Release scope"
+  replay. In v0.104.0 every tool runs live; serving recorded MCP results is new in this release.
+  The page now says which release does what, the same way the replay-modes "Release scope"
   note does. It also called `redaction-proof.json` "proof that secret scanning ran"; it is a
   secret-scan record.
 - **The Evidence Bundle's contents were described three different ways**, and `nova
@@ -804,8 +815,8 @@ longer forwards the submitting shell's environment (ADR-0270).
   called `redaction-proof.json` "proof no secrets leaked". They now say *secret-scanned* (known
   key formats; the FAQ lists what is not detected), *sealable* (capture seals only once a
   signing key is configured), and five replay modes with `intervention` experimental. The
-  README states the rule count (18 on `main`, 14 in v0.104.0) and labels MCP tool-result
-  serving and `nova seal init` as unreleased. Developer and trust journeys (Capture → Replay →
+  README states the rule count (18, read from the code by a test) and labels MCP tool-result
+  serving and `nova seal init` with the release that ships them. Developer and trust journeys (Capture → Replay →
   Diff; Capture → Seal → Verify → Audit) replace the single verb chain. The plugin's deploy
   skill no longer calls `nova serve` read-only or `--insecure` by default, and points to the
   real capsule directory. PyPI keyword `observability` replaced by `audit` to mirror
@@ -823,6 +834,14 @@ longer forwards the submitting shell's environment (ADR-0270).
   did not say that a stock image cannot load NovaFabric's LLM-call hooks (since B3 the loader
   is mounted and logs `hook install failed` to `outputs/stderr.txt`). `notebook-capture/run.sh`
   said the executed notebook is part of the capsule; it is written beside it.
+- **Release labels name the release.** Docs, examples, the architecture diagrams and the
+  explainer that marked this release's features "unreleased, on `main`" now say v0.105.0
+  (experimental features stay experimental). Older "Unreleased" labels on features that had
+  already shipped now name their release: the dashboard filter bar, URL view state, capsule
+  explorer, evidence cart, aggregate strip and Dashboards view (v0.103.0), eight dated
+  ROADMAP rows (v0.102.0), the ADR-0126/0150/0206 ROADMAP slices (v0.103.0) and the
+  operator guide's ADR-0270 environment rule (v0.102.0); `nova memory` is no longer headed
+  "Unreleased" in the CLI reference (it shipped in v0.64.0).
 
 ## [0.104.0] - 2026-10-08
 

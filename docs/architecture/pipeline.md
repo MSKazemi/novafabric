@@ -94,14 +94,14 @@ private keys, JWTs and passwords are not matched at all. The full list:
 A failed workload still produces a complete capsule with `status: failure`. A
 workload the runner could not start at all (for example a mistyped command, which
 `runners/_local.py` reports as `command not found: <name>`) is recorded with
-`error.type: WorkloadNotStarted` rather than `NonZeroExit` (unreleased, on `main`). If a NovaFabric
+`error.type: WorkloadNotStarted` rather than `NonZeroExit` (since v0.105.0). If a NovaFabric
 component fails, the failure is recorded and the workload continues.
 
 Steps 6–9 are one shared function, `capture/finalize.py` (`write_redacted_manifest`
 then `finalize_capsule`). Framework adapters, the `@agent` decorator and OTLP trace
 ingest (`otel/genai_ingest.py`) call the same two steps through
 `finalize_in_process_capsule`, after writing `env.lock` and `replay.yaml` and
-running the step-5 scan (unreleased, on `main`). Their capsules
+running the step-5 scan (since v0.105.0). Their capsules
 therefore get the residual pass, `lineage.jsonl`, `evidence_digests` and, when a
 signing profile exists, a seal. Configured maskers are a `nova capture` option
 and do not run there. A finalization failure in that path never fails the wrapped
@@ -142,7 +142,7 @@ exception) and the recorded MCP tool results served from the capsule; other tool
 run live, and outbound connections are reported. A capsule that records no
 command to re-run (a framework-adapter or `@agent`-decorator (`novafabric.sdk.agent`) capsule, or one
 imported from OpenTelemetry) is refused before anything is spawned
-(`CapsuleNotReplayable`). What v0.104.0 serves versus `main` is in
+(`CapsuleNotReplayable`). What v0.104.0 served versus v0.105.0 is in
 [Replay modes › Release scope](replay-modes.md). `forensic`, `semantic` and `exact` analyse the capsule
 without re-running it. Every mode writes
 `.novafabric/replays/<ulid>/replay_result.yaml`. `intervention` is the only mode
@@ -181,7 +181,7 @@ source line (ADR-0303 Amendment 2). `nova diff` also accepts two `name@version`
 asset references and diffs their specs field by field, in any of the three
 output formats.
 
-This contract (ADR-0303 and its Amendments 1 and 2) is unreleased, on `main`; in v0.104.0 an
+This contract (ADR-0303 and its Amendments 1 and 2) shipped in v0.105.0; in v0.104.0 an
 unresolvable capsule ref exits 1, malformed lines are dropped silently, a malformed
 `env.lock` crashes the diff, and request parameters are not compared.
 

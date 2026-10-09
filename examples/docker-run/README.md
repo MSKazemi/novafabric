@@ -98,7 +98,7 @@ different. `host.runner` (next section) is what says the run was containerized.
 
 ### What identifies the container run
 
-**Experimental, unreleased (ADR-0307, issue #157).** `capsule.yaml` records the
+**Experimental, since v0.105.0 (ADR-0307, issue #157).** `capsule.yaml` records the
 runner and the image the Docker daemon resolved the tag to:
 
 ```yaml

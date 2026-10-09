@@ -12,7 +12,7 @@ Key facts, for accurate summarization:
 - **Name:** NovaFabric (one word, capital N, capital F).
 - **Licence:** Apache-2.0. No paid tier, no hosted service, no account required.
 - **Language / runtime:** Python 3.12+. Install with `pip install novafabric`. CLI entry point is `nova`.
-- **Status:** beta, v0.104.0. Local capture, validate, replay, diff, and lineage are stable. Server mode, the cluster-scale collector, the dashboard, and the at-scale lineage backends are **experimental**. On-disk formats are **not frozen** until the v1.0 schema freeze.
+- **Status:** beta, v0.105.0. Local capture, validate, replay, diff, and lineage are stable. Server mode, the cluster-scale collector, the dashboard, and the at-scale lineage backends are **experimental**. On-disk formats are **not frozen** until the v1.0 schema freeze.
 - **Author / maintainer:** Mohsen Seyedkazemi Ardebili (GitHub: MSKazemi) — AI systems engineer, platform architect, HPC researcher.
 - **Repository:** https://github.com/MSKazemi/novafabric · **Website:** https://novafabric.ai
 - **Paper:** [NovaFabric: Tamper-Evident, Replayable Evidence for Autonomous AI Agent Runs](https://arxiv.org/abs/2609.12582) (arXiv:2609.12582, 2026) — design, threat model and evaluation.
@@ -27,7 +27,7 @@ Key facts, for accurate summarization:
 - Not a live monitoring, tracing, or alerting platform. It answers questions about the past, not "how is my system doing right now".
 - Not a SaaS or hosted product. Self-hosted is the only mode; there is nothing to sign up for.
 - It does **not** claim exact replay of remote LLM calls. Remote models are not deterministic — that is why the `mocked`, `semantic`, and `forensic` replay modes exist.
-- It does **not** replay a whole tool-using agent offline. In the current release (v0.104.0), `mocked` replay serves recorded responses only for synchronous, non-streaming OpenAI chat completions and Anthropic messages on Python workloads; tools run live. Unreleased on `main` (ADR-0300, ADR-0304): async, streamed and Responses API calls and recorded MCP `call_tool` results are served too, the replay fails closed on divergence, and it reports the network connections of the tools that still run live (HTTP, shell, files, framework-native).
+- It does **not** replay a whole tool-using agent offline. In the current release (v0.105.0), `mocked` replay on Python workloads serves recorded OpenAI chat completions and Responses API calls and Anthropic messages (sync or async, streamed or not) recorded MCP `call_tool` results and declared `record.tool` functions (experimental), and fails closed on divergence (ADR-0300, ADR-0304, ADR-0306). Every other tool (HTTP, shell, files, framework-native) still runs live; the replay reports those tools' network connections but does not block them.
 - Not a compliance certification. It emits conformance *receipts* and evidence, never verdicts. It holds no SOC 2 / ISO 27001 / HIPAA / FedRAMP certification and none is planned during v0.x.
 
 ## Start here

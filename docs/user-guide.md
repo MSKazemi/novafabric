@@ -143,8 +143,8 @@ capsule is still written even when no AI SDK is present at all:
 
 | Transport | What is recorded |
 |---|---|
-| `openai` SDK | `chat.completions.create` calls → `model-calls.jsonl`; on `main` (unreleased) also `responses.create`, async and streamed calls |
-| `anthropic` SDK | `messages.create` calls → `model-calls.jsonl`; on `main` (unreleased) also async and streamed calls |
+| `openai` SDK | `chat.completions.create` calls → `model-calls.jsonl`; since v0.105.0 also `responses.create`, async and streamed calls |
+| `anthropic` SDK | `messages.create` calls → `model-calls.jsonl`; since v0.105.0 also async and streamed calls |
 | `httpx` | Requests to URL-registry-classified hosts → `model-calls.jsonl` |
 | `requests` | Same classification as `httpx`; covers LangChain, LlamaIndex, `boto3` |
 | `aiohttp` | Async wire-level capture; covers async LangChain, FastAPI agents |
@@ -261,7 +261,7 @@ Without `capsule_dir`,
 the decorator emits OTel spans only — no capsule is written. This is the
 original v0.1 observability mode and is still useful if you only need traces.
 
-**Same finalization as `nova capture` (unreleased, on `main`).** The capsule goes
+**Same finalization as `nova capture` (since v0.105.0).** The capsule goes
 through the same secret scan, manifest redaction, residual pass, `lineage.jsonl`
 and `evidence_digests`, and it is sealed when a signing profile exists
 (`nova seal init`), so `nova verify` checks it like any other capsule. Sealing
@@ -327,7 +327,7 @@ nova capture --runner slurm \
 Pass runner-specific options with `--runner-option key=value` (repeatable). All
 runners are non-privileged by design — see the enforcement notes per runner.
 
-**What the capsule records about where the run happened** (experimental, unreleased,
+**What the capsule records about where the run happened** (experimental, since v0.105.0,
 ADR-0307). `capsule.yaml` names the runner under `host.runner.name`. For `docker` and
 `kubernetes` it also records the image you passed and the digest the runtime actually
 resolved it to:
@@ -399,7 +399,7 @@ Adapters ship for eleven frameworks. Each is importable by name from
 The last four are not wrappers — they hook the framework's own extension point
 (ADR-0078) rather than patching a method.
 
-**Evidence and sealing (unreleased, on `main`).** Every adapter finalizes its
+**Evidence and sealing (since v0.105.0).** Every adapter finalizes its
 capsule through the same path as `nova capture`: secret scan, manifest redaction,
 residual pass, `lineage.jsonl`, `evidence_digests`, and a seal when a signing
 profile exists (opt-in), so `nova verify` works on an adapter capsule. Configured
@@ -412,8 +412,8 @@ never breaks the framework call: the capsule is left unsealed and
 `NOVAFABRIC_HOME` is set, otherwise to `./.novafabric/runs/<run-id>/` under the
 working directory. That is **not** where `nova capture` writes
 (`$NOVAFABRIC_CAPSULE_DIR`, default `~/.novafabric/capsules/`). A capsule path
-always works (`nova replay .novafabric/runs/<run-id>/ --mode forensic`). On `main`
-(unreleased; v0.104.0 resolves a bare id in the capture store only) the bare run id
+always works (`nova replay .novafabric/runs/<run-id>/ --mode forensic`). Since v0.105.0
+(v0.104.0 resolved a bare id in the capture store only) the bare run id
 works too: `nova replay`, `nova diff`, `nova validate` and every other command that
 takes a run id also look in those two adapter defaults, print a `note:` on stderr
 naming the directory the capsule was found in, and fail with an error listing both
@@ -692,7 +692,7 @@ nova replay .novafabric/capsules/01HX.../ --mode mocked
 ```
 
 The original command is re-spawned as a subprocess (Python workloads; what
-v0.104.0 serves versus unreleased `main` is listed under
+v0.104.0 served versus v0.105.0 is listed under
 [Release scope](architecture/replay-modes.md)). A capsule
 that records no command — written by a framework adapter or `@agent`
 (`capture_mode: sdk-decorator`), or imported from OpenTelemetry spans — is refused
@@ -706,7 +706,7 @@ tool runs live** — HTTP requests, shell commands, file writes, framework-nativ
 tools, functions you did not declare — so run replays of such agents in a sandbox
 or against test credentials.
 
-**Declaring your own Python tools** (experimental, unreleased — ADR-0306 slice 1).
+**Declaring your own Python tools** (experimental, since v0.105.0 — ADR-0306 slice 1).
 Decorate a tool function with `record.tool` and a mocked replay returns its
 recorded result instead of running it:
 
@@ -732,7 +732,7 @@ JSON-native (no tuples or objects) and at most 1 MiB. See
 [Python API: `record.tool`](python-api.md#extended-event-recording-experimental).
 The result lists the outbound connections the replay made
 (`replay_contract.network_connections_live`); they are reported, not blocked.
-On `main` (unreleased), a recorded call that failed (a rate limit, a 4xx, a 5xx
+Since v0.105.0 (experimental), a recorded call that failed (a rate limit, a 4xx, a 5xx
 after the SDK's retries, a timeout) is replayed by raising the same SDK exception class at the same
 position, so the workload's error handling runs again.
 
@@ -745,7 +745,7 @@ recorded response that is never requested makes the replay `failure` with a
 only reports — except that an unmatched MCP or `record.tool` call runs live only if
 a safety-ladder flag permits its `mutation_class` (the decorator's declared class;
 every MCP call counts as `unknown`, so it needs `--allow-unknown-mutation`).
-*Changed, unreleased (ADR-0306):* `--permissive` alone used to run every unmatched
+*Changed in v0.105.0 (ADR-0306):* `--permissive` alone used to run every unmatched
 MCP call live.
 
 The safety-ladder flags classify the capsule's recorded tool calls for the
@@ -762,7 +762,7 @@ nova replay .novafabric/capsules/01HX.../ --mode mocked \
   --allow-unknown-mutation     # rung: unclassified tools
 ```
 
-**Per-tool overrides** (experimental, unreleased, ADR-0306). A capsule's
+**Per-tool overrides** (experimental, since v0.105.0, ADR-0306). A capsule's
 `replay.yaml` may carry `tool_overrides`; in `mocked` mode they are enforced inside
 the replayed process, and `--dry-run` prints the same decisions:
 
@@ -830,12 +830,12 @@ Outputs:
 ```
 
 **Use as a CI gate.** `--assert-no-regressions` exits 1 if any changes are
-detected — a changed, added or removed entry in any section — and, on `main`
-(unreleased, ADR-0303), exits 2 when
+detected — a changed, added or removed entry in any section — and, since v0.105.0
+(ADR-0303), exits 2 when
 the comparison could not be made (a capsule ref that does not resolve, a
 `capsule.yaml` or `env.lock` that cannot be read or parsed, or a record line
 that could not be read, which is counted in `skipped_malformed_lines` and warned
-about on stderr). On `main` a model call whose recorded request parameters
+about on stderr). Since v0.105.0 a model call whose recorded request parameters
 (temperature, seed, …) changed also counts as a change (ADR-0303 Amendment 2). Wire it into CI to catch
 behavioral regressions before they reach production:
 
@@ -1754,9 +1754,9 @@ unchanged.)
   `nova query --where` predicates, with a node / root / tree scope; "save current as" writes a
   `nova view` file that `nova view run` can re-run. Honest aggregates say "no value" and
   refuse rather than show `$0.00` for an unpriced model. See
-  [dashboard.md](dashboard.md#filter-bar-experimental-unreleased--adr-0232-d1d3-adr-0233).
+  [dashboard.md](dashboard.md#filter-bar-experimental--adr-0232-d1d3-adr-0233).
 - **Evidence cart** *(experimental, `admin` scope)* — collect runs, then export them as one signed
-  Evidence Bundle. See [dashboard.md](dashboard.md#evidence-cart-experimental-unreleased--adr-0239).
+  Evidence Bundle. See [dashboard.md](dashboard.md#evidence-cart-experimental--adr-0239).
 - **Dashboards tab** *(experimental, `g 4`)* — render, validate and save ADR-0235 widget and
   dashboard JSON files (the same files `nova dashboard` manages). See
   [dashboard.md](dashboard.md#dashboards-view-experimental--adr-0235--adr-0236).

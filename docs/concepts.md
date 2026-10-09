@@ -167,8 +167,8 @@ the portable Agent Card and the Task/Message/Artifact mapping (ADR-0149). The
 starts the subprocess, it imports this loader automatically, which installs
 monkey-patches for:
 
-- **OpenAI** — `Completions.create`; on `main` (unreleased) also `AsyncCompletions.create`, `Responses.create` and `AsyncResponses.create`, in `openai.resources` (`capture/hooks/_openai.py`). A `stream=True` call is folded into one record when the stream ends (ADR-0304), and a call that raised is recorded with the SDK error detail (`io.novafabric.sdk_error`, `capture/hooks/_sdk_errors.py`) that mocked replay needs to raise it again.
-- **Anthropic** — `anthropic.resources.messages.Messages.create`; on `main` (unreleased) also `AsyncMessages.create`, streamed or not (`capture/hooks/_anthropic.py`).
+- **OpenAI** — `Completions.create`; since v0.105.0 also `AsyncCompletions.create`, `Responses.create` and `AsyncResponses.create`, in `openai.resources` (`capture/hooks/_openai.py`). A `stream=True` call is folded into one record when the stream ends (ADR-0304), and a call that raised is recorded with the SDK error detail (`io.novafabric.sdk_error`, `capture/hooks/_sdk_errors.py`) that mocked replay needs to raise it again.
+- **Anthropic** — `anthropic.resources.messages.Messages.create`; since v0.105.0 also `AsyncMessages.create`, streamed or not (`capture/hooks/_anthropic.py`).
 - **httpx** — `httpx.Client.send`, recording requests classified by the URL registry (`src/novafabric/capture/hooks/url_registry.yaml` + `~/.novafabric/url_registry.yaml` override). Default coverage: OpenAI, Anthropic, Cohere, Together, Mistral, Replicate, AWS Bedrock, Ollama (default port 11434). Non-default Ollama ports are detected automatically from `OLLAMA_BASE_URL` / `OLLAMA_HOST` at call time.
 - **requests** — `requests.Session.send`, same URL-registry classification (v0.5; RFC-0001 Option C wire-level layer). Covers LangChain HTTP adapters, LlamaIndex REST clients, and any SDK that ships over `requests`.
 - **aiohttp** — `aiohttp.ClientSession._request`, async wire-level capture (v0.6 / C-3.1). Catches LangChain async paths, FastAPI agents, streaming-first SDKs.
@@ -318,8 +318,8 @@ determination starts.
 
 Before a capsule is finalized, `SecretScannerV0` scans every capsule file against the
 `gitleaks-core-v0` rule pack — LLM provider keys (Anthropic, OpenAI, HuggingFace,
-Replicate, Langfuse, and others) and, unreleased on `main`, AWS and GitHub credentials
-(18 rules on `main`, 14 in v0.104.0). Detected values are redacted in-place as
+Replicate, Langfuse, and others) and, since v0.105.0, AWS and GitHub credentials
+(18 rules in pack 0.7.0). Detected values are redacted in-place as
 `[REDACTED:rule-id]`. The scan is pattern-based: formats it does not detect (PEM keys,
 JWTs, passwords, connection-string credentials, …) are listed in
 [the Run Capsule reference](architecture/run-capsule.md).
@@ -373,12 +373,12 @@ Use forensic mode to inspect what happened without any risk of side effects.
 ### `mocked` mode
 
 The original command is re-spawned as a subprocess (**works today** for Python
-workloads; what v0.104.0 serves versus unreleased `main` — MCP results, async,
+workloads; what v0.104.0 served versus v0.105.0 — MCP results, async,
 streamed and Responses API calls, the fail-closed contract — is listed under
 [Release scope](architecture/replay-modes.md)). A capsule that records **no command to re-run** — written
 by a framework adapter or the `@agent` decorator (`novafabric.sdk.agent`; `capture_mode: sdk-decorator`, a
 `@framework:name` label) or imported from OpenTelemetry spans — is refused
-before anything is spawned (`CapsuleNotReplayable`, exit 1; unreleased, on `main`).
+before anything is spawned (`CapsuleNotReplayable`, exit 1; since v0.105.0).
 Inside the re-spawned process:
 
 - `MockModelDispatcher` serves the recorded responses, in order, for OpenAI
@@ -387,7 +387,7 @@ Inside the re-spawned process:
   event stream the SDK would have produced (ADR-0304) — including the
   assistant's recorded tool-call requests. `parse`, legacy completions,
   Anthropic `messages.stream()` and `with_raw_response` calls are **refused**,
-  not sent to the network. On `main` (unreleased), a recorded call that **failed** (a rate limit, a 4xx,
+  not sent to the network. Since v0.105.0 (experimental), a recorded call that **failed** (a rate limit, a 4xx,
   a 5xx after the SDK's retries, a timeout) is replayed by raising the same SDK
   exception class at its position, from an allow-list
   (`replay/_model_errors.py`); the wire hook's per-attempt transport records are
@@ -396,7 +396,7 @@ Inside the re-spawned process:
   `mcp.ClientSession.call_tool`, one recorded result per call (matched by tool
   name and arguments, repeated identical calls in recorded order). A call with
   no recorded result is **refused** — the live tool does not run.
-- **Experimental, unreleased (ADR-0306 slice 1):** it also serves functions the
+- **Experimental (ADR-0306 slice 1, since v0.105.0):** it also serves functions the
   workload declared with `novafabric.capture.record.tool`, before the function
   body runs, matched by name and signature-bound arguments. Records are servable
   only when captured at the `forensic`/`air_gapped` level with JSON-native
@@ -415,7 +415,7 @@ caught the exception. `--permissive` (Python: `ReplayFlags(permissive=True)`)
 keeps the older behaviour — an empty reply on an exhausted queue, unsupported
 model surfaces run live — and still reports every divergence; an unmatched MCP or
 `record.tool` call runs live only if a safety-ladder flag permits its class (an MCP
-call always counts as `unknown`: `--allow-unknown-mutation`). *(Changed, unreleased,
+call always counts as `unknown`: `--allow-unknown-mutation`). *(Changed in v0.105.0,
 ADR-0306: `--permissive` alone used to run every unmatched MCP call live.)* The result counts what was
 actually served: `model_calls_mocked` of `model_calls_available`,
 `tool_calls_mocked`/`tool_calls_live`/`tool_calls_unmatched`, and
@@ -462,7 +462,7 @@ tool_overrides:
 ```
 
 In `mocked` mode the overrides are **enforced inside the replayed process**
-(experimental, unreleased, ADR-0306) on the two surfaces replay intercepts — MCP
+(experimental, ADR-0306, since v0.105.0) on the two surfaces replay intercepts — MCP
 `ClientSession.call_tool` and functions declared with `record.tool` — and `--dry-run`
 prints exactly the same decisions. Because `replay.yaml` travels inside the capsule, a
 restriction from it is trusted and a permission is not:
@@ -509,7 +509,7 @@ semantics (zero live tokens) and writes a diffable capsule hard-marked
 `replay_mode: intervention`, never mistakable for a real run. Only a substituted
 **model** response reaches the re-executed workload: intervention installs no
 tool dispatcher, so tools run live and a substituted **tool** result changes the
-output capsule and the checks only. On `main` (unreleased) the result says which
+output capsule and the checks only. Since v0.105.0 the result says which
 with `intervention.substitution_delivered_to_workload`. A capsule with no command to
 re-run is not re-executed at all (`downstream_reexecuted: false`). This is the
 building block behind the no-LLM causal-graph diagnostic suite below — see

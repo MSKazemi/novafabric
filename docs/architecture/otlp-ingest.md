@@ -37,7 +37,7 @@ flowchart LR
 |---|---|---|
 | 1 | The exporter POSTs a trace export. Like every `serve` route, it first passes the [scope check](serve-request-path.md); both OTLP routes need `operate`. | `serve/app.py:otlp_ingest_traces`, `serve/authz.py:ROUTE_SCOPES` |
 | 2 | Spans that carry at least one `gen_ai.*` attribute become model and tool calls. Every other span is counted as skipped, never guessed at. If no GenAI span is present, the response says so and **no capsule is written**. | `otel/genai_ingest.py:ingest_otlp_json`, `ingest_otlp_protobuf` |
-| 3 | `write_ingest_capsule` writes a new capsule under a fresh ULID with the native `CapsuleWriter`, environment lock and replay policy. The manifest records `capture_mode: otel-import` and `metadata.capture_level: ingested-otlp`. The capsule then finalizes through the same path as `nova capture` (unreleased, on `main`): secret scan, manifest redaction, `lineage.jsonl`, residual pass, `evidence_digests`, manifest gate, and a seal **only when a signing profile exists**. The response says `"sealed": true/false`. A finalization failure keeps every ingested record, leaves the capsule unsealed, records the redacted reason in `metadata.finalization_error`, and returns it as `finalization_error` (still a 200). | `otel/genai_ingest.py:write_ingest_capsule_finalized`, `capture/finalize.py:finalize_in_process_capsule` |
+| 3 | `write_ingest_capsule` writes a new capsule under a fresh ULID with the native `CapsuleWriter`, environment lock and replay policy. The manifest records `capture_mode: otel-import` and `metadata.capture_level: ingested-otlp`. The capsule then finalizes through the same path as `nova capture` (since v0.105.0): secret scan, manifest redaction, `lineage.jsonl`, residual pass, `evidence_digests`, manifest gate, and a seal **only when a signing profile exists**. The response says `"sealed": true/false`. A finalization failure keeps every ingested record, leaves the capsule unsealed, records the redacted reason in `metadata.finalization_error`, and returns it as `finalization_error` (still a 200). | `otel/genai_ingest.py:write_ingest_capsule_finalized`, `capture/finalize.py:finalize_in_process_capsule` |
 | 4 | The exporter POSTs a logs export. A body over 16 MiB or more than 10,000 records is a 400, and nothing is written. Protobuf needs the `otlp` extra. | `otel/logs_ingest.py:ingest_otlp_logs_body` |
 | 5 | Each record is routed by its link key: the `novafabric.run_id` attribute (record or resource), else a valid non-zero 32-hex `traceId`, else the UTC day of the record time. | `otel/logs_ingest.py:ingest_otlp_logs` |
 | 6 | For a run-linked record, the run's capsule state is *observed*: `absent` (no `capsule.yaml`), `unsealed`, or `sealed` (`.seal/` present). The state is stamped on the record. The capsule directory is never opened for writing. | `otel/logs_ingest.py:_capsule_state`, `capsule/_manifest_write.py:is_sealed` |
@@ -75,8 +75,8 @@ rules. Each record carries `schema: novafabric/otlp-log-record/v0`.
 - There is no `nova` command or HTTP route that reads the sidecar today. The
   Python function `otel.logs_ingest.read_log_records` reads one stream.
 - Trace ingest seals its capsule only when a NovaSeal signing profile is
-  configured on the server (opt-in, as for `nova capture`; unreleased, on
-  `main` — v0.104.0 and earlier never sealed an ingested capsule). A seal proves
+  configured on the server (opt-in, as for `nova capture`; since v0.105.0 —
+  v0.104.0 and earlier never sealed an ingested capsule). A seal proves
   the bytes are unchanged since ingest, not that the spans were truthful: the
   `capture_level: ingested-otlp` label stays.
 - An ingested capsule is honestly lower fidelity than native capture: it

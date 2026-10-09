@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 719" width="980" height="719" role="img" aria-labelledby="t d">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 697" width="980" height="697" role="img" aria-labelledby="t d">
 <title id="t">The diff gate: nova diff A B and its exit codes</title>
-<desc id="d">How nova diff compares two runs and how its exit code gates CI. A ref that does not resolve exits 2. Malformed record lines are skipped and counted. Only logical model calls are aligned. Under --assert-no-regressions an incomplete read exits 2, any difference exits 1, and otherwise the gate exits 0. Step 1: nova diff takes two capsule paths or run IDs; a ref that does not resolve exits 2 before anything is compared. (on main, unreleased (after v0.104.0).) Step 2: A record line that is not UTF-8, not JSON or not a JSON object is skipped, counted per side and warned about on stderr. (on main, unreleased (after v0.104.0).) Step 3: Only logical model calls are aligned: wire records marked transport are left out, so one SDK call is one pair (ADR-0305). (on main, unreleased (after v0.104.0).) Step 4: Environment, model calls, tool calls and outputs/ are compared; a provider change under the same model is a changed call. (on main, unreleased (after v0.104.0).) Step 5: One property, has_changes, is the verdict; text, json and github-annotation all read it, so an added-only diff is an error. (on main, unreleased (after v0.104.0).) Step 6: With --assert-no-regressions an incomplete read is checked first: the runs were not fully compared, so the gate exits 2. (on main, unreleased (after v0.104.0).) Step 7: Then has_changes decides: exit 1 for any difference, else 0. Without a gate flag, a difference is reported and exits 0. (on main, unreleased (after v0.104.0).)</desc>
+<desc id="d">How nova diff compares two runs and how its exit code gates CI. A ref that does not resolve exits 2. Malformed record lines are skipped and counted. Only logical model calls are aligned. Under --assert-no-regressions an incomplete read exits 2, any difference exits 1, and otherwise the gate exits 0. Step 1: nova diff takes two capsule paths or run IDs; a ref that does not resolve exits 2 before anything is compared. Step 2: A record line that is not UTF-8, not JSON or not a JSON object is skipped, counted per side and warned about on stderr. Step 3: Only logical model calls are aligned: wire records marked transport are left out, so one SDK call is one pair (ADR-0305). Step 4: Environment, model calls, tool calls and outputs/ are compared; a provider change under the same model is a changed call. Step 5: One property, has_changes, is the verdict; text, json and github-annotation all read it, so an added-only diff is an error. Step 6: With --assert-no-regressions an incomplete read is checked first: the runs were not fully compared, so the gate exits 2. Step 7: Then has_changes decides: exit 1 for any difference, else 0. Without a gate flag, a difference is reported and exits 0.</desc>
 <style>
 svg{--bg:#111114;--card:#1c1c22;--card2:#24242c;--stroke:#3a3a44;--fg:#ececf1;--muted:#a8a8b3;--line:#6b6b78;--cap:#7dd3fc;--seal:#c4b5fd;--rep:#5eead4;--ver:#c4f0a8;--amb:#fcd34d;--warn:#fda4af}
 @media (prefers-color-scheme:light){svg{--bg:#fafaf9;--card:#ffffff;--card2:#f1f1f3;--stroke:#d4d4d8;--fg:#18181b;--muted:#52525b;--line:#a1a1aa;--cap:#0369a1;--seal:#6d28d9;--rep:#0f766e;--ver:#3f6212;--amb:#a16207;--warn:#be123c}}
@@ -38,7 +38,7 @@ text{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvet
 @media (prefers-reduced-motion:reduce){.k,.hl{animation:none!important;opacity:0!important}.motion{display:none}}
 </style>
 <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-muted" d="M0 0 L10 5 L0 10z"/></marker><marker id="ahw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="f-warn" d="M0 0 L10 5 L0 10z"/></marker></defs>
-<rect class="bg" x="0" y="0" width="980" height="719" rx="14"/>
+<rect class="bg" x="0" y="0" width="980" height="697" rx="14"/>
 <text class="title" x="22" y="36" text-anchor="start">The diff gate: nova diff A B and its exit codes</text>
 <text class="s" x="22" y="56" text-anchor="start">nova diff --assert-no-regressions · ADR-0303 and Amendment 1, ADR-0305</text>
 <rect class="ring k c-rep" x="18" y="74" width="158" height="112" rx="13" style="animation-delay:0s"/>
@@ -167,42 +167,34 @@ text{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvet
 <circle r="5" class="f-warn" opacity="0"><animateMotion dur="23.8s" repeatCount="indefinite" path="M560 340 V386" keyPoints="0;0;1;1" keyTimes="0;0.861;0.917;1" calcMode="linear"/><animate attributeName="opacity" dur="23.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.861;0.863;0.917;0.921;1"/></circle>
 <circle r="5" class="f-ver" opacity="0"><animateMotion dur="23.8s" repeatCount="indefinite" path="M700 340 V386" keyPoints="0;0;1;1" keyTimes="0;0.933;0.988;1" calcMode="linear"/><animate attributeName="opacity" dur="23.8s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.933;0.935;0.988;0.992;1"/></circle>
 </g>
-<rect class="card2" x="22" y="496" width="936" height="209" rx="10"/>
+<rect class="card2" x="22" y="496" width="936" height="187" rx="10"/>
 <text class="h" x="38" y="520" text-anchor="start">Steps, in order</text>
 <rect class="k lit f-rep" x="30" y="524" width="920" height="20" rx="5" style="animation-delay:0s"/>
 <circle class="f-rep" cx="48" cy="534" r="8"/>
 <text class="num" x="48" y="538" style="fill:var(--bg)">1</text>
-<text class="s" x="59" y="538" text-anchor="start">†</text>
-<text class="t" x="70" y="538" text-anchor="start">nova diff takes two capsule paths or run IDs; a ref that does not resolve exits 2 before anything is compared.</text>
+<text class="t" x="64" y="538" text-anchor="start">nova diff takes two capsule paths or run IDs; a ref that does not resolve exits 2 before anything is compared.</text>
 <rect class="k lit f-amb" x="30" y="545" width="920" height="20" rx="5" style="animation-delay:3.4s"/>
 <circle class="f-amb" cx="48" cy="555" r="8"/>
 <text class="num" x="48" y="559" style="fill:var(--bg)">2</text>
-<text class="s" x="59" y="559" text-anchor="start">†</text>
-<text class="t" x="70" y="559" text-anchor="start">A record line that is not UTF-8, not JSON or not a JSON object is skipped, counted per side and warned about on stderr.</text>
+<text class="t" x="64" y="559" text-anchor="start">A record line that is not UTF-8, not JSON or not a JSON object is skipped, counted per side and warned about on stderr.</text>
 <rect class="k lit f-amb" x="30" y="566" width="920" height="20" rx="5" style="animation-delay:6.8s"/>
 <circle class="f-amb" cx="48" cy="576" r="8"/>
 <text class="num" x="48" y="580" style="fill:var(--bg)">3</text>
-<text class="s" x="59" y="580" text-anchor="start">†</text>
-<text class="t" x="70" y="580" text-anchor="start">Only logical model calls are aligned: wire records marked transport are left out, so one SDK call is one pair (ADR-0305).</text>
+<text class="t" x="64" y="580" text-anchor="start">Only logical model calls are aligned: wire records marked transport are left out, so one SDK call is one pair (ADR-0305).</text>
 <rect class="k lit f-amb" x="30" y="587" width="920" height="20" rx="5" style="animation-delay:10.2s"/>
 <circle class="f-amb" cx="48" cy="597" r="8"/>
 <text class="num" x="48" y="601" style="fill:var(--bg)">4</text>
-<text class="s" x="59" y="601" text-anchor="start">†</text>
-<text class="t" x="70" y="601" text-anchor="start">Environment, model calls, tool calls and outputs/ are compared; a provider change under the same model is a changed call.</text>
+<text class="t" x="64" y="601" text-anchor="start">Environment, model calls, tool calls and outputs/ are compared; a provider change under the same model is a changed call.</text>
 <rect class="k lit f-ver" x="30" y="608" width="920" height="20" rx="5" style="animation-delay:13.6s"/>
 <circle class="f-ver" cx="48" cy="618" r="8"/>
 <text class="num" x="48" y="622" style="fill:var(--bg)">5</text>
-<text class="s" x="59" y="622" text-anchor="start">†</text>
-<text class="t" x="70" y="622" text-anchor="start">One property, has_changes, is the verdict; text, json and github-annotation all read it, so an added-only diff is an error.</text>
+<text class="t" x="64" y="622" text-anchor="start">One property, has_changes, is the verdict; text, json and github-annotation all read it, so an added-only diff is an error.</text>
 <rect class="k lit f-warn" x="30" y="629" width="920" height="20" rx="5" style="animation-delay:17s"/>
 <circle class="f-warn" cx="48" cy="639" r="8"/>
 <text class="num" x="48" y="643" style="fill:var(--bg)">6</text>
-<text class="s" x="59" y="643" text-anchor="start">†</text>
-<text class="t" x="70" y="643" text-anchor="start">With --assert-no-regressions an incomplete read is checked first: the runs were not fully compared, so the gate exits 2.</text>
+<text class="t" x="64" y="643" text-anchor="start">With --assert-no-regressions an incomplete read is checked first: the runs were not fully compared, so the gate exits 2.</text>
 <rect class="k lit f-seal" x="30" y="650" width="920" height="20" rx="5" style="animation-delay:20.4s"/>
 <circle class="f-seal" cx="48" cy="660" r="8"/>
 <text class="num" x="48" y="664" style="fill:var(--bg)">7</text>
-<text class="s" x="59" y="664" text-anchor="start">†</text>
-<text class="t" x="70" y="664" text-anchor="start">Then has_changes decides: exit 1 for any difference, else 0. Without a gate flag, a difference is reported and exits 0.</text>
-<text class="s" x="38" y="689" text-anchor="start">† On main, unreleased (after v0.104.0).</text>
+<text class="t" x="64" y="664" text-anchor="start">Then has_changes decides: exit 1 for any difference, else 0. Without a gate flag, a difference is reported and exits 0.</text>
 </svg>

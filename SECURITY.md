@@ -93,7 +93,7 @@ STRIDE analysis in the project's internal threat model:
 - **OTLP GenAI ingest** (`POST /api/otlp/v1/traces`) — token-authenticated;
   foreign span data is secret-scanned at write time, the manifest is redacted,
   and the finished capsule gets the same residual pass, `evidence_digests` and
-  opt-in seal as `nova capture` (unreleased, on `main`). Ingested capsules stay
+  opt-in seal as `nova capture` (since v0.105.0). Ingested capsules stay
   labeled `capture_level: ingested-otlp`.
 - **Remote runners** (`nova capture --runner {docker,kubernetes,slurm,lsf,pbs}`)
   — send the workload to a container, cluster or batch scheduler. They forward a

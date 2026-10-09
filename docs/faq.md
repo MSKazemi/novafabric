@@ -159,8 +159,8 @@ recording that redaction ran. If you find a leak, that is a security issue: foll
 The built-in scanner (rule pack `gitleaks-core-v0`, in `novafabric.capture.secrets`)
 matches **known key formats**: OpenAI, Anthropic, Hugging Face, Replicate, Langfuse,
 LangSmith, Weaviate, Qdrant, Cohere, Together, Mistral and Pinecone keys, NovaFabric's
-own API keys and webhook secrets, and — from pack 0.7.0, on `main` and not yet released
-— AWS and GitHub credentials. That is why the project says *secret-scanned*, never
+own API keys and webhook secrets, and — from pack 0.7.0, shipped in v0.105.0 — AWS and
+GitHub credentials. That is why the project says *secret-scanned*, never
 *secret-free*. It does **not** detect:
 
 - passwords, PEM private keys, JWTs, or database connection strings with credentials;

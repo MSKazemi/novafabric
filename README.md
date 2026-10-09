@@ -129,9 +129,9 @@ Sealing is opt-in: a capsule is sealed only once you configure a signing key.
 
 The analogy: observability is a *flight recorder* — it tells you what happened.
 NovaFabric keeps the recording as evidence you own. Mocked replay re-runs a Python
-workload against the recorded model responses on supported API paths; tools still run
-live (on `main`, unreleased: recorded MCP tool results are served too — see
-[replay modes](docs/architecture/replay-modes.md#support-matrix)).
+workload against the recorded model responses on supported API paths and serves recorded
+MCP tool results; other tools still run live — see
+[replay modes](docs/architecture/replay-modes.md#support-matrix).
 
 ---
 
@@ -224,9 +224,9 @@ Replay re-executes or inspects a capsule. A replay is itself a new capsule you c
 # Forensic: read-only inspection, no network, no subprocess — for audit / post-incident
 nova replay ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --mode forensic
 
-# Mocked: re-run the command; recorded sync OpenAI/Anthropic chat replies are served
-# from the capsule and tools run live (unreleased on main: MCP tool results are served
-# too, and divergence fails the replay)
+# Mocked: re-run the command; recorded OpenAI/Anthropic replies (sync, async, streamed)
+# and MCP tool results are served from the capsule, other tools run live, and
+# divergence fails the replay
 nova replay ~/.novafabric/capsules/01HXAY7M5JZ8R7K4P9DPBYK2WX/ --mode mocked
 
 # Dry-run: see what would be mocked before committing
@@ -331,7 +331,7 @@ Re-execute or inspect a capsule in **five explicit, falsifiable modes**:
 | Mode | What it does | Use for |
 |---|---|---|
 | `forensic` | Read-only inspection; no subprocess, no network | Audit, post-incident review |
-| `mocked` | Re-spawns the command (Python workloads). Serves recorded replies for sync, non-streaming OpenAI `chat.completions` / Anthropic `messages` calls; **tools run live**. Unreleased on `main` (ADR-0300, ADR-0304): async, streamed and Responses API calls are served too, as are recorded MCP `call_tool` results (other tools still run live, and their network connections are reported); the replay fails closed on an extra, unmatched or unsupported call (e.g. `parse`, legacy completions, `with_raw_response`) or an unconsumed recording (`--permissive` only reports it). See the [support matrix](docs/architecture/replay-modes.md#support-matrix) | CI, regression |
+| `mocked` | Re-spawns the command (Python workloads). Serves recorded replies for OpenAI `chat.completions` / `responses` and Anthropic `messages` calls, sync or async, streamed or not, and recorded MCP `call_tool` results (ADR-0300, ADR-0304); **other tools run live**, and their network connections are reported. The replay fails closed on an extra, unmatched or unsupported call (e.g. `parse`, legacy completions, `with_raw_response`) or an unconsumed recording (`--permissive` only reports it). See the [support matrix](docs/architecture/replay-modes.md#support-matrix) | CI, regression |
 | `semantic` | **Does not re-execute.** Scores how similar the capsule's *recorded* model responses are to each other (mean pairwise text similarity, 0.0–1.0); no live model is called | Consistency check of recorded responses |
 | `exact` | **Does not re-execute.** Eligibility check for byte-exact replay (`exact_eligible` + reasons): deterministic env.lock, per-call seed, no tool-schema drift | Local / on-prem / compliance |
 | `intervention` *(experimental)* | Replays under mocked semantics after substituting one captured model/tool event | Counterfactual root-cause analysis |
@@ -409,8 +409,7 @@ Both proxies auto-allocate a capsule directory if `--capsule-dir` is omitted.
 Before the capsule is finalized, secret scanning runs over the event streams, the
 manifest (`capsule.yaml`, including the recorded command line), `env.lock`, and every
 file under `inputs/` and `outputs/` (18 API-key and token rules in rule pack
-`gitleaks-core-v0` 0.7.0 on `main`, unreleased — v0.104.0 ships 14; PII masking is a
-separate opt-in). Detected values in text are redacted in place
+`gitleaks-core-v0` 0.7.0; PII masking is a separate opt-in). Detected values in text are redacted in place
 (`[REDACTED:rule-id]`); a binary file that contains a key is dropped from the capsule,
 and a file over 64 MiB is recorded as skipped rather than read. A hash-chained proof
 record is written to `redaction-proof.json`. A capsule without that proof is invalid
@@ -654,7 +653,7 @@ See [`docs/releases/v0.60.0.md`](docs/releases/v0.60.0.md) and
 
 ### v0.62–v0.101 — all `experimental`
 
-The latest tagged release is **v0.104.0**. Since v0.61, each release has shipped one
+The latest tagged release is **v0.105.0**. Since v0.61, each release has shipped one
 verifiable, additive slice at a time (no big-bang rewrites); highlights:
 
 - **Enterprise audit closure (v0.62–v0.63)** — SIEM egress, `ops.*` alerting
@@ -709,7 +708,7 @@ verifiable, additive slice at a time (no big-bang rewrites); highlights:
 
 See [`CHANGELOG.md`](CHANGELOG.md) and [`ROADMAP.md`](ROADMAP.md) for the full
 release-by-release detail, and `docs/releases/v0.64.0.md` through
-`docs/releases/v0.104.0.md` for individual release notes.
+`docs/releases/v0.105.0.md` for individual release notes.
 
 > **Not yet frozen:** on-disk Run Capsule and Evidence Bundle formats change until the
 > v1.0 schema freeze. Do not treat capsule internals as a stable contract before then.
@@ -779,7 +778,7 @@ capsules you own, with run-to-run structural diff and cryptographic provenance. 
 [How NovaFabric compares](#how-novafabric-compares).
 
 **Is NovaFabric production-ready?**
-It is **beta** (v0.104.0). Local capture, replay, diff, lineage, the trust layer,
+It is **beta** (v0.105.0). Local capture, replay, diff, lineage, the trust layer,
 policy gates, eval suites, and the asset registry are usable; server mode, the
 cluster-scale collector, the dashboard, the at-scale lineage backends, and every
 cohort shipped since v0.59 (observability parity, enterprise readiness, cloud KMS,
@@ -819,6 +818,7 @@ See [Citation](#citation) below, or the [`CITATION.cff`](CITATION.cff) file.
 - [Architecture decisions](docs/decisions.md) — every recorded architecture decision and its status
 
 ### Release notes
+- [v0.105.0 — Mocked replay that fails closed, a diff gate that tells a difference from a failure to compare, and one secret pipeline for every capsule](docs/releases/v0.105.0.md)
 - [v0.104.0 — Every capsule file secret-scanned, run-to-run diff that pairs separate captures, and replayable tool-calling turns](docs/releases/v0.104.0.md)
 - [v0.103.0 — Governed delete, opt-in timestamping, spec-conformant seals, and a dashboard that explores capsules](docs/releases/v0.103.0.md)
 - [v0.102.1 — The release pipeline actually publishes](docs/releases/v0.102.1.md)
@@ -878,7 +878,7 @@ Full details, including what to do next, are in [CONTRIBUTING.md](CONTRIBUTING.m
 
 ## Status
 
-**Beta — actively developed (v0.104.0).** Stable and usable today: local capture,
+**Beta — actively developed (v0.105.0).** Stable and usable today: local capture,
 replay, diff, lineage (SQLite default), the trust layer (signing, secret scanning,
 redaction), the asset registry, policy/approval gates, and standard eval suites.
 `Experimental`: server mode, the cluster-scale collector, the Object Capsule Store,
@@ -937,7 +937,7 @@ To cite a specific software release instead:
   author  = {Seyedkazemi Ardebili, Mohsen},
   title   = {{NovaFabric}: replayable, verifiable execution evidence for {AI} agents},
   url     = {https://github.com/MSKazemi/novafabric},
-  version = {0.104.0},
+  version = {0.105.0},
   license = {Apache-2.0}
 }
 ```

@@ -38,10 +38,10 @@ $ nova diff    <run-a> <run-b>                # what actually differed between t
 ```
 
 `mocked` replay is the one that matters most for review: it re-runs the pipeline against
-the recorded model responses from the capsule, at no API cost. In v0.104.0 that covers
-synchronous, non-streaming OpenAI and Anthropic chat calls, and tools run live; async,
-streamed and Responses API calls and recorded MCP tool results are served on `main`
-(unreleased). Re-running is not a determinism guarantee: anything the capsule does not
+the recorded model responses from the capsule, at no API cost. Since v0.105.0 that covers
+OpenAI chat completions and Responses API calls and Anthropic messages, sync or async,
+streamed or not, and recorded MCP tool results; every other tool runs live (v0.104.0
+served only synchronous, non-streaming chat calls). Re-running is not a determinism guarantee: anything the capsule does not
 serve — tools, the clock, the filesystem — can still differ. A
 reviewer without a budget or an account can still run your experiment.
 
@@ -192,7 +192,7 @@ behaviour changes between releases, and a citation without a version is not repr
 either.
 
 A DOI is being minted via Zenodo; until it appears in `CITATION.cff`, cite the repository URL
-and the exact version, e.g. `novafabric 0.104.0`.
+and the exact version, e.g. `novafabric 0.105.0`.
 
 ## Working with us
 
