@@ -148,7 +148,17 @@ def ensure_content_index(conn: sqlite3.Connection) -> None:
     """
     if not fts5_available():
         raise ContentIndexUnavailableError(FTS5_UNAVAILABLE_MSG)
-    conn.executescript(_DDL)
+    # One transaction for the whole schema. ``executescript`` commits each
+    # statement on its own, so the tables used to appear one by one, and a
+    # concurrent delete saw ``capsule_docs`` without ``capsule_index_state``
+    # ("no such table", an intermittent 500 on DELETE /api/runs/{id}). SQLite
+    # DDL, including CREATE VIRTUAL TABLE, is transactional.
+    try:
+        conn.executescript("BEGIN IMMEDIATE;\n" + _DDL + "\nCOMMIT;")
+    except sqlite3.Error:
+        if conn.in_transaction:
+            conn.rollback()
+        raise
 
 
 def content_index_enabled() -> bool:
@@ -406,11 +416,23 @@ def extract_docs(
 # ── writes (indexer owns all writes; no triggers) ─────────────────────────
 
 
+#: Every table the content index reads or writes; a reader needs all of them.
+_REQUIRED_TABLES: frozenset[str] = frozenset(
+    {"capsule_docs", "capsule_fts", "capsule_index_state"}
+)
+
+
+def _present_tables(conn: sqlite3.Connection) -> set[str]:
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN (?, ?, ?)",
+        tuple(sorted(_REQUIRED_TABLES)),
+    ).fetchall()
+    return {r[0] for r in rows}
+
+
 def _tables_present(conn: sqlite3.Connection) -> bool:
-    row = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='capsule_docs'"
-    ).fetchone()
-    return row is not None
+    """True only when the whole content-index schema exists (not just ``capsule_docs``)."""
+    return _present_tables(conn) == _REQUIRED_TABLES
 
 
 def _delete_run_rows(conn: sqlite3.Connection, run_id: str) -> None:
@@ -481,9 +503,16 @@ def index_capsule(
 
 
 def delete_run(conn: sqlite3.Connection, run_id: str) -> None:
-    """Remove a run's content-index rows (erasure/GC contract). Idempotent."""
-    if not _tables_present(conn):
+    """Remove a run's content-index rows (erasure/GC contract). Idempotent.
+
+    A partial schema (an older install, or one another connection is still
+    creating) is completed first rather than failing the delete.
+    """
+    present = _present_tables(conn)
+    if not present:
         return
+    if present != _REQUIRED_TABLES:
+        ensure_content_index(conn)
     with conn:
         _delete_run_rows(conn, run_id)
 

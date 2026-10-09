@@ -411,6 +411,13 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **A capsule delete could fail with `no such table: capsule_index_state` while the content
+  index was being created.** `executescript` committed each table on its own, so another
+  connection — typically `nova serve`'s startup indexer racing a `DELETE /api/runs/{id}` — could
+  see `capsule_docs` without `capsule_index_state`, and the delete rolled back with a 500. The
+  schema is now created in one transaction, readers require the whole table set, and a delete
+  that finds a partial schema (including an install that predates `capsule_index_state`)
+  completes it instead of failing. Found by an intermittent CI failure.
 - **`--json` output was followed by human notes on stdout.** Eleven commands (`nova eval card`
   show/build, `assure run|check|baseline|impact|canary|alarm`, `replay-equivalence`, `a2a card`,
   `a2a objects`, `eval offline`) printed an honesty line, reasons, a digest or warnings on stdout
