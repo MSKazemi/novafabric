@@ -86,7 +86,7 @@ def record(
         )
     else:
         emit_json(json.dumps(payload))
-    console.print(f"[dim]{HONESTY_LINE}[/dim]")
+    err_console.print(f"[dim]{HONESTY_LINE}[/dim]")
 
 
 @app.command("check")
@@ -122,7 +122,7 @@ def check(
         raise typer.Exit(2) from exc
 
     emit_json(json.dumps(verdict.model_dump()))
-    console.print(f"[dim]{HONESTY_LINE}[/dim]")
+    err_console.print(f"[dim]{HONESTY_LINE}[/dim]")
     if verdict.overdue:
         err_console.print(
             f"[red]overdue:[/red] {verdict.schedule_id} was due "

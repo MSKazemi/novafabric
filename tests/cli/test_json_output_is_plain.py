@@ -36,6 +36,7 @@ import novafabric
 from novafabric.eval.scores import Score, ScoreSource, ScoreValueType, write_scores
 
 _PKG = Path(novafabric.__file__).parent
+_CLI_DIR = _PKG / "cli"
 _CLI = _PKG / "cli"
 
 # Calls whose result is a JSON document (or that render one).
@@ -288,3 +289,92 @@ def test_json_stdout_parses_with_colour_forced_in_a_narrow_terminal(
     assert proc.stdout.strip(), f"no stdout (exit {proc.returncode}): {proc.stderr[-2000:]}"
     assert "\x1b[" not in proc.stdout, proc.stdout[:500]
     json.loads(proc.stdout)  # the whole of stdout is one JSON document
+
+
+def _stdout_prints_after_json(source: str) -> list[int]:
+    """Lines where a command prints to the stdout ``console`` on the same path, after
+    it emitted JSON.
+
+    Path-aware, not line-order: a ``console.print`` in the text-mode ``else:`` branch
+    of ``if as_json: emit_json(...)`` never runs after the JSON, and neither does code
+    after an early ``return``. From each ``emit_json`` statement, this walks the
+    statements that follow it in its block, then the statements that follow each
+    enclosing compound statement, stopping at a ``return``/``raise`` and at the
+    function boundary.
+    """
+    tree = ast.parse(source)
+    parent: dict[ast.AST, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parent[child] = node
+
+    def _is_stdout_print(node: ast.AST) -> bool:
+        return (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "print"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "console"
+        )
+
+    def _block_of(stmt: ast.stmt) -> list[ast.stmt] | None:
+        holder = parent.get(stmt)
+        for field in ("body", "orelse", "finalbody", "handlers"):
+            block = getattr(holder, field, None)
+            if isinstance(block, list) and stmt in block:
+                return block
+        return None
+
+    hits: set[int] = set()
+    for call in ast.walk(tree):
+        if not (isinstance(call, ast.Call) and getattr(call.func, "id", None) == "emit_json"):
+            continue
+        stmt: ast.AST = call
+        while not isinstance(stmt, ast.stmt):
+            stmt = parent[stmt]
+        while True:
+            block = _block_of(stmt)  # type: ignore[arg-type]
+            if block is None:
+                break
+            stopped = False
+            for following in block[block.index(stmt) + 1:]:
+                hits.update(n.lineno for n in ast.walk(following) if _is_stdout_print(n))
+                if isinstance(following, (ast.Return, ast.Raise)):
+                    stopped = True
+                    break
+            holder = parent.get(stmt)
+            if stopped or holder is None or isinstance(
+                holder, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)
+            ):
+                break
+            stmt = holder
+    return sorted(hits)
+
+
+def test_no_command_prints_to_stdout_after_its_json() -> None:
+    """A note printed after the JSON (an honesty line, reasons, a digest) makes stdout
+    unparseable for `nova … --json | jq`; such notes belong on stderr."""
+    offenders = [
+        f"{path.relative_to(_CLI_DIR)}:{line}"
+        for path in sorted(_CLI_DIR.rglob("*.py"))
+        for line in _stdout_prints_after_json(path.read_text(encoding="utf-8"))
+    ]
+    assert not offenders, "stdout print after emit_json:\n" + "\n".join(offenders)
+
+
+def test_the_after_json_scan_can_see_an_offender() -> None:
+    bad = "def f():\n    emit_json('{}')\n    console.print('note')\n"
+    good = "def f():\n    emit_json('{}')\n    err_console.print('note')\n"
+    after_branch = (
+        "def f(j):\n    if j:\n        emit_json('{}')\n    else:\n"
+        "        console.print('text')\n    console.print('honesty')\n"
+    )
+    early_return = (
+        "def f(j):\n    if j:\n        emit_json('{}')\n        return\n"
+        "    console.print('text')\n"
+    )
+    assert _stdout_prints_after_json(bad) == [3]
+    assert _stdout_prints_after_json(good) == []
+    # the text-mode else branch is not after the JSON; the line after the if is
+    assert _stdout_prints_after_json(after_branch) == [6]
+    assert _stdout_prints_after_json(early_return) == []

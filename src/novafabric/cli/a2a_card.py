@@ -96,9 +96,9 @@ def capture(
         emit_json(json.dumps(payload))
 
     if facet.signature_ok is None:
-        console.print(f"[yellow]signature:[/yellow] {facet.signature_status}")
+        err_console.print(f"[yellow]signature:[/yellow] {facet.signature_status}")
     if facet.missing_fields:
-        console.print(
+        err_console.print(
             f"[yellow]card is missing:[/yellow] {', '.join(facet.missing_fields)}"
         )
 
@@ -125,6 +125,6 @@ def verify(
 
     emit_json(json.dumps(result.model_dump()))
     if result.signature_ok is None:
-        console.print(f"[yellow]signature:[/yellow] {result.signature_status}")
+        err_console.print(f"[yellow]signature:[/yellow] {result.signature_status}")
     if not result.fingerprint_matches:
         raise typer.Exit(1)

@@ -96,14 +96,14 @@ def report(
         emit_json(json.dumps(payload))
 
     if built.inconclusive:
-        console.print(
+        err_console.print(
             f"[yellow]{built.inconclusive} of {built.n} run(s) were inconclusive[/yellow]"
             " — not counted as equivalent."
         )
     for delta, label in ((built.cost_delta, "cost"), (built.token_delta, "token")):
         if delta.missing_runs:
-            console.print(
+            err_console.print(
                 f"[yellow]{label} delta covers {delta.contributing_runs} of "
                 f"{built.n} run(s)[/yellow] — {delta.missing_runs} carried no data."
             )
-    console.print(f"[dim]{HONESTY_LINE}[/dim]")
+    err_console.print(f"[dim]{HONESTY_LINE}[/dim]")

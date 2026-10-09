@@ -77,7 +77,7 @@ def subject_proof_cmd(
 
     \b
     Examples:
-      NOVA_PII_PEPPER=secret nova subject-proof path/to/my-capsule/ --subject user@example.com
+      NOVA_PII_PEPPER=secret nova subject-proof user@example.com --output proof.json
     """
     try:
         from novafabric.compliance.pii.index import RedactionSubjectIndex

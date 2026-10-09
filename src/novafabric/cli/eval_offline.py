@@ -47,6 +47,7 @@ from novafabric.eval.offline import (
 from novafabric.eval.scores import SCORES_FILENAME, append_score
 
 console = Console()
+err_console = Console(stderr=True)
 
 
 class OfflineCheck(str, Enum):
@@ -109,4 +110,4 @@ def offline_cmd(
 
     if emit_score:
         append_score(capsule / SCORES_FILENAME, score)
-        console.print(f"[green]Recorded[/green] {score.score_id} → {capsule / SCORES_FILENAME}")
+        err_console.print(f"[green]Recorded[/green] {score.score_id} → {capsule / SCORES_FILENAME}")

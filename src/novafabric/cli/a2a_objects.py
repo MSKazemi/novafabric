@@ -91,7 +91,7 @@ def map_cmd(
 
     unmapped = sum(len(o.unmapped) for o in facet.all_objects())
     if unmapped:
-        console.print(
+        err_console.print(
             f"[yellow]{unmapped} field(s) are not carried by this mapping[/yellow] "
             "— listed per object in `unmapped[]`, never dropped silently."
         )

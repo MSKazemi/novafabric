@@ -97,16 +97,16 @@ def record(
         emit_json(json.dumps(payload))
 
     if run.same_stack is False:
-        console.print(
+        err_console.print(
             "[yellow]stack changed since the baseline was pinned[/yellow] — a "
             "difference here may be the stack, not the agent."
         )
     elif run.same_stack is None:
-        console.print(
+        err_console.print(
             "[yellow]baseline stack unknown[/yellow] — this run was not confirmed "
             "to be a like-for-like comparison."
         )
-    console.print(f"[dim]{HONESTY_LINE}[/dim]")
+    err_console.print(f"[dim]{HONESTY_LINE}[/dim]")
 
     if run.alarm:
         err_console.print(

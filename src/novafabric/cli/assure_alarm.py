@@ -100,11 +100,11 @@ def check(
 
     emit_json(json.dumps(alarm.model_dump(mode="json")))
     if alarm.verdict is AlarmVerdict.inconclusive:
-        console.print(
+        err_console.print(
             "[yellow]inconclusive[/yellow] — not enough evidence yet; "
             "this is not a regression."
         )
-    console.print(f"[dim]{HONESTY_LINE}[/dim]")
+    err_console.print(f"[dim]{HONESTY_LINE}[/dim]")
 
     if alarm.fired:
         err_console.print(

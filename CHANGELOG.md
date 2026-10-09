@@ -363,6 +363,14 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ### Fixed
 
+- **`--json` output was followed by human notes on stdout.** Eleven commands (`nova eval card`
+  show/build, `assure run|check|baseline|impact|canary|alarm`, `replay-equivalence`, `a2a card`,
+  `a2a objects`, `eval offline`) printed an honesty line, reasons, a digest or warnings on stdout
+  after their JSON, so `nova … --json | jq` failed. Those notes now go to stderr. A path-aware
+  guard in `tests/cli/test_json_output_is_plain.py` fails on any stdout print that runs after
+  `emit_json` in the same command. Also: the `nova subject-proof` help example used a
+  `--subject` option and a capsule path that do not exist; it now shows
+  `nova subject-proof user@example.com --output proof.json`.
 - **JSON output carried ANSI colour codes when colour was forced.** 38 `--json` /
   `--output-format json` paths (`nova diff --significance`, `nova media list`, `nova aibom
   validate`, `nova session …`, `nova eval card …`, `nova assure …`, `nova eval score config …`,

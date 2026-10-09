@@ -73,6 +73,7 @@ from novafabric.eval.scores import (
 from novafabric.trust.keyring import ensure_keypair
 
 console = Console()
+err_console = Console(stderr=True)
 
 card_app = typer.Typer(name="card", help="Manage signed eval cards.", no_args_is_help=True)
 score_app = typer.Typer(
@@ -171,7 +172,7 @@ def card_new(
         emit_json(payload)
     else:
         out.write_text(payload + "\n", encoding="utf-8")
-        console.print(f"[green]Wrote[/green] {out}  digest={card_digest(card)}")
+        err_console.print(f"[green]Wrote[/green] {out}  digest={card_digest(card)}")
 
 
 @card_app.command("sign")
@@ -217,7 +218,7 @@ def card_show(
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
     emit_json(card.model_dump_json(exclude_none=True))
-    console.print(f"digest={card_digest(card)}")
+    err_console.print(f"digest={card_digest(card)}")
 
 
 @card_app.command("verify")
@@ -353,4 +354,4 @@ def score_list(
         table.add_row(
             s.score_id, s.name, str(s.value), s.value_type.value, s.source.value, s.eval_card_digest
         )
-    console.print(table)
+    err_console.print(table)

@@ -91,7 +91,7 @@ def pin(
         console.print(f"[green]Pinned[/green] {baseline_id} -> {out}")
     else:
         emit_json(json.dumps(payload))
-    console.print(f"[dim]{HONESTY_LINE}[/dim]")
+    err_console.print(f"[dim]{HONESTY_LINE}[/dim]")
 
 
 @app.command("verify")
@@ -144,7 +144,7 @@ def verify(
 
     result = results[0]
     emit_json(json.dumps(result.model_dump()))
-    console.print(f"[dim]{HONESTY_LINE}[/dim]")
+    err_console.print(f"[dim]{HONESTY_LINE}[/dim]")
     if not result.matches:
         raise typer.Exit(1)
 

@@ -225,7 +225,7 @@ def regime(
     result = assess(logical_model_calls(calls))
     emit_json(json.dumps(result.model_dump(mode="json")))
     for reason in result.reasons:
-        console.print(f"[dim]{reason}[/dim]")
+        err_console.print(f"[dim]{reason}[/dim]")
 
     if result.eligibility is not Eligibility.eligible:
         raise typer.Exit(1)
