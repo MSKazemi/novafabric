@@ -400,13 +400,19 @@ Inside the re-spawned process:
   workload declared with `novafabric.capture.record.tool`, before the function
   body runs, matched by name and signature-bound arguments. Records are servable
   only when captured at the `forensic`/`air_gapped` level with JSON-native
-  values; anything else is refused with the reason.
+  values; anything else is refused with the reason. *Unreleased (after v0.105.0,
+  slice 4):* a declared function that itself called a model or tool is served too,
+  and the records it wrote are consumed as covered; MCP arguments a capsule
+  redacted at seal now match the live call (redact-then-hash).
 - **Every other tool runs live**: HTTP requests, shell commands, file writes,
   framework-native tools, undeclared functions and other providers' SDKs are not
   intercepted. The
   result reports them as `tool_calls_not_interceptable`, and the outbound
   connections the replayed process opened as `network_connections_live`
-  (observed, not blocked).
+  (observed, not blocked). *Unreleased (after v0.105.0, slice 4, experimental):*
+  the result an undeclared function sends back to the model is compared with the
+  recorded one and a difference is reported in `replay_contract.tool_result_echo`
+  — report-only, never a failure.
 
 The replay **fails closed**: an extra model call, a call on an unsupported
 surface, an unmatched MCP or `record.tool` call, or a recorded response that is never requested

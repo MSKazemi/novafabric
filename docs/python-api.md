@@ -296,9 +296,15 @@ async def lookup_order(order_id: str) -> dict: ...
   other non-JSON argument must be listed in `ignore` (methods need
   `ignore=("self",)`). A recorded builtin exception (e.g. `ValueError`) is raised
   again as itself; any other class becomes `ReplayRecordedToolError`.
-- **Not supported**: generator functions (rejected at decoration), and a
-  decorated function that itself calls a model or tool — its record is marked
-  nested and is not servable yet.
+- **Nested boundaries** (unreleased, after v0.105.0 — ADR-0306 slice 4,
+  experimental): a decorated function that itself calls a model, an MCP tool or
+  another decorated function is served like any other; the records it wrote at
+  capture (marked `io.novafabric.within_tool_call_id`) are consumed as *covered*
+  (`replay_contract.model_calls_covered` / `tool_calls_covered`), so the calls
+  after it still get their own recorded answers. A nested call made from a raw
+  thread is not marked; its record stays unconsumed and the replay fails closed.
+  Capsules captured by v0.105.0 are served too, without re-capture.
+- **Not supported**: generator functions (rejected at decoration).
 - **Digests and secrets.** At the default capture level the record keeps an
   argument digest (and, for results up to 64 KiB, a result digest) instead of the
   values. Both are computed **after** the capsule's secret rules have masked every
@@ -309,7 +315,13 @@ async def lookup_order(order_id: str) -> dict: ...
   be confirmed offline by guessing. **Do not decorate a tool that takes credentials
   or other low-entropy secrets at the default capture level**; pass them through an
   `ignore=` parameter or leave the function undecorated. Redaction costs roughly
-  150 µs per KiB of argument text per call at that level.
+  150 µs per KiB of argument text per call at that level. MCP `call_tool`
+  arguments are matched the same way since slice 4 (unreleased, after v0.105.0).
+- **Undeclared functions** are not served, but since slice 4 (unreleased, after
+  v0.105.0, experimental) mocked replay compares the result such a function sends
+  back to the model (the `role: "tool"` message, or an Anthropic `tool_result`
+  block) with the recorded one, by `tool_call_id`, and reports a difference under
+  `replay_contract.tool_result_echo` — report-only, it never fails the replay.
 
 ---
 

@@ -12,6 +12,31 @@ longer forwards the submitting shell's environment (ADR-0270).
 ## [Unreleased]
 
 ## [0.105.0] - 2026-10-10
+### Added
+
+- **Mocked replay serves `record.tool` boundaries that called a model or tool (ADR-0306
+  slice 4, experimental).** The records written inside a served boundary are consumed as
+  *covered* (nested boundaries too), so later calls still get their own recorded answers;
+  `replay_contract.model_calls_covered`, `tool_calls_covered` and a per-surface `covered`
+  counter report them. Capsules captured by v0.105.0 are served without re-capture. A nested
+  call made from a raw thread is not marked and still fails closed.
+- **Tool-result echo check, report-only (ADR-0306 D10, experimental).** For each served
+  Chat Completions or Anthropic Messages call, mocked replay compares the tool results the
+  request sends back (`role: "tool"` / `tool_result`) with the recorded ones, by
+  `tool_call_id` and redacted digest, and reports differences under
+  `replay_contract.tool_result_echo` (`tool_result_echo_mismatch`). It never fails a replay
+  (owner decision Q10) and writes no values. `nova replay` prints the counts.
+
+### Changed
+
+- **MCP tool calls are matched after secret redaction (ADR-0306 D12.3, experimental).** An
+  MCP argument the capsule scanner masked as `[REDACTED:<rule>]` now matches the replayed
+  call carrying the real value, instead of failing closed as unmatched. The raw hash is tried
+  first, so every call that matched before matches the same record; the
+  `tool_call_unmatched` divergence for MCP now carries the redacted digest. Capture no longer
+  marks a `record.tool` boundary with nested records `not-servable`.
+
+## [0.105.0] - 2026-10-09
 
 **Mocked replay that fails closed, a diff gate that tells a difference from a failure to
 compare, and one secret pipeline for every capsule.** Mocked replay now serves async, streamed

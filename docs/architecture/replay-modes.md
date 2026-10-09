@@ -20,7 +20,10 @@ Every flag of these commands: [CLI reference — nova replay, diff and diagnose]
 > an unmatched MCP call runs live (ADR-0306 slice 2). In **v0.104.0** and earlier, `mocked`
 > replay served recorded responses only for synchronous, non-streaming OpenAI chat
 > completions and Anthropic messages, and every tool ran live; rows of the support matrix
-> below that cite those ADRs do not apply to those versions.
+> below that cite those ADRs do not apply to those versions. **Unreleased** (on `main`,
+> not in v0.105.0; **experimental**, ADR-0306 slice 4): MCP arguments matched after
+> secret redaction, `record.tool` boundaries that called a model or tool served with their
+> nested records consumed as covered, and the report-only tool-result echo check.
 
 ![The five replay modes](../assets/architecture/replay-modes.svg)
 
@@ -142,9 +145,22 @@ only when capture marked it `io.novafabric.result_codec: "json-v1"`: arguments
 and result were kept (capture level `forensic` or `air_gapped` —
 `NOVA_CAPTURE_LEVEL`; at lower levels only digests are kept), every argument was
 JSON-native (exclude others with `ignore=`), the result was JSON-native and at
-most `NOVAFABRIC_TOOL_RESULT_MAX_BYTES` (default 1 MiB), and no model or tool
-record was written inside the call (nested records are marked
-`io.novafabric.within_tool_call_id` and make the boundary unservable in slice 1).
+most `NOVAFABRIC_TOOL_RESULT_MAX_BYTES` (default 1 MiB).
+
+**Nested boundaries** (ADR-0306 slice 4, **experimental**, unreleased). A
+decorated function may itself call a model, an MCP tool or another decorated
+function. Capture marks every record written inside it with
+`io.novafabric.within_tool_call_id` and counts them on the boundary
+(`io.novafabric.nested_records`). When replay serves the boundary, its body never
+runs, so those calls are never requested: they are consumed as **covered** —
+nested boundaries transitively — and the model queue skips their positions in
+place, so the calls after the boundary still get their own recorded answers.
+Covered records are counted (`model_calls_covered`, `tool_calls_covered`, and
+`covered` per tool surface), never served and never left over. A nested call made
+from a raw thread inherits no context and is not marked; its record stays in the
+queue and a strict replay fails closed. Capsules captured by v0.105.0 marked such
+a boundary not servable with a fixed reason; replay recognises that exact reason
+and serves them without re-capture.
 A recorded exception is raised again as the same class only when it is a builtin
 `Exception` subclass; anything else is `ReplayRecordedToolError`. Results are
 decoded as JSON only — never unpickled or imported by name.
@@ -161,6 +177,18 @@ applied, so `f(1)`, `f(1, b=2)` and `f(a=1, b=2)` match the same record. The
 matcher is indexed by name and argument hash, so a lookup does not scan the
 capsule.
 
+**Arguments are compared after secret redaction** (ADR-0306 D12.3; `record.tool`
+since slice 1, MCP since slice 4 — experimental, unreleased). The capsule scanner
+masks detected secrets as `[REDACTED:<rule>]` when it seals the capsule, so a
+recorded argument can no longer equal the live one byte for byte. The matcher
+therefore tries two hashes, in order: the **raw** hash (a record holding exactly
+these arguments — every call an older replay matched still matches, and to the
+same record), then the hash of both sides **after** the same ADR-0009 rule pack
+has masked them. Two different secrets caught by one rule mask to the same value;
+when no record holds the raw value, recorded order decides between them, and the
+match is reported with `how: redacted-signature` in the event log. Raw digests are
+computed in memory only; divergences and the event log carry the redacted digest.
+
 **Divergence policy.** Under the default `fail` policy the replayed process
 raises a named `ReplayDivergenceError` subclass (`replay/_errors.py`) at the call
 that diverged, instead of fabricating a reply or reaching the network:
@@ -174,7 +202,7 @@ that diverged, instead of fabricating a reply or reaching the network:
 | `malformed_recorded_response` | a recorded tool-call entry has no `name` |
 | `recorded_error_unreconstructable` | the recorded call failed, and replay cannot raise that failure faithfully (`error_type`, `reason` reported); under `--permissive` a `ReplayRecordedModelError` stand-in with the recorded type and message is raised instead |
 | `tool_call_unmatched` | an MCP `call_tool` or `record.tool` call with no unconsumed recorded result — **the live tool is not run** |
-| `tool_result_not_servable` | a `record.tool` call matched a record whose result cannot be served, or has an argument that is not JSON-representable; `reason` names the cause (payloads not recorded, tuple/object result, size cap, the parameter, nested records) — **the function body is not run**. Counted as a tool divergence |
+| `tool_result_not_servable` | a `record.tool` call matched a record whose result cannot be served, or has an argument that is not JSON-representable; `reason` names the cause (payloads not recorded, tuple/object result, size cap, the parameter) — **the function body is not run**. Counted as a tool divergence |
 | `override_unenforceable` | `--permissive` only (a strict replay refuses to start instead): a `replay.yaml` `allow: false` override names a tool recorded on a transport replay cannot intercept, so it ran live (`tool_name`, `transports` reported; experimental, ADR-0306) |
 | `model_calls_unconsumed` / `tool_calls_unconsumed` | (after the run) recorded responses that were never requested |
 | `dispatcher_install_failed`, `multiple_interpreters` | the dispatcher could not be installed (the process is stopped, exit 86, before the workload runs), or several Python processes each consumed the queue |
@@ -197,6 +225,24 @@ records is never used to permit anything. *(Changed in v0.105.0, ADR-0306 Q3:
 before, `--permissive` alone ran every unmatched MCP call live.)* `intervention`
 always uses `warn` and installs no tool dispatcher, because a counterfactual is
 expected to diverge.
+
+**Tool-result echo check** (ADR-0306 D10, slice 4 — **experimental**,
+unreleased). A function the workload runs for the model without declaring it is
+not intercepted, but its result reaches the model as the `role: "tool"` message
+(Chat Completions) or `tool_result` block (Anthropic Messages) of the next
+request, and the capsule recorded that request. For every served call, the
+dispatcher pairs each tool result the replayed request sends back with the one
+recorded at the same position, by `tool_call_id`, and compares digests taken
+after secret redaction (a secret the scanner masked in the capsule compares equal
+to the raw value). Each id is checked once, at the first request that carries it.
+A difference — or a result recorded there that the replay no longer sends — is a
+`tool_result_echo_mismatch`: the answers served after it were recorded for a
+different question. The check is **report-only** (owner decision, open question
+10): mismatches are listed under `replay_contract.tool_result_echo`, never in
+`divergences`, and never fail a replay. When the capsule kept no request messages
+(or for the Responses API, whose request input is not recorded) the result is
+`not_checked`, never `matched`. No value is written — only ids, positions and
+counts.
 
 **`replay.yaml` `tool_overrides` (experimental, ADR-0306 slice 2).** The engine
 resolves the capsule's `replay.yaml` (`replay/_policy.py:PolicyEvaluator`) into a
@@ -235,13 +281,15 @@ used to permit anything.
 | `tool_calls_live` / `tool_calls_unmatched` | intercepted calls run live (`--permissive`, or an honoured `allow: true` override) / intercepted calls with no servable recorded result |
 | `queues_fully_consumed` | every servable recording was requested |
 | `divergence_reason` | the first divergence, plus a count of the others |
-| `replay_contract` | policy, intercepted surfaces, `dispatcher_installed`, `model_calls_live`, `model_errors_replayed` (recorded SDK errors raised again; they are also counted in `model_calls_mocked`), unconsumed counts, `tool_calls_not_interceptable`, `tool_calls_refused` (intercepted calls `--permissive` did not run: no ladder flag permitted their class, or an `allow: false` override), `tool_calls_by_surface` (`recorded`, `available`, `mocked`, `live`, `refused`, `unmatched`, `unconsumed` per tool surface), the network observation below, and the divergence list |
+| `replay_contract` | policy, intercepted surfaces, `dispatcher_installed`, `model_calls_live`, `model_errors_replayed` (recorded SDK errors raised again; they are also counted in `model_calls_mocked`), unconsumed counts, `tool_calls_not_interceptable`, `tool_calls_refused` (intercepted calls `--permissive` did not run: no ladder flag permitted their class, or an `allow: false` override), `tool_calls_by_surface` (`recorded`, `available`, `mocked`, `live`, `refused`, `unmatched`, `covered`, `unconsumed` per tool surface), `model_calls_covered` / `tool_calls_covered` (records consumed by a served nested `record.tool` boundary, slice 4), the network observation below, and the divergence list |
+| `replay_contract.tool_result_echo` | the D10 echo check (slice 4, experimental, unreleased): `policy: report-only`, `matched`, `mismatched`, `not_checked` with `not_checked_reasons`, and up to 50 `mismatches` (`kind: tool_result_echo_mismatch`, `tool_call_id`, `surface`, `call_index`, `reason`) — never a divergence |
 | `replay_contract.tool_overrides` | only when `replay.yaml` has overrides: one `{tool_name, decision, honoured, reason, rationale?}` per override; `reason` starts with `override_unused`, `override_unenforceable` or `override_not_honoured` when it is not honoured (experimental, ADR-0306) |
 | `replay_contract.network_connections_live` / `network_destinations` | IPv4/IPv6 connections the replayed Python process opened (`socket.connect` / `connect_ex`, `replay/_dispatcher.py:NetworkObserver`), with the distinct `host:port` destinations (first 20). **Observed, never blocked** (ADR-0304); `network_observed: false` means nothing was observed, not that nothing happened. After 10,000 connections the count stops and `network_connections_capped: true` marks it as a lower bound |
 | `intervention` | for `--mode intervention`: the spec, `matched_event_index`, the check outcomes, `downstream_reexecuted` (and `downstream_not_reexecuted_reason`), and `substitution_delivered_to_workload` with a `substitution_note` when it is `false` |
 
 `nova replay` prints the served counts (and how many were raised as recorded
-errors), the live network connections and the divergence reason under the
+errors), the tool-result echo counts when any tool result was checked, the live
+network connections and the divergence reason under the
 "Replay written" line, and a warning when an intervention's substitution did not
 reach the re-executed workload.
 
@@ -314,7 +362,8 @@ These limits are stated so you can rely on the parts that do work:
 - **`record.tool` serves declared functions only** (experimental). Undeclared
   functions a model asks the workload to run, framework-native tools, and
   anything a served function would have done (files, caches, globals) are not
-  replayed. With the default capture level the records hold digests only and a
+  replayed; an undeclared function's result is only *compared* with the recorded
+  one (the echo check, report-only). With the default capture level the records hold digests only and a
   strict replay refuses them with a re-capture hint. Concurrent identical calls
   pair with records in an unspecified order.
 - **`record.tool` digests are only as safe as secret detection.** Argument and
@@ -351,14 +400,21 @@ These limits are stated so you can rely on the parts that do work:
   HTTP API through a tool replay does not intercept succeeds; the result names
   the destinations. Connections made by C extensions that bypass Python's
   `socket` methods, and by non-Python child processes, are not seen.
-- **Model requests are not compared.** Responses are served by position per
-  API surface; a changed prompt with the same call count and order is not a
-  divergence here. Use `nova diff` against a fresh capture.
+- **Model requests are not compared**, except for the tool results they send
+  back (the echo check, unreleased, report-only). Responses are served by
+  position per API surface; a changed prompt with the same call count and order
+  is not a divergence here. Use `nova diff` against a fresh capture.
 - **MCP results recorded by the in-process hook are lossy** for non-text content
   (image `mimeType`, embedded resources, `structuredContent` are not recorded);
   `nova mcp-proxy` records the verbatim envelope.
-- **A recorded argument that capture redacted cannot match** a replayed call
-  carrying the real value; it fails closed as unmatched.
+- **Redact-then-hash has edges.** A recorded argument the capsule scanner
+  masked matches the replayed call carrying the real value (since slice 4 for
+  MCP, unreleased). It still fails closed as unmatched when the capsule was
+  sealed with a non-`mask` strategy override, or when a rule match spans JSON
+  syntax (the scanner redacts the record file as text, the matcher redacts
+  values). Two different secrets caught by one rule are told apart only by
+  recorded order when no record holds the raw value. In v0.105.0 and earlier, a
+  redacted MCP argument never matched.
 - **Replays do not write lineage edges.** Only `intervention` produces a capsule.
   Its `replay_of_run_id` becomes a `replayed_from` edge when that capsule is
   indexed.
