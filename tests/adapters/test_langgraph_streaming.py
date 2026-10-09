@@ -37,6 +37,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
+import novafabric.adapters.langgraph as _langgraph_adapter
+
 
 def _quiet_capsule() -> Any:
     scanner = MagicMock()
@@ -67,10 +69,14 @@ def _transitions(tmp_path: Path) -> list[dict]:
 
 
 def _wrap(graph: Any, tmp_path: Path, run_name: str = "lg") -> Any:
+    # The adapter module is imported once, at test-module level (_langgraph_adapter).
+    # Importing it *inside* patch.dict(sys.modules) made patch.dict evict it on exit,
+    # so every _wrap() re-imported a fresh module with its own `_in_flight`
+    # ContextVar: an inner graph then never saw the outer run's flag and opened its
+    # own capsule — a failure that appeared only when no earlier test had imported
+    # the adapter first (alone, or under a different xdist split).
     with patch.dict(sys.modules, {"langgraph": MagicMock()}):
-        from novafabric.adapters.langgraph import wrap
-
-        return wrap(graph, run_name=run_name, data_dir=tmp_path)
+        return _langgraph_adapter.wrap(graph, run_name=run_name, data_dir=tmp_path)
 
 
 class _FakeGraph:
