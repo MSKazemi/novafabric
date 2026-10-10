@@ -11,7 +11,6 @@ longer forwards the submitting shell's environment (ADR-0270).
 
 ## [Unreleased]
 
-## [0.105.0] - 2026-10-10
 ### Added
 
 - **Mocked replay serves `record.tool` boundaries that called a model or tool (ADR-0306
@@ -26,17 +25,6 @@ longer forwards the submitting shell's environment (ADR-0270).
   `tool_call_id` and redacted digest, and reports differences under
   `replay_contract.tool_result_echo` (`tool_result_echo_mismatch`). It never fails a replay
   (owner decision Q10) and writes no values. `nova replay` prints the counts.
-
-### Changed
-
-- **MCP tool calls are matched after secret redaction (ADR-0306 D12.3, experimental).** An
-  MCP argument the capsule scanner masked as `[REDACTED:<rule>]` now matches the replayed
-  call carrying the real value, instead of failing closed as unmatched. The raw hash is tried
-  first, so every call that matched before matches the same record; the
-  `tool_call_unmatched` divergence for MCP now carries the redacted digest. Capture no longer
-  marks a `record.tool` boundary with nested records `not-servable`.
-### Added
-
 - **Google ADK tool calls are captured and served by mocked replay (experimental, ADR-0306
   slice 3).** `novafabric.adapters.google_adk.make_tool_plugin()`, placed first in an ADK
   `Runner`'s plugins, records each ADK tool call under `nova capture python …` as one
@@ -55,7 +43,16 @@ longer forwards the submitting shell's environment (ADR-0270).
   `tool_calls_by_surface`. Capsules written by the ADK capture plugin (`make_plugin()`) are
   still refused by mocked replay (pseudo-command; ADR-0306 open question 7).
 
-## [0.105.0] - 2026-10-09
+### Changed
+
+- **MCP tool calls are matched after secret redaction (ADR-0306 D12.3, experimental).** An
+  MCP argument the capsule scanner masked as `[REDACTED:<rule>]` now matches the replayed
+  call carrying the real value, instead of failing closed as unmatched. The raw hash is tried
+  first, so every call that matched before matches the same record; the
+  `tool_call_unmatched` divergence for MCP now carries the redacted digest. Capture no longer
+  marks a `record.tool` boundary with nested records `not-servable`.
+
+## [0.105.0] - 2026-10-10
 
 **Mocked replay that fails closed, a diff gate that tells a difference from a failure to
 compare, and one secret pipeline for every capsule.** Mocked replay now serves async, streamed
